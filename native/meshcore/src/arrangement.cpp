@@ -65,6 +65,7 @@
 #include "clip3d.hpp"
 #include "dyadic.hpp"
 #include "filtered.hpp"
+#include "floating_point_mode.hpp"
 #include "phydrax_meshcore.h"
 #include "exact_scalar.hpp"
 #include "geometry3.hpp"
@@ -2089,6 +2090,8 @@ int32_t phx_mc_arrange_triangles(int64_t vertex_count, const double* vertices,
                                  const int64_t* pairs, int64_t* failed_face,
                                  phx_mc_arrangement** result) {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (result == nullptr || failed_face == nullptr || vertices == nullptr ||
         triangles == nullptr || surfaces == nullptr || (pair_count > 0 && pairs == nullptr) ||
         !phx::mc::addressable(vertex_count, 3, sizeof(double)) ||
@@ -2149,6 +2152,8 @@ int32_t phx_mc_arrange_triangles(int64_t vertex_count, const double* vertices,
 int32_t phx_mc_arrangement_classify(phx_mc_arrangement* result, int64_t operand_count,
                                     int64_t* failed_face) {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (result == nullptr || result->arranger == nullptr || failed_face == nullptr)
       return PHX_MC_INVALID_ARGUMENT;
     *failed_face = -1;
@@ -2271,6 +2276,8 @@ int32_t phx_mc_clip_reference_triangle_exact(
     int32_t vertex_capacity, int32_t* supporting_planes, int32_t* edge_labels,
     int32_t* vertex_count) {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     return phx::mc::clip_reference_triangle_exact(
         words, word_count, offsets, signs, vertex_capacity, supporting_planes, edge_labels,
         vertex_count);
@@ -2282,6 +2289,8 @@ int32_t phx_mc_clip_reference_tetrahedron_exact(
   if (request == nullptr || request->result == nullptr) return PHX_MC_INVALID_ARGUMENT;
   *request->result = nullptr;
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     phx::mc::ReferenceTetrahedronClip topology;
     const int32_t status = phx::mc::clip_reference_tetrahedron_exact(
         request->words, request->word_count, request->offsets, request->signs,
@@ -2369,6 +2378,8 @@ int32_t phx_mc_arrange_tetrahedra_exact(const phx_mc_arrange_tetrahedra_exact_re
   if (request == nullptr || request->result == nullptr) return PHX_MC_INVALID_ARGUMENT;
   *request->result = nullptr;
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     phx::mc::TetrahedraArrangementBanks banks;
     const int32_t status = phx::mc::arrange_tetrahedra_exact(request, banks);
     if (status != PHX_MC_OK) return status;

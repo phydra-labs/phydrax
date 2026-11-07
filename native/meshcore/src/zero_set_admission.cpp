@@ -13,6 +13,7 @@
 #include <utility>
 
 #include "capi_guard.hpp"
+#include "floating_point_mode.hpp"
 #include "phydrax_meshcore.h"
 #include "rounding.hpp"
 
@@ -613,6 +614,8 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh(const phx_mc_zero_set_remesh_request* 
     return PHX_MC_INVALID_ARGUMENT;
   *request->result = nullptr;
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     auto owned = std::make_unique<phx::mc::remesh::ZeroSetRemeshResult>();
     const int32_t status =
         phx::mc::remesh::remesh_zero_set(*request, *owned, request->counters, request->distance,
@@ -634,6 +637,8 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(
       *request, vertex_face_offsets, vertex_face_offset_count, vertex_faces, vertex_face_count);
   if (incidence_status != PHX_MC_OK) return incidence_status;
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     try {
       auto owned = std::make_unique<phx::mc::remesh::ZeroSetRemeshResult>();
       const int32_t status = phx::mc::remesh::remesh_zero_set(

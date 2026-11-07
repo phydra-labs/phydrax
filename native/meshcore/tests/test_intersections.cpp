@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "check.hpp"
+#include "fp_hazards.hpp"
 #include "geometry3.hpp"
 #include "intersections.hpp"
 #include "phydrax_meshcore.h"
@@ -390,6 +391,106 @@ void test_abi_batches() {
   PHX_CHECK(status[0] == PHX_MC_OK && sides[0] == 0 && located[0] == 3);
 }
 
+// Contact batches with random transversal pairs and pairs that are exactly
+// coplanar by symmetry (every vertex is a signed copy of a or b, so all lie in
+// the plane through the origin spanned by a and b) while coordinate
+// differences are inexact. Item 0 carries a subnormal coordinate.
+struct ContactBatches {
+  static constexpr int64_t kCount = 64;
+  std::vector<double> first;
+  std::vector<double> second;
+  std::vector<double> segments;
+  std::vector<double> points;
+};
+
+ContactBatches contact_batches() {
+  ContactBatches batches;
+  std::uint64_t state = 2026;
+  const auto uniform = [&state]() {
+    state = phx::mc::splitmix64(state);
+    return static_cast<double>(state >> 11) * 0x1p-53 * 2.0 - 1.0;
+  };
+  for (int64_t item = 0; item < ContactBatches::kCount; ++item) {
+    double a[3];
+    double b[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      a[axis] = uniform();
+      b[axis] = uniform();
+    }
+    if (item % 2 == 0) {
+      batches.first.insert(batches.first.end(), {a[0], a[1], a[2], b[0], b[1], b[2], -a[0],
+                                                 -a[1], -a[2]});
+      batches.second.insert(batches.second.end(), {b[0], b[1], b[2], -a[0], -a[1], -a[2],
+                                                   -b[0], -b[1], -b[2]});
+      batches.segments.insert(batches.segments.end(), {a[0], a[1], a[2], -b[0], -b[1], -b[2]});
+      batches.points.insert(batches.points.end(), {-b[0], -b[1], -b[2]});
+    } else {
+      for (int k = 0; k < 9; ++k) batches.first.push_back(uniform());
+      for (int k = 0; k < 9; ++k) batches.second.push_back(uniform());
+      for (int k = 0; k < 6; ++k) batches.segments.push_back(uniform());
+      for (int k = 0; k < 3; ++k) batches.points.push_back(uniform());
+    }
+  }
+  batches.first[0] = 0x1p-1060;
+  batches.segments[0] = 0x1p-1060;
+  batches.points[0] = 0x1p-1060;
+  return batches;
+}
+
+// Every output of the three contact entry points on `batches`, in call order.
+std::vector<double> contact_outputs(const ContactBatches& batches) {
+  constexpr int64_t n = ContactBatches::kCount;
+  constexpr int32_t capacity = 6;
+  std::vector<int8_t> classes(n, 9);
+  std::vector<int32_t> counts(n, 9);
+  std::vector<double> points(n * capacity * 3, 0.0);
+  std::vector<double> bounds(n * capacity, 0.0);
+  std::vector<int8_t> features(n * capacity * 2, 9);
+  std::vector<int32_t> status(n, 9);
+  std::vector<double> out;
+  const auto append = [&](int32_t call) {
+    out.push_back(static_cast<double>(call));
+    out.insert(out.end(), classes.begin(), classes.end());
+    out.insert(out.end(), counts.begin(), counts.end());
+    out.insert(out.end(), points.begin(), points.end());
+    out.insert(out.end(), bounds.begin(), bounds.end());
+    out.insert(out.end(), features.begin(), features.end());
+    out.insert(out.end(), status.begin(), status.end());
+  };
+  append(phx_mc_triangle_intersections(n, capacity, batches.first.data(),
+                                       batches.second.data(), nullptr, nullptr, classes.data(),
+                                       counts.data(), points.data(), bounds.data(),
+                                       features.data(), status.data()));
+  append(phx_mc_segment_triangle_intersections(n, capacity, batches.segments.data(),
+                                               batches.second.data(), nullptr, nullptr,
+                                               classes.data(), counts.data(), points.data(),
+                                               bounds.data(), features.data(), status.data()));
+  append(phx_mc_point_triangle_locations(n, batches.points.data(), batches.second.data(),
+                                         classes.data(), features.data(), status.data()));
+  return out;
+}
+
+// Contacts give their round-to-nearest, gradual-underflow classes, constructed
+// points and bounds in every caller mode, and a subnormal coordinate stays
+// outside the exact domain.
+void test_floating_point_hazards() {
+  const ContactBatches batches = contact_batches();
+  const std::vector<double> reference = contact_outputs(batches);
+  int8_t classes[1] = {9};
+  int32_t status[1] = {9};
+  int8_t features[1] = {9};
+  PHX_CHECK(phx_mc_triangle_intersections(1, 0, batches.first.data(), batches.second.data(),
+                                          nullptr, nullptr, classes, nullptr, nullptr, nullptr,
+                                          nullptr, status) == PHX_MC_OK);
+  PHX_CHECK(status[0] == PHX_MC_RANGE_ERROR);
+  PHX_CHECK(phx_mc_point_triangle_locations(1, batches.points.data(), batches.second.data(),
+                                            classes, features, status) == PHX_MC_OK);
+  PHX_CHECK(status[0] == PHX_MC_RANGE_ERROR);
+  phx::mc::test::under_floating_point_hazards([&](const phx::mc::test::FloatingPointHazard&) {
+    PHX_CHECK(contact_outputs(batches) == reference);
+  });
+}
+
 }  // namespace
 
 int main() {
@@ -400,5 +501,6 @@ int main() {
   test_point_locations();
   test_lattice_invariance();
   test_abi_batches();
+  test_floating_point_hazards();
   return phx::mc::test::finish("test_intersections");
 }

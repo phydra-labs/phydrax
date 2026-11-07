@@ -28,6 +28,7 @@
 
 #include "capi_guard.hpp"
 #include "clip_common.hpp"
+#include "floating_point_mode.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 
@@ -649,7 +650,9 @@ int32_t phx_mc_polygon_intersection_moments(int64_t count, int32_t first_capacit
                                             const double* second_vertices,
                                             const int32_t* second_counts, double* areas,
                                             double* first_moments, int32_t* item_status) {
-  return phx::mc::guarded([&] {
+  return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     return phx::mc::polygon_batch(count, first_capacity, first_vertices, first_counts,
                                   second_capacity, second_vertices, second_counts, 0, nullptr,
                                   nullptr, areas, first_moments, item_status);
@@ -662,6 +665,8 @@ int32_t phx_mc_polygon_intersection_simplices(
     const int32_t* second_counts, int32_t simplex_capacity, double* simplices,
     int32_t* simplex_counts, double* areas, double* first_moments, int32_t* item_status) {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (count > 0 &&
         (simplex_counts == nullptr || (simplex_capacity > 0 && simplices == nullptr))) {
       return PHX_MC_INVALID_ARGUMENT;
@@ -681,6 +686,8 @@ int32_t phx_mc_clip_box_halfplanes(int64_t count, const double* box_lower,
                                    int32_t* vertex_counts, double* areas, double* first_moments,
                                    int32_t* item_status) {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (count < 0 || plane_capacity < 0 || vertex_capacity < 0 ||
         !phx::mc::addressable(count, 2 * static_cast<int64_t>(plane_capacity), sizeof(double)) ||
         !phx::mc::addressable(count, plane_capacity, sizeof(double)) ||

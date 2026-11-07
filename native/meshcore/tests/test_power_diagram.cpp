@@ -16,6 +16,7 @@
 #include "clip3d.hpp"
 #include "expansion.hpp"
 #include "filtered.hpp"
+#include "fp_hazards.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 
@@ -819,6 +820,106 @@ void selected_bisector_on_constrained_carrier() {
   }
 }
 
+bool same_doubles(const std::vector<double>& first, const std::vector<double>& second) {
+  return first.size() == second.size() &&
+         std::equal(first.begin(), first.end(), second.begin(), [](double a, double b) {
+           return std::bit_cast<uint64_t>(a) == std::bit_cast<uint64_t>(b);
+         });
+}
+
+bool same_snapshot(const PowerSnapshot& a, const PowerSnapshot& b) {
+  return a.sizes == b.sizes && same_doubles(a.vertices, b.vertices) &&
+         same_doubles(a.volumes, b.volumes) && same_doubles(a.moments, b.moments) &&
+         same_doubles(a.second, b.second) && same_doubles(a.piece_volumes, b.piece_volumes) &&
+         same_doubles(a.piece_moments, b.piece_moments) && a.offsets == b.offsets &&
+         a.face_vertices == b.face_vertices && a.face_cells == b.face_cells &&
+         a.facets == b.facets && a.sites == b.sites && a.regions == b.regions &&
+         a.piece_sites == b.piece_sites && a.piece_tets == b.piece_tets &&
+         a.piece_cells == b.piece_cells && a.remote_sites == b.remote_sites &&
+         a.remote_tets == b.remote_tets;
+}
+
+// Both power-cell entries give their round-to-nearest, gradual-underflow
+// cells under hazardous caller modes, and refuse a subnormal site coordinate
+// or weight (outside the exact input domain) in every mode.
+void floating_point_hazards() {
+  const Domain domain = unit_cube_box();
+  std::vector<double> sites = {0.3, 0.45, 0.55, 0.8, 0.5, 0.45};
+  std::vector<double> weights = {0.01, 0.0};
+  constexpr int32_t owners[] = {0, 1};
+  constexpr int64_t coordinates[] = {0, 1, 2, 3, 4, 5, 6};
+  constexpr int64_t neighbor_offsets[] = {0, 1, 2};
+  constexpr int32_t neighbors[] = {1, 0};
+  constexpr int8_t split_sites[] = {0, 0};
+  phx_mc_power_cells* handle = nullptr;
+  int64_t failed_coordinate = -2, failed_component = -2;
+  const phx_mc_restricted_power_cells_request request{
+      .site_count = 2, .sites = sites.data(), .weights = weights.data(),
+      .neighbor_offsets = neighbor_offsets, .neighbors = neighbors, .split_sites = split_sites,
+      .point_count = 8, .points = domain.points.data(), .tet_count = 6,
+      .tets = domain.tets.data(), .tet_regions = domain.regions.data(),
+      .tet_face_facets = domain.facets.data(), .result = &handle,
+  };
+  const phx_mc_restricted_power_cells_exact_request exact_request{
+      .original_site_count = 2, .original_sites = sites.data(),
+      .original_weights = weights.data(), .image_count = 2, .image_site_owners = owners,
+      .image_coordinate_offsets = coordinates, .component_count = 6,
+      .image_coordinate_components = sites.data(), .neighbor_offsets = neighbor_offsets,
+      .neighbors = neighbors, .split_sites = split_sites, .point_count = 8,
+      .points = domain.points.data(), .tet_count = 6, .tets = domain.tets.data(),
+      .tet_regions = domain.regions.data(), .tet_face_facets = domain.facets.data(),
+      .result = &handle, .failed_image_coordinate = &failed_coordinate,
+      .failed_component = &failed_component, .selected_site_count = -1,
+      .selected_sites = nullptr,
+  };
+  const auto run = [&](bool exact) {
+    handle = nullptr;
+    const int32_t status = exact ? phx_mc_restricted_power_cells_exact(&exact_request)
+                                 : phx_mc_restricted_power_cells(&request);
+    PHX_CHECK(status == PHX_MC_OK && handle != nullptr);
+    PowerSnapshot result;
+    if (handle != nullptr) result = snapshot_power_cells(handle);
+    phx_mc_power_cells_free(handle);
+    handle = nullptr;
+    return result;
+  };
+  const auto refused = [&](bool exact) {
+    handle = nullptr;
+    const int32_t status = exact ? phx_mc_restricted_power_cells_exact(&exact_request)
+                                 : phx_mc_restricted_power_cells(&request);
+    const bool released = handle == nullptr;
+    phx_mc_power_cells_free(handle);
+    handle = nullptr;
+    return status == PHX_MC_INVALID_INPUT && released;
+  };
+  const PowerSnapshot rounded = run(false);
+  const PowerSnapshot exact = run(true);
+  for (const PowerSnapshot* snapshot : {&rounded, &exact}) {
+    PHX_CHECK(snapshot->sizes[3] == 2);
+    if (snapshot->sizes[3] != 2) continue;
+    PHX_CHECK(snapshot->volumes[0] > 0.5 && snapshot->volumes[1] > 0.0);
+    PHX_CHECK(std::fabs(snapshot->volumes[0] + snapshot->volumes[1] - 1.0) < 1.0e-14);
+  }
+  PHX_CHECK(failed_coordinate == -1 && failed_component == -1);
+  sites[0] = 0x1p-1060;
+  PHX_CHECK(refused(false));
+  sites[0] = 0.3;
+  weights[1] = 0x1p-1070;
+  PHX_CHECK(refused(true));
+  weights[1] = 0.0;
+
+  phx::mc::test::under_floating_point_hazards([&](const phx::mc::test::FloatingPointHazard&) {
+    PHX_CHECK(same_snapshot(run(false), rounded));
+    PHX_CHECK(same_snapshot(run(true), exact));
+    sites[0] = 0x1p-1060;
+    PHX_CHECK(refused(false));
+    sites[0] = 0.3;
+    weights[1] = 0x1p-1070;
+    PHX_CHECK(refused(true));
+    weights[1] = 0.0;
+  });
+}
+
 }  // namespace
 int main() {
   single_site_tetrahedron();
@@ -830,5 +931,6 @@ int main() {
   exact_power_clip_rounds_constructed_vertex_to_nearest_binary64();
   positive_exact_power_cell_collapsing_to_a_plane_is_refused();
   exact_weighted_periodic_cube_images_match_owner_volumes();
+  floating_point_hazards();
   return phx::mc::test::finish("test_power_diagram");
 }

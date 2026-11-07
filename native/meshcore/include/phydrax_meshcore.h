@@ -702,6 +702,16 @@ typedef struct phx_mc_tet_mesh_edit_request {
 PHX_MC_API int32_t phx_mc_tet_mesh_apply_edit(
     phx_mc_tet_mesh* mesh, const phx_mc_tet_mesh_edit_request* request,
     int32_t* edit_status);
+/* Exact refusal probe of an edit request, mutating no mesh state. `decided`
+ * is 1 when phx_mc_tet_mesh_apply_edit would refuse the request with
+ * `edit_status`, and 0 when it may apply or the probe does not decide it
+ * (flips, ring reconnections, collapses and relocations of an unbound,
+ * nonperiodic state are
+ * decided). A decided refusal advances the implicit-source refusal counters
+ * exactly as that refused apply_edit would. */
+PHX_MC_API int32_t phx_mc_tet_mesh_probe_edit(
+    phx_mc_tet_mesh* mesh, const phx_mc_tet_mesh_edit_request* request,
+    int32_t* decided, int32_t* edit_status);
 /* Refine inserts circumcenters until every cell meets the radius-edge bound
  * and its circumradius size target. `sizes` (one per current vertex in
  * snapshot order, 0 = unconstrained; empty keeps the mesh's retained field)
@@ -761,6 +771,21 @@ PHX_MC_API int32_t phx_mc_interval_program_execute(
     double* upper, int64_t workspace_size);
 /* Bit n advertises interval-program opcode n; bit 0 is reserved. */
 PHX_MC_API int32_t phx_mc_interval_program_capabilities(uint64_t* opcodes);
+/* Execute an interval program as phx_mc_interval_program_execute, then record
+ * per-box branch evidence: smooth[b] and continuous[b] start at 1 for every
+ * box b < box_count, and each event row (kind, test, size, a, a_index, boxes;
+ * six int64 fields) clears them where its test holds on a workspace entry
+ * a + (a_index < 0 ? k : indices[a_index + k]), k < size: kind 0 (kink) clears
+ * smooth, kind 1 (jump) clears smooth and continuous, for box
+ * indices[boxes + k], or every box when that entry or `boxes` is -1. Tests:
+ * 0 the enclosure meets zero, 1 lower <= 0 (or NaN), 2 lower < 0 (or NaN),
+ * 3 lower != upper, 4 a nonfinite endpoint, 5 always. The program and the
+ * events are validated before any write. */
+PHX_MC_API int32_t phx_mc_interval_program_branches(
+    const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
+    int64_t index_count, const double* parameters, int64_t parameter_count, double* lower,
+    double* upper, int64_t workspace_size, const int64_t* events, int64_t event_count,
+    int64_t box_count, uint8_t* smooth, uint8_t* continuous);
 PHX_MC_API int32_t phx_mc_simplex_quadratic_bounds(
     int64_t count, int32_t dimension, int32_t components, const double* q_lower,
     const double* q_upper, const double* barycentric_lower, const double* barycentric_upper,
@@ -850,6 +875,58 @@ PHX_MC_API int32_t phx_mc_interval_sum(
     int64_t count, const double* first_lower, const double* first_upper,
     const double* second_lower, const double* second_upper, int32_t subtract, double* lower,
     double* upper);
+#define PHX_MC_ELEMENTARY_EXP 0
+#define PHX_MC_ELEMENTARY_LOG 1
+#define PHX_MC_ELEMENTARY_SIN 2
+#define PHX_MC_ELEMENTARY_COS 3
+#define PHX_MC_ELEMENTARY_TAN 4
+#define PHX_MC_ELEMENTARY_ATAN 5
+#define PHX_MC_ELEMENTARY_TANH 6
+#define PHX_MC_ELEMENTARY_ASIN 7
+#define PHX_MC_ELEMENTARY_ACOS 8
+/* Elementwise rigorous enclosure [out_lower, out_upper] of the selected f over
+ * each box [lower, upper] of count items (lower <= upper unless an endpoint is
+ * NaN; infinite endpoints bound the real set and are never members), computed
+ * without a platform libm from binary64 basic operations and fma in
+ * round-to-nearest with gradual underflow. That mode is established before any
+ * argument is inspected; if it cannot be, the call returns
+ * PHX_MC_INTERNAL_ERROR. count < 0, parallelism < 1, an unknown function code
+ * or a null pointer with count > 0 returns PHX_MC_INVALID_ARGUMENT. Outputs may
+ * alias inputs (element i is read before it is written). Results are
+ * bit-identical for every parallelism and platform.
+ * Rules:
+ *   - A NaN endpoint gives (-inf, inf) for every f.
+ *   - Monotone f (exp, log, atan, tanh) bound f at the lower endpoint from below
+ *     and at the upper endpoint from above (an inverted box stays inverted).
+ *   - exp: exp(-inf) contributes 0 below and exp([-inf, -inf]) = [0, 2^-1074];
+ *     exp(+inf) contributes +inf above and exp([+inf, +inf]) = [DBL_MAX, +inf].
+ *   - log: lower <= 0 gives out_lower = -inf and upper <= 0 gives
+ *     out_upper = +inf (a box <= 0 maps to the whole line); log(+inf) is
+ *     bounded by [DBL_MAX, +inf].
+ *   - atan(+-inf) contributes the outward-rounded +-pi/2 bound; tanh(+-inf)
+ *     contributes +-1 exactly.
+ *   - asin (increasing) and acos (decreasing): the box is clipped to [-1, 1];
+ *     a box with no point in [-1, 1] (upper < -1 or lower > 1) gives the whole
+ *     line, as log does for an empty domain. asin(+-1), acos(0) and acos(-1)
+ *     enclose +-pi/2, pi/2 and pi outward.
+ *   - sin, cos: an infinite endpoint, an inverted box or a width >= 2 pi
+ *     (decided exactly) gives [-1, 1]; otherwise the endpoint enclosures widened
+ *     to -1 or 1 wherever an extremum may lie in the box, clipped to [-1, 1].
+ *   - tan: an infinite endpoint, an inverted box or a possible pole (decided or
+ *     undecided) gives (-inf, +inf); otherwise [bound at lower, bound at upper].
+ *   - The argument reduction of sin, cos and tan is exact Payne-Hanek with a
+ *     proven error bound for every finite binary64 x (R = DBL_MAX), so no finite
+ *     argument falls back to the full range; extremum and pole membership is
+ *     decided from the reduced quadrants, undecided meaning contained.
+ *   - Exact results are returned exactly: exp(0) = 1, log(1) = 0, cos(0) = 1,
+ *     acos(1) = 0, and sin, tan, atan, tanh, asin of a signed zero return that
+ *     zero; other zero results are +0, and zeros order as IEEE 754-2019
+ *     minimum/maximum.
+ * Point enclosures of finite non-exact results are one or two binary64 steps
+ * wide; the error proofs are documented in src/elementary.cpp. */
+PHX_MC_API int32_t phx_mc_interval_elementary(
+    int32_t function, int64_t count, const double* lower, const double* upper,
+    double* out_lower, double* out_upper, int32_t parallelism);
 /* Exact Bernstein controls of polynomials sum_t N_t x^{e_t} / Q on a domain.
  * Item i owns terms [term_offsets[i], term_offsets[i + 1]) with exponents
  * (terms, dimension) and numerators (terms) words, degrees (count, degree_width)

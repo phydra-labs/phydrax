@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "check.hpp"
+#include "fp_hazards.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 #include "spatial_sort.hpp"
@@ -645,6 +646,52 @@ void test_status_codes() {
   PHX_CHECK(run(points, &bad_weights).status == PHX_MC_RANGE_ERROR);
 }
 
+bool same_result(const Result& left, const Result& right) {
+  return left.status == right.status && left.input_point_count == right.input_point_count &&
+         left.cells == right.cells && left.vertex_map == right.vertex_map;
+}
+
+// Cyclic coordinate permutations and negations of random points: every orbit
+// of six is exactly cospherical about the origin while coordinate differences
+// are inexact.
+std::vector<double> permutation_orbits(int orbits, std::uint64_t seed) {
+  std::vector<double> points;
+  for (int orbit = 0; orbit < orbits; ++orbit) {
+    const double x = 2.0 * uniform(seed) - 1.0;
+    const double y = 2.0 * uniform(seed) - 1.0;
+    const double z = 2.0 * uniform(seed) - 1.0;
+    const double images[6][3] = {{x, y, z},    {y, z, x},    {z, x, y},
+                                 {-x, -y, -z}, {-y, -z, -x}, {-z, -x, -y}};
+    for (const auto& image : images) points.insert(points.end(), image, image + 3);
+  }
+  return points;
+}
+
+// The Delaunay and regular tetrahedralizations of exactly cospherical orbits,
+// and the rejection of a subnormal coordinate or weight, do not depend on the
+// caller's floating-point mode.
+void test_floating_point_hazards() {
+  const std::vector<double> points = permutation_orbits(20, 2026);
+  const std::vector<double> zero_weights(points.size() / 3, 0.0);
+  const Result reference = run(points, nullptr);
+  PHX_CHECK(reference.status == PHX_MC_OK);
+  const Result weighted = run(points, &zero_weights);
+  PHX_CHECK(weighted.status == PHX_MC_OK);
+  std::vector<double> subnormal = random_points(10, 1);
+  subnormal[7] = 0x1p-1060;
+  const std::vector<double> plain = random_points(10, 1);
+  std::vector<double> subnormal_weights(10, 0.0);
+  subnormal_weights[4] = 0x1p-1060;
+  PHX_CHECK(run(subnormal, nullptr).status == PHX_MC_RANGE_ERROR);
+  PHX_CHECK(run(plain, &subnormal_weights).status == PHX_MC_RANGE_ERROR);
+  phx::mc::test::under_floating_point_hazards([&](const phx::mc::test::FloatingPointHazard&) {
+    PHX_CHECK(same_result(run(points, nullptr), reference));
+    PHX_CHECK(same_result(run(points, &zero_weights), weighted));
+    PHX_CHECK(run(subnormal, nullptr).status == PHX_MC_RANGE_ERROR);
+    PHX_CHECK(run(plain, &subnormal_weights).status == PHX_MC_RANGE_ERROR);
+  });
+}
+
 bool all_coplanar(const std::vector<double>& points) {
   const int32_t count = static_cast<int32_t>(points.size() / 3);
   for (int32_t a = 0; a < count; ++a) {
@@ -759,5 +806,6 @@ int main() {
   test_regular_redundant_points();
   test_status_codes();
   test_performance();
+  test_floating_point_hazards();
   return phx::mc::test::finish("test_delaunay3d");
 }

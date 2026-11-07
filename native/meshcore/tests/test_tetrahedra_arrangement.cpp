@@ -10,6 +10,7 @@
 // agrees with that enumeration.
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <functional>
 #include <initializer_list>
@@ -20,6 +21,7 @@
 #include <vector>
 
 #include "check.hpp"
+#include "fp_hazards.hpp"
 #include "phydrax_meshcore.h"
 
 namespace {
@@ -1171,6 +1173,213 @@ void test_declared_invalid_unused_inputs() {
   expect_invalid(behind, 1, static_cast<std::int64_t>(behind.points.size()) - 1);
 }
 
+struct TriangleArrangementSnapshot {
+  std::int32_t status = -1;
+  std::int32_t classify_status = -1;
+  std::int64_t failed_face = -2;
+  std::int64_t classify_failed_face = -2;
+  std::array<std::int64_t, 5> sizes{};
+  std::array<std::int64_t, 2> classification_sizes{};
+  std::vector<double> vertices, bounds;
+  std::vector<std::int8_t> constructions;
+  std::vector<std::int64_t> origins, fragments, fragment_faces, contact_edges, coplanar,
+      locations, fragment_components;
+  std::vector<std::int32_t> component_windings;
+
+  bool operator==(const TriangleArrangementSnapshot& other) const {
+    const auto same_bits = [](const std::vector<double>& a, const std::vector<double>& b) {
+      return a.size() == b.size() &&
+             std::equal(a.begin(), a.end(), b.begin(), [](double x, double y) {
+               return std::bit_cast<std::uint64_t>(x) == std::bit_cast<std::uint64_t>(y);
+             });
+    };
+    return status == other.status && classify_status == other.classify_status &&
+           failed_face == other.failed_face &&
+           classify_failed_face == other.classify_failed_face && sizes == other.sizes &&
+           classification_sizes == other.classification_sizes &&
+           same_bits(vertices, other.vertices) && same_bits(bounds, other.bounds) &&
+           constructions == other.constructions && origins == other.origins &&
+           fragments == other.fragments && fragment_faces == other.fragment_faces &&
+           contact_edges == other.contact_edges && coplanar == other.coplanar &&
+           locations == other.locations && fragment_components == other.fragment_components &&
+           component_windings == other.component_windings;
+  }
+};
+
+// Arranges two closed triangle surfaces against each other, exports the
+// arrangement, then classifies it for both operands.
+TriangleArrangementSnapshot arrange_two_surfaces(const std::vector<double>& vertices,
+                                                 const std::vector<std::int64_t>& triangles,
+                                                 const std::vector<std::int32_t>& surfaces,
+                                                 const std::vector<std::int64_t>& pairs) {
+  TriangleArrangementSnapshot out;
+  phx_mc_arrangement* handle = nullptr;
+  out.status = phx_mc_arrange_triangles(
+      static_cast<std::int64_t>(vertices.size() / 3), vertices.data(),
+      static_cast<std::int64_t>(triangles.size() / 3), triangles.data(), surfaces.data(),
+      static_cast<std::int64_t>(pairs.size() / 2), pairs.data(), &out.failed_face, &handle);
+  if (handle == nullptr) return out;
+  PHX_CHECK(phx_mc_arrangement_sizes(handle, out.sizes.data()) == PHX_MC_OK);
+  const auto [nv, nf, ne, nc, nl] = out.sizes;
+  out.vertices.resize(static_cast<std::size_t>(3 * nv));
+  out.bounds.resize(static_cast<std::size_t>(nv));
+  out.constructions.resize(static_cast<std::size_t>(nv));
+  out.origins.resize(static_cast<std::size_t>(nv));
+  out.fragments.resize(static_cast<std::size_t>(3 * nf));
+  out.fragment_faces.resize(static_cast<std::size_t>(nf));
+  out.contact_edges.resize(static_cast<std::size_t>(2 * ne));
+  out.coplanar.resize(static_cast<std::size_t>(3 * nc));
+  out.locations.resize(static_cast<std::size_t>(3 * nl));
+  PHX_CHECK(phx_mc_arrangement_export(
+                handle, nv, nf, ne, nc, nl, out.vertices.data(), out.bounds.data(),
+                out.constructions.data(), out.origins.data(), out.fragments.data(),
+                out.fragment_faces.data(), out.contact_edges.data(), out.coplanar.data(),
+                out.locations.data()) == PHX_MC_OK);
+  out.classify_status = phx_mc_arrangement_classify(handle, 2, &out.classify_failed_face);
+  if (out.classify_status == PHX_MC_OK) {
+    PHX_CHECK(phx_mc_arrangement_classification_sizes(handle, out.classification_sizes.data()) ==
+              PHX_MC_OK);
+    out.fragment_components.resize(static_cast<std::size_t>(nf));
+    out.component_windings.resize(
+        static_cast<std::size_t>(out.classification_sizes[0] * out.classification_sizes[1]));
+    PHX_CHECK(phx_mc_arrangement_export_classification(
+                  handle, nf, out.classification_sizes[0], out.classification_sizes[1],
+                  out.fragment_components.data(), out.component_windings.data()) == PHX_MC_OK);
+  }
+  phx_mc_arrangement_free(handle);
+  return out;
+}
+
+struct TriangleClip {
+  std::int32_t status = -1;
+  std::int32_t vertex_count = -1;
+  std::vector<std::int32_t> supporting_planes, edge_labels;
+
+  bool operator==(const TriangleClip& other) const {
+    return status == other.status && vertex_count == other.vertex_count &&
+           supporting_planes == other.supporting_planes && edge_labels == other.edge_labels;
+  }
+};
+
+TriangleClip clip_triangle(const PackedRows& packed) {
+  TriangleClip out;
+  out.supporting_planes.assign(16, -9);
+  out.edge_labels.assign(8, -9);
+  out.status = phx_mc_clip_reference_triangle_exact(
+      packed.words.data(), static_cast<std::int64_t>(packed.words.size()),
+      packed.offsets.data(), packed.signs.data(), 8, out.supporting_planes.data(),
+      out.edge_labels.data(), &out.vertex_count);
+  return out;
+}
+
+struct TetrahedronClip {
+  std::int32_t status = -1;
+  std::array<std::int64_t, 4> sizes{};
+  std::vector<std::int32_t> supporting, incident_offsets, incident_planes, face_offsets,
+      face_planes, face_vertices;
+
+  bool operator==(const TetrahedronClip& other) const {
+    return status == other.status && sizes == other.sizes && supporting == other.supporting &&
+           incident_offsets == other.incident_offsets &&
+           incident_planes == other.incident_planes && face_offsets == other.face_offsets &&
+           face_planes == other.face_planes && face_vertices == other.face_vertices;
+  }
+};
+
+TetrahedronClip clip_tetrahedron(const PackedRows& packed, std::int32_t plane_count) {
+  TetrahedronClip out;
+  phx_mc_reference_tetrahedron_clip* clip = nullptr;
+  const phx_mc_clip_reference_tetrahedron_exact_request request{
+      .words = packed.words.data(),
+      .word_count = static_cast<std::int64_t>(packed.words.size()),
+      .offsets = packed.offsets.data(),
+      .signs = packed.signs.data(),
+      .plane_count = plane_count,
+      .result = &clip,
+  };
+  out.status = phx_mc_clip_reference_tetrahedron_exact(&request);
+  if (clip == nullptr) return out;
+  PHX_CHECK(phx_mc_reference_tetrahedron_clip_sizes(clip, out.sizes.data()) == PHX_MC_OK);
+  const auto [vertices, faces, entries, incidents] = out.sizes;
+  out.supporting.resize(static_cast<std::size_t>(3 * vertices));
+  out.incident_offsets.resize(static_cast<std::size_t>(vertices + 1));
+  out.incident_planes.resize(static_cast<std::size_t>(incidents));
+  out.face_offsets.resize(static_cast<std::size_t>(faces + 1));
+  out.face_planes.resize(static_cast<std::size_t>(faces));
+  out.face_vertices.resize(static_cast<std::size_t>(entries));
+  PHX_CHECK(phx_mc_reference_tetrahedron_clip_export(
+                clip, vertices, out.supporting.data(), vertices + 1,
+                out.incident_offsets.data(), incidents, out.incident_planes.data(), faces + 1,
+                out.face_offsets.data(), faces, out.face_planes.data(), entries,
+                out.face_vertices.data()) == PHX_MC_OK);
+  phx_mc_reference_tetrahedron_clip_free(clip);
+  return out;
+}
+
+// Every arrangement and reference-clip entry gives its round-to-nearest,
+// gradual-underflow result under hazardous caller modes. The triangle inputs
+// include a vertex a subnormal distance off the other surface's face plane.
+void test_floating_point_hazards() {
+  const std::vector<std::int64_t> triangles = {0, 2, 1, 0, 1, 3, 1, 2, 3, 2, 0, 3,
+                                               4, 6, 5, 4, 5, 7, 5, 6, 7, 6, 4, 7};
+  const std::vector<std::int32_t> surfaces = {0, 0, 0, 0, 1, 1, 1, 1};
+  std::vector<std::int64_t> pairs;
+  for (std::int64_t a = 0; a < 4; ++a)
+    for (std::int64_t b = 4; b < 8; ++b) pairs.insert(pairs.end(), {a, b});
+  const std::vector<double> crossing = {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1,
+                                        0.25, 0.25, 0.25, 1.25, 0.25, 0.25,
+                                        0.25, 1.25, 0.25, 0.25, 0.25, 1.25};
+  const std::vector<double> grazing = {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1,
+                                       0.25, 0.25, 0x1p-1060, 1.25, 0.25, 0.25,
+                                       0.25, 1.25, 0.25, 0.25, 0.25, 1.25};
+  const TriangleArrangementSnapshot crossed =
+      arrange_two_surfaces(crossing, triangles, surfaces, pairs);
+  PHX_CHECK(crossed.status == PHX_MC_OK && crossed.failed_face == -1);
+  PHX_CHECK(crossed.sizes[1] > 8 && crossed.sizes[2] > 0);
+  PHX_CHECK(crossed.classify_status == PHX_MC_OK && crossed.classification_sizes[1] == 2);
+  const TriangleArrangementSnapshot grazed =
+      arrange_two_surfaces(grazing, triangles, surfaces, pairs);
+  PHX_CHECK(grazed.status == PHX_MC_OK && grazed.sizes[1] > 8);
+
+  // Reference triangle rows, then lambda_0 <= lambda_1 and two repeated rows.
+  std::vector<Big> triangle_values;
+  for (const int value : {-1, 0, 0, 0, -1, 0, 1, 1, 1, 1, -1, 0, -1, 0, 0, 0, -1, 0})
+    triangle_values.push_back(Big(value));
+  PackedRows triangle_planes;
+  for (const Big& value : triangle_values) {
+    triangle_planes.words.insert(triangle_planes.words.end(), value.limbs.begin(),
+                                 value.limbs.end());
+    triangle_planes.signs.push_back(static_cast<std::int8_t>(value.sign()));
+    triangle_planes.offsets.push_back(static_cast<std::int64_t>(triangle_planes.words.size()));
+  }
+  const TriangleClip triangle = clip_triangle(triangle_planes);
+  PHX_CHECK(triangle.status == PHX_MC_OK && triangle.vertex_count == 3);
+
+  const std::vector<Row> planes{
+      {-1, 0, 0, 0}, {0, -1, 0, 0}, {0, 0, -1, 0}, {1, 1, 1, -1}, {2, 0, 0, -1}};
+  const PackedRows tetrahedron_planes = pack_rows(planes);
+  const TetrahedronClip tetrahedron =
+      clip_tetrahedron(tetrahedron_planes, static_cast<std::int32_t>(planes.size()));
+  PHX_CHECK(tetrahedron.status == PHX_MC_OK && tetrahedron.sizes[0] >= 4);
+
+  ArrangementInput identity = unit_tetrahedron();
+  identity.job(from_tetrahedron(0), {});
+  const ArrangementInput declared = declared_choice_input();
+  const ArrangementOutput identity_out = run_arrangement(identity);
+  const ArrangementOutput declared_out = run_arrangement(declared);
+  PHX_CHECK(identity_out.status == PHX_MC_OK && declared_out.status == PHX_MC_OK);
+
+  phx::mc::test::under_floating_point_hazards([&](const phx::mc::test::FloatingPointHazard&) {
+    PHX_CHECK(arrange_two_surfaces(crossing, triangles, surfaces, pairs) == crossed);
+    PHX_CHECK(arrange_two_surfaces(grazing, triangles, surfaces, pairs) == grazed);
+    PHX_CHECK(clip_triangle(triangle_planes) == triangle);
+    PHX_CHECK(clip_tetrahedron(tetrahedron_planes, static_cast<std::int32_t>(planes.size())) ==
+              tetrahedron);
+    PHX_CHECK(run_arrangement(identity).same(identity_out));
+    PHX_CHECK(run_arrangement(declared).same(declared_out));
+  });
+}
+
 }  // namespace
 
 int main() {
@@ -1189,5 +1398,6 @@ int main() {
   test_declared_operand_choice();
   test_declared_job_parent_and_long_chain();
   test_declared_invalid_unused_inputs();
+  test_floating_point_hazards();
   return phx::mc::test::finish("test_tetrahedra_arrangement");
 }

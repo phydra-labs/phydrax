@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "check.hpp"
+#include "fp_hazards.hpp"
 #include "phydrax_meshcore.h"
 #include "spatial_sort.hpp"
 
@@ -918,6 +919,140 @@ void test_intersection_simplices() {
   PHX_CHECK(status == PHX_MC_CAPACITY_EXCEEDED && triangle_count == 0 && area == 0.0);
 }
 
+// Counterclockwise square: quarter-turn images of (x, y) about (cx, cy).
+std::vector<double> rotated_square(double cx, double cy, double x, double y) {
+  return {cx + x, cy + y, cx - y, cy + x, cx - x, cy - y, cx + y, cy - x};
+}
+
+// Random clipping inputs, generated once in the default mode so that every
+// hazard run sees the identical binary64 inputs.
+struct ClipTrial {
+  std::array<double, 12> a{};
+  std::array<double, 12> b{};
+  std::vector<double> normals3;
+  std::vector<double> offsets3;
+  std::vector<double> normals2;
+  std::vector<double> offsets2;
+  std::vector<double> first;
+  std::vector<double> second;
+};
+
+std::vector<ClipTrial> clip_trials() {
+  std::vector<ClipTrial> trials(20);
+  std::uint64_t state = 4242;
+  for (ClipTrial& trial : trials) {
+    for (double& x : trial.a) x = uniform(state);
+    for (double& x : trial.b) x = 0.2 + uniform(state);
+    trial.normals3.resize(9);
+    trial.offsets3.resize(3);
+    for (double& x : trial.normals3) x = 2.0 * uniform(state) - 1.0;
+    for (double& x : trial.offsets3) x = uniform(state) - 0.25;
+    trial.normals2.resize(6);
+    trial.offsets2.resize(3);
+    for (double& x : trial.normals2) x = 2.0 * uniform(state) - 1.0;
+    for (double& x : trial.offsets2) x = uniform(state) - 0.25;
+    trial.first = rotated_square(uniform(state), uniform(state), uniform(state), uniform(state));
+    trial.second = rotated_square(uniform(state), uniform(state), uniform(state), uniform(state));
+  }
+  return trials;
+}
+
+// Every output of the clipping entry points on `trials`, in call order.
+std::vector<double> clip_outputs(const std::vector<ClipTrial>& trials) {
+  std::vector<double> out;
+  const double lower2[2] = {0.0, 0.0};
+  const double upper2[2] = {1.0, 1.0};
+  const double lower3[3] = {0.0, 0.0, 0.0};
+  const double upper3[3] = {1.0, 1.0, 1.0};
+  for (const ClipTrial& trial : trials) {
+    const std::array<double, 12>& a = trial.a;
+    const std::array<double, 12>& b = trial.b;
+    const std::vector<double>& normals3 = trial.normals3;
+    const std::vector<double>& offsets3 = trial.offsets3;
+    const std::vector<double>& normals2 = trial.normals2;
+    const std::vector<double>& offsets2 = trial.offsets2;
+    const std::vector<double>& first = trial.first;
+    const std::vector<double>& second = trial.second;
+    const Volume overlap = tetrahedra(a, b);
+    out.insert(out.end(), {overlap.volume, overlap.moment[0], overlap.moment[1],
+                           overlap.moment[2], static_cast<double>(overlap.status)});
+    std::vector<double> simplices(20 * 12, 0.0);
+    int32_t simplex_count = -1;
+    double volume = -1.0;
+    double moment[3] = {0.0, 0.0, 0.0};
+    int32_t status = -1;
+    PHX_CHECK(phx_mc_tetrahedron_intersection_simplices(1, a.data(), b.data(), 20,
+                                                        simplices.data(), &simplex_count, &volume,
+                                                        moment, &status) == PHX_MC_OK);
+    out.insert(out.end(), simplices.begin(), simplices.end());
+    out.insert(out.end(), {static_cast<double>(simplex_count), volume, moment[0], moment[1],
+                           moment[2], static_cast<double>(status)});
+    const Volume clipped = halfspaces(normals3, offsets3, a);
+    out.insert(out.end(), {clipped.volume, clipped.moment[0], clipped.moment[1],
+                           clipped.moment[2], static_cast<double>(clipped.status)});
+    const Cell3 cell3 = box3(lower3, upper3, normals3, offsets3);
+    out.insert(out.end(), cell3.vertices.begin(), cell3.vertices.end());
+    out.insert(out.end(), cell3.offsets.begin(), cell3.offsets.end());
+    out.insert(out.end(), cell3.labels.begin(), cell3.labels.end());
+    out.insert(out.end(), cell3.loops.begin(), cell3.loops.end());
+    out.insert(out.end(), {static_cast<double>(cell3.vertex_count),
+                           static_cast<double>(cell3.face_count), cell3.volume, cell3.moment[0],
+                           cell3.moment[1], cell3.moment[2], static_cast<double>(cell3.status)});
+    const Cell2 cell2 = box2(lower2, upper2, normals2, offsets2);
+    out.insert(out.end(), cell2.vertices.begin(), cell2.vertices.end());
+    out.insert(out.end(), cell2.labels.begin(), cell2.labels.end());
+    out.insert(out.end(), {static_cast<double>(cell2.count), cell2.area, cell2.moment[0],
+                           cell2.moment[1], static_cast<double>(cell2.status)});
+    const Area area = polygons(first, second);
+    out.insert(out.end(), {area.area, area.moment[0], area.moment[1],
+                           static_cast<double>(area.status)});
+    const int32_t four = 4;
+    std::vector<double> triangles(8 * 6, 0.0);
+    int32_t triangle_count = -1;
+    double triangle_area = -1.0;
+    double area_moment[2] = {0.0, 0.0};
+    PHX_CHECK(phx_mc_polygon_intersection_simplices(1, 4, first.data(), &four, 4, second.data(),
+                                                    &four, 8, triangles.data(), &triangle_count,
+                                                    &triangle_area, area_moment,
+                                                    &status) == PHX_MC_OK);
+    out.insert(out.end(), triangles.begin(), triangles.end());
+    out.insert(out.end(), {static_cast<double>(triangle_count), triangle_area, area_moment[0],
+                           area_moment[1], static_cast<double>(status)});
+  }
+  return out;
+}
+
+// Per-item statuses of inputs with one subnormal coordinate or offset.
+std::vector<int32_t> subnormal_statuses() {
+  const double s = 0x1p-1060;
+  std::array<double, 12> tet = kUnitTet;
+  tet[3] = s;
+  std::vector<double> square = kSquare;
+  square[2] = s;
+  const double lower2[2] = {0.0, 0.0};
+  const double upper2[2] = {1.0, 1.0};
+  const double lower3[3] = {0.0, 0.0, 0.0};
+  const double upper3[3] = {1.0, 1.0, 1.0};
+  return {tetrahedra(tet, kUnitTet).status,
+          halfspaces({1.0, 0.0, 0.0}, {s}, kUnitTet).status,
+          polygons(square, kSquare).status,
+          box2(lower2, upper2, {1.0, 0.0}, {s}).status,
+          box3(lower3, upper3, {1.0, 0.0, 0.0}, {s}).status};
+}
+
+// Clipping gives its round-to-nearest, gradual-underflow result in every
+// caller mode, and a subnormal input stays outside the exact domain.
+void test_floating_point_hazards() {
+  const std::vector<ClipTrial> trials = clip_trials();
+  const std::vector<double> reference = clip_outputs(trials);
+  const std::vector<int32_t> rejected = subnormal_statuses();
+  for (const int32_t status : rejected) PHX_CHECK(status == PHX_MC_RANGE_ERROR);
+  phx::mc::test::under_floating_point_hazards([&](const phx::mc::test::FloatingPointHazard&) {
+    PHX_CHECK(clip_outputs(trials) == reference);
+    PHX_CHECK(subnormal_statuses() == rejected);
+  });
+}
+
 }  // namespace
 
 int main() {
@@ -938,5 +1073,6 @@ int main() {
   test_ulp_planes();
   test_determinism();
   test_intersection_simplices();
+  test_floating_point_hazards();
   return phx::mc::test::finish("test_clip");
 }

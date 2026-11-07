@@ -17,6 +17,7 @@
 #include <sys/mman.h>
 #endif
 
+#include "exact_scalar.hpp"
 #include "geometry3.hpp"
 #include "intersections.hpp"
 #include "phydrax_meshcore.h"
@@ -1131,7 +1132,7 @@ class Remesher {
     std::vector<std::pair<int64_t, V>> moved;
     bool adds_vertex = false;
     V added{};
-    int64_t dropped = -1;
+    std::vector<int64_t> dropped;  // vertices whose stars the edit empties
     std::vector<F> created;
   };
 
@@ -1285,9 +1286,9 @@ class Remesher {
         return restore();
     }
     for (int64_t id : edit.removed) kill(id);
-    if (edit.dropped >= 0) {
-      if (compact_stars) edited_star.clear(static_cast<size_t>(edit.dropped));
-      else star[static_cast<size_t>(edit.dropped)].clear();
+    for (int64_t vertex : edit.dropped) {
+      if (compact_stars) edited_star.clear(static_cast<size_t>(vertex));
+      else star[static_cast<size_t>(vertex)].clear();
     }
     std::vector<int64_t> touched;
     std::vector<int64_t> created_ids;
@@ -1399,7 +1400,7 @@ class Remesher {
       edit.created.push_back(t);
     }
     edit.moved.emplace_back(v, position);
-    edit.dropped = u;
+    edit.dropped = {u};
     if (!apply_if_admissible(edit, admission)) return false;
     ++collapses;
     return true;
@@ -1571,7 +1572,11 @@ class Remesher {
   // certified admission, never lowering a patch's worst score. Every collapse
   // removes a vertex and every flip keeps the vertex count while strictly
   // lowering the integer valence energy, so the pair (vertex count, valence
-  // energy) decreases lexicographically and the sweeps terminate.
+  // energy) decreases lexicographically and the sweeps terminate. A short
+  // edge collapses to its projected midpoint or either endpoint; only when the
+  // targets request admission-limited coarsening are the further collapse
+  // positions and the size relocations tried, so every other caller keeps the
+  // plain quality/regularization outputs.
   void regularize(bool size_only = false) {
     const double short_edge = 0.8 * h;
     size_t sweep = 0;
@@ -1642,7 +1647,7 @@ class Remesher {
               changed = true;
               continue;
             }
-            if (!size_only) {
+            if (!size_only && targets.admission_limited_coarsening) {
               if (collapse(a, b, project(add(mul(keep_a, 0.75), mul(keep_b, 0.25))),
                            Admission::kPreserve) ||
                   collapse(a, b, project(add(mul(keep_a, 0.25), mul(keep_b, 0.75))),
@@ -1798,13 +1803,130 @@ class Remesher {
         if (!(target == points[static_cast<size_t>(ring[i])]))
           edit.moved.emplace_back(ring[i], target);
       }
-      edit.dropped = u;
+      edit.dropped = {u};
       if (!apply_if_admissible(edit, Admission::kPreserve)) continue;
       ++collapses;
       relocations += static_cast<int64_t>(edit.moved.size()) - 1;
       return true;
     }
     return false;
+  }
+
+  // Collapses u into v and, while that compound edit is refused, absorbs into
+  // v its shortest staged neighbor across an edge below 4/5 h, admitting the
+  // compound once per absorption: v at the projected centroid of the merged
+  // vertices, centered in the band by 1/2, 1/4 or none of the sagitta. A
+  // graded rosette of near-full-score triangles around a point refuses every
+  // single collapse and relaxed collapse, because each re-fans the removed
+  // vertex's area into triangles far below the rosette's worst score, while
+  // merging the rosette's core into one vertex leaves a fan at or above that
+  // score. Every absorption satisfies the edge-collapse link condition in the
+  // staged state (two triangles on the edge, common neighbors exactly their
+  // opposite corners, each of valence above three), so the staged carrier
+  // stays a closed oriented two-manifold; the one preserve admission checks
+  // the final state. Each step absorbs a new vertex, so an attempt is finite,
+  // and an admitted attempt removes at least one vertex.
+  bool collapse_absorbing(int64_t u, int64_t v) {
+    const double short_edge = 0.8 * h;
+    // Live IDs of the triangles touching v or an absorbed vertex (sorted), and
+    // their staged corners with every absorbed vertex renamed v; triangles that
+    // collapsed onto an edge are no longer staged.
+    std::vector<int64_t> patch;
+    std::vector<F> staged;
+    std::vector<int64_t> absorbed;
+    const auto in_patch = [&](int64_t id) {
+      return std::binary_search(patch.begin(), patch.end(), id);
+    };
+    const auto has = [](const F& t, int64_t w) { return t[0] == w || t[1] == w || t[2] == w; };
+    const auto add_star = [&](int64_t w) {
+      for (int64_t id : live_star(w)) {
+        if (in_patch(id)) continue;
+        patch.insert(std::upper_bound(patch.begin(), patch.end(), id), id);
+        staged.push_back(triangles[static_cast<size_t>(id)]);
+      }
+    };
+    // Neighbors of w in the staged state: triangles outside the patch are
+    // unchanged, staged triangles carry the renamed corners.
+    const auto staged_neighbors = [&](int64_t w) {
+      std::vector<int64_t> result;
+      const auto collect = [&](const F& t) {
+        if (!has(t, w)) return;
+        for (int64_t x : t)
+          if (x != w) result.push_back(x);
+      };
+      for (int64_t id : live_star(w))
+        if (!in_patch(id)) collect(triangles[static_cast<size_t>(id)]);
+      for (const F& t : staged) collect(t);
+      std::sort(result.begin(), result.end());
+      result.erase(std::unique(result.begin(), result.end()), result.end());
+      return result;
+    };
+    // Absorbs w into v when the staged edge (w, v) passes the link condition.
+    const auto absorb = [&](int64_t w) {
+      std::vector<F> on_edge;
+      for (int64_t id : live_star(w))
+        if (!in_patch(id) && has(triangles[static_cast<size_t>(id)], v))
+          on_edge.push_back(triangles[static_cast<size_t>(id)]);
+      for (const F& t : staged)
+        if (has(t, w) && has(t, v)) on_edge.push_back(t);
+      if (on_edge.size() != 2) return false;
+      std::vector<int64_t> opposite;
+      for (const F& t : on_edge)
+        for (int64_t x : t)
+          if (x != w && x != v) opposite.push_back(x);
+      std::sort(opposite.begin(), opposite.end());
+      const auto w_neighbors = staged_neighbors(w), v_neighbors = staged_neighbors(v);
+      std::vector<int64_t> common;
+      std::set_intersection(w_neighbors.begin(), w_neighbors.end(), v_neighbors.begin(),
+                            v_neighbors.end(), std::back_inserter(common));
+      if (common != opposite || opposite.size() != 2) return false;
+      for (int64_t x : opposite)
+        if (staged_neighbors(x).size() <= 3) return false;
+      add_star(w);
+      std::vector<F> next;
+      for (F t : staged) {
+        if (has(t, w) && has(t, v)) continue;
+        for (int64_t& x : t)
+          if (x == w) x = v;
+        next.push_back(t);
+      }
+      staged = std::move(next);
+      absorbed.push_back(w);
+      return true;
+    };
+    add_star(v);
+    if (!absorb(u)) return false;
+    while (true) {
+      V sum = points[static_cast<size_t>(v)];
+      for (int64_t w : absorbed) sum = add(sum, points[static_cast<size_t>(w)]);
+      const V merged = project(mul(sum, 1.0 / static_cast<double>(absorbed.size() + 1)));
+      const auto place = [&](int64_t w) {
+        return w == v ? merged : points[static_cast<size_t>(w)];
+      };
+      for (double fraction : {0.5, 0.25, 0.0}) {
+        Edit edit;
+        edit.removed = patch;
+        edit.created = staged;
+        edit.moved.emplace_back(v, centered(merged, staged, v, fraction, place));
+        edit.dropped = absorbed;
+        if (!apply_if_admissible(edit, Admission::kPreserve)) continue;
+        collapses += static_cast<int64_t>(absorbed.size());
+        return true;
+      }
+      std::vector<std::pair<double, int64_t>> candidates;
+      for (int64_t w : staged_neighbors(v)) {
+        const double edge = length(difference(merged, points[static_cast<size_t>(w)]));
+        if (edge < short_edge) candidates.emplace_back(edge, w);
+      }
+      std::sort(candidates.begin(), candidates.end());
+      bool grew = false;
+      for (const auto& [edge, w] : candidates)
+        if (absorb(w)) {
+          grew = true;
+          break;
+        }
+      if (!grew) return false;
+    }
   }
 
   // Admission-limited coarsening after the sweeps. A collapse sweep stalls
@@ -1814,9 +1936,10 @@ class Remesher {
   // collapse concentrates the removed vertex's area in one star. Each round
   // centers the vertices around the short edges in the band (preserve
   // relocations by half, else a quarter, of the mean star sagitta), then tries
-  // the short edges shortest first as relaxed, centered collapses, at most one
-  // per 2-ring. A round that collapses nothing ends the phase; every other
-  // round removes a vertex, so the phase terminates.
+  // the short edges shortest first as relaxed, centered collapses, else as
+  // absorbing collapses (see collapse_absorbing), at most one per 2-ring. A
+  // round that collapses nothing ends the phase; every other round removes a
+  // vertex, so the phase terminates.
   void coarsen_uniformly() {
     const double short_edge = 0.8 * h;
     while (true) {
@@ -1862,7 +1985,7 @@ class Remesher {
         if (touched[static_cast<size_t>(a)] || touched[static_cast<size_t>(b)]) continue;
         if (!(length(difference(points[static_cast<size_t>(a)],
                                 points[static_cast<size_t>(b)])) < short_edge) ||
-            !collapse_relaxed(a, b))
+            !(collapse_relaxed(a, b) || collapse_absorbing(a, b)))
           continue;
         collapsed = true;
         touched[static_cast<size_t>(a)] = touched[static_cast<size_t>(b)] = 1;
@@ -2023,8 +2146,11 @@ class Remesher {
     for (size_t id = 0; id < triangles.size(); ++id) {
       rescore(static_cast<int64_t>(id));
     }
-    regularize(true);
-    repack_after_size_pass();
+    // The collapse-only size sweep belongs to admission-limited coarsening.
+    if (targets.admission_limited_coarsening) {
+      regularize(true);
+      repack_after_size_pass();
+    }
     queue_enabled = true;
     for (size_t id = 0; id < triangles.size(); ++id)
       if (state.alive(id) && !state.stuck(id) && state.score(id) < kScoreLevels)
@@ -2087,38 +2213,78 @@ double forced_turn(const NormalCone& first, const NormalCone& second) {
                            std::max(second.half_angle, 0.0));
 }
 
+namespace {
+
+// An upper bound on sqrt(numerator / denominator) for exact positive dyadics:
+// the directed upper quotient, then the correctly rounded square root raised
+// until its exact square covers it.
+double upper_sqrt_quotient(const Dyadic& numerator, const Dyadic& denominator) {
+  const double square = exact::directed_quotient_bounds(numerator, denominator).upper;
+  if (!std::isfinite(square)) return std::numeric_limits<double>::infinity();
+  const Dyadic bound(square);
+  double root = std::sqrt(square);
+  while ((Dyadic(root) * Dyadic(root) - bound).sign() < 0) {
+    root = next_up(root);
+    if (!std::isfinite(root)) return root;
+  }
+  return root;
+}
+
+}  // namespace
+
+// Every point of the triangle lies within the returned radius of a corner,
+// plus the caller's absolute `roundoff`. The squared sides and the squared
+// cross product are exact dyadics of the binary64 corners, so the obtuse
+// classification and the radius are exact before one directed rounding: a
+// floating cross product loses relative accuracy of about eps / theta at an
+// apex angle theta and cannot bound a needle's circumradius. A zero cross
+// product (degenerate triangle) or a nonfinite corner has no free radius.
 double certified_free_radius(const Point& a, const Point& b, const Point& c,
                            double roundoff) {
-  const double ab = length(difference(b, a)), bc = length(difference(c, b)),
-               ca = length(difference(a, c));
-  const V normal = cross(difference(b, a), difference(c, a));
-  const double twice_area = length(normal);
-  if (!(twice_area > 0) || !std::isfinite(twice_area))
-    return std::numeric_limits<double>::infinity();
-  std::array<double, 3> sides{bc, ca, ab};  // opposite a, b, c
-  std::array<double, 3> squares{bc * bc, ca * ca, ab * ab};
+  for (const Point* corner : {&a, &b, &c})
+    for (int axis = 0; axis < 3; ++axis)
+      if (!std::isfinite((*corner)[axis])) return std::numeric_limits<double>::infinity();
+  std::array<Dyadic, 3> ab, ac, bc;
+  for (int axis = 0; axis < 3; ++axis) {
+    ab[axis] = Dyadic(b[axis]) - Dyadic(a[axis]);
+    ac[axis] = Dyadic(c[axis]) - Dyadic(a[axis]);
+    bc[axis] = Dyadic(c[axis]) - Dyadic(b[axis]);
+  }
+  const auto squared = [](const std::array<Dyadic, 3>& v) {
+    return v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+  };
+  const std::array<Dyadic, 3> normal{ab[1] * ac[2] - ab[2] * ac[1],
+                                     ab[2] * ac[0] - ab[0] * ac[2],
+                                     ab[0] * ac[1] - ab[1] * ac[0]};
+  const Dyadic twice_area_squared = squared(normal);
+  if (twice_area_squared.sign() <= 0) return std::numeric_limits<double>::infinity();
+  const std::array<Dyadic, 3> squares{squared(bc), squared(ac), squared(ab)};  // opposite a, b, c
   int obtuse = -1;
   for (int k = 0; k < 3; ++k)
-    if (squares[k] > squares[(k + 1) % 3] + squares[(k + 2) % 3]) obtuse = k;
+    if ((squares[k] - squares[(k + 1) % 3] - squares[(k + 2) % 3]).sign() > 0) obtuse = k;
   double radius;
   if (obtuse < 0) {
-    radius = ab * bc * ca / (2 * twice_area);
+    // Circumradius: R^2 = |bc|^2 |ca|^2 |ab|^2 / (4 |ab x ac|^2).
+    radius = upper_sqrt_quotient(squares[0] * squares[1] * squares[2],
+                                 twice_area_squared * Dyadic(4.0));
   } else {
-    // Obtuse at corner k: the bisectors of its two sides meet the longest
-    // side at distance side / (2 cos(adjacent angle)) from that side's ends.
+    // Obtuse at corner `obtuse`: the bisectors of its two sides meet the
+    // longest side at distance side / (2 cos(adjacent angle)) from that side's
+    // ends; with S the squared sides, that distance squared is
+    // S_other^2 S_obtuse / (S_obtuse + S_other - S_k)^2 for the angle at k.
     radius = 0;
     for (int k = 0; k < 3; ++k) {
       if (k == obtuse) continue;
       const int other = 3 - k - obtuse;
-      // Angle at corner k is between the sides opposite `obtuse` and `other`.
-      const double cosine = (squares[obtuse] + squares[other] - squares[k]) /
-                            (2 * sides[obtuse] * sides[other]);
-      if (!(cosine > 0)) return std::numeric_limits<double>::infinity();
-      radius = std::max(radius, sides[other] / (2 * cosine));
+      const Dyadic twice_cosine_product = squares[obtuse] + squares[other] - squares[k];
+      if (twice_cosine_product.sign() <= 0) return std::numeric_limits<double>::infinity();
+      radius = std::max(radius, upper_sqrt_quotient(
+                                    squares[other] * squares[other] * squares[obtuse],
+                                    twice_cosine_product * twice_cosine_product));
     }
   }
-  return next_up(next_up(radius * (1 + 64 * std::numeric_limits<double>::epsilon())) +
-                 roundoff);
+  if (!std::isfinite(radius)) return radius;
+  return next_up(radius + roundoff);
 }
 
 int32_t remesh_surface(std::vector<Point>& points, std::vector<Triangle>& triangles,

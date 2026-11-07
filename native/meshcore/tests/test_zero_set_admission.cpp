@@ -681,6 +681,180 @@ double maximum_turn(const std::vector<double>& v, const std::vector<int64_t>& t)
   return turn;
 }
 
+// The afba level-0 sphere carrier (radius 0.371) scaled to the unit sphere: a
+// graded rosette of 29.1-29.4 degree triangles with edges down to 0.0016
+// around (-0.018, 0.738, -0.674), which refuses every single and relaxed
+// collapse under the preserve admission.
+const std::vector<double> kRosettePoints{
+    0x1.eeda6ae2d21c0p-4, 0x1.3250dd65e43d6p-1, 0x1.a3b00cacfb909p-1,
+    -0x1.1539ba00cd504p-3, 0x1.28e732f4b620fp-2, 0x1.effd5df9a051fp-1,
+    0x1.1a1f1704eebbdp-2, 0x1.8c7c41da36572p-3, 0x1.ea0beccb18aa1p-1,
+    0x1.04371bd452169p-1, 0x1.f43bcd08d2226p-2, 0x1.7c7eda30a5fd3p-1,
+    0x1.eee818a03aa26p-1, 0x1.3948d3559920ap-4, 0x1.3b3a453f17ed2p-2,
+    0x1.65bd6bb620306p-1, 0x1.d274fbdf966adp-4, 0x1.74bc80912193fp-1,
+    0x1.94961f2d94024p-1, -0x1.25f71de0f3e0cp-2, 0x1.243605e728a0ap-1,
+    -0x1.58ae4facd1ae1p-1, -0x1.35de981d47246p-1, -0x1.067eb178479f7p-1,
+    -0x1.d2ebac70dec87p-2, -0x1.c449b23d2875fp-1, -0x1.b333bba8ebb8fp-3,
+    -0x1.9aa59ca85d442p-1, -0x1.3efc5bc2f02dep-1, -0x1.858b26c3dddbfp-6,
+    -0x1.fec32face981dp-1, -0x1.a96b6cc0af127p-3, 0x1.57019b7ce1807p-3,
+    -0x1.63fbe33476659p-1, -0x1.240f5676c4fa6p-1, 0x1.e45da359f5054p-2,
+    -0x1.e87d7b2cc9214p-1, -0x1.5f4c4212d333cp-3, -0x1.5c05057b75b94p-2,
+    -0x1.9bb1ce742cf48p-1, -0x1.c1c2d1aa0d3d4p-4, 0x1.3db776fae2b83p-1,
+    -0x1.e463a2eda8133p-1, 0x1.a293598d3c9fep-3, 0x1.4ed63f7eb314ap-2,
+    -0x1.76e9f932c9bd7p-1, 0x1.782673623c1ccp-2, 0x1.40ac7e8c23b75p-1,
+    -0x1.0c49e0ff5f7ebp-1, 0x1.7b3177608bff0p-4, 0x1.c3f12395360a4p-1,
+    -0x1.5efa3d1f7f214p-2, 0x1.289bd88cd786bp-1, 0x1.8cad6d6d155b4p-1,
+    -0x1.0b5aca318d79bp-4, 0x1.b1cf6a23946a8p-1, 0x1.226eba51f8332p-1,
+    -0x1.d76fdb1bcd301p-2, 0x1.9ce816013265fp-1, 0x1.c7dcbaee794c1p-2,
+    -0x1.9717944071b25p-2, -0x1.d59b0bee86c68p-1, 0x1.8b71401e2c755p-3,
+    0x1.877bd2b9a9512p-2, 0x1.c1ec43500e0d2p-1, 0x1.a2e85cd842e22p-2,
+    0x1.e3d53cb95eaa9p-1, -0x1.9f33b82ce78b1p-2, 0x1.5fbb622e4bdd5p-3,
+    -0x1.c0c3a62a60e98p-2, -0x1.95f3f4440889bp-2, 0x1.a72547328598dp-1,
+    -0x1.21224031d36b8p-2, -0x1.8f16ebc17bc2bp-1, 0x1.2dbb50677f9cap-1,
+    0x1.1151c5b0c39a0p-3, -0x1.e97c56b38993cp-1, 0x1.51d6d6063a479p-2,
+    0x1.33424e9ccaa0ap-4, -0x1.4cd46d259462ep-1, 0x1.922d5bbd5dc3bp-1,
+    0x1.2a80155ca0a14p-1, -0x1.5a1fb3fe15c17p-1, 0x1.f703c785b15bcp-2,
+    -0x1.2a2dce78bed9dp-4, -0x1.22f300bbbc5c8p-3, 0x1.010e6bc07c6d7p+0,
+    0x1.be7e68880fd60p-2, -0x1.351f538ba2173p-2, 0x1.bd38b7d38b247p-1,
+    0x1.6511c9f42c247p-5, -0x1.01f6b8f080fa6p+0, -0x1.44affc2f2d413p-3,
+    0x1.344e15cee2adap-1, -0x1.a4dc439e91b85p-1, -0x1.744958f89911ap-7,
+    -0x1.5dfe212f829c0p-1, -0x1.55aea0e320c9dp-3, -0x1.7f65e977a3085p-1,
+    -0x1.a41641b3288c3p-1, 0x1.471c09abe96d3p-2, -0x1.1ca30af5a24f5p-1,
+    -0x1.b6a3b7181eb52p-2, 0x1.30d1c0928a491p-1, -0x1.6d2df8c77a297p-1,
+    -0x1.09f6f03cf6ac7p-1, 0x1.a26e20453ec5ep-3, -0x1.b81d817bc57ccp-1,
+    -0x1.7dd7aed8cb54dp-3, 0x1.7374de04c0621p-1, -0x1.586669a0d0b99p-1,
+    -0x1.e112520b5c729p-5, 0x1.417b59422c6b1p-1, -0x1.914f0eb71437fp-1,
+    -0x1.14e8b0cf0884fp-4, 0x1.7024be3a40682p-1, -0x1.62728985e2fa9p-1,
+    -0x1.e37497eee1e07p-5, 0x1.87c968f526c11p-1, -0x1.48e7da2a93fa4p-1,
+    -0x1.1e7a06578f006p-5, 0x1.7b720e78c8beep-1, -0x1.57496a43f9a60p-1,
+    -0x1.4ff0f5b5e1ca1p-6, 0x1.7c288b984c37fp-1, -0x1.56cd6167cbe72p-1,
+    -0x1.7a8ba54082a3fp-6, 0x1.79ca2f7b1a8f2p-1, -0x1.595e2a2b8fec0p-1,
+    -0x1.4616ac7bd699ep-6, 0x1.7abe0c56886d4p-1, -0x1.5860f7d3d4065p-1,
+    -0x1.7b733a0aee504p-6, 0x1.745bb57536ac2p-1, -0x1.5f1d57e812aafp-1,
+    -0x1.cd7c68bedcc0dp-7, 0x1.78a4b2ae9f2a9p-1, -0x1.5ac9228cf7931p-1,
+    -0x1.196d2e08cc41bp-6, 0x1.7a1c0015c2671p-1, -0x1.591b5b621b3e7p-1,
+    -0x1.dcc4084b0f46ep-7, 0x1.7a18505c16649p-1, -0x1.59274f7947650p-1,
+    -0x1.6ddb1ad6c7c71p-7, 0x1.7b0588d4ee328p-1, -0x1.582bdf17000f3p-1,
+    -0x1.18e172d25be0dp-6, 0x1.7aacb3bd5ffe2p-1, -0x1.587e37302d7bap-1,
+    -0x1.1f1ed9e9e9d5bp-6, 0x1.812ab7483756bp-1, -0x1.51484d4eb1673p-1,
+    -0x1.96ca428c19d60p-2, 0x1.b7ee1b1a4093ep-1, -0x1.962458a80720bp-2,
+    -0x1.f9c433610cb75p-1, 0x1.2c711184bd531p-2, -0x1.88c2762fb18dfp-4,
+    -0x1.7535e7b93af33p-1, 0x1.614d84c139e75p-1, -0x1.03fd01b7644f5p-2,
+    -0x1.933157b31e546p-1, 0x1.49d29dea4762bp-1, 0x1.8e531c6b42da1p-3,
+    -0x1.d6ffe9531fab5p-2, 0x1.d683575467c06p-1, 0x1.38d603a4f55e8p-8,
+    -0x1.52f3dc02fc5e8p-2, -0x1.08a4e56bc60d9p-1, -0x1.ab05dda445b51p-1,
+    -0x1.0adc4d05b99f7p-3, -0x1.aa5d9559e90a3p-1, -0x1.3132240740c40p-1,
+    -0x1.df03365ef0029p-3, -0x1.5fd7ae5d19a62p-3, -0x1.fe57ea82b1eb8p-1,
+    0x1.08aff7e7e1d67p-1, -0x1.7ed6317851ec2p-1, -0x1.0324032cf0721p-1,
+    0x1.bbb773d6992bbp-1, -0x1.e71bc2b32f214p-2, -0x1.07fa1c476f699p-2,
+    -0x1.3bde7ac19454bp-3, 0x1.5d12ee23f9477p-2, -0x1.e889a7d475336p-1,
+    0x1.c2462ca517c2ep-3, 0x1.b6e31a4d2c469p-4, -0x1.003f79aea7b1ep+0,
+    0x1.0737baa1a23b5p-2, -0x1.b64404c08465ap-2, -0x1.cce057712edaap-1,
+    -0x1.3278b5811ee38p-7, 0x1.677a33e7b8ab2p-1, -0x1.6e100028dfe34p-1,
+    -0x1.aae47cc5181d6p-12, 0x1.77a8e678cb6ecp-1, -0x1.5bcaa804c8d40p-1,
+    0x1.cc7e47085c51ep-7, 0x1.7f4152df2dee8p-1, -0x1.53c29719c157ep-1,
+    0x1.5514ccd043626p-5, 0x1.7766e6047b359p-1, -0x1.5b7486e53c7a5p-1,
+    0x1.67185b39f91e8p-7, 0x1.92cb1c6b2dd11p-1, -0x1.3c733d4d25fadp-1,
+    0x1.35b782e21ece9p-4, 0x1.86eae5fab735bp-1, -0x1.47ede0040dcb2p-1,
+    0x1.255986670b4d8p-3, 0x1.9dafafac3df0fp-1, -0x1.2cc20289cf6bfp-1,
+    0x1.e09ee90a7fcc7p-4, 0x1.6b34a9c1ca917p-1, -0x1.67126f30a0320p-1,
+    0x1.03dcccc8b916ep-3, 0x1.2106a2082a38fp-1, -0x1.a86d82892f41dp-1,
+    -0x1.215da30f53b98p-4, 0x1.b663bef97d458p-1, -0x1.0e1f5008e8a5bp-1,
+    -0x1.44bc84f605a98p-4, 0x1.f94d1dc0508fdp-1, -0x1.1a6e2aa72b64ap-2,
+    0x1.2f71f9f20ba02p-1, 0x1.483c747cf8a91p-7, -0x1.b5da3ae38bb9dp-1,
+    0x1.92491fdd0eb43p-1, -0x1.ee1564b519c7bp-3, -0x1.3981a2d50ebcep-1,
+    0x1.e5bd5882747e0p-2, 0x1.82aa2403130c3p-2, -0x1.a8b5303ae0f4ep-1,
+    0x1.9b0bea8db080cp-1, 0x1.6c77c8d6eb7dfp-2, -0x1.1bbb89267ca71p-1,
+    0x1.99fc66b5a9e84p-2, 0x1.6ed2af77f6d3cp-1, -0x1.3c6f22c83565ep-1,
+    0x1.60f6f85cbbdbbp-1, 0x1.69b4888837a53p-1, -0x1.2e1a711f02a63p-2,
+    -0x1.11bacb87e81b1p-4, 0x1.05a49b1139b46p+0, 0x1.66f79a4dc4832p-3,
+    0x1.6158522ee03a9p-2, 0x1.ed0218167a92fp-1, -0x1.6ca7986b488edp-3,
+    0x1.05fd2ae034fbdp+0, -0x1.50323c2acbcb7p-6, -0x1.9ff869c30b015p-3,
+    0x1.e263e3cc86963p-1, 0x1.afbd1108acd3cp-2, -0x1.7220e24775550p-4,
+    0x1.9c956a31e7721p-1, 0x1.0487406aca354p-1, 0x1.b0f400e9f564fp-2,
+    0x1.5f064c3baf1afp-1, 0x1.867efa1af3b5fp-1, 0x1.3a4b84e909539p-4,
+};
+const std::vector<int64_t> kRosetteTriangles{
+    0, 1, 2, 3, 0, 2, 4, 5, 6, 5, 3, 2, 7, 8, 9, 10, 9, 11,
+    7, 9, 12, 10, 12, 9, 11, 13, 10, 10, 13, 14, 15, 14, 13, 13, 16, 15,
+    1, 0, 17, 0, 18, 17, 1, 17, 16, 15, 16, 17, 17, 18, 19, 17, 19, 15,
+    8, 20, 9, 11, 9, 20, 0, 21, 18, 0, 3, 21, 4, 6, 22, 23, 13, 11,
+    23, 16, 13, 11, 20, 24, 23, 11, 24, 20, 25, 24, 25, 26, 24, 23, 24, 26,
+    25, 27, 26, 2, 1, 28, 28, 1, 16, 23, 28, 16, 23, 26, 28, 6, 5, 29,
+    29, 5, 2, 6, 29, 27, 27, 29, 26, 29, 2, 28, 29, 28, 26, 6, 27, 22,
+    20, 8, 30, 20, 30, 25, 30, 31, 25, 25, 31, 27, 31, 22, 27, 12, 32, 7,
+    33, 32, 12, 34, 35, 33, 32, 33, 35, 34, 36, 37, 36, 38, 37, 36, 39, 38,
+    40, 41, 42, 38, 39, 40, 42, 41, 43, 40, 42, 44, 44, 38, 40, 44, 42, 45,
+    42, 43, 46, 42, 46, 45, 45, 47, 48, 45, 46, 47, 49, 41, 48, 43, 41, 49,
+    43, 49, 46, 49, 48, 47, 46, 49, 47, 50, 48, 41, 40, 50, 41, 40, 39, 50,
+    36, 34, 51, 12, 10, 52, 52, 10, 14, 33, 12, 52, 34, 33, 53, 34, 53, 51,
+    33, 52, 53, 15, 54, 14, 19, 54, 15, 52, 14, 54, 54, 53, 52, 51, 53, 55,
+    55, 54, 19, 54, 55, 53, 32, 56, 7, 8, 7, 57, 30, 8, 57, 7, 56, 57,
+    58, 32, 35, 58, 56, 32, 30, 59, 31, 30, 57, 59, 31, 60, 22, 59, 60, 31,
+    61, 35, 34, 61, 34, 37, 58, 35, 61, 58, 61, 62, 56, 63, 57, 56, 58, 63,
+    63, 59, 57, 63, 58, 62, 38, 64, 37, 38, 44, 64, 45, 48, 65, 44, 45, 65,
+    64, 44, 65, 66, 48, 50, 48, 66, 65, 65, 67, 64, 66, 67, 65, 39, 68, 50,
+    50, 68, 66, 66, 69, 67, 70, 69, 68, 66, 68, 69, 71, 64, 67, 70, 71, 69,
+    67, 69, 71, 61, 37, 72, 62, 61, 72, 37, 64, 72, 72, 64, 71, 36, 73, 39,
+    36, 51, 73, 68, 73, 70, 73, 68, 39, 51, 55, 74, 74, 70, 73, 73, 51, 74,
+    75, 63, 62, 76, 60, 59, 76, 59, 63, 75, 76, 63, 62, 72, 77, 75, 62, 77,
+    78, 76, 75, 78, 75, 77, 71, 70, 79, 72, 71, 79, 77, 72, 79, 78, 77, 79,
+    80, 78, 79, 19, 18, 81, 21, 81, 18, 55, 19, 81, 55, 81, 74, 82, 70, 74,
+    82, 79, 70, 79, 82, 80, 81, 21, 82, 81, 82, 74, 4, 22, 83, 83, 22, 60,
+    76, 83, 60, 76, 78, 83, 78, 80, 84, 83, 84, 4, 83, 78, 84, 85, 5, 4,
+    5, 85, 3, 85, 21, 3, 84, 85, 4, 21, 86, 82, 86, 80, 82, 80, 86, 84,
+    86, 21, 85, 85, 84, 86,
+};
+
+// Admission-limited coarsening of that carrier: the absorbing collapse merges
+// the rosette's core, so no triangle stays below full score and no edge of the
+// rosette core survives, within the same certified band and orientation.
+void remesh_coarsening_absorbs_rosette() {
+  PHX_CHECK(signed_volume(kRosettePoints, kRosetteTriangles) > 0);
+  PHX_CHECK(minimum_angle(kRosettePoints, kRosetteTriangles) < 29.2);
+  const Program value = sphere_value(), gradient = sphere_gradient();
+  constexpr double tolerance = 0.02 / 0.371, edge = 0.5;
+  void* handle = nullptr;
+  std::array<int64_t, 8> counters{};
+  double distance = -1;
+  phx_mc_zero_set_remesh_request request{
+      kRosettePoints.data(), static_cast<int64_t>(kRosettePoints.size() / 3),
+      kRosetteTriangles.data(), static_cast<int64_t>(kRosetteTriangles.size() / 3),
+      value.view(),          gradient.view(),
+      tolerance,             tolerance,
+      edge,                  30.0,
+      &handle,               counters.data(),
+      &distance,             1};
+  PHX_CHECK(phx_mc_zero_set_remesh(&request) == PHX_MC_OK);
+  PHX_CHECK(handle != nullptr);
+  if (handle == nullptr) return;
+  std::array<int64_t, 2> sizes{};
+  PHX_CHECK(phx_mc_zero_set_remesh_sizes(handle, sizes.data()) == PHX_MC_OK);
+  std::vector<double> vertices(static_cast<size_t>(3 * sizes[0]));
+  std::vector<int64_t> triangles(static_cast<size_t>(3 * sizes[1]));
+  PHX_CHECK(phx_mc_zero_set_remesh_arrays(handle, sizes[0], sizes[1], vertices.data(),
+                                          triangles.data()) == PHX_MC_OK);
+  phx_mc_zero_set_remesh_free(handle);
+  PHX_CHECK(counters[4] == 0);  // no unmet triangle
+  PHX_CHECK(counters[5] == 1);
+  PHX_CHECK(distance >= 0 && distance <= tolerance);
+  PHX_CHECK(signed_volume(vertices, triangles) > 0);
+  PHX_CHECK(minimum_angle(vertices, triangles) >= 30.0);
+  double shortest = std::numeric_limits<double>::infinity();
+  for (size_t f = 0; f < triangles.size(); f += 3)
+    for (int k = 0; k < 3; ++k) {
+      const double* p = &vertices[3 * static_cast<size_t>(triangles[f + static_cast<size_t>(k)])];
+      const double* q =
+          &vertices[3 * static_cast<size_t>(triangles[f + static_cast<size_t>((k + 1) % 3)])];
+      shortest = std::min(shortest, std::hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]));
+    }
+  // The rosette core's edges reach 0.0016 (0.003 of the requested length);
+  // no edge of that scale survives.
+  PHX_CHECK(shortest > 0.2 * edge);
+  PHX_CHECK(sizes[0] < static_cast<int64_t>(kRosettePoints.size() / 3));
+}
+
+
 // The crease of a CSG lens is a turn its source admits: the fold factor leaves
 // it at full score, so remeshing keeps the crease and leaves nothing unmet
 // there (a fixed 90 degree turn limit scored every crease triangle unmet).
@@ -803,6 +977,7 @@ int main() {
   sphere_cases();
   torus_cases();
   remesh_sphere_carrier();
+  remesh_coarsening_absorbs_rosette();
   remesh_lens_crease();
   remesh_edit_parity(5, 12, 0.08, 0.22, 25.0, true);
   remesh_edit_parity(8, 40, 0.2, 1.0, 25.0, false);

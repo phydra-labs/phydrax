@@ -1971,6 +1971,89 @@ void flat_fixed_boundary_cell_is_removed_by_edge_ring_insertion() {
   PHX_CHECK(minimum_determinant > 1.0e-12);
 }
 
+// The star of interior vertex 670 of the hybrid-concave layer-core fill
+// (radius-edge bound 2, dihedral target 10 degrees, size target 0.1 at every
+// vertex), every star boundary face fixed and every boundary vertex
+// protected, so vertex 0 is the only free vertex. Two star cells miss the
+// targets (radius-edge ratio 2.103, minimum dihedral 9.641 degrees). Every
+// star cell already exceeds its size target, so the size gate admits no cell
+// beyond the star's largest excess, and no point on the segments from the
+// vertex to its neighbor centroid or to a constrained-face apex makes
+// sufficient progress within that gate: the edit loop converges with both
+// cells unmet. The shape pass's compass search relocates the vertex to a
+// point where every star cell meets both targets within the gate.
+void unmet_star_cells_are_cleared_by_target_meeting_relocation() {
+  const ImprovementFixture fixture = make_improvement_fixture(
+      {
+          0.1103927947521261, 0.550763787437625, 0.7418807544760528,
+          0.036400000000000016, 0.34040361158129356, 0.6592319425848331,
+          0.03640000000000001, 0.6588755379893775, 0.6588755379893775,
+          0.038506654339513745, 0.6554360795287418, 0.9635999999999924,
+          0.15549244271862098, 0.4972481380118381, 0.5119879787787778,
+          0.12711382206193117, 0.7571748414931436, 0.7807971547746697,
+          0.1793244320434948, 0.5164284080853874, 0.8852596147585691,
+          0.2441854018200628, 0.42260768154133804, 0.743355203526505,
+          0.19277446254919717, 0.5258213658211804, 0.7723582744991315,
+          0.14355533536770473, 0.37061027695578636, 0.8056381699446444,
+          0.19353328432895028, 0.5761140322930921, 0.6090021341992539,
+      },
+      {
+          {3, 5, 0, 2}, {3, 1, 0, 9}, {8, 6, 0, 7}, {6, 0, 7, 9}, {0, 3, 6, 5},
+          {3, 6, 9, 0}, {8, 5, 0, 6}, {7, 10, 0, 8}, {10, 9, 7, 0}, {10, 5, 2, 0},
+          {10, 5, 0, 8}, {2, 1, 0, 3}, {1, 2, 0, 4}, {1, 10, 0, 9}, {10, 1, 0, 4},
+          {4, 2, 0, 10},
+      });
+  PHX_CHECK(fixture.cells.size() == 16 && fixture.faces.size() == 16);
+  if (fixture.cells.size() != 16 || fixture.faces.size() != 16) return;
+  const std::size_t vertex_count = fixture.points.size() / 3;
+  const std::vector<std::int32_t> regions(fixture.cells.size(), 0);
+  std::vector<std::int8_t> protected_vertices(vertex_count, 1);
+  protected_vertices[0] = 0;
+  TetMesh mesh(BoundaryPolicy::kFixed);
+  PHX_CHECK(build_improvement_mesh(mesh, fixture, regions, sequential_ids(vertex_count),
+                                   sequential_ids(fixture.cells.size()),
+                                   sequential_ids(fixture.faces.size()),
+                                   protected_vertices) == PHX_MC_OK);
+  TetMeshSnapshot before;
+  PHX_CHECK(mesh.snapshot(before) == TetEditStatus::kApplied);
+  const TetQualityRequest request{2.0, 10.0, 0x1p-35};
+  std::vector<TetUnmetRecord> unmet_before;
+  PHX_CHECK(evaluate_mesh_quality(mesh, request, unmet_before) == PHX_MC_OK);
+  PHX_CHECK(unmet_before.size() == 2);
+  PHX_CHECK(std::any_of(unmet_before.begin(), unmet_before.end(), [](const TetUnmetRecord& row) {
+    return row.criterion == PHX_MC_TET_UNMET_RADIUS_EDGE && row.value > 2.1;
+  }));
+  PHX_CHECK(std::any_of(unmet_before.begin(), unmet_before.end(), [](const TetUnmetRecord& row) {
+    return row.criterion == PHX_MC_TET_UNMET_DIHEDRAL && row.value < 9.7;
+  }));
+
+  const std::vector<double> sizes(vertex_count, 0.1);
+  std::int64_t inserted = 0;
+  std::int64_t collapsed = 0;
+  std::int64_t relocated = 0;
+  std::int64_t unmet = 0;
+  const std::int32_t status =
+      improve_mesh(mesh, request, sizes, inserted, collapsed, relocated, unmet);
+  PHX_CHECK(status == PHX_MC_OK && unmet == 0 && mesh.unmet_records().empty());
+  PHX_CHECK(inserted == 0 && collapsed == 0 && relocated >= 1);
+  TetMeshSnapshot after;
+  PHX_CHECK(mesh.snapshot(after) == TetEditStatus::kApplied);
+  PHX_CHECK(same_source_banks(before, after));
+  PHX_CHECK(after.vertices.size() == before.vertices.size());
+  // Only the free vertex moved, and every cell meets both targets.
+  for (std::size_t vertex = 1; vertex < vertex_count; ++vertex) {
+    const double* point = mesh.point(mesh.vertex_slot(vertex));
+    PHX_CHECK(std::equal(point, point + 3, fixture.points.data() + 3 * vertex));
+  }
+  double minimum_angle = 0.0;
+  double minimum_determinant = 0.0;
+  double maximum_radius_edge = 0.0;
+  PHX_CHECK(minimum_quality(mesh, after, minimum_angle, minimum_determinant,
+                            maximum_radius_edge));
+  PHX_CHECK(minimum_angle >= 10.0 && maximum_radius_edge <= 2.0);
+  PHX_CHECK(minimum_determinant > 0x1p-22);
+}
+
 // A flat pole-cap cell of a CAD sphere fill with its vertex neighborhood,
 // every neighborhood boundary face fixed. Its four boundary vertices lie on
 // two latitude circles: the isosceles latitude trapezoid is cocircular, so
@@ -3273,6 +3356,7 @@ int main() {
   improvement_respects_refinement_size_field();
   size_excess_is_bounded_by_the_removed_cells();
   flat_fixed_boundary_cell_is_removed_by_edge_ring_insertion();
+  unmet_star_cells_are_cleared_by_target_meeting_relocation();
   flat_cocircular_cap_cell_scores_below_every_valid_cell();
   incidence_route_matches_public_scan_after_collapse();
   cavity_local_reconnection_matches_public_batch();

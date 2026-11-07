@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "capi_guard.hpp"
+#include "floating_point_mode.hpp"
 #include "geometry3.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
@@ -571,6 +572,8 @@ extern "C" PHX_MC_API int32_t
 phx_mc_surface_envelope_create(const phx_mc_surface_envelope_create_request* request) {
   if (request == nullptr) return PHX_MC_INVALID_ARGUMENT;
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     int32_t status = validate_envelope_request(*request);
     if (status != PHX_MC_OK) return status;
     std::fill(request->bounds, request->bounds + 4, 0.0);
@@ -956,6 +959,8 @@ extern "C" PHX_MC_API int32_t phx_mc_surface_envelope_remesh(void* handle, doubl
   if (handle == nullptr || bounds == nullptr || counters == nullptr)
     return PHX_MC_INVALID_ARGUMENT;
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     auto& data = *static_cast<EnvelopeData*>(handle);
     if (data.cloud.empty() || data.triangles.empty()) return PHX_MC_INVALID_ARGUMENT;
     phx::mc::remesh::RemeshCounters result;

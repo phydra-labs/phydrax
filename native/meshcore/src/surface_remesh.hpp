@@ -82,10 +82,23 @@
 //    average, and centering of the moved vertices (1/2, 1/4 or none of the
 //    sagitta). Admission sees only the final state, so the removed vertex's
 //    area is shared by its ring; vertices need not stay on the represented
-//    surface, only every triangle in the admitted band. A round without a
-//    collapse ends the phase and every other round removes a vertex;
-//  * the passes run quality, regularization, quality and, when requested,
-//    admission-limited coarsening followed by quality.
+//    surface, only every triangle in the admitted band. An edge whose relaxed
+//    collapse is refused is retried as an absorbing collapse: the merged
+//    vertex repeatedly absorbs its shortest staged neighbor across an edge
+//    below 4/5 h (each step meeting the edge-collapse link condition), and
+//    the compound is offered after every absorption as one preserve edit
+//    with the merged vertex at the projected centroid of the merged vertices,
+//    centered by 1/2, 1/4 or none of the sagitta. A graded rosette of
+//    near-full-score triangles refuses every single collapse yet admits the
+//    merge of its core. A round without a collapse ends the phase and every
+//    other round removes a vertex;
+//  * the passes run quality, regularization, quality. Only when the targets
+//    request admission-limited coarsening does a collapse-only size sweep
+//    (projected midpoint or endpoint collapses of short edges) precede them,
+//    do regularization collapses also try the quarter points, star-centroid
+//    and apex goals and length-increasing size relocations, and do
+//    admission-limited coarsening and quality follow them. Without the
+//    request the passes and their outputs are the plain ones.
 // The score of a triangle is floor(2^20 * min(1, angle_min / minimum_angle) *
 // min(1, (4/3) h / edge_max) * fold). Fold is the minimum over the triangle's
 // edges of two factors:
@@ -172,7 +185,7 @@ double forced_turn(const NormalCone& first, const NormalCone& second);
 struct RemeshTargets {
   double edge_length = 0;              // h
   double minimum_angle_degrees = 30;   // full-score minimum angle
-  bool admission_limited_coarsening = false;  // run the coarsening pass
+  bool admission_limited_coarsening = false;  // size sweep, extended regularization, coarsening
 };
 
 struct RemeshCounters {

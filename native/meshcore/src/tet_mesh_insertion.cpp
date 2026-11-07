@@ -962,9 +962,13 @@ bool TetMesh::removes_constrained_segment(std::span<const std::int32_t> removed_
 // exactly positive; the cone then tiles the cavity (same chain argument as
 // replace_local_cavity), the new point lies in the cavity interior and so
 // coincides with no vertex, and every cavity vertex must remain on the
-// cavity boundary. Constrained faces may bound the cavity but not lie inside it.
+// cavity boundary except `removed_vertices`: exactly the buried vertices, each
+// an unprotected interior vertex without a source witness (the vertices a
+// collapse may remove), whose stars lie inside the cavity and are replaced.
+// Constrained faces may bound the cavity but not lie inside it.
 TetEditStatus TetMesh::insert_local_cone(const TetEditVertex& vertex,
                                          std::span<const std::int32_t> cavity,
+                                         std::span<const std::int32_t> removed_vertices,
                                          std::vector<std::uint64_t>& created_cells) {
   created_cells.clear();
   try {
@@ -1032,6 +1036,41 @@ TetEditStatus TetMesh::insert_local_cone(const TetEditVertex& vertex,
     std::sort(ancestors.begin(), ancestors.end());
     if (removes_constrained_segment(cavity, kept_edges)) {
       return TetEditStatus::kRejectedProtected;
+    }
+    if (!removed_vertices.empty()) {
+      for (std::size_t index = 0; index < removed_vertices.size(); ++index) {
+        const std::int32_t removed = removed_vertices[index];
+        if ((index > 0 && removed_vertices[index - 1] >= removed) || !live_vertex(removed)) {
+          return TetEditStatus::kRejectedTopology;
+        }
+        if (protected_vertex(removed) || protection_radius(removed) > 0.0) {
+          return TetEditStatus::kRejectedProtected;
+        }
+        if (vertex_dimension(removed) != 3 || witness(removed).stratum != SourceStratum::kNone) {
+          return TetEditStatus::kRejectedTopology;
+        }
+      }
+      std::vector<std::int32_t> kept;
+      kept.reserve(3 * boundary.size());
+      for (const BoundaryFacet& face : boundary) {
+        const Tetrahedron& cell = tet(face.tet);
+        for (int corner = 0; corner < 4; ++corner) {
+          if (corner != face.slot) kept.push_back(cell.v[corner]);
+        }
+      }
+      std::sort(kept.begin(), kept.end());
+      std::vector<std::int32_t> buried;
+      for (std::int32_t slot : cavity) {
+        for (std::int32_t corner : tet(slot).v) {
+          if (!std::binary_search(kept.begin(), kept.end(), corner)) buried.push_back(corner);
+        }
+      }
+      std::sort(buried.begin(), buried.end());
+      buried.erase(std::unique(buried.begin(), buried.end()), buried.end());
+      if (!std::equal(buried.begin(), buried.end(), removed_vertices.begin(),
+                      removed_vertices.end())) {
+        return TetEditStatus::kRejectedTopology;
+      }
     }
     const std::int32_t center = static_cast<std::int32_t>(vertex_ids_.size());
     if (boundary.size() > std::numeric_limits<std::uint64_t>::max() - next_cell_id_ ||
@@ -1105,7 +1144,7 @@ TetEditStatus TetMesh::insert_local_cone(const TetEditVertex& vertex,
       created_cells.reserve(created);
       inserted = insert_checked_cone(
           complex_, edit_, [this](const std::int32_t* v) { return positive(v); }, center,
-          cavity, boundary, false);
+          cavity, boundary, !removed_vertices.empty());
     } catch (...) {
       edit_.rollback();
       unstage();
@@ -1140,6 +1179,13 @@ TetEditStatus TetMesh::insert_local_cone(const TetEditVertex& vertex,
       created_cells.push_back(id);
     }
     next_cell_id_ += created_slots.size();
+    for (std::int32_t removed : removed_vertices) {
+      const std::uint64_t id = vertex_id(removed);
+      vertex_live_[static_cast<std::size_t>(removed)] = 0;
+      vertex_slots_.erase(id);
+      vertex_ancestry_.erase(id);
+      vertex_sizes_.erase(id);
+    }
     if (vertex.id >= next_vertex_id_) next_vertex_id_ = vertex.id + 1;
     ++generation_;
     unmet_records_.clear();

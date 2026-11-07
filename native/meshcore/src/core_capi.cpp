@@ -9,6 +9,7 @@
 #include <memory>
 
 #include "capi_guard.hpp"
+#include "floating_point_mode.hpp"
 #include "mesh.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
@@ -27,6 +28,7 @@ struct phx_mc_plc3d_result {
 
 namespace {
 
+using phx::mc::GradualNearestScope;
 using phx::mc::addressable;
 using phx::mc::coordinate_in_domain;
 using phx::mc::guarded;
@@ -134,6 +136,8 @@ int32_t run_plc3d_request(const phx_mc_plc3d_prepare_source_request* request,
   if (request == nullptr) return PHX_MC_INVALID_ARGUMENT;
   if (request->result != nullptr) *request->result = nullptr;
   return guarded([&]() -> int32_t {
+    const GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     const int32_t valid = validate_plc3d_prepare_request(*request);
     if (valid != PHX_MC_OK) return valid;
     if (protected_facets != nullptr) {
@@ -221,6 +225,8 @@ int32_t phx_mc_parallel_for(int64_t count, int64_t chunk_size, int32_t paralleli
 int32_t phx_mc_orient2d(int64_t count, const double* a, const double* b, const double* c,
                         int8_t* signs) {
   return guarded([&]() -> int32_t {
+    const GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     const double* arrays[3] = {a, b, c};
     const int32_t status = validate_batch(count, 2, arrays, 3, signs);
     if (status != PHX_MC_OK) {
@@ -236,6 +242,8 @@ int32_t phx_mc_orient2d(int64_t count, const double* a, const double* b, const d
 int32_t phx_mc_orient3d(int64_t count, const double* a, const double* b, const double* c,
                         const double* d, int8_t* signs) {
   return guarded([&]() -> int32_t {
+    const GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     const double* arrays[4] = {a, b, c, d};
     const int32_t status = validate_batch(count, 3, arrays, 4, signs);
     if (status != PHX_MC_OK) {
@@ -252,6 +260,8 @@ int32_t phx_mc_orient3d(int64_t count, const double* a, const double* b, const d
 int32_t phx_mc_incircle(int64_t count, const double* a, const double* b, const double* c,
                         const double* d, int8_t* signs) {
   return guarded([&]() -> int32_t {
+    const GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     const double* arrays[4] = {a, b, c, d};
     const int32_t status = validate_batch(count, 2, arrays, 4, signs);
     if (status != PHX_MC_OK) {
@@ -268,6 +278,8 @@ int32_t phx_mc_incircle(int64_t count, const double* a, const double* b, const d
 int32_t phx_mc_insphere(int64_t count, const double* a, const double* b, const double* c,
                         const double* d, const double* e, int8_t* signs) {
   return guarded([&]() -> int32_t {
+    const GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     const double* arrays[5] = {a, b, c, d, e};
     const int32_t status = validate_batch(count, 3, arrays, 5, signs);
     if (status != PHX_MC_OK) {
@@ -284,6 +296,8 @@ int32_t phx_mc_insphere(int64_t count, const double* a, const double* b, const d
 int32_t phx_mc_orient2d_sos(int64_t count, const double* a, const double* b, const double* c,
                             const int64_t* ids, int8_t* signs) {
   return guarded([&]() -> int32_t {
+    const GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     const double* arrays[3] = {a, b, c};
     int32_t status = validate_batch(count, 2, arrays, 3, signs);
     if (status == PHX_MC_OK) {
@@ -304,6 +318,8 @@ int32_t phx_mc_orient2d_sos(int64_t count, const double* a, const double* b, con
 int32_t phx_mc_orient3d_sos(int64_t count, const double* a, const double* b, const double* c,
                             const double* d, const int64_t* ids, int8_t* signs) {
   return guarded([&]() -> int32_t {
+    const GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     const double* arrays[4] = {a, b, c, d};
     int32_t status = validate_batch(count, 3, arrays, 4, signs);
     if (status == PHX_MC_OK) {
@@ -324,6 +340,8 @@ int32_t phx_mc_orient3d_sos(int64_t count, const double* a, const double* b, con
 int32_t phx_mc_incircle_sos(int64_t count, const double* a, const double* b, const double* c,
                             const double* d, const int64_t* ids, int8_t* signs) {
   return guarded([&]() -> int32_t {
+    const GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     const double* arrays[4] = {a, b, c, d};
     int32_t status = validate_batch(count, 2, arrays, 4, signs);
     if (status == PHX_MC_OK) {
@@ -345,6 +363,8 @@ int32_t phx_mc_insphere_sos(int64_t count, const double* a, const double* b, con
                             const double* d, const double* e, const int64_t* ids,
                             int8_t* signs) {
   return guarded([&]() -> int32_t {
+    const GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     const double* arrays[5] = {a, b, c, d, e};
     int32_t status = validate_batch(count, 3, arrays, 5, signs);
     if (status == PHX_MC_OK) {

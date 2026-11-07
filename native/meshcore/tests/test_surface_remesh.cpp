@@ -5,12 +5,14 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <random>
 #include <utility>
 #include <vector>
 
 #include "check.hpp"
+#include "dyadic.hpp"
 #include "intersections.hpp"
 #include "phydrax_meshcore.h"
 #include "surface_remesh.hpp"
@@ -434,6 +436,145 @@ void exact_contact_parity() {
   }
 }
 
+// Exact squared free radius of binary64 corners (independent reference):
+// non-obtuse, the circumradius |bc|^2 |ca|^2 |ab|^2 / (4 |ab x ac|^2); obtuse at
+// corner o, the maximum over the other corners k of S_other^2 S_o /
+// (S_o + S_other - S_k)^2 with S the squared sides. Returns numerator and
+// denominator.
+std::pair<phx::mc::Dyadic, phx::mc::Dyadic> exact_free_radius_squared(const Point& a,
+                                                                     const Point& b,
+                                                                     const Point& c) {
+  using phx::mc::Dyadic;
+  std::array<Dyadic, 3> ab, ac, bc;
+  for (int axis = 0; axis < 3; ++axis) {
+    ab[axis] = Dyadic(b[axis]) - Dyadic(a[axis]);
+    ac[axis] = Dyadic(c[axis]) - Dyadic(a[axis]);
+    bc[axis] = Dyadic(c[axis]) - Dyadic(b[axis]);
+  }
+  const auto dot = [](const std::array<Dyadic, 3>& u, const std::array<Dyadic, 3>& v) {
+    return u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+  };
+  const std::array<Dyadic, 3> n{ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2],
+                                ab[0] * ac[1] - ab[1] * ac[0]};
+  const std::array<Dyadic, 3> s{dot(bc, bc), dot(ac, ac), dot(ab, ab)};
+  int obtuse = -1;
+  for (int k = 0; k < 3; ++k)
+    if ((s[k] - s[(k + 1) % 3] - s[(k + 2) % 3]).sign() > 0) obtuse = k;
+  if (obtuse < 0) return {s[0] * s[1] * s[2], Dyadic(4.0) * dot(n, n)};
+  std::pair<Dyadic, Dyadic> best{Dyadic(), Dyadic(1.0)};
+  for (int k = 0; k < 3; ++k) {
+    if (k == obtuse) continue;
+    const int other = 3 - k - obtuse;
+    const Dyadic d = s[obtuse] + s[other] - s[k];
+    const Dyadic numerator = s[other] * s[other] * s[obtuse], denominator = d * d;
+    if ((numerator * best.second - best.first * denominator).sign() > 0)
+      best = {numerator, denominator};
+  }
+  return best;
+}
+
+bool covers(double radius, const std::pair<phx::mc::Dyadic, phx::mc::Dyadic>& exact) {
+  const phx::mc::Dyadic r(radius);
+  return (r * r * exact.second - exact.first).sign() >= 0;
+}
+
+double envelope_roundoff(const Point& a, const Point& b, const Point& c) {
+  double scale = 0;
+  for (const Point* p : {&a, &b, &c})
+    for (double v : *p) scale = std::max(scale, std::abs(v));
+  return std::nextafter(std::max(256 * std::numeric_limits<double>::epsilon() * scale,
+                                 256 * std::numeric_limits<double>::denorm_min()),
+                        std::numeric_limits<double>::infinity());
+}
+
+// The free radius must bound the exact one for binary64 needles, whose
+// floating cross product loses relative accuracy of about eps / theta. The
+// first rows are the Windows audit's escapes (C8); the random needles and caps
+// repeat its probe.
+void certified_free_radius_is_exact() {
+  using phx::mc::remesh::certified_free_radius;
+  const std::array<std::array<Point, 3>, 5> escapes{{
+      {{{-0x1.7156d5fa24df0p-1, 0x1.baf3c9d8ec664p-2, -0x1.856534f685164p-2},
+        {-0x1.0af5efa4a7ba6p-1, 0x1.2176fc2305e7ap-1, -0x1.50629dffa805ap-1},
+        {-0x1.0af600e997fdcp-1, 0x1.2177007bfa29ap-1, -0x1.5062a8640476ep-1}}},
+      {{{0x1.8b3ce171aaa0ap-1, -0x1.10a8fb78985c0p-1, 0x1.522e4628d3c58p-1},
+        {0x1.f830fb2ad305fp-1, -0x1.41fda84f50363p-1, 0x1.ab9e617334331p-2},
+        {0x1.f830fb37251a1p-1, -0x1.41fda847cd213p-1, 0x1.ab9e6182d4cf9p-2}}},
+      {{{0x1.83ec42ffac8c0p-5, -0x1.e174b90083ad4p-1, -0x1.f4b2c8b7ca1fcp-1},
+        {-0x1.b63b05759e842p-2, -0x1.76298e9efd6cbp+0, -0x1.391e328c39dbbp+0},
+        {-0x1.b638625b4e03ap-2, -0x1.762a5257200d5p+0, -0x1.391dd9a81f49fp+0}}},
+      {{{0x1.8ed948f0188b0p-1, -0x1.ad390989186e4p-1, -0x1.f4c6549956f58p-3},
+        {0x1.83b919c2a19adp-1, -0x1.bcbe2b1fdefa4p-1, -0x1.d01e2bdf83c57p-3},
+        {0x1.83b90c5e43ec1p-1, -0x1.bcbe226dbefeep-1, -0x1.d01e320037e35p-3}}},
+      {{{0x1.c0cdb5943415cp-2, -0x1.9646364cc6752p-1, 0x1.4ddf18f4f3a5ep-1},
+        {0x1.6f9bb4f0f5d75p-2, -0x1.15443b8523851p-1, 0x1.6d5f7b85a308fp-1},
+        {0x1.6f9bb4fba105bp-2, -0x1.15443842e5a03p-1, 0x1.6d5f6e340a1afp-1}}},
+  }};
+  for (const auto& [a, b, c] : escapes) {
+    const double roundoff = envelope_roundoff(a, b, c);
+    const double radius = certified_free_radius(a, b, c, roundoff);
+    const auto exact = exact_free_radius_squared(a, b, c);
+    PHX_CHECK(std::isfinite(radius));
+    PHX_CHECK(covers(radius, exact));
+    // Only the caller's absolute roundoff and directed rounding separate the
+    // bound from the exact radius.
+    PHX_CHECK(!covers(radius - 2 * roundoff, exact));
+  }
+  // An obtuse triangle takes the bisector bound (exactly 0.265625 here), not
+  // its circumradius (1.0625); a negligible roundoff leaves directed rounding.
+  {
+    const Point a{0, 0, 0}, b{1, 0, 0}, c{0.5, 0.125, 0};
+    const double radius = certified_free_radius(a, b, c, 0x1p-60);
+    const auto exact = exact_free_radius_squared(a, b, c);
+    PHX_CHECK(covers(radius, exact));
+    double below = radius;
+    for (int step = 0; step < 4; ++step)
+      below = std::nextafter(below, -std::numeric_limits<double>::infinity());
+    PHX_CHECK(!covers(below, exact));
+    PHX_CHECK(radius < 0.5);
+  }
+  // An exactly zero cross product or a nonfinite corner has no free radius.
+  PHX_CHECK(std::isinf(certified_free_radius({0, 0, 0}, {0.25, 0.5, 1}, {0.5, 1, 2}, 0x1p-60)));
+  PHX_CHECK(std::isinf(certified_free_radius({0, 0, 0}, {1, 0, 0},
+                                             {0, std::numeric_limits<double>::quiet_NaN(), 0},
+                                             0x1p-60)));
+  std::mt19937_64 generator(20261106);
+  std::uniform_real_distribution<double> unit(-1.0, 1.0), exponent(0.0, 1.0);
+  std::normal_distribution<double> normal;
+  int escaped = 0, finite = 0;
+  for (int sample = 0; sample < 20000; ++sample) {
+    const Point apex{unit(generator), unit(generator), unit(generator)};
+    Point direction{normal(generator), normal(generator), normal(generator)};
+    const double direction_length = std::sqrt(direction[0] * direction[0] +
+                                              direction[1] * direction[1] +
+                                              direction[2] * direction[2]);
+    for (double& v : direction) v /= direction_length;
+    Point side{normal(generator), normal(generator), normal(generator)};
+    const double along = side[0] * direction[0] + side[1] * direction[1] + side[2] * direction[2];
+    for (int axis = 0; axis < 3; ++axis) side[axis] -= along * direction[axis];
+    const double side_length = std::sqrt(side[0] * side[0] + side[1] * side[1] + side[2] * side[2]);
+    for (double& v : side) v /= side_length;
+    const double length = std::pow(10.0, -3.0 * exponent(generator));
+    const double theta = std::pow(10.0, -9.0 + 8.0 * exponent(generator));
+    Point b, c;
+    for (int axis = 0; axis < 3; ++axis) {
+      if (sample % 2 == 0) {
+        b[axis] = apex[axis] + length * direction[axis] + 0.5 * length * theta * side[axis];
+        c[axis] = apex[axis] + length * direction[axis] - 0.5 * length * theta * side[axis];
+      } else {
+        b[axis] = apex[axis] + length * direction[axis];
+        c[axis] = apex[axis] + 0.5 * length * direction[axis] + length * theta * side[axis];
+      }
+    }
+    const double radius = certified_free_radius(apex, b, c, envelope_roundoff(apex, b, c));
+    if (!std::isfinite(radius)) continue;
+    ++finite;
+    if (!covers(radius, exact_free_radius_squared(apex, b, c))) ++escaped;
+  }
+  PHX_CHECK(finite == 20000);
+  PHX_CHECK(escaped == 0);
+}
+
 }  // namespace
 
 int main() {
@@ -441,5 +582,6 @@ int main() {
   sphere_band_quality();
   knife_edge_lens();
   exact_contact_parity();
+  certified_free_radius_is_exact();
   return phx::mc::test::finish("test_surface_remesh");
 }

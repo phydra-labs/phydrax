@@ -38,6 +38,7 @@
 #include "clip_common.hpp"
 #include "expansion.hpp"
 #include "filtered.hpp"
+#include "floating_point_mode.hpp"
 #include "geometry3.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
@@ -829,6 +830,8 @@ int32_t phx_mc_triangle_intersections(int64_t count, int32_t point_capacity,
                                       double* point_bounds, int8_t* point_features,
                                       int32_t* item_status) {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     const phx::mc::ContactOutput output{point_counts, points, point_bounds, point_features,
                                         point_capacity};
     return phx::mc::contact_batch(
@@ -851,6 +854,8 @@ int32_t phx_mc_segment_triangle_intersections(int64_t count, int32_t point_capac
                                               double* point_bounds, int8_t* point_features,
                                               int32_t* item_status) {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     const phx::mc::ContactOutput output{point_counts, points, point_bounds, point_features,
                                         point_capacity};
     return phx::mc::contact_batch(
@@ -868,6 +873,8 @@ int32_t phx_mc_point_triangle_locations(int64_t count, const double* points,
                                         const double* triangles, int8_t* sides,
                                         int8_t* features, int32_t* item_status) {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (count < 0 || !phx::mc::addressable(count, 9, sizeof(double)) ||
         !phx::mc::addressable(count, 1, sizeof(int8_t)) ||
         !phx::mc::addressable(count, 1, sizeof(int32_t)) || sides == nullptr || features == nullptr ||

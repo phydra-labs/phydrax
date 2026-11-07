@@ -15,6 +15,7 @@
 #include <numbers>
 #include <optional>
 #include <set>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -454,6 +455,22 @@ bool register_box(HashGrid& grid, double cell, const double* lower, const double
   return true;
 }
 
+// The largest metric length of one binary64 coordinate step at `p`.
+double coordinate_resolution(const TetMesh& mesh, const double* p) {
+  double resolution = 0.0;
+  for (int axis = 0; axis < 3; ++axis) {
+    const double magnitude = std::abs(p[axis]);
+    const double step = std::nextafter(magnitude, std::numeric_limits<double>::infinity()) -
+                        magnitude;
+    std::array<double, 3> delta{};
+    delta[static_cast<std::size_t>(axis)] = step;
+    const auto transformed = mesh.metric_transform(delta);
+    resolution =
+        std::max(resolution, std::hypot(std::hypot(transformed[0], transformed[1]), transformed[2]));
+  }
+  return resolution;
+}
+
 // lambda(v) for every live vertex slot: the distance from v to the nearest
 // feature not incident to v. Point features are the live vertices, line
 // features the constrained segments and constrained-facet edges, plane
@@ -595,22 +612,237 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
     if (!visited || !std::isfinite(lambda)) return false;
     // Features nearer than the coordinate spacing at v cannot be separated by
     // a representable point; lambda is floored there, which keeps it positive.
-    double resolution = 0.0;
-    for (int axis = 0; axis < 3; ++axis) {
-      const double magnitude = std::abs(p[axis]);
-      const double step = std::nextafter(magnitude, infinity) - magnitude;
-      std::array<double, 3> delta{};
-      delta[axis] = step;
-      const auto transformed = mesh.metric_transform(delta);
-      resolution = std::max(resolution, std::hypot(std::hypot(transformed[0], transformed[1]),
-                                                   transformed[2]));
-    }
-    lambda = std::max(lambda, resolution);
+    lambda = std::max(lambda, coordinate_resolution(mesh, p));
     sizes[slot] = lambda;
     smallest = std::min(smallest, lambda);
   }
   return std::isfinite(smallest);
 }
+
+// The features of the source complex as a ball query: facets (the source
+// face rows of one face group connected across edges that are not source
+// segments, i.e. one authored polygon) and segment groups (the union of
+// their source segment rows). Two features are incident when they share a
+// source point. A point x on a feature C lies in C, so for any feature F
+// disjoint from C the ball of radius |x - F| around x meets the two disjoint
+// features C and F: lfs(x) <= |x - F| (Ruppert, Shewchuk). For any x and
+// disjoint features A, B, lfs(x) <= max(|x - A|, |x - B|). Both bounds are
+// upper bounds of the true local feature size, so a guard measured with
+// them stays above c * lfs_min and keeps the packing argument; unlike the
+// Lipschitz bound lambda(u) + |x - u| from the vertices u near x, they see a
+// thin gap between two large facets far from every vertex.
+class InputFeatureIndex {
+ public:
+  struct Carrier {
+    bool segment = false;
+    std::int32_t group = kNoConstraint;
+  };
+
+  bool build(const TetMesh& mesh, std::span<const std::int32_t> face_groups,
+             std::span<const std::int32_t> segment_groups) {
+    std::map<std::array<double, 3>, std::int32_t> point_ids;
+    const auto point_id = [&](const double* point) {
+      return point_ids.emplace(std::array<double, 3>{point[0], point[1], point[2]},
+                               static_cast<std::int32_t>(point_ids.size()))
+          .first->second;
+    };
+    // Source segment edges, by their point pair.
+    std::set<std::pair<std::int32_t, std::int32_t>> segment_edges;
+    const auto ordered = [](std::int32_t a, std::int32_t b) {
+      return a < b ? std::pair{a, b} : std::pair{b, a};
+    };
+    for (std::size_t row = 0; row < segment_groups.size(); ++row) {
+      const double* corners[3]{};
+      if (!mesh.source_corners(SourceStratum::kSegment, static_cast<std::int32_t>(row), corners)) {
+        return false;
+      }
+      segment_edges.insert(ordered(point_id(corners[0]), point_id(corners[1])));
+    }
+    // Facet components: union of face rows of one group across non-segment edges.
+    const std::size_t face_count = face_groups.size();
+    std::vector<std::array<std::int32_t, 3>> face_points(face_count);
+    std::vector<std::size_t> parent(face_count);
+    for (std::size_t row = 0; row < face_count; ++row) parent[row] = row;
+    const std::function<std::size_t(std::size_t)> root = [&](std::size_t row) {
+      while (parent[row] != row) row = parent[row] = parent[parent[row]];
+      return row;
+    };
+    std::map<std::tuple<std::int32_t, std::int32_t, std::int32_t>, std::size_t> edge_owner;
+    for (std::size_t row = 0; row < face_count; ++row) {
+      const double* corners[3]{};
+      if (!mesh.source_corners(SourceStratum::kFacet, static_cast<std::int32_t>(row), corners)) {
+        return false;
+      }
+      for (int corner = 0; corner < 3; ++corner) {
+        face_points[row][static_cast<std::size_t>(corner)] = point_id(corners[corner]);
+      }
+      for (int corner = 0; corner < 3; ++corner) {
+        const auto edge = ordered(face_points[row][static_cast<std::size_t>(corner)],
+                                  face_points[row][static_cast<std::size_t>((corner + 1) % 3)]);
+        if (segment_edges.contains(edge)) continue;
+        const auto [found, inserted] =
+            edge_owner.emplace(std::tuple{face_groups[row], edge.first, edge.second}, row);
+        if (!inserted) parent[root(found->second)] = root(row);
+      }
+    }
+    std::map<std::size_t, std::size_t> component_rows;
+    double extent = 0.0;
+    double length_sum = 0.0;
+    const auto add = [&](std::size_t feature, int size, const double* const* corners,
+                         const std::int32_t* ids) {
+      Element element;
+      element.feature = static_cast<std::int32_t>(feature);
+      element.size = size;
+      for (int corner = 0; corner < size; ++corner) {
+        element.points[static_cast<std::size_t>(corner)] = corners[corner];
+        features_[feature].points.push_back(ids[corner]);
+      }
+      double lower[3], upper[3];
+      box(mesh, element, lower, upper);
+      for (int axis = 0; axis < 3; ++axis) extent = std::max(extent, upper[axis] - lower[axis]);
+      length_sum += metric_distance(mesh, corners[0], corners[1]);
+      elements_.push_back(element);
+    };
+    for (std::size_t row = 0; row < face_count; ++row) {
+      const auto [found, inserted] = component_rows.emplace(root(row), features_.size());
+      if (inserted) features_.push_back({false, face_groups[row], {}});
+      const double* corners[3]{};
+      mesh.source_corners(SourceStratum::kFacet, static_cast<std::int32_t>(row), corners);
+      add(found->second, 3, corners, face_points[row].data());
+    }
+    std::map<std::int32_t, std::size_t> segment_rows;
+    for (std::size_t row = 0; row < segment_groups.size(); ++row) {
+      const auto [found, inserted] = segment_rows.emplace(segment_groups[row], features_.size());
+      if (inserted) features_.push_back({true, segment_groups[row], {}});
+      const double* corners[3]{};
+      mesh.source_corners(SourceStratum::kSegment, static_cast<std::int32_t>(row), corners);
+      const std::int32_t ids[2]{point_id(corners[0]), point_id(corners[1])};
+      add(found->second, 2, corners, ids);
+    }
+    for (Feature& feature : features_) {
+      std::sort(feature.points.begin(), feature.points.end());
+      feature.points.erase(std::unique(feature.points.begin(), feature.points.end()),
+                           feature.points.end());
+    }
+    if (elements_.empty()) return true;
+    // Cells of the mean element edge, coarsened so that no element box spans
+    // more than 17 cells per axis.
+    cell_ = std::max(length_sum / static_cast<double>(elements_.size()), extent / 16.0);
+    if (!(cell_ > 0.0) || !std::isfinite(cell_)) return false;
+    for (std::size_t row = 0; row < elements_.size(); ++row) {
+      double lower[3], upper[3];
+      box(mesh, elements_[row], lower, upper);
+      if (!register_box(grid_, cell_, lower, upper, static_cast<std::int32_t>(row))) return false;
+    }
+    stamps_.assign(features_.size(), 0);
+    distances_.assign(features_.size(), 0.0);
+    return true;
+  }
+
+  // An upper bound of lfs(point), at most `bound`: for a point on `carrier`
+  // (a segment group, or a face group whose feature holding the point is its
+  // nearest one) the least distance to a feature disjoint from it, else (an
+  // interior point) the least max(|x - A|, |x - B|) over disjoint features A,
+  // B. Only features nearer than `bound` are read.
+  double bound(const TetMesh& mesh, const double* point, std::optional<Carrier> carrier,
+               double bound) {
+    if (elements_.empty() || !(bound > 0.0) || !std::isfinite(bound)) return bound;
+    ++stamp_;
+    near_.clear();
+    const auto world = metric_point(mesh, point);
+    const double lower[3]{world[0] - bound, world[1] - bound, world[2] - bound};
+    const double upper[3]{world[0] + bound, world[1] + bound, world[2] + bound};
+    const bool visited = visit_box(grid_, cell_, lower, upper, [&](std::int32_t row) {
+      const Element& element = elements_[static_cast<std::size_t>(row)];
+      const std::size_t feature = static_cast<std::size_t>(element.feature);
+      const double* a = element.points[0];
+      const double* b = element.points[1];
+      const double distance = element.size == 2
+                                  ? metric_segment_distance(mesh, point, a, b)
+                                  : metric_triangle_distance(mesh, point, a, b, element.points[2]);
+      if (!(distance < bound)) return;
+      if (stamps_[feature] != stamp_) {
+        stamps_[feature] = stamp_;
+        distances_[feature] = distance;
+        near_.push_back(feature);
+      } else {
+        distances_[feature] = std::min(distances_[feature], distance);
+      }
+    });
+    if (!visited) return bound;
+    std::sort(near_.begin(), near_.end(), [&](std::size_t a, std::size_t b) {
+      return distances_[a] < distances_[b] || (distances_[a] == distances_[b] && a < b);
+    });
+    if (carrier.has_value()) {
+      const auto holder = std::find_if(near_.begin(), near_.end(), [&](std::size_t feature) {
+        return features_[feature].segment == carrier->segment &&
+               features_[feature].group == carrier->group;
+      });
+      if (holder == near_.end()) return bound;
+      for (std::size_t feature : near_) {
+        if (!incident(feature, *holder)) return distances_[feature];
+      }
+      return bound;
+    }
+    for (std::size_t second = 1; second < near_.size(); ++second) {
+      for (std::size_t first = 0; first < second; ++first) {
+        if (!incident(near_[first], near_[second])) return distances_[near_[second]];
+      }
+    }
+    return bound;
+  }
+
+ private:
+  struct Feature {
+    bool segment = false;
+    std::int32_t group = kNoConstraint;
+    std::vector<std::int32_t> points;
+  };
+  struct Element {
+    std::int32_t feature = -1;
+    int size = 0;
+    std::array<const double*, 3> points{};
+  };
+
+  static void box(const TetMesh& mesh, const Element& element, double* lower, double* upper) {
+    const auto first = metric_point(mesh, element.points[0]);
+    std::copy(first.begin(), first.end(), lower);
+    std::copy(first.begin(), first.end(), upper);
+    for (int corner = 1; corner < element.size; ++corner) {
+      const auto point = metric_point(mesh, element.points[static_cast<std::size_t>(corner)]);
+      for (int axis = 0; axis < 3; ++axis) {
+        lower[axis] = std::min(lower[axis], point[axis]);
+        upper[axis] = std::max(upper[axis], point[axis]);
+      }
+    }
+  }
+
+  bool incident(std::size_t first, std::size_t second) const {
+    if (first == second) return true;
+    const auto& a = features_[first].points;
+    const auto& b = features_[second].points;
+    auto left = a.begin();
+    auto right = b.begin();
+    while (left != a.end() && right != b.end()) {
+      if (*left == *right) return true;
+      if (*left < *right) {
+        ++left;
+      } else {
+        ++right;
+      }
+    }
+    return false;
+  }
+
+  std::vector<Feature> features_;
+  std::vector<Element> elements_;
+  HashGrid grid_;
+  double cell_ = 0.0;
+  std::vector<std::uint64_t> stamps_;
+  std::vector<double> distances_;
+  std::uint64_t stamp_ = 0;
+  std::vector<std::size_t> near_;
+};
 
 // Spacing queries over hash grids whose cells double per level. A query of
 // radius r reads the 27 cells around the point on the finest level whose
@@ -1289,13 +1521,31 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
                            feature_sizes, smallest_feature)) {
     return PHX_MC_INVALID_INPUT;
   }
-  const auto feature_size_at = [&](const double* point, std::span<const std::int32_t> neighbors) {
+  InputFeatureIndex input_features;
+  if (!input_features.build(mesh, mesh.source_face_groups_, mesh.source_segment_groups_)) {
+    return PHX_MC_INVALID_INPUT;
+  }
+  // lfs(x) estimate: the Lipschitz bound from the natural neighbors, lowered
+  // to the direct bound of the features near x (InputFeatureIndex; on
+  // `carrier` when x is a boundary point), floored at the coordinate spacing.
+  // Termination: every term is an upper bound of the true lfs(x) (lfs is
+  // 1-Lipschitz, and InputFeatureIndex::bound returns the radius of a ball
+  // around x that meets two disjoint input features), so the estimate never
+  // falls below lfs(x) >= lfs_min > 0, the least distance between disjoint
+  // input features. insertion_guard keeps every inserted vertex at least
+  // kSizeGuardFraction * min(estimate / kGrading, target) from all others, so
+  // the packing argument (Ruppert, Shewchuk) bounds the vertex count exactly
+  // as with the larger Lipschitz bound: a smaller upper bound admits more
+  // insertions, never an unbounded number.
+  const auto feature_size_at = [&](const double* point, std::span<const std::int32_t> neighbors,
+                                   std::optional<InputFeatureIndex::Carrier> carrier) {
     double size = std::numeric_limits<double>::infinity();
     for (std::int32_t vertex : neighbors) {
       size = std::min(size, feature_sizes[static_cast<std::size_t>(vertex)] +
                                 metric_distance(mesh, point, mesh.point(vertex)));
     }
-    return size;
+    return std::max(input_features.bound(mesh, point, carrier, size),
+                    coordinate_resolution(mesh, point));
   };
   const auto spacing_guard = [&](double feature_size, double target_size) {
     const double guard = kSizeGuardFraction * feature_size;
@@ -1632,7 +1882,15 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       if (encroached_segment.has_value()) {
         return PHX_MC_OK;
       }
-      const double feature_size = feature_size_at(point, cavity_vertices);
+      std::optional<InputFeatureIndex::Carrier> carrier;
+      if (segment_edge != nullptr) {
+        carrier = InputFeatureIndex::Carrier{
+            true, mesh.segments_[split_segment_rows.front()].source};
+      } else if (!seeds.empty()) {
+        carrier = InputFeatureIndex::Carrier{
+            false, mesh.complex_.constraint(seeds.front().first, seeds.front().second)};
+      }
+      const double feature_size = feature_size_at(point, cavity_vertices, carrier);
       if (radius > 0.0 && !spacing.clear(point, insertion_guard(feature_size, radius, target))) {
         return PHX_MC_OK;
       }
@@ -2106,7 +2364,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
         if (vertex >= 0) cavity_vertices.push_back(vertex);
       }
     }
-    const double center_feature_size = feature_size_at(center, cavity_vertices);
+    const double center_feature_size = feature_size_at(center, cavity_vertices, std::nullopt);
     if (!spacing.clear(center, insertion_guard(center_feature_size, shape.circumradius,
                                                has_center_size ? center_size : 0.0))) {
       unmet_causes[cell_id] = refused;
@@ -2117,7 +2375,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     inserted.id = mesh.next_vertex_id_;
     std::copy(shape.circumcenter.begin(), shape.circumcenter.end(), inserted.carrier.begin());
     const TetEditStatus status =
-        incidence.insert_cone(mesh, inserted, cavity.cells, created_cells);
+        incidence.insert_cone(mesh, inserted, cavity.cells, {}, created_cells);
     const std::int32_t error = edit_error(status);
     if (error != PHX_MC_OK) return error;
     if (status != TetEditStatus::kApplied) {

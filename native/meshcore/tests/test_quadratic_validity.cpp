@@ -1,12 +1,14 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 // Behavioral tests for exact continuous validity of quadratic tetrahedral maps.
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 
 #include "check.hpp"
+#include "fp_hazards.hpp"
 #include "phydrax_meshcore.h"
 
 namespace {
@@ -193,12 +195,51 @@ void extreme_values_and_input_validation() {
   PHX_CHECK(overflow == PHX_MC_INVALID_ARGUMENT);
 }
 
+bool same_result(const Result& first, const Result& second) {
+  return first.status == second.status && first.decision == second.decision &&
+         std::bit_cast<std::uint64_t>(first.lower) == std::bit_cast<std::uint64_t>(second.lower) &&
+         std::bit_cast<std::uint64_t>(first.upper) == std::bit_cast<std::uint64_t>(second.upper);
+}
+
+void floating_point_hazards() {
+  // det(J) = (1+x)(1+y) with floor 0.1, and the subnormal identity scaled by
+  // the smallest subnormal, keep their round-to-nearest results in every mode.
+  Input quadratic;
+  quadratic.derivative(0, 0, {1.0, 0.0, 0.0});
+  quadratic.derivative(0, 1, {1.0, 0.0, 0.0});
+  quadratic.derivative(1, 0, {0.0, 1.0, 0.0});
+  quadratic.derivative(1, 2, {0.0, 1.0, 0.0});
+  quadratic.derivative(2, 0, {0.0, 0.0, 1.0});
+  const Result quadratic_reference = call(quadratic, 0.1);
+  PHX_CHECK(quadratic_reference.status == PHX_MC_OK && quadratic_reference.decision == kValid);
+  const double tiny = std::numeric_limits<double>::denorm_min();
+  Input subnormal;
+  subnormal.derivative(0, 0, {tiny, 0.0, 0.0});
+  subnormal.derivative(1, 0, {0.0, tiny, 0.0});
+  subnormal.derivative(2, 0, {0.0, 0.0, tiny});
+  const Result subnormal_reference = call(subnormal);
+  PHX_CHECK(subnormal_reference.status == PHX_MC_OK &&
+            subnormal_reference.decision == kValid);
+  PHX_CHECK(subnormal_reference.lower == 0.0 && subnormal_reference.upper == tiny);
+  // A negative subnormal relative floor is rejected before any evaluation.
+  const Result negative_floor = call(identity(), -0x1p-1074);
+  PHX_CHECK(negative_floor.status == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(negative_floor.decision == 77 && negative_floor.lower == -123.0 &&
+            negative_floor.upper == 456.0);
+  phx::mc::test::under_floating_point_hazards([&](const phx::mc::test::FloatingPointHazard&) {
+    PHX_CHECK(same_result(call(quadratic, 0.1), quadratic_reference));
+    PHX_CHECK(same_result(call(subnormal), subnormal_reference));
+    PHX_CHECK(same_result(call(identity(), -0x1p-1074), negative_floor));
+  });
+}
+
 }  // namespace
 
 int main() {
   affine_and_degenerate_maps();
   polynomial_degree_and_range();
   relative_floor_and_unresolved_contacts();
+  floating_point_hazards();
   extreme_values_and_input_validation();
   return phx::mc::test::finish("test_quadratic_validity");
 }

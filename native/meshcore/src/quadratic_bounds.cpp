@@ -741,6 +741,8 @@ int32_t phx_mc_simplex_quadratic_bounds(int64_t count, int32_t dimension, int32_
                                         const double* barycentric_upper, double* lower,
                                         double* upper) {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (dimension < 1 || dimension > 3 || components < 1 || components > 3 || count < 0) {
       return PHX_MC_INVALID_ARGUMENT;
     }
@@ -756,8 +758,6 @@ int32_t phx_mc_simplex_quadratic_bounds(int64_t count, int32_t dimension, int32_
                       barycentric_upper == nullptr || lower == nullptr || upper == nullptr)) {
       return PHX_MC_INVALID_ARGUMENT;
     }
-    const phx::mc::GradualNearestScope mode;
-    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     const int32_t validation = validate_quadratic_bounds(
         count, m, components, q_lower, q_upper, barycentric_lower, barycentric_upper);
     if (validation != PHX_MC_OK) return validation;
@@ -775,11 +775,11 @@ int32_t phx_mc_quadratic_tetrahedron_validity(int64_t count, const double* nodes
                                               double relative_floor, int32_t* decisions,
                                               double* lower, double* upper) {
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     const int32_t validation = validate_validity_inputs(
         count, nodes, derivative_weights, relative_floor, decisions, lower, upper);
     if (validation != PHX_MC_OK) return validation;
-    const phx::mc::GradualNearestScope mode;
-    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     std::vector<ValidityResult> staged;
     staged.reserve(static_cast<std::size_t>(count));
     for (int64_t cell = 0; cell < count; ++cell) {

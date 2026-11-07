@@ -13,6 +13,7 @@
 
 #include "capi_guard.hpp"
 #include "expansion.hpp"
+#include "floating_point_mode.hpp"
 #include "geometry3.hpp"
 #include "mesh.hpp"
 #include "predicates.hpp"
@@ -436,7 +437,9 @@ extern "C" PHX_MC_API int32_t phx_mc_restricted_dual_3d(
     const int32_t* tets, const double* domain, int64_t facet_capacity,
     int32_t* facets, int32_t* cells, double* endpoints, int32_t* kinds,
     int32_t* item_status, int64_t* facet_count) {
-  return phx::mc::guarded([&] {
+  return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     return phx::mc::construct_duals(point_count, points, tet_count, tets, domain,
                                     facet_capacity, facets, cells, endpoints, kinds,
                                     item_status, facet_count);
@@ -446,7 +449,9 @@ extern "C" PHX_MC_API int32_t phx_mc_restricted_dual_3d(
 extern "C" PHX_MC_API int32_t phx_mc_restricted_centers_3d(
     int64_t point_count, const double* points, int64_t tet_count,
     const int32_t* tets, double* center_bounds, int32_t* item_status) {
-  return phx::mc::guarded([&] {
+  return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     return phx::mc::construct_centers(point_count, points, tet_count, tets,
                                       center_bounds, item_status);
   });
@@ -457,7 +462,9 @@ extern "C" PHX_MC_API int32_t phx_mc_restricted_rays_3d(
     const int32_t* tets, const double* center_bounds, int64_t ray_count,
     const int32_t* facets, const int32_t* cells, const double* domain,
     double* endpoint_bounds, int32_t* kinds, int32_t* item_status) {
-  return phx::mc::guarded([&] {
+  return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     return phx::mc::construct_rays(point_count, points, tet_count, tets, center_bounds,
                                     ray_count, facets, cells, domain, endpoint_bounds,
                                     kinds, item_status);

@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -346,6 +347,18 @@ struct TetInsertionCavity {
   int blocked_face = -1;           // cell separates the point
 };
 
+// Tables of the replacement refusal probe (TetMesh::probe_replacement_edit),
+// valid for one generation: whether that state passes every check that
+// validate_and_commit applies to cells, facets and segments a replacement edit
+// retains, and the derived source-side regions and facet indexes.
+struct TetReplacementProbeCache {
+  std::uint64_t generation = std::numeric_limits<std::uint64_t>::max();
+  bool certified = false;
+  std::map<std::pair<std::int32_t, int>, std::int32_t> source_regions;
+  std::unordered_map<std::uint64_t, std::size_t> facet_row_by_id;
+  std::map<std::array<std::int32_t, 3>, std::size_t> facet_row_by_face;
+};
+
 class TetMesh {
  public:
   explicit TetMesh(BoundaryPolicy policy = BoundaryPolicy::kFixed);
@@ -432,6 +445,16 @@ class TetMesh {
   TetEditStatus snapshot(TetMeshSnapshot& output) const;
   TetEditStatus apply_edit_batch(const TetEditBatch& batch,
                                  std::vector<TetEditResult>& results);
+  // Exact refusal probe of a single-operation flip, ring reconnection or collapse batch
+  // against this unbound, nonperiodic state: true with `status` when
+  // apply_edit_batch would refuse it with that status (mutating nothing but
+  // the implicit-source refusal counters apply_edit_batch would advance);
+  // false when the batch may apply, or the probe does not decide it.
+  bool probe_cavity_edit(const TetEdit& operation, TetReplacementProbeCache& cache,
+                         TetEditStatus& status) const;
+  // The same probe for a single-operation relocation batch (no state tables:
+  // a relocation is validated on its moved vertices and their stars).
+  bool probe_relocation_edit(const TetEdit& operation, TetEditStatus& status) const;
 
   // Retained circumradius size targets by vertex ID (see vertex_sizes_).
   const std::unordered_map<std::uint64_t, double>& vertex_sizes() const noexcept {
@@ -565,9 +588,13 @@ class TetMesh {
   // collapse; validation and commit touch only the cavity and its boundary.
   TetEditStatus replace_local_cavity(const TetEdit& operation);
   // Called by refinement and improvement: cones a star-shaped cavity to one
-  // new interior vertex; created cell IDs are returned in cone order.
+  // new interior vertex; created cell IDs are returned in cone order. The
+  // cone buries exactly the cavity vertices `removed_vertices` (sorted
+  // slots, each an unprotected interior vertex without a source witness),
+  // which are removed; every other cavity vertex stays on its boundary.
   TetEditStatus insert_local_cone(const TetEditVertex& vertex,
                                   std::span<const std::int32_t> cavity,
+                                  std::span<const std::int32_t> removed_vertices,
                                   std::vector<std::uint64_t>& created_cells);
   // Called by refinement through LocalIncidence: inserts the source-witnessed
   // vertex `vertex` into a constrained facet, or into the constrained segment
@@ -681,6 +708,8 @@ class TetMesh {
   bool periodic_seam_facet(const TetSnapshotFacet& facet,
                            const PeriodicMemberIndex& members) const;
   bool audit_state() const;
+  // Fills `cache` for this generation (see TetReplacementProbeCache).
+  bool certify_replacement_probe(TetReplacementProbeCache& cache) const;
 
   BoundaryPolicy policy_;
   std::array<double, 9> metric_{1, 0, 0, 0, 1, 0, 0, 0, 1};

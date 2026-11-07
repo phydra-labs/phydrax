@@ -10,6 +10,7 @@
 
 #include "check.hpp"
 #include "floating_point_mode.hpp"
+#include "fp_hazards.hpp"
 #include "phydrax_meshcore.h"
 
 namespace {
@@ -183,6 +184,35 @@ void caller_rounding_modes() {
   PHX_CHECK(phx::mc::floating_point_mode() == initial_mode);
 }
 
+// Subnormal coefficients keep the round-to-nearest enclosure under flushing
+// and directed caller modes, and a negative subnormal barycentric endpoint is
+// rejected before any evaluation in every mode.
+void subnormal_inputs_under_hazards() {
+  const Matrix2 q{{0x1p-1060, -0x1p-1070, -0x1p-1070, 0x1p-1062}};
+  const Matrix2 l{{0.75, 0.25, 0.25, 0.75}};
+  double expected_lower = 99.0, expected_upper = -99.0;
+  PHX_CHECK(bounds(q.data(), q.data(), l.data(), l.data(), &expected_lower, &expected_upper) ==
+            PHX_MC_OK);
+  // Exact transformed coefficients lie in [0x1p-1063, 0x1p-1061 + 0x1p-1063].
+  PHX_CHECK(expected_lower <= 0x1p-1062 && expected_upper >= 0x1p-1061);
+  const Matrix2 identity{{1.0, 0.0, 0.0, 1.0}};
+  const Matrix2 negative_lower{{1.0, -0x1p-1074, 0.0, 1.0}};
+  double lower = -123.0, upper = 456.0;
+  PHX_CHECK(bounds(identity.data(), identity.data(), negative_lower.data(), identity.data(),
+                   &lower, &upper) == PHX_MC_INVALID_INPUT);
+  PHX_CHECK(lower == -123.0 && upper == 456.0);
+  phx::mc::test::under_floating_point_hazards([&](const phx::mc::test::FloatingPointHazard&) {
+    double hazard_lower = 0.0, hazard_upper = 0.0;
+    PHX_CHECK(bounds(q.data(), q.data(), l.data(), l.data(), &hazard_lower, &hazard_upper) ==
+              PHX_MC_OK);
+    PHX_CHECK(same(hazard_lower, expected_lower) && same(hazard_upper, expected_upper));
+    double rejected_lower = -123.0, rejected_upper = 456.0;
+    PHX_CHECK(bounds(identity.data(), identity.data(), negative_lower.data(), identity.data(),
+                     &rejected_lower, &rejected_upper) == PHX_MC_INVALID_INPUT);
+    PHX_CHECK(rejected_lower == -123.0 && rejected_upper == 456.0);
+  });
+}
+
 }  // namespace
 
 int main() {
@@ -190,5 +220,6 @@ int main() {
   unbounded_coefficients_and_determinism();
   invalid_inputs_leave_outputs_unchanged();
   caller_rounding_modes();
+  subnormal_inputs_under_hazards();
   return phx::mc::test::finish("test_quadratic_bounds");
 }

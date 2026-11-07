@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "check.hpp"
+#include "fp_hazards.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 #include "spatial_sort.hpp"
@@ -247,6 +248,137 @@ void test_c_abi_batches() {
   PHX_CHECK(low == -120 && high == 120);
 }
 
+// Exactly degenerate configurations whose coordinate differences are inexact,
+// so the adaptive predicates reach their exact stages: (a, b, -a, -b) is
+// coplanar with the origin, quarter-turn images of a point are cocircular, and
+// cyclic coordinate permutations and negations of a point are cospherical.
+struct DegenerateBatches {
+  static constexpr std::int64_t kCount = 256;
+  std::vector<double> plane[4];
+  std::vector<double> circle[4];
+  std::vector<double> sphere[5];
+  std::vector<std::int64_t> plane_ids;
+  std::vector<std::int64_t> circle_ids;
+  std::vector<std::int64_t> sphere_ids;
+};
+
+DegenerateBatches degenerate_batches() {
+  DegenerateBatches batches;
+  std::uint64_t state = 0xD1B54A32D192ED03ULL;
+  for (std::int64_t item = 0; item < DegenerateBatches::kCount; ++item) {
+    double a[3];
+    double b[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      a[axis] = 2.0 * uniform(state) - 1.0;
+      b[axis] = 2.0 * uniform(state) - 1.0;
+    }
+    const double plane[4][3] = {{a[0], a[1], a[2]},
+                                {b[0], b[1], b[2]},
+                                {-a[0], -a[1], -a[2]},
+                                {-b[0], -b[1], -b[2]}};
+    const double circle[4][2] = {{a[0], a[1]}, {-a[1], a[0]}, {-a[0], -a[1]}, {a[1], -a[0]}};
+    const double sphere[5][3] = {{b[0], b[1], b[2]},
+                                 {b[1], b[2], b[0]},
+                                 {b[2], b[0], b[1]},
+                                 {-b[0], -b[1], -b[2]},
+                                 {-b[1], -b[2], -b[0]}};
+    for (int row = 0; row < 4; ++row) {
+      batches.plane[row].insert(batches.plane[row].end(), plane[row], plane[row] + 3);
+      batches.circle[row].insert(batches.circle[row].end(), circle[row], circle[row] + 2);
+      batches.plane_ids.push_back(row);
+      batches.circle_ids.push_back(row);
+    }
+    for (int row = 0; row < 5; ++row) {
+      batches.sphere[row].insert(batches.sphere[row].end(), sphere[row], sphere[row] + 3);
+      batches.sphere_ids.push_back(row);
+    }
+  }
+  return batches;
+}
+
+struct DegenerateSigns {
+  std::int32_t status[6] = {-1, -1, -1, -1, -1, -1};
+  std::vector<std::int8_t> signs[6];
+};
+
+DegenerateSigns evaluate_degenerate(const DegenerateBatches& b) {
+  constexpr std::int64_t n = DegenerateBatches::kCount;
+  DegenerateSigns result;
+  for (auto& signs : result.signs) signs.assign(n, 9);
+  result.status[0] = phx_mc_orient3d(n, b.plane[0].data(), b.plane[1].data(), b.plane[2].data(),
+                                     b.plane[3].data(), result.signs[0].data());
+  result.status[1] = phx_mc_incircle(n, b.circle[0].data(), b.circle[1].data(),
+                                     b.circle[2].data(), b.circle[3].data(),
+                                     result.signs[1].data());
+  result.status[2] = phx_mc_insphere(n, b.sphere[0].data(), b.sphere[1].data(),
+                                     b.sphere[2].data(), b.sphere[3].data(), b.sphere[4].data(),
+                                     result.signs[2].data());
+  result.status[3] = phx_mc_orient3d_sos(n, b.plane[0].data(), b.plane[1].data(),
+                                         b.plane[2].data(), b.plane[3].data(),
+                                         b.plane_ids.data(), result.signs[3].data());
+  result.status[4] = phx_mc_incircle_sos(n, b.circle[0].data(), b.circle[1].data(),
+                                         b.circle[2].data(), b.circle[3].data(),
+                                         b.circle_ids.data(), result.signs[4].data());
+  result.status[5] = phx_mc_insphere_sos(n, b.sphere[0].data(), b.sphere[1].data(),
+                                         b.sphere[2].data(), b.sphere[3].data(),
+                                         b.sphere[4].data(), b.sphere_ids.data(),
+                                         result.signs[5].data());
+  return result;
+}
+
+// Statuses of one out-of-domain subnormal coordinate per predicate entry point.
+struct SubnormalStatus {
+  std::int32_t status[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
+};
+
+SubnormalStatus evaluate_subnormal() {
+  const double s = 0x1p-1060;
+  const double o2[2] = {0.0, 0.0}, x2[2] = {1.0, 0.0}, y2[2] = {0.0, 1.0}, t2[2] = {s, 0.0};
+  const double o3[3] = {0.0, 0.0, 0.0}, x3[3] = {1.0, 0.0, 0.0}, y3[3] = {0.0, 1.0, 0.0},
+               z3[3] = {0.0, 0.0, 1.0}, t3[3] = {0.0, 0.0, s};
+  const std::int64_t ids3[3] = {0, 1, 2};
+  const std::int64_t ids4[4] = {0, 1, 2, 3};
+  const std::int64_t ids5[5] = {0, 1, 2, 3, 4};
+  std::int8_t sign = 9;
+  SubnormalStatus result;
+  result.status[0] = phx_mc_orient2d(1, o2, x2, t2, &sign);
+  result.status[1] = phx_mc_orient3d(1, o3, x3, y3, t3, &sign);
+  result.status[2] = phx_mc_incircle(1, o2, x2, y2, t2, &sign);
+  result.status[3] = phx_mc_insphere(1, o3, x3, y3, z3, t3, &sign);
+  result.status[4] = phx_mc_orient2d_sos(1, o2, x2, t2, ids3, &sign);
+  result.status[5] = phx_mc_orient3d_sos(1, o3, x3, y3, t3, ids4, &sign);
+  result.status[6] = phx_mc_incircle_sos(1, o2, x2, y2, t2, ids4, &sign);
+  result.status[7] = phx_mc_insphere_sos(1, o3, x3, y3, z3, t3, ids5, &sign);
+  return result;
+}
+
+// Certified predicates give their round-to-nearest, gradual-underflow decisions
+// in every caller mode: exact zeros stay zero under directed rounding, and a
+// subnormal coordinate stays outside the exact domain under flush-to-zero.
+void test_floating_point_hazards() {
+  const DegenerateBatches batches = degenerate_batches();
+  const DegenerateSigns reference = evaluate_degenerate(batches);
+  for (int k = 0; k < 6; ++k) PHX_CHECK(reference.status[k] == PHX_MC_OK);
+  for (int k = 0; k < 3; ++k) {
+    for (const std::int8_t sign : reference.signs[k]) PHX_CHECK(sign == 0);
+  }
+  for (int k = 3; k < 6; ++k) {
+    for (const std::int8_t sign : reference.signs[k]) PHX_CHECK(sign == 1 || sign == -1);
+  }
+  const SubnormalStatus subnormal = evaluate_subnormal();
+  for (const std::int32_t status : subnormal.status) PHX_CHECK(status == PHX_MC_RANGE_ERROR);
+
+  phx::mc::test::under_floating_point_hazards([&](const phx::mc::test::FloatingPointHazard&) {
+    const DegenerateSigns hazard = evaluate_degenerate(batches);
+    for (int k = 0; k < 6; ++k) {
+      PHX_CHECK(hazard.status[k] == reference.status[k]);
+      PHX_CHECK(hazard.signs[k] == reference.signs[k]);
+    }
+    const SubnormalStatus flushed = evaluate_subnormal();
+    for (int k = 0; k < 8; ++k) PHX_CHECK(flushed.status[k] == subnormal.status[k]);
+  });
+}
+
 }  // namespace
 
 int main() {
@@ -257,5 +389,6 @@ int main() {
   test_sos_orientation();
   test_sos_lifted_consistency();
   test_c_abi_batches();
+  test_floating_point_hazards();
   return phx::mc::test::finish("test_predicates");
 }

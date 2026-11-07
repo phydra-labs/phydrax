@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "capi_guard.hpp"
+#include "floating_point_mode.hpp"
 #include "geometry3.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
@@ -1105,6 +1106,8 @@ int32_t phx_mc_surface_reconnect(
     const phx_mc_surface_reconnect_request* request) {
   if (request == nullptr) return PHX_MC_INVALID_ARGUMENT;
   return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     using phx::mc::SurfaceTriangulation;
     const auto& r = *request;
     if (r.vertex_count >= INT32_MAX || r.triangle_count >= INT32_MAX ||

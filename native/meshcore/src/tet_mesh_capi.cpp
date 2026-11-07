@@ -3,6 +3,7 @@
 //
 // Owned C boundary for persistent source-aware tetrahedral meshes.
 #include "capi_guard.hpp"
+#include "floating_point_mode.hpp"
 #include "phydrax_meshcore.h"
 #include "refine3d.hpp"
 #include "improve3d.hpp"
@@ -22,6 +23,8 @@
 struct phx_mc_tet_mesh {
   explicit phx_mc_tet_mesh(phx::mc::BoundaryPolicy policy) : state(policy) {}
   phx::mc::TetMesh state;
+  // Every state change advances the generation, which keys the probe tables.
+  phx::mc::TetReplacementProbeCache probe_cache;
 };
 
 namespace {
@@ -852,6 +855,8 @@ static int32_t create_tet_mesh(
   if (request != nullptr && request->result != nullptr) *request->result = nullptr;
   if (request == nullptr) return PHX_MC_INVALID_ARGUMENT;
   return guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (!valid_create_request(*request)) return PHX_MC_INVALID_ARGUMENT;
     const auto policy = static_cast<phx::mc::BoundaryPolicy>(request->boundary_policy);
     auto handle = std::make_unique<phx_mc_tet_mesh>(policy);
@@ -1398,6 +1403,8 @@ int32_t phx_mc_tet_mesh_apply_edit(phx_mc_tet_mesh* mesh,
   if (edit_status != nullptr) *edit_status = PHX_MC_TET_EDIT_REJECTED_TOPOLOGY;
   if (mesh == nullptr || request == nullptr || edit_status == nullptr) return PHX_MC_INVALID_ARGUMENT;
   return guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (!valid_edit_request(*request)) return PHX_MC_INVALID_ARGUMENT;
     TetEdit operation;
     switch (request->kind) {
@@ -1613,6 +1620,171 @@ int32_t phx_mc_tet_mesh_apply_edit(phx_mc_tet_mesh* mesh,
   });
 }
 
+int32_t phx_mc_tet_mesh_probe_edit(phx_mc_tet_mesh* mesh,
+                                   const phx_mc_tet_mesh_edit_request* request,
+                                   int32_t* decided, int32_t* edit_status) {
+  if (decided != nullptr) *decided = 0;
+  if (edit_status != nullptr) *edit_status = PHX_MC_TET_EDIT_REJECTED_TOPOLOGY;
+  if (mesh == nullptr || request == nullptr || decided == nullptr || edit_status == nullptr) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  return guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    // Anything but a flip, ring reconnection, collapse or relocation of the
+    // current, unbound generation stays undecided for apply_edit.
+    if (!valid_edit_request(*request) || request->periodic != nullptr) return PHX_MC_OK;
+    TetEdit operation;
+    switch (request->kind) {
+      case PHX_MC_TET_EDIT_COLLAPSE: operation.kind = TetEditKind::kCollapse; break;
+      case PHX_MC_TET_EDIT_FLIP23: operation.kind = TetEditKind::kFlip23; break;
+      case PHX_MC_TET_EDIT_FLIP32: operation.kind = TetEditKind::kFlip32; break;
+      case PHX_MC_TET_EDIT_RECONNECT: operation.kind = TetEditKind::kRingReconnect; break;
+      case PHX_MC_TET_EDIT_RELOCATE: operation.kind = TetEditKind::kRelocate; break;
+      default: return PHX_MC_OK;
+    }
+    const phx::mc::TetMesh& state = mesh->state;
+    const auto identity = [](const char* bytes, int64_t length) {
+      return length > 0 ? std::string(bytes, static_cast<std::size_t>(length)) : std::string();
+    };
+    const bool bound = request->identity_bound != 0;
+    if (request->expected_generation != state.generation() || bound != state.identity_bound() ||
+        state.periodic_identity().bound ||
+        (bound ? identity(request->source_id, request->source_id_length) : std::string()) !=
+            state.source_id() ||
+        (bound ? identity(request->source_revision, request->source_revision_length)
+               : std::string()) != state.source_revision() ||
+        (bound ? identity(request->source_map_id, request->source_map_id_length)
+               : std::string()) != state.source_map_id() ||
+        (bound ? identity(request->frame_id, request->frame_id_length) : std::string()) !=
+            state.frame_id()) {
+      return PHX_MC_OK;
+    }
+    // The request conversion of phx_mc_tet_mesh_apply_edit; a request it
+    // rejects stays undecided and is rejected there.
+    operation.collapse_pairs.reserve(static_cast<std::size_t>(request->collapse_pair_count));
+    for (int64_t row = 0; row < request->collapse_pair_count; ++row) {
+      if (request->collapse_removed_ids[row] != request->removed_vertex_ids[row]) {
+        return PHX_MC_OK;
+      }
+      operation.collapse_pairs.push_back(
+          {request->collapse_removed_ids[row], request->collapse_survivor_ids[row]});
+    }
+    assign_bank(operation.removed_vertex_ids, request->removed_vertex_ids,
+                request->removed_vertex_count);
+    operation.split_edges.reserve(static_cast<std::size_t>(request->split_edge_count));
+    for (int64_t row = 0; row < request->split_edge_count; ++row) {
+      operation.split_edges.push_back(
+          {request->split_edges[2 * row], request->split_edges[2 * row + 1]});
+    }
+    assign_bank(operation.removed_cell_ids, request->removed_cell_ids,
+                request->removed_cell_count);
+    operation.changed_vertices.reserve(static_cast<std::size_t>(request->changed_vertex_count));
+    const bool has_witness = request->changed_witness_strata != nullptr;
+    for (int64_t row = 0; row < request->changed_vertex_count; ++row) {
+      TetEditVertex vertex;
+      vertex.id = request->changed_vertex_ids[row];
+      std::copy_n(request->changed_vertex_points + 3 * row, 3, vertex.carrier.begin());
+      if (has_witness) {
+        vertex.witness.stratum = static_cast<SourceStratum>(request->changed_witness_strata[row]);
+        vertex.witness.entity = request->changed_witness_entities[row];
+        vertex.witness.parameters[0] = request->changed_witness_parameters[2 * row];
+        vertex.witness.parameters[1] = request->changed_witness_parameters[2 * row + 1];
+        vertex.witness.deviation = request->changed_witness_deviations == nullptr
+                                       ? 0.0 : request->changed_witness_deviations[row];
+        if (vertex.witness.stratum != SourceStratum::kNone &&
+            vertex.witness.stratum != SourceStratum::kSegment &&
+            vertex.witness.stratum != SourceStratum::kFacet &&
+            vertex.witness.stratum != SourceStratum::kPlane) return PHX_MC_OK;
+      }
+      vertex.protection_radius = request->changed_protection_radii == nullptr
+                                     ? 0.0 : request->changed_protection_radii[row];
+      vertex.protected_vertex = request->changed_protected_vertices != nullptr &&
+                                request->changed_protected_vertices[row] != 0;
+      vertex.edge_witness_supplied = request->changed_edge_witness_present != nullptr;
+      if (request->changed_edge_witness_present != nullptr &&
+          request->changed_edge_witness_present[row] != 0) {
+        vertex.has_edge_parameter = true;
+        std::copy_n(request->changed_edge_witness_endpoints + 2 * row, 2,
+                    vertex.edge_endpoints.begin());
+        vertex.edge_parameter = request->changed_edge_parameters[row];
+      }
+      if (request->changed_vertex_ancestry_offsets != nullptr) {
+        const int64_t begin = request->changed_vertex_ancestry_offsets[row];
+        const int64_t end = request->changed_vertex_ancestry_offsets[row + 1];
+        vertex.ancestry.reserve(static_cast<std::size_t>(end - begin));
+        for (int64_t entry = begin; entry < end; ++entry) {
+          phx::mc::TetVertexAncestry ancestry;
+          ancestry.source_vertex_id = request->changed_vertex_ancestor_ids[entry];
+          std::copy_n(request->changed_vertex_ancestor_winding + 3 * entry, 3,
+                      ancestry.source_winding.begin());
+          ancestry.weight = request->changed_vertex_ancestry_weights[entry];
+          vertex.ancestry.push_back(ancestry);
+        }
+      }
+      operation.changed_vertices.push_back(vertex);
+    }
+    operation.replacement_cells.reserve(static_cast<std::size_t>(request->replacement_cell_count));
+    for (int64_t row = 0; row < request->replacement_cell_count; ++row) {
+      TetEditCell cell;
+      cell.id = request->replacement_cell_ids[row];
+      std::copy_n(request->replacement_cell_vertices + 4 * row, 4, cell.vertices.begin());
+      if (request->replacement_cell_facet_sources != nullptr) {
+        std::copy_n(request->replacement_cell_facet_sources + 4 * row, 4,
+                    cell.facet_sources.begin());
+      }
+      cell.region = request->replacement_regions == nullptr ? phx::mc::kNoRegion
+                                                            : request->replacement_regions[row];
+      if (request->replacement_cell_ancestry_offsets != nullptr) {
+        const int64_t begin = request->replacement_cell_ancestry_offsets[row];
+        const int64_t end = request->replacement_cell_ancestry_offsets[row + 1];
+        if (end > begin) {
+          cell.ancestor_cell_ids.assign(request->replacement_cell_ancestor_ids + begin,
+                                        request->replacement_cell_ancestor_ids + end);
+        }
+      }
+      operation.replacement_cells.push_back(cell);
+    }
+    assign_bank(operation.removed_facet_ids, request->removed_facet_ids,
+                request->removed_facet_count);
+    operation.replacement_facets.reserve(static_cast<std::size_t>(request->replacement_facet_count));
+    for (int64_t row = 0; row < request->replacement_facet_count; ++row) {
+      TetEditFacet facet;
+      facet.id = request->replacement_facet_ids[row];
+      std::copy_n(request->replacement_facet_vertices + 3 * row, 3, facet.vertices.begin());
+      facet.source = request->replacement_facet_sources[row];
+      if (request->replacement_facet_orientations != nullptr) {
+        facet.orientation = request->replacement_facet_orientations[row];
+      }
+      facet.protected_facet = request->replacement_protected_facets != nullptr &&
+                              request->replacement_protected_facets[row] != 0;
+      operation.replacement_facets.push_back(facet);
+    }
+    assign_bank(operation.removed_segment_ids, request->removed_segment_ids,
+                request->removed_segment_count);
+    operation.replacement_segments.reserve(
+        static_cast<std::size_t>(request->replacement_segment_count));
+    for (int64_t row = 0; row < request->replacement_segment_count; ++row) {
+      TetEditSegment segment;
+      segment.id = request->replacement_segment_ids[row];
+      std::copy_n(request->replacement_segment_vertices + 2 * row, 2, segment.vertices.begin());
+      segment.source = request->replacement_segment_sources[row];
+      segment.protected_segment = request->replacement_protected_segments != nullptr &&
+                                  request->replacement_protected_segments[row] != 0;
+      operation.replacement_segments.push_back(segment);
+    }
+    TetEditStatus status = TetEditStatus::kRejectedTopology;
+    const bool refused = operation.kind == TetEditKind::kRelocate
+                             ? state.probe_relocation_edit(operation, status)
+                             : state.probe_cavity_edit(operation, mesh->probe_cache, status);
+    if (refused) {
+      *decided = 1;
+      *edit_status = static_cast<int32_t>(status);
+    }
+    return PHX_MC_OK;
+  });
+}
+
 int32_t phx_mc_tet_mesh_refine(phx_mc_tet_mesh* mesh, uint64_t expected_generation,
                                int32_t identity_bound, const char* source_id,
                                int64_t source_id_length, const char* source_revision,
@@ -1642,6 +1814,8 @@ int32_t phx_mc_tet_mesh_refine(phx_mc_tet_mesh* mesh, uint64_t expected_generati
     return PHX_MC_OK;
   }
   return guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     const std::int32_t status = phx::mc::refine_mesh(
         mesh->state, radius_edge_bound,
         input_span(sizes, size_count), *inserted_count, *unmet_count);
@@ -1696,6 +1870,8 @@ int32_t phx_mc_tet_mesh_improve_quality(phx_mc_tet_mesh* mesh, uint64_t expected
     return PHX_MC_OK;
   }
   return guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     const phx::mc::TetQualityRequest request{radius_edge_bound, minimum_dihedral_degrees,
                                              minimum_relative_determinant};
     bool applied = false;
@@ -1729,6 +1905,8 @@ int32_t phx_mc_tet_mesh_evaluate_quality(
   *count = 0;
   if (expected_generation != mesh->state.generation()) return PHX_MC_STALE_GENERATION;
   return guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     std::vector<phx::mc::TetUnmetRecord> records;
     const int32_t status = phx::mc::evaluate_mesh_quality(
         mesh->state, {radius_edge_bound, minimum_dihedral_degrees, minimum_relative_determinant},
@@ -1770,6 +1948,8 @@ int32_t phx_mc_tet_mesh_evaluate_candidate_quality(
   *count = 0;
   if (expected_generation != mesh->state.generation()) return PHX_MC_STALE_GENERATION;
   return guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     std::vector<phx::mc::TetUnmetRecord> records;
     const int32_t status = phx::mc::evaluate_mesh_quality(
         mesh->state, {radius_edge_bound, minimum_dihedral_degrees, minimum_relative_determinant},
@@ -1884,6 +2064,8 @@ int32_t phx_mc_tet_mesh_bind_implicit(
     phx_mc_tet_mesh* mesh, const phx_mc_tet_implicit_source* source) {
   if (mesh == nullptr) return PHX_MC_INVALID_ARGUMENT;
   return guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     std::shared_ptr<phx::mc::TetImplicitSource> owned;
     const int32_t status = prepare_implicit_owner(source, owned);
     if (status != PHX_MC_OK) return status;

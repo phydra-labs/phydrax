@@ -111,10 +111,12 @@ class LocalIncidence {
   // current star of the removed vertex as the removed cells.
   TetEditStatus replace_cavity(TetMesh& mesh, const TetEdit& operation,
                                const Star* collapsed_star);
-  // Cones a star-shaped cavity to one new interior vertex through the
-  // cavity-local TetMesh route and updates this index.
+  // Cones a star-shaped cavity to one new interior vertex, removing the
+  // buried vertices `removed_vertices` (TetMesh::insert_local_cone), through
+  // the cavity-local TetMesh route and updates this index.
   TetEditStatus insert_cone(TetMesh& mesh, const TetEditVertex& vertex,
                             std::span<const std::int32_t> cavity,
+                            std::span<const std::int32_t> removed_vertices,
                             std::vector<std::uint64_t>& created_cells);
   // Inserts a source-witnessed vertex into a constrained facet or segment
   // through TetMesh::insert_local_boundary_point (whose cavity and bank-row

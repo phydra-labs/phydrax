@@ -40,6 +40,7 @@
 #include "capi_guard.hpp"
 #include "expansion.hpp"
 #include "filtered.hpp"
+#include "floating_point_mode.hpp"
 #include "mesh.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
@@ -1205,7 +1206,9 @@ int32_t phx_mc_constrained_delaunay_2d(int64_t point_count, const double* points
                                        int64_t hole_count, const double* holes,
                                        int32_t keep_convex_hull, double min_angle_degrees,
                                        double max_area, phx_mc_mesh** mesh) {
-  return phx::mc::guarded([&] {
+  return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     return phx::mc::constrained_delaunay(point_count, points, segment_count, segments, hole_count,
                                          holes, keep_convex_hull, min_angle_degrees, max_area, mesh);
   });

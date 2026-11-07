@@ -23,13 +23,25 @@ namespace phx::mc {
 static_assert(std::endian::native == std::endian::little,
               "wide integer words are little-endian byte images");
 
-// a + b + carry as one limb; `carry` (0 or 1) receives the outgoing carry.
+// a + b + carry as one limb; `carry` (0 or 1) receives the outgoing carry. The
+// compiler's exact carry chain is used where one exists; all routes give identical bits.
 inline std::uint64_t add_with_carry(std::uint64_t a, std::uint64_t b,
                                     std::uint64_t& carry) noexcept {
+#if defined(__SIZEOF_INT128__)
+  __extension__ using Wide = unsigned __int128;
+  const Wide total = static_cast<Wide>(a) + b + carry;
+  carry = static_cast<std::uint64_t>(total >> 64);
+  return static_cast<std::uint64_t>(total);
+#elif defined(_MSC_VER) && defined(_M_X64)
+  unsigned long long sum = 0;
+  carry = _addcarry_u64(static_cast<unsigned char>(carry), a, b, &sum);
+  return sum;
+#else
   const std::uint64_t partial = a + b;
   const std::uint64_t sum = partial + carry;
   carry = static_cast<std::uint64_t>(partial < a) + static_cast<std::uint64_t>(sum < partial);
   return sum;
+#endif
 }
 
 // Exact 128-bit product a * b: returns the low limb and stores the high limb.
@@ -55,6 +67,27 @@ inline std::uint64_t multiply_wide(std::uint64_t a, std::uint64_t b,
   const std::uint64_t middle = (low_low >> 32) + (high_low & kLow32) + low_high;
   high = high_high + (high_low >> 32) + (middle >> 32);
   return (middle << 32) | (low_low & kLow32);
+#endif
+}
+
+// Exact x * y + addend + carry_in, at most (2^64 - 1)^2 + 2 (2^64 - 1) = 2^128 - 1:
+// returns the low limb and stores the high limb.
+inline std::uint64_t multiply_accumulate(std::uint64_t x, std::uint64_t y,
+                                         std::uint64_t addend, std::uint64_t carry_in,
+                                         std::uint64_t& high) noexcept {
+#if defined(__SIZEOF_INT128__)
+  __extension__ using Product = unsigned __int128;
+  const Product total = static_cast<Product>(x) * y + addend + carry_in;
+  high = static_cast<std::uint64_t>(total >> 64);
+  return static_cast<std::uint64_t>(total);
+#else
+  std::uint64_t product_high = 0;
+  const std::uint64_t low = multiply_wide(x, y, product_high);
+  std::uint64_t first = 0;
+  std::uint64_t second = 0;
+  const std::uint64_t sum = add_with_carry(add_with_carry(low, addend, first), carry_in, second);
+  high = product_high + first + second;
+  return sum;
 #endif
 }
 
@@ -170,13 +203,8 @@ bool checked_multiply(const WideInt<N>& a, const WideInt<N>& b, WideInt<N>& out)
   for (std::size_t i = 0; i < x_used; ++i) {
     std::uint64_t carry = 0;
     for (std::size_t j = 0; j < y_used; ++j) {
-      // x_i y_j + product[i + j] + carry <= 2^128 - 1, so the high limb never wraps.
-      std::uint64_t high = 0;
-      const std::uint64_t low = multiply_wide(x.limb[i], y.limb[j], high);
-      std::uint64_t first = 0;
-      std::uint64_t second = 0;
-      product[i + j] = add_with_carry(add_with_carry(low, product[i + j], first), carry, second);
-      carry = high + first + second;
+      product[i + j] =
+          multiply_accumulate(x.limb[i], y.limb[j], product[i + j], carry, carry);
     }
     std::size_t k = i + y_used;
     while (carry != 0) {
