@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from fractions import Fraction
 from pathlib import Path
 from typing import Any, cast, Literal, NamedTuple
@@ -9,6 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from phydrax._array_archive import ArrayArchiveLimits
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization._periodic_exact import (
@@ -43,11 +45,20 @@ _GROWTH_RATE = 1.2
 # operator (41,403 P2 DOFs) needs 122,996,112 under nested dissection; its
 # refined target has 5.8x the DOFs, so 2**33 leaves ~10x beyond linear growth.
 _SYMBOLIC_WORK_BUDGET = 1 << 33
-# Run envelope 16 GiB (LIN archived-layer-core row). The history transition is
-# the measured resident peak, 11.67 GB at its solve; a Cholesky solve holds its
-# factor and preparation workspace, each within the budget, so twice the
-# budget must fit the remaining 5.51 GB: 2.5 GiB for every layer/core profile.
-_LAYER_CORE_SOLVE_BUDGET = 5 << 29
+# Run envelope 24 GiB per layer/core profile (25.77 GB). One declared execution
+# budget serves every harmonic-history solve and every de Rham Hodge admission
+# factorization. Measured needs: the unit-box target's degree-1 Hodge factor
+# is 2,934,501,142 bytes, so the budget must exceed 2.73 GiB. Measured peaks:
+# 11.67 GB at the archived-layer-core history-transition solve, and a
+# 20.90 GB process peak for unit-box at its target complex, which holds that
+# Hodge factor. Hence 4 GiB: it admits the Hodge factor, and the history
+# transition plus a factor and workspace at the budget (11.67 + 2 x 4.29 =
+# 20.3 GB) fits the envelope.
+_LAYER_CORE_SOLVE_BUDGET = 4 << 30
+# MAC-20261107T1759Z: declared byte budget of every layer/core cycle archive,
+# writer and cold reader alike. The cold reader materializes the archive's
+# logical aggregate, so it is bounded by the same 4 GiB execution budget.
+_LAYER_CORE_ARCHIVE_BUDGET = 4 << 30
 
 
 class _ProfileFailure(RuntimeError):
@@ -65,6 +76,8 @@ class _LayerCoreLifecycle(NamedTuple):
     ``solve_memory_bytes`` is the profile's declared execution-memory budget of
     every harmonic-history solve and factorization, writer and cold reader
     alike (MAC-20261107T1649Z); it enters plan_id and is never host-derived.
+    ``archive_bytes`` is its declared cycle-archive byte budget
+    (MAC-20261107T1759Z), recorded with each cycle and checked by the reader.
     """
 
     densities: tuple[float, ...]
@@ -74,6 +87,7 @@ class _LayerCoreLifecycle(NamedTuple):
     semantics: str
     density_semantics: str
     solve_memory_bytes: int
+    archive_bytes: int
 
 
 # Material densities/sites are the original campaign controls; nonperiodic
@@ -87,6 +101,7 @@ _LAYER_CORE_LIFECYCLES = {
         "original-periodic-ridge",
         "two-material-cell-average-density",
         _LAYER_CORE_SOLVE_BUDGET,
+        _LAYER_CORE_ARCHIVE_BUDGET,
     ),
     "concave-box-core-lifecycle": _LayerCoreLifecycle(
         (2.0,),
@@ -96,6 +111,7 @@ _LAYER_CORE_LIFECYCLES = {
         "original-concave-closed-cap",
         "fluid-cell-average-density",
         _LAYER_CORE_SOLVE_BUDGET,
+        _LAYER_CORE_ARCHIVE_BUDGET,
     ),
     "concave-box-core-lifecycle:larger": _LayerCoreLifecycle(
         (2.0,),
@@ -105,6 +121,7 @@ _LAYER_CORE_LIFECYCLES = {
         "original-concave-closed-cap",
         "fluid-cell-average-density",
         _LAYER_CORE_SOLVE_BUDGET,
+        _LAYER_CORE_ARCHIVE_BUDGET,
     ),
     "unit-box": _LayerCoreLifecycle(
         (2.0,),
@@ -114,8 +131,32 @@ _LAYER_CORE_LIFECYCLES = {
         "original-unit-box",
         "fluid-cell-average-density",
         _LAYER_CORE_SOLVE_BUDGET,
+        _LAYER_CORE_ARCHIVE_BUDGET,
     ),
 }
+
+
+def _layer_core_archive_limits(budget: int, /) -> ArrayArchiveLimits:
+    """Cycle-archive admission limits from one declared byte budget.
+
+    Container, aggregate and member bytes are the budget. Element and axis
+    counts use the same number, since each element takes at least one byte.
+    Manifest bytes are budget / 64, central-directory bytes budget / 1024.
+    Member-count and nesting limits stay the codec's model limits.
+    """
+    from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS
+
+    return replace(
+        MODEL_ARCHIVE_LIMITS,
+        max_container_bytes=budget,
+        max_aggregate_bytes=budget,
+        max_member_bytes=budget,
+        max_manifest_bytes=budget // 64,
+        max_central_directory_bytes=budget // 1024,
+        max_axis_length=budget,
+        max_array_elements=budget,
+        max_total_array_elements=budget,
+    )
 
 
 def _migration_profiles() -> tuple[str, ...]:
@@ -1186,7 +1227,6 @@ def _write_layer_core_cycle_archive(
         _layer_core_accepted_lifecycle_recipes,
         layer_core_authoring_recipe,
         model_archive_content_id,
-        MODEL_ARCHIVE_LIMITS,
         write_model_artifact,
     )
 
@@ -1362,8 +1402,9 @@ def _write_layer_core_cycle_archive(
         ),
         boundary_id=f"{controls.semantics}-refined-accepted-state",
     )
-    write_model_artifact(path, composition, limits=MODEL_ARCHIVE_LIMITS)
-    return model_archive_content_id(path, limits=MODEL_ARCHIVE_LIMITS)
+    limits = _layer_core_archive_limits(controls.archive_bytes)
+    write_model_artifact(path, composition, limits=limits)
+    return model_archive_content_id(path, limits=limits)
 
 
 def _write_mapped_refinement_archive(
@@ -5107,7 +5148,7 @@ def _run_unit_box() -> dict[str, object]:
 
 
 def _resume_layer_core_cycle(
-    path: Path, content_id: str, profile: str, /
+    path: Path, content_id: str, profile: str, archive_bytes: str, /
 ) -> dict[str, object]:
     """Authenticate and continue one accepted layer/core cycle in a fresh process."""
     from phydrax._array_archive import ArrayArchiveCorruptionError
@@ -5115,7 +5156,6 @@ def _resume_layer_core_cycle(
     from phydrax.lifecycle import Composition
     from phydrax.meshing._model_codec import (
         _restore_layer_core_accepted_lifecycle,
-        MODEL_ARCHIVE_LIMITS,
         read_model_artifact,
         restore_finite_element_field_banks,
         restore_layer_core_authoring,
@@ -5124,6 +5164,13 @@ def _resume_layer_core_cycle(
     )
 
     controls = _LAYER_CORE_LIFECYCLES[profile]
+    # The cold reader admits the archive under its profile's own declaration,
+    # which must be the archive budget the writer recorded.
+    if controls.archive_bytes != int(archive_bytes):
+        raise ValueError(
+            "Cold reader's declared archive budget differs from the writer's."
+        )
+    limits = _layer_core_archive_limits(controls.archive_bytes)
     if not content_id:
         raise ValueError("Cold layer/core continuation requires its trusted content ID.")
     changed_id = ("0" if content_id[0] != "0" else "1") + content_id[1:]
@@ -5132,7 +5179,7 @@ def _resume_layer_core_cycle(
             path,
             expected_type=Composition,
             restore=restore_model_archive_value,
-            limits=MODEL_ARCHIVE_LIMITS,
+            limits=limits,
             expected_content_id=changed_id,
         )
     except ArrayArchiveCorruptionError:
@@ -5144,7 +5191,7 @@ def _resume_layer_core_cycle(
         path,
         expected_type=Composition,
         restore=restore_model_archive_value,
-        limits=MODEL_ARCHIVE_LIMITS,
+        limits=limits,
         expected_content_id=content_id,
     )
     specification = phx.meshing.VolumeMeshingSpec.from_stored_fields(
@@ -5443,10 +5490,11 @@ def _run_layer_core_lifecycle(
                 "from tools.meshing_qualification.scenarios.native_hybrid_profiles "
                 "import _resume_layer_core_cycle; "
                 "print(json.dumps(_resume_layer_core_cycle("
-                "Path(sys.argv[1]), sys.argv[2], sys.argv[3])))",
+                "Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4])))",
                 str(path),
                 content_id,
                 profile,
+                str(controls.archive_bytes),
             ),
             cwd=str(Path(__file__).resolve().parents[3]),
             capture_output=True,
@@ -5465,6 +5513,7 @@ def _run_layer_core_lifecycle(
                 "refinement_id": refined.result_id,
                 "archive_path": str(path),
                 "archive_content_id": content_id,
+                "archive_budget_bytes": controls.archive_bytes,
                 "forward_history": forward_history,
                 "forward_scalar_transfer": forward_scalars,
                 "forward_compatible_transfer": forward_forms,

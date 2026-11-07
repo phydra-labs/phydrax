@@ -5,7 +5,7 @@ import math
 import os
 import resource
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path
 from time import perf_counter
@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from phydrax._array_archive import ArrayArchiveLimits
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry.reconstruction import (
@@ -1330,7 +1331,6 @@ def _capture_accepted_volume(
     from phydrax.lifecycle import Composition, CompositionEntry
     from phydrax.meshing._model_codec import (
         model_archive_content_id,
-        MODEL_ARCHIVE_LIMITS,
         write_model_artifact,
     )
 
@@ -1356,16 +1356,17 @@ def _capture_accepted_volume(
         dependencies=(source_entry.binding("revision"),),
     )
     path = Path(directory) / f"{label}-pre-refinement.phx"
+    limits = _archive_limits(profile)
     write_model_artifact(
         path,
         Composition((source_entry, result_entry), boundary_id=f"{label}-pre-refinement"),
-        limits=MODEL_ARCHIVE_LIMITS,
+        limits=limits,
     )
     path.with_suffix(".json").write_text(
         json.dumps(
             {
                 "path": str(path),
-                "content_id": model_archive_content_id(path, limits=MODEL_ARCHIVE_LIMITS),
+                "content_id": model_archive_content_id(path, limits=limits),
                 "profile": profile,
                 "label": label,
                 "source_type": type(archived_source).__name__,
@@ -1408,7 +1409,6 @@ def _write_accepted_archive(
     from phydrax.meshing._model_codec import (
         finite_element_field_banks_recipe,
         model_archive_content_id,
-        MODEL_ARCHIVE_LIMITS,
         write_model_artifact,
     )
 
@@ -1462,15 +1462,16 @@ def _write_accepted_archive(
         dependencies=(result_entry.binding("revision"),),
     )
     path.parent.mkdir(parents=True, exist_ok=True)
+    limits = _archive_limits(profile)
     write_model_artifact(
         path,
         Composition(
             (source_entry, specification_entry, result_entry, fields_entry),
             boundary_id=f"{label}-accepted-state",
         ),
-        limits=MODEL_ARCHIVE_LIMITS,
+        limits=limits,
     )
-    return model_archive_content_id(path, limits=MODEL_ARCHIVE_LIMITS), {
+    return model_archive_content_id(path, limits=limits), {
         "source_type": type(source).__name__,
         "source_revision_id": source_revision_id,
         "source_binding_id": plc.binding_id,
@@ -1480,6 +1481,7 @@ def _write_accepted_archive(
         "profile": profile,
         "label": label,
         "solve_memory_budget_bytes": _SOLVE_MEMORY_BUDGET_BYTES[profile],
+        "archive_budget_bytes": _ARCHIVE_BUDGET_BYTES[profile],
     }
 
 
@@ -1489,17 +1491,23 @@ def _resume_accepted_archive(
     """Independent fresh-process restore and continued physics of all fields."""
     from phydrax.lifecycle import Composition
     from phydrax.meshing._model_codec import (
-        MODEL_ARCHIVE_LIMITS,
         read_model_artifact,
         restore_finite_element_field_banks,
         restore_model_archive_value,
     )
 
+    # The cold reader admits the archive under its profile's own declaration,
+    # which must be the archive budget the writer declared.
+    profile = str(expected["profile"])
+    if _ARCHIVE_BUDGET_BYTES[profile] != expected["archive_budget_bytes"]:
+        raise RuntimeError(
+            "Cold reader's declared archive budget differs from the writer's."
+        )
     archive = read_model_artifact(
         path,
         expected_type=Composition,
         restore=restore_model_archive_value,
-        limits=MODEL_ARCHIVE_LIMITS,
+        limits=_archive_limits(profile),
         expected_content_id=content_id,
     )
     _stage(str(expected["profile"]), "cold-archive-restore")
@@ -1911,6 +1919,53 @@ _SOLVE_MEMORY_BUDGET_BYTES = {
     },
     _ENVELOPE_PROFILE: 3 << 29,
 }
+
+# MAC-20261107T1759Z: every profile declares the byte budget of its model
+# archives (pre-refinement capture, accepted state), shared by the writer and
+# the cold reader and recorded in the receipt. Measured on 6.1 for the largest
+# row, the lobed-sphere-2 accepted state: a 256,132,493-byte container,
+# 238,085,115 stored array bytes, a 17,660,054-byte manifest and 3,521
+# members. The admission check charges the recipe's logical expansion, and
+# that expansion exceeded the 1 GiB default. 4 GiB keeps 16x headroom over
+# the stored bytes. It also stays within the 16 GiB run envelope, whose
+# measured process peak is 10.78 GB. Re-measure on wave-7, where array
+# deduplication changes the logical/stored ratio.
+_ARCHIVE_BUDGET_BYTES = {
+    **{
+        _profile_id(kind, scale): 4 << 30
+        for kind in ("lobed-sphere", "torus", "rotated-ellipsoid")
+        for scale in (1, 2)
+    },
+    _ENVELOPE_PROFILE: 4 << 30,
+}
+# Member count: 3,521 measured, against the model codec's 4,097.
+_ARCHIVE_MEMBERS = 8193
+
+
+def _archive_limits(profile: str, /) -> ArrayArchiveLimits:
+    """Model-archive admission limits of one profile from its declared budget.
+
+    Container, aggregate and member bytes are the budget. Element and axis
+    counts use the same number, since each element takes at least one byte.
+    Manifest bytes are budget / 64: 64 MiB, 3.8x the measured 17.7 MB.
+    Central-directory bytes are budget / 1024: 4 MiB, 19x the measured
+    0.22 MB. Nesting stays at the codec's model limit.
+    """
+    from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS
+
+    budget = _ARCHIVE_BUDGET_BYTES[profile]
+    return replace(
+        MODEL_ARCHIVE_LIMITS,
+        max_container_bytes=budget,
+        max_aggregate_bytes=budget,
+        max_member_bytes=budget,
+        max_manifest_bytes=budget // 64,
+        max_members=_ARCHIVE_MEMBERS,
+        max_central_directory_bytes=budget // 1024,
+        max_axis_length=budget,
+        max_array_elements=budget,
+        max_total_array_elements=budget,
+    )
 
 
 def _envelope_case(directory: str, /) -> dict[str, object]:

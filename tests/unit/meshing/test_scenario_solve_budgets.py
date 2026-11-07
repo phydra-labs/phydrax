@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._array_archive import ArrayArchiveLimits
 from phydrax.discretization import CellGeometrySpec, CellMesh
 from tools.meshing_qualification.scenarios import (
     native_hybrid_profiles as hybrid,
@@ -143,3 +144,26 @@ def test_history_policy_solves_offset_columns_on_one_cholesky_factor() -> None:
     np.testing.assert_allclose(
         np.asarray(solved.value[:, 1]), 2.0 * np.asarray(solved.value[:, 0]), rtol=1e-12
     )
+
+
+def _archive_budgets(limits: ArrayArchiveLimits, /) -> set[int]:
+    return {
+        limits.max_container_bytes,
+        limits.max_aggregate_bytes,
+        limits.max_member_bytes,
+        limits.max_axis_length,
+        limits.max_array_elements,
+        limits.max_total_array_elements,
+    }
+
+
+def test_every_profile_declares_its_archive_budget() -> None:
+    assert set(reconstruction._ARCHIVE_BUDGET_BYTES) == set(
+        reconstruction._SOLVE_MEMORY_BUDGET_BYTES
+    )
+    for profile, budget in reconstruction._ARCHIVE_BUDGET_BYTES.items():
+        assert _archive_budgets(reconstruction._archive_limits(profile)) == {budget}
+    for controls in hybrid._LAYER_CORE_LIFECYCLES.values():
+        assert _archive_budgets(
+            hybrid._layer_core_archive_limits(controls.archive_bytes)
+        ) == {controls.archive_bytes}
