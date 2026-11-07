@@ -59,7 +59,7 @@ from phydrax.geometry._volume_material_deformation import (
     MaterialReferencePolicy,
 )
 from phydrax.geometry._volume_material_map import prepare_eulerian_volume_overlap
-from phydrax.geometry.brep._patches import AbstractSurfacePatch, LineCurve
+from phydrax.geometry.brep._patches import BSplineSurfacePatch, LineCurve
 from phydrax.meshing._adaptation import (
     _renew_transition_certification_inputs,
     _unknown_lineage,
@@ -880,21 +880,41 @@ def test_fixed_topology_motion_reproves_source_coverage_or_rolls_back() -> None:
     source.certification.revalidate(source.mesh, source.geometry)
 
 
-class _TinyTrianglePatch(AbstractSurfacePatch):
-    @property
-    def parameter_domain(self) -> tuple[tuple[float, float], tuple[float, float]]:
-        return ((0.0, 0.0), (1.0, 1.0))
+def _tiny_chart_patch() -> BSplineSurfacePatch:
+    """Exact bilinear chart ``(0.1 u, 0.1 v, 0.002 u v)`` over the unit square.
 
-    def evaluate(self, parameters: jnp.ndarray, /) -> jnp.ndarray:
-        uv = jnp.asarray(parameters, dtype=jnp.float64)
-        return jnp.stack(
+    Boundary chart coverage admits only registered exact source carriers, so the
+    chart is a degree-(1, 1) B-spline whose binary control points are the source.
+    """
+    exact_control_points = tuple(
+        tuple(
             (
-                0.1 * uv[..., 0],
-                0.1 * uv[..., 1],
-                0.002 * uv[..., 0] * uv[..., 1],
-            ),
-            axis=-1,
+                Fraction.from_float(0.1 * u),
+                Fraction.from_float(0.1 * v),
+                Fraction.from_float(0.002 * u * v),
+            )
+            for v in (0.0, 1.0)
         )
+        for u in (0.0, 1.0)
+    )
+    knots = (Fraction(0), Fraction(0), Fraction(1), Fraction(1))
+    return BSplineSurfacePatch(
+        np.asarray(
+            [
+                [[float(value) for value in point] for point in row]
+                for row in exact_control_points
+            ],
+            dtype=np.float64,
+        ),
+        np.ones((2, 2), dtype=np.float64),
+        np.asarray(knots, dtype=np.float64),
+        np.asarray(knots, dtype=np.float64),
+        1,
+        1,
+        exact_control_points=exact_control_points,
+        exact_u_knots=knots,
+        exact_v_knots=knots,
+    )
 
 
 def _tiny_chart_domain() -> MeshingDomain:
@@ -916,7 +936,7 @@ def _tiny_chart_domain() -> MeshingDomain:
         for curve, (first, last) in enumerate(endpoint_pairs)
     )
     return MeshingDomain(
-        (MeshingSurfacePatch(_TinyTrianglePatch(), (uses,)),),
+        (MeshingSurfacePatch(_tiny_chart_patch(), (uses,)),),
         curves,
         3,
         source_id="transition-chart-triangle",

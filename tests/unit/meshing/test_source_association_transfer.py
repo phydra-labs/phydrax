@@ -601,8 +601,29 @@ def test_curve_edge_replay_retains_original_root_parent() -> None:
         source, lineage, source.mesh, stencil, parent
     )
     assert result.parent_association_id == "original-curve-bank"
-    np.testing.assert_array_equal(result.parent_ids, ids + 1000)
-    assert result.source_parameter_intervals == parent.source_parameter_intervals
+    # Replay rows follow the source curves, so each retained edge is compared
+    # by its target id rather than by row position.
+    replayed = np.asarray(result.target_global_ids, dtype=np.int64).tolist()
+    assert sorted(replayed) == ids.tolist()
+    expected = {
+        int(target): (int(target) + 1000, int(curve), interval)
+        for target, curve, interval in zip(
+            ids.tolist(),
+            np.asarray(parent.source_indices).tolist(),
+            parent.source_parameter_intervals,
+            strict=True,
+        )
+    }
+    assert {
+        target: (int(root), int(curve), interval)
+        for target, root, curve, interval in zip(
+            replayed,
+            np.asarray(result.parent_ids, dtype=np.int64).tolist(),
+            np.asarray(result.source_indices).tolist(),
+            result.source_parameter_intervals,
+            strict=True,
+        )
+    } == expected
 
 
 def test_mapped_reference_root_association_and_composed_namespaces() -> None:
