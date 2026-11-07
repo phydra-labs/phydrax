@@ -3275,13 +3275,25 @@ def _certify_polyhedral_cells(
         axis=-1,
     )
     determinants = _square_determinant(columns)
-    scale = np.prod(np.linalg.norm(columns, axis=-2), axis=-1)
+    scale = np.prod(_underflow_free_norm(columns, axis=-2), axis=-1)
+    # Gradual underflow: each of the six 2x2 cofactor products may lose 2^-1075,
+    # amplified by its first-row factor (at most ``largest``), and each of the three
+    # outer products may lose 2^-1075 itself; relative terms miss both. The charge
+    # (6 * largest + 4) * 2^-1074 is twice that loss and covers the rounded margin.
+    largest = np.max(np.abs(columns), axis=(-2, -1))
+    underflow = (6.0 * largest + 4.0) * _SMALLEST_SUBNORMAL
     local = np.searchsorted(cells, star_cell)
     thresholds = np.zeros((cells.size,))
     np.maximum.at(thresholds, local, policy.determinant_floor() * scale)
     total = np.zeros((cells.size,))
     np.add.at(total, local, determinants)
-    return _star_status(determinants, 32.0 * _EPSILON * scale, local, thresholds, total)
+    return _star_status(
+        determinants,
+        32.0 * _EPSILON * scale + underflow,
+        local,
+        thresholds,
+        total,
+    )
 
 
 # Public entry point ----------------------------------------------------------------

@@ -1745,3 +1745,55 @@ def test_polygon_measure_enclosure_covers_subnormal_area() -> None:
 
     assert Fraction(float((determinant - margin)[0])) <= exact
     assert exact <= Fraction(float((determinant + margin)[0]))
+
+
+def test_polyhedral_star_enclosure_covers_subnormal_determinants() -> None:
+    # Cube of side 45 * 2^-362: its centroid and face centroids are exact, every
+    # star tetrahedron has exact determinant side^3 / 4 (about 5.56 * 2^-1074), and
+    # the final cofactor products round inside the subnormal range while the
+    # relative margin underflows to zero.
+    side = 45.0 * 2.0**-362
+    corners = np.asarray(
+        [[x, y, z] for z in (0.0, side) for y in (0.0, side) for x in (0.0, side)],
+        dtype=np.float64,
+    )
+    faces = (
+        (0, 2, 3, 1),
+        (4, 5, 7, 6),
+        (0, 1, 5, 4),
+        (2, 6, 7, 3),
+        (0, 4, 6, 2),
+        (1, 3, 7, 5),
+    )
+    exact_corners = [tuple(Fraction(value) for value in row) for row in corners]
+    center = tuple(
+        sum((row[axis] for row in exact_corners), Fraction(0)) / 8 for axis in range(3)
+    )
+
+    def offset(point: tuple[Fraction, ...]) -> tuple[Fraction, ...]:
+        return tuple(point[axis] - center[axis] for axis in range(3))
+
+    determinants: list[Fraction] = []
+    for face in faces:
+        face_center = offset(
+            tuple(
+                sum((exact_corners[v][axis] for v in face), Fraction(0)) / 4
+                for axis in range(3)
+            )
+        )
+        for first, second in zip(face, face[1:] + face[:1], strict=True):
+            a, b = offset(exact_corners[first]), offset(exact_corners[second])
+            determinants.append(
+                face_center[0] * (a[1] * b[2] - a[2] * b[1])
+                - face_center[1] * (a[0] * b[2] - a[2] * b[0])
+                + face_center[2] * (a[0] * b[1] - a[1] * b[0])
+            )
+
+    certificate = D.certify_cell_geometry_validity(
+        D.CellMesh.from_polyhedra(corners, (faces,))
+    )
+
+    assert set(determinants) == {Fraction(side) ** 3 / 4}
+    assert int(certificate.status[0]) == Status.CERTIFIED_VALID
+    assert Fraction(float(certificate.determinant_lower[0])) <= min(determinants)
+    assert max(determinants) <= Fraction(float(certificate.determinant_upper[0]))

@@ -1097,7 +1097,8 @@ def _periodic_quotient_transfer_action(
     target_abs = abs(target_collapse_matrix)
     lifted_abs = abs(lifted_matrix)
     error_matrix = _matrix_entry_error(evidence)
-    integral_error = target_abs @ error_matrix @ source_abs
+    left_integral_error = target_abs @ error_matrix
+    integral_error = left_integral_error @ source_abs
     magnitude = target_abs @ lifted_abs @ source_abs
     left_stage_magnitude = target_abs @ lifted_abs
     left_terms = _maximum_row_terms(target_abs) * _maximum_row_terms(lifted_abs)
@@ -1120,6 +1121,25 @@ def _periodic_quotient_transfer_action(
         )
         * integral_error
     )
+    # Gradual underflow adds an absolute error of at most 2^-1075 to every rounded
+    # product and none to additions; relative gamma terms miss it. Losses of the
+    # first stage reach the result through the source lift, whose entries are
+    # bounded by their integer ceilings. Each counted product is charged 2^-1074
+    # (twice its loss, which also covers the gamma terms evaluated on underflowed
+    # magnitudes); two more units cover the four rounded scalar products that
+    # assemble roundoff and integral_roundoff.
+    source_ceiling = source_abs.copy()
+    source_ceiling.data = np.ceil(source_ceiling.data)
+    product_counts = (
+        _product_counts(target_collapse_matrix, lifted_matrix) @ source_ceiling
+        + _product_counts(left_stage_magnitude, source_abs)
+        + _product_counts(target_abs, error_matrix) @ source_ceiling
+        + _product_counts(left_integral_error, source_abs)
+    ).tocsr()
+    del source_ceiling, left_integral_error
+    product_counts.data += 2.0
+    roundoff = (roundoff + product_counts.multiply(_SMALLEST_SUBNORMAL)).tocsr()
+    del product_counts
     error_matrix = (integral_error + roundoff + integral_roundoff).tocsr()
     error_matrix.eliminate_zeros()
     if error_matrix.nnz:

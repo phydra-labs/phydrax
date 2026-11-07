@@ -10,14 +10,16 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 from scipy.linalg import eigvalsh
-from scipy.sparse import bmat, coo_matrix, csc_matrix
+from scipy.sparse import bmat, coo_matrix, csc_matrix, csr_matrix
 from scipy.sparse.linalg import spsolve
 
 import phydrax as phx
 from phydrax.discretization import CellBlock, CellMesh
 from phydrax.discretization.fem._de_rham import (
+    _periodic_quotient_transfer_action,
     _require_complex_map_commutes,
     FiniteElementDeRhamComplex,
+    FiniteElementTransferResult,
     SparseTransferEntryEvidence,
 )
 from phydrax.discretization.fem._form_elements import FormElementFamily
@@ -1055,32 +1057,33 @@ def test_order_two_scalar_spectrum_lifts_realization_dofs(
     )
 
 
+def _coordinate_operator(
+    matrix: npt.NDArray[np.float64],
+    source: phx.linalg.ArraySpace,
+    target: phx.linalg.ArraySpace,
+    identifier: str,
+) -> SparseCoordinateOperator:
+    rows, columns = np.nonzero(matrix)
+    relation = EdgeRelation(
+        jnp.asarray(columns, dtype=jnp.int32),
+        jnp.asarray(rows, dtype=jnp.int32),
+        source_size=source.size,
+        target_size=target.size,
+    )
+    return SparseCoordinateOperator(
+        relation,
+        jnp.asarray(matrix[rows, columns], dtype=jnp.float64),
+        source=source,
+        target=target,
+        operator_id=identifier,
+    )
+
+
 def test_commuting_roundoff_bound_covers_gradual_underflow() -> None:
     # Normal entries whose products are subnormal: each 1.5 * 2^-1074 product of
     # the target side rounds to 2^-1073, so the observed defect is 2^-1073 while
     # the exact defect of the float matrices is zero.
     unit = 2.0**-537
-
-    def operator(
-        matrix: npt.NDArray[np.float64],
-        source: phx.linalg.ArraySpace,
-        target: phx.linalg.ArraySpace,
-        identifier: str,
-    ) -> SparseCoordinateOperator:
-        rows, columns = np.nonzero(matrix)
-        relation = EdgeRelation(
-            jnp.asarray(columns, dtype=jnp.int32),
-            jnp.asarray(rows, dtype=jnp.int32),
-            source_size=source.size,
-            target_size=target.size,
-        )
-        return SparseCoordinateOperator(
-            relation,
-            jnp.asarray(matrix[rows, columns], dtype=jnp.float64),
-            source=source,
-            target=target,
-            operator_id=identifier,
-        )
 
     spaces = {
         name: phx.linalg.ArraySpace((size,), dtype=jnp.float64, space_id=name)
@@ -1092,20 +1095,20 @@ def test_commuting_roundoff_bound_covers_gradual_underflow() -> None:
     second_map = np.full((1, 1), 6.0 * unit, dtype=np.float64)
     source = phx.linalg.HilbertComplex(
         (spaces["s0"], spaces["s1"]),
-        (operator(source_differential, spaces["s0"], spaces["s1"], "ds"),),
+        (_coordinate_operator(source_differential, spaces["s0"], spaces["s1"], "ds"),),
         complex_id="underflow-source",
     )
     target = phx.linalg.HilbertComplex(
         (spaces["t0"], spaces["t1"]),
-        (operator(target_differential, spaces["t0"], spaces["t1"], "dt"),),
+        (_coordinate_operator(target_differential, spaces["t0"], spaces["t1"], "dt"),),
         complex_id="underflow-target",
     )
     complex_map = phx.linalg.ComplexMap(
         source,
         target,
         (
-            operator(first_map, spaces["s0"], spaces["t0"], "m0"),
-            operator(second_map, spaces["s1"], spaces["t1"], "m1"),
+            _coordinate_operator(first_map, spaces["s0"], spaces["t0"], "m0"),
+            _coordinate_operator(second_map, spaces["s1"], spaces["t1"], "m1"),
         ),
         map_id="underflow-map",
     )
@@ -1135,3 +1138,96 @@ def test_commuting_roundoff_bound_covers_gradual_underflow() -> None:
     roundoff = Fraction(float(np.asarray(evidence.roundoff_error_bounds)[0]))
     assert observed > 0
     assert abs(observed - exact) <= roundoff
+
+
+def test_periodic_quotient_entry_bounds_cover_gradual_underflow() -> None:
+    # Normal entries whose products are subnormal: each 1.5 * 2^-1074 collapse
+    # product rounds to 2^-1073, and the lift amplifies that loss by 8; the 1/3
+    # lift entry rounds again inside the subnormal range. Every gamma term of
+    # these subnormal magnitudes underflows to zero.
+    unit = 2.0**-537
+    spaces = {
+        name: phx.linalg.ArraySpace((size,), dtype=jnp.float64, space_id=name)
+        for name, size in (
+            ("lifted-source", 1),
+            ("lifted-target", 4),
+            ("quotient-source", 2),
+            ("quotient-target", 1),
+        )
+    }
+    collapse = np.full((1, 4), 1.5 * unit, dtype=np.float64)
+    lifted = np.full((4, 1), unit, dtype=np.float64)
+    lift = np.asarray(((8.0, 1.0 / 3.0),), dtype=np.float64)
+    complex_map = phx.linalg.ComplexMap(
+        phx.linalg.HilbertComplex(
+            (spaces["lifted-source"],), (), complex_id="lifted-source"
+        ),
+        phx.linalg.HilbertComplex(
+            (spaces["lifted-target"],), (), complex_id="lifted-target"
+        ),
+        (
+            _coordinate_operator(
+                lifted, spaces["lifted-source"], spaces["lifted-target"], "lifted"
+            ),
+        ),
+        map_id="underflow-lifted-map",
+    )
+    lifted_result = FiniteElementTransferResult(
+        complex_map,
+        (
+            SparseTransferEntryEvidence(
+                0,
+                1,
+                4,
+                np.arange(4, dtype=np.int64),
+                np.zeros((4,), dtype=np.int64),
+                np.zeros((4,), dtype=np.float64),
+                np.ones((4,), dtype=np.int64),
+                np.zeros((4,), dtype=np.int64),
+            ),
+        ),
+        (),
+        None,
+        4,
+        0,
+    )
+    source_lift = _coordinate_operator(
+        lift, spaces["quotient-source"], spaces["lifted-source"], "lift"
+    )
+    target_collapse = _coordinate_operator(
+        collapse, spaces["lifted-target"], spaces["quotient-target"], "collapse"
+    )
+    quotient_action = csr_matrix(collapse) @ csr_matrix(lifted) @ csr_matrix(lift)
+    exact = [
+        sum(
+            (
+                Fraction(collapse[0, index])
+                * Fraction(lifted[index, 0])
+                * Fraction(lift[0, column])
+                for index in range(4)
+            ),
+            Fraction(0),
+        )
+        for column in range(2)
+    ]
+
+    operator, evidence = _periodic_quotient_transfer_action(
+        lifted_result, 0, source_lift, target_collapse, quotient_action, "quotient"
+    )
+
+    assert np.asarray(evidence.target_indices).tolist() == [0, 0]
+    assert np.asarray(evidence.source_indices).tolist() == [0, 1]
+    relation = operator.relation
+    assert isinstance(relation, EdgeRelation)
+    values = {
+        int(column): Fraction(float(value))
+        for column, value in zip(
+            np.asarray(relation.source_indices),
+            np.asarray(operator.coefficients),
+            strict=True,
+        )
+    }
+    bounds = np.asarray(evidence.absolute_error_bounds).tolist()
+    for column in range(2):
+        assert values[column] != exact[column]
+        assert abs(values[column] - exact[column]) <= Fraction(bounds[column])
