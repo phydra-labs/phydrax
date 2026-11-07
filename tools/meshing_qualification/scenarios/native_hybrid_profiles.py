@@ -2314,17 +2314,35 @@ def _layer_form_transition(
             ):
                 raise ValueError(f"{name} field changed its canonical moment layout.")
             del actual, expected, elements
-        periodic = source_complex.transfer_periodic_quotient(
-            target_complex, geometry_transition=transition
-        )
-        action = periodic.lifted_transfer_result.complex_map.map(degree)
-        commuting = np.asarray(periodic.commuting_defects, dtype=np.float64)
-        bounds = np.asarray(periodic.commuting_error_bounds, dtype=np.float64)
-        periodic_transfer_id = periodic.transfer_id
-        lifted_evidence_id = periodic.lifted_transfer_result.evidence_id
-        # All complex, Hodge, periodic-descent and commuting checks have
-        # completed. Release their owners before the selected action's consumers.
-        del periodic, source_complex, target_complex, complex_
+        # The route follows the meshes' declared periodicity: a periodic pair
+        # descends to its quotients, a non-periodic pair uses the nested
+        # h/Piola transfer itself.
+        source_periodic = adaptation.source.mesh.periodic_topology is not None
+        if source_periodic != (adaptation.target.mesh.periodic_topology is not None):
+            raise ValueError("Form transfer endpoints must agree on periodicity.")
+        if source_periodic:
+            periodic = source_complex.transfer_periodic_quotient(
+                target_complex, geometry_transition=transition
+            )
+            route = "periodic-quotient"
+            transferred = periodic.lifted_transfer_result
+            commuting = np.asarray(periodic.commuting_defects, dtype=np.float64)
+            bounds = np.asarray(periodic.commuting_error_bounds, dtype=np.float64)
+            transfer_id = periodic.transfer_id
+            del periodic
+        else:
+            transferred = source_complex.transfer(
+                target_complex, geometry_transition=transition
+            )
+            route = "nested"
+            commuting = np.asarray(transferred.commuting_defects, dtype=np.float64)
+            bounds = np.asarray(transferred.commuting_error_bounds, dtype=np.float64)
+            transfer_id = transferred.transfer_id
+        action = transferred.complex_map.map(degree)
+        evidence_id = transferred.evidence_id
+        # All complex, Hodge, descent and commuting checks have completed.
+        # Release their owners before the selected action's consumers.
+        del transferred, source_complex, target_complex, complex_
         source_values = np.asarray(banks[name], dtype=np.float64)
         target_values = np.asarray(
             action.mv(jnp.asarray(source_values)), dtype=np.float64
@@ -2359,7 +2377,7 @@ def _layer_form_transition(
             or not np.all(np.isfinite(bounds))
             or np.max(commuting + bounds, initial=0.0) > 3.0e-11
         ):
-            raise ValueError(f"{name} periodic compatible transfer did not commute.")
+            raise ValueError(f"{name} compatible transfer did not commute.")
         physical_defect = None
         partition = transition.coarsening_partition
 
@@ -2424,10 +2442,12 @@ def _layer_form_transition(
         ):
             raise ValueError(f"{name} physical compatible content changed.")
         record = {
-            "field_space": "lifted-canonical-dofs",
-            "periodic_quotient_is_operator_evidence_only": True,
-            "periodic_transfer_id": periodic_transfer_id,
-            "lifted_evidence_id": lifted_evidence_id,
+            "field_space": "lifted-canonical-dofs"
+            if source_periodic
+            else "canonical-dofs",
+            "route": route,
+            "transfer_id": transfer_id,
+            "evidence_id": evidence_id,
             "adjoint_defect": adjoint_defect,
             "physical_defect": physical_defect,
             "compiled_defect": float(np.max(np.abs(compiled_values - target_values))),
