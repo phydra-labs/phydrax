@@ -11,7 +11,8 @@ from phydrax._meshcore import meshcore_available
 from phydrax.geometry._meshing_domain import MeshingDomain
 from phydrax.geometry.brep import brep_box
 from phydrax.geometry.brep._projection import NativeBRepProjection
-from phydrax.meshing._association import GeometryAssociationKind
+from phydrax.geometry.brep._projection_contracts import brep_entity_id
+from phydrax.meshing._association import GeometryAssociation, GeometryAssociationKind
 from phydrax.meshing._association_routes import target_dimension
 from phydrax.meshing._layer_core_association_transfer import (
     NativeLayerCoreAssociationTransfer,
@@ -271,6 +272,57 @@ def _replace_table(
     return eqx.tree_at(lambda value: value.associations, result, tuple(tables))
 
 
+def _forged_occurrence(association: GeometryAssociation) -> GeometryAssociation:
+    """Re-key one classified row to a forged occurrence through the constructor.
+
+    Occurrence paths are static metadata, so the forgery is a coherent new table:
+    the row's B-Rep entity key is re-derived for the forged path, as a forger
+    who also controls the identities would emit it.
+    """
+    dimensions = np.asarray(association.source_dimensions)
+    indices = np.asarray(association.source_indices)
+    row = int(np.flatnonzero(dimensions >= 0)[0])
+    paths = list(association.source_occurrence_paths)
+    paths[row] = (*paths[row], "forged-occurrence")
+    entities = list(association.source_entity_ids)
+    if association.association_kind is GeometryAssociationKind.BREP:
+        entities[row] = brep_entity_id(
+            association.source_id,
+            association.source_revision,
+            int(dimensions[row]),
+            int(indices[row]),
+            occurrence_path=paths[row],
+        )
+    return GeometryAssociation(
+        association.association_kind,
+        association.source_id,
+        association.source_revision,
+        association.target_entity_set_id,
+        association.target_global_ids,
+        tuple(entities),
+        association.residuals,
+        resolved=association.resolved,
+        ambiguous=association.ambiguous,
+        exact=association.exact,
+        source_dimensions=dimensions,
+        source_indices=indices,
+        source_roles=association.source_roles,
+        source_occurrence_paths=tuple(paths),
+        source_region_sides=association.source_region_sides,
+        source_parameter_intervals=association.source_parameter_intervals,
+        target_parameter_intervals=association.target_parameter_intervals,
+        target_reference_pieces=association.target_reference_pieces,
+        source_boundary_witness_id=association.source_boundary_witness_id,
+        source_parameter_points=association.source_parameter_points,
+        parameters=association.parameters,
+        orientations=association.orientations,
+        parent_dimensions=association.parent_dimensions,
+        parent_ids=association.parent_ids,
+        parent_association_id=association.parent_association_id,
+        provenance=association.provenance,
+    )
+
+
 def test_brep_wall_refinement_and_complete_coarsening(brep_layer_core: LayerCase) -> None:
     _, _, original, transfer = brep_layer_core
     transfer.validate_source(original)
@@ -352,18 +404,17 @@ def test_brep_wall_rejects_forged_source_rows(
 ) -> None:
     _, _, result, transfer = brep_layer_core
     index, table = _wall_table(result)
-    if field == "parameters":
-        values = np.asarray(table.parameters).copy()
-        row = int(np.flatnonzero(np.isfinite(values[:, 0]))[0])
-        values[row, 0] += 0.125
-    elif field == "source_indices":
-        values = np.asarray(table.source_indices).copy()
-        values[0] += 1
+    if field == "source_occurrence_paths":
+        forged = _forged_occurrence(table)
     else:
-        values = list(table.source_occurrence_paths)
-        values[0] = (*values[0], "forged-occurrence")
-        values = tuple(values)
-    forged = eqx.tree_at(lambda value: getattr(value, field), table, values)
+        if field == "parameters":
+            values = np.asarray(table.parameters).copy()
+            row = int(np.flatnonzero(np.isfinite(values[:, 0]))[0])
+            values[row, 0] += 0.125
+        else:
+            values = np.asarray(table.source_indices).copy()
+            values[0] += 1
+        forged = eqx.tree_at(lambda value: getattr(value, field), table, values)
     with pytest.raises(ValueError):
         transfer.validate_source(_replace_table(result, index, forged))
 
@@ -390,18 +441,17 @@ def test_projected_original_wall_rejects_forged_rows(
         pytest.skip("requires the original projected wall fixture")
     association = source.layers.wall_association
     assert association is not None and policy is not None
-    if field == "parameters":
-        values = np.asarray(association.parameters).copy()
-        row = int(np.flatnonzero(np.isfinite(values[:, 0]))[0])
-        values[row, 0] += 0.125
-    elif field == "source_indices":
-        values = np.asarray(association.source_indices).copy()
-        values[0] += 1
+    if field == "source_occurrence_paths":
+        forged = _forged_occurrence(association)
     else:
-        values = list(association.source_occurrence_paths)
-        values[0] = (*values[0], "forged-occurrence")
-        values = tuple(values)
-    forged = eqx.tree_at(lambda value: getattr(value, field), association, values)
+        if field == "parameters":
+            values = np.asarray(association.parameters).copy()
+            row = int(np.flatnonzero(np.isfinite(values[:, 0]))[0])
+            values[row, 0] += 0.125
+        else:
+            values = np.asarray(association.source_indices).copy()
+            values[0] += 1
+        forged = eqx.tree_at(lambda value: getattr(value, field), association, values)
     with pytest.raises(ValueError):
         rebuilt = _projected_source(
             source,
