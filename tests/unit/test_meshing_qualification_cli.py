@@ -881,7 +881,7 @@ def test_native_surface_profiles_preserve_complete_source_and_fidelity(
     if geometry in ("sphere", "capped_cylinder"):
         assert association["collapsed_pole_edge_count"] == 2
         poles = association["collapsed_pole_edges"]
-        assert isinstance(poles, list)
+        assert isinstance(poles, tuple)
         assert all(
             isinstance(pole, dict) and pole["proved_coedge_uses"] > 0 for pole in poles
         )
