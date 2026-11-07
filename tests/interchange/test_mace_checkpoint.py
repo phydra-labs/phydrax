@@ -68,6 +68,7 @@ from tests._support.mace_source import (
     les_provider,
     native_case,
     ONE_LAYER_INVARIANT_READOUT,
+    provider_energy_gradient_reference,
     provider_runtime,
     reduced_cg_provider,
     RELEASE_FIXTURES,
@@ -77,6 +78,7 @@ from tests._support.mace_source import (
     TWO_LAYER_RESIDUAL_AGNESI_ZBL,
     within,
 )
+from tests.fixtures.mace_torch_0_3_16.generate import five_point_energy_gradient
 from tools.mace_checkpoint_campaign import CAMPAIGN_ROWS
 
 
@@ -1806,6 +1808,13 @@ def _assert_family_conversion(
         == declaration["mace_torch_release"]
     )
     for case, reference in zip(cases, oracle.cases, strict=True):
+        gates = FLOAT64_GATES
+        if declaration.get("radial_type") == "chebyshev":
+            # mace-torch's Chebyshev basis has no autograd: its forces and
+            # stress are not the energy gradient, which native returns.
+            reference, gates = provider_energy_gradient_reference(
+                source, case, reference, provider=provider, head="Default"
+            )
         potential = conversion.potential
         if latent:
             potential = dataclasses.replace(
@@ -1814,13 +1823,13 @@ def _assert_family_conversion(
                 latent_resources=latent_resources(definition, case.cell),
             ).reconstruct({})
         native = native_case(potential, case)
-        assert within(native["energy"], reference.energy, FLOAT64_GATES["energy"]), (
+        assert within(native["energy"], reference.energy, gates["energy"]), (
             native["energy"],
             reference.energy,
         )
-        assert within(native["forces"], reference.forces, FLOAT64_GATES["forces"])
+        assert within(native["forces"], reference.forces, gates["forces"])
         if case.periodic:
-            assert within(native["stress"], reference.stress, FLOAT64_GATES["stress"])
+            assert within(native["stress"], reference.stress, gates["stress"])
     return conversion
 
 
@@ -1871,6 +1880,43 @@ def test_family_source_matches_independent_provider_oracle(
     # unchanged inventory reproduces the conversion exactly.
     rebuilt = conversion.reconstruct({})
     assert rebuilt.architecture_id == conversion.potential.architecture_id
+
+
+def test_chebyshev_oracle_stencil_is_the_energy_gradient_and_virial() -> None:
+    # The [chebyshev-agnesi] provider row and the committed fixture share this
+    # stencil; on a quartic energy (exact for five points up to rounding) it
+    # returns -dE/dx and the provider virial -dE/d(symmetric strain).
+    rng = np.random.default_rng(5)
+    positions = rng.normal(size=(3, 3))
+    cell = np.diag([2.4, 2.2, 2.6]) + 0.1 * rng.normal(size=(3, 3))
+    linear = rng.normal(size=3)
+    quadratic = rng.normal(size=(3, 3))
+    quadratic = quadratic + quadratic.T
+
+    def energy(x: np.ndarray) -> float:
+        return float(
+            np.sum(x @ linear)
+            + 0.5 * np.einsum("ar,rc,ac->", x, quadratic, x)
+            + 0.1 * np.sum(x**4)
+        )
+
+    calls = []
+
+    def energies(points: list[tuple[np.ndarray, np.ndarray | None]]) -> list[float]:
+        calls.append(len(points))
+        return [energy(moved) for moved, _ in points]
+
+    gradient = positions @ quadratic + linear + 0.4 * positions**3
+    result = five_point_energy_gradient(energies, positions, cell)
+    np.testing.assert_allclose(result["forces"], -gradient, rtol=0.0, atol=1e-9)
+    moment = positions.T @ gradient
+    np.testing.assert_allclose(
+        result["virials"][0], -0.5 * (moment + moment.T), rtol=0.0, atol=1e-9
+    )
+    # One batched provider evaluation per configuration: 4 points per
+    # coordinate and per strain component.
+    assert calls == [4 * (positions.size + 9)]
+    assert "virials" not in five_point_energy_gradient(energies, positions, None)
 
 
 def test_trusted_full_object_family_converts_like_its_state_dict(
