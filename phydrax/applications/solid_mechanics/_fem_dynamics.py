@@ -25,7 +25,7 @@ from ...equations import (
     MaterialSiteId,
     MaterialTransaction,
 )
-from ...equations.fem import FiniteElementMassPolicy
+from ...equations.fem import FiniteElementAuxiliaryEvaluation, FiniteElementMassPolicy
 from ...linalg import ArraySpace
 from ...nonlinear import (
     AbstractNonlinearMethod,
@@ -198,13 +198,14 @@ class FiniteElementDynamicsState(StrictModule, NonTrainableState):
 
 
 class FiniteElementAdmissibilityEvidence(StrictModule):
-    """Finite-state, orientation, constitutive, and user-hook evidence."""
+    """Finite-state, orientation, constitutive, form-veto, and user-hook evidence."""
 
     minimum_jacobian: Array
     jacobian_available: Array
     jacobian_valid: Array
     constitutive_valid: Array
     transaction_consistency_residual: Array
+    form_valid: Array
     custom_valid: Array
     finite: Array
     admissible: Array
@@ -305,6 +306,34 @@ def _system_arguments(
     )
 
 
+def _form_valid(
+    problem: CompiledFiniteElementProblem,
+    displacement: Array,
+    arguments: _FiniteElementStepArguments,
+    /,
+) -> Array:
+    """The form's declared auxiliary veto at the Newmark residual's context."""
+    evaluator = problem.form.auxiliary_evaluator
+    if evaluator is None:
+        return jnp.asarray(True)
+    base = problem._execution_context(_system_arguments(arguments))
+    context = FiniteElementExecutionContext(
+        base.runtime,
+        time=arguments.end_time,
+        lift=base.lift,
+        lift_rate=base.lift_rate,
+        lift_acceleration=base.lift_acceleration,
+        metric_data=base.metric_data,
+        user_args=base.user_args,
+    )
+    auxiliary = evaluator(problem.expand(displacement, context), context)
+    if not isinstance(auxiliary, FiniteElementAuxiliaryEvaluation):
+        raise TypeError(
+            "Form auxiliary evaluator must return FiniteElementAuxiliaryEvaluation."
+        )
+    return auxiliary.valid
+
+
 class _NewmarkResidual(StrictModule, NonTrainableState):
     system: SecondOrderDifferentialSystem
     method: ImplicitNewmarkMethod
@@ -325,6 +354,7 @@ class _NewmarkResidual(StrictModule, NonTrainableState):
 
 
 class _NewmarkValidity(StrictModule, NonTrainableState):
+    problem: CompiledFiniteElementProblem
     method: ImplicitNewmarkMethod
     determinant_evaluator: Callable | None
     admissibility_evaluator: Callable | None
@@ -375,7 +405,8 @@ class _NewmarkValidity(StrictModule, NonTrainableState):
                     dtype=jnp.bool_,
                 )
             )
-        return finite & jacobian_valid & custom_valid
+        form_valid = _form_valid(self.problem, displacement, arguments)
+        return finite & jacobian_valid & form_valid & custom_valid
 
 
 class FiniteElementDynamicsPlan(StrictModule, NonTrainableState):
@@ -551,6 +582,17 @@ def prepare_finite_element_dynamics(
     step_host = np.asarray(sample_step)
     if step_host.shape != () or not np.isfinite(step_host) or step_host <= 0.0:
         raise ValueError("sample_step must be one positive finite scalar.")
+    hooks: dict[str, str | None] = {
+        "determinant": determinant_name,
+        "admissibility": admissibility_name,
+        "material": material_name,
+        "potential": potential_name,
+        "external_work": external_name,
+    }
+    # The form's declared auxiliary veto is part of the step's acceptance, so it
+    # enters the identity; forms without one keep their previous plan identity.
+    if problem.form.auxiliary_id is not None:
+        hooks["form_admissibility"] = problem.form.auxiliary_id
     generated = canonical_fingerprint(
         {
             "kind": "finite-element-transient-dynamics",
@@ -561,13 +603,7 @@ def prepare_finite_element_dynamics(
             "damping": float(damping_host).hex(),
             "nonlinear_method": selected_nonlinear.method_id,
             "precision": precision.policy_id,
-            "hooks": {
-                "determinant": determinant_name,
-                "admissibility": admissibility_name,
-                "material": material_name,
-                "potential": potential_name,
-                "external_work": external_name,
-            },
+            "hooks": hooks,
             "minimum_jacobian": minimum.hex(),
             "transaction_tolerance": transaction_limit.hex(),
             "energy_tolerance": energy_limit.hex(),
@@ -590,6 +626,7 @@ def prepare_finite_element_dynamics(
         state_space=problem.state_space,
         residual_space=problem.state_space,
         validity=_NewmarkValidity(
+            problem,
             selected_method,
             determinant_evaluator,
             admissibility_evaluator,
@@ -780,13 +817,15 @@ def _admissibility(
     constitutive_valid = material_finite & (
         transaction_residual <= plan.transaction_tolerance
     )
-    admissible = finite & jacobian_valid & constitutive_valid & custom_valid
+    form_valid = _form_valid(plan.problem, displacement, arguments)
+    admissible = finite & jacobian_valid & constitutive_valid & form_valid & custom_valid
     return FiniteElementAdmissibilityEvidence(
         minimum,
         jacobian_available,
         jacobian_valid,
         constitutive_valid,
         transaction_residual,
+        form_valid,
         custom_valid,
         finite,
         admissible,
