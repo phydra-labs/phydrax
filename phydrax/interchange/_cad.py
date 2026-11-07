@@ -4950,7 +4950,6 @@ def _pole_identity_carriers(
             return ()
 
 
-@checked
 def cad_export_pole_identity_losses(
     target_patches: Sequence[AbstractSurfacePatch],
     format_name: str,
