@@ -227,6 +227,10 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- On a non-POSIX host a native meshing provider worker is refused as
+  `PROVIDER_UNAVAILABLE`: `NativeWorker` raises `NativeWorkerError` of kind
+  `"unavailable"` instead of a bare `OSError` that escaped the provider's
+  `MeshingFailure` boundary.
 - Certified distance, chord, norm, frame and quality bounds round outward in
   directed binary64 arithmetic instead of padding round-to-nearest estimates:
   source distance sums, curve and surface chord, point and box bounds,
