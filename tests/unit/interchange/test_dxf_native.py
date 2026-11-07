@@ -208,6 +208,48 @@ def test_spline_end_at_its_vertex_joins_exactly() -> None:
     )
 
 
+def test_literal_corner_joins_exact_quarter_arc_under_declared_gap() -> None:
+    # Lines meet the point the float parameter fl(pi/2) denotes, not the exact
+    # axis point (0, 1) that the right-angle convention makes the arc end.
+    with mpmath.workprec(200):
+        parameter = mpmath.mpf(_right_angle(1))
+        corner = (float(2 * mpmath.cos(parameter)), float(mpmath.sin(parameter)))
+        displacement = mpmath.hypot(corner[0], corner[1] - 1)
+    source = _drawing(
+        "0\nELLIPSE\n10\n0.0\n20\n0.0\n30\n0.0\n11\n2.0\n21\n0.0\n31\n0.0\n"
+        f"40\n0.5\n41\n0.0\n42\n{_right_angle(1)!r}\n"
+        f"0\nLINE\n10\n{corner[0]!r}\n20\n{corner[1]!r}\n30\n0.0\n"
+        "11\n0.0\n21\n0.0\n31\n0.0\n"
+        "0\nLINE\n10\n0.0\n20\n0.0\n30\n0.0\n11\n2.0\n21\n0.0\n31\n0.0\n"
+    )
+    with pytest.raises(DxfImportError):
+        decode_dxf_bytes(source, DxfImportPolicy())
+    imported = decode_dxf_bytes(source, DxfImportPolicy(maximum_junction_gap=1e-15))
+    assert [loss.category for loss in imported.report.losses] == ["transformed"]
+    rows = imported.profile.endpoint_gap_bounds
+    assert rows is not None
+    (arc,) = (
+        index
+        for index, segment in enumerate(imported.profile.outer.segments)
+        if isinstance(segment, BSplineCurve)
+    )
+    assert min(rows[0][arc]) == 0.0
+    assert displacement <= max(rows[0][arc]) <= 1e-15
+
+
+def test_spline_end_off_its_vertex_needs_a_declared_gap() -> None:
+    corner = (2.0**-60, 1.0)
+    with pytest.raises(DxfImportError):
+        decode_dxf_bytes(_spline_wedge(corner), DxfImportPolicy())
+    imported = decode_dxf_bytes(
+        _spline_wedge(corner), DxfImportPolicy(maximum_junction_gap=1e-15)
+    )
+    assert [loss.category for loss in imported.report.losses] == ["transformed"]
+    rows = imported.profile.endpoint_gap_bounds
+    assert rows is not None
+    assert 2.0**-60 <= max(max(row) for row in rows[0]) <= 1e-15
+
+
 # Exact axis points of the ellipse centered at 0 with major (2, 0), ratio 0.5.
 _AXIS_POINTS = ((2.0, 0.0), (0.0, 1.0), (-2.0, 0.0), (0.0, -1.0), (2.0, 0.0))
 

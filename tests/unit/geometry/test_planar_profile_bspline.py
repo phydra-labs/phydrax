@@ -35,6 +35,22 @@ def test_curved_bspline_loop_certifies_with_material_on_the_left() -> None:
         np.asarray(profile.outer.segments[1].control_points),
         np.asarray(spline.control_points),
     )
+    assert profile.endpoint_gap_bounds is None
+
+
+def test_bspline_end_off_its_vertex_keeps_a_certified_gap() -> None:
+    # The spline ends 2^-60 above the declared vertex; nothing is moved.
+    offset = 2.0**-60
+    spline = _quadratic([(2.0, 0.0), (1.0, 2.0), (0.0, offset)])
+    profile = _profile(spline)
+
+    rows = profile.endpoint_gap_bounds
+    assert rows is not None
+    assert rows[0][0] == (0.0, 0.0)
+    assert rows[0][1][0] == 0.0 and offset <= rows[0][1][1] <= 2 * offset
+    kept = profile.outer.segments[1]
+    assert isinstance(kept, BSplineCurve)
+    assert tuple(np.asarray(kept.control_points)[-1]) == (0.0, offset)
 
 
 def test_reversed_curved_bspline_loop_is_reoriented() -> None:

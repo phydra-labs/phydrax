@@ -744,7 +744,12 @@ def _profile_bspline_controls(
     tuple[Fraction, ...],
     tuple[Fraction, ...],
 ]:
-    """Exact controls and endpoint chord of one clamped profile B-spline."""
+    """Exact controls and endpoint chord of one clamped profile B-spline.
+
+    The clamped end controls are the spline's own ends. Like conic-use ends,
+    they may sit off the declared vertices ``start``/``end`` by a gap that
+    ``_profile_endpoint_gap_rows`` certifies; no geometry is moved.
+    """
     if curve.ambient_dimension != 2:
         raise ValueError(
             "Planar profile B-splines must have two-dimensional control points."
@@ -758,15 +763,14 @@ def _profile_bspline_controls(
         raise ValueError(
             "Planar profile B-splines require a full clamped parameter domain."
         )
-    exact_start = tuple(_fraction(value) for value in start)
-    exact_end = tuple(_fraction(value) for value in end)
     controls = tuple(
         tuple(_fraction(value) for value in point) for point in control_points
     )
-    if controls[0] != exact_start or controls[-1] != exact_end:
-        raise ValueError(
-            "Profile B-spline boundary controls must match declared vertices exactly."
-        )
+    exact_start, exact_end = controls[0], controls[-1]
+    if tuple(_fraction(value) for value in start) == tuple(
+        _fraction(value) for value in end
+    ):
+        raise ValueError("Profile B-spline endpoints must be distinct.")
     delta = tuple(b - a for a, b in zip(exact_start, exact_end, strict=True))
     if delta[0] == 0 and delta[1] == 0:
         raise ValueError("Profile B-spline endpoints must be distinct.")
@@ -779,8 +783,15 @@ def _profile_bspline_is_straight(
     end: tuple[float, float],
     /,
 ) -> bool:
-    """Whether every control lies exactly on the endpoint chord."""
+    """Whether the spline is exactly the chord between its declared vertices.
+
+    A spline whose ends sit off its vertices is a curved boundary piece with
+    certified end gaps, never a polygon edge.
+    """
     controls, exact_start, delta = _profile_bspline_controls(curve, start, end)
+    vertices = tuple(tuple(_fraction(value) for value in point) for point in (start, end))
+    if (controls[0], controls[-1]) != vertices:
+        return False
     return all(
         (point[0] - exact_start[0]) * delta[1] - (point[1] - exact_start[1]) * delta[0]
         == 0
