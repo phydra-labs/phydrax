@@ -881,3 +881,55 @@ def test_float64_interval_elementary_refuses_unknown_functions() -> None:
             np.zeros(2),
             np.ones(2),
         )
+
+
+@pytest.mark.parametrize("function", ("asin", "acos"))
+def test_float64_interval_elementary_encloses_inverse_sine_and_cosine(
+    function: Literal["asin", "acos"],
+) -> None:
+    noise = np.random.default_rng(29)
+    points = np.concatenate(
+        (
+            noise.uniform(-1.0, 1.0, size=300),
+            noise.uniform(-1.0, 1.0, size=100) * 10.0 ** noise.integers(-20, 0, size=100),
+            np.asarray((-1.0, -0.5, -0.0, 0.0, 0.5, 1.0, np.nextafter(1.0, 0.0))),
+        )
+    )
+    lower, upper = _exact_kernels.float64_interval_elementary(function, points, points)
+    evaluate = getattr(mpmath, function)
+    with mpmath.workprec(256):
+        for x, low, high in zip(points, lower, upper, strict=True):
+            exact = evaluate(mpmath.mpf(float(x)))
+            assert low <= exact <= high
+            assert np.nextafter(np.nextafter(low, np.inf), np.inf) >= high
+
+
+@pytest.mark.parametrize(
+    ("function", "box", "expected"),
+    (
+        ("asin", (-0.0, -0.0), (-0.0, -0.0)),
+        ("acos", (1.0, 1.0), (0.0, 0.0)),
+        ("asin", (2.0, 3.0), (-_INFINITY, _INFINITY)),
+        ("acos", (np.nan, 0.5), (-_INFINITY, _INFINITY)),
+        ("asin", (-_INFINITY, 0.0), (np.nextafter(-np.pi / 2, -np.inf), 0.0)),
+        ("acos", (0.0, 5.0), (0.0, np.nextafter(np.pi / 2, np.inf))),
+    ),
+    ids=(
+        "asin_negative_zero",
+        "acos_one",
+        "asin_empty",
+        "acos_nan",
+        "asin_clipped",
+        "acos_clipped",
+    ),
+)
+def test_float64_interval_elementary_inverse_domain_rules(
+    function: _exact_kernels.ElementaryFunction,
+    box: tuple[float, float],
+    expected: tuple[float, float],
+) -> None:
+    lower, upper = _exact_kernels.float64_interval_elementary(
+        function, np.float64(box[0]), np.float64(box[1])
+    )
+    assert lower.tobytes() == np.float64(expected[0]).tobytes()
+    assert upper.tobytes() == np.float64(expected[1]).tobytes()

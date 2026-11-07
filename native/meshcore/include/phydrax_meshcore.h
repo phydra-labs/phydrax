@@ -857,6 +857,8 @@ PHX_MC_API int32_t phx_mc_interval_sum(
 #define PHX_MC_ELEMENTARY_TAN 4
 #define PHX_MC_ELEMENTARY_ATAN 5
 #define PHX_MC_ELEMENTARY_TANH 6
+#define PHX_MC_ELEMENTARY_ASIN 7
+#define PHX_MC_ELEMENTARY_ACOS 8
 /* Elementwise rigorous enclosure [out_lower, out_upper] of the selected f over
  * each box [lower, upper] of count items (lower <= upper unless an endpoint is
  * NaN; infinite endpoints bound the real set and are never members), computed
@@ -878,6 +880,10 @@ PHX_MC_API int32_t phx_mc_interval_sum(
  *     bounded by [DBL_MAX, +inf].
  *   - atan(+-inf) contributes the outward-rounded +-pi/2 bound; tanh(+-inf)
  *     contributes +-1 exactly.
+ *   - asin (increasing) and acos (decreasing): the box is clipped to [-1, 1];
+ *     a box with no point in [-1, 1] (upper < -1 or lower > 1) gives the whole
+ *     line, as log does for an empty domain. asin(+-1), acos(0) and acos(-1)
+ *     enclose +-pi/2, pi/2 and pi outward.
  *   - sin, cos: an infinite endpoint, an inverted box or a width >= 2 pi
  *     (decided exactly) gives [-1, 1]; otherwise the endpoint enclosures widened
  *     to -1 or 1 wherever an extremum may lie in the box, clipped to [-1, 1].
@@ -888,8 +894,9 @@ PHX_MC_API int32_t phx_mc_interval_sum(
  *     argument falls back to the full range; extremum and pole membership is
  *     decided from the reduced quadrants, undecided meaning contained.
  *   - Exact results are returned exactly: exp(0) = 1, log(1) = 0, cos(0) = 1,
- *     and sin, tan, atan, tanh of a signed zero return that zero; other zero
- *     results are +0, and zeros order as IEEE 754-2019 minimum/maximum.
+ *     acos(1) = 0, and sin, tan, atan, tanh, asin of a signed zero return that
+ *     zero; other zero results are +0, and zeros order as IEEE 754-2019
+ *     minimum/maximum.
  * Point enclosures of finite non-exact results are one or two binary64 steps
  * wide; the error proofs are documented in src/elementary.cpp. */
 PHX_MC_API int32_t phx_mc_interval_elementary(

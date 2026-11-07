@@ -1,7 +1,8 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
-// Rigorous binary64 interval enclosures of exp, log, sin, cos, tan, atan and
-// tanh. No libm transcendental is called: the kernels use binary64 +, -, *, /
-// in round-to-nearest (RN) without contraction, the correctly rounded std::fma,
+// Rigorous binary64 interval enclosures of exp, log, sin, cos, tan, atan, tanh,
+// asin and acos. No libm transcendental is called: the kernels use binary64
+// +, -, *, / and sqrt in round-to-nearest (RN) without contraction, the
+// correctly rounded std::fma,
 // and exact bit manipulation. u = 2^-53 throughout.
 //
 // Proof structure shared by every kernel
@@ -596,6 +597,83 @@ Enclosure tanh_point(double x) noexcept {
   return x < 0.0 ? negate(result) : result;
 }
 
+// -------------------------------------------------------------- asin, acos
+//
+// Square root of a DW d >= 0: s0 = RN(sqrt(d_h)) (correctly rounded), one
+// Newton correction c = RN(R_h / (2 s0)) with R = d - s0^2 (exact TwoProduct,
+// AccurateDWPlusDW). |s0 - sqrt d| <= 1.5u sqrt d, so the exact Newton step errs
+// by <= (1.5u)^2 / 2 = 1.13u^2 and the rounded correction by <= 2u |c|
+// <= 3u^2 (relative to sqrt d): relative error <= 4.2u^2 plus half of d's own.
+//
+// arcsine_core(z), z in [0, 1/2] (a DW): asin z = atan(z / sqrt(1 - z^2)) with
+// t = z / sqrt(1 - z^2) in [0, 0.5774] and the atan unit kernel (37u^2). For a
+// binary64 z: 1 - z^2 from an exact TwoProduct and AccurateDWPlusDW (3u^2, the
+// result >= 3/4), sqrt 4.2 + 1.5u^2, division 11.01u^2: t carries <= 19.8u^2;
+// for z = sqrt(y) (4.2u^2): z^2 carries 5 + 8.4u^2 on a value <= 1/4, so
+// 1 - z^2 carries <= 3 + 3.4u^2, sqrt 4.2 + 3.2u^2, and t <= 4.2 + 7.4 + 11.01
+// = 22.7u^2. asin's condition z / (sqrt(1 - z^2) asin z) is at most 1.11 on
+// [0, 1/2] and atan's t / ((1 + t^2) atan t) at most 1, so asin z carries
+// <= 37 + 1.11 (22.7) = 62.2u^2.
+// asin x (asin(-x) = -asin x): |x| < 2^-27 uses away_from_zero (asin x - x
+// <= 0.17 |x|^3, inside the gap above |x|); |x| <= 1/2 the core on z = |x|
+// (<= 59u^2); |x| > 1/2: asin |x| = pi/2 - 2 asin(sqrt((1 - |x|) / 2)) with
+// 1 - |x| exact (Sterbenz) and the halving exact, z in [0, 1/2]; the result
+// >= pi/6 bounds the cancellation: 3.01 + 2 (62.2) + 3 (2^-109.7 / u^2)
+// <= 128u^2.
+// acos x: |x| <= 1/2: pi/2 - asin x (result >= pi/3, asin x / result <= 1/2):
+// <= 3.01 + 0.5 (59) + 1.5 (0.08) <= 33u^2; x > 1/2: 2 asin(sqrt((1 - x)/2))
+// <= 62.2u^2; x < -1/2: pi - 2 asin(sqrt((1 + x)/2)) (result >= 2pi/3):
+// <= 3.01 + 62.2 + 0.08 <= 66u^2. pi = 2 (pi/2 DW) exactly.
+// All cases: <= 128u^2 = 2^-99 < 2^-96 / 8. Underflowing products for tiny z
+// add absolute errors below 2^-1070, absorbed by the margin (acos >= pi/3 and
+// tiny asin takes the away_from_zero path). Exact results: asin(+-0) = +-0,
+// acos(1) = 0 (the core returns exactly 0 for z = 0); asin(+-1), acos(0),
+// acos(-1) are pi/2, pi/2, pi enclosed through the bound.
+constexpr double kArcsineBound = 0x1p-96;
+
+DoubleWord square_root(DoubleWord d) noexcept {  // d >= 0
+  if (d.high == 0.0) return {0.0, 0.0};
+  const double first = std::sqrt(d.high);
+  const DoubleWord remainder = add(d, negate(two_product(first, first)));
+  return fast_two_sum(first, remainder.high / (2.0 * first));
+}
+
+DoubleWord arcsine_core(DoubleWord z) noexcept {  // z in [0, 1/2]
+  const DoubleWord complement = add(DoubleWord{1.0, 0.0}, negate(multiply(z, z)));
+  return arctangent_unit(divide(z, square_root(complement)));
+}
+
+// asin(sqrt((1 - m) / 2)) for m in (1/2, 1]: 1 - m is exact (Sterbenz).
+DoubleWord arcsine_half_complement(double magnitude) noexcept {
+  return arcsine_core(square_root({0.5 * (1.0 - magnitude), 0.0}));
+}
+
+DoubleWord twice(DoubleWord x) noexcept { return {2.0 * x.high, 2.0 * x.low}; }
+
+Enclosure asin_point(double x) noexcept {  // x in [-1, 1]
+  const double magnitude = std::fabs(x);
+  if (magnitude < kTinyArgument) return away_from_zero(x);
+  const DoubleWord value =
+      magnitude <= 0.5 ? arcsine_core({magnitude, 0.0})
+                       : add(kHalfPi, negate(twice(arcsine_half_complement(magnitude))));
+  const Enclosure result = enclose(value, error_bound(value, kArcsineBound));
+  return x < 0.0 ? negate(result) : result;
+}
+
+Enclosure acos_point(double x) noexcept {  // x in [-1, 1]
+  const double magnitude = std::fabs(x);
+  DoubleWord value;
+  if (magnitude <= 0.5) {
+    const DoubleWord arcsine = arcsine_core({magnitude, 0.0});
+    value = add(kHalfPi, x < 0.0 ? arcsine : negate(arcsine));
+  } else if (x > 0.0) {
+    value = twice(arcsine_half_complement(magnitude));
+  } else {
+    value = add(twice(kHalfPi), negate(twice(arcsine_half_complement(magnitude))));
+  }
+  return enclose(value, error_bound(value, kArcsineBound));
+}
+
 }  // namespace
 
 // ------------------------------------------------------- DW building blocks
@@ -690,6 +768,24 @@ Enclosure tanh(double lower, double upper) noexcept {
   return {tanh_point(lower).lower, tanh_point(upper).upper};
 }
 
+// asin and acos: the box is clipped to the domain [-1, 1]; a box without a
+// point in [-1, 1] gives the whole line (log's rule for an empty domain).
+Enclosure asin(double lower, double upper) noexcept {
+  if (std::isnan(lower) || std::isnan(upper) || upper < -1.0 || lower > 1.0) return kWholeLine;
+  const double low = lower < -1.0 ? -1.0 : lower;
+  const double high = upper > 1.0 ? 1.0 : upper;
+  if (low == high) return asin_point(low);
+  return {asin_point(low).lower, asin_point(high).upper};
+}
+
+Enclosure acos(double lower, double upper) noexcept {
+  if (std::isnan(lower) || std::isnan(upper) || upper < -1.0 || lower > 1.0) return kWholeLine;
+  const double low = lower < -1.0 ? -1.0 : lower;
+  const double high = upper > 1.0 ? 1.0 : upper;
+  if (low == high) return acos_point(low);
+  return {acos_point(high).lower, acos_point(low).upper};
+}
+
 Enclosure evaluate(Function function, double lower, double upper) noexcept {
   switch (function) {
     case Function::kExp:
@@ -706,6 +802,10 @@ Enclosure evaluate(Function function, double lower, double upper) noexcept {
       return atan(lower, upper);
     case Function::kTanh:
       return tanh(lower, upper);
+    case Function::kAsin:
+      return asin(lower, upper);
+    case Function::kAcos:
+      return acos(lower, upper);
   }
   return kWholeLine;
 }
@@ -720,7 +820,7 @@ int32_t phx_mc_interval_elementary(int32_t function, int64_t count, const double
   return phx::mc::guarded([&]() -> int32_t {
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
-    if (function < PHX_MC_ELEMENTARY_EXP || function > PHX_MC_ELEMENTARY_TANH || count < 0 ||
+    if (function < PHX_MC_ELEMENTARY_EXP || function > PHX_MC_ELEMENTARY_ACOS || count < 0 ||
         parallelism < 1 || !phx::mc::addressable(count, 1, sizeof(double))) {
       return PHX_MC_INVALID_ARGUMENT;
     }
