@@ -771,6 +771,10 @@
   likelihood whose component declares no admitted derivative route, at trace
   time and in reverse mode as well as forward mode; reverse-mode gradients
   previously returned silent zeros.
+- Exponential- and power-cone projections support reverse-mode
+  differentiation: the symmetric bordered-KKT tangent solve is owned by a
+  symmetric custom linear solve, so pullbacks (including
+  `conic_primal_vjp`) reuse the native dense solve instead of transposing it.
 
 ### Added
 - Sketches retain directed circular-arc incidence, support exact arc profile
