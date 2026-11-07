@@ -33,6 +33,10 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 
 
+# Round-to-nearest maps magnitudes at or above 2^1024 - 2^970 to infinity.
+_BINARY64_ROUNDING_OVERFLOW = Fraction(2**1024 - 2**970)
+
+
 def _bernoulli_numbers(count: int, /) -> tuple[Fraction, ...]:
     numbers = [Fraction(1)]
     for m in range(1, count):
@@ -127,13 +131,15 @@ class EndpointJetBasis(StrictModule, NonTrainableState):
         )
 
     def endpoint_jets(self, length: float, /) -> np.ndarray:
-        """Return exact host jets ``d^k q_n / dx^k`` at ``s = 0`` and ``s = 1``.
+        """Return correctly rounded jets ``d^k q_n / dx^k`` at ``s = 0`` and ``s = 1``.
 
+        Each entry is the exact rational jet rounded once to nearest binary64.
         The result has shape ``(2, max_order + 1, basis_size)``.
         """
         length_ = float(length)
         if length_ != self.length:
             raise ValueError("Endpoint jets must use the prepared interval length.")
+        exact_length = Fraction(length_)
         numbers = _bernoulli_numbers(self.basis_size)
         table = np.zeros((2, self.max_order + 1, self.basis_size), dtype=np.float64)
         for side in (0, 1):
@@ -146,9 +152,13 @@ class EndpointJetBasis(StrictModule, NonTrainableState):
                     )
                     if value == 0:
                         continue
-                    with np.errstate(over="ignore", under="ignore", divide="ignore"):
-                        entry = float(value) * np.power(length_, degree - 1 - order)
-                    if not np.isfinite(entry) or entry == 0.0:
+                    entry_exact = value * exact_length ** (degree - 1 - order)
+                    entry = (
+                        0.0
+                        if abs(entry_exact) >= _BINARY64_ROUNDING_OVERFLOW
+                        else float(entry_exact)
+                    )
+                    if entry == 0.0:
                         raise ValueError(
                             "Endpoint interval jets are not representable in float64."
                         )
