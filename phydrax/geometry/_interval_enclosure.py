@@ -2118,6 +2118,7 @@ class _ValueIdentity:
         self._stacks: dict[jax_core.Var, tuple[int, tuple[int, ...]]] = {}
         self._extrema: dict[jax_core.Var, _Extremum] = {}
         self._reductions: dict[jax_core.Var, _Extremum] = {}
+        self._attainments: dict[jax_core.Var, _Extremum] = {}
 
     def _intern(self, key: object, /) -> int:
         return self._identities.setdefault(key, len(self._identities))
@@ -2236,6 +2237,12 @@ class _ValueIdentity:
             self._extrema[result] = extremum
         elif extremum is not None and name in ("reduce_min", "reduce_max"):
             self._reductions[result] = extremum
+        elif (
+            name == "convert_element_type"
+            and isinstance(equation.invars[0], jax_core.Var)
+            and equation.invars[0] in self._attainments
+        ):
+            self._attainments[result] = self._attainments[equation.invars[0]]
         elif name in ("reshape", "broadcast_in_dim") and isinstance(
             equation.invars[0], jax_core.Var
         ):
@@ -2298,10 +2305,34 @@ class _ValueIdentity:
                 decided = np.broadcast_to(extremum.decided, lower.shape)
             except ValueError:
                 continue
+            if name == "eq" and extremum.axes and equation.outvars:
+                self._attainments[equation.outvars[0]] = extremum
             truth = equal if name == "eq" else ~equal
             lower = np.where(decided, truth, lower)
             upper = np.where(decided, truth, upper)
         return lower, upper
+
+    def bound_attainment(
+        self, equation: jax_core.JaxprEqn, result: Interval, /
+    ) -> Interval:
+        """Count at least one attaining element in a sum of extremum indicators.
+
+        A reduction attains its extremum at every point, so the indicators of
+        ``operand == extremum`` summed over the reduced axes are at least one;
+        JAX divides its min/max tangent by exactly this count.
+        """
+        source = equation.invars[0] if equation.invars else None
+        extremum = (
+            self._attainments.get(source) if isinstance(source, jax_core.Var) else None
+        )
+        if (
+            equation.primitive.name != "reduce_sum"
+            or extremum is None
+            or tuple(int(axis) for axis in equation.params["axes"]) != extremum.axes
+        ):
+            return result
+        lower, upper = _endpoints(result)
+        return np.maximum(lower, 1.0), upper
 
 
 class _BranchLedger:
@@ -2535,6 +2566,8 @@ def _evaluate_jaxpr(
             outputs = _primitive(name, arguments, equation.params)
             if values is not None and name in ("eq", "ne"):
                 outputs = (values.decide_comparison(equation, arguments, outputs[0]),)
+            elif values is not None and name == "reduce_sum":
+                outputs = (values.bound_attainment(equation, outputs[0]),)
         if len(outputs) != len(equation.outvars):
             raise IntervalExtensionError(
                 f"primitive {name!r} returned the wrong interval arity."
