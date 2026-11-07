@@ -227,6 +227,10 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- `RowGramLinearOperator` plans the canonical storage of a sparse factor from
+  its concrete topology at construction, so its exact diagonal (and the
+  matrix-free Jacobi preconditioner of Craig solves) works again for sparse
+  operators built without a storage plan instead of refusing traced topology.
 - Certified distance, chord, norm, frame and quality bounds round outward in
   directed binary64 arithmetic instead of padding round-to-nearest estimates:
   source distance sums, curve and surface chord, point and box bounds,

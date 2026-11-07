@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import prod
-from typing import Any, assert_never, Literal, TypeAlias
+from typing import Any, assert_never, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -57,6 +57,10 @@ from ._spaces import (
 )
 from ._sparse_contract import AbstractSparseLinearOperator
 from ._tree import TreeLinearOperator
+
+
+if TYPE_CHECKING:
+    from ..sparse._linear import _SparseStoragePlan
 
 
 def _same(left: AbstractVectorSpace, right: AbstractVectorSpace, /) -> None:
@@ -1710,13 +1714,17 @@ def _diagonal_factor(operator: AbstractLinearOperator, /) -> Array | None:
 
 
 def _weighted_row_squares(
-    operator: AbstractLinearOperator, column_weights: Array, /
+    operator: AbstractLinearOperator,
+    column_weights: Array,
+    storage_plan: _SparseStoragePlan | None,
+    /,
 ) -> Array | None:
     """``r_i = sum_j |a_ij|^2 w_j`` from exact entries, or ``None`` when unknown.
 
     Explicit dense and native sparse operators supply their entries directly;
     diagonal factors of compositions and scalings rescale rows or columns.
-    Nothing is materialized and no product operator is formed.
+    Nothing is materialized and no product operator is formed. ``storage_plan``
+    is the host plan of the coordinate sparse factor, if any.
     """
     if operator.batch_shape:
         return None
@@ -1726,7 +1734,14 @@ def _weighted_row_squares(
     if isinstance(operator, DenseLinearOperator):
         return (jnp.abs(operator.matrix) ** 2) @ column_weights
     if isinstance(operator, AbstractSparseLinearOperator):
-        storage = operator.sparse_storage()
+        from ..sparse._linear import SparseCoordinateOperator, SparseLinearMap
+
+        storage = (
+            storage_plan.apply(operator.coefficients, relation=operator.relation)
+            if storage_plan is not None
+            and isinstance(operator, (SparseCoordinateOperator, SparseLinearMap))
+            else operator.sparse_storage()
+        )
         rows = storage.shape[0]
         row_ids = (
             jnp.searchsorted(
@@ -1742,30 +1757,37 @@ def _weighted_row_squares(
             num_segments=rows,
         )
     if isinstance(operator, ScaledLinearOperator):
-        inner = _weighted_row_squares(operator.operator, column_weights)
+        inner = _weighted_row_squares(operator.operator, column_weights, storage_plan)
         return None if inner is None else jnp.abs(operator.scalar) ** 2 * inner
     if isinstance(operator, TwoSidedScaledLinearOperator):
         inner = _weighted_row_squares(
-            operator.operator, jnp.abs(operator.right_scale) ** 2 * column_weights
+            operator.operator,
+            jnp.abs(operator.right_scale) ** 2 * column_weights,
+            storage_plan,
         )
         return None if inner is None else jnp.abs(operator.left_scale) ** 2 * inner
     if isinstance(operator, ComposedLinearOperator):
         left = _diagonal_factor(operator.left)
         if left is not None:
-            inner = _weighted_row_squares(operator.right, column_weights)
+            inner = _weighted_row_squares(operator.right, column_weights, storage_plan)
             return None if inner is None else jnp.abs(left) ** 2 * inner
         right = _diagonal_factor(operator.right)
         if right is not None:
             return _weighted_row_squares(
-                operator.left, jnp.abs(right) ** 2 * column_weights
+                operator.left, jnp.abs(right) ** 2 * column_weights, storage_plan
             )
     return None
 
 
-def _row_squares_supported(operator: AbstractLinearOperator, /) -> bool:
-    """Static structure check of :func:`_weighted_row_squares` (no evaluation)."""
+def _row_squares_factor(
+    operator: AbstractLinearOperator, /
+) -> AbstractLinearOperator | None:
+    """Explicit factor whose entries :func:`_weighted_row_squares` reads, or ``None``.
+
+    Static structure walk; nothing is evaluated.
+    """
     if operator.batch_shape:
-        return False
+        return None
     if isinstance(
         operator,
         (
@@ -1775,15 +1797,45 @@ def _row_squares_supported(operator: AbstractLinearOperator, /) -> bool:
             AbstractSparseLinearOperator,
         ),
     ):
-        return True
+        return operator
     if isinstance(operator, (ScaledLinearOperator, TwoSidedScaledLinearOperator)):
-        return _row_squares_supported(operator.operator)
+        return _row_squares_factor(operator.operator)
     if isinstance(operator, ComposedLinearOperator):
         if _diagonal_structured(operator.left):
-            return _row_squares_supported(operator.right)
+            return _row_squares_factor(operator.right)
         if _diagonal_structured(operator.right):
-            return _row_squares_supported(operator.left)
-    return False
+            return _row_squares_factor(operator.left)
+    return None
+
+
+def _row_squares_storage_plan(
+    factor: AbstractLinearOperator, /
+) -> _SparseStoragePlan | None:
+    """Host canonical-storage plan of a coordinate sparse row-square factor.
+
+    Diagonal assembly traces the operator, and canonical sparse storage needs
+    concrete topology, so the plan is prepared before tracing. Traced topology
+    and other factors carry no plan.
+    """
+    from ..sparse._linear import (
+        _SparseStoragePlan,
+        SparseCoordinateOperator,
+        SparseLinearMap,
+    )
+    from ..sparse._relation import _relation_traced
+
+    if not isinstance(factor, (SparseCoordinateOperator, SparseLinearMap)):
+        return None
+    if isinstance(factor, SparseCoordinateOperator) and factor._storage_plan is not None:
+        return factor._storage_plan
+    if _relation_traced(factor.relation):
+        return None
+    return _SparseStoragePlan(
+        factor.relation,
+        block_shape=factor.block_shape
+        if isinstance(factor, SparseCoordinateOperator)
+        else None,
+    )
 
 
 def _diagonal_structured(operator: AbstractLinearOperator, /) -> bool:
@@ -1831,11 +1883,13 @@ class RowGramLinearOperator(AbstractLinearOperator):
     adjoint and one forward action of ``B``; ``B B*`` is never formed. Its exact
     coordinate diagonal ``N_i sum_j |b_ij|^2 / M_j`` (source and target diagonal
     pairings ``M``, ``N``) is assembled from the entries of explicit, sparse, and
-    diagonally scaled ``B`` without any product.
+    diagonally scaled ``B`` without any product; the canonical storage of a
+    sparse factor is planned from its concrete topology at construction.
     """
 
     operator: AbstractLinearOperator
     gram: ComposedLinearOperator
+    _storage_plan: _SparseStoragePlan | None
 
     def __init__(
         self, operator: AbstractLinearOperator, /, *, operator_id: str | None = None
@@ -1847,8 +1901,19 @@ class RowGramLinearOperator(AbstractLinearOperator):
         if not operator.capabilities.adjoint:
             raise ValueError("A row Gram operator requires an explicit adjoint action.")
         gram = ComposedLinearOperator(operator, adjoint(operator))
+        factor = _row_squares_factor(operator)
+        diagonal_assembly = (
+            _has_diagonal_pairing(operator.source)
+            and _has_diagonal_pairing(operator.target)
+            and factor is not None
+        )
         self.operator = operator
         self.gram = gram
+        self._storage_plan = (
+            _row_squares_storage_plan(factor)
+            if diagonal_assembly and factor is not None
+            else None
+        )
         self.source = operator.target
         self.target = operator.target
         self.properties = _row_gram_properties(operator)
@@ -1856,11 +1921,7 @@ class RowGramLinearOperator(AbstractLinearOperator):
             transpose=gram.capabilities.transpose,
             adjoint=True,
             materialize=gram.capabilities.materialize,
-            diagonal_assembly=(
-                _has_diagonal_pairing(operator.source)
-                and _has_diagonal_pairing(operator.target)
-                and _row_squares_supported(operator)
-            ),
+            diagonal_assembly=diagonal_assembly,
         )
         self.batch_shape = ()
         self.operator_id = _id(
@@ -1883,7 +1944,9 @@ class RowGramLinearOperator(AbstractLinearOperator):
     def _assemble_diagonal(self, /) -> Array:
         source_weights = jnp.real(_coordinate_pairing_weights(self.operator.source))
         target_weights = jnp.real(_coordinate_pairing_weights(self.operator.target))
-        squares = _weighted_row_squares(self.operator, 1.0 / source_weights)
+        squares = _weighted_row_squares(
+            self.operator, 1.0 / source_weights, self._storage_plan
+        )
         if squares is None:
             raise LinearCapabilityError(
                 "Row Gram diagonal assembly needs explicit or diagonally scaled entries."
