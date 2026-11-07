@@ -41,7 +41,7 @@ from ...sparse import (
     RowRelation,
     SparseLinearMap,
 )
-from ...typing import checked
+from ...typing import checked, parse
 from .._adaptive_simplex import MaskedSimplexMesh
 from .._cell_complex import (
     IntervalConnectivity,
@@ -2020,7 +2020,7 @@ class _MappedBasisTable(StrictModule):
 
 
 type _BlockBasisTable = _StoredBasisTable | _MappedBasisTable
-type _BasisTables = Literal["retained", "deferred"]
+type FiniteElementBasisTables = Literal["retained", "deferred"]
 
 
 class FiniteElementBlockGeometry(StrictModule, NonTrainableState):
@@ -2618,7 +2618,7 @@ def _prepare_finite_element_field(
     *,
     coordinate_measure: CoordinateMeasurePlan | None = None,
     source_surface: SurfaceFiniteElementGeometry | None = None,
-    basis_tables: _BasisTables = "retained",
+    basis_tables: FiniteElementBasisTables = "retained",
     geometry_workset_bytes: int,
 ) -> tuple[
     tuple[FiniteElementSpec, ...],
@@ -2772,11 +2772,10 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         /,
         *,
         numeric_version: str = "0",
-        basis_tables: Literal["retained", "deferred"] = "retained",
+        basis_tables: FiniteElementBasisTables = "retained",
         geometry_workset_bytes: int | None = None,
     ) -> None:
-        if basis_tables not in ("retained", "deferred"):
-            raise ValueError("basis_tables must be 'retained' or 'deferred'.")
+        basis_tables = parse(basis_tables, FiniteElementBasisTables, "basis_tables")
         workset = (
             _GEOMETRY_WORKSET_BYTES
             if geometry_workset_bytes is None
@@ -3990,7 +3989,7 @@ def _prepare_block_geometry(
     precision_policy: FiniteElementPrecisionPolicy,
     coordinate_measure: CoordinateMeasurePlan | None = None,
     source_surface: SurfaceFiniteElementGeometry | None = None,
-    basis_tables: _BasisTables = "retained",
+    basis_tables: FiniteElementBasisTables = "retained",
     geometry_workset_bytes: int = _GEOMETRY_WORKSET_BYTES,
     source_block_index: int = 0,
 ) -> FiniteElementBlockGeometry:
