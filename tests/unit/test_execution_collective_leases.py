@@ -104,6 +104,29 @@ def test_collective_dispatch_refuses_unqualified_jaxlib(
         collectives._require_collective_jax_abi()
 
 
+@pytest.mark.parametrize("release", ["0.12.0", "0.12.0.1"])
+def test_collective_dispatch_admits_each_qualified_matched_release(
+    monkeypatch: pytest.MonkeyPatch,
+    release: str,
+) -> None:
+    identity = collectives._require_collective_jax_abi()
+    monkeypatch.setattr(collectives.jax, "__version__", release)
+    monkeypatch.setattr(collectives.jaxlib, "__version__", release)
+    assert collectives._require_collective_jax_abi() == identity
+
+
+def test_collective_dispatch_refuses_mismatched_qualified_jaxlib(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(collectives.jax, "__version__", "0.12.0.1")
+    monkeypatch.setattr(collectives.jaxlib, "__version__", "0.12.0")
+    with pytest.raises(
+        CollectiveLeaseError,
+        match=r"matched JAXlib 0\.12\.0\.1.*unqualified JAXlib 0\.12\.0$",
+    ):
+        collectives._require_collective_jax_abi()
+
+
 @dataclass(frozen=True)
 class _Device:
     process_index: int
@@ -776,7 +799,8 @@ def test_program_records_qualified_private_dispatch_provenance_and_refuses_chang
 ) -> None:
     lease = harness.create()
     program = _ticket_program(lease)
-    assert program.provenance.jax_release == "0.12.0"
+    assert program.provenance.jax_release == jax.__version__
+    assert program.provenance.jax_release in ("0.12.0", "0.12.0.1")
     assert (
         program.provenance.private_dispatch_identity
         == collectives._require_collective_jax_abi()

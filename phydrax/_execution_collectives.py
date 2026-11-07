@@ -53,8 +53,12 @@ class CollectiveLeaseError(RuntimeError):
     """A collective owner refused admission or its coupled execution failed."""
 
 
-_QUALIFIED_COLLECTIVE_JAX_RELEASE = "0.12.0"
-# SHA-256 of the published jax-v0.12.0 sources, not the local installation.
+# Matched jax/jaxlib releases whose published guarded dispatch sources are
+# byte-identical. jax-v0.12.0.1 (dc4af684) is one commit over jax-v0.12.0
+# (8dcb7aec): version metadata and a Windows-only XLA:CPU intrinsic build patch.
+_QUALIFIED_COLLECTIVE_JAX_RELEASES = ("0.12.0", "0.12.0.1")
+# SHA-256 of the published sources of every qualified release, not the local
+# installation.
 _QUALIFIED_DISPATCH_SOURCES = {
     "jax._src.stages": "85faffefd43598283b52e22c5d99293b05702f9796b1c898000d3d2c38a7aca2",
     "jax._src.interpreters.pxla": "78aa89c3a410591ff240bbb46e0cf7ab0b7c76773a9430fbfaf1fa9befc07986",
@@ -184,14 +188,15 @@ def _collective_dispatch_identity() -> str:
 
 
 def _require_collective_jax_abi() -> str:
-    if jax.__version__ != _QUALIFIED_COLLECTIVE_JAX_RELEASE:
+    qualified = " or ".join(_QUALIFIED_COLLECTIVE_JAX_RELEASES)
+    if jax.__version__ not in _QUALIFIED_COLLECTIVE_JAX_RELEASES:
         raise CollectiveLeaseError(
-            "ordered collective execution requires the qualified JAX 0.12.0 "
+            f"ordered collective execution requires a qualified JAX {qualified} "
             f"private dispatch ABI; found unqualified JAX {jax.__version__}"
         )
-    if jaxlib.__version__ != _QUALIFIED_COLLECTIVE_JAX_RELEASE:
+    if jaxlib.__version__ != jax.__version__:
         raise CollectiveLeaseError(
-            "ordered collective execution requires the qualified JAXlib 0.12.0 "
+            f"ordered collective execution requires the matched JAXlib {jax.__version__} "
             f"private dispatch ABI; found unqualified JAXlib {jaxlib.__version__}"
         )
     return _collective_dispatch_identity()
