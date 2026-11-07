@@ -537,7 +537,15 @@ def test_energy_is_invariant_and_forces_match_finite_differences() -> None:
         energy(positions @ rotation.T + 0.3), value, rtol=1e-10, atol=1e-10
     )
     gradient = jax.grad(energy)(positions)
-    step = 1e-5
+    # Central-difference error: h^2 |E'''| / 6 (truncation) + delta / h
+    # (rounding), where delta bounds the error of one energy evaluation. The
+    # reference shifts give E ~ -4.1e3 eV, so ulp(E) = 2^-40 ~ 9.1e-13 and
+    # delta >= ulp(E) / 2 from the final rounding alone; at h = 1e-5 that is
+    # 4.5e-8, above atol = 1e-8 by itself. With |E'''| <= 0.2 eV/A^3 on the
+    # probed coordinates (AD: 0.034, 0.155, 0.142), h = 3e-4 A balances the
+    # two terms: truncation <= 3.0e-9 and rounding <= k * 3.0e-9 for a k-ulp
+    # evaluation error, so atol = 1e-8 (+ rtol * |dE| >= 4.3e-9) admits k <= 3.
+    step = 3e-4
     for atom, axis in ((0, 0), (2, 1), (4, 2)):
         shift = jnp.zeros_like(positions).at[0, atom, axis].set(step)
         estimate = (energy(positions + shift) - energy(positions - shift)) / (2 * step)
