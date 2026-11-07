@@ -710,8 +710,12 @@ arrays, host RSS, and compiler estimates retain their separate scopes.
 No multi-GPU, multi-host, RDMA, cross-device bitwise-replay, or general speedup
 claim follows from these checks. Exact evidence and benchmark scopes are in
 [`spark_qualification.json`](https://github.com/phydra-labs/phydrax/blob/dev/benchmarks/spark_qualification.json).
-The checkout benchmark identity requires the local, git-ignored `uv.lock`;
-generate it with `uv lock` before running the recorded benchmark commands.
+The checkout benchmark identity includes the tracked `uv.lock`. `pyproject.toml`
+pins uv `0.13.5`; verify with `uv lock --check` that the lock matches the project
+metadata before running the recorded benchmark commands or any verification
+gate. The universal lock omits `phydrax-rocm-runtime`, which
+`tools/build_rocm_wheels.py` builds and which is not published, so a locked
+`rocm10` environment installs those wheels separately.
 
 For checkout verification on shared-memory Spark hosts, hide CUDA from CPU-only
 test workers with `CUDA_VISIBLE_DEVICES=""`, keep
