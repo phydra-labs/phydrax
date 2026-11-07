@@ -827,8 +827,10 @@ def _accept_native_construction(
         certification.require_passed()
     else:
         computed_surface = _ComputedSurfaceAcceptance(
-            inputs, organization, embedding=None,
-            validity_parent=request.validity_parent, validated=validated,
+            inputs,
+            organization,
+            validity_parent=request.validity_parent,
+            validated=validated,
             computed_validity=construction.computed_validity,
         )
         certification = computed_surface.report

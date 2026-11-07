@@ -368,7 +368,6 @@ def test_live_surface_proof_retains_exact_control_identity() -> None:
     computed = _ComputedSurfaceAcceptance(
         original,
         construction.organization,
-        embedding=None,
         validity_parent=None,
         validated=(),
     )
