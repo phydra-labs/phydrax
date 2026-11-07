@@ -11,7 +11,6 @@ import numpy.typing as npt
 import pytest
 
 from phydrax.geometry.implicit._adaptive_discovery import (
-    _BoxBounds,
     _Cell,
     _CORNER_OFFSETS,
     _CUBE_EDGES,
@@ -53,29 +52,10 @@ class _Plane(_FieldEnclosures):
         value = self.field_values(points)
         return value, value.copy()
 
-    def boxes(self, lower: np.ndarray, upper: np.ndarray) -> _BoxBounds:
-        count = len(lower)
-        return _BoxBounds(
-            lower[:, 0] - self.intercept,
-            upper[:, 0] - self.intercept,
-            np.tile((1.0, 0.0, 0.0), (count, 1)),
-            np.tile((1.0, 0.0, 0.0), (count, 1)),
-        )
-
 
 class _Saddle(_Plane):
     def field_values(self, points: np.ndarray) -> np.ndarray:
         return (points[:, 0] - 0.3125) * (points[:, 1] - 0.3125)
-
-    def boxes(self, lower: np.ndarray, upper: np.ndarray) -> _BoxBounds:
-        count = len(lower)
-        unbounded = np.full(count, np.inf)
-        return _BoxBounds(
-            -unbounded,
-            unbounded,
-            np.full((count, 3), -np.inf),
-            np.full((count, 3), np.inf),
-        )
 
 
 def _leaves(
@@ -201,14 +181,15 @@ def test_polygon_replay_detects_root_ancestry_corruption() -> None:
 def test_packed_refusal_preserves_surface_order_and_singular_evidence() -> None:
     represented = int(AdaptiveImplicitBoxIssue.REPRESENTABILITY)
     leaves = _leaves(((2, 2, 2), (4, 2, 2), (5, 2, 2)), (0, represented, 0))
-    boxes = leaves.boxes.copy()
     result = _polygon(leaves, 0.25)
-    # The third leaf's corners share a sign and the plane is monotone in x, so
-    # its minimum face x = 5/8 encloses positive values: proved free of the
-    # zero set, it is neither refused nor contoured.
-    np.testing.assert_array_equal(result.unresolved_boxes, boxes[:2])
+    np.testing.assert_array_equal(result.unresolved_boxes, leaves.boxes)
     np.testing.assert_array_equal(
-        result.unresolved_issues, (int(AdaptiveImplicitBoxIssue.SINGULAR), represented)
+        result.unresolved_issues,
+        (
+            int(AdaptiveImplicitBoxIssue.SINGULAR),
+            represented,
+            int(AdaptiveImplicitBoxIssue.EDGE),
+        ),
     )
     assert not len(result.witness_values)
     assert not len(result.scaffold_arrays["root_edge_ids"])

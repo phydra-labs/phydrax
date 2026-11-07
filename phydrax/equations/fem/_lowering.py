@@ -556,11 +556,27 @@ def compile_workset_program(
         )
         use_common = not action.rules and (
             not isinstance(discretization, FiniteElementDiscretization)
-            or all(
-                element.continuity == "conforming"
-                and element.value_spec.form_type.degree == 0
-                for field in fields
-                for element in discretization.elements[discretization._field_index(field)]
+            or (
+                all(
+                    element.continuity == "conforming"
+                    and element.value_spec.form_type.degree == 0
+                    for field in fields
+                    for element in discretization.elements[
+                        discretization._field_index(field)
+                    ]
+                )
+                and all(
+                    len(
+                        {
+                            element.local_dof_count
+                            for element in discretization.elements[
+                                discretization._field_index(field)
+                            ]
+                        }
+                    )
+                    == 1
+                    for field in fields
+                )
             )
         )
         if not use_common:
@@ -593,25 +609,7 @@ def compile_workset_program(
             raise ValueError(
                 "Local provider returned no regions for the requested domain."
             )
-        block_indices = (
-            {block.name: index for index, block in enumerate(discretization.mesh.blocks)}
-            if isinstance(discretization, FiniteElementDiscretization)
-            else {}
-        )
         for region in regions:
-            # Each FE block region carries its own element's local width, so
-            # mixed-kind meshes run every block through the same prepared rule
-            # and kernel as a single-kind mesh of that block.
-            expected_widths = (
-                tuple(
-                    discretization.elements[discretization._field_index(name)][
-                        block_indices[region.block_name]
-                    ].local_dof_count
-                    for name in fields
-                )
-                if isinstance(discretization, FiniteElementDiscretization)
-                else tuple(binding.local_width for binding in bindings)
-            )
             if (
                 region.field_names != fields
                 or region.domain.kind != domain.kind
@@ -620,10 +618,10 @@ def compile_workset_program(
                 or any(
                     reference.maximum_derivative_order < derivative_order
                     or mode not in reference.kernel_modes
-                    or reference.local_width != width
+                    or reference.local_width != binding.local_width
                     or reference.realization_id != selection.reference_realization_id
-                    for reference, width in zip(
-                        region.reference_actions, expected_widths, strict=True
+                    for reference, binding in zip(
+                        region.reference_actions, bindings, strict=True
                     )
                 )
             ):

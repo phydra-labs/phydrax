@@ -941,31 +941,19 @@ class CellMeshingResult(StrictModule, NonTrainableState):
                 for item in original.protected_features
             )
         )
-        from ..geometry._source_boundary_records import SurfaceEnvelopeDistanceWitness
-
-        def stored_witness[W](witness: W, /) -> W:
-            # An envelope witness retains its derived chart source and witness
-            # as archive recipes; they are rebuilt through their owners.
-            return (
-                restore_model_archive_value(witness)
-                if type(witness) is SurfaceEnvelopeDistanceWitness
-                else witness
-            )
-
         scoped = tuple(
             (
                 restore_mapped_layer_core_boundary_source(query, layer_core_feature_source)
                 if type(query) is MappedReferenceBoundarySourceArchiveRecipe
                 and type(query.authority) is MappedCoreFacetAuthorityArchiveRecipe
                 else restore_model_archive_value(query),
-                stored_witness(witness),
+                witness,
                 tolerance,
             )
             for query, witness, tolerance in original.scoped_fidelity
         )
-        fidelity_witness = stored_witness(original.fidelity_witness)
         validated = validate_fidelity_witnesses(
-            mesh, geometry, source, fidelity_witness, scoped
+            mesh, geometry, source, original.fidelity_witness, scoped
         )
         inputs = MeshCertificationInputs(
             mesh,
@@ -981,7 +969,7 @@ class CellMeshingResult(StrictModule, NonTrainableState):
             junction_vertices=original.junction_vertices,
             protected_features=features,
             scoped_fidelity=scoped,
-            fidelity_witness=fidelity_witness,
+            fidelity_witness=original.fidelity_witness,
             feature_source=restored_feature_source,
             layer_core_root_geometry=layer_core_root_geometry,
             computed_root=computed_root,

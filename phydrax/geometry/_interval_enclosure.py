@@ -415,56 +415,6 @@ def interval_cos(value: Interval, /) -> Interval:
     return _trigonometric_interval(value, "cos")
 
 
-# Outward binary64 enclosure of the real constant 2 pi.
-_TWO_PI: Interval = (
-    np.nextafter(np.float64(2.0 * math.pi), -np.inf),
-    np.nextafter(np.float64(2.0 * math.pi), np.inf),
-)
-
-
-def interval_periodic_harmonic(
-    coordinate: Interval, frequency: HostArray, order: int, /
-) -> Interval:
-    """Enclose ``d^k/du^k (sin(2 pi n u), cos(2 pi n u))`` on a new last axis.
-
-    The real functions are periodic, so the enclosure is taken over the
-    unreduced coordinate interval with an outward enclosure of ``2 pi``; the
-    point program's exact reduction changes rounding only, never the value.
-    """
-    frequencies = np.asarray(frequency, dtype=np.float64)
-    if (
-        isinstance(order, bool)
-        or not isinstance(order, int)
-        or order < 0
-        or not np.all(np.isfinite(frequencies))
-        or np.any(frequencies < 0.0)
-        or np.any(frequencies != np.floor(frequencies))
-    ):
-        raise IntervalExtensionError(
-            "periodic harmonics require exact nonnegative integer frequencies and order."
-        )
-    exact = (frequencies, frequencies)
-    phase = interval_multiply(exact, coordinate)
-    if order % 4:
-        quarter = np.float64(0.25 * (order % 4))
-        phase = interval_add(phase, (quarter, quarter))
-    angle = interval_multiply(_TWO_PI, phase)
-    sine, cosine = interval_sin(angle), interval_cos(angle)
-    if order:
-        rate = interval_multiply(_TWO_PI, exact)
-        scale = rate
-        for _ in range(order - 1):
-            scale = interval_multiply(scale, rate)
-        sine, cosine = interval_multiply(scale, sine), interval_multiply(scale, cosine)
-    sine_lower, sine_upper, cosine_lower, cosine_upper = np.broadcast_arrays(
-        sine[0], sine[1], cosine[0], cosine[1]
-    )
-    return (
-        np.stack((sine_lower, cosine_lower), axis=-1),
-        np.stack((sine_upper, cosine_upper), axis=-1),
-    )
-
-
 def interval_tan(value: Interval, /) -> Interval:
     lower, upper = (
         np.asarray(value[0], dtype=np.float64),
@@ -1452,48 +1402,6 @@ def _bspline_jet_equation(
     )
 
 
-type CustomIntervalExtension = Callable[[tuple[Interval, ...]], Interval]
-
-# Declared interval extensions of custom-JVP functions, keyed by their declared
-# JVP rule. Each owner registers the sound enclosure of the real function its
-# equation denotes; the interpreter then never walks the staged primal.
-_CUSTOM_EXTENSIONS: dict[object, CustomIntervalExtension] = {}
-
-
-def register_custom_jvp_interval_extension(
-    rule: object, extension: CustomIntervalExtension, /
-) -> None:
-    """Declare the interval extension of a custom-JVP function by its JVP rule.
-
-    ``extension`` receives the operand intervals of one staged equation and
-    returns an enclosure of its single output over them.
-    """
-    if rule in _CUSTOM_EXTENSIONS:
-        raise ValueError("A custom-JVP rule already declares an interval extension.")
-    _CUSTOM_EXTENSIONS[rule] = extension
-
-
-def _custom_extension_equation(
-    equation: jax_core.JaxprEqn, arguments: tuple[Interval, ...], /
-) -> Interval | None:
-    """Declared enclosure of a staged custom-JVP equation, if its rule has one."""
-    owner = custom_jvp_rule_owner(equation.params.get("jvp_jaxpr_fun"))
-    extension = None if owner is None else _CUSTOM_EXTENSIONS.get(owner.f)
-    if extension is None or len(equation.outvars) != 1:
-        return None
-    result = extension(arguments[int(equation.params.get("num_consts", 0)) :])
-    aval = equation.outvars[0].aval
-    if (
-        not isinstance(aval, ShapedArray)
-        or np.shape(result[0]) != aval.shape
-        or np.shape(result[1]) != aval.shape
-    ):
-        raise IntervalExtensionError(
-            "A declared custom-JVP interval extension returned a misaligned enclosure."
-        )
-    return result
-
-
 def _primitive(
     name: str, values: tuple[Interval, ...], params: Mapping[str, Any], /
 ) -> tuple[Interval, ...]:
@@ -1868,11 +1776,11 @@ def _evaluate_jaxpr(
         identity.record(equation)
         arguments = tuple(_read_atom(atom, environment) for atom in equation.invars)
         name = equation.primitive.name
-        jets = None
-        if name == "custom_jvp_call":
-            jets = _bspline_jet_equation(equation, arguments, tables)
-            if jets is None:
-                jets = _custom_extension_equation(equation, arguments)
+        jets = (
+            _bspline_jet_equation(equation, arguments, tables)
+            if name == "custom_jvp_call"
+            else None
+        )
         if jets is not None:
             outputs = (jets,)
         elif name in ("pjit", "jit", "custom_jvp_call"):
@@ -2190,7 +2098,6 @@ def prepare_interval_function(
 
 __all__ = [
     "HostArray",
-    "CustomIntervalExtension",
     "Interval",
     "IntervalExecution",
     "IntervalExtensionError",
@@ -2203,12 +2110,10 @@ __all__ = [
     "interval_maximum",
     "interval_minimum",
     "interval_multiply",
-    "interval_periodic_harmonic",
     "interval_sin",
     "interval_sqrt",
     "interval_square",
     "interval_subtract",
     "interval_tan",
     "prepare_interval_function",
-    "register_custom_jvp_interval_extension",
 ]

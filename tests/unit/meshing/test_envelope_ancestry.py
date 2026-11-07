@@ -50,7 +50,6 @@ def _source_and_witness() -> tuple[SurfaceEnvelopeSource, PlcSourcePointWitness,
         face_plane_tolerances=np.zeros(count),
         domain_face_rows=np.arange(count, dtype=np.int64),
         domain_id=source.domain.domain_id,
-        vertex_deviations=None,
     )
     return source, witness, edge_row
 

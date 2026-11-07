@@ -377,16 +377,8 @@ class PlcSourcePointWitness(StrictModule, NonTrainableState):
     ``vertex_parameters``. Source triangles sharing a ``face_groups`` value
     form one source facet; ``domain_face_rows`` names the source triangle
     realizing each coverage-domain facet. The exact source point is
-    authoritative; certification recomputes it from these parameters.
-
-    ``vertex_deviations`` is ``None`` exactly when every carrier is its
-    source point's correctly rounded binary64 realization. Otherwise it bounds
-    every row: the Euclidean distance from each carrier to its exact source
-    point is at most that outward-rounded value, and rows without a source
-    point hold zero. Nested refinement records such bounds for vertices it
-    creates between rounded source points: a created point is the exact
-    stencil combination of its parents' source points, and its bound is
-    propagated from theirs plus the carrier's own rounding.
+    authoritative and the mesh carrier must be its correctly rounded binary64
+    realization; certification recomputes both from these parameters.
     """
 
     __strict_contract__ = True
@@ -401,7 +393,6 @@ class PlcSourcePointWitness(StrictModule, NonTrainableState):
     face_planes: HostFloat64[_WitnessFaceDim, Literal[3], Literal[3]]
     face_plane_tolerances: HostFloat64[_WitnessFaceDim]
     domain_face_rows: HostInt64[_WitnessDomainFacetDim]
-    vertex_deviations: HostFloat64[_WitnessVertexDim] | None
     domain_id: Identifier = eqx.field(static=True)
     witness_id: Identifier = eqx.field(static=True)
 
@@ -420,7 +411,6 @@ class PlcSourcePointWitness(StrictModule, NonTrainableState):
         face_plane_tolerances: ArrayLike,
         domain_face_rows: ArrayLike,
         domain_id: str,
-        vertex_deviations: ArrayLike | None,
     ) -> None:
         scope = Scope()
         ids = as_host_array(
@@ -487,28 +477,6 @@ class PlcSourcePointWitness(StrictModule, NonTrainableState):
             )
         )
         _require_witness_tables(*arrays)
-        deviations = None
-        if vertex_deviations is not None:
-            deviations = np.array(
-                as_host_array(
-                    vertex_deviations,
-                    HostFloat64[_WitnessVertexDim],
-                    "vertex_deviations",
-                    scope=scope,
-                ),
-                copy=True,
-            )
-            if not np.all(np.isfinite(deviations)) or np.any(deviations < 0.0):
-                raise ValueError("vertex_deviations must be finite and nonnegative.")
-            pointed = arrays[1] >= 0
-            if np.any(deviations[~pointed] != 0.0) or np.any(
-                deviations[pointed] <= 0.0
-            ):
-                raise ValueError(
-                    "vertex_deviations must bound every source point positively "
-                    "and hold zero for vertices without one."
-                )
-            deviations.setflags(write=False)
         identity = canonical_identifier(domain_id, "domain_id")
         for array in arrays:
             array.setflags(write=False)
@@ -524,17 +492,14 @@ class PlcSourcePointWitness(StrictModule, NonTrainableState):
             self.face_plane_tolerances,
             self.domain_face_rows,
         ) = arrays
-        self.vertex_deviations = deviations
         self.domain_id = identity
-        # The correctly rounded state keeps its identity payload unchanged.
-        payload: dict[str, object] = {
-            "kind": "plc-source-point-witness",
-            "domain": identity,
-            "tables": tuple(array_tree_fingerprint(array) for array in arrays),
-        }
-        if deviations is not None:
-            payload["vertex_deviations"] = array_tree_fingerprint(deviations)
-        self.witness_id = canonical_fingerprint(payload)
+        self.witness_id = canonical_fingerprint(
+            {
+                "kind": "plc-source-point-witness",
+                "domain": identity,
+                "tables": tuple(array_tree_fingerprint(array) for array in arrays),
+            }
+        )
 
 
 def _require_witness_tables(
@@ -947,8 +912,7 @@ def resolve_plc_source_points(
             exact = domain.transform_point(exact)
         carrier = carriers.get(vertex)
         if carrier is None or (
-            witness.vertex_deviations is None
-            and carrier != exact
+            carrier != exact
             and carrier != tuple(Fraction(float(value)) for value in exact)
         ):
             raise SourcePointRefusal(
@@ -956,19 +920,6 @@ def resolve_plc_source_points(
                 "A mesh carrier is not the correctly rounded exact source point.",
                 entity_ids=(vertex,),
             )
-        if witness.vertex_deviations is not None:
-            squared = sum(
-                ((a - b) ** 2 for a, b in zip(carrier, exact, strict=True)),
-                Fraction(0),
-            )
-            bound = Fraction(float(witness.vertex_deviations[row]))
-            if squared > bound * bound:
-                raise SourcePointRefusal(
-                    "source_point_deviation",
-                    "A mesh carrier lies farther from its exact source point than its "
-                    f"recorded deviation: {_sqrt_upper(squared)!r} > {float(bound)!r}.",
-                    entity_ids=(vertex,),
-                )
         if exact != carrier:
             points[vertex] = exact
             deviation = max(

@@ -8,7 +8,6 @@ from ._adaptive_discovery import (
     AdaptiveImplicitSurface,
     AdaptiveImplicitSurfaceEvidence,
     discover_adaptive_implicit_surface,
-    ImplicitCoverVolume,
     ImplicitVolumeClass,
     ImplicitVolumeClassification,
     ImplicitVolumeQuery,
@@ -28,11 +27,6 @@ from ._neural import (
     ImplicitRegionTopology,
     NeuralImplicitCertificate,
     NeuralImplicitRegion,
-)
-from ._periodic_discovery import (
-    discover_periodic_trigonometric_surface,
-    PeriodicImplicitSurface,
-    PeriodicSurfaceTopology,
 )
 from ._policy import (
     AdaptiveImplicitBoxIssue,
@@ -85,14 +79,10 @@ __all__ = [
     "ImplicitSurfaceStatus",
     "NeuralImplicitCertificate",
     "NeuralImplicitRegion",
-    "PeriodicImplicitSurface",
-    "PeriodicSurfaceTopology",
     "discover_implicit_curve",
-    "ImplicitCoverVolume",
     "ImplicitVolumeClass",
     "ImplicitVolumeClassification",
     "ImplicitVolumeQuery",
     "discover_implicit_surface",
     "discover_adaptive_implicit_surface",
-    "discover_periodic_trigonometric_surface",
 ]

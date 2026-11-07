@@ -1120,7 +1120,6 @@ def _volume_lifecycle(
     /,
 ) -> dict[str, object]:
     """Accept, solve, refine every cell, transfer all fields, reanalyse and archive."""
-    _capture_accepted_volume(plc, archived_source, result, profile, label)
     _stage(profile, "volume-acceptance")
     initial_acceptance = _volume_acceptance(plc, result)
     _stage(profile, "manufactured-solve-epoch-0")
@@ -1174,72 +1173,6 @@ def _volume_lifecycle(
         ],
         "archive": {"path": str(path), "content_id": content_id, "expected": expected},
     }
-
-
-def _capture_accepted_volume(
-    plc: NativePlcSource,
-    archived_source: NativePlcSource | phx.meshing.SurfaceEnvelopeSource,
-    result: phx.meshing.CellMeshingResult,
-    profile: str,
-    label: str,
-    /,
-) -> None:
-    """Durable model archive of the accepted volume before acceptance and refinement.
-
-    Written only into a declared capture directory, so a failing downstream
-    stage replays from these genuine operands instead of a whole producer run.
-    """
-    directory = os.environ.get("PHYDRAX_RECONSTRUCTION_CAPTURE_DIR")
-    if not directory:
-        return
-    from phydrax.lifecycle import Composition, CompositionEntry
-    from phydrax.meshing._model_codec import (
-        model_archive_content_id,
-        MODEL_ARCHIVE_LIMITS,
-        write_model_artifact,
-    )
-
-    _stage(profile, "pre-refinement-capture")
-    _, source_revision_id, source_semantics = _archived_source_identity(archived_source)
-    source_entry = CompositionEntry(
-        archived_source,
-        entry_id="source",
-        role="topology",
-        owner_id="phydrax.meshing",
-        structure_id=plc.complex.complex_id,
-        revision_id=source_revision_id,
-        semantics_id=source_semantics,
-    )
-    result_entry = CompositionEntry(
-        result,
-        entry_id="result/accepted",
-        role="topology",
-        owner_id="phydrax.meshing",
-        structure_id=result.mesh.topology_id,
-        revision_id=result.result_id,
-        semantics_id="accepted-volume-before-refinement",
-        dependencies=(source_entry.binding("revision"),),
-    )
-    path = Path(directory) / f"{label}-pre-refinement.phx"
-    write_model_artifact(
-        path,
-        Composition((source_entry, result_entry), boundary_id=f"{label}-pre-refinement"),
-        limits=MODEL_ARCHIVE_LIMITS,
-    )
-    path.with_suffix(".json").write_text(
-        json.dumps(
-            {
-                "path": str(path),
-                "content_id": model_archive_content_id(path, limits=MODEL_ARCHIVE_LIMITS),
-                "profile": profile,
-                "label": label,
-                "source_type": type(archived_source).__name__,
-                "plc_binding_id": plc.binding_id,
-                "result_id": result.result_id,
-            },
-            indent=1,
-        )
-    )
 
 
 def _archived_source_identity(

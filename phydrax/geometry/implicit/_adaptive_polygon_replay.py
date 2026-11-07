@@ -61,7 +61,6 @@ def replay_polygon(surface: _ReplaySurface, bounds: _FieldEnclosures, /) -> bool
         _domain_boundary_faces,
         _edge_key,
         _faces_exclude_zero,
-        _prove_constant_signs,
         _triangulate_cell_band,
         AdaptiveImplicitBoxIssue as Issue,
     )
@@ -191,25 +190,12 @@ def replay_polygon(surface: _ReplaySurface, bounds: _FieldEnclosures, /) -> bool
             preliminary[singular] = int(Issue.SINGULAR)
             preliminary[no_crossing & gradient] = int(Issue.EDGE)
             preliminary[no_crossing & ~gradient] = int(Issue.SINGULAR)
-            empty = np.zeros(stop - start, dtype=np.bool_)
-            candidates = np.flatnonzero(no_crossing)
-            if len(candidates):
-                proved = _prove_constant_signs(
-                    bounds,
-                    s.cell_boxes[start + candidates, 0],
-                    s.cell_boxes[start + candidates, 1],
-                    cell_signs[candidates, 0],
-                    s.cell_gradient_lower[start + candidates],
-                    s.cell_gradient_upper[start + candidates],
-                )
-                empty[candidates[proved]] = True
-                preliminary[candidates[proved]] = 0
             boundary_mask = np.any(
                 (s.cell_boxes[start:stop, 0] == s.domain[0])
                 | (s.cell_boxes[start:stop, 1] == s.domain[1]),
                 axis=1,
             )
-            for local in np.flatnonzero((preliminary == 0) & ~empty & boundary_mask):
+            for local in np.flatnonzero((preliminary == 0) & boundary_mask):
                 row = start + int(local)
                 cell = _Cell(
                     int(s.cell_indices[row, 0]),
@@ -232,9 +218,9 @@ def replay_polygon(surface: _ReplaySurface, bounds: _FieldEnclosures, /) -> bool
             rejected = preliminary != 0
             if not np.array_equal(
                 np.asarray(s.cell_issues[start:stop])[rejected], preliminary[rejected]
-            ) or np.any(np.asarray(s.cell_issues[start:stop])[empty]):
+            ):
                 return False
-            selected = np.flatnonzero(~rejected & ~empty)
+            selected = np.flatnonzero(~rejected)
             if not len(selected):
                 continue
             cell_rows = start + selected
@@ -469,7 +455,6 @@ def replay_history_attempt(
         _faces_exclude_zero,
         _FieldEnclosures,
         _GridEdge,
-        _prove_constant_signs,
         _root_on_edges,
         _ROOT_PROBE_OFFSETS,
         _ROOT_PROBE_SCALE,
@@ -603,18 +588,6 @@ def replay_history_attempt(
                 if len(zero):
                     issue = int(Issue.SINGULAR)
                 elif not (np.any(signs < 0) and np.any(signs > 0)):
-                    if bool(
-                        _prove_constant_signs(
-                            bounds,
-                            boxes[row : row + 1, 0],
-                            boxes[row : row + 1, 1],
-                            signs[:1],
-                            grad_lower[row : row + 1],
-                            grad_upper[row : row + 1],
-                        )[0]
-                    ):
-                        # Proved free of the zero set: no contour, no issue.
-                        continue
                     gradient = np.any((grad_lower[row] > 0) | (grad_upper[row] < 0))
                     issue = int(Issue.EDGE if gradient else Issue.SINGULAR)
                 else:

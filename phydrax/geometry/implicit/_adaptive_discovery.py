@@ -552,99 +552,6 @@ class AdaptiveImplicitCover(StrictModule, NonTrainableState):
     def possible_zero_mask(self) -> np.ndarray:
         return (self.value_lower <= 0.0) & (self.value_upper >= 0.0)
 
-    def volume_enclosure(self) -> ImplicitCoverVolume:
-        """Enclose the region's volume within ``domain`` from the final leaf cover.
-
-        Leaves partition the domain on an exact dyadic lattice; their stored
-        corners are outward binary64 roundings, so each leaf is shrunk by one
-        ulp per side before its volume is rounded down. Leaves with a negative
-        value enclosure lie inside and positive ones outside; every other leaf
-        is unresolved volume. The result is independent of any mesh.
-        """
-        if not self.certified:
-            raise ValueError("A volume enclosure needs a value-rigorous discovery cover.")
-        inner_lower = np.nextafter(self.boxes[:, 0], np.inf)
-        inner_upper = np.nextafter(self.boxes[:, 1], -np.inf)
-        widths = np.maximum(np.nextafter(inner_upper - inner_lower, -np.inf), 0.0)
-        volumes = np.nextafter(widths[:, 0] * widths[:, 1], -np.inf)
-        volumes = np.maximum(np.nextafter(volumes * widths[:, 2], -np.inf), 0.0)
-
-        def lower_sum(mask: np.ndarray) -> Fraction:
-            total = math.fsum(volumes[mask].tolist())
-            return Fraction(max(float(np.nextafter(total, -np.inf)), 0.0))
-
-        domain_volume = math.prod(
-            Fraction(float(self.domain[1, axis])) - Fraction(float(self.domain[0, axis]))
-            for axis in range(3)
-        )
-        inside = lower_sum(self.value_upper < 0.0)
-        outside = lower_sum(self.value_lower > 0.0)
-        return ImplicitCoverVolume(
-            inside_lower=_fraction_down(inside),
-            outside_lower=_fraction_down(outside),
-            unresolved_upper=_fraction_up(
-                max(domain_volume - inside - outside, Fraction(0))
-            ),
-            domain_volume=float(domain_volume),
-            fraction_lower=_fraction_down(inside / domain_volume),
-            fraction_upper=_fraction_up(
-                min((domain_volume - outside) / domain_volume, Fraction(1))
-            ),
-            cover_id=self.cover_id,
-        )
-
-
-def _fraction_down(value: Fraction, /) -> float:
-    nearest = float(value)
-    return float(np.nextafter(nearest, -np.inf)) if Fraction(nearest) > value else nearest
-
-
-def _fraction_up(value: Fraction, /) -> float:
-    nearest = float(value)
-    return float(np.nextafter(nearest, np.inf)) if Fraction(nearest) < value else nearest
-
-
-class ImplicitCoverVolume(StrictModule):
-    """Certified, mesh-independent volume of a source region within a cover domain.
-
-    ``inside_lower`` and ``outside_lower`` bound the region's and its
-    complement's measure from below, ``unresolved_upper`` bounds the volume of
-    leaves the cover could not classify, and ``[fraction_lower,
-    fraction_upper]`` encloses the region's volume fraction of the domain
-    (relative density; porosity is its complement).
-    """
-
-    inside_lower: float = eqx.field(static=True)
-    outside_lower: float = eqx.field(static=True)
-    unresolved_upper: float = eqx.field(static=True)
-    domain_volume: float = eqx.field(static=True)
-    fraction_lower: float = eqx.field(static=True)
-    fraction_upper: float = eqx.field(static=True)
-    cover_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        *,
-        inside_lower: float,
-        outside_lower: float,
-        unresolved_upper: float,
-        domain_volume: float,
-        fraction_lower: float,
-        fraction_upper: float,
-        cover_id: str,
-    ) -> None:
-        if not 0.0 <= fraction_lower <= fraction_upper <= 1.0:
-            raise ValueError(
-                "A cover volume fraction enclosure must be ordered in [0, 1]."
-            )
-        self.inside_lower = inside_lower
-        self.outside_lower = outside_lower
-        self.unresolved_upper = unresolved_upper
-        self.domain_volume = domain_volume
-        self.fraction_lower = fraction_lower
-        self.fraction_upper = fraction_upper
-        self.cover_id = cover_id
-
 
 class ImplicitVolumeQuery(StrictModule, NonTrainableState):
     """Point and box classification against the retained implicit source."""
@@ -1727,79 +1634,6 @@ def _faces_exclude_zero(
     lower = np.asarray(face_bounds.value_lower, dtype=np.float64)
     upper = np.asarray(face_bounds.value_upper, dtype=np.float64)
     return bool(np.all((lower > 0.0) | (upper < 0.0)))
-
-
-def _prove_constant_signs(
-    bounds: _FieldEnclosures,
-    lower: np.ndarray,
-    upper: np.ndarray,
-    signs: np.ndarray,
-    gradient_lower: np.ndarray,
-    gradient_upper: np.ndarray,
-    /,
-) -> np.ndarray:
-    """Prove that the field keeps the corners' strict sign on each closed box.
-
-    A band box whose eight corners share a proved sign ``s`` misses the zero
-    set exactly when ``s F`` stays positive on it. Along an axis where the
-    gradient enclosure proves monotonicity, the minimum of ``s F`` lies on one
-    face, so the box restricts to that face. Remaining pieces are bisected
-    with interval value enclosures until each is proved, a point enclosure of
-    the opposite sign proves the zero set meets the box, or a piece cannot be
-    bisected in binary64. A box is proved only when all its pieces are.
-    """
-    count = int(lower.shape[0])
-    if not count or not bounds.value_rigorous:
-        return np.zeros(count, dtype=np.bool_)
-    failed = np.zeros(count, dtype=np.bool_)
-    owner = np.arange(count, dtype=np.int64)
-    low = np.array(lower, dtype=np.float64, copy=True)
-    high = np.array(upper, dtype=np.float64, copy=True)
-    sign = np.asarray(signs, dtype=np.int64)
-    slope_lower = np.asarray(gradient_lower, dtype=np.float64)
-    slope_upper = np.asarray(gradient_upper, dtype=np.float64)
-    while owner.size:
-        positive = (sign[owner] > 0)[:, None]
-        increasing = slope_lower > 0.0
-        decreasing = slope_upper < 0.0
-        at_low = (positive & increasing) | (~positive & decreasing)
-        at_high = (positive & decreasing) | (~positive & increasing)
-        high = np.where(at_low, low, high)
-        low = np.where(at_high, high, low)
-        try:
-            evidence = bounds.boxes(low, high)
-        except IntervalExtensionError:
-            # No interval extension over a piece is no proof.
-            return np.zeros(count, dtype=np.bool_)
-        value_lower = np.asarray(evidence.value_lower, dtype=np.float64)
-        value_upper = np.asarray(evidence.value_upper, dtype=np.float64)
-        positive = positive[:, 0]
-        settled = np.where(positive, value_lower > 0.0, value_upper < 0.0)
-        middle = 0.5 * low + 0.5 * high
-        open_rows = np.flatnonzero(~settled)
-        point_lower, point_upper = bounds.point_values(middle[open_rows])
-        opposite = np.where(positive[open_rows], point_upper < 0.0, point_lower > 0.0)
-        failed[owner[open_rows[opposite]]] = True
-        splittable = (middle > low) & (middle < high)
-        divisible = np.any(splittable, axis=1)
-        failed[owner[open_rows[~divisible[open_rows]]]] = True
-        keep = ~settled & divisible & ~failed[owner]
-        owner, low, high, middle = owner[keep], low[keep], high[keep], middle[keep]
-        splittable = splittable[keep]
-        slope_lower = np.asarray(evidence.gradient_lower, dtype=np.float64)[keep]
-        slope_upper = np.asarray(evidence.gradient_upper, dtype=np.float64)[keep]
-        axis = np.argmax(np.where(splittable, high - low, -1.0), axis=1)
-        rows = np.arange(owner.size)
-        left_high = high.copy()
-        left_high[rows, axis] = middle[rows, axis]
-        right_low = low.copy()
-        right_low[rows, axis] = middle[rows, axis]
-        owner = np.concatenate((owner, owner))
-        low = np.concatenate((low, right_low))
-        high = np.concatenate((left_high, high))
-        slope_lower = np.concatenate((slope_lower, slope_lower))
-        slope_upper = np.concatenate((slope_upper, slope_upper))
-    return ~failed
 
 
 def _cell_box(
@@ -3171,7 +3005,6 @@ __all__ = [
     "AdaptiveImplicitSurfaceArchiveRecipe",
     "AdaptiveImplicitScaffold",
     "AdaptiveImplicitSurfaceEvidence",
-    "ImplicitCoverVolume",
     "ImplicitVolumeClass",
     "ImplicitVolumeClassification",
     "ImplicitVolumeQuery",

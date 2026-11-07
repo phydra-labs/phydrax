@@ -704,16 +704,9 @@ def test_small_angle_wedge_exempts_only_input_forced_rows() -> None:
     source_input = scenario._input_for(profile)
     source = scenario._source_for(profile, source_input)
     specification, options, _ = scenario._request(profile, source, source_input)
-    declared = options.volume_schedule
-    assert declared is not None and declared.minimum_dihedral_degrees == 10.0
-    assert declared.radius_edge_bound == 2.0
-    # The scenario declares these shape targets soft; the input-forced
-    # exemptions are the acceptance rule of the same targets declared hard.
-    schedule = NativeVolumeSchedule(
-        radius_edge_bound=declared.radius_edge_bound,
-        minimum_dihedral_degrees=declared.minimum_dihedral_degrees,
-    )
-    assert schedule.shape_strength is SizeControlStrength.HARD
+    schedule = options.volume_schedule
+    assert schedule is not None and schedule.minimum_dihedral_degrees == 10.0
+    assert schedule.radius_edge_bound == 2.0
     construction = generate_plc_volume(
         source.complex,
         specification,
@@ -887,13 +880,13 @@ def test_small_angle_wedge_soft_shape_targets_publish_unmet_rows() -> None:
     source_input = scenario._input_for(profile)
     source = scenario._source_for(profile, source_input)
     specification, options, _ = scenario._request(profile, source, source_input)
-    soft = options.volume_schedule
-    assert soft is not None and soft.shape_strength is SizeControlStrength.SOFT
-    hard = NativeVolumeSchedule(
-        radius_edge_bound=soft.radius_edge_bound,
-        minimum_dihedral_degrees=soft.minimum_dihedral_degrees,
+    hard = options.volume_schedule
+    assert hard is not None and hard.shape_strength is SizeControlStrength.HARD
+    soft = NativeVolumeSchedule(
+        radius_edge_bound=hard.radius_edge_bound,
+        minimum_dihedral_degrees=hard.minimum_dihedral_degrees,
+        shape_strength=SizeControlStrength.SOFT,
     )
-    assert hard.shape_strength is SizeControlStrength.HARD
 
     def construct(schedule: NativeVolumeSchedule) -> VolumeConstruction:
         return generate_plc_volume(
@@ -2066,7 +2059,6 @@ def test_tampered_source_point_witness_is_refused(
         face_plane_tolerances=witness.face_plane_tolerances,
         domain_face_rows=witness.domain_face_rows,
         domain_id=witness.domain_id,
-        vertex_deviations=witness.vertex_deviations,
     )
     coverage = certify_domain_coverage(
         inputs.mesh,

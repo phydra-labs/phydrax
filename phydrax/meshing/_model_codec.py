@@ -2418,7 +2418,6 @@ def restore_model_archive_value(
                 face_plane_tolerances=item.face_plane_tolerances,
                 domain_face_rows=item.domain_face_rows,
                 domain_id=item.domain_id,
-                vertex_deviations=item.vertex_deviations,
             )
             if witness.witness_id != item.witness_id:
                 raise ValueError("Stored PLC source-point witness identity changed.")

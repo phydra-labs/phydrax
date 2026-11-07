@@ -66,31 +66,14 @@ from ._source_boundary_records import (
 
 
 if TYPE_CHECKING:
-    from .._interpolation._bspline_extraction import RationalBSplineSurfaceSpan
     from ..meshing._association import GeometryAssociation
     from ..meshing._result import CellMeshingResult
-    from .brep._patches import AbstractCurve, AbstractSurfacePatch, BSplineSurfacePatch
+    from .brep._patches import BSplineSurfacePatch
 Corners = tuple[tuple[Fraction, Fraction], ...]
 type _SurfaceChartToken = tuple[int, int]
 type _SurfaceChartPoint = tuple[_SurfaceChartToken, _SurfaceChartToken]
 type _SurfaceChartCell = tuple[_SurfaceChartPoint, ...]
 type _SurfaceChartRationalBank = tuple[_SurfaceChartCell, ...]
-# Exact spans, affine chart line (origin, direction) and span breakpoints of
-# one coedge's normalized parameter on a spline carrier.
-type _SplineCoedgeTrace = tuple[
-    tuple[RationalBSplineSurfaceSpan, ...],
-    tuple[Fraction, Fraction],
-    tuple[Fraction, Fraction],
-    tuple[Fraction, ...],
-]
-# Angle map (u0, du) and the affine (constant, rate) parts of the constant,
-# cosine and sine coefficients of one line-revolution coedge trace.
-type _HarmonicCoedgeTrace = tuple[
-    tuple[Fraction, Fraction],
-    tuple[tuple[ExactScalar, ...], tuple[ExactScalar, ...]],
-    tuple[tuple[ExactScalar, ...], tuple[ExactScalar, ...]],
-    tuple[tuple[ExactScalar, ...], tuple[ExactScalar, ...]],
-]
 
 # Restriction proofs completed in this process, bound to the exact live support,
 # target mesh, geometry and chart witness objects (see prove_native_restrictions).
@@ -1117,92 +1100,18 @@ def _cad_plane_seam_side(
     return cross(first, last, third) * cross(a, b, c) > 0
 
 
-def _harmonic_coedge_trace(
-    surface: AbstractSurfacePatch,
-    pcurve: AbstractCurve,
-    first: float,
-    last: float,
-    /,
-) -> _HarmonicCoedgeTrace | None:
-    """Exact harmonic form of a line-revolution trim side in its parameter ``t``.
-
-    The side runs ``first -> last`` of ``pcurve`` over ``t in [0, 1]``.
-    ``S(u, v) = P0 + v P1 + cos(u) (P2 + v P3) + sin(u) (P4 + v P5)`` on the
-    chart line ``u = u0 + du t + 2 pi k``, ``v = v0 + dv t`` is
-    ``a(t) + cos(u0 + du t) b(t) + sin(u0 + du t) c(t)`` with affine ``a, b,
-    c``: whole native turns ``k`` leave ``cos`` and ``sin`` unchanged exactly,
-    so they are not part of the form.
-    """
-    from ._meshing_domain import _PlacedSurfacePatch
-    from ._source_interpolation import exact_line_revolution_vectors
-    from .brep._correspondence import _periodic_pcurve_source
-    from .brep._intersection_curve import CurveTrimSegment
-    from .brep._source_correspondence import _affine_curve_coefficients
-
-    vectors = exact_line_revolution_vectors(surface)
-    if vectors is None:
-        return None
-    native = surface.source if isinstance(surface, _PlacedSurfacePatch) else surface
-    periodic = _periodic_pcurve_source(pcurve, native)
-    if periodic is None:
-        return None
-    affine = _affine_curve_coefficients(
-        CurveTrimSegment(
-            periodic[0], min(first, last), max(first, last), reversed=first > last
-        ),
-        (Fraction(0), Fraction(0)),
-    )
-    if affine is None:
-        return None
-    (u0, v0), (du, dv) = affine
-    if not (
-        isinstance(u0, Fraction)
-        and isinstance(v0, Fraction)
-        and isinstance(du, Fraction)
-        and isinstance(dv, Fraction)
-    ):
-        return None
-
-    def affine_part(
-        base: tuple[ExactScalar, ...], rate: tuple[ExactScalar, ...], /
-    ) -> tuple[tuple[ExactScalar, ...], tuple[ExactScalar, ...]]:
-        return (
-            tuple(base[i] + v0 * rate[i] for i in range(3)),
-            tuple(dv * rate[i] for i in range(3)),
-        )
-
-    return (
-        (u0, du),
-        affine_part(vectors[0], vectors[1]),
-        affine_part(vectors[2], vectors[3]),
-        affine_part(vectors[4], vectors[5]),
-    )
-
-
 def _surface_pole_proven(
     charts: SurfaceSourceCharts, patch: int, use: PatchPoleUse, /
 ) -> bool:
-    """Prove the complete represented pole maps to its exact source corner.
-
-    On a line revolution the side's harmonic form collapses to the constant
-    ``a`` for every parameter exactly when its rate and both harmonic
-    coefficients vanish identically.
-    """
+    """Prove the complete represented pole maps to its exact source corner."""
     from .brep._correspondence import _exact_brep_pole_collapse
 
     lower, upper = charts.domain.source_corner_point_bounds(use.corner)
     if lower != upper or len(lower) != 3:
         return False
-    surface = charts.domain.patches[patch].surface
-    harmonic = _harmonic_coedge_trace(surface, use.pcurve, use.first, use.last)
-    if harmonic is not None:
-        _, (constant, rate), cosine, sine = harmonic
-        return constant == lower and all(
-            value == 0 for value in (*rate, *cosine[0], *cosine[1], *sine[0], *sine[1])
-        )
     return _exact_brep_pole_collapse(
         None,
-        surface,
+        charts.domain.patches[patch].surface,
         use.pcurve,
         min(use.first, use.last),
         max(use.first, use.last),
@@ -1397,14 +1306,10 @@ def _surface_trim_root_index(
 
 def _validate_surface_curve_lifts(charts: SurfaceSourceCharts, /) -> None:
     """Prove all coedge uses lift to the same normalized spatial source curve."""
-    from ._meshing_domain import _prepare_surface_spans
-    from ._source_interpolation import (
-        _exact_rational_surface_chart_breakpoints,
-        exact_surface_coordinate_expressions,
-    )
+    from ._source_interpolation import exact_surface_coordinate_expressions
     from .brep._correspondence import exact_source_lift
     from .brep._intersection_curve import CurveTrimSegment, SurfaceRegion
-    from .brep._patches import SurfaceMappedCurve
+    from .brep._patches import AbstractSurfacePatch, SurfaceMappedCurve
     from .brep._source_correspondence import _affine_curve_coefficients
 
     domain = charts.domain
@@ -1431,82 +1336,6 @@ def _validate_surface_curve_lifts(charts: SurfaceSourceCharts, /) -> None:
         )
         return tuple(compose_expression(value, arguments) for value in surface_map)
 
-    def spline_trace(
-        surface: AbstractSurfacePatch, use: PatchCurveUse, /
-    ) -> _SplineCoedgeTrace | None:
-        """Exact spans, affine chart line and span breakpoints of one coedge."""
-        spans = _prepare_surface_spans(surface)
-        affine = _affine_curve_coefficients(normalized(use), (Fraction(0), Fraction(0)))
-        if spans is None or affine is None:
-            return None
-        (u, v), (du, dv) = affine
-        if not (
-            isinstance(u, Fraction)
-            and isinstance(v, Fraction)
-            and isinstance(du, Fraction)
-            and isinstance(dv, Fraction)
-        ):
-            return None
-        breakpoints = _exact_rational_surface_chart_breakpoints(
-            spans, (u, v), (du, dv), Fraction(0), Fraction(1)
-        )
-        if breakpoints is None:
-            return None
-        return spans.spans, (u, v), (du, dv), breakpoints
-
-    def trace_chart(
-        trace: _SplineCoedgeTrace, parameter: Fraction, /
-    ) -> tuple[Fraction, Fraction]:
-        _, origin, direction, _ = trace
-        return (
-            origin[0] + direction[0] * parameter,
-            origin[1] + direction[1] * parameter,
-        )
-
-    def piece_span(
-        trace: _SplineCoedgeTrace, lower: Fraction, upper: Fraction, /
-    ) -> RationalBSplineSurfaceSpan | None:
-        """A span whose closed box holds the whole chart segment of one piece."""
-        first, last = trace_chart(trace, lower), trace_chart(trace, upper)
-        return next(
-            (
-                span
-                for span in trace[0]
-                if all(
-                    span.parameter_bounds[axis][0] <= min(first[axis], last[axis])
-                    and max(first[axis], last[axis]) <= span.parameter_bounds[axis][1]
-                    for axis in range(2)
-                )
-            ),
-            None,
-        )
-
-    def spline_traces_match(
-        first: _SplineCoedgeTrace, second: _SplineCoedgeTrace, /
-    ) -> bool:
-        """Prove two spline coedge traces are one rational map of their parameter.
-
-        Between merged span breakpoints each trace is ``N(t) / W(t)`` with
-        ``N`` and ``W > 0`` of degree at most its span's ``p + q``, so the
-        difference numerator ``N1 W2 - N2 W1`` has degree at most the sum of
-        both bounds. It vanishes identically once it vanishes at one more
-        distinct exact parameter than that degree.
-        """
-        breakpoints = sorted({*first[3], *second[3]})
-        for lower, upper in zip(breakpoints, breakpoints[1:]):
-            first_span = piece_span(first, lower, upper)
-            second_span = piece_span(second, lower, upper)
-            if first_span is None or second_span is None:
-                return False
-            degree = sum(first_span.degrees) + sum(second_span.degrees)
-            for index in range(degree + 1):
-                parameter = lower + (upper - lower) * Fraction(index, max(degree, 1))
-                if first_span.evaluate_exact(
-                    trace_chart(first, parameter)
-                ) != second_span.evaluate_exact(trace_chart(second, parameter)):
-                    return False
-        return True
-
     uses: dict[int, list[tuple[int, int, int, PatchCurveUse]]] = {}
     for patch in charts.boundary_source.patches:
         for loop_index, loop in enumerate(domain.patches[patch].loops):
@@ -1524,7 +1353,6 @@ def _validate_surface_curve_lifts(charts: SurfaceSourceCharts, /) -> None:
         owner_surface = domain.patches[owner_patch].surface
         spatial = SurfaceMappedCurve(owner_surface, normalized(owner))
         owner_trace = polynomial_trace(owner_surface, owner)
-        owner_spline: list[_SplineCoedgeTrace | None] = []
         for patch, loop_index, use_index, use in occurrences:
             if (patch, loop_index, use_index) == owner_position:
                 continue
@@ -1537,27 +1365,6 @@ def _validate_surface_curve_lifts(charts: SurfaceSourceCharts, /) -> None:
                     expression_equal(first, second)
                     for first, second in zip(owner_trace, target_trace, strict=True)
                 )
-            ):
-                continue
-            if not owner_spline:
-                owner_spline.append(spline_trace(owner_surface, owner))
-            owner_piecewise = owner_spline[0]
-            target_piecewise = (
-                None if owner_piecewise is None else spline_trace(surface, use)
-            )
-            if (
-                owner_piecewise is not None
-                and target_piecewise is not None
-                and spline_traces_match(owner_piecewise, target_piecewise)
-            ):
-                continue
-            # Equal angle maps and equal affine coefficient vectors give the
-            # same function exactly; this is sufficient, never sampled.
-            owner_harmonic = _harmonic_coedge_trace(
-                owner_surface, owner.pcurve, owner.first, owner.last
-            )
-            if owner_harmonic is not None and owner_harmonic == _harmonic_coedge_trace(
-                surface, use.pcurve, use.first, use.last
             ):
                 continue
             box = surface.parameter_domain

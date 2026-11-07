@@ -10,7 +10,6 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import TYPE_CHECKING
 
 import numpy as np
 from jax import Array
@@ -50,11 +49,6 @@ from ._rational import fraction_endpoint, rational_vector
 from ._source_boundary_records import SourceBoundaryChartWitness
 
 
-if TYPE_CHECKING:
-    from ._meshing_domain import _PlacedSurfacePatch
-    from .brep._patches import RevolutionSurface
-
-
 def _has_analytic_source_program(surface: object, /) -> bool:
     """Whether a direct or placed analytic carrier has a source-bound program."""
     from ._meshing_domain import _PlacedSurfacePatch
@@ -72,111 +66,6 @@ def _has_analytic_source_program(surface: object, /) -> bool:
         isinstance(native, RevolutionSurface)
         and isinstance(native.curve, (LineCurve, CircleCurve))
     )
-
-
-def _revolution_axis_split(
-    revolution_axis: tuple[ExactScalar, ...], vector: tuple[ExactScalar, ...], /
-) -> tuple[tuple[ExactScalar, ...], tuple[ExactScalar, ...], tuple[ExactScalar, ...]]:
-    """Axial, radial and axis-cross parts of ``vector`` about a retained axis."""
-    projection = sum((vector[i] * revolution_axis[i] for i in range(3)), Fraction(0))
-    axial = tuple(projection * revolution_axis[i] for i in range(3))
-    radial = tuple(vector[i] - axial[i] for i in range(3))
-    cross = tuple(
-        revolution_axis[(i + 1) % 3] * radial[(i + 2) % 3]
-        - revolution_axis[(i + 2) % 3] * radial[(i + 1) % 3]
-        for i in range(3)
-    )
-    return axial, radial, cross
-
-
-def _revolution_axis(
-    native: RevolutionSurface, /
-) -> tuple[tuple[ExactScalar, ...], tuple[ExactScalar, ...]]:
-    # These are the retained source coefficients. The stored normalized
-    # binary axis need not have exactly unit squared length.
-    return (
-        rational_vector(np.asarray(native.axis_origin, dtype=np.float64)),
-        rational_vector(np.asarray(native.axis_direction, dtype=np.float64)),
-    )
-
-
-def _line_revolution_source_vectors(
-    native: RevolutionSurface, /
-) -> tuple[tuple[ExactScalar, ...], ...]:
-    """Exact ``(P0, ..., P5)`` of a line revolution's unplaced source map.
-
-    ``S(u, v) = P0 + v P1 + cos(u) (P2 + v P3) + sin(u) (P4 + v P5)``.
-    """
-    from .brep._patches import _require_exact_numeric_shadow, LineCurve
-
-    curve = native.curve
-    if not isinstance(curve, LineCurve):
-        raise TypeError("A line revolution requires a LineCurve profile.")
-    _require_exact_numeric_shadow(curve.origin, curve.origin_exact, "Line origin")
-    _require_exact_numeric_shadow(
-        curve.direction, curve.direction_exact, "Line direction"
-    )
-    axis_origin, revolution_axis = _revolution_axis(native)
-    relative = tuple(curve.origin_exact[i] - axis_origin[i] for i in range(3))
-    axial, radial, cross = _revolution_axis_split(revolution_axis, relative)
-    axial_rate, radial_rate, cross_rate = _revolution_axis_split(
-        revolution_axis, curve.direction_exact
-    )
-    return (
-        tuple(axis_origin[i] + axial[i] for i in range(3)),
-        axial_rate,
-        radial,
-        radial_rate,
-        cross,
-        cross_rate,
-    )
-
-
-def _placed_source_vectors(
-    surface: _PlacedSurfacePatch,
-    vectors: tuple[tuple[ExactScalar, ...], ...],
-    /,
-) -> tuple[tuple[ExactScalar, ...], ...]:
-    """Apply an exact placement to a point (first) and direction vectors."""
-    from .brep._patches import _require_exact_numeric_shadow
-
-    matrix = surface.placement.matrix
-    linear = tuple(tuple(matrix[i][j] for j in range(3)) for i in range(3))
-    offset = tuple(matrix[i][3] for i in range(3))
-    _require_exact_numeric_shadow(surface.linear, linear, "Placed source linear")
-    _require_exact_numeric_shadow(surface.offset, offset, "Placed source offset")
-    return tuple(
-        tuple(
-            sum(
-                (linear[i][j] * vector[j] for j in range(3)),
-                offset[i] if index == 0 else Fraction(0),
-            )
-            for i in range(3)
-        )
-        for index, vector in enumerate(vectors)
-    )
-
-
-def exact_line_revolution_vectors(
-    surface: object, /
-) -> tuple[tuple[ExactScalar, ...], ...] | None:
-    """Exact harmonic vectors of a direct or placed line revolution, else ``None``.
-
-    ``S(u, v) = P0 + v P1 + cos(u) (P2 + v P3) + sin(u) (P4 + v P5)`` in
-    the carrier's physical frame.
-    """
-    from ._meshing_domain import _PlacedSurfacePatch
-    from .brep._patches import LineCurve, RevolutionSurface
-
-    native = surface.source if isinstance(surface, _PlacedSurfacePatch) else surface
-    if not isinstance(native, RevolutionSurface) or not isinstance(
-        native.curve, LineCurve
-    ):
-        return None
-    vectors = _line_revolution_source_vectors(native)
-    if isinstance(surface, _PlacedSurfacePatch):
-        return _placed_source_vectors(surface, vectors)
-    return vectors
 
 
 def _prepare_analytic_source_program(
@@ -217,45 +106,85 @@ def _prepare_analytic_source_program(
         return None
     if order not in (0, 1, 2):
         raise ValueError("Analytic source interval derivative order must be 0, 1, or 2.")
-    radii: tuple[ExactScalar, ...] = ()
-    if line_revolution:
-        vectors = _line_revolution_source_vectors(native)
-    elif circle_revolution:
+    if line_revolution or circle_revolution:
         curve = native.curve
-        if not isinstance(curve, CircleCurve):
-            raise RuntimeError("Analytic source classification is inconsistent.")
-        _require_exact_numeric_shadow(curve.center, curve.center_exact, "Circle center")
-        _require_exact_numeric_shadow(
-            curve.first_axis, curve.first_axis_exact, "Circle first axis"
+        if isinstance(curve, LineCurve):
+            _require_exact_numeric_shadow(curve.origin, curve.origin_exact, "Line origin")
+            _require_exact_numeric_shadow(
+                curve.direction, curve.direction_exact, "Line direction"
+            )
+        else:
+            _require_exact_numeric_shadow(
+                curve.center, curve.center_exact, "Circle center"
+            )
+            _require_exact_numeric_shadow(
+                curve.first_axis, curve.first_axis_exact, "Circle first axis"
+            )
+            _require_exact_numeric_shadow(
+                curve.second_axis, curve.second_axis_exact, "Circle second axis"
+            )
+            _require_exact_numeric_shadow(
+                curve.radius, curve.radius_exact, "Circle radius"
+            )
+        # These are the retained source coefficients. The stored normalized
+        # binary axis need not have exactly unit squared length.
+        axis_origin = rational_vector(np.asarray(native.axis_origin, dtype=np.float64))
+        revolution_axis = rational_vector(
+            np.asarray(native.axis_direction, dtype=np.float64)
         )
-        _require_exact_numeric_shadow(
-            curve.second_axis, curve.second_axis_exact, "Circle second axis"
-        )
-        _require_exact_numeric_shadow(curve.radius, curve.radius_exact, "Circle radius")
-        axis_origin, revolution_axis = _revolution_axis(native)
-        relative = tuple(curve.center_exact[i] - axis_origin[i] for i in range(3))
-        components = (
-            _revolution_axis_split(revolution_axis, relative),
-            _revolution_axis_split(
-                revolution_axis,
-                tuple(curve.radius_exact * value for value in curve.first_axis_exact),
-            ),
-            _revolution_axis_split(
-                revolution_axis,
-                tuple(curve.radius_exact * value for value in curve.second_axis_exact),
-            ),
-        )
-        vectors = (
-            tuple(axis_origin[i] + components[0][0][i] for i in range(3)),
-            components[1][0],
-            components[2][0],
-            components[0][1],
-            components[1][1],
-            components[2][1],
-            components[0][2],
-            components[1][2],
-            components[2][2],
-        )
+
+        def split(
+            vector: tuple[ExactScalar, ...],
+        ) -> tuple[
+            tuple[ExactScalar, ...], tuple[ExactScalar, ...], tuple[ExactScalar, ...]
+        ]:
+            projection = sum(
+                (vector[i] * revolution_axis[i] for i in range(3)), Fraction(0)
+            )
+            axial = tuple(projection * revolution_axis[i] for i in range(3))
+            radial = tuple(vector[i] - axial[i] for i in range(3))
+            cross = tuple(
+                revolution_axis[(i + 1) % 3] * radial[(i + 2) % 3]
+                - revolution_axis[(i + 2) % 3] * radial[(i + 1) % 3]
+                for i in range(3)
+            )
+            return axial, radial, cross
+
+        if isinstance(curve, LineCurve):
+            relative = tuple(curve.origin_exact[i] - axis_origin[i] for i in range(3))
+            axial, radial, cross = split(relative)
+            axial_rate, radial_rate, cross_rate = split(curve.direction_exact)
+            vectors = (
+                tuple(axis_origin[i] + axial[i] for i in range(3)),
+                axial_rate,
+                radial,
+                radial_rate,
+                cross,
+                cross_rate,
+            )
+        else:
+            relative = tuple(curve.center_exact[i] - axis_origin[i] for i in range(3))
+            components = (
+                split(relative),
+                split(
+                    tuple(curve.radius_exact * value for value in curve.first_axis_exact)
+                ),
+                split(
+                    tuple(curve.radius_exact * value for value in curve.second_axis_exact)
+                ),
+            )
+            vectors = (
+                tuple(axis_origin[i] + components[0][0][i] for i in range(3)),
+                components[1][0],
+                components[2][0],
+                components[0][1],
+                components[1][1],
+                components[2][1],
+                components[0][2],
+                components[1][2],
+                components[2][2],
+            )
+        radii: tuple[ExactScalar, ...] = ()
     else:
         match native:
             case CylinderPatch():
@@ -285,7 +214,26 @@ def _prepare_analytic_source_program(
             )
         _validate_surface_source_shadows(native)
     if isinstance(surface, _PlacedSurfacePatch):
-        vectors = _placed_source_vectors(surface, vectors)
+        matrix = surface.placement.matrix
+        linear = tuple(tuple(matrix[i][j] for j in range(3)) for i in range(3))
+        offset = tuple(matrix[i][3] for i in range(3))
+        _require_exact_numeric_shadow(surface.linear, linear, "Placed source linear")
+        _require_exact_numeric_shadow(surface.offset, offset, "Placed source offset")
+
+        def transform(
+            vector: tuple[ExactScalar, ...], *, point: bool
+        ) -> tuple[ExactScalar, ...]:
+            return tuple(
+                sum(
+                    (linear[i][j] * vector[j] for j in range(3)),
+                    offset[i] if point else Fraction(0),
+                )
+                for i in range(3)
+            )
+
+        vectors = tuple(
+            transform(vector, point=index == 0) for index, vector in enumerate(vectors)
+        )
     exact = (*sum(vectors, ()), *radii)
     nominal = np.asarray(tuple(float(value) for value in exact), dtype=np.float64)
     intervals = tuple(coefficient_interval(value, bits=128) for value in exact)
