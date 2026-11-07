@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from .._exact_kernels import float64_interval_elementary
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -37,7 +38,11 @@ from ..geometry._interval_enclosure import (
     Interval,
     interval_absolute,
     interval_add,
+    interval_cos,
+    interval_divide,
+    interval_minimum,
     interval_multiply,
+    interval_sin,
     interval_sqrt,
     interval_square,
     interval_subtract,
@@ -84,21 +89,18 @@ class QuadLayoutObstruction(ValueError):
 type _IntervalPair = tuple[Interval, Interval]
 type _IntervalVector = tuple[Interval, ...]
 
-# Declared consistency tolerance of archived float evidence. Edge angles,
-# feature residuals, and field energy are each a fixed formula of other stored
-# arrays (frames, source coordinates, angles, guidance), never of the solve's
-# residual. Restore accepts the evidence only if every enclosed exact value of
-# that formula lies within this tolerance; the verdict is decided by exact
-# rational and outward-rounded interval predicates, so identical bytes give an
-# identical verdict on every platform. Its magnitude is chosen far above the
-# binary64 evaluation differences of legitimate generation on any platform and
-# far below any material change of the evidence.
-_EVIDENCE_TOLERANCE = Fraction(1, 1 << 36)
-# Taylor tail of the rational cosine/sine enclosures, below binary64 rounding.
-_TAYLOR_TAIL = Fraction(1, 1 << 80)
-# Exact bracket math.pi < pi < nextafter(math.pi, inf).
-_PI_LOWER = Fraction(math.pi)
-_PI_UPPER = Fraction(float(np.nextafter(math.pi, math.inf)))
+# Acceptance constants of a source-bound cross field. Generation
+# (``_quad_generation``) declares them and restore reuses them; this module owns
+# them because generation imports the field contract from here.
+# Relative residual a sparse connection solve must certify.
+CROSS_FIELD_RELATIVE_RESIDUAL_LIMIT = 1.0e-10
+# Absolute agreement of field evidence with its declared source formula:
+# frames, edge angles, feature residuals, and the absolute energy floor.
+CROSS_FIELD_EVIDENCE_ATOL = 1.0e-12
+# Relative agreement of the field energy with its declared formula.
+CROSS_FIELD_ENERGY_RTOL = 1.0e-10
+# Outward binary64 enclosure of pi: math.pi < pi < nextafter(math.pi, inf).
+_PI: Interval = (np.float64(math.pi), np.float64(np.nextafter(math.pi, math.inf)))
 # Reference rays for winding counts; the count is independent of the ray, so
 # the first ray whose crossings are all certified decides it exactly.
 _WINDING_RAYS = (
@@ -121,11 +123,15 @@ def _enclose(lower: Fraction, upper: Fraction, /) -> Interval:
     return (np.float64(fraction_down(lower)), np.float64(fraction_up(upper)))
 
 
+def _enclose_point(value: Fraction, /) -> Interval:
+    return _enclose(value, value)
+
+
 def _enclose_vector(vector: RationalVector, /) -> _IntervalVector:
-    return tuple(_enclose(value, value) for value in vector)
+    return tuple(_enclose_point(value) for value in vector)
 
 
-def _scaled(value: Interval, factor: int, /) -> Interval:
+def _scaled(value: Interval, factor: float, /) -> Interval:
     return interval_multiply(value, (np.float64(factor), np.float64(factor)))
 
 
@@ -136,6 +142,19 @@ def _certified_sign(value: Interval, /) -> int | None:
     if float(value[1]) < 0.0:
         return -1
     return None
+
+
+def _certified_at_most(value: Interval, bound: float, /) -> bool:
+    """Decide that every enclosed value is at most ``bound``."""
+    return float(value[1]) <= bound
+
+
+def _certified_within(stored: float, enclosure: Interval, tolerance: float, /) -> bool:
+    """Decide ``|stored - x| <= tolerance`` for every ``x`` in the enclosure."""
+    value = Fraction(stored)
+    return max(
+        value - Fraction(float(enclosure[0])), Fraction(float(enclosure[1])) - value
+    ) <= Fraction(tolerance)
 
 
 def _interval_dot(first: _IntervalVector, second: _IntervalVector, /) -> Interval:
@@ -161,94 +180,49 @@ def _interval_cross(
     )
 
 
-def _cosine_sine(angle: Fraction, /) -> _IntervalPair:
-    """Rigorously enclose the cosine and sine of an exact rational angle.
+def _interval_atan(value: Interval, /) -> Interval:
+    lower, upper = float64_interval_elementary("atan", value[0], value[1])
+    return lower, upper
 
-    The Taylor terms are summed exactly in rationals. Once the term index
-    exceeds the argument magnitude both alternating tails decrease
-    monotonically, so each is bounded by the first omitted term; the rational
-    bounds are then rounded outward to binary64. No libm call is involved.
+
+def _edge_angle_enclosure(local: tuple[Fraction, Fraction], /) -> Interval:
+    """Enclose ``atan2(y, x)`` of an exact frame-local edge direction."""
+    first, second = local
+    if first > 0:
+        return _interval_atan(_enclose_point(second / first))
+    if first == 0 and second == 0:
+        raise ValueError("A cross-field edge direction must be finite and nonzero.")
+    half_turn = _scaled(_PI, 0.5)
+    if second > 0:
+        return interval_subtract(
+            half_turn, _interval_atan(_enclose_point(first / second))
+        )
+    if second < 0:
+        return interval_subtract(
+            _scaled(half_turn, -1.0), _interval_atan(_enclose_point(first / second))
+        )
+    return _PI
+
+
+def _periodic_distance(value: Interval, /) -> Interval:
+    """Enclose the distance of every enclosed value to the nearest multiple of 2 pi.
+
+    This is ``|atan2(sin x, cos x)|`` of the generation formulas and the
+    distance between two angles that denote the same direction.
     """
-    cosine = sine = Fraction(0)
-    term = Fraction(1)
-    magnitude = abs(angle)
-    index = 0
-    while index <= magnitude or abs(term) > _TAYLOR_TAIL:
-        match index % 4:
-            case 0:
-                cosine += term
-            case 1:
-                sine += term
-            case 2:
-                cosine -= term
-            case _:
-                sine -= term
-        index += 1
-        term = term * angle / index
-    remainder = abs(term)
-    return (
-        _enclose(cosine - remainder, cosine + remainder),
-        _enclose(sine - remainder, sine + remainder),
+    full_turn = _scaled(_PI, 2.0)
+    # Candidate turn counts only select terms; the true nearest multiple is
+    # always among the three around the midpoint estimate.
+    center = np.rint(
+        0.5 * (np.asarray(value[0]) + np.asarray(value[1])) / (2.0 * math.pi)
     )
-
-
-def _angle_difference(first: _IntervalPair, second: _IntervalPair, /) -> _IntervalPair:
-    """Cosine and sine of ``first - second`` from their enclosures."""
-    return (
-        interval_add(
-            interval_multiply(first[0], second[0]), interval_multiply(first[1], second[1])
-        ),
-        interval_subtract(
-            interval_multiply(first[1], second[0]), interval_multiply(first[0], second[1])
-        ),
-    )
-
-
-def _fourfold(value: _IntervalPair, /) -> _IntervalPair:
-    """Cosine and sine of four times an enclosed angle."""
-    cosine, sine = value
-    double = (
-        interval_subtract(interval_square(cosine), interval_square(sine)),
-        _scaled(interval_multiply(cosine, sine), 2),
-    )
-    return (
-        interval_subtract(interval_square(double[0]), interval_square(double[1])),
-        _scaled(interval_multiply(double[0], double[1]), 2),
-    )
-
-
-def _directions_agree(
-    rotation: _IntervalPair,
-    first: _IntervalPair,
-    second: _IntervalPair,
-    tolerance: Fraction,
-    /,
-) -> bool:
-    """Decide that ``first`` rotated by ``rotation`` lies within ``tolerance`` of ``second``.
-
-    Accepts only if every enclosed configuration has a positive dot product and
-    an angular sine of at most ``tolerance``.
-    """
-    cosine, sine = rotation
-    rotated = (
-        interval_subtract(
-            interval_multiply(cosine, first[0]), interval_multiply(sine, first[1])
-        ),
-        interval_add(
-            interval_multiply(sine, first[0]), interval_multiply(cosine, first[1])
-        ),
-    )
-    dot = _interval_dot(rotated, second)
-    cross = interval_subtract(
-        interval_multiply(rotated[0], second[1]), interval_multiply(rotated[1], second[0])
-    )
-    norms = interval_multiply(
-        interval_add(interval_square(first[0]), interval_square(first[1])),
-        interval_add(interval_square(second[0]), interval_square(second[1])),
-    )
-    return _certified_sign(dot) == 1 and Fraction(
-        float(interval_square(cross)[1])
-    ) <= tolerance * tolerance * Fraction(float(norms[0]))
+    distances = [
+        interval_absolute(
+            interval_subtract(value, interval_multiply(full_turn, (turns, turns)))
+        )
+        for turns in (center - 1.0, center, center + 1.0)
+    ]
+    return reduce(interval_minimum, distances)
 
 
 def _rotate_between_normals(
@@ -496,7 +470,7 @@ class SurfaceCrossField(StrictModule, NonTrainableState):
             or float(solve_residual_) < 0.0
             or float(relative_residual_) < 0.0
             or float(energy_) < 0.0
-            or float(relative_residual_) > 1.0e-10
+            or float(relative_residual_) > CROSS_FIELD_RELATIVE_RESIDUAL_LIMIT
         ):
             raise ValueError(
                 "Cross-field numerical evidence must be finite, non-negative, and residual-certified."
@@ -592,58 +566,77 @@ class SurfaceCrossField(StrictModule, NonTrainableState):
         return rebuilt
 
 
-def _within_quarter_turn(value: float, /) -> bool:
-    """Decide ``|value| <= pi/4`` exactly against the bracket of pi.
+def _enclose_all(values: Sequence[Fraction], /) -> Interval:
+    """Enclose rationals as one vector interval of outward binary64 endpoints."""
+    return (
+        np.asarray([fraction_down(value) for value in values], dtype=np.float64),
+        np.asarray([fraction_up(value) for value in values], dtype=np.float64),
+    )
 
-    ``4 |value|`` is a binary64 number and no binary64 number lies strictly
-    between the bracket endpoints, so one of the two comparisons decides.
-    """
-    scaled = 4 * abs(Fraction(value))
-    if scaled <= _PI_LOWER:
-        return True
-    if scaled >= _PI_UPPER:
-        return False
-    raise ValueError("A binary64 angle cannot lie strictly inside the pi bracket.")
+
+def _row(value: Interval, index: int, /) -> Interval:
+    return np.asarray(value[0])[index], np.asarray(value[1])[index]
 
 
 def _certify_stored_cross_field(field: SurfaceCrossField, /) -> None:
-    """Refuse stored field evidence that its source does not reproduce."""
-    from ._quad_generation import (
-        _edge_key,
-        _surface_patch_ids,
-        _triangle_data,
-        _triangle_frames,
-    )
+    """Decide stored field evidence against generation's declared acceptance.
+
+    Every gate reuses the constant with which generation accepts a field and
+    is decided exactly on the stored arrays: exact rationals and outward
+    binary64 intervals with the rigorous native elementary kernels. The solve
+    is never repeated; angles and solve residuals beyond their generation
+    limits are stored evidence bound by the field identity and the archive.
+    """
+    from ._quad_generation import _edge_key, _surface_patch_ids, _triangle_data
 
     source = field.source
     data = _triangle_data(source)
     face_count = data.cells.shape[0]
     frames = np.asarray(field.frames, dtype=np.float64)
-    # Frames use only correctly rounded binary64 operations in a fixed order,
-    # so every platform reproduces them bit for bit.
-    if not np.array_equal(frames, _triangle_frames(source, data.cells)):
-        raise ValueError(
-            "Stored source-bound cross field does not reproduce its source frames."
-        )
     angles = np.asarray(field.angles, dtype=np.float64)
     guidance = np.asarray(field.guide_angles, dtype=np.float64)
-    if not all(
-        _within_quarter_turn(value) for value in (*angles.tolist(), *guidance.tolist())
-    ):
-        raise ValueError(
-            "Stored source-bound cross field does not reproduce its canonical quarter-turn angles."
-        )
     points = np.asarray(source.coordinates, dtype=np.float64)
     padded = np.pad(points, ((0, 0), (0, 3 - points.shape[1])))
     exact_points = [rational_vector(row) for row in padded.tolist()]
     exact_frames = [
         (rational_vector(face[0]), rational_vector(face[1])) for face in frames.tolist()
     ]
+    # Frames: the exact unit tangent e1/|e1| and in-plane normal
+    # (n x e1)/(|n||e1|) of each source triangle.
+    numerators: list[Fraction] = []
+    denominators: list[Fraction] = []
+    for triangle in data.cells.tolist():
+        origin = exact_points[triangle[0]]
+        first = tuple(
+            b - a for a, b in zip(origin, exact_points[triangle[1]], strict=True)
+        )
+        second = tuple(
+            b - a for a, b in zip(origin, exact_points[triangle[2]], strict=True)
+        )
+        normal = rational_cross(first, second)
+        first_square = rational_dot(first, first)
+        normal_square = rational_dot(normal, normal)
+        if first_square == 0 or normal_square == 0:
+            raise ValueError("Cross-field frames require nondegenerate source triangles.")
+        numerators.extend((*first, *rational_cross(normal, first)))
+        denominators.extend((first_square,) * 3 + (normal_square * first_square,) * 3)
+    exact_frame_values = interval_divide(
+        _enclose_all(numerators), interval_sqrt(_enclose_all(denominators))
+    )
+    if not all(
+        _certified_within(
+            stored, _row(exact_frame_values, index), CROSS_FIELD_EVIDENCE_ATOL
+        )
+        for index, stored in enumerate(frames.reshape(-1).tolist())
+    ):
+        raise ValueError(
+            "Stored source-bound cross field does not reproduce its source frames."
+        )
     features = {int(row) for row in np.asarray(field.feature_edges).tolist()}
     links: list[tuple[int, int]] = []
-    link_directions: list[tuple[_IntervalPair, _IntervalPair]] = []
+    link_directions: list[tuple[Interval, Interval]] = []
     feature_rows: list[int] = []
-    feature_directions: list[_IntervalPair] = []
+    feature_directions: list[Interval] = []
     for edge_row, edge_values in enumerate(data.edges.tolist()):
         key = _edge_key(int(edge_values[0]), int(edge_values[1]))
         faces = data.edge_owners[key]
@@ -651,11 +644,15 @@ def _certify_stored_cross_field(field: SurfaceCrossField, /) -> None:
             end - start
             for start, end in zip(exact_points[key[0]], exact_points[key[1]], strict=True)
         )
-        local: list[_IntervalPair] = []
-        for face in faces:
-            first = rational_dot(exact_frames[face][0], direction)
-            second = rational_dot(exact_frames[face][1], direction)
-            local.append((_enclose(first, first), _enclose(second, second)))
+        local = [
+            _edge_angle_enclosure(
+                (
+                    rational_dot(exact_frames[face][0], direction),
+                    rational_dot(exact_frames[face][1], direction),
+                )
+            )
+            for face in faces
+        ]
         if edge_row in features:
             feature_rows.extend(faces)
             feature_directions.extend(local)
@@ -679,98 +676,103 @@ def _certify_stored_cross_field(field: SurfaceCrossField, /) -> None:
         raise ValueError(
             "Stored source-bound cross field does not reproduce its source edge graph."
         )
-    one = (np.float64(1.0), np.float64(1.0))
-    zero = (np.float64(0.0), np.float64(0.0))
-    unit = (one, zero)
-    # Feature and transport angles are fixed source geometry (edge angles in
-    # the stored frames), never solver unknowns.
-    feature_angles = [
-        _cosine_sine(Fraction(value))
-        for value in np.asarray(field.feature_angles, dtype=np.float64).tolist()
-    ]
-    transport_angles = [
-        _cosine_sine(Fraction(value))
-        for value in np.asarray(field.transport_angles, dtype=np.float64).tolist()
-    ]
+    # Edge angles are fixed source geometry, never solver unknowns; they denote
+    # directions, so agreement is measured modulo a full turn.
+    feature_angles = np.asarray(field.feature_angles, dtype=np.float64).tolist()
+    transport_angles = np.asarray(field.transport_angles, dtype=np.float64).tolist()
     if not all(
-        _directions_agree(rotation, unit, direction, _EVIDENCE_TOLERANCE)
-        for rotation, direction in zip(feature_angles, feature_directions, strict=True)
-    ) or not all(
-        _directions_agree(rotation, first, second, _EVIDENCE_TOLERANCE)
-        for rotation, (first, second) in zip(
-            transport_angles, link_directions, strict=True
+        _certified_at_most(
+            _periodic_distance(interval_subtract((stored, stored), exact)),
+            CROSS_FIELD_EVIDENCE_ATOL,
         )
-    ):
-        raise ValueError(
-            "Stored source-bound cross field does not reproduce its source edge "
-            "directions within the declared evidence tolerance."
-        )
-    field_angles = [_cosine_sine(Fraction(value)) for value in angles.tolist()]
-    feature_mismatch = [
-        _fourfold(_angle_difference(field_angles[row], feature_angle))
-        for row, feature_angle in zip(feature_rows, feature_angles, strict=True)
-    ]
-    if not all(
-        _directions_agree(
-            _cosine_sine(4 * Fraction(residual)),
-            unit,
-            (cosine, interval_absolute(sine)),
-            4 * _EVIDENCE_TOLERANCE,
-        )
-        for residual, (cosine, sine) in zip(
-            np.asarray(field.feature_residuals, dtype=np.float64).tolist(),
-            feature_mismatch,
+        for stored, exact in zip(
+            np.asarray(feature_angles, dtype=np.float64),
+            feature_directions,
             strict=True,
         )
+    ) or not all(
+        _certified_at_most(
+            _periodic_distance(
+                interval_subtract((stored, stored), interval_subtract(second, first))
+            ),
+            CROSS_FIELD_EVIDENCE_ATOL,
+        )
+        for stored, (first, second) in zip(
+            np.asarray(transport_angles, dtype=np.float64), link_directions, strict=True
+        )
     ):
         raise ValueError(
-            "Stored source-bound cross field does not reproduce its feature-alignment "
-            "residuals within the declared evidence tolerance."
+            "Stored source-bound cross field does not reproduce its source edge directions."
         )
-    link_mismatch = [
-        _fourfold(
-            _angle_difference(
-                _angle_difference(field_angles[second], field_angles[first]), transport
-            )
+    exact_angles = [Fraction(value) for value in angles.tolist()]
+    feature_arguments = [
+        4 * (exact_angles[row] - Fraction(angle))
+        for row, angle in zip(feature_rows, feature_angles, strict=True)
+    ]
+    # Feature residual |atan2(sin 4d, cos 4d)| / 4 of the stored angles.
+    residuals = _scaled(_periodic_distance(_enclose_all(feature_arguments)), 0.25)
+    if not all(
+        _certified_within(stored, _row(residuals, index), CROSS_FIELD_EVIDENCE_ATOL)
+        for index, stored in enumerate(
+            np.asarray(field.feature_residuals, dtype=np.float64).tolist()
         )
+    ):
+        raise ValueError(
+            "Stored source-bound cross field does not reproduce its feature-alignment residuals."
+        )
+    # Energy of the stored angles: link mismatches, and feature plus guidance
+    # rows weighted four, exactly as the solve assembles them.
+    link_arguments = [
+        4 * (exact_angles[second] - exact_angles[first] - Fraction(transport))
         for (first, second), transport in zip(links, transport_angles, strict=True)
     ]
-    # The solve weights guidance like feature constraints, one row per face.
-    guidance_mismatch = [
-        _fourfold(_angle_difference(field_angles[face], _cosine_sine(Fraction(value))))
+    guidance_arguments = [
+        4 * (exact_angles[face] - Fraction(value))
         for face, value in enumerate(guidance.tolist())
     ]
-    defects = [interval_subtract(one, cosine) for cosine, _ in link_mismatch]
-    weighted = [
-        _scaled(interval_subtract(one, cosine), 4)
-        for cosine, _ in (*feature_mismatch, *guidance_mismatch)
-    ]
-    energy = reduce(interval_add, (*defects, *weighted), zero)
-    # The tolerance applies per weighted term, with a logarithmic factor for
-    # the summation order of the stored evaluation.
-    constrained = len(feature_rows) + len(guidance_mismatch)
-    terms = len(links) + constrained
-    energy_tolerance = (
-        _EVIDENCE_TOLERANCE
-        * (1 + len(links) + 4 * constrained)
-        * (1 + terms.bit_length())
+    weights = np.asarray(
+        [1.0] * len(link_arguments)
+        + [4.0] * (len(feature_arguments) + len(guidance_arguments)),
+        dtype=np.float64,
     )
+    arguments = link_arguments + feature_arguments + guidance_arguments
+    energy: Interval = (np.float64(0.0), np.float64(0.0))
+    if arguments:
+        terms = interval_multiply(
+            (weights, weights),
+            interval_subtract(
+                (np.float64(1.0), np.float64(1.0)), interval_cos(_enclose_all(arguments))
+            ),
+        )
+        energy = reduce(
+            interval_add, (_row(terms, index) for index in range(len(arguments)))
+        )
     stored_energy = Fraction(float(field.field_energy))
-    if not (
-        stored_energy - energy_tolerance <= Fraction(float(energy[0]))
-        and Fraction(float(energy[1])) <= stored_energy + energy_tolerance
+    energy_lower = Fraction(float(energy[0]))
+    energy_upper = Fraction(float(energy[1]))
+    smallest = min(abs(energy_lower), abs(energy_upper))
+    if energy_lower <= 0 <= energy_upper:
+        smallest = Fraction(0)
+    # math.isclose(stored, exact, rel_tol, abs_tol) for every enclosed exact value.
+    if max(stored_energy - energy_lower, energy_upper - stored_energy) > max(
+        Fraction(CROSS_FIELD_ENERGY_RTOL) * max(abs(stored_energy), smallest),
+        Fraction(CROSS_FIELD_EVIDENCE_ATOL),
     ):
         raise ValueError(
-            "Stored source-bound cross field does not reproduce its field energy "
-            "within the declared evidence tolerance."
+            "Stored source-bound cross field does not reproduce its field energy."
         )
+    angle_cosines = interval_cos((angles, angles))
+    angle_sines = interval_sin((angles, angles))
     singular_vertices, singularity_indices = _certified_singularity_indices(
         data.cells.tolist(),
         data.edges,
         data.edge_owners,
         exact_points,
         exact_frames,
-        field_angles,
+        [
+            (_row(angle_cosines, face), _row(angle_sines, face))
+            for face in range(face_count)
+        ],
         features,
     )
     if not np.array_equal(
@@ -1045,7 +1047,7 @@ class SurfaceQuadFieldEvent(StrictModule, NonTrainableState):
         complete: bool,
     ) -> None:
         from ..geometry._mesh_certificates import _same_tree_content
-        from ._quad_generation import prepare_surface_quad_layout
+        from ._quad_generation import verify_surface_quad_layout
 
         if type(complete) is not bool:
             raise TypeError("complete must be bool.")
@@ -1054,9 +1056,10 @@ class SurfaceQuadFieldEvent(StrictModule, NonTrainableState):
         validity = certify_cell_geometry_validity(source_geometry, mesh=source)
         if validity.invalid_count or validity.unresolved_count:
             raise ValueError("A quad field event requires certified source geometry.")
-        rebuilt = prepare_surface_quad_layout(
+        rebuilt = verify_surface_quad_layout(
             source,
             field,
+            layout.paired_edge_rows,
             maximum_field_error=maximum_field_error,
             source_geometry=source_geometry,
             complete=complete,
@@ -1150,9 +1153,8 @@ def restore_surface_quad_field_event(
     source_geometry: CellGeometrySpec,
     /,
 ) -> SurfaceQuadFieldEvent:
-    """Certify the stored field, then rebuild its layout; never restore a proof by ID."""
+    """Certify the stored field and decide its stored layout; never solve or restore by ID."""
     from ..geometry._mesh_certificates import _same_tree_content
-    from ._quad_generation import prepare_surface_quad_layout
 
     if type(recipe) is not SurfaceQuadFieldArchiveRecipe:
         raise TypeError("recipe must be SurfaceQuadFieldArchiveRecipe.")
@@ -1163,17 +1165,16 @@ def restore_surface_quad_field_event(
         or field.field_id != recipe.field_id
     ):
         raise ValueError("Stored source-bound cross field does not reproduce.")
-    layout = prepare_surface_quad_layout(
+    cell_count = source.blocks[0].cell_count
+    layout = SurfaceQuadLayout(
         source,
-        field,
-        maximum_field_error=recipe.maximum_field_error,
-        source_geometry=source_geometry,
-        complete=recipe.complete,
+        np.arange(cell_count + 1, dtype=np.int64),
+        np.arange(cell_count, dtype=np.int64),
+        recipe.paired_edge_rows,
+        source.topology_id,
+        recipe.layout_id,
     )
-    if layout.layout_id != recipe.layout_id or not np.array_equal(
-        layout.paired_edge_rows, recipe.paired_edge_rows
-    ):
-        raise ValueError("Stored source-bound quad layout does not reproduce.")
+    # The event decides the stored pairing exactly and requires its identity.
     event = SurfaceQuadFieldEvent(
         source,
         source_geometry,

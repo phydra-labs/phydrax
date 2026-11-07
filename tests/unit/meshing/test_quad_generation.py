@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import final
 
 import equinox as eqx
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -760,7 +761,7 @@ def test_stored_cross_field_restore_refuses_altered_constraints(
         ),
         (
             lambda value: value.frames,
-            np.nextafter(frames, np.full_like(frames, 2.0)),
+            frames + 1.0e-9,
             "source frames",
         ),
         (
@@ -784,11 +785,6 @@ def test_stored_cross_field_restore_refuses_altered_constraints(
             "feature-alignment residuals",
         ),
         (
-            lambda value: value.angles,
-            np.where(np.arange(angles.size) == 0, np.pi / 4 + 1.0e-12, angles),
-            "canonical quarter-turn angles",
-        ),
-        (
             lambda value: value.feature_residuals,
             np.asarray(field.feature_residuals) + 1.0e-6,
             "feature-alignment residuals",
@@ -796,7 +792,7 @@ def test_stored_cross_field_restore_refuses_altered_constraints(
         (
             lambda value: value.field_energy,
             np.asarray(field.field_energy) + 1.0e-6,
-            "field energy within the declared evidence tolerance",
+            "its field energy",
         ),
     )
     for where, replacement, message in alterations:
@@ -806,6 +802,42 @@ def test_stored_cross_field_restore_refuses_altered_constraints(
     with pytest.raises(ValueError, match="its identity"):
         SurfaceCrossField.from_stored_fields(
             eqx.tree_at(lambda value: value.angles, field, np.nextafter(angles, 1.0))
+        )
+
+
+def test_stored_quad_layout_restore_decides_the_stored_pairing() -> None:
+    source, field = _guided_singular_fan(0.0)
+    geometry = CellGeometrySpec.affine(source)
+    layout = prepare_surface_quad_layout(source, field)
+    event = SurfaceQuadFieldEvent(
+        source, geometry, field, layout, maximum_field_error=2.0, complete=True
+    )
+    recipe = event.archive_recipe()
+    restored = restore_surface_quad_field_event(recipe, source, geometry)
+    assert restored.layout.layout_id == layout.layout_id
+    rows = np.asarray(layout.paired_edge_rows)
+    with pytest.raises(QuadLayoutObstruction, match="do not cover") as uncovered:
+        restore_surface_quad_field_event(
+            recipe._replace(paired_edge_rows=jnp.asarray(rows[:-1])), source, geometry
+        )
+    assert uncovered.value.category == "layout_evidence"
+    boundary_row = next(
+        row
+        for row in np.asarray(field.feature_edges).tolist()
+        if row not in rows.tolist()
+    )
+    with pytest.raises(QuadLayoutObstruction, match="not an accepted") as rejected:
+        restore_surface_quad_field_event(
+            recipe._replace(
+                paired_edge_rows=jnp.asarray(np.sort(np.append(rows[:-1], boundary_row)))
+            ),
+            source,
+            geometry,
+        )
+    assert rejected.value.category == "layout_evidence"
+    with pytest.raises(ValueError, match="layout does not reproduce"):
+        restore_surface_quad_field_event(
+            recipe._replace(layout_id="altered"), source, geometry
         )
 
 
@@ -1667,16 +1699,24 @@ def test_curved_cross_field_layout_preserves_one_exact_shared_patch_map() -> Non
     assert geometry is not None
     assert result.field_event is not None
     result.field_event.require_target(result.mesh, geometry)
-    reference = np.asarray(reference_cell_topology("quadrilateral").vertices)
+    # The composed map interpolates every quad corner exactly. Only the exact
+    # map (CellGeometrySpec.evaluate_exact) carries that contract; binary64
+    # ``evaluate`` rounds the degree-four expansion with no stated error bound.
+    reference = tuple(
+        tuple(Fraction(float(value)) for value in point)
+        for point in reference_cell_topology("quadrilateral").vertices
+    )
     block = result.mesh.blocks[0]
-    mapped = geometry.evaluate(
-        result.mesh,
-        block.global_ids,
-        np.broadcast_to(reference, (block.cell_count, *reference.shape)),
+    mapped = geometry.evaluate_exact(
+        result.mesh, np.asarray(block.global_ids), (reference,) * block.cell_count
     )
-    np.testing.assert_allclose(
-        mapped,
-        coordinates[np.asarray(block.vertices)],
-        rtol=0.0,
-        atol=1.0e-14,
-    )
+    for corners, vertices in zip(
+        mapped, np.asarray(block.vertices).tolist(), strict=True
+    ):
+        for corner, vertex in zip(corners, vertices, strict=True):
+            assert all(
+                value == Fraction(coordinate)
+                for value, coordinate in zip(
+                    corner, coordinates[vertex].tolist(), strict=True
+                )
+            )
