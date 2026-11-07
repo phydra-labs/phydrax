@@ -5,11 +5,13 @@ The application is a declared orthogonal scalar 1D model. These tests do not
 qualify atomistic parameters, a foundry process, scattering, or transient NEGF.
 """
 
+from fractions import Fraction
 from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import mpmath
 import numpy as np
 import pytest
 from scipy.optimize import brentq
@@ -445,3 +447,49 @@ def test_dimensional_confinement_rejects_truncated_mode_count() -> None:
     )
     with pytest.raises(ValueError, match="complete declared finite basis"):
         solve_schrodinger(basis.hamiltonian(jnp.zeros((2, 2))), 0.04 * Q, 100.0, count=2)
+
+
+def test_omitted_population_bound_encloses_exact_hot_occupation() -> None:
+    # At kT >> spectral pad the round-to-nearest occupation fell 1.7e-16 below
+    # the exact omitted population while still passing an equal tolerance.
+    diagonal = (
+        float.fromhex("0x1.2ee03af9c0789p-63"),
+        float.fromhex("0x1.019363bfdcdc3p-63"),
+    )
+    coupling = float.fromhex("0x1.9227f652bee69p-64")
+    temperature = float.fromhex("0x1.e246ce91fa612p+30")
+    mu = float.fromhex("0x1.2d83226653bb1p-47")
+    h = ChainHamiltonian(diagonal, (coupling,), (1.0, 1.0), energy_reference=REFERENCE)
+    result = solve_schrodinger(
+        h, mu, temperature, count=1, omitted_particle_tolerance=1.14871084994055
+    )
+    with mpmath.workdps(60):
+        first, second, hop = (mpmath.mpf(value) for value in (*diagonal, coupling))
+        highest = (first + second) / 2 + mpmath.sqrt(((first - second) / 2) ** 2 + hop**2)
+        thermal = mpmath.mpf(1.380649e-23) * mpmath.mpf(temperature)
+        exact = 2 / (1 + mpmath.exp((highest - mpmath.mpf(mu)) / thermal))
+        assert mpmath.mpf(float(result.omitted_particle_bound)) >= exact
+    assert bool(result.eigen_result.successful)
+    assert not bool(result.successful)
+
+
+def test_host_sturm_count_matches_exact_count_on_near_degenerate_chain() -> None:
+    from phydrax.applications.semiconductor.quantum._basis import _sturm_count_below
+
+    diagonal = (1.0, 1.0 + 2.0**-40, 1.0, 1.0 - 2.0**-40, 1.0)
+    couplings = (2.0**-30, 2.0**-60, 0.5, 2.0**-1000)
+    squares = tuple(value * value for value in couplings)
+    floor = 32 * 2.0**-52 * 2.0
+
+    def exact_count(shift: Fraction) -> int:
+        pivot = Fraction(diagonal[0]) - shift
+        count = int(pivot < 0)
+        for row, square in zip(diagonal[1:], squares, strict=True):
+            pivot = Fraction(row) - shift - Fraction(square) / pivot
+            count += pivot < 0
+        return count
+
+    for shift in (0.25, 1.0 - 2.0**-20, 1.0 + 2.0**-20, 1.75, 2.0**-1070):
+        assert _sturm_count_below(
+            list(diagonal), list(squares), shift, floor
+        ) == exact_count(Fraction(shift))
