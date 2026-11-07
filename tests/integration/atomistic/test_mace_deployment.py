@@ -81,6 +81,10 @@ def test_loaded_artifact_through_ase_and_ipi_matches_native_reference(
     plan = phx.atomistic.interchange.IPITransportPlan.unix(
         str(Path("/tmp") / f"phydrax-mace-{os.getpid()}.sock"), timeout=30.0
     )
+    if os.name != "posix":
+        with pytest.raises(OSError, match="Unix i-PI socket transport requires a POSIX"):
+            plan.listen()
+        return
     listener = plan.listen()
 
     def serve() -> Any:
@@ -133,6 +137,10 @@ def test_native_ipi_driver_refuses_required_virial_for_finite_system() -> None:
     plan = phx.atomistic.interchange.IPITransportPlan.unix(
         str(Path("/tmp") / f"phydrax-mace-finite-{os.getpid()}.sock"), timeout=30.0
     )
+    if os.name != "posix":
+        with pytest.raises(OSError, match="Unix i-PI socket transport requires a POSIX"):
+            plan.listen()
+        return
     listener = plan.listen()
 
     def serve() -> Any:
