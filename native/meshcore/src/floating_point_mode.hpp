@@ -49,9 +49,11 @@ inline void write(FloatingPointMode mode) noexcept {
 }  // namespace floating_point_detail
 #elif defined(__aarch64__)
 using FloatingPointMode = std::uint64_t;
-// FPCR flushed inputs FIZ (bit 0, RES0 when unavailable), rounding RMode (bits 22-23), FZ (bit 24).
+// FPCR flushed inputs FIZ (bit 0) and alternate handling AH (bit 1), both RES0 without
+// FEAT_AFP; rounding RMode (bits 22-23); FZ (bit 24).
 inline constexpr FloatingPointMode kFloatingPointModeFields =
-    (std::uint64_t{1} << 0) | (std::uint64_t{3} << 22) | (std::uint64_t{1} << 24);
+    (std::uint64_t{1} << 0) | (std::uint64_t{1} << 1) | (std::uint64_t{3} << 22) |
+    (std::uint64_t{1} << 24);
 inline constexpr FloatingPointMode kGradualNearestMode = 0;
 inline constexpr FloatingPointMode kFlushingMode = std::uint64_t{1} << 24;
 inline constexpr bool kFlushControl = true;
