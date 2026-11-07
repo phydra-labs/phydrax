@@ -1287,7 +1287,13 @@ def test_split_face_associations_reject_forged_scope_side_and_coverage(
         )
 
         assert isinstance(case.specification, VolumeMeshingSpec)
-        original_seed = case.specification.region_seeds[0]
+        # The profile declares donor RegionControls instead of seeds; probe the
+        # seed validator with the left material's identity.
+        left = next(
+            control
+            for control in case.specification.region_controls
+            if control.region_name == "left"
+        )
         for point in ((1.5, 0.5, 0.5), (1.0, 0.5, 0.5)):
             altered = object.__new__(type(case.specification))
             for field in fields(case.specification):
@@ -1296,9 +1302,9 @@ def test_split_face_associations_reject_forged_scope_side_and_coverage(
                     value = (
                         RegionSeed(
                             np.asarray(point),
-                            original_seed.region_name,
-                            original_seed.material_id,
-                            original_seed.role,
+                            left.region_name,
+                            left.material_id,
+                            left.role,
                         ),
                     )
                 object.__setattr__(altered, field.name, value)
