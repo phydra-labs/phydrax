@@ -797,7 +797,23 @@ def test_support_crossing_on_a_curved_surface_is_continuously_differentiable() -
     np.testing.assert_allclose(samples[1], samples[-1], atol=1e-6 * sensitivity * step)
     left = (samples[0] - samples[-2]) / (2 * step)
     right = (samples[2] - samples[0]) / (2 * step)
-    np.testing.assert_allclose(left, right, atol=1e-6 * sensitivity)
+    # The quotients cannot resolve below the fitted row's rounding. The row is
+    # a backward-stable SVD fit whose entries accumulate inner products over
+    # the K = indices.shape[1] candidate slots (padded slots add exact zeros),
+    # so each sample carries at most delta = K eps |row|_inf, with the largest
+    # (diagonal) coefficient bounding every elementwise error compared here.
+    # BLAS kernels differ in that rounding when the crossing slot's weight goes
+    # from tiny to exactly zero (Haswell FMA: 6 ulps of |row|_inf). The
+    # three-sample combination (2 s0 - s-2 - s2) / (2 step) bounds its error by
+    # 2 delta / step.
+    rounding = (
+        2.0
+        * indices.shape[1]
+        * np.finfo(np.float64).eps
+        * np.max(np.abs(samples[0]))
+        / step
+    )
+    np.testing.assert_allclose(left, right, atol=1e-6 * sensitivity + rounding)
 
 
 def _velocity_grid(lower: float, upper: float, growth: float) -> tuple[Any, Array]:
