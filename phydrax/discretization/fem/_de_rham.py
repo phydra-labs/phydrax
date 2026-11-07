@@ -30,6 +30,7 @@ from ...linalg import (
     HilbertComplex,
     LinearSolvePolicy,
     OperatorProperties,
+    SolveResourcePolicy,
 )
 from ...linalg._algebra_operators import apply_real_map_componentwise
 from ...linalg._complexes import (
@@ -46,6 +47,7 @@ from .._cell_geometry_transition_types import CellGeometryTransition
 from .._cell_mesh import CellBlock, CellMesh, PolyhedralBlock
 from .._cochain_hodge import SparseHodge
 from .._distributed_field import DistributedSparseTransfer
+from .._gram import gram_solve_policy
 from .._nested_reference import (
     nested_cell_reference_maps,
     nested_simplex_maps,
@@ -76,6 +78,7 @@ from ._generic import (
     _form_cell_orientation_sign,
     _linear_reference_element,
     _local_mass_tensor,
+    _MappedBasisTable,
     _prism_canonical_form_coordinates,
     _prism_form_entity_chart_vertices,
     FiniteElementBlockGeometry,
@@ -2892,6 +2895,7 @@ def _metric_hodge(
     discretization: FiniteElementDiscretization,
     degree: int,
     policy: LinearSolvePolicy | None,
+    resources: SolveResourcePolicy | None,
     /,
 ) -> SparseHodge:
     dofs = discretization.dof_maps[degree]
@@ -2917,7 +2921,17 @@ def _metric_hodge(
         jnp.concatenate(values),
         dofs.global_dof_count,
     )
-    return SparseHodge(row, column, data, dofs.global_dof_count, policy=policy)
+    if resources is None:
+        return SparseHodge(row, column, data, dofs.global_dof_count, policy=policy)
+    # Declared budgets bind the metric's Riesz solves and its SPD admission.
+    return SparseHodge(
+        row,
+        column,
+        data,
+        dofs.global_dof_count,
+        policy=gram_solve_policy(dofs.global_dof_count, resources=resources),
+        admission_bytes=resources.factorization_bytes,
+    )
 
 
 def _local_derivatives(
@@ -3301,24 +3315,51 @@ def _weighted_local_mass(
     offset: int,
     /,
 ) -> Array:
-    basis = geometry.basis_values
+    table = geometry.basis_table
+    if isinstance(table, _MappedBasisTable):
+        # One-pass assembly of a deferred table in bounded cell blocks; the
+        # weighted and tensor-applied rows are the row-sized intermediates.
+        return jnp.concatenate(
+            tuple(
+                _weighted_mass_rows(
+                    geometry.physical_weights[start:stop],
+                    table.rows(start, stop),
+                    data,
+                    stop - start,
+                    components,
+                    offset + start,
+                )
+                for start, stop in table.row_blocks(2)
+            ),
+            axis=0,
+        )
+    return _weighted_mass_rows(
+        geometry.physical_weights, table(), data, cells, components, offset
+    )
+
+
+def _weighted_mass_rows(
+    physical_weights: Array,
+    basis: Array,
+    data: Array,
+    cells: int,
+    components: int,
+    offset: int,
+    /,
+) -> Array:
     if basis.ndim == 2:
         basis = jnp.broadcast_to(basis[None, :, :, None], (cells, *basis.shape, 1))
     elif basis.ndim == 3:
         basis = basis[..., None]
     if data.ndim in (0, 1):
         weight = data if data.ndim == 0 else data[offset : offset + cells, None]
-        return contract(
-            "cq,cqiv,cqjv->cij", geometry.physical_weights * weight, basis, basis
-        )
+        return contract("cq,cqiv,cqjv->cij", physical_weights * weight, basis, basis)
     tensor = (
         jnp.broadcast_to(data, (cells, components, components))
         if data.ndim == 2
         else data[offset : offset + cells]
     )
-    return contract(
-        "cq,cqiv,cvw,cqjw->cij", geometry.physical_weights, basis, tensor, basis
-    )
+    return contract("cq,cqiv,cvw,cqjw->cij", physical_weights, basis, tensor, basis)
 
 
 def _constitutive_entries(
@@ -3358,6 +3399,12 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
     ``order`` specifies the top-form polynomial order.
     ``coordinate_spec`` binds the exact source/reference map used for Piola
     actions; nonlinear nested transfers require a bound CellGeometryTransition.
+    ``hodge_resources`` declares the byte budgets of the default metric Riesz
+    solves and of each Hodge's SPD admission factorization; ``None`` keeps the
+    documented library defaults. A caller-owned ``hodge_solve`` carries its own
+    solve budgets, so the two are exclusive.
+    Mapped basis tables are deferred (per-point Jacobians retained): the metric
+    Hodges and constitutive Grams form them once, in bounded cell blocks.
     """
 
     mesh: CellMesh
@@ -3387,6 +3434,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         coordinate_spec: CellGeometrySpec | None = None,
         coordinate_measure: CoordinateMeasurePlan | None = None,
         hodge_solve: LinearSolvePolicy | None = None,
+        hodge_resources: SolveResourcePolicy | None = None,
         coefficient_dtype: DTypeLike = jnp.float64,
     ) -> None:
         selected = parse(family, FormElementFamily, "family")
@@ -3398,6 +3446,15 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
             )
         if hodge_solve is not None and not isinstance(hodge_solve, LinearSolvePolicy):
             raise TypeError("hodge_solve must be an owning LinearSolvePolicy or None.")
+        if hodge_resources is not None and not isinstance(
+            hodge_resources, SolveResourcePolicy
+        ):
+            raise TypeError("hodge_resources must be a SolveResourcePolicy or None.")
+        if hodge_solve is not None and hodge_resources is not None:
+            raise ValueError(
+                "hodge_resources budgets the default Hodge solve; a supplied "
+                "hodge_solve declares its own resources."
+            )
         dimension = mesh.topological_dimension
         fields = _complex_fields(mesh, selected, order, twist_)
         discretization = FiniteElementDiscretization(
@@ -3407,10 +3464,11 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                 coordinate_spec=coordinate_spec,
                 coordinate_measure=coordinate_measure,
                 coefficient_dtype=coefficient_dtype,
-            )
+            ),
+            basis_tables="deferred",
         )
         hodges = tuple(
-            _metric_hodge(discretization, degree, hodge_solve)
+            _metric_hodge(discretization, degree, hodge_solve, hodge_resources)
             for degree in range(dimension + 1)
         )
         identifier = canonical_fingerprint(

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 from itertools import combinations
 from math import prod
-from typing import Any, final
+from typing import Any, final, Literal
 
 import equinox as eqx
 import jax
@@ -1966,17 +1966,78 @@ type _BlockGradientTable = (
 )
 
 
+@final
+class _StoredBasisTable(StrictModule):
+    """Basis values formed with the block: shared reference values or a mapped table."""
+
+    values: Array
+
+    def __call__(self) -> Array:
+        return self.values
+
+
+@final
+class _MappedBasisTable(StrictModule):
+    """Piola-mapped basis values formed from retained per-point Jacobians.
+
+    Retains the ``(cell, q, ambient, reference)`` Jacobian in place of the
+    ``(cell, q, basis, component)`` mapped table. Readers form the table with the
+    row-chunked map a retained table is formed with; one-pass assemblies form it
+    in the cell blocks of `row_blocks`, whose boundaries are whole row chunks of
+    that map, so every row is mapped by the same program on the same inputs.
+    """
+
+    element: FiniteElementSpec
+    reference_values: Array
+    jacobian: Array
+
+    def __call__(self) -> Array:
+        return self.rows(0, self.jacobian.shape[0])
+
+    def _map(self, jacobian: Array, /) -> Array:
+        return map_reference_values(
+            self.reference_values[None], self.element.value_spec, jacobian[:, :, None]
+        )
+
+    def rows(self, start: int, stop: int, /) -> Array:
+        """Mapped basis values of the block's cells ``start:stop``."""
+        return _row_chunked_map(self._map, self.jacobian[start:stop])
+
+    def row_blocks(self, consumer_row_copies: int, /) -> tuple[tuple[int, int], ...]:
+        """Cell blocks whose mapped rows fit ``_GEOMETRY_WORKSET_BYTES``.
+
+        One cell costs its mapped row twice (row-chunk parts and their
+        concatenation) plus ``consumer_row_copies`` row-sized consumer
+        intermediates; the consumer's per-cell output is smaller than a row.
+        """
+        count = self.jacobian.shape[0]
+        chunk = _row_chunk(self._map, self.jacobian)
+        row = jax.eval_shape(self._map, self.jacobian[:1])
+        cell_bytes = (2 + consumer_row_copies) * prod(row.shape[1:]) * row.dtype.itemsize
+        size = chunk * max(1, _GEOMETRY_WORKSET_BYTES // (chunk * cell_bytes))
+        return tuple((start, min(start + size, count)) for start in range(0, count, size))
+
+
+type _BlockBasisTable = _StoredBasisTable | _MappedBasisTable
+type _BasisTables = Literal["retained", "deferred"]
+
+
 class FiniteElementBlockGeometry(StrictModule, NonTrainableState):
     block_name: str = eqx.field(static=True)
     reference_points: Array
     reference_weights: Array
-    basis_values: Array
+    basis_table: _BlockBasisTable
     reference_gradients: Array
     physical_points: Array
     gradient_table: _BlockGradientTable
     physical_weights: Array
     measure: Array
     coordinate_measure: CoordinateMeasurePlan | None = None
+
+    @property
+    def basis_values(self) -> Array:
+        """Physical basis values, formed from ``basis_table`` when deferred."""
+        return self.basis_table()
 
     @property
     def physical_gradients(self) -> Array:
@@ -2556,6 +2617,7 @@ def _prepare_finite_element_field(
     *,
     coordinate_measure: CoordinateMeasurePlan | None = None,
     source_surface: SurfaceFiniteElementGeometry | None = None,
+    basis_tables: _BasisTables = "retained",
 ) -> tuple[
     tuple[FiniteElementSpec, ...],
     FiniteElementDofMap,
@@ -2612,6 +2674,7 @@ def _prepare_finite_element_field(
             coordinate_measure=coordinate_measure,
             source_surface=source_surface,
             source_block_index=block_index,
+            basis_tables=basis_tables,
         )
         for block_index, (block, element, coordinate_element, geometry_dofs) in enumerate(
             zip(mesh.blocks, elements, coordinate_elements, coordinate_dofs, strict=True)
@@ -2661,6 +2724,16 @@ def _finite_element_domains(
 
 @final
 class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
+    """Prepared FE fields, DOF maps and per-block quadrature geometry of one plan.
+
+    ``basis_tables`` selects how Piola-mapped (non-identity) basis tables are
+    held. ``"retained"`` stores the ``(cell, q, basis, component)`` table for
+    consumers that read it repeatedly. ``"deferred"`` retains the per-point
+    Jacobian instead and forms the table when read; owners whose consumers are
+    one-pass assemblies (the FE de Rham Hodge and constitutive Grams) form it
+    in bounded cell blocks. Both hold bit-identical values.
+    """
+
     mesh: CellMesh
     dof_maps: tuple[FiniteElementDofMap, ...]
     default_runtime: FiniteElementRuntimeData
@@ -2687,7 +2760,16 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
     preparation: PreparationReport
 
     @checked
-    def __init__(self, plan: FiniteElementPlan, /, *, numeric_version: str = "0") -> None:
+    def __init__(
+        self,
+        plan: FiniteElementPlan,
+        /,
+        *,
+        numeric_version: str = "0",
+        basis_tables: Literal["retained", "deferred"] = "retained",
+    ) -> None:
+        if basis_tables not in ("retained", "deferred"):
+            raise ValueError("basis_tables must be 'retained' or 'deferred'.")
         version = str(numeric_version)
         if not version:
             raise ValueError("numeric_version must be non-empty.")
@@ -2708,6 +2790,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
                 plan.coordinate_spec,
                 plan.precision_policy,
                 coordinate_measure=plan.coordinate_measure,
+                basis_tables=basis_tables,
                 source_surface=plan.source_surface,
             )
             all_elements.append(elements)
@@ -3440,26 +3523,31 @@ def _local_mass_tensor(geometry: FiniteElementBlockGeometry, /) -> Array:
         # Nodal quadrature at the axis cannot certify positive capacity.
         valid = jnp.all(jnp.isfinite(weights) & (weights > 0.0), axis=-1)
         weights = jnp.where(valid[:, None], weights, jnp.nan)
-    if geometry.basis_values.ndim == 2:
-        return ein.contract(
-            "cq,qi,qj->cij",
-            weights,
-            geometry.basis_values,
-            geometry.basis_values,
+    table = geometry.basis_table
+    if isinstance(table, _MappedBasisTable):
+        # One-pass assembly of a deferred table: each bounded cell block is
+        # mapped and contracted before the next; the weighted row is the one
+        # row-sized consumer intermediate.
+        return jnp.concatenate(
+            tuple(
+                _mass_contraction(
+                    weights[start:stop],
+                    geometry.physical_weights[start:stop],
+                    table.rows(start, stop),
+                )
+                for start, stop in table.row_blocks(1)
+            ),
+            axis=0,
         )
-    if geometry.basis_values.ndim == 3:
-        return ein.contract(
-            "cq,cqi,cqj->cij",
-            geometry.physical_weights,
-            geometry.basis_values,
-            geometry.basis_values,
-        )
-    return ein.contract(
-        "cq,cqiv,cqjv->cij",
-        weights,
-        geometry.basis_values,
-        geometry.basis_values,
-    )
+    return _mass_contraction(weights, geometry.physical_weights, table())
+
+
+def _mass_contraction(weights: Array, physical_weights: Array, basis: Array, /) -> Array:
+    if basis.ndim == 2:
+        return ein.contract("cq,qi,qj->cij", weights, basis, basis)
+    if basis.ndim == 3:
+        return ein.contract("cq,cqi,cqj->cij", physical_weights, basis, basis)
+    return ein.contract("cq,cqiv,cqjv->cij", weights, basis, basis)
 
 
 def _local_stiffness_tensor(geometry: FiniteElementBlockGeometry, /) -> Array:
@@ -3619,16 +3707,88 @@ def _degree_aware_reference_rule(
 _MAPPED_GRADIENT_ELEMENT_BUDGET = 1 << 19
 
 
+def _row_chunk(function: Callable[..., Array], *rows: Array) -> int:
+    """Rows per chunk whose output stays within the mapped element budget."""
+    per_row = prod(jax.eval_shape(function, *(row[:1] for row in rows)).shape[1:])
+    return max(1, _MAPPED_GRADIENT_ELEMENT_BUDGET // max(per_row, 1))
+
+
 def _row_chunked_map(function: Callable[..., Array], *rows: Array) -> Array:
     """Apply a row-vectorized ``function`` in chunks bounded by output size."""
     row_count = rows[0].shape[0]
-    per_row = prod(jax.eval_shape(function, *(row[:1] for row in rows)).shape[1:])
-    chunk = max(1, _MAPPED_GRADIENT_ELEMENT_BUDGET // max(per_row, 1))
+    chunk = _row_chunk(function, *rows)
     parts = [
         function(*(row[start : start + chunk] for row in rows))
         for start in range(0, row_count, chunk)
     ]
     return parts[0] if len(parts) == 1 else jnp.concatenate(parts, axis=0)
+
+
+# Declared working set of one cell chunk of block-geometry preparation and of
+# one cell block of a one-pass assembly over a deferred basis table. Chunk
+# sizes are derived from the bytes one cell contributes to that working set,
+# so transients stay within this bound whatever the block's cell count, while
+# 64 MiB still amortizes per-chunk dispatch over hundreds of order-2 3D cells.
+# Chunking never changes values: every cell's operations, inputs and order are
+# those of the unchunked block.
+_GEOMETRY_WORKSET_BYTES = 64 * 1024 * 1024
+
+
+def _block_coordinate_map(
+    geometry_element: ScalarCoordinateElement,
+    routes: ArrayLike,
+    coordinates: ArrayLike,
+    reference_points: Array,
+    /,
+    *,
+    precision_policy: FiniteElementPrecisionPolicy,
+) -> tuple[Array, Array, Array, Array]:
+    """Points, Jacobians, inverse Jacobians and measures of one block's cells.
+
+    The coordinate map is evaluated in cell chunks within
+    ``_GEOMETRY_WORKSET_BYTES``. One cell costs its chart tabulation (values and
+    gradients, stacked by distinct chart and then gathered), its nodes, and the
+    eight per-point map outputs; only the four retained outputs span the block.
+    """
+    route_array = jnp.asarray(routes)
+    cell_count, local_count = route_array.shape
+    ambient = jnp.shape(coordinates)[1]
+    point_count, dimension = reference_points.shape
+    itemsize = jnp.dtype(precision_policy.geometry(reference_points).dtype).itemsize
+    per_point = (
+        2 * local_count * (1 + dimension)
+        + ambient * (1 + 2 * dimension)
+        + 2 * dimension * dimension
+        + 3
+    )
+    cell_bytes = itemsize * (point_count * per_point + local_count * ambient)
+    chunk = max(1, _GEOMETRY_WORKSET_BYTES // cell_bytes)
+    per_cell = isinstance(geometry_element, PerCellRestrictedCellGeometryElement)
+    parts = []
+    # An empty block still evaluates once, as the unchunked map did.
+    for start in range(0, max(cell_count, 1), chunk):
+        stop = min(start + chunk, cell_count)
+        points, jacobian, _, _, inverse_jacobian, _, measure, _ = (
+            _evaluate_coordinate_map(
+                geometry_element,
+                route_array[start:stop],
+                coordinates,
+                reference_points,
+                precision_policy=precision_policy,
+                paired=False,
+                cell_rows=(np.arange(start, stop, dtype=np.int32) if per_cell else None),
+            )
+        )
+        parts.append((points, jacobian, inverse_jacobian, measure))
+    if len(parts) == 1:
+        return parts[0]
+    points, jacobians, inverses, measures = zip(*parts, strict=True)
+    return (
+        jnp.concatenate(points, axis=0),
+        jnp.concatenate(jacobians, axis=0),
+        jnp.concatenate(inverses, axis=0),
+        jnp.concatenate(measures, axis=0),
+    )
 
 
 def _evaluate_coordinate_map(
@@ -3814,6 +3974,7 @@ def _prepare_block_geometry(
     precision_policy: FiniteElementPrecisionPolicy,
     coordinate_measure: CoordinateMeasurePlan | None = None,
     source_surface: SurfaceFiniteElementGeometry | None = None,
+    basis_tables: _BasisTables = "retained",
     source_block_index: int = 0,
 ) -> FiniteElementBlockGeometry:
     if (reference_points is None) != (reference_weights is None):
@@ -3890,40 +4051,27 @@ def _prepare_block_geometry(
         )
         gradient_table: _BlockGradientTable = _StoredGradientTable(physical_gradients)
     else:
-        (
-            physical_points,
-            jacobian,
-            _,
-            _,
-            inverse_jacobian,
-            _,
-            measure_factor,
-            _,
-        ) = _evaluate_coordinate_map(
-            geometry_element,
-            routes,
-            coordinate_values,
-            reference_points,
-            precision_policy=precision_policy,
-            paired=False,
-            cell_rows=(
-                np.arange(block.cell_count, dtype=np.int32)
-                if isinstance(geometry_element, PerCellRestrictedCellGeometryElement)
-                else None
-            ),
+        physical_points, jacobian, inverse_jacobian, measure_factor = (
+            _block_coordinate_map(
+                geometry_element,
+                routes,
+                coordinate_values,
+                reference_points,
+                precision_policy=precision_policy,
+            )
         )
         if identity_mapped:
             gradient_table = _InverseJacobianGradientTable(
                 inverse_jacobian, reference_gradients
             )
         else:
-            # Bound temporary Piola-map work without changing the retained
-            # per-cell basis table or its physical quadrature.
-            physical_basis = _row_chunked_map(
-                lambda cell_jacobian: map_reference_values(
-                    basis_values[None], element.value_spec, cell_jacobian[:, :, None]
-                ),
-                jacobian,
+            mapped_basis = _MappedBasisTable(element, basis_values, jacobian)
+            # A retained table is formed now with the same bounded row-chunked
+            # Piola map a deferred table applies when read.
+            basis_table: _BlockBasisTable = (
+                mapped_basis
+                if basis_tables == "deferred"
+                else _StoredBasisTable(mapped_basis())
             )
     measure_factor = eqx.error_if(
         measure_factor,
@@ -3931,7 +4079,7 @@ def _prepare_block_geometry(
         "Finite-element geometry requires positive finite metric determinant.",
     )
     if identity_mapped:
-        physical_basis = basis_values
+        basis_table = _StoredBasisTable(basis_values)
     else:
         gradient_table = _MappedGradientTable(
             element,
@@ -3961,7 +4109,7 @@ def _prepare_block_geometry(
         block_name=block.name,
         reference_points=reference_points,
         reference_weights=reference_weights,
-        basis_values=physical_basis,
+        basis_table=basis_table,
         reference_gradients=reference_gradients,
         physical_points=physical_points,
         gradient_table=gradient_table,
@@ -4225,7 +4373,7 @@ def _masked_local_tensors(
         block_name=plan.cell_kind,
         reference_points=reference_points,
         reference_weights=reference_weights,
-        basis_values=policy.evaluation(basis_values),
+        basis_table=_StoredBasisTable(policy.evaluation(basis_values)),
         reference_gradients=reference_gradients,
         physical_points=physical_points,
         gradient_table=_InverseJacobianGradientTable(

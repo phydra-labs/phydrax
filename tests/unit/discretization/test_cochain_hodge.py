@@ -151,6 +151,22 @@ def test_sparse_hodge_respects_native_factor_resource_limits(
         SparseHodge(_ROWS, _COLUMNS, _VALUES, 3)
 
 
+def test_sparse_hodge_admission_uses_its_declared_budget() -> None:
+    with pytest.raises(ValueError, match="factor_bytes requires"):
+        SparseHodge(_ROWS, _COLUMNS, _VALUES, 3, admission_bytes=128)
+    budget = 1 << 20
+    declared = SparseHodge(_ROWS, _COLUMNS, _VALUES, 3, admission_bytes=budget).admit()
+    assert declared._admission_plan is not None
+    assert declared._admission_plan.policy.max_factor_bytes == budget
+    assert declared.layout_id != SparseHodge(_ROWS, _COLUMNS, _VALUES, 3).layout_id
+    restricted = declared.restrict(np.asarray([True, False, True], dtype=np.bool_))
+    assert restricted.admission_bytes == budget
+    with pytest.raises(TypeError, match="admission_bytes"):
+        SparseHodge(_ROWS, _COLUMNS, _VALUES, 3, admission_bytes=True)
+    with pytest.raises(ValueError, match="positive"):
+        SparseHodge(_ROWS, _COLUMNS, _VALUES, 3, admission_bytes=0)
+
+
 def test_diagonal_restriction_and_refresh_preserve_dynamic_metric_derivative() -> None:
     hodge = DiagonalHodge(jnp.asarray([2.0, 3.0, 5.0], dtype=jnp.float64))
     active = np.asarray([True, False, True], dtype=np.bool_)

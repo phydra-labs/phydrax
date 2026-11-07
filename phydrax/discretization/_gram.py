@@ -28,14 +28,25 @@ from ..linalg import (
     PCG,
     PreconditioningPolicy,
     prepare,
+    SolveResourcePolicy,
     TolerancePolicy,
 )
 from ..sparse import EdgeRelation, SparseCoordinateOperator
 from ..sparse._linear import _SparseStoragePlan
 
 
-def gram_solve_policy(size: int, /, *, tolerance: float = 1e-10) -> LinearSolvePolicy:
-    """Prepare native PCG/Jacobi with mathematical value and right-side derivatives."""
+def gram_solve_policy(
+    size: int,
+    /,
+    *,
+    tolerance: float = 1e-10,
+    resources: SolveResourcePolicy | None = None,
+) -> LinearSolvePolicy:
+    """Prepare native PCG/Jacobi with mathematical value and right-side derivatives.
+
+    ``resources`` declares the solve's byte budgets; ``None`` keeps the
+    documented `SolveResourcePolicy` defaults.
+    """
     if not np.isfinite(tolerance) or not 0.0 < tolerance < 1.0:
         raise ValueError("gram_tolerance must be finite, positive, and below one.")
     steps = max(1, 4 * size)
@@ -48,6 +59,7 @@ def gram_solve_policy(size: int, /, *, tolerance: float = 1e-10) -> LinearSolveP
             relative_tolerance=tolerance, absolute_tolerance=0.0, maximum_steps=steps
         ),
         failure=FailurePolicy("status"),
+        resources=resources,
     )
 
 
