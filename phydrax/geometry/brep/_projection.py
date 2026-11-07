@@ -1202,6 +1202,17 @@ def _directed_distance(lower: Fraction, upper: Fraction, /) -> tuple[float, floa
     )
 
 
+def _root_sum(first: ExactScalar, second: ExactScalar, /) -> tuple[Fraction, Fraction]:
+    """Enclose ``sqrt(first) + sqrt(second)`` for nonnegative exact scalars."""
+    lower = Fraction(0)
+    upper = Fraction(0)
+    for value in (first, second):
+        value_lower, value_upper = coefficient_interval(value, bits=128)
+        lower += fraction_sqrt_interval(max(Fraction(0), value_lower))[0]
+        upper += fraction_sqrt_interval(max(Fraction(0), value_upper))[1]
+    return lower, upper
+
+
 def _root_difference(
     first: ExactScalar, second: ExactScalar, /
 ) -> tuple[Fraction, Fraction] | None:
@@ -1214,12 +1225,7 @@ def _root_difference(
     if difference == 0:
         return Fraction(0), Fraction(0)
     difference_lower, difference_upper = coefficient_interval(difference, bits=128)
-    root_lower = Fraction(0)
-    root_upper = Fraction(0)
-    for value in (first, second):
-        value_lower, value_upper = coefficient_interval(value, bits=128)
-        root_lower += fraction_sqrt_interval(max(Fraction(0), value_lower))[0]
-        root_upper += fraction_sqrt_interval(max(Fraction(0), value_upper))[1]
+    root_lower, root_upper = _root_sum(first, second)
     if root_lower == 0:
         return None
     quotients = tuple(
@@ -1243,23 +1249,62 @@ def _hypotenuse(
     return lower - width, upper + width
 
 
+def _origin_segment_distance(
+    radial: tuple[Fraction, Fraction],
+    height: Fraction,
+    rate: tuple[Fraction, Fraction],
+    end_height: Fraction,
+    /,
+) -> tuple[Fraction, Fraction]:
+    """Enclose the distance from ``(radial, height)`` to a segment from the origin.
+
+    The segment ends at ``(rate, end_height)``. The distance is 1-Lipschitz in
+    the point and in the segment end, so it is enclosed exactly at the lower
+    first coordinates and widened by both widths.
+    """
+    length = rate[0] * rate[0] + end_height * end_height
+    fraction = (
+        Fraction(0)
+        if length == 0
+        else min(
+            Fraction(1),
+            max(Fraction(0), (radial[0] * rate[0] + height * end_height) / length),
+        )
+    )
+    horizontal = radial[0] - fraction * rate[0]
+    vertical = height - fraction * end_height
+    lower, upper = fraction_sqrt_interval(horizontal * horizontal + vertical * vertical)
+    width = radial[1] - radial[0] + rate[1] - rate[0]
+    return lower - width, upper + width
+
+
 def _meridian_segment_distance(
     point: tuple[ExactScalar, ExactScalar],
     start: tuple[ExactScalar, ExactScalar],
     end: tuple[ExactScalar, ExactScalar],
     /,
-) -> tuple[float, float] | None:
-    """Enclose the distance from a point to a full-turn surface of a segment.
+    *,
+    crossing: bool,
+) -> tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction] | None] | None:
+    """Enclose the distances from a point to the full turn of a profile segment.
 
-    Each argument is a meridian ``(squared radius, axial height)``. The full
-    turn's distance is the meridian half-plane distance to the segment. Radii
-    enter only as conjugate differences against ``start``; the distance moves by
-    at most each difference's enclosure width (it is 1-Lipschitz in the point
-    and in a segment end), so it is enclosed exactly at the lower endpoints and
-    widened by both widths.
+    Each argument is a meridian ``(squared radius, axial height)``. In signed
+    radial coordinates with ``start`` on the positive side, the segment ends at
+    ``+sqrt(end)``, or at ``-sqrt(end)`` when it is ``crossing`` the axis.
+    Turning a profile point at signed radius ``r`` toward the point's
+    half-plane or away from it places it at ``|rho - r|`` or ``|-rho - r|`` from
+    the point's radius ``rho``, so the full turn's distance is the smaller of
+    the signed meridian distances from ``(rho, h)`` (first result) and
+    ``(-rho, h)`` (second result). Without a crossing the second is never
+    smaller and is ``None``. Radii enter only as conjugate differences or sums
+    against ``start``; the distance moves by at most their enclosure widths.
     """
     point_radius = _root_difference(point[0], start[0])
-    end_radius = _root_difference(end[0], start[0])
+    if crossing:
+        end_sum = _root_sum(end[0], start[0])
+        end_radius: tuple[Fraction, Fraction] | None = (-end_sum[1], -end_sum[0])
+    else:
+        end_radius = _root_difference(end[0], start[0])
     heights = tuple(
         coefficient_interval(value - start[1], bits=128) for value in (point[1], end[1])
     )
@@ -1270,35 +1315,76 @@ def _meridian_segment_distance(
     ):
         return None
     point_height, end_height = heights[0][0], heights[1][0]
-    radial, rate = point_radius[0], end_radius[0]
-    length = rate * rate + end_height * end_height
-    fraction = (
-        Fraction(0)
-        if length == 0
-        else min(
-            Fraction(1),
-            max(Fraction(0), (radial * rate + point_height * end_height) / length),
-        )
+    same = _origin_segment_distance(point_radius, point_height, end_radius, end_height)
+    if not crossing:
+        return same, None
+    mirrored_sum = _root_sum(point[0], start[0])
+    opposite = _origin_segment_distance(
+        (-mirrored_sum[1], -mirrored_sum[0]), point_height, end_radius, end_height
     )
-    horizontal = radial - fraction * rate
-    vertical = point_height - fraction * end_height
-    lower, upper = fraction_sqrt_interval(horizontal * horizontal + vertical * vertical)
-    width = point_radius[1] - point_radius[0] + end_radius[1] - end_radius[0]
-    return _directed_distance(lower - width, upper + width)
+    return same, opposite
 
 
-def _fraction_values(values: Sequence[ExactScalar], /) -> tuple[Fraction, ...] | None:
-    fractions = tuple(value for value in values if isinstance(value, Fraction))
-    return fractions if len(fractions) == len(values) else None
+def _shadow(values: Sequence[ExactScalar], /) -> tuple[Fraction, ...]:
+    """Rational stand-ins of exact scalars: rationals themselves, else a lower end."""
+    return tuple(coefficient_interval(value, bits=128)[0] for value in values)
 
 
-def _orthonormal(*vectors: tuple[Fraction, ...]) -> bool:
-    return all(
-        rational_dot(left, right) == (1 if first == second else 0)
-        for first, left in enumerate(vectors)
-        for second, right in enumerate(vectors)
-        if first <= second
+def _norm_upper(values: Sequence[ExactScalar], /) -> Fraction:
+    """Rational upper bound of the Euclidean norm of an exact vector."""
+    squared = Fraction(0)
+    for value in values:
+        lower, upper = coefficient_interval(value, bits=128)
+        squared += max(-lower, upper) ** 2
+    return fraction_sqrt_interval(squared)[1]
+
+
+def _shadow_deviation(
+    exact: Sequence[ExactScalar], shadow: Sequence[Fraction], /
+) -> Fraction:
+    """Upper bound of ``|exact - shadow|`` for equally long exact and rational vectors."""
+    return _norm_upper(
+        tuple(value - stand_in for value, stand_in in zip(exact, shadow, strict=True))
     )
+
+
+def _frame_deviation(
+    first: tuple[Fraction, ...],
+    second: tuple[Fraction, ...],
+    axis: tuple[Fraction, ...],
+    /,
+) -> Fraction | None:
+    """Bound ``hypot(|f - f*|, |s - s*|)`` for an orthonormal frame normal to ``axis``.
+
+    ``f*, s*`` is the Gram-Schmidt frame of ``f, s`` against ``a = axis/|axis|``:
+    ``f' = f - (f.a) a``, ``f* = f'/|f'|``, ``s' = s - (s.a) a - (s.f*) f*``,
+    ``s* = s'/|s'|``. The parts of ``f - f*`` along ``a`` and ``f'`` are orthogonal,
+    so ``|f - f*|^2 = (f.a)^2 + (|f'| - 1)^2``, and ``| |f'| - 1 |`` is at most
+    ``| |f'|^2 - 1 |``; likewise ``|s - s*|^2 = (s.a)^2 + (s.f*)^2 + (|s'| - 1)^2``.
+    Every square is rational, so no cancellation is rounded. ``None`` when ``f``
+    or ``s`` has no part normal to the axis and the preceding vectors.
+    """
+    axis_squared = rational_dot(axis, axis)
+    if not axis_squared > 0:
+        return None
+    first_axis, second_axis = rational_dot(first, axis), rational_dot(second, axis)
+    first_squared = rational_dot(first, first) - first_axis * first_axis / axis_squared
+    if not first_squared > 0:
+        return None
+    cross = rational_dot(first, second) - first_axis * second_axis / axis_squared
+    second_squared = (
+        rational_dot(second, second)
+        - second_axis * second_axis / axis_squared
+        - cross * cross / first_squared
+    )
+    if not second_squared > 0:
+        return None
+    return fraction_sqrt_interval(
+        (first_axis * first_axis + second_axis * second_axis) / axis_squared
+        + cross * cross / first_squared
+        + (first_squared - 1) ** 2
+        + (second_squared - 1) ** 2
+    )[1]
 
 
 def _absolute(lower: Fraction, upper: Fraction, /) -> tuple[Fraction, Fraction]:
@@ -1310,43 +1396,52 @@ def _cylinder_distance(
 ) -> tuple[float, float] | None:
     """Enclose the distance from ``point`` to the cylinder over a height range.
 
-    With an exactly orthonormal radial frame normal to the axis ``a``, the
-    distance is ``hypot(rho - R, (w - v |a|^2) / |a|)`` for ``w = (p - o) . a``
-    and the clamped height ``v``.
+    The exact chart ``o + R (cos u f + sin u s) + v a`` is compared with the
+    circular chart ``o~ + R~ (cos u f* + sin u s*) + v a~``: rational stand-ins
+    of the exact data and the orthonormal frame ``f*, s*`` of ``f~, s~`` normal
+    to ``a~`` (``_frame_deviation``). Over every full-turn parameter pair the
+    charts differ by at most ``|o - o~| + |(R f - R~ f~, R s - R~ s~)| +
+    max|v| |a - a~| + R~ |(f~ - f*, s~ - s*)|``, which bounds the change of the
+    distance to the image. The circular distance is
+    ``hypot(rho - R~, (w - v |a~|^2) / |a~|)`` with ``w = (p - o~) . a~``,
+    ``rho^2 = |p - o~|^2 - w^2 / |a~|^2`` and the clamped height ``v``.
     """
-    values = _fraction_values(
-        (
-            *patch.origin_exact,
-            *patch.first_axis_exact,
-            *patch.second_axis_exact,
-            *patch.axis_exact,
-            patch.radius_exact,
+    origin = _shadow(patch.origin_exact)
+    first = _shadow(patch.first_axis_exact)
+    second = _shadow(patch.second_axis_exact)
+    axis = _shadow(patch.axis_exact)
+    (radius,) = _shadow((patch.radius_exact,))
+    frame = _frame_deviation(first, second, axis)
+    if frame is None or not radius > 0:
+        return None
+    reach = max(abs(Fraction(height[0])), abs(Fraction(height[1])))
+    deviation = (
+        _shadow_deviation(patch.origin_exact, origin)
+        + _shadow_deviation(
+            tuple(
+                patch.radius_exact * value
+                for value in (*patch.first_axis_exact, *patch.second_axis_exact)
+            ),
+            tuple(radius * value for value in (*first, *second)),
         )
+        + reach * _shadow_deviation(patch.axis_exact, axis)
+        + radius * frame
     )
-    if values is None:
-        return None
-    origin, first, second, axis = values[0:3], values[3:6], values[6:9], values[9:12]
-    radius = values[12]
     axis_squared = rational_dot(axis, axis)
-    if (
-        not _orthonormal(first, second)
-        or rational_dot(first, axis) != 0
-        or rational_dot(second, axis) != 0
-        or not axis_squared > 0
-        or not radius > 0
-    ):
-        return None
     relative = tuple(
         value - base for value, base in zip(rational_vector(point), origin, strict=True)
     )
-    x, y = rational_dot(relative, first), rational_dot(relative, second)
-    radial = _root_difference(x * x + y * y, radius * radius)
+    axial = rational_dot(relative, axis)
+    radial = _root_difference(
+        rational_dot(relative, relative) - axial * axial / axis_squared,
+        radius * radius,
+    )
     if radial is None:
         return None
-    axial = rational_dot(relative, axis)
     clamped = min(Fraction(height[1]), max(Fraction(height[0]), axial / axis_squared))
     offset = axial - clamped * axis_squared
-    return _directed_distance(*_hypotenuse(radial, offset * offset / axis_squared))
+    lower, upper = _hypotenuse(radial, offset * offset / axis_squared)
+    return _directed_distance(lower - deviation, upper + deviation)
 
 
 def _sphere_distance(
@@ -1369,32 +1464,59 @@ def _sphere_distance(
 def _torus_distance(
     patch: TorusPatch, point: np.ndarray, /
 ) -> tuple[float, float] | None:
-    """Enclose ``| hypot(rho - M, z) - m |``, the distance from ``point`` to the torus."""
-    values = _fraction_values(
-        (
-            *patch.center_exact,
-            *patch.first_axis_exact,
-            *patch.second_axis_exact,
-            *patch.axis_exact,
-            patch.major_radius_exact,
-            patch.minor_radius_exact,
+    """Enclose the distance from ``point`` to the torus.
+
+    The exact chart ``c + (M + m cos t)(cos u f + sin u s) + m sin t a`` is
+    compared with the ring torus of rational stand-ins ``c~, M~, m~`` and the
+    orthonormal frame ``f*, s*, a* = a~/|a~|`` (``_frame_deviation``). Over every
+    parameter pair the charts differ by at most ``|c - c~| +
+    |(M f - M~ f~, M s - M~ s~)| + |(m f - m~ f~, m s - m~ s~)| + |m a - m~ a~| +
+    (M~ + m~) |(f~ - f*, s~ - s*)| + m~ | |a~|^2 - 1 |``, which bounds the change
+    of the distance to the image. The ring torus distance is
+    ``| hypot(rho - M~, z) - m~ |`` with ``z^2 = w^2 / |a~|^2``,
+    ``w = (p - c~) . a~`` and ``rho^2 = |p - c~|^2 - z^2``.
+    """
+    center = _shadow(patch.center_exact)
+    first = _shadow(patch.first_axis_exact)
+    second = _shadow(patch.second_axis_exact)
+    axis = _shadow(patch.axis_exact)
+    major, minor = _shadow((patch.major_radius_exact, patch.minor_radius_exact))
+    frame = _frame_deviation(first, second, axis)
+    if frame is None or not major > minor > 0:
+        return None
+    axis_squared = rational_dot(axis, axis)
+    exact_radial = (*patch.first_axis_exact, *patch.second_axis_exact)
+    radial = (*first, *second)
+    deviation = (
+        _shadow_deviation(patch.center_exact, center)
+        + _shadow_deviation(
+            tuple(patch.major_radius_exact * value for value in exact_radial),
+            tuple(major * value for value in radial),
         )
+        + _shadow_deviation(
+            tuple(patch.minor_radius_exact * value for value in exact_radial),
+            tuple(minor * value for value in radial),
+        )
+        + _shadow_deviation(
+            tuple(patch.minor_radius_exact * value for value in patch.axis_exact),
+            tuple(minor * value for value in axis),
+        )
+        + (major + minor) * frame
+        + minor * abs(axis_squared - 1)
     )
-    if values is None:
-        return None
-    center, first, second, axis = values[0:3], values[3:6], values[6:9], values[9:12]
-    major, minor = values[12], values[13]
-    if not _orthonormal(first, second, axis) or not major > minor > 0:
-        return None
     relative = tuple(
         value - base for value, base in zip(rational_vector(point), center, strict=True)
     )
-    x, y, z = (rational_dot(relative, vector) for vector in (first, second, axis))
-    ring = _root_difference(x * x + y * y, major * major)
+    axial = rational_dot(relative, axis)
+    height_squared = axial * axial / axis_squared
+    ring = _root_difference(
+        rational_dot(relative, relative) - height_squared, major * major
+    )
     if ring is None:
         return None
-    tube_lower, tube_upper = _hypotenuse(ring, z * z)
-    return _directed_distance(*_absolute(tube_lower - minor, tube_upper - minor))
+    tube_lower, tube_upper = _hypotenuse(ring, height_squared)
+    lower, upper = _absolute(tube_lower - minor, tube_upper - minor)
+    return _directed_distance(lower - deviation, upper + deviation)
 
 
 def _tspline_graph_stationary_hit(
@@ -2623,10 +2745,19 @@ def _project_face(
             )
             for parameter in (first_parameter, last_parameter)
         )
-        # The meridian image is one segment only when both rectangle ends lie on
-        # one side of the axis; the radial parts are parallel by the test above.
-        if dot_exact(radial_first, radial_last) < 0:
-            return _unresolved(2, face, path)
+        # Signed meridian coordinates put the first rectangle end (else the
+        # last) on the positive side; the radial parts are parallel by the test
+        # above, so a negative product means the segment crosses the axis.
+        crossing = dot_exact(radial_first, radial_last) < 0
+        positive = (
+            radial_first if any(value != 0 for value in radial_first) else radial_last
+        )
+        reversed_side = (
+            dot_exact(
+                positive, exact_radial_start if radial_norm > 0.0 else exact_radial_rate
+            )
+            < 0
+        )
 
         def meridian(
             relative: tuple[ExactScalar, ...], /
@@ -2634,7 +2765,7 @@ def _project_face(
             height = dot_exact(relative, exact_axis)
             return dot_exact(relative, relative) - height * height, height
 
-        carrier_distance = _meridian_segment_distance(
+        distances = _meridian_segment_distance(
             meridian(
                 tuple(
                     value - base
@@ -2645,9 +2776,20 @@ def _project_face(
             ),
             meridian(segment_ends[0]),
             meridian(segment_ends[1]),
+            crossing=crossing,
         )
-        if carrier_distance is None:
+        if distances is None:
             return _unresolved(2, face, path)
+        same, opposite = distances
+        # Across the axis the closest turn faces the point with the first end's
+        # side or the opposite one; only separated enclosures decide which.
+        mirrored = False
+        if opposite is not None:
+            if opposite[1] < same[0]:
+                same, mirrored = opposite, True
+            elif not same[1] < opposite[0]:
+                return _unresolved(2, face, path)
+        carrier_distance = _directed_distance(*same)
         profile_first = line_origin + first_parameter * line_direction
         profile_last = line_origin + last_parameter * line_direction
         relative_first = profile_first - axis_origin
@@ -2655,15 +2797,18 @@ def _project_face(
         z_first, z_last = float(relative_first @ axis), float(relative_last @ axis)
         rho_first = float(np.linalg.norm(relative_first - z_first * axis))
         rho_last = float(np.linalg.norm(relative_last - z_last * axis))
+        if crossing:
+            rho_last = -rho_last
         relative = point - axis_origin
         axial_point = float(relative @ axis)
         radial_point = relative - axial_point * axis
         rho_point = float(np.linalg.norm(radial_point))
+        signed_point = -rho_point if mirrored else rho_point
         delta = np.asarray((rho_last - rho_first, z_last - z_first))
         squared = float(delta @ delta)
         if squared == 0.0:
             return _unresolved(2, face, path)
-        phase = np.asarray((rho_point - rho_first, axial_point - z_first))
+        phase = np.asarray((signed_point - rho_first, axial_point - z_first))
         fraction = float(np.clip((phase @ delta) / squared, 0.0, 1.0))
         profile_parameter = first_parameter + fraction * (
             last_parameter - first_parameter
@@ -2675,6 +2820,10 @@ def _project_face(
             angle = float(
                 np.arctan2(radial_point @ second_axis, radial_point @ radial_axis)
             )
+            if mirrored != reversed_side:
+                # The positive meridian side lies along the reference direction
+                # unless reversed and faces the point unless mirrored.
+                angle += pi
         uv = np.asarray((angle, profile_parameter), dtype=np.float64)
         candidate = np.asarray(
             patch.evaluate(jnp.asarray(uv, dtype=jnp.float64)), dtype=np.float64

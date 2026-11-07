@@ -1442,3 +1442,244 @@ def test_far_cylinder_certified_boundary_distance_encloses_exact_distance() -> N
     assert 0 <= lower <= upper < Fraction(1, 2)
     assert (Fraction(radius) - lower) ** 2 >= axis_squared
     assert (Fraction(radius) - upper) ** 2 <= axis_squared
+
+
+def _rectangle_face_model(patch: Any, bounds: tuple[tuple[float, float], ...]) -> Any:
+    """One face over a chart rectangle whose sides are exact chart lines."""
+    from phydrax.geometry.brep._model import BRepImportReport
+    from phydrax.geometry.brep._patches import LineCurve, SurfaceMappedCurve
+    from phydrax.geometry.brep._root_bindings import BRepPlacedVertex, BRepVertexRoot
+
+    (u0, v0), (u1, v1) = bounds
+    pcurves = (
+        LineCurve((u0, v0), (u1 - u0, 0.0)),
+        LineCurve((u1, v0), (0.0, v1 - v0)),
+        LineCurve((u0, v1), (u1 - u0, 0.0)),
+        LineCurve((u0, v0), (0.0, v1 - v0)),
+    )
+    corners = jnp.asarray(((u0, v0), (u1, v0), (u1, v1), (u0, v1)), dtype=jnp.float64)
+    points = np.asarray(patch.evaluate(corners), dtype=np.float64)
+    geometry = BRepGeometry(
+        vertex_points=points,
+        vertex_roots=tuple(
+            BRepVertexRoot(
+                BRepPlacedVertex(
+                    point,
+                    np.eye(3, dtype=np.float64),
+                    np.zeros((3,), dtype=np.float64),
+                    f"rectangle-vertex-{index}",
+                )
+            )
+            for index, point in enumerate(points)
+        ),
+        curves=tuple(SurfaceMappedCurve(patch, pcurve) for pcurve in pcurves),
+        edge_curves=(0, 1, 2, 3),
+        edge_ranges=np.tile(np.asarray((0.0, 1.0), dtype=np.float64), (4, 1)),
+        edge_vertices=((0, 1), (1, 2), (3, 2), (0, 3)),
+        pcurves=pcurves,
+        coedge_edges=(0, 1, 2, 3),
+        coedge_senses=(1, 1, -1, -1),
+        face_loops=(((0, 1, 2, 3),),),
+        shell_faces=(),
+        shell_orientations=(),
+        solid_shells=(),
+    )
+    report = BRepImportReport(
+        source_id="projection-rectangle-face",
+        source_digest="e" * 64,
+        source_format="native",
+        coordinate_contract=_CONTRACT,
+        import_policy_id="f" * 64,
+        num_solids=0,
+        num_faces=1,
+        num_edges=4,
+        num_vertices=4,
+    )
+    return BRepModel(
+        geometry=geometry,
+        patches=(patch,),
+        parameter_bounds=np.asarray((bounds,), dtype=np.float64),
+        orientation=np.asarray((1.0,), dtype=np.float64),
+        physical_tags=("rectangle-face",),
+        coordinate_contract=_CONTRACT,
+        report=report,
+    )
+
+
+@pytest.mark.parametrize("frame", ("radical", "rounded"))
+@pytest.mark.parametrize("surface", ("cylinder", "torus"))
+def test_rotated_quadric_face_certifies_exact_distance(surface: str, frame: str) -> None:
+    import mpmath
+
+    from phydrax.discretization._exact_algebraic_geometry import RadicalElement
+    from phydrax.geometry.brep._patches import CylinderPatch, TorusPatch
+
+    # The frame about the (1, 1, 1) axis is exactly orthonormal with radical
+    # entries, or its binary64 rounding, which is rational but not orthonormal.
+    root2, root3, root6 = (RadicalElement.sqrt(Fraction(n)) for n in (2, 3, 6))
+    exact_frame = (
+        (1 / root2, -1 / root2, Fraction(0)),
+        (1 / root6, 1 / root6, -2 / root6),
+        (1 / root3, 1 / root3, 1 / root3),
+    )
+    first, second, axis = (
+        np.asarray(tuple(float(value) for value in vector), dtype=np.float64)
+        for vector in exact_frame
+    )
+    exact: dict[str, Any] = (
+        {
+            "first_axis_exact": exact_frame[0],
+            "second_axis_exact": exact_frame[1],
+            "axis_exact": exact_frame[2],
+        }
+        if frame == "radical"
+        else {}
+    )
+    origin = np.asarray((0.5, -0.25, 2.0), dtype=np.float64)
+    angle = 0.5
+    turned = np.cos(angle) * first + np.sin(angle) * second
+    patch: Any
+    if surface == "cylinder":
+        patch = CylinderPatch(origin, first, second, axis, 1.0, **exact)
+        bounds = ((0.0, 0.0), (1.0, 2.0))
+        point = origin + 1.7 * turned + 0.8 * axis
+    else:
+        patch = TorusPatch(origin, first, second, axis, 2.0, 0.5, **exact)
+        bounds = ((0.0, 0.0), (1.0, 1.0))
+        point = (
+            origin + (2.0 + 0.35 * np.cos(angle)) * turned + 0.35 * np.sin(angle) * axis
+        )
+    projection = phx.geometry.prepare_brep_projection(
+        _rectangle_face_model(patch, bounds)
+    )
+    result = _project(projection, point[None, :], _FACE, 0)
+    assert int(result.status[0]) == _STATUS.UNIQUE
+    lower = Fraction(float(result.distance_lower_bounds[0]))
+    upper = Fraction(float(result.residuals[0]))
+    assert 0 < lower <= upper
+
+    if frame == "radical":
+        # Exactly orthonormal frame: with r = p - o and w = r . (1, 1, 1), the
+        # radius about the axis is rho^2 = |r|^2 - w^2 / 3 and the height w^2 / 3.
+        relative = tuple(
+            Fraction(float(value)) - Fraction(float(base))
+            for value, base in zip(point, origin, strict=True)
+        )
+        height_squared = sum(relative, Fraction(0)) ** 2 / 3
+        rho_squared = sum((value * value for value in relative), Fraction(0)) - (
+            height_squared
+        )
+        if surface == "cylinder":
+            # The point is outside, between both rims: distance rho - 1.
+            assert sum(relative) > 0 and height_squared < 4
+            assert (lower + 1) ** 2 <= rho_squared <= (upper + 1) ** 2
+            return
+        # Inside the tube: distance m - t with t = hypot(rho - M, z); for
+        # s = rho^2 + M^2 + z^2 - b^2, t < b iff s < 2 M rho, decided by squares.
+        major, minor = Fraction(2), Fraction(1, 2)
+        ring = 4 * major**2 * rho_squared
+
+        def excess(bound: Fraction, /) -> Fraction:
+            return rho_squared + major**2 + height_squared - bound * bound
+
+        def tube_below(bound: Fraction, /) -> bool:
+            return excess(bound) < 0 or excess(bound) ** 2 < ring
+
+        def tube_above(bound: Fraction, /) -> bool:
+            return excess(bound) > 0 and excess(bound) ** 2 > ring
+
+        assert upper < minor and tube_below(minor)
+        assert not tube_above(minor - lower)
+        assert not tube_below(minor - upper)
+        return
+
+    # Rounded frame: the exact carrier is the chart of the rational, slightly
+    # non-orthonormal data. Its distance is a transcendental minimum, located by
+    # 256-bit Newton steps on the chart gradient from the reported parameters.
+    with mpmath.workprec(256):
+        # The patch's exact data are these binary64 vectors.
+        data = {
+            name: [mpmath.mpf(float(value)) for value in vector]
+            for name, vector in (
+                ("o", origin),
+                ("f", first),
+                ("s", second),
+                ("a", axis),
+                ("p", point),
+            )
+        }
+
+        def chart(u: Any, v: Any) -> list[Any]:
+            if surface == "cylinder":
+                ring, lift = mpmath.mpf(1), v
+            else:
+                ring, lift = 2 + mpmath.cos(v) / 2, mpmath.sin(v) / 2
+            return [
+                data["o"][k]
+                + ring * (mpmath.cos(u) * data["f"][k] + mpmath.sin(u) * data["s"][k])
+                + lift * data["a"][k]
+                for k in range(3)
+            ]
+
+        def squared(u: Any, v: Any) -> Any:
+            return mpmath.fsum(
+                (data["p"][k] - value) ** 2 for k, value in enumerate(chart(u, v))
+            )
+
+        u, v = mpmath.findroot(
+            [
+                lambda u, v: mpmath.diff(lambda x: squared(x, v), u),
+                lambda u, v: mpmath.diff(lambda y: squared(u, y), v),
+            ],
+            [mpmath.mpf(float(value)) for value in np.asarray(result.parameters[0])],
+        )
+        distance = mpmath.sqrt(squared(u, v))
+        assert bounds[0][0] < u < bounds[1][0] and bounds[0][1] < v < bounds[1][1]
+        assert mpmath.mpf(lower.numerator) / lower.denominator <= distance
+        assert distance <= mpmath.mpf(upper.numerator) / upper.denominator
+
+
+def test_axis_crossing_straight_revolution_certifies_far_nappe_distance() -> None:
+    from phydrax.geometry.brep._patches import LineCurve, RevolutionSurface
+
+    # The profile from (-1, 0, -1) to (1, 0, 1) crosses the z axis at the
+    # origin, so its full turn is the double cone rho = |z|. The first profile
+    # end lies on the -x side, while the closest point to the query lies on the
+    # upper nappe, across the axis from it: at (rho, z) = (0.7, 0.7) turned by
+    # 0.5, inside the face.
+    patch = RevolutionSurface(
+        LineCurve((-1.0, 0.0, -1.0), (2.0, 0.0, 2.0)), (0.0, 0.0, 0.0), (0.0, 0.0, 1.0)
+    )
+    projection = phx.geometry.prepare_brep_projection(
+        _rectangle_face_model(patch, ((0.0, 0.0), (1.0, 1.0)))
+    )
+    angle = 0.5
+    point = np.asarray((0.8 * np.cos(angle), 0.8 * np.sin(angle), 0.6), dtype=np.float64)
+    result = _project(projection, point[None, :], _FACE, 0)
+    assert int(result.status[0]) == _STATUS.UNIQUE
+    np.testing.assert_allclose(
+        result.points[0],
+        (0.7 * np.cos(angle), 0.7 * np.sin(angle), 0.7),
+        rtol=0.0,
+        atol=1.0e-12,
+    )
+    lower = Fraction(float(result.distance_lower_bounds[0]))
+    upper = Fraction(float(result.residuals[0]))
+
+    # The exact distance is d = (rho - z) / sqrt(2) with rho > z > 0, so for
+    # b >= 0 and K = rho^2 + z^2 - 2 b^2, b^2 - d^2 = (2 z rho - K) / 2: the sign
+    # of 2 z rho - K is decided by squares.
+    rho_squared = Fraction(float(point[0])) ** 2 + Fraction(float(point[1])) ** 2
+    height = Fraction(float(point[2]))
+    assert height > 0 and rho_squared > height**2
+
+    def excess(bound: Fraction, /) -> int:
+        """Sign of ``bound - d``."""
+        threshold = rho_squared + height**2 - 2 * bound**2
+        if threshold < 0:
+            return 1
+        difference = 4 * height**2 * rho_squared - threshold**2
+        return (difference > 0) - (difference < 0)
+
+    assert 0 <= lower <= upper
+    assert excess(lower) <= 0 <= excess(upper)
