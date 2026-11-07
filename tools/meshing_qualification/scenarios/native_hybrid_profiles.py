@@ -828,6 +828,26 @@ def _layer_core_initial_history(
     return accepted, space, defect
 
 
+# Declared per-chunk geometry/Hodge-assembly workset of the de Rham complexes:
+# 512 MiB is the workset validated on the unit-box target (38,696 cells;
+# geometry setup peak 7.95 GiB). It only changes chunking, never values.
+_LAYER_CORE_HODGE_WORKSET = 512 << 20
+
+
+def _layer_core_hodge_resources(
+    controls: _LayerCoreLifecycle, /
+) -> phx.linalg.SolveResourcePolicy:
+    """The profile's declared budget of every de Rham Hodge admission and solve."""
+    budget = controls.solve_memory_bytes
+    return phx.linalg.SolveResourcePolicy(
+        factorization_bytes=budget,
+        workspace_bytes=_LAYER_CORE_HODGE_WORKSET,
+        krylov_basis_bytes=budget,
+        preconditioner_bytes=budget,
+        recycling_state_bytes=budget,
+    )
+
+
 def _harmonic_history_policy(budget: int, /) -> phx.linalg.LinearSolvePolicy:
     """PCG on the exact supernodal Cholesky factor under one declared byte budget.
 
@@ -1637,6 +1657,8 @@ def _resume_mapped_refinement(path: Path, content_id: str, /) -> dict[str, objec
             for row, name in enumerate(names)
             if row >= 2
         },
+        # Mapped wall profiles declare no run envelope yet: library defaults.
+        hodge_resources=None,
     )
     forward = {**scalar_forward, **form_forward}
     if any(
@@ -1673,6 +1695,7 @@ def _resume_mapped_refinement(path: Path, content_id: str, /) -> dict[str, objec
             target_fields,
             {name: np.asarray(refined_values[names.index(name)])},
             fields=(name,),
+            hodge_resources=None,
         )
         form_back.update(values)
         backward_forms.update(evidence)
@@ -2247,10 +2270,16 @@ def _layer_form_transition(
     banks: dict[str, np.ndarray],
     /,
     *,
+    hodge_resources: phx.linalg.SolveResourcePolicy | None,
     fields: tuple[str, ...] = ("Hcurl", "Hdiv"),
     on_field: Any | None = None,
 ) -> tuple[dict[str, np.ndarray], dict[str, object]]:
-    """Move the original lifted H(curl)/H(div) banks and prove periodic descent."""
+    """Move the original lifted H(curl)/H(div) banks and prove periodic descent.
+
+    ``hodge_resources`` is the profile's declared budget of both complexes'
+    Hodge admission factorizations, assembly workset and Riesz solves; ``None``
+    keeps the documented library defaults (unbudgeted callers).
+    """
     import jax.numpy as jnp
 
     from phydrax._owned_programs import run_owned_program
@@ -2293,6 +2322,7 @@ def _layer_form_transition(
             order=2,
             twist=twist,
             coordinate_spec=adaptation.source.geometry,
+            hodge_resources=hodge_resources,
         )
         target_complex = phx.discretization.FiniteElementDeRhamComplex(
             adaptation.target.mesh,
@@ -2300,6 +2330,7 @@ def _layer_form_transition(
             order=2,
             twist=twist,
             coordinate_spec=adaptation.target.geometry,
+            hodge_resources=hodge_resources,
         )
         for endpoint, spec, complex_ in (
             (adaptation.source, source_spec, source_complex),
@@ -3718,7 +3749,11 @@ def _run_wall_profile(
             target_form_fields = _layer_field_plan(refinement.target).fields
             del scalar_space, refined_space
             refined_forms, forward_forms = _layer_form_transition(
-                refinement, source_form_fields, target_form_fields, form_banks
+                refinement,
+                source_form_fields,
+                target_form_fields,
+                form_banks,
+                hodge_resources=None,
             )
             form_space = _layer_field_plan(accepted).prepare()
             refined_form_space = _layer_field_plan(refinement.target).prepare()
@@ -3762,7 +3797,11 @@ def _run_wall_profile(
             inverse_form_fields = _layer_field_plan(coarsening.target).fields
             del refined_space, restored_space
             restored_forms, backward_forms = _layer_form_transition(
-                coarsening, target_form_fields, inverse_form_fields, refined_forms
+                coarsening,
+                target_form_fields,
+                inverse_form_fields,
+                refined_forms,
+                hodge_resources=None,
             )
             for field_name in ("H1", "DG"):
                 if not np.allclose(
@@ -5315,6 +5354,7 @@ def _resume_layer_core_cycle(
             for row, name in enumerate(names)
             if row >= 2
         },
+        hodge_resources=_layer_core_hodge_resources(controls),
     )
     replayed = {**replayed_scalars, **replayed_forms}
     if any(
@@ -5347,6 +5387,7 @@ def _resume_layer_core_cycle(
             for row, name in enumerate(names)
             if row >= 2
         },
+        hodge_resources=_layer_core_hodge_resources(controls),
     )
     restored = {**restored_scalars, **restored_forms}
     if any(
@@ -5459,6 +5500,7 @@ def _run_layer_core_lifecycle(
             source_form_fields,
             refined_plan.fields,
             {name: banks[name] for name in ("Hcurl", "Hdiv")},
+            hodge_resources=_layer_core_hodge_resources(controls),
         )
         del source_form_fields
         refined_space = refined_plan.prepare()
@@ -5545,6 +5587,7 @@ def _run_layer_core_lifecycle(
             refined_plan.fields,
             field_plan.fields,
             {name: refined_banks[name] for name in ("Hcurl", "Hdiv")},
+            hodge_resources=_layer_core_hodge_resources(controls),
         )
         del refined_space
         banks = {**restored_scalars, **restored_forms}
