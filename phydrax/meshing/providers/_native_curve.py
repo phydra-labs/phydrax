@@ -107,6 +107,18 @@ class _AtlasCurveCarrier(AbstractCurve):
         rows = jnp.full(values.shape, self.chart_row, dtype=jnp.int32)
         return self.mapping.map(rows, local[..., None])
 
+    def bounding_box(self, first: float, last: float, /) -> np.ndarray:
+        """Enclose the atlas chart program, which is this carrier's source map."""
+        AbstractCurve.is_c1_on(self, first, last)
+        prepared = prepare_interval_function(
+            lambda parameters: self.evaluate(parameters[0]), 1
+        )
+        lower, upper = prepared.evaluate(
+            np.asarray(((first,),), dtype=np.float64),
+            np.asarray(((last,),), dtype=np.float64),
+        )
+        return np.stack((lower[0], upper[0]))
+
 
 def _curve_source_query(
     prepared: PreparedCurveNetwork,
