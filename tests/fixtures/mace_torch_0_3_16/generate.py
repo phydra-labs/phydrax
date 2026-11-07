@@ -14,6 +14,11 @@ each case's declaration and the provider's realized normalization constants
 (``normalize2mom_silu`` of the radial networks, the readout activation, and
 the nonlinear-block gate constants). The fixtures are an independent oracle
 for native reconstruction; they are not checkpoints of any published model.
+Forces and virials are the provider's own autograd outputs, except where the
+provider radial basis carries no autograd (``ChebychevBasis`` evaluates
+``torch.special.chebyshev_polynomial_t``): its autograd forces then omit the
+basis derivative, so those cases store a five-point central difference of the
+provider energy instead and record it as ``force_reference``.
 
 Family cases cover the attention-residual and residual-nonlinear interactions
 with a nonlinear-bias readout, Gaussian/Chebyshev bases with Soft/Agnesi
@@ -202,27 +207,35 @@ _STRUCTURES: dict[str, dict[str, Any]] = {
 }
 
 
-def _evaluate(
+# Five-point central stencil of the energy-gradient oracle (step in angstrom
+# for positions, dimensionless for strain). At 2.5e-4 the truncation (~h**4)
+# and rounding (~eps |E| / h) errors stay below 1e-10 on the autograd-exact
+# Gaussian case, an order under the force and stress gates.
+_STENCIL_STEP = 2.5e-4
+_STENCIL = (
+    (-2.0, 1.0 / 12.0),
+    (-1.0, -8.0 / 12.0),
+    (1.0, 8.0 / 12.0),
+    (2.0, -1.0 / 12.0),
+)
+
+
+def _batch(
     modules: dict[str, Any],
-    model: Any,
-    structure: dict[str, Any],
+    symbols: str,
+    positions: np.ndarray,
+    cell: np.ndarray | None,
     head: int,
     conditions: dict[str, int],
     /,
-) -> dict[str, np.ndarray]:
+) -> dict[str, Any]:
     torch, ase, data, tools = (
         modules["torch"],
         modules["ase"],
         modules["data"],
         modules["tools"],
     )
-    periodic = structure["cell"] is not None
-    atoms = ase.Atoms(
-        structure["symbols"],
-        positions=structure["positions"],
-        cell=structure["cell"],
-        pbc=periodic,
-    )
+    atoms = ase.Atoms(symbols, positions=positions, cell=cell, pbc=cell is not None)
     table = tools.AtomicNumberTable([1, 8])
     config = data.config_from_atoms(atoms)
     for name, value in conditions.items():
@@ -235,6 +248,86 @@ def _evaluate(
     for name in ("total_charge", "total_spin"):
         if batch.get(name) is not None and batch[name].ndim == 0:
             batch[name] = batch[name].reshape(1)
+    return batch
+
+
+def _detached_radial_basis(modules: dict[str, Any], model: Any, /) -> bool:
+    """Whether the provider's radial basis drops its distance derivative.
+
+    ``torch.special.chebyshev_polynomial_t`` carries no autograd, so the forces
+    and virials of a mace-torch ``ChebychevBasis`` model omit the basis (and the
+    distance-transform) derivative: they are not the negative energy gradient.
+    """
+
+    probe = modules["torch"].full((1, 1), 0.5, requires_grad=True)
+    return not model.radial_embedding.bessel_fn(probe).requires_grad
+
+
+def _energy_gradient(
+    modules: dict[str, Any],
+    model: Any,
+    structure: dict[str, Any],
+    head: int,
+    conditions: dict[str, int],
+    /,
+) -> dict[str, np.ndarray]:
+    """Forces and virials as stencil derivatives of the provider energy.
+
+    Virials follow the provider convention ``-dE/d(eps)`` with positions and
+    cell mapped by ``x (I + sym(eps))``.
+    """
+
+    positions = np.asarray(structure["positions"], dtype=np.float64)
+    cell = (
+        None if structure["cell"] is None else np.asarray(structure["cell"], np.float64)
+    )
+
+    def energy(moved: np.ndarray, moved_cell: np.ndarray | None) -> float:
+        batch = _batch(modules, structure["symbols"], moved, moved_cell, head, conditions)
+        output = model(batch, compute_force=False, training=False)
+        return float(output["energy"].detach().sum())
+
+    forces = np.zeros_like(positions)
+    for atom, axis in np.ndindex(positions.shape):
+        for offset, weight in _STENCIL:
+            moved = positions.copy()
+            moved[atom, axis] += offset * _STENCIL_STEP
+            forces[atom, axis] -= weight * energy(moved, cell) / _STENCIL_STEP
+    result = {"forces": forces}
+    if cell is not None:
+        virials = np.zeros((1, 3, 3), dtype=np.float64)
+        for row, column in np.ndindex(3, 3):
+            for offset, weight in _STENCIL:
+                strain = np.zeros((3, 3), dtype=np.float64)
+                strain[row, column] = offset * _STENCIL_STEP
+                deformation = np.eye(3, dtype=np.float64) + 0.5 * (strain + strain.T)
+                virials[0, row, column] -= (
+                    weight
+                    * energy(positions @ deformation, cell @ deformation)
+                    / _STENCIL_STEP
+                )
+        result["virials"] = virials
+    return result
+
+
+def _evaluate(
+    modules: dict[str, Any],
+    model: Any,
+    structure: dict[str, Any],
+    head: int,
+    conditions: dict[str, int],
+    /,
+) -> dict[str, np.ndarray]:
+    torch = modules["torch"]
+    periodic = structure["cell"] is not None
+    batch = _batch(
+        modules,
+        structure["symbols"],
+        np.asarray(structure["positions"]),
+        None if structure["cell"] is None else np.asarray(structure["cell"]),
+        head,
+        conditions,
+    )
     output = model(batch, compute_force=True, compute_virials=periodic, training=True)
     names, parameters = zip(*model.named_parameters())
     gradients = torch.autograd.grad(
@@ -254,6 +347,10 @@ def _evaluate(
     }
     if periodic:
         result["virials"] = output["virials"].detach().numpy()
+    if _detached_radial_basis(modules, model):
+        # The reference is the provider energy's gradient, not its autograd
+        # forces/virials, which miss the radial-basis derivative.
+        result.update(_energy_gradient(modules, model, structure, head, conditions))
     return result
 
 
@@ -389,7 +486,13 @@ def _case(
                 np.lib.format.write_array(
                     member, np.asanyarray(value), allow_pickle=False
                 )
-    return {**case, **_constants(model)}
+    record = {**case, **_constants(model)}
+    if _detached_radial_basis(modules, model):
+        record["force_reference"] = {
+            "method": "five-point central difference of the provider energy",
+            "step": _STENCIL_STEP,
+        }
+    return record
 
 
 def generate(directory: Path, cases: dict[str, dict[str, Any]], release: str, /) -> None:
