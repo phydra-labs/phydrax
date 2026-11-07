@@ -3347,23 +3347,35 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
 
         Assembly runs as one compiled program per discretization. The default
         runtime reads the prepared block geometry; any other runtime evaluates
-        its geometry anew inside the program.
+        its geometry anew inside the program. Operators leaving the program are
+        rebound to their now-concrete topology, so host canonical counts (and
+        sparse cost estimation) are available as for host-assembled operators.
         """
         if runtime is self.default_runtime:
-            return run_owned_program(
+            operators = run_owned_program(
                 self,
                 "prepared-field-operators",
                 FiniteElementDiscretization._prepared_field_operators,
                 str(field_name),
                 kinds,
             )
-        return run_owned_program(
-            self,
-            "runtime-field-operators",
-            FiniteElementDiscretization._runtime_field_operators,
-            str(field_name),
-            runtime,
-            kinds,
+        else:
+            operators = run_owned_program(
+                self,
+                "runtime-field-operators",
+                FiniteElementDiscretization._runtime_field_operators,
+                str(field_name),
+                runtime,
+                kinds,
+            )
+        return tuple(
+            SparseLinearMap(
+                operator.relation,
+                operator.coefficients,
+                properties=operator.properties,
+                operator_id=operator.operator_id,
+            )
+            for operator in operators
         )
 
     def _prepared_field_operators(
