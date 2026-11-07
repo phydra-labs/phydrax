@@ -505,6 +505,13 @@
   compensated order, so inactive capacity padding is an exact no-op: resource
   transport to larger group or support capacities stays bitwise and the
   validator reproduces committed populations exactly on every platform.
+- The internal ordered `compensated_sum` takes a `where` mask of logical terms
+  and chooses its sequential or 32-term blocked algorithm from their count, not
+  the padded capacity: each lane is bitwise the unmasked sum of its selected
+  terms, wherever the excluded entries sit. Projector Monte Carlo norms,
+  populations and the validator pass their active masks, so transport across
+  the 64-term boundary (for example 60 active terms at capacity 60, 70 or 128)
+  stays bitwise. Unmasked reductions are unchanged.
 - `RowGramLinearOperator` plans the canonical storage of a sparse factor from
   its concrete topology at construction, so its exact diagonal (and the
   matrix-free Jacobi preconditioner of Craig solves) works again for sparse

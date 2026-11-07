@@ -338,7 +338,7 @@ def initialize_projector_monte_carlo(
             raise ValueError(
                 "Guide transformation is invalid or outside numerical range."
             )
-    population = compensated_sum(jnp.abs(coefficients))
+    population = compensated_sum(jnp.abs(coefficients), where=prepared.initial_active)
     if not bool(jax.device_get(jnp.isfinite(population) & (population > 0))):
         raise ValueError("Initial represented population must be finite and positive.")
     r, s = prepared.plan.replicas, prepared.plan.support_capacity
@@ -436,9 +436,7 @@ def validate_projector_state(
         state.metric_id,
     ):
         raise ValueError("History semantic bindings do not match the state.")
-    population = compensated_sum(
-        jnp.where(state.active, jnp.abs(state.coefficients), jnp.float64(0)), axis=1
-    )
+    population = compensated_sum(jnp.abs(state.coefficients), axis=1, where=state.active)
     support_good = (
         _active_keys_admissible(
             prepared.original_operator.domain,
