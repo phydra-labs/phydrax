@@ -39,6 +39,12 @@ constexpr std::int64_t kMaximum = 15;
 constexpr std::int64_t kMinimum = 16;
 constexpr std::int64_t kExp = 17;
 constexpr std::int64_t kLog = 18;
+constexpr std::int64_t kEqual = 19;
+constexpr std::int64_t kAbsolute = 20;
+constexpr std::int64_t kExtremumPair = 21;
+constexpr std::int64_t kExtremumReduce = 22;
+constexpr std::int64_t kDecide = 23;
+constexpr std::int64_t kAttain = 24;
 constexpr double kInfinity = std::numeric_limits<double>::infinity();
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 constexpr double kLargest = std::numeric_limits<double>::max();
@@ -166,6 +172,7 @@ void reference(const Program& program, std::vector<double>& lower, std::vector<d
       if (opcode == kReduceSum) {
         const std::int64_t base = a + element * aux;
         double low_sum = 0.0, high_sum = 0.0, scale = 0.0;
+        bool nonnegative = true, nonpositive = true;
         for (std::int64_t term = 0; term < aux; ++term) {
           low_sum += lower[static_cast<std::size_t>(base + term)];
           high_sum += upper[static_cast<std::size_t>(base + term)];
@@ -173,10 +180,14 @@ void reference(const Program& program, std::vector<double>& lower, std::vector<d
         for (std::int64_t term = 0; term < aux; ++term) {
           scale += numpy_maximum(std::fabs(lower[static_cast<std::size_t>(base + term)]),
                                  std::fabs(upper[static_cast<std::size_t>(base + term)]));
+          nonnegative = nonnegative && lower[static_cast<std::size_t>(base + term)] >= 0.0;
+          nonpositive = nonpositive && upper[static_cast<std::size_t>(base + term)] <= 0.0;
         }
         const double gamma = program.parameters[static_cast<std::size_t>(bi)];
-        lower[target] = step_down(low_sum - gamma * scale);
-        upper[target] = step_up(high_sum + gamma * scale);
+        const double low = step_down(low_sum - gamma * scale);
+        const double high = step_up(high_sum + gamma * scale);
+        lower[target] = nonnegative ? numpy_maximum(low, 0.0) : low;
+        upper[target] = nonpositive ? numpy_minimum(high, 0.0) : high;
         continue;
       }
       const std::size_t x = at(a, ai, element);
@@ -197,8 +208,13 @@ void reference(const Program& program, std::vector<double>& lower, std::vector<d
         const double bl = lower[y], bh = upper[y];
         if (opcode == kAdd) {
           const double low = al + bl, high = ah + bh;
-          lower[target] = std::isnan(low) ? -kInfinity : step_down(low);
-          upper[target] = std::isnan(high) ? kInfinity : step_up(high);
+          const double rounded_low = step_down(low), rounded_high = step_up(high);
+          lower[target] = std::isnan(low) ? -kInfinity
+                          : al >= 0.0 && bl >= 0.0 ? numpy_maximum(rounded_low, 0.0)
+                                                   : rounded_low;
+          upper[target] = std::isnan(high) ? kInfinity
+                          : ah <= 0.0 && bh <= 0.0 ? numpy_minimum(rounded_high, 0.0)
+                                                   : rounded_high;
         } else if (opcode == kMultiply) {
           const double ll = endpoint_product(al, bl), lu = endpoint_product(al, bh);
           const double ul = endpoint_product(ah, bl), uu = endpoint_product(ah, bh);
@@ -477,6 +493,297 @@ void exponential_and_logarithm() {
   PHX_CHECK(program.lower[logarithm + 4] == -kInfinity && program.upper[logarithm + 4] == kInfinity);
 }
 
+// Host interpreter conventions (_comparison, interval_absolute,
+// _ValueIdentity): eq decides on equal points and disjoint operands only, abs
+// rounds both endpoints outward, winner flags are [decided, winner] pairs.
+void branch_opcodes() {
+  Program program;
+  const std::int64_t left = program.values(
+      {{1.0, 1.0}, {0.0, 1.0}, {0.0, 1.0}, {2.0, 3.0}, {-0.0, -0.0}, {kNaN, 1.0}});
+  const std::int64_t right = program.values(
+      {{1.0, 1.0}, {0.5, 0.5}, {2.0, 3.0}, {0.0, 1.0}, {0.0, 0.0}, {0.0, 1.0}});
+  const std::int64_t equal = program.slots(6);
+  program.row(kEqual, equal, 6, left, -1, right, -1, 0);
+  const std::int64_t unequal = program.slots(6);
+  program.row(kEqual, unequal, 6, left, -1, right, -1, 1);
+  const std::int64_t magnitude_input = program.values(
+      {{-2.0, -1.0}, {-1.0, 3.0}, {kNaN, 1.0}, {-kInfinity, 0.0}, {0.5, 4.0}});
+  const std::int64_t magnitude = program.slots(5);
+  program.row(kAbsolute, magnitude, 5, magnitude_input, -1, -1, -1, 0);
+  const std::int64_t first = program.values({{0.0, 1.0}, {2.0, 3.0}, {0.0, 2.0}, {kNaN, 1.0}});
+  const std::int64_t second = program.values({{2.0, 3.0}, {0.0, 1.0}, {1.0, 3.0}, {0.0, 0.0}});
+  const std::int64_t least = program.slots(8);
+  program.row(kExtremumPair, least, 4, first, -1, second, -1, 0);
+  const std::int64_t most = program.slots(8);
+  program.row(kExtremumPair, most, 4, first, -1, second, -1, 1);
+  // Three outputs of three lanes; lane 2 repeats lane 0's identity.
+  const std::int64_t lanes = program.values({{0.0, 1.0}, {2.0, 3.0}, {0.0, 1.0},
+                                             {0.0, 2.0}, {1.0, 3.0}, {0.0, 2.0},
+                                             {0.0, kNaN}, {5.0, 6.0}, {0.0, kNaN}});
+  const std::int64_t groups = program.index({0, 1, 0});
+  const std::int64_t grouped = program.slots(9);
+  program.row(kExtremumReduce, grouped, 3, lanes, -1, 3, groups, 0);
+  const std::int64_t ungrouped = program.slots(9);
+  program.row(kExtremumReduce, ungrouped, 3, lanes, -1, 3, -1, 0);
+  const std::int64_t comparisons =
+      program.values({{0.0, 1.0}, {0.0, 1.0}, {0.0, 1.0}, {0.0, 1.0}});
+  const std::int64_t flags = program.values({{1.0, 1.0}, {1.0, 0.0}, {0.0, 0.0}, {0.0, 1.0}});
+  const std::int64_t decided_equal = program.slots(4);
+  program.row(kDecide, decided_equal, 4, comparisons, -1, flags, -1, 0);
+  const std::int64_t decided_unequal = program.slots(4);
+  program.row(kDecide, decided_unequal, 4, comparisons, -1, flags, -1, 1);
+  const std::int64_t counts =
+      program.values({{0.0, 2.0}, {3.0, 4.0}, {kNaN, 2.0}, {-kInfinity, kInfinity}});
+  const std::int64_t attained = program.slots(4);
+  program.row(kAttain, attained, 4, counts, -1, -1, -1, 0);
+  PHX_CHECK(execute(program) == PHX_MC_OK);
+  const auto pair = [&](std::int64_t at, double low, double high) {
+    return same(program.lower[at], low) && same(program.upper[at], high);
+  };
+  const double expected_equal[6][2] = {{1, 1}, {0, 1}, {0, 0}, {0, 0}, {1, 1}, {0, 1}};
+  for (int k = 0; k < 6; ++k) {
+    PHX_CHECK(pair(equal + k, expected_equal[k][0], expected_equal[k][1]));
+    PHX_CHECK(pair(unequal + k, 1.0 - expected_equal[k][1], 1.0 - expected_equal[k][0]));
+  }
+  PHX_CHECK(pair(magnitude, step_down(1.0), step_up(2.0)));
+  PHX_CHECK(pair(magnitude + 1, -kSmallest, step_up(3.0)));
+  PHX_CHECK(pair(magnitude + 2, -kInfinity, kInfinity));
+  PHX_CHECK(pair(magnitude + 3, -kSmallest, kInfinity));
+  PHX_CHECK(pair(magnitude + 4, step_down(0.5), step_up(4.0)));
+  const double expected_least[8][2] = {{1, 1}, {1, 0}, {0, 0}, {0, 0},
+                                       {1, 0}, {1, 1}, {0, 0}, {0, 0}};
+  const double expected_most[8][2] = {{1, 0}, {1, 1}, {0, 0}, {0, 0},
+                                      {1, 1}, {1, 0}, {0, 0}, {0, 0}};
+  for (int k = 0; k < 8; ++k) {
+    PHX_CHECK(pair(least + k, expected_least[k][0], expected_least[k][1]));
+    PHX_CHECK(pair(most + k, expected_most[k][0], expected_most[k][1]));
+  }
+  // Grouped: [0,1] beats [2,3] and its twin lane shares the win; [0,2] ties
+  // [1,3]; a NaN representative bound decides nothing. Ungrouped, the twin
+  // lanes tie each other.
+  const double expected_grouped[9][2] = {{1, 1}, {1, 0}, {1, 1}, {0, 0}, {0, 0},
+                                         {0, 0}, {0, 0}, {0, 0}, {0, 0}};
+  for (int k = 0; k < 9; ++k) {
+    PHX_CHECK(pair(grouped + k, expected_grouped[k][0], expected_grouped[k][1]));
+    PHX_CHECK(pair(ungrouped + k, 0.0, 0.0));
+  }
+  const double expected_decided_equal[4][2] = {{1, 1}, {0, 0}, {0, 1}, {0, 1}};
+  const double expected_decided_unequal[4][2] = {{0, 0}, {1, 1}, {0, 1}, {0, 1}};
+  for (int k = 0; k < 4; ++k) {
+    PHX_CHECK(pair(decided_equal + k, expected_decided_equal[k][0], expected_decided_equal[k][1]));
+    PHX_CHECK(
+        pair(decided_unequal + k, expected_decided_unequal[k][0], expected_decided_unequal[k][1]));
+  }
+  PHX_CHECK(pair(attained, 1.0, 2.0));
+  PHX_CHECK(pair(attained + 1, 3.0, 4.0));
+  PHX_CHECK(std::isnan(program.lower[attained + 2]) && program.upper[attained + 2] == 2.0);
+  PHX_CHECK(pair(attained + 3, 1.0, kInfinity));
+
+  // Maximum reductions over indexed lanes: [5,6] wins outright; a NaN lower
+  // endpoint in a representative lane decides nothing.
+  Program strict;
+  const std::int64_t strict_lanes =
+      strict.values({{0.0, 1.0}, {5.0, 6.0}, {2.0, 4.0}, {kNaN, 1.0}});
+  const std::int64_t order = strict.index({2, 1, 0, 0, 3, 1});
+  const std::int64_t strict_out = strict.slots(6);
+  strict.row(kExtremumReduce, strict_out, 2, strict_lanes, order, 3, -1, 1);
+  PHX_CHECK(execute(strict) == PHX_MC_OK);
+  const double expected_strict[6][2] = {{1, 0}, {1, 1}, {1, 0}, {0, 0}, {0, 0}, {0, 0}};
+  for (int k = 0; k < 6; ++k) {
+    PHX_CHECK(same(strict.lower[strict_out + k], expected_strict[k][0]) &&
+              same(strict.upper[strict_out + k], expected_strict[k][1]));
+  }
+}
+
+void branch_opcode_validation() {
+  const auto refused = [](const auto& build) {
+    Program invalid;
+    const std::int64_t values = invalid.values({{0.0, 1.0}, {1.0, 2.0}, {2.0, 3.0}});
+    build(invalid, values);
+    const Program original = invalid;
+    PHX_CHECK(execute(invalid) == PHX_MC_INVALID_INPUT);
+    PHX_CHECK(unchanged(invalid, original));
+  };
+  refused([](Program& p, std::int64_t v) { p.row(kEqual, p.slots(1), 1, v, -1, v + 1, -1, 2); });
+  refused([](Program& p, std::int64_t v) { p.row(kDecide, p.slots(1), 1, v, -1, v + 1, -1, 2); });
+  refused([](Program& p, std::int64_t v) { p.row(kExtremumPair, p.slots(1), 1, v, -1, v, -1, 0); });
+  refused([](Program& p, std::int64_t v) {
+    const std::int64_t out = p.slots(4);
+    p.row(kExtremumPair, out, 2, v, -1, v, -1, 0);
+    p.row(kNegate, out + 3, 1, v, -1, -1, -1, 0);  // inside the flag-pair block
+  });
+  refused([](Program& p, std::int64_t v) { p.row(kExtremumReduce, p.slots(3), 1, v, -1, 0, -1, 0); });
+  refused([](Program& p, std::int64_t v) { p.row(kExtremumReduce, p.slots(3), 1, v, -1, 3, -1, 2); });
+  refused([](Program& p, std::int64_t v) { p.row(kExtremumReduce, p.slots(2), 1, v, -1, 3, -1, 0); });
+  refused([](Program& p, std::int64_t v) {
+    const std::int64_t out = p.slots(3);
+    p.row(kExtremumReduce, out, 1, v, -1, 3, -1, 0);
+    p.row(kNegate, out + 2, 1, v, -1, -1, -1, 0);  // inside the flag-pair block
+  });
+  refused([](Program& p, std::int64_t v) {
+    const std::int64_t groups = p.index({0, 2, 0});
+    p.row(kExtremumReduce, p.slots(3), 1, v, -1, 3, groups, 0);
+  });
+  refused([](Program& p, std::int64_t v) {
+    const std::int64_t groups = p.index({0, 0, 1});
+    p.row(kExtremumReduce, p.slots(3), 1, v, -1, 3, groups, 0);
+  });
+  refused([](Program& p, std::int64_t v) {
+    const std::int64_t groups = p.index({0, 1});
+    p.row(kExtremumReduce, p.slots(3), 1, v, -1, 3, groups, 0);
+  });
+  refused([](Program& p, std::int64_t v) {
+    const std::int64_t lanes = p.index({0, 1, 7});
+    p.row(kExtremumReduce, p.slots(3), 1, v, lanes, 3, -1, 0);
+  });
+  refused([](Program& p, std::int64_t v) {
+    p.row(kExtremumReduce, p.slots(3), kMax, v, -1, 3, -1, 0);
+  });
+  refused([](Program& p, std::int64_t v) { p.row(kAttain, p.slots(1), 1, v, -1, v, -1, 0); });
+  refused([](Program& p, std::int64_t v) { p.row(kAbsolute, p.slots(1), 1, v, -1, -1, -1, 1); });
+  refused([](Program& p, std::int64_t v) { p.row(kAttain + 1, p.slots(1), 1, v, -1, -1, -1, 0); });
+}
+
+struct Evidence {
+  std::vector<std::int64_t> events;
+  std::vector<std::uint8_t> smooth, continuous;
+  std::int64_t count() const { return static_cast<std::int64_t>(events.size() / 6); }
+  void event(std::int64_t kind, std::int64_t test, std::int64_t size, std::int64_t a,
+             std::int64_t a_index, std::int64_t boxes) {
+    events.insert(events.end(), {kind, test, size, a, a_index, boxes});
+  }
+};
+
+std::int32_t branches(Program& program, Evidence& evidence, std::int64_t box_count) {
+  evidence.smooth.assign(static_cast<std::size_t>(box_count), 7);
+  evidence.continuous.assign(static_cast<std::size_t>(box_count), 7);
+  return phx_mc_interval_program_branches(
+      program.rows.data(), program.count(), program.indices.data(),
+      static_cast<std::int64_t>(program.indices.size()), program.parameters.data(),
+      static_cast<std::int64_t>(program.parameters.size()), program.lower.data(),
+      program.upper.data(), static_cast<std::int64_t>(program.lower.size()),
+      evidence.events.data(), evidence.count(), box_count, evidence.smooth.data(),
+      evidence.continuous.data());
+}
+
+// Per-box evidence after execution: each event test, per-element boxes, -1
+// (every box) entries and whole-event attribution.
+void branch_evidence() {
+  Program program;
+  const std::int64_t values = program.values(
+      {{-1.0, 1.0}, {0.5, 1.0}, {0.0, 2.0}, {1.0, 1.0}, {2.0, 3.0}, {kNaN, 1.0}});
+  const std::int64_t negated = program.slots(6);
+  program.row(kNegate, negated, 6, values, -1, -1, -1, 0);
+  const std::int64_t box_of = program.index({0, 1, 2, 0, 1, 2});
+  const std::int64_t mixed = program.index({-1, 2});
+  const std::int64_t points = program.index({3, 4});
+  using Flags = std::vector<std::uint8_t>;
+  Evidence kink;  // [-1,1] meets zero (box 0); [0.5,1] does not (box 1).
+  kink.event(0, 0, 2, values, -1, box_of);
+  PHX_CHECK(branches(program, kink, 3) == PHX_MC_OK);
+  PHX_CHECK((kink.smooth == Flags{0, 1, 1}) && (kink.continuous == Flags{1, 1, 1}));
+  Evidence nonfinite;  // the negated NaN endpoint (element 5, box 2) jumps.
+  nonfinite.event(1, 4, 6, negated, -1, box_of);
+  PHX_CHECK(branches(program, nonfinite, 3) == PHX_MC_OK);
+  PHX_CHECK((nonfinite.smooth == Flags{1, 1, 0}) && (nonfinite.continuous == Flags{1, 1, 0}));
+  Evidence broadcast;  // undecided [0.5,1] on a -1 entry clears every box.
+  broadcast.event(1, 3, 2, values + 1, -1, mixed);
+  PHX_CHECK(branches(program, broadcast, 3) == PHX_MC_OK);
+  PHX_CHECK((broadcast.smooth == Flags{0, 0, 0}) && (broadcast.continuous == Flags{0, 0, 0}));
+  Evidence whole;  // [1,1] decided, [2,3] undecided: a -1 event clears every box.
+  whole.event(0, 3, 2, values, points, -1);
+  PHX_CHECK(branches(program, whole, 3) == PHX_MC_OK);
+  PHX_CHECK((whole.smooth == Flags{0, 0, 0}) && (whole.continuous == Flags{1, 1, 1}));
+  Evidence decided;  // only the point [1,1]: nothing is cleared.
+  decided.event(1, 3, 1, values + 3, -1, -1);
+  PHX_CHECK(branches(program, decided, 3) == PHX_MC_OK);
+  PHX_CHECK((decided.smooth == Flags{1, 1, 1}) && (decided.continuous == Flags{1, 1, 1}));
+  Evidence tests;
+  const std::int64_t box_one = program.index({1});
+  const std::int64_t box_two = program.index({2});
+  tests.event(0, 1, 1, values + 2, -1, box_one);  // [0,2]: lower not positive
+  tests.event(1, 2, 1, values + 2, -1, box_two);  // [0,2]: lower nonnegative, no jump
+  tests.event(1, 2, 1, values + 5, -1, box_two);  // NaN lower: not nonnegative
+  tests.event(0, 5, 1, values + 3, -1, box_one);  // always
+  PHX_CHECK(branches(program, tests, 3) == PHX_MC_OK);
+  PHX_CHECK((tests.smooth == Flags{1, 0, 0}) && (tests.continuous == Flags{1, 1, 0}));
+  Evidence none;
+  PHX_CHECK(branches(program, none, 2) == PHX_MC_OK);
+  PHX_CHECK((none.smooth == Flags{1, 1}) && (none.continuous == Flags{1, 1}));
+  PHX_CHECK(same(program.lower[negated], -1.0) && same(program.upper[negated], 1.0));
+
+  // Invalid events are refused before any workspace or flag write.
+  const auto refused = [&](std::array<std::int64_t, 6> fields, std::int64_t box_count) {
+    Program copy = base_program();
+    const Program original = copy;
+    Evidence invalid;
+    invalid.event(fields[0], fields[1], fields[2], fields[3], fields[4], fields[5]);
+    PHX_CHECK(branches(copy, invalid, box_count) == PHX_MC_INVALID_INPUT);
+    PHX_CHECK(unchanged(copy, original));
+    PHX_CHECK(std::all_of(invalid.smooth.begin(), invalid.smooth.end(),
+                          [](std::uint8_t flag) { return flag == 7; }));
+  };
+  const auto extent = static_cast<std::int64_t>(base_program().lower.size());
+  refused({2, 0, 1, 0, -1, -1}, 1);
+  refused({0, 6, 1, 0, -1, -1}, 1);
+  refused({0, -1, 1, 0, -1, -1}, 1);
+  refused({0, 0, -1, 0, -1, -1}, 1);
+  refused({0, 0, 1, extent, -1, -1}, 1);
+  refused({0, 0, 2, extent - 1, -1, -1}, 1);
+  refused({0, 0, 2, 0, 3, -1}, 1);    // index range past the indices
+  refused({0, 0, 1, 0, -1, 0}, 1);    // box indices[0] = 1 of one box
+  refused({0, 0, 1, 0, -1, -2}, 1);
+  refused({0, 0, 1, 0, -1, kMax}, 1);
+  Program bad = base_program();
+  bad.row(99, 0, 1, 0, -1, -1, -1, 0);
+  Evidence flags;
+  PHX_CHECK(branches(bad, flags, 2) == PHX_MC_INVALID_INPUT);
+  PHX_CHECK((flags.smooth == Flags{7, 7}) && (flags.continuous == Flags{7, 7}));
+  // Argument errors.
+  Program args = base_program();
+  const std::int64_t one_event[6] = {0, 0, 1, 0, -1, -1};
+  std::uint8_t smooth = 7, continuous = 7;
+  const auto call = [&](const std::int64_t* events, std::int64_t event_count, std::int64_t boxes,
+                        std::uint8_t* s, std::uint8_t* c) {
+    return phx_mc_interval_program_branches(
+        args.rows.data(), args.count(), args.indices.data(),
+        static_cast<std::int64_t>(args.indices.size()), args.parameters.data(),
+        static_cast<std::int64_t>(args.parameters.size()), args.lower.data(), args.upper.data(),
+        static_cast<std::int64_t>(args.lower.size()), events, event_count, boxes, s, c);
+  };
+  PHX_CHECK(call(one_event, -1, 1, &smooth, &continuous) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(call(nullptr, 1, 1, &smooth, &continuous) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(call(one_event, 1, -1, &smooth, &continuous) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(call(one_event, 1, 1, nullptr, &continuous) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(call(one_event, 1, 1, &smooth, nullptr) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(call(one_event, kMax / 6 + 1, 1, &smooth, &continuous) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(smooth == 7 && continuous == 7);
+  PHX_CHECK(phx_mc_interval_program_branches(nullptr, 0, nullptr, 0, nullptr, 0, nullptr,
+                                             nullptr, 0, nullptr, 0, 0, nullptr,
+                                             nullptr) == PHX_MC_OK);
+}
+
+// As the host interval sum: a sum of nonnegative (nonpositive) operands keeps
+// its sign through outward rounding, so x*x + z*z stays a root's admissible base.
+void sign_clamped_sums() {
+  Program program;
+  const std::int64_t first = program.values({{0.0, 1.0}, {-1.0, 0.0}, {-0.0, 1.0}, {-1.0, 2.0}});
+  const std::int64_t second = program.values({{0.0, 2.0}, {-2.0, 0.0}, {0.0, 0.0}, {0.0, 0.0}});
+  const std::int64_t sums = program.slots(4);
+  program.row(kAdd, sums, 4, first, -1, second, -1, 0);
+  const std::int64_t terms = program.values({{0.0, 1.0}, {0.0, 0.5}, {-1.0, 0.0}, {-0.5, 0.0}});
+  const std::int64_t gamma = program.parameter(4.0 * kEpsilon);
+  const std::int64_t reduced = program.slots(2);
+  program.row(kReduceSum, reduced, 2, terms, -1, -1, gamma, 2);
+  check_reference(program);
+  PHX_CHECK(same(program.lower[sums], 0.0) && program.upper[sums] > 3.0);
+  PHX_CHECK(program.lower[sums + 1] < -3.0 && same(program.upper[sums + 1], 0.0));
+  PHX_CHECK(same(program.lower[sums + 2], 0.0));
+  PHX_CHECK(same(program.lower[sums + 3], -1.0 - kEpsilon));
+  PHX_CHECK(same(program.lower[reduced], 0.0) && program.upper[reduced] > 1.5);
+  PHX_CHECK(program.lower[reduced + 1] < -1.5 && same(program.upper[reduced + 1], 0.0));
+}
+
 void interval_capability_query() {
   std::uint64_t opcodes = 0;
   const std::uint64_t expected =
@@ -488,7 +795,10 @@ void interval_capability_query() {
       (std::uint64_t{1} << kReciprocal) | (std::uint64_t{1} << kSquare) |
       (std::uint64_t{1} << kCompare) | (std::uint64_t{1} << kSelect) |
       (std::uint64_t{1} << kMaximum) | (std::uint64_t{1} << kMinimum) |
-      (std::uint64_t{1} << kExp) | (std::uint64_t{1} << kLog);
+      (std::uint64_t{1} << kExp) | (std::uint64_t{1} << kLog) |
+      (std::uint64_t{1} << kEqual) | (std::uint64_t{1} << kAbsolute) |
+      (std::uint64_t{1} << kExtremumPair) | (std::uint64_t{1} << kExtremumReduce) |
+      (std::uint64_t{1} << kDecide) | (std::uint64_t{1} << kAttain);
   PHX_CHECK(phx_mc_interval_program_capabilities(&opcodes) == PHX_MC_OK);
   PHX_CHECK(opcodes == expected);
   PHX_CHECK(phx_mc_interval_program_capabilities(nullptr) == PHX_MC_INVALID_ARGUMENT);
@@ -672,6 +982,25 @@ void floating_point_modes() {
   PHX_CHECK(same(nearest.lower[result + 2], -kSmallest));
   PHX_CHECK(same(nearest.upper[result + 2], kSmallest));
 
+  // Branch opcodes and evidence on subnormal operands: a flushed or directed
+  // caller mode must neither move the outward abs endpoints nor make
+  // kSmallest look nonpositive.
+  Program branchy;
+  const std::int64_t tiny = branchy.values({{kSmallest, 1.0}, {-kSmallest, kSmallest}});
+  const std::int64_t magnitude = branchy.slots(2);
+  branchy.row(kAbsolute, magnitude, 2, tiny, -1, -1, -1, 0);
+  const std::int64_t winners = branchy.slots(4);
+  branchy.row(kExtremumPair, winners, 2, tiny, -1, magnitude, -1, 0);
+  const std::int64_t boxes = branchy.index({0, 1});
+  Evidence tiny_events;
+  tiny_events.event(0, 1, 2, tiny, -1, boxes);
+  Program branchy_nearest = branchy;
+  Evidence nearest_events = tiny_events;
+  PHX_CHECK(branches(branchy_nearest, nearest_events, 2) == PHX_MC_OK);
+  PHX_CHECK((nearest_events.smooth == std::vector<std::uint8_t>{1, 0}));
+  PHX_CHECK(same(branchy_nearest.lower[magnitude], step_down(kSmallest)));
+  PHX_CHECK(same(branchy_nearest.lower[magnitude + 1], -kSmallest));
+  PHX_CHECK(same(branchy_nearest.upper[magnitude + 1], step_up(kSmallest)));
   struct Hazard { bool flush; int rounding; };
   const std::array<Hazard, 5> hazards{{{true, FE_TONEAREST}, {false, FE_UPWARD},
       {false, FE_DOWNWARD}, {false, FE_TOWARDZERO}, {true, FE_DOWNWARD}}};
@@ -687,6 +1016,18 @@ void floating_point_modes() {
     PHX_CHECK(execute(call) == PHX_MC_OK);
     PHX_CHECK(identical(call.lower, nearest.lower));
     PHX_CHECK(identical(call.upper, nearest.upper));
+    Program branch_call = branchy;
+    Evidence branch_events = tiny_events;
+    PHX_CHECK(branches(branch_call, branch_events, 2) == PHX_MC_OK);
+    PHX_CHECK(identical(branch_call.lower, branchy_nearest.lower));
+    PHX_CHECK(identical(branch_call.upper, branchy_nearest.upper));
+    PHX_CHECK(branch_events.smooth == nearest_events.smooth);
+    PHX_CHECK(branch_events.continuous == nearest_events.continuous);
+    Program refused_call = branchy;
+    Evidence invalid_events;
+    invalid_events.event(0, 9, 1, tiny, -1, -1);
+    PHX_CHECK(branches(refused_call, invalid_events, 2) == PHX_MC_INVALID_INPUT);
+    PHX_CHECK(unchanged(refused_call, branchy));
     // Invalid programs and arguments are refused inside the established scope.
     const std::int64_t invalid_row[8] = {99, 0, 1, 0, -1, -1, -1, 0};
     double low = 7.0, high = 7.0;
@@ -717,6 +1058,10 @@ int main() {
   compare_and_select();
   maximum_and_minimum();
   exponential_and_logarithm();
+  branch_opcodes();
+  branch_opcode_validation();
+  branch_evidence();
+  sign_clamped_sums();
   deterministic_random_programs();
   validation_and_empty_programs();
   prepared_ownership_and_refusal();

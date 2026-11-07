@@ -761,6 +761,21 @@ PHX_MC_API int32_t phx_mc_interval_program_execute(
     double* upper, int64_t workspace_size);
 /* Bit n advertises interval-program opcode n; bit 0 is reserved. */
 PHX_MC_API int32_t phx_mc_interval_program_capabilities(uint64_t* opcodes);
+/* Execute an interval program as phx_mc_interval_program_execute, then record
+ * per-box branch evidence: smooth[b] and continuous[b] start at 1 for every
+ * box b < box_count, and each event row (kind, test, size, a, a_index, boxes;
+ * six int64 fields) clears them where its test holds on a workspace entry
+ * a + (a_index < 0 ? k : indices[a_index + k]), k < size: kind 0 (kink) clears
+ * smooth, kind 1 (jump) clears smooth and continuous, for box
+ * indices[boxes + k], or every box when that entry or `boxes` is -1. Tests:
+ * 0 the enclosure meets zero, 1 lower <= 0 (or NaN), 2 lower < 0 (or NaN),
+ * 3 lower != upper, 4 a nonfinite endpoint, 5 always. The program and the
+ * events are validated before any write. */
+PHX_MC_API int32_t phx_mc_interval_program_branches(
+    const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
+    int64_t index_count, const double* parameters, int64_t parameter_count, double* lower,
+    double* upper, int64_t workspace_size, const int64_t* events, int64_t event_count,
+    int64_t box_count, uint8_t* smooth, uint8_t* continuous);
 PHX_MC_API int32_t phx_mc_simplex_quadratic_bounds(
     int64_t count, int32_t dimension, int32_t components, const double* q_lower,
     const double* q_upper, const double* barycentric_lower, const double* barycentric_upper,

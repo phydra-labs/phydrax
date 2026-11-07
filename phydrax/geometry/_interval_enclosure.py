@@ -2203,6 +2203,25 @@ class _ValueIdentity:
         )
         return _Extremum((self.atom(source),), (winners,), decided, axes)
 
+    def identify(
+        self, equation: jax_core.JaxprEqn, nested_outputs: Sequence[object] | None, /
+    ) -> tuple[int, ...]:
+        """Assign the outputs' identities from the operands'; return the operands'."""
+        operands = tuple(self.atom(atom) for atom in equation.invars)
+        if nested_outputs is not None:
+            identities = tuple(self.atom(atom) for atom in nested_outputs)
+        else:
+            parameters = _parameter_key(dict(equation.params))
+            identities = tuple(
+                self._fresh()
+                if parameters is _UNKEYED
+                else self._intern((equation.primitive.name, operands, parameters, index))
+                for index in range(len(equation.outvars))
+            )
+        for variable, identity in zip(equation.outvars, identities, strict=True):
+            self._representatives[variable] = identity
+        return operands
+
     def record(
         self,
         equation: jax_core.JaxprEqn,
@@ -2213,19 +2232,7 @@ class _ValueIdentity:
     ) -> tuple[tuple[int, ...], _Extremum | None]:
         """Assign the outputs' identities; return the operands' and any winners."""
         name = equation.primitive.name
-        operands = tuple(self.atom(atom) for atom in equation.invars)
-        if nested_outputs is not None:
-            identities = tuple(self.atom(atom) for atom in nested_outputs)
-        else:
-            parameters = _parameter_key(dict(equation.params))
-            identities = tuple(
-                self._fresh()
-                if parameters is _UNKEYED
-                else self._intern((name, operands, parameters, index))
-                for index in range(len(equation.outvars))
-            )
-        for variable, identity in zip(equation.outvars, identities, strict=True):
-            self._representatives[variable] = identity
+        operands = self.identify(equation, nested_outputs)
         extremum = self.extremum(equation, arguments)
         if not equation.outvars:
             return operands, extremum
@@ -2672,6 +2679,10 @@ class PreparedIntervalFunction:
     branch_axes: dict[jax_core.Var, int | None] = field(
         default_factory=dict, init=False, repr=False, compare=False
     )
+    # The native program with branch-evidence events, lowered on first query.
+    native_branch_program: NativeIntervalProgram | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
     # Whether a min/max selects among values: evaluation then tracks value
     # identities so a decided selection is decided in every comparison.
     selects_values: bool = field(init=False, repr=False, compare=False)
@@ -2687,6 +2698,17 @@ class PreparedIntervalFunction:
                 self, "execution_reason", "host interval reference was requested."
             )
             return
+        object.__setattr__(self, "native_program", self._lower_native(None))
+        object.__setattr__(
+            self,
+            "execution_reason",
+            "meshcore advertised every opcode in the native interval program.",
+        )
+
+    def _lower_native(
+        self, branch_axes: Mapping[jax_core.Var, int | None] | None, /
+    ) -> NativeIntervalProgram:
+        """Lower to an advertised native program, with ledger events given box axes."""
         from ._interval_native import lower_interval_jaxpr
 
         program = lower_interval_jaxpr(
@@ -2694,6 +2716,7 @@ class PreparedIntervalFunction:
             self.constant_intervals,
             self.batch_capacity,
             self.input_dimension,
+            branch_axes,
         )
         from .._meshcore import load_meshcore, MeshcoreUnavailableError
 
@@ -2704,12 +2727,7 @@ class PreparedIntervalFunction:
                 f"native interval execution requires the meshcore capability query: {error}"
             ) from error
         program.require_supported_opcodes(supported_opcodes)
-        object.__setattr__(self, "native_program", program)
-        object.__setattr__(
-            self,
-            "execution_reason",
-            "meshcore advertised every opcode in the native interval program.",
-        )
+        return program
 
     def _boxes(
         self, lower: ArrayLike, upper: ArrayLike, /
@@ -2782,15 +2800,15 @@ class PreparedIntervalFunction:
         NDArray[np.bool_],
         NDArray[np.bool_],
     ]:
-        """Host enclosures with per-box branch decisions from the same evaluation.
+        """Enclosures with per-box branch decisions from the same evaluation.
 
         Returns ``(lower, upper, smooth, continuous)``. ``smooth[i]`` proves
         the traced map C-infinity on a neighbourhood of box ``i`` (see
         `_BranchLedger`), so derivative programs of the same map enclose its
         true derivatives there; it assumes custom-JVP rules are derivatives
         of their primal maps where those are smooth. ``continuous[i]`` proves
-        the map continuous on box ``i``. The host reference interpreter
-        evaluates regardless of the selected execution.
+        the map continuous on box ``i``. The native route records the same
+        ledger events in its program (``phx_mc_interval_program_branches``).
         """
         lower_, upper_ = self._boxes(lower, upper)
         axes = self._branch_batch_axes()
@@ -2800,24 +2818,38 @@ class PreparedIntervalFunction:
         smooth = np.empty((count,), dtype=np.bool_)
         continuous = np.empty((count,), dtype=np.bool_)
         jaxpr = self.closed_jaxpr.jaxpr
+        native = None
+        if self.native_program is not None:
+            native = self.native_branch_program
+            if native is None:
+                native = self._lower_native(axes)
+                object.__setattr__(self, "native_branch_program", native)
         for start in range(0, count, self.batch_capacity):
             stop = min(start + self.batch_capacity, count)
             active = stop - start
-            values = _ValueIdentity()
-            values.bind_inputs(jaxpr.invars)
-            ledger = _BranchLedger(axes, self.batch_capacity)
-            (output,) = _evaluate_jaxpr(
-                jaxpr,
-                self.constant_intervals,
-                ((self._padded(lower_, start, stop), self._padded(upper_, start, stop)),),
-                self.jet_tables,
-                values,
-                ledger,
-            )
-            low_result[start:stop] = np.asarray(output[0])[:active]
-            high_result[start:stop] = np.asarray(output[1])[:active]
-            smooth[start:stop] = ledger.smooth[:active]
-            continuous[start:stop] = ledger.continuous[:active]
+            chunk_lower = self._padded(lower_, start, stop)
+            chunk_upper = self._padded(upper_, start, stop)
+            if native is not None:
+                output_low, output_high, chunk_smooth, chunk_continuous = (
+                    native.evaluate_branches(chunk_lower, chunk_upper)
+                )
+            else:
+                values = _ValueIdentity()
+                values.bind_inputs(jaxpr.invars)
+                ledger = _BranchLedger(axes, self.batch_capacity)
+                ((output_low, output_high),) = _evaluate_jaxpr(
+                    jaxpr,
+                    self.constant_intervals,
+                    ((chunk_lower, chunk_upper),),
+                    self.jet_tables,
+                    values,
+                    ledger,
+                )
+                chunk_smooth, chunk_continuous = ledger.smooth, ledger.continuous
+            low_result[start:stop] = np.asarray(output_low)[:active]
+            high_result[start:stop] = np.asarray(output_high)[:active]
+            smooth[start:stop] = chunk_smooth[:active]
+            continuous[start:stop] = chunk_continuous[:active]
         return low_result, high_result, smooth, continuous
 
     def _branch_batch_axes(self) -> dict[jax_core.Var, int | None]:

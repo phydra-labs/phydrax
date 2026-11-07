@@ -901,6 +901,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (_P, _I64, _P, _I64, _P, _I64, _P, _P, _I64),
     ),
+    "phx_mc_interval_program_branches": (
+        _I32,
+        (_P, _I64, _P, _I64, _P, _I64, _P, _P, _I64, _P, _I64, _I64, _P, _P),
+    ),
     "phx_mc_simplex_quadratic_bounds": (
         _I32,
         (_I64, _I32, _I32, _P, _P, _P, _P, _P, _P),
@@ -1575,20 +1579,14 @@ def _native_integer_array(value: object, name: str, dtype: np.dtype, /) -> np.nd
     return np.ascontiguousarray(array, dtype=dtype)
 
 
-def interval_program_execute(
+def _interval_program_arrays(
     instructions: object,
     indices: object,
     parameters: object,
     lower: object,
     upper: object,
     /,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Execute an interval program in caller-owned mutable binary64 workspaces.
-
-    ``instructions`` has shape ``(rows, 8)``; lower and upper are equal-shaped
-    one-dimensional workspaces whose length is their actual native output extent.
-    """
-
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     instruction_array = _native_integer_array(
         instructions, "instructions", np.dtype(np.int64)
     )
@@ -1613,6 +1611,25 @@ def interval_program_execute(
             raise ValueError(
                 "interval program inputs must not overlap output workspaces."
             )
+    return instruction_array, index_array, parameter_array, lower_array, upper_array
+
+
+def interval_program_execute(
+    instructions: object,
+    indices: object,
+    parameters: object,
+    lower: object,
+    upper: object,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Execute an interval program in caller-owned mutable binary64 workspaces.
+
+    ``instructions`` has shape ``(rows, 8)``; lower and upper are equal-shaped
+    one-dimensional workspaces whose length is their actual native output extent.
+    """
+    instruction_array, index_array, parameter_array, lower_array, upper_array = (
+        _interval_program_arrays(instructions, indices, parameters, lower, upper)
+    )
     library = load_meshcore()
     status = library["phx_mc_interval_program_execute"](
         instruction_array.ctypes.data,
@@ -1627,6 +1644,58 @@ def interval_program_execute(
     )
     _raise_for_call(status, "interval_program_execute")
     return lower_array, upper_array
+
+
+def interval_program_branches(
+    instructions: object,
+    indices: object,
+    parameters: object,
+    lower: object,
+    upper: object,
+    events: object,
+    box_count: int,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Execute an interval program and record its per-box branch evidence.
+
+    As `interval_program_execute`, plus ``events`` of shape ``(rows, 6)``
+    (kind, test, size, a, a_index, boxes; see ``phx_mc_interval_program_branches``).
+    Returns the workspaces and the ``(box_count,)`` smooth and continuous flags.
+    """
+    instruction_array, index_array, parameter_array, lower_array, upper_array = (
+        _interval_program_arrays(instructions, indices, parameters, lower, upper)
+    )
+    event_array = _native_integer_array(events, "events", np.dtype(np.int64))
+    if event_array.ndim != 2 or event_array.shape[1] != 6:
+        raise ValueError("events must have shape (rows, 6).")
+    if np.shares_memory(event_array, lower_array) or np.shares_memory(
+        event_array, upper_array
+    ):
+        raise ValueError("interval program inputs must not overlap output workspaces.")
+    boxes = int(box_count)
+    if boxes < 0:
+        raise ValueError("box_count must be nonnegative.")
+    smooth = np.zeros((boxes,), dtype=np.uint8)
+    continuous = np.zeros((boxes,), dtype=np.uint8)
+    library = load_meshcore()
+    status = library["phx_mc_interval_program_branches"](
+        instruction_array.ctypes.data,
+        instruction_array.shape[0],
+        index_array.ctypes.data,
+        index_array.shape[0],
+        parameter_array.ctypes.data,
+        parameter_array.shape[0],
+        lower_array.ctypes.data,
+        upper_array.ctypes.data,
+        lower_array.size,
+        event_array.ctypes.data,
+        event_array.shape[0],
+        boxes,
+        smooth.ctypes.data,
+        continuous.ctypes.data,
+    )
+    _raise_for_call(status, "interval_program_branches")
+    return lower_array, upper_array, smooth.astype(np.bool_), continuous.astype(np.bool_)
 
 
 def simplex_quadratic_bounds(
@@ -7300,7 +7369,9 @@ class TetMesh3D:
                 implicit_source.binding_id,
                 implicit_source.frame_id,
             ) != (source_id, source_revision, source_map_id, frame_id):
-                raise ValueError("Implicit tetra source must match the bound source identity and frame.")
+                raise ValueError(
+                    "Implicit tetra source must match the bound source identity and frame."
+                )
         library = load_meshcore()
         handle = ctypes.c_void_p()
         request = _TetMeshCreateRequest()
@@ -9064,6 +9135,7 @@ __all__ = [
     "exact_orient3d",
     "graph_partition",
     "parallel_for",
+    "interval_program_branches",
     "interval_program_execute",
     "load_meshcore",
     "meshcore_available",
