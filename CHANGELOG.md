@@ -753,6 +753,9 @@
 - UMA domain owner partials (`case_sums`) keep the dtype of the summed values:
   owned atom and species counts stay int32 with 64-bit JAX enabled, as the
   slab path's `case_atom_counts` does, instead of widening to int64.
+- `convert_uma_checkpoint` no longer fails while forming its conversion
+  identity: `UMASourceProvenance.to_record` serializes the read-only admitted
+  declaration mapping as a plain object, so provenance records round-trip.
 
 ### Added
 - Sketches retain directed circular-arc incidence, support exact arc profile

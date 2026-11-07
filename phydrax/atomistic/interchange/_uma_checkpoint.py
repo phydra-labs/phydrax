@@ -231,7 +231,7 @@ class UMASourceProvenance:
             item.name: getattr(self, item.name) for item in dataclasses.fields(self)
         }
         record["excluded"] = dict(self.excluded)
-        record["declaration"] = json.loads(json.dumps(self.declaration))
+        record["declaration"] = json.loads(json.dumps(dict(self.declaration)))
         record["source_dtypes"] = list(self.source_dtypes)
         return record
 

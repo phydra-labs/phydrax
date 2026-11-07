@@ -1,6 +1,7 @@
 """UMA source admission: isolated safe extraction and exact reconstruction."""
 
 import copy
+import dataclasses
 import hashlib
 import io
 import json
@@ -8,6 +9,7 @@ import struct
 import sys
 import zipfile
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import jax.numpy as jnp
@@ -26,10 +28,12 @@ from phydrax.atomistic import AtomisticScaleContract
 from phydrax.atomistic.interchange import _uma_worker as worker
 from phydrax.atomistic.interchange._uma_checkpoint import (
     _admitted_extraction,
+    _conversion_id,
     convert_uma_checkpoint,
     UMAConversionLimits,
     UMAExtractionRuntime,
     UMASource,
+    UMASourceProvenance,
     UMASourceRefusedError,
 )
 from phydrax.interchange import pin_executable
@@ -445,6 +449,38 @@ def test_pinned_isolated_conversion_round_trips_without_source_packages(
     )
     with pytest.raises(UMASourceRefusedError, match="outside the admitted format"):
         convert_uma_checkpoint(refused, runtime=runtime)
+
+
+def test_provenance_with_an_admitted_declaration_round_trips_its_record() -> None:
+    # The converter stores the admitted declaration record as a read-only
+    # mapping; its record and conversion identity must serialize that mapping.
+    declaration = _declaration()
+    unsigned = UMASourceProvenance(
+        source_sha256="a" * 64,
+        source_byte_size=1,
+        source_license_id="test-license",
+        source_manifest_id="test-manifest",
+        source_admission_id="test-admission",
+        source_commit="test-commit",
+        model_id=declaration.model_id,
+        interpreter_sha256="b" * 64,
+        interpreter_version="host-python",
+        worker_sha256="c" * 64,
+        ema_n_averaged=1,
+        source_dtypes=("<f4",),
+        basis_residual=0.0,
+        excluded=MappingProxyType(dict(declaration.excluded)),
+        declaration=MappingProxyType(dict(declaration.record)),
+        roll_gauge="two-chart-nlerp-zero-roll",
+        native_architecture_id="test-architecture",
+        native_method_id="test-method",
+        conversion_id="pending",
+    )
+    provenance = dataclasses.replace(unsigned, conversion_id=_conversion_id(unsigned))
+    record = provenance.to_record()
+    assert json.loads(json.dumps(record)) == record
+    assert record["declaration"] == json.loads(json.dumps(dict(declaration.record)))
+    assert UMASourceProvenance.from_record(record) == provenance
 
 
 def test_host_refuses_ema_and_training_inventories_that_disagree(tmp_path: Path) -> None:
