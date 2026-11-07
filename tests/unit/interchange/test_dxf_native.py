@@ -245,15 +245,29 @@ def _neighbors() -> list[tuple[float, float, int, int]]:
     cases = []
     for k_first, k_last in ((0, 1), (0, 2), (1, 3), (3, 1), (2, 4)):
         first, last = _right_angle(k_first), _right_angle(k_last)
-        below = math.nextafter(first, -math.inf) if k_first else -0.0
         cases += [
             (first, math.nextafter(last, 0.0), k_first, k_last),
-            (below, last, k_first, k_last),
             (math.nextafter(first, math.inf), last, k_first, k_last),
         ]
+        if k_first:
+            cases.append((math.nextafter(first, -math.inf), last, k_first, k_last))
         if k_last != 4:
             cases.append((first, math.nextafter(last, math.inf), k_first, k_last))
     return cases
+
+
+@pytest.mark.parametrize("k_last", (1, 2))
+def test_signed_zero_start_keeps_the_analytic_carrier(k_last: int) -> None:
+    # -0.0 is not bit-equal to the right angle 0, so no quarter arc is formed;
+    # its analytic end is nevertheless exact and the right-angle end is rooted.
+    imported = decode_dxf_bytes(
+        _wedge(-0.0, _right_angle(k_last), 0, k_last), DxfImportPolicy()
+    )
+    assert imported.report.losses == ()
+    assert any(
+        isinstance(segment, ProfileCurveUse)
+        for segment in imported.profile.outer.segments
+    )
 
 
 @pytest.mark.parametrize(("first", "last", "k_first", "k_last"), _neighbors())
@@ -271,6 +285,39 @@ def test_parameter_past_the_full_turn_is_out_of_period() -> None:
     source = _wedge(_right_angle(2), math.nextafter(_right_angle(4), math.inf), 2, 4)
     with pytest.raises(DxfImportError, match="one declared period"):
         decode_dxf_bytes(source, DxfImportPolicy(maximum_junction_gap=1e-14))
+
+
+def _mixed_right_angles() -> list[tuple[float, float, int, int]]:
+    cases = []
+    for k in (1, 2, 3):
+        # The general end lies one ulp off the neighboring axis parameter.
+        before = _right_angle(k - 1)
+        start = math.nextafter(before, math.inf) if k > 1 else math.nextafter(0.0, 1.0)
+        cases.append((start, _right_angle(k), k - 1, k))
+        cases.append(
+            (_right_angle(k), math.nextafter(_right_angle(k + 1), 0.0), k, k + 1)
+        )
+    return cases
+
+
+@pytest.mark.parametrize(("first", "last", "k_first", "k_last"), _mixed_right_angles())
+def test_single_right_angle_end_joins_at_its_exact_axis_point(
+    first: float, last: float, k_first: int, k_last: int
+) -> None:
+    source = _wedge(first, last, k_first, k_last)
+    with pytest.raises(DxfImportError):
+        decode_dxf_bytes(source, DxfImportPolicy())
+    imported = decode_dxf_bytes(source, DxfImportPolicy(maximum_junction_gap=1e-14))
+    assert [loss.category for loss in imported.report.losses] == ["transformed"]
+    rows = imported.profile.endpoint_gap_bounds
+    assert rows is not None
+    (use,) = (
+        index
+        for index, segment in enumerate(imported.profile.outer.segments)
+        if isinstance(segment, ProfileCurveUse)
+    )
+    # The right-angle end is the exact axis point; only the general end has a gap.
+    assert min(rows[0][use]) == 0.0 < max(rows[0][use]) <= 1e-14
 
 
 _TWO_PI = 2 * math.pi

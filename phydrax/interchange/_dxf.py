@@ -45,7 +45,12 @@ from ..geometry.brep._constructors import (
     ProfileSegment,
 )
 from ..geometry.brep._intersection import NativePeriodEndpoint
-from ..geometry.brep._patches import BSplineCurve, CircleCurve, EllipseCurve
+from ..geometry.brep._patches import (
+    BSplineCurve,
+    CircleCurve,
+    ConicParameterRoot,
+    EllipseCurve,
+)
 from ..typing import checked, parse
 from ..units import (
     CENTIMETER,
@@ -616,6 +621,36 @@ def _exact_binary(value: Fraction) -> float | None:
     return result if Fraction(result) == value else None
 
 
+def _quarter_roots(
+    segment: ProfileCurveUse,
+) -> tuple[ConicParameterRoot | None, ConicParameterRoot | None]:
+    """Exact conic roots for ELLIPSE use ends bit-equal to ``fl(k pi / 2)``, k = 1..3.
+
+    A parameter of 0 is already exact; wrapped parameters lie at or above
+    ``fl(2 pi)`` and never match, so only authored right angles are bound. As
+    in the profile owner's root recovery, the exact frame must be orthonormal.
+    """
+    curve = segment.curve
+    if not isinstance(curve, EllipseCurve):
+        return None, None
+    first, second = curve.first_axis_exact, curve.second_axis_exact
+    if (
+        first[0] * first[0] + first[1] * first[1] != 1
+        or second[0] * second[0] + second[1] * second[1] != 1
+        or first[0] * second[0] + first[1] * second[1] != 0
+    ):
+        return None, None
+
+    def root(parameter: float) -> ConicParameterRoot | None:
+        k = _right_angle(parameter)
+        if k is None or not 1 <= k <= 3:
+            return None
+        cosine, sine = ((0, 1), (-1, 0), (0, -1))[k - 1]
+        return ConicParameterRoot(curve, Fraction(cosine), Fraction(sine))
+
+    return root(segment.first), root(segment.last)
+
+
 def _ellipse_quarters(
     center: _Point, major: _Point, ratio: float, first: int, quarters: int
 ) -> BSplineCurve | None:
@@ -784,7 +819,7 @@ def _segment_gaps(
             NativePeriodEndpoint(segment.curve, rational=rational, turns=1),
         )
         if full_turn
-        else (None, None)
+        else _quarter_roots(segment)
     )
     vertices = (loop.vertices[index], loop.vertices[(index + 1) % len(loop.vertices)])
     return endpoint_gap_bounds(
@@ -874,7 +909,9 @@ def _endpoint_bound(edge: _Edge, vertex: _Point, endpoint: int) -> float:
         return 0.0 if edge[endpoint] == vertex else math.inf
     parameters = (segment.first, segment.last)
     vertices = np.asarray((vertex, vertex), dtype=np.float64)
-    return endpoint_gap_bounds(segment.curve, parameters, vertices)[endpoint]
+    return endpoint_gap_bounds(
+        segment.curve, parameters, vertices, endpoint_roots=_quarter_roots(segment)
+    )[endpoint]
 
 
 def _join(

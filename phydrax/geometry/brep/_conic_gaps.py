@@ -25,6 +25,7 @@ from ._patches import (
     BSplineCurve,
     BSplineSurfacePatch,
     CircleCurve,
+    ConicParameterRoot,
     CylinderPatch,
     EllipseCurve,
     ExactLineCurve,
@@ -358,14 +359,31 @@ def _periodic_endpoint_squared(
     raise ValueError("The periodic endpoint has no rationally proved source image.")
 
 
+def _conic_root_squared(
+    curve: AbstractCurve,
+    root: ConicParameterRoot,
+    parameter: float,
+    vertex: np.ndarray,
+    /,
+) -> Fraction:
+    """Squared gap from a vertex to the exact conic point an endpoint realizes."""
+    if carrier_payload(root.conic) != carrier_payload(curve):
+        raise ValueError("A conic endpoint root must bind the unchanged source curve.")
+    if not root.parameter_lower <= parameter <= root.parameter_upper:
+        raise ValueError("A numeric endpoint must realize its exact conic root.")
+    return _squared_gap_upper(root.exact_point(), rational_vector(vertex))
+
+
 def _endpoint_squared(
     curve: AbstractCurve,
     parameter: float,
     vertex: np.ndarray,
     /,
     *,
-    root: NativePeriodEndpoint | None,
+    root: NativePeriodEndpoint | ConicParameterRoot | None,
 ) -> Fraction:
+    if isinstance(root, ConicParameterRoot):
+        return _conic_root_squared(curve, root, parameter, vertex)
     if root is not None:
         return _periodic_endpoint_squared(curve, root, parameter, vertex)
     target = rational_vector(vertex)
@@ -472,10 +490,10 @@ def endpoint_gap_bounds(
     parameters: tuple[float, float],
     vertices: np.ndarray,
     *,
-    endpoint_roots: tuple[NativePeriodEndpoint | None, NativePeriodEndpoint | None] = (
-        None,
-        None,
-    ),
+    endpoint_roots: tuple[
+        NativePeriodEndpoint | ConicParameterRoot | None,
+        NativePeriodEndpoint | ConicParameterRoot | None,
+    ] = (None, None),
 ) -> tuple[float, float]:
     """Return outward Euclidean endpoint-gap bounds without moving source vertices."""
     if len(parameters) != 2 or not all(np.isfinite(value) for value in parameters):
