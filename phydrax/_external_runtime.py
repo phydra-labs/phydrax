@@ -1414,7 +1414,11 @@ class NativeWorker:
     ) -> None:
         _host_only()
         if os.name != "posix":
-            raise OSError("Persistent native workers require a POSIX host.")
+            raise NativeWorkerError(
+                "unavailable",
+                "Persistent native workers require a POSIX host.",
+                evidence={"executable": str(executable), "os_name": os.name},
+            )
         self.policy = NativeWorkerPolicy() if policy is None else policy
         if not isinstance(self.policy, NativeWorkerPolicy):
             raise TypeError("policy must be NativeWorkerPolicy or None.")
