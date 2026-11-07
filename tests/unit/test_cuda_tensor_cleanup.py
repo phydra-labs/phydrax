@@ -1,5 +1,6 @@
 """Exercise the native owning-device teardown boundary without a CUDA context."""
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -206,13 +207,16 @@ int main(int argc, char** argv) {
 
 @pytest.fixture(scope="module")
 def cleanup_harness(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    compiler = shutil.which("c++")
+    # Windows builds with the MSVC driver of a Visual Studio developer
+    # environment (cl on PATH with its INCLUDE/LIB); POSIX hosts use c++.
+    windows = os.name == "nt"
+    compiler = shutil.which("cl" if windows else "c++")
     if compiler is None:
         pytest.fail("Native tensor cleanup tests require a C++ compiler")
     directory = tmp_path_factory.mktemp("tensor_cleanup")
     source = directory / "cleanup.cpp"
     source.write_text(_SOURCE)
-    executable = directory / "cleanup"
+    executable = directory / ("cleanup.exe" if windows else "cleanup")
     include = Path(__file__).resolve().parents[2] / "native/cuda/src/common"
     # Only external CUDA/XLA types are stubbed; registry and C ABI behavior
     # comes from the production implementation.
@@ -233,26 +237,30 @@ def cleanup_harness(tmp_path_factory: pytest.TempPathFactory) -> Path:
         "static Error Internal(const std::string&) { return {}; }\n"
         "}; }\n"
     )
-    subprocess.run(
-        [
+    includes = (directory, include, include.parents[1] / "include")
+    sources = (str(source), str(include / "capi.cpp"))
+    if windows:
+        command = [
+            compiler,
+            "/nologo",
+            "/std:c++17",
+            "/EHsc",
+            *(f"/I{path}" for path in includes),
+            *sources,
+            f"/Fe{executable}",
+        ]
+    else:
+        command = [
             compiler,
             "-std=c++17",
             "-pthread",
-            "-I",
-            str(directory),
-            "-I",
-            str(include),
-            "-I",
-            str(include.parents[1] / "include"),
-            str(source),
-            str(include / "capi.cpp"),
+            *(argument for path in includes for argument in ("-I", str(path))),
+            *sources,
             "-o",
             str(executable),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+        ]
+    # MSVC writes object files to the working directory.
+    subprocess.run(command, check=True, capture_output=True, text=True, cwd=directory)
     return executable
 
 
