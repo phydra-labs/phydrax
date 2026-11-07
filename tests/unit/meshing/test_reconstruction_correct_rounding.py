@@ -85,10 +85,16 @@ def test_torus_samples_are_bit_identical_to_the_oracle(
     assert samples.tobytes() == expected.tobytes()
 
 
-# Published hardest-to-round binary64 arguments (Lefevre, Ly & Zimmermann,
+# Published hardest-to-round binary64 arguments: Lefevre, Ly & Zimmermann,
 # "Computing hard-to-round cases of sin, cos, tan in double precision",
-# ARITH 2026, Tables V and VI).
+# ARITH 2026, Tables V and VI (|x| >= 2**10). Inside the sampler range they come
+# from CORE-MATH sin.wc/cos.wc: the m = 65 near-representable sine
+# 0x1.fe767739d0f6dp-2, and the closest-to-midpoint listed arguments.
 _PUBLISHED_SIN = (
+    "0x1.fe767739d0f6dp-2",
+    "0x1.598bae9e632f6p-7",
+    "0x1.1c63df63d59d0p-2",
+    "0x1.d98c4c612718dp-1",
     "0x1.e009c53148be1p+991",
     "0x1.b951f1572eba5p+23",
     "0x1.504cac51f1eafp+131",
@@ -97,6 +103,9 @@ _PUBLISHED_SIN = (
     "0x1.4c96c11134d36p+577",
 )
 _PUBLISHED_COS = (
+    "0x1.34ec2f9fc9c00p+1",
+    "0x1.6b8a6273d7c21p+0",
+    "0x1.16e534ee36580p-4",
     "0x1.5afb7107105d9p+1006",
     "0x1.e009c53148be1p+992",
     "0x1.b7fe89bf86037p+917",

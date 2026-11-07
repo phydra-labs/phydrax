@@ -77,18 +77,24 @@ class CorrectRoundingUndecided(ArithmeticError):
     """Ziv's strategy did not decide a correctly rounded value by its cap."""
 
 
-# Ziv precisions (bits): each interval evaluation of the exact binary64
-# argument either rounds both endpoints to one binary64 or doubles precision.
-# Published worst cases (identical bits m after the round bit) for binary64:
-# Lefevre & Muller, ARITH-15 (2001), Property 5 and Tables 6-8: sin on
-# [1/32, 2] is decided by 53 + 65 = 118 bits, cos on [1/64, 12867/8192] by
-# 108 bits. Lefevre, Ly & Zimmermann, ARITH 2026, Tables V-VI: for |x| >= 2**10
-# the hardest sin case has m = 65 (0x1.b951f1572eba5p+23) and the hardest cos
-# case m = 62. These do not cover every binade of the sampler's [0, 2*pi);
-# the complete sets are the CORE-MATH sin.wc/cos.wc files. The 4096-bit cap
-# exceeds 53 + 68 + guard bits by far and also covers argument reduction of
-# |x| < 2**1024.
-_ZIV_PRECISIONS = (64, 128, 256, 512, 1024, 2048, 4096)
+# Ziv precisions (bits). mpmath's interval sin/cos of the exact argument at
+# precision p is outward-rounded, so its enclosure is at most two p-bit ulps
+# wide. Round to nearest is decided once that width falls below the result's
+# distance to the nearest binary64 midpoint.
+# Proven binary64 bounds on that distance (the Table Maker's Dilemma for
+# sin/cos is solved):
+# - |x| >= 2**10: V. Lefevre, T. Ly, P. Zimmermann, "Computing hard-to-round
+#   cases of sin, cos, tan in double precision", ARITH 2026, Tables V-VI. The
+#   hardest cases have m <= 68 (sin) and m <= 66 (cos) identical bits after
+#   the round bit, so a midpoint is at least 2**-69 ulp away.
+# - |x| < 2**11: CORE-MATH src/binary64/{sin,cos}/{sin,cos}.wc (complete sets
+#   with >= 43 identical bits; sin.wc includes the three Koizumi cases;
+#   sha256 8fb40c3d... / 40660955...). Measured over every listed argument,
+#   the closest midpoint is 2**-60.06 ulp (sin 0x1.598bae9e632f6p-7) and
+#   2**-59.78 ulp (cos 0x1.34ec2f9fc9c00p+1).
+# So 53 + 1 + 68 + 2 (width) = 124 bits always decide. The 128-bit ceiling
+# adds a 4-bit guard, and the typed refusal is unreachable for binary64 input.
+_ZIV_PRECISIONS = (64, 96, 128)
 
 
 def _correctly_rounded_sin_cos(
