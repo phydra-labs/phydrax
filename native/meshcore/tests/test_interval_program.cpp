@@ -687,6 +687,17 @@ void floating_point_modes() {
     PHX_CHECK(execute(call) == PHX_MC_OK);
     PHX_CHECK(identical(call.lower, nearest.lower));
     PHX_CHECK(identical(call.upper, nearest.upper));
+    // Invalid programs and arguments are refused inside the established scope.
+    const std::int64_t invalid_row[8] = {99, 0, 1, 0, -1, -1, -1, 0};
+    double low = 7.0, high = 7.0;
+    PHX_CHECK(phx_mc_interval_program_execute(invalid_row, 1, nullptr, 0, nullptr, 0, &low, &high,
+                                              1) == PHX_MC_INVALID_INPUT);
+    PHX_CHECK(phx_mc_interval_program_execute(nullptr, -1, nullptr, 0, nullptr, 0, &low, &high,
+                                              1) == PHX_MC_INVALID_ARGUMENT);
+    PHX_CHECK(low == 7.0 && high == 7.0);
+    std::uint64_t opcodes = 0;
+    PHX_CHECK(phx_mc_interval_program_capabilities(&opcodes) == PHX_MC_OK && opcodes != 0);
+    PHX_CHECK(phx_mc_interval_program_capabilities(nullptr) == PHX_MC_INVALID_ARGUMENT);
     PHX_CHECK(phx::mc::floating_point_mode() == installed);
     PHX_CHECK(std::fegetround() == hazard.rounding);
   }
