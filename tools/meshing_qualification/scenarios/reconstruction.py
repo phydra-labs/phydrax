@@ -1822,12 +1822,13 @@ _ENVELOPE_PROFILE = "native-envelope-lifecycle"
 
 # MAC-20261107T1649Z: every profile declares the execution-memory budget of
 # all its manufactured solves and factorizations (epoch 0, reanalysis, cold).
-# Run envelope: 8 GiB per row (LIN guard). The largest measured resident peak
-# of any row is 5.24 GB (rotated-ellipsoid-1, archive-write; lobed-sphere-2
-# reaches its reanalysis at 4.35 GB). A Cholesky solve holds its factor and
-# its preparation workspace, each within the budget, so twice the budget must
-# fit the remaining 3.35 GB: 1.5 GiB. Measured need: the refined
-# lobed-sphere-2 factor is 40,886,178 bytes.
+# Run envelope: 16 GiB per row. The largest measured process-tree peak is
+# 10.78 GB (lobed-sphere-2 through all-field transfer, reanalysis and archive
+# packing; the 6.1 rows that reached no reanalysis peaked at 5.24 GB under an
+# 8 GiB guard, which the larger row exceeds). A Cholesky solve holds its factor
+# and its preparation workspace, each within the budget, so 1.5 GiB keeps the
+# worst case (10.78 GB + 2 x 1.61 GB = 14.0 GB) inside the 17.18 GB envelope.
+# Measured need: the refined lobed-sphere-2 factor is 40,886,178 bytes.
 _SOLVE_MEMORY_BUDGET_BYTES = {
     **{
         _profile_id(kind, scale): 3 << 29
