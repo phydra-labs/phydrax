@@ -570,6 +570,19 @@ def test_rejected_native_newmark_preserves_pending_material_trial() -> None:
     mechanics = phx.applications.solid_mechanics
     policy = _plan(participant).policy
     valid_args = {"valid": jnp.asarray(True, dtype=jnp.bool_)}
+
+    # The direct Newmark step vetoes through its declared admissibility hook; the
+    # form's auxiliary evaluation is consumed by contact and static solves only.
+    def admissible(
+        time: Array,
+        displacement: Array,
+        velocity: Array,
+        acceleration: Array,
+        args: dict[str, Array],
+    ) -> Array:
+        del time, displacement, velocity, acceleration
+        return args["valid"]
+
     plan = mechanics.prepare_finite_element_dynamics(
         problem,
         previous,
@@ -577,6 +590,8 @@ def test_rejected_native_newmark_preserves_pending_material_trial() -> None:
         args=valid_args,
         nonlinear_method=policy.method,
         nonlinear_termination=policy.termination,
+        admissibility_evaluator=admissible,
+        admissibility_id="valid-argument",
         material_update=plasticity.update,
         material_update_id="j2-trial",
     )
