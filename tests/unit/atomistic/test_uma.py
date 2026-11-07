@@ -377,7 +377,13 @@ def test_condition_schema_records_source_defaults_and_refuses_bad_categories() -
     assert int(omol.value("uma_spin_index")[0]) == 1
     assert int(omat.value("uma_spin_index")[0]) == 0
     assert int(omol.value("total_charge")[0]) == 0
-    assert bool(jnp.all(omol.defaults_used))
+    # Defaults are recorded per (case, field): charge and spin take the source
+    # defaults, while the task code is always stated explicitly.
+    defaulted = np.asarray(omol.defaults_used)
+    assert defaulted.shape == (1, len(schema.spec.fields))
+    assert defaulted[0, schema.spec.index("total_charge")]
+    assert defaulted[0, schema.spec.index("uma_spin_index")]
+    assert not defaulted[0, schema.spec.index("uma_task")]
     with pytest.raises(ValueError, match="Mixed-task"):
         schema.conditioning(["omol", "omat"], atom_capacity=2)
     mask = jnp.ones((4,), dtype=jnp.bool_)
