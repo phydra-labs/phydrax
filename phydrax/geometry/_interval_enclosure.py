@@ -22,7 +22,12 @@ from jax.extend import core as jax_core
 from jax.typing import ArrayLike
 from numpy.typing import NDArray
 
-from .._exact_kernels import float64_interval_product, float64_interval_sum
+from .._exact_kernels import (
+    ElementaryFunction,
+    float64_interval_elementary,
+    float64_interval_product,
+    float64_interval_sum,
+)
 from .._interpolation._bspline import bspline_jet_rule_alignment
 from .._interpolation._bspline_extraction import (
     _bernstein_derivative,
@@ -403,65 +408,33 @@ def interval_sqrt(value: Interval, /) -> Interval:
     return _round_out(low, high)
 
 
+def _elementary(function: ElementaryFunction, value: Interval, /) -> Interval:
+    """Rigorous enclosure from the native libm-free elementary kernel.
+
+    No host rule is sound on every platform (libm results carry no error
+    bound), so without meshcore the primitive has no sound interval extension.
+    """
+    if not meshcore_available():
+        raise IntervalExtensionError(
+            f"the rigorous {function} enclosure requires the native meshcore library."
+        )
+    return float64_interval_elementary(function, value[0], value[1])
+
+
 def interval_exp(value: Interval, /) -> Interval:
-    with np.errstate(over="ignore", invalid="ignore"):
-        return _round_out(np.exp(value[0]), np.exp(value[1]))
+    return _elementary("exp", value)
 
 
 def interval_log(value: Interval, /) -> Interval:
-    lower, upper = np.asarray(value[0]), np.asarray(value[1])
-    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
-        low = np.log(lower)
-        high = np.log(upper)
-    low = np.where(lower <= 0.0, -np.inf, low)
-    high = np.where(upper <= 0.0, np.inf, high)
-    return _round_out(low, high)
-
-
-def _trigonometric_interval(value: Interval, kind: str, /) -> Interval:
-    lower, upper = (
-        np.asarray(value[0], dtype=np.float64),
-        np.asarray(value[1], dtype=np.float64),
-    )
-    width = upper - lower
-    with np.errstate(invalid="ignore"):
-        representable_step = np.maximum(
-            np.spacing(np.abs(lower)), np.spacing(np.abs(upper))
-        )
-    wide = (
-        ~np.isfinite(lower)
-        | ~np.isfinite(upper)
-        | (width >= 2.0 * math.pi)
-        | (representable_step >= 0.5 * math.pi)
-    )
-    with np.errstate(invalid="ignore", over="ignore"):
-        if kind == "sin":
-            low = _ieee_minimum(np.sin(lower), np.sin(upper))
-            high = _ieee_maximum(np.sin(lower), np.sin(upper))
-            maximum = np.ceil((lower - 0.5 * math.pi) / (2.0 * math.pi))
-            minimum = np.ceil((lower + 0.5 * math.pi) / (2.0 * math.pi))
-            high = np.where(0.5 * math.pi + maximum * (2.0 * math.pi) <= upper, 1.0, high)
-            low = np.where(-0.5 * math.pi + minimum * (2.0 * math.pi) <= upper, -1.0, low)
-        elif kind == "cos":
-            low = _ieee_minimum(np.cos(lower), np.cos(upper))
-            high = _ieee_maximum(np.cos(lower), np.cos(upper))
-            maximum = np.ceil(lower / (2.0 * math.pi))
-            minimum = np.ceil((lower - math.pi) / (2.0 * math.pi))
-            high = np.where(maximum * (2.0 * math.pi) <= upper, 1.0, high)
-            low = np.where(math.pi + minimum * (2.0 * math.pi) <= upper, -1.0, low)
-        else:
-            raise ValueError(f"unknown trigonometric interval function {kind!r}.")
-    low = np.where(wide, -1.0, low)
-    high = np.where(wide, 1.0, high)
-    return _round_out(low, high)
+    return _elementary("log", value)
 
 
 def interval_sin(value: Interval, /) -> Interval:
-    return _trigonometric_interval(value, "sin")
+    return _elementary("sin", value)
 
 
 def interval_cos(value: Interval, /) -> Interval:
-    return _trigonometric_interval(value, "cos")
+    return _elementary("cos", value)
 
 
 # Outward binary64 enclosure of the real constant 2 pi.
@@ -515,23 +488,7 @@ def interval_periodic_harmonic(
 
 
 def interval_tan(value: Interval, /) -> Interval:
-    lower, upper = (
-        np.asarray(value[0], dtype=np.float64),
-        np.asarray(value[1], dtype=np.float64),
-    )
-    with np.errstate(invalid="ignore"):
-        resolution = np.maximum(np.spacing(np.abs(lower)), np.spacing(np.abs(upper)))
-    first_pole = np.ceil((lower - 0.5 * math.pi) / math.pi)
-    pole = 0.5 * math.pi + first_pole * math.pi
-    crosses = (
-        ~np.isfinite(lower)
-        | ~np.isfinite(upper)
-        | (resolution >= 0.5 * math.pi)
-        | (pole <= upper)
-    )
-    with np.errstate(invalid="ignore", over="ignore"):
-        low, high = np.tan(lower), np.tan(upper)
-    return _round_out(np.where(crosses, -np.inf, low), np.where(crosses, np.inf, high))
+    return _elementary("tan", value)
 
 
 def interval_absolute(value: Interval, /) -> Interval:
@@ -1609,9 +1566,9 @@ def _primitive(
         case "tan":
             return (interval_tan(values[0]),)
         case "atan":
-            return (_round_out(np.arctan(values[0][0]), np.arctan(values[0][1])),)
+            return (_elementary("atan", values[0]),)
         case "tanh":
-            return (_round_out(np.tanh(values[0][0]), np.tanh(values[0][1])),)
+            return (_elementary("tanh", values[0]),)
         case "integer_pow":
             exponent = int(params["y"])
             if exponent == 0:

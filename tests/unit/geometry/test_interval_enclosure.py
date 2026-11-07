@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax._exact_kernels import ElementaryFunction, float64_interval_elementary
 from phydrax._interpolation import bspline_jet_stencil
 from phydrax._meshcore import load_meshcore, meshcore_available
 from phydrax.geometry import _interval_enclosure as interval_enclosure, Superquadric
@@ -1074,3 +1075,105 @@ def test_interval_bspline_piece_jets_extrapolate_their_span_polynomial() -> None
         np.testing.assert_allclose(
             (bounds[0][row, 0], bounds[1][row, 0]), (low, high), rtol=1e-12
         )
+
+
+def _elementary_boxes() -> tuple[np.ndarray, np.ndarray]:
+    noise = np.random.default_rng(20261107)
+    points = np.concatenate(
+        (
+            noise.normal(size=60) * 10.0 ** noise.integers(-30, 22, size=60),
+            np.asarray((0.0, -0.0, 1.0, np.pi / 2, 1.0e22, -745.0, 709.0, 5.0e-324)),
+        )
+    )
+    widths = np.abs(noise.normal(size=points.size)) * 10.0 ** noise.integers(
+        -16, 1, size=points.size
+    )
+    lower = np.concatenate((points, points))[:, None]
+    upper = np.concatenate((points, points + widths))[:, None]
+    return lower, upper
+
+
+@pytest.mark.meshcore
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native phydrax-meshcore library is not available"
+)
+def test_host_and_native_elementary_routes_agree_bit_for_bit() -> None:
+    lower, upper = _elementary_boxes()
+
+    def native_admitted(point: jax.Array) -> jax.Array:
+        return jnp.stack(
+            (jnp.sin(point[0]), jnp.cos(point[0]), jnp.exp(point[0]), jnp.log(point[0]))
+        )
+
+    def host_only(point: jax.Array) -> jax.Array:
+        return jnp.stack((jnp.tan(point[0]), jnp.arctan(point[0]), jnp.tanh(point[0])))
+
+    native = prepare_interval_function(native_admitted, 1, execution="native")
+    host = prepare_interval_function(native_admitted, 1, execution="host")
+    assert native.execution == "native"
+    for native_bound, host_bound in zip(
+        native.evaluate(lower, upper), host.evaluate(lower, upper), strict=True
+    ):
+        np.testing.assert_array_equal(_bits(native_bound), _bits(host_bound))
+    host_bounds = prepare_interval_function(host_only, 1, execution="host").evaluate(
+        lower, upper
+    )
+    host_only_functions: tuple[ElementaryFunction, ...] = ("tan", "atan", "tanh")
+    for column, function in enumerate(host_only_functions):
+        expected = float64_interval_elementary(function, lower[:, 0], upper[:, 0])
+        for host_bound, wrapper_bound in zip(host_bounds, expected, strict=True):
+            np.testing.assert_array_equal(
+                _bits(host_bound[:, column]), _bits(wrapper_bound)
+            )
+
+
+@pytest.mark.parametrize(
+    "function",
+    (jnp.exp, jnp.log, jnp.sin, jnp.cos, jnp.tan, jnp.arctan, jnp.tanh),
+    ids=("exp", "log", "sin", "cos", "tan", "atan", "tanh"),
+)
+def test_host_elementary_primitives_refuse_without_meshcore(
+    function: Callable[[jax.Array], jax.Array], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(interval_enclosure, "meshcore_available", lambda: False)
+
+    def mapped(point: jax.Array) -> jax.Array:
+        return function(point[0])[None]
+
+    prepared = prepare_interval_function(mapped, 1, execution="host")
+    box = np.asarray(((0.5,),), dtype=np.float64)
+    with pytest.raises(IntervalExtensionError, match="requires the native meshcore"):
+        prepared.evaluate(box, box + 0.25)
+
+
+@pytest.mark.meshcore
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native phydrax-meshcore library is not available"
+)
+def test_native_exact_extrema_fold_orders_signed_zero_ties() -> None:
+    # Constant max/min operands are folded at lowering time with the IEEE
+    # 754-2019 ordering of the _MAXIMUM/_MINIMUM opcodes (+0 above -0), not the
+    # platform-dependent NumPy tie choice.
+    def function(point: jax.Array) -> jax.Array:
+        zero = jnp.arange(1, dtype=jnp.float64)[0]
+        negative = zero * -1.0
+        return jnp.stack(
+            (
+                jnp.maximum(negative, zero),
+                jnp.maximum(zero, negative),
+                jnp.minimum(negative, zero),
+                jnp.minimum(zero, negative),
+                point[0],
+            )
+        )
+
+    box = np.asarray(((1.0,),), dtype=np.float64)
+    native = prepare_interval_function(function, 1, execution="native")
+    host = prepare_interval_function(function, 1, execution="host")
+    expected = np.asarray(((0.0, 0.0, -0.0, -0.0, 1.0),), dtype=np.float64)
+    assert native.execution == "native"
+    for native_bound, host_bound in zip(
+        native.evaluate(box, box), host.evaluate(box, box), strict=True
+    ):
+        np.testing.assert_array_equal(_bits(native_bound), _bits(expected))
+        np.testing.assert_array_equal(host_bound, expected)
