@@ -187,9 +187,11 @@ def test_brep_archive_cold_restores_source_and_exact_spline_in_new_process(
         capture_output=True,
         text=True,
     )
-    expected = json.loads(written.stdout)
+    # The cold-restore oracle exceeds the per-argument process limit; it is a file.
+    expected = tmp_path / "cold-restore-expected.json"
+    expected.write_text(json.dumps(json.loads(written.stdout)), encoding="utf-8")
     restored = subprocess.run(
-        [sys.executable, str(_WORKER), "read", str(tmp_path), json.dumps(expected)],
+        [sys.executable, str(_WORKER), "read", str(tmp_path), str(expected)],
         cwd=_REPOSITORY_ROOT,
         check=True,
         capture_output=True,

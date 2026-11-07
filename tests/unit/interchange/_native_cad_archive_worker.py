@@ -14218,7 +14218,10 @@ if __name__ == "__main__":
     if operation == "write":
         _write(archive_directory)
     elif operation == "read":
-        _read(archive_directory, json.loads(sys.argv[3]))
+        # The cold-restore oracle exceeds the per-argument process limit; it is a file.
+        _read(
+            archive_directory, json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+        )
     elif operation == "read-continuation":
         _read_continuation(archive_directory, json.loads(sys.argv[3]))
     elif operation == "read-implicit":
