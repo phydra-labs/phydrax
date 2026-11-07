@@ -407,13 +407,15 @@ def case_sums(values: Array, mask: Array, atom_cases: Array, case_count: int, /)
     Domain owner rows are not case-major slabs: row ``i`` belongs to case
     ``atom_cases[i]``. Each case selects its active rows through a masked
     ``(N, B)`` indicator and sums them along the row axis (no duplicate-index
-    scatter-add); integer values stay exact.
+    scatter-add); integer values stay exact in their own dtype (no x64 widening).
     """
     flat = values.reshape((values.shape[0], -1))
     cases = jnp.arange(case_count, dtype=atom_cases.dtype)
     select = (atom_cases[:, None] == cases[None, :]) & mask[:, None]
     zero = jnp.zeros((), dtype=values.dtype)
-    sums = jnp.sum(jnp.where(select[:, :, None], flat[:, None, :], zero), axis=0)
+    sums = jnp.sum(
+        jnp.where(select[:, :, None], flat[:, None, :], zero), axis=0, dtype=values.dtype
+    )
     return sums.reshape((case_count,) + values.shape[1:])
 
 
