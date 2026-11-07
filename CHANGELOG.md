@@ -783,6 +783,12 @@
   placed by a select on row indices in the column-index dtype instead of
   comparing `int64` rows with `int32` columns and multiplying by a boolean
   mask.
+- `guard_derivative_validity(..., failure="error")`, and every linear solve
+  under `FailurePolicy("error")`, refuse invalid derivatives in reverse mode as
+  well as forward mode. The check on the tangent was dropped when reverse
+  mode transposed it, so gradients and pullbacks through an invalid result
+  silently returned zeros; the transpose now applies the same check to the
+  cotangent. Primal values and valid derivatives are unchanged.
 
 ### Added
 - Sketches retain directed circular-arc incidence, support exact arc profile
