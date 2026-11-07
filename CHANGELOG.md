@@ -764,6 +764,9 @@
 - `read_safetensors_tensors` refuses a tensor extent above
   `max_tensor_elements` as exceeding the tensor limits, as it refuses an
   element or byte count above them, rather than as malformed extents.
+- Cell-geometry validity again caches its Bernstein interpolation plans per
+  parameter domain and degree in the bounded host-table cache instead of
+  re-solving the conversion operator on every certification.
 
 ### Added
 - Sketches retain directed circular-arc incidence, support exact arc profile
