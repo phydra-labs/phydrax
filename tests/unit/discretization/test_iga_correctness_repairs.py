@@ -3,6 +3,8 @@
 #
 
 
+import math
+from fractions import Fraction
 from typing import Any
 
 import jax.numpy as jnp
@@ -22,6 +24,13 @@ from phydrax.discretization.iga._basis import (
     IsogeometricQuadraturePolicy,
     TensorSplineBasisSpec,
 )
+from phydrax.discretization.iga._certificate import (
+    _positive_power_interval,
+    CertificateDisposition,
+    certify_tensor_nurbs,
+    IntervalBound,
+    TensorNURBSCertificatePolicy,
+)
 from phydrax.discretization.iga._geometry import NURBSGeometryState
 from phydrax.discretization.iga._interfaces import (
     certify_mortar_inf_sup,
@@ -36,6 +45,7 @@ from phydrax.discretization.iga._plan import IsogeometricPlan
 from phydrax.discretization.iga._realization import DirectTensorRealization
 from phydrax.discretization.iga._thb import THBHierarchy, THBLevel
 from phydrax.discretization.iga._topology import SplineSpanTopology
+from phydrax.discretization.iga._volume import TensorNURBSVolume
 
 
 class _LineMap(phx.geometry.BoundaryMap):
@@ -225,3 +235,61 @@ def test_iga_correctness_repairs_scenario_2() -> None:
             ((0.0, 1.0, 0.0, 1.0),),
             (TAnchor2D(11, (0.0, 0.0), foreign_knots),),
         )
+
+
+@pytest.mark.parametrize(
+    ("lower", "upper", "exponent"),
+    (
+        ("0x1.0000000000001p+0", "0x1.0000000000001p+0", 4),
+        ("0x1.0000000000001p+0", "0x1.0000000000001p+0", 6),
+        ("0x1.0000000000001p+0", "0x1.0000000000001p+0", 8),
+        ("0x1.1ce0b608f6030p+0", "0x1.1ce0b608f6031p+0", 8),
+    ),
+)
+def test_weight_power_interval_encloses_exact_powers(
+    lower: str, upper: str, exponent: int
+) -> None:
+    bound = IntervalBound(float.fromhex(lower), float.fromhex(upper))
+
+    power = _positive_power_interval(bound, exponent)
+
+    assert Fraction(power.lower) <= Fraction(bound.lower) ** exponent
+    assert Fraction(bound.upper) ** exponent <= Fraction(power.upper)
+    assert math.isfinite(power.lower) and math.isfinite(power.upper)
+
+
+def test_tensor_nurbs_jacobian_enclosure_survives_cancellation() -> None:
+    # Affine map with integer Jacobian columns near 2^27 and exact determinant -1:
+    # the ~2^54 Bernstein products cancel completely in the measure coefficients.
+    first = (
+        float.fromhex("0x1.9b57240000000p+26"),
+        float.fromhex("0x1.7be7714000000p+26"),
+    )
+    second = (
+        float.fromhex("0x1.cee7334000000p+26"),
+        float.fromhex("0x1.ab86b30000000p+26"),
+    )
+    exact = Fraction(first[0]) * Fraction(second[1]) - Fraction(first[1]) * Fraction(
+        second[0]
+    )
+    grid = BSplineGrid.open_uniform(1, 1, interval=(0.0, 1.0))
+    control = np.zeros((2, 2, 2), dtype=np.float64)
+    control[1, 0] = first
+    control[0, 1] = second
+    control[1, 1] = (first[0] + second[0], first[1] + second[1])
+    geometry = NURBSGeometryState(control, np.ones((2, 2), dtype=np.float64))
+    plan = IsogeometricPlan.isoparametric(
+        (grid, grid), geometry, quadrature_policy=IsogeometricQuadraturePolicy(2)
+    )
+
+    certificate = certify_tensor_nurbs(
+        TensorNURBSVolume("cancelling-affine", plan.basis, geometry),
+        policy=TensorNURBSCertificatePolicy(maximum_subdivision_depth=0),
+    )
+
+    assert exact == -1
+    assert certificate.disposition is not CertificateDisposition.PASS
+    assert certificate.cells
+    for cell in certificate.cells:
+        measure = cell.jacobian_measure
+        assert Fraction(measure.lower) <= exact <= Fraction(measure.upper)

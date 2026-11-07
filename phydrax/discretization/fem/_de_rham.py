@@ -912,6 +912,21 @@ def _maximum_row_terms(matrix: csr_matrix, /) -> int:
     return int(np.max(np.diff(matrix.indptr), initial=0))
 
 
+_SMALLEST_SUBNORMAL = float(np.ldexp(1.0, -1074))
+
+
+def _nonzero_pattern(matrix: csr_matrix, /) -> csr_matrix:
+    pattern = matrix.copy()
+    pattern.data = (pattern.data != 0.0).astype(np.float64)
+    pattern.eliminate_zeros()
+    return pattern
+
+
+def _product_counts(first: csr_matrix, second: csr_matrix, /) -> csr_matrix:
+    """Per-entry count of nonzero scalar products formed by ``first @ second``."""
+    return (_nonzero_pattern(first) @ _nonzero_pattern(second)).tocsr()
+
+
 def _require_complex_map_commutes(
     map: ComplexMap,
     entry_evidence: Sequence[SparseTransferEntryEvidence],
@@ -936,6 +951,14 @@ def _require_complex_map_commutes(
         observed = abs(difference)
         current_error = _matrix_entry_error(entry_evidence[degree])
         next_error = _matrix_entry_error(entry_evidence[degree + 1])
+        # Gradual underflow adds an absolute error of at most 2^-1075 to every
+        # rounded product and none to additions; relative gamma terms miss it.
+        product_counts = (
+            _product_counts(target_differential, target_map)
+            + _product_counts(next_map, source_differential)
+            + _product_counts(target_differential, current_error)
+            + _product_counts(next_error, source_differential)
+        ).tocsr()
         left_integral_error = abs(target_differential) @ current_error
         right_integral_error = next_error @ abs(source_differential)
         integration_error = (left_integral_error + right_integral_error).tocsr()
@@ -972,6 +995,12 @@ def _require_complex_map_commutes(
             * integration_error
         )
         roundoff = (roundoff + integration_roundoff).tocsr()
+        # Each counted product is charged 2^-1074 (twice its underflow loss, which
+        # also covers the gamma terms evaluated on underflowed magnitudes); two
+        # more units cover the four rounded scalar products assembling roundoff.
+        product_counts.data += 2.0
+        roundoff = (roundoff + product_counts.multiply(_SMALLEST_SUBNORMAL)).tocsr()
+        del product_counts
         del (
             integration_roundoff,
             target_differential,

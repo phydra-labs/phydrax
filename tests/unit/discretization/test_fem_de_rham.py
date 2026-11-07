@@ -1,5 +1,6 @@
 """Closed Whitney masses and topology-exact sparse differential contracts."""
 
+from fractions import Fraction
 from itertools import combinations, permutations, product
 from math import factorial
 
@@ -14,7 +15,11 @@ from scipy.sparse.linalg import spsolve
 
 import phydrax as phx
 from phydrax.discretization import CellBlock, CellMesh
-from phydrax.discretization.fem._de_rham import FiniteElementDeRhamComplex
+from phydrax.discretization.fem._de_rham import (
+    _require_complex_map_commutes,
+    FiniteElementDeRhamComplex,
+    SparseTransferEntryEvidence,
+)
 from phydrax.discretization.fem._form_elements import FormElementFamily
 from phydrax.exterior import hodge_laplacian_eigenbasis
 from phydrax.exterior._algebra import form_to_vector
@@ -1048,3 +1053,85 @@ def test_order_two_scalar_spectrum_lifts_realization_dofs(
     assert basis.decomposition_id == (
         f"hodge:{realization.realization_id}:0:complete:{boundary}:rank={active_count}"
     )
+
+
+def test_commuting_roundoff_bound_covers_gradual_underflow() -> None:
+    # Normal entries whose products are subnormal: each 1.5 * 2^-1074 product of
+    # the target side rounds to 2^-1073, so the observed defect is 2^-1073 while
+    # the exact defect of the float matrices is zero.
+    unit = 2.0**-537
+
+    def operator(
+        matrix: npt.NDArray[np.float64],
+        source: phx.linalg.ArraySpace,
+        target: phx.linalg.ArraySpace,
+        identifier: str,
+    ) -> SparseCoordinateOperator:
+        rows, columns = np.nonzero(matrix)
+        relation = EdgeRelation(
+            jnp.asarray(columns, dtype=jnp.int32),
+            jnp.asarray(rows, dtype=jnp.int32),
+            source_size=source.size,
+            target_size=target.size,
+        )
+        return SparseCoordinateOperator(
+            relation,
+            jnp.asarray(matrix[rows, columns], dtype=jnp.float64),
+            source=source,
+            target=target,
+            operator_id=identifier,
+        )
+
+    spaces = {
+        name: phx.linalg.ArraySpace((size,), dtype=jnp.float64, space_id=name)
+        for name, size in (("s0", 1), ("s1", 1), ("t0", 4), ("t1", 1))
+    }
+    source_differential = np.full((1, 1), unit, dtype=np.float64)
+    target_differential = np.full((1, 4), 1.5 * unit, dtype=np.float64)
+    first_map = np.full((4, 1), unit, dtype=np.float64)
+    second_map = np.full((1, 1), 6.0 * unit, dtype=np.float64)
+    source = phx.linalg.HilbertComplex(
+        (spaces["s0"], spaces["s1"]),
+        (operator(source_differential, spaces["s0"], spaces["s1"], "ds"),),
+        complex_id="underflow-source",
+    )
+    target = phx.linalg.HilbertComplex(
+        (spaces["t0"], spaces["t1"]),
+        (operator(target_differential, spaces["t0"], spaces["t1"], "dt"),),
+        complex_id="underflow-target",
+    )
+    complex_map = phx.linalg.ComplexMap(
+        source,
+        target,
+        (
+            operator(first_map, spaces["s0"], spaces["t0"], "m0"),
+            operator(second_map, spaces["s1"], spaces["t1"], "m1"),
+        ),
+        map_id="underflow-map",
+    )
+    entry_evidence = tuple(
+        SparseTransferEntryEvidence(
+            degree,
+            1,
+            size,
+            np.arange(size, dtype=np.int64),
+            np.zeros((size,), dtype=np.int64),
+            np.zeros((size,), dtype=np.float64),
+            np.ones((size,), dtype=np.int64),
+            np.zeros((size,), dtype=np.int64),
+        )
+        for degree, size in ((0, 4), (1, 1))
+    )
+    exact = sum(
+        Fraction(target_differential[0, index]) * Fraction(first_map[index, 0])
+        for index in range(4)
+    ) - Fraction(second_map[0, 0]) * Fraction(source_differential[0, 0])
+
+    (evidence,) = _require_complex_map_commutes(complex_map, entry_evidence, None)
+
+    assert np.asarray(evidence.target_indices).tolist() == [0]
+    assert np.asarray(evidence.source_indices).tolist() == [0]
+    observed = Fraction(float(np.asarray(evidence.observed_defects)[0]))
+    roundoff = Fraction(float(np.asarray(evidence.roundoff_error_bounds)[0]))
+    assert observed > 0
+    assert abs(observed - exact) <= roundoff

@@ -65,6 +65,7 @@ from ..geometry._interval_enclosure import (
     interval_square,
     interval_subtract,
 )
+from ..geometry._rational import fraction_up
 from ..linalg import (
     ArraySpace,
     DenseLinearOperator,
@@ -771,6 +772,20 @@ register_strict_reconstruction(CellValidityCertificate)
 
 
 _EPSILON = float(np.finfo(np.float64).eps)
+_SMALLEST_SUBNORMAL = float(np.ldexp(1.0, -1074))
+
+
+def _underflow_free_norm(values: np.ndarray, /, *, axis: int) -> np.ndarray:
+    """Euclidean norm along ``axis`` whose squares cannot underflow.
+
+    Vectors below one half are scaled up by an exact power of two first, so the
+    result equals ``np.linalg.norm`` whenever none of its squares underflows.
+    """
+
+    largest = np.max(np.abs(values), axis=axis, keepdims=True)
+    shift = np.maximum(-np.frexp(largest)[1], 0)
+    scaled = np.linalg.norm(np.ldexp(values, shift), axis=axis)
+    return np.ldexp(scaled, -np.squeeze(shift, axis=axis))
 
 
 # Bernstein parameter domains ------------------------------------------------
@@ -1123,7 +1138,7 @@ def _jacobian_determinant(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return the determinant and its Hadamard scale for (..., ambient, reference)."""
 
-    column_scale = np.prod(np.linalg.norm(magnitude, axis=-2), axis=-1)
+    column_scale = np.prod(_underflow_free_norm(magnitude, axis=-2), axis=-1)
     if jacobian.shape[-2] == jacobian.shape[-1]:
         return _square_determinant(jacobian), column_scale
     gram = np.swapaxes(jacobian, -1, -2) @ jacobian
@@ -1209,7 +1224,50 @@ def _evaluate_pieces(
             + node_count * _EPSILON * np.max(np.abs(values), axis=1)
         )
     )
-    return coefficient, margin
+    absolute = _underflow_margin(
+        np.max(magnitude, axis=(1, 2, 3)),
+        plan.conversion_norm,
+        dof_count,
+        node_count,
+        points.shape[-1],
+        reference.shape[-1],
+    )
+    return coefficient, margin + absolute
+
+
+def _underflow_margin(
+    largest_entries: np.ndarray,
+    conversion_norm: float,
+    dof_count: int,
+    node_count: int,
+    ambient: int,
+    dimension: int,
+    /,
+) -> np.ndarray:
+    """Upward absolute bound on gradual-underflow error of Bernstein coefficients.
+
+    Every rounded product may lose up to 2^-1075 that relative gamma terms do not
+    see. A Jacobian entry forms ``dof_count`` products; the determinant (or Gram
+    determinant) has degree ``power`` in those entries, so each loss propagates
+    through at most ``power - 1`` factors bounded by ``1 + 2 * largest`` and its
+    own products. The Bernstein conversion amplifies by ``conversion_norm`` and
+    adds ``node_count`` products; the factor two covers the rounded margin.
+    """
+
+    power = dimension if ambient == dimension else 2 * dimension
+    terms = 16 * ambient * dimension * (dof_count + ambient + dimension)
+    conversion = Fraction(conversion_norm)
+    unit = Fraction(2, 2**1074)
+    bounds = np.empty(largest_entries.shape, dtype=np.float64)
+    for index, largest in enumerate(largest_entries.tolist()):
+        if not math.isfinite(largest):
+            bounds[index] = math.inf
+            continue
+        factor = (1 + 2 * Fraction(largest)) ** (power - 1)
+        bounds[index] = fraction_up(
+            unit * (conversion * (2 * terms * factor + 2) + node_count + 1)
+        )
+    return bounds
 
 
 def _root_scale(
@@ -3071,18 +3129,23 @@ def _polygon_measure(points: np.ndarray, policy: CellValidityPolicy, /) -> tuple
     first = points - center
     second = np.roll(first, -1, axis=1)
     scale = np.sum(
-        np.linalg.norm(first, axis=-1) * np.linalg.norm(second, axis=-1), axis=1
+        _underflow_free_norm(first, axis=-1) * _underflow_free_norm(second, axis=-1),
+        axis=1,
     )
     rounding = 2.0 * (corner_count + 8) * _EPSILON * scale
+    # Gradual underflow: each of the 2 * corner_count rounded products per area
+    # component may lose 2^-1075, invisible to the relative rounding term; the
+    # charge is doubled to cover the rounded margin arithmetic.
+    underflow = (2.0 * corner_count + 4.0) * _SMALLEST_SUBNORMAL
     floor = policy.relative_determinant_floor
     if ambient == 2:
         area = np.sum(
             first[..., 0] * second[..., 1] - first[..., 1] * second[..., 0], axis=1
         )
         planar = np.zeros((cell_count,), dtype=np.bool_)
-        return area, rounding, floor * scale, planar, planar, points
+        return area, rounding + underflow, floor * scale, planar, planar, points
     area = np.sum(np.cross(first, second), axis=1)
-    magnitude = np.linalg.norm(area, axis=-1)
+    magnitude = _underflow_free_norm(area, axis=-1)
     guarded = np.maximum(magnitude, np.finfo(np.float64).tiny)
     # Vertex offsets from the Newell plane; the normal direction inherits the
     # relative rounding of the area vector.
@@ -3095,9 +3158,14 @@ def _polygon_measure(points: np.ndarray, policy: CellValidityPolicy, /) -> tuple
     diameter = np.linalg.norm(np.max(points, axis=1) - np.min(points, axis=1), axis=-1)
     allowed = policy.relative_planarity_tolerance * diameter
     axes = np.asarray(((1, 2), (0, 2), (0, 1)))[np.argmax(np.abs(area), axis=-1)]
+    # The area vector's Euclidean error is at most sqrt(3) times its componentwise
+    # underflow loss; four more units cover the rounded squares and products below.
+    area_rounding = rounding + 2.0 * underflow
     return (
         magnitude * magnitude,
-        2.0 * magnitude * rounding + rounding * rounding,
+        2.0 * magnitude * area_rounding
+        + area_rounding * area_rounding
+        + 4.0 * _SMALLEST_SUBNORMAL,
         floor * scale * scale,
         offset - slack > allowed,
         offset + slack > allowed,
