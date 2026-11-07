@@ -31,8 +31,8 @@ def test_helper_and_oracle_source_changes_rebind_benchmark_identity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_name: str, driver_name: str
 ) -> None:
     root = scaling.PROJECT_ROOT
-    for name in ("pyproject.toml", "uv.lock"):
-        shutil.copyfile(root / name, tmp_path / name)
+    shutil.copyfile(root / "pyproject.toml", tmp_path / "pyproject.toml")
+    (tmp_path / "uv.lock").write_text("revision = 1\n", encoding="utf-8")
     for name in ("benchmarks", "examples"):
         shutil.copytree(
             root / name,
