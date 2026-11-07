@@ -205,6 +205,28 @@ def test_deep_kernel_parameter_mean_and_noise_score_matches_dense() -> None:
         assert jnp.allclose(actual, expected, rtol=2e-7, atol=2e-8)
 
 
+@pytest.mark.strict_jax
+def test_conditioned_exact_score_assembles_under_strict_dtype_promotion() -> None:
+    points = _design()
+    observations = jnp.sin(points[:, 0])
+    model = phx.uq.ExactGaussianProcessDiscrepancy(points, observations)
+    conditioning = phx.linalg.ConditionTargetPolicy(50.0)
+
+    def native(theta: Array) -> Array:
+        return model.log_marginal_likelihood(
+            theta[6] * points[:, 0] + theta[7],
+            state=_state(theta, points, 2, conditioning),
+        )
+
+    # Two columns over seven points cover the looped blocks, the remainder
+    # block, and the conditioned diagonal tangent of every block.
+    strict_value, strict_gradient = jax.value_and_grad(native)(_theta())
+    with phx.config.context(phx.config.NumericsConfig(dtype_promotion="standard")):
+        value, gradient = jax.value_and_grad(native)(_theta())
+    assert jnp.array_equal(strict_value, value)
+    assert jnp.array_equal(strict_gradient, gradient)
+
+
 @pytest.mark.parametrize("bound", ["gershgorin", "trace"])
 def test_condition_target_uses_complete_covariance_and_preserves_exact_score(
     bound: Literal["gershgorin", "trace"],

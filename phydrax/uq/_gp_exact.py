@@ -343,10 +343,9 @@ def _exact_gp_log_marginal_likelihood_jvp(
             covariance_primals, covariance_tangents, start, size
         )
         if added_diagonal_dot is not None:
-            covariance_dot = (
-                covariance_dot
-                + (jnp.arange(points.shape[0])[:, None] == columns[None, :])
-                * added_diagonal_dot[:, None]
+            rows = jnp.arange(points.shape[0], dtype=columns.dtype)
+            covariance_dot = covariance_dot + jnp.where(
+                rows[:, None] == columns[None, :], added_diagonal_dot[:, None], 0.0
             )
         score = alpha[:, None] * alpha[columns][None, :] - inverse_values
         return 0.5 * ein.contract("nc,nc->", score, covariance_dot)
@@ -394,10 +393,9 @@ def _covariance_block(
     query = jax.lax.dynamic_slice_in_dim(points, start, size, axis=0)
     noise = jnp.broadcast_to(noise_scale, (points.shape[0],))
     columns = start + jnp.arange(size, dtype=jnp.int32)
-    return (
-        kernel.matrix(points, query)
-        + (jnp.arange(points.shape[0])[:, None] == columns[None, :])
-        * (noise * noise + jitter)[:, None]
+    rows = jnp.arange(points.shape[0], dtype=columns.dtype)
+    return kernel.matrix(points, query) + jnp.where(
+        rows[:, None] == columns[None, :], (noise * noise + jitter)[:, None], 0.0
     )
 
 

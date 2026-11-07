@@ -778,6 +778,11 @@
 - `PreparedFactorization.inverse_columns` accepts integer indices of any
   dtype under strict dtype promotion; validated indices are converted to the
   row-index dtype instead of being compared across integer widths.
+- Exact Gaussian-process covariance assembly and its conditioned score
+  derivative run under strict dtype promotion: the observation diagonal is
+  placed by a select on row indices in the column-index dtype instead of
+  comparing `int64` rows with `int32` columns and multiplying by a boolean
+  mask.
 
 ### Added
 - Sketches retain directed circular-arc incidence, support exact arc profile
