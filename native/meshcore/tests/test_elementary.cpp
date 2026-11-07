@@ -423,7 +423,10 @@ void inverse_sine_and_cosine() {
   PHX_CHECK(exactly(point(acos, 0.0), kHalfPiRounded, up(kHalfPiRounded)));
   PHX_CHECK(exactly(point(acos, -1.0), 2.0 * kHalfPiRounded, up(2.0 * kHalfPiRounded)));
   PHX_CHECK(exactly(point(asin, 0x1p-40), 0x1p-40, up(0x1p-40)));
-  // asin(1/2) = pi/6, acos(1/2) = pi/3 (RN(pi/6) and RN(pi/3) lie below).
+  // asin(x) < x for x < 0: the tiny path returns [prev(x), x].
+  PHX_CHECK(exactly(point(asin, -0x1p-40), down(-0x1p-40), -0x1p-40));
+  PHX_CHECK(exactly(point(asin, -kSmallest), down(-kSmallest), -kSmallest));
+  // asin(1/2) = pi/6, acos(1/2) = pi/3 (RN(pi/6) and RN(pi/3) lie above).
   PHX_CHECK(exactly(point(asin, 0.5), 0x1.0c152382d7365p-1, 0x1.0c152382d7366p-1));
   PHX_CHECK(exactly(point(acos, 0.5), 0x1.0c152382d7365p+0, 0x1.0c152382d7366p+0));
   // Domain: clipped boxes, empty intersections and NaN give the whole line.
