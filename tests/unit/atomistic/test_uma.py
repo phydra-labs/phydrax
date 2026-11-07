@@ -842,8 +842,17 @@ def test_merged_mole_artifact_round_trip_preserves_outputs_and_refuses_tampering
     assert prepared.binding.binding_id == binding.binding_id
     assert prepared.model_kind == kind
     positions = jnp.asarray(POSITIONS)[None]
-    written = _outputs(merged, positions, _condition(model))
-    read = _outputs(prepared, positions, _condition(model))
+    # request=None means the scalar energy for a potential and every supported
+    # report for a property model, so the potential asks for its direct forces.
+    request = (
+        AtomisticObservableRequest(
+            (AtomisticObservable.ENERGY, AtomisticObservable.DIRECT_FORCES)
+        )
+        if kind == "potential"
+        else None
+    )
+    written = _outputs(merged, positions, _condition(model), request)
+    read = _outputs(prepared, positions, _condition(model), request)
     assert written.energy_available == read.energy_available == (kind == "potential")
     if kind == "potential":
         np.testing.assert_array_equal(read.energy, written.energy)
