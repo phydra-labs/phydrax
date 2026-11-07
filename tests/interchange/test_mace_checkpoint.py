@@ -1987,6 +1987,8 @@ _COMMITTED_FAMILY_CASES = {
         "two_maceles",
     ),
 }
+# Generated only where the caller supplies the rights-gated LES provider.
+_LES_GATED_CASES = frozenset({"two_maceles"})
 
 
 def _committed_structure(manifest: Mapping[str, Any], name: str) -> Any:
@@ -2015,6 +2017,8 @@ def test_committed_family_fixture_matches_its_provider_evaluation(
     from phydrax.atomistic._latent_electrostatics import LatentEwaldDefinition
 
     manifest = committed_manifest(release)
+    if case in _LES_GATED_CASES and case not in manifest["cases"]:
+        pytest.skip("MACELES fixtures need the rights-gated LES provider (NOTICE).")
     assert case in manifest["cases"], (
         f"Regenerate tests/fixtures/mace_torch_{release.replace('.', '_')} with "
         "its generate.py and the pinned provider."

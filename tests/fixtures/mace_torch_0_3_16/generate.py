@@ -28,7 +28,9 @@ MACELES on both the finite and the periodic structure.
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import json
+import sys
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -403,7 +405,13 @@ def generate(directory: Path, cases: dict[str, dict[str, Any]], release: str, /)
         "tools": importlib.import_module("mace.tools"),
     }
     distributions = ["mace-torch", "e3nn", "torch", "ase"]
-    if any(case["class"] == "MACELES" for case in cases.values()):
+    # LES is rights-gated (NOTICE): MACELES cases exist only where the caller
+    # supplies it; without it they are omitted and their tests skip.
+    les_cases = sorted(name for name, case in cases.items() if case["class"] == "MACELES")
+    if les_cases and importlib.util.find_spec("les") is None:
+        print(f"LES is absent; omitting {', '.join(les_cases)}.", file=sys.stderr)
+        cases = {name: case for name, case in cases.items() if name not in les_cases}
+    elif les_cases:
         distributions.append("les")
     manifest = {
         "provider": {name: metadata.version(name) for name in distributions},
