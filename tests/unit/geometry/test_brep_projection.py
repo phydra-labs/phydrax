@@ -1299,10 +1299,22 @@ def test_distant_query_is_not_blocked_by_unresolved_boundary_entities() -> None:
     assert np.all(np.isnan(np.asarray(result.points)))
 
 
+# The seam point's exact distance exceeds the face minimum by far less than
+# 1e-16; certified edge and carrier enclosures prove a gap of a few 1e-18, so a
+# 1e-16 band admits the seam point, while 1e-30 lies below what binary64
+# bounds of a 1e-4 distance can certify.
 @pytest.mark.parametrize(
     ("ambiguity", "expected_status"),
-    ((1.0e-9, _STATUS.SEAM), (1.0e-16, _STATUS.UNRESOLVED)),
-    ids=("certified-minimum-band", "insufficient-distance-evidence"),
+    (
+        (1.0e-9, _STATUS.SEAM),
+        (1.0e-16, _STATUS.SEAM),
+        (1.0e-30, _STATUS.UNRESOLVED),
+    ),
+    ids=(
+        "certified-minimum-band",
+        "certified-narrow-band",
+        "insufficient-distance-evidence",
+    ),
 )
 def test_torus_seam_minimum_requires_certified_distance_evidence(
     ambiguity: float, expected_status: phx.geometry.BRepProjectionStatus
@@ -1682,4 +1694,126 @@ def test_axis_crossing_straight_revolution_certifies_far_nappe_distance() -> Non
         return (difference > 0) - (difference < 0)
 
     assert 0 <= lower <= upper
+    assert excess(lower) <= 0 <= excess(upper)
+
+
+def test_far_sphere_revolution_face_distance_encloses_exact_distance() -> None:
+    # The revolved sphere of radius 1e8 passes through the origin; binary64
+    # candidates near it carry ~1e-8 cancellation errors, far beyond a padding
+    # scaled by the query and candidate magnitudes.
+    radius = 1.0e8
+    model = brep_sphere(radius, center=(radius, 0.0, 0.0), coordinate_contract=_CONTRACT)
+    values = ("0x1.ade4e1346afffp-18", "-0x1.1ae2d68a58b75p-3", "-0x1.1a069f367611dp-2")
+    point = np.asarray(tuple(float.fromhex(value) for value in values), dtype=np.float64)
+    projection = phx.geometry.prepare_brep_projection(model)
+    result = _project(projection, point[None, :], _FACE, 0)
+    assert int(result.status[0]) == _STATUS.UNIQUE
+    lower = Fraction(float(result.distance_lower_bounds[0]))
+    upper = Fraction(float(result.residuals[0]))
+
+    # The query is inside, so its exact distance is R - |p - c|.
+    squared = (Fraction(float(point[0])) - Fraction(radius)) ** 2 + sum(
+        Fraction(float(value)) ** 2 for value in point[1:]
+    )
+    assert 0 <= lower <= upper < Fraction(radius)
+    assert (Fraction(radius) - lower) ** 2 >= squared >= (Fraction(radius) - upper) ** 2
+
+
+def test_far_cone_face_distance_encloses_exact_distance() -> None:
+    import mpmath
+
+    from phydrax.geometry.brep._patches import ConePatch
+
+    # A slightly tapered cone of reference radius 1e8 about the vertical line
+    # through (1e8, 0, 0): its u = 0 generator runs through the origin.
+    radius, semi_angle = 1.0e8, 1.0e-3
+    patch = ConePatch(
+        (radius, 0.0, 0.0),
+        (-1.0, 0.0, 0.0),
+        (0.0, -1.0, 0.0),
+        (0.0, 0.0, 1.0),
+        radius,
+        semi_angle,
+    )
+    projection = phx.geometry.prepare_brep_projection(
+        _rectangle_face_model(patch, ((-0.5, 0.0), (0.5, 1.0)))
+    )
+    values = ("0x1.b92f39cfd1b90p-21", "-0x1.1ae2d68a58b75p-3", "0x1.cbf2c19313dc6p-3")
+    point = np.asarray(tuple(float.fromhex(value) for value in values), dtype=np.float64)
+    result = _project(projection, point[None, :], _FACE, 0)
+    assert int(result.status[0]) == _STATUS.UNIQUE
+
+    # The frame is exactly orthonormal, so the exact distance is the meridian
+    # distance |rho - R - z T| / sqrt(1 + T^2) to the generator, whose foot lies
+    # inside the face; T = tan(semi_angle) is transcendental, so the oracle is
+    # 256-bit mpmath.
+    with mpmath.workprec(256):
+        x, y, z = (mpmath.mpf(float(value)) for value in point)
+        slope = mpmath.tan(mpmath.mpf(semi_angle))
+        rho = mpmath.sqrt((x - radius) ** 2 + y**2)
+        assert 0 < (z + slope * (rho - radius)) / (1 + slope**2) < 1
+        distance = abs(rho - radius - z * slope) / mpmath.sqrt(1 + slope**2)
+        lower = mpmath.mpf(float(result.distance_lower_bounds[0]))
+        upper = mpmath.mpf(float(result.residuals[0]))
+        assert 0 <= lower <= distance <= upper
+
+
+@pytest.mark.parametrize("curve", ("line", "circle"))
+def test_far_edge_distance_encloses_exact_distance(curve: str) -> None:
+    # Edges 2e8 long, or of radius 1e8, whose closest point lies near the
+    # origin: the binary64 candidate's cancellation error is ~1e-8.
+    radius = 1.0e8
+    if curve == "line":
+        model = brep_box(
+            (-radius, -1.0, -1.0), (radius, 1.0, 1.0), coordinate_contract=_CONTRACT
+        )
+        values = ("-0x1.d77a103be9318p-3", "-0x1.00006b79384d2p+0", "-0x1p+0")
+    else:
+        model = brep_cylinder(
+            radius, 1.0, base_center=(radius, 0.0, 0.0), coordinate_contract=_CONTRACT
+        )
+        values = (
+            "0x1.6fa75ad7d96fcp-19",
+            "-0x1.1ae2d68a58b75p-3",
+            "-0x1.e152fb3e3a254p-11",
+        )
+    geometry = model.geometry
+    vertices = np.asarray(geometry.vertex_points)
+    edge = next(
+        index
+        for index, (first, last) in enumerate(geometry.edge_vertices)
+        if geometry.edge_curves[index] >= 0
+        and (
+            (first == last and vertices[first, 2] == 0.0)
+            if curve == "circle"
+            else np.array_equal(vertices[first, 1:], (-1.0, -1.0))
+            and np.array_equal(vertices[last, 1:], (-1.0, -1.0))
+        )
+    )
+    point = np.asarray(tuple(float.fromhex(value) for value in values), dtype=np.float64)
+    result = _project(
+        phx.geometry.prepare_brep_projection(model), point[None, :], _EDGE, edge
+    )
+    assert int(result.status[0]) == _STATUS.UNIQUE
+    lower = Fraction(float(result.distance_lower_bounds[0]))
+    upper = Fraction(float(result.residuals[0]))
+    assert 0 <= lower <= upper
+    x, y, z = (Fraction(float(value)) for value in point)
+    if curve == "line":
+        # The edge runs along x at y = z = -1 through the query's x.
+        assert lower <= -1 - y <= upper
+        return
+    # The circle of radius R about the axis through (R, 0, 0) at z = 0:
+    # d = hypot(rho - R, z). For b >= 0 and K = rho^2 + R^2 + z^2 - b^2,
+    # b^2 - d^2 = 2 R rho - K, decided by squares.
+    rho_squared = (x - Fraction(radius)) ** 2 + y**2
+
+    def excess(bound: Fraction, /) -> int:
+        """Sign of ``bound - d``."""
+        threshold = rho_squared + Fraction(radius) ** 2 + z**2 - bound**2
+        if threshold < 0:
+            return 1
+        difference = 4 * Fraction(radius) ** 2 * rho_squared - threshold**2
+        return (difference > 0) - (difference < 0)
+
     assert excess(lower) <= 0 <= excess(upper)
