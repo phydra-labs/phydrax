@@ -672,7 +672,9 @@ def _runtime_dependency_identity(
     package_records = lock_document.get("package")
     if not isinstance(package_records, list):
         raise ValueError("uv.lock must contain package records.")
-    locked: dict[str, str] = {}
+    # A universal lock may fork a package by marker (e.g. an extra's own jaxlib);
+    # the installed version must be one of its locked versions.
+    locked: dict[str, set[str]] = {}
     required = set(_RUNTIME_DISTRIBUTIONS)
     for package in package_records:
         if not isinstance(package, Mapping):
@@ -683,9 +685,10 @@ def _runtime_dependency_identity(
         version = package.get("version")
         if type(version) is not str or not version:
             raise ValueError(f"uv.lock package {name!r} has no exact version.")
-        if name in locked:
+        versions = locked.setdefault(name, set())
+        if version in versions:
             raise ValueError(f"uv.lock contains duplicate runtime package {name!r}.")
-        locked[name] = version
+        versions.add(version)
     missing_lock = sorted(required - set(locked))
     if missing_lock:
         raise ValueError(
@@ -710,10 +713,10 @@ def _runtime_dependency_identity(
             raise ValueError(
                 f"Installed runtime distribution {name!r} has no exact version."
             )
-        if version != locked[name]:
+        if version not in locked[name]:
             raise ValueError(
                 f"Installed runtime distribution {name!r} version {version!r} "
-                f"does not match uv.lock version {locked[name]!r}."
+                f"does not match uv.lock versions {sorted(locked[name])!r}."
             )
         observed[name] = version
     return observed, hashlib.sha256(lock_payload).hexdigest()

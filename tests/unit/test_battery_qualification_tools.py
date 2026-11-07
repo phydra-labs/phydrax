@@ -798,6 +798,25 @@ def test_runtime_identity_requires_installed_versions_to_match_lock(
         )
 
 
+def test_runtime_identity_admits_any_marker_forked_lock_version(tmp_path: Any) -> None:
+    source_root, versions = _synthetic_runtime_lock(tmp_path)
+    lockfile = source_root / "uv.lock"
+    lockfile.write_text(
+        lockfile.read_text() + '[[package]]\nname = "jaxlib"\nversion = "0.9.9"\n'
+    )
+    for jaxlib in ("1.0.4", "0.9.9"):
+        identity = battery_qualification.capture_runtime_identity(
+            source_root=source_root,
+            installed_versions={**versions, "jaxlib": jaxlib},
+        )
+        assert identity.environment_record["runtime_dependencies"]["jaxlib"] == jaxlib
+    with pytest.raises(ValueError, match="does not match uv.lock"):
+        battery_qualification.capture_runtime_identity(
+            source_root=source_root,
+            installed_versions={**versions, "jaxlib": "2.0.0"},
+        )
+
+
 def test_atomic_output_does_not_follow_predictable_temporary_symlink(
     tmp_path: Any,
 ) -> None:
