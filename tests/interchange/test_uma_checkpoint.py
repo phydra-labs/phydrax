@@ -4,6 +4,7 @@ import copy
 import hashlib
 import io
 import json
+import os
 import struct
 import sys
 import zipfile
@@ -411,6 +412,11 @@ def _admitted(tmp_path: Path, payload: bytes) -> UMASource:
     )
 
 
+# Pinned executables run through a host descriptor path, which non-POSIX hosts
+# refuse ("The host does not expose executable descriptor paths").
+@pytest.mark.skipif(
+    os.name != "posix", reason="Pinned descriptor execution requires a POSIX host."
+)
 def test_pinned_isolated_conversion_round_trips_without_source_packages(
     tmp_path: Path,
 ) -> None:
