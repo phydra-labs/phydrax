@@ -3896,13 +3896,18 @@ def _box_witness_distance_upper(
     upper: np.ndarray,
     reach: float,
     /,
+    *,
+    directed: bool = False,
 ) -> np.ndarray:
     """Per box, ``min_w max_{x in box, z in w} |x - z|`` over the witness boxes.
 
+    ``directed`` bounds ``min_w max_{x in box} min_{z in w} |x - z|`` instead,
+    for witness boxes every point of which serves (opposite-sign leaves).
     Witness boxes beyond a reach ``r`` are farther than ``r`` from the whole
     box, so a box is settled once its least upper distance is at most ``r``;
     the reach doubles until every box is settled.
     """
+    distance = _directed_distance_upper if directed else _distance_upper
     nearest = np.full((lower.shape[0],), np.inf, dtype=np.float64)
     pending = np.arange(lower.shape[0])
     while pending.shape[0]:
@@ -3918,7 +3923,7 @@ def _box_witness_distance_upper(
             np.minimum.at(
                 nearest,
                 boxes,
-                _distance_upper(
+                distance(
                     lower[boxes],
                     upper[boxes],
                     witness_lower[witness_rows],
@@ -5071,6 +5076,33 @@ def _distance_upper(
     return np.nextafter(np.sqrt(total), np.inf)
 
 
+def _directed_distance_upper(
+    lower: np.ndarray,
+    upper: np.ndarray,
+    other_lower: np.ndarray,
+    other_upper: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Upper bounds of ``max_{x in box} min_{q in other} |x - q|`` for paired boxes.
+
+    Per axis the farthest gap of a coordinate in ``[l, u]`` from ``[a, b]``
+    is ``max(a - l, u - b, 0)``; the axes are independent, so the squared
+    farthest gaps add. Every rounded step moves up.
+    """
+    gap = np.maximum(
+        np.maximum(
+            np.nextafter(other_lower - lower, np.inf),
+            np.nextafter(upper - other_upper, np.inf),
+        ),
+        0.0,
+    )
+    squared = np.nextafter(gap * gap, np.inf)
+    total = np.zeros((lower.shape[0],), dtype=np.float64)
+    for axis in range(3):
+        total = np.nextafter(total + squared[:, axis], np.inf)
+    return np.nextafter(np.sqrt(total), np.inf)
+
+
 def _distance_lower(
     lower: np.ndarray,
     upper: np.ndarray,
@@ -5379,9 +5411,12 @@ class ImplicitSignCoverage:
 
     ``certified`` proves that the target region ``M`` and the source region
     ``{f < 0}`` agree everywhere outside a band of leaves meeting the target
-    boundary. Every band point lies within ``band_extent`` of the target
-    boundary and within ``distance_upper`` (``band_extent`` plus the certified
-    target-to-zero-set bound) of the zero set.
+    boundary, leaves that may hold a zero, and disagreeing components proved
+    within the tolerance of the zero set. Every band point lies within
+    ``band_extent`` of the target boundary; ``distance_upper`` bounds the
+    distance to the zero set of every point of all three (``band_extent``
+    plus the certified target-to-zero-set bound, the root-witness bound of
+    the possible-zero leaves, and the absorbed components' bound).
     """
 
     status: Literal["certified", "violated", "unresolved"]
@@ -5448,6 +5483,19 @@ def _split_triangle_pieces(
         children.reshape((-1, 3, 2)),
         np.repeat(depths + 1, 4),
     )
+
+
+def _box_octants(
+    lower: np.ndarray, upper: np.ndarray, middle: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """The eight closed octants of each box at ``middle``, in octant-major order."""
+    child_lower: list[np.ndarray] = []
+    child_upper: list[np.ndarray] = []
+    for index in range(8):
+        choice = np.asarray([(index >> axis) & 1 for axis in range(3)], dtype=np.bool_)
+        child_lower.append(np.where(choice, middle, lower))
+        child_upper.append(np.where(choice, upper, middle))
+    return np.concatenate(child_lower), np.concatenate(child_upper)
 
 
 def _touching_rows(
@@ -5527,8 +5575,7 @@ def certify_implicit_sign_coverage(
 
     1. The band is the set of leaves of the discovery's complete cover
        (refined further where needed) that touch the outward box of a
-       facet piece or whose value enclosure contains zero, so it holds the
-       topological boundaries of ``M`` and of ``{f < 0}``. The band
+       facet piece, so it holds the topological boundary of ``M``. The band
        resolution is the larger of ``tolerance - mesh_to_source`` and the
        diagonal of a target-level discovery cell: the band is not resolved
        below the source's own certified resolution. A band leaf is halved
@@ -5539,22 +5586,32 @@ def certify_implicit_sign_coverage(
        leaf whose box they touch, so they follow the band instead of tiling
        every facet at its finest scale; only binary64 parameter resolution
        stops a piece earlier.
-    2. Every other leaf has one field sign and misses the target boundary,
+    2. A leaf off the band whose value enclosure contains zero may hold a
+       zero; it stands unrefined. Every retained root witness encloses a
+       zero, so the leaf's farthest distance to the nearest witness box
+       bounds its distance to ``Z`` (the possible-zero-box bound of
+       discovery), with no reference to the target. The band and these
+       leaves hold the topological boundaries of ``M`` and of ``{f < 0}``.
+    3. Every other leaf has one field sign and misses the target boundary,
        so membership in ``M`` and in ``{f < 0}`` is constant on each
        connected union of such closed leaves (touching leaves must agree in
        sign).
-    3. A component touching the domain boundary joins the unbounded
+    4. A component touching the domain boundary joins the unbounded
        exterior, outside both regions, so it must be positive. Any other
        component is inside ``M`` when a cell corner, a cell centroid
        enclosure or its largest leaf's center lies in a cell (exactly), and
        outside when that center lies in none; its sign must agree.
 
-    Then ``M`` and ``{f < 0}`` differ only inside the band and inside
-    disagreeing components proved within ``tolerance`` of the zero set (each
-    leaf's farthest distance to a leaf of the opposite field sign); a farther
-    disagreeing component is a violation. The argument needs only the
-    discovery's enclosure-complete box cover, as the donor's possible-zero-box
-    distance bounds did, and applies it to regions.
+    Then ``M`` and ``{f < 0}`` differ only inside the band, inside
+    possible-zero leaves, and inside disagreeing components proved within
+    ``tolerance`` of the zero set; a farther disagreeing component is a
+    violation. A point of one strict sign is at most its distance to any
+    point of the opposite sign from ``Z`` (the segment between them meets
+    ``Z``), and at most its farthest distance to a root witness box, so each
+    leaf's nearest opposite-sign leaf (directed distance) or witness box
+    bounds it. The argument needs only the discovery's enclosure-complete box
+    cover and its root witnesses, as the donor's possible-zero-box distance
+    bounds did, and applies them to regions.
     """
 
     def outcome(
@@ -5566,10 +5623,11 @@ def certify_implicit_sign_coverage(
         band: int = 0,
         far: int = 0,
         components: int = 0,
+        possible: float = 0.0,
         absorbed: float = 0.0,
     ) -> ImplicitSignCoverage:
         distance = (
-            max(math.nextafter(mesh_to_source + extent, math.inf), absorbed)
+            max(math.nextafter(mesh_to_source + extent, math.inf), possible, absorbed)
             if math.isfinite(extent)
             else math.inf
         )
@@ -5582,6 +5640,7 @@ def certify_implicit_sign_coverage(
                 "tolerance": repr(float(tolerance)),
                 "mesh_to_source": repr(float(mesh_to_source)),
                 "band_extent": repr(float(extent)),
+                "possible_zero_distance": repr(float(possible)),
                 "absorbed_distance": repr(float(absorbed)),
                 "distance_upper": repr(float(distance)),
                 "band_leaves": band,
@@ -5660,6 +5719,9 @@ def certify_implicit_sign_coverage(
     signed_band_lower: list[np.ndarray] = []
     signed_band_upper: list[np.ndarray] = []
     signed_band_signs: list[np.ndarray] = []
+    # Possible-zero leaves off the band: bounded by root witnesses.
+    possible_lower: list[np.ndarray] = []
+    possible_upper: list[np.ndarray] = []
     extent_upper = 0.0
     band_count = 0
     while lower.shape[0]:
@@ -5692,24 +5754,16 @@ def certify_implicit_sign_coverage(
             piece_lower = np.concatenate((piece_lower[kept], child_piece_lower))
             piece_upper = np.concatenate((piece_upper[kept], child_piece_upper))
         del leaf_bvh
-        # Leaves that may hold a zero or a target boundary point form the band.
-        band = _touching_rows(piece_bvh, lower, upper) | (signs == 0)
-        # A band leaf farther than the resolution from every piece (in some
-        # coordinate) cannot be refined into the resolution: its extent is
-        # left unbounded rather than searched across the whole target.
-        near = band & _touching_rows(
-            piece_bvh,
-            np.nextafter(lower - resolution, -np.inf),
-            np.nextafter(upper + resolution, np.inf),
-        )
-        extent = np.where(band, np.inf, 0.0)
-        if np.any(near):
-            extent[near] = _box_witness_distance_upper(
+        # Leaves that may hold a target boundary point form the band.
+        band = _touching_rows(piece_bvh, lower, upper)
+        extent = np.zeros(lower.shape[0], dtype=np.float64)
+        if np.any(band):
+            extent[band] = _box_witness_distance_upper(
                 piece_bvh,
                 piece_lower,
                 piece_upper,
-                lower[near],
-                upper[near],
+                lower[band],
+                upper[band],
                 resolution,
             )
         middle = 0.5 * lower + 0.5 * upper
@@ -5718,37 +5772,37 @@ def certify_implicit_sign_coverage(
         splittable = np.all((lower < middle) & (middle < upper), axis=1) & (
             leaf_widths > leaf_floor
         )
-        split = near & (extent > resolution) & splittable
+        split = band & (extent > resolution) & splittable
         settled = band & ~split
+        # Off the band, a leaf that may hold a zero stands as it is: its
+        # distance to the zero set is bounded by root witnesses, not by
+        # its distance to the target.
+        possible = ~band & (signs == 0)
+        standing = settled | possible
+        if np.any(standing) and (
+            np.any(lower[standing] <= domain[0]) or np.any(upper[standing] >= domain[1])
+        ):
+            return outcome(
+                "unresolved",
+                "The target boundary band or a possible-zero leaf reaches the "
+                "discovery domain boundary.",
+            )
         if np.any(settled):
-            if np.any(lower[settled] <= domain[0]) or np.any(upper[settled] >= domain[1]):
-                return outcome(
-                    "unresolved",
-                    "The target boundary band reaches the discovery domain boundary.",
-                )
             extent_upper = max(extent_upper, float(np.max(extent[settled])))
             band_count += int(np.count_nonzero(settled))
             signed = settled & (signs != 0)
             signed_band_lower.append(lower[signed])
             signed_band_upper.append(upper[signed])
             signed_band_signs.append(signs[signed])
+        band_count += int(np.count_nonzero(possible))
+        possible_lower.append(lower[possible])
+        possible_upper.append(upper[possible])
         far = ~band & (signs != 0)
         far_lower.append(lower[far])
         far_upper.append(upper[far])
         far_signs.append(signs[far])
-        parent_lower, parent_upper = lower[split], upper[split]
-        parent_middle, parent_signs = middle[split], signs[split]
-        child_lower: list[np.ndarray] = []
-        child_upper: list[np.ndarray] = []
-        for index in range(8):
-            choice = np.asarray(
-                [(index >> axis) & 1 for axis in range(3)], dtype=np.bool_
-            )
-            child_lower.append(np.where(choice, parent_middle, parent_lower))
-            child_upper.append(np.where(choice, parent_upper, parent_middle))
-        lower = np.concatenate(child_lower)
-        upper = np.concatenate(child_upper)
-        signs = np.tile(parent_signs, 8)
+        lower, upper = _box_octants(lower[split], upper[split], middle[split])
+        signs = np.tile(signs[split], 8)
         undecided = np.flatnonzero(signs == 0)
         if undecided.shape[0]:
             value_lower, value_upper = _box_value_bounds(
@@ -5800,6 +5854,45 @@ def certify_implicit_sign_coverage(
         "far": far_count,
         "components": component_count,
     }
+    witness_points = np.asarray(surface.boundary_witnesses, dtype=np.float64).reshape(
+        (-1, 3)
+    )
+    witness_errors = np.asarray(surface.boundary_errors, dtype=np.float64).reshape((-1,))
+    witness_bvh = None
+    witness_lower = witness_upper = np.empty((0, 3), dtype=np.float64)
+    if (
+        witness_points.shape[0] > 0
+        and witness_errors.shape == (witness_points.shape[0],)
+        and bool(np.all(np.isfinite(witness_points)))
+        and bool(np.all(np.isfinite(witness_errors)))
+        and not bool(np.any(witness_errors < 0.0))
+    ):
+        # Every retained root witness box encloses a zero of the field.
+        witness_lower = np.nextafter(witness_points - witness_errors[:, None], -np.inf)
+        witness_upper = np.nextafter(witness_points + witness_errors[:, None], np.inf)
+        witness_bvh = prepare_bvh(witness_lower, witness_upper, dtype=np.float64)
+    zero_lower = np.concatenate(possible_lower)
+    zero_upper = np.concatenate(possible_upper)
+    if zero_lower.shape[0]:
+        if witness_bvh is None:
+            return outcome(
+                "unresolved",
+                "A possible-zero leaf needs finite retained root witnesses of the "
+                "source.",
+                **counts,
+            )
+        counts["possible"] = float(
+            np.max(
+                _box_witness_distance_upper(
+                    witness_bvh,
+                    witness_lower,
+                    witness_upper,
+                    zero_lower,
+                    zero_upper,
+                    resolution,
+                )
+            )
+        )
     component_signs = np.zeros(component_count, dtype=np.int8)
     component_signs[labels] = region_signs
     exterior = np.zeros(component_count, dtype=np.bool_)
@@ -5854,44 +5947,92 @@ def certify_implicit_sign_coverage(
         outside[component] = not decided
     # A disagreeing component is absorbed into the band when every point of it
     # is proved within the tolerance of the zero set: each of its leaves has
-    # one strict sign, and every segment to a leaf of the opposite sign meets
-    # the zero set, so its farthest distance to the nearest such leaf bounds
-    # its distance to the zero set.
+    # one strict sign, and every segment to a point of the opposite sign meets
+    # the zero set, so its directed distance to the nearest leaf of the
+    # opposite sign, or its farthest distance to the nearest root witness box,
+    # bounds its distance to the zero set. A leaf of one sign is halved while
+    # its bound exceeds the tolerance and it is wider than the leaf floor.
     disagree = ((inside & (component_signs > 0)) | (outside & (component_signs < 0))) & ~(
         inside & exterior
     )
     absorbed = 0.0
+    farther = 0
     if np.any(disagree):
         evidence_lower = np.concatenate((region_lower, *signed_band_lower))
         evidence_upper = np.concatenate((region_upper, *signed_band_upper))
         evidence_signs = np.concatenate((region_signs, *signed_band_signs))
         for sign in (1, -1):
             members = np.flatnonzero(disagree[labels] & (region_signs == sign))
-            opposite = np.flatnonzero(evidence_signs == -sign)
             if not members.shape[0]:
                 continue
-            if not opposite.shape[0]:
-                absorbed = math.inf
+            opposite = np.flatnonzero(evidence_signs == -sign)
+            if not opposite.shape[0] and witness_bvh is None:
+                absorbed, farther = math.inf, sign
                 break
-            nearest = _box_witness_distance_upper(
-                prepare_bvh(
-                    evidence_lower[opposite], evidence_upper[opposite], dtype=np.float64
-                ),
-                evidence_lower[opposite],
-                evidence_upper[opposite],
-                region_lower[members],
-                region_upper[members],
-                resolution,
+            opposite_lower = evidence_lower[opposite]
+            opposite_upper = evidence_upper[opposite]
+            opposite_bvh = (
+                prepare_bvh(opposite_lower, opposite_upper, dtype=np.float64)
+                if opposite.shape[0]
+                else None
             )
-            absorbed = max(absorbed, float(np.max(nearest)))
-    if absorbed > tolerance:
-        if np.any(disagree & inside):
-            return outcome(
-                "violated",
-                "The target region contains a zero-free leaf outside the source region "
-                "farther than the tolerance from the zero set.",
-                **counts,
-            )
+            member_lower, member_upper = region_lower[members], region_upper[members]
+            while member_lower.shape[0]:
+                nearest = np.full(member_lower.shape[0], np.inf, dtype=np.float64)
+                if opposite_bvh is not None:
+                    nearest = _box_witness_distance_upper(
+                        opposite_bvh,
+                        opposite_lower,
+                        opposite_upper,
+                        member_lower,
+                        member_upper,
+                        resolution,
+                        directed=True,
+                    )
+                if witness_bvh is not None:
+                    nearest = np.minimum(
+                        nearest,
+                        _box_witness_distance_upper(
+                            witness_bvh,
+                            witness_lower,
+                            witness_upper,
+                            member_lower,
+                            member_upper,
+                            resolution,
+                        ),
+                    )
+                member_middle = 0.5 * member_lower + 0.5 * member_upper
+                split = (
+                    (nearest > tolerance)
+                    & np.all(
+                        (member_lower < member_middle) & (member_middle < member_upper),
+                        axis=1,
+                    )
+                    & (
+                        _distance_upper(
+                            member_lower, member_upper, member_lower, member_upper
+                        )
+                        > leaf_floor
+                    )
+                )
+                if np.any(~split):
+                    absorbed = max(absorbed, float(np.max(nearest[~split])))
+                if absorbed > tolerance:
+                    farther = sign
+                    break
+                member_lower, member_upper = _box_octants(
+                    member_lower[split], member_upper[split], member_middle[split]
+                )
+            if farther:
+                break
+    if farther > 0:
+        return outcome(
+            "violated",
+            "The target region contains a zero-free leaf outside the source region "
+            "farther than the tolerance from the zero set.",
+            **counts,
+        )
+    if farther < 0:
         return outcome(
             "violated",
             "The target region misses a zero-free leaf inside the source region "
@@ -5903,13 +6044,6 @@ def certify_implicit_sign_coverage(
         return outcome(
             "violated",
             "The target region reaches the unbounded exterior of the source.",
-            **counts,
-        )
-    if not math.isfinite(extent_upper):
-        return outcome(
-            "unresolved",
-            "A band leaf that may hold a zero lies farther than the resolution "
-            "from the target boundary.",
             **counts,
         )
     return outcome(

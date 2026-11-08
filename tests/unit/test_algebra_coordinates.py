@@ -46,9 +46,12 @@ def test_algebra_coordinates_scenario_1() -> None:
     assert isinstance(coordinates, phx.linalg.AbstractRealCoordinateMap)
     assert coordinates.evidence.domain_kind == "constrained_subspace"
     assert coordinates.evidence.norm_relation == "isometry"
+    # 6bffc1354 removed the PeriodicCell image-count quota from cell identity
+    # (CHANGELOG: "arbitrary image-count allowances no longer alter PeriodicCell
+    # identity"), which reaches the spectral discretization and this id.
     assert (
         coordinates.coordinate_id
-        == "5cb3e54c0c191bde3770e09bae8f946bb05d7f6cbd58abfabff8fe2c409fd4df"
+        == "aabdf88078395f239a73188097a0e2e81426a12e6f7ee3084398b013298497aa"
     )
     assert jnp.allclose(coordinates.from_real_coordinates(real), state, atol=1e-12)
     source = phx.linalg.ArraySpace((2,), dtype=jnp.float64)

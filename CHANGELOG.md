@@ -483,6 +483,14 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Native PLC recovery terminates on every input. Suppression could grow a
+  merged wedge cavity layer by layer and rewrap it without end on inputs a few
+  ulp from ones that recover (the scale-2 torus reconstruction on every
+  platform); growth now stops at the first exactly repeated obstruction state
+  (the first unfilled wedge and its sorted open sides), which terminates because
+  the state set is finite, and a last-resort pass cones or peels the remaining
+  open pockets. Recoveries that never repeated a state are bit-identical, and
+  the scale-1 torus input recovers in 3 s instead of 211 s.
 - Common refinement of polyhedral cells decomposes each face on the same
   triangles finite-volume geometry integrates (planar faces fanned from their
   first vertex, warped faces from their vertex centroid). On warped faces the
@@ -672,6 +680,24 @@
   distance to a leaf of opposite certified sign, instead of reporting a
   violation; a component farther than the tolerance is still violated, and the
   absorbed distance is part of `distance_upper`.
+- Implicit sign coverage certifies coarse targets whose boundary lies farther
+  than the band resolution from a finely discovered zero set. The 0.01 m
+  hidden-disconnected-components volume case now passes in 353 s at 4.8 GB.
+  It previously failed `source_boundary_homotopy` after 2187 s at 10.3 GB on
+  a target whose material is all within 0.0161 of the exact spheres
+  (tolerance 0.02). The changes:
+  - A leaf off the target band that may hold a zero is bounded by its
+    farthest distance to a retained root witness, which encloses a zero. It
+    is not refined toward the target. Before, it was halved down to the leaf
+    floor, or left unbounded (unresolved) when it lay beyond the band
+    resolution.
+  - Absorption bounds each disagreeing leaf by its directed distance to the
+    nearest opposite-sign leaf or its farthest distance to a root witness,
+    halving it while the bound exceeds the tolerance. Before, the farthest
+    pair distance included the opposite leaf's own extent: 0.051 against a
+    true 0.012.
+  - A violation names the sign of the leaves that stay farther than the
+    tolerance.
 - Adaptive implicit discovery no longer refines without end when the zero set
   touches or hugs a lattice face. Such a box is the new
   `AdaptiveImplicitBoxIssue.TANGENCY`: all its possible zeros are proved to lie

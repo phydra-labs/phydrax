@@ -166,8 +166,9 @@ struct PlcSourceRefusal {
 // merged cavities: wedges filled after merging with neighbouring cells and
 // the most layers one needed, and wedges whose constraint-delimited region
 // was exhausted without a fill with the largest such region in cells (a
-// suppression refusal follows only such exhaustion or a wedge that cannot
-// merge at all). Last, the work of the gift-wrapped constrained Delaunay
+// suppression refusal follows only such exhaustion, a growth stopped at a
+// recurring obstruction, or a wedge that cannot merge at all). Last, the
+// work of the gift-wrapped constrained Delaunay
 // fills (complete, stopped at a stuck side, or partial): how many ran, the
 // cells they laid in total and at most in one fill (each cell is one step).
 // Then the declared search budget (states per recovery, bytes per search),

@@ -4645,12 +4645,14 @@ class PlcRecoveryBuilder {
   // applies is retried after the others have been removed. A pass that
   // removes nothing is repeated once with grown wedge cavities (see
   // remove_witnessed_vertex), a grown pass that removes nothing once as a
-  // pinched pass (relocation by peeling), and a pinched pass that removes
-  // nothing refuses its first remaining point. Every other pass removes at
-  // least one point, so there are at most three times as many passes as
-  // points. The grown and pinched passes run only where every pass before
-  // them failed, so recoveries that never need them are unchanged.
-  enum class SuppressionPass { kOrdinary, kGrown, kPinched };
+  // pinched pass (relocation by peeling), a pinched pass that removes
+  // nothing once as a pockets pass (grown cavities again, their open
+  // pockets coned apart), and a pockets pass that removes nothing refuses
+  // its first remaining point. Every other pass removes at least one point,
+  // so there are at most four times as many passes as points. The grown,
+  // pinched and pockets passes run only where every pass before them
+  // failed, so recoveries that never need them are unchanged.
+  enum class SuppressionPass { kOrdinary, kGrown, kPinched, kPockets };
   int32_t suppress_witnessed_vertices() {
     const int32_t count = static_cast<int32_t>(candidate_.points.size() / 3);
     suppressed_.assign(static_cast<std::size_t>(count), 0);
@@ -4672,11 +4674,12 @@ class PlcRecoveryBuilder {
         if (!removed) remaining.push_back(vertex);
       }
       if (remaining.size() == pending.size()) {
-        if (pass == SuppressionPass::kPinched) {
+        if (pass == SuppressionPass::kPockets) {
           return refuse_suppression(remaining.front(), inconclusive_.contains(remaining.front()));
         }
         pass = pass == SuppressionPass::kOrdinary ? SuppressionPass::kGrown
-                                                  : SuppressionPass::kPinched;
+               : pass == SuppressionPass::kGrown  ? SuppressionPass::kPinched
+                                                  : SuppressionPass::kPockets;
         continue;
       }
       pass = SuppressionPass::kOrdinary;
@@ -4892,6 +4895,19 @@ class PlcRecoveryBuilder {
       found.blocked = &blocked;
       return &found;
     }
+  };
+
+  // What a failed attempt of a kGrown or kPockets pass reports about its
+  // growth (remove_witnessed_vertex): whether the region of its first
+  // unfilled wedge can still grow, and the obstruction at s that remained:
+  // that wedge (its ordinal; the wedges before it were filled) and the
+  // sides with a vertex among the wedge's own cavity vertices that the
+  // partial constrained Delaunay wrap of its merged cavity left open
+  // (option 6), sorted.
+  struct SuppressionGrowth {
+    bool extended = false;
+    std::size_t wedge = 0;
+    std::vector<FacetKey> obstruction;
   };
 
   // The declared budget of the exhaustive search (PlcInput) and what one
@@ -5673,8 +5689,9 @@ class PlcRecoveryBuilder {
   // existence is NP-complete; a larger cavity only gives the polynomial
   // options more room). Then the wedge and the merged cavity get the
   // partial constrained Delaunay wrap (every side it can close) with cones
-  // from one binary64 point over the sides it leaves open. `extended`
-  // reports a failed attempt whose region can still grow. `memo` holds the
+  // from one binary64 point over the sides it leaves open. `growth` reports
+  // a failed attempt whose region can still grow, with its progress measure
+  // (SuppressionGrowth). `memo` holds the
   // visibility facts of the point's earlier fills (SuppressionMemo), one
   // lineage per target, wedge and kind of cavity. Merging removes no
   // boundary vertex but s (only volume Steiner points besides, which no
@@ -5683,17 +5700,20 @@ class PlcRecoveryBuilder {
   // without merging. With `pinched` (passes after a grown pass that
   // removed no point; layers 0) the exhaustive search is skipped and a
   // finite wedge none of the polynomial options fill is relocated with
-  // peeling (option 8 of fill_wedge). Every finite proposed cell is exactly
+  // peeling (option 8 of fill_wedge). With `pockets` (passes after a
+  // pinched pass that removed no point; layers > 0) the exhaustive search
+  // is skipped and option 6 goes on to cone the pockets it left open
+  // apart (option 9). Every finite proposed cell is exactly
   // positive on exact positions and the cavity edit checks that the
   // proposal's boundary is the link of the removed cells with its marks, so
   // the proposal tiles them; the removal commits only when the proposal also
   // carries the chain interval (p, q) of a segment point and every new
   // subface with its mark. Otherwise nothing changes.
   int32_t remove_witnessed_vertex(int32_t s, int32_t t, int32_t p, int32_t q, int layers,
-                                  bool pinched, SuppressionMemo& memo, bool& removed,
-                                  bool& extended) {
+                                  bool pinched, bool pockets, SuppressionMemo& memo,
+                                  bool& removed, SuppressionGrowth& growth) {
     removed = false;
-    extended = false;
+    growth = SuppressionGrowth{};
     TetrahedralComplex& complex = triangulation_->complex();
     if (t >= 0) {
       const int32_t flip_status = flip_star_toward(s, t);
@@ -5833,8 +5853,10 @@ class PlcRecoveryBuilder {
     // centroids may serve as Steiner apices; `search` admits the exhaustive
     // Steiner-free search; `size` is the cell count reported as its
     // evidence. With `partial`, only options 1 and 6 run (the fallback after
-    // every cavity of an attempt failed options 1 to 5). `lineage` carries
+    // every cavity of an attempt failed options 1 to 5) and `open_sides`
+    // receives the sides its partial wrap left open. `lineage` carries
     // the visibility facts of earlier fills of this cavity's lineage.
+    std::vector<Proposal> open_sides;
     const auto fill_wedge = [&](std::vector<Proposal> cavity,
                                 const std::vector<std::size_t>& blocked,
                                 const std::vector<std::array<double, 3>>& normals, double reach,
@@ -5902,50 +5924,20 @@ class PlcRecoveryBuilder {
         proposals.insert(proposals.end(), walls.begin(), walls.end());
         return true;
       };
-      // 6. (`partial_only`) The partial constrained Delaunay wrap of 1
-      // (every side it could close) and cones from one binary64 point over
-      // the sides it left open: positive cells pairing every face, with the
-      // cavity walls as boundary, tile the cavity, so the remainder need
-      // not be star-shaped as a whole, only seen from y side by side.
-      if (partial_only) {
-        if (remainder.empty()) {
-          if (partial.empty()) return PHX_MC_OK;
-          proposals.insert(proposals.end(), partial.begin(), partial.end());
-          done = true;
-          return PHX_MC_OK;
-        }
-        const std::size_t before = proposals.size();
-        proposals.insert(proposals.end(), partial.begin(), partial.end());
-        done = cone_from_point(remainder);
-        if (!done) proposals.resize(before);
-        return PHX_MC_OK;
-      }
-      // 2. Cones from one cavity vertex v over every wall not through v: a
-      // tiling when the cavity is strictly star-shaped from v. A cone face
-      // through v that is a wall carries that wall's mark. As chains, the
-      // cones' boundary is the sum of the walls, in which the two sides of a
-      // sheet inside the cavity (a new subface the wedge meets from both
-      // sides) cancel; so every wall through v must also be a face of a
-      // cone, with its orientation, or the cones run across that subface and
-      // it and its segment intervals are lost. On a cavity whose walls
-      // bound it as a closed surface this holds whenever every cone is
-      // positive.
-      std::set<int32_t> on_walls;
-      for (const Proposal& wall : cavity) {
-        for (int32_t vertex : wall.v) {
-          if (vertex != kPlaceholder) on_walls.insert(vertex);
-        }
-      }
       const auto slot_of = [](const std::array<int32_t, 4>& v, int32_t vertex) {
         return static_cast<int>(std::find(v.begin(), v.end(), vertex) - v.begin());
       };
-      for (int32_t apex : on_walls) {
-        std::vector<Proposal> cones;
+      // Cones from the cavity vertex `apex` over every wall of `walls` not
+      // through it (option 2), into `cones`, when every cone is positive and
+      // every wall through apex is a face of a cone with its orientation. A
+      // cone face through apex that is a wall carries that wall's mark.
+      const auto cones_from_vertex = [&](const std::vector<Proposal>& walls, int32_t apex,
+                                         std::vector<Proposal>& cones) {
+        cones.clear();
         std::map<Triple, int32_t> through;
         std::vector<FacetKey> sides;
         std::vector<FacetKey> faces;
-        bool visible = true;
-        for (const Proposal& wall : cavity) {
+        for (const Proposal& wall : walls) {
           if (std::find(wall.v.begin(), wall.v.end(), apex) == wall.v.end()) continue;
           const int slot = slot_of(wall.v, kPlaceholder);
           Triple face{};
@@ -5954,32 +5946,158 @@ class PlcRecoveryBuilder {
                           wall.constraints[static_cast<std::size_t>(slot)]);
           sides.push_back(FacetKey::of(face.data()));
         }
-        for (const Proposal& wall : cavity) {
+        for (const Proposal& wall : walls) {
           if (std::find(wall.v.begin(), wall.v.end(), apex) != wall.v.end()) continue;
           Proposal cone = wall;
           std::replace(cone.v.begin(), cone.v.end(), kPlaceholder, apex);
-          if (!positive(cone.v, nullptr)) {
-            visible = false;
-            break;
-          }
+          if (!positive(cone.v, nullptr)) return false;
           const int own = slot_of(cone.v, apex);
           for (int slot = 0; slot < 4; ++slot) {
             if (slot == own) continue;
             Triple face{};
             oriented_facet(cone.v.data(), slot, face.data());
             faces.push_back(FacetKey::of(face.data()));
-            const auto wall = through.find(sorted_triple(face.data()));
-            if (wall != through.end()) cone.constraints[static_cast<std::size_t>(slot)] = wall->second;
+            const auto known = through.find(sorted_triple(face.data()));
+            if (known != through.end()) cone.constraints[static_cast<std::size_t>(slot)] = known->second;
           }
           cones.push_back(cone);
         }
-        if (!visible) continue;
         std::sort(faces.begin(), faces.end());
-        if (!std::all_of(sides.begin(), sides.end(), [&](const FacetKey& side) {
-              return std::binary_search(faces.begin(), faces.end(), side);
-            })) {
-          continue;
+        return std::all_of(sides.begin(), sides.end(), [&](const FacetKey& side) {
+          return std::binary_search(faces.begin(), faces.end(), side);
+        });
+      };
+      // 9. (`pockets`: passes after a pinched pass that removed no point)
+      // The sides 6 left open, split into pockets (sides joined across
+      // shared edges), each filled on its own: cones from one of its
+      // vertices (cones_from_vertex), else cones from the point y of 4,
+      // else the peel of wrap_cavity from the binary64 centroid of its
+      // vertices (the sides the centroid does not see closed by pocket
+      // vertices, the rest coned from it, as in relocate_by_peeling). A
+      // pocket's sides bound it as a closed surface, so positive cells
+      // pairing every face tile it, and the partial fill with the pockets'
+      // fills tiles the cavity. A grown cavity's partial wrap can close
+      // every side around s and still leave pockets far from it, which y
+      // does not see.
+      const auto cone_pockets = [&](const std::vector<Proposal>& open) {
+        std::vector<std::size_t> parent(open.size());
+        std::iota(parent.begin(), parent.end(), 0);
+        const auto find = [&](std::size_t row) {
+          while (parent[row] != row) row = parent[row] = parent[parent[row]];
+          return row;
+        };
+        std::map<std::pair<int32_t, int32_t>, std::size_t> edges;
+        for (std::size_t row = 0; row < open.size(); ++row) {
+          Triple face{};
+          oriented_facet(open[row].v.data(), slot_of(open[row].v, kPlaceholder), face.data());
+          for (int k = 0; k < 3; ++k) {
+            const int32_t a = face[static_cast<std::size_t>(k)];
+            const int32_t b = face[static_cast<std::size_t>((k + 1) % 3)];
+            const auto [known, fresh] = edges.emplace(std::minmax(a, b), row);
+            if (!fresh) parent[find(row)] = find(known->second);
+          }
         }
+        std::map<std::size_t, std::vector<Proposal>> pockets;
+        for (std::size_t row = 0; row < open.size(); ++row) pockets[find(row)].push_back(open[row]);
+        for (const auto& [unused, walls] : pockets) {
+          (void)unused;
+          std::set<int32_t> vertices;
+          for (const Proposal& wall : walls) {
+            for (int32_t vertex : wall.v) {
+              if (vertex != kPlaceholder) vertices.insert(vertex);
+            }
+          }
+          bool coned = false;
+          for (int32_t apex : vertices) {
+            std::vector<Proposal> cones;
+            if (cones_from_vertex(walls, apex, cones)) {
+              proposals.insert(proposals.end(), cones.begin(), cones.end());
+              coned = true;
+              break;
+            }
+          }
+          if (!coned) coned = cone_from_point(walls);
+          if (!coned) {
+            double location[3] = {0.0, 0.0, 0.0};
+            for (int32_t vertex : vertices) {
+              for (int axis = 0; axis < 3; ++axis) location[axis] += point(vertex)[axis];
+            }
+            for (double& coordinate : location) coordinate /= static_cast<double>(vertices.size());
+            if (geometry::point_in_domain(location)) {
+              // The peel of wrap_cavity (relocate_by_peeling) from the
+              // centroid: the sides it does not see are closed by pocket
+              // vertices first, the rest are coned from it.
+              const ExactPointRef center{location, nullptr};
+              std::vector<Proposal> peeled;
+              std::vector<Proposal> rest;
+              std::size_t peel_nodes = 0;
+              coned = wrap_cavity(walls, kPlaceholder, {}, false, peeled, peel_nodes, &rest,
+                                  nullptr, nullptr, &center);
+              PlcSuppressionSearch& evidence = candidate_.suppression_search;
+              ++evidence.wraps;
+              evidence.wrap_cells += static_cast<int64_t>(peel_nodes);
+              evidence.max_wrap_cells =
+                  std::max(evidence.max_wrap_cells, static_cast<int64_t>(peel_nodes));
+              if (coned) {
+                if (!rest.empty()) {
+                  for (Proposal& cone : rest) {
+                    std::replace(cone.v.begin(), cone.v.end(), kPlaceholder,
+                                 kPlaceholder + 1 + static_cast<int32_t>(centers.size()));
+                  }
+                  centers.push_back({location[0], location[1], location[2]});
+                }
+                proposals.insert(proposals.end(), peeled.begin(), peeled.end());
+                proposals.insert(proposals.end(), rest.begin(), rest.end());
+              }
+            }
+          }
+          if (!coned) return false;
+        }
+        return true;
+      };
+      // 6. (`partial_only`) The partial constrained Delaunay wrap of 1
+      // (every side it could close) and cones from one binary64 point over
+      // the sides it left open: positive cells pairing every face, with the
+      // cavity walls as boundary, tile the cavity, so the remainder need
+      // not be star-shaped as a whole, only seen from y side by side; with
+      // `pockets`, then 9.
+      if (partial_only) {
+        open_sides = remainder;
+        if (remainder.empty()) {
+          if (partial.empty()) return PHX_MC_OK;
+          proposals.insert(proposals.end(), partial.begin(), partial.end());
+          done = true;
+          return PHX_MC_OK;
+        }
+        const std::size_t before = proposals.size();
+        const std::size_t placed = centers.size();
+        proposals.insert(proposals.end(), partial.begin(), partial.end());
+        done = cone_from_point(remainder);
+        if (!done && pockets) done = cone_pockets(remainder);
+        if (!done) {
+          proposals.resize(before);
+          centers.resize(placed);
+        }
+        return PHX_MC_OK;
+      }
+      // 2. Cones from one cavity vertex v over every wall not through v: a
+      // tiling when the cavity is strictly star-shaped from v. As chains,
+      // the cones' boundary is the sum of the walls, in which the two sides
+      // of a sheet inside the cavity (a new subface the wedge meets from
+      // both sides) cancel; so every wall through v must also be a face of
+      // a cone, with its orientation, or the cones run across that subface
+      // and it and its segment intervals are lost. On a cavity whose walls
+      // bound it as a closed surface this holds whenever every cone is
+      // positive (cones_from_vertex).
+      std::set<int32_t> on_walls;
+      for (const Proposal& wall : cavity) {
+        for (int32_t vertex : wall.v) {
+          if (vertex != kPlaceholder) on_walls.insert(vertex);
+        }
+      }
+      for (int32_t apex : on_walls) {
+        std::vector<Proposal> cones;
+        if (!cones_from_vertex(cavity, apex, cones)) continue;
         proposals.insert(proposals.end(), cones.begin(), cones.end());
         done = true;
         return PHX_MC_OK;
@@ -6297,8 +6415,9 @@ class PlcRecoveryBuilder {
       }
       bool done = false;
       SuppressionMemo::Lineage* own = memo.lineage(t, ordinal, 0);
-      int32_t status = fill_wedge(cavity, blocked, normals, reach, layers <= 1 && !pinched, false,
-                                  rows.size(), own, done);
+      int32_t status = fill_wedge(cavity, blocked, normals, reach,
+                                  layers <= 1 && !pinched && !pockets, false, rows.size(), own,
+                                  done);
       if (status != PHX_MC_OK) return status;
       // 7. With layers > 0, the wedge merged with that many layers of cells
       // around it (grow_wedge), filled by options 1 to 5 (the exhaustive
@@ -6315,8 +6434,8 @@ class PlcRecoveryBuilder {
         const std::size_t size = rows.size() + grown.size();
         SuppressionMemo::Lineage* wider = memo.lineage(t, ordinal, 1);
         if (!grown.empty()) {
-          status = fill_wedge(walls, blocked, normals, reach, layers == 1, false, size, wider,
-                              merged);
+          status = fill_wedge(walls, blocked, normals, reach, layers == 1 && !pockets, false, size,
+                              wider, merged);
           if (status != PHX_MC_OK) return status;
         }
         if (!merged) {
@@ -6338,7 +6457,31 @@ class PlcRecoveryBuilder {
           evidence.max_exhausted_cells =
               std::max(evidence.max_exhausted_cells, static_cast<int64_t>(size));
         }
-        extended = !done && reached;
+        // Unfilled with its region still growing: the merged cavity's
+        // partial wrap was the last fill tried, so `open_sides` are its;
+        // the obstruction is those with a vertex among the wedge's own
+        // cavity vertices.
+        if (!done && reached) {
+          std::unordered_set<int32_t> own_vertices;
+          for (const Proposal& wall : cavity) {
+            for (int32_t vertex : wall.v) {
+              if (vertex != kPlaceholder) own_vertices.insert(vertex);
+            }
+          }
+          growth.extended = true;
+          growth.wedge = static_cast<std::size_t>(ordinal);
+          for (const Proposal& side : open_sides) {
+            const int slot = static_cast<int>(
+                std::find(side.v.begin(), side.v.end(), kPlaceholder) - side.v.begin());
+            Triple face{};
+            oriented_facet(side.v.data(), slot, face.data());
+            if (std::any_of(face.begin(), face.end(),
+                            [&](int32_t vertex) { return own_vertices.contains(vertex); })) {
+              growth.obstruction.push_back(FacetKey::of(face.data()));
+            }
+          }
+          std::sort(growth.obstruction.begin(), growth.obstruction.end());
+        }
       }
       if (!done) return abandon();
       if (merged) {
@@ -6513,19 +6656,34 @@ class PlcRecoveryBuilder {
 
   // Suppresses one witnessed vertex if it can: contraction onto a chain
   // neighbour (a segment point) or a disk neighbour (a facet point), else
-  // the ear-clipped half-fans. In a kGrown pass, the targets are retried
-  // with wedge cavities merged with 1, 2, ... layers of cells; a target
+  // the ear-clipped half-fans. In a kGrown pass (and a kPockets pass, with
+  // option 9 and without the exhaustive search), the targets are retried
+  // with wedge cavities merged with 1, 2, ... layers of cells. A target
   // leaves the rotation once its unfillable wedge has exhausted its region
-  // (layer `layers` admitted no cell). A layer is a breadth-first level, and
-  // no region has more levels than the complex has cells, so this ends. A
-  // kPinched pass tries the targets once more on the wedges themselves with
-  // relocation by peeling in place of the exhaustive search
+  // (layer `layers` admitted no cell), or once a layer repeats an
+  // obstruction of an earlier layer: a failed attempt reports its first
+  // unfilled wedge and the sides with a vertex among that wedge's own
+  // cavity vertices that the partial constrained Delaunay wrap of its
+  // merged cavity left open (SuppressionGrowth), and growth stops at the
+  // first such state the target has already met. Growth serves only to
+  // let that wrap close the sides around s; an obstruction around s that
+  // recurs is one growth has stopped changing, and the later passes take
+  // over. (R002: torus-2 with one ulp grew one wedge for hours to tens of
+  // thousands of cells, its open sides around s the same 13 from the
+  // fourteenth layer on, the fill failing on sides far from s; the merges
+  // that succeed, after up to seven layers, never met a state twice.) The
+  // states are pairs of a wedge and a set of oriented triangles of the
+  // complex's finitely many vertices, so they are finitely many and a
+  // target meets each at most once: the guard is exact and needs no cap.
+  // A kPinched pass tries the targets once more on the wedges themselves
+  // with relocation by peeling in place of the exhaustive search
   // (remove_witnessed_vertex).
   //
   // Work bound, with no cap: let n be the cells of the region a target's
   // wedge grows into (its constraint-delimited region, at most the
   // complex), so its cavities have O(n) vertices and walls. The target
-  // takes at most n + 1 layers. A layer rebuilds its merged cavity
+  // takes at most one layer per obstruction state and per BFS level of the
+  // region, whichever ends first. A layer rebuilds its merged cavity
   // breadth first in O(n) cells and runs a fixed number of wraps (options
   // 1, 3 and 6 on the wedge and on the merged cavity): a wrap takes at most
   // two steps per oriented triangle of its vertices, O(n^3) (one per cell
@@ -6533,13 +6691,13 @@ class PlcRecoveryBuilder {
   // its cells interior-disjoint), and a step O(n) apex extractions of O(n)
   // insphere tests, O(n) visibility tests of O(n) separation tests, and
   // one overlap test per open side, O(n^3); so the target's work is
-  // polynomial in n, O(n^7) predicates at worst. Visibility facts persist
-  // across the layers, targets and options of the point (SuppressionMemo):
-  // a repeated cavity tests no wall again and a grown one tests its new
-  // walls only against the cells its previous layer saw. Only the
-  // exhaustive search (option 5; Steiner-free fill existence is
-  // NP-complete) is not polynomial, and it runs on the wedge and its first
-  // layer only, never on the region beyond.
+  // polynomial in n per layer, O(n^7) predicates at worst. Visibility facts
+  // persist across the layers, targets and options of the point
+  // (SuppressionMemo): a repeated cavity tests no wall again and a grown
+  // one tests its new walls only against the cells its previous layer
+  // saw. Only the exhaustive search (option 5; Steiner-free fill existence
+  // is NP-complete) is not polynomial, and it runs on the wedge and its
+  // first layer only, never on the region beyond.
   int32_t suppress_vertex(int32_t s, SuppressionPass pass, bool& removed) {
     removed = false;
     const PlcRecoveryWitness& witness = candidate_.witnesses[static_cast<std::size_t>(s)];
@@ -6579,26 +6737,31 @@ class PlcRecoveryBuilder {
       }
       return PHX_MC_OK;
     };
-    bool extended = false;
+    SuppressionGrowth growth;
     SuppressionMemo memo;
-    if (pass != SuppressionPass::kGrown) {
+    if (pass != SuppressionPass::kGrown && pass != SuppressionPass::kPockets) {
       for (int32_t target : targets) {
         const int32_t status = remove_witnessed_vertex(
-            s, target, p, q, 0, pass == SuppressionPass::kPinched, memo, removed, extended);
+            s, target, p, q, 0, pass == SuppressionPass::kPinched, false, memo, removed, growth);
         if (status != PHX_MC_OK) return status;
         if (removed) return committed();
       }
       return PHX_MC_OK;
     }
     std::vector<char> open(targets.size(), 1);
+    std::vector<std::set<std::pair<std::size_t, std::vector<FacetKey>>>> met(targets.size());
     for (int layers = 1; std::find(open.begin(), open.end(), 1) != open.end(); ++layers) {
       for (std::size_t row = 0; row < targets.size(); ++row) {
         if (open[row] == 0) continue;
-        const int32_t status = remove_witnessed_vertex(s, targets[row], p, q, layers, false, memo,
-                                                       removed, extended);
+        const int32_t status =
+            remove_witnessed_vertex(s, targets[row], p, q, layers, false,
+                                    pass == SuppressionPass::kPockets, memo, removed, growth);
         if (status != PHX_MC_OK) return status;
         if (removed) return committed();
-        if (!extended) open[row] = 0;
+        if (!growth.extended ||
+            !met[row].emplace(growth.wedge, std::move(growth.obstruction)).second) {
+          open[row] = 0;
+        }
       }
     }
     return PHX_MC_OK;

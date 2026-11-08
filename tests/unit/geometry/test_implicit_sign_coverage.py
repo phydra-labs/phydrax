@@ -30,6 +30,7 @@ from phydrax.geometry.implicit import (
 )
 from phydrax.geometry.implicit._source_charts import (
     _box_witness_distance_upper,
+    _directed_distance_upper,
     _SIGN_COVER_WHOLE_PIECE,
     _split_triangle_pieces,
     _triangle_piece_boxes,
@@ -288,6 +289,134 @@ def test_tight_target_bound_resolves_the_band_at_the_source_resolution(
     differ = in_target != _union_inside(samples, 0.0)
     assert np.any(differ)
     assert np.all(_union_distance(samples[differ]) <= result.distance_upper)
+
+
+def _icosahedron() -> np.ndarray:
+    golden = (1.0 + math.sqrt(5.0)) / 2.0
+    points = np.asarray(
+        [
+            (sign_a * 1.0, sign_b * golden, 0.0)
+            for sign_a in (-1.0, 1.0)
+            for sign_b in (-1.0, 1.0)
+        ]
+        + [
+            (0.0, sign_a * 1.0, sign_b * golden)
+            for sign_a in (-1.0, 1.0)
+            for sign_b in (-1.0, 1.0)
+        ]
+        + [
+            (sign_b * golden, 0.0, sign_a * 1.0)
+            for sign_a in (-1.0, 1.0)
+            for sign_b in (-1.0, 1.0)
+        ],
+        dtype=np.float64,
+    )
+    return points / np.linalg.norm(points, axis=1)[:, None]
+
+
+def test_coarse_target_far_from_the_zero_set_certifies_within_tolerance() -> None:
+    # Two disjoint balls (the hidden-components shape) meshed by one coarse
+    # icosahedron each, corners 5 % outside the sphere: the target boundary
+    # lies up to about 0.025 from the zero set, several discovery cells and
+    # more than the band resolution away. Possible-zero leaves there stand
+    # unrefined under their root-witness bound, and the disagreeing shells
+    # (target material outside the balls near corners, ball material outside
+    # the target under facets) are absorbed by directed opposite-sign and
+    # root-witness distances. Every claim is checked against the exact balls.
+    centers = np.asarray(((-0.4, 0.013, -0.017), (0.4, -0.019, 0.021)))
+    radius = 0.15
+    geometry = (
+        phx.geometry.Sphere(tuple(float(value) for value in centers[0]), radius)
+        | phx.geometry.Sphere(tuple(float(value) for value in centers[1]), radius)
+    ).compile()
+    diagonal = float(np.linalg.norm(_DOMAIN[1] - _DOMAIN[0]))
+    surface = discover_adaptive_implicit_surface(
+        geometry,
+        domain=_DOMAIN,
+        policy=AdaptiveImplicitSurfacePolicy(
+            relative_cell_diameter=0.25 * _TOLERANCE / diagonal,
+            root_tolerance=1.0e-10,
+            allow_nonsmooth_field=True,
+        ),
+        source_id="sign-coverage-coarse",
+    )
+    hulls = [center + 1.05 * radius * _icosahedron() for center in centers]
+    triangles = np.concatenate(
+        [corners[Delaunay(corners).convex_hull] for corners in hulls]
+    )
+    cells = np.concatenate(
+        [
+            np.concatenate(
+                (
+                    corners[Delaunay(corners).convex_hull],
+                    np.repeat(center[None, None], 20, axis=0),
+                ),
+                axis=1,
+            )
+            for corners, center in zip(hulls, centers, strict=True)
+        ]
+    )
+    epsilon = _mesh_to_source(surface, triangles)
+    assert epsilon < _TOLERANCE
+    result = certify_implicit_sign_coverage(
+        surface, triangles, cells, mesh_to_source=epsilon, tolerance=_TOLERANCE
+    )
+    assert result.status == "certified", result.detail
+    delta = result.distance_upper
+    assert epsilon <= delta <= _TOLERANCE
+
+    def ball_distance(points: np.ndarray) -> np.ndarray:
+        return np.min(
+            np.abs(np.linalg.norm(points[:, None] - centers[None], axis=2) - radius),
+            axis=1,
+        )
+
+    samples = np.random.default_rng(13).uniform(-0.2, 0.2, (2, 100_000, 3))
+    differ_distances = []
+    for center, corners, local in zip(centers, hulls, samples, strict=True):
+        points = center + local
+        in_target = Delaunay(corners).find_simplex(points) >= 0
+        in_ball = np.linalg.norm(points - center, axis=1) < radius
+        differ = in_target != in_ball
+        # Both kinds of disagreement occur: corners poke out, facets cut in.
+        assert np.any(in_target & ~in_ball) and np.any(in_ball & ~in_target)
+        differ_distances.append(ball_distance(points[differ]))
+    assert np.max(np.concatenate(differ_distances)) <= delta
+
+
+def test_directed_box_distance_bounds_the_farthest_point_distance() -> None:
+    rng = np.random.default_rng(5)
+    lower = rng.uniform(-1.0, 1.0, (200, 3))
+    upper = lower + rng.uniform(0.0, 0.5, (200, 3))
+    other_lower = rng.uniform(-1.0, 1.0, (200, 3))
+    other_upper = other_lower + rng.uniform(0.0, 0.5, (200, 3))
+    bound = _directed_distance_upper(lower, upper, other_lower, other_upper)
+    # The farthest point of a box from another box is one of its corners.
+    corners = np.stack(
+        [
+            np.where(
+                np.asarray([(index >> axis) & 1 for axis in range(3)], dtype=np.bool_),
+                upper,
+                lower,
+            )
+            for index in range(8)
+        ],
+        axis=1,
+    )
+    gaps = np.maximum(
+        np.maximum(other_lower[:, None] - corners, corners - other_upper[:, None]), 0.0
+    )
+    farthest = np.max(np.linalg.norm(gaps, axis=2), axis=1)
+    assert np.all(farthest <= bound)
+    assert np.all(bound <= farthest + 1.0e-12)
+    # Every point of the box is no farther: sampled interior points agree.
+    inner = (
+        lower[:, None] + rng.uniform(0.0, 1.0, (200, 64, 3)) * (upper - lower)[:, None]
+    )
+    inner_gaps = np.maximum(
+        np.maximum(other_lower[:, None] - inner, inner - other_upper[:, None]), 0.0
+    )
+    assert np.all(np.linalg.norm(inner_gaps, axis=2) <= bound[:, None])
 
 
 def test_facet_pieces_halve_exactly_and_enclose_their_exact_corners() -> None:

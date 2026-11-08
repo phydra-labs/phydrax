@@ -26,6 +26,7 @@
 #include "intersections.hpp"
 #include "phydrax_meshcore.h"
 #include "plc3d.hpp"
+#include "plc3d_recurring_obstruction_fixture.hpp"
 #include "predicates.hpp"
 #include "triangulation3d.hpp"
 
@@ -3117,6 +3118,41 @@ void test_suppression_keeps_the_subface_through_a_cone_apex() {
   }
 }
 
+// R002 (PlcChainInterval): torus-2 inputs perturbed by a few ulps did not
+// terminate. The grown pass grew one wedge layer after layer, re-wrapping its
+// merged cavity each time, for hours. Its open sides around the point stayed
+// the same set while the region kept growing far from it, and region
+// exhaustion was the only stop. This reduced patch of such an input
+// (plc3d_recurring_obstruction_fixture.hpp) shows that growth. Wave 8.1
+// grew six wedges to their regions' ends (3,240 cells), about 30 s here.
+// Growth now stops at the first repeated obstruction (SuppressionGrowth), no
+// region is exhausted, and the pinched pass removes the point by peeling.
+// CONFORMING, no declared segments, as the torus input.
+void test_suppression_growth_stops_at_a_recurring_obstruction() {
+  const std::vector<double>& points = phx::mc::test::recurring_obstruction_points();
+  const std::vector<int32_t>& triangles = phx::mc::test::recurring_obstruction_triangles();
+  const std::size_t point_count = points.size() / 3;
+  const std::size_t faces = triangles.size() / 3;
+  SheetInBox plc;
+  build_sheet_in_box(points, triangles, phx::mc::test::kRecurringObstructionSheetFaces, plc);
+  PlcInput input = plc.input;
+  input.segment_count = 0;
+  input.segments = nullptr;
+  input.policy = BoundaryPolicy::kConforming;
+  PlcRecovery result;
+  const int32_t status = recover_plc(input, result);
+  PHX_CHECK(status == PHX_MC_OK);
+  if (status != PHX_MC_OK) return;
+  check_conforming_recovery(result, point_count, faces);
+  const PlcSuppressionSearch& evidence = result.suppression_search;
+  PHX_CHECK(evidence.exhausted == 0 && evidence.max_exhausted_cells == 0);
+  PHX_CHECK(evidence.merges > 0 && evidence.peeled >= 1);
+  PlcRecovery again;
+  PHX_CHECK(recover_plc(input, again) == PHX_MC_OK);
+  PHX_CHECK(again.points == result.points && again.tets == result.tets &&
+            again.faces == result.faces && again.segments == result.segments);
+}
+
 // A capped patch of the original lobed-r4 reconstruction surface, whose full
 // recovery refused STEINER_SUPPRESSION at its PLC edge (36, 88): the 63
 // source triangles within 0.04 of that edge, closed by a fan to one apex
@@ -3661,6 +3697,7 @@ int main() {
   test_relocation_peels_a_pinched_wedge();
   test_suppression_merges_a_sliver_wedge_with_its_neighbours();
   test_suppression_keeps_the_subface_through_a_cone_apex();
+  test_suppression_growth_stops_at_a_recurring_obstruction();
   test_suppression_merges_enclose_volume_steiner_points();
   return phx::mc::test::finish("test_plc3d");
 }
