@@ -197,9 +197,22 @@ def test_archive_member_declaration_refuses_before_writing(tmp_path: Path) -> No
     assert not (tmp_path / "refused.phx").exists()
 
 
+def test_archive_resource_plan_identity_covers_complete_policy() -> None:
+    profile = reconstruction._profile_id("rotated-ellipsoid", 2)
+    limits = reconstruction._archive_limits(profile)
+    identity = reconstruction._resource_plan_id(profile, limits)
+    assert identity == reconstruction._resource_plan_id(profile, limits)
+    assert identity != reconstruction._resource_plan_id(
+        profile, replace(limits, max_members=limits.max_members - 1)
+    )
+    assert identity != reconstruction._resource_plan_id(
+        profile, replace(limits, max_manifest_bytes=limits.max_manifest_bytes - 1)
+    )
+
+
 @pytest.mark.parametrize(
     ("archive_bytes_delta", "members_delta", "message"),
-    [(1, 1, "archive budget"), (0, 1, "archive member limit")],
+    [(1, 1, "archive budget"), (0, 1, "archive member limit"), (0, 0, "resource plan")],
 )
 def test_cold_reader_refuses_resource_identity_before_io(
     tmp_path: Path, archive_bytes_delta: int, members_delta: int, message: str
@@ -211,6 +224,7 @@ def test_cold_reader_refuses_resource_identity_before_io(
         + archive_bytes_delta,
         "archive_member_limit": reconstruction._ARCHIVE_MEMBER_LIMITS[profile]
         + members_delta,
+        "resource_plan_id": "incorrect",
     }
     with pytest.raises(RuntimeError, match=message):
         reconstruction._resume_accepted_archive(

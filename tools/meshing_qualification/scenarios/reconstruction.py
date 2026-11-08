@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from fractions import Fraction
 from pathlib import Path
 from time import perf_counter
@@ -1512,6 +1512,7 @@ def _write_accepted_archive(
         "solve_memory_budget_bytes": _SOLVE_MEMORY_BUDGET_BYTES[profile],
         "archive_budget_bytes": _ARCHIVE_BUDGET_BYTES[profile],
         "archive_member_limit": _ARCHIVE_MEMBER_LIMITS[profile],
+        "resource_plan_id": _resource_plan_id(profile, limits),
     }
 
 
@@ -1537,11 +1538,14 @@ def _resume_accepted_archive(
         raise RuntimeError(
             "Cold reader's declared archive member limit differs from the writer's."
         )
+    limits = _archive_limits(profile)
+    if _resource_plan_id(profile, limits) != expected["resource_plan_id"]:
+        raise RuntimeError("Cold reader's resource plan differs from the writer's.")
     archive = read_model_artifact(
         path,
         expected_type=Composition,
         restore=restore_model_archive_value,
-        limits=_archive_limits(profile),
+        limits=limits,
         expected_content_id=content_id,
     )
     _stage(str(expected["profile"]), "cold-archive-restore")
@@ -2028,6 +2032,20 @@ def _archive_limits(profile: str, /) -> ArrayArchiveLimits:
         max_axis_length=budget,
         max_array_elements=budget,
         max_total_array_elements=budget,
+    )
+
+
+def _resource_plan_id(profile: str, limits: ArrayArchiveLimits, /) -> str:
+    """Fingerprint the complete archive policy and lifecycle resource budgets."""
+    archive = asdict(limits)
+    archive["allowed_dtype_kinds"] = sorted(limits.allowed_dtype_kinds)
+    return canonical_fingerprint(
+        {
+            "profile": profile,
+            "archive": archive,
+            "solve_memory_budget_bytes": _SOLVE_MEMORY_BUDGET_BYTES[profile],
+            "refinement_memory_budget_bytes": _REFINEMENT_MEMORY_BUDGET_BYTES[profile],
+        }
     )
 
 
