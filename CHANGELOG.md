@@ -489,6 +489,10 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Adaptive implicit volume archives restore a shared query and domain only after
+  comparing their complete stored discovery recipes and replaying discovery.
+  Matching scoped fidelity owners retain their tighter tolerance for subsequent
+  metric consumers; differing scientific inputs remain independently validated.
 - Native PLC suppression can peel a thin wedge along directions toward its
   incident cells when the existing inward-normal direction cannot fill it.
   Directions are tried lazily in deterministic cell order, without additional

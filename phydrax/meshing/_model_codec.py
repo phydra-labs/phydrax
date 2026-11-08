@@ -170,15 +170,21 @@ def _same_model_content(left: Any, right: Any, /) -> bool:
     )
 
 
-def _same_implicit_surface_archive(left: Any, right: Any, /) -> bool:
-    """Compare every stored implicit-discovery input directly, without digests."""
+def _same_implicit_archive(left: Any, right: Any, /) -> bool:
+    """Compare implicit owner inputs directly, including every stored byte."""
+    from ..geometry._source_boundary_records import SourceBoundaryChartWitness
     from ..geometry.implicit._adaptive_discovery import (
         AdaptiveImplicitSurfaceArchiveRecipe,
     )
 
-    if type(left) is not AdaptiveImplicitSurfaceArchiveRecipe or type(right) is not type(
-        left
-    ):
+    if type(left) not in (
+        AdaptiveImplicitSurfaceArchiveRecipe,
+        AdaptiveImplicitBoundarySourceArchiveRecipe,
+        NativeImplicitBoundaryQueryArchiveRecipe,
+        SourceBoundaryChartWitness,
+    ) or type(right) is not type(left):
+        return False
+    if type(left) is SourceBoundaryChartWitness and not left.implicit_cell_keys.size:
         return False
     if left is right:
         return True
