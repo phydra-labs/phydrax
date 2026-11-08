@@ -879,12 +879,10 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
                     else {}
                 ),
                 "source_pieces": self.source_piece_ids,
+                # Association identities bind every exact row field; sampled
+                # residuals are stored evidence and are not hashed.
                 "associations": tuple(
-                    (
-                        value.association_id,
-                        array_tree_fingerprint(value),
-                    )
-                    for value in self.associations
+                    value.association_id for value in self.associations
                 ),
                 "boundary_scope": self.boundary_source.source_scope_id,
                 "boundary_cover": self.boundary_source.domain.domain_id,

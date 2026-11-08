@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Literal
 
+import equinox as eqx
 import numpy as np
 import pytest
 
@@ -179,7 +180,7 @@ def _composition(plc: PiecewiseLinearComplex, /) -> Composition:
     return Composition((source, complex_entry), boundary_id="cad-plc-cold-replay")
 
 
-def _run_cold(path: Path, expected_id: str, /, *, rejected: bool) -> None:
+def _run_cold(path: Path, expected_id: str, /, *, rejected: bool) -> str:
     script = (
         "import sys; from phydrax.lifecycle import Composition; "
         "from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS, read_model_artifact, restore_model_archive_value; "
@@ -202,6 +203,7 @@ def _run_cold(path: Path, expected_id: str, /, *, rejected: bool) -> None:
         ), child.stderr
     else:
         assert child.returncode == 0, child.stderr
+    return child.stderr
 
 
 def test_cad_plc_composition_replays_in_cold_process(
@@ -231,6 +233,69 @@ def test_cad_plc_cold_archive_refuses_rehashed_forgery(
         limits=MODEL_ARCHIVE_LIMITS,
     )
     _run_cold(path, forged.complex_id, rejected=True)
+
+
+def _with_face_residuals(
+    plc: PiecewiseLinearComplex, residual: float | None, /
+) -> PiecewiseLinearComplex:
+    """Replace stored face residual evidence; ``None`` re-rounds it by two ulps."""
+    charts = copy.copy(plc.cad_source_charts)
+    assert charts is not None
+    faces = charts.mesh.entity_set(2).entity_set_id
+    index = next(
+        i
+        for i, value in enumerate(charts.associations)
+        if value.target_entity_set_id == faces
+    )
+    table = charts.associations[index]
+    residuals = np.array(table.residuals, dtype=np.float64, copy=True)
+    if residual is None:
+        residuals = np.nextafter(np.nextafter(residuals, np.inf), np.inf)
+    else:
+        residuals[0] = residual
+    associations = list(charts.associations)
+    associations[index] = eqx.tree_at(lambda value: value.residuals, table, residuals)
+    object.__setattr__(charts, "associations", tuple(associations))
+    object.__setattr__(charts, "source_chart_id", charts._identity())
+    forged = copy.copy(plc)
+    object.__setattr__(forged, "cad_source_charts", charts)
+    object.__setattr__(forged, "complex_id", _plc_identity(forged))
+    return forged
+
+
+def test_cad_plc_identity_excludes_platform_rounded_face_residuals(
+    cad_plc: PiecewiseLinearComplex,
+    tmp_path: Path,
+) -> None:
+    """Another platform's sampled chord residuals restore under one exact identity."""
+    rounded = _with_face_residuals(cad_plc, None)
+    charts, original = rounded.cad_source_charts, cad_plc.cad_source_charts
+    assert charts is not None and original is not None
+    assert charts.source_chart_id == original.source_chart_id
+    assert rounded.complex_id == cad_plc.complex_id
+    path = write_model_artifact(
+        tmp_path / "rounded-residuals.phx",
+        _composition(rounded),
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    _run_cold(path, cad_plc.complex_id, rejected=False)
+
+
+@pytest.mark.parametrize("residual", (-1.0e-16, float("nan"), float("inf")))
+def test_cad_plc_cold_archive_refuses_forged_face_residual(
+    cad_plc: PiecewiseLinearComplex,
+    tmp_path: Path,
+    residual: float,
+) -> None:
+    forged = _with_face_residuals(cad_plc, residual)
+    assert forged.complex_id == cad_plc.complex_id
+    path = write_model_artifact(
+        tmp_path / "forged-residual.phx",
+        _composition(forged),
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    stderr = _run_cold(path, forged.complex_id, rejected=True)
+    assert "AssociationResidualError" in stderr, stderr
 
 
 def test_cad_plc_static_banks_are_exact_dynamic_columns(

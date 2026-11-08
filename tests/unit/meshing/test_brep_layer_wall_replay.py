@@ -845,14 +845,9 @@ def test_full_atlas_replay_keeps_sampled_residuals_under_other_platform_rounding
 def test_full_atlas_replay_refuses_an_invalid_stored_residual(
     unit_box_staged_source: NativeLayerCoreSource, residual: float
 ) -> None:
-    from phydrax.meshing._layer_wall_source_replay import (
-        _stored_residual,
-        validate_full_boundary_charts,
-    )
+    from phydrax.meshing._association import AssociationResidualError
+    from phydrax.meshing._layer_wall_source_replay import validate_full_boundary_charts
 
-    assert not _stored_residual(residual, None)
-    assert not _stored_residual(np.nextafter(0.0, 1.0), 0.0)
-    assert _stored_residual(0.0, 0.0) and _stored_residual(1.0e-16, None)
     source = unit_box_staged_source
     charts = source.source_boundary_charts
     assert charts is not None
@@ -862,13 +857,19 @@ def test_full_atlas_replay_refuses_an_invalid_stored_residual(
         if table.target_entity_set_id == faces:
             residuals = np.array(table.residuals, dtype=np.float64, copy=True)
             residuals[0] = residual
-            table = eqx.tree_at(lambda value: value.residuals, table, residuals)
+            forged_table = eqx.tree_at(lambda value: value.residuals, table, residuals)
+            # Residuals are stored evidence: the association identity is unchanged.
+            assert forged_table.association_id == table.association_id
+            with pytest.raises(AssociationResidualError, match="finite non-negative"):
+                forged_table.require_stored_residuals()
+            table = forged_table
         tables.append(table)
     forged_charts = eqx.tree_at(lambda value: value.associations, charts, tuple(tables))
+    assert forged_charts._identity() == charts.source_chart_id
     forged = eqx.tree_at(
         lambda value: value.source_boundary_charts, source, forged_charts
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(AssociationResidualError):
         validate_full_boundary_charts(forged, 0.0)
 
 

@@ -262,7 +262,9 @@ class MeshInterfaceAttachment(StrictModule, NonTrainableState):
     patch/zone/label evidence the scopes came from. ``association_id`` is the
     witness: a certified association of the part's carrier classifying every
     attached entity on the declared ``geometry_entity_ids`` of
-    ``geometry_source_revision`` within ``tolerance``. ``orientation`` relates
+    ``geometry_source_revision`` within ``tolerance``; its largest attached
+    residual, ``maximum_residual``, is stored evidence and not part of
+    ``attachment_id``. ``orientation`` relates
     the attached side's outward normal to the authoritative oriented normal
     (``+1`` aligned, ``-1`` opposed, ``0`` for an unsided attachment).
     """
@@ -338,7 +340,6 @@ class MeshInterfaceAttachment(StrictModule, NonTrainableState):
                 "geometry_entity_ids": entity_ids,
                 "association": association.association_id,
                 "tolerance": tolerance_,
-                "maximum_residual": residual,
                 "orientation": orientation,
             }
         )

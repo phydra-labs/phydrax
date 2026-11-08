@@ -12,6 +12,7 @@ from typing import NamedTuple, NoReturn, SupportsIndex
 
 import numpy as np
 
+from .._live_proofs import live_content_fingerprint, LiveProofLedger
 from ..discretization import CellMesh
 from ..discretization._cell_geometry import (
     CellGeometryRestrictionSource,
@@ -519,16 +520,8 @@ def _conforming_layer_replay(
     geometry: CellGeometrySpec,
     root: LayerCoreRootGeometry,
     /,
-    *,
-    computed_root: ComputedLayerCoreRoot | None = None,
 ) -> LayerAssociationReplay:
     """Compose current→root and root→authored exact prism maps."""
-    if computed_root is None:
-        root.require_current(source, root.specification)
-    elif type(computed_root) is ComputedLayerCoreRoot:
-        computed_root.require(source, root.specification, root.mesh, root.geometry, root)
-    else:
-        raise TypeError("computed_root must be ComputedLayerCoreRoot or None.")
     authority = source.reference_source if source.mapped_domain is not None else source
     if authority is None:
         raise ValueError(
@@ -601,6 +594,11 @@ def _conforming_layer_replay(
     )
 
 
+# Layer replays bound to the exact live source, endpoint mesh and map, and
+# root (see replay_layer_source_associations).
+_REPLAYED_LAYERS: LiveProofLedger[LayerAssociationReplay] = LiveProofLedger()
+
+
 def replay_layer_source_associations(
     source: NativeLayerCoreSource,
     mesh: CellMesh,
@@ -614,19 +612,47 @@ def replay_layer_source_associations(
 
     Restriction charts are checked against complete physical coordinate maps.  The
     authored reference atlas and its inverse are independent of endpoint labels.
+
+    The root and its operation-local proof are checked on every call. The
+    replay itself is made once per exact live ``(source, mesh, geometry,
+    root)``; any copy, rebuild or changed content replays in full.
     """
     if source.conforming_execution:
         if root is None:
             raise ValueError(
                 "Conforming layer replay requires its original bounded root."
             )
-        return _conforming_layer_replay(
-            source, mesh, geometry, root, computed_root=computed_root
-        )
-    if root is not None:
-        raise ValueError("Fixed layer replay cannot borrow a conforming root authority.")
-    if computed_root is not None:
-        raise ValueError("Fixed layer replay cannot use a conforming root proof.")
+        if computed_root is None:
+            root.require_current(source, root.specification)
+        elif type(computed_root) is ComputedLayerCoreRoot:
+            computed_root.require(source, root.specification, root.mesh, root.geometry, root)
+        else:
+            raise TypeError("computed_root must be ComputedLayerCoreRoot or None.")
+    else:
+        if root is not None:
+            raise ValueError("Fixed layer replay cannot borrow a conforming root authority.")
+        if computed_root is not None:
+            raise ValueError("Fixed layer replay cannot use a conforming root proof.")
+    operands = (source, mesh, geometry, root)
+    replayed = _REPLAYED_LAYERS.find(operands)
+    if replayed is not None:
+        return replayed
+    fingerprint = live_content_fingerprint(operands)
+    replay = (
+        _conforming_layer_replay(source, mesh, geometry, root)
+        if root is not None
+        else _fixed_layer_replay(source, mesh, geometry)
+    )
+    _REPLAYED_LAYERS.record(operands, fingerprint, replay)
+    return replay
+
+
+def _fixed_layer_replay(
+    source: NativeLayerCoreSource,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    /,
+) -> LayerAssociationReplay:
     authority = source.reference_source if source.reference_source is not None else source
     authored_mesh = authority.layers.mesh
     authored = _cell_vertices(authored_mesh)

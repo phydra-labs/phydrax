@@ -51,6 +51,7 @@ from jax.typing import ArrayLike
 
 from .._archive_columns import StaticColumnArchiveRecipe, TextRowsArchiveRecipe
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._live_proofs import live_content_fingerprint, LiveProofLedger
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellMesh, EntitySet
@@ -163,10 +164,34 @@ def source_boundary_image_association_piece_rows(
     return {key: tuple(sorted(pieces)) for key, pieces in result.items()}
 
 
+# Image face orientations bound to the exact live mesh, map and witness (see
+# source_boundary_image_face_orientations).
+_RESOLVED_IMAGE_ORIENTATIONS: LiveProofLedger[
+    dict[tuple[int, str, tuple[str, ...]], int]
+] = LiveProofLedger()
+
+
 def source_boundary_image_face_orientations(
     mesh: CellMesh, geometry: CellGeometrySpec, witness: SourceBoundaryFaceImageWitness, /
 ) -> dict[tuple[int, str, tuple[str, ...]], int]:
-    """Resolve source normals against canonical target-face vertex orientation."""
+    """Resolve source normals against canonical target-face vertex orientation.
+
+    Resolved once per exact live ``(mesh, geometry, witness)``; any copy,
+    rebuild or changed content resolves again.
+    """
+    operands = (mesh, geometry, witness)
+    resolved = _RESOLVED_IMAGE_ORIENTATIONS.find(operands)
+    if resolved is not None:
+        return dict(resolved)
+    fingerprint = live_content_fingerprint(operands)
+    orientations = _resolve_image_face_orientations(mesh, geometry, witness)
+    _RESOLVED_IMAGE_ORIENTATIONS.record(operands, fingerprint, orientations)
+    return dict(orientations)
+
+
+def _resolve_image_face_orientations(
+    mesh: CellMesh, geometry: CellGeometrySpec, witness: SourceBoundaryFaceImageWitness, /
+) -> dict[tuple[int, str, tuple[str, ...]], int]:
     from ..discretization._cell_geometry_transition_types import _geometry_map_expressions
     from ..discretization._coordinate_enclosure import evaluate_expression
     from ..discretization._reference_cell import reference_cell_topology
@@ -897,6 +922,37 @@ class AssociationTransfer(Protocol):
     ) -> tuple[GeometryAssociation, ...]: ...
 
 
+class AssociationResidualError(ValueError):
+    """Stored association residual evidence breaks the stored-residual rule.
+
+    ``target_id`` names the first offending target entity, when one row is at
+    fault.
+    """
+
+    def __init__(self, message: str, /, *, target_id: int | None = None) -> None:
+        location = "" if target_id is None else f" at target entity {target_id}"
+        super().__init__(f"{message}{location}.")
+        self.target_id = target_id
+
+
+def _rejected_residual_rows(
+    stored: np.ndarray, resolved: np.ndarray, exact: float | None, /
+) -> np.ndarray:
+    """Rows whose stored residual breaks the stored-residual rule.
+
+    Residuals are stored evidence, never identity: platform arithmetic (libm,
+    XLA, BLAS) rounds sampled residuals differently, so restore does not
+    re-derive them bit for bit. A residual the restoring owner recomputes
+    exactly must equal its stored value; any other row stores a finite,
+    non-negative residual, or ``+inf`` when unresolved (no closest point).
+    """
+    if exact is not None:
+        return np.flatnonzero(stored != exact)
+    return np.flatnonzero(
+        ~((np.isfinite(stored) & (stored >= 0.0)) | (np.isposinf(stored) & ~resolved))
+    )
+
+
 def _unclassified_id(
     source_id: str, source_revision: str, occurrence_path: tuple[str, ...], /
 ) -> str:
@@ -926,7 +982,9 @@ class GeometryAssociation(StrictModule, NonTrainableState):
     oriented normal (``+1``/``-1``; ``0`` when undefined). ``parent_dimensions`` and
     ``parent_ids`` name the parent mesh entity whose class a row inherited
     (``-1`` for geometric classification). Infinite residuals are allowed only on
-    unresolved rows (no closest point).
+    unresolved rows (no closest point). Residuals are stored evidence:
+    ``association_id`` binds every exact row field but not the residuals, which
+    restore verifies with :meth:`require_stored_residuals`.
     ``target_parameter_intervals`` restrict edge rows to exact subintervals of
     the canonically oriented target edge; ``None`` denotes the entire edge.
     Source intervals and orientation then describe only that target support.
@@ -1037,24 +1095,28 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         ambiguous_ = _rows_or(ambiguous, False, (count,), np.bool_)
         if resolved_.shape != targets.shape or ambiguous_.shape != targets.shape:
             raise ValueError("Association status masks must match target entities.")
-        if (
-            distances.shape != targets.shape
-            or np.any(np.isnan(distances))
-            or np.any(distances < 0)
-            or np.any(np.isinf(distances) & resolved_)
-        ):
-            raise ValueError(
-                "Association residuals must be non-negative and aligned; infinite "
-                "residuals are allowed only on unresolved rows."
+        if distances.shape != targets.shape:
+            raise AssociationResidualError(
+                "Association residuals must align with target entities"
+            )
+        rejected = _rejected_residual_rows(distances, resolved_, None)
+        if rejected.size:
+            raise AssociationResidualError(
+                "Association residuals must be non-negative; infinite residuals are "
+                "allowed only on unresolved rows",
+                target_id=int(targets[rejected[0]]),
             )
         if np.any(resolved_ & ambiguous_):
             raise ValueError("Resolved geometry associations cannot be ambiguous.")
-        if exact and (
-            not np.all(resolved_) or np.any(ambiguous_) or np.any(distances != 0.0)
-        ):
-            raise ValueError(
-                "Exact geometry associations require zero-residual unique coverage."
-            )
+        if exact:
+            if not np.all(resolved_) or np.any(ambiguous_):
+                raise ValueError("Exact geometry associations require unique coverage.")
+            rejected = _rejected_residual_rows(distances, resolved_, 0.0)
+            if rejected.size:
+                raise AssociationResidualError(
+                    "Exact geometry associations require zero residuals",
+                    target_id=int(targets[rejected[0]]),
+                )
         roles = (
             tuple(None for _ in range(count))
             if source_roles is None
@@ -1300,7 +1362,8 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                 "target_entity_set_id": entity_set,
                 "target_global_ids": array_tree_fingerprint(targets),
                 "source_entity_ids": sources,
-                "residuals": array_tree_fingerprint(distances),
+                "source_dimensions": array_tree_fingerprint(dimensions),
+                "source_indices": array_tree_fingerprint(indices),
                 "resolved": array_tree_fingerprint(resolved_),
                 "ambiguous": array_tree_fingerprint(ambiguous_),
                 "parameters": array_tree_fingerprint(parameters_),
@@ -1376,6 +1439,28 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         resolved = np.asarray(self.resolved)
         residuals = np.asarray(self.residuals)[resolved]
         return float(np.max(residuals)) if residuals.size else 0.0
+
+    def require_stored_residuals(self, exact: float | None = None, /) -> None:
+        """Verify the stored residual evidence under the stored-residual rule.
+
+        ``exact`` is the residual the caller recomputed exactly for every row
+        (for example ``0.0`` for exact source images); each stored residual must
+        equal it. Without one, sampled residuals computed through platform
+        arithmetic are accepted as finite, non-negative evidence (``+inf`` only
+        on unresolved rows). Raises :class:`AssociationResidualError`.
+        """
+        rejected = _rejected_residual_rows(
+            np.asarray(self.residuals, dtype=np.float64),
+            np.asarray(self.resolved, dtype=np.bool_),
+            None if exact is None else float(exact),
+        )
+        if rejected.size:
+            raise AssociationResidualError(
+                "Stored association residual differs from its recomputed value"
+                if exact is not None
+                else "Stored association residual is not finite non-negative evidence",
+                target_id=int(np.asarray(self.target_global_ids)[rejected[0]]),
+            )
 
     @checked
     def validate_target(self, entity_set: EntitySet, /) -> None:

@@ -17,6 +17,7 @@ from scipy.spatial import cKDTree
 
 from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
 from .._fingerprint import canonical_fingerprint
+from .._live_proofs import live_content_fingerprint, LiveProofLedger
 from ..discretization import CellMesh
 from ..discretization._exact_plc_geometry import ExactPlcCellGeometrySource
 from ..discretization._periodic_exact import exact_periodic_element
@@ -857,7 +858,7 @@ class RefinedColumnEvidence:
     maximum_stretch_squared: Fraction
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class RefinedColumnCertification:
     """Exact refined-column evidence bound to its unmodified authoring request."""
 
@@ -1341,6 +1342,11 @@ def _layer_exact_by_id(
     return exact_by_id
 
 
+# Column replays bound to the exact live source, mesh, map, request and column
+# evidence they proved (see require_refined_column_certification).
+_PROVEN_COLUMN_CERTIFICATIONS: LiveProofLedger[bool] = LiveProofLedger()
+
+
 def require_refined_column_certification(
     source: NativeLayerCoreSource,
     mesh: CellMesh,
@@ -1349,9 +1355,32 @@ def require_refined_column_certification(
     certification: RefinedColumnCertification | None,
     /,
 ) -> None:
-    """Reprove accepted column stencils and wall-distance evidence from source."""
+    """Reprove accepted column stencils and wall-distance evidence from source.
+
+    The replay is made once per exact live operand set: a later call on the same
+    unchanged objects reuses it, and any copy, rebuild or changed content
+    replays in full.
+    """
     if not isinstance(certification, RefinedColumnCertification):
         raise TypeError("Accepted conforming layers need their column certification.")
+    operands = (source, mesh, geometry, specification, certification)
+    if _PROVEN_COLUMN_CERTIFICATIONS.find(operands) is not None:
+        return
+    fingerprint = live_content_fingerprint(operands)
+    _replay_refined_column_certification(
+        source, mesh, geometry, specification, certification
+    )
+    _PROVEN_COLUMN_CERTIFICATIONS.record(operands, fingerprint, True)
+
+
+def _replay_refined_column_certification(
+    source: NativeLayerCoreSource,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    specification: VolumeMeshingSpec,
+    certification: RefinedColumnCertification,
+    /,
+) -> None:
     target_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     exact_by_id = _layer_exact_by_id(mesh, geometry)
     original = source.layers.mesh

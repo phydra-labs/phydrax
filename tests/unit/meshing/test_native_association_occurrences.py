@@ -103,6 +103,81 @@ def test_surface_association_refuses_invalid_source_strata(
         )
 
 
+def _surface_faces(
+    residuals: np.ndarray, /, *, indices: tuple[int, int] = (3, 4)
+) -> GeometryAssociation:
+    keys = tuple(
+        source_entity_id("surface", "revision", "surface", index) for index in (3, 4)
+    )
+    return GeometryAssociation(
+        GeometryAssociationKind.SURFACE,
+        "surface",
+        "revision",
+        "mesh-faces",
+        np.asarray((7, 19), dtype=np.int64),
+        keys,
+        residuals,
+        source_dimensions=np.asarray((2, 2), dtype=np.int8),
+        source_indices=np.asarray(indices, dtype=np.int64),
+        source_roles=(GeometrySourceEntityRole.FACET, GeometrySourceEntityRole.FACET),
+    )
+
+
+def test_association_identity_excludes_sampled_residual_evidence() -> None:
+    """Platform-rounded sampled residuals keep one exact association identity."""
+    from phydrax.meshing._association import GeometryAssociationArchiveRecipe
+
+    # Last-bit chord residuals of one face as rounded on two platforms.
+    first = _surface_faces(np.asarray((5.551115123125783e-17, 0.0)))
+    second = _surface_faces(np.asarray((1.1102230246251565e-16, 1.1102230246251565e-16)))
+    assert first.association_id == second.association_id
+    restored = GeometryAssociationArchiveRecipe.from_association(second).restore()
+    assert restored.association_id == first.association_id
+    np.testing.assert_array_equal(restored.residuals, second.residuals)
+    second.require_stored_residuals()
+    # Exact row content still identifies: source strata are part of the identity.
+    assert _surface_faces(np.zeros(2), indices=(3, 5)).association_id != (
+        first.association_id
+    )
+
+
+@pytest.mark.parametrize("residual", (-1.0e-16, float("nan"), float("inf")))
+def test_association_restore_refuses_forged_residual_evidence(residual: float) -> None:
+    from phydrax.meshing._association import (
+        AssociationResidualError,
+        GeometryAssociationArchiveRecipe,
+    )
+
+    honest = _surface_faces(np.zeros(2))
+    recipe = GeometryAssociationArchiveRecipe.from_association(honest)._replace(
+        residuals=jnp.asarray((0.0, residual))
+    )
+    with pytest.raises(AssociationResidualError, match="target entity 19") as error:
+        recipe.restore()
+    assert error.value.target_id == 19
+
+
+def test_association_stored_residuals_must_match_recomputed_exact_values() -> None:
+    from phydrax.meshing._association import AssociationResidualError
+
+    sampled = _surface_faces(np.asarray((0.0, np.nextafter(0.0, 1.0))))
+    sampled.require_stored_residuals()
+    _surface_faces(np.asarray((0.0, -0.0))).require_stored_residuals(0.0)
+    with pytest.raises(AssociationResidualError, match="recomputed value"):
+        sampled.require_stored_residuals(0.0)
+    with pytest.raises(AssociationResidualError, match="zero residuals"):
+        GeometryAssociation(
+            GeometryAssociationKind.SURFACE,
+            "surface",
+            "revision",
+            "mesh-faces",
+            np.asarray((7,), dtype=np.int64),
+            ("source-face",),
+            np.asarray((1.0e-16,)),
+            exact=True,
+        )
+
+
 def _two_box_occurrences() -> BRepModel:
     source = brep_box(
         (0.0, 0.0, 0.0),

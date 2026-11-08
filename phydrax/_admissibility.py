@@ -98,7 +98,11 @@ def _guard_derivative_leaf_jvp(
         # dependencies. Reverse mode keeps them as residuals of its linear map,
         # so an enclosing derivative of a cotangent differentiates them and is
         # poisoned too; on valid input their derivatives are exact zeros.
-        carrier = dependency + jnp.sum(jnp.real(value))
+        # The carrier takes the value's real dtype explicitly: the dependency is
+        # one scalar shared by every leaf and may differ in precision, which
+        # strict promotion refuses to add implicitly.
+        real_value = jnp.real(value)
+        carrier = jnp.asarray(dependency, dtype=real_value.dtype) + jnp.sum(real_value)
         dtype = value_tangent.dtype
         nan = jnp.asarray(jnp.nan, dtype=dtype)
 

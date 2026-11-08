@@ -1288,12 +1288,14 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                         cad_source_charts.source_chart_id,
                         # The CAD fidelity proof enters through ``complex_id``
                         # by its exact identity; its certified float bounds
-                        # are stored evidence and are not hashed here.
+                        # are stored evidence and are not hashed here. The
+                        # source charts enter through ``source_chart_id``,
+                        # which excludes their association residual evidence.
                         array_tree_fingerprint(
                             tuple(
                                 getattr(cad_plc, item.name)
                                 for item in fields(cad_plc)
-                                if item.name != "cad_fidelity"
+                                if item.name not in ("cad_fidelity", "cad_source_charts")
                             )
                         ),
                     ),
@@ -1325,7 +1327,6 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                         cad_curve_association.exact,
                         cad_curve_association.provenance.value,
                         cad_curve_association.parent_association_id,
-                        array_tree_fingerprint(cad_curve_association),
                     ),
                 ),
             }

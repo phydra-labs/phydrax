@@ -11,6 +11,7 @@ from typing import cast, TYPE_CHECKING
 
 import numpy as np
 
+from .._live_proofs import live_content_fingerprint, LiveProofLedger
 from ..discretization import CellGeometrySpec, CellMesh
 from ..discretization._cell_geometry_transition_types import (
     _ExactCellMaps,
@@ -269,6 +270,14 @@ def _unmapped_face_edge_candidates(
         return None
 
 
+# Face-segment overlays bound to the exact live source, mesh, map, root and
+# tokens and to the exact covered source-edge intervals (see
+# replay_source_edge_face_overlays).
+_PROVEN_FACE_SEGMENT_OVERLAYS: LiveProofLedger[tuple[GeometryAssociation, ...]] = (
+    LiveProofLedger()
+)
+
+
 def replay_source_edge_face_overlays(
     source: NativeLayerCoreSource,
     mesh: CellMesh,
@@ -286,14 +295,12 @@ def replay_source_edge_face_overlays(
     Each input token must already bind the actual source query and target geometry.
     Mapped sources use independently reproved original-reference charts; a curved
     image is never replaced by a physical chord approximation.
-    """
-    from ._layer_core_boundary_replay import (
-        _core_facet_sides,
-        _require_layer_fidelity_token,
-        core_facet_source_key,
-    )
-    from ._layer_core_strata_replay import _triangle_line_interval
 
+    The face segments depend on the edge tables only through each original
+    edge's exact covered intervals, which are checked here on every call. The
+    segments are proved once per exact live source, mesh, map, root and tokens
+    with those intervals; any copy, rebuild or changed content proves again.
+    """
     authored = source if source.reference_source is None else source.reference_source
     complex_ = authored.complex
     if tuple(sorted(set(original_edge_rows))) != original_edge_rows or any(
@@ -344,6 +351,66 @@ def replay_source_edge_face_overlays(
             raise ValueError(
                 f"Original source edge {edge} has overlapping target-edge support."
             )
+    arguments = (
+        source,
+        mesh,
+        geometry,
+        tokens,
+        original_edge_rows,
+        root,
+        computed_root,
+        identities,
+        covered,
+    )
+    if any(type(token) is not ValidatedSourceFidelityWitness for token in tokens):
+        return _face_segment_overlays(*arguments)
+    # A validated token is a plain tuple binding its mesh, map, query and
+    # witness by identity; it cannot be weakly referenced, so it binds through
+    # those four live objects.
+    operands = (
+        source,
+        mesh,
+        geometry,
+        root,
+        computed_root if source.mapped_domain is not None else None,
+        *(item for token in tokens for item in token),
+    )
+    parameters = (
+        original_edge_rows,
+        tuple((row, tuple(sorted(covered[row]))) for row in original_edge_rows),
+    )
+    proven = _PROVEN_FACE_SEGMENT_OVERLAYS.find(operands, parameters=parameters)
+    if proven is not None:
+        return proven
+    fingerprint = live_content_fingerprint(operands)
+    output = _face_segment_overlays(*arguments)
+    _PROVEN_FACE_SEGMENT_OVERLAYS.record(
+        operands, fingerprint, output, parameters=parameters
+    )
+    return output
+
+
+def _face_segment_overlays(
+    source: NativeLayerCoreSource,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    tokens: tuple[ValidatedSourceFidelityWitness, ...],
+    original_edge_rows: tuple[int, ...],
+    root: LayerCoreRootGeometry | None,
+    computed_root: ComputedLayerCoreRoot | None,
+    identities: dict[int, tuple[str, tuple[str, ...]]],
+    covered: dict[int, list[_Interval]],
+    /,
+) -> tuple[GeometryAssociation, ...]:
+    from ._layer_core_boundary_replay import (
+        _core_facet_sides,
+        _require_layer_fidelity_token,
+        core_facet_source_key,
+    )
+    from ._layer_core_strata_replay import _triangle_line_interval
+
+    authored = source if source.reference_source is None else source.reference_source
+    complex_ = authored.complex
     missing = {
         row: _subtract((Fraction(0), Fraction(1)), values)
         for row, values in covered.items()

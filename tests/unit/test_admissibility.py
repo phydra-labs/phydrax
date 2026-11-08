@@ -208,6 +208,38 @@ def test_guard_applies_at_every_derivative_order(route: str) -> None:
         jax.block_until_ready(nested(_guarded(False, "error"))(_X, _K))
 
 
+@pytest.mark.parametrize(
+    "dependencies",
+    [(), (jnp.asarray(0.5, dtype=jnp.float32),)],
+    ids=["no-dependency", "float32-dependency"],
+)
+@pytest.mark.parametrize("route", _NESTED_ROUTES)
+def test_guard_carrier_obeys_strict_dtype_promotion(
+    route: str, dependencies: tuple[jax.Array, ...]
+) -> None:
+    # A float64 value guarded by an empty (float32 placeholder) or a float32
+    # dependency must not rely on implicit promotion at any derivative order.
+    nested = _NESTED_ROUTES[route]
+
+    def guarded(valid: bool) -> Callable[..., jax.Array]:
+        def owner(x: jax.Array, k: jax.Array) -> jax.Array:
+            return guard_derivative_validity(
+                _unguarded(x, k), jnp.asarray(valid), dependencies=dependencies
+            )
+
+        return owner
+
+    expected = jax.tree.leaves(nested(_unguarded)(_X, _K))
+    with phx.config.context(phx.config.NumericsConfig(dtype_promotion="strict")):
+        actual = jax.tree.leaves(jax.jit(nested(guarded(True)))(_X, _K))
+        poisoned = jax.tree.leaves(jax.jit(nested(guarded(False)))(_X, _K))
+    for leaf, value in zip(expected, actual, strict=True):
+        assert value.dtype == jnp.float64
+        np.testing.assert_array_equal(value, leaf)
+    for leaf in poisoned:
+        assert bool(jnp.all(jnp.isnan(leaf)))
+
+
 def _refused_owner(x: jax.Array, k: jax.Array) -> jax.Array:
     # The owner stops its route through `k` (as an rhs-only or unsupported solve
     # would) and refuses it, so any derivative in `k` must raise, not return 0.

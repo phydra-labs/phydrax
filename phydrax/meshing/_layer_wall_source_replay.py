@@ -354,18 +354,6 @@ def validate_wall_source(
     return _validate_chart_association(charts, parent, tolerance, authority)
 
 
-def _stored_residual(stored: float, exact: float | None, /) -> bool:
-    """Accept a stored sampled residual as evidence, or require its exact value.
-
-    A sampled residual is finite, nonnegative provider evidence; restore never
-    re-derives it through platform arithmetic. An exactly known residual must
-    equal its stored value.
-    """
-    if exact is not None:
-        return stored == exact
-    return bool(np.isfinite(stored)) and stored >= 0.0
-
-
 def validate_full_boundary_charts(
     source: NativeLayerCoreSource, tolerance: float, /
 ) -> None:
@@ -401,14 +389,13 @@ def validate_full_boundary_charts(
     if len(vertex_tables) != 1:
         raise ValueError("The full source atlas requires one exact vertex association.")
     vertex_table = vertex_tables[0]
-    if (
-        vertex_table.exact
-        or np.any(np.asarray(vertex_table.residuals, dtype=np.float64) != 0)
-        or np.any(np.asarray(vertex_table.orientations, dtype=np.int8) != 0)
+    if vertex_table.exact or np.any(
+        np.asarray(vertex_table.orientations, dtype=np.int8) != 0
     ):
         raise ValueError(
             "Full source atlas vertex evidence changes its native provider origin."
         )
+    vertex_table.require_stored_residuals(0.0)
     roles = (
         GeometrySourceEntityRole.VERTEX,
         GeometrySourceEntityRole.EDGE,
@@ -494,6 +481,7 @@ def validate_full_boundary_charts(
                 raise ValueError(
                     "Native source curve rows cannot claim exact sampled residuals."
                 )
+            table.require_stored_residuals(exact_residual)
             if np.any(~np.isnan(np.asarray(table.parameters, dtype=np.float64))):
                 raise ValueError(
                     "Native source curve rows cannot claim unrelated point parameters."
@@ -508,12 +496,6 @@ def validate_full_boundary_charts(
                 if len(keys) != 1:
                     raise ValueError(
                         "A full source curve edge has conflicting exact source parameters."
-                    )
-                if not _stored_residual(
-                    float(np.asarray(table.residuals)[row]), exact_residual
-                ):
-                    raise ValueError(
-                        "A full source curve changes its original sampled residual."
                     )
                 possible = []
                 for use in uses:
@@ -541,6 +523,8 @@ def validate_full_boundary_charts(
                     raise ValueError(
                         "A full source curve changes its original material sides."
                     )
+    for table in face_tables:
+        table.require_stored_residuals(exact_residual)
     for chart_row, identifier in enumerate(charts.cell_global_ids):
         table, row = face_rows[int(identifier)]
         patch = int(charts.root_patches[chart_row])
@@ -559,13 +543,11 @@ def validate_full_boundary_charts(
         expected = centers[chart_row]
         if not np.array_equal(np.asarray(table.parameters)[row], expected):
             raise ValueError("The full source atlas changes its original face parameter.")
-        if not _stored_residual(
-            float(np.asarray(table.residuals)[row]), exact_residual
-        ) or int(np.asarray(table.orientations)[row]) != int(
+        if int(np.asarray(table.orientations)[row]) != int(
             expected_orientations[chart_row]
         ):
             raise ValueError(
-                "The full source atlas changes its original face residual or orientation."
+                "The full source atlas changes its original face orientation."
             )
         permitted = [None, None]
         for region_row, region in enumerate(charts.domain.regions):

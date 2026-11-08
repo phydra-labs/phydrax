@@ -13,6 +13,7 @@ from typing import cast, TYPE_CHECKING
 
 import numpy as np
 
+from .._live_proofs import live_content_fingerprint, LiveProofLedger
 from ..discretization import CellMesh
 from ..discretization._cell_geometry import CellGeometrySpec
 from ..discretization._coordinate_enclosure import (
@@ -227,6 +228,15 @@ def mapped_core_edge_curve(
     return curve
 
 
+type _CoreEdgeImages = dict[
+    int, tuple[tuple[int, tuple[Expression, ...], tuple[Expression, ...] | None], ...]
+]
+
+# Core edge charts bound to the exact live source, mesh, map and root (with the
+# operation-local root proof for mapped sources) and the core cell set.
+_RESOLVED_CORE_EDGE_IMAGES: LiveProofLedger[_CoreEdgeImages] = LiveProofLedger()
+
+
 def core_edge_images(
     source: NativeLayerCoreSource,
     mesh: CellMesh,
@@ -236,16 +246,48 @@ def core_edge_images(
     *,
     root: LayerCoreRootGeometry | None = None,
     computed_root: ComputedLayerCoreRoot | None = None,
-) -> dict[
-    int, tuple[tuple[int, tuple[Expression, ...], tuple[Expression, ...] | None], ...]
-]:
+) -> _CoreEdgeImages:
     """Resolve core edge charts in canonical global-vertex order.
 
     Mapped reference images are reconstructed through the retained root atlas,
     and the complete physical cell map is checked against that same atlas.
     Every incident core cell is retained so later carrier proofs can refuse
     contradictory charts rather than choosing an arbitrary owner.
+
+    The charts are resolved once per exact live operand set and core cell set;
+    any copy, rebuild or changed content resolves them again. Only mapped
+    sources read the root and its operation-local proof, so only they bind it.
     """
+    mapped = source.mapped_domain is not None
+    operands = (
+        source,
+        mesh,
+        geometry,
+        root if mapped else None,
+        computed_root if mapped else None,
+    )
+    core = (tuple(sorted({int(value) for value in core_cell_ids})), len(core_cell_ids))
+    resolved = _RESOLVED_CORE_EDGE_IMAGES.find(operands, parameters=core)
+    if resolved is not None:
+        return dict(resolved)
+    fingerprint = live_content_fingerprint(operands)
+    images = _resolve_core_edge_images(
+        source, mesh, geometry, core_cell_ids, root=root, computed_root=computed_root
+    )
+    _RESOLVED_CORE_EDGE_IMAGES.record(operands, fingerprint, images, parameters=core)
+    return dict(images)
+
+
+def _resolve_core_edge_images(
+    source: NativeLayerCoreSource,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    core_cell_ids: Sequence[int],
+    /,
+    *,
+    root: LayerCoreRootGeometry | None,
+    computed_root: ComputedLayerCoreRoot | None,
+) -> _CoreEdgeImages:
     target_maps = _maps(mesh, geometry)
     domain = source.mapped_domain
     root_reference = None
