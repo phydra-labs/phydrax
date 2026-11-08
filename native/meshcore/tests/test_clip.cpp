@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "check.hpp"
+#include "exact_scalar.hpp"
 #include "fp_hazards.hpp"
 #include "phydrax_meshcore.h"
 #include "spatial_sort.hpp"
@@ -906,8 +907,57 @@ void test_determinism() {
             first.moment[1] == second.moment[1] && first.moment[2] == second.moment[2]);
 }
 
-// Simplex partitions reproduce the reported moments term by term, match the
-// moments-only entry points bitwise, and report capacity refusal.
+// Independently integrate the emitted binary64 tetrahedra, including signed
+// terms: rounding the fan origin can put it slightly outside a thin polytope.
+void check_tetrahedron_simplex_integrals(const std::array<double, 12>& a,
+                                         const std::array<double, 12>& b) {
+  std::vector<double> simplices(20 * 12);
+  int32_t simplex_count = -1;
+  double volume = -1.0;
+  double moment[3] = {0.0, 0.0, 0.0};
+  int32_t status = -1;
+  PHX_CHECK(phx_mc_tetrahedron_intersection_simplices(1, a.data(), b.data(), 20,
+                                                      simplices.data(), &simplex_count, &volume,
+                                                      moment, &status) == PHX_MC_OK);
+  PHX_CHECK(status == PHX_MC_OK);
+  PHX_CHECK((volume == 0.0) == (simplex_count == 0));
+  using phx::mc::Dyadic;
+  using phx::mc::exact::rounded_quotient;
+  Dyadic total;
+  Dyadic centroid_sum[3];
+  double absolute_total = 0.0;
+  double absolute_moment[3] = {0.0, 0.0, 0.0};
+  for (int32_t s = 0; s < simplex_count; ++s) {
+    const double* p = simplices.data() + 12 * s;
+    Dyadic edge[3][3];
+    for (int j = 0; j < 3; ++j) {
+      for (int k = 0; k < 3; ++k) {
+        edge[j][k] = Dyadic(p[3 * (j + 1) + k]) - Dyadic(p[k]);
+      }
+    }
+    const auto& u = edge[0];
+    const auto& v = edge[1];
+    const auto& w = edge[2];
+    const Dyadic det = u[0] * (v[1] * w[2] - v[2] * w[1]) -
+                       u[1] * (v[0] * w[2] - v[2] * w[0]) +
+                       u[2] * (v[0] * w[1] - v[1] * w[0]);
+    total = total + det;
+    absolute_total += std::abs(rounded_quotient(det, Dyadic(6.0)));
+    for (int k = 0; k < 3; ++k) {
+      const Dyadic first = det * (Dyadic(p[k]) + Dyadic(p[3 + k]) +
+                                   Dyadic(p[6 + k]) + Dyadic(p[9 + k]));
+      centroid_sum[k] = centroid_sum[k] + first;
+      absolute_moment[k] += std::abs(rounded_quotient(first, Dyadic(24.0)));
+    }
+  }
+  PHX_CHECK(std::abs(rounded_quotient(total, Dyadic(6.0)) - volume) <= 1e-13 * absolute_total);
+  for (int k = 0; k < 3; ++k) {
+    PHX_CHECK(std::abs(rounded_quotient(centroid_sum[k], Dyadic(24.0)) - moment[k]) <=
+              1e-13 * absolute_moment[k]);
+  }
+}
+
+// Simplex partitions reproduce their own integrals and report capacity refusal.
 void test_intersection_simplices() {
   std::uint64_t state = 17;
   for (int trial = 0; trial < 50; ++trial) {
@@ -918,38 +968,21 @@ void test_intersection_simplices() {
     for (double& x : b) {
       x = 0.2 + uniform(state);
     }
-    std::vector<double> simplices(20 * 12);
-    int32_t simplex_count = -1;
-    double volume = -1.0;
-    double moment[3] = {0.0, 0.0, 0.0};
-    int32_t status = -1;
-    PHX_CHECK(phx_mc_tetrahedron_intersection_simplices(1, a.data(), b.data(), 20,
-                                                        simplices.data(), &simplex_count, &volume,
-                                                        moment, &status) == PHX_MC_OK);
-    PHX_CHECK(status == PHX_MC_OK);
-    const Volume reference = tetrahedra(a, b);
-    PHX_CHECK(reference.volume == volume && reference.moment[0] == moment[0]);
-    PHX_CHECK((volume == 0.0) == (simplex_count == 0));
-    double total = 0.0;
-    double centroid_sum[3] = {0.0, 0.0, 0.0};
-    for (int32_t s = 0; s < simplex_count; ++s) {
-      const double* p = simplices.data() + 12 * s;
-      const double u[3] = {p[3] - p[0], p[4] - p[1], p[5] - p[2]};
-      const double v[3] = {p[6] - p[0], p[7] - p[1], p[8] - p[2]};
-      const double w[3] = {p[9] - p[0], p[10] - p[1], p[11] - p[2]};
-      const double det = u[0] * (v[1] * w[2] - v[2] * w[1]) - u[1] * (v[0] * w[2] - v[2] * w[0]) +
-                         u[2] * (v[0] * w[1] - v[1] * w[0]);
-      PHX_CHECK(det >= -1e-15);
-      total += det / 6.0;
-      for (int k = 0; k < 3; ++k) {
-        centroid_sum[k] += det / 6.0 * 0.25 * (p[k] + p[3 + k] + p[6 + k] + p[9 + k]);
-      }
-    }
-    PHX_CHECK_NEAR(total, volume, 1e-14);
-    for (int k = 0; k < 3; ++k) {
-      PHX_CHECK_NEAR(centroid_sum[k], moment[k], 1e-14);
-    }
+    check_tetrahedron_simplex_integrals(a, b);
   }
+  // A non-dyadic, thin captured overlap whose symbolic volume is substantially
+  // different from the volume of its rounded simplex carriers.
+  const std::array<double, 12> thin_source = {
+      0x1.998159b62a6b7p-1, 0x0p+0, 0x1.4013b5588f94dp-1,
+      0x1.91cca930f0bd5p-1, 0x0p+0, 0x1.36c43925439f2p-1,
+      0x1.9bb4e3ff3e99dp-1, 0x1.be61ebc283a9fp-7, 0x1.3a496f160e86bp-1,
+      0x1.99067e5d6242ap-1, 0x0p+0, 0x1.38a14cfbcaa8ap-1};
+  const std::array<double, 12> thin_target = {
+      0x1.8fe65498785eap-1, 0x1.6666666666666p-8, 0x1.34fbb62c3b693p-1,
+      0x1.956993c7297ffp-1, 0x0p+0, 0x1.37b2c3108723ep-1,
+      0x1.9a5db12e506e4p-1, 0x1.be61ebc283a9fp-8, 0x1.39755e08ec97bp-1,
+      0x1.96c0c69817ab9p-1, 0x1.be61ebc283a9fp-8, 0x1.3886d41da912fp-1};
+  check_tetrahedron_simplex_integrals(thin_source, thin_target);
   // The unit tetrahedron against its point reflection has eight faces.
   const auto reflected = affine(kUnitTet, -1.0, 0.6, 0.6, 0.6);
   std::vector<double> simplices(4 * 12);

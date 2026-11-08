@@ -119,20 +119,23 @@ PHX_MC_API int32_t phx_mc_polygon_intersection_moments(
     const int32_t* first_counts, int32_t second_capacity, const double* second_vertices,
     const int32_t* second_counts, double* areas, double* first_moments, int32_t* item_status);
 
-/* Tetrahedra (count, 4, 3), either orientation. */
+/* Tetrahedra (count, 4, 3), either orientation.  The moments are integrated
+ * from the symbolic intersection vertices, not their rounded carriers. */
 PHX_MC_API int32_t phx_mc_tetrahedron_intersection_moments(
     int64_t count, const double* first, const double* second, double* volumes,
     double* first_moments, int32_t* item_status);
 
 /* Simplex partitions of the intersections above, for quadrature on the common
  * refinement.  Each nonempty intersection is fanned from the vertex average o of
- * its vertices (the same fan as the moments, so the signed simplex measures sum
- * to the reported measure term by term): polygon intersections as triangles
- * (o, v_i, v_{i+1}) over the counterclockwise boundary loop, simplices
- * (count, simplex_capacity, 3, 2); tetrahedron intersections as tetrahedra
- * (o, x_0, x_i, x_{i+1}) over the fan triangles of every outward face,
- * simplices (count, simplex_capacity, 4, 3).  Simplices are positively oriented
- * up to the rounding of o.  simplex_counts (count,) receives the number written;
+ * its rounded vertices: polygon intersections as triangles (o, v_i, v_{i+1})
+ * over the counterclockwise boundary loop, simplices (count, simplex_capacity,
+ * 3, 2); tetrahedron intersections as tetrahedra (o, x_0, x_i, x_{i+1}) over
+ * the fan triangles of every outward face, simplices (count, simplex_capacity,
+ * 4, 3).  The returned measures and first moments are calculated from this
+ * rounded fan and reproduce its signed simplex integrals up to arithmetic
+ * rounding; tetrahedron moments-only results can differ because they integrate
+ * symbolic vertices instead.  Simplices are positively oriented up to the
+ * rounding of o.  simplex_counts (count,) receives the number written;
  * empty and zero-measure intersections write none.  An intersection needing more
  * than simplex_capacity simplices reports PHX_MC_CAPACITY_EXCEEDED:
  * first_capacity + second_capacity always suffices for polygons and 20 for

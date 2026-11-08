@@ -626,9 +626,9 @@ class PolytopeClipper {
     for (int k = 0; k < 3; ++k) first_moment[k] = sum[k].value() / 24.0;
   }
 
-  // The fan tetrahedra (o, x0, x_i, x_{i+1}) of moments(): a signed partition
-  // of the polytope whose terms are exactly the fan terms of moments().
-  int32_t cone_simplices(clip::SimplexOutput& out) const {
+  // Emit the rounded fan and integrate those same carriers with exact dyadic
+  // determinants. Thin fans can have strongly cancelling determinant terms.
+  int32_t cone_simplices(clip::SimplexOutput& out, double& volume, double* first_moment) const {
     int64_t needed = 0;
     for (const Face& face : faces) {
       needed += face.size - 2;
@@ -638,6 +638,8 @@ class PolytopeClipper {
     }
     double o[3];
     vertex_average(o);
+    Dyadic six;
+    Dyadic sum[3];
     int32_t written = 0;
     for (const Face& face : faces) {
       const double* x0 = vertices[loops[face.start]].x;
@@ -650,8 +652,28 @@ class PolytopeClipper {
             row[3 * corner + k] = corners[corner][k];
           }
         }
+        Dyadic edges[3][3];
+        for (int k = 0; k < 3; ++k) {
+          const Dyadic origin(row[k]);
+          edges[0][k] = Dyadic(row[3 + k]) - origin;
+          edges[1][k] = Dyadic(row[6 + k]) - origin;
+          edges[2][k] = Dyadic(row[9 + k]) - origin;
+        }
+        const Dyadic determinant = exact::det3(edges[0], edges[1], edges[2]);
+        if (!determinant.is_zero()) {
+          six = six + determinant;
+          for (int k = 0; k < 3; ++k) {
+            const Dyadic centroid_sum = Dyadic(row[k]) + Dyadic(row[3 + k]) +
+                                        Dyadic(row[6 + k]) + Dyadic(row[9 + k]);
+            sum[k] = sum[k] + determinant * centroid_sum;
+          }
+        }
         ++written;
       }
+    }
+    volume = exact::rounded_quotient(six, Dyadic(6.0));
+    for (int k = 0; k < 3; ++k) {
+      first_moment[k] = exact::rounded_quotient(sum[k], Dyadic(24.0));
     }
     out.count = written;
     return PHX_MC_OK;
@@ -1085,9 +1107,12 @@ int32_t intersect_tetrahedra(const double* first, const double* second,
   bool empty = false;
   status = run_clips(clipper, empty);
   if (status == PHX_MC_OK && !empty) {
-    clipper.tetrahedron_moments(volume, first_moment);
     if (simplices != nullptr) {
-      status = clipper.cone_simplices(*simplices);
+      // Simplex coordinates are rounded carriers, so their aggregate must use
+      // the same rounded fan rather than the symbolic intersection vertices.
+      status = clipper.cone_simplices(*simplices, volume, first_moment);
+    } else {
+      clipper.tetrahedron_moments(volume, first_moment);
     }
   }
   return status;
