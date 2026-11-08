@@ -157,7 +157,7 @@ def test_periodic_network_mesh_certifies_and_closes_through_paired_cell_faces(
     # on the paired upper face, and no other boundary triangle lies there.
     assert (
         sum(
-            _cell_face_pairs(volume.mesh, surface.reduced_domain, axis)
+            _cell_face_pairs(volume.mesh, volume.reduced_domain, axis)
             for axis in range(3)
         )
         == volume.cap_triangle_count
@@ -165,7 +165,7 @@ def test_periodic_network_mesh_certifies_and_closes_through_paired_cell_faces(
     # Paired caps become interior quotient faces: only the contour bounds the
     # quotient region, with the topology of the discovery's surface report.
     boundary = _quotient_boundary(volume.mesh)
-    assert len(boundary) == surface.faces.shape[0]
+    assert len(boundary) == volume.boundary_triangle_count
     assert _surface_census(boundary) == (
         surface.topology.euler_characteristic,
         surface.topology.component_count,
@@ -254,7 +254,7 @@ def test_periodic_network_public_adaptation_edits_complete_lattice_orbits() -> N
     }
     assert relocated and all(copies[representatives[row_of[v]]] == 1 for v in relocated)
     # The upper cell-face triangulations stay the exact translates of the lower.
-    domain = volume.surface.reduced_domain
+    domain = volume.reduced_domain
     assert sum(_cell_face_pairs(target, domain, axis) for axis in range(3)) > 0
     # The fixed contour still alone bounds the quotient region, unchanged.
     target_boundary = _quotient_boundary(target)

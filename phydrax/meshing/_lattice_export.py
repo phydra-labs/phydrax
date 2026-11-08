@@ -143,12 +143,7 @@ def lattice_solid_surface(
             raise ValueError("Only an audited periodic lattice cell can be exported.")
         vertices = np.asarray(volume.mesh.coordinates, dtype=np.float64)
         triangles = _periodic_cell_boundary(volume)
-        fidelity = (
-            (
-                "vertex_root_distance",
-                volume.surface.lattice_metrics().vertex_root_distance,
-            ),
-        )
+        fidelity = (("vertex_root_distance", volume.vertex_root_distance),)
         kind = "periodic-lattice-cell"
         source_id = volume.surface.source_id
     else:

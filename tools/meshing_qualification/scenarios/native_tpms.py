@@ -208,7 +208,7 @@ def _cell_face_pairs(volume: PeriodicImplicitVolume, axis: int, /) -> int:
     coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
     representatives = np.asarray(topology.vertex_representatives, dtype=np.int64)
     shifts = np.asarray(topology.vertex_shifts, dtype=np.int64)
-    lower, upper = volume.surface.reduced_domain[:, axis]
+    lower, upper = volume.reduced_domain[:, axis]
     in_plane = [index for index in range(3) if index != axis]
     counts: dict[frozenset[int], int] = {}
     tetrahedra = np.concatenate(

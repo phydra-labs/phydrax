@@ -199,6 +199,21 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- `mesh_periodic_trigonometric_region` rebuilds the region's boundary before
+  the fixed-boundary fill (`_periodic_box_boundary`). The fundamental box is
+  chosen per axis by the sampled crease between the surface and the face
+  planes, and the discovery's quotient contour is lifted into it
+  (`quotient_box_contour`, falling back to the published box). The contour is
+  remeshed isotropically on the certified zero set (`QuotientZeroSet`), seam
+  vertices sliding along the face traces with exact upper-face translates and
+  box-edge roots pinned; caps are refined constrained Delaunay triangulations
+  whose seam refinements become certified seam splits. Marching-tetrahedra
+  needles and grid-square cap slivers no longer reach the fill.
+  `PeriodicImplicitVolume` gains `reduced_domain` (the fill box),
+  `boundary_triangle_count`, `root_error` and `vertex_root_distance`; the
+  realization's recorded projection tolerance and the lattice export's
+  `vertex_root_distance` use the volume's certificate. Fill results, meshes
+  and cap counts change for every periodic TPMS fill; discovery is unchanged.
 - Native PLC recovery bounds its exhaustive Steiner-free suppression search
   (fill existence is NP-complete) by a declared `PlcSearchBudget` (states per
   recovery, counted bytes per search), a field of the recover request and of
