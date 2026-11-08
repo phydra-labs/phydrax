@@ -2339,7 +2339,7 @@ def _native_tspline_patch(resolution: int, /) -> tuple[Any, dict[str, float]]:
         raise RuntimeError("Native T-spline refinement lost a T-junction orientation.")
     exact_control_points = tuple(
         (u, v, u * v)
-        for u, v, _ in (
+        for u, v in (
             anchor.local_knots.greville_parameter for anchor in source_mesh.anchors
         )
     )

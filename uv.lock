@@ -4123,7 +4123,6 @@ version = "0.2.2"
 source = { editable = "." }
 dependencies = [
     { name = "blackjax" },
-    { name = "cadquery-ocp-novtk" },
     { name = "diffrax" },
     { name = "equinox" },
     { name = "h5py" },
@@ -4152,6 +4151,9 @@ atomistic-interop = [
     { name = "mdanalysis" },
     { name = "openmm" },
     { name = "parmed" },
+]
+cad-occt = [
+    { name = "cadquery-ocp-novtk" },
 ]
 chemistry-pyscf = [
     { name = "pyscf" },
@@ -4270,6 +4272,7 @@ meshing-ftetwild = [
     { name = "wildmeshing" },
 ]
 meshing-gmsh = [
+    { name = "cadquery-ocp-novtk" },
     { name = "gmsh" },
 ]
 meshing-manifold = [
@@ -4378,7 +4381,8 @@ requires-dist = [
     { name = "awkward", marker = "extra == 'hep-columnar'", specifier = ">=2.14.0,<3" },
     { name = "blackjax", specifier = ">=1.6.2,<2" },
     { name = "build123d", marker = "extra == 'tests'", specifier = ">=0.13.0,<0.14" },
-    { name = "cadquery-ocp-novtk", specifier = ">=8.0.1.0.0,<9" },
+    { name = "cadquery-ocp-novtk", marker = "extra == 'cad-occt'", specifier = ">=8.0.1.0.0,<9" },
+    { name = "cadquery-ocp-novtk", marker = "extra == 'meshing-gmsh'", specifier = ">=8.0.1.0.0,<9" },
     { name = "cadquery-ocp-stubs", marker = "extra == 'qa'", specifier = ">=8.0.1.0.0,<9" },
     { name = "cfgrib", marker = "extra == 'geophysical-data'", specifier = ">=0.9.15.1,<0.10" },
     { name = "clarabel", marker = "extra == 'clarabel'", specifier = ">=0.11.1,<0.12" },
@@ -4510,7 +4514,7 @@ requires-dist = [
     { name = "zarr", marker = "extra == 'geophysics-io'", specifier = ">=3.4.0,<4" },
     { name = "zospy", marker = "sys_platform == 'win32' and extra == 'opticstudio'", specifier = ">=2.2.0,<3" },
 ]
-provides-extras = ["geophysical-data", "atomistic-interop", "atomistic-data", "chemistry-qcschema", "chemistry-qcengine", "chemistry-pyscf", "clarabel", "scip", "commercial", "cpu", "cuda13", "cutensor", "cutensornet", "cuest", "metal", "oneapi", "rocm10", "tpu", "fmi", "hep-columnar", "onnx-export", "onnx-inference", "privacy-jax", "geospatial-render", "geodesy", "geometry-pyvista", "geophysics-io", "helics", "opendss", "mpi", "imaging-dicom", "imaging-nifti", "lidar-las", "e57", "radar-cfradial", "rosbag", "sonar-xtf", "ipopt", "iree", "kinetic-interop", "layout-interop", "meshcore", "meshing-manifold", "meshing-gmsh", "meshing-ftetwild", "meshing-poisson", "uq-arviz", "docs", "notebooks", "opticstudio", "radiation-interop", "robotics-mjx", "wandb", "tests", "velocimetry-images", "velocimetry-xarray", "qa"]
+provides-extras = ["cad-occt", "geophysical-data", "atomistic-interop", "atomistic-data", "chemistry-qcschema", "chemistry-qcengine", "chemistry-pyscf", "clarabel", "scip", "commercial", "cpu", "cuda13", "cutensor", "cutensornet", "cuest", "metal", "oneapi", "rocm10", "tpu", "fmi", "hep-columnar", "onnx-export", "onnx-inference", "privacy-jax", "geospatial-render", "geodesy", "geometry-pyvista", "geophysics-io", "helics", "opendss", "mpi", "imaging-dicom", "imaging-nifti", "lidar-las", "e57", "radar-cfradial", "rosbag", "sonar-xtf", "ipopt", "iree", "kinetic-interop", "layout-interop", "meshcore", "meshing-manifold", "meshing-gmsh", "meshing-ftetwild", "meshing-poisson", "uq-arviz", "docs", "notebooks", "opticstudio", "radiation-interop", "robotics-mjx", "wandb", "tests", "velocimetry-images", "velocimetry-xarray", "qa"]
 
 [[package]]
 name = "phydrax-cuda-major"

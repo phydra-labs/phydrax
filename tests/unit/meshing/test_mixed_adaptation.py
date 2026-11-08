@@ -1171,11 +1171,13 @@ def test_retained_coordinate_bank_rejects_rehashed_foreign_provenance(
     hex_pyramid_mesh: CellMesh,
     tmp_path: Path,
 ) -> None:
+    from phydrax.geometry._surface_source_archive import _geometry
     from phydrax.meshing._curving import _ExactCoordinateBankMap
     from phydrax.meshing._mixed_adaptation import (
         _require_retained_bank_origin,
         _RetainedCoordinateBank,
     )
+    from phydrax.meshing._model_codec import _require_layer_endpoint_coordinate_origin
 
     base = _curved_hex_pyramid_geometry(hex_pyramid_mesh)
     exact = base.source_coordinates()
@@ -1205,6 +1207,10 @@ def test_retained_coordinate_bank_rejects_rehashed_foreign_provenance(
     geometry = outcome.target_geometry
     assert geometry is not None and type(geometry.source_map) is _RetainedCoordinateBank
     _require_retained_bank_origin(source_geometry, geometry)
+    _require_layer_endpoint_coordinate_origin(geometry, None, source_geometry)
+    restored_geometry = _geometry(geometry, target)
+    assert cell_geometry_id(restored_geometry) == cell_geometry_id(geometry)
+    _require_layer_endpoint_coordinate_origin(restored_geometry, None, None)
     retained = geometry.source_map
     forged = _RetainedCoordinateBank(
         retained.source_id,
@@ -1223,6 +1229,19 @@ def test_retained_coordinate_bank_rejects_rehashed_foreign_provenance(
     assert cell_geometry_id(forged_geometry) != cell_geometry_id(geometry)
     with pytest.raises(ValueError, match="actual source geometry"):
         _require_retained_bank_origin(source_geometry, forged_geometry)
+    with pytest.raises(ValueError, match="actual source geometry"):
+        _require_layer_endpoint_coordinate_origin(forged_geometry, None, source_geometry)
+    forged_origin = CellGeometrySpec(
+        dict(zip(source_geometry.block_names, source_geometry.elements, strict=True)),
+        dict(
+            zip(source_geometry.block_names, source_geometry.geometry_dofs, strict=True)
+        ),
+        source_geometry.coordinates,
+        source_map=forged,
+        source_mesh=hex_pyramid_mesh,
+    )
+    with pytest.raises(ValueError, match="actual source geometry"):
+        _require_layer_endpoint_coordinate_origin(geometry, None, forged_origin)
 
     from phydrax._array_archive import ArrayArchiveCorruptionError
     from phydrax.discretization._cell_geometry_transition_types import (

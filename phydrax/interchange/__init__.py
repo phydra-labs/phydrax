@@ -12,10 +12,15 @@ from .._deferred_exports import deferred_exports
 from .._external_runtime import __all__ as _external_runtime_all
 
 
+_OCCT_PROJECTION_EXPORTS = {"PreparedOcctProjection", "prepare_occt_projection"}
+
+
 def _facade_getattr(name: str) -> Any:
     if name in ("cosmology", "hep"):
         # Cosmology interchange depends on application products; both load on use.
         value = import_module(f".{name}", __name__)
+    elif name in _OCCT_PROJECTION_EXPORTS:
+        value = getattr(import_module("._cad_occt_projection", __name__), name)
     elif name in _external_runtime_all:
         value = external_runtime.__dict__[name]
     else:
@@ -25,7 +30,12 @@ def _facade_getattr(name: str) -> Any:
 
 
 def _facade_dir() -> list[str]:
-    return sorted(set(globals()) | {"cosmology", "hep"} | set(_external_runtime_all))
+    return sorted(
+        set(globals())
+        | {"cosmology", "hep"}
+        | set(_external_runtime_all)
+        | _OCCT_PROJECTION_EXPORTS
+    )
 
 
 # Re-exports load on first use, so importing one owner never imports the
@@ -77,8 +87,6 @@ _DEFERRED_EXPORTS = {
     "read_occt_shape": "._cad_occt",
     "import_occt_shape": "._cad_occt",
     "persist_occt_shape": "._cad_occt",
-    "PreparedOcctProjection": "._cad_occt_projection",
-    "prepare_occt_projection": "._cad_occt_projection",
     "decode_json_resource": ".._document_resource",
     "decode_text_resource": ".._document_resource",
     "decode_xml_resource": ".._document_resource",

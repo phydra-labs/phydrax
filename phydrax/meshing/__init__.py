@@ -138,6 +138,8 @@ _DEFERRED_EXPORTS = {
     "PlcAssociationTransfer": "._plc_association_transfer",
     "NativePolyhedralSchedule": "._polyhedral_generation",
     "NativeVolumeSchedule": "._volume_generation",
+    "PlcSearchBudget": ".._meshcore",
+    "PLC_SEARCH_BUDGET": ".._meshcore",
     "TransfiniteBlock": "._structured",
     "BackgroundMetricControl": "._controls",
     "BackgroundMetricMode": "._controls",
@@ -409,6 +411,10 @@ __getattr__, __dir__ = deferred_exports(__name__, globals(), _DEFERRED_EXPORTS)
 
 
 if TYPE_CHECKING:
+    from .._meshcore import (
+        PLC_SEARCH_BUDGET as PLC_SEARCH_BUDGET,
+        PlcSearchBudget as PlcSearchBudget,
+    )
     from . import providers
     from ._adaptation import (
         execute_mesh_adaptation,
@@ -886,6 +892,8 @@ __all__ = [
     "BlockInterfaceControl",
     "NativePolyhedralSchedule",
     "NativeVolumeSchedule",
+    "PlcSearchBudget",
+    "PLC_SEARCH_BUDGET",
     "PiecewiseLinearComplex",
     "PlcAssociationTransfer",
     "TransfiniteBlock",

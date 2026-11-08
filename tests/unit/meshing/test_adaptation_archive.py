@@ -1090,3 +1090,203 @@ def test_surface_metric_adaptation_round_trips_with_its_chart_witness(
         _flip_hex,
     )
     _refuses_tamper(path, MeshAdaptationResult, ("evidence", 5), lambda value: value + 1)
+
+
+def test_hp_adaptation_cold_archive_and_coarsening(tmp_path: Path) -> None:
+    import gc
+    import subprocess
+    import sys
+    import weakref
+
+    import jax.numpy as jnp
+
+    from phydrax.discretization import CellBlock
+    from phydrax.discretization.fem import (
+        finite_element_hp_transfer_plan,
+        initial_finite_element_hp_topology,
+        prepare_finite_element_hp_epoch,
+    )
+    from phydrax.lifecycle._composition_rebind import Composition, CompositionEntry
+
+    mesh = CellMesh(
+        np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
+        (
+            CellBlock(
+                "quad",
+                "quadrilateral",
+                np.asarray(((0, 1, 2, 3),), dtype=np.int32),
+                global_ids=np.asarray((10,), dtype=np.int64),
+            ),
+        ),
+    )
+    topology, geometry = initial_finite_element_hp_topology(mesh, 2, 16)
+    epoch = prepare_finite_element_hp_epoch(topology, geometry, "u", conformity="L2")
+    source = _certified(epoch.mesh)
+    request = MarkedMeshAdaptation(np.asarray((10,), dtype=np.int64), hierarchy=epoch)
+    epoch_id = epoch.epoch_id
+    epoch_reference = weakref.ref(epoch)
+    result = _adapt(source, request, MeshAdaptationRoute.HP)
+    del request, epoch
+    gc.collect()
+    assert epoch_reference() is None
+    path = tmp_path / "hp-refined.phx"
+    restored = _round_trip(path, result, MeshAdaptationResult)
+    assert restored.result_id == result.result_id
+    source_epoch = restore_model_archive_value(restored.evidence.source_epoch)
+    assert source_epoch.epoch_id == epoch_id
+    refined = restored.evidence.refinement
+    target_epoch = prepare_finite_element_hp_epoch(
+        refined.topology, refined.geometry, "u", conformity="L2"
+    )
+    transfer = finite_element_hp_transfer_plan(
+        source_epoch,
+        target_epoch,
+        refined.lineage,
+        "u",
+        "h-refinement",
+    )
+    values = jnp.zeros((topology.capacity, transfer.primal.shape[2])).at[0].set(1.0)
+    transferred = np.asarray(transfer.apply_primal(values))
+    for slot, count in zip(transfer.target_slots, transfer.target_dof_count, strict=True):
+        np.testing.assert_allclose(transferred[int(slot), : int(count)], 1.0)
+    _refuses_tamper(
+        path,
+        MeshAdaptationResult,
+        ("evidence", "refinement", "lineage", "lineage_id"),
+        _flip_hex,
+    )
+    _refuses_tamper(
+        path,
+        MeshAdaptationResult,
+        ("evidence", "refinement", "geometry", "geometry_id"),
+        _flip_hex,
+    )
+    state = Composition(
+        (
+            CompositionEntry(
+                result,
+                entry_id="adaptation",
+                role="discretization",
+                owner_id="hp",
+                structure_id=topology.plan_id,
+                revision_id=result.result_id,
+                semantics_id="hp-adaptation",
+            ),
+            CompositionEntry(
+                values,
+                entry_id="field",
+                role="physical-state",
+                owner_id="hp-field",
+                structure_id=topology.plan_id,
+                revision_id="field-revision",
+                semantics_id="primal",
+            ),
+        ),
+        boundary_id="accepted",
+    )
+    state_path = tmp_path / "hp-state.phx"
+    write_model_artifact(state_path, state, limits=MODEL_ARCHIVE_LIMITS)
+    script = """
+import sys
+import numpy as np
+from phydrax.discretization.fem import finite_element_hp_transfer_plan, prepare_finite_element_hp_epoch
+from phydrax.lifecycle._composition_rebind import Composition
+from phydrax.meshing import MarkedMeshAdaptation, MeshAdaptationPolicy, MeshAdaptationResult, MeshAdaptationRoute, execute_mesh_adaptation, prepare_mesh_adaptation
+from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS, read_model_artifact, restore_model_archive_value, write_model_artifact
+state = read_model_artifact(sys.argv[1], expected_type=Composition, restore=restore_model_archive_value, limits=MODEL_ARCHIVE_LIMITS)
+result = state.value("adaptation")
+values = state.value("field")
+assert result.result_id == sys.argv[3]
+assert np.all(np.asarray(values)[0] == 1.0) and np.all(np.asarray(values)[1:] == 0.0)
+refined = result.evidence.refinement
+source_epoch = restore_model_archive_value(result.evidence.source_epoch)
+prepared_target = prepare_finite_element_hp_epoch(refined.topology, refined.geometry, "u", conformity="L2")
+transfer = finite_element_hp_transfer_plan(source_epoch, prepared_target, refined.lineage, "u", "h-refinement")
+mapped = np.asarray(transfer.apply_primal(values))
+for slot, count in zip(transfer.target_slots, transfer.target_dof_count, strict=True):
+    np.testing.assert_allclose(mapped[int(slot), :int(count)], 1.0)
+epoch = result.hierarchy
+children = np.asarray(epoch.topology.cell_global_ids)[1:5]
+request = MarkedMeshAdaptation((), children, hierarchy=epoch)
+prepared = prepare_mesh_adaptation(result.target, request, policy=MeshAdaptationPolicy(MeshAdaptationRoute.HP, relocation=False))
+coarsened = execute_mesh_adaptation(prepared)
+assert coarsened.hierarchy.topology.active_count == 1
+write_model_artifact(sys.argv[2], coarsened, limits=MODEL_ARCHIVE_LIMITS)
+"""
+    coarsened_path = tmp_path / "hp-coarsened.phx"
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(state_path),
+            str(coarsened_path),
+            result.result_id,
+        ],
+        check=True,
+    )
+    coarsened = read_model_artifact(
+        coarsened_path,
+        expected_type=MeshAdaptationResult,
+        restore=restore_model_archive_value,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    assert coarsened.hierarchy.topology.active_count == 1
+    coarsened_evidence = coarsened.evidence.refinement
+    coarsened_source = restore_model_archive_value(coarsened.evidence.source_epoch)
+    coarsened_source = prepare_finite_element_hp_epoch(
+        coarsened_source.topology,
+        coarsened_source.geometry,
+        "u",
+        conformity="L2",
+    )
+    coarsened_target = prepare_finite_element_hp_epoch(
+        coarsened_evidence.topology, coarsened_evidence.geometry, "u", conformity="L2"
+    )
+    reverse = finite_element_hp_transfer_plan(
+        coarsened_source,
+        coarsened_target,
+        coarsened_evidence.lineage,
+        "u",
+        "h-coarsening",
+    )
+    reverse_values = jnp.zeros(
+        (coarsened_source.topology.capacity, reverse.primal.shape[2])
+    )
+    for slot, count in zip(reverse.source_slots, reverse.source_dof_count, strict=True):
+        reverse_values = reverse_values.at[int(slot), : int(count)].set(1.0)
+    mapped = np.asarray(reverse.apply_primal(reverse_values))
+    for slot, count in zip(reverse.target_slots, reverse.target_dof_count, strict=True):
+        np.testing.assert_allclose(mapped[int(slot), : int(count)], 1.0)
+
+
+def test_hp_nonconforming_cell_mesh_is_refused_by_audit() -> None:
+    from phydrax.discretization import CellBlock
+    from phydrax.discretization.fem import (
+        initial_finite_element_hp_topology,
+        prepare_finite_element_hp_epoch,
+    )
+    from phydrax.meshing._contracts import MeshingFailure, MeshingFailureCategory
+
+    mesh = CellMesh(
+        np.asarray(
+            ((0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (0.0, 1.0), (1.0, 1.0), (2.0, 1.0))
+        ),
+        (
+            CellBlock(
+                "quads",
+                "quadrilateral",
+                np.asarray(((0, 1, 4, 3), (1, 2, 5, 4)), dtype=np.int32),
+                global_ids=np.asarray((10, 20), dtype=np.int64),
+            ),
+        ),
+    )
+    topology, geometry = initial_finite_element_hp_topology(mesh, 2, 16)
+    epoch = prepare_finite_element_hp_epoch(topology, geometry, "u", conformity="L2")
+    with pytest.raises(MeshingFailure) as failure:
+        _adapt(
+            _certified(epoch.mesh),
+            MarkedMeshAdaptation(np.asarray((10,), dtype=np.int64), hierarchy=epoch),
+            MeshAdaptationRoute.HP,
+        )
+    assert failure.value.category is MeshingFailureCategory.AUDIT_FAILED

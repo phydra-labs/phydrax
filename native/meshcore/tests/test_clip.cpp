@@ -438,6 +438,78 @@ void test_tetrahedron_overlaps() {
   }
 }
 
+void test_tetrahedron_sliver_measures() {
+  // The overlap is a tetrahedron of edge length delta. All coordinates and
+  // translations are dyadic, so these are exact rational references.
+  for (double scale : {0.25, 1.0, 4.0}) {
+    const double delta = std::ldexp(scale, -30);
+    const double x = 8.0;
+    const double y = -4.0;
+    const double z = 2.0;
+    const auto a = affine(kUnitTet, scale, x, y, z);
+    const auto b = affine(kUnitTet, scale, x + scale - delta, y, z);
+    const double volume = delta * delta * delta / 6.0;
+    const Volume result = tetrahedra(a, b);
+    PHX_CHECK(result.status == PHX_MC_OK);
+    PHX_CHECK(std::abs(result.volume - volume) <= volume * 1e-14);
+    PHX_CHECK(std::abs(result.moment[0] - volume * (x + scale - 0.75 * delta)) <=
+              volume * 16e-14);
+    PHX_CHECK(std::abs(result.moment[1] - volume * (y + 0.25 * delta)) <= volume * 8e-14);
+    PHX_CHECK(std::abs(result.moment[2] - volume * (z + 0.25 * delta)) <= volume * 4e-14);
+  }
+}
+
+void test_unitbox_overlap_measures() {
+  // Exact rational clipping of these captured binary64 vertices supplies the
+  // independent volume and first-moment references below.
+  const std::array<double, 12> target = {
+      0x1.8fe65498785eap-1, 0x1.6666666666666p-8, 0x1.34fbb62c3b693p-1,
+      0x1.956993c7297ffp-1, 0x0p+0, 0x1.37b2c3108723ep-1,
+      0x1.9a5db12e506e4p-1, 0x1.be61ebc283a9fp-8, 0x1.39755e08ec97bp-1,
+      0x1.96c0c69817ab9p-1, 0x1.be61ebc283a9fp-8, 0x1.3886d41da912fp-1};
+  const std::array<std::array<double, 12>, 2> sources = {{
+      {0x1.998159b62a6b7p-1, 0x0p+0, 0x1.4013b5588f94dp-1,
+       0x1.91cca930f0bd5p-1, 0x0p+0, 0x1.36c43925439f2p-1,
+       0x1.9bb4e3ff3e99dp-1, 0x1.be61ebc283a9fp-7, 0x1.3a496f160e86bp-1,
+       0x1.99067e5d6242ap-1, 0x0p+0, 0x1.38a14cfbcaa8ap-1},
+      {0x1.8e00000000000p-1, 0x1.6666666666666p-7, 0x1.3333333333334p-1,
+       0x1.91cca930f0bd5p-1, 0x0p+0, 0x1.36c43925439f2p-1,
+       0x1.99067e5d6242ap-1, 0x0p+0, 0x1.38a14cfbcaa8ap-1,
+       0x1.9bb4e3ff3e99dp-1, 0x1.be61ebc283a9fp-7, 0x1.3a496f160e86bp-1}}};
+  const double references[2][4] = {
+      {8.893623600176372e-22, 7.080384685354392e-22, 4.347969733964415e-24,
+       5.43018697799541e-22},
+      {2.6297667260072485e-08, 2.083308332828933e-08, 1.2551392002073365e-10,
+       1.6008020250829855e-08}};
+  for (int i = 0; i < 2; ++i) {
+    const Volume result = tetrahedra(sources[i], target);
+    PHX_CHECK(result.status == PHX_MC_OK);
+    PHX_CHECK(std::abs(result.volume - references[i][0]) <= references[i][0] * 1e-14);
+    for (int k = 0; k < 3; ++k) {
+      PHX_CHECK(std::abs(result.moment[k] - references[i][k + 1]) <=
+                references[i][k + 1] * 1e-14);
+    }
+  }
+}
+
+void test_tetrahedron_batch_scratch_reuse() {
+  const std::array<std::array<double, 12>, 4> first = {
+      kUnitTet, kUnitTet, affine(kUnitTet, 1.0, 0.5, 0, 0), kUnitTet};
+  const std::array<std::array<double, 12>, 4> second = {
+      affine(kUnitTet, -1.0, 0.6, 0.6, 0.6), kUnitTet, kUnitTet,
+      affine(kUnitTet, -1.0, 0.6, 0.6, 0.6)};
+  double volumes[4] = {};
+  double moments[12] = {};
+  int32_t statuses[4] = {};
+  PHX_CHECK(phx_mc_tetrahedron_intersection_moments(
+                4, first[0].data(), second[0].data(), volumes, moments, statuses) == PHX_MC_OK);
+  for (int i = 0; i < 4; ++i) {
+    const Volume reference = tetrahedra(first[i], second[i]);
+    PHX_CHECK(statuses[i] == reference.status && volumes[i] == reference.volume);
+    for (int k = 0; k < 3; ++k) PHX_CHECK(moments[3 * i + k] == reference.moment[k]);
+  }
+}
+
 void test_tetrahedron_contacts() {
   // Shared face x = 0.
   check_volume(tetrahedra(kUnitTet, {0, 0, 0, -1, 0, 0, 0, 1, 0, 0, 0, 1}), 0, 0, 0, 0);
@@ -1064,6 +1136,9 @@ int main() {
   test_box_halfplanes();
   test_box_halfplanes_voronoi();
   test_tetrahedron_overlaps();
+  test_tetrahedron_sliver_measures();
+  test_unitbox_overlap_measures();
+  test_tetrahedron_batch_scratch_reuse();
   test_tetrahedron_contacts();
   test_tetrahedron_statuses();
   test_tetrahedron_invariance();

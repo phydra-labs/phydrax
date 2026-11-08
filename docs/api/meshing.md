@@ -159,6 +159,9 @@ certification, and topology-transition contracts.
         - NativeMeshingProvider
         - NativeMeshingPlan
         - NativeMeshingOptions
+        - NativeVolumeSchedule
+        - PlcSearchBudget
+        - PLC_SEARCH_BUDGET
         - NativeMeshingRoute
         - NativeMeshingSource
         - SurfaceEnvelopeSource

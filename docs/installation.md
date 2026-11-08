@@ -49,6 +49,26 @@ without explicit operator IDs and plain functions passed as operator-training
 `static_callables`. Checkpoints bound to such identities are refused with their
 usual identity-mismatch error; reprepare or restart them under 3.13.
 
+## Native CAD and meshing
+
+The base installation does not require Open CASCADE (OCP), Gmsh, or another
+external CAD or meshing engine. Install the native meshcore companion for native
+CAD and meshing operations:
+
+```bash
+pip install "phydrax[meshcore]"
+```
+
+This selects `phydrax-meshcore==0.2.2`; a compatible companion wheel must be
+available. For local builds, provide its wheel directory with `--find-links`.
+Native archive operations do not require the OCCT reference provider.
+
+For OCCT import, projection, or reference comparisons, explicitly install
+`pip install "phydrax[cad-occt]"`. For Gmsh comparisons, install
+`pip install "phydrax[meshing-gmsh]"`; this extra includes both Gmsh and the
+OCP provider required to validate its CAD imports. Accessing an OCCT-specific
+operation without OCP installed fails at that optional-provider boundary.
+
 ## Apple Silicon GPUs
 
 The Apple extra selects the exact wheel-only `phydrax-metal==0.2.2` companion:

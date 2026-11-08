@@ -362,3 +362,45 @@ def test_polyhedral_decomposition_measures_are_finite_volume_cell_volumes() -> N
     assert invalid.status is CommonRefinementStatus.INVALID_GEOMETRY
     assert invalid.evidence.invalid_cell_count == 2
     np.testing.assert_array_equal(invalid.source_measures, (0.0,))
+
+
+def test_warped_prism_remaps_with_a_certified_interior_cone() -> None:
+    from phydrax.discretization.finite_volume import (
+        prepare_unstructured_conservative_remap,
+        UnstructuredFiniteVolumePlan,
+    )
+
+    # Cell 2 of concave-box-core-lifecycle: its FV face triangles admit an
+    # interior cone, but no mesh vertex sees every oriented boundary triangle.
+    points = np.asarray(
+        (
+            (0.0, 0.0, 0.3333333333333333),
+            (0.0, 0.3333333333333333, 0.3333333333333333),
+            (0.0, 0.3333333333333333, 0.6666666666666666),
+            (0.010000000000000002, 0.010000000000000005, 0.3347518376925911),
+            (0.009999999999999998, 0.33564663370289066, 0.33564663370289066),
+            (0.010000000000000004, 0.3352757174673883, 0.6646241600507783),
+        ),
+        dtype=np.float64,
+    )
+    faces = ((0, 2, 1), (3, 4, 5), (0, 1, 4, 3), (1, 2, 5, 4), (2, 0, 3, 5))
+    mesh = CellMesh.from_polyhedra(points, [faces])
+    volume = UnstructuredFiniteVolumePlan.from_cell_mesh(mesh).prepare()
+    remap = prepare_unstructured_conservative_remap(
+        volume, volume, provenance="certified-interior-prism"
+    )
+
+    assert remap.status is CommonRefinementStatus.SUCCESS
+    assert remap.plan is not None
+    np.testing.assert_allclose(
+        remap.refinement.source_measures, volume.cell_volumes, rtol=1e-13, atol=0.0
+    )
+    assert float(volume.cell_volumes[0]) == pytest.approx(
+        0.0005455764894995036, rel=1e-13, abs=0.0
+    )
+    np.testing.assert_allclose(
+        remap.plan.apply(np.asarray([1.25], dtype=np.float64)),
+        np.asarray([1.25], dtype=np.float64),
+        rtol=1e-13,
+        atol=0.0,
+    )

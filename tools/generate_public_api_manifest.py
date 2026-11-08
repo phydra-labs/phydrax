@@ -30,6 +30,7 @@ EXPLICIT_PUBLIC_MODULES = (
     "phydrax.discretization.discrete_velocity",
     "phydrax.discretization.dlr",
     "phydrax.discretization.spatial",
+    "phydrax.geometry.surface",
     "phydrax.interchange.cosmology",
     "phydrax.nn.quantum.variable_sector",
     "phydrax.nuclear.dosimetry",

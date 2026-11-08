@@ -74,9 +74,27 @@ from phydrax.meshing.providers._native_schedules import (
 from phydrax.meshing.providers._native_surface import (
     _box_chord_bound,
     _box_point_distance_upper,
+    _conform_chart_edges,
     _domain_curve_source_query,
     prepare_native_surface,
 )
+
+
+@pytest.mark.parametrize("reverse", (False, True))
+def test_source_piece_edges_share_exact_hanging_vertices(reverse: bool) -> None:
+    points = [
+        (Fraction(x), Fraction(y)) for x, y in ((0, 0), (2, 0), (0, 1), (1, 0), (2, -1))
+    ]
+    triangles = [(0, 1, 2), (1, 3, 4), (3, 0, 4)]
+    if reverse:
+        triangles = [(a, c, b) for a, b, c in triangles]
+    conformed = _conform_chart_edges(points, triangles)
+    assert len(conformed) == 4
+    assert not any(0 in triangle and 1 in triangle for triangle in conformed)
+    for triangle in conformed:
+        a, b, c = (points[row] for row in triangle)
+        signed = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+        assert (signed < 0) is reverse
 
 
 def _binary64_rows(rows: tuple[tuple[str, str, str], ...], /) -> np.ndarray:

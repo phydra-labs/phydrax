@@ -55,6 +55,13 @@ def soft_shape_volume_schedule() -> None:
     phx.meshing.NativeVolumeSchedule(shape_strength="soft")  # ty: ignore[invalid-argument-type]
 
 
+def bounded_native_search() -> None:
+    budget = phx.meshing.PlcSearchBudget(nodes=1 << 20, bytes=512 << 20)
+    schedule = phx.meshing.NativeVolumeSchedule(plc_search_budget=budget)
+    assert_type(schedule.plc_search_budget, phx.meshing.PlcSearchBudget)
+    assert_type(phx.meshing.PLC_SEARCH_BUDGET, phx.meshing.PlcSearchBudget)
+
+
 def native_cad_archive(model: phx.geometry.brep.BRepModel, path: Path) -> None:
     assert_type(phx.interchange.save_brep_archive(model, path), Path)
     assert_type(phx.interchange.load_brep_archive(path), phx.geometry.brep.BRepModel)

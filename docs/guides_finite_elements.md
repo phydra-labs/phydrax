@@ -482,9 +482,9 @@ Rejected attempts do not increment state or material versions.
 
 ## CAD meshing and prepared cell maps
 
-`phydrax.meshing.GmshProvider` constructs from a `BRepModel` or solid `BRepSource`,
-exports the immutable model to native BRep text, and requires an exact
-`source_revision` round trip. Native specifications are separate from `GmshOptions`.
+`phydrax.meshing.NativeMeshingProvider` provides native source-to-mesh routes
+for supported CAD geometry. `GmshProvider` is an optional external comparison,
+not a native fallback; its controls are specified by `GmshOptions`.
 Audited results retain `CellMesh`, independent `CellGeometrySpec`, source
 associations, compliance, and an execution trace; FEM consumes these artifacts
 rather than a solver-specific meshing API. There is no query-tessellation fallback

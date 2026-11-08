@@ -1273,6 +1273,16 @@ was achieved. Existing numeric schedules keep their identities. At the C
 interchange boundary only, zero encodes absence; Python callers use `None`,
 and an explicit numeric zero remains invalid.
 
+`NativeVolumeSchedule.plc_search_budget` takes
+`phydrax.meshing.PlcSearchBudget(nodes=..., bytes=...)`; the immutable
+`PLC_SEARCH_BUDGET` constant supplies the documented default. These positive
+integer limits are declared inputs, never inferred from host memory. They
+bound exhaustive Steiner-free suppression search, not the physical mesh size.
+An exhausted search is inconclusive: the native recovery owner may still
+complete through its exact peeling route. A final refusal retains the search
+counts and route evidence. Nondefault budgets enter schedule identity and are
+preserved by portable archives.
+
 `shape_strength` (a `SizeControlStrength`, default `HARD`) sets how acceptance
 reads both shape targets. `HARD` gates them: every unmet radius-edge or
 dihedral row is a `native_final_quality` finding unless an input-forced
@@ -1285,8 +1295,8 @@ schedules keep their identities; `SOFT` enters the schedule identity. The PLC, C
 image, envelope and adaptive implicit volume routes support soft targets. Routes
 whose acceptance never reads these rows (restricted Delaunay, layer core, hex
 families, polyhedral carriers) refuse `SOFT` rather than ignore it.
-Original qualification profiles declare `SOFT` only where the donor source
-authored the targets as aims, and each receipt cites that source.
+Qualification profiles declare `SOFT` only where the source authored the
+targets as aims; the profile records that source.
 
 - **Size field.** `sizes` holds one circumradius target per current vertex (0:
   unconstrained). A cell's target is the mean of its corners' targets, and is
@@ -1550,11 +1560,11 @@ mirror image, Schwarz P, Schwarz D (diamond), I-WP and the lidinoid; user tables
 use the same representation. They are nodal approximations of the minimal
 surfaces, not the surfaces themselves. The regions are `network` (`F <= c`),
 `complement` (`F >= c`) and `sheet` (`|F - c| <= tau`, with the sheet-thickness
-semantics of the geometry reference). Each boundary level is separated from the
-table's certified critical values when the source is built. A level that meets
-a critical-value enclosure raises `TrigonometricSingularLevelError` with the
-separation evidence, so a topology change such as Schwarz P at `|c| = 1` is
-refused rather than meshed.
+semantics of the geometry reference). Each boundary level is checked against
+the table's certified critical values when the source is built. Separation
+refines overlapping enclosures; a proved singular level or a level that cannot
+be separated at binary64 resolution raises `TrigonometricSingularLevelError`
+with the separation evidence rather than silently meshing it.
 
 A periodic cell goes through four owners:
 
@@ -2307,7 +2317,16 @@ bound to the source vertices). Routes:
   adapted target (see below); without one Mmg records the dropped associations as
   an adapter loss and Omega_h rejects the source.
 - `HP`: tensor-product h-refinement or coarsening of a `FiniteElementHPEpoch`,
-  with lineage projected by `project_hp_lineage`.
+  with lineage projected by `project_hp_lineage`. Accepted conforming results
+  retain compact source topology, geometry, current field specifications and
+  marked-request data for independent archive replay. Restore reconstructs
+  prepared field/trace owners and verifies the replayed transition before
+  exposing field transfer or continuing with complete-sibling coarsening.
+  It does not serialize callbacks, retain the prepared source epoch, or infer
+  historical degree offsets from clamped element degrees. Hanging-interface
+  epochs retain their own trace constraints when archived as epochs; exporting
+  a nonconforming `CellMesh` through the general meshing route still requires
+  that route's audit and is not silently treated as conforming.
 
 ### Embedded-surface metric adaptation
 
@@ -2332,6 +2351,17 @@ and relocation points on such a source take the exact pullback at their own
 chart point of the physical metric interpolated over their source location.
 Every target vertex keeps an exact chart point on the source face shared by its
 parent cells, so a split of a source-cell interface stays on that exact edge.
+
+For an analytic implicit source, every cell must retain an unambiguous lift in
+each declared periodic chart direction: at least two corners are regular, and
+their exact coordinate span is strictly less than half the declared period.
+Explicitly collapsed boundary corners do not constrain that span. Split,
+collapse, flip, and relocation candidates are admitted only when conservative
+rounding enclosures prove the condition; an uncertain candidate is refused.
+Publication rechecks the synchronized exact source-stencil charts before any
+continuation or final certification. This does not replace the independent
+geometry, embedding, fidelity, or transfer checks. Planar and other periodic
+routes do not acquire this implicit-chart constraint.
 
 The source must retain either `SurfaceSourceCharts` for a `MeshingDomain` or an
 analytic implicit `SourceBoundaryChartWitness` together with its authoring

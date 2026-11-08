@@ -63,43 +63,43 @@ classification fail closed; orientation is not repaired. Both operations require
 native meshcore, with no optional-engine fallback. Use the B-Rep partition APIs
 below the CAD section of the meshing guide for source-level CAD operations.
 
-:::: phydrax.geometry.surface.arrange_triangle_surfaces
+::: phydrax.geometry.surface.arrange_triangle_surfaces
 
 ---
 
-:::: phydrax.geometry.surface.SurfaceArrangement
+::: phydrax.geometry.surface.SurfaceArrangement
 
 ---
 
-:::: phydrax.geometry.surface.SurfaceArrangementEvidence
+::: phydrax.geometry.surface.SurfaceArrangementEvidence
 
 ---
 
-:::: phydrax.geometry.surface.surface_boolean
+::: phydrax.geometry.surface.surface_boolean
 
 ---
 
-:::: phydrax.geometry.surface.SurfaceBooleanResult
+::: phydrax.geometry.surface.SurfaceBooleanResult
 
 ---
 
-:::: phydrax.geometry.surface.SurfaceBooleanOperation
+::: phydrax.geometry.surface.SurfaceBooleanOperation
 
 ---
 
-:::: phydrax.geometry.surface.SurfaceBooleanError
+::: phydrax.geometry.surface.SurfaceBooleanError
 
 ---
 
-:::: phydrax.geometry.surface.SurfaceClosureEvidence
+::: phydrax.geometry.surface.SurfaceClosureEvidence
 
 ---
 
-:::: phydrax.geometry.surface.SurfaceArrangementError
+::: phydrax.geometry.surface.SurfaceArrangementError
 
 ---
 
-:::: phydrax.geometry.SurfaceModel
+::: phydrax.geometry.SurfaceModel
 
 ---
 Surface audit policy controls metric tolerances, closure, and orientation—not

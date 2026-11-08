@@ -3,6 +3,26 @@
 ## Unreleased
 
 ### Added
+- Native T-spline intersections use exact local rational Bézier extraction,
+  interval source bounds and Krawczyk-certified graph branches against planes,
+  quadrics, NURBS and T-splines. Tangent and non-graph cases retain typed
+  unresolved parameter evidence; certified intersection p-curves are available
+  to native trimmed surface meshing.
+- `CadImportPolicy.maximum_placement_deviation` admits a declared positive STEP
+  placement-error bound. `BRepPlacementEvidence` records each occurrence's
+  pose error against its outward local-solid extent, including translation.
+- `CadExportPolicy(intersection_approximation=CadCurveFitPolicy(...))` fits
+  intersection edges and p-curves only after continuous coupled distance,
+  parameter, surface-lift, branch-topology and trim-separation proofs. Export
+  records the resulting geometry-changing transformation loss.
+- `MeshingFailureEvidence` carries requested and achieved quantities,
+  checkpoint, logical findings and evidence identity through `MeshingFailure`
+  into diagnostic trace records.
+- Native polyhedral adaptation accepts `PolyhedralAdaptationRequest`, including
+  a well-formed unchanged result when a restricting plane cuts no cell.
+- `phydrax.meshing.PlcSearchBudget` and `PLC_SEARCH_BUDGET` expose the canonical
+  declared search budget used by `NativeVolumeSchedule`, without requiring
+  callers to import the private native binding module.
 - `linear_elasticity_form` has a structural sparse lowering. Its residual
   kernel defines the isotropic stress once, and the sparse operator is that
   stress's exact Jacobian, assembled as coupled `(cells, d·n, d·n)` vector
@@ -199,6 +219,11 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native CAD, meshing and portable archive registration no longer require OCP
+  in the base installation. OCCT comparisons use the explicit `cad-occt`
+  extra; `meshing-gmsh` includes its CAD-validation dependency. Checked OCCT
+  projection types still load the real provider on explicit access, while
+  native-only imports and archive reconstruction leave it unloaded.
 - The `SparseHodge` SPD admission decides positive definiteness with
   `admit_sparse_factorization_values`, which keeps only the pivot evidence
   (status, minimum pivot, replaced/rejected pivots, finiteness) instead of
@@ -489,6 +514,42 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Native tetrahedron intersection volumes and first moments integrate exact
+  symbolic construction coordinates rather than rounded physical vertices.
+  Exact term contributions feed compensated binary64 sums, avoiding the
+  thin-overlap error that caused a false finite-volume double-coverage refusal.
+  The ABI and coverage tolerances are unchanged; numerical measures may change,
+  and the exact route has an explicit higher kernel cost.
+- Layer transition archives validate retained coordinate provenance against
+  the independently restored preceding endpoint. Standalone retained banks
+  remain data rather than source authority: their coefficients, execution
+  shadows and current scientific geometry are revalidated without requiring a
+  historical authentication chain. Mapped layer-root checks remain unchanged.
+- Common refinement certifies an interior centroid apex when no mesh-vertex
+  cone partitions an otherwise admissible polyhedral cell. Star-shaped warped
+  prism face fans in concave layer/core histories can therefore remap without
+  changing finite-volume geometry or tolerances. Previously successful vertex
+  decompositions are unchanged.
+- Native parametric surface meshing conforms internal source-cell edges using
+  shared exact parameter subdivisions, preventing hanging extraction vertices
+  from creating undeclared contacts in locally refined T-spline meshes.
+- Supported HP adaptation results now retain compact source-bound replay
+  inputs for cold reconstruction. Restore rebuilds concrete field elements,
+  worksets, interfaces and trace constraints, then replays conforming
+  refinement or complete-sibling coarsening and verifies geometry, lineage,
+  request identities and field transfer. Prepared source epochs and callbacks
+  are not retained. HP result IDs and archive representation change; non-HP
+  results are unchanged. Nonconforming exported cell meshes retain their
+  explicit audit refusal.
+- Bounded batched solver objectives reconstruct their parameter-lane pullback
+  in the backward trace instead of retaining a batched tracer in a custom-VJP
+  residual. Reverse differentiation now works when the last `lax.map` batch is
+  partial; fixed-state cotangents and failed-case acceptance gates are unchanged.
+- Native implicit surface metric adaptation preserves the declared half-period
+  chart lift for regular cell corners through split, collapse, flip, relocation,
+  and exact publication. Collapsed boundary corners remain explicit; uncertain
+  candidate lifts are refused. Planar and other periodic adaptation paths retain
+  their existing decisions, and final scientific certificates remain required.
 - Native PLC suppression can peel a thin wedge along directions toward its
   incident cells when the existing inward-normal direction cannot fill it.
   Directions are tried lazily in deterministic cell order, without additional
@@ -594,8 +655,9 @@
   and third order) are NaN with `failure="status"` and refused at run time with
   `failure="error"` (whose reverse-mode refusal goes through an identity
   `custom_linear_solve`). Second derivatives whose first-order tangent was
-  constant previously came back as a silent zero. Valid inputs are unchanged at
-  every order.
+  constant previously came back as a silent zero. First-order outputs on valid
+  inputs remain bit-identical; higher-order results satisfy the analytic
+  derivative contract, but signed-zero bits may differ between traces.
 - Boundary-layer corner stretch no longer depends on how the platform rounds
   exact distance ties. When a column's probe distance is attained by two or
   more candidates (its foot on a wall vertex or edge, or on several triangles,

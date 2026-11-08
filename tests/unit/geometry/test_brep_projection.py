@@ -8,21 +8,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from OCP.BRep import BRep_Builder
-from OCP.BRepBuilderAPI import (
-    BRepBuilderAPI_MakeEdge,
-    BRepBuilderAPI_MakeFace,
-    BRepBuilderAPI_MakePolygon,
-    BRepBuilderAPI_MakeWire,
-    BRepBuilderAPI_Transform,
-)
-from OCP.BRepPrimAPI import (
-    BRepPrimAPI_MakeBox,
-    BRepPrimAPI_MakeCylinder,
-    BRepPrimAPI_MakeSphere,
-)
-from OCP.gp import gp_Ax2, gp_Circ, gp_Dir, gp_Pnt, gp_Trsf, gp_Vec
-from OCP.TopoDS import TopoDS_Compound
 
 import phydrax as phx
 from phydrax._fingerprint import array_tree_fingerprint
@@ -47,7 +32,7 @@ from phydrax.geometry.brep._constructors import (
 )
 from phydrax.geometry.brep._model import BRepGeometry, BRepModel
 from phydrax.geometry.brep._projection import _containment_ray_directions
-from phydrax.interchange import import_occt_shape, prepare_occt_projection
+from phydrax.interchange import import_occt_shape
 
 
 _CONTRACT = phx.SpatialCoordinateContract.si()
@@ -188,6 +173,9 @@ def test_planar_excluded_support_keeps_unresolved_boundary_box_evidence() -> Non
 
 
 def test_brep_projection_scenario_1() -> None:
+    pytest.importorskip("OCP")
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder, BRepPrimAPI_MakeSphere
+
     # The projection is immutable, so one cylinder import serves every query.
     _, cylinder = _bound(BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape())
     projection = cylinder
@@ -443,6 +431,9 @@ def test_closed_revolution_containment_is_exact_with_unresolved_boundary(
 
 
 def test_capped_cylinder_containment_retries_non_generic_rays() -> None:
+    pytest.importorskip("OCP")
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
+
     # Axis, rim-height and cap-plane points: exact ray parity against the
     # cylinder wall and both caps decides interior and exterior points, and
     # points on the wall, a cap or the rim stay unresolved.
@@ -673,6 +664,16 @@ def test_containment_rays_continue_past_degenerate_sequence_prefix() -> None:
 
 
 def test_brep_projection_scenario_2() -> None:
+    pytest.importorskip("OCP")
+    from OCP.BRepBuilderAPI import (
+        BRepBuilderAPI_MakeEdge,
+        BRepBuilderAPI_MakeFace,
+        BRepBuilderAPI_MakePolygon,
+        BRepBuilderAPI_MakeWire,
+    )
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
+    from OCP.gp import gp_Ax2, gp_Circ, gp_Dir, gp_Pnt
+
     shape = BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape()
     model = import_occt_shape(
         shape,
@@ -768,6 +769,9 @@ def _mesh_reference(
 
 @pytest.fixture
 def query_box_model() -> Any:
+    pytest.importorskip("OCP")
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+
     return import_occt_shape(
         BRepPrimAPI_MakeBox(1.0, 2.0, 3.0).Shape(),
         coordinate_contract=_CONTRACT,
@@ -927,6 +931,9 @@ def test_brep_memory_candidate_nearest_preserves_second_face_and_refit(
 
 
 def test_fixed_topology_brep_queries_follow_changed_radius_and_derivative() -> None:
+    pytest.importorskip("OCP")
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeSphere
+
     model = import_occt_shape(
         BRepPrimAPI_MakeSphere(1.0).Shape(),
         coordinate_contract=_CONTRACT,
@@ -1201,6 +1208,11 @@ def test_definition_projection_returns_explicit_empty_occurrence_paths() -> None
 
 
 def test_optional_occt_projection_binds_physical_source_revision() -> None:
+    pytest.importorskip("OCP")
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+
+    from phydrax.interchange import prepare_occt_projection
+
     shape = BRepPrimAPI_MakeBox(1.0, 2.0, 3.0).Shape()
     model = import_occt_shape(shape, coordinate_contract=_CONTRACT).model
     projection = prepare_occt_projection(model, shape)
@@ -1229,6 +1241,15 @@ def test_optional_occt_projection_binds_physical_source_revision() -> None:
 
 
 def test_optional_occt_projection_maps_assembly_entities_to_occurrence_paths() -> None:
+    pytest.importorskip("OCP")
+    from OCP.BRep import BRep_Builder
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.gp import gp_Trsf, gp_Vec
+    from OCP.TopoDS import TopoDS_Compound
+
+    from phydrax.interchange import prepare_occt_projection
+
     source = BRepPrimAPI_MakeBox(1.0, 1.0, 1.0).Shape()
     transform = gp_Trsf()
     transform.SetTranslation(gp_Vec(10.0, 0.0, 0.0))
@@ -1412,6 +1433,8 @@ def test_torus_seam_minimum_requires_certified_distance_evidence(
 
 
 def test_torus_seam_projection_does_not_promote_an_unrepaired_source_gap() -> None:
+    pytest.importorskip("OCP")
+
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeTorus
 
     from phydrax.geometry.brep._patches import TorusPatch

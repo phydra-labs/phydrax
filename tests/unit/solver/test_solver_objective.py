@@ -310,7 +310,7 @@ def test_evaluate_differentiates_only_the_parameter_lane() -> None:
     assert float(gradient.gain) == pytest.approx(float(expected), rel=1e-12)
 
 
-@pytest.mark.parametrize("case_batch_size", [None, 2])
+@pytest.mark.parametrize("case_batch_size", [None, 1, 2, 3, 4])
 def test_case_independent_loss_is_gated_by_each_case_acceptance(
     case_batch_size: Any,
 ) -> None:
@@ -333,12 +333,17 @@ def test_case_independent_loss_is_gated_by_each_case_acceptance(
     gradient = jax.grad(lambda tree: objective.evaluate(tree).value)(
         _OffsetGain(2.0, 3.0)
     )
+    compiled_gradient = jax.jit(jax.grad(lambda tree: objective.evaluate(tree).value))(
+        _OffsetGain(2.0, 3.0)
+    )
 
     assert evaluation.accepted.tolist() == [True, True, False]
     assert float(evaluation.value) == pytest.approx(16.0, rel=1e-12)
     # Mean over the two accepted cases of d(gain + 2)²/dgain: each case once.
     assert float(gradient.gain) == pytest.approx(8.0, rel=1e-12)
     assert float(gradient.offset) == 0.0
+    assert float(compiled_gradient.gain) == pytest.approx(8.0, rel=1e-12)
+    assert float(compiled_gradient.offset) == 0.0
 
 
 def test_algorithmic_work_loss_is_finite_at_exact_convergence_and_saturates() -> None:

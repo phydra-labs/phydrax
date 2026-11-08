@@ -289,6 +289,8 @@ class _State(NamedTuple):
     # regular rows. Every copy in a group is one physical vertex; copies are
     # fixed, and their protected incident edges are chart cuts (see ``_cuts``).
     pole: np.ndarray | None = None
+    # Internal implicit-chart admission, absent for planar and periodic routes.
+    chart_lift: tuple[tuple[int, Fraction], ...] | None = None
 
 
 class _Source(NamedTuple):
@@ -822,6 +824,62 @@ def _orientation(a: np.ndarray, b: np.ndarray, c: np.ndarray, mode: Any, /) -> n
     return np.where(
         ~certain, _UNCERTAIN, np.where(signs == PredicateSign.POSITIVE, _OK, _INVALID)
     )
+
+
+def _chart_lift_exact(
+    points: tuple[tuple[Fraction, ...], ...],
+    collapsed: tuple[bool, ...],
+    chart_lift: tuple[tuple[int, Fraction], ...],
+    /,
+) -> bool:
+    """Whether regular corners have an unambiguous lift in every declared axis."""
+    regular = tuple(
+        point
+        for point, is_collapsed in zip(points, collapsed, strict=True)
+        if not is_collapsed
+    )
+    return len(regular) >= 2 and all(
+        2
+        * (max(point[axis] for point in regular) - min(point[axis] for point in regular))
+        < period
+        for axis, period in chart_lift
+    )
+
+
+def _chart_lift_status(
+    state: _State, points: np.ndarray, cells: np.ndarray, /
+) -> np.ndarray:
+    """Conservatively classify candidate chart lifts using rounding enclosures.
+
+    Each carrier canonically rounds its exact source-stencil coordinate. One
+    adjacent binary64 number on either side encloses that coordinate; outward
+    subtraction and exact declared-period bounds admit only proved strict spans.
+    Rows beyond the live state are newly proposed regular vertices.
+    """
+    if state.chart_lift is None:
+        return np.zeros((cells.shape[0],), dtype=np.int64)
+    collapsed = np.zeros((points.shape[0],), dtype=np.bool_)
+    if state.pole is not None:
+        collapsed[: state.pole.size] = state.pole >= 0
+    regular = ~collapsed[cells]
+    status = np.where(np.sum(regular, axis=1) >= 2, _OK, _INVALID)
+    for axis, period in state.chart_lift:
+        values = points[cells, axis]
+        lower = np.nextafter(values, -np.inf)
+        upper = np.nextafter(values, np.inf)
+        minimum_lower = np.min(np.where(regular, lower, np.inf), axis=1)
+        maximum_upper = np.max(np.where(regular, upper, -np.inf), axis=1)
+        minimum_upper = np.min(np.where(regular, upper, np.inf), axis=1)
+        maximum_lower = np.max(np.where(regular, lower, -np.inf), axis=1)
+        upper_span = np.nextafter(maximum_upper - minimum_lower, np.inf)
+        lower_span = np.nextafter(maximum_lower - minimum_upper, -np.inf)
+        half = period / 2
+        proven = upper_span < _binary64_down(half)
+        impossible = lower_span >= _binary64_up(half)
+        status = np.maximum(
+            status, np.where(proven, _OK, np.where(impossible, _INVALID, _UNCERTAIN))
+        )
+    return status
 
 
 def _collinear(a: np.ndarray, b: np.ndarray, c: np.ndarray, mode: Any, /) -> np.ndarray:
@@ -1776,6 +1834,18 @@ def _split_round(
         _orientation(points[u], middle[op], points[apex], mode),
         _orientation(middle[op], points[v], points[apex], mode),
     )
+    if state.chart_lift is not None:
+        extended = np.concatenate((points, middle))
+        middle_rows = points.shape[0] + op
+        left = np.stack((u, middle_rows, apex), axis=1)
+        right = np.stack((middle_rows, v, apex), axis=1)
+        checks = np.maximum(
+            checks,
+            np.maximum(
+                _chart_lift_status(state, extended, left),
+                _chart_lift_status(state, extended, right),
+            ),
+        )
     status = _group_maximum(checks, op, candidates.size, _OK)
     counts = _tally(counts, status)
     valid = np.flatnonzero(status == _OK)
@@ -2052,6 +2122,8 @@ def _collapse_geometry(
     orientation = _orientation(
         points[moved[:, 0]], points[moved[:, 1]], points[moved[:, 2]], mode
     )
+    if state.chart_lift is not None:
+        orientation = np.maximum(orientation, _chart_lift_status(state, points, moved))
     status = _group_maximum(orientation, owner[modified], removed.size, _OK)
     neighbor, spot = _expand(topology.neighbor_offsets, removed)
     other = topology.neighbor_values[spot]
@@ -3800,6 +3872,13 @@ def _optimal_collapse_batch(
             extended_points[moved[:, 2]],
             mode,
         ).reshape((cell_owner.size, lanes))
+        if state.chart_lift is not None:
+            orientation = np.maximum(
+                orientation,
+                _chart_lift_status(state, extended_points, moved).reshape(
+                    (cell_owner.size, lanes)
+                ),
+            )
         status = np.full((live.size, lanes), _OK, dtype=np.int64)
         np.maximum.at(status, cell_owner, orientation.astype(np.int64))
         curve = np.flatnonzero(topology.kind[live_kept] == _CURVE)
@@ -4248,6 +4327,11 @@ def _periodic_seam_flips(
             ),
             _OK,
         )
+        if state.chart_lift is not None:
+            status = max(
+                status,
+                int(np.max(_chart_lift_status(state, points, children), initial=_OK)),
+            )
         lengths = _metric_lengths(
             tensors,
             points,
@@ -4390,6 +4474,14 @@ def _flip_candidates(
         _orientation(points[u], points[x1], points[x0], mode),
         _orientation(points[v], points[x0], points[x1], mode),
     )
+    if state.chart_lift is not None:
+        status = np.maximum(
+            status,
+            np.maximum(
+                _chart_lift_status(state, points, np.stack((u, x1, x0), axis=1)),
+                _chart_lift_status(state, points, np.stack((v, x0, x1), axis=1)),
+            ),
+        )
     duplicate = _lookup(topology.codes, _codes(_sorted_pairs(x0, x1))) >= 0
     if state.pole is not None:
         # On the physical surface the copies of a collapsed chart point are one
@@ -4790,6 +4882,8 @@ def _proposal_checks(
     orientation = _orientation(
         points[moved[:, 0]], points[moved[:, 1]], points[moved[:, 2]], mode
     )
+    if state.chart_lift is not None:
+        orientation = np.maximum(orientation, _chart_lift_status(state, points, moved))
     status = _group_maximum(orientation, owner, vertex.size, _OK)
     curve = np.flatnonzero(topology.kind[vertex] == _CURVE)
     neighbors = topology.curve_neighbors[vertex[curve]]
@@ -6536,6 +6630,7 @@ def execute_local_metric_adaptation(
     collapsed_groups: np.ndarray | None = None,
     metric_field: Any = None,
     exact_source_points: tuple[tuple[Fraction, ...], ...] | None = None,
+    chart_lift: tuple[tuple[int, Fraction], ...] | None = None,
 ) -> LocalMetricOutcome:
     """Adapt a planar triangle mesh until it meets the unit-mesh criterion or stalls.
 
@@ -6605,6 +6700,11 @@ def execute_local_metric_adaptation(
     stencils define the target geometry even when no binary64 point lies on
     the source edge. The receiving adaptation owner must retain that exact
     geometry rather than reinterpret its rounded carrier as a source point.
+
+    ``chart_lift`` is an internal implicit-chart constraint: each axis names
+    the exact rational value of its declared period. Collapsed corners do not
+    constrain that axis; every cell's remaining corners must span strictly less
+    than half the period.
     """
     values = _validate_mesh(mesh, metric)
     _validate_controls(predicate_mode, topology_operations, relocation)
@@ -6642,6 +6742,39 @@ def execute_local_metric_adaptation(
         metric_field,
         exact_source_points,
     )
+    if chart_lift is not None:
+        if (
+            not isinstance(chart_lift, tuple)
+            or not chart_lift
+            or any(
+                not isinstance(row, tuple)
+                or len(row) != 2
+                or type(row[0]) is not int
+                or row[0] < 0
+                or row[0] >= state.points.shape[1]
+                or not isinstance(row[1], Fraction)
+                or row[1] <= 0
+                for row in chart_lift
+            )
+            or tuple(row[0] for row in chart_lift)
+            != tuple(sorted({row[0] for row in chart_lift}))
+        ):
+            raise ValueError(
+                "Chart lift axes and exact declared periods must be canonical."
+            )
+        poles = (
+            np.zeros((state.points.shape[0],), dtype=np.bool_)
+            if state.pole is None
+            else state.pole >= 0
+        )
+        for cell in state.cells.tolist():
+            if not _chart_lift_exact(
+                tuple(source.exact_points[int(row)] for row in cell),
+                tuple(bool(poles[int(row)]) for row in cell),
+                chart_lift,
+            ):
+                raise ValueError("Source cell has an ambiguous implicit chart lift.")
+        state = state._replace(chart_lift=chart_lift)
     return _resume_local_metric_adaptation(
         mesh, source, state, predicate_mode, topology_operations, relocation, _Counts(), 0
     )

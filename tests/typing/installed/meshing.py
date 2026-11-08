@@ -10,6 +10,8 @@ from phydrax.meshing import (
     CellMeshingResult,
     MeshAssembly,
     NativeVolumeSchedule,
+    PLC_SEARCH_BUDGET,
+    PlcSearchBudget,
     SizeControlStrength,
     VolumeMeshingSpec,
 )
@@ -44,6 +46,13 @@ def fixed_boundary_volume(
 def soft_shape_volume_schedule() -> None:
     schedule = NativeVolumeSchedule(shape_strength=SizeControlStrength.SOFT)
     assert_type(schedule.shape_strength, SizeControlStrength)
+
+
+def bounded_native_search() -> None:
+    budget = PlcSearchBudget(nodes=1 << 20, bytes=512 << 20)
+    schedule = NativeVolumeSchedule(plc_search_budget=budget)
+    assert_type(schedule.plc_search_budget, PlcSearchBudget)
+    assert_type(PLC_SEARCH_BUDGET, PlcSearchBudget)
 
 
 def exact_archive(model: BRepModel, path: Path) -> None:

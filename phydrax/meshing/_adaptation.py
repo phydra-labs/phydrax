@@ -30,6 +30,7 @@ from numpy.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._geometry_predicates import PredicateMode, resolve_host_predicate_mode
+from .._model._structure import FiniteElementHPEpochArchiveRecipe
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellGeometrySpec, CellMesh, PolyhedralConnectivity
@@ -149,7 +150,7 @@ from ._bisection import (
     BisectionHierarchy,
     execute_bisection,
 )
-from ._canonical import certify_cell_mesh
+from ._canonical import canonicalize_cell_mesh, certify_cell_mesh
 from ._certification_inputs import (
     MeshCertificationInputs,
     ScopedFidelityInput,
@@ -1707,6 +1708,50 @@ def _empty_constraints(mesh: CellMesh, /) -> _AdaptationConstraints:
     )
 
 
+class HPAdaptationEvidence(StrictModule, NonTrainableState):
+    """Compact source-bound request inputs and resulting forest transition."""
+
+    source_epoch: FiniteElementHPEpochArchiveRecipe
+    refine_cell_ids: Array
+    coarsen_cell_ids: Array
+    periodic_edge_lock: PeriodicRefinementEdgeLock | None
+    inherited_cell_markers: tuple[str, ...] = eqx.field(static=True)
+    request_id: str = eqx.field(static=True)
+    refinement: FiniteElementHPRefinementResult | None
+    result_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        request: MarkedMeshAdaptation,
+        refinement: FiniteElementHPRefinementResult | None,
+        /,
+    ) -> None:
+        from ._model_codec import _hp_epoch_archive_recipe
+
+        if not isinstance(request, MarkedMeshAdaptation) or not isinstance(
+            request.hierarchy, FiniteElementHPEpoch
+        ):
+            raise TypeError("HP adaptation evidence requires its source-bound request.")
+        if refinement is not None and not isinstance(
+            refinement, FiniteElementHPRefinementResult
+        ):
+            raise TypeError("HP adaptation evidence has an invalid refinement result.")
+        self.source_epoch = _hp_epoch_archive_recipe(request.hierarchy)
+        self.refine_cell_ids = request.refine_cell_ids
+        self.coarsen_cell_ids = request.coarsen_cell_ids
+        self.periodic_edge_lock = request.periodic_edge_lock
+        self.inherited_cell_markers = request.inherited_cell_markers
+        self.request_id = request.request_id
+        self.refinement = refinement
+        self.result_id = canonical_fingerprint(
+            {
+                "kind": "hp-adaptation-evidence",
+                "request": request.request_id,
+                "refinement": None if refinement is None else refinement.result_id,
+            }
+        )
+
+
 MeshAdaptationEvidence: TypeAlias = (
     BisectionEvidence
     | LocalMetricEvidence
@@ -1718,7 +1763,7 @@ MeshAdaptationEvidence: TypeAlias = (
     | SurfaceMetricOutcome
     | MmgAdaptationResult
     | OmegaHAdaptationResult
-    | FiniteElementHPRefinementResult
+    | HPAdaptationEvidence
 )
 
 
@@ -1750,11 +1795,7 @@ def _evidence_id(evidence: MeshAdaptationEvidence | None, /) -> Any:
             | PolyhedralAdaptationEvidence()
         ):
             return evidence.evidence_id
-        case (
-            MmgAdaptationResult()
-            | OmegaHAdaptationResult()
-            | FiniteElementHPRefinementResult()
-        ):
+        case MmgAdaptationResult() | OmegaHAdaptationResult() | HPAdaptationEvidence():
             return evidence.result_id
         case _:
             raise TypeError("Unsupported adaptation evidence.")
@@ -7839,31 +7880,27 @@ def _complete_hp_parents(epoch: FiniteElementHPEpoch, marked: np.ndarray, /) -> 
 
 def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
     request = prepared.request
-    # ty: ignore[unresolved-attribute]
+    if not isinstance(request, MarkedMeshAdaptation) or not isinstance(
+        request.hierarchy, FiniteElementHPEpoch
+    ):
+        raise TypeError("HP execution requires its source-bound marked request.")
     epoch = request.hierarchy
     source = prepared.source
-    # ty: ignore[unresolved-attribute]
     refine = np.asarray(request.refine_cell_ids, dtype=np.int64)
-    # ty: ignore[unresolved-attribute]
     coarsen = np.asarray(request.coarsen_cell_ids, dtype=np.int64)
     if refine.size:
-        # ty: ignore[unresolved-attribute]
         closed, _ = balanced_hp_refinement_ids(epoch.topology, epoch.interfaces, refine)
         result = refine_tensor_hp_cells(
-            # ty: ignore[unresolved-attribute]
             epoch.topology,
-            # ty: ignore[unresolved-attribute]
             epoch.geometry,
             np.asarray(closed, dtype=np.int64),
         )
         kind = MeshTransitionKind.REFINE
         partial = False
     else:
-        # ty: ignore[invalid-argument-type]
         parents = _complete_hp_parents(epoch, coarsen)
         if parents.size == 0:
-            return _unchanged(prepared, None, epoch)
-        # ty: ignore[unresolved-attribute]
+            return _unchanged(prepared, HPAdaptationEvidence(request, None), epoch)
         result = coarsen_tensor_hp_cells(epoch.topology, epoch.geometry, parents)
         kind = MeshTransitionKind.COARSEN
         covered = np.asarray(result.lineage.source_slots)[
@@ -7875,6 +7912,7 @@ def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
         result.geometry,
         numeric_version=f"adaptation:{prepared.prepared_id}",
     )
+    mesh = canonicalize_cell_mesh(mesh)
     if source.certification is not None and not _piecewise_linear_geometry(
         source.mesh, source.geometry
     ):
@@ -7892,7 +7930,6 @@ def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
         result.geometry,
         finite_element_hp_interface_plan(result.topology, result.geometry),
     )
-    # ty: ignore[invalid-argument-type]
     lineage = project_hp_lineage(epoch, target_epoch, result.lineage)
     material_requested = prepared.material_reference is not None or (
         prepared.prior_transition is not None
@@ -8028,7 +8065,7 @@ def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
         None,
         None,
         None,
-        result,
+        HPAdaptationEvidence(request, result),
         target_epoch,
     )
 

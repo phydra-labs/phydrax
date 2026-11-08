@@ -481,6 +481,17 @@ with no compatibility reads.
    owner. Measured on the STEP external-combined curved geometry: 132.6 MB in
    3.2M objects becomes 9.77 MB, and its identities and re-packed archive bytes
    are unchanged.
+7. HP adaptation results retain a compact source-replay record rather than a
+   complete prepared source epoch. It records the source topology and geometry,
+   source epoch/mesh identities, actual current field element specifications,
+   the adaptation request and original refinement/coarsening evidence. Restore
+   rebuilds derived worksets, constraints and discretization through their
+   canonical owners, replays the requested transition, and verifies geometry,
+   lineage, target state and field transfer. Lost caller degree-offset intent
+   must not be inferred from clamped target degrees. HP result identities and
+   HP PyTree/archive representation change; non-HP result representation is
+   unchanged. Existing scientific topology, geometry and lineage identities
+   remain authoritative.
 
 **Resource budget policy:** solver, factorization, Krylov and Hodge memory
 budgets are explicit plan inputs and part of plan identity. Library defaults

@@ -146,3 +146,12 @@ def test_locally_refined_ast_spline_h1_solution_converges_at_bicubic_rate() -> N
     # Bicubic H1-conforming Galerkin: L2 error O(h^4).
     assert fine < coarse
     assert rate >= 3.5, (coarse, fine, rate)
+
+
+def test_nonuniform_locally_refined_tspline_mesh_and_iga_share_source() -> None:
+    # This source previously produced hanging vertices on internal extraction
+    # edges, so public embedding certification rejected the resulting mesh.
+    from tools.meshing_benchmarks import benchmark_native_tspline_cad_analysis
+
+    result = benchmark_native_tspline_cad_analysis(8, 1)
+    assert result["status"] == "passed"

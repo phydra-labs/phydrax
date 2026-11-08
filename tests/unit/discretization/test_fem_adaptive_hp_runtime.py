@@ -629,3 +629,86 @@ def _bilinear_measure(vertices: Any, points: Any) -> Any:
         (d_first @ vertices, d_second @ vertices), axis=-1
     )  # (points, space, reference)
     return np.abs(np.linalg.det(jacobian))
+
+
+def test_hp_epoch_archive_rebuilds_preparation_and_refuses_geometry_changes() -> None:
+    from phydrax._model._structure import model_archive_projection
+    from phydrax.discretization.fem._hp_runtime import (
+        FiniteElementHPGeometry,
+        FiniteElementHPTraceConstraintPlan,
+    )
+    from phydrax.meshing._model_codec import restore_model_archive_value
+
+    topology, geometry = initial_finite_element_hp_topology(_quad_mesh(), 2, 16)
+    refined = refine_tensor_hp_cells(
+        topology, geometry, jnp.asarray((10,), dtype=jnp.int64)
+    )
+    epoch = prepare_finite_element_hp_epoch(refined.topology, refined.geometry, "u")
+    recipe = model_archive_projection(epoch)
+    restored = restore_model_archive_value(recipe)
+    assert restored.epoch_id == epoch.epoch_id
+    assert restored.worksets.plan_id == epoch.worksets.plan_id
+    restored_trace = restored.constraints[0][1]
+    original_trace = epoch.constraints[0][1]
+    assert isinstance(restored_trace, FiniteElementHPTraceConstraintPlan)
+    assert isinstance(original_trace, FiniteElementHPTraceConstraintPlan)
+    assert restored_trace.plan_id == original_trace.plan_id
+    np.testing.assert_array_equal(
+        restored.topology.cell_global_ids, epoch.topology.cell_global_ids
+    )
+    continued = refine_tensor_hp_cells(
+        restored.topology, restored.geometry, jnp.asarray((20,), dtype=jnp.int64)
+    )
+    assert continued.topology.active_count > restored.topology.active_count
+
+    vertices = np.array(refined.geometry.cell_vertices)
+    vertices[0, 0, 0] += 0.125
+    altered = FiniteElementHPGeometry(
+        refined.topology,
+        vertices,
+        refined.geometry.reference_lower,
+        refined.geometry.reference_upper,
+    )
+    with pytest.raises(ValueError):
+        restore_model_archive_value(recipe._replace(geometry=altered))
+
+
+def test_hp_epoch_archive_cold_process(tmp_path: Any) -> None:
+    import subprocess
+    import sys
+
+    from phydrax.lifecycle._composition_rebind import Composition, CompositionEntry
+    from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS, write_model_artifact
+
+    topology, geometry = initial_finite_element_hp_topology(_quad_mesh(), 2, 16)
+    refined = refine_tensor_hp_cells(
+        topology, geometry, jnp.asarray((10,), dtype=jnp.int64)
+    )
+    epoch = prepare_finite_element_hp_epoch(refined.topology, refined.geometry, "u")
+    entry = CompositionEntry(
+        epoch,
+        entry_id="epoch",
+        role="discretization",
+        owner_id="hp",
+        structure_id=epoch.topology.plan_id,
+        revision_id=epoch.epoch_id,
+        semantics_id="tensor-h1",
+    )
+    path = tmp_path / "hp.zip"
+    write_model_artifact(
+        path, Composition((entry,), boundary_id="accepted"), limits=MODEL_ARCHIVE_LIMITS
+    )
+    script = """
+import sys
+import numpy as np
+from phydrax.discretization.fem import refine_tensor_hp_cells
+from phydrax.lifecycle._composition_rebind import Composition
+from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS, read_model_artifact, restore_model_archive_value
+composition = read_model_artifact(sys.argv[1], expected_type=Composition, restore=restore_model_archive_value, limits=MODEL_ARCHIVE_LIMITS)
+epoch = composition.value("epoch")
+assert epoch.epoch_id == sys.argv[2]
+assert tuple(np.asarray(epoch.topology.cell_global_ids)[np.asarray(epoch.topology.active)]) == (20, 21, 22, 23, 24)
+next_epoch = refine_tensor_hp_cells(epoch.topology, epoch.geometry, np.asarray([20], dtype=np.int64))
+assert next_epoch.topology.active_count == 8
+"""
+    subprocess.run([sys.executable, "-c", script, str(path), epoch.epoch_id], check=True)

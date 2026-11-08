@@ -895,6 +895,28 @@ class AnalyticImplicitProfileArchiveRecipe(NamedTuple):
     expected_profile_id: str
 
 
+class FiniteElementHPEpochArchiveRecipe(NamedTuple):
+    """Declarative hp epoch inputs; derived executable plans are rebuilt."""
+
+    mesh: object
+    topology: object
+    geometry: object
+    fields: (
+        tuple[
+            tuple[
+                str, str, tuple[int, ...], tuple[tuple[int, ...], ...], tuple[str, ...]
+            ],
+            ...,
+        ]
+        | None
+    )
+    epoch_id: str
+    workset_id: str
+    interface_id: str
+    prepared_id: str | None
+    constraint_ids: tuple[tuple[str, str], ...]
+
+
 class FiniteElementAcceptedStateArchiveRecipe(NamedTuple):
     """Stored state payload plus canonical layout recipes for FE cold restore."""
 
@@ -2447,6 +2469,13 @@ _RUNTIME_TELEMETRY_FIELDS: dict[tuple[str, str], frozenset[str]] = {
 
 def model_archive_projection(value: Any, /) -> Any:
     """Return a structural archive view with query caches replaced by owner inputs."""
+    if (
+        type(value).__module__ == "phydrax.discretization.fem._hp_runtime"
+        and type(value).__name__ == "FiniteElementHPEpoch"
+    ):
+        from ..meshing._model_codec import _hp_epoch_archive_recipe
+
+        return model_archive_projection(_hp_epoch_archive_recipe(value))
     if type(value).__module__ == "phydrax.meshing._certification_inputs":
         from ..meshing._certification_inputs import MeshCertificationInputs
         from ..meshing.providers._native_sources import NativeLayerCoreSource

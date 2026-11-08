@@ -1565,6 +1565,195 @@ def _restored_material_transition(
     return VolumeMaterialChain.revalidate(chain, maps), None
 
 
+def _restore_hp_adaptation_result(raw: MeshAdaptationResult, /) -> MeshAdaptationResult:
+    """Replay the retained source forest and marked request before accepting an HP result."""
+    from ..discretization.fem import (
+        balanced_hp_refinement_ids,
+        coarsen_tensor_hp_cells,
+        refine_tensor_hp_cells,
+    )
+    from ._adaptation import (
+        _complete_hp_parents,
+        _compliance,
+        _RouteOutcome,
+        _StoredAdaptationBinding,
+        HPAdaptationEvidence,
+        MarkedMeshAdaptation,
+        MeshAdaptationResult,
+        MeshAdaptationStatus,
+        project_hp_lineage,
+    )
+    from ._lineage import MeshTransitionKind
+    from ._model_codec import _same_model_content, restore_model_archive_value
+    from ._periodic import PeriodicRefinementEdgeLock
+    from ._result import CellMeshingResult
+
+    stored_evidence = raw.evidence
+    if type(stored_evidence) is not HPAdaptationEvidence:
+        raise TypeError("Stored HP adaptation lacks its source replay evidence.")
+    source_epoch = restore_model_archive_value(stored_evidence.source_epoch)
+    source = CellMeshingResult.from_stored_fields(raw.source)
+    stored_lock = stored_evidence.periodic_edge_lock
+    lock = None
+    if stored_lock is not None:
+        if type(stored_lock) is not PeriodicRefinementEdgeLock:
+            raise TypeError("Stored HP request has an invalid periodic edge lock.")
+        lock = PeriodicRefinementEdgeLock(
+            source.mesh, stored_lock.cell_global_ids, stored_lock.selected_edge_global_ids
+        )
+        lock.require_source(source.mesh)
+        if not _same_model_content(lock, stored_lock):
+            raise ValueError("Stored HP periodic edge lock changed.")
+    request = MarkedMeshAdaptation(
+        stored_evidence.refine_cell_ids,
+        stored_evidence.coarsen_cell_ids,
+        hierarchy=source_epoch,
+        periodic_edge_lock=lock,
+        inherited_cell_markers=stored_evidence.inherited_cell_markers,
+    )
+    if request.request_id != stored_evidence.request_id:
+        raise ValueError("Stored HP request identity changed.")
+    if (
+        source_epoch.mesh.topology_id != source.mesh.topology_id
+        or not np.array_equal(source_epoch.mesh.coordinates, source.mesh.coordinates)
+        or raw.elapsed_seconds is not None
+        or raw.stencil is not None
+        or raw.transfer is not None
+        or raw.metric is not None
+        or raw.cell_content_transfer is not None
+        or raw.conservative_remap is not None
+        or raw.surface_chart_witness is not None
+    ):
+        raise ValueError(
+            "Stored HP adaptation has inconsistent source or foreign evidence."
+        )
+    refine = np.asarray(request.refine_cell_ids, dtype=np.int64)
+    coarsen = np.asarray(request.coarsen_cell_ids, dtype=np.int64)
+    if refine.size and coarsen.size:
+        raise ValueError("Stored HP request mixes refinement and coarsening.")
+    if refine.size:
+        closed, _ = balanced_hp_refinement_ids(
+            source_epoch.topology, source_epoch.interfaces, refine
+        )
+        refinement = refine_tensor_hp_cells(
+            source_epoch.topology, source_epoch.geometry, closed
+        )
+        status, kind = MeshAdaptationStatus.COMPLETE, MeshTransitionKind.REFINE
+    else:
+        parents = _complete_hp_parents(source_epoch, coarsen)
+        refinement = (
+            coarsen_tensor_hp_cells(source_epoch.topology, source_epoch.geometry, parents)
+            if parents.size
+            else None
+        )
+        if refinement is None:
+            status, kind = MeshAdaptationStatus.UNCHANGED, None
+        else:
+            covered = np.asarray(refinement.lineage.source_slots)[
+                np.asarray(refinement.lineage.relation_mask("coarsening"), dtype=np.bool_)
+            ]
+            status = (
+                MeshAdaptationStatus.PARTIAL
+                if covered.size != coarsen.size
+                else MeshAdaptationStatus.COMPLETE
+            )
+            kind = MeshTransitionKind.COARSEN
+    if (refinement is None) != (stored_evidence.refinement is None) or (
+        refinement is not None
+        and not _same_model_content(refinement, stored_evidence.refinement)
+    ):
+        raise ValueError("Stored HP refinement differs from source replay.")
+    evidence = HPAdaptationEvidence(request, refinement)
+    if evidence.result_id != stored_evidence.result_id or raw.status is not status:
+        raise ValueError("Stored HP request, evidence, or status changed.")
+    hierarchy = restore_model_archive_value(raw.hierarchy)
+    transition = lineage = distribution = None
+    if refinement is None:
+        if (
+            not _same_model_content(raw.target, raw.source)
+            or raw.transition is not None
+            or raw.lineage is not None
+            or hierarchy.epoch_id != source_epoch.epoch_id
+        ):
+            raise ValueError("Unchanged HP adaptation retains a transition.")
+        target = source
+    else:
+        if kind is None:
+            raise ValueError("Changed HP adaptation lacks its transition kind.")
+        target = CellMeshingResult.from_stored_fields(raw.target)
+        if (
+            not _same_model_content(hierarchy.topology, refinement.topology)
+            or not _same_model_content(hierarchy.geometry, refinement.geometry)
+            or not _same_model_content(hierarchy.mesh, target.mesh)
+        ):
+            raise ValueError("Stored HP target does not match the replayed forest.")
+        lineage = project_hp_lineage(source_epoch, hierarchy, refinement.lineage)
+        stored = raw.transition
+        if (
+            stored is None
+            or raw.lineage is None
+            or not _same_model_content(raw.lineage, lineage)
+            or not _same_model_content(stored.lineage, lineage)
+            or stored.vertex_stencil is not None
+        ):
+            raise ValueError("Stored HP mesh lineage differs from replay.")
+        geometry_transition = (
+            None
+            if stored.geometry_transition is None
+            else restore_model_archive_value(stored.geometry_transition)
+        )
+        if geometry_transition is not None and (
+            not _same_model_content(geometry_transition.source_mesh, source.mesh)
+            or not _same_model_content(
+                geometry_transition.source_geometry, source.geometry
+            )
+            or not _same_model_content(geometry_transition.target_mesh, target.mesh)
+            or not _same_model_content(
+                geometry_transition.target_geometry, target.geometry
+            )
+        ):
+            raise ValueError("Stored HP geometry transition binds different endpoints.")
+        material_chain = material_reference = None
+        if (
+            stored.volume_material_chain is not None
+            or stored.material_reference is not None
+        ):
+            material_chain, material_reference = _restored_material_transition(
+                stored, source, target, geometry_transition
+            )
+        transition = CellMeshTransition(
+            source.mesh.mesh_id,
+            source.mesh.topology_id,
+            target,
+            lineage,
+            kind,
+            geometry_transition=geometry_transition,
+            volume_material_chain=material_chain,
+            material_reference=material_reference,
+        )
+        if transition.transition_id != stored.transition_id:
+            raise ValueError("Stored HP mesh transition identity changed.")
+        if raw.distribution is not None:
+            distribution = _restored_distribution_transition(
+                raw.distribution, source, target, lineage
+            )
+    binding = _StoredAdaptationBinding(raw.route, source, raw.prepared_id)
+    rebuilt = MeshAdaptationResult(
+        binding,
+        _RouteOutcome(
+            status, target, transition, lineage, None, None, None, evidence, hierarchy
+        ),
+        _compliance(binding, target),
+        distribution,
+        None,
+    )
+    if rebuilt.result_id != raw.result_id or not _same_model_content(
+        rebuilt.compliance, raw.compliance
+    ):
+        raise ValueError("Stored HP result identity or compliance changed.")
+    return rebuilt
+
+
 def restore_route_adaptation_result(raw: MeshAdaptationResult, /) -> MeshAdaptationResult:
     """Restore one native or device bisection or metric adaptation from its fields.
 
@@ -1594,6 +1783,8 @@ def restore_route_adaptation_result(raw: MeshAdaptationResult, /) -> MeshAdaptat
     if type(raw) is not MeshAdaptationResult:
         raise TypeError("Route restoration requires a stored MeshAdaptationResult.")
     route = raw.route
+    if route.value == "hp":
+        return _restore_hp_adaptation_result(raw)
     if route.value not in _ROUTE_EVIDENCE:
         raise ValueError(
             f"Stored {route.value} adaptation has no canonical restore owner."

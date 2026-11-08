@@ -44,6 +44,7 @@ from .._model._structure import (
     expand_shared_model_archive_recipe,
     FiniteElementAcceptedStateArchiveRecipe,
     FiniteElementFieldBanksArchiveRecipe,
+    FiniteElementHPEpochArchiveRecipe,
     FiniteVolumeOversetPartSpecArchiveRecipe,
     FiniteVolumeOversetPolicyArchiveRecipe,
     FiniteVolumeOwnerLocalCellStateBankArchiveRecipe,
@@ -169,6 +170,198 @@ def _same_model_content(left: Any, right: Any, /) -> bool:
     )
 
 
+def _hp_epoch_archive_recipe(value: Any, /) -> FiniteElementHPEpochArchiveRecipe:
+    """Capture an epoch's concrete prepared field layouts, not their callbacks."""
+    import numpy as np
+
+    from ..discretization.fem._hp_runtime import FiniteElementHPTraceConstraintPlan
+
+    fields = None
+    if value.discretization is not None:
+        topology = value.topology
+        layouts = []
+        for field, dofs, elements in zip(
+            value.discretization.field_spaces,
+            value.discretization.dof_maps,
+            value.discretization.elements,
+            strict=True,
+        ):
+            continuity = {element.continuity for element in elements}
+            if continuity not in ({"conforming"}, {"discontinuous"}):
+                raise ValueError("hp field has unsupported element continuity.")
+            conformity = "L2" if continuity == {"discontinuous"} else "H1"
+            degrees = tuple(
+                tuple(
+                    int(np.unique(np.asarray(element.reference_nodes)[:, axis]).size - 1)
+                    for axis in range(topology.dimension)
+                )
+                for element in elements
+            )
+            layouts.append(
+                (
+                    field.name,
+                    conformity,
+                    dofs.component_shape,
+                    degrees,
+                    tuple(x.element_id for x in elements),
+                )
+            )
+        fields = tuple(layouts)
+    if any(
+        type(plan) is not FiniteElementHPTraceConstraintPlan
+        for _, plan in value.constraints
+    ):
+        raise TypeError("hp epoch contains an unsupported trace constraint.")
+    return FiniteElementHPEpochArchiveRecipe(
+        value.mesh,
+        value.topology,
+        value.geometry,
+        fields,
+        value.epoch_id,
+        value.worksets.plan_id,
+        value.interfaces.plan_id,
+        None if value.discretization is None else value.discretization.prepared_id,
+        tuple((name, plan.plan_id) for name, plan in value.constraints),
+    )
+
+
+def _restore_hp_epoch_archive_recipe(
+    item: FiniteElementHPEpochArchiveRecipe, restore: Callable[[Any], Any], /
+) -> Any:
+    import numpy as np
+
+    from ..discretization.fem._generic import FiniteElementFieldSpec, FiniteElementPlan
+    from ..discretization.fem._high_order import ReferenceNodalFamily
+    from ..discretization.fem._hp_runtime import (
+        _hp_trace_constraint_for_field,
+        certify_finite_element_hp_geometry,
+        finite_element_hp_interface_plan,
+        FiniteElementHPEpoch,
+        FiniteElementHPGeometry,
+        FiniteElementHPTraceConstraintPlan,
+    )
+    from ..discretization.fem._reference import FiniteElementSpec
+
+    topology = restore(item.topology)
+    stored_geometry = item.geometry
+    if type(stored_geometry) is not FiniteElementHPGeometry:
+        raise TypeError("hp epoch requires its canonical geometry owner.")
+    geometry = FiniteElementHPGeometry(
+        topology,
+        stored_geometry.cell_vertices,
+        stored_geometry.reference_lower,
+        stored_geometry.reference_upper,
+    )
+    if not _same_model_content(geometry, stored_geometry):
+        raise ValueError("Stored hp geometry differs from its constructor.")
+    interfaces = finite_element_hp_interface_plan(topology, geometry)
+    if not certify_finite_element_hp_geometry(topology, geometry, interfaces).passed:
+        raise ValueError("Stored hp geometry failed its certificate.")
+    mesh = restore(item.mesh)
+    slots = {
+        int(identifier): slot
+        for slot, identifier in enumerate(np.asarray(topology.cell_global_ids))
+        if bool(np.asarray(topology.active)[slot])
+    }
+    for block in mesh.blocks:
+        if block.cell_kind != topology.cell_kind or not np.all(block.vertex_valid):
+            raise ValueError("Stored hp mesh has an incompatible cell block.")
+        try:
+            block_slots = [slots[int(identifier)] for identifier in block.global_ids]
+        except KeyError as error:
+            raise ValueError("Stored hp mesh names an unknown active cell.") from error
+        if not np.array_equal(
+            np.asarray(mesh.coordinates)[np.asarray(block.vertices)],
+            np.asarray(geometry.cell_vertices)[block_slots],
+        ):
+            raise ValueError("Stored hp mesh differs from its forest geometry.")
+    if item.fields is None:
+        epoch = FiniteElementHPEpoch(mesh, topology, geometry, interfaces)
+    else:
+        specs = []
+        for name, conformity, components, degrees, identifiers in item.fields:
+            if conformity not in ("H1", "L2") or len(degrees) != len(mesh.blocks):
+                raise ValueError("Stored hp field layout is invalid.")
+            elements = {}
+            for block, degree, identifier in zip(
+                mesh.blocks, degrees, identifiers, strict=True
+            ):
+                element = ReferenceNodalFamily(
+                    topology.cell_kind, degree
+                ).finite_element()
+                if conformity == "L2":
+                    entities: list[tuple[tuple[int, ...], ...]] = [
+                        tuple(() for _ in level) for level in element.entity_dofs
+                    ]
+                    entities[-1] = (tuple(range(element.local_dof_count)),)
+                    element = FiniteElementSpec(
+                        "DiscontinuousTensorProductLagrange",
+                        element.cell_kind,
+                        element.degree,
+                        element.reference_nodes,
+                        tuple(entities),
+                        value_spec=element.value_spec,
+                        continuity="discontinuous",
+                        representation=element.representation,
+                        tabulator=element.tabulate,
+                        tabulator_id=f"discontinuous:{element.element_id}",
+                    )
+                if element.element_id != identifier:
+                    raise ValueError("Stored hp field element identity changed.")
+                elements[block.name] = element
+            specs.append(
+                FiniteElementFieldSpec(name, elements, component_shape=components)
+            )
+        discretization = FiniteElementPlan(mesh, tuple(specs)).prepare()
+        slots_by_id = {
+            int(identifier): slot
+            for slot, identifier in enumerate(np.asarray(topology.cell_global_ids))
+            if bool(np.asarray(topology.active)[slot])
+        }
+        active_slots = np.asarray(
+            [
+                slots_by_id[int(identifier)]
+                for block in mesh.blocks
+                for identifier in block.global_ids
+            ],
+            dtype=np.int32,
+        )
+        constraints = tuple(
+            (
+                name,
+                _hp_trace_constraint_for_field(
+                    topology, interfaces, discretization, active_slots, index
+                ),
+            )
+            for index, (name, conformity, _, _, _) in enumerate(item.fields)
+            if conformity == "H1"
+        )
+        if any(
+            type(plan) is not FiniteElementHPTraceConstraintPlan
+            for _, plan in constraints
+        ):
+            raise TypeError("hp trace preparation returned an unsupported owner.")
+        epoch = FiniteElementHPEpoch(
+            mesh,
+            topology,
+            geometry,
+            interfaces,
+            discretization=discretization,
+            constraints=constraints,
+        )
+    if (
+        epoch.epoch_id != item.epoch_id
+        or epoch.worksets.plan_id != item.workset_id
+        or epoch.interfaces.plan_id != item.interface_id
+        or (None if epoch.discretization is None else epoch.discretization.prepared_id)
+        != item.prepared_id
+        or tuple((name, getattr(plan, "plan_id")) for name, plan in epoch.constraints)
+        != item.constraint_ids
+    ):
+        raise ValueError("Stored hp epoch identity differs from canonical preparation.")
+    return epoch
+
+
 def _register_model_archive_types() -> None:
     """Register built-in scientific models supported by the generic recipe codec."""
     from .._archive_columns import (
@@ -285,6 +478,11 @@ def _register_model_archive_types() -> None:
         SparseTransferEntryEvidence,
     )
     from ..discretization.fem._distributed import FiniteElementDofOwnership
+    from ..discretization.fem._hp import FiniteElementHPLineage, FiniteElementHPTopology
+    from ..discretization.fem._hp_runtime import (
+        FiniteElementHPGeometry,
+        FiniteElementHPRefinementResult,
+    )
     from ..discretization.fem._reference import FiniteElementSpec
     from ..discretization.fem._topology_transfer import FiniteElementTopologyTransfer
     from ..discretization.finite_volume._owner_local_remap import (
@@ -624,6 +822,7 @@ def _register_model_archive_types() -> None:
     from ..units._dimension import DimensionSignature
     from ..units._unit import UnitDefinition
     from ._adaptation import (
+        HPAdaptationEvidence,
         MarkedMeshAdaptation,
         MeshAdaptationResult,
         MeshAdaptationRoute,
@@ -724,7 +923,11 @@ def _register_model_archive_types() -> None:
     )
     from ._motion import MeshMotionMonitorPolicy
     from ._optimization import MeshQualityObjective
-    from ._periodic import PeriodicPointOrbits, PeriodicQuotientHistory
+    from ._periodic import (
+        PeriodicPointOrbits,
+        PeriodicQuotientHistory,
+        PeriodicRefinementEdgeLock,
+    )
     from ._plc_source import PiecewiseLinearComplex
     from ._polyhedral_adaptation import (
         _PolyhedralExactCoordinateSource,
@@ -882,6 +1085,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.model.archive", NativeLayerCoreAuthoringArchiveRecipe),
         ("phydrax.model.archive", LayerCoreAcceptedResultArchiveRecipe),
         ("phydrax.model.archive", LayerCoreAcceptedAdaptationArchiveRecipe),
+        ("phydrax.model.archive", FiniteElementHPEpochArchiveRecipe),
         ("phydrax.model.archive", LayerCoreSourceReferenceArchiveRecipe),
         ("phydrax.model.archive", LayerCoreFidelitySourceReferenceArchiveRecipe),
         ("phydrax.model.archive", SourceBoundaryImagePullbackArchiveRecipe),
@@ -1049,6 +1253,10 @@ def _register_model_archive_types() -> None:
         ("phydrax.discretization", AxisDomain),
         ("phydrax.discretization", DiscreteMeasure),
         ("phydrax.discretization.fem", FiniteElementSpec),
+        ("phydrax.discretization.fem", FiniteElementHPLineage),
+        ("phydrax.discretization.fem", FiniteElementHPTopology),
+        ("phydrax.discretization.fem", FiniteElementHPGeometry),
+        ("phydrax.discretization.fem", FiniteElementHPRefinementResult),
         ("phydrax.discretization.fem", FiniteElementTransferResult),
         ("phydrax.discretization.fem", DistributedFiniteElementTransfer),
         ("phydrax.discretization.fem", FiniteElementTopologyTransfer),
@@ -1155,6 +1363,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.meshing", MixedAdaptationEvidence),
         ("phydrax.meshing", MixedCellContentTransfer),
         ("phydrax.meshing", MeshAdaptationResult),
+        ("phydrax.meshing", HPAdaptationEvidence),
         ("phydrax.meshing", MeshAdaptationRoute),
         ("phydrax.meshing", MixedForestRoot),
         ("phydrax.meshing", MixedSibling),
@@ -1214,6 +1423,7 @@ def _register_model_archive_types() -> None:
         ),
         ("phydrax.discretization.finite_volume", UnstructuredRemapReport),
         ("phydrax.meshing", PeriodicQuotientHistory),
+        ("phydrax.meshing", PeriodicRefinementEdgeLock),
         ("phydrax.meshing.internal", OwnerLocalPeriodicAdaptiveResult),
         ("phydrax.meshing.internal", OwnerLocalPeriodicCellMetadata),
         ("phydrax.meshing.internal", OwnerLocalPeriodicSizeEvidence),
@@ -1542,6 +1752,11 @@ def restore_model_archive_value(
         SparseCommutingEvidence,
         SparseTransferEntryEvidence,
     )
+    from ..discretization.fem._hp import FiniteElementHPLineage, FiniteElementHPTopology
+    from ..discretization.fem._hp_runtime import (
+        FiniteElementHPGeometry,
+        FiniteElementHPRefinementResult,
+    )
     from ..equations._finite_element_material import (
         MaterialCheckpointPayload,
         MaterialSiteId,
@@ -1640,7 +1855,11 @@ def restore_model_archive_value(
     from ..sparse._linear import SparseCoordinateOperator
     from ..sparse._relation import EdgeRelation
     from ..units._unit import UnitDefinition
-    from ._adaptation import MarkedMeshAdaptation, MeshAdaptationResult
+    from ._adaptation import (
+        HPAdaptationEvidence,
+        MarkedMeshAdaptation,
+        MeshAdaptationResult,
+    )
     from ._controls import (
         BlockInterfaceControl,
         LayerSchedule,
@@ -1655,7 +1874,7 @@ def restore_model_archive_value(
         MixedLayerColumns,
     )
     from ._motion_source import NativePlanarMotionSource
-    from ._periodic import PeriodicQuotientHistory
+    from ._periodic import PeriodicQuotientHistory, PeriodicRefinementEdgeLock
     from ._plc_source import PiecewiseLinearComplex
     from ._polyhedral_generation import NativePolyhedralSchedule
     from ._result import CellMeshingResult
@@ -1851,6 +2070,8 @@ def restore_model_archive_value(
 
     def restore(item: Any, /) -> Any:
         nonlocal in_composition
+        if type(item) is FiniteElementHPEpochArchiveRecipe:
+            return _restore_hp_epoch_archive_recipe(item, restore)
         if type(item) in (
             LayerCoreAcceptedResultArchiveRecipe,
             LayerCoreAcceptedAdaptationArchiveRecipe,
@@ -3171,6 +3392,8 @@ def restore_model_archive_value(
             if columns.columns_id != item.columns_id:
                 raise ValueError("Stored mixed layer columns identity changed.")
             return columns
+        if type(item) is PeriodicRefinementEdgeLock:
+            raise ValueError("A periodic edge lock requires its source mesh owner.")
         if type(item) is PeriodicQuotientHistory:
             history = PeriodicQuotientHistory(
                 item.identification_id,
@@ -3188,6 +3411,46 @@ def restore_model_archive_value(
             ):
                 raise ValueError("Stored periodic quotient history changed.")
             return history
+        if type(item) in (FiniteElementHPGeometry, FiniteElementHPRefinementResult):
+            raise ValueError("HP geometry and refinement require their source owner.")
+        if type(item) is HPAdaptationEvidence:
+            raise ValueError("HP adaptation evidence requires its result endpoints.")
+        if type(item) is FiniteElementHPTopology:
+            rebuilt = FiniteElementHPTopology(
+                item.cell_kind,
+                item.topology_id,
+                item.cell_global_ids,
+                item.allocated,
+                item.active,
+                item.cell_degrees,
+                root_cell_ids=item.root_cell_ids,
+                path_codes=item.path_codes,
+                levels=item.levels,
+                parent_slots=item.parent_slots,
+                child_slots=item.child_slots,
+                child_valid=item.child_valid,
+            )
+            if not same_content(rebuilt, item):
+                raise ValueError("Stored hp topology differs from its constructor.")
+            return rebuilt
+        if type(item) is FiniteElementHPLineage:
+            codes = np.asarray(item.relation_codes)
+            if codes.ndim != 1 or np.any((codes < 0) | (codes > 2)):
+                raise ValueError("Stored hp lineage relation codes are invalid.")
+            names = ("unchanged", "refinement", "coarsening")
+            rebuilt = FiniteElementHPLineage(
+                item.source_topology_id,
+                item.target_topology_id,
+                item.source_capacity,
+                item.target_capacity,
+                item.source_slots,
+                item.target_slots,
+                tuple(names[int(code)] for code in codes),
+                valid=item.valid,
+            )
+            if not same_content(rebuilt, item):
+                raise ValueError("Stored hp lineage differs from its constructor.")
+            return rebuilt
         if type(item) is MixedAdaptationHierarchy:
             hierarchy = MixedAdaptationHierarchy(
                 item.siblings,
@@ -3209,16 +3472,17 @@ def restore_model_archive_value(
         if type(item) is MarkedMeshAdaptation:
             if item.periodic_edge_lock is not None:
                 raise ValueError("Periodic edge locks require their own archive owner.")
-            if (
-                item.hierarchy is not None
-                and type(item.hierarchy) is not MixedAdaptationHierarchy
+            if item.hierarchy is not None and type(item.hierarchy) not in (
+                MixedAdaptationHierarchy,
+                FiniteElementHPEpochArchiveRecipe,
             ):
-                raise ValueError("Stored marked request requires a mixed hierarchy.")
+                raise ValueError("Stored marked request has an unsupported hierarchy.")
             request = MarkedMeshAdaptation(
                 item.refine_cell_ids,
                 item.coarsen_cell_ids,
                 hierarchy=restore(item.hierarchy),
                 layer_columns=restore(item.layer_columns),
+                inherited_cell_markers=item.inherited_cell_markers,
             )
             if request.request_id != item.request_id:
                 raise ValueError("Stored marked adaptation request changed.")
@@ -5357,6 +5621,19 @@ def restore_layer_core_accepted_result(
     return result
 
 
+def _require_layer_endpoint_coordinate_origin(
+    geometry: Any, root: Any | None, source_geometry: Any | None, /
+) -> None:
+    """Check a retained bank against an actual root or transition source, if bound."""
+    from ._mixed_adaptation import _require_retained_bank_origin, _RetainedCoordinateBank
+
+    if type(geometry.source_map) is not _RetainedCoordinateBank:
+        return
+    origin = root.geometry if root is not None else source_geometry
+    if origin is not None:
+        _require_retained_bank_origin(origin, geometry)
+
+
 def _restore_layer_core_accepted_result(
     recipe: LayerCoreAcceptedResultArchiveRecipe,
     source: Any,
@@ -5366,6 +5643,7 @@ def _restore_layer_core_accepted_result(
     *,
     computed_embedding_out: list[Any] | None = None,
     validated_chart_parent_embedding: Any | None = None,
+    source_geometry: Any | None = None,
 ) -> tuple[Any, Any | None]:
     """Restore an endpoint, optionally using this operation's exact root proof."""
     from ..discretization._cell_mesh import CellMesh
@@ -5378,7 +5656,6 @@ def _restore_layer_core_accepted_result(
     from ._layer_core_association_transfer import NativeLayerCoreAssociationTransfer
     from ._layer_core_carrier_witness import NativeLayerCoreCarrierWitness
     from ._layer_curving_records import LayerCurvingSourceEvidence
-    from ._mixed_adaptation import _require_retained_bank_origin, _RetainedCoordinateBank
     from ._result import CellMeshingResult
     from .providers._native_sources import NativeLayerCoreSource
 
@@ -5492,12 +5769,7 @@ def _restore_layer_core_accepted_result(
         _computed_embedding_out=computed_embedding_out,
         _validated_chart_parent_embedding=validated_chart_parent_embedding,
     )
-    if type(result.geometry.source_map) is _RetainedCoordinateBank:
-        if root is None:
-            raise ValueError(
-                "Retained coordinate provenance requires its actual layer root."
-            )
-        _require_retained_bank_origin(root.geometry, result.geometry)
+    _require_layer_endpoint_coordinate_origin(result.geometry, root, source_geometry)
     if root is not None and source.mapped_domain is not None:
         # The final result constructor has already replayed all mapped source
         # associations. Keep the external source/root binding checks here.
@@ -5855,6 +6127,8 @@ def _restore_layer_core_accepted_lifecycle(
         None,
         computed_embedding_out=parent_embeddings,
     )
+    if initial.result_id != adaptation_recipe.source_result_id:
+        raise ValueError("Stored mixed adaptation names a different source endpoint.")
     operation_specification = (
         specification if computed_root is None else computed_root.specification
     )
@@ -5880,6 +6154,7 @@ def _restore_layer_core_accepted_lifecycle(
         operation_specification,
         computed_root,
         validated_chart_parent_embedding=parent_embedding,
+        source_geometry=initial.geometry,
     )
     if computed_root is not None and target_root is not computed_root:
         raise ValueError("Layer endpoints did not retain the same computed root.")

@@ -56,6 +56,7 @@ from ..geometry.brep._patches import RevolutionSurface, SpherePatch
 from ..geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from ._association import GeometryAssociation
 from ._local_metric import (
+    _chart_lift_exact,
     _Counts,
     _edge_table,
     _exact_periodic_metric,
@@ -1131,10 +1132,6 @@ def _implicit_cell_charts(
                 )
                 lifted[vertex][axis] -= turns * period
             values = [lifted[vertex][axis] for vertex in regular]
-            if max(values) - min(values) >= period / 2:
-                raise ValueError(
-                    "A source cell spans half a chart period, so its lattice lift is ambiguous."
-                )
             base = math.floor(min(values) / period)
             for vertex in regular:
                 lifted[vertex][axis] -= base * period
@@ -1145,6 +1142,14 @@ def _implicit_cell_charts(
             else (lifted[int(vertex)][0], lifted[int(vertex)][1])
             for vertex in cell
         )
+        if not _chart_lift_exact(
+            chart,
+            tuple(collapsed_rows[int(vertex)] for vertex in cell),
+            tuple((axis, period) for axis in periodic_axes),
+        ):
+            raise ValueError(
+                "A source cell spans half a chart period, so its lattice lift is ambiguous."
+            )
         charts.append((chart[0], chart[1], chart[2]))
     return tuple(charts), collapsed
 
@@ -2163,6 +2168,20 @@ def _physical_edit(
         if len(chart_points) != 3:
             raise ValueError("Surface metric target cells must remain triangles.")
         chart: _ExactTriangle = (chart_points[0], chart_points[1], chart_points[2])
+        if global_chart and not _chart_lift_exact(
+            chart,
+            tuple(
+                bool(prepared.collapsed_source_vertices[source_row])
+                if (source_row := old_id_to_source_row.get(int(target_ids[int(vertex)])))
+                is not None
+                else False
+                for vertex in cell
+            ),
+            tuple(zip(prepared.periodic_axes, prepared.periods, strict=True)),
+        ):
+            raise ValueError(
+                "A published implicit surface cell has an ambiguous chart lift."
+            )
         area = _chart_area(chart)
         if area == 0 or (1 if area > 0 else -1) != 1:
             raise ValueError("A UV operation produced a nonpositive chart triangle.")
@@ -2621,6 +2640,11 @@ def execute_surface_metric_adaptation(
         # points take the exact pullback rather than chart-linear interpolation.
         metric_field=_pullback_field(source) if np.any(collapsed) else None,
         exact_source_points=source.work_vertex_charts,
+        chart_lift=(
+            tuple(zip(source.periodic_axes, source.periods, strict=True))
+            if isinstance(source.source_charts, _ImplicitSurfaceChartBank)
+            else None
+        ),
     )
     # Brent checkpoints retain one numerical publication state. A cycle stops at
     # executed chart/tensor resolution; it proves neither exact-source equality

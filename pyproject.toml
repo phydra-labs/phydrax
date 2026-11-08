@@ -37,7 +37,6 @@ license-files = ["LICENSE", "LICENSES/*", "NOTICE"]
 
 dependencies = [
     "blackjax>=1.6.2,<2",
-    "cadquery-ocp-novtk>=8.0.1.0.0,<9",
     "diffrax>=0.7.2,<0.8",
     "equinox>=0.13.8,<0.14",
     "jax>=0.12.0,<0.13",
@@ -58,6 +57,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+cad-occt = [
+  "cadquery-ocp-novtk>=8.0.1.0.0,<9",
+]
 geophysical-data = [
     "xarray>=2026.7.0,<2027",
     "zarr>=3.4.0,<4",
@@ -229,6 +231,7 @@ meshing-manifold = [
   "manifold3d>=3.5.4,<4",
 ]
 meshing-gmsh = [
+  "cadquery-ocp-novtk>=8.0.1.0.0,<9",
   "gmsh>=4.15.2,<5",
 ]
 meshing-ftetwild = [

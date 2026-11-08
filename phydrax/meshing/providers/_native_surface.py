@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import math
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from fractions import Fraction
@@ -2324,6 +2324,62 @@ def _chart_point_row(
     return row
 
 
+def _conform_chart_edges(
+    points: list[_ChartUV], triangles: list[tuple[int, int, int]], /
+) -> list[tuple[int, int, int]]:
+    """Insert exact chart vertices on every incident edge after root clipping."""
+    used = {row for triangle in triangles for row in triangle}
+    ordered = tuple(sorted((points[row][axis], row) for row in used) for axis in (0, 1))
+    coordinates = tuple(tuple(item[0] for item in bank) for bank in ordered)
+    result: list[tuple[int, int, int]] = []
+    for triangle in triangles:
+        children = [triangle]
+        for first, last in (
+            (triangle[0], triangle[1]),
+            (triangle[1], triangle[2]),
+            (triangle[2], triangle[0]),
+        ):
+            start, end = points[first], points[last]
+            ranges = tuple(
+                (
+                    bisect_right(coordinates[axis], min(start[axis], end[axis])),
+                    bisect_left(coordinates[axis], max(start[axis], end[axis])),
+                )
+                if start[axis] != end[axis]
+                else (
+                    bisect_left(coordinates[axis], start[axis]),
+                    bisect_right(coordinates[axis], start[axis]),
+                )
+                for axis in (0, 1)
+            )
+            axis = min(range(2), key=lambda index: ranges[index][1] - ranges[index][0])
+            lower, upper = ranges[axis]
+            cuts = sorted(
+                (fraction, row)
+                for _, row in ordered[axis][lower:upper]
+                if row not in (first, last)
+                and (fraction := _segment_fraction(points[row], start, end)) is not None
+            )
+            if not cuts:
+                continue
+            for index, child in enumerate(children):
+                if first in child and last in child:
+                    break
+            else:
+                raise RuntimeError(
+                    "Chart edge disappeared while conforming source cells."
+                )
+            opposite = next(row for row in child if row not in (first, last))
+            chain = (first, *(row for _, row in cuts), last)
+            replacements = [
+                (chain[index], chain[index + 1], opposite)
+                for index in range(len(chain) - 1)
+            ]
+            children[index : index + 1] = replacements
+        result.extend(children)
+    return result
+
+
 def _split_chart_at_source_cells(
     chart: _ChartMesh,
     root_charts: tuple[_SurfaceRootChart, ...],
@@ -2397,7 +2453,7 @@ def _split_chart_at_source_cells(
                 category=MeshingFailureCategory.INVALID_SOURCE,
                 entity_ids=(int(chart.patch),),
             )
-    chart.triangles = children
+    chart.triangles = _conform_chart_edges(chart.points, children)
     chart.root_cells = root_charts
 
 

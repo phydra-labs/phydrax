@@ -1084,8 +1084,16 @@ def _replace_association_support(
         resolved=table.resolved,
         ambiguous=table.ambiguous,
         exact=table.exact if exact is None else exact,
-        source_dimensions=table.source_dimensions,
-        source_indices=table.source_indices,
+        source_dimensions=(
+            table.source_dimensions
+            if np.any(np.asarray(table.source_dimensions) >= 0)
+            else None
+        ),
+        source_indices=(
+            table.source_indices
+            if np.any(np.asarray(table.source_indices) >= 0)
+            else None
+        ),
         source_roles=table.source_roles,
         source_occurrence_paths=table.source_occurrence_paths,
         source_region_sides=table.source_region_sides,
@@ -1984,6 +1992,16 @@ def test_native_layer_core_refuses_stale_forged_and_conflicting_sources(
         resolved=original.resolved,
         ambiguous=original.ambiguous,
         exact=original.exact,
+        source_dimensions=(
+            original.source_dimensions
+            if np.any(np.asarray(original.source_dimensions) >= 0)
+            else None
+        ),
+        source_indices=(
+            original.source_indices
+            if np.any(np.asarray(original.source_indices) >= 0)
+            else None
+        ),
         source_roles=original.source_roles,
         source_occurrence_paths=original.source_occurrence_paths,
         source_region_sides=tuple(sides),
@@ -1994,6 +2012,10 @@ def test_native_layer_core_refuses_stale_forged_and_conflicting_sources(
         source_boundary_witness_id=original.source_boundary_witness_id,
         parameters=original.parameters,
         orientations=original.orientations,
+        parent_dimensions=original.parent_dimensions,
+        parent_ids=original.parent_ids,
+        parent_association_id=original.parent_association_id,
+        provenance=original.provenance,
     )
     conflicting_result = eqx.tree_at(
         lambda value: value.associations, result, (*result.associations, conflicting)

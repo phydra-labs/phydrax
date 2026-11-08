@@ -127,6 +127,10 @@ refused by gradient optimizers and trained explicitly with a
 distribution-evolution optimizer or calibrated with
 `phydrax.uq.posterior_problem_from_solver_objective` and `fit_eki`.
 
+With `case_batch_size`, bounded batches, including a partial final batch, retain
+the same per-case acceptance and parameter-gradient semantics under JAX
+transformations. The case pullback is recomputed during the backward pass.
+
 Coupled spatial problems train the same way. A learned conductivity or other
 physical input is bound as a `ParameterBinding` value of the prepared coupled
 problem and scored through its observation bindings; see
