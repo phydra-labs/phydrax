@@ -510,7 +510,7 @@ def _same_source(
 def _recorded_projection_policy(
     volume: PeriodicImplicitVolume, source: TrigonometricLevelSet, /
 ) -> ImplicitProjectionPolicy:
-    """Field root tolerance proved by the fill's recorded discovery evidence.
+    """Field root tolerance proved by the fill's recorded boundary certificate.
 
     Every contour vertex lies within reduced distance ``root_error`` of a root,
     and the reduced-coordinate gradient is bounded by ``table.gradient_bound``.
@@ -520,7 +520,7 @@ def _recorded_projection_policy(
     """
     default = ImplicitProjectionPolicy()
     bound = float(
-        np.nextafter(source.table.gradient_bound * volume.surface.root_error, np.inf)
+        np.nextafter(source.table.gradient_bound * volume.root_error, np.inf)
     )
     if source.region == "sheet":
         assert source.half_width is not None

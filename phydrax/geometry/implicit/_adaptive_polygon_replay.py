@@ -228,7 +228,7 @@ def replay_polygon(
     vertices, keys, edges = Vertices(), VertexKeys(), EdgeRows()
     face_edge_order = np.asarray((0, 1, 2, 3, 4, 5, 6, 7, 9, 8, 10, 11))
     resolution_rows: list[np.ndarray] = []
-    hug_witnesses: dict[int, tuple[np.ndarray, float]] = {}
+    classified_witnesses: dict[int, tuple[np.ndarray, float]] = {}
     try:
         for start in range(0, count, _CHUNK):
             stop = min(start + _CHUNK, count)
@@ -263,10 +263,14 @@ def replay_polygon(
                 if len(resolved):
                     rows = start + candidates[resolved]
                     resolution_rows.append(np.column_stack((rows, resolutions[resolved])))
-                    for row, point, error in zip(
-                        rows.tolist(), points[resolved], errors[resolved], strict=True
-                    ):
-                        hug_witnesses[row] = (point, float(error))
+                witnessed = np.flatnonzero(np.isfinite(errors))
+                for row, point, error in zip(
+                    (start + candidates[witnessed]).tolist(),
+                    points[witnessed],
+                    errors[witnessed],
+                    strict=True,
+                ):
+                    classified_witnesses[row] = (point, float(error))
             boundary_mask = np.any(
                 (s.cell_boxes[start:stop, 0] == s.domain[0])
                 | (s.cell_boxes[start:stop, 1] == s.domain[1]),
@@ -485,16 +489,19 @@ def replay_polygon(
         if resolution_rows
         else np.empty((0, 8), dtype=np.int64)
     )
-    if not np.array_equal(replayed_resolutions, s.tangency_resolutions):
+    if not np.array_equal(replayed_resolutions, s.local_resolutions):
         return False
     if np.asarray(surface.feature_edges).shape != (0, 2):
         return False
     del root_used, amb_keys, amb_records, amb_signs
     vertex_by_root = root_by_vertex = None
-    # A resolved tangency cell's witness is the root found inside it.
+    # A cell without a crossing edge (proved free of the zero set, or resolved
+    # locally) carries the witness its classification found.
     witness_cells = np.flatnonzero(witness_root >= 0)
-    if len(replayed_resolutions):
-        witness_cells = np.union1d(witness_cells, replayed_resolutions[:, 0])
+    if classified_witnesses:
+        witness_cells = np.union1d(
+            witness_cells, np.fromiter(classified_witnesses, dtype=np.int64)
+        )
     if len(witness_cells):
         witness_cells = witness_cells[
             np.lexsort(np.asarray(s.cell_indices)[witness_cells, 1:].T[::-1])
@@ -515,7 +522,7 @@ def replay_polygon(
         expected_points[rooted] = s.root_points[roots[rooted]]
         expected_errors[rooted] = s.root_errors[roots[rooted]]
         for local in np.flatnonzero(~rooted).tolist():
-            expected_points[local], expected_errors[local] = hug_witnesses[
+            expected_points[local], expected_errors[local] = classified_witnesses[
                 int(rows[local])
             ]
         if (

@@ -350,3 +350,77 @@ def test_adaptive_cubature_domain_targets_require_declared_domain_functions() ->
         phx.integration.integrate(
             undeclared, phx.integration.over(domain.component()), plan
         )
+
+
+def _bitwise_estimate(estimate: Any) -> tuple[bytes, ...]:
+    return tuple(
+        np.asarray(value).tobytes()
+        for value in (
+            estimate.value,
+            estimate.error_estimate,
+            estimate.status,
+            estimate.num_evaluations,
+            estimate.diagnostics.partition.count,
+        )
+    )
+
+
+def test_adaptive_cubature_is_bitwise_independent_of_cell_capacity() -> None:
+    # Forty 1/32-wide strips integrate their constants exactly: strip estimates
+    # 1, 2**-53 and thirty-eight 2**-107 tails. One by one each tail vanishes
+    # and 1 + 2**-53 ties to 1; a 32-cell block of tails sums exactly and
+    # survives, rounding up to 1 + 2**-52. The wide zero cell [0.25, 1] is too
+    # anisotropic, so one shape split leaves 42 active cells.
+    bins = np.zeros((128,), dtype=np.float64)
+    bins[0:2] = 16.0
+    bins[2:4] = 16.0 * 2.0**-53
+    bins[4:80] = 16.0 * 2.0**-107
+    table = jnp.asarray(bins)
+
+    def strips(points: Any) -> Any:
+        index = jnp.floor((points[:, 0] + 1.0) * 64.0).astype(jnp.int32)
+        return table[jnp.clip(index, 0, 127)][:, None]
+
+    def run(capacity: int) -> Any:
+        plan = phx.integration.AdaptiveCubaturePlan(
+            phx.integration.GenzMalikRule(2, 9),
+            absolute_tolerance=1e-12,
+            relative_tolerance=0.0,
+            max_cells=capacity,
+            breakpoints=(tuple(-1.0 + k / 32.0 for k in range(1, 41)), ()),
+            anisotropy=(1.0 / 32.0, 2.0),
+            collect_partition=True,
+            throw=False,
+        )
+        return phx.integration.adaptive_cubature_callable(
+            strips, plan, precision=phx.integration.IntegrationPrecisionPolicy()
+        )
+
+    reference = run(60)
+    assert reference.successful
+    assert int(reference.diagnostics.partition.count) == 42
+    assert np.asarray(reference.value).tobytes() == np.asarray([1.0]).tobytes()
+    for capacity in (64, 65, 70, 128):
+        assert _bitwise_estimate(run(capacity)) == _bitwise_estimate(reference), capacity
+
+    def kink(points: Any) -> Any:
+        return (jnp.abs(points[:, 0] - 0.1234) + points[:, 1] ** 2)[:, None]
+
+    small = []
+    for capacity in (8, 12):
+        plan = phx.integration.AdaptiveCubaturePlan(
+            phx.integration.GenzMalikRule(2, 9),
+            absolute_tolerance=1e-8,
+            relative_tolerance=0.0,
+            max_cells=capacity,
+            collect_partition=True,
+            throw=False,
+        )
+        small.append(
+            _bitwise_estimate(
+                phx.integration.adaptive_cubature_callable(
+                    kink, plan, precision=phx.integration.IntegrationPrecisionPolicy()
+                )
+            )
+        )
+    assert small[0] == small[1]

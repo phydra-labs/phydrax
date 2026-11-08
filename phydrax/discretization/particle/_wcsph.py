@@ -660,16 +660,19 @@ class PreparedWeaklyCompressibleSPHDynamics(StrictModule, NonTrainableState):
         )
 
     @staticmethod
-    def _angular_sum(position: Array, vector: Array, /) -> Array:
+    def _angular_sum(position: Array, vector: Array, active: Array, /) -> Array:
         dimension = position.shape[-1]
         if dimension == 1:
             return jnp.zeros((), dtype=position.dtype)
         if dimension == 2:
             return compensated_sum(
-                position[:, 0] * vector[:, 1] - position[:, 1] * vector[:, 0]
+                position[:, 0] * vector[:, 1] - position[:, 1] * vector[:, 0],
+                where=active,
             )
         if dimension == 3:
-            return compensated_sum(jnp.cross(position, vector), axis=0)
+            return compensated_sum(
+                jnp.cross(position, vector), axis=0, where=active[:, None]
+            )
         raise ValueError("Angular diagnostics support dimensions 1, 2, and 3.")
 
     def diagnostics(
@@ -692,54 +695,46 @@ class PreparedWeaklyCompressibleSPHDynamics(StrictModule, NonTrainableState):
         external_force = masses[:, None] * self.precision.certification(
             evaluation.external_acceleration
         )
-        kinetic_terms = jnp.where(
-            active,
-            0.5 * masses * jnp.sum(velocity * velocity, axis=-1),
-            0.0,
-        )
-        internal_terms = jnp.where(
-            active,
-            masses * self.material.specific_internal_energy(density),
-            0.0,
-        )
+        kinetic_terms = 0.5 * masses * jnp.sum(velocity * velocity, axis=-1)
+        internal_terms = masses * self.material.specific_internal_energy(density)
+        # Positions, velocities, and external accelerations are zeroed outside
+        # `active`; masking the logical particles keeps these reductions
+        # independent of particle capacity.
         pressure_kinetic_power = compensated_sum(
-            jnp.sum(velocity * pressure_force, axis=-1)
+            jnp.sum(velocity * pressure_force, axis=-1), where=active
         )
         if evaluation.density_rate is None:
             internal_energy_rate = compensated_sum(
-                jnp.sum(velocity * evaluation.pressure_gradient, axis=-1)
+                jnp.sum(velocity * evaluation.pressure_gradient, axis=-1),
+                where=active,
             )
         else:
             internal_energy_rate = compensated_sum(
-                jnp.where(
-                    active,
-                    masses * evaluation.pressure / density**2 * evaluation.density_rate,
-                    0.0,
-                )
+                masses * evaluation.pressure / density**2 * evaluation.density_rate,
+                where=active,
             )
         diffusion_energy_rate = (
             jnp.zeros((), dtype=density.dtype)
             if evaluation.density_diffusion is None
             else compensated_sum(
-                jnp.where(
-                    active,
-                    masses
-                    * evaluation.pressure
-                    / density**2
-                    * evaluation.density_diffusion.rate,
-                    0.0,
-                )
+                masses
+                * evaluation.pressure
+                / density**2
+                * evaluation.density_diffusion.rate,
+                where=active,
             )
         )
         pressure_internal_rate = internal_energy_rate - diffusion_energy_rate
-        external_power = compensated_sum(jnp.sum(velocity * external_force, axis=-1))
+        external_power = compensated_sum(
+            jnp.sum(velocity * external_force, axis=-1), where=active
+        )
         counts = jnp.zeros((self.particles.capacity,), dtype=jnp.int32)
         increments = evaluation.physical_pairs.astype(jnp.int32)
         pairs = evaluation.neighborhood.pair_relation
         counts = counts.at[pairs.left_indices].add(increments)
         counts = counts.at[pairs.right_indices].add(increments)
         density_mean = (
-            compensated_sum(jnp.where(active, density, 0.0)) / self.particles.active_count
+            compensated_sum(density, where=active) / self.particles.active_count
         )
         reference = jnp.asarray(self.material.reference_density, dtype=density.dtype)
         reference_error = jnp.max(jnp.where(active, jnp.abs(density - reference), 0.0))
@@ -760,14 +755,13 @@ class PreparedWeaklyCompressibleSPHDynamics(StrictModule, NonTrainableState):
                 jnp.where(active, counts, jnp.iinfo(jnp.int32).max)
             ),
             neighbor_count_maximum=jnp.max(jnp.where(active, counts, 0)),
-            total_mass=compensated_sum(jnp.where(active, masses, 0.0)),
-            linear_momentum=compensated_sum(
-                jnp.where(active[:, None], momentum, 0.0), axis=0
-            ),
-            angular_momentum=self._angular_sum(position, momentum),
-            kinetic_energy=compensated_sum(kinetic_terms),
-            internal_energy=compensated_sum(internal_terms),
-            total_energy=compensated_sum(kinetic_terms) + compensated_sum(internal_terms),
+            total_mass=compensated_sum(masses, where=active),
+            linear_momentum=compensated_sum(momentum, axis=0, where=active[:, None]),
+            angular_momentum=self._angular_sum(position, momentum, active),
+            kinetic_energy=compensated_sum(kinetic_terms, where=active),
+            internal_energy=compensated_sum(internal_terms, where=active),
+            total_energy=compensated_sum(kinetic_terms, where=active)
+            + compensated_sum(internal_terms, where=active),
             pressure_kinetic_power=pressure_kinetic_power,
             internal_energy_rate=internal_energy_rate,
             pressure_energy_balance_defect=pressure_balance,
@@ -787,13 +781,13 @@ class PreparedWeaklyCompressibleSPHDynamics(StrictModule, NonTrainableState):
             free_surface_ambiguity_count=jnp.zeros((), dtype=jnp.int32)
             if evaluation.free_surface is None
             else jnp.sum(evaluation.free_surface.ambiguous_mask.astype(jnp.int32)),
-            external_force=compensated_sum(external_force, axis=0),
+            external_force=compensated_sum(external_force, axis=0, where=active[:, None]),
             external_power=external_power,
             total_energy_rate=total_energy_rate,
             net_pressure_force=compensated_sum(pressure_force, axis=0),
             net_viscous_force=compensated_sum(viscous_force, axis=0),
             net_artificial_force=compensated_sum(artificial_force, axis=0),
-            net_viscous_torque=self._angular_sum(position, viscous_force),
+            net_viscous_torque=self._angular_sum(position, viscous_force, active),
             active_pairs=jnp.sum(evaluation.physical_pairs.astype(jnp.int32)),
             pair_count=evaluation.neighborhood.pair_count,
             maximum_cell_occupancy=evaluation.neighborhood.maximum_cell_occupancy,

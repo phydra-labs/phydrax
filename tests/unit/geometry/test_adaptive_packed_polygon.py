@@ -206,12 +206,17 @@ def test_packed_refusal_preserves_surface_order_and_singular_evidence() -> None:
     result = _polygon(leaves, 0.25)
     # The third leaf's corners share a sign and the plane is monotone in x, so
     # its minimum face x = 5/8 encloses positive values: proved free of the
-    # zero set, it is neither refused nor contoured.
+    # zero set, it is neither refused nor contoured. Its possible-zero box
+    # keeps a witness: its centre, with the distance to the plane x = 1/4
+    # bounded by the first opposite-sign probe, 4 cell widths away along -x.
     np.testing.assert_array_equal(result.unresolved_boxes, boxes[:2])
     np.testing.assert_array_equal(
         result.unresolved_issues, (int(AdaptiveImplicitBoxIssue.SINGULAR), represented)
     )
-    assert not len(result.witness_values)
+    np.testing.assert_array_equal(result.witness_boxes, boxes[2:])
+    np.testing.assert_array_equal(result.witness_values, [[0.6875, 0.3125, 0.3125]])
+    np.testing.assert_array_equal(result.witness_errors, [np.nextafter(0.5, np.inf)])
+    assert 0.6875 - 0.25 <= result.witness_errors[0]
     assert not len(result.scaffold_arrays["root_edge_ids"])
     assert result.mesh is None
 
@@ -522,7 +527,7 @@ def test_native_sphere_polygon_matches_legacy_identity_and_replay() -> None:
     # cyclic faces are bit-identical to the original capture. The sphere has no
     # lattice-face tangency, so its tangency resolution record is empty.
     arrays = dict(candidate.scaffold_arrays)
-    assert arrays.pop("tangency_resolutions").shape == (0, 8)
+    assert arrays.pop("local_resolutions").shape == (0, 8)
     arrays.update(
         mesh_faces=np.asarray(candidate.mesh.faces),
         mesh_vertices=np.asarray(candidate.mesh.vertices),

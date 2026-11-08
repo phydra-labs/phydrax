@@ -228,12 +228,14 @@ class RigidMPMContactPlan(StrictModule, NonTrainableState):
                 - jnp.sum(velocity_ * velocity_, axis=-1)
             )
         )
-        work = compensated_sum(jnp.where(active, kinetic_change, 0.0))
+        work = compensated_sum(kinetic_change, where=active)
         dissipation = compensated_sum(
-            jnp.where(active, tangential_impulse_magnitude * tangential_speed, 0.0)
+            tangential_impulse_magnitude * tangential_speed, where=active
         )
         total_impulse = compensated_sum(
-            impulse.reshape((-1, velocity_.shape[-1])), axis=0
+            impulse.reshape((-1, velocity_.shape[-1])),
+            axis=0,
+            where=active.reshape((-1, 1)),
         )
         approach_speed = jnp.maximum(-normal_speed, 0.0)
         step_limit = jnp.min(

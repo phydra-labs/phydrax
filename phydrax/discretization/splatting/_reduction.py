@@ -95,9 +95,20 @@ def _scatter_route_payload(
     return _reduce_routes(stencil, values, order, target_size, accumulation)
 
 
-def certified_sum(value: ArrayLike, real_dtype: str, /, *, axis: int) -> Array:
-    """Reduce one payload axis in certification precision with compensation."""
-    return compensated_sum(cast_stage(value, real_dtype), axis=axis)
+def certified_sum(
+    value: ArrayLike,
+    real_dtype: str,
+    /,
+    *,
+    axis: int,
+    where: ArrayLike | None = None,
+) -> Array:
+    """Reduce one payload axis in certification precision with compensation.
+
+    ``where`` selects the logical terms of a padded payload; see
+    ``compensated_sum``.
+    """
+    return compensated_sum(cast_stage(value, real_dtype), axis=axis, where=where)
 
 
 __all__ = ["cast_stage", "certified_sum", "deposit_routes", "stage_dtype"]

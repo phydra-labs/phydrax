@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import pickle
 from fractions import Fraction
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -65,12 +66,67 @@ def test_bank_take_and_replace_rows_preserve_sparse_entries() -> None:
     bank = ExactCoordinateBank.from_rows(rows)
     taken = bank.take(np.asarray((2, 1), dtype=np.int64))
     assert tuple(taken) == (rows[2], rows[1])
-    replacement = ExactCoordinateBank.from_rows(((Fraction(1, 7), Fraction(2), Fraction(0)),))
+    replacement = ExactCoordinateBank.from_rows(
+        ((Fraction(1, 7), Fraction(2), Fraction(0)),)
+    )
     replaced = bank.replace_rows(np.asarray((1,), dtype=np.int64), replacement)
     assert tuple(replaced) == (rows[0], replacement[0], rows[2])
     assert replaced == ExactCoordinateBank.from_rows((rows[0], replacement[0], rows[2]))
     with pytest.raises(IndexError):
         bank.take(np.asarray((3,), dtype=np.int64))
+
+
+def test_bank_model_recipe_is_its_row_recipe_and_restores_the_bank(
+    tmp_path: Path,
+) -> None:
+    from phydrax._model._structure import model_structure_recipe
+    from phydrax.discretization import CellBlock, CellGeometrySpec, CellMesh
+    from phydrax.discretization.fem import lagrange_element
+    from phydrax.meshing._curving import _exact_coordinate_bank_source_map
+    from phydrax.meshing._model_codec import (
+        MODEL_ARCHIVE_LIMITS,
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+
+    rows = (
+        (Fraction(0), Fraction(0), Fraction(0)),
+        (Fraction(1, 3), Fraction(0), Fraction(0)),
+        (Fraction(0), RadicalElement.sqrt(Fraction(2)) / 4, Fraction(0)),
+        (Fraction(0), Fraction(0), Fraction(3, 8)),
+    )
+    bank = ExactCoordinateBank.from_rows(rows)
+    # The portable form is the former tuple field's recipe, byte for byte.
+    assert model_structure_recipe(bank) == model_structure_recipe(rows)
+    execution = np.asarray(
+        [[float(value) for value in row] for row in rows], dtype=np.float64
+    )
+    mesh = CellMesh(
+        execution,
+        (CellBlock("cells", "tetrahedron", np.asarray(((0, 1, 2, 3),), dtype=np.int64)),),
+    )
+    geometry = CellGeometrySpec(
+        {"cells": lagrange_element("tetrahedron", 1)},
+        {"cells": np.arange(4, dtype=np.int64)[None, :]},
+        execution,
+        source_map=_exact_coordinate_bank_source_map(
+            mesh, "source", "revision", ("bank",), rows, execution
+        ),
+        source_mesh=mesh,
+    )
+    assert geometry.exact_coordinate_bank == bank
+    path = write_model_artifact(
+        tmp_path / "geometry.phx", geometry, limits=MODEL_ARCHIVE_LIMITS
+    )
+    restored = read_model_artifact(
+        path,
+        expected_type=CellGeometrySpec,
+        restore=restore_model_archive_value,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    assert type(restored.exact_coordinate_bank) is ExactCoordinateBank
+    assert restored.exact_coordinate_bank == bank
 
 
 def test_bank_binary64_matches_float_of_every_entry() -> None:
@@ -92,7 +148,9 @@ def test_bank_binary64_matches_float_of_every_entry() -> None:
 
 
 def test_dyadic_helpers_return_canonical_odd_significands() -> None:
-    values = np.asarray([[0.0, -0.0, 0.375, -6.0, 2.0**-1074, 2.0**1000]], dtype=np.float64)
+    values = np.asarray(
+        [[0.0, -0.0, 0.375, -6.0, 2.0**-1074, 2.0**1000]], dtype=np.float64
+    )
     significands, exponents = binary64_dyadic_entries(values)
     assert significands.tolist() == [[0, 0, 3, -3, 1, 1]]
     assert exponents.tolist() == [[0, 0, -3, 1, -1074, 1000]]

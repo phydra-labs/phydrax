@@ -204,6 +204,7 @@ class _FieldEnclosures:
     error: float | None
     _values: PreparedIntervalFunction | None
     _gradients: PreparedIntervalFunction | None
+    _branches: tuple[_BranchNode | None] | None
 
     def __init__(
         self, geometry: CompiledGeometry, selector: ImplicitDiscoveryEnclosure
@@ -214,6 +215,7 @@ class _FieldEnclosures:
         self.value_rigorous = selector != "sampled"
         self.gradient_rigorous = selector == "interval"
         self.continuity_rigorous = selector != "sampled"
+        self._branches = None
         self.lipschitz = self.certificate.lipschitz_upper_bound
         self.error = self.certificate.evaluation_error
         if selector == "interval":
@@ -242,6 +244,21 @@ class _FieldEnclosures:
             self._values = self._gradients = None
         else:
             self._values = self._gradients = None
+
+    def branch_tree(self) -> _BranchNode | None:
+        """The field's sharp min/max structure (`_branch_node`), prepared once.
+
+        ``None`` without interval programs, or for a field that is not a
+        sharp CSG combination of interval-evaluable children.
+        """
+        if self._branches is None:
+            node = None
+            if self.selector == "interval" and self.gradient_rigorous:
+                node = _branch_node(self.geometry.kernel, self.geometry.state)
+                if node is not None and node.operation == "leaf":
+                    node = None
+            self._branches = (node,)
+        return self._branches[0]
 
     def field_values(self, points: np.ndarray) -> np.ndarray:
         values = np.asarray(
@@ -805,11 +822,14 @@ class AdaptiveImplicitSurfaceEvidence(StrictModule, NonTrainableState):
 class AdaptiveImplicitScaffold(StrictModule, NonTrainableState):
     """Retained boundary-band P1 scaffold and source-root ancestry.
 
-    ``tangency_resolutions`` rows ``(cell row, group lower index, group upper
-    index, graph axis)`` record each lattice-face tangency cell decided locally
-    (`_resolve_tangencies`): its target-level cell group ``[lower, upper)``
-    and the gradient component proved strict on it. Such a cell has no issue
-    and no contour of its own.
+    ``local_resolutions`` rows ``(cell row, group lower index, group upper
+    index, axis)`` record each constant-sign band cell decided locally. A
+    lattice-face tangency (`_resolve_tangencies`) names its target-level cell
+    group ``[lower, upper)``, at least two cells, and the gradient component
+    proved strict on it. A sharp CSG crease cell (`_resolve_creases`) names
+    itself, ``[index, index + 1)``, and the axis along which its branches
+    prove the field strictly monotone. Such a cell has no issue and no
+    contour of its own.
     """
 
     domain: np.ndarray
@@ -836,7 +856,7 @@ class AdaptiveImplicitScaffold(StrictModule, NonTrainableState):
     root_issues: np.ndarray
     root_endpoint_value_lower: np.ndarray
     root_endpoint_value_upper: np.ndarray
-    tangency_resolutions: np.ndarray
+    local_resolutions: np.ndarray
     triangle_cell_rows: np.ndarray
     triangle_root_edge_rows: np.ndarray
     target_level: int = eqx.field(static=True)
@@ -868,7 +888,7 @@ class AdaptiveImplicitScaffold(StrictModule, NonTrainableState):
         root_issues: np.ndarray,
         root_endpoint_value_lower: np.ndarray,
         root_endpoint_value_upper: np.ndarray,
-        tangency_resolutions: np.ndarray,
+        local_resolutions: np.ndarray,
         triangle_cell_rows: np.ndarray,
         triangle_root_edge_rows: np.ndarray,
         target_level: int,
@@ -929,8 +949,8 @@ class AdaptiveImplicitScaffold(StrictModule, NonTrainableState):
             "root_endpoint_value_upper": _discovery_array(
                 root_endpoint_value_upper, np.float64, (-1, 2), _ownership
             ),
-            "tangency_resolutions": _discovery_array(
-                tangency_resolutions, np.int64, (-1, 2 * _DIMENSION + 2), _ownership
+            "local_resolutions": _discovery_array(
+                local_resolutions, np.int64, (-1, 2 * _DIMENSION + 2), _ownership
             ),
             "triangle_cell_rows": _discovery_array(
                 triangle_cell_rows, np.int64, (-1,), _ownership
@@ -968,13 +988,13 @@ class AdaptiveImplicitScaffold(StrictModule, NonTrainableState):
             or arrays["triangle_cell_rows"].shape != (triangle_count,)
             or arrays["triangle_root_edge_rows"].shape != (triangle_count, 3)
             or (
-                arrays["tangency_resolutions"].size
+                arrays["local_resolutions"].size
                 and (
-                    np.any(np.diff(arrays["tangency_resolutions"][:, 0]) <= 0)
-                    or np.min(arrays["tangency_resolutions"][:, 0]) < 0
-                    or np.max(arrays["tangency_resolutions"][:, 0]) >= cell_count
+                    np.any(np.diff(arrays["local_resolutions"][:, 0]) <= 0)
+                    or np.min(arrays["local_resolutions"][:, 0]) < 0
+                    or np.max(arrays["local_resolutions"][:, 0]) >= cell_count
                     or np.any(
-                        arrays["cell_issues"][arrays["tangency_resolutions"][:, 0]] != 0
+                        arrays["cell_issues"][arrays["local_resolutions"][:, 0]] != 0
                     )
                 )
             )
@@ -2263,18 +2283,7 @@ def _resolve_tangencies(
         return result, witness_points, witness_errors
     for row in range(count):
         cell = tuple(int(value) for value in indices[row])
-        corner, far = (
-            np.asarray(
-                [
-                    _grid_coordinate(
-                        cell[axis] + offset, level, domain[0, axis], domain[1, axis]
-                    )
-                    for axis in range(_DIMENSION)
-                ],
-                dtype=np.float64,
-            )
-            for offset in (0, 1)
-        )
+        corner, far = _lattice_cell_corners(domain, level, cell)
         witness = _tangency_witness(
             bounds,
             corner,
@@ -2308,6 +2317,319 @@ def _resolve_tangencies(
     return result, witness_points, witness_errors
 
 
+@dataclass(frozen=True, slots=True)
+class _BranchNode:
+    """One node of a sharp CSG field: a leaf field, or a min/max of signed children.
+
+    A ``min`` (sharp union) or ``max`` (sharp intersection, or a difference
+    with its subtrahends negated) node's value is that extremum of
+    ``signs[k]`` times child ``k``'s value. A ``leaf`` carries interval
+    programs of its own value and gradient.
+    """
+
+    operation: str
+    signs: tuple[int, ...]
+    children: tuple[_BranchNode, ...]
+    values: PreparedIntervalFunction | None
+    gradients: PreparedIntervalFunction | None
+
+
+def _ledger_crease_cells(
+    bounds: _FieldEnclosures, lower: np.ndarray, upper: np.ndarray, /
+) -> np.ndarray:
+    """Boxes of a non-smooth field that its branch ledger does not prove smooth.
+
+    One evaluation of the discovery's interval value program decides each
+    box (`PreparedIntervalFunction.evaluate_branches`). Only such a box may
+    lack a strict regular-gradient enclosure in a root scaffold: there the
+    branches of a sharp min or max may switch, and its faces take the root
+    witness bound. A box of a smooth field, or one the ledger proves smooth,
+    is never a crease box.
+    """
+    count = int(np.asarray(lower).shape[0])
+    values = bounds._values
+    if (
+        not count
+        or bounds.certificate.regularity is FieldRegularity.SMOOTH
+        or bounds.selector != "interval"
+        or values is None
+    ):
+        return np.zeros(count, dtype=np.bool_)
+    _, _, smooth, _ = values.evaluate_branches(
+        np.asarray(lower, dtype=np.float64), np.asarray(upper, dtype=np.float64)
+    )
+    return ~np.asarray(smooth, dtype=np.bool_).reshape((-1,))
+
+
+def _branch_node(kernel: object, state: object, /) -> _BranchNode | None:
+    """The sharp min/max tree of a kernel's field, or ``None`` without programs."""
+    from ..analytic._expressions import _UnionKernel
+    from ..analytic._operations import _SharpCSGKernel
+
+    if isinstance(kernel, (_UnionKernel, _SharpCSGKernel)):
+        count = len(kernel.children)
+        if isinstance(kernel, _UnionKernel):
+            operation, signs = "min", (1,) * count
+        elif kernel.operation == "intersection":
+            operation, signs = "max", (1,) * count
+        else:
+            operation, signs = "max", (1, *((-1,) * (count - 1)))
+        children = tuple(_branch_node(child, state) for child in kernel.children)
+        if any(child is None for child in children):
+            return None
+        return _BranchNode(
+            operation,
+            signs,
+            tuple(child for child in children if child is not None),
+            None,
+            None,
+        )
+    boundary_field = getattr(kernel, "boundary_field", None)
+    if boundary_field is None:
+        return None
+
+    def value_function(points: jax.Array) -> jax.Array:
+        return boundary_field(state, points)
+
+    def gradient_function(points: jax.Array) -> jax.Array:
+        def scalar(point: jax.Array) -> jax.Array:
+            return boundary_field(state, point[None, :])[0]
+
+        return jax.grad(scalar)(points)
+
+    try:
+        return _BranchNode(
+            "leaf",
+            (),
+            (),
+            prepare_interval_function(value_function, _DIMENSION),
+            prepare_interval_function(gradient_function, _DIMENSION),
+        )
+    except IntervalExtensionError:
+        return None
+
+
+def _branch_bounds(
+    node: _BranchNode, lower: np.ndarray, upper: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Value enclosure and proved strict monotonicity of a branch tree per box.
+
+    Returns value lower and upper bounds and, per box and axis, ``+1`` or
+    ``-1`` where the field is proved strictly increasing or decreasing along
+    that axis on the box (``0`` otherwise). A leaf is monotone where its
+    interval program's branch ledger proves it smooth on the box, so its
+    gradient program encloses the true gradient there, and that enclosure
+    has the sign. A min or max node drops children proved never extremal on
+    the box (a child of a min whose lower bound exceeds another's upper
+    bound) and is monotone along an axis where every remaining signed child
+    is, in one direction: a min or max of strictly increasing functions is
+    strictly increasing, with no derivative of the extremum itself.
+    """
+    if node.operation == "leaf":
+        values, gradients = node.values, node.gradients
+        if values is None or gradients is None:
+            raise RuntimeError("A branch leaf has no interval programs.")
+        value_lower, value_upper, smooth, _ = values.evaluate_branches(lower, upper)
+        slope_lower, slope_upper = _evaluate_interval_boxes(gradients, lower, upper)
+        smooth = np.asarray(smooth, dtype=np.bool_)[:, None]
+        return (
+            np.asarray(value_lower, dtype=np.float64).reshape((-1,)),
+            np.asarray(value_upper, dtype=np.float64).reshape((-1,)),
+            np.where(
+                smooth & (slope_lower > 0.0),
+                1,
+                np.where(smooth & (slope_upper < 0.0), -1, 0),
+            ).astype(np.int8),
+        )
+    lows, highs, slopes = [], [], []
+    for sign, child in zip(node.signs, node.children, strict=True):
+        low, high, slope = _branch_bounds(child, lower, upper)
+        if sign < 0:
+            low, high, slope = -high, -low, -slope
+        lows.append(low)
+        highs.append(high)
+        slopes.append(slope)
+    low, high, slope = np.stack(lows), np.stack(highs), np.stack(slopes)
+    if node.operation == "min":
+        active = low <= np.min(high, axis=0)
+        value = (np.min(low, axis=0), np.min(high, axis=0))
+    else:
+        active = high >= np.max(low, axis=0)
+        value = (np.max(low, axis=0), np.max(high, axis=0))
+    increasing = np.all(~active[:, :, None] | (slope > 0), axis=0)
+    decreasing = np.all(~active[:, :, None] | (slope < 0), axis=0)
+    return (
+        value[0],
+        value[1],
+        np.where(increasing, 1, np.where(decreasing, -1, 0)).astype(np.int8),
+    )
+
+
+def _lattice_cell_corners(
+    domain: np.ndarray, level: int, cell: tuple[int, ...], /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Binary64 lattice points of a target-level cell's lower and upper corners."""
+
+    def point(offset: int, /) -> np.ndarray:
+        return np.asarray(
+            [
+                _grid_coordinate(
+                    cell[axis] + offset, level, domain[0, axis], domain[1, axis]
+                )
+                for axis in range(_DIMENSION)
+            ],
+            dtype=np.float64,
+        )
+
+    return point(0), point(1)
+
+
+def _resolve_creases(
+    bounds: _FieldEnclosures,
+    domain: np.ndarray,
+    level: int,
+    indices: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    signs: np.ndarray,
+    opposite: np.ndarray,
+    stalls: np.ndarray,
+    tolerance: float,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Decide constant-sign cells without a strict gradient on a sharp CSG crease.
+
+    The field's own gradient enclosure cannot be strict where the branches of
+    a sharp min or max switch. Cell ``i`` (corners of sign ``signs[i]``,
+    search results ``opposite[i]`` and ``stalls[i]`` from
+    `_constant_sign_search`) is resolved when
+
+    1. the branch tree (`_FieldEnclosures.branch_tree`) proves the field
+       strictly monotone along an axis ``c`` on the cell (`_branch_bounds`):
+       every component of the zero set in the cell is then a graph along
+       ``c`` that reaches the cell boundary, so none is hidden inside it;
+    2. a crease is certified in the cell: two of its corners have different
+       top-level branches strictly extremal there, so the switching set of
+       those branches meets the cell; and
+    3. the cell has a witness (`_tangency_witness`).
+
+    The cell is then contoured by its corner signs, with no triangle, as any
+    crease cell is: its zeros lie in the cell, within its witness's reach.
+    Returns, per row, the cell's own index box ``[index, index + 1)`` and
+    ``c`` (``-1`` for a refusal), and the witness points and bounds.
+    """
+    count = len(indices)
+    result = np.full((count, 2 * _DIMENSION + 1), -1, dtype=np.int64)
+    witness_points = np.full((count, _DIMENSION), np.nan, dtype=np.float64)
+    witness_errors = np.full(count, np.nan, dtype=np.float64)
+    tree = bounds.branch_tree() if bounds.value_rigorous else None
+    if tree is None or not count:
+        return result, witness_points, witness_errors
+    try:
+        _, _, slopes = _branch_bounds(tree, lower, upper)
+        corners = np.where(
+            _CORNER_OFFSETS[None, :, :] == 0, lower[:, None, :], upper[:, None, :]
+        ).reshape(-1, _DIMENSION)
+        corner_values = []
+        for sign, child in zip(tree.signs, tree.children, strict=True):
+            low, high, _ = _branch_bounds(child, corners, corners)
+            corner_values.append((-high, -low) if sign < 0 else (low, high))
+    except IntervalExtensionError:
+        return result, witness_points, witness_errors
+    low = np.stack([value[0] for value in corner_values]).reshape(-1, count, 8)
+    high = np.stack([value[1] for value in corner_values]).reshape(-1, count, 8)
+    extremal = np.full((count, 8), -1, dtype=np.int64)
+    for branch in range(low.shape[0]):
+        others = np.delete(np.arange(low.shape[0]), branch)
+        if tree.operation == "min":
+            strict = np.all(high[branch][None] < low[others], axis=0)
+        else:
+            strict = np.all(low[branch][None] > high[others], axis=0)
+        extremal[strict] = branch
+    for row in range(count):
+        axes = np.flatnonzero(slopes[row])
+        decided = extremal[row][extremal[row] >= 0]
+        if not len(axes) or len(np.unique(decided)) < 2:
+            continue
+        cell = tuple(int(value) for value in indices[row])
+        corner, far = _lattice_cell_corners(domain, level, cell)
+        witness = _tangency_witness(
+            bounds,
+            corner,
+            far - corner,
+            int(signs[row]),
+            opposite[row],
+            stalls[row],
+            tolerance,
+        )
+        if witness is None:
+            continue
+        result[row] = (*cell, *(value + 1 for value in cell), int(axes[0]))
+        witness_points[row], witness_errors[row] = witness
+    return result, witness_points, witness_errors
+
+
+# Probe distances, in cell extents along each axis, of the witness of a cell
+# proved free of the zero set: 2**k for k = 0.._EMPTY_WITNESS_STEPS - 1.
+_EMPTY_WITNESS_STEPS = 4
+
+
+def _empty_cell_witnesses(
+    bounds: _FieldEnclosures,
+    domain: np.ndarray,
+    level: int,
+    indices: np.ndarray,
+    signs: np.ndarray,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Witnesses of possible-zero cells proved free of the zero set.
+
+    The cell's enclosure admitted a zero that `_constant_sign_search`
+    refuted, so no root lies in it; its witness is its centre ``c``, of the
+    corners' sign, with the distance to the zero set bounded by the first
+    probe ``c ± 2**k h_a e_a`` (``k`` first, then axis, then ``-`` before
+    ``+``) whose point enclosure has the opposite sign: the segment between
+    them holds a zero. Rows with no such probe keep ``NaN``.
+    """
+    count = len(indices)
+    points = np.full((count, _DIMENSION), np.nan, dtype=np.float64)
+    errors = np.full(count, np.nan, dtype=np.float64)
+    if not count:
+        return points, errors
+    corners = [
+        _lattice_cell_corners(domain, level, tuple(int(value) for value in row))
+        for row in indices
+    ]
+    lower = np.stack([corner for corner, _ in corners])
+    upper = np.stack([far for _, far in corners])
+    centres = 0.5 * lower + 0.5 * upper
+    steps = [
+        (2.0**power, axis, side)
+        for power in range(_EMPTY_WITNESS_STEPS)
+        for axis in range(_DIMENSION)
+        for side in (-1.0, 1.0)
+    ]
+    probes = np.repeat(centres[:, None, :], len(steps), axis=1)
+    for column, (scale, axis, side) in enumerate(steps):
+        probes[:, column, axis] = centres[:, axis] + side * scale * (
+            upper[:, axis] - lower[:, axis]
+        )
+    value_lower, value_upper = bounds.point_values(probes.reshape(-1, _DIMENSION))
+    opposite = np.where(
+        (np.asarray(signs) > 0)[:, None],
+        value_upper.reshape(count, -1) < 0.0,
+        value_lower.reshape(count, -1) > 0.0,
+    )
+    found = np.flatnonzero(np.any(opposite, axis=1))
+    first = np.argmax(opposite[found], axis=1)
+    axes = np.asarray([steps[column][1] for column in first], dtype=np.int64)
+    points[found] = centres[found]
+    errors[found] = np.nextafter(
+        np.abs(probes[found, first, axes] - centres[found, axes]), np.inf
+    )
+    return points, errors
+
+
 def _classify_constant_sign_cells(
     bounds: _FieldEnclosures,
     domain: np.ndarray,
@@ -2330,9 +2652,12 @@ def _classify_constant_sign_cells(
     issue; otherwise a cell with no strict gradient component is ``SINGULAR``,
     one whose zeros lie in a face slab (`_tangency_faces`) is ``TANGENCY``, and
     any other is ``EDGE``. With ``resolve`` a tangency proved on a group of
-    cells around it (`_resolve_tangencies`, roots within ``tolerance``) has no
-    issue either. Also returns the resolution rows (``-1`` where none) and the
-    resolved cells' witness points and distance bounds (``NaN`` where none).
+    cells around it (`_resolve_tangencies`), and a singular cell proved to be
+    a monotone sharp CSG crease cell (`_resolve_creases`), roots within
+    ``tolerance``, have no issue either. Also returns the resolution rows
+    (``-1`` where none), and, with ``resolve``, the witness points and
+    distance bounds of the resolved cells and of the cells proved free of the
+    zero set (`_empty_cell_witnesses`; ``NaN`` where none).
     """
     count = int(lower.shape[0])
     issues = np.zeros(count, dtype=np.int64)
@@ -2347,6 +2672,29 @@ def _classify_constant_sign_cells(
     )
     issues[~proved & gradient] = int(AdaptiveImplicitBoxIssue.EDGE)
     issues[~proved & ~gradient] = int(AdaptiveImplicitBoxIssue.SINGULAR)
+    empty = np.flatnonzero(proved)
+    if resolve and len(empty):
+        witness_points[empty], witness_errors[empty] = _empty_cell_witnesses(
+            bounds, domain, level, indices[empty], signs[empty]
+        )
+    singular = np.flatnonzero(~proved & ~gradient)
+    if resolve and len(singular):
+        groups, points, errors = _resolve_creases(
+            bounds,
+            domain,
+            level,
+            indices[singular],
+            lower[singular],
+            upper[singular],
+            signs[singular],
+            opposite[singular],
+            stalls[singular],
+            tolerance,
+        )
+        resolutions[singular] = groups
+        witness_points[singular] = points
+        witness_errors[singular] = errors
+        issues[singular[groups[:, -1] >= 0]] = 0
     edge = np.flatnonzero(~proved & gradient)
     if len(edge):
         faces = _tangency_faces(
@@ -3253,9 +3601,10 @@ def _discover_adaptive_implicit_surface_once(
     Possible-zero leaves are resolved to the requested physical cell diameter.
     Pure edge-ambiguous leaves trigger finer dyadic discovery until their roots
     are witnessed or their diameter reaches the requested root tolerance.
-    A lattice-face tangency proved on a group of cells around it is resolved
-    there (`_resolve_tangencies`, recorded in the scaffold's
-    ``tangency_resolutions``); other tangencies, singular and otherwise
+    A lattice-face tangency proved on a group of cells around it
+    (`_resolve_tangencies`), and a constant-sign cell on a monotone sharp CSG
+    crease (`_resolve_creases`), are resolved there and recorded in the
+    scaffold's ``local_resolutions``; other tangencies, singular and otherwise
     unresolved leaves remain explicit.
     """
     _validate_discovery_inputs(geometry, policy, source_id)

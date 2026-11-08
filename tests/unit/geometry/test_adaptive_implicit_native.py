@@ -697,7 +697,7 @@ def test_lattice_face_tangency_resolves_on_its_cell_pair() -> None:
     assert result.evidence.lattice_anchor == 0
     assert result.scaffold.target_level == 5
     assert result.evidence.unresolved_count == 0
-    resolutions = np.asarray(result.scaffold.tangency_resolutions)
+    resolutions = np.asarray(result.scaffold.local_resolutions)
     np.testing.assert_array_equal(
         resolutions[:, 1:],
         [[19, 16, 15, 21, 17, 16, 0], [23, 16, 15, 25, 17, 16, 0]],
@@ -744,7 +744,7 @@ def test_lattice_face_tangency_resolves_on_its_cell_pair() -> None:
         if name != "target_level"
     ]
     arrays = list(recipe.scaffold_arrays)
-    arrays[names.index("tangency_resolutions")] = np.empty((0, 8), dtype=np.int64)
+    arrays[names.index("local_resolutions")] = np.empty((0, 8), dtype=np.int64)
     with pytest.raises(ValueError):
         restore_adaptive_implicit_surface(
             replace(recipe, scaffold_arrays=tuple(arrays)), geometry, _POLE_POLICY
@@ -772,7 +772,7 @@ def test_refused_lattice_face_tangency_reanchors_without_refinement(
         first.evidence.unresolved_issues.tolist()
         == [int(AdaptiveImplicitBoxIssue.TANGENCY)] * 2
     )
-    assert first.scaffold.tangency_resolutions.shape == (0, 8)
+    assert first.scaffold.local_resolutions.shape == (0, 8)
     assert owner._next_discovery_resolution(first, _POLE_POLICY) is None
     retry, coincidence, tangencies = replay_history_attempt(
         geometry, _POLE_DOMAIN, _POLE_POLICY
@@ -833,7 +833,7 @@ def test_straddling_hidden_ball_tangency_is_an_unresolved_event(
     assert result.evidence.lattice_anchor == 0
     assert result.scaffold.target_level == 5
     assert result.mesh is None
-    assert result.scaffold.tangency_resolutions.shape == (0, 8)
+    assert result.scaffold.local_resolutions.shape == (0, 8)
     issues = result.evidence.unresolved_issues.tolist()
     assert int(AdaptiveImplicitBoxIssue.TANGENCY) in issues
     tangent = result.evidence.unresolved_boxes[
@@ -843,6 +843,93 @@ def test_straddling_hidden_ball_tangency_is_an_unresolved_event(
         tangent, [[[0.1875, 0.0, -0.0625], [0.25, 0.0625, 0.0]]]
     )
     assert owner.verify_discovery_history(result)
+
+
+# Two overlapping spheres meet in a concave crease on the lattice plane x = 0.
+# On the re-anchored lattice, 16 cells along the crease have corners of one
+# sign while the groove of the union pokes between them; the branches of the
+# sharp min share a strict radial gradient component there.
+_SEAM_DOMAIN = np.asarray(((-0.8, -0.6, -0.6), (0.8, 0.6, 0.6)))
+_SEAM_POLICY = AdaptiveImplicitSurfacePolicy(
+    relative_cell_diameter=0.02
+    / float(np.linalg.norm(_SEAM_DOMAIN[1] - _SEAM_DOMAIN[0])),
+    root_tolerance=1.0e-10,
+    allow_nonsmooth_field=True,
+)
+
+
+@pytest.fixture(scope="module")
+def seam_surface() -> AdaptiveImplicitSurface:
+    geometry = (
+        _G.Sphere((-0.2, 0.0, 0.0), 0.3) | _G.Sphere((0.2, 0.0, 0.0), 0.3)
+    ).compile()
+    return discover_adaptive_implicit_surface(
+        geometry, domain=_SEAM_DOMAIN, policy=_SEAM_POLICY, source_id="union-seam"
+    )
+
+
+def test_union_seam_crease_cells_resolve_on_their_branches(
+    seam_surface: AdaptiveImplicitSurface,
+) -> None:
+    from phydrax.geometry.implicit import _adaptive_discovery as owner
+    from phydrax.geometry.implicit._adaptive_polygon_replay import replay_polygon
+
+    result = seam_surface
+    assert result.evidence.lattice_anchor == 1
+    assert result.evidence.unresolved_count == 0
+    assert result.mesh is not None and result.mesh.topology.watertight
+    resolutions = np.asarray(result.scaffold.local_resolutions)
+    assert resolutions.shape == (16, 8)
+    # Each crease cell is decided on itself, across the seam plane.
+    np.testing.assert_array_equal(resolutions[:, 4:7], resolutions[:, 1:4] + 1)
+    boxes = result.scaffold.cell_boxes[resolutions[:, 0]]
+    assert np.all((boxes[:, 0, 0] < 0.0) & (boxes[:, 1, 0] > 0.0))
+    assert not np.any(np.isin(result.scaffold.triangle_cell_rows, resolutions[:, 0]))
+    bounds = owner._FieldEnclosures(result.geometry, _SEAM_POLICY.enclosure)
+    tree = bounds.branch_tree()
+    assert tree is not None and tree.operation == "min"
+    _, _, slopes = owner._branch_bounds(tree, boxes[:, 0], boxes[:, 1])
+    assert np.all(slopes[np.arange(len(boxes)), resolutions[:, 7]] != 0), (
+        "the recorded axis is one the branches prove monotone"
+    )
+    # Every possible-zero box keeps a witness. The union field is 1-Lipschitz,
+    # so a witness within ``e`` of the zero set has ``|f| <= e`` there.
+    cover = result.cover
+    assert cover is not None
+    possible = (cover.value_lower <= 0.0) & (cover.value_upper >= 0.0)
+    assert len(result.boundary_witness_boxes) == int(np.count_nonzero(possible))
+    field = np.min(
+        [
+            np.linalg.norm(result.boundary_witnesses - np.asarray(center), axis=1) - 0.3
+            for center in ((-0.2, 0.0, 0.0), (0.2, 0.0, 0.0))
+        ],
+        axis=0,
+    )
+    assert np.all(np.abs(field) <= result.boundary_errors + 1.0e-15)
+    assert replay_polygon(result, bounds)
+    assert owner.verify_discovery_history(result)
+
+
+def test_crease_cell_needs_an_unproved_branch_ledger(
+    seam_surface: AdaptiveImplicitSurface, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from phydrax.geometry._interval_enclosure import PreparedIntervalFunction
+    from phydrax.geometry._source_fidelity import _implicit_scaffold_banks
+
+    # Triangle cells across the seam lack a strict gradient enclosure; they are
+    # admitted because the branch ledger does not prove the field smooth there.
+    _implicit_scaffold_banks(seam_surface)
+    evaluate = PreparedIntervalFunction.evaluate_branches
+
+    def smooth_everywhere(
+        self: PreparedIntervalFunction, lower: np.ndarray, upper: np.ndarray, /
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        low, high, _, continuous = evaluate(self, lower, upper)
+        return low, high, np.ones_like(continuous), continuous
+
+    monkeypatch.setattr(PreparedIntervalFunction, "evaluate_branches", smooth_everywhere)
+    with pytest.raises(ValueError, match="strict regular-gradient"):
+        _implicit_scaffold_banks(seam_surface)
 
 
 def test_discovery_buffer_adoption_requires_sealed_owning_storage() -> None:

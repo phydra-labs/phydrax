@@ -208,7 +208,7 @@ def _cell_face_pairs(volume: PeriodicImplicitVolume, axis: int, /) -> int:
     coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
     representatives = np.asarray(topology.vertex_representatives, dtype=np.int64)
     shifts = np.asarray(topology.vertex_shifts, dtype=np.int64)
-    lower, upper = volume.surface.reduced_domain[:, axis]
+    lower, upper = volume.reduced_domain[:, axis]
     in_plane = [index for index in range(3) if index != axis]
     counts: dict[frozenset[int], int] = {}
     tetrahedra = np.concatenate(
@@ -382,8 +382,12 @@ def _gyroid_sheet_cell() -> dict[str, Any]:
         "fill_seconds",
         lambda: mesh_periodic_trigonometric_region(
             surface,
-            # The fixed contour's feature size is far below any shape target;
-            # only cell validity is enforced (as for specimens).
+            # The sheet (half-width 0.3) is about one default target edge
+            # thick, so the hard default shape targets fail at this resolution
+            # (1138 radius-edge and 995 dihedral rows); they pass only at
+            # maximum_edge_length=0.03 (2-3 edges across: 155705 cells, about
+            # 2.5x the wall and 7x the peak memory). This profile keeps the
+            # default resolution and enforces cell validity only.
             volume_schedule=NativeVolumeSchedule(
                 radius_edge_bound=None,
                 minimum_dihedral_degrees=0.0,

@@ -121,7 +121,7 @@ def apic_particle_kinetic_energy(
             velocity, _bounded_dot(affine_velocity, first_moment[:, None, :])
         )
     terms = 0.5 * mass * (translational + affine)
-    return compensated_sum(jnp.where(active, terms, 0.0))
+    return compensated_sum(terms, where=active)
 
 
 def _affine_route_velocity(affine_velocity: Array, route_offsets: Array, /) -> Array:
@@ -144,20 +144,15 @@ def apic_particle_angular_momentum(
     affine_route_momentum = (
         mass[:, None, None] * state.stencil.weights[..., None] * affine_route_velocity
     )
+    valid = state.stencil.valid
     affine = compensated_sum(
-        jnp.where(
-            state.stencil.valid.reshape(
-                state.stencil.valid.shape + (1,) * (dimension == 3)
-            ),
-            _cross(state.route_offsets, affine_route_momentum, dimension),
-            0.0,
-        ),
+        _cross(state.route_offsets, affine_route_momentum, dimension),
         axis=(0, 1),
+        where=valid[..., None] if dimension == 3 else valid,
     )
     return (
         compensated_sum(
-            jnp.where(active[..., None] if dimension == 3 else active, orbital, 0.0),
-            axis=0,
+            orbital, axis=0, where=active[..., None] if dimension == 3 else active
         )
         + affine
     )
@@ -172,7 +167,7 @@ def grid_angular_momentum(
     dimension = coordinates.shape[-1]
     values = _cross(coordinates, momentum, dimension)
     mask = active[..., None] if dimension == 3 else active
-    return compensated_sum(jnp.where(mask, values, 0.0), axis=0)
+    return compensated_sum(values, axis=0, where=mask)
 
 
 def build_apic_route_payload(

@@ -272,9 +272,7 @@ def _same_triangle_chain_boundary(
             if not area:
                 continue
             orientation = chain_sign if area > 0 else -chain_sign
-            for start, stop in zip(
-                triangle, triangle[1:] + triangle[:1], strict=True
-            ):
+            for start, stop in zip(triangle, triangle[1:] + triangle[:1], strict=True):
                 dx = stop[0] - start[0]
                 dy = stop[1] - start[1]
                 if dx:
@@ -530,7 +528,8 @@ def _partition_findings(
                 _exact_chart_from_tokens(witness.chart_rational_tokens, row)
                 for row in range(len(patches))
             )
-            if exact_target_charts is None else exact_target_charts
+            if exact_target_charts is None
+            else exact_target_charts
         )
         if len(charts) != len(patches):
             raise ValueError("Exact target charts must cover the witness rows.")
@@ -791,10 +790,13 @@ def reprove_actual_planar_chart_rows(charts: object, /) -> tuple[Triangle2, ...]
     if not exact_affine_boundary_source(source):
         return None
     for patch in source.patches:
-        expressions = exact_surface_coordinate_expressions(source.domain.patches[patch].surface)
+        expressions = exact_surface_coordinate_expressions(
+            source.domain.patches[patch].surface
+        )
         if expressions is None or any(
             not isinstance(value, (Fraction, int))
-            for expression in expressions for value in expression.values()
+            for expression in expressions
+            for value in expression.values()
         ):
             return None
     witness = charts.chart_witness
@@ -805,7 +807,9 @@ def reprove_actual_planar_chart_rows(charts: object, /) -> tuple[Triangle2, ...]
         # The wall may select a strict subset of the retained whole boundary.
         # Prove complete trim coverage on precisely those original source patches.
         source = MeshingDomainBoundarySource(
-            source.domain, selected, resolution=source.resolution,
+            source.domain,
+            selected,
+            resolution=source.resolution,
             validated=source.validated_domain,
         )
     preparation = SourcePreparation(source.domain)
@@ -826,10 +830,15 @@ def reprove_actual_planar_chart_rows(charts: object, /) -> tuple[Triangle2, ...]
         root_mesh_cell_bindings=witness.root_mesh_cell_bindings,
     )
     if renewed.witness_id != witness.witness_id:
-        raise ValueError("Surface chart witness identity does not reproduce its current arrays.")
+        raise ValueError(
+            "Surface chart witness identity does not reproduce its current arrays."
+        )
     validate_surface_source_pieces(
-        source.domain, np.asarray(witness.patches), np.asarray(witness.charts),
-        np.asarray(witness.source_root_cell_ids), witness.source_piece_ids,
+        source.domain,
+        np.asarray(witness.patches),
+        np.asarray(witness.charts),
+        np.asarray(witness.source_root_cell_ids),
+        witness.source_piece_ids,
         exact_charts=tuple(
             _exact_chart_from_tokens(witness.chart_rational_tokens, row)
             for row in range(len(witness.source_piece_ids))
@@ -837,7 +846,9 @@ def reprove_actual_planar_chart_rows(charts: object, /) -> tuple[Triangle2, ...]
         cell_kind=witness.cell_kind,
     )
     _chart_point_tables(source, witness, charts.mesh, charts.geometry)
-    ids = tuple(int(value) for value in np.asarray(witness.cell_global_ids, dtype=np.int64))
+    ids = tuple(
+        int(value) for value in np.asarray(witness.cell_global_ids, dtype=np.int64)
+    )
     patches = tuple(int(value) for value in np.asarray(witness.patches, dtype=np.int64))
     original = tuple(
         _exact_triangle2(_exact_chart_from_tokens(witness.chart_rational_tokens, row))
@@ -852,34 +863,47 @@ def reprove_actual_planar_chart_rows(charts: object, /) -> tuple[Triangle2, ...]
         (Fraction(0), Fraction(1)),
     )
     try:
-        for block, element, route in zip(charts.mesh.blocks, elements, routes, strict=True):
+        for block, element, route in zip(
+            charts.mesh.blocks, elements, routes, strict=True
+        ):
             if not isinstance(block, CellBlock) or block.cell_kind != "triangle":
                 return None
             if not isinstance(element, ScalarCoordinateElement):
                 return None
             for row, cell_id in enumerate(np.asarray(block.global_ids, dtype=np.int64)):
-                local = tuple(coefficients[int(index)] for index in np.asarray(route[row]))
+                local = tuple(
+                    coefficients[int(index)] for index in np.asarray(route[row])
+                )
                 expressions = coordinate_map_expressions(element, local, cell_row=row)
                 if len(expressions) != 3 or any(
                     not isinstance(expression, dict)
-                    or any(sum(power) > 1 and value != 0 for power, value in expression.items())
+                    or any(
+                        sum(power) > 1 and value != 0
+                        for power, value in expression.items()
+                    )
                     for expression in expressions
                 ):
                     return None
                 target_corners[int(cell_id)] = tuple(
-                    tuple(evaluate_expression(expression, point) for expression in expressions)
+                    tuple(
+                        evaluate_expression(expression, point)
+                        for expression in expressions
+                    )
                     for point in reference
                 )
                 if any(
                     not isinstance(value, (Fraction, int))
-                    for point in target_corners[int(cell_id)] for value in point
+                    for point in target_corners[int(cell_id)]
+                    for value in point
                 ):
                     return None
         actual = _exact_affine_target_charts(
             source, ids, patches, original, target_corners, set(ids)
         )
         if actual is None:
-            raise ValueError("Actual planar chart corners do not lie on their source planes.")
+            raise ValueError(
+                "Actual planar chart corners do not lie on their source planes."
+            )
         if any(
             _area2(first) * _area2(second) <= 0
             for first, second in zip(original, actual, strict=True)
@@ -888,30 +912,42 @@ def reprove_actual_planar_chart_rows(charts: object, /) -> tuple[Triangle2, ...]
 
         def oriented(rows: tuple[Triangle2, ...]) -> tuple[Triangle2, ...]:
             return tuple(
-                row if source.domain.patches[patch].orientation * _area2(row) > 0
+                row
+                if source.domain.patches[patch].orientation * _area2(row) > 0
                 else (row[0], row[2], row[1])
                 for patch, row in zip(patches, rows, strict=True)
             )
+
         original_partition = oriented(original)
         actual_partition = oriented(actual)
 
         if _partition_findings(
-            source, witness, preparation, checked_current=True,
+            source,
+            witness,
+            preparation,
+            checked_current=True,
             exact_target_charts=original_partition,
         ):
             return None
         if _partition_findings(
-            source, witness, preparation, checked_current=True,
+            source,
+            witness,
+            preparation,
+            checked_current=True,
             exact_target_charts=actual_partition,
         ):
-            raise ValueError("Actual planar charts do not reproduce the complete source partition.")
+            raise ValueError(
+                "Actual planar charts do not reproduce the complete source partition."
+            )
         # Partition triangles alone describe a chordal trim approximation.
         # A derived exact atlas is admissible only if its omitted pole and
         # curved-trim regions have independently proved zero physical extent.
         for patch in source.patches:
             patch_rows = tuple(
                 (cell_id, chart)
-                for cell_id, row_patch, chart in zip(ids, patches, actual_partition, strict=True)
+                for cell_id, row_patch, chart in zip(
+                    ids, patches, actual_partition, strict=True
+                )
                 if row_patch == patch
             )
             patch_charts = tuple(chart for _, chart in patch_rows)
@@ -927,10 +963,15 @@ def reprove_actual_planar_chart_rows(charts: object, /) -> tuple[Triangle2, ...]
                 if any(value != 0 for value in caps.values()):
                     return None
         validate_surface_source_pieces(
-            source.domain, np.asarray(witness.patches),
-            np.asarray([[[float(value) for value in point] for point in row] for row in actual]),
-            np.asarray(witness.source_root_cell_ids), witness.source_piece_ids,
-            exact_charts=actual, cell_kind="triangle",
+            source.domain,
+            np.asarray(witness.patches),
+            np.asarray(
+                [[[float(value) for value in point] for point in row] for row in actual]
+            ),
+            np.asarray(witness.source_root_cell_ids),
+            witness.source_piece_ids,
+            exact_charts=actual,
+            cell_kind="triangle",
         )
     except NotImplementedError:
         return None
@@ -1380,12 +1421,17 @@ def _validate_source_fidelity_witness(
                 "Mapped root fidelity must use the identity-bound domain coordinate contract."
             )
     from ._surface_source_support import SurfaceNativeRestrictionBoundarySource
+
     if isinstance(witness, SourceBoundaryFaceImageWitness):
         if not isinstance(source, MeshingDomainBoundarySource):
-            raise TypeError("Face-image witness requires its MeshingDomain boundary source.")
+            raise TypeError(
+                "Face-image witness requires its MeshingDomain boundary source."
+            )
         from ._source_face_image import validate_source_face_image
 
-        validate_source_face_image(mesh, geometry, source, witness, preparation=preparation)
+        validate_source_face_image(
+            mesh, geometry, source, witness, preparation=preparation
+        )
         return
 
     if isinstance(witness, SourceBoundaryDistanceWitness):
@@ -1498,7 +1544,9 @@ def _validate_source_fidelity_witness(
             or not _same_tree_content(source.domain, charts.domain)
             or not set(source.patches).issubset(charts.boundary_source.patches)
         ):
-            raise ValueError("CAD witness source query must retain its PLC domain and scope.")
+            raise ValueError(
+                "CAD witness source query must retain its PLC domain and scope."
+            )
         source.require_current()
         if witness.cad_curve_association is not None:
             witness.cad_curve_association.validate_target(mesh.entity_set(1))
@@ -2126,14 +2174,29 @@ def _implicit_scaffold_banks(
         raise ValueError(
             "Implicit scaffold gradient and triangle-cell banks are malformed."
         )
+    from .implicit._adaptive_discovery import _ledger_crease_cells
+
+    # A triangle cell needs a strict regular-gradient enclosure, except a
+    # crease cell of a non-smooth field (`_ledger_crease_cells`): the chart
+    # prover decides its faces from the branch ledger, and a face meeting the
+    # crease takes the certified root-witness bound.
     for start in range(0, triangle_cells.size, _IMPLICIT_WITNESS_BLOCK_ROWS):
         rows = triangle_cells[start : start + _IMPLICIT_WITNESS_BLOCK_ROWS]
-        if not np.all(
-            np.any((gradient_lower[rows] > 0.0) | (gradient_upper[rows] < 0.0), axis=1)
-        ):
-            raise ValueError(
-                "Implicit root chart cell lacks a strict regular-gradient enclosure."
-            )
+        irregular = np.unique(
+            rows[
+                ~np.any(
+                    (gradient_lower[rows] > 0.0) | (gradient_upper[rows] < 0.0), axis=1
+                )
+            ]
+        )
+        if irregular.size:
+            boxes = np.asarray(scaffold.cell_boxes, dtype=np.float64)[irregular]
+            if not np.all(
+                _ledger_crease_cells(surface.volume.bounds, boxes[:, 0], boxes[:, 1])
+            ):
+                raise ValueError(
+                    "Implicit root chart cell lacks a strict regular-gradient enclosure."
+                )
     cell_keys = np.asarray(scaffold.cell_indices, dtype=np.int64)
     if (
         cell_keys.ndim != 2
@@ -3314,9 +3377,13 @@ def _validate_surface_envelope_witness(
             or not np.array_equal(derived.entity_ids, rebuilt.entity_ids)
             or not np.array_equal(derived.source_rows, rebuilt.source_rows)
         ):
-            raise ValueError("Derived source facet and chart ancestry does not reproduce.")
+            raise ValueError(
+                "Derived source facet and chart ancestry does not reproduce."
+            )
         if set(_integer_vector(chart.entity_global_ids)) != set(target_facet_ids):
-            raise ValueError("Derived charts must cover exactly the target exterior facets.")
+            raise ValueError(
+                "Derived charts must cover exactly the target exterior facets."
+            )
         validate_source_fidelity_witness(mesh, geometry, derived, chart)
         return
     # Vertex coincidence proves a facet only when its actual coordinate map is affine.
@@ -3881,9 +3948,9 @@ def _require_reference_chart_partition(
         for second in triangles[index + 1 :]
     ):
         raise ValueError("Target reference chart pieces have positive-measure overlap.")
-    if require_complete and sum((abs(_area2(triangle)) for triangle in triangles), Fraction(0)) != sum(
-        (abs(_area2(triangle)) for triangle in domain), Fraction(0)
-    ):
+    if require_complete and sum(
+        (abs(_area2(triangle)) for triangle in triangles), Fraction(0)
+    ) != sum((abs(_area2(triangle)) for triangle in domain), Fraction(0)):
         raise ValueError("Target reference chart pieces omit part of their mesh facet.")
 
 
@@ -4341,9 +4408,9 @@ def _surface_jacobian_bounds(
                     max(column[physical_axis][1] for column in columns), upper=True
                 )
         return lower, upper
-    if _has_unexpanded_exact_surface_carrier(surface) and not _has_analytic_source_program(
+    if _has_unexpanded_exact_surface_carrier(
         surface
-    ):
+    ) and not _has_analytic_source_program(surface):
         return None
     chart_lower = tuple(min(point[axis] for point in uv_triangle) for axis in range(2))
     chart_upper = tuple(max(point[axis] for point in uv_triangle) for axis in range(2))
@@ -5030,7 +5097,11 @@ def _normal_deviation_for_cell(
                 high[physical_axis, parameter] = upper
     else:
         spans = derivatives.patch_spans(surface)
-        if unexpanded_exact and spans is None and not _has_analytic_source_program(surface):
+        if (
+            unexpanded_exact
+            and spans is None
+            and not _has_analytic_source_program(surface)
+        ):
             return None
         chart_lower = tuple(
             min(point[axis] for point in uv_triangle) for axis in range(2)
@@ -5328,8 +5399,13 @@ def _certify_surface_envelope_fidelity(
             mesh, geometry, None, chart, full_source=True
         )
         evidence = certify_surface_chart_maps(
-            mesh, geometry, derived, chart, target_rows,
-            tolerance=tolerance, maximum_normal_deviation=None,
+            mesh,
+            geometry,
+            derived,
+            chart,
+            target_rows,
+            tolerance=tolerance,
+            maximum_normal_deviation=None,
         )
         chart_findings = evidence.findings
         # The chart correspondence covers both complete surfaces. Its supremum
@@ -5344,7 +5420,9 @@ def _certify_surface_envelope_fidelity(
             mesh_to_source_upper = math.inf
             source_to_mesh_upper = math.inf
         else:
-            mesh_to_source_lower = max(Fraction(0), mesh_to_source_lower - deviation_bound)
+            mesh_to_source_lower = max(
+                Fraction(0), mesh_to_source_lower - deviation_bound
+            )
             mesh_to_source_upper += deviation_bound
             source_to_mesh_upper += deviation_bound
     limit = Fraction.from_float(float(tolerance))
@@ -5567,19 +5645,27 @@ def _certify_face_image_fidelity(
     if validated is None or not validated.binds(mesh, geometry, source):
         from ._source_face_image import validate_source_face_image
 
-        patches = validate_source_face_image(mesh, geometry, source, witness, preparation=preparation)
+        patches = validate_source_face_image(
+            mesh, geometry, source, witness, preparation=preparation
+        )
     else:
         patches = tuple(
             source.domain.resolve_entity_id(2, entity, occurrence_path=path)
-            for entity, path in zip(witness.source_entity_ids, witness.occurrence_paths, strict=True)
+            for entity, path in zip(
+                witness.source_entity_ids, witness.occurrence_paths, strict=True
+            )
         )
     coverage = source.boundary_chart_cover(preparation=preparation)
     findings = list(coverage.findings)
     if not coverage.complete or coverage.semantics != "certified" or coverage.findings:
-        findings.append(MeshCertificateFinding(
-            "source_boundary_cover", "unresolved", "source_facet",
-            detail="Independent source boundary chart coverage is not complete and certified.",
-        ))
+        findings.append(
+            MeshCertificateFinding(
+                "source_boundary_cover",
+                "unresolved",
+                "source_facet",
+                detail="Independent source boundary chart coverage is not complete and certified.",
+            )
+        )
     normal_bounds = None
     normal_lower = None
     if maximum_normal_deviation is not None:
@@ -5588,25 +5674,49 @@ def _certify_face_image_fidelity(
         normal_bounds = np.where(signs > 0, 0.0, math.nextafter(math.pi, math.inf))
         normal_lower = math.pi if reversed_faces else 0.0
         if reversed_faces and normal_lower > maximum_normal_deviation:
-            findings.append(MeshCertificateFinding(
-                "normal_deviation", "violated", "mesh",
-                detail="An exact target-face normal reverses its oriented source patch.",
-            ))
+            findings.append(
+                MeshCertificateFinding(
+                    "normal_deviation",
+                    "violated",
+                    "mesh",
+                    detail="An exact target-face normal reverses its oriented source patch.",
+                )
+            )
         elif reversed_faces:
-            findings.append(MeshCertificateFinding(
-                "normal_deviation", "unresolved", "mesh",
-                detail="The exact reversed normal lies above the represented angular bound.",
-            ))
+            findings.append(
+                MeshCertificateFinding(
+                    "normal_deviation",
+                    "unresolved",
+                    "mesh",
+                    detail="The exact reversed normal lies above the represented angular bound.",
+                )
+            )
     binding = MeshCertificateBinding(
-        mesh, geometry, "mapped", source=source,
-        source_id=source.source_id, source_revision=source.source_revision,
+        mesh,
+        geometry,
+        "mapped",
+        source=source,
+        source_id=source.source_id,
+        source_revision=source.source_revision,
     )
     return SourceFidelityCertificate._from_computed(
-        binding, source, tolerance, maximum_normal_deviation,
-        np.zeros((len(patches), 2), dtype=np.float64), 0.0, 0.0, 0.0, 0.0,
-        normal_bounds, normal_lower,
+        binding,
+        source,
+        tolerance,
+        maximum_normal_deviation,
+        np.zeros((len(patches), 2), dtype=np.float64),
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        normal_bounds,
+        normal_lower,
         tuple(int(value) for value in witness.cell_global_ids),
-        patches, witness.occurrence_paths, witness, coverage, tuple(findings),
+        patches,
+        witness.occurrence_paths,
+        witness,
+        coverage,
+        tuple(findings),
     )
 
 
@@ -6235,8 +6345,13 @@ def certify_source_fidelity(
         )
     if isinstance(witness, SourceBoundaryFaceImageWitness):
         return _certify_face_image_fidelity(
-            mesh, geometry, source, witness, tolerance=tolerance_,
-            maximum_normal_deviation=normal_limit, validated=validated,
+            mesh,
+            geometry,
+            source,
+            witness,
+            tolerance=tolerance_,
+            maximum_normal_deviation=normal_limit,
+            validated=validated,
             preparation=preparation,
         )
     if isinstance(witness, SourceBoundaryChartWitness):
@@ -6637,11 +6752,18 @@ def certify_source_fidelity(
         # the complete source-trim partition before using those coordinates.
         try:
             actual_charts = _exact_affine_target_charts(
-                domain_source, witness_ids, witness_patches, witness_charts,
-                target_corners, selected_cells,
+                domain_source,
+                witness_ids,
+                witness_patches,
+                witness_charts,
+                target_corners,
+                selected_cells,
             )
             if actual_charts is not None and not _partition_findings(
-                domain_source, witness, preparation, checked_current=True,
+                domain_source,
+                witness,
+                preparation,
+                checked_current=True,
                 exact_target_charts=actual_charts,
             ):
                 witness_charts = actual_charts

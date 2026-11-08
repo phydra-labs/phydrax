@@ -933,11 +933,21 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         supported_values = active_values * fractions
         dropped_values = active_values - supported_values
         certification = self.plan.precision.certification_dtype
-        active_total = certified_sum(active_values, certification, axis=0)
-        supported_total = certified_sum(supported_values, certification, axis=0)
-        dropped_total = certified_sum(dropped_values, certification, axis=0)
-        dropped_abs = certified_sum(jnp.abs(dropped_values), certification, axis=0)
-        active_abs = certified_sum(jnp.abs(active_values), certification, axis=0)
+        active_total = certified_sum(
+            active_values, certification, axis=0, where=active_mask
+        )
+        supported_total = certified_sum(
+            supported_values, certification, axis=0, where=active_mask
+        )
+        dropped_total = certified_sum(
+            dropped_values, certification, axis=0, where=active_mask
+        )
+        dropped_abs = certified_sum(
+            jnp.abs(dropped_values), certification, axis=0, where=active_mask
+        )
+        active_abs = certified_sum(
+            jnp.abs(active_values), certification, axis=0, where=active_mask
+        )
         target_total = certified_sum(target_flat, certification, axis=0)
         target_abs = certified_sum(jnp.abs(target_flat), certification, axis=0)
         defect = active_total - target_total - dropped_total

@@ -447,21 +447,26 @@ include = [
 respect-type-ignore-comments = false
 # Optional external providers, and compiled submodules without stubs, are `Any`
 # at their import boundary, so the diagnostic set does not depend on which
-# optional extras are installed.
+# optional extras are installed. A `pkg.**` pattern also matches `pkg` itself.
 replace-imports-with-any = [
   # AIMNet2 runs only in an explicitly pinned isolated source-oracle environment.
   "aimnet.**",
   "arviz.**",
+  "ase.**",
   "cryptography.**",
   "cvxpy.**",
   "dafoam.**",
   "design.**",
   "e3nn.**",
   "gpt.**",
+  # Imported only by the docs-build hook mkdocstrings_setup.py (docs extra).
+  "griffe.**",
   "h5py.h5o",
   "mace.**",
   "manifold3d.**",
   "marimo.**",
+  # Imported only by the marimo examples (notebooks extra).
+  "matplotlib.**",
   "mini_studies.**",
   # tools/generate_cubature_data.py imports ModePy from an explicit --modepy-root.
   "modepy.**",
@@ -469,19 +474,23 @@ replace-imports-with-any = [
   "mpi4py.**",
   # MPContext constructs its public scalar classes dynamically per context.
   "mpmath.**",
-  # MJX is a separate optional provider installed by the robotics-mjx extra.
-  "mujoco.mjx.**",
+  # MuJoCo and MJX are separate optional providers installed by the robotics-mjx
+  # extra; both are imported only through the robotics provider boundary.
+  "mujoco.**",
   "open3d.**",
   "openmdao.**",
   "parameter_targets.**",
   "petsc4py.**",
   "psutil.**",
+  "pydicom.**",
   "pyscf.**",
   "pyvista.**",
   "qdesignoptimizer.**",
   "qiskit_metal.**",
   "qlat.**",
   "qlat_utils.**",
+  # RDKit is an undeclared host graph parser imported dynamically by require_rdkit.
+  "rdkit.**",
   "scikits.**",
   "sklearn.**",
   "sksparse.**",
@@ -491,6 +500,7 @@ replace-imports-with-any = [
   "win32api.**",
   "win32con.**",
   "win32job.**",
+  "xarray.**",
 ]
 
 [tool.ty.rules]

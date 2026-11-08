@@ -745,6 +745,17 @@ def test_retained_column_stretch_is_stored_evidence_not_a_float_rederivation(
         _boundary_layer._reprove_retained_boundary_layers(forged, wall, control)
 
 
+@pytest.mark.parametrize("count", (5, 6, 9))
+def test_planar_wall_probe_stretch_is_exactly_one(count: int) -> None:
+    # Each probe sits exactly epsilon above its planar column vertex, so every
+    # face, edge and vertex distance candidate ties at epsilon squared. The tie
+    # is decided exactly, never by a float argmin/min, so the stretch is 1.
+    points, triangles = _plate(count)
+    wall = _wall(points, triangles)
+    layers = phx.meshing.prepare_boundary_layers(wall, _control(wall))
+    np.testing.assert_array_equal(np.asarray(layers.column_stretch), 1.0)
+
+
 def test_retained_quad_cap_and_obstacle_reproof() -> None:
     import equinox as eqx
 

@@ -476,12 +476,13 @@ def polygonize(
 
     cell_issue = np.zeros(count, dtype=np.int64)
     # Band cells with no contour and no issue: proved free of the zero set, or
-    # a tangency resolved on its cell group (rows of ``resolution_rows``, with
-    # a witness root inside the cell).
+    # resolved locally (rows of ``resolution_rows``). Each carries the witness
+    # its classification found (rows of ``classified_rows``).
     empty = np.zeros(count, dtype=np.bool_)
     resolution_rows: list[np.ndarray] = []
-    resolution_points: list[np.ndarray] = []
-    resolution_errors: list[np.ndarray] = []
+    classified_rows: list[np.ndarray] = []
+    classified_points: list[np.ndarray] = []
+    classified_errors: list[np.ndarray] = []
     status = 0
     # Classify cells before collecting any crossing edge, as in the original.
     for start in range(0, count, _CHUNK):
@@ -513,8 +514,11 @@ def polygonize(
                 resolution_rows.append(
                     np.column_stack((start + candidates[resolved], resolutions[resolved]))
                 )
-                resolution_points.append(points[resolved])
-                resolution_errors.append(errors[resolved])
+            witnessed = np.flatnonzero(np.isfinite(errors))
+            if len(witnessed):
+                classified_rows.append(start + candidates[witnessed])
+                classified_points.append(points[witnessed])
+                classified_errors.append(errors[witnessed])
     unresolved_faces = None if clipped is None else clipped.unresolved_face_keys()
     for row in range(count):
         if periodic or cell_issue[row] or empty[row]:
@@ -895,14 +899,19 @@ def polygonize(
     leaves._release_auxiliary()
     del surface_rows, surface_issue, mesh_mask, mesh_surface_rows, unresolved_mask
     # All mesh cells are at one level, so sorting their indices gives legacy key order.
-    tangency_resolutions = (
+    local_resolutions = (
         np.concatenate(resolution_rows)
         if resolution_rows
         else np.empty((0, 8), dtype=np.int64)
     )
+    classified = (
+        np.concatenate(classified_rows)
+        if classified_rows
+        else np.empty((0,), dtype=np.int64)
+    )
     witness_cells = np.flatnonzero(witness_root >= 0)
-    if len(tangency_resolutions):
-        witness_cells = np.union1d(witness_cells, tangency_resolutions[:, 0])
+    if len(classified):
+        witness_cells = np.union1d(witness_cells, classified)
     if len(witness_cells):
         witness_cells = witness_cells[np.lexsort(cell_indices[witness_cells, 1:].T[::-1])]
     # The full inverse corner map is needed during contouring, but retaining it
@@ -953,18 +962,18 @@ def polygonize(
                 status |= int(Status.DEGENERATE_EXTRACTION)
             del vertex_array
     witness_boxes = cell_boxes[witness_cells]
-    if len(tangency_resolutions):
-        # A resolved tangency cell has no crossing edge; its witness is the
-        # root found inside it during classification.
+    if len(classified):
+        # A cell without a crossing edge (proved free of the zero set, or
+        # resolved locally) carries the witness its classification found.
         rooted = witness_root[witness_cells]
         has_root = rooted >= 0
-        hugged = np.searchsorted(tangency_resolutions[:, 0], witness_cells[~has_root])
+        found = np.searchsorted(classified, witness_cells[~has_root])
         witness_values = np.empty((len(witness_cells), 3), dtype=np.float64)
         witness_errors = np.empty(len(witness_cells), dtype=np.float64)
         witness_values[has_root] = root_points[rooted[has_root]]
         witness_errors[has_root] = root_errors[rooted[has_root]]
-        witness_values[~has_root] = np.concatenate(resolution_points)[hugged]
-        witness_errors[~has_root] = np.concatenate(resolution_errors)[hugged]
+        witness_values[~has_root] = np.concatenate(classified_points)[found]
+        witness_errors[~has_root] = np.concatenate(classified_errors)[found]
     else:
         witness_values = root_points[witness_root[witness_cells]]
         witness_errors = root_errors[witness_root[witness_cells]]
@@ -1006,7 +1015,7 @@ def polygonize(
         root_issues=root_issues,
         root_endpoint_value_lower=point_lower[pairs],
         root_endpoint_value_upper=point_upper[pairs],
-        tangency_resolutions=tangency_resolutions,
+        local_resolutions=local_resolutions,
         triangle_cell_rows=triangle_cell_array,
         triangle_root_edge_rows=triangle_root_rows,
     )

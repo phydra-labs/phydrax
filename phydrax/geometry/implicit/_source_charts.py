@@ -962,7 +962,10 @@ def _tangent_conditioner(
     trace = first_square + second_square
     determinant = first_square * second_square - product * product
     threshold = Fraction(_CONDITIONING_THRESHOLD) ** 2
-    if determinant <= 0 or threshold * trace * trace <= (threshold + 1) ** 2 * determinant:
+    if (
+        determinant <= 0
+        or threshold * trace * trace <= (threshold + 1) ** 2 * determinant
+    ):
         return None
     diagonal_first = math.sqrt(float(first_square))
     diagonal_second = math.sqrt(float(determinant / first_square))
@@ -3623,14 +3626,38 @@ def _face_setup(
         for axis in range(3)
         if cell_gradient_lower[axis] > 0.0 or cell_gradient_upper[axis] < 0.0
     ]
-    if not strict_axes:
-        raise ValueError("Implicit root cell has no strictly regular gradient component.")
-    selected_axis = max(
-        strict_axes,
-        key=lambda axis: min(
-            abs(cell_gradient_lower[axis]), abs(cell_gradient_upper[axis])
-        ),
-    )
+    if strict_axes:
+        selected_axis = max(
+            strict_axes,
+            key=lambda axis: min(
+                abs(cell_gradient_lower[axis]), abs(cell_gradient_upper[axis])
+            ),
+        )
+    else:
+        # Only a crease cell of a non-smooth field may lack a strict regular
+        # gradient. Its face goes to the branch-decided prover, which bounds a
+        # face meeting the crease by root witnesses; the projection follows an
+        # axis along which the branches prove the field strictly monotone, or
+        # else the gradient enclosure's largest midpoint magnitude.
+        from ._adaptive_discovery import _branch_bounds, _ledger_crease_cells
+
+        box = np.asarray(scaffold.cell_boxes[cell_row_source], dtype=np.float64)
+        bounds = surface.volume.bounds
+        if not _ledger_crease_cells(bounds, box[None, 0], box[None, 1])[0]:
+            raise ValueError(
+                "Implicit root cell has no strictly regular gradient component."
+            )
+        tree = bounds.branch_tree()
+        monotone = (
+            np.flatnonzero(_branch_bounds(tree, box[None, 0], box[None, 1])[2][0])
+            if tree is not None
+            else np.empty(0, dtype=np.int64)
+        )
+        selected_axis = (
+            int(monotone[0])
+            if monotone.size
+            else int(np.argmax(np.abs(cell_gradient_lower + cell_gradient_upper)))
+        )
     if selected_axis == 0:
         projected_axes = (0, 1, 2)
     elif selected_axis == 1:
@@ -4910,8 +4937,7 @@ def _nearest_face_parameters(
     one = np.ones_like(first)
     for _ in range(8):
         residual = (
-            _ordered_contraction(coefficients, _monomial_values(first, second))
-            - points
+            _ordered_contraction(coefficients, _monomial_values(first, second)) - points
         )
         along_first = _ordered_contraction(
             coefficients,

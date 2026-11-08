@@ -199,6 +199,22 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- The `SparseHodge` SPD admission decides positive definiteness with
+  `admit_sparse_factorization_values`, which keeps only the pivot evidence
+  (status, minimum pivot, replaced/rejected pivots, finiteness) instead of
+  copying the whole factor through a JAX callback; decisions and evidence are
+  identical. Its declared `admission_bytes` now bounds the factor plus the
+  multifrontal workspace (`numeric_admission_bytes`) and refuses with
+  `MemoryBudgetError("admission_bytes", …)` before numeric work, so a declared
+  Hodge budget bounds the admission's real transient memory.
+- Mesh adaptation resolves organization membership (patches, zones, labels) as
+  sparse entity-to-scope pairs through `resolve_mesh_scope_rows` instead of a
+  dense entities × scopes matrix, which on reconstructed PLCs (one patch per
+  source triangle) cost +4.6 GB on the torus-1 reconstruction and tens of GB at
+  the next scale. Cell, facet and edge classes are bit-identical. Reconstruction
+  qualification profiles declare a refinement memory budget, and all-cell
+  marked refinement refuses with `MemoryBudgetError("refinement_memory_bytes",
+  estimate, budget)` before any adaptation work when its estimate exceeds it.
 - `CellGeometrySpec.exact_coordinate_bank`, `_ExactCoordinateBankMap.exact_coordinates`
   and `_RetainedCoordinateBank.exact_coordinates` hold an immutable
   integer-dyadic `ExactCoordinateBank` (an int64 odd significand and int16
@@ -557,6 +573,14 @@
   `custom_linear_solve`). Second derivatives whose first-order tangent was
   constant previously came back as a silent zero. Valid inputs are unchanged at
   every order.
+- Boundary-layer corner stretch no longer depends on how the platform rounds
+  exact distance ties. When a column's probe distance is attained by two or
+  more candidates (its foot on a wall vertex or edge, or on several triangles,
+  as on every planar wall), the minimum is computed exactly on the binary64
+  inputs and rounded once instead of being decided by float argmin/min. Planar
+  columns now get a stretch of exactly 1 on every host, where some were
+  `1 + 2⁻⁵²` on some hosts, so their layer meshes and identities can change.
+  Columns without an exact tie keep bit-identical stretch values.
 - `ImplicitPointProjectionPlan` second and higher derivatives were silently
   zero because the normal-gauge JVP returned a stop-gradient primal. They are
   now total derivatives along the normal-gauge level-set flow
@@ -568,9 +592,30 @@
   strict gradient component, proved boundary arcs and contours forming one disk
   proves that the existing contours span the zero set there, and the tangency
   cell is resolved with a witness inside it. Resolutions are recorded in
-  `AdaptiveImplicitScaffold.tangency_resolutions` and checked by polygon and
+  `AdaptiveImplicitScaffold.local_resolutions` and checked by polygon and
   history replay; only tangencies no group proves still re-anchor or remain
   unresolved events.
+- Adaptive implicit discovery resolves constant-sign cells on a sharp CSG
+  crease (union, intersection or difference), such as the seam of two
+  overlapping spheres: a cell is resolved when the min/max branches prove the
+  field strictly monotone along one axis, two corners have different extremal
+  branches, and the cell has a witness; the decision is recorded in
+  `local_resolutions` and checked by replay. A possible-zero cell proved free of
+  the zero set keeps a witness (its centre with a certified distance bound), so
+  every possible-zero box of the cover is witnessed. Root-scaffold fidelity and
+  chart setup admit a cell without a strict gradient only when the field is
+  non-smooth and its branch ledger does not prove the cell smooth; such faces
+  are bounded by root witnesses.
+- Periodic TPMS fills rebuild the fundamental-box boundary (caps and contour)
+  with split, collapse and flip/relax passes graded away from short seam edges,
+  and choose per axis the box offset where the surface meets the face most
+  steeply; every vertex keeps its certified root and caps pair by exact
+  coordinates. Schwarz P and gyroid network fills meet the HARD shape schedule
+  with no bad cells (previously hundreds to thousands of slivers), HARD is the
+  default for network fills, and the fixed-topology design window widens from
+  about 1e-4 to ±0.131 in level. Sheet fills default to SOFT (HARD needs two to
+  three edges across the sheet thickness). A periodic collapse whose new cell
+  would join two lifted copies of one vertex orbit is rejected.
 - Zero-set band admission no longer overflows the native stack: piece
   splitting uses an explicit work stack and refuses at binary64 resolution
   relative to the triangle's scale.
@@ -715,6 +760,39 @@
   populations and the validator pass their active masks, so transport across
   the 64-term boundary (for example 60 active terms at capacity 60, 70 or 128)
   stays bitwise. Unmasked reductions are unchanged.
+- MPM transfer, momentum and angular-momentum gates and energy ledgers reduce
+  padded streams over their logical terms: particle mass, momentum, kinetic,
+  material, external-work and plastic sums pass the active particle mask,
+  APIC affine and axisymmetric route sums the valid routes, contact and grid
+  kinetic sums their active nodes, and block-sparse storage sums the valid
+  storage slots. 60 active particles give the same bits at capacities 60, 70
+  and 128, and block-sparse sums no longer depend on storage capacity. Dense
+  storage sums are unchanged; unpadded runs keep their bits.
+- Particle and SPH diagnostics reduce padded streams over their logical terms:
+  exchange-ledger torque and relative power, Morris and artificial-viscosity
+  dissipation, density-diffusion means and variance rates, barotropic and
+  weakly compressible SPH mass, momentum, angular momentum, energy and power
+  diagnostics, and masked production-qualification residuals pass their active
+  particle or valid pair masks. Their bits no longer depend on particle or pair
+  capacity (for example 60 active particles at capacity 60, 70 or 128);
+  unpadded configurations, capacities of at most 64 and the default
+  qualification mask keep their bits.
+- The internal `compensated_sum_chunks` takes one `where` mask per chunk; each
+  chunk follows the algorithm of its logical term count, and masked
+  `compensated_sum` reduces through it with unchanged bits. Finite-volume stage
+  and accepted conservation ledgers sum sources and net cell content over
+  active cells and the boundary-outward stream over active boundary routes, so
+  their sums no longer depend on inactive cell or route slots or on interleaved
+  interior routes. All-active ledgers whose blocks hold at most 64 routes or
+  only boundary routes keep their bits; unmasked reductions keep their programs.
+- Particle-grid splat balance evidence sums the active, supported and dropped
+  source totals and absolute totals over the active sources (`certified_sum`
+  takes `where`), so they no longer depend on particle capacity or inactive slot
+  positions. Target totals, which carry no target-validity mask, are unchanged.
+- Adaptive cubature sums the active cell estimates and errors through their
+  activity mask, so the returned value, error estimate and termination decision
+  no longer depend on `max_cells`; they previously could change when
+  `max_cells` exceeded 64 while at most 64 cells were active.
 - `RowGramLinearOperator` plans the canonical storage of a sparse factor from
   its concrete topology at construction, so its exact diagonal (and the
   matrix-free Jacobi preconditioner of Craig solves) works again for sparse

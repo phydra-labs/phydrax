@@ -15,6 +15,7 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
 
+from .._execution_resources import MemoryBudgetError
 from .._fingerprint import canonical_fingerprint
 from .._owned_programs import run_owned_program
 from .._strict import StrictModule
@@ -24,10 +25,13 @@ from ..linalg import (
     LinearSolvePolicy,
     OperatorProperties,
     prepare_sparse_factorization,
-    refresh_sparse_factorization_values,
     SparseFactorizationPlan,
     SparseFactorizationPolicy,
     SparseFactorizationStatus,
+)
+from ..linalg._sparse_factorizations import (
+    admit_sparse_factorization_values,
+    numeric_admission_bytes,
 )
 from ..sparse import EdgeRelation, SparseCoordinateOperator
 from ..sparse._linear import _SparseStoragePlan
@@ -123,7 +127,9 @@ def _admission_pattern(
     """Prepare native SPD evidence using byte-bounded, AMD-ordered Cholesky.
 
     ``factor_bytes`` is the Hodge's declared admission budget; ``None`` keeps
-    the documented library default of `SparseFactorizationPolicy`.
+    the documented library default of `SparseFactorizationPolicy`. It bounds
+    the whole numeric admission: the factor and its multifrontal workspace
+    (`numeric_admission_bytes`), refused before any numeric work.
     """
     row = np.asarray(rows, dtype=np.int32)
     column = np.asarray(columns, dtype=np.int32)
@@ -174,14 +180,16 @@ def _admission_pattern(
                 admission_policy,
             )
         )
+        if plan is not None:
+            required = numeric_admission_bytes(plan)
+            if required > budget:
+                raise MemoryBudgetError("admission_bytes", required, budget)
     return plan, tuple(int(index) for index in order), storage_plan
 
 
 def _admission_succeeds(plan: SparseFactorizationPlan, values: Array, /) -> Array:
-    evidence = refresh_sparse_factorization_values(plan, values)
-    return (evidence.status == int(SparseFactorizationStatus.SUCCESS)) & (
-        evidence.diagnostics.finite
-    )
+    evidence = admit_sparse_factorization_values(plan, values)
+    return (evidence.status == int(SparseFactorizationStatus.SUCCESS)) & evidence.finite
 
 
 @final
@@ -230,11 +238,13 @@ class SparseHodge(StrictModule):
             raise TypeError("Hodge pattern must contain integer coordinates.")
         if size < 0 or np.any((row < 0) | (column < row) | (column >= size)):
             raise ValueError("Hodge pattern must be upper triangular and in range.")
-        pairs = tuple((int(r), int(c)) for r, c in zip(row, column, strict=True))
-        if len(set(pairs)) != len(pairs):
+        # Vectorized: per-route Python pairs and their set cost about 0.25 KB
+        # per route, which is gigabytes on a refined order-2 form mass.
+        keys = row.astype(np.int64) * max(size, 1) + column.astype(np.int64)
+        if np.unique(keys).size != keys.size:
             raise ValueError("Hodge upper-triangular routes must be unique.")
-        rows_ = tuple(pair[0] for pair in pairs)
-        columns_ = tuple(pair[1] for pair in pairs)
+        rows_ = tuple(row.tolist())
+        columns_ = tuple(column.tolist())
         selected = gram_solve_policy(size) if policy is None else policy
         if not isinstance(selected, LinearSolvePolicy):
             raise TypeError("policy must be a LinearSolvePolicy or None.")
@@ -243,7 +253,7 @@ class SparseHodge(StrictModule):
                 raise TypeError("admission_bytes must be an integer or None.")
             if admission_bytes <= 0:
                 raise ValueError("admission_bytes must be positive.")
-        mirror = tuple(index for index, (r, c) in enumerate(pairs) if r != c)
+        mirror = tuple(np.flatnonzero(row != column).tolist())
         admission_plan, admission_order, storage_plan = _admission_pattern(
             rows_, columns_, mirror, size, admission_bytes
         )

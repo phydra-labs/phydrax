@@ -17,7 +17,7 @@ its affine map, every translate by the exact lattice action, so the canonical
 from __future__ import annotations
 
 import math
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import final
 
 import equinox as eqx
@@ -625,8 +625,6 @@ def discover_periodic_trigonometric_surface(
     unresolved cells reach ``root_tolerance``. Undecided results keep the last
     attempt's unresolved boxes as evidence and carry no mesh.
     """
-    if not isinstance(source, TrigonometricLevelSet):
-        raise TypeError("source must be a TrigonometricLevelSet.")
     if policy.enclosure != "interval":
         raise ValueError("Quotient discovery requires the interval enclosure policy.")
     reduced = reduced_trigonometric_source(source)
@@ -709,6 +707,13 @@ class QuotientZeroSet:
         self._values = jax.jit(jax.vmap(value))
         self._gradients = jax.jit(jax.vmap(jax.grad(value)))
         self.tolerance = float(surface.policy.root_tolerance)
+
+    def values(self, points: np.ndarray, /) -> np.ndarray:
+        """Float field values (sampled choices only, never a certificate)."""
+        rows = np.asarray(points, dtype=np.float64).reshape((-1, 3))
+        if not rows.shape[0]:
+            return np.empty(0, dtype=np.float64)
+        return np.asarray(self._values(jnp.asarray(rows)), dtype=np.float64)
 
     def gradients(self, points: np.ndarray, /) -> np.ndarray:
         """Float field gradients (search directions and orientation tests only)."""
@@ -796,3 +801,90 @@ class QuotientZeroSet:
             half[rows[~done]] *= 2.0
             pending &= half <= reach
         return brackets, signs, found
+
+
+@dataclass(frozen=True, slots=True)
+class QuotientBoxContour:
+    """A resolved discovery's quotient contour lifted into one fundamental box.
+
+    ``domain`` is the box ``[offset, offset + 1]^3``; ``points``/``faces`` are
+    the lifted contour with ``vertex_orbits``/``vertex_windings``.
+    ``root_error`` bounds every vertex's reduced distance from a root of the
+    field, and ``interior`` is a point of the box certified inside the region
+    (the centre of the largest certified-inside cover leaf).
+    """
+
+    domain: np.ndarray
+    points: np.ndarray
+    faces: np.ndarray
+    vertex_orbits: np.ndarray
+    vertex_windings: np.ndarray
+    root_error: float
+    interior: np.ndarray
+
+
+def _interior_point(cover: AdaptiveImplicitCover, /) -> np.ndarray:
+    boxes = np.asarray(cover.boxes, dtype=np.float64)
+    inside = np.flatnonzero(np.asarray(cover.value_upper) < 0.0)
+    if not inside.size:
+        raise ValueError("The quotient cover has no certified interior leaf.")
+    sizes = boxes[inside, 1, 0] - boxes[inside, 0, 0]
+    box = boxes[inside[int(np.argmax(sizes))]]
+    return 0.5 * box[0] + 0.5 * box[1]
+
+
+def quotient_box_contour(
+    surface: PeriodicImplicitSurface, offset: np.ndarray, /
+) -> QuotientBoxContour | None:
+    """The resolved discovery's contour in the fundamental box at ``offset``.
+
+    The quotient surface does not depend on the box: any dyadic ``offset``
+    (``offset + 1`` exact) cuts it along other cell-face planes. The published
+    box is the surface's own contour; any other box re-runs the quotient
+    polygonization at the surface's resolved policy and returns ``None`` when
+    that box leaves unresolved cells. Its quotient topology must equal the
+    surface's.
+    """
+    if surface.topology is None:
+        raise ValueError("Only a resolved quotient discovery has a box contour.")
+    offset = np.asarray(offset, dtype=np.float64).reshape(3)
+    if not np.array_equal((offset + 1.0) - 1.0, offset):
+        raise ValueError("A fundamental box offset must keep offset + 1 exact.")
+    if np.array_equal(offset, surface.reduced_domain[0]):
+        return QuotientBoxContour(
+            np.array(surface.reduced_domain, copy=True),
+            np.array(surface.reduced_points, copy=True),
+            np.array(surface.faces, copy=True),
+            np.array(surface.vertex_orbits, copy=True),
+            np.array(surface.vertex_windings, copy=True),
+            surface.root_error,
+            _interior_point(surface.cover),
+        )
+    domain = np.stack((offset, offset + 1.0))
+    cover, evidence, contour, scaffold, _, _ = _discover_once(
+        reduced_trigonometric_source(surface.source),
+        domain,
+        surface.policy,
+        surface.source_id,
+        surface.evidence.lattice_anchor,
+    )
+    if np.asarray(evidence.unresolved_issues).size or contour is None:
+        return None
+    _, periodic = _lifted_surface(surface.cell, contour)
+    topology = _quotient_topology(
+        contour.faces, contour.vertex_orbits, contour.vertex_windings, periodic
+    )
+    if (
+        topology.euler_characteristic != surface.topology.euler_characteristic
+        or topology.component_count != surface.topology.component_count
+    ):
+        raise ValueError("A re-anchored quotient contour changed the surface topology.")
+    return QuotientBoxContour(
+        domain,
+        np.asarray(contour.points, dtype=np.float64),
+        np.asarray(contour.faces, dtype=np.int64),
+        np.asarray(contour.vertex_orbits, dtype=np.int64),
+        np.asarray(contour.vertex_windings, dtype=np.int64),
+        float(np.max(np.asarray(scaffold["root_errors"]), initial=0.0)),
+        _interior_point(cover),
+    )

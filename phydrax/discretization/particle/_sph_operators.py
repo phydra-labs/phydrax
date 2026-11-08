@@ -220,8 +220,10 @@ def sph_morris_viscous_force(
         force=precision.output(force),
         pair_force=precision.output(pair_force),
         pair_power=pair_power_certified,
-        dissipation_rate=-compensated_sum(pair_power_certified),
-        positive_power_defect=compensated_sum(jnp.maximum(pair_power_certified, 0.0)),
+        dissipation_rate=-compensated_sum(pair_power_certified, where=valid),
+        positive_power_defect=compensated_sum(
+            jnp.maximum(pair_power_certified, 0.0), where=valid
+        ),
     )
 
 

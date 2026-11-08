@@ -14,6 +14,7 @@ import numpy as np
 
 import phydrax as phx
 from phydrax._array_archive import ArrayArchiveLimits
+from phydrax._execution_resources import MemoryBudgetError
 from phydrax._execution_sampling import process_peak_memory
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax._physical import SpatialCoordinateContract
@@ -775,9 +776,27 @@ def _volume_acceptance(
     }
 
 
+def _refinement_admission(mesh: phx.discretization.CellMesh, budget: int, /) -> int:
+    """Admission estimate of one all-cell refinement, refused above ``budget``.
+
+    Every tetrahedron red-refines into eight children; the estimate charges the
+    stage's measured resident growth per child (_REFINEMENT_BYTES_PER_TARGET_CELL).
+    The refusal is typed and comes before any adaptation work is allocated.
+    """
+    marked = sum(block.cell_count for block in mesh.blocks)
+    single_cell_kind(mesh, "tetrahedron")
+    required = (
+        marked * _REFINED_CHILDREN_PER_TETRAHEDRON * _REFINEMENT_BYTES_PER_TARGET_CELL
+    )
+    if required > budget:
+        raise MemoryBudgetError("refinement_memory_bytes", required, budget)
+    return required
+
+
 def _refine_every_cell(
-    plc: NativePlcSource, result: phx.meshing.CellMeshingResult, /
-) -> phx.meshing.MeshAdaptationResult:
+    plc: NativePlcSource, result: phx.meshing.CellMeshingResult, budget: int, /
+) -> tuple[phx.meshing.MeshAdaptationResult, int]:
+    admitted = _refinement_admission(result.mesh, budget)
     marks = np.concatenate(
         [np.asarray(block.global_ids, dtype=np.int64) for block in result.mesh.blocks]
     )
@@ -801,7 +820,7 @@ def _refine_every_cell(
         raise RuntimeError(
             f"Marked reconstructed-volume refinement was not accepted: {adaptation.status}."
         )
-    return adaptation
+    return adaptation, admitted
 
 
 def _all_field_layouts(
@@ -1269,7 +1288,8 @@ def _volume_lifecycle(
     budget = _SOLVE_MEMORY_BUDGET_BYTES[profile]
     initial = _manufactured_solve(result, f"{label}-epoch-0", budget)
     _stage(profile, "marked-refinement")
-    adaptation = _refine_every_cell(plc, result)
+    refinement_budget = _REFINEMENT_MEMORY_BUDGET_BYTES[profile]
+    adaptation, refinement_admitted = _refine_every_cell(plc, result, refinement_budget)
     target = adaptation.target
     _stage(profile, "target-acceptance")
     target_acceptance = _volume_acceptance(plc, target)
@@ -1310,6 +1330,8 @@ def _volume_lifecycle(
                     "source_result_id": result.result_id,
                     "target_result_id": target.result_id,
                     "association_transfer": "PlcAssociationTransfer",
+                    "memory_budget_bytes": refinement_budget,
+                    "admission_estimate_bytes": refinement_admitted,
                 },
                 "transfer": transfer,
                 **refreshed.record,
@@ -1925,6 +1947,30 @@ _SOLVE_MEMORY_BUDGET_BYTES = {
         for scale in (1, 2)
     },
     _ENVELOPE_PROFILE: 3 << 29,
+}
+
+# MAC-20261108 (MarkedRefinementBudget): every profile declares the memory
+# budget of its all-cell marked refinement, checked before any adaptation work
+# against the admission estimate of _refinement_admission. The estimate is a
+# sampled rate, not an allocation bound: NATIVE_MIXED keeps each child's exact
+# restricted geometry live (torus resolution 3: 3.15 M Fractions, 0.53 M
+# rational-polynomial mapping proxies after the stage) and its transient
+# Python objects stay allocator-resident. Measured on that row (10,095
+# tetrahedra -> 80,760 children) after the organization membership went
+# sparse: 3,189,260,288 and 3,356,000,256 bytes of stage growth in two runs,
+# at most 41,555 per child. The estimate charges 48 KiB per child (18% over
+# that rate): 8.84 GB for torus-1 (179,944 children). 10 GiB keeps every
+# admitted row inside the 16 GiB run envelope (largest stage-start resident:
+# 4.9 GB, torus-2 on wave-7) and refuses rows whose refinement cannot fit.
+_REFINED_CHILDREN_PER_TETRAHEDRON = 8
+_REFINEMENT_BYTES_PER_TARGET_CELL = 48 << 10
+_REFINEMENT_MEMORY_BUDGET_BYTES = {
+    **{
+        _profile_id(kind, scale): 10 << 30
+        for kind in ("lobed-sphere", "torus", "rotated-ellipsoid")
+        for scale in (1, 2)
+    },
+    _ENVELOPE_PROFILE: 10 << 30,
 }
 
 # MAC-20261107T1759Z: every profile declares the byte budget of its model

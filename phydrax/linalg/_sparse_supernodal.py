@@ -538,6 +538,65 @@ def analyze_supernodal(
     )
 
 
+def numeric_workspace_bytes(analysis: SupernodalAnalysis, itemsize: int, /) -> int:
+    """Upper bound on the transient bytes of one `factor_values` call.
+
+    Counts what `factor_values` holds besides its ``factor_size`` panels, at
+    each allocation point of a node with ``h`` rows, ``c`` columns and
+    ``u = h - c`` update rows:
+
+    - the new ``h^2`` front while the previous node's front, pivot block,
+      panel and triangular solve are still bound, over the pending update
+      stack (its children not yet popped);
+    - the extend-add gather of a child update, while the previous node's
+      block, panel and solve are still bound;
+    - the blocked kernels (pivot block, panel, triangular solve and its copy,
+      trailing copy and rank update: ``c^2 + hc + 2uc + 2u^2``) or the
+      unblocked fallback (pivot-by-pivot outer product, failed pivot block,
+      panel, lower-triangular copies: ``h^2 + 2c^2 + hc + 2u^2``), with the
+      last popped child still bound.
+
+    Plus the host input values, their gathered (and conjugated) pairs, the
+    per-column pivot kinds and the six per-supernode offset lists held as
+    Python integers (40 bytes each). Derived from the analysis alone, so it
+    is not part of `analysis_id`.
+    """
+    widths = np.diff(analysis.supernode_columns).tolist()
+    heights = np.diff(analysis.row_offsets).tolist()
+    child_counts = analysis.child_counts.tolist()
+    live = 0
+    peak = 0
+    previous_front = 0
+    previous_rest = 0
+    stack: list[int] = []
+    for node, (columns, height) in enumerate(zip(widths, heights, strict=True)):
+        update = height - columns
+        front = height * height
+        children = [stack.pop() for _ in range(child_counts[node])]
+        largest_child = max(children, default=0)
+        blocked = (
+            columns * columns + height * columns + 2 * update * columns + 2 * update**2
+        )
+        unblocked = front + 2 * columns * columns + height * columns + 2 * update**2
+        peak = max(
+            peak,
+            live + previous_front + previous_rest + front,
+            live + previous_rest + front + largest_child,
+            live - sum(children) + largest_child + front + max(blocked, unblocked),
+        )
+        live -= sum(children)
+        previous_front = front
+        previous_rest = columns * columns + height * columns + 2 * update * columns
+        stack.append(update * update)
+        live += update * update
+    supernodes = analysis.supernode_count
+    return (
+        itemsize * (peak + 3 * int(analysis.input_sources.size))
+        + analysis.size
+        + 6 * 40 * (supernodes + 1)
+    )
+
+
 def _kernels(dtype: np.dtype, /):  # noqa: ANN202
     complex_ = np.issubdtype(dtype, np.complexfloating)
     (potrf,) = lapack.get_lapack_funcs(("potrf",), dtype=dtype)

@@ -263,10 +263,17 @@ def particle_constraint_residuals(
         if active_mask is None
         else jnp.asarray(active_mask, bool)
     )
+    # The all-True default mask keeps the unmasked reduction; a supplied mask
+    # selects the logical particles independently of their padded capacity.
+    selected = None if active_mask is None else active
     relative = jnp.where(active, (density_ - reference) / reference, 0.0)
     weight = jnp.where(active, volume, 0.0)
-    weight_sum = jnp.maximum(compensated_sum(weight), jnp.finfo(density_.dtype).tiny)
-    density_l2 = jnp.sqrt(compensated_sum(weight * relative**2) / weight_sum)
+    weight_sum = jnp.maximum(
+        compensated_sum(weight, where=selected), jnp.finfo(density_.dtype).tiny
+    )
+    density_l2 = jnp.sqrt(
+        compensated_sum(weight * relative**2, where=selected) / weight_sum
+    )
     if density_rate is None:
         divergence_relative = jnp.zeros_like(relative)
     else:
@@ -278,7 +285,7 @@ def particle_constraint_residuals(
             0.0,
         )
     divergence_l2 = jnp.sqrt(
-        compensated_sum(weight * divergence_relative**2) / weight_sum
+        compensated_sum(weight * divergence_relative**2, where=selected) / weight_sum
     )
     if pressure is None:
         complementarity = jnp.zeros((), dtype=density_.dtype)

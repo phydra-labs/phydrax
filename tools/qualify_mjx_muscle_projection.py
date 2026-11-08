@@ -43,8 +43,7 @@ _MODEL = """
 def qualify(steps: int) -> dict[str, object]:
     import mujoco
 
-    # MuJoCo 3.12 Windows stubs omit this runtime-verified public binding.
-    model = mujoco.MjModel.from_xml_string(_MODEL)  # ty: ignore[unresolved-attribute]
+    model = mujoco.MjModel.from_xml_string(_MODEL)
     adapter = prepare_mjx_adapter(model, device=jax.devices("cpu")[0])
     projection = adapter.prepare_muscle_projection()
     state = adapter.reset(jax.random.key(7), adapter.parameters).accepted_state
@@ -67,15 +66,13 @@ def qualify(steps: int) -> dict[str, object]:
         if not bool(result.successful):
             raise RuntimeError("MJX candidate failed before provider comparison.")
         state = result.accepted_state
-    # MuJoCo 3.12 Windows stubs omit this runtime-verified public binding.
-    host = mujoco.MjData(model)  # ty: ignore[unresolved-attribute]
+    host = mujoco.MjData(model)
     host.qpos[:] = np.asarray(state.payload.opaque.qpos)
     host.qvel[:] = np.asarray(state.payload.opaque.qvel)
     host.act[:] = np.asarray(state.payload.opaque.act)
     host.ctrl[:] = np.asarray(state.payload.opaque.ctrl)
     host.time = float(np.asarray(state.payload.opaque.time))
-    # MuJoCo 3.12 Windows stubs omit this runtime-verified public binding.
-    mujoco.mj_forward(model, host)  # ty: ignore[unresolved-attribute]
+    mujoco.mj_forward(model, host)
     refreshed = adapter.refresh(state)
     if not bool(refreshed.successful):
         raise RuntimeError("MJX forward refresh failed before provider comparison.")

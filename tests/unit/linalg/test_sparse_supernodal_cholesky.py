@@ -350,3 +350,100 @@ def test_supernodal_factor_and_solve_derivatives_match_central_differences(
         (jnp.asarray(1.0),),
     )[1]
     np.testing.assert_allclose(forward, jnp.vdot(value_gradient, direction), rtol=1e-9)
+
+
+def _admission_cases(matrix: sp.csr_matrix, plan: Any) -> dict[str, np.ndarray]:
+    rows = np.repeat(np.arange(matrix.shape[0]), np.diff(matrix.indptr))
+    diagonal = np.flatnonzero(rows == matrix.indices)
+    spd = np.asarray(matrix.data).copy()
+    last = spd.copy()
+    last[diagonal[int(plan.permutation[-1])]] *= -1.0
+    first = spd.copy()
+    first[diagonal[int(plan.permutation[0])]] *= -1.0
+    nonfinite = spd.copy()
+    nonfinite[0] = np.nan
+    return {"spd": spd, "last": last, "first": first, "nonfinite": nonfinite}
+
+
+@pytest.mark.parametrize("replacement", (False, True))
+def test_status_only_admission_reproduces_the_refresh_evidence(
+    fe_system: tuple[Any, np.ndarray], replacement: bool
+) -> None:
+    operator, _ = fe_system
+    matrix = _matrix(operator)
+    plan = la.prepare_sparse_factorization(
+        operator,
+        la.SparseFactorizationPolicy(
+            "cholesky",
+            ordering="approximate-minimum-degree",
+            allow_pivot_replacement=replacement,
+        ),
+    )
+    cases = _admission_cases(matrix, plan)
+
+    def refresh(values: jax.Array) -> Any:
+        return la.refresh_sparse_factorization_values(plan, values)
+
+    def admit(values: jax.Array) -> Any:
+        return factorizations.admit_sparse_factorization_values(plan, values)
+
+    batch = np.stack(tuple(cases.values()))
+    for name, values, transform in (
+        *((name, values, jax.jit) for name, values in cases.items()),
+        ("batch", batch, jax.vmap),
+    ):
+        full = transform(refresh)(jnp.asarray(values))
+        admitted = transform(admit)(jnp.asarray(values))
+        for left, right in (
+            (admitted.status, full.status),
+            (admitted.minimum_pivot, full.diagnostics.minimum_pivot),
+            (admitted.replaced_pivots, full.diagnostics.replaced_pivots),
+            (admitted.rejected_pivots, full.diagnostics.rejected_pivots),
+            (admitted.finite, full.diagnostics.finite),
+        ):
+            np.testing.assert_array_equal(
+                np.asarray(left), np.asarray(right), err_msg=name
+            )
+    # The evidence carries no derivative and does not refuse to be traced by one.
+    gradient = jax.grad(
+        lambda values: (
+            jnp.sum(values)
+            + factorizations.admit_sparse_factorization_values(plan, values).minimum_pivot
+        )
+    )(jnp.asarray(cases["spd"]))
+    np.testing.assert_array_equal(gradient, np.ones_like(cases["spd"]))
+
+
+@pytest.mark.parametrize("case", ("spd", "last", "first", "nonfinite"))
+def test_numeric_workspace_bound_covers_the_measured_refresh(
+    fe_system: tuple[Any, np.ndarray], case: str
+) -> None:
+    import tracemalloc
+
+    from phydrax.linalg import _sparse_supernodal as supernodal
+
+    operator, _ = fe_system
+    matrix = _matrix(operator)
+    plan = la.prepare_sparse_factorization(
+        operator,
+        la.SparseFactorizationPolicy("cholesky", ordering="nested-dissection"),
+    )
+    analysis = plan.supernodal
+    assert analysis is not None
+    values = _admission_cases(matrix, plan)[case]
+    policy = plan.policy
+    tracemalloc.start()
+    supernodal.factor_values(
+        analysis,
+        values,
+        policy.diagonal_shift,
+        policy.pivot_tolerance,
+        policy.allow_pivot_replacement,
+        policy.replacement_value,
+    )
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    itemsize = values.dtype.itemsize
+    workspace = supernodal.numeric_workspace_bytes(analysis, itemsize)
+    assert peak <= analysis.factor_size * itemsize + workspace
+    assert factorizations.numeric_admission_bytes(plan) == plan.factor_bytes + workspace

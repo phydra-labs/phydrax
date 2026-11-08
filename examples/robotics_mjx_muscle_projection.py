@@ -1,7 +1,5 @@
 """Project one provider-native MuJoCo muscle through the MJX adapter."""
 
-import importlib
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -17,7 +15,7 @@ if not availability.available:
         f"(requires {availability.requirement})"
     )
 
-mujoco = importlib.import_module("mujoco")
+import mujoco
 
 
 xml = """
@@ -44,8 +42,7 @@ xml = """
   </actuator>
 </mujoco>
 """
-# MuJoCo's compiled public MjModel export is absent from its stubs.
-model = mujoco.MjModel.from_xml_string(xml)  # ty: ignore[unresolved-attribute]
+model = mujoco.MjModel.from_xml_string(xml)
 adapter = prepare_mjx_adapter(model, device=jax.devices("cpu")[0])
 muscles = adapter.prepare_muscle_projection()
 source = adapter.reset(jax.random.key(7), adapter.parameters).accepted_state

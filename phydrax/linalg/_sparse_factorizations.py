@@ -1816,6 +1816,125 @@ class _SupernodalFactorCallback:
         )
 
 
+class SparseFactorizationAdmission(StrictModule):
+    """Numeric pivot evidence of one supernodal refresh, without its panels.
+
+    The fields equal the status and diagnostics that
+    `refresh_sparse_factorization_values` reports for the same values.
+    """
+
+    status: Array
+    minimum_pivot: Array
+    replaced_pivots: Array
+    rejected_pivots: Array
+    finite: Array
+
+
+@dataclass(frozen=True)
+class _SupernodalAdmissionCallback:
+    """Host multifrontal refresh that keeps only its pivot evidence.
+
+    Each value set runs the same `factor_values` as the full refresh; its
+    panels are released on the host before the next set, so no factor ever
+    reaches a device buffer.
+    """
+
+    analysis: SupernodalAnalysis
+    diagonal_shift: float
+    pivot_tolerance: float
+    allow_replacement: bool
+    replacement_value: float
+
+    def result_shapes(self, values: Array, /) -> tuple[jax.ShapeDtypeStruct, ...]:
+        batch = values.shape[:-1]
+        return (
+            jax.ShapeDtypeStruct(batch, jnp.int32),
+            jax.ShapeDtypeStruct(batch, jnp.finfo(values.dtype).dtype),
+            jax.ShapeDtypeStruct(batch, jnp.int32),
+            jax.ShapeDtypeStruct(batch, jnp.int32),
+            jax.ShapeDtypeStruct(batch, jnp.bool_),
+        )
+
+    def __call__(self, values: np.ndarray, /) -> tuple[np.ndarray, ...]:
+        values = np.asarray(values)
+        batch = values.shape[:-1]
+        status = np.empty(batch, dtype=np.int32)
+        minimum_pivot = np.empty(batch, dtype=np.finfo(values.dtype).dtype)
+        replaced = np.empty(batch, dtype=np.int32)
+        rejected = np.empty(batch, dtype=np.int32)
+        finite = np.empty(batch, dtype=bool)
+        for index in np.ndindex(*batch):
+            result = _supernodal.factor_values(
+                self.analysis,
+                values[index],
+                self.diagonal_shift,
+                self.pivot_tolerance,
+                self.allow_replacement,
+                self.replacement_value,
+            )
+            status[index] = result.status
+            minimum_pivot[index] = result.minimum_pivot
+            replaced[index] = result.replaced
+            rejected[index] = result.rejected
+            finite[index] = result.status != _supernodal.STATUS_NONFINITE
+            del result
+        return status, minimum_pivot, replaced, rejected, finite
+
+
+def numeric_admission_bytes(plan: SparseFactorizationPlan, /) -> int:
+    """Working set of one `admit_sparse_factorization_values` call.
+
+    The plan's admitted bytes (retained indices and the panels the refresh
+    fills) plus the bounded multifrontal workspace of
+    `numeric_workspace_bytes`: dense fronts, the pending update stack and the
+    dense kernel temporaries, none of which ``factor_bytes`` charges.
+    """
+    if not isinstance(plan, SparseFactorizationPlan) or plan.supernodal is None:
+        raise TypeError("Numeric admission requires a supernodal Cholesky plan.")
+    itemsize = np.dtype(plan.value_dtype).itemsize
+    return plan.factor_bytes + _supernodal.numeric_workspace_bytes(
+        plan.supernodal, itemsize
+    )
+
+
+def admit_sparse_factorization_values(
+    plan: SparseFactorizationPlan, values: ArrayLike, /
+) -> SparseFactorizationAdmission:
+    """Decide a supernodal refresh of ``values`` and keep only its evidence.
+
+    The decision and evidence (status, minimum pivot, replaced and rejected
+    pivots, finiteness) equal `refresh_sparse_factorization_values` for the
+    same values, but the panels never leave the host refresh, so its working
+    set is `numeric_admission_bytes`. The evidence carries no derivative:
+    the values enter through ``stop_gradient``.
+    """
+    if not isinstance(plan, SparseFactorizationPlan):
+        raise TypeError("plan must be a SparseFactorizationPlan.")
+    if plan.supernodal is None:
+        raise ValueError("Numeric admission requires a supernodal Cholesky plan.")
+    numeric_values = jnp.asarray(values)
+    if numeric_values.shape != plan.batch_shape + (plan.input_nnz,):
+        raise ValueError("Sparse factorization values must match the plan's input shape.")
+    if numeric_values.dtype.name != plan.value_dtype:
+        raise ValueError(
+            "Sparse factorization refresh requires an unchanged value dtype "
+            f"({plan.value_dtype}); got {numeric_values.dtype.name}."
+        )
+    policy = plan.policy
+    callback = _SupernodalAdmissionCallback(
+        plan.supernodal,
+        policy.diagonal_shift,
+        policy.pivot_tolerance,
+        policy.allow_pivot_replacement,
+        policy.replacement_value,
+    )
+    held = jax.lax.stop_gradient(numeric_values)
+    status, minimum_pivot, replaced, rejected, finite = jax.pure_callback(
+        callback, callback.result_shapes(held), held, vmap_method="broadcast_all"
+    )
+    return SparseFactorizationAdmission(status, minimum_pivot, replaced, rejected, finite)
+
+
 class SparseFactorDerivativeError(LinearCapabilityError):
     """A reverse-mode cotangent reached supernodal factor panels.
 

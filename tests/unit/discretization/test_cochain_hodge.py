@@ -177,6 +177,34 @@ def test_sparse_hodge_admission_uses_its_declared_budget() -> None:
         SparseHodge(_ROWS, _COLUMNS, _VALUES, 3, admission_bytes=0)
 
 
+def test_sparse_hodge_budget_charges_its_numeric_admission_working_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax._execution_resources import MemoryBudgetError
+    from phydrax.linalg._sparse_factorizations import numeric_admission_bytes
+
+    plan = SparseHodge(
+        _ROWS, _COLUMNS, _VALUES, 3, admission_bytes=1 << 20
+    )._admission_plan
+    assert plan is not None
+    required = numeric_admission_bytes(plan)
+    # The factor alone fits; its multifrontal workspace does not.
+    assert plan.factor_bytes < required
+
+    def unreachable(*args: object) -> None:
+        raise AssertionError("A refused admission must not factor numerically.")
+
+    monkeypatch.setattr(cochain_hodge, "admit_sparse_factorization_values", unreachable)
+    with pytest.raises(MemoryBudgetError) as refused:
+        SparseHodge(_ROWS, _COLUMNS, _VALUES, 3, admission_bytes=required - 1)
+    assert refused.value.budget == "admission_bytes"
+    assert refused.value.required_bytes == required
+    assert refused.value.limit_bytes == required - 1
+    monkeypatch.undo()
+    admitted = SparseHodge(_ROWS, _COLUMNS, _VALUES, 3, admission_bytes=required)
+    assert bool(admitted.valid)
+
+
 def test_diagonal_restriction_and_refresh_preserve_dynamic_metric_derivative() -> None:
     hodge = DiagonalHodge(jnp.asarray([2.0, 3.0, 5.0], dtype=jnp.float64))
     active = np.asarray([True, False, True], dtype=np.bool_)

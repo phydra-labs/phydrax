@@ -525,15 +525,17 @@ class PreparedBarotropicSPHDynamics(StrictModule, NonTrainableState):
         return position, momentum, velocity
 
     @staticmethod
-    def _angular_sum(position: Array, vector: Array, /) -> Array:
+    def _angular_sum(position: Array, vector: Array, active: Array, /) -> Array:
         dimension = position.shape[-1]
         if dimension == 1:
             return jnp.zeros((), dtype=position.dtype)
         if dimension == 2:
             torque = position[:, 0] * vector[:, 1] - position[:, 1] * vector[:, 0]
-            return compensated_sum(torque)
+            return compensated_sum(torque, where=active)
         if dimension == 3:
-            return compensated_sum(jnp.cross(position, vector), axis=0)
+            return compensated_sum(
+                jnp.cross(position, vector), axis=0, where=active[:, None]
+            )
         raise ValueError("Angular diagnostics support dimensions 1, 2, and 3.")
 
     def diagnostics(
@@ -562,11 +564,7 @@ class PreparedBarotropicSPHDynamics(StrictModule, NonTrainableState):
         masses = self.precision.certification(self.particles.safe_masses)
         momentum_cert = self.precision.certification(momentum_)
         configuration_cert = self.precision.certification(configuration)
-        kinetic_terms = jnp.where(
-            active,
-            0.5 * jnp.sum(momentum_cert * momentum_cert, axis=-1) / masses,
-            0.0,
-        )
+        kinetic_terms = 0.5 * jnp.sum(momentum_cert * momentum_cert, axis=-1) / masses
         internal_energy = self.precision.certification(
             self._internal_energy_from_evaluation(evaluation)
         )
@@ -576,14 +574,16 @@ class PreparedBarotropicSPHDynamics(StrictModule, NonTrainableState):
         internal_force = -self.precision.certification(
             self._internal_gradient_from_evaluation(evaluation)
         )
-        total_mass = compensated_sum(jnp.where(active, masses, 0.0))
-        linear_momentum = compensated_sum(
-            jnp.where(active[:, None], momentum_cert, 0.0), axis=0
-        )
-        kinetic_energy = compensated_sum(kinetic_terms)
-        angular_momentum = self._angular_sum(configuration_cert, momentum_cert)
+        # Positions and momenta are zeroed outside `active`; masking the logical
+        # particles keeps these reductions independent of particle capacity.
+        total_mass = compensated_sum(masses, where=active)
+        linear_momentum = compensated_sum(momentum_cert, axis=0, where=active[:, None])
+        kinetic_energy = compensated_sum(kinetic_terms, where=active)
+        angular_momentum = self._angular_sum(configuration_cert, momentum_cert, active)
         net_internal_force = compensated_sum(internal_force, axis=0)
-        net_internal_torque = self._angular_sum(configuration_cert, internal_force)
+        net_internal_torque = self._angular_sum(
+            configuration_cert, internal_force, active
+        )
         safe_density = jnp.where(
             active,
             density,

@@ -876,6 +876,26 @@ def is_layer_archive_record(value: Any) -> bool:
     return name in _COLUMNS and type(value) is _record_types()[name]
 
 
+def restore_exact_bank_fields(owner: type, fields: dict[str, Any], /) -> dict[str, Any]:
+    """Rebuild each ``exact_bank`` field of ``owner`` from its restored row tuples.
+
+    Outside the column projection a bank field's model recipe is the recipe of
+    its row tuples (byte-identical to the former tuple field), so the generic
+    restore yields rows that this turns back into the ``ExactCoordinateBank``.
+    """
+    columns = _COLUMNS.get(owner.__name__)
+    if columns is None or "exact_bank" not in columns.values():
+        return fields
+    if _record_types()[owner.__name__] is not owner:
+        return fields
+    from ..discretization._exact_coordinate_bank import ExactCoordinateBank
+
+    for name, kind in columns.items():
+        if kind == "exact_bank" and fields[name] is not None:
+            fields[name] = ExactCoordinateBank.from_rows(fields[name])
+    return fields
+
+
 def layer_record_archive_recipe(value: Any) -> LayerRecordArchiveRecipe | None:
     name = type(value).__name__
     if not is_layer_archive_record(value):

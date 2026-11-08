@@ -3103,6 +3103,14 @@ def model_structure_recipe(
             "numerator": value.numerator,
             "denominator": value.denominator,
         }
+    if type(value).__module__ == "phydrax.discretization._exact_coordinate_bank":
+        from ..discretization._exact_coordinate_bank import ExactCoordinateBank
+
+        if type(value) is ExactCoordinateBank:
+            # The canonical exact payload is the recipe of the row tuples, the
+            # bytes of the former tuple field; restore rebuilds the bank
+            # (``restore_exact_bank_fields``).
+            return model_structure_recipe(tuple(value), path=path)
     if value is None or isinstance(value, (str, bool, int, float)):
         if isinstance(value, float) and not np.isfinite(value):
             raise ValueError(f"{path} contains a non-finite static float.")
@@ -3757,6 +3765,8 @@ def _restore_recipe(recipe: Mapping[str, Any], array_factory: Any, /) -> Any:
                 continue
             pending.append((child, False))
 
+    from ..meshing._archive_layer_columns import restore_exact_bank_fields
+
     restored: dict[int, Any] = {}
     for node in order:
         kind = node["kind"]
@@ -3814,8 +3824,9 @@ def _restore_recipe(recipe: Mapping[str, Any], array_factory: Any, /) -> Any:
             fields = {name: restored[id(child)] for name, child in node["fields"].items()}
             value = _restore_strict_value(value_type, fields)
         elif kind == "dataclass":
+            cls = artifact_value(node["type"])
             fields = {name: restored[id(child)] for name, child in node["fields"].items()}
-            value = _restore_dataclass(artifact_value(node["type"]), fields)
+            value = _restore_dataclass(cls, restore_exact_bank_fields(cls, fields))
         elif kind in ("tuple", "list", "set", "frozenset"):
             items = [restored[id(child)] for child in node["items"]]
             if kind == "tuple":

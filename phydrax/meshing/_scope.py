@@ -942,8 +942,8 @@ class MeshingScope(StrictModule, NonTrainableState):
         return self.difference(other)
 
 
-def resolve_mesh_scope(mesh: CellMesh, scope: MeshingScope, /) -> EntitySelection:
-    """Resolve persistent mesh-entity IDs onto one exact mesh topology."""
+def _mesh_scope_entities(mesh: CellMesh, scope: MeshingScope, /) -> EntitySet:
+    """The exact mesh entity set one persistent mesh-entity scope is bound to."""
 
     if not isinstance(mesh, CellMesh):
         raise TypeError("mesh must be CellMesh.")
@@ -960,6 +960,13 @@ def resolve_mesh_scope(mesh: CellMesh, scope: MeshingScope, /) -> EntitySelectio
     entities = mesh.entity_set(scope.entity_dimension)
     if scope.entity_set_id != entities.entity_set_id:
         raise ValueError("Meshing scope does not match the mesh entity set.")
+    return entities
+
+
+def resolve_mesh_scope(mesh: CellMesh, scope: MeshingScope, /) -> EntitySelection:
+    """Resolve persistent mesh-entity IDs onto one exact mesh topology."""
+
+    entities = _mesh_scope_entities(mesh, scope)
     entity_ids = np.asarray(entities.entity_ids, dtype=np.int64)
     active = np.asarray(entities.active_mask, dtype=np.bool_)
     requested = np.asarray(scope.entity_ids, dtype=np.int64)
@@ -967,6 +974,40 @@ def resolve_mesh_scope(mesh: CellMesh, scope: MeshingScope, /) -> EntitySelectio
     if np.count_nonzero(mask) != requested.size:
         raise ValueError("Meshing scope contains undeclared mesh entity IDs.")
     return EntitySelection(entities, mask)
+
+
+def resolve_mesh_scope_rows(
+    mesh: CellMesh, scopes: tuple[MeshingScope, ...], /
+) -> tuple[np.ndarray, ...]:
+    """Ascending entity rows of every scope, without a mesh-sized mask per scope.
+
+    Each result equals ``np.flatnonzero(resolve_mesh_scope(mesh, scope).mask)``
+    under the same checks. One sorted active-ID table per entity set serves
+    every scope (active IDs are unique), so many scopes cost
+    O(n log n + selected) time and O(n + selected) memory instead of O(n) each.
+    """
+
+    tables: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    resolved: list[np.ndarray] = []
+    for scope in scopes:
+        entities = _mesh_scope_entities(mesh, scope)
+        table = tables.get(entities.entity_set_id)
+        if table is None:
+            active_rows = np.flatnonzero(np.asarray(entities.active_mask, dtype=np.bool_))
+            active_ids = np.asarray(entities.entity_ids, dtype=np.int64)[active_rows]
+            order = np.argsort(active_ids, kind="stable")
+            table = (active_ids[order], active_rows[order])
+            tables[entities.entity_set_id] = table
+        sorted_ids, sorted_rows = table
+        requested = np.asarray(scope.entity_ids, dtype=np.int64).reshape((-1,))
+        position = np.searchsorted(sorted_ids, requested)
+        found = position < sorted_ids.size
+        found[found] = sorted_ids[position[found]] == requested[found]
+        rows = np.unique(sorted_rows[position[found]])
+        if rows.size != requested.size:
+            raise ValueError("Meshing scope contains undeclared mesh entity IDs.")
+        resolved.append(rows.astype(np.int64, copy=False))
+    return tuple(resolved)
 
 
 class ScopeResolutionReport(StrictModule, NonTrainableState):

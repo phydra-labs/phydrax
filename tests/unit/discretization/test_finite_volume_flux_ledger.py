@@ -1071,3 +1071,111 @@ def test_amr_route_aggregation_requires_contiguous_dynamic_versions(
             first.blocks[0].route_id,
         )
         jax.block_until_ready(result)
+
+
+def _discriminating_terms(count: int) -> np.ndarray:
+    # 1 + 2**-53 ties to 1. One by one, every 2**-108 tail term vanishes; a
+    # 32-term block of tail terms sums exactly and survives. Sixty terms sum to
+    # 1 sequentially but to 1 + 2**-52 once padding past 64 makes them blocked.
+    terms = np.full((count,), 2.0**-108, dtype=np.float64)
+    terms[:2] = (1.0, 2.0**-53)
+    return terms
+
+
+def _padded_ledger(
+    logical: int,
+    cell_slots: np.ndarray,
+    cell_capacity: int,
+    face_slots: np.ndarray,
+    face_capacity: int,
+    *,
+    interior: bool,
+) -> Any:
+    """Boundary face ``k`` leaves logical cell ``k`` through face slot ``k``.
+
+    Unused face slots are inactive routes or, with ``interior``, active
+    interior routes between logical cells; unused cell slots are inactive.
+    """
+    terms = _discriminating_terms(logical)
+    active_cells = np.zeros((cell_capacity,), dtype=np.bool_)
+    active_cells[cell_slots] = True
+    source = np.zeros((cell_capacity, 1), dtype=np.float64)
+    source[cell_slots, 0] = terms
+    flux = np.full((face_capacity, 1), 7.0, dtype=np.float64)
+    owner = np.full((face_capacity,), cell_slots[0], dtype=np.int32)
+    neighbor = np.full((face_capacity,), -1, dtype=np.int32)
+    active = np.full((face_capacity,), interior, dtype=np.bool_)
+    if interior:
+        neighbor[:] = cell_slots[1]
+    flux[face_slots, 0] = 0.5 * terms
+    owner[face_slots] = cell_slots
+    neighbor[face_slots] = -1
+    active[face_slots] = True
+    return _stage(
+        flux,
+        source,
+        active_cell_mask=active_cells,
+        owner=owner,
+        neighbor=neighbor,
+        active=active,
+    )
+
+
+def _bits(values: tuple[Any, ...]) -> list[bytes]:
+    return [np.asarray(value).tobytes() for value in values]
+
+
+@pytest.mark.parametrize(
+    "logical,capacities",
+    [
+        pytest.param(8, (8, 12), id="logical-8"),
+        pytest.param(60, (60, 70, 128), id="logical-60"),
+        pytest.param(70, (70, 128), id="logical-70"),
+    ],
+)
+def test_conservation_sums_are_bitwise_independent_of_route_and_cell_capacity(
+    logical: int, capacities: tuple[int, ...]
+) -> None:
+    rng = np.random.default_rng(logical)
+    trailing = np.arange(logical)
+    reference = _padded_ledger(
+        logical, trailing, logical, trailing, logical, interior=False
+    )
+    expected = _bits(reference.conservation_sums())
+    expected_accepted = _bits(
+        _integrate(reference, reference, reference).conservation_sums()
+    )
+    for capacity in capacities:
+        interleaved_cells = np.sort(rng.choice(capacity, size=logical, replace=False))
+        interleaved_faces = np.sort(rng.choice(capacity, size=logical, replace=False))
+        for cell_slots, face_slots in (
+            (trailing, trailing),
+            (interleaved_cells, interleaved_faces),
+        ):
+            ledger = _padded_ledger(
+                logical, cell_slots, capacity, face_slots, capacity, interior=False
+            )
+            assert _bits(ledger.conservation_sums()) == expected, capacity
+            assert (
+                _bits(_integrate(ledger, ledger, ledger).conservation_sums())
+                == expected_accepted
+            ), capacity
+
+
+@pytest.mark.parametrize("logical,capacity", [(8, 12), (60, 70), (60, 128), (70, 128)])
+def test_boundary_sum_excludes_interior_routes_bitwise(
+    logical: int, capacity: int
+) -> None:
+    trailing = np.arange(logical)
+    reference = _padded_ledger(
+        logical, trailing, logical, trailing, logical, interior=False
+    )
+    face_slots = np.sort(
+        np.random.default_rng(capacity).choice(capacity, size=logical, replace=False)
+    )
+    ledger = _padded_ledger(
+        logical, trailing, logical, face_slots, capacity, interior=True
+    )
+    _, boundary_sum, _ = ledger.conservation_sums()
+    _, expected, _ = reference.conservation_sums()
+    assert _bits((boundary_sum,)) == _bits((expected,))
