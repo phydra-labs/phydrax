@@ -19,6 +19,8 @@ and only the contour bounds the quotient region.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from fractions import Fraction
 from typing import final
 
 import equinox as eqx
@@ -44,6 +46,53 @@ from ._result import CellMeshingResult
 from ._scope import MeshingEntityKind, MeshingScope
 from ._sizing import SizeControlStrength, UniformSizeControl
 from ._volume_generation import NativeVolumeSchedule
+
+
+def _orientation(a: np.ndarray, b: np.ndarray, c: np.ndarray, /) -> int:
+    """Exact sign of the 2D orientation of three binary64 points."""
+    ax, ay, bx, by, cx, cy = (Fraction(float(value)) for value in (*a, *b, *c))
+    value = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+    return (value > 0) - (value < 0)
+
+
+def _triangulate_convex(
+    loop: list[int], plane: Mapping[int, np.ndarray], /
+) -> list[tuple[int, int, int]]:
+    """Triangulate a counter-clockwise convex loop that may hold collinear vertices.
+
+    Only strictly convex ears are clipped, and never one whose removal would
+    leave the remaining loop without a strictly convex vertex, so every
+    triangle is nondegenerate under exact orientation.
+    """
+    remaining = list(loop)
+    triangles: list[tuple[int, int, int]] = []
+    while len(remaining) > 3:
+        for position in range(len(remaining)):
+            previous = remaining[position - 1]
+            current = remaining[position]
+            following = remaining[(position + 1) % len(remaining)]
+            if _orientation(plane[previous], plane[current], plane[following]) <= 0:
+                continue
+            rest = remaining[:position] + remaining[position + 1 :]
+            if not any(
+                _orientation(
+                    plane[rest[index - 1]],
+                    plane[rest[index]],
+                    plane[rest[(index + 1) % len(rest)]],
+                )
+                > 0
+                for index in range(len(rest))
+            ):
+                continue
+            triangles.append((previous, current, following))
+            remaining = rest
+            break
+        else:
+            raise ValueError("A cap polygon is degenerate under exact orientation.")
+    if _orientation(plane[remaining[0]], plane[remaining[1]], plane[remaining[2]]) <= 0:
+        raise ValueError("A cap polygon is degenerate under exact orientation.")
+    triangles.append((remaining[0], remaining[1], remaining[2]))
+    return triangles
 
 
 @final
