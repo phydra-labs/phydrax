@@ -2333,6 +2333,17 @@ chart point of the physical metric interpolated over their source location.
 Every target vertex keeps an exact chart point on the source face shared by its
 parent cells, so a split of a source-cell interface stays on that exact edge.
 
+For an analytic implicit source, every cell must retain an unambiguous lift in
+each declared periodic chart direction: at least two corners are regular, and
+their exact coordinate span is strictly less than half the declared period.
+Explicitly collapsed boundary corners do not constrain that span. Split,
+collapse, flip, and relocation candidates are admitted only when conservative
+rounding enclosures prove the condition; an uncertain candidate is refused.
+Publication rechecks the synchronized exact source-stencil charts before any
+continuation or final certification. This does not replace the independent
+geometry, embedding, fidelity, or transfer checks. Planar and other periodic
+routes do not acquire this implicit-chart constraint.
+
 The source must retain either `SurfaceSourceCharts` for a `MeshingDomain` or an
 analytic implicit `SourceBoundaryChartWitness` together with its authoring
 profile and `ImplicitAssociationTransfer`. Target cells retain exact chart

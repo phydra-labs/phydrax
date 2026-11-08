@@ -489,6 +489,11 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Native implicit surface metric adaptation preserves the declared half-period
+  chart lift for regular cell corners through split, collapse, flip, relocation,
+  and exact publication. Collapsed boundary corners remain explicit; uncertain
+  candidate lifts are refused. Planar and other periodic adaptation paths retain
+  their existing decisions, and final scientific certificates remain required.
 - Native PLC suppression can peel a thin wedge along directions toward its
   incident cells when the existing inward-normal direction cannot fill it.
   Directions are tried lazily in deterministic cell order, without additional
