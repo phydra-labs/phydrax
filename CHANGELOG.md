@@ -489,6 +489,11 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Nonperiodic tetrahedral metric relocation continues its finite source-candidate
+  search after a native refusal instead of marking the vertex exhausted.
+  Pending searches retain only local numerical data and are invalidated when
+  their closed star changes. Exact ancestry, metric improvement, native
+  zero-set distance and embedding checks remain required for every move.
 - Adaptive implicit volume archives restore a shared query and domain only after
   comparing their complete stored discovery recipes and replaying discovery.
   Matching scoped fidelity owners retain their tighter tolerance for subsequent

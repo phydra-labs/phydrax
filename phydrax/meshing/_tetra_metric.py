@@ -13,7 +13,7 @@ from enum import StrEnum
 from fractions import Fraction
 from itertools import combinations, islice
 from math import gcd, lcm
-from typing import Any, cast, NamedTuple
+from typing import Any, cast, final, NamedTuple
 
 import equinox as eqx
 import numpy as np
@@ -344,6 +344,15 @@ class _EditCounters(NamedTuple):
     rejected_protected: int = 0
     rejected_uncertain: int = 0
     rejected_invalid: int = 0
+
+
+@final
+@dataclass(slots=True)
+class _RelocationSearch:
+    """One pending proposal and its finite continuation on an unchanged star."""
+
+    candidates: Iterator[dict[str, Any]]
+    proposal: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -6613,7 +6622,7 @@ def _band_tangents(
 
 def _relocation_proposals(
     state: _NativeState,
-    cache: dict[int, dict[str, Any] | None],
+    cache: dict[int, _RelocationSearch | None],
     /,
     *,
     deep: bool = False,
@@ -6633,9 +6642,11 @@ def _relocation_proposals(
     at source corners); a periodic lift moves interior vertices only. A move is
     proposed when its star stays positively oriented above the determinant
     floor (``_floor_oriented``) and strictly decreases the termination
-    objective. ``cache`` holds each vertex's proposal (or ``None``, also after a
-    native refusal) while its closed star is unchanged; the caller evicts the
-    closed stars of moved vertices.
+    objective. ``cache`` retains the finite search on each unchanged star:
+    native refusal consumes a proposal, not all remaining source candidates.
+    The caller evicts searches on the closed stars of moved vertices.
+    Preparation remains grouped to preserve its floating-point operation and
+    goal order; resumable quantization is isolated in a star-local continuation.
     """
     snapshot = state.snapshot
     if prepared is None:
@@ -6654,19 +6665,15 @@ def _relocation_proposals(
         else None
     )
     periodic = state.target_mesh.periodic_topology is not None
-    vertex_ids = np.asarray(snapshot.vertex_ids, dtype=np.int64)
     dimensions = np.asarray(snapshot.vertex_dimensions, dtype=np.int8)
     protected_vertices = np.asarray(snapshot.protected_vertices, dtype=np.bool_)
     cells = np.asarray(snapshot.tetrahedra, dtype=np.int64)
     regions = np.asarray(snapshot.tetrahedron_regions, dtype=np.int64)
     current_cell_ids = np.asarray(snapshot.cell_ids, dtype=np.int64)
-    current_vertex_rows = {
-        int(identifier): row for row, identifier in enumerate(vertex_ids.tolist())
-    }
     source_coordinates = state.source_points
     constant_metric = bool(np.all(state.source_metric == state.source_metric[0]))
 
-    def propose(vertex: int) -> dict[str, Any] | None:
+    def propose(vertex: int) -> _RelocationSearch | None:
         row = topology.vertex_row[vertex]
         if vertex in state.fixed_vertices or protected_vertices[row]:
             return None
@@ -6709,6 +6716,18 @@ def _relocation_proposals(
         ).reshape((-1, 4))
         local_points = points[local_rows]
         local_metrics = metrics[local_rows]
+        periodic_star = (
+            (
+                np.asarray((vertex, *neighbors), dtype=np.int64),
+                np.asarray(star_ids, dtype=np.int64),
+                {
+                    identifier: index
+                    for index, identifier in enumerate((vertex, *neighbors))
+                },
+            )
+            if periodic
+            else None
+        )
         spokes = np.column_stack(
             (
                 np.zeros((len(neighbors),), dtype=np.int64),
@@ -6871,13 +6890,13 @@ def _relocation_proposals(
         # are fixed during this proposal, so retrying an identical goal cannot
         # change its exact quantization or admission result.
         seen_goals: set[bytes] = set()
-        rejected_stencils: set[tuple[tuple[int, Fraction], ...]] = set()
+        examined_stencils: set[tuple[tuple[int, Fraction], ...]] = set()
         before_quality = float(np.min(before))
 
         def fresh_goals() -> Iterator[np.ndarray]:
             """Projected goals not seen before, in generation order, in
             batches of at least ``_SCREEN_BATCH`` rows (but the last)."""
-            raw_goals = _relocation_goals(points[row], pulls, seed_only=not deep)
+            raw_goals = _relocation_goals(local_points[0], pulls, seed_only=not deep)
             batch: list[np.ndarray] = []
             size = 0
             while block := list(islice(raw_goals, _GOAL_BLOCK)):
@@ -6938,101 +6957,108 @@ def _relocation_proposals(
                 for goal in prepared:
                     yield goal, True
 
-        for goal, remaining in candidate_goals():
-            if refine:
-                choices = _quantized_relocation_candidates(
-                    state,
-                    simplices,
-                    goal,
-                    points[row],
-                    frames=frames,
-                    images=images,
-                    fine_first=True,
-                )
-                first = next(choices, None)
-                candidates = choices if remaining else (() if first is None else (first,))
-            else:
-                quantized = _quantized_relocation(
-                    state, simplices, goal, points[row], frames=frames, images=images
-                )
-                if deep:
-                    fine = next(
-                        _quantized_relocation_candidates(
-                            state,
-                            simplices,
-                            goal,
-                            points[row],
-                            frames=frames,
-                            images=images,
-                            fine_first=True,
-                        ),
-                        None,
+        def candidate_search() -> Iterator[dict[str, Any]]:
+            # Retain star-local arrays only, not an old whole-mesh snapshot.
+            # Preparation above keeps the existing numerical operation order;
+            # this continuation owns quantization and admission ordering.
+            for goal, remaining in candidate_goals():
+                if refine:
+                    choices = _quantized_relocation_candidates(
+                        state,
+                        simplices,
+                        goal,
+                        local_points[0],
+                        frames=frames,
+                        images=images,
+                        fine_first=True,
                     )
-                    candidates = tuple(
-                        value for value in (quantized, fine) if value is not None
+                    first = next(choices, None)
+                    candidates = (
+                        choices if remaining else (() if first is None else (first,))
                     )
                 else:
-                    candidates = () if quantized is None else (quantized,)
-            best: tuple[Any, dict[str, Any]] | None = None
-            for stencil, carrier in candidates:
-                if np.array_equal(carrier, points[row]) or np.any(
-                    np.all(local_points[1:] == carrier, axis=1)
-                ):
-                    continue
-                # Distinct goals can quantize to the same exact source point.
-                # A rejected stencil has the same carrier, metric and star on
-                # every revisit, so its admission result cannot change here.
-                stencil_key = tuple(stencil.items())
-                if stencil_key in rejected_stencils:
-                    continue
-                if best is not None and stencil == best[1]["stencil"]:
-                    continue
-                moved_metric = _source_metric_from_stencil(
-                    state.source_metric,
-                    state.source_vertex_rows,
-                    stencil,
-                    source_metric_log=state.source_metric_log,
-                )
-                evaluated = evaluate(carrier, moved_metric)
-                if evaluated is None:
-                    rejected_stencils.add(stencil_key)
-                    continue
-                after, moved_lengths = evaluated
-                current_stencil = None
-                if periodic:
-                    # A periodic lift also needs the binary64 stencil of the
-                    # carrier in the current star, reproducing it exactly.
-                    current_stencil = _current_star_stencil(
-                        points,
-                        cells[star_rows],
-                        vertex_ids,
-                        current_cell_ids[star_rows],
-                        current_vertex_rows,
-                        carrier,
+                    quantized = _quantized_relocation(
+                        state,
+                        simplices,
+                        goal,
+                        local_points[0],
+                        frames=frames,
+                        images=images,
                     )
-                    if current_stencil is None:
-                        rejected_stencils.add(stencil_key)
+                    if deep:
+                        fine = next(
+                            _quantized_relocation_candidates(
+                                state,
+                                simplices,
+                                goal,
+                                local_points[0],
+                                frames=frames,
+                                images=images,
+                                fine_first=True,
+                            ),
+                            None,
+                        )
+                        candidates = tuple(
+                            value for value in (quantized, fine) if value is not None
+                        )
+                    else:
+                        candidates = () if quantized is None else (quantized,)
+                admitted: list[tuple[Any, dict[str, Any]]] = []
+                for stencil, carrier in candidates:
+                    if np.array_equal(carrier, local_points[0]) or np.any(
+                        np.all(local_points[1:] == carrier, axis=1)
+                    ):
                         continue
-                proposal = {
-                    "vertex": int(vertex),
-                    "point": carrier,
-                    "metric": moved_metric,
-                    "stencil": stencil,
-                    "current_stencil": current_stencil,
-                    "star_cell_ids": star_ids,
-                    "star_vertices": frozenset((vertex, *neighbors)),
-                    "cavity": frozenset(star_ids),
-                    "gain": float(np.min(after) - np.min(before)),
-                    "badness": float(np.max(np.maximum(lengths, 1.0 / lengths))),
-                    "block": next(iter(star_blocks)),
-                    "region": next(iter(star_regions)),
-                }
-                key = (_band_violations(moved_lengths[measured]), -float(np.min(after)))
-                if best is None or key < best[0]:
-                    best = key, proposal
-            if best is not None:
-                return best[1]
-        return None
+                    # The source, metric and star stay fixed until eviction.
+                    stencil_key = tuple(stencil.items())
+                    if stencil_key in examined_stencils:
+                        continue
+                    examined_stencils.add(stencil_key)
+                    moved_metric = _source_metric_from_stencil(
+                        state.source_metric,
+                        state.source_vertex_rows,
+                        stencil,
+                        source_metric_log=state.source_metric_log,
+                    )
+                    evaluated = evaluate(carrier, moved_metric)
+                    if evaluated is None:
+                        continue
+                    after, moved_lengths = evaluated
+                    current_stencil = None
+                    if periodic_star is not None:
+                        current_stencil = _current_star_stencil(
+                            local_points,
+                            local_cells,
+                            *periodic_star,
+                            carrier,
+                        )
+                        if current_stencil is None:
+                            continue
+                    proposal = {
+                        "vertex": int(vertex),
+                        "point": carrier,
+                        "metric": moved_metric,
+                        "stencil": stencil,
+                        "current_stencil": current_stencil,
+                        "star_cell_ids": star_ids,
+                        "star_vertices": frozenset((vertex, *neighbors)),
+                        "cavity": frozenset(star_ids),
+                        "gain": float(np.min(after) - np.min(before)),
+                        "badness": float(np.max(np.maximum(lengths, 1.0 / lengths))),
+                        "block": next(iter(star_blocks)),
+                        "region": next(iter(star_regions)),
+                    }
+                    key = (
+                        _band_violations(moved_lengths[measured]),
+                        -float(np.min(after)),
+                    )
+                    admitted.append((key, proposal))
+                # At most the finite binary64 dyadic resolutions for one goal.
+                # Stable sorting preserves the previous first-best proposal.
+                for _, proposal in sorted(admitted, key=lambda item: item[0]):
+                    yield proposal
+
+        return _RelocationSearch(candidate_search())
 
     candidates: list[dict[str, Any]] = []
     occupied_cells: set[int] = set()
@@ -7052,7 +7078,15 @@ def _relocation_proposals(
                 continue
         if vertex not in cache:
             cache[vertex] = propose(vertex)
-        proposal = cache[vertex]
+        search = cache[vertex]
+        if search is None:
+            continue
+        if search.proposal is None:
+            search.proposal = next(search.candidates, None)
+            if search.proposal is None:
+                cache[vertex] = None
+                continue
+        proposal = search.proposal
         if proposal is not None:
             candidates.append(proposal)
             if deep and not periodic:
@@ -7198,11 +7232,10 @@ def _apply_relocation_partition(
     state: _NativeState,
     candidate_groups: list[tuple[dict[str, Any], ...]],
     counters: dict[str, int],
-    cache: dict[int, dict[str, Any] | None],
+    cache: dict[int, _RelocationSearch | None],
     /,
 ) -> list[dict[str, Any]]:
-    """Apply disjoint relocation orbits; refused orbits are counted and their
-    vertices cached as having no proposal. Returns the applied proposals."""
+    """Apply disjoint orbits, retaining nonperiodic searches after refusal."""
     proposals = [proposal for group in candidate_groups for proposal in group]
     try:
         status: TetMeshEditStatus | None = _apply_relocation_batch(state, proposals)
@@ -7219,7 +7252,15 @@ def _apply_relocation_partition(
             state, candidate_groups[:middle], counters, cache
         ) + _apply_relocation_partition(state, candidate_groups[middle:], counters, cache)
     for proposal in candidate_groups[0]:
-        cache[int(proposal["vertex"])] = None
+        vertex = int(proposal["vertex"])
+        search = cache[vertex]
+        if search is None:
+            raise RuntimeError("A refused relocation has no retained candidate search.")
+        if state.target_mesh.periodic_topology is not None:
+            # Periodic members are an indivisible orbit, not independent searches.
+            cache[vertex] = None
+        else:
+            search.proposal = None
     _count_rejection(status, counters, len(proposals))
     return []
 
@@ -7273,16 +7314,16 @@ def _relocation_phase(
 ) -> int:
     """Relocate until no vertex has an applicable objective-decreasing move.
 
-    Every pass either applies a move (a strict objective decrease) or caches a
-    refused proposal as none, so the phase terminates; a moved vertex evicts the
-    cached proposals of its closed star.
+    Every pass applies a strictly improving move or consumes a distinct member
+    of a finite candidate search. A native refusal does not prove exhaustion.
+    A moved vertex evicts the searches of its closed star.
     """
     applied = 0
     # The four search stages have different proposal sets. Preserve each
     # stage's results across a restart, invalidating only changed closed stars.
     # Periodic edits can change lifted representatives outside the local star,
     # so retain the conservative whole-cache invalidation for those meshes.
-    caches: list[dict[int, dict[str, Any] | None]] = [{}, {}, {}, {}]
+    caches: list[dict[int, _RelocationSearch | None]] = [{}, {}, {}, {}]
     periodic = state.target_mesh.periodic_topology is not None
     stage = 0
     prepared: _RelocationPreparation | None = None
