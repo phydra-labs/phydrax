@@ -215,6 +215,12 @@
   qualification profiles declare a refinement memory budget, and all-cell
   marked refinement refuses with `MemoryBudgetError("refinement_memory_bytes",
   estimate, budget)` before any adaptation work when its estimate exceeds it.
+- Mixed coarsening indexes the shared faces by cell once per candidate search
+  and looks the prior retired entities up in one batched key query per degree.
+  Each accepted sibling record used to rescan every face and each prior
+  retired entity recomputed the target's entity keys, which made coarsening
+  quadratic in the number of records. Candidates, retired records and
+  outcomes are bit-identical.
 - `CellGeometrySpec.exact_coordinate_bank`, `_ExactCoordinateBankMap.exact_coordinates`
   and `_RetainedCoordinateBank.exact_coordinates` hold an immutable
   integer-dyadic `ExactCoordinateBank` (an int64 odd significand and int16
