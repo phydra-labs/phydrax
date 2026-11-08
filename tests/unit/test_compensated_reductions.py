@@ -430,3 +430,55 @@ def test_selected_sum_derivative_and_mask_contract() -> None:
     )
     with pytest.raises(TypeError, match="boolean mask"):
         compensated_sum(values, where=jnp.ones((70,), dtype=jnp.int32))
+
+
+def test_selected_chunks_equal_unmasked_sum_of_each_chunks_selected_terms() -> None:
+    rng = np.random.default_rng(20261108)
+    unmasked = jax.jit(lambda *chunks: compensated_sum_chunks(chunks, output_ndim=1))
+    reduce = jax.jit(
+        lambda chunks, where: compensated_sum_chunks(chunks, output_ndim=1, where=where)
+    )
+    # Chunk-local counts below, at, and above 64 behind a shared carry.
+    counts = (8, 60, 64, 65, 100)
+    logical = tuple(_random_streams(rng, count, np.float64) for count in counts) + tuple(
+        _boundary_stream(count)[:, None].repeat(2, axis=1) for count in counts
+    )
+    expected = unmasked(*logical)
+    for extra in (0, 4, 70):
+        chunks: list[np.ndarray] = []
+        masks: list[np.ndarray] = []
+        for terms in logical:
+            capacity = terms.shape[0] + extra
+            positions = np.sort(rng.choice(capacity, size=terms.shape[0], replace=False))
+            values, selected = _scatter(terms, positions, capacity)
+            chunks.append(values)
+            masks.append(selected[:, None])
+        _assert_bitwise(reduce(tuple(chunks), tuple(masks)), expected)
+
+
+def test_selected_chunks_follow_each_lane_and_validate_masks() -> None:
+    rng = np.random.default_rng(65)
+    capacity = 128
+    values = np.full((capacity, 4), np.nan, dtype=np.float64)
+    selected = np.zeros((capacity, 4), dtype=np.bool_)
+    for lane, count in enumerate((8, 60, 65, 100)):
+        stream = _boundary_stream(count)
+        positions = np.sort(rng.choice(capacity, size=count, replace=False))
+        values[:, lane], selected[:, lane] = _scatter(stream, positions, capacity)
+    head = np.full((3, 4), 0.25, dtype=np.float64)
+    lanes = compensated_sum_chunks(
+        (head, values), output_ndim=1, where=(np.ones((3, 1), dtype=np.bool_), selected)
+    )
+    _assert_bitwise(
+        lanes,
+        jnp.stack(
+            [
+                compensated_sum_chunks((head[:, lane], values[selected[:, lane], lane]))
+                for lane in range(4)
+            ]
+        ),
+    )
+    with pytest.raises(ValueError, match="one mask per chunk"):
+        compensated_sum_chunks((head, values), output_ndim=1, where=(selected,))
+    with pytest.raises(TypeError, match="boolean mask"):
+        compensated_sum_chunks((head,), output_ndim=1, where=(np.ones((3, 4)),))

@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.discretization import SplatBoundaryPolicy
 
 
 def _grid(points: int = 3, *, periodic: bool = False) -> Any:
@@ -408,3 +409,74 @@ def test_indexed_support_splat_matches_physical_particle_splat() -> None:
             _particles(4, particle_ids=ids, active_mask=active),
             support_id="test-indexed-support-schema",
         )
+
+
+def _discriminating_content(count: int) -> np.ndarray:
+    # 1 + 2**-53 ties to 1. One by one, every 2**-108 tail term vanishes; a
+    # 32-term block of tail terms sums exactly and survives. Sixty terms sum to
+    # 1 sequentially but to 1 + 2**-52 once padding past 64 makes them blocked.
+    content = np.full((count,), 2.0**-108, dtype=np.float64)
+    content[:2] = (1.0, 2.0**-53)
+    return content
+
+
+def _padded_balance(
+    content: np.ndarray,
+    positions: np.ndarray,
+    slots: np.ndarray,
+    capacity: int,
+    boundary: SplatBoundaryPolicy,
+) -> tuple[np.ndarray, ...]:
+    active = np.zeros((capacity,), dtype=np.bool_)
+    active[slots] = True
+    # Inactive slots hold NaN geometry and content: they must never reach a sum.
+    padded_positions = np.full((capacity, 1), np.nan, dtype=np.float64)
+    padded_positions[slots, 0] = positions
+    padded_content = np.full((capacity,), np.nan, dtype=np.float64)
+    padded_content[slots] = content
+    prepared = phx.discretization.ParticleGridSplatPlan(
+        _grid(9), boundary=boundary
+    ).prepare(_particles(capacity, active_mask=active))
+    state = prepared.build(jnp.asarray(padded_positions))
+    balance = prepared.deposit_content(state, jnp.asarray(padded_content)).balance
+    return tuple(
+        np.asarray(total)
+        for total in (
+            balance.active_source_total,
+            balance.supported_source_total,
+            balance.dropped_source_total,
+            balance.dropped_source_absolute_total,
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "logical,capacities",
+    [
+        pytest.param(8, (8, 12), id="logical-8"),
+        pytest.param(60, (60, 70, 128), id="logical-60"),
+        pytest.param(70, (70, 128), id="logical-70"),
+    ],
+)
+@pytest.mark.parametrize("boundary", ["reject", "drop"])
+def test_source_balance_totals_are_bitwise_independent_of_particle_capacity(
+    logical: int, capacities: tuple[int, ...], boundary: SplatBoundaryPolicy
+) -> None:
+    rng = np.random.default_rng(logical)
+    content = _discriminating_content(logical)
+    positions = rng.uniform(0.05, 0.95, size=logical)
+    if boundary == "drop":
+        # Every third source leaves the domain, so dropped totals are nonzero.
+        positions[1::3] += 1.5
+    expected = _padded_balance(content, positions, np.arange(logical), logical, boundary)
+    for capacity in capacities:
+        trailing = np.arange(logical)
+        interleaved = np.sort(rng.choice(capacity, size=logical, replace=False))
+        for slots in (trailing, interleaved):
+            actual = _padded_balance(content, positions, slots, capacity, boundary)
+            assert [value.dtype for value in actual] == [
+                value.dtype for value in expected
+            ]
+            assert [value.tobytes() for value in actual] == [
+                value.tobytes() for value in expected
+            ], capacity

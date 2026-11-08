@@ -2338,8 +2338,86 @@ def _incident_grown_triangles(
     return grow_triangles, rows, incidence[np.repeat(starts, counts) + within, 1]
 
 
+type _Integers3 = tuple[int, int, int]
+
+# Relative band of the float tie screen in ``_probe_stretch``. It is about 1e6
+# times the rounding of the float distance kernel, so every exact tie is
+# screened in; the exact pass, not the band, decides whether a tie exists.
+_PROBE_TIE_BAND = 2.0**-20
+
+
+def _subtract3(first: _Integers3, second: _Integers3, /) -> _Integers3:
+    return (first[0] - second[0], first[1] - second[1], first[2] - second[2])
+
+
+def _dot3(first: _Integers3, second: _Integers3, /) -> int:
+    return first[0] * second[0] + first[1] * second[1] + first[2] * second[2]
+
+
+def _cross3(first: _Integers3, second: _Integers3, /) -> _Integers3:
+    return (
+        first[1] * second[2] - first[2] * second[1],
+        first[2] * second[0] - first[0] * second[2],
+        first[0] * second[1] - first[1] * second[0],
+    )
+
+
+def _exact_probe_candidates(probe: np.ndarray, corners: np.ndarray, /) -> list[Fraction]:
+    """Exact squared-distance candidates of ``point_triangle_distance``.
+
+    The face projection is a candidate when it lies in the closed triangle;
+    each edge contributes its clamped projection. The binary64 inputs are
+    scaled by one common power of two, so all arithmetic is on integers.
+    """
+    ratios = [
+        value.as_integer_ratio()
+        for value in (*probe.tolist(), *corners.reshape(-1).tolist())
+    ]
+    shift = max(denominator.bit_length() for _, denominator in ratios) - 1
+    scaled = [
+        numerator << (shift + 1 - denominator.bit_length())
+        for numerator, denominator in ratios
+    ]
+    point, first, second, third = (
+        (scaled[start], scaled[start + 1], scaled[start + 2]) for start in range(0, 12, 3)
+    )
+    unit = 1 << (2 * shift)
+    edges = ((first, second), (second, third), (third, first))
+    normal = _cross3(_subtract3(second, first), _subtract3(third, first))
+    area = _dot3(normal, normal)
+    candidates: list[Fraction] = []
+    if area and all(
+        _dot3(_cross3(_subtract3(end, start), _subtract3(point, start)), normal) >= 0
+        for start, end in edges
+    ):
+        height = _dot3(_subtract3(point, first), normal)
+        candidates.append(Fraction(height * height, area * unit))
+    for start, end in edges:
+        edge = _subtract3(end, start)
+        offset = _subtract3(point, start)
+        along = _dot3(offset, edge)
+        length = _dot3(edge, edge)
+        if along <= 0:
+            candidates.append(Fraction(_dot3(offset, offset), unit))
+        elif along >= length:
+            rest = _subtract3(point, end)
+            candidates.append(Fraction(_dot3(rest, rest), unit))
+        else:
+            candidates.append(
+                Fraction(_dot3(offset, offset) * length - along * along, length * unit)
+            )
+    return candidates
+
+
 def _probe_stretch(wall: _Wall, front: _Front, /) -> np.ndarray:
-    """Height factor that makes each column's local wall distance equal its level."""
+    """Height factor that makes each column's local wall distance equal its level.
+
+    A column whose nearest wall distance is attained by two or more distance
+    candidates (its probe's foot on a wall vertex or edge, or on several
+    triangles) is an exact tie. Float rounding must not break it: its minimum
+    is computed exactly on the binary64 inputs and rounded once. Every other
+    column keeps the float kernel's value.
+    """
     grow_triangles, rows, items = _incident_grown_triangles(wall, front.column_vertex)
     lengths = np.linalg.norm(
         wall.points[wall.edges[:, 0]] - wall.points[wall.edges[:, 1]], axis=1
@@ -2355,8 +2433,28 @@ def _probe_stretch(wall: _Wall, front: _Front, /) -> np.ndarray:
         jnp.asarray(corners[:, 1]),
         jnp.asarray(corners[:, 2]),
     )
-    squared = np.full((front.column_vertex.size,), np.inf)
-    np.minimum.at(squared, rows, np.asarray(distance.squared_distance))
+    pair_squared = np.asarray(distance.squared_distance, dtype=np.float64)
+    count = front.column_vertex.size
+    squared = np.full((count,), np.inf, dtype=np.float64)
+    np.minimum.at(squared, rows, pair_squared)
+    # Screen: two near-minimal pairs, or a near-minimal witness near its
+    # triangle's boundary (edge and vertex witnesses have a zero weight).
+    near = pair_squared <= squared[rows] * (1.0 + _PROBE_TIE_BAND)
+    weights = -np.asarray(distance.coefficients, dtype=np.float64)[:, 1:]
+    boundary = np.min(weights, axis=1) <= _PROBE_TIE_BAND
+    suspect = (np.bincount(rows[near], minlength=count) > 1) | (
+        np.bincount(rows[near & boundary], minlength=count) > 0
+    )
+    bounds = np.searchsorted(rows, np.arange(count + 1, dtype=np.int64))
+    for column in np.flatnonzero(suspect):
+        candidates = [
+            value
+            for pair in range(bounds[column], bounds[column + 1])
+            for value in _exact_probe_candidates(probe[column], corners[pair])
+        ]
+        least = min(candidates)
+        if candidates.count(least) > 1:
+            squared[column] = float(least)
     nearest = np.sqrt(squared)
     return epsilon / np.maximum(nearest, np.finfo(np.float64).tiny)
 

@@ -308,9 +308,9 @@ def sph_density_diffusion_rate(
     )
     active = particles.active_mask
     active_count = jnp.sum(active, dtype=density_.dtype)
-    mean_density = compensated_sum(jnp.where(active, density_, 0.0)) / active_count
+    mean_density = compensated_sum(density_, where=active) / active_count
     centered = jnp.where(active, density_ - mean_density, 0.0)
-    variance_rate = 2.0 * compensated_sum(centered * rate)
+    variance_rate = 2.0 * compensated_sum(centered * rate, where=active)
     return SPHDensityDiffusionResult(
         rate,
         variance_rate,
@@ -424,8 +424,8 @@ def sph_artificial_viscosity_force(
     return ArtificialViscosityResult(
         force,
         pair_power,
-        -compensated_sum(pair_power),
-        compensated_sum(jnp.maximum(pair_power, 0.0)),
+        -compensated_sum(pair_power, where=physical),
+        compensated_sum(jnp.maximum(pair_power, 0.0), where=physical),
         jnp.sum(valid.astype(jnp.int32)),
     )
 

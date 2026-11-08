@@ -211,7 +211,12 @@ from ._polyhedral_adaptation import (
     PolyhedralCoverageRenewal,
 )
 from ._result import CellMeshingResult, MeshingComplianceReport
-from ._scope import MeshingEntityKind, MeshingScope, resolve_mesh_scope
+from ._scope import (
+    MeshingEntityKind,
+    MeshingScope,
+    resolve_mesh_scope,
+    resolve_mesh_scope_rows,
+)
 from ._surface_association_transfer import (
     _curve_edges_with_root_ancestry,
     SurfaceAssociationTransfer,
@@ -775,21 +780,57 @@ def _organization_scopes(source: CellMeshingResult, /) -> tuple[MeshingScope, ..
 
 def _membership(
     mesh: CellMesh, scopes: tuple[MeshingScope, ...], dimension: int, /
-) -> np.ndarray:
-    columns = [
-        np.asarray(resolve_mesh_scope(mesh, scope).mask, dtype=np.bool_)
-        for scope in scopes
-        if scope.entity_dimension == dimension
-    ]
-    count = mesh.entity_set(dimension).count
-    if not columns:
-        return np.zeros((count, 0), dtype=np.bool_)
-    return np.stack(columns, axis=1)
+) -> tuple[np.ndarray, np.ndarray]:
+    """Sparse entity-to-scope membership of one dimension, sorted by (row, column).
+
+    Column ``c`` is the ``c``-th scope of ``dimension`` in ``scopes`` order; the
+    pairs are the nonzeros of the entities x scopes membership matrix, which is
+    never materialized: a reconstructed PLC carries one patch per source
+    triangle, so that matrix grows as facets x triangles.
+    """
+
+    resolved = resolve_mesh_scope_rows(
+        mesh, tuple(scope for scope in scopes if scope.entity_dimension == dimension)
+    )
+    if not resolved:
+        return np.zeros((0,), dtype=np.int64), np.zeros((0,), dtype=np.int64)
+    rows = np.concatenate(resolved)
+    columns = np.repeat(
+        np.arange(len(resolved), dtype=np.int64), [value.size for value in resolved]
+    )
+    order = np.lexsort((columns, rows))
+    return rows[order], columns[order]
 
 
 def _row_classes(rows: np.ndarray, /) -> np.ndarray:
     _, inverse = np.unique(rows, axis=0, return_inverse=True)
     return inverse.reshape((-1,)).astype(np.int64)
+
+
+def _membership_classes(
+    leading: np.ndarray, membership: tuple[np.ndarray, np.ndarray], /
+) -> np.ndarray:
+    """``_row_classes`` of ``leading`` beside the 0/1 membership columns, kept sparse.
+
+    ``np.unique`` ranks rows lexicographically. Between two membership rows the
+    first differing column decides and its 1 ranks higher, so a row's
+    membership orders as its ascending column sequence negated, an equal
+    shorter prefix lower. Re-ranking (rank, next negated column) once per
+    sequence position reproduces the dense inverse exactly in O(rows) memory.
+    """
+
+    classes = _row_classes(leading)
+    rows, columns = membership
+    if rows.size == 0:
+        return classes
+    position = np.arange(rows.size, dtype=np.int64) - np.searchsorted(rows, rows)
+    absent = -int(np.max(columns)) - 1
+    for depth in range(int(np.max(position)) + 1):
+        at = position == depth
+        step = np.full(classes.shape, absent, dtype=np.int64)
+        step[rows[at]] = -columns[at]
+        classes = _row_classes(np.column_stack((classes, step)))
+    return classes
 
 
 def _cell_classes(mesh: CellMesh, scopes: tuple[MeshingScope, ...], /) -> np.ndarray:
@@ -806,10 +847,8 @@ def _cell_classes(mesh: CellMesh, scopes: tuple[MeshingScope, ...], /) -> np.nda
         ]
     )
     cells = key_rows(block_ids[:, None], entity_keys(mesh, dimension))
-    return _row_classes(
-        np.column_stack(
-            (block_rows[cells], _membership(mesh, scopes, dimension).astype(np.int64))
-        )
+    return _membership_classes(
+        block_rows[cells][:, None], _membership(mesh, scopes, dimension)
     )
 
 
@@ -837,14 +876,17 @@ def _edge_classes(
         high = np.full((count,), -1, dtype=np.int64)
         np.minimum.at(low, edges, cells)
         np.maximum.at(high, edges, cells)
-    member = _membership(mesh, scopes, 1)
-    feature = (incident != 2) | (low != high) | np.any(member, axis=1)
+    member_rows, member_columns = _membership(mesh, scopes, 1)
+    feature = (incident != 2) | (low != high)
+    feature[member_rows] = True
     classes = np.zeros((count,), dtype=np.int64)
     if np.any(feature):
-        keys = np.column_stack(
-            (incident == 1, low, high, member.astype(np.int64))
-        ).astype(np.int64)
-        classes[feature] = 1 + _row_classes(keys[feature])
+        # Every member row is a feature, so the compaction keeps every pair.
+        compact = np.cumsum(feature, dtype=np.int64) - 1
+        keys = np.column_stack((incident == 1, low, high)).astype(np.int64)
+        classes[feature] = 1 + _membership_classes(
+            keys[feature], (compact[member_rows], member_columns)
+        )
     return classes
 
 
@@ -893,13 +935,9 @@ def _resolve_constraints(
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     organization = _organization_scopes(source)
     cell_classes = _cell_classes(mesh, organization)
-    facet_classes = _row_classes(
-        np.column_stack(
-            (
-                np.zeros((mesh.entity_set(dimension - 1).count,), dtype=np.int64),
-                _membership(mesh, organization, dimension - 1).astype(np.int64),
-            )
-        )
+    facet_classes = _membership_classes(
+        np.zeros((mesh.entity_set(dimension - 1).count, 1), dtype=np.int64),
+        _membership(mesh, organization, dimension - 1),
     )
     edge_codes = np.zeros((edge_count,), dtype=np.int64)
     transfer = policy.association_transfer
@@ -927,7 +965,7 @@ def _resolve_constraints(
         )
         edge_codes = np.where(classes[1].dimensions < dimension, 1 + codes[1], 0)
     protected_vertex_ids = vertex_ids[fixed]
-    fixed |= np.any(_membership(mesh, organization, 0), axis=1)
+    fixed[_membership(mesh, organization, 0)[0]] = True
     metric_route = policy.route in (
         MeshAdaptationRoute.NATIVE_METRIC_2D,
         MeshAdaptationRoute.DEVICE_METRIC_2D,

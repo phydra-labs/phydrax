@@ -285,11 +285,13 @@ class ParticleExchangeLedger(StrictModule):
                 torque = compensated_sum(
                     jnp.cross(geometry.displacement, exchange),
                     axis=0,
+                    where=pairs.valid[:, None],
                 )
             elif dimension == 2:
                 torque = compensated_sum(
                     geometry.displacement[:, 0] * exchange[:, 1]
-                    - geometry.displacement[:, 1] * exchange[:, 0]
+                    - geometry.displacement[:, 1] * exchange[:, 0],
+                    where=pairs.valid,
                 )
             else:
                 torque = jnp.asarray(0.0, dtype=exchange.dtype)
@@ -310,7 +312,7 @@ class ParticleExchangeLedger(StrictModule):
                 raise ValueError(
                     "Particle velocities do not match the pair exchange quantity."
                 )
-            power = compensated_sum(jnp.where(pairs.valid, pair_power, 0.0))
+            power = compensated_sum(pair_power, where=pairs.valid)
         finite = (
             jnp.all(jnp.isfinite(exchange))
             & jnp.all(jnp.isfinite(scattered))

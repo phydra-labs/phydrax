@@ -557,6 +557,14 @@
   `custom_linear_solve`). Second derivatives whose first-order tangent was
   constant previously came back as a silent zero. Valid inputs are unchanged at
   every order.
+- Boundary-layer corner stretch no longer depends on how the platform rounds
+  exact distance ties. When a column's probe distance is attained by two or
+  more candidates (its foot on a wall vertex or edge, or on several triangles,
+  as on every planar wall), the minimum is computed exactly on the binary64
+  inputs and rounded once instead of being decided by float argmin/min. Planar
+  columns now get a stretch of exactly 1 on every host, where some were
+  `1 + 2⁻⁵²` on some hosts, so their layer meshes and identities can change.
+  Columns without an exact tie keep bit-identical stretch values.
 - `ImplicitPointProjectionPlan` second and higher derivatives were silently
   zero because the normal-gauge JVP returned a stop-gradient primal. They are
   now total derivatives along the normal-gauge level-set flow
@@ -715,6 +723,39 @@
   populations and the validator pass their active masks, so transport across
   the 64-term boundary (for example 60 active terms at capacity 60, 70 or 128)
   stays bitwise. Unmasked reductions are unchanged.
+- MPM transfer, momentum and angular-momentum gates and energy ledgers reduce
+  padded streams over their logical terms: particle mass, momentum, kinetic,
+  material, external-work and plastic sums pass the active particle mask,
+  APIC affine and axisymmetric route sums the valid routes, contact and grid
+  kinetic sums their active nodes, and block-sparse storage sums the valid
+  storage slots. 60 active particles give the same bits at capacities 60, 70
+  and 128, and block-sparse sums no longer depend on storage capacity. Dense
+  storage sums are unchanged; unpadded runs keep their bits.
+- Particle and SPH diagnostics reduce padded streams over their logical terms:
+  exchange-ledger torque and relative power, Morris and artificial-viscosity
+  dissipation, density-diffusion means and variance rates, barotropic and
+  weakly compressible SPH mass, momentum, angular momentum, energy and power
+  diagnostics, and masked production-qualification residuals pass their active
+  particle or valid pair masks. Their bits no longer depend on particle or pair
+  capacity (for example 60 active particles at capacity 60, 70 or 128);
+  unpadded configurations, capacities of at most 64 and the default
+  qualification mask keep their bits.
+- The internal `compensated_sum_chunks` takes one `where` mask per chunk; each
+  chunk follows the algorithm of its logical term count, and masked
+  `compensated_sum` reduces through it with unchanged bits. Finite-volume stage
+  and accepted conservation ledgers sum sources and net cell content over
+  active cells and the boundary-outward stream over active boundary routes, so
+  their sums no longer depend on inactive cell or route slots or on interleaved
+  interior routes. All-active ledgers whose blocks hold at most 64 routes or
+  only boundary routes keep their bits; unmasked reductions keep their programs.
+- Particle-grid splat balance evidence sums the active, supported and dropped
+  source totals and absolute totals over the active sources (`certified_sum`
+  takes `where`), so they no longer depend on particle capacity or inactive slot
+  positions. Target totals, which carry no target-validity mask, are unchanged.
+- Adaptive cubature sums the active cell estimates and errors through their
+  activity mask, so the returned value, error estimate and termination decision
+  no longer depend on `max_cells`; they previously could change when
+  `max_cells` exceeded 64 while at most 64 cells were active.
 - `RowGramLinearOperator` plans the canonical storage of a sparse factor from
   its concrete topology at construction, so its exact diagonal (and the
   matrix-free Jacobi preconditioner of Craig solves) works again for sparse

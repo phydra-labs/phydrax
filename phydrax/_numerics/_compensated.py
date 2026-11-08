@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from math import prod
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -187,13 +188,63 @@ def _block_expansion(flat: Array, /) -> tuple[Array, Array]:
     return _accumulate(jnp.swapaxes(blocked, 0, 1), carry)
 
 
+class _SelectedChunk(NamedTuple):
+    """A compacted chunk of more than 64 slots and both of its unpadded reductions."""
+
+    sequential: Array
+    high: Array
+    correction: Array
+    exceeds: Array
+
+
+def _selection(where: ArrayLike, shape: tuple[int, ...], /) -> Array:
+    selected = jnp.asarray(where)
+    if selected.dtype != jnp.bool_:
+        raise TypeError("where must be a boolean mask.")
+    return jnp.broadcast_to(selected, shape)
+
+
+def _selected_chunk(flat: Array, selected: Array, /) -> _SelectedChunk:
+    # Blocks are position-dependent. A stable compaction moves the selected
+    # terms to the front, so the zeros fill the tail of the last occupied
+    # block and whole trailing blocks, both exact no-ops of the expansion; the
+    # logical count then picks what the unpadded chunk would use.
+    order = jnp.argsort(jnp.logical_not(selected).astype(jnp.int8), axis=0, stable=True)
+    compacted = jnp.take_along_axis(flat, order, axis=0)
+    high, correction = _block_expansion(compacted)
+    # The compacted mask is True exactly on the first `count` slots.
+    exceeds = jnp.take_along_axis(selected, order, axis=0)[_BLOCK_THRESHOLD]
+    return _SelectedChunk(compacted[:_BLOCK_THRESHOLD], high, correction, exceeds)
+
+
+def _accumulate_selected(
+    chunk: _SelectedChunk, carry: tuple[Array, Array], /
+) -> tuple[Array, Array]:
+    sequential = _accumulate(chunk.sequential, carry)
+    blocked = _accumulate(chunk.correction, _accumulate(chunk.high, carry))
+    return (
+        jnp.where(chunk.exceeds, blocked[0], sequential[0]),
+        jnp.where(chunk.exceeds, blocked[1], sequential[1]),
+    )
+
+
 def compensated_sum_chunks(
     chunks: tuple[ArrayLike, ...],
     /,
     *,
     output_ndim: int = 0,
+    where: tuple[ArrayLike, ...] | None = None,
 ) -> Array:
-    """Sum signed leading-axis chunks with a twofold compensated accumulator."""
+    """Sum signed leading-axis chunks with a twofold compensated accumulator.
+
+    ``where`` holds one boolean mask per chunk, broadcast to that chunk, that
+    selects its logical terms. For float32 and float64 (real or complex) values
+    each output lane is then bitwise the unmasked sum of the chunks' selected
+    terms, in chunk and reduction order: every chunk takes the algorithm of its
+    logical term count, and neither chunk capacities nor the positions or
+    values of excluded entries change the result. Other dtypes keep the native
+    sum of the zeroed chunks.
+    """
     if not chunks:
         raise ValueError("compensated_sum_chunks requires at least one chunk.")
     output_ndim_ = int(output_ndim)
@@ -210,27 +261,52 @@ def compensated_sum_chunks(
         for array in arrays[1:]
     ):
         raise ValueError("Compensated chunks must have identical trailing output shapes.")
+    if where is not None and len(where) != len(arrays):
+        raise ValueError("where must hold exactly one mask per chunk.")
     dtype = jnp.result_type(*(array.dtype for array in arrays))
     arrays = tuple(array.astype(dtype) for array in arrays)
+    selections = (
+        None
+        if where is None
+        else tuple(
+            _selection(mask, array.shape)
+            for mask, array in zip(where, arrays, strict=True)
+        )
+    )
+    if selections is not None:
+        # Excluded entries are zeros, and a zero term is an exact Sum2 no-op
+        # wherever it sits: the running sum and correction never become -0.
+        arrays = tuple(
+            jnp.where(selected, array, jnp.zeros((), dtype=dtype))
+            for selected, array in zip(selections, arrays, strict=True)
+        )
     flat_chunks = tuple(_flat_leading(array, output_ndim_) for array in arrays)
     if not _compensates(dtype):
         native = jnp.zeros(output_shape, dtype=dtype)
         for flat in flat_chunks:
             native = native + jnp.sum(flat, axis=0)
         return native
-    reduced_chunks: list[Array] = []
-    for flat in flat_chunks:
-        if flat.shape[0] > _BLOCK_THRESHOLD:
+    reduced_chunks: list[Array | _SelectedChunk] = []
+    for index, flat in enumerate(flat_chunks):
+        if flat.shape[0] <= _BLOCK_THRESHOLD:
+            reduced_chunks.append(flat)
+        elif selections is None:
             high, correction = _block_expansion(flat)
             reduced_chunks.extend((high, correction))
         else:
-            reduced_chunks.append(flat)
+            reduced_chunks.append(
+                _selected_chunk(flat, _flat_leading(selections[index], output_ndim_))
+            )
     carry = (
         jnp.zeros(output_shape, dtype=dtype),
         jnp.zeros(output_shape, dtype=dtype),
     )
     for reduced in reduced_chunks:
-        carry = _accumulate(reduced, carry)
+        carry = (
+            _accumulate_selected(reduced, carry)
+            if isinstance(reduced, _SelectedChunk)
+            else _accumulate(reduced, carry)
+        )
     high, correction = carry
     return high + correction
 
@@ -245,27 +321,6 @@ def _resolve_axes(axis: Axis, ndim: int, /) -> tuple[int, ...]:
     if len(set(resolved)) != len(resolved):
         raise ValueError("axis contains duplicate reduction dimensions.")
     return resolved
-
-
-def _selected_sum(flat: Array, selected: Array, /) -> Array:
-    output_ndim = flat.ndim - 1
-    if flat.shape[0] <= _BLOCK_THRESHOLD or not _compensates(flat.dtype):
-        # Excluded entries are zeros, and a zero term is an exact Sum2 no-op
-        # wherever it sits: the running sum and correction never become -0.
-        return compensated_sum_chunks((flat,), output_ndim=output_ndim)
-    # Blocks are position-dependent. A stable compaction moves the selected
-    # terms to the front, so the zeros fill the tail of the last occupied
-    # block and whole trailing blocks, both exact no-ops of the expansion; the
-    # logical count then picks what the unpadded stream would use.
-    order = jnp.argsort(jnp.logical_not(selected).astype(jnp.int8), axis=0, stable=True)
-    compacted = jnp.take_along_axis(flat, order, axis=0)
-    sequential = compensated_sum_chunks(
-        (compacted[:_BLOCK_THRESHOLD],), output_ndim=output_ndim
-    )
-    blocked = compensated_sum_chunks((compacted,), output_ndim=output_ndim)
-    # The compacted mask is True exactly on the first `count` slots.
-    exceeds = jnp.take_along_axis(selected, order, axis=0)[_BLOCK_THRESHOLD]
-    return jnp.where(exceeds, blocked, sequential)
 
 
 def compensated_sum(
@@ -287,25 +342,25 @@ def compensated_sum(
     """
     array = jnp.asarray(value)
     axes = _resolve_axes(axis, array.ndim)
-    selected = None
-    if where is not None:
-        selected = jnp.asarray(where)
-        if selected.dtype != jnp.bool_:
-            raise TypeError("where must be a boolean mask.")
-        selected = jnp.broadcast_to(selected, array.shape)
-        array = jnp.where(selected, array, jnp.zeros((), dtype=array.dtype))
+    selected = None if where is None else _selection(where, array.shape)
     if not axes:
-        return array
+        return (
+            array
+            if selected is None
+            else jnp.where(selected, array, jnp.zeros((), dtype=array.dtype))
+        )
     output_axes = tuple(index for index in range(array.ndim) if index not in axes)
     order = axes + output_axes
     flat_shape = (prod(array.shape[index] for index in axes),) + tuple(
         array.shape[index] for index in output_axes
     )
     flattened = jnp.transpose(array, order).reshape(flat_shape)
-    result = (
-        compensated_sum_chunks((flattened,), output_ndim=len(output_axes))
+    result = compensated_sum_chunks(
+        (flattened,),
+        output_ndim=len(output_axes),
+        where=None
         if selected is None
-        else _selected_sum(flattened, jnp.transpose(selected, order).reshape(flat_shape))
+        else (jnp.transpose(selected, order).reshape(flat_shape),),
     )
     if not keepdims:
         return result

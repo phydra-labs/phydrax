@@ -135,7 +135,12 @@ def multifield_step_detailed(
         )
         if dynamics.geometry.kind == "axisymmetric":
             reflected_source_momenta.append(
-                compensated_sum(payload[..., :dimension], axis=(0, 1))
+                compensated_sum(
+                    payload[..., :dimension],
+                    axis=(0, 1),
+                    where=owned[:, None, None]
+                    & execution_routes.stencil.valid[..., None],
+                )
             )
         scattered = dynamics._scatter_route_payload(routes, storage_state, payload)
         momentum = scattered.values[..., :dimension]
@@ -479,7 +484,12 @@ def multifield_step_detailed(
                 )
                 if dynamics.geometry.kind == "axisymmetric":
                     reflected_second_momenta.append(
-                        compensated_sum(payload[..., :dimension], axis=(0, 1))
+                        compensated_sum(
+                            payload[..., :dimension],
+                            axis=(0, 1),
+                            where=owned[:, None, None]
+                            & second_execution_routes.stencil.valid[..., None],
+                        )
                     )
                 momentum_result = dynamics._scatter_route_payload(
                     second_routes, storage_state, payload
@@ -862,14 +872,25 @@ def multifield_step_detailed(
         state.lifecycle_state,
         tuple(candidate_boundaries),
     )
-    particle_mass = compensated_sum(jnp.where(active, mass, 0.0))
-    target_mass = compensated_sum(grid_mass)
+    # Mapped routes scatter only into valid compact slots, so the field grid
+    # mass, momentum, and internal force are zero on storage padding.
+    storage_mask = dynamics._storage_padding_mask(storage_state)
+    field_node_mask = (
+        None if storage_mask is None else jnp.broadcast_to(storage_mask, grid_mass.shape)
+    )
+    field_storage_mask = (
+        None if field_node_mask is None else field_node_mask.reshape((-1, 1))
+    )
+    particle_mass = compensated_sum(mass, where=active)
+    target_mass = compensated_sum(grid_mass, where=field_node_mask)
     particle_momentum = compensated_sum(
-        jnp.where(active[:, None], mass[:, None] * particle.velocity, 0.0), axis=0
+        mass[:, None] * particle.velocity, axis=0, where=active[:, None]
     )
     if dynamics.geometry.kind == "axisymmetric":
         particle_momentum = jnp.sum(jnp.stack(tuple(reflected_source_momenta)), axis=0)
-    target_momentum = compensated_sum(grid_momentum.reshape((-1, dimension)), axis=0)
+    target_momentum = compensated_sum(
+        grid_momentum.reshape((-1, dimension)), axis=0, where=field_storage_mask
+    )
     aggregate_momentum = jnp.sum(grid_momentum, axis=0)
     aggregate_active = jnp.any(grid_active, axis=0)
     particle_angular = apic_particle_angular_momentum(
@@ -893,7 +914,9 @@ def multifield_step_detailed(
     angular_defect = jnp.where(
         angular_valid, _relative(particle_angular, target_angular), 0.0
     )
-    net_internal = compensated_sum(internal_force.reshape((-1, dimension)), axis=0)
+    net_internal = compensated_sum(
+        internal_force.reshape((-1, dimension)), axis=0, where=field_storage_mask
+    )
     transfer_successful = (_relative(particle_momentum, target_momentum) <= 1.0e-10) & (
         (~angular_valid) | (angular_defect <= 1.0e-10)
     )
@@ -947,14 +970,10 @@ def multifield_step_detailed(
         0.5 * grid_mass * jnp.sum(grid_after**2, axis=-1)
     )
     material_before = compensated_sum(
-        jnp.where(
-            active, particle.reference_volume * particle.reference_energy_density, 0.0
-        )
+        particle.reference_volume * particle.reference_energy_density, where=active
     )
     material_after = compensated_sum(
-        jnp.where(
-            active, particle.reference_volume * material.reference_energy_density, 0.0
-        )
+        particle.reference_volume * material.reference_energy_density, where=active
     )
     boundary_work = compensated_sum(
         jnp.stack(tuple(result.work for result in boundary_results))
@@ -968,7 +987,7 @@ def multifield_step_detailed(
         jnp.stack(tuple(result.dissipation for result in rigid_results))
     )
     plastic_dissipation = compensated_sum(
-        jnp.where(active, particle.reference_volume * material.dissipation_increment, 0.0)
+        particle.reference_volume * material.dissipation_increment, where=active
     )
     energy = MPMEnergyLedger(
         particle_kinetic_before,

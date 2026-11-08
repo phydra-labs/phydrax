@@ -114,7 +114,7 @@ def _relative_defect(left: Array, right: Array, /) -> Array:
 
 def _grid_kinetic(mass: Array, velocity: Array, active: Array, /) -> Array:
     terms = 0.5 * mass * jnp.sum(velocity * velocity, axis=-1)
-    return compensated_sum(jnp.where(active, terms, 0.0).reshape((-1,)))
+    return compensated_sum(terms.reshape((-1,)), where=active.reshape((-1,)))
 
 
 def _route_digest(state: ParticleGridSplatState) -> Array:
@@ -784,6 +784,14 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                 )
             return storage_state.node_valid.reshape((-1,))
         return jnp.ones((self.grid_count,), dtype=jnp.bool_)
+
+    def _storage_padding_mask(
+        self, storage_state: SparseBlockTopologyState | None
+    ) -> Array | None:
+        """Logical slots of padded compact storage; dense storage has no padding."""
+        if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
+            return self._storage_node_valid(storage_state)
+        return None
 
     def _storage_boundary_data(
         self, storage_state: SparseBlockTopologyState | None
@@ -2104,15 +2112,22 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                 )
             )
             second_source_momentum = compensated_sum(
-                jnp.where(active[:, None], second_particle_momentum, 0.0),
-                axis=0,
+                second_particle_momentum, axis=0, where=active[:, None]
             )
             if self.geometry.kind == "axisymmetric":
                 second_source_momentum = compensated_sum(
-                    second_payload[..., :dimension], axis=(0, 1)
+                    second_payload[..., :dimension],
+                    axis=(0, 1),
+                    where=active[:, None, None]
+                    & second_execution_routes.stencil.valid[..., None],
                 )
+            # Mapped routes scatter only into valid compact slots, so the grid
+            # stream is zero on storage padding.
+            storage_mask = self._storage_padding_mask(storage_state)
             second_target_momentum = compensated_sum(
-                second_momentum_content.reshape((-1, dimension)), axis=0
+                second_momentum_content.reshape((-1, dimension)),
+                axis=0,
+                where=None if storage_mask is None else storage_mask[:, None],
             )
             second_momentum_defect = _relative_defect(
                 second_source_momentum, second_target_momentum
@@ -2357,17 +2372,24 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             state.lifecycle_state,
             candidate_boundaries,
         )
-        particle_mass = compensated_sum(jnp.where(active, mass, 0.0))
-        target_mass = compensated_sum(grid_mass.reshape((-1,)))
+        # Mapped routes scatter only into valid compact slots, so grid mass,
+        # momentum, and internal force are zero on storage padding.
+        storage_mask = self._storage_padding_mask(storage_state)
+        storage_vector_mask = None if storage_mask is None else storage_mask[:, None]
+        particle_mass = compensated_sum(mass, where=active)
+        target_mass = compensated_sum(grid_mass.reshape((-1,)), where=storage_mask)
         particle_momentum = compensated_sum(
-            jnp.where(active[:, None], mass[:, None] * particle.velocity, 0.0),
-            axis=0,
+            mass[:, None] * particle.velocity, axis=0, where=active[:, None]
         )
         if self.geometry.kind == "axisymmetric":
             particle_momentum = compensated_sum(
-                route_payload[..., :dimension], axis=(0, 1)
+                route_payload[..., :dimension],
+                axis=(0, 1),
+                where=active[:, None, None] & execution_routes.stencil.valid[..., None],
             )
-        target_momentum = compensated_sum(grid_momentum.reshape((-1, dimension)), axis=0)
+        target_momentum = compensated_sum(
+            grid_momentum.reshape((-1, dimension)), axis=0, where=storage_vector_mask
+        )
         particle_angular = apic_particle_angular_momentum(
             particle.position,
             particle.velocity,
@@ -2391,7 +2413,9 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             _relative_defect(particle_angular, target_angular),
             0.0,
         )
-        net_internal = compensated_sum(internal_force.reshape((-1, dimension)), axis=0)
+        net_internal = compensated_sum(
+            internal_force.reshape((-1, dimension)), axis=0, where=storage_vector_mask
+        )
         maximum_condition = jnp.max(
             jnp.where(active, gathered.condition_estimate, 0.0), initial=0.0
         )
@@ -2448,36 +2472,22 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         grid_kinetic_before = _grid_kinetic(grid_mass, velocity_before, grid_active)
         grid_kinetic_after = _grid_kinetic(grid_mass, grid_after, grid_active)
         material_before = compensated_sum(
-            jnp.where(
-                active,
-                particle.reference_volume * particle.reference_energy_density,
-                0.0,
-            )
+            particle.reference_volume * particle.reference_energy_density, where=active
         )
         material_after = compensated_sum(
-            jnp.where(
-                active,
-                particle.reference_volume * material.reference_energy_density,
-                0.0,
-            )
+            particle.reference_volume * material.reference_energy_density, where=active
         )
         average_velocity = 0.5 * (particle.velocity + candidate_particle.velocity)
         external_work = dt * compensated_sum(
-            jnp.where(
-                active,
-                mass * jnp.sum(acceleration_external * average_velocity, axis=-1),
-                0.0,
-            )
+            mass * jnp.sum(acceleration_external * average_velocity, axis=-1),
+            where=active,
         )
         external_work = external_work + dt * compensated_sum(
-            jnp.where(
-                grid_active,
-                jnp.sum(
-                    trial.increment_force * 0.5 * (velocity_before + grid_after),
-                    axis=-1,
-                ),
-                0.0,
-            )
+            jnp.sum(
+                trial.increment_force * 0.5 * (velocity_before + grid_after),
+                axis=-1,
+            ),
+            where=grid_active,
         )
         total_before = particle_kinetic_before + material_before
         total_after = particle_kinetic_after + material_after
@@ -2487,11 +2497,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         contact_work = contact_result.work + second_contact_work
         contact_dissipation = contact_result.dissipation + second_contact_dissipation
         plastic_dissipation = compensated_sum(
-            jnp.where(
-                active,
-                particle.reference_volume * material.dissipation_increment,
-                0.0,
-            )
+            particle.reference_volume * material.dissipation_increment, where=active
         )
         balance_defect = (
             total_after

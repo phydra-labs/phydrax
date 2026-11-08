@@ -305,32 +305,41 @@ def _scatter_block(
 
 def _conservation_sums(
     source: Array,
-    routed_values: tuple[tuple[Array, Array], ...],
+    routed_values: tuple[tuple[Array, Array, Array], ...],
     scattered: Array,
+    active_cell_mask: Array,
     component_shape: tuple[int, ...],
     /,
 ) -> tuple[Array, Array, Array]:
     """Compensated source, boundary-outward, and net-cell sums of one ledger.
 
-    ``routed_values`` pairs each block's owner-outward values with its neighbor
-    cells; boundary routes are the ``-1`` neighbors. For exact scatter algebra
+    ``routed_values`` holds each block's owner-outward values, neighbor cells,
+    and active route mask. The logical terms are the active cells and the
+    active ``-1`` (boundary) routes, so neither inactive cell or route slots
+    nor interior routes change the bits of a sum. For exact scatter algebra
     ``net_cell == source - boundary_outward`` up to compensated round-off.
     """
-    source_sum = compensated_sum(source, axis=0)
-    boundary_chunks = tuple(
-        jnp.where(
-            (neighbor_cells < 0).reshape(neighbor_cells.shape + (1,) * (values.ndim - 1)),
-            values,
-            jnp.zeros((), dtype=values.dtype),
-        )
-        for values, neighbor_cells in routed_values
+    active_cells = active_cell_mask.reshape(
+        active_cell_mask.shape + (1,) * len(component_shape)
     )
+    source_sum = compensated_sum(source, axis=0, where=active_cells)
     boundary_sum = (
-        compensated_sum_chunks(boundary_chunks, output_ndim=len(component_shape))
-        if boundary_chunks
+        compensated_sum_chunks(
+            tuple(values for values, _, _ in routed_values),
+            output_ndim=len(component_shape),
+            where=tuple(
+                ((neighbor_cells < 0) & active).reshape(
+                    neighbor_cells.shape + (1,) * (values.ndim - 1)
+                )
+                for values, neighbor_cells, active in routed_values
+            ),
+        )
+        if routed_values
         else jnp.zeros(component_shape, dtype=source.dtype)
     )
-    net_cell_sum = compensated_sum(scattered, axis=0)
+    # Sources are validated zero on inactive cells, and active routes never
+    # touch one, so the inactive cells excluded here hold exact zeros.
+    net_cell_sum = compensated_sum(scattered, axis=0, where=active_cells)
     return source_sum, boundary_sum, net_cell_sum
 
 
@@ -485,7 +494,9 @@ class ConservationStageLedger(StrictModule):
         topology_id = _flux_identity(topology_epoch_id, "topology_epoch_id")
         source = _finite_values(source_rate, "source_rate")
         if source.ndim == 0 or any(size <= 0 for size in source.shape[1:]):
-            raise ValueError("source_rate must have a cell axis and non-empty components.")
+            raise ValueError(
+                "source_rate must have a cell axis and non-empty components."
+            )
         cell_count = source.shape[0]
         component_shape = tuple(source.shape[1:])
         active_cells = _active_cell_array(active_cell_mask, cell_count)
@@ -668,8 +679,12 @@ class ConservationStageLedger(StrictModule):
         """Return source, boundary-outward, and net-cell content-rate sums."""
         return _conservation_sums(
             self.source_rate,
-            tuple((block.flux_rate, block.neighbor_cells) for block in self.blocks),
+            tuple(
+                (block.flux_rate, block.neighbor_cells, block.active_mask)
+                for block in self.blocks
+            ),
             self.scatter_content_rate(),
+            self.active_cell_mask,
             self.component_shape,
         )
 
@@ -878,7 +893,9 @@ class AcceptedConservationIntegralLedger(StrictModule):
             )
         source = _finite_values(source_integral, "source_integral")
         if source.ndim == 0 or any(size <= 0 for size in source.shape[1:]):
-            raise ValueError("source_integral must have a cell axis and non-empty components.")
+            raise ValueError(
+                "source_integral must have a cell axis and non-empty components."
+            )
         cell_count = source.shape[0]
         component_shape = tuple(source.shape[1:])
         active_cells = _active_cell_array(active_cell_mask, cell_count)
@@ -1111,8 +1128,12 @@ class AcceptedConservationIntegralLedger(StrictModule):
         """Return source, boundary-outward, and net-cell accepted content sums."""
         return _conservation_sums(
             self.source_integral,
-            tuple((block.flux_integral, block.neighbor_cells) for block in self.blocks),
+            tuple(
+                (block.flux_integral, block.neighbor_cells, block.active_mask)
+                for block in self.blocks
+            ),
             self.scatter_content_integral(),
+            self.active_cell_mask,
             self.component_shape,
         )
 

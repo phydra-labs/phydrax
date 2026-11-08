@@ -804,16 +804,10 @@ def _adaptive_cubature_solve(
                         (capacity,) + (1,) * len(output_shape)
                     )
                     estimate = precision.accumulation(
-                        compensated_sum(
-                            jnp.where(value_mask, next_estimates, 0.0),
-                            axis=0,
-                        )
+                        compensated_sum(next_estimates, axis=0, where=value_mask)
                     )
                     error = precision.decision(
-                        compensated_sum(
-                            jnp.where(next_active, next_errors, 0.0),
-                            axis=0,
-                        )
+                        compensated_sum(next_errors, axis=0, where=next_active)
                     )
                     children_finite = jnp.all(child_finite)
                     mesh_regular = jnp.all(
