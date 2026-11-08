@@ -328,9 +328,8 @@ class _Patch:
         """Lengths of edges and the target length at their midpoints."""
         if not edges:
             return np.empty(0), np.empty(0)
-        rows = np.asarray(edges, dtype=np.int64)
-        points = np.asarray(self.points, dtype=np.float64)
-        first, second = points[rows[:, 0]], points[rows[:, 1]]
+        first = np.stack([self.points[a] for a, _ in edges])
+        second = np.stack([self.points[b] for _, b in edges])
         lengths = np.linalg.norm(second - first, axis=1)
         return lengths, self.sizes(0.5 * (first + second))
 
