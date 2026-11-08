@@ -98,8 +98,9 @@ def _exact_carrier_second(simplex: np.ndarray, /) -> np.ndarray:
 @pytest.mark.parametrize(
     "scale,shift",
     [(1.0, (0.0, 0.0, 0.0)), (8.0, (2.0, -4.0, 6.0)), (0.25, (0.125, -0.25, 0.5))],
+    ids=("unit", "scaled-translated-large", "scaled-translated-small"),
 )
-@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("reverse", [False, True], ids=("native-order", "reversed-order"))
 def test_signed_thin_carrier_second_moments(
     scale: float, shift: tuple[float, float, float], reverse: bool
 ) -> None:

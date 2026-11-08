@@ -1024,9 +1024,9 @@ def _simplex_second_moments(simplices: np.ndarray, /) -> np.ndarray:
     represented binary64 vertices with exact rational arithmetic.
     """
     dimension = simplices.shape[2]
-    edges = simplices[:, 1:] - simplices[:, :1]
     match dimension:
         case 2:
+            edges = simplices[:, 1:] - simplices[:, :1]
             measure = 0.5 * (
                 edges[:, 0, 0] * edges[:, 1, 1] - edges[:, 0, 1] * edges[:, 1, 0]
             )
@@ -1090,11 +1090,12 @@ def _simplex_second_moments(simplices: np.ndarray, /) -> np.ndarray:
             exact_determinant = determinant3(first, second, third, fourth)
             exact_total = tuple(sum(point[k] for point in points) for k in range(3))
             for j in range(3):
-                for k in range(3):
+                for k in range(j, 3):
                     polynomial = sum(point[j] * point[k] for point in points) + (
                         exact_total[j] * exact_total[k]
                     )
                     result[row, j, k] = float(exact_determinant * polynomial / 120)
+                    result[row, k, j] = result[row, j, k]
     return result
 
 
