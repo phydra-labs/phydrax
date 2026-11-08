@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fractions import Fraction
 from itertools import combinations, permutations
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -585,6 +586,123 @@ def test_implicit_boundary_survivor_proposals_keep_exact_source_stencils() -> No
         state.native.protect_facet_group_rows(np.asarray([group], dtype=np.int32))
         state.snapshot = state.native.arrays()
         assert not _implicit_only_vertex(state, _boundary_records(state), 4)
+    finally:
+        state.native.close()
+
+
+@pytest.mark.parametrize("restored", (False, True))
+def test_implicit_collapse_admits_survivor_off_original_facet(
+    tmp_path: Path, restored: bool
+) -> None:
+    from phydrax._meshcore import IntervalBoxProgram, TetMeshImplicitSource
+    from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
+    from phydrax.meshing._tetra_metric import (
+        _current_edge_controls,
+        _directed_collapse,
+        _source_permits_collapse,
+        _state_topology,
+    )
+
+    grid = _source(4)
+    points = np.asarray(grid.mesh.coordinates).copy()
+    points[points[:, 2] == 1.0 / 3.0, 2] = 0.005
+    if restored:
+        points += np.asarray((1.0, -2.0, 0.0))
+    source = _mesh_result(points, np.asarray(grid.mesh.blocks[0].vertices).tolist())
+    bank = ExactPlcCellGeometrySource(
+        "plane",
+        "revision",
+        np.asarray(source.mesh.vertex_global_ids),
+        tuple(tuple(Fraction(float(value)) for value in point) for point in points),
+        vertex_source_entity_ids=(None,) * len(points),
+        vertex_occurrence_paths=((),) * len(points),
+    )
+    affine = phx.discretization.CellGeometrySpec.affine(source.mesh)
+    geometry = phx.discretization.CellGeometrySpec(
+        dict(zip(affine.block_names, affine.elements, strict=True)),
+        dict(zip(affine.block_names, affine.geometry_dofs, strict=True)),
+        source.mesh.coordinates,
+        source_map=bank,
+        source_mesh=source.mesh,
+    )
+    source = certify_cell_mesh(source.mesh, source.coordinate_contract, geometry=geometry)
+    if restored:
+        from phydrax.meshing._model_codec import (
+            read_model_artifact,
+            restore_model_archive_value,
+            write_model_artifact,
+        )
+
+        path = write_model_artifact(tmp_path / "source.phx", source, limits=None)
+        source = read_model_artifact(
+            path,
+            expected_type=CellMeshingResult,
+            restore=restore_model_archive_value,
+            limits=None,
+        )
+    state = _state(source, np.eye(3))
+    removed, kept = 20, 24
+    records = _boundary_records(state)
+    groups = {records.facets[key][1] for key in records.vertex_facets[removed]}
+    assert len(groups) == 1
+    group = next(iter(groups))
+    value = IntervalBoxProgram(
+        np.asarray([[2, 4, 1, 2, -1, 3, -1, 0]], dtype=np.int64),
+        np.empty(0, dtype=np.int64),
+        np.empty(0),
+        np.zeros(5),
+        np.zeros(5),
+        np.asarray([4]),
+        np.empty(0, dtype=np.int64),
+    )
+    gradient = IntervalBoxProgram(
+        np.empty((0, 8), dtype=np.int64),
+        np.empty(0, dtype=np.int64),
+        np.empty(0),
+        np.asarray([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
+        np.asarray([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
+        np.asarray([3, 4, 5]),
+        np.empty(0, dtype=np.int64),
+    )
+    try:
+        state.native.bind_implicit_source(
+            TetMeshImplicitSource(
+                value,
+                gradient,
+                np.asarray([group], dtype=np.int32),
+                0.01,
+                0,
+                "plane",
+                "revision",
+                bank.source_map_id,
+                source.coordinate_contract.reference_frame,
+            )
+        )
+        state.snapshot = state.native.arrays()
+        state.implicit_groups = frozenset((group,))
+        topology = _state_topology(state)
+        cell_ids = np.asarray(state.snapshot.cell_ids, dtype=np.int64)
+        stencil = {kept: Fraction(1, 2), kept + 1: Fraction(1, 2)}
+        move = {
+            "vertex": kept,
+            "point": np.asarray([float(value) for value in _stencil_image(state, stencil)]),
+            "metric": np.eye(3),
+            "stencil": stencil,
+            "star_cell_ids": tuple(int(cell_ids[row]) for row in topology.vertex_cells[kept]),
+        }
+        assert _apply_relocation_batch(state, [move]) is TetMeshEditStatus.APPLIED
+        records = _boundary_records(state)
+        topology = _state_topology(state)
+        assert not _source_permits_collapse(state, topology, records, removed, 21)
+        assert not set(stencil) <= state.source_face_vertices[group]
+        state.implicit_groups = frozenset()
+        assert not _source_permits_collapse(state, topology, records, removed, kept)
+        state.implicit_groups = frozenset((group,))
+        assert _source_permits_collapse(state, topology, records, removed, kept)
+        _, protected = _current_edge_controls(state, topology)
+        proposal = _directed_collapse(state, topology, records, protected, removed, kept)
+        assert proposal is not None
+        assert _apply_collapse_batch(state, [proposal]) is TetMeshEditStatus.APPLIED
     finally:
         state.native.close()
 

@@ -4069,12 +4069,17 @@ def _source_permits_collapse(
 ) -> bool:
     """Whether the source boundary lets ``removed`` collapse into ``kept``.
 
-    The removed vertex is neither fixed nor protected, carries no protected
-    facet or segment, and is interior or carried by a source triangle or edge
-    holding the kept vertex (a constrained segment collapses only along
-    itself). On a periodic lift a seam vertex is carried by its planar cell-face
-    cap, so it collapses only within the cap (or along the cell edge two caps
-    share); the orbit-locked candidate applies the same collapse to every
+    The removed vertex is neither fixed nor protected and carries no protected
+    facet or segment. A PWL boundary vertex must collapse into a vertex on its
+    source facet or edge (and a constrained segment only along itself). Two
+    implicit-only endpoints both belong solely to unprotected facets of the
+    same bound implicit source, with no source segment: the source stratum is
+    the zero set, not the old PWL facet's interpolation support. The native
+    owner still certifies every replacement facet against that source's tube
+    and embedding before committing.
+    On a periodic lift a seam vertex is carried by its planar cell-face cap,
+    so it collapses only within the cap (or along the edge two caps share);
+    the orbit-locked candidate applies the same collapse to every
     lifted copy (``_collapse_metric_candidates``). The native mesh refuses a
     protected survivor; a periodic lift, whose fixed lattice contour borders
     many short interior edges, rules that out here rather than paying for a
@@ -4089,7 +4094,12 @@ def _source_permits_collapse(
         protected_vertices[topology.vertex_row[kept]]
     ):
         return False
-    entity = _carrier_entity(state, records, removed)
+    implicit_edge = (
+        bool(state.implicit_groups)
+        and _implicit_only_vertex(state, records, removed)
+        and _implicit_only_vertex(state, records, kept)
+    )
+    entity = None if implicit_edge else _carrier_entity(state, records, removed)
     if entity is not None and (
         len(entity) < 2 or not set(state.vertex_stencils[kept]) <= entity
     ):
