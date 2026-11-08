@@ -9,7 +9,12 @@ from typing import Any
 import numpy as np
 import pytest
 
-from phydrax._meshcore import meshcore_available, tetrahedron_intersection_simplices
+from phydrax._meshcore import (
+    meshcore_available,
+    MeshcoreStatus,
+    tetrahedron_intersection_moments,
+    tetrahedron_intersection_simplices,
+)
 from phydrax.discretization import CellBlock, CellMesh
 from phydrax.geometry import (
     CommonRefinementCoverage,
@@ -19,6 +24,10 @@ from phydrax.geometry import (
     prepare_common_refinement,
 )
 from phydrax.geometry._supermesh import _simplex_second_moments
+from phydrax.geometry._tetra_intersections import (
+    _exact_intersection_pieces,
+    _exact_pieces_volume,
+)
 
 
 pytestmark = [
@@ -145,6 +154,104 @@ def test_thin_common_refinement_carrier_second_moments() -> None:
     np.testing.assert_allclose(
         np.asarray(refinement.second_moments)[0], expected, rtol=2e-14, atol=0.0
     )
+
+
+def test_positive_overlap_with_collapsed_carriers_is_not_partial_success() -> None:
+    source = np.asarray(
+        [
+            float.fromhex(value)
+            for value in (
+                "0x1.c5ad1c6273193p+0",
+                "0x1p+0",
+                "0x1.a07e9952a3352p+0",
+                "0x1.ccc0acdb1535cp+0",
+                "0x1p+0",
+                "0x1.a009daac47ca6p+0",
+                "0x1.c8e65498785eap+0",
+                "0x1p+0",
+                "0x1.9b621c92a1cf9p+0",
+                "0x1.cdda71ff9f4cep+0",
+                "0x1.037cc3d785075p+0",
+                "0x1.9d24b78b07436p+0",
+            )
+        ],
+        dtype=np.float64,
+    ).reshape(4, 3)
+    target = np.asarray(
+        [
+            float.fromhex(value)
+            for value in (
+                "0x1.c7f32a4c3c2f5p+0",
+                "0x1.0166666666666p+0",
+                "0x1.9a7ddb161db4ap+0",
+                "0x1.cab4c9e394c00p+0",
+                "0x1p+0",
+                "0x1.9bd961884391fp+0",
+                "0x1.cd2ed89728372p+0",
+                "0x1.01be61ebc283bp+0",
+                "0x1.9cbaaf04764bep+0",
+                "0x1.cb60634c0bd5cp+0",
+                "0x1.01be61ebc283bp+0",
+                "0x1.9c436a0ed4898p+0",
+            )
+        ],
+        dtype=np.float64,
+    ).reshape(4, 3)
+    exact = _exact_pieces_volume(_exact_intersection_pieces(source, target))
+    assert exact > 0
+    assert float(exact) == pytest.approx(2.0102052517994655e-48, rel=1e-15)
+    _, counts, _, _, status = tetrahedron_intersection_simplices(
+        source[None], target[None]
+    )
+    assert counts[0] == 0 and status[0] == MeshcoreStatus.UNRESOLVED
+    cells = np.asarray(((0, 1, 2, 3),), dtype=np.int32)
+    refinement = prepare_common_refinement(
+        CellMesh.from_tetrahedra(source, cells),
+        CellMesh.from_tetrahedra(target, cells),
+        policy=CommonRefinementPolicy(
+            coverage=CommonRefinementCoverage.PARTIAL, overlap_simplices=True
+        ),
+    )
+    assert not refinement.succeeded
+    assert refinement.status is CommonRefinementStatus.INTERSECTION_FAILURE
+    assert refinement.evidence.intersection_failure_count == 1
+
+
+def test_positive_symbolic_overlap_below_binary64_is_unresolved() -> None:
+    small, large = 2.0**-120, 2.0**120
+    source = np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype=np.float64)
+    target = np.asarray(
+        (
+            (small, -large, large),
+            (-large, large, 0),
+            (0, small, -small),
+            (-large, -large, -large),
+        ),
+        dtype=np.float64,
+    )
+    exact = _exact_pieces_volume(_exact_intersection_pieces(source, target))
+    assert 0 < exact < Fraction(float(np.nextafter(0.0, 1.0))) / 2
+    volume, _, status = tetrahedron_intersection_moments(source[None], target[None])
+    assert volume[0] == 0.0 and status[0] == MeshcoreStatus.UNRESOLVED
+    _, counts, volume, _, status = tetrahedron_intersection_simplices(
+        source[None], target[None]
+    )
+    assert counts[0] == 0 and volume[0] == 0.0 and status[0] == MeshcoreStatus.UNRESOLVED
+
+
+def test_partial_refinement_accepts_true_zero_contact() -> None:
+    source = np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype=np.float64)
+    target = np.asarray(((0, 0, 0), (-1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype=np.float64)
+    cells = np.asarray(((0, 1, 2, 3),), dtype=np.int32)
+    refinement = prepare_common_refinement(
+        CellMesh.from_tetrahedra(source, cells),
+        CellMesh.from_tetrahedra(target, cells),
+        policy=CommonRefinementPolicy(
+            coverage=CommonRefinementCoverage.PARTIAL, overlap_simplices=True
+        ),
+    )
+    assert refinement.succeeded and refinement.entry_count == 0
+    assert refinement.evidence.intersection_failure_count == 0
 
 
 def _grid(cells: int, /) -> Any:

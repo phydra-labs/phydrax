@@ -511,6 +511,53 @@ void test_tetrahedron_batch_scratch_reuse() {
   }
 }
 
+void test_tetrahedron_unrepresentable_overlap() {
+  // Binary64 translation of the captured unit-box pair 0. Independent exact
+  // rational clipping gives positive volume 2.0102052517994655e-48, while
+  // the rounded carrier fan has exactly zero signed volume.
+  const std::array<double, 12> source = {
+      0x1.c5ad1c6273193p+0, 0x1p+0, 0x1.a07e9952a3352p+0,
+      0x1.ccc0acdb1535cp+0, 0x1p+0, 0x1.a009daac47ca6p+0,
+      0x1.c8e65498785eap+0, 0x1p+0, 0x1.9b621c92a1cf9p+0,
+      0x1.cdda71ff9f4cep+0, 0x1.037cc3d785075p+0, 0x1.9d24b78b07436p+0};
+  const std::array<double, 12> target = {
+      0x1.c7f32a4c3c2f5p+0, 0x1.0166666666666p+0, 0x1.9a7ddb161db4ap+0,
+      0x1.cab4c9e394c00p+0, 0x1p+0, 0x1.9bd961884391fp+0,
+      0x1.cd2ed89728372p+0, 0x1.01be61ebc283bp+0, 0x1.9cbaaf04764bep+0,
+      0x1.cb60634c0bd5cp+0, 0x1.01be61ebc283bp+0, 0x1.9c436a0ed4898p+0};
+  const Volume exact = tetrahedra(source, target);
+  PHX_CHECK(exact.status == PHX_MC_OK);
+  PHX_CHECK(std::abs(exact.volume - 2.0102052517994655e-48) < 1e-62);
+  std::array<double, 20 * 12> simplices{};
+  int32_t count = -1, status = -1;
+  double volume = -1.0, moment[3] = {-1.0, -1.0, -1.0};
+  PHX_CHECK(phx_mc_tetrahedron_intersection_simplices(
+                1, source.data(), target.data(), 20, simplices.data(), &count, &volume,
+                moment, &status) == PHX_MC_OK);
+  PHX_CHECK(status == PHX_MC_UNRESOLVED && count == 0 && volume == 0.0);
+  PHX_CHECK(moment[0] == 0.0 && moment[1] == 0.0 && moment[2] == 0.0);
+
+  // Exact overlap is positive but smaller than half the least subnormal
+  // binary64 volume. All input coordinates remain in the native exact domain.
+  const double small = 0x1p-120, large = 0x1p120;
+  const std::array<double, 12> underflow = {
+      small, -large, large, -large, large, 0, 0, small, -small, -large, -large, -large};
+  const Volume underflow_moments = tetrahedra(kUnitTet, underflow);
+  PHX_CHECK(underflow_moments.status == PHX_MC_UNRESOLVED && underflow_moments.volume == 0.0);
+  PHX_CHECK(phx_mc_tetrahedron_intersection_simplices(
+                1, kUnitTet.data(), underflow.data(), 20, simplices.data(), &count, &volume,
+                moment, &status) == PHX_MC_OK);
+  PHX_CHECK(status == PHX_MC_UNRESOLVED && count == 0 && volume == 0.0);
+
+  // An exact shared-face contact is genuinely empty, not unresolved.
+  const std::array<double, 12> contact = {0, 0, 0, -1, 0, 0, 0, 1, 0, 0, 0, 1};
+  check_volume(tetrahedra(kUnitTet, contact), 0, 0, 0, 0);
+  PHX_CHECK(phx_mc_tetrahedron_intersection_simplices(
+                1, kUnitTet.data(), contact.data(), 20, simplices.data(), &count, &volume,
+                moment, &status) == PHX_MC_OK);
+  PHX_CHECK(status == PHX_MC_OK && count == 0 && volume == 0.0);
+}
+
 void test_tetrahedron_contacts() {
   // Shared face x = 0.
   check_volume(tetrahedra(kUnitTet, {0, 0, 0, -1, 0, 0, 0, 1, 0, 0, 0, 1}), 0, 0, 0, 0);
@@ -1172,6 +1219,7 @@ int main() {
   test_tetrahedron_sliver_measures();
   test_unitbox_overlap_measures();
   test_tetrahedron_batch_scratch_reuse();
+  test_tetrahedron_unrepresentable_overlap();
   test_tetrahedron_contacts();
   test_tetrahedron_statuses();
   test_tetrahedron_invariance();

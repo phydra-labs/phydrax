@@ -673,7 +673,11 @@ class PolytopeClipper {
         ++written;
       }
     }
+    // Exact clipping reaches this fan only for a positive-volume overlap.
+    // Rounded carriers can collapse or fold to a nonpositive signed total.
+    if (six.sign() <= 0) return PHX_MC_UNRESOLVED;
     volume = exact::rounded_quotient(six, Dyadic(6.0));
+    if (!(volume > 0.0) || !std::isfinite(volume)) return PHX_MC_UNRESOLVED;
     for (int k = 0; k < 3; ++k) {
       first_moment[k] = exact::rounded_quotient(sum[k], Dyadic(24.0));
     }
@@ -1115,6 +1119,9 @@ int32_t intersect_tetrahedra(const double* first, const double* second,
       status = clipper.cone_simplices(*simplices, volume, first_moment);
     } else {
       clipper.tetrahedron_moments(volume, first_moment);
+      // A nonempty exact clip is full-dimensional. A zero or nonfinite
+      // numerical volume is an unrepresentable result, not an empty contact.
+      if (!(volume > 0.0) || !std::isfinite(volume)) status = PHX_MC_UNRESOLVED;
     }
   }
   return status;
