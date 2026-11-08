@@ -452,23 +452,43 @@
 
 ### Fixed
 - `intersect_tetrahedra` decides its topology the same on every BLAS. Each
-  face is the closed half-space `n . (x - o) <= 0` of its `np.cross` normal
-  through its face vertex. Vertex admission, face membership and the normal
-  orientation are exact residual decisions: a fixed-order sum with a derived
-  rounding bound, then rational arithmetic on the undecided rows. Plane-triple
-  vertices are exact rational points, admitted exactly and reported correctly
-  rounded. Previously, rounded plane offsets `np.dot(n, o)` (errors up to 6e-8
-  at 2**30) and the BLAS `ddot` accumulation order decided whether boundary
-  corners were admitted. For the far-offset corner overlap, WIN (OpenBLAS)
-  returned `SUCCESS` with 2 of the 4 vertices and no faces, while other
-  kernels returned `UNCERTAIN_PREDICATE`. It now returns `SUCCESS` with the
-  exact 4-vertex, 4-face polytope everywhere.
+  face of the tolerance enumeration is the closed half-space `n . (x - o) <= 0`
+  of its binary64 `np.cross` normal through its face vertex. Vertex admission,
+  face membership and the normal orientation are exact residual decisions on
+  that normal: a fixed-order sum with a derived rounding bound, then rational
+  arithmetic on the undecided rows. Plane-triple vertices are exact rational
+  points, admitted exactly and reported correctly rounded.
 
-  A `SUCCESS` whose constructed faces do not close a polytope surface now
-  fails closed with `UNCERTAIN_PREDICATE`: every edge must be on exactly two
-  faces, every vertex must be on a face, and the Euler characteristic must be
-  2. Dot products, norms and determinants in the module use the fixed order
-  `(x0 + x1) + x2` instead of BLAS.
+  Previously, rounded plane offsets `np.dot(n, o)` (errors up to 6e-8 at 2**30)
+  and the BLAS `ddot` accumulation order decided whether boundary corners were
+  admitted. For the far-offset corner overlap:
+  - Windows x86-64 OpenBLAS 0.3.34 (Haswell kernel, sequential, no FMA)
+    returned `SUCCESS` with 2 of the 4 vertices and no faces;
+  - Linux aarch64 OpenBLAS 0.3.34 (neoversev2 kernel, `fma(a2, b2, a0 b0) + a1 b1`)
+    and the reassociated orders returned `UNCERTAIN_PREDICATE`.
+
+  It now returns `SUCCESS` with the exact 4-vertex, 4-face polytope everywhere.
+
+  When the tolerance enumeration of a `SUCCESS` is unresolved (a filtered
+  plane-triple orientation is uncertain) or its faces do not close an oriented
+  polytope surface, the polytope is rebuilt exactly from the exact half-spaces
+  of the binary64 vertices, the ones that already decide status and volume:
+  - vertices are the exactly feasible plane-triple points, merged by exact
+    equality;
+  - faces are the exact incidences, ordered by exact orientation signs;
+  - closure requires every directed edge once with its reverse, every vertex on
+    a face, and Euler characteristic 2.
+
+  `UNCERTAIN_PREDICATE` remains only for contacts and for a failed exact
+  construction. Vertex coordinates are correctly rounded per vertex and never
+  merged after rounding. Distinct exact vertices can therefore share a binary64
+  coordinate (a zero-length edge), and `_pressure_patch` accepts that.
+
+  Degeneracy compares the exact determinant with the exact threshold
+  `max(absolute, relative * max(scale**3, 1e-300))` on the binary64 tolerances
+  and edge scale. The `SUCCESS` volume threshold is the same expression. No
+  platform `pow` or rounding is involved. Dot products, norms and determinants
+  in the module use the fixed order `(x0 + x1) + x2` instead of BLAS.
 
   On a 1387-pair corpus in 3 predicate modes:
   - status, volume and `volume_error` are unchanged wherever the old topology
@@ -478,11 +498,13 @@
     typically 2–64 ulps away, up to 19k ulps for an ill-conditioned plane
     triple, with `-0.0` (and once `-7.4e-17`) where the exact coordinate is
     `+0.0`;
-  - 662 old `SUCCESS` rows had unclosed topologies. The 536 far-offset ones are
-    now closed `SUCCESS`. The 126 near-coincident ones (a cell and its translate
-    by 1e-13 to 1e-8, at the coordinate tolerance) now return
-    `UNCERTAIN_PREDICATE`;
-  - 14 far-offset rows move from `UNCERTAIN_PREDICATE` to closed `SUCCESS`.
+  - all 662 old `SUCCESS` rows with unclosed topologies are closed `SUCCESS`
+    rows now. These are 536 far-offset rows and 126 near-coincident rows (a cell
+    and its translate by 1e-13 to 1e-8, at the coordinate tolerance);
+  - 151 solid rows that were `UNCERTAIN_PREDICATE` are closed `SUCCESS` rows
+    now: 14 far-offset rows, plus 137 filtered-mode rows with an uncertain
+    plane-triple orientation. The filtered rows' topology equals the
+    exact-mode result.
 - Native PLC recovery's Steiner-point suppression no longer loses a subface or
   a segment chain interval. Where a wedge meets a new subface from both sides,
   the cone fill from a cavity vertex on that subface could be accepted with

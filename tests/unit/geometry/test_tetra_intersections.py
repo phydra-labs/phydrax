@@ -386,15 +386,30 @@ def test_far_corner_overlap_constructs_the_exact_polytope() -> None:
     _assert_far_overlap_topology(intersect_tetrahedra(FAR, FAR_TRANSLATED))
 
 
+def _lose_every_triple(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Only the input corners FAR[1] and FAR_TRANSLATED[2] remain in the
+    # tolerance construction, which cannot close the solid overlap.
+    monkeypatch.setattr(
+        tetra_module, "_triple_intersection", lambda *arguments: (None, False)
+    )
+
+
+def test_far_corner_overlap_lost_by_the_tolerance_construction_is_rebuilt_exactly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_far_translate_is_exact()
+    _lose_every_triple(monkeypatch)
+
+    _assert_far_overlap_topology(intersect_tetrahedra(FAR, FAR_TRANSLATED))
+
+
 def test_far_corner_overlap_lost_by_the_constructed_topology_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _assert_far_translate_is_exact()
-    # Lose every plane-triple construction: only the input corners FAR[1] and
-    # FAR_TRANSLATED[2] remain, which cannot close the solid overlap.
-    monkeypatch.setattr(
-        tetra_module, "_triple_intersection", lambda *arguments: (None, False)
-    )
+    _lose_every_triple(monkeypatch)
+    # The exact construction fails as well.
+    monkeypatch.setattr(tetra_module, "_exact_polytope_topology", lambda *arguments: None)
 
     result = intersect_tetrahedra(FAR, FAR_TRANSLATED)
 
@@ -402,35 +417,171 @@ def test_far_corner_overlap_lost_by_the_constructed_topology_fails_closed(
     assert result.evidence.predicate_uncertain
 
 
-@pytest.mark.parametrize("order", ((0, 1, 2), (0, 2, 1), (2, 0, 1)))
-def test_far_corner_decisions_do_not_depend_on_the_summation_order(
-    monkeypatch: pytest.MonkeyPatch, order: tuple[int, int, int]
-) -> None:
-    # Each order a BLAS kernel may use for a three-term dot product is injected
-    # into both routes a dot product can take: NumPy's ``np.dot`` and the
-    # module's fixed-order ``_dot3``.
-    first, second, third = order
-    blas_dot = np.dot
-    calls = [0]
+# beta = 1 + 2**-30: det[(1, 0, 0), (0, beta, 1), (0, 1, beta)] = beta**2 - 1 is
+# exactly 2**-29 + 2**-60, a binary64 number, but rounding beta**2 gives 2**-29.
+_THRESHOLD_BETA = 1.0 + 2.0**-30
+THRESHOLD_TETRAHEDRON = np.asarray(
+    (
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.0, _THRESHOLD_BETA, 1.0),
+        (0.0, 1.0, _THRESHOLD_BETA),
+    ),
+    dtype=np.float64,
+)
+_EXACT_DETERMINANT = 2.0**-29 + 2.0**-60
 
-    def ordered(left: np.ndarray, right: np.ndarray) -> np.ndarray:
-        calls[0] += 1
+
+@pytest.mark.parametrize(
+    ("threshold", "degenerate"),
+    (
+        (_EXACT_DETERMINANT, True),
+        (float(np.nextafter(_EXACT_DETERMINANT, np.inf)), True),
+        (float(np.nextafter(_EXACT_DETERMINANT, -np.inf)), False),
+        (2.0**-29, False),
+    ),
+    ids=("equal", "ulp-above", "ulp-below", "rounded-determinant"),
+)
+def test_degeneracy_compares_the_exact_determinant_with_the_threshold(
+    threshold: float, degenerate: bool
+) -> None:
+    assert _exact_tetrahedron_volume(THRESHOLD_TETRAHEDRON) * 6 == Fraction(
+        _EXACT_DETERMINANT
+    )
+    assert _THRESHOLD_BETA * _THRESHOLD_BETA - 1.0 == 2.0**-29
+    tolerance = TetraIntersectionTolerance(absolute=threshold, relative=0.0)
+
+    result = intersect_tetrahedra(
+        THRESHOLD_TETRAHEDRON,
+        THRESHOLD_TETRAHEDRON,
+        tolerance=tolerance,
+        volume_only=True,
+    )
+
+    assert result.status is (
+        TetraIntersectionStatus.DEGENERATE_TETRAHEDRON
+        if degenerate
+        else TetraIntersectionStatus.ZERO_MEASURE_CONTACT
+    )
+
+
+def _fused(left: float, right: float, addend: float) -> float:
+    """``fma(left, right, addend)``: one rounding of the exact value."""
+    if not all(np.isfinite((left, right, addend))):
+        return left * right + addend
+    return float(Fraction(left) * Fraction(right) + Fraction(addend))
+
+
+_FUSED = np.frompyfunc(_fused, 3, 1)
+
+
+def _reassociated(first: int, second: int, third: int) -> Any:
+    def dot(left: np.ndarray, right: np.ndarray) -> np.ndarray:
         return (
             left[..., first] * right[..., first] + left[..., second] * right[..., second]
         ) + left[..., third] * right[..., third]
+
+    return dot
+
+
+def _aarch64_openblas(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+    # fl(fma(a2, b2, a0 * b0) + a1 * b1), the Linux aarch64 OpenBLAS ddot.
+    fused = _FUSED(left[..., 2], right[..., 2], left[..., 0] * right[..., 0])
+    return np.asarray(fused, dtype=np.float64) + left[..., 1] * right[..., 1]
+
+
+@pytest.mark.parametrize(
+    "dot",
+    (
+        _reassociated(0, 1, 2),
+        _reassociated(0, 2, 1),
+        _reassociated(2, 0, 1),
+        _aarch64_openblas,
+    ),
+    ids=("(x0+x1)+x2", "(x0+x2)+x1", "(x2+x0)+x1", "fma(x2,x0)+x1"),
+)
+def test_far_corner_decisions_do_not_depend_on_the_summation_order(
+    monkeypatch: pytest.MonkeyPatch, dot: Any
+) -> None:
+    # Each order or contraction a BLAS kernel may use for a three-term dot
+    # product is injected into both routes a dot product can take: NumPy's
+    # ``np.dot`` and the module's fixed-order ``_dot3``.
+    blas_dot = np.dot
+    calls = [0]
+
+    def counted(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+        calls[0] += 1
+        return dot(left, right)
 
     def ordered_dot(left: Any, right: Any) -> Any:
         left_ = np.asarray(left)
         right_ = np.asarray(right)
         if left_.shape == right_.shape == (3,):
-            return ordered(left_, right_)
+            return counted(left_, right_)
         return blas_dot(left, right)
 
     monkeypatch.setattr(np, "dot", ordered_dot)
-    monkeypatch.setattr(tetra_module, "_dot3", ordered, raising=False)
+    monkeypatch.setattr(tetra_module, "_dot3", counted, raising=False)
 
     _assert_far_overlap_topology(intersect_tetrahedra(FAR, FAR_TRANSLATED))
     assert calls[0] > 0
+
+
+# A far-offset pair whose distinct exact vertices round to one binary64: the edge
+# P-Q of the second cell passes u/4 above the first cell's edge along x at
+# y = z = C (u = ulp(C)).  It enters the first cell through y = C and leaves
+# through z = C at two exact points within u/4 of (C + 1, C, C).
+_C = 2.0**30
+_U = float(np.spacing(_C))
+COINCIDENT_SOURCE = np.asarray(
+    ((_C, _C, _C), (_C + 4, _C, _C), (_C, _C + 4, _C), (_C, _C, _C + 4)),
+    dtype=np.float64,
+)
+COINCIDENT_TARGET = np.asarray(
+    (
+        (_C + 1, _C - 3, _C + 3 + _U),
+        (_C + 1, _C + 1, _C - 1),
+        (_C - 2, _C + 3, _C + 3),
+        (_C + 4, _C + 3, _C + 3),
+    ),
+    dtype=np.float64,
+)
+
+
+def test_closed_surface_requires_consistently_oriented_faces() -> None:
+    oriented = ((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3))
+    # One face reversed: every edge still borders two faces, but a directed edge
+    # repeats and its reverse is missing.
+    reversed_face = ((0, 1, 2), (0, 1, 3), (0, 3, 2), (1, 2, 3))
+
+    assert tetra_module._closed_surface(4, oriented)
+    assert not tetra_module._closed_surface(4, reversed_face)
+
+
+def test_distinct_exact_vertices_may_round_to_one_coordinate() -> None:
+    first, second = (
+        [Fraction(float(value)) for value in COINCIDENT_TARGET[row]] for row in (0, 1)
+    )
+    # The exact points where P-Q crosses y = C and z = C.
+    crossings = []
+    for axis in (1, 2):
+        weight = (Fraction(_C) - first[axis]) / (second[axis] - first[axis])
+        crossings.append(
+            tuple(a + weight * (b - a) for a, b in zip(first, second, strict=True))
+        )
+    assert crossings[0] != crossings[1]
+    rounded = (_C + 1, _C, _C)
+    assert all(tuple(float(value) for value in point) == rounded for point in crossings)
+
+    result = intersect_tetrahedra(COINCIDENT_SOURCE, COINCIDENT_TARGET)
+
+    assert result.status is TetraIntersectionStatus.SUCCESS
+    # The topology is the exact polytope's: closed and oriented over every vertex
+    # index, while two of its vertices share a correctly rounded coordinate.
+    assert tetra_module._closed_surface(len(result.vertices), result.faces)
+    matches = np.flatnonzero(np.all(result.vertices == np.asarray(rounded), axis=1))
+    assert len(matches) == 2
+    assert len(np.unique(result.vertices, axis=0)) == len(result.vertices) - 1
 
 
 def test_gap_below_the_coordinate_tolerance_is_disjoint(unit_tetrahedron: Any) -> None:

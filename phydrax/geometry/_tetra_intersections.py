@@ -15,11 +15,15 @@ predicates, and unresolved constructions return a typed non-success result,
 never a plausible but unverifiable volume. Orientation and plane-triple singularity
 decisions are certified by the geometric predicates of the precision policy
 (exact with meshcore; otherwise filtered, with unresolved signs reported as
-``UNCERTAIN_PREDICATE``).  Half-space admission and face membership are exact
-residual decisions (a fixed-order filter with a derived rounding bound, then
-rational arithmetic), and plane-triple vertices are exact rational points
-reported correctly rounded, so no decision depends on the BLAS accumulation
-order of a dot product.
+``UNCERTAIN_PREDICATE`` for contacts).  Degeneracy compares the exact
+determinant with an exact threshold.  Half-space admission and face membership
+are exact residual decisions on the binary64 face normals (a fixed-order filter
+with a derived rounding bound, then rational arithmetic), and plane-triple
+vertices are exact rational points reported correctly rounded, so no decision
+depends on the BLAS accumulation order of a dot product.  A solid intersection
+whose tolerance enumeration is unresolved or does not close is rebuilt from the
+exact half-spaces of the binary64 vertices, the same ones that decide the status
+and volume.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from fractions import Fraction
+from functools import cmp_to_key
 from itertools import combinations
 from typing import Any, cast
 
@@ -105,9 +110,15 @@ class TetraIntersectionResult:
 
     ``vertices`` is a read-only ``(N, 3)`` array in lexicographic order and
     ``faces`` contains outward-oriented polygon index tuples in canonical
-    order.  For ``volume_only=True`` the topology is not constructed: the
-    arrays are empty and the vertex and face counts are zero while the exact
-    status, certified volume, and remaining evidence stay available.
+    order.  The vertex indices and faces are the constructed topology; for
+    ``SUCCESS`` they close an oriented polytope surface.  Each vertex
+    coordinate is the correctly rounded value of its vertex, and vertices are
+    never merged after rounding: distinct exact vertices of the exact
+    construction can share a binary64 coordinate, so an edge may have zero
+    length and a face zero area.  For ``volume_only=True`` the topology is not
+    constructed: the arrays are empty and the vertex and face counts are zero
+    while the exact status, certified volume, and remaining evidence stay
+    available.
     """
 
     status: TetraIntersectionStatus
@@ -304,6 +315,20 @@ def _tetra_volume(vertices: np.ndarray) -> float:
     )
 
 
+def _volume_threshold(tolerance: TetraIntersectionTolerance, scale: float, /) -> Fraction:
+    """Exact ``max(absolute, relative * max(scale**3, 1e-300))``.
+
+    The threshold is the rational value of this expression on the binary64
+    tolerances and edge scale, evaluated without rounding.  A binary64
+    evaluation would go through the platform ``pow`` and two roundings, so it
+    would not be the same number on every host.
+    """
+    return max(
+        Fraction(tolerance.absolute),
+        Fraction(tolerance.relative) * max(Fraction(scale) ** 3, Fraction(1.0e-300)),
+    )
+
+
 def _validate_tetrahedron(
     vertices: np.ndarray,
     tolerance: TetraIntersectionTolerance,
@@ -319,12 +344,15 @@ def _validate_tetrahedron(
     )
     if not math.isfinite(determinant):
         return TetraIntersectionStatus.NONFINITE_INPUT, 0.0, scale, False
-    determinant_tolerance = max(
-        tolerance.absolute, tolerance.relative * max(scale**3, 1.0e-300)
+    # The tolerance is a volume admissibility threshold: the exact determinant of
+    # the binary64 vertices is compared with the exact threshold.  The
+    # orientation sign itself comes from the certified predicate.
+    first, second, third, fourth = _exact_tetrahedron(vertices)
+    exact_determinant = rational_dot(
+        _exact_difference(second, first),
+        rational_cross(_exact_difference(third, first), _exact_difference(fourth, first)),
     )
-    # The tolerance is a volume admissibility threshold; the orientation sign
-    # itself comes from the certified predicate.
-    if abs(determinant) <= determinant_tolerance:
+    if abs(exact_determinant) <= _volume_threshold(tolerance, scale):
         return TetraIntersectionStatus.DEGENERATE_TETRAHEDRON, 0.0, scale, False
     orientation = orient3d(vertices[0], vertices[1], vertices[2], vertices[3], mode=mode)
     if not bool(orientation.certain):
@@ -483,8 +511,10 @@ def _triple_intersection(
     matrix = np.stack([planes[index].normal for index in indices], axis=0)
     # Coincident source/target faces are represented by independently built
     # normals.  Their cross product can carry a few ulps even though the
-    # geometric planes are identical; this is a rank-zero combination, not an
-    # uncertain predicate.
+    # geometric planes are identical; the tolerance enumeration treats such a
+    # pair as rank zero.  This is a tolerance decision, not a certified one: a
+    # solid intersection whose tolerance faces then fail to close is rebuilt by
+    # ``_exact_polytope_topology``, which decides rank exactly.
     for first, second in combinations(range(3), 2):
         normal_scale = max(
             1.0,
@@ -689,6 +719,11 @@ def _clip_exact_tetrahedron(
             raise RuntimeError("A tetrahedron has exactly four vertices.")
 
 
+def _exact_tetrahedron(vertices: np.ndarray, /) -> _ExactTetrahedron:
+    first, second, third, fourth = (_exact_point(row) for row in vertices)
+    return first, second, third, fourth
+
+
 def _exact_intersection_pieces(
     source: np.ndarray, target: np.ndarray, /
 ) -> tuple[_ExactTetrahedron, ...]:
@@ -703,16 +738,8 @@ def _exact_intersection_pieces(
     empty exactly when the closed intersection is empty and the absolute
     determinants sum to its exact volume.
     """
-
-    def exact_tetrahedron(vertices: np.ndarray, /) -> _ExactTetrahedron:
-        first, second, third, fourth = (
-            rational_vector((float(row[0]), float(row[1]), float(row[2])))
-            for row in vertices
-        )
-        return first, second, third, fourth
-
-    pieces: tuple[_ExactTetrahedron, ...] = (exact_tetrahedron(source),)
-    for normal, offset in _exact_halfspaces(exact_tetrahedron(target)):
+    pieces: tuple[_ExactTetrahedron, ...] = (_exact_tetrahedron(source),)
+    for normal, offset in _exact_halfspaces(_exact_tetrahedron(target)):
         pieces = tuple(
             clipped
             for piece in pieces
@@ -751,7 +778,9 @@ def _build_faces(
     scale: float,
     /,
 ) -> tuple[tuple[tuple[int, ...], ...], bool]:
-    area_tolerance = max(tolerance.absolute, tolerance.relative * max(scale**2, 1.0e-300))
+    area_tolerance = max(
+        tolerance.absolute, tolerance.relative * max(scale * scale, 1.0e-300)
+    )
     boundary_limit = tolerance.absolute + tolerance.relative * max(scale, 1.0e-300)
     for plane in planes:
         norm = float(_norm3(plane.normal))
@@ -795,44 +824,125 @@ def _build_faces(
 
 
 def _closed_surface(vertex_count: int, faces: tuple[tuple[int, ...], ...], /) -> bool:
-    """Whether ``faces`` close a polytope surface over all ``vertex_count`` vertices.
+    """Whether ``faces`` close an oriented polytope surface over all vertices.
 
-    Every edge borders exactly two faces, every vertex lies on a face, and the
-    Euler characteristic ``V - E + F`` is 2.  A construction that lost a vertex
-    of a solid intersection leaves an edge on a single face.
+    Every directed edge appears exactly once and its reverse appears too, so each
+    edge borders exactly two consistently oriented faces.  Every vertex lies on a
+    face, and the Euler characteristic ``V - E + F`` is 2.  A construction that
+    lost a vertex of a solid intersection leaves an edge on a single face; a
+    misordered face repeats or orphans a directed edge.
     """
-    edges: dict[tuple[int, int], int] = {}
+    directed: dict[tuple[int, int], int] = {}
     for face in faces:
         for first, second in zip(face, face[1:] + face[:1]):
-            key = (min(first, second), max(first, second))
-            edges[key] = edges.get(key, 0) + 1
+            directed[(first, second)] = directed.get((first, second), 0) + 1
     return (
         len(faces) >= 4
         and {index for face in faces for index in face} == set(range(vertex_count))
-        and all(count == 2 for count in edges.values())
-        and vertex_count - len(edges) + len(faces) == 2
+        and all(
+            count == 1 and (second, first) in directed
+            for (first, second), count in directed.items()
+        )
+        and vertex_count - len(directed) // 2 + len(faces) == 2
     )
 
 
-def _polytope_topology(
+def _exact_polytope_topology(
+    source: np.ndarray, target: np.ndarray, /
+) -> tuple[np.ndarray, tuple[tuple[int, ...], ...]] | None:
+    """Exact vertices and faces of a solid intersection, or ``None``.
+
+    The eight closed half-spaces are exact on the binary64 vertices.  The common
+    point of every nonsingular plane triple that satisfies all of them is a
+    vertex, and equal points merge.  The vertices on one plane form a face when
+    there are at least three; coincident planes give the same vertex set and
+    merge.  Each face runs counterclockwise about its outward normal from its
+    smallest vertex, ordered by exact orientation signs.  Vertices are reported
+    correctly rounded in exact lexicographic order.  ``None`` means the exact
+    construction does not close a polytope surface or leaves the binary64
+    range; neither happens for a solid intersection of finite cells.
+    """
+    halfspaces = _exact_halfspaces(_exact_tetrahedron(source)) + _exact_halfspaces(
+        _exact_tetrahedron(target)
+    )
+    points: dict[_ExactPoint, None] = {}
+    for first, second, third in combinations(halfspaces, 3):
+        second_third = rational_cross(second[0], third[0])
+        determinant = rational_dot(first[0], second_third)
+        if determinant == 0:
+            continue
+        third_first = rational_cross(third[0], first[0])
+        first_second = rational_cross(first[0], second[0])
+        first_coordinate, second_coordinate, third_coordinate = (
+            -(
+                first[1] * second_third[axis]
+                + second[1] * third_first[axis]
+                + third[1] * first_second[axis]
+            )
+            / determinant
+            for axis in range(3)
+        )
+        point = (first_coordinate, second_coordinate, third_coordinate)
+        if all(
+            rational_dot(normal, point) + offset >= 0 for normal, offset in halfspaces
+        ):
+            points[point] = None
+    exact_vertices = sorted(points)
+    rounded = [_rounded_point(point) for point in exact_vertices]
+    if not all(bool(np.all(np.isfinite(point))) for point in rounded):
+        return None
+    faces_by_key: dict[tuple[int, ...], tuple[int, ...]] = {}
+    for normal, offset in halfspaces:
+        boundary = tuple(
+            index
+            for index, point in enumerate(exact_vertices)
+            if rational_dot(normal, point) + offset == 0
+        )
+        if len(boundary) < 3 or boundary in faces_by_key:
+            continue
+        pivot = exact_vertices[boundary[0]]
+        outward = (-normal[0], -normal[1], -normal[2])
+
+        def turn(left: int, right: int, /) -> int:
+            # ``left`` precedes ``right`` when the turn pivot-left-right is
+            # counterclockwise about the outward normal.
+            sign = rational_dot(
+                outward,
+                rational_cross(
+                    _exact_difference(exact_vertices[left], pivot),
+                    _exact_difference(exact_vertices[right], pivot),
+                ),
+            )
+            return (sign < 0) - (sign > 0)
+
+        faces_by_key[boundary] = (
+            boundary[0],
+            *sorted(boundary[1:], key=cmp_to_key(turn)),
+        )
+    faces = tuple(faces_by_key[key] for key in sorted(faces_by_key))
+    if not _closed_surface(len(exact_vertices), faces):
+        return None
+    vertices = np.asarray(rounded, dtype=np.float64)
+    vertices.setflags(write=False)
+    return vertices, faces
+
+
+def _tolerance_topology(
     source: np.ndarray,
     target: np.ndarray,
+    planes: tuple[_Plane, ...],
+    triple_points: list[_ExactPoint],
     tolerance: TetraIntersectionTolerance,
     scale: float,
-    mode: PredicateMode,
-    solid: bool,
     /,
 ) -> tuple[np.ndarray, tuple[tuple[int, ...], ...]] | None:
-    """Constructed vertices and faces of a nonempty intersection, or ``None``.
+    """Tolerance-merged vertices and faces, or ``None`` when unresolved.
 
-    Candidates are the input vertices and the exact common points of plane
-    triples; each is admitted by its exact residuals and reported correctly
-    rounded.  ``None`` reports an unresolved construction: an uncertain
-    plane-triple orientation, an admitted point beyond the binary64 range, no
-    constructed vertex, an unorderable face, or, for a ``solid`` intersection,
-    faces that do not close a polytope surface.
+    Candidates are the input vertices and the exact plane-triple points; each is
+    admitted by its exact residuals and reported correctly rounded.  ``None``
+    reports an admitted point beyond the binary64 range, no admitted vertex, or
+    an unorderable face.
     """
-    planes = _tetra_planes(source) + _tetra_planes(target)
     candidates: list[tuple[np.ndarray, _ExactPoint]] = []
     point_tolerance = tolerance.absolute + tolerance.relative * max(scale, 1.0e-300)
     inputs = np.concatenate((source, target), axis=0)
@@ -841,30 +951,6 @@ def _polytope_topology(
     ):
         if admitted:
             _append_unique(candidates, point, _exact_point(point), point_tolerance)
-    triples = tuple(combinations(range(len(planes)), 3))
-    triple_normals = np.asarray(
-        [[planes[index].normal for index in indices] for indices in triples],
-        dtype=np.float64,
-    )
-    triple_orientation = orient3d(
-        np.zeros(3, dtype=np.float64),
-        triple_normals[:, 0],
-        triple_normals[:, 1],
-        triple_normals[:, 2],
-        mode=mode,
-    )
-    triple_points: list[_ExactPoint] = []
-    for triple_index, indices in enumerate(triples):
-        point, point_uncertain = _triple_intersection(
-            planes,
-            indices,
-            int(triple_orientation.signs[triple_index]),
-            bool(triple_orientation.certain[triple_index]),
-        )
-        if point_uncertain:
-            return None
-        if point is not None:
-            triple_points.append(point)
     if triple_points:
         rounded = [_rounded_point(point) for point in triple_points]
         admitted = _inside(
@@ -886,9 +972,62 @@ def _polytope_topology(
     faces, face_failure = _build_faces(
         vertices, tuple(exact for _, exact in candidates), planes, tolerance, scale
     )
-    if face_failure or (solid and not _closed_surface(len(vertices), faces)):
+    if face_failure:
         return None
     return vertices, faces
+
+
+def _polytope_topology(
+    source: np.ndarray,
+    target: np.ndarray,
+    tolerance: TetraIntersectionTolerance,
+    scale: float,
+    mode: PredicateMode,
+    solid: bool,
+    /,
+) -> tuple[np.ndarray, tuple[tuple[int, ...], ...]] | None:
+    """Constructed vertices and faces of a nonempty intersection, or ``None``.
+
+    The tolerance-based enumeration runs first.  For a ``solid`` intersection
+    whose enumeration meets an uncertain plane-triple orientation, is
+    unresolved, or whose faces do not close a polytope surface (near-coincident
+    faces within the coordinate tolerance), the exact polytope replaces it.
+    ``None`` reports, for a contact, an uncertain plane-triple orientation or
+    an unresolved enumeration, and for a solid a failed exact construction.
+    """
+    planes = _tetra_planes(source) + _tetra_planes(target)
+    triples = tuple(combinations(range(len(planes)), 3))
+    triple_normals = np.asarray(
+        [[planes[index].normal for index in indices] for indices in triples],
+        dtype=np.float64,
+    )
+    triple_orientation = orient3d(
+        np.zeros(3, dtype=np.float64),
+        triple_normals[:, 0],
+        triple_normals[:, 1],
+        triple_normals[:, 2],
+        mode=mode,
+    )
+    triple_points: list[_ExactPoint] = []
+    for triple_index, indices in enumerate(triples):
+        point, point_uncertain = _triple_intersection(
+            planes,
+            indices,
+            int(triple_orientation.signs[triple_index]),
+            bool(triple_orientation.certain[triple_index]),
+        )
+        if point_uncertain:
+            return _exact_polytope_topology(source, target) if solid else None
+        if point is not None:
+            triple_points.append(point)
+    topology = _tolerance_topology(
+        source, target, planes, triple_points, tolerance, scale
+    )
+    if not solid:
+        return topology
+    if topology is not None and _closed_surface(len(topology[0]), topology[1]):
+        return topology
+    return _exact_polytope_topology(source, target)
 
 
 def intersect_tetrahedra(
@@ -912,11 +1051,14 @@ def intersect_tetrahedra(
     tolerance-based enumeration: input vertices and exact plane-triple points
     are admitted by exact residual predicates and reported correctly rounded,
     so no decision depends on the platform's dot-product accumulation order.
-    Filtered orientation uncertainty, an unorderable constructed face, or a
-    construction that loses a nonempty intersection (for ``SUCCESS``, faces
-    that do not close a polytope surface) returns ``UNCERTAIN_PREDICATE``.
-    ``volume_only`` skips that construction, so its status never depends on
-    it.  No candidate-count or topology cap truncates work.
+    When that enumeration meets an uncertain filtered plane-triple orientation
+    or does not close a ``SUCCESS`` polytope (faces within the coordinate
+    tolerance of each other), the exact polytope of the exact half-spaces
+    replaces it.  For a ``ZERO_MEASURE_CONTACT`` an uncertain plane-triple
+    orientation or an unresolved enumeration, and for a ``SUCCESS`` a failed
+    exact construction, returns ``UNCERTAIN_PREDICATE``.  ``volume_only`` skips
+    that construction, so its status never depends on it.  No candidate-count or
+    topology cap truncates work.
     """
 
     policy = GeometryPrecisionPolicy() if precision is None else precision
@@ -988,12 +1130,9 @@ def intersect_tetrahedra(
     exact_volume = _exact_pieces_volume(pieces)
     volume = fraction_down(exact_volume)
     volume_error = fraction_up(exact_volume - Fraction(volume))
-    volume_tolerance = max(
-        tolerance_.absolute, tolerance_.relative * max(scale**3, 1.0e-300)
-    )
     status = (
         TetraIntersectionStatus.SUCCESS
-        if exact_volume > Fraction(volume_tolerance)
+        if exact_volume > _volume_threshold(tolerance_, scale)
         else TetraIntersectionStatus.ZERO_MEASURE_CONTACT
     )
     vertices = np.empty((0, 3), dtype=np.float64)

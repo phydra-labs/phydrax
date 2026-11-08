@@ -529,3 +529,116 @@ def test_closed_surface_certificate_and_halo_exchange_are_explicit() -> None:
     )
     assert not bool(invalid_route.evidence.successful)
     np.testing.assert_array_equal(invalid_route.value, jnp.zeros_like(values))
+
+
+_UNIT_CELL = np.asarray(
+    ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+    dtype=np.float64,
+)
+# A positively oriented cell and its translate by about 1.4e-13: their nearly
+# coincident faces lie within the coordinate tolerance of the tetrahedron
+# intersection, whose tolerance-merged faces do not close a polytope.
+_NEAR_CELL = np.asarray(
+    [
+        [float.fromhex(value) for value in row]
+        for row in (
+            ("0x1.4d229bf6080bcp-2", "0x1.36748fcfbec3cp-2", "0x1.4303c57b50e00p-3"),
+            ("0x1.4cbaa592af305p-1", "0x1.c9ad67af5c4e7p-1", "0x1.e314d72de33e5p-1"),
+            ("0x1.4ba05bd6f5be0p-1", "0x1.78ff4d3667354p-2", "0x1.f5533a00d3dc0p-2"),
+            ("0x1.6d03e152a38f8p-4", "0x1.90b3a12e1d71ap-2", "0x1.c51e2cd47ef60p-6"),
+        )
+    ],
+    dtype=np.float64,
+)
+_NEAR_SHIFT = np.asarray(
+    [
+        float.fromhex(value)
+        for value in (
+            "-0x1.4fb6a814f7407p-44",
+            "-0x1.02ce6841179f6p-43",
+            "-0x1.9196472694421p-45",
+        )
+    ],
+    dtype=np.float64,
+)
+
+
+def _single_cell_field(vertices: np.ndarray) -> Any:
+    mesh = phx.discretization.CellMesh(
+        jnp.asarray(vertices),
+        (
+            phx.discretization.CellBlock(
+                "tetrahedra",
+                "tetrahedron",
+                jnp.asarray(((0, 1, 2, 3),), dtype=jnp.int32),
+            ),
+        ),
+    )
+    return phx.discretization.HydroelasticPressureFieldPlan(mesh)
+
+
+@pytest.mark.parametrize(
+    ("cell", "shift"),
+    (
+        (_UNIT_CELL, np.zeros(3, dtype=np.float64)),
+        (_UNIT_CELL, np.asarray((1.0e-13, 0.0, 0.0), dtype=np.float64)),
+        (_NEAR_CELL, _NEAR_SHIFT),
+    ),
+    ids=("identical", "unit-1e-13", "near-coincident"),
+)
+def test_initial_contact_pressure_patch_preparation_is_complete(
+    cell: np.ndarray, shift: np.ndarray
+) -> None:
+    prepared = phx.discretization.HydroelasticPatchExtractionPlan(
+        maximum_overlap_pairs=1,
+        maximum_polytope_edges=12,
+        patch_capacity=4,
+    ).prepare(_single_cell_field(cell), _single_cell_field(cell + shift))
+
+    assert bool(prepared.preparation_complete)
+    assert bool(prepared.pair_valid[0])
+    # The overlap is a tetrahedron: six polytope edges.
+    assert int(jnp.sum(prepared.edge_valid[0])) == 6
+
+
+def test_pressure_patch_accepts_vertices_that_round_together() -> None:
+    # Two distinct exact vertices of this overlap round to one binary64, so one
+    # polytope edge has coincident endpoints (see test_tetra_intersections).
+    offset = 2.0**30
+    ulp = float(np.spacing(offset))
+    source = np.asarray(
+        (
+            (offset, offset, offset),
+            (offset + 4, offset, offset),
+            (offset, offset + 4, offset),
+            (offset, offset, offset + 4),
+        ),
+        dtype=np.float64,
+    )
+    target = np.asarray(
+        (
+            (offset + 1, offset - 3, offset + 3 + ulp),
+            (offset + 1, offset + 1, offset - 1),
+            (offset - 2, offset + 3, offset + 3),
+            (offset + 4, offset + 3, offset + 3),
+        ),
+        dtype=np.float64,
+    )
+    prepared = phx.discretization.HydroelasticPatchExtractionPlan(
+        maximum_overlap_pairs=1,
+        maximum_polytope_edges=32,
+        patch_capacity=64,
+    ).prepare(_single_cell_field(source), _single_cell_field(target))
+
+    assert bool(prepared.preparation_complete)
+    edges = np.asarray(prepared.edge_points[0])[np.asarray(prepared.edge_valid[0])]
+    assert int(np.sum(np.all(edges[:, 0] == edges[:, 1], axis=-1))) == 1
+    extraction = prepared.evaluate(
+        phx.discretization.HydroelasticPressureFieldState(
+            jnp.asarray((0.0, 1.0, 1.0, 1.0))
+        ),
+        phx.discretization.HydroelasticPressureFieldState(0.5 * jnp.ones((4,))),
+    )
+    assert bool(extraction.evidence.successful)
+    assert int(extraction.evidence.triangle_count) > 0
+    assert bool(jnp.all(jnp.isfinite(extraction.patch.pressure)))
