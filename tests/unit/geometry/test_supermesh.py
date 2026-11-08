@@ -3,12 +3,13 @@
 #
 
 
+from fractions import Fraction
 from typing import Any
 
 import numpy as np
 import pytest
 
-from phydrax._meshcore import meshcore_available
+from phydrax._meshcore import meshcore_available, tetrahedron_intersection_simplices
 from phydrax.discretization import CellBlock, CellMesh
 from phydrax.geometry import (
     CommonRefinementCoverage,
@@ -17,6 +18,7 @@ from phydrax.geometry import (
     PredicateMode,
     prepare_common_refinement,
 )
+from phydrax.geometry._supermesh import _simplex_second_moments
 
 
 pytestmark = [
@@ -26,6 +28,122 @@ pytestmark = [
         reason="native phydrax-meshcore library is not available",
     ),
 ]
+
+
+def _thin_overlap_tetrahedra() -> tuple[np.ndarray, np.ndarray]:
+    source = (
+        "0x1.998159b62a6b7p-1",
+        "0x0p+0",
+        "0x1.4013b5588f94dp-1",
+        "0x1.91cca930f0bd5p-1",
+        "0x0p+0",
+        "0x1.36c43925439f2p-1",
+        "0x1.9bb4e3ff3e99dp-1",
+        "0x1.be61ebc283a9fp-7",
+        "0x1.3a496f160e86bp-1",
+        "0x1.99067e5d6242ap-1",
+        "0x0p+0",
+        "0x1.38a14cfbcaa8ap-1",
+    )
+    target = (
+        "0x1.8fe65498785eap-1",
+        "0x1.6666666666666p-8",
+        "0x1.34fbb62c3b693p-1",
+        "0x1.956993c7297ffp-1",
+        "0x0p+0",
+        "0x1.37b2c3108723ep-1",
+        "0x1.9a5db12e506e4p-1",
+        "0x1.be61ebc283a9fp-8",
+        "0x1.39755e08ec97bp-1",
+        "0x1.96c0c69817ab9p-1",
+        "0x1.be61ebc283a9fp-8",
+        "0x1.3886d41da912fp-1",
+    )
+    return (
+        np.asarray([float.fromhex(x) for x in source], dtype=np.float64).reshape(4, 3),
+        np.asarray([float.fromhex(x) for x in target], dtype=np.float64).reshape(4, 3),
+    )
+
+
+def _exact_carrier_second(simplex: np.ndarray, /) -> np.ndarray:
+    points = [[Fraction(float(value)) for value in point] for point in simplex]
+    u, v, w = (
+        [points[i][axis] - points[0][axis] for axis in range(3)] for i in range(1, 4)
+    )
+    determinant = (
+        u[0] * (v[1] * w[2] - v[2] * w[1])
+        - u[1] * (v[0] * w[2] - v[2] * w[0])
+        + u[2] * (v[0] * w[1] - v[1] * w[0])
+    )
+    return np.asarray(
+        [
+            [
+                float(
+                    determinant
+                    * (
+                        sum(point[j] * point[k] for point in points)
+                        + sum(point[j] for point in points)
+                        * sum(point[k] for point in points)
+                    )
+                    / 120
+                )
+                for k in range(3)
+            ]
+            for j in range(3)
+        ],
+        dtype=np.float64,
+    )
+
+
+@pytest.mark.parametrize(
+    "scale,shift",
+    [(1.0, (0.0, 0.0, 0.0)), (8.0, (2.0, -4.0, 6.0)), (0.25, (0.125, -0.25, 0.5))],
+)
+@pytest.mark.parametrize("reverse", [False, True])
+def test_signed_thin_carrier_second_moments(
+    scale: float, shift: tuple[float, float, float], reverse: bool
+) -> None:
+    source, target = _thin_overlap_tetrahedra()
+    simplices, counts, _, _, status = tetrahedron_intersection_simplices(
+        source[None], target[None]
+    )
+    assert status[0] == 0 and counts[0] > 0
+    carriers = simplices[0, : counts[0]] * scale + np.asarray(shift, dtype=np.float64)
+    if reverse:
+        carriers = carriers[:, [0, 2, 1, 3]]
+    expected = np.asarray([_exact_carrier_second(piece) for piece in carriers])
+    np.testing.assert_allclose(
+        _simplex_second_moments(carriers), expected, rtol=2e-14, atol=0.0
+    )
+
+
+def test_well_conditioned_carrier_second_moments() -> None:
+    simplex = np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype=np.float64)
+    carriers = np.stack((simplex, simplex[[0, 2, 1, 3]]))
+    expected = np.asarray([_exact_carrier_second(piece) for piece in carriers])
+    np.testing.assert_allclose(
+        _simplex_second_moments(carriers), expected, rtol=2e-15, atol=0.0
+    )
+
+
+def test_thin_common_refinement_carrier_second_moments() -> None:
+    source, target = _thin_overlap_tetrahedra()
+    cells = np.asarray(((0, 1, 2, 3),), dtype=np.int32)
+    refinement = prepare_common_refinement(
+        CellMesh.from_tetrahedra(source, cells),
+        CellMesh.from_tetrahedra(target, cells),
+        policy=CommonRefinementPolicy(
+            coverage=CommonRefinementCoverage.PARTIAL,
+            second_moments=True,
+            overlap_simplices=True,
+        ),
+    )
+    assert refinement.succeeded and refinement.entry_count == 1
+    carriers = np.asarray(refinement.simplices)
+    expected = np.sum([_exact_carrier_second(piece) for piece in carriers], axis=0)
+    np.testing.assert_allclose(
+        np.asarray(refinement.second_moments)[0], expected, rtol=2e-14, atol=0.0
+    )
 
 
 def _grid(cells: int, /) -> Any:
