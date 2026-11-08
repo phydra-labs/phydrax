@@ -186,6 +186,11 @@ bool other_two(int i, int j, int& k, int& l) {
 }
 
 class PolytopeClipper {
+  struct Homogeneous {
+    Dyadic numerator[3];
+    Dyadic denominator;
+  };
+
  public:
   Family family = Family::kTetTet;
   double points[kMaxPoints][3] = {};
@@ -557,12 +562,11 @@ class PolytopeClipper {
   // Integrate the symbolic tet-tet vertices, not their rounded carriers.  Each
   // face triangle and an actual polytope vertex form an oriented tetrahedron;
   // its determinant and centroid are rational functions of dyadic inputs.
+  // Tet-tet construction produces only point and edge-plane vertices;
+  // three-plane vertices occur only in the other clipping families.
   void tetrahedron_moments(double& volume, double* first_moment) {
-    struct Homogeneous {
-      Dyadic numerator[3];
-      Dyadic denominator;
-    };
-    std::vector<Homogeneous> exact_vertices(vertices.size());
+    if (exact_vertices_.size() < vertices.size()) exact_vertices_.resize(vertices.size());
+    auto& exact_vertices = exact_vertices_;
     for (int index : live) {
       const Vertex& vertex = vertices[index];
       Homogeneous& value = exact_vertices[index];
@@ -1014,6 +1018,7 @@ class PolytopeClipper {
   std::vector<unsigned char> exact_ready_;
   std::vector<Approx> cofactors_;
   std::vector<Expansion> exact_cofactors_;
+  std::vector<Homogeneous> exact_vertices_;
   std::vector<signed char> side_;
   std::vector<Cut> cuts_;
   std::vector<Segment> segments_;

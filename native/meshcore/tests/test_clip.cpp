@@ -492,6 +492,24 @@ void test_unitbox_overlap_measures() {
   }
 }
 
+void test_tetrahedron_batch_scratch_reuse() {
+  const std::array<std::array<double, 12>, 4> first = {
+      kUnitTet, kUnitTet, affine(kUnitTet, 1.0, 0.5, 0, 0), kUnitTet};
+  const std::array<std::array<double, 12>, 4> second = {
+      affine(kUnitTet, -1.0, 0.6, 0.6, 0.6), kUnitTet, kUnitTet,
+      affine(kUnitTet, -1.0, 0.6, 0.6, 0.6)};
+  double volumes[4] = {};
+  double moments[12] = {};
+  int32_t statuses[4] = {};
+  PHX_CHECK(phx_mc_tetrahedron_intersection_moments(
+                4, first[0].data(), second[0].data(), volumes, moments, statuses) == PHX_MC_OK);
+  for (int i = 0; i < 4; ++i) {
+    const Volume reference = tetrahedra(first[i], second[i]);
+    PHX_CHECK(statuses[i] == reference.status && volumes[i] == reference.volume);
+    for (int k = 0; k < 3; ++k) PHX_CHECK(moments[3 * i + k] == reference.moment[k]);
+  }
+}
+
 void test_tetrahedron_contacts() {
   // Shared face x = 0.
   check_volume(tetrahedra(kUnitTet, {0, 0, 0, -1, 0, 0, 0, 1, 0, 0, 0, 1}), 0, 0, 0, 0);
@@ -1120,6 +1138,7 @@ int main() {
   test_tetrahedron_overlaps();
   test_tetrahedron_sliver_measures();
   test_unitbox_overlap_measures();
+  test_tetrahedron_batch_scratch_reuse();
   test_tetrahedron_contacts();
   test_tetrahedron_statuses();
   test_tetrahedron_invariance();
