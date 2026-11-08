@@ -60,7 +60,6 @@ from phydrax.meshing import (
     mesh_periodic_trigonometric_region,
     PeriodicImplicitVolume,
 )
-from phydrax.meshing._sizing import SizeControlStrength
 from phydrax.meshing._volume_generation import NativeVolumeSchedule
 from phydrax.units import METER
 
@@ -383,16 +382,13 @@ def _gyroid_sheet_cell() -> dict[str, Any]:
         lambda: mesh_periodic_trigonometric_region(
             surface,
             # The sheet (half-width 0.3) is about one default target edge
-            # thick, so the hard default shape targets fail at this resolution
-            # (1138 radius-edge and 995 dihedral rows); they pass only at
-            # maximum_edge_length=0.03 (2-3 edges across: 155705 cells, about
-            # 2.5x the wall and 7x the peak memory). This profile keeps the
-            # default resolution and enforces cell validity only.
-            volume_schedule=NativeVolumeSchedule(
-                radius_edge_bound=None,
-                minimum_dihedral_degrees=0.0,
-                shape_strength=SizeControlStrength.SOFT,
-            ),
+            # thick, so the library's sheet default is validity-only; this
+            # qualification profile requires the hard shape targets at
+            # maximum_edge_length=0.03, which puts 2-3 edges across the sheet
+            # (155705 cells; about 2.5x the wall and 7x the peak memory of the
+            # validity-only default resolution).
+            maximum_edge_length=0.03,
+            volume_schedule=NativeVolumeSchedule(),
         ),
     )
     fill = _fill_record(volume)

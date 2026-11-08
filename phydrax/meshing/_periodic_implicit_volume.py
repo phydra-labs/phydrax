@@ -44,8 +44,19 @@ from ._periodic_box_boundary import periodic_box_boundary
 from ._plc_source import PiecewiseLinearComplex
 from ._result import CellMeshingResult
 from ._scope import MeshingEntityKind, MeshingScope
-from ._sizing import UniformSizeControl
+from ._sizing import SizeControlStrength, UniformSizeControl
 from ._volume_generation import NativeVolumeSchedule
+
+
+# A sheet band is about one default target edge thick, so hard shape targets at
+# the default resolution are a resolution-limited refusal; the sheet default
+# enforces cell validity only and an explicit schedule plus a finer
+# ``maximum_edge_length`` (2-3 edges across) requests the hard targets.
+_SHEET_VOLUME_SCHEDULE = NativeVolumeSchedule(
+    radius_edge_bound=None,
+    minimum_dihedral_degrees=0.0,
+    shape_strength=SizeControlStrength.SOFT,
+)
 
 
 def _orientation(a: np.ndarray, b: np.ndarray, c: np.ndarray, /) -> int:
@@ -216,11 +227,14 @@ def mesh_periodic_trigonometric_region(
     native route keeps every contour and cap vertex and facet
     (``boundary="fixed"``), so the paired cell-face triangulations stay
     identical; the periodic topology then identifies them exactly. The default
-    schedule is `NativeVolumeSchedule()`: hard shape targets (radius-edge 2,
-    dihedral 10 degrees), met by the rebuilt boundary. The soft default that the
-    discovery's marching-tetrahedra contour required (PeriodicCollapseSupport /
-    TpmsDerivativeCheck) is gone; a region thinner than about two target edges,
-    such as a thin sheet, declares its own schedule.
+    schedule for a network region is `NativeVolumeSchedule()`: hard shape
+    targets (radius-edge 2, dihedral 10 degrees), met by the rebuilt boundary.
+    The soft default that the discovery's marching-tetrahedra contour required
+    (PeriodicCollapseSupport / TpmsDerivativeCheck) is gone for networks. A
+    sheet region (``half_width`` set) is about one default target edge thick,
+    so its default stays soft and validity-only; pass a hard schedule with a
+    ``maximum_edge_length`` giving 2-3 edges across the sheet to require the
+    shape targets.
     """
     from ._contracts import VolumeMeshingSpec
     from .providers._native import NativeMeshingProvider
@@ -333,7 +347,11 @@ def mesh_periodic_trigonometric_region(
             NativeMeshingOptions(
                 "plc_tetrahedral",
                 volume_schedule=(
-                    NativeVolumeSchedule() if volume_schedule is None else volume_schedule
+                    volume_schedule
+                    if volume_schedule is not None
+                    else _SHEET_VOLUME_SCHEDULE
+                    if surface.source.half_width is not None
+                    else NativeVolumeSchedule()
                 ),
             )
         )
