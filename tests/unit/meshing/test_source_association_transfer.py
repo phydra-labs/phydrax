@@ -1534,9 +1534,20 @@ def test_native_layer_core_mixed_round_trip_preserves_source_strata(
         for table in refined.associations
         for sides in table.source_region_sides
     )
-    assert _layer_association_semantics(restored) == _layer_association_semantics(
-        original
-    )
+    # Adapted targets have their own numeric version and face witness IDs
+    # (ff7c77f82, _finalize_native). Compare every other field, preserving the
+    # original grouping into witness-bound strata.
+    assert restored.mesh.mesh_id != original.mesh.mesh_id
+
+    def strata(result: CellMeshingResult) -> list[tuple[tuple[object, ...], ...]]:
+        groups: dict[object, list[tuple[object, ...]]] = {}
+        for row in _layer_association_semantics(result):
+            groups.setdefault(row[13], []).append(row[:13] + row[14:])
+        return sorted(
+            (tuple(sorted(rows, key=repr)) for rows in groups.values()), key=repr
+        )
+
+    assert strata(restored) == strata(original)
     from phydrax.meshing._layer_core_association import _core_source_identity
 
     authored = source if source.reference_source is None else source.reference_source
