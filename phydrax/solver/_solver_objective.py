@@ -730,17 +730,9 @@ def _gated_case(component: Any, objective: AbstractSolverObjective, case: Any) -
 def _gated_case_fwd(
     perturbed: Any, component: Any, objective: AbstractSolverObjective, case: Any
 ) -> Any:
-    # Only the PARAMETER lane is differentiated: FIXED data and MODEL_STATE of
-    # the component are constants of the case and receive no cotangent.
     del perturbed
-    lane = resolve_array_roles(component).filter_spec(ArrayRole.PARAMETER)
-    parameters, rest = eqx.partition(component, lane)
-    record, pullback, aux = jax.vjp(
-        lambda values: objective._case(eqx.combine(values, rest), case),
-        parameters,
-        has_aux=True,
-    )
-    return (record, aux), (pullback, record[1] > 0)
+    record, aux = objective._case(component, case)
+    return (record, aux), record[1] > 0
 
 
 @_gated_case.def_bwd
@@ -754,11 +746,19 @@ def _gated_case_bwd(
 ) -> Any:
     # A failed case contributes an exact zero derivative, selected rather than
     # multiplied, so a nonfinite pullback of a failed solve cannot leak.
-    del component, objective, case
-    pullback, accepted = residuals
+    accepted = residuals
     cotangent = grad_obj[0]
     if cotangent is None:
         return jax.tree.map(lambda _: None, perturbed)
+    # Rebuild the pullback inside the backward trace. Saving a pullback from
+    # the forward trace can capture a batched tracer as a scan constant when
+    # lax.map evaluates a partial final batch.
+    lane = resolve_array_roles(component).filter_spec(ArrayRole.PARAMETER)
+    parameters, rest = eqx.partition(component, lane)
+    _, pullback = jax.vjp(
+        lambda values: objective._case(eqx.combine(values, rest), case)[0],
+        parameters,
+    )
     (gradient,) = pullback(cotangent)
     gated = jax.tree.map(
         lambda leaf: jnp.where(accepted, leaf, jnp.zeros_like(leaf)), gradient
