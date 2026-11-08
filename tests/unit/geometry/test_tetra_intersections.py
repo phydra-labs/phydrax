@@ -13,6 +13,7 @@ import pytest
 from phydrax._geometry_precision import GeometryPrecisionPolicy
 from phydrax._geometry_predicates import PredicateMode
 from phydrax._meshcore import meshcore_available
+from phydrax.geometry import _tetra_intersections as tetra_module
 from phydrax.geometry._tetra_intersections import (
     intersect_tetrahedra,
     TetraIntersectionStatus,
@@ -318,8 +319,14 @@ def test_exact_orientation_certifies_the_sliver(unit_tetrahedron: Any) -> None:
 # A unit-sized tetrahedron at offset 2**30 and its exact translate by
 # (3/4)(FAR[1] - FAR[2]).  In barycentric coordinates of FAR the overlap is
 # lambda_1 >= 3/4: the homothet of FAR at FAR[1] with ratio 1/4, of exact volume
-# vol(FAR)/64.  The rounded face residuals at this offset exceed the coordinate
-# tolerance, so the floating-point vertex enumeration constructs no vertex.
+# vol(FAR)/64, with vertices FAR[1], FAR_TRANSLATED[2] = (3/4) FAR[1] + (1/4) FAR[2],
+# and (3/4) FAR[1] + (1/4) FAR[k] for k = 0, 3.  In rational arithmetic on these
+# binary64 inputs every face edge difference and cross product is exact; FAR[1]
+# lies exactly on the two FAR_TRANSLATED faces through its edge 1-2 (residual 0)
+# and strictly inside the other two, FAR_TRANSLATED[2] likewise for FAR, and all
+# four overlap vertices are binary64 numbers.  Rounded plane offsets n . o at this
+# offset carry errors up to 6e-8, so admitting the corners through them depends on
+# the BLAS accumulation order of the dot product.
 FAR = _hex_rows(
     (
         ("0x1.262802e44c000p+30", "0x1.f7082049c4000p+30", "0x1.66d1a1b140000p+30"),
@@ -341,6 +348,21 @@ def _assert_far_translate_is_exact() -> None:
             )
 
 
+def _far_overlap_vertices() -> np.ndarray:
+    """The four exact overlap vertices, which are all binary64 numbers."""
+    rows = []
+    for other in (0, 2, 3):
+        exact = [
+            Fraction(3, 4) * Fraction(float(FAR[1, axis]))
+            + Fraction(1, 4) * Fraction(float(FAR[other, axis]))
+            for axis in range(3)
+        ]
+        assert all(Fraction(float(value)) == value for value in exact)
+        rows.append([float(value) for value in exact])
+    rows.append([float(value) for value in FAR[1]])
+    return np.asarray(sorted(rows), dtype=np.float64)
+
+
 def test_far_corner_overlap_is_certified_instead_of_disjoint() -> None:
     _assert_far_translate_is_exact()
     exact = _exact_tetrahedron_volume(FAR) / 64
@@ -351,13 +373,64 @@ def test_far_corner_overlap_is_certified_instead_of_disjoint() -> None:
     assert abs(Fraction(result.volume) - exact) <= Fraction(result.evidence.volume_error)
 
 
-def test_far_corner_overlap_lost_by_the_constructed_topology_fails_closed() -> None:
+def _assert_far_overlap_topology(result: Any) -> None:
+    assert result.status is TetraIntersectionStatus.SUCCESS
+    assert not result.evidence.predicate_uncertain
+    np.testing.assert_array_equal(result.vertices, _far_overlap_vertices())
+    assert result.faces == ((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3))
+
+
+def test_far_corner_overlap_constructs_the_exact_polytope() -> None:
     _assert_far_translate_is_exact()
+
+    _assert_far_overlap_topology(intersect_tetrahedra(FAR, FAR_TRANSLATED))
+
+
+def test_far_corner_overlap_lost_by_the_constructed_topology_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_far_translate_is_exact()
+    # Lose every plane-triple construction: only the input corners FAR[1] and
+    # FAR_TRANSLATED[2] remain, which cannot close the solid overlap.
+    monkeypatch.setattr(
+        tetra_module, "_triple_intersection", lambda *arguments: (None, False)
+    )
 
     result = intersect_tetrahedra(FAR, FAR_TRANSLATED)
 
     assert result.status is TetraIntersectionStatus.UNCERTAIN_PREDICATE
     assert result.evidence.predicate_uncertain
+
+
+@pytest.mark.parametrize("order", ((0, 1, 2), (0, 2, 1), (2, 0, 1)))
+def test_far_corner_decisions_do_not_depend_on_the_summation_order(
+    monkeypatch: pytest.MonkeyPatch, order: tuple[int, int, int]
+) -> None:
+    # Each order a BLAS kernel may use for a three-term dot product is injected
+    # into both routes a dot product can take: NumPy's ``np.dot`` and the
+    # module's fixed-order ``_dot3``.
+    first, second, third = order
+    blas_dot = np.dot
+    calls = [0]
+
+    def ordered(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+        calls[0] += 1
+        return (
+            left[..., first] * right[..., first] + left[..., second] * right[..., second]
+        ) + left[..., third] * right[..., third]
+
+    def ordered_dot(left: Any, right: Any) -> Any:
+        left_ = np.asarray(left)
+        right_ = np.asarray(right)
+        if left_.shape == right_.shape == (3,):
+            return ordered(left_, right_)
+        return blas_dot(left, right)
+
+    monkeypatch.setattr(np, "dot", ordered_dot)
+    monkeypatch.setattr(tetra_module, "_dot3", ordered, raising=False)
+
+    _assert_far_overlap_topology(intersect_tetrahedra(FAR, FAR_TRANSLATED))
+    assert calls[0] > 0
 
 
 def test_gap_below_the_coordinate_tolerance_is_disjoint(unit_tetrahedron: Any) -> None:

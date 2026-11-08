@@ -451,6 +451,38 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- `intersect_tetrahedra` decides its topology the same on every BLAS. Each
+  face is the closed half-space `n . (x - o) <= 0` of its `np.cross` normal
+  through its face vertex. Vertex admission, face membership and the normal
+  orientation are exact residual decisions: a fixed-order sum with a derived
+  rounding bound, then rational arithmetic on the undecided rows. Plane-triple
+  vertices are exact rational points, admitted exactly and reported correctly
+  rounded. Previously, rounded plane offsets `np.dot(n, o)` (errors up to 6e-8
+  at 2**30) and the BLAS `ddot` accumulation order decided whether boundary
+  corners were admitted. For the far-offset corner overlap, WIN (OpenBLAS)
+  returned `SUCCESS` with 2 of the 4 vertices and no faces, while other
+  kernels returned `UNCERTAIN_PREDICATE`. It now returns `SUCCESS` with the
+  exact 4-vertex, 4-face polytope everywhere.
+
+  A `SUCCESS` whose constructed faces do not close a polytope surface now
+  fails closed with `UNCERTAIN_PREDICATE`: every edge must be on exactly two
+  faces, every vertex must be on a face, and the Euler characteristic must be
+  2. Dot products, norms and determinants in the module use the fixed order
+  `(x0 + x1) + x2` instead of BLAS.
+
+  On a 1387-pair corpus in 3 predicate modes:
+  - status, volume and `volume_error` are unchanged wherever the old topology
+    was a closed polytope, and so are the faces, up to renumbering;
+  - the vertex coordinates change in 1809 of those 1854 rows, to the correctly
+    rounded exact vertex. The old ones were LAPACK solves with rounded offsets:
+    typically 2–64 ulps away, up to 19k ulps for an ill-conditioned plane
+    triple, with `-0.0` (and once `-7.4e-17`) where the exact coordinate is
+    `+0.0`;
+  - 662 old `SUCCESS` rows had unclosed topologies. The 536 far-offset ones are
+    now closed `SUCCESS`. The 126 near-coincident ones (a cell and its translate
+    by 1e-13 to 1e-8, at the coordinate tolerance) now return
+    `UNCERTAIN_PREDICATE`;
+  - 14 far-offset rows move from `UNCERTAIN_PREDICATE` to closed `SUCCESS`.
 - Native PLC recovery's Steiner-point suppression no longer loses a subface or
   a segment chain interval. Where a wedge meets a new subface from both sides,
   the cone fill from a cavity vertex on that subface could be accepted with
