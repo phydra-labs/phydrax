@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from pathlib import Path
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax._array_archive import ArrayArchiveLimits
+from phydrax._array_archive import ArrayArchiveLimits, write_array_archive
 from phydrax.discretization import CellGeometrySpec, CellMesh
 from tools.meshing_qualification.scenarios import (
     native_hybrid_profiles as hybrid,
@@ -161,9 +164,55 @@ def test_every_profile_declares_its_archive_budget() -> None:
     assert set(reconstruction._ARCHIVE_BUDGET_BYTES) == set(
         reconstruction._SOLVE_MEMORY_BUDGET_BYTES
     )
+    assert set(reconstruction._ARCHIVE_MEMBER_LIMITS) == set(
+        reconstruction._ARCHIVE_BUDGET_BYTES
+    )
     for profile, budget in reconstruction._ARCHIVE_BUDGET_BYTES.items():
         assert _archive_budgets(reconstruction._archive_limits(profile)) == {budget}
+        limits = reconstruction._archive_limits(profile)
+        assert limits.max_members == reconstruction._ARCHIVE_MEMBER_LIMITS[profile]
+        assert limits.max_manifest_bytes == budget // 64
+        assert limits.max_central_directory_bytes == budget // 1024
     for controls in hybrid._LAYER_CORE_LIFECYCLES.values():
         assert _archive_budgets(
             hybrid._layer_core_archive_limits(controls.archive_bytes)
         ) == {controls.archive_bytes}
+
+
+def test_archive_member_declaration_refuses_before_writing(tmp_path: Path) -> None:
+    profile = reconstruction._profile_id("rotated-ellipsoid", 2)
+    limits = reconstruction._archive_limits(profile)
+    arrays = {"value": np.asarray([1], dtype=np.int64)}
+    path = tmp_path / "model.phx"
+    write_array_archive(
+        path, manifest={}, arrays=arrays, limits=replace(limits, max_members=2)
+    )
+    with pytest.raises(ValueError, match="member count"):
+        write_array_archive(
+            tmp_path / "refused.phx",
+            manifest={},
+            arrays=arrays,
+            limits=replace(limits, max_members=1),
+        )
+    assert not (tmp_path / "refused.phx").exists()
+
+
+@pytest.mark.parametrize(
+    ("archive_bytes_delta", "members_delta", "message"),
+    [(1, 1, "archive budget"), (0, 1, "archive member limit")],
+)
+def test_cold_reader_refuses_resource_identity_before_io(
+    tmp_path: Path, archive_bytes_delta: int, members_delta: int, message: str
+) -> None:
+    profile = reconstruction._profile_id("rotated-ellipsoid", 2)
+    expected: dict[str, object] = {
+        "profile": profile,
+        "archive_budget_bytes": reconstruction._ARCHIVE_BUDGET_BYTES[profile]
+        + archive_bytes_delta,
+        "archive_member_limit": reconstruction._ARCHIVE_MEMBER_LIMITS[profile]
+        + members_delta,
+    }
+    with pytest.raises(RuntimeError, match=message):
+        reconstruction._resume_accepted_archive(
+            str(tmp_path / "missing.phx"), "", expected
+        )

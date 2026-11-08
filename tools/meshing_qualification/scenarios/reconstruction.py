@@ -1511,6 +1511,7 @@ def _write_accepted_archive(
         "label": label,
         "solve_memory_budget_bytes": _SOLVE_MEMORY_BUDGET_BYTES[profile],
         "archive_budget_bytes": _ARCHIVE_BUDGET_BYTES[profile],
+        "archive_member_limit": _ARCHIVE_MEMBER_LIMITS[profile],
     }
 
 
@@ -1531,6 +1532,10 @@ def _resume_accepted_archive(
     if _ARCHIVE_BUDGET_BYTES[profile] != expected["archive_budget_bytes"]:
         raise RuntimeError(
             "Cold reader's declared archive budget differs from the writer's."
+        )
+    if _ARCHIVE_MEMBER_LIMITS[profile] != expected["archive_member_limit"]:
+        raise RuntimeError(
+            "Cold reader's declared archive member limit differs from the writer's."
         )
     archive = read_model_artifact(
         path,
@@ -1991,8 +1996,13 @@ _ARCHIVE_BUDGET_BYTES = {
     },
     _ENVELOPE_PROFILE: 4 << 30,
 }
-# Member count: 3,521 measured, against the model codec's 4,097.
-_ARCHIVE_MEMBERS = 8193
+# The larger rotated ellipsoid has 9,964 stored array owners plus its manifest
+# (LIN 20261108). Give that profile a fixed 16,384-array envelope; the other
+# profiles retain their prior 8,192-array envelope.
+_ARCHIVE_MEMBER_LIMITS = {
+    **{profile: 8193 for profile in _ARCHIVE_BUDGET_BYTES},
+    _profile_id("rotated-ellipsoid", 2): 16385,
+}
 
 
 def _archive_limits(profile: str, /) -> ArrayArchiveLimits:
@@ -2013,7 +2023,7 @@ def _archive_limits(profile: str, /) -> ArrayArchiveLimits:
         max_aggregate_bytes=budget,
         max_member_bytes=budget,
         max_manifest_bytes=budget // 64,
-        max_members=_ARCHIVE_MEMBERS,
+        max_members=_ARCHIVE_MEMBER_LIMITS[profile],
         max_central_directory_bytes=budget // 1024,
         max_axis_length=budget,
         max_array_elements=budget,
