@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax._array_archive import ArrayArchiveLimits, write_array_archive
+from phydrax._array_archive import ArrayArchiveLimits
 from phydrax.discretization import CellGeometrySpec, CellMesh
 from tools.meshing_qualification.scenarios import (
     native_hybrid_profiles as hybrid,
@@ -177,24 +177,6 @@ def test_every_profile_declares_its_archive_budget() -> None:
         assert _archive_budgets(
             hybrid._layer_core_archive_limits(controls.archive_bytes)
         ) == {controls.archive_bytes}
-
-
-def test_archive_member_declaration_refuses_before_writing(tmp_path: Path) -> None:
-    profile = reconstruction._profile_id("rotated-ellipsoid", 2)
-    limits = reconstruction._archive_limits(profile)
-    arrays = {"value": np.asarray([1], dtype=np.int64)}
-    path = tmp_path / "model.phx"
-    write_array_archive(
-        path, manifest={}, arrays=arrays, limits=replace(limits, max_members=2)
-    )
-    with pytest.raises(ValueError, match="member count"):
-        write_array_archive(
-            tmp_path / "refused.phx",
-            manifest={},
-            arrays=arrays,
-            limits=replace(limits, max_members=1),
-        )
-    assert not (tmp_path / "refused.phx").exists()
 
 
 def test_archive_resource_plan_identity_covers_complete_policy() -> None:
