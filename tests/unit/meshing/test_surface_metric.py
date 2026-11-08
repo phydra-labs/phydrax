@@ -908,3 +908,92 @@ def test_native_surface_metric_route_rebinds_trimmed_sheet_source_charts(
         raise AssertionError("Surface metric finalization lost its refreshed chart bank.")
     target_charts.require_root(result.target.mesh, result.target.geometry)
     assert result.transition.geometry_transition.evidence.kind == "bounded_reconstruction"
+
+
+def test_captured_implicit_chart_flip_rejects_ambiguous_lift() -> None:
+    """A valid two-cell chart cannot flip into the captured LIN pole-wrapping face."""
+    from phydrax.meshing import _local_metric as local
+
+    # The first three (polar, azimuth) points are reconstructed from the
+    # physical vertices of LIN cell 17244; the fourth gives a valid predecessor
+    # diagonal. The target's regular corners span more than half a period.
+    points = np.asarray(
+        (
+            (3.094700470313012, -2.4492935982947064e-16),
+            (2.97490006436007, -2.476928747097762),
+            (3.019643640912539, -3.998391053541494),
+            (3.05, -2.9),
+        ),
+        dtype=np.float64,
+    )
+    mesh = CellMesh.from_triangles(
+        points, np.asarray(((0, 1, 3), (1, 2, 3)), dtype=np.int32)
+    )
+    edges = mesh.entity_set(1).entity_ids.size
+    state, _ = local._initial_state(
+        mesh,
+        np.broadcast_to(np.eye(2), (4, 2, 2)).copy(),
+        np.zeros((2,), dtype=np.int64),
+        np.zeros((edges,), dtype=np.int64),
+        np.zeros((edges,), dtype=np.bool_),
+        np.zeros((4,), dtype=np.bool_),
+        PredicateMode.EXACT,
+    )
+    topology = local._topology(state, PredicateMode.EXACT)
+    edge = np.flatnonzero(np.all(topology.edges == (1, 3), axis=1))
+    assert edge.size == 1
+    # The unconstrained planar path remains unchanged.
+    assert (
+        local._flip_candidates(state, topology, edge, PredicateMode.EXACT).status[0]
+        == local._OK
+    )
+    state = state._replace(chart_lift=((1, Fraction.from_float(2.0 * np.pi)),))
+    assert (
+        local._flip_candidates(state, topology, edge, PredicateMode.EXACT).status[0]
+        == local._INVALID
+    )
+    boundary = points.copy()
+    boundary[:3, 1] = (0.0, np.pi, np.pi / 2.0)
+    assert (
+        local._chart_lift_status(
+            state, boundary, np.asarray(((0, 1, 2),), dtype=np.int64)
+        )[0]
+        == local._UNCERTAIN
+    )
+
+
+def test_implicit_chart_lift_excludes_collapsed_corners() -> None:
+    profile = AnalyticImplicitProfile(
+        Sphere((0.0, 0.0, 0.0), 1.0, feature_id="lift-test").compile(),
+        SpatialCoordinateContract.si(),
+        source_id="lift-test",
+    )
+    theta = 0.5
+    parameters = np.asarray(((0.0, 100.0), (theta, 1.0), (theta, 2.0)))
+    coordinates = np.asarray(
+        (
+            (0.0, 0.0, 1.0),
+            (np.sin(theta) * np.cos(1.0), np.sin(theta) * np.sin(1.0), np.cos(theta)),
+            (np.sin(theta) * np.cos(2.0), np.sin(theta) * np.sin(2.0), np.cos(theta)),
+        )
+    )
+    cells = np.asarray(((0, 1, 2),), dtype=np.int64)
+    charts, collapsed = surface_metric._implicit_cell_charts(
+        profile, coordinates, parameters, cells
+    )
+    assert collapsed.tolist() == [True, False, False]
+    assert charts[0][0][1] == Fraction(3, 2)
+
+    boundary_parameters = np.asarray(((theta, 0.0), (theta, np.pi), (theta, np.pi / 2.0)))
+    boundary_coordinates = np.stack(
+        (
+            np.sin(theta) * np.cos(boundary_parameters[:, 1]),
+            np.sin(theta) * np.sin(boundary_parameters[:, 1]),
+            np.full((3,), np.cos(theta)),
+        ),
+        axis=1,
+    )
+    with pytest.raises(ValueError, match="spans half a chart period"):
+        surface_metric._implicit_cell_charts(
+            profile, boundary_coordinates, boundary_parameters, cells
+        )
