@@ -1169,6 +1169,13 @@
   mode transposed it, so gradients and pullbacks through an invalid result
   silently returned zeros; the transpose now applies the same check to the
   cotangent. Primal values and valid derivatives are unchanged.
+- Derivatives through `guard_derivative_validity` run under strict dtype
+  promotion again, so dense, PCG and MINRES solve derivatives of `float64`
+  and `complex128` systems no longer raise `TypePromotionError`. The
+  every-order guard added the shared dependency scalar (a `float32` zero when
+  there are no dependencies) to the value's `float64` sum implicitly; the sum
+  now converts the dependency to the value's real dtype explicitly. Values and
+  derivatives under standard promotion are unchanged.
 
 ### Added
 - Sketches retain directed circular-arc incidence, support exact arc profile
