@@ -10,7 +10,7 @@ interchange in three certified phases:
 
 1. Decomposition.  Triangles, tetrahedra, and convex polygons are single convex
    pieces.  Every other cell is the cone of its canonically triangulated
-   boundary from one of its vertices.  Faces of polyhedral cell complexes are
+   boundary from a vertex or a certified interior apex.  Polyhedral faces are
    triangulated exactly as polyhedral finite-volume geometry integrates them
    (:func:`~phydrax.discretization.finite_volume._polyhedral.polyhedral_face_fan`:
    planar faces fan from their first vertex, warped faces from their vertex
@@ -19,7 +19,8 @@ interchange in three certified phases:
    agree on shared faces either way.  A cone is accepted only when every
    nondegenerate cone simplex has one exact orientation: the signed cone
    indicators sum to the winding number of the boundary, so equal signs certify
-   a partition of the cell.  Apexes are tried in ascending vertex order.
+   a partition of the cell.  Apexes are tried in ascending vertex order, then
+   a rounded vertex centroid is tested if no vertex cone was certified.
 2. Broad phase.  Packed float64 BVHs over the cell boxes enumerate every cell
    pair whose boxes overlap with positive extent, which any positive-measure
    intersection requires.
@@ -433,7 +434,7 @@ def _cone_decomposition(
     mode: PredicateMode,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Certify cones of oriented boundary facets ``(n, F, d)`` from cell vertices.
+    """Certify cones of oriented boundary facets ``(n, F, d)`` from candidate apexes.
 
     Returns the chosen apex per cell, the kept (nondegenerate) facet mask, and
     the invalid and uncertain cell masks.  Candidates are tried in column order;
@@ -730,6 +731,37 @@ def _volume_block_pieces(
         candidate_valid,
         mode,
     )
+    unresolved = np.flatnonzero(invalid | uncertain)
+    if unresolved.size:
+        # Warped face fans can have a nonempty kernel containing no mesh vertex.
+        # A centroid is only a candidate: the same orientation proof must certify
+        # its cones. Existing vertex cones and their reduction order are retained.
+        local_valid = candidate_valid[unresolved]
+        local = coordinates[np.where(local_valid, ordered[unresolved], 0)]
+        origin = local[:, 0]
+        centers = (
+            origin
+            + np.sum(
+                np.where(local_valid[..., None], local - origin[:, None, :], 0.0),
+                axis=1,
+            )
+            / np.sum(local_valid, axis=1)[:, None]
+        )
+        center_ids = coordinates.shape[0] + np.arange(unresolved.size)
+        coordinates = np.concatenate((coordinates, centers), axis=0)
+        center_apex, center_keep, center_invalid, center_uncertain = _cone_decomposition(
+            coordinates,
+            triangles[unresolved],
+            triangle_valid[unresolved],
+            center_ids[:, None],
+            np.ones((unresolved.size, 1), dtype=np.bool_),
+            mode,
+        )
+        previous_uncertain = uncertain[unresolved]
+        apex[unresolved] = center_apex
+        keep[unresolved] = center_keep
+        invalid[unresolved] = center_invalid & ~previous_uncertain
+        uncertain[unresolved] = center_uncertain | (center_invalid & previous_uncertain)
     rows, slots = np.nonzero(keep)
     tetrahedra = np.concatenate((apex[rows, None], triangles[rows, slots]), axis=1)
     return _BlockPieces(rows, coordinates[tetrahedra], None, invalid, uncertain)
