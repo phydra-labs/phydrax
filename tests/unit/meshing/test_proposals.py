@@ -1,4 +1,5 @@
 from fractions import Fraction
+from pathlib import Path
 from typing import Any
 
 import equinox as eqx
@@ -1115,3 +1116,35 @@ def test_implicit_surface_metric_proposals_preserve_exact_source_classes(
         np.sort(np.asarray(stencil.target_global_ids, dtype=np.int64)),
         np.sort(np.asarray(target.mesh.vertex_global_ids, dtype=np.int64)),
     )
+
+
+def test_implicit_volume_archive_reuses_reproved_query_domain(
+    tmp_path: Path, _implicit_volume_source: tuple[Any, Any, Any]
+) -> None:
+    from phydrax.meshing._model_codec import (
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+    from phydrax.meshing._result import CellMeshingResult
+    from phydrax.meshing.providers._native_implicit import _NativeImplicitBoundaryQuery
+
+    _, source, _ = _implicit_volume_source
+    assert source.certification is not None and source.certification.passed
+    archive = write_model_artifact(tmp_path / "volume.phx", source, limits=None)
+    restored = read_model_artifact(
+        archive,
+        expected_type=CellMeshingResult,
+        restore=restore_model_archive_value,
+        limits=None,
+    )
+    assert restored.certification is not None and restored.certification.passed
+    inputs = restored.certification.inputs
+    assert isinstance(inputs.source, _NativeImplicitBoundaryQuery)
+    assert inputs.domain is inputs.source.adaptive_source.surface
+    assert (inputs.source_id, inputs.source_revision) == (
+        source.certification.inputs.source_id,
+        source.certification.inputs.source_revision,
+    )
+    assert restored.result_id == source.result_id
+    assert restored.certification.report_id == source.certification.report_id

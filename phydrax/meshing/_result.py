@@ -865,10 +865,12 @@ class CellMeshingResult(StrictModule, NonTrainableState):
         from copy import copy
 
         from .._model._structure import (
+            AdaptiveImplicitBoundarySourceArchiveRecipe,
             LayerCoreFidelitySourceReferenceArchiveRecipe,
             LayerCoreSourceReferenceArchiveRecipe,
             MappedCoreFacetAuthorityArchiveRecipe,
             MappedReferenceBoundarySourceArchiveRecipe,
+            NativeImplicitBoundaryQueryArchiveRecipe,
             model_archive_projection,
         )
         from ..discretization._cell_geometry_validity import CellValidityPolicy
@@ -888,6 +890,7 @@ class CellMeshingResult(StrictModule, NonTrainableState):
         from ._controls import ProtectedFeature
         from ._model_codec import (
             _register_model_archive_types,
+            _same_implicit_surface_archive,
             _same_model_content,
             restore_mapped_layer_core_boundary_source,
             restore_model_archive_value,
@@ -1204,13 +1207,39 @@ class CellMeshingResult(StrictModule, NonTrainableState):
             restored_owners.append((stored, owner))
             return owner
 
-        domain = None if original.domain is None else restored_owner(original.domain)
-        source = (
-            None
-            if original.source is None
-            or type(original.source) is LayerCoreFidelitySourceReferenceArchiveRecipe
-            else restored_owner(original.source)
+        implicit_query = (
+            original.source.query
+            if type(original.source) is NativeImplicitBoundaryQueryArchiveRecipe
+            else original.source
         )
+        if (
+            type(implicit_query) is AdaptiveImplicitBoundarySourceArchiveRecipe
+            and _same_implicit_surface_archive(original.domain, implicit_query.surface)
+        ):
+            # The complete stored discovery recipes agree byte-for-byte. Restore
+            # their shared scientific owner once through the query's normal
+            # constructor and full discovery replay, rather than independently
+            # rebuilding callback-bearing interval owners that compare by identity.
+            source = restored_owner(original.source)
+            adaptive = (
+                source.adaptive_source
+                if type(original.source) is NativeImplicitBoundaryQueryArchiveRecipe
+                else source
+            )
+            from ..geometry.implicit._adaptive_discovery import AdaptiveImplicitBoundarySource
+
+            if type(adaptive) is not AdaptiveImplicitBoundarySource:
+                raise TypeError("Restored implicit query lost its adaptive source owner.")
+            domain = adaptive.surface
+            restored_owners.append((original.domain, domain))
+        else:
+            domain = None if original.domain is None else restored_owner(original.domain)
+            source = (
+                None
+                if original.source is None
+                or type(original.source) is LayerCoreFidelitySourceReferenceArchiveRecipe
+                else restored_owner(original.source)
+            )
         if type(original.feature_source) is LayerCoreSourceReferenceArchiveRecipe:
             reference = original.feature_source
             if (

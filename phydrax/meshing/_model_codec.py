@@ -31,6 +31,7 @@ from .._model._structure import (
     _recipe_array_nodes,
     _require_model_array_content,
     _row_record_recipe_types,
+    _same_array_bytes,
     AdaptiveImplicitBoundarySourceArchiveRecipe,
     AffinePlcBoundarySourceArchiveRecipe,
     AffinePlcDomainArchiveRecipe,
@@ -166,6 +167,34 @@ def _same_model_content(left: Any, right: Any, /) -> bool:
     return left_arrays.keys() == right_arrays.keys() and all(
         array_payload_digest(left_arrays[key]) == array_payload_digest(right_arrays[key])
         for key in left_arrays
+    )
+
+
+def _same_implicit_surface_archive(left: Any, right: Any, /) -> bool:
+    """Compare every stored implicit-discovery input directly, without digests."""
+    from ..geometry.implicit._adaptive_discovery import (
+        AdaptiveImplicitSurfaceArchiveRecipe,
+    )
+
+    if type(left) is not AdaptiveImplicitSurfaceArchiveRecipe or type(right) is not type(
+        left
+    ):
+        return False
+    if left is right:
+        return True
+    recipe = model_structure_recipe(left, path="compare")
+    if _canonical_recipe_payload(recipe) != _canonical_recipe_payload(
+        model_structure_recipe(right, path="compare")
+    ):
+        return False
+    left_arrays = _pack_projected_model_array_tree(
+        left, recipe, prefix="compare", limits=None
+    )
+    right_arrays = _pack_projected_model_array_tree(
+        right, recipe, prefix="compare", limits=None
+    )
+    return left_arrays.keys() == right_arrays.keys() and all(
+        _same_array_bytes(left_arrays[key], right_arrays[key]) for key in left_arrays
     )
 
 

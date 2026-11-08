@@ -239,6 +239,31 @@ def test_adaptive_enclosure_finds_hidden_component_and_certifies_source_cover() 
     assert np.all(np.isfinite(samples.covering_radius))
 
 
+def test_implicit_archive_owner_comparison_checks_all_scientific_inputs(
+    cover_surface: AdaptiveImplicitSurface,
+) -> None:
+    from phydrax.meshing._model_codec import (
+        _register_model_archive_types,
+        _same_implicit_surface_archive,
+    )
+
+    _register_model_archive_types()
+
+    recipe = cover_surface.archive_recipe
+    equivalent = replace(recipe)
+    assert _same_implicit_surface_archive(recipe, recipe)
+    assert _same_implicit_surface_archive(recipe, equivalent)
+    assert not _same_implicit_surface_archive(
+        recipe, replace(recipe, source_id=recipe.source_id + "-other")
+    )
+    changed = np.array(recipe.scaffold_arrays[0], copy=True)
+    changed.flat[0] = np.nextafter(changed.flat[0], np.inf)
+    altered = replace(
+        recipe, scaffold_arrays=(changed, *recipe.scaffold_arrays[1:])
+    )
+    assert not _same_implicit_surface_archive(recipe, altered)
+
+
 def test_adaptive_archive_retains_and_reproves_stored_arrays() -> None:
     geometry = _G.Sphere((0.031, -0.019, 0.017), 0.3).compile()
     domain = np.asarray(((-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)))
