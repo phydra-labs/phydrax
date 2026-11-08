@@ -554,6 +554,74 @@ class PolytopeClipper {
     }
   }
 
+  // Integrate the symbolic tet-tet vertices, not their rounded carriers.  Each
+  // face triangle and an actual polytope vertex form an oriented tetrahedron;
+  // its determinant and centroid are rational functions of dyadic inputs.
+  void tetrahedron_moments(double& volume, double* first_moment) {
+    struct Homogeneous {
+      Dyadic numerator[3];
+      Dyadic denominator;
+    };
+    std::vector<Homogeneous> exact_vertices(vertices.size());
+    for (int index : live) {
+      const Vertex& vertex = vertices[index];
+      Homogeneous& value = exact_vertices[index];
+      if (vertex.kind == Kind::kPoint) {
+        value.denominator = Dyadic(1.0);
+        for (int k = 0; k < 3; ++k) value.numerator[k] = Dyadic(points[vertex.a][k]);
+      } else {
+        const Dyadic a = exact::to_dyadic(exact_value(vertex.plane[0], vertex.a));
+        const Dyadic b = exact::to_dyadic(exact_value(vertex.plane[0], vertex.b));
+        value.denominator = a - b;
+        for (int k = 0; k < 3; ++k) {
+          value.numerator[k] = a * Dyadic(points[vertex.b][k]) -
+                               b * Dyadic(points[vertex.a][k]);
+        }
+        if (value.denominator.sign() < 0) {
+          value.denominator.negate();
+          for (Dyadic& coordinate : value.numerator) coordinate.negate();
+        }
+      }
+    }
+    const int origin = live[0];
+    const Homogeneous& o = exact_vertices[origin];
+    clip::CompensatedSum six;
+    clip::CompensatedSum sum[3];
+    for (const Face& face : faces) {
+      for (int i = 1; i + 1 < face.size; ++i) {
+        const int indices[3] = {loops[face.start], loops[face.start + i],
+                                loops[face.start + i + 1]};
+        if (indices[0] == origin || indices[1] == origin || indices[2] == origin) continue;
+        const Homogeneous* v[4] = {&o, &exact_vertices[indices[0]],
+                                   &exact_vertices[indices[1]], &exact_vertices[indices[2]]};
+        Dyadic edge[3][3];
+        for (int j = 0; j < 3; ++j) {
+          for (int k = 0; k < 3; ++k) {
+            edge[j][k] = v[j + 1]->numerator[k] * o.denominator -
+                         o.numerator[k] * v[j + 1]->denominator;
+          }
+        }
+        const Dyadic determinant = exact::det3(edge[0], edge[1], edge[2]);
+        if (determinant.is_zero()) continue;
+        const Dyadic common = o.denominator * v[1]->denominator *
+                              v[2]->denominator * v[3]->denominator;
+        const Dyadic determinant_denominator = common * o.denominator * o.denominator;
+        six.add(exact::rounded_quotient(determinant, determinant_denominator));
+        for (int k = 0; k < 3; ++k) {
+          const Dyadic centroid =
+              v[0]->numerator[k] * v[1]->denominator * v[2]->denominator * v[3]->denominator +
+              v[1]->numerator[k] * v[0]->denominator * v[2]->denominator * v[3]->denominator +
+              v[2]->numerator[k] * v[0]->denominator * v[1]->denominator * v[3]->denominator +
+              v[3]->numerator[k] * v[0]->denominator * v[1]->denominator * v[2]->denominator;
+          sum[k].add(exact::rounded_quotient(determinant * centroid,
+                                              determinant_denominator * common));
+        }
+      }
+    }
+    volume = six.value() / 6.0;
+    for (int k = 0; k < 3; ++k) first_moment[k] = sum[k].value() / 24.0;
+  }
+
   // The fan tetrahedra (o, x0, x_i, x_{i+1}) of moments(): a signed partition
   // of the polytope whose terms are exactly the fan terms of moments().
   int32_t cone_simplices(clip::SimplexOutput& out) const {
@@ -1012,7 +1080,7 @@ int32_t intersect_tetrahedra(const double* first, const double* second,
   bool empty = false;
   status = run_clips(clipper, empty);
   if (status == PHX_MC_OK && !empty) {
-    clipper.moments(volume, first_moment);
+    clipper.tetrahedron_moments(volume, first_moment);
     if (simplices != nullptr) {
       status = clipper.cone_simplices(*simplices);
     }
