@@ -13,6 +13,7 @@ from phydrax._meshcore import (
     meshcore_available,
     MeshcoreStatus,
     tetrahedron_intersection_moments,
+    tetrahedron_intersection_quadratic_moments,
     tetrahedron_intersection_simplices,
 )
 from phydrax.discretization import CellBlock, CellMesh
@@ -104,6 +105,34 @@ def _exact_carrier_second(simplex: np.ndarray, /) -> np.ndarray:
     )
 
 
+def _exact_intersection_second(source: np.ndarray, target: np.ndarray, /) -> np.ndarray:
+    pieces = _exact_intersection_pieces(source, target)
+    return np.asarray(
+        [
+            [
+                float(
+                    sum(
+                        (
+                            _exact_pieces_volume((piece,))
+                            * (
+                                sum(point[j] * point[k] for point in piece)
+                                + sum(point[j] for point in piece)
+                                * sum(point[k] for point in piece)
+                            )
+                            / 20
+                            for piece in pieces
+                        ),
+                        Fraction(0),
+                    )
+                )
+                for k in range(3)
+            ]
+            for j in range(3)
+        ],
+        dtype=np.float64,
+    )
+
+
 @pytest.mark.parametrize(
     "scale,shift",
     [(1.0, (0.0, 0.0, 0.0)), (8.0, (2.0, -4.0, 6.0)), (0.25, (0.125, -0.25, 0.5))],
@@ -133,6 +162,25 @@ def test_well_conditioned_carrier_second_moments() -> None:
     expected = np.asarray([_exact_carrier_second(piece) for piece in carriers])
     np.testing.assert_allclose(
         _simplex_second_moments(carriers), expected, rtol=2e-15, atol=0.0
+    )
+
+
+def test_symbolic_quadratic_moments_preserve_signed_coordinates() -> None:
+    source = np.asarray(
+        ((-2, 1, -1), (-1, 1, -1), (-2, 2, -1), (-2, 1, 0)), dtype=np.float64
+    )
+    volume, first, second, status = tetrahedron_intersection_quadratic_moments(
+        source[None], source[None]
+    )
+    assert status[0] == MeshcoreStatus.OK and volume[0] > 0
+    old_volume, old_first, old_status = tetrahedron_intersection_moments(
+        source[None], source[None]
+    )
+    np.testing.assert_array_equal(volume, old_volume)
+    np.testing.assert_array_equal(first, old_first)
+    np.testing.assert_array_equal(status, old_status)
+    np.testing.assert_allclose(
+        second[0], _exact_intersection_second(source, source), rtol=2e-14, atol=0.0
     )
 
 
@@ -200,14 +248,33 @@ def test_positive_overlap_with_collapsed_carriers_is_not_partial_success() -> No
     exact = _exact_pieces_volume(_exact_intersection_pieces(source, target))
     assert exact > 0
     assert float(exact) == pytest.approx(2.0102052517994655e-48, rel=1e-15)
+    volume, _, second, status = tetrahedron_intersection_quadratic_moments(
+        source[None], target[None]
+    )
+    assert status[0] == MeshcoreStatus.OK and volume[0] > 0
+    expected_second = _exact_intersection_second(source, target)
+    np.testing.assert_allclose(second[0], expected_second, rtol=2e-14, atol=0.0)
     _, counts, _, _, status = tetrahedron_intersection_simplices(
         source[None], target[None]
     )
     assert counts[0] == 0 and status[0] == MeshcoreStatus.UNRESOLVED
     cells = np.asarray(((0, 1, 2, 3),), dtype=np.int32)
+    source_mesh = CellMesh.from_tetrahedra(source, cells)
+    target_mesh = CellMesh.from_tetrahedra(target, cells)
+    functional = prepare_common_refinement(
+        source_mesh,
+        target_mesh,
+        policy=CommonRefinementPolicy(
+            coverage=CommonRefinementCoverage.PARTIAL, second_moments=True
+        ),
+    )
+    assert functional.succeeded and functional.entry_count == 1
+    np.testing.assert_allclose(
+        np.asarray(functional.second_moments)[0], expected_second, rtol=2e-14, atol=0.0
+    )
     refinement = prepare_common_refinement(
-        CellMesh.from_tetrahedra(source, cells),
-        CellMesh.from_tetrahedra(target, cells),
+        source_mesh,
+        target_mesh,
         policy=CommonRefinementPolicy(
             coverage=CommonRefinementCoverage.PARTIAL, overlap_simplices=True
         ),
