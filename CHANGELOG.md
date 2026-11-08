@@ -433,6 +433,14 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Boundary-layer corner stretch no longer depends on how the platform rounds
+  exact distance ties. When a column's probe distance is attained by two or
+  more candidates (its foot on a wall vertex or edge, or on several triangles,
+  as on every planar wall), the minimum is computed exactly on the binary64
+  inputs and rounded once instead of being decided by float argmin/min. Planar
+  columns now get a stretch of exactly 1 on every host, where some were
+  `1 + 2⁻⁵²` on some hosts, so their layer meshes and identities can change.
+  Columns without an exact tie keep bit-identical stretch values.
 - `ImplicitPointProjectionPlan` second and higher derivatives were silently
   zero because the normal-gauge JVP returned a stop-gradient primal. They are
   now total derivatives along the normal-gauge level-set flow
