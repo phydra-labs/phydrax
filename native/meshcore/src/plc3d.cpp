@@ -5651,7 +5651,8 @@ class PlcRecoveryBuilder {
   // the new subfaces; any other finite wedge by the first of, in order: the
   // constrained Delaunay fill of its cavity (wrap_cavity; walls are the link
   // faces and the new subfaces), the cones from one cavity vertex that sees
-  // every wall not through it, the constrained Delaunay fill with centroid
+  // every wall not through it and carries every wall through it as a cone
+  // face, the constrained Delaunay fill with centroid
   // points of the blocking cells, the cones from one binary64 point
   // y = s + l d (d the sum of the inner unit normals of its subface planes,
   // l halving) over the walls, and the exhaustive Steiner-free search of
@@ -5685,7 +5686,9 @@ class PlcRecoveryBuilder {
   // peeling (option 8 of fill_wedge). Every finite proposed cell is exactly
   // positive on exact positions and the cavity edit checks that the
   // proposal's boundary is the link of the removed cells with its marks, so
-  // the proposal tiles them. Otherwise nothing changes.
+  // the proposal tiles them; the removal commits only when the proposal also
+  // carries the chain interval (p, q) of a segment point and every new
+  // subface with its mark. Otherwise nothing changes.
   int32_t remove_witnessed_vertex(int32_t s, int32_t t, int32_t p, int32_t q, int layers,
                                   bool pinched, SuppressionMemo& memo, bool& removed,
                                   bool& extended) {
@@ -5919,7 +5922,14 @@ class PlcRecoveryBuilder {
       }
       // 2. Cones from one cavity vertex v over every wall not through v: a
       // tiling when the cavity is strictly star-shaped from v. A cone face
-      // through v that is a wall carries that wall's mark.
+      // through v that is a wall carries that wall's mark. As chains, the
+      // cones' boundary is the sum of the walls, in which the two sides of a
+      // sheet inside the cavity (a new subface the wedge meets from both
+      // sides) cancel; so every wall through v must also be a face of a
+      // cone, with its orientation, or the cones run across that subface and
+      // it and its segment intervals are lost. On a cavity whose walls
+      // bound it as a closed surface this holds whenever every cone is
+      // positive.
       std::set<int32_t> on_walls;
       for (const Proposal& wall : cavity) {
         for (int32_t vertex : wall.v) {
@@ -5932,6 +5942,8 @@ class PlcRecoveryBuilder {
       for (int32_t apex : on_walls) {
         std::vector<Proposal> cones;
         std::map<Triple, int32_t> through;
+        std::vector<FacetKey> sides;
+        std::vector<FacetKey> faces;
         bool visible = true;
         for (const Proposal& wall : cavity) {
           if (std::find(wall.v.begin(), wall.v.end(), apex) == wall.v.end()) continue;
@@ -5940,6 +5952,7 @@ class PlcRecoveryBuilder {
           oriented_facet(wall.v.data(), slot, face.data());
           through.emplace(sorted_triple(face.data()),
                           wall.constraints[static_cast<std::size_t>(slot)]);
+          sides.push_back(FacetKey::of(face.data()));
         }
         for (const Proposal& wall : cavity) {
           if (std::find(wall.v.begin(), wall.v.end(), apex) != wall.v.end()) continue;
@@ -5954,12 +5967,19 @@ class PlcRecoveryBuilder {
             if (slot == own) continue;
             Triple face{};
             oriented_facet(cone.v.data(), slot, face.data());
+            faces.push_back(FacetKey::of(face.data()));
             const auto wall = through.find(sorted_triple(face.data()));
             if (wall != through.end()) cone.constraints[static_cast<std::size_t>(slot)] = wall->second;
           }
           cones.push_back(cone);
         }
         if (!visible) continue;
+        std::sort(faces.begin(), faces.end());
+        if (!std::all_of(sides.begin(), sides.end(), [&](const FacetKey& side) {
+              return std::binary_search(faces.begin(), faces.end(), side);
+            })) {
+          continue;
+        }
         proposals.insert(proposals.end(), cones.begin(), cones.end());
         done = true;
         return PHX_MC_OK;
@@ -6339,6 +6359,20 @@ class PlcRecoveryBuilder {
                      kPlaceholder + 1 + static_cast<int32_t>(row), vertex);
       }
     }
+    // The cavity edit checks the proposal against the link of the removed
+    // cells, around which the subfaces and segment interval through s are
+    // interior. So the removal also requires, whatever filled each wedge,
+    // the chain interval (p, q) that replaces the two through a segment
+    // point as an edge of the proposal (the segment passes through s, inside
+    // the removed cells) and every new subface as a face with its mark
+    // (CavityEdit::preserve). A proposal without them is not committed.
+    if (p >= 0 && q >= 0 &&
+        std::none_of(proposals.begin(), proposals.end(), [&](const Proposal& cell) {
+          return std::find(cell.v.begin(), cell.v.end(), p) != cell.v.end() &&
+                 std::find(cell.v.begin(), cell.v.end(), q) != cell.v.end();
+        })) {
+      return abandon();
+    }
     // Subfaces through s are interior to the removed star; their marks move
     // to the proposal, which carries them on the new subfaces.
     std::vector<std::array<int32_t, 3>> released;
@@ -6380,6 +6414,11 @@ class PlcRecoveryBuilder {
     }
     for (const Proposal& proposal : proposals) {
       edit.add(proposal.v.data(), proposal.constraints.data(), kNoRegion);
+    }
+    for (const std::vector<NewFace>& group : groups) {
+      for (const NewFace& face : group) {
+        edit.preserve(face.oriented[0], face.oriented[1], face.oriented[2], face.facet);
+      }
     }
     EditStatus edit_status = edit.validate([&](const int32_t* vertices) {
       return orient(vertices[0], vertices[1], vertices[2], vertices[3]) > 0;

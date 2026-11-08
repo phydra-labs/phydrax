@@ -2837,6 +2837,52 @@ void test_relocation_peels_a_pinched_wedge() {
   PHX_CHECK(detail::fill_suppression_cavity(malformed, refused) == PHX_MC_INVALID_INPUT);
 }
 
+// An internal sheet of region 0 (the first `sheet_faces` triangles) inside
+// a box hull, one facet per triangle and every triangle edge a segment,
+// under FIXED. `plc.input` points into the banks of `plc`.
+struct SheetInBox {
+  std::vector<int64_t> offsets;
+  std::vector<int32_t> facets;
+  std::vector<int32_t> regions;
+  std::vector<int32_t> segments;
+  PlcInput input;
+};
+
+void build_sheet_in_box(const std::vector<double>& points, const std::vector<int32_t>& triangles,
+                        std::size_t sheet_faces, SheetInBox& plc) {
+  const std::size_t faces = triangles.size() / 3;
+  plc.offsets.resize(faces + 1);
+  plc.facets.resize(faces);
+  plc.regions.resize(2 * faces);
+  std::set<std::pair<int32_t, int32_t>> edge_set;
+  for (std::size_t row = 0; row <= faces; ++row) plc.offsets[row] = static_cast<int64_t>(3 * row);
+  for (std::size_t row = 0; row < faces; ++row) {
+    plc.facets[row] = static_cast<int32_t>(row);
+    plc.regions[2 * row] = row < sheet_faces ? 0 : -1;
+    plc.regions[2 * row + 1] = 0;
+    for (int k = 0; k < 3; ++k) {
+      const int32_t a = triangles[3 * row + static_cast<std::size_t>(k)];
+      const int32_t b = triangles[3 * row + static_cast<std::size_t>((k + 1) % 3)];
+      edge_set.insert({std::min(a, b), std::max(a, b)});
+    }
+  }
+  plc.segments.clear();
+  for (const auto& [a, b] : edge_set) plc.segments.insert(plc.segments.end(), {a, b});
+  PlcInput& input = plc.input;
+  input = PlcInput{};
+  input.point_count = static_cast<int64_t>(points.size() / 3);
+  input.points = points.data();
+  input.polygon_count = static_cast<int64_t>(faces);
+  input.polygon_offsets = plc.offsets.data();
+  input.polygon_vertices = triangles.data();
+  input.polygon_facets = plc.facets.data();
+  input.facet_count = static_cast<int64_t>(faces);
+  input.facet_regions = plc.regions.data();
+  input.segment_count = static_cast<int64_t>(edge_set.size());
+  input.segments = plc.segments.data();
+  input.policy = BoundaryPolicy::kFixed;
+}
+
 // A 26-triangle patch of the scale-2 torus reconstruction envelope (nearly
 // flat offset faces), as an internal sheet of region 0 inside a box hull.
 // Under FIXED the split point of the segment (15, 21) is suppressed last;
@@ -2923,36 +2969,9 @@ void test_suppression_merges_a_sliver_wedge_with_its_neighbours() {
       55, 59, 61, 55, 61, 57,  };
   const std::size_t point_count = points.size() / 3;
   const std::size_t faces = triangles.size() / 3;
-  constexpr std::size_t kSheetFaces = 26;
-  std::vector<int64_t> offsets(faces + 1);
-  std::vector<int32_t> facets(faces);
-  std::vector<int32_t> regions(2 * faces);
-  std::set<std::pair<int32_t, int32_t>> edge_set;
-  for (std::size_t row = 0; row <= faces; ++row) offsets[row] = static_cast<int64_t>(3 * row);
-  for (std::size_t row = 0; row < faces; ++row) {
-    facets[row] = static_cast<int32_t>(row);
-    regions[2 * row] = row < kSheetFaces ? 0 : -1;
-    regions[2 * row + 1] = 0;
-    for (int k = 0; k < 3; ++k) {
-      const int32_t a = triangles[3 * row + static_cast<std::size_t>(k)];
-      const int32_t b = triangles[3 * row + static_cast<std::size_t>((k + 1) % 3)];
-      edge_set.insert({std::min(a, b), std::max(a, b)});
-    }
-  }
-  std::vector<int32_t> segments;
-  for (const auto& [a, b] : edge_set) segments.insert(segments.end(), {a, b});
-  PlcInput input;
-  input.point_count = static_cast<int64_t>(point_count);
-  input.points = points.data();
-  input.polygon_count = static_cast<int64_t>(faces);
-  input.polygon_offsets = offsets.data();
-  input.polygon_vertices = triangles.data();
-  input.polygon_facets = facets.data();
-  input.facet_count = static_cast<int64_t>(faces);
-  input.facet_regions = regions.data();
-  input.segment_count = static_cast<int64_t>(edge_set.size());
-  input.segments = segments.data();
-  input.policy = BoundaryPolicy::kFixed;
+  SheetInBox plc;
+  build_sheet_in_box(points, triangles, 26, plc);
+  const PlcInput& input = plc.input;
   PlcRecovery result;
   const int32_t status = recover_plc(input, result);
   PHX_CHECK(status == PHX_MC_OK);
@@ -2970,8 +2989,11 @@ void test_suppression_merges_a_sliver_wedge_with_its_neighbours() {
   // fewer the over-budget search is recorded (exceeded, its states, bytes
   // and depth) and the later passes still remove the point, here the grown
   // pass; the route rows record the search fills. With fewer bytes than
-  // one chunk of states every search is inconclusive and the recovery does
-  // not publish (it stops with the search evidence of all of them).
+  // one chunk of states every search is inconclusive, and the later passes
+  // still remove every split point: the recovery publishes, with the search
+  // evidence of all of them. (Before PlcChainInterval it refused
+  // OUTSIDE_DOMAIN: the cones of option 2 from vertex 24 ran across the new
+  // subface (19, 24, 65), dropping the chain interval (19, 65).)
   const PlcSuppressionSearch evidence = result.suppression_search;
   PHX_CHECK(evidence.node_budget == kPlcSearchNodeBudget);
   PHX_CHECK(evidence.byte_budget == kPlcSearchByteBudget);
@@ -3008,15 +3030,91 @@ void test_suppression_merges_a_sliver_wedge_with_its_neighbours() {
   }
   PlcInput short_bytes = input;
   short_bytes.search_byte_budget = 4096 * 40 - 1;
-  PlcRecovery stopped;
-  PHX_CHECK(recover_plc(short_bytes, stopped) != PHX_MC_OK);
-  PHX_CHECK(stopped.suppression_search.byte_budget == 4096 * 40 - 1);
-  PHX_CHECK(stopped.suppression_search.inconclusive == stopped.suppression_search.searches);
-  PHX_CHECK(stopped.suppression_search.nodes == 0 && stopped.suppression_search.exceeded == 1);
+  PlcRecovery starved;
+  PHX_CHECK(recover_plc(short_bytes, starved) == PHX_MC_OK);
+  PHX_CHECK(starved.suppression_search.byte_budget == 4096 * 40 - 1);
+  PHX_CHECK(starved.suppression_search.searches > 0);
+  PHX_CHECK(starved.suppression_search.inconclusive == starved.suppression_search.searches);
+  PHX_CHECK(starved.suppression_search.nodes == 0 && starved.suppression_search.exceeded == 1);
+  check_conforming_recovery(starved, point_count, faces);
+  check_fixed_boundary(starved, point_count);
+  PlcRecovery starved_again;
+  PHX_CHECK(recover_plc(short_bytes, starved_again) == PHX_MC_OK);
+  PHX_CHECK(starved_again.points == starved.points && starved_again.tets == starved.tets);
   PlcInput negative = input;
   negative.search_byte_budget = -1;
   PlcRecovery invalid;
   PHX_CHECK(recover_plc(negative, invalid) == PHX_MC_INVALID_ARGUMENT);
+}
+
+// The minimal configuration of the lost chain interval (PlcChainInterval),
+// reduced from the sliver wedge above: four disjoint triangles of its sheet
+// inside the same box. Recovery splits the segment (6, 9), a free edge of
+// the sheet triangle (6, 7, 9), at a point s. The star of s is one wedge
+// that meets the new subface (6, 7, 9) of the contraction onto 6 from both
+// sides, and the cones of option 2 from vertex 7 are all positive yet run
+// across that subface (as chains, its two sides cancel). Wave 8 committed
+// them, losing the subface and the chain interval (6, 9), and refused
+// OUTSIDE_DOMAIN at the final embedded check with any budget. Now an apex
+// must carry every wall through it as a cone face, and a removal commits
+// only with its chain interval and its new subfaces. With the default
+// budget and with fewer bytes than one chunk of states (every search
+// inconclusive) the recovery publishes, deterministically.
+void test_suppression_keeps_the_subface_through_a_cone_apex() {
+  const std::vector<double> points{
+      -0x1.04f3d3509a726p-2, 0x1.74437725edd60p-6, -0x1.56aafd8a8568cp-4,
+      -0x1.04f3d3509a726p-2, 0x1.bfc4b98e1d95ep-8, -0x1.56aafd8a8568cp-4,
+      -0x1.e95d5d88e816cp-3, 0x1.74437725edd60p-6, -0x1.15966b59ebcccp-4,
+      -0x1.e3597df5eb8f7p-3, 0x1.64ab155864700p-9, -0x1.04bf786bcd16ep-4,
+      -0x1.dd706f156eafdp-3, 0x1.64ab155864700p-9, -0x1.d9cb3709b4922p-5,
+      -0x1.d75168e158446p-3, 0x1.79ea0fcf1641ap-7, -0x1.c14f1e395ae47p-5,
+      -0x1.4586534b7772ep-3, 0x1.64ab155864700p-9, -0x1.445f7bcd67b41p-3,
+      -0x1.4586534b7772ep-3, 0x1.f45c51d48132cp-8, -0x1.451c52c970e07p-3,
+      -0x1.2b6881200b218p-3, 0x1.64ab155864700p-9, -0x1.2636c673572f4p-3,
+      -0x1.28ea30b684b4bp-3, 0x1.74437725edd60p-6, -0x1.2636c673572f4p-3,
+      -0x1.29bfa1850a6bep-3, 0x1.0acaf0de74c60p-6, -0x1.2636c673572f4p-3,
+      -0x1.1c9090bc1b49ep-3, 0x1.74437725edd60p-6, -0x1.17dd188567644p-3,
+      -0x1.c763460d6e7e7p-2, -0x1.798ea1a81a302p-3, -0x1.10f8a60720728p-2,
+      -0x1.c763460d6e7e7p-2, -0x1.798ea1a81a302p-3, 0x1.f9610c74592c0p-4,
+      -0x1.c763460d6e7e7p-2, 0x1.a68a73b273dabp-3, -0x1.10f8a60720728p-2,
+      -0x1.c763460d6e7e7p-2, 0x1.a68a73b273dabp-3, 0x1.f9610c74592c0p-4,
+      -0x1.ac1ec529c9fa7p-5, -0x1.798ea1a81a302p-3, -0x1.10f8a60720728p-2,
+      -0x1.ac1ec529c9fa7p-5, -0x1.798ea1a81a302p-3, 0x1.f9610c74592c0p-4,
+      -0x1.ac1ec529c9fa7p-5, 0x1.a68a73b273dabp-3, -0x1.10f8a60720728p-2,
+      -0x1.ac1ec529c9fa7p-5, 0x1.a68a73b273dabp-3, 0x1.f9610c74592c0p-4,
+  };
+  const std::vector<int32_t> triangles{
+      1, 2, 0, 3, 4, 5, 6, 7, 9, 8, 10, 11,
+      12, 13, 15, 12, 15, 14, 16, 18, 19, 16, 19, 17,
+      12, 16, 17, 12, 17, 13, 14, 15, 19, 14, 19, 18,
+      12, 14, 18, 12, 18, 16, 13, 17, 19, 13, 19, 15,
+  };
+  const std::size_t point_count = points.size() / 3;
+  const std::size_t faces = triangles.size() / 3;
+  SheetInBox plc;
+  build_sheet_in_box(points, triangles, 4, plc);
+  for (const int64_t bytes : {kPlcSearchByteBudget, int64_t{4096 * 40 - 1}}) {
+    PlcInput input = plc.input;
+    input.search_byte_budget = bytes;
+    PlcRecovery result;
+    const int32_t status = recover_plc(input, result);
+    PHX_CHECK(status == PHX_MC_OK);
+    if (status != PHX_MC_OK) continue;
+    check_conforming_recovery(result, point_count, faces);
+    check_fixed_boundary(result, point_count);
+    const PlcSuppressionSearch& evidence = result.suppression_search;
+    PHX_CHECK(evidence.byte_budget == bytes);
+    if (bytes == kPlcSearchByteBudget) {
+      PHX_CHECK(evidence.exceeded == 0 && evidence.inconclusive == 0);
+    } else {
+      PHX_CHECK(evidence.searches > 0 && evidence.inconclusive == evidence.searches);
+      PHX_CHECK(evidence.nodes == 0 && evidence.exceeded == 1);
+    }
+    PlcRecovery again;
+    PHX_CHECK(recover_plc(input, again) == PHX_MC_OK);
+    PHX_CHECK(again.points == result.points && again.tets == result.tets &&
+              again.faces == result.faces && again.segments == result.segments);
+  }
 }
 
 // A capped patch of the original lobed-r4 reconstruction surface, whose full
@@ -3562,6 +3660,7 @@ int main() {
   test_suppression_wedge_without_delaunay_fill_is_searched();
   test_relocation_peels_a_pinched_wedge();
   test_suppression_merges_a_sliver_wedge_with_its_neighbours();
+  test_suppression_keeps_the_subface_through_a_cone_apex();
   test_suppression_merges_enclose_volume_steiner_points();
   return phx::mc::test::finish("test_plc3d");
 }
