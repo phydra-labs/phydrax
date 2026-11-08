@@ -10,8 +10,13 @@ interchange in three certified phases:
 
 1. Decomposition.  Triangles, tetrahedra, and convex polygons are single convex
    pieces.  Every other cell is the cone of its canonically triangulated
-   boundary (faces fanned from their smallest mesh vertex, so neighbors agree on
-   shared faces) from one of its vertices.  A cone is accepted only when every
+   boundary from one of its vertices.  Faces of polyhedral cell complexes are
+   triangulated exactly as polyhedral finite-volume geometry integrates them
+   (:func:`~phydrax.discretization.finite_volume._polyhedral.polyhedral_face_fan`:
+   planar faces fan from their first vertex, warped faces from their vertex
+   centroid), so decomposition measures and finite-volume cell volumes describe
+   one geometry; other faces fan from their smallest mesh vertex.  Neighbors
+   agree on shared faces either way.  A cone is accepted only when every
    nondegenerate cone simplex has one exact orientation: the signed cone
    indicators sum to the winding number of the boundary, so equal signs certify
    a partition of the cell.  Apexes are tried in ascending vertex order.
@@ -47,6 +52,7 @@ from ..ein import contract
 
 
 if TYPE_CHECKING:
+    from ..discretization._cell_complex import PolyhedralConnectivity
     from ..discretization._cell_mesh import CellMesh
 
 
@@ -614,14 +620,68 @@ def _standard_face_triangles(cells: np.ndarray, kind: str, /) -> np.ndarray:
     return np.concatenate(triangles, axis=1)
 
 
-def _polyhedral_face_triangles(
-    connectivity: Any, first_cell: int, cell_count: int, /
-) -> tuple[np.ndarray, np.ndarray]:
-    """Cell-oriented face triangles of explicit polyhedra from packed incidence."""
+class _PolyhedralSurface(NamedTuple):
+    """Finite-volume face triangles of a polyhedral cell complex.
 
-    cell_face_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
+    ``coordinates`` are the mesh vertices followed by the vertex centroids of
+    warped faces; ``triangles[offsets[f]:offsets[f + 1]]`` index them in the
+    orientation of face loop ``f`` of ``connectivity``.  ``failed`` marks faces
+    without admissible finite-volume triangles.
+    """
+
+    connectivity: PolyhedralConnectivity
+    coordinates: np.ndarray
+    triangles: np.ndarray
+    offsets: np.ndarray
+    failed: np.ndarray
+
+
+def _polyhedral_surface(
+    connectivity: PolyhedralConnectivity, coordinates: np.ndarray, /
+) -> _PolyhedralSurface:
+    from ..discretization.finite_volume._polyhedral import (
+        polyhedral_face_fan,
+        POLYHEDRAL_PLANARITY_TOLERANCE,
+    )
+
     face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
     face_values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
+    face_count = face_offsets.size - 1
+    vertex_count = coordinates.shape[0]
+    apexes: list[np.ndarray] = []
+    rows: list[np.ndarray] = []
+    counts = np.zeros((face_count,), dtype=np.int64)
+    failed = np.zeros((face_count,), dtype=np.bool_)
+    for face in range(face_count):
+        loop = face_values[face_offsets[face] : face_offsets[face + 1]]
+        fan = polyhedral_face_fan(coordinates[loop], POLYHEDRAL_PLANARITY_TOLERANCE)
+        if fan.failure:
+            failed[face] = True
+            continue
+        if fan.apex is not None:
+            # Corner -1 of a warped fan names this appended vertex centroid.
+            loop = np.append(loop, vertex_count + len(apexes))
+            apexes.append(fan.apex)
+        rows.append(loop[np.asarray(fan.corners, dtype=np.int64)])
+        counts[face] = len(fan.corners)
+    return _PolyhedralSurface(
+        connectivity,
+        np.concatenate(
+            (coordinates, np.asarray(apexes, dtype=np.float64).reshape((-1, 3)))
+        ),
+        np.concatenate(rows) if rows else np.zeros((0, 3), dtype=np.int64),
+        _offsets(counts),
+        failed,
+    )
+
+
+def _polyhedral_face_triangles(
+    surface: _PolyhedralSurface, first_cell: int, cell_count: int, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Cell-oriented face triangles, their mask, and cells with failed faces."""
+
+    connectivity = surface.connectivity
+    cell_face_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
     begin = cell_face_offsets[first_cell]
     end = cell_face_offsets[first_cell + cell_count]
     faces = np.asarray(connectivity.cell_face_values, dtype=np.int64)[begin:end]
@@ -630,33 +690,15 @@ def _polyhedral_face_triangles(
         np.arange(cell_count),
         np.diff(cell_face_offsets[first_cell : first_cell + cell_count + 1]),
     )
-    sizes = face_offsets[faces + 1] - face_offsets[faces]
-    starts = face_offsets[faces]
+    sizes = surface.offsets[faces + 1] - surface.offsets[faces]
     incidence = np.repeat(np.arange(faces.size), sizes)
     local = np.arange(incidence.size) - np.repeat(np.cumsum(sizes) - sizes, sizes)
-    values = face_values[starts[incidence] + local]
-    smallest = np.minimum.reduceat(values, np.cumsum(sizes) - sizes)
-    anchor = local[values == smallest[incidence]]
-    triangle_incidence = np.repeat(np.arange(faces.size), sizes - 2)
-    step = (
-        np.arange(triangle_incidence.size)
-        - np.repeat(np.cumsum(sizes - 2) - (sizes - 2), sizes - 2)
-        + 1
-    )
-    direction = np.where(signs[triangle_incidence] < 0, -1, 1)
-    size = sizes[triangle_incidence]
-    origin = starts[triangle_incidence]
-    corner = anchor[triangle_incidence]
-
-    def vertex(offset: Any) -> Any:
-        return face_values[origin + (corner + direction * offset) % size]
-
-    triangles = np.stack(
-        (vertex(np.zeros_like(step)), vertex(step), vertex(step + 1)), axis=1
-    )
-    triangle_cells = owner[triangle_incidence]
+    triangles = surface.triangles[surface.offsets[faces][incidence] + local]
+    reverse = signs[incidence] < 0
+    triangles[reverse] = triangles[reverse][:, [0, 2, 1]]
+    triangle_cells = owner[incidence]
     per_cell = np.bincount(triangle_cells, minlength=cell_count)
-    width = int(np.max(per_cell))
+    width = int(np.max(per_cell, initial=0))
     slot = np.arange(triangle_cells.size) - np.repeat(
         np.cumsum(per_cell) - per_cell, per_cell
     )
@@ -664,7 +706,9 @@ def _polyhedral_face_triangles(
     valid = np.zeros((cell_count, width), dtype=np.bool_)
     padded[triangle_cells, slot] = triangles
     valid[triangle_cells, slot] = True
-    return padded, valid
+    failed = np.zeros((cell_count,), dtype=np.bool_)
+    failed[owner[surface.failed[faces]]] = True
+    return padded, valid, failed
 
 
 def _volume_block_pieces(
@@ -714,35 +758,42 @@ def _block_family(kind: str, /) -> str:
 
 
 def _block_pieces(
-    mesh: CellMesh, block: Any, first_cell: int, coordinates: np.ndarray, mode: Any, /
+    block: Any,
+    first_cell: int,
+    coordinates: np.ndarray,
+    surface: _PolyhedralSurface | None,
+    mode: Any,
+    /,
 ) -> _BlockPieces:
     cells = np.asarray(block.vertices, dtype=np.int64)
     family = _block_family(block.cell_kind)
+    failed = np.zeros((block.cell_count,), dtype=np.bool_)
     match family:
         case "triangle" | "quadrilateral" | "polygon":
             return _polygon_block_pieces(coordinates, cells, mode)
-        case "tetrahedron" | "hexahedron" | "prism" | "pyramid":
-            triangles = _standard_face_triangles(cells, family)
-            triangle_valid = np.ones(triangles.shape[:2], dtype=np.bool_)
-        case "polyhedron":
-            from ..discretization._cell_complex import PolyhedralConnectivity
-
-            if not isinstance(mesh.connectivity, PolyhedralConnectivity):
-                raise ValueError("Polyhedral blocks require polyhedral connectivity.")
-            identifiers = np.asarray(mesh.connectivity.cell_global_ids, dtype=np.int64)
-            if not np.array_equal(
-                identifiers[first_cell : first_cell + block.cell_count],
-                np.asarray(block.global_ids, dtype=np.int64),
-            ):
-                raise ValueError(
-                    "Polyhedral connectivity cells must follow the mesh block order."
+        case "tetrahedron" | "hexahedron" | "prism" | "pyramid" | "polyhedron":
+            if surface is None:
+                if family == "polyhedron":
+                    raise ValueError("Polyhedral blocks require polyhedral connectivity.")
+                triangles = _standard_face_triangles(cells, family)
+                triangle_valid = np.ones(triangles.shape[:2], dtype=np.bool_)
+            else:
+                identifiers = np.asarray(
+                    surface.connectivity.cell_global_ids, dtype=np.int64
                 )
-            triangles, triangle_valid = _polyhedral_face_triangles(
-                mesh.connectivity, first_cell, block.cell_count
-            )
+                if not np.array_equal(
+                    identifiers[first_cell : first_cell + block.cell_count],
+                    np.asarray(block.global_ids, dtype=np.int64),
+                ):
+                    raise ValueError(
+                        "Polyhedral connectivity cells must follow the mesh block order."
+                    )
+                triangles, triangle_valid, failed = _polyhedral_face_triangles(
+                    surface, first_cell, block.cell_count
+                )
         case _:
             raise ValueError(f"Unsupported cell kind {block.cell_kind!r}.")
-    return _volume_block_pieces(
+    pieces = _volume_block_pieces(
         coordinates,
         cells,
         np.asarray(block.vertex_valid, dtype=np.bool_),
@@ -750,20 +801,44 @@ def _block_pieces(
         triangle_valid,
         mode,
     )
+    # A cell with a face outside the finite-volume geometry is uncertified,
+    # whatever its remaining cone certifies, and carries no pieces.
+    kept = ~failed[pieces.cells]
+    return _BlockPieces(
+        pieces.cells[kept],
+        pieces.vertices[kept],
+        None,
+        pieces.invalid | failed,
+        pieces.uncertain & ~failed,
+    )
 
 
 def _decompose(mesh: CellMesh, mode: PredicateMode, /) -> _Decomposition:
+    from ..discretization._cell_complex import PolyhedralConnectivity
+
     coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
     dimension = mesh.topological_dimension
+    surface = (
+        _polyhedral_surface(mesh.connectivity, coordinates)
+        if dimension == 3 and isinstance(mesh.connectivity, PolyhedralConnectivity)
+        else None
+    )
+    if surface is not None:
+        coordinates = surface.coordinates
     cell_parts, vertex_parts, count_parts = [], [], []
     minima, maxima, invalid, uncertain, identifiers = [], [], [], [], []
     first_cell = 0
     for block in mesh.blocks:
-        pieces = _block_pieces(mesh, block, first_cell, coordinates, mode)
+        pieces = _block_pieces(block, first_cell, coordinates, surface, mode)
         cells = np.asarray(block.vertices, dtype=np.int64)
         lower, upper = _cell_bounds(
             coordinates, cells, np.asarray(block.vertex_valid, dtype=np.bool_)
         )
+        if surface is not None:
+            # Warped-face vertex centroids are piece vertices beyond the cell's
+            # own vertices; the broad phase must box them too.
+            np.minimum.at(lower, pieces.cells, np.min(pieces.vertices, axis=1))
+            np.maximum.at(upper, pieces.cells, np.max(pieces.vertices, axis=1))
         cell_parts.append(pieces.cells + first_cell)
         vertex_parts.append(pieces.vertices)
         count_parts.append(pieces.counts)

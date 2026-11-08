@@ -317,3 +317,48 @@ def test_supermesh_scenario_3() -> None:
         prepare_common_refinement(source, _kuhn_tetrahedra(1))
     with pytest.raises(ValueError, match="FILTERED or EXACT"):
         CommonRefinementPolicy(predicate_mode=PredicateMode.FILTERED_DEVICE)
+
+
+def test_polyhedral_decomposition_measures_are_finite_volume_cell_volumes() -> None:
+    from phydrax.discretization.finite_volume import (
+        prepare_polyhedral_finite_volume_geometry,
+    )
+
+    points, corners = _cube_lattice(2)
+    rng = np.random.default_rng(11)
+    # Lifting interior and top vertices warps faces of every cell.
+    points[:, 2] += rng.uniform(-0.05, 0.05, points.shape[0]) * points[:, 2]
+    faces = ((0, 2, 3, 1), (4, 5, 7, 6), (0, 1, 5, 4))
+    faces += ((1, 3, 7, 5), (3, 2, 6, 7), (2, 0, 4, 6))
+    mesh = CellMesh.from_polyhedra(
+        points, [[cell[list(face)] for face in faces] for cell in corners]
+    )
+    volumes = np.asarray(prepare_polyhedral_finite_volume_geometry(mesh).cell_volumes)
+    refinement = prepare_common_refinement(mesh, mesh)
+
+    assert refinement.succeeded
+    np.testing.assert_allclose(refinement.source_measures, volumes, rtol=1e-14)
+    np.testing.assert_allclose(
+        np.bincount(
+            refinement.target_cells,
+            weights=refinement.volumes,
+            minlength=refinement.target_cell_count,
+        ),
+        volumes,
+        rtol=1e-13,
+    )
+    # Planar caps of an L-shaped prism that do not fan from their first vertex
+    # have no finite-volume geometry: the cell stays uncertified, with no measure.
+    outline = ((2.0, 0.0), (2.0, 1.0), (1.0, 1.0), (1.0, 2.0), (0.0, 2.0), (0.0, 0.0))
+    prism_points = np.asarray([(x, y, z) for z in (0.0, 1.0) for x, y in outline])
+    count = len(outline)
+    loops = [tuple(reversed(range(count))), tuple(range(count, 2 * count))]
+    loops += [
+        (i, (i + 1) % count, count + (i + 1) % count, count + i) for i in range(count)
+    ]
+    prism = CellMesh.from_polyhedra(prism_points, [loops])
+    invalid = prepare_common_refinement(prism, prism)
+
+    assert invalid.status is CommonRefinementStatus.INVALID_GEOMETRY
+    assert invalid.evidence.invalid_cell_count == 2
+    np.testing.assert_array_equal(invalid.source_measures, (0.0,))
