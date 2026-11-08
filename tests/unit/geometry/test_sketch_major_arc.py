@@ -11,14 +11,14 @@ import pytest
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization._exact_algebraic_geometry import RadicalElement
 from phydrax.geometry.brep._constructors import (
-    ProfileCurveUse,
-    ProfileLine,
-    ProfileLoop,
-    ProfilePlane,
     _arc_circle,
     _line_arc_contact,
     _profile_edge,
     _segment_curve,
+    ProfileCurveUse,
+    ProfileLine,
+    ProfileLoop,
+    ProfilePlane,
 )
 from phydrax.geometry.brep._intersection import ConicParameterEndpoint
 from phydrax.geometry.brep._patches import CircleCurve

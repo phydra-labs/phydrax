@@ -555,14 +555,18 @@ def test_auto_power_site_is_the_first_recovered_carrier_centroid() -> None:
         region_seeds=spec.region_seeds,
     )
     construction = generate_polyhedral_volume(
-        source, source_spec, NativePolyhedralSchedule(),
+        source,
+        source_spec,
+        NativePolyhedralSchedule(),
         frame_id=SpatialCoordinateContract.si().spatial_id,
     )
     carrier = construction.carrier.mesh
     first = np.asarray(carrier.blocks[0].vertices[0], dtype=np.int64)
     expected = np.mean(np.asarray(carrier.coordinates, dtype=np.float64)[first], axis=0)
     np.testing.assert_array_equal(construction.site_points, expected[None, :])
-    np.testing.assert_array_equal(construction.site_weights, np.zeros(1, dtype=np.float64))
+    np.testing.assert_array_equal(
+        construction.site_weights, np.zeros(1, dtype=np.float64)
+    )
     assert construction.site_ids == (
         canonical_fingerprint(
             {

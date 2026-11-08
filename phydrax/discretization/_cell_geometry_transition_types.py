@@ -650,18 +650,18 @@ def _structurally_equal_maps(
     """
     input_chart, input_basis, input_coefficients = input_parts
     mapped_chart, mapped_basis, mapped_coefficients = mapped_parts
-    if (
-        len(input_coefficients) != len(mapped_coefficients)
+    if len(input_coefficients) != len(mapped_coefficients) or any(
+        len(first_row) != len(second_row)
         or any(
-            len(first_row) != len(second_row)
-            or any(
-                type(first) is not type(second) or first != second
-                for first, second in zip(first_row, second_row, strict=True)
-            )
-            for first_row, second_row in zip(input_coefficients, mapped_coefficients, strict=True)
+            type(first) is not type(second) or first != second
+            for first, second in zip(first_row, second_row, strict=True)
+        )
+        for first_row, second_row in zip(
+            input_coefficients, mapped_coefficients, strict=True
         )
     ):
         return False
+
     def same_polynomial(
         first: Mapping[tuple[int, ...], ExactScalar] | RationalPolynomial,
         second: Mapping[tuple[int, ...], ExactScalar] | RationalPolynomial,
@@ -699,7 +699,8 @@ def _structurally_equal_maps(
     equal = equal_bases.get(key)
     if equal is None:
         equal = len(input_basis) == len(mapped_basis) and all(
-            type(first) is dict and type(second) is dict
+            type(first) is dict
+            and type(second) is dict
             and first.keys() == second.keys()
             and all(
                 type(first[key]) is type(second[key]) and first[key] == second[key]
@@ -1469,7 +1470,11 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
             raise TypeError("evidence must be CellGeometryTransitionEvidence.")
         bounded_reconstruction = evidence.kind == "bounded_reconstruction"
         if bounded_reconstruction:
-            if refinement is not None or coarsening is not None or coarsening_partition is not None:
+            if (
+                refinement is not None
+                or coarsening is not None
+                or coarsening_partition is not None
+            ):
                 raise ValueError(
                     "Bounded surface reconstruction does not accept nested ancestry witnesses."
                 )
@@ -1591,8 +1596,14 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
                 fine_ids = np.asarray(group.target_cell_ids, dtype=np.int64)
                 coarse_ids = np.asarray(group.source_cell_ids, dtype=np.int64)
                 if (
-                    any(source_kinds.get(int(value)) != group.target_cell_kind for value in fine_ids)
-                    or any(target_kinds.get(int(value)) != group.source_cell_kind for value in coarse_ids)
+                    any(
+                        source_kinds.get(int(value)) != group.target_cell_kind
+                        for value in fine_ids
+                    )
+                    or any(
+                        target_kinds.get(int(value)) != group.source_cell_kind
+                        for value in coarse_ids
+                    )
                     or seen_fine.intersection(int(value) for value in fine_ids)
                 ):
                     raise ValueError(
@@ -1605,7 +1616,9 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
                 )
                 partition_count += fine_ids.size
             if seen_target_ids & partition_coarse:
-                raise ValueError("A target cell cannot be both directly mapped and coarsened.")
+                raise ValueError(
+                    "A target cell cannot be both directly mapped and coarsened."
+                )
             if coarsening is not None:
                 raise ValueError("Use one complete coarsening partition witness.")
             direct_sources = {
@@ -1646,7 +1659,8 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
         refinement_id = _nested_map_identity(refinement)
         coarsening_id = _nested_map_identity(coarsening)
         coarsening_partition_id = (
-            None if coarsening_partition is None
+            None
+            if coarsening_partition is None
             else _reference_map_identity(coarsening_partition.maps)
         )
         if (
@@ -1654,7 +1668,8 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
             or evidence.refinement_map_count
             != (0 if refinement is None else len(refinement.fine_cell_ids))
             or evidence.coarsening_map_count
-            != (0 if coarsening is None else len(coarsening.fine_cell_ids)) + partition_count
+            != (0 if coarsening is None else len(coarsening.fine_cell_ids))
+            + partition_count
         ):
             raise ValueError(
                 "Geometry transition evidence counts must match retained maps."
@@ -1693,7 +1708,8 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
                 "refinement": refinement_id,
                 "coarsening": coarsening_id,
                 **(
-                    {} if coarsening_partition_id is None
+                    {}
+                    if coarsening_partition_id is None
                     else {"coarsening_partition": coarsening_partition_id}
                 ),
                 "evidence": evidence.evidence_id,
@@ -1792,9 +1808,11 @@ class CellGeometryTransition(StrictModule, NonTrainableState):
             or _nested_map_identity(self.refinement) != self.refinement_id
             or _nested_map_identity(self.coarsening) != self.coarsening_id
             or (
-                None if self.coarsening_partition is None
+                None
+                if self.coarsening_partition is None
                 else _reference_map_identity(self.coarsening_partition.maps)
-            ) != self.coarsening_partition_id
+            )
+            != self.coarsening_partition_id
         ):
             raise ValueError("Retained exact reference-map witnesses have changed.")
         # Exact nested equality or bounded reconstruction evidence is established

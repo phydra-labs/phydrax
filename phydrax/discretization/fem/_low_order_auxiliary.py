@@ -148,9 +148,7 @@ class LowOrderAuxiliaryOperatorPlan(StrictModule, NonTrainableState):
             )
 
         transfer_result = low.transfer(complex)
-        inclusion = coordinate_operator(
-            transfer_result.complex_map.maps[degree]
-        )
+        inclusion = coordinate_operator(transfer_result.complex_map.maps[degree])
         prolongation = restriction(complex) @ inclusion @ adjoint(restriction(low))
         return cls(
             transfer_result,

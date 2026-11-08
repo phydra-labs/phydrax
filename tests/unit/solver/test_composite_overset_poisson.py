@@ -7,33 +7,54 @@ import numpy as np
 import pytest
 from jax import Array
 
-
 import phydrax as phx
 from phydrax._meshcore import meshcore_available
 from phydrax.discretization import CellBlock, CellMesh
-from phydrax.discretization.fem import FiniteElementDiscretization, FiniteElementFieldSpec, FiniteElementPlan, lagrange_element
-from phydrax.geometry._overset_partition import OversetPartition, partition_overset_triangles
-from phydrax.solver._composite_overset_poisson import CompositeOversetPoissonResult, solve_composite_poisson
+from phydrax.discretization.fem import (
+    FiniteElementDiscretization,
+    FiniteElementFieldSpec,
+    FiniteElementPlan,
+    lagrange_element,
+)
+from phydrax.geometry._overset_partition import (
+    OversetPartition,
+    partition_overset_triangles,
+)
+from phydrax.solver._composite_overset_poisson import (
+    CompositeOversetPoissonResult,
+    solve_composite_poisson,
+)
+
 
 type Part = tuple[str, np.ndarray, np.ndarray]
 type PreparedPart = tuple[Part, FiniteElementDiscretization]
 
-pytestmark = pytest.mark.skipif(not meshcore_available(), reason="mesh certification requires meshcore")
+pytestmark = pytest.mark.skipif(
+    not meshcore_available(), reason="mesh certification requires meshcore"
+)
 
 
 def _part(name: str, bounds: tuple[float, float, float, float]) -> PreparedPart:
     x0, y0, x1, y1 = bounds
     points = np.asarray(((x0, y0), (x1, y0), (x1, y1), (x0, y1)), dtype=np.float64)
     triangles = np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int64)
-    mesh = CellMesh(points, (CellBlock(name, "triangle", triangles),), numeric_version=name)
+    mesh = CellMesh(
+        points, (CellBlock(name, "triangle", triangles),), numeric_version=name
+    )
     certified = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
-    disc = FiniteElementPlan(mesh, FiniteElementFieldSpec("u", lagrange_element("triangle", 1)), coordinate_spec=certified.geometry).prepare()
+    disc = FiniteElementPlan(
+        mesh,
+        FiniteElementFieldSpec("u", lagrange_element("triangle", 1)),
+        coordinate_spec=certified.geometry,
+    ).prepare()
     return (name, points, triangles), disc
 
 
-def _fixture(cavities: tuple[np.ndarray, ...] = ()) -> tuple[OversetPartition, dict[str, FiniteElementDiscretization]]:
+def _fixture(
+    cavities: tuple[np.ndarray, ...] = (),
+) -> tuple[OversetPartition, dict[str, FiniteElementDiscretization]]:
     patch, patch_disc = _part("patch", (0.25, 0.2, 0.75, 0.8))
-    background, background_disc = _part("background", (0., 0., 1., 1.))
+    background, background_disc = _part("background", (0.0, 0.0, 1.0, 1.0))
     partition = partition_overset_triangles((patch, background), cavities)
     return partition, {"patch": patch_disc, "background": background_disc}
 
@@ -44,17 +65,29 @@ def _affine(points: Array) -> Array:
 
 def test_coupled_affine_field_and_no_previous_state_dependency() -> None:
     partition, spaces = _fixture()
+
     def zero(points: Array) -> Array:
         return jnp.zeros(points.shape[0])
-    result = solve_composite_poisson(partition, spaces, "u", _affine, solve_tolerance=1e-8, source=zero)
-    again = solve_composite_poisson(partition, spaces, "u", _affine, solve_tolerance=1e-8, source=zero)
+
+    result = solve_composite_poisson(
+        partition, spaces, "u", _affine, solve_tolerance=1e-8, source=zero
+    )
+    again = solve_composite_poisson(
+        partition, spaces, "u", _affine, solve_tolerance=1e-8, source=zero
+    )
     assert any(edge.kind == "inter_part" for edge in result.interfaces)
     for name, disc in spaces.items():
         dofs = np.asarray(disc.dof_maps[0].cell_dofs[0])
         vertices = np.asarray(disc.mesh.blocks[0].vertices)
         coefficients = np.asarray(result.coefficients_by_name[name])
-        np.testing.assert_allclose(coefficients[dofs], np.asarray(_affine(jnp.asarray(disc.mesh.coordinates)))[vertices], atol=1e-7)
-        np.testing.assert_allclose(coefficients, again.coefficients_by_name[name], atol=1e-10)
+        np.testing.assert_allclose(
+            coefficients[dofs],
+            np.asarray(_affine(jnp.asarray(disc.mesh.coordinates)))[vertices],
+            atol=1e-7,
+        )
+        np.testing.assert_allclose(
+            coefficients, again.coefficients_by_name[name], atol=1e-10
+        )
     assert result.linear_residual < 1e-8
     assert result.flux_defect < 1e-8
     assert abs(sum(result.interface_flux_by_name.values())) < 1e-12
@@ -63,12 +96,16 @@ def test_coupled_affine_field_and_no_previous_state_dependency() -> None:
 def test_cut_cavity_unit_source_and_local_conservation() -> None:
     cavity = np.asarray(((0.4, 0.4), (0.6, 0.4), (0.6, 0.6), (0.4, 0.6)))
     partition, spaces = _fixture((cavity,))
-    result = solve_composite_poisson(partition, spaces, "u", _affine, solve_tolerance=1e-8)
+    result = solve_composite_poisson(
+        partition, spaces, "u", _affine, solve_tolerance=1e-8
+    )
     assert float(partition.total_area) == pytest.approx(0.96)
     assert result.source_content == pytest.approx(0.96)
     assert result.boundary_flux == pytest.approx(-0.96, abs=1e-8)
     for name in spaces:
-        assert result.source_area_by_name[name] + result.physical_flux_by_name[name] + result.interface_flux_by_name[name] == pytest.approx(0., abs=1e-8)
+        assert result.source_area_by_name[name] + result.physical_flux_by_name[
+            name
+        ] + result.interface_flux_by_name[name] == pytest.approx(0.0, abs=1e-8)
 
 
 def test_invalid_data_and_tolerance_rejected() -> None:
@@ -76,34 +113,54 @@ def test_invalid_data_and_tolerance_rejected() -> None:
     with pytest.raises(ValueError, match="tolerance"):
         solve_composite_poisson(partition, spaces, "u", _affine, solve_tolerance=0)
     with pytest.raises(ValueError, match="finite scalar"):
-        solve_composite_poisson(partition, spaces, "u", lambda p: jnp.full((p.shape[0],), jnp.nan), solve_tolerance=1e-8)
+        solve_composite_poisson(
+            partition,
+            spaces,
+            "u",
+            lambda p: jnp.full((p.shape[0],), jnp.nan),
+            solve_tolerance=1e-8,
+        )
 
 
 def test_source_changes_both_coupled_fields() -> None:
     partition, spaces = _fixture()
     zero = lambda points: jnp.zeros(points.shape[0])
-    baseline = solve_composite_poisson(partition, spaces, "u", _affine, solve_tolerance=1e-8, source=zero)
-    forced = solve_composite_poisson(partition, spaces, "u", _affine, solve_tolerance=1e-8)
+    baseline = solve_composite_poisson(
+        partition, spaces, "u", _affine, solve_tolerance=1e-8, source=zero
+    )
+    forced = solve_composite_poisson(
+        partition, spaces, "u", _affine, solve_tolerance=1e-8
+    )
     for name in spaces:
-        assert np.linalg.norm(np.asarray(forced.coefficients_by_name[name]) -
-                              np.asarray(baseline.coefficients_by_name[name])) > 1e-6
+        assert (
+            np.linalg.norm(
+                np.asarray(forced.coefficients_by_name[name])
+                - np.asarray(baseline.coefficients_by_name[name])
+            )
+            > 1e-6
+        )
 
 
 def test_fully_covered_part_has_no_artificial_unknowns() -> None:
-    first, first_disc = _part("first", (0., 0., 1., 1.))
-    hidden, hidden_disc = _part("hidden", (0., 0., 1., 1.))
+    first, first_disc = _part("first", (0.0, 0.0, 1.0, 1.0))
+    hidden, hidden_disc = _part("hidden", (0.0, 0.0, 1.0, 1.0))
     partition = partition_overset_triangles((first, hidden), ())
-    result = solve_composite_poisson(partition, {"first": first_disc, "hidden": hidden_disc},
-                                     "u", _affine, solve_tolerance=1e-8)
+    result = solve_composite_poisson(
+        partition,
+        {"first": first_disc, "hidden": hidden_disc},
+        "u",
+        _affine,
+        solve_tolerance=1e-8,
+    )
     np.testing.assert_array_equal(result.coefficients_by_name["hidden"], 0)
     assert result.source_area_by_name["hidden"] == 0
-    assert result.source_content == pytest.approx(1.)
+    assert result.source_content == pytest.approx(1.0)
 
 
 def test_three_part_manufactured_unit_source_and_cross_part_response() -> None:
     first, first_disc = _part("first", (0.15, 0.15, 0.65, 0.75))
     second, second_disc = _part("second", (0.4, 0.25, 0.85, 0.85))
-    background, background_disc = _part("background", (0., 0., 1., 1.))
+    background, background_disc = _part("background", (0.0, 0.0, 1.0, 1.0))
     spaces = {"first": first_disc, "second": second_disc, "background": background_disc}
     partition = partition_overset_triangles((first, second, background), ())
 
@@ -113,24 +170,35 @@ def test_three_part_manufactured_unit_source_and_cross_part_response() -> None:
         return 5 + x + y - (x * x + y * y) / 4
 
     result = solve_composite_poisson(partition, spaces, "u", exact, solve_tolerance=1e-9)
+
     def perturbed_source(points: Array) -> Array:
-        return 1.0 + jnp.exp(-100 * ((points[:, 0] - 0.25) ** 2 +
-                                     (points[:, 1] - 0.3) ** 2))
+        return 1.0 + jnp.exp(
+            -100 * ((points[:, 0] - 0.25) ** 2 + (points[:, 1] - 0.3) ** 2)
+        )
+
     perturbed = solve_composite_poisson(
         partition, spaces, "u", exact, solve_tolerance=1e-9, source=perturbed_source
     )
 
-    assert float(partition.total_area) == pytest.approx(1.)
-    assert result.source_content == pytest.approx(1.)
+    assert float(partition.total_area) == pytest.approx(1.0)
+    assert result.source_content == pytest.approx(1.0)
     assert result.normalized_residual <= 1e-9
     assert result.flux_defect <= 1e-8
     assert bool(jnp.all(result.solve_result.successful))
     assert abs(sum(result.interface_flux_by_name.values())) <= 1e-10
     for name in spaces:
         assert result.source_area_by_name[name] > 0
-        assert abs(result.source_area_by_name[name] + result.physical_flux_by_name[name] +
-                   result.interface_flux_by_name[name]) <= 1e-8
-        delta = np.asarray(perturbed.coefficients_by_name[name]) - np.asarray(result.coefficients_by_name[name])
+        assert (
+            abs(
+                result.source_area_by_name[name]
+                + result.physical_flux_by_name[name]
+                + result.interface_flux_by_name[name]
+            )
+            <= 1e-8
+        )
+        delta = np.asarray(perturbed.coefficients_by_name[name]) - np.asarray(
+            result.coefficients_by_name[name]
+        )
         assert np.linalg.norm(delta) > 1e-9
 
     # Integrate the P1 solution QoI and a degree-two quadrature estimate of
@@ -144,8 +212,11 @@ def test_three_part_manufactured_unit_source_and_cross_part_response() -> None:
         coordinates = np.asarray(disc.default_runtime.coordinates)[vertices]
         dofs = np.asarray(disc.dof_maps[0].cell_dofs[0])[cell]
         coefficients = np.asarray(result.coefficients_by_name[piece.part_name])[dofs]
-        inverse = np.linalg.inv(np.column_stack((coordinates[1] - coordinates[0],
-                                                coordinates[2] - coordinates[0])))
+        inverse = np.linalg.inv(
+            np.column_stack(
+                (coordinates[1] - coordinates[0], coordinates[2] - coordinates[0])
+            )
+        )
         polygon = np.asarray(piece.vertices, dtype=float)
         for i in range(1, len(polygon) - 1):
             triangle = polygon[[0, i, i + 1]]
@@ -156,12 +227,16 @@ def test_three_part_manufactured_unit_source_and_cross_part_response() -> None:
             basis = np.column_stack((1 - uv.sum(axis=1), uv))
             values = basis @ coefficients
             qoi += area * float(np.mean(values))
-            squared_error += area * float(np.mean((values - np.asarray(exact(jnp.asarray(points)))) ** 2))
+            squared_error += area * float(
+                np.mean((values - np.asarray(exact(jnp.asarray(points)))) ** 2)
+            )
     assert np.isfinite(qoi)
     assert np.isfinite(squared_error) and squared_error > 0
 
 
-def _refined_part(name: str, bounds: tuple[float, float, float, float], subdivisions: int) -> PreparedPart:
+def _refined_part(
+    name: str, bounds: tuple[float, float, float, float], subdivisions: int
+) -> PreparedPart:
     x0, y0, x1, y1 = bounds
     xs = np.linspace(x0, x1, subdivisions + 1)
     ys = np.linspace(y0, y1, subdivisions + 1)
@@ -173,23 +248,30 @@ def _refined_part(name: str, bounds: tuple[float, float, float, float], subdivis
             b, c, d = a + 1, a + subdivisions + 2, a + subdivisions + 1
             cells.extend(((a, b, c), (a, c, d)))
     triangles = np.asarray(cells, dtype=np.int64)
-    mesh = CellMesh(points, (CellBlock(name, "triangle", triangles),),
-                    numeric_version=f"{name}-{subdivisions}")
+    mesh = CellMesh(
+        points,
+        (CellBlock(name, "triangle", triangles),),
+        numeric_version=f"{name}-{subdivisions}",
+    )
     certified = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
     disc = FiniteElementPlan(
-        mesh, FiniteElementFieldSpec("u", lagrange_element("triangle", 1)),
+        mesh,
+        FiniteElementFieldSpec("u", lagrange_element("triangle", 1)),
         coordinate_spec=certified.geometry,
     ).prepare()
     return (name, points, triangles), disc
 
 
-def _manufactured_metrics(result: CompositeOversetPoissonResult, spaces: dict[str, FiniteElementDiscretization]) -> tuple[float, float]:
+def _manufactured_metrics(
+    result: CompositeOversetPoissonResult, spaces: dict[str, FiniteElementDiscretization]
+) -> tuple[float, float]:
     # Six-point degree-four triangle rule exactly integrates the square of
     # P1 minus the quadratic manufactured field, up to floating arithmetic.
     a, b = 0.816847572980459, 0.091576213509771
     c, d = 0.108103018168070, 0.445948490915965
-    barycentric = np.asarray(((a, b, b), (b, a, b), (b, b, a),
-                              (c, d, d), (d, c, d), (d, d, c)))
+    barycentric = np.asarray(
+        ((a, b, b), (b, a, b), (b, b, a), (c, d, d), (d, c, d), (d, d, c))
+    )
     weights = np.asarray((0.109951743655322,) * 3 + (0.223381589678011,) * 3)
     error = 0.0
     qoi = 0.0
@@ -199,8 +281,11 @@ def _manufactured_metrics(result: CompositeOversetPoissonResult, spaces: dict[st
         coordinates = np.asarray(disc.default_runtime.coordinates)[vertices]
         dofs = np.asarray(disc.dof_maps[0].cell_dofs[0])[piece.cell_index]
         values = np.asarray(result.coefficients_by_name[piece.part_name])[dofs]
-        inverse = np.linalg.inv(np.column_stack((coordinates[1] - coordinates[0],
-                                                coordinates[2] - coordinates[0])))
+        inverse = np.linalg.inv(
+            np.column_stack(
+                (coordinates[1] - coordinates[0], coordinates[2] - coordinates[0])
+            )
+        )
         polygon = np.asarray(piece.vertices, dtype=np.float64)
         for i in range(1, len(polygon) - 1):
             triangle = polygon[[0, i, i + 1]]
@@ -215,24 +300,28 @@ def _manufactured_metrics(result: CompositeOversetPoissonResult, spaces: dict[st
     return float(np.sqrt(error)), float(qoi)
 
 
-def test_three_part_manufactured_refinement_convergence(record_property: Callable[[str, float], None]) -> None:
+def test_three_part_manufactured_refinement_convergence(
+    record_property: Callable[[str, float], None],
+) -> None:
     metrics = []
     for subdivisions in (2, 4):
         parts_and_spaces = (
             _refined_part("first", (0.15, 0.15, 0.65, 0.75), subdivisions),
             _refined_part("second", (0.4, 0.25, 0.85, 0.85), subdivisions),
-            _refined_part("background", (0., 0., 1., 1.), subdivisions),
+            _refined_part("background", (0.0, 0.0, 1.0, 1.0), subdivisions),
         )
         parts = tuple(item[0] for item in parts_and_spaces)
         spaces = {part[0]: disc for part, disc in parts_and_spaces}
         partition = partition_overset_triangles(parts, ())
+
         def boundary(points: Array) -> Array:
             x, y = points[:, 0], points[:, 1]
             return 5 + x + y - (x * x + y * y) / 4
+
         result = solve_composite_poisson(
             partition, spaces, "u", boundary, solve_tolerance=1e-9
         )
-        assert float(partition.total_area) == pytest.approx(1.)
+        assert float(partition.total_area) == pytest.approx(1.0)
         assert result.normalized_residual <= 1e-9
         assert result.flux_defect <= 1e-8
         assert bool(jnp.all(result.solve_result.successful))

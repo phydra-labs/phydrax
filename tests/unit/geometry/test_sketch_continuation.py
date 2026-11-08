@@ -13,10 +13,10 @@ from jax.typing import ArrayLike
 from numpy.typing import NDArray
 
 from phydrax.geometry.design._continuation import (
+    continue_sketch,
     SketchBranchWitness,
     SketchContinuationReference,
     SketchContinuationResult,
-    continue_sketch,
 )
 from phydrax.geometry.design._schema import ParameterId
 from phydrax.geometry.design._sketch import (

@@ -141,9 +141,7 @@ def test_fem_libparanumal_absorption_scenario_3() -> None:
         _mesh(), family="trimmed", order=1
     )
     transfer_result = complex_.transfer(complex_)
-    interpolation = phx.linalg.coordinate_operator(
-        transfer_result.complex_map.maps[0]
-    )
+    interpolation = phx.linalg.coordinate_operator(transfer_result.complex_map.maps[0])
     anterpolation = phx.linalg.adjoint(interpolation)
     auxiliary_plan = phx.discretization.fem.LowOrderAuxiliaryOperatorPlan(
         transfer_result,

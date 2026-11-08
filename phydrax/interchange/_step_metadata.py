@@ -123,5 +123,3 @@ class StepEntityMetadata(StrictModule):
         if unique and len(entities) > 1:
             raise StepMetadataConflict(entities)
         return entities
-
-

@@ -22,6 +22,7 @@ from ..geometry._surface_source_support import SurfaceSourceCharts
 from ._layer_core_association import composite_region_identity
 from ._layer_core_topology import combined_domain, prepare_identity
 
+
 if TYPE_CHECKING:
     from .providers._native_sources import NativeLayerCoreSource
 

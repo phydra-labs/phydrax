@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Any
 
@@ -202,6 +203,17 @@ def _repository(path: Path) -> POSIXArtifactRepository:
     )
 
 
+def _assert_repository_refused(path: Path) -> None:
+    # POSIXArtifactRepository refuses non-POSIX hosts at construction.
+    with pytest.raises(
+        OSError,
+        match=r"^POSIXArtifactRepository requires a POSIX filesystem backend\.$",
+    ) as refusal:
+        _repository(path)
+    assert type(refusal.value) is OSError
+    assert not path.exists()
+
+
 def test_distributed_wave_particle_gas_rollout_is_atomic_and_matches_single_part() -> (
     None
 ):
@@ -241,6 +253,9 @@ def test_distributed_checkpoint_has_exact_coverage_and_restores_into_destination
     distributed = execution.initialize(
         state, rng_counters=jnp.arange(16, dtype=jnp.uint64)
     )
+    if os.name != "posix":
+        _assert_repository_refused(tmp_path / "distributed-mixed")
+        return
     repository = _repository(tmp_path / "distributed-mixed")
     assert distributed.gas is not None
     checkpoint_gas = distributed.gas
@@ -315,6 +330,9 @@ def test_checkpoint_restore_rejects_incomplete_and_identity_substitution(
 ) -> None:
     _, state, execution = _workflow()
     distributed = execution.initialize(state)
+    if os.name != "posix":
+        _assert_repository_refused(tmp_path / "distributed-mixed-rejection")
+        return
     repository = _repository(tmp_path / "distributed-mixed-rejection")
     publish_process_checkpoint(
         repository,

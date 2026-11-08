@@ -269,7 +269,9 @@ def test_doubly_wrapped_material_l_channel_is_refused() -> None:
 
 def test_mapped_contact_filter_preserves_periodic_overlap_detection() -> None:
     from phydrax.geometry._embedding_cells import prepare_embedding_cells
-    from phydrax.geometry._periodic_mapped_contacts import certify_periodic_mapped_contacts
+    from phydrax.geometry._periodic_mapped_contacts import (
+        certify_periodic_mapped_contacts,
+    )
 
     for winding, expected in ((1, "certified"), (2, "violated")):
         mesh, geometry = _material_l_channel(winding_multiplier=winding)
@@ -280,7 +282,9 @@ def test_mapped_contact_filter_preserves_periodic_overlap_detection() -> None:
         )
         assert result.status == expected, result.findings
         if winding == 2:
-            assert any(check == "periodic_cell_contact" for check, _, _ in result.findings)
+            assert any(
+                check == "periodic_cell_contact" for check, _, _ in result.findings
+            )
 
 
 def test_folded_material_l_channel_is_invalid() -> None:

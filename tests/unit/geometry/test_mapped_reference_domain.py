@@ -45,7 +45,9 @@ def test_piecewise_domain_requires_closed_positive_source_boundary() -> None:
         )
 
 
-def test_mapped_reference_domain_resolves_source_vertex_occurrences_and_exact_measure() -> None:
+def test_mapped_reference_domain_resolves_source_vertex_occurrences_and_exact_measure() -> (
+    None
+):
     reference_domain, mesh, geometry = _tetrahedral_reference()
     domain = MappedReferenceDomain(
         reference_domain,
@@ -64,7 +66,9 @@ def test_mapped_reference_domain_resolves_source_vertex_occurrences_and_exact_me
     assert row == 2
     assert domain.root_vertex_id(row) == 17
     assert domain.exact_region_measures() == (Fraction(1, 6),)
-    assert domain.coordinate_contract.spatial_id == SpatialCoordinateContract.si().spatial_id
+    assert (
+        domain.coordinate_contract.spatial_id == SpatialCoordinateContract.si().spatial_id
+    )
     local_contract = SpatialCoordinateContract(
         domain.coordinate_contract.length_unit,
         reference_frame="part-local",

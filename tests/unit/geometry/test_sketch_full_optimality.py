@@ -10,10 +10,10 @@ import pytest
 from phydrax.geometry.design import FixedPoint, Sketch
 from phydrax.geometry.design._solve import solve_prepared_sketch_residual
 from phydrax.optim import (
+    least_squares,
     LevenbergMarquardt,
     NonlinearLeastSquaresProblem,
     OptimizationTermination,
-    least_squares,
 )
 
 

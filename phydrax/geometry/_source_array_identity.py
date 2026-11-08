@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 """Bit-exact dynamic source-array identity checks compatible with JAX."""
+
 from __future__ import annotations
 
 import jax
@@ -40,13 +41,14 @@ def source_arrays_equal(first: ArrayLike, second: ArrayLike, /) -> Array:
     left, right = jnp.asarray(first), jnp.asarray(second)
     if left.shape != right.shape or left.dtype != right.dtype:
         raise ValueError("Source arrays must have the same shape and dtype.")
-    if (jnp.issubdtype(left.dtype, jnp.floating)
-            or jnp.issubdtype(left.dtype, jnp.complexfloating)):
+    if jnp.issubdtype(left.dtype, jnp.floating) or jnp.issubdtype(
+        left.dtype, jnp.complexfloating
+    ):
         left, right = _fixed_source_array(left), _fixed_source_array(right)
     if jnp.issubdtype(left.dtype, jnp.complexfloating):
-        return jnp.all(_floating_bits(jnp.real(left)) == _floating_bits(jnp.real(right))) & jnp.all(
-            _floating_bits(jnp.imag(left)) == _floating_bits(jnp.imag(right))
-        )
+        return jnp.all(
+            _floating_bits(jnp.real(left)) == _floating_bits(jnp.real(right))
+        ) & jnp.all(_floating_bits(jnp.imag(left)) == _floating_bits(jnp.imag(right)))
     if jnp.issubdtype(left.dtype, jnp.floating):
         return jnp.all(_floating_bits(left) == _floating_bits(right))
     if jnp.issubdtype(left.dtype, jnp.integer) or jnp.issubdtype(left.dtype, jnp.bool_):

@@ -736,8 +736,15 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         target_stencil: GatherStencil,
         target_measure: ArrayLike,
         /,
+        *,
+        target_valid: ArrayLike | None = None,
     ) -> SplatDepositResult:
-        """Deposit onto an explicit logical-to-storage stencil without dense output."""
+        """Deposit onto an explicit logical-to-storage stencil without dense output.
+
+        ``target_valid`` marks the logical slots of padded compact storage; the
+        balance evidence then reduces only those slots. ``None`` means every
+        storage slot is logical.
+        """
         self._require_state(state)
         if target_stencil.relation.output_shape != state.stencil.relation.output_shape:
             raise ValueError("target_stencil must preserve the particle output shape.")
@@ -754,6 +761,11 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         measure = jnp.asarray(target_measure, dtype=target_content.real.dtype)
         if measure.shape != (target_stencil.source_size,):
             raise ValueError("target_measure must have one value per storage site.")
+        storage_valid = (
+            None if target_valid is None else jnp.asarray(target_valid, dtype=jnp.bool_)
+        )
+        if storage_valid is not None and storage_valid.shape != measure.shape:
+            raise ValueError("target_valid must have one value per storage site.")
         measure_shape = measure.shape + (1,) * (target_content.ndim - 1)
         density = target_content / measure.reshape(measure_shape)
         balance = self._balance_evidence(
@@ -761,6 +773,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
             source,
             target_flat,
             target_size=target_stencil.source_size,
+            target_valid=storage_valid,
         )
         successful = (
             state.successful
@@ -923,6 +936,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         /,
         *,
         target_size: int | None = None,
+        target_valid: Array | None = None,
     ) -> SplatBalanceEvidence:
         active = state.source_active_mask
         active_mask = active.reshape(active.shape + (1,) * (source.ndim - 1))
@@ -948,8 +962,17 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         active_abs = certified_sum(
             jnp.abs(active_values), certification, axis=0, where=active_mask
         )
-        target_total = certified_sum(target_flat, certification, axis=0)
-        target_abs = certified_sum(jnp.abs(target_flat), certification, axis=0)
+        target_mask = (
+            None
+            if target_valid is None
+            else target_valid.reshape(target_valid.shape + (1,) * (target_flat.ndim - 1))
+        )
+        target_total = certified_sum(
+            target_flat, certification, axis=0, where=target_mask
+        )
+        target_abs = certified_sum(
+            jnp.abs(target_flat), certification, axis=0, where=target_mask
+        )
         defect = active_total - target_total - dropped_total
         maximum_defect = jnp.max(jnp.abs(defect), initial=0.0)
         partition_defect = jnp.max(
@@ -970,8 +993,22 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         )
         real_dtype = jnp.asarray(active_total).real.dtype
         epsilon = jnp.finfo(real_dtype).eps
-        output_size = self.target_size if target_size is None else int(target_size)
-        operation_count = max(2, self.route_count + self.source_capacity + output_size)
+        # Rounding enters only through logical terms: the routes of active
+        # sources, the active sources and the logical target slots. A fully
+        # active, unpadded configuration counts exactly its capacities. Counts
+        # combine in the real dtype, exactly while they fit its significand.
+        active_count = jnp.sum(active, dtype=jnp.int32).astype(real_dtype)
+        target_count = (
+            jnp.asarray(
+                self.target_size if target_size is None else int(target_size),
+                dtype=real_dtype,
+            )
+            if target_valid is None
+            else jnp.sum(target_valid, dtype=jnp.int32).astype(real_dtype)
+        )
+        operation_count = jnp.maximum(
+            2.0, active_count * (self.route_width + 1) + target_count
+        )
         accumulated_epsilon = operation_count * epsilon
         roundoff_model_valid = accumulated_epsilon < 0.5
         gamma = accumulated_epsilon / jnp.maximum(1.0 - accumulated_epsilon, epsilon)

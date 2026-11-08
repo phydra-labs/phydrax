@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from _collections_abc import dict_values
 from collections import defaultdict
 from collections.abc import Callable
 from fractions import Fraction
@@ -888,6 +889,142 @@ def test_mixed_canonical_simplex_kind_survives_refine_coarsen(
     assert set(np.asarray(restored.entity_set(3).entity_ids)) == set(
         np.asarray(mesh.entity_set(3).entity_ids)
     )
+
+
+_FacetKey = tuple[int, ...]
+_FacetOwners = list[tuple[int, int, tuple[int, ...]]]
+
+
+def _hex_column(count: int, /) -> CellMesh:
+    square = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+    points = np.asarray(
+        [(x, y, float(z)) for z in range(count + 1) for x, y in square],
+        dtype=np.float64,
+    )
+    cells = np.asarray(
+        [tuple(range(4 * layer, 4 * layer + 8)) for layer in range(count)],
+        dtype=np.int32,
+    )
+    return CellMesh(
+        points,
+        (
+            CellBlock(
+                "hexahedra",
+                "hexahedron",
+                cells,
+                global_ids=np.arange(1000, 1000 + count, dtype=np.int64),
+            ),
+        ),
+        vertex_global_ids=np.arange(5000, 5000 + points.shape[0], dtype=np.int64),
+    )
+
+
+def _coarsening_work(
+    count: int, monkeypatch: pytest.MonkeyPatch, /
+) -> tuple[int, int, int, int]:
+    """Face-table scans per candidate pass and key lookups per retired-record pass."""
+
+    import phydrax.meshing._mixed_adaptation as mixed
+
+    mesh = _hex_column(count)
+    refined = adapt_mixed_mesh(
+        mesh, refine_cell_ids=np.asarray(mesh.entity_set(3).entity_ids)
+    )
+    fine, _, _ = assemble_topology_edit(
+        mesh, refined.edit, numeric_version=f"hex-column-{count}"
+    )
+    inside = {"candidates": False, "retired": False}
+    counts = {"scans": 0, "lookups": 0, "records": 0, "prior": 0}
+
+    class CountingOwners(dict[_FacetKey, _FacetOwners]):
+        def values(self) -> dict_values[_FacetKey, _FacetOwners]:
+            if inside["candidates"]:
+                counts["scans"] += 1
+            return super().values()
+
+    owners = mixed._mesh_facet_owners
+    candidates = mixed._coarsening_candidates
+    retired = mixed._retired_entity_records
+    keys = mixed.entity_keys
+    rows = mixed.key_rows
+
+    def counting_owners(cells: list[mixed._Cell], /) -> dict[_FacetKey, _FacetOwners]:
+        return CountingOwners(owners(cells))
+
+    def counting_candidates(
+        cells: list[mixed._Cell],
+        marks: set[int],
+        hierarchy: MixedAdaptationHierarchy | None,
+        protected_vertices: set[int],
+        protected_cells: set[int],
+        root_points: dict[int, mixed._PointKey],
+        /,
+    ) -> tuple[list[MixedSibling], set[int], set[int]]:
+        inside["candidates"] = True
+        result = candidates(
+            cells, marks, hierarchy, protected_vertices, protected_cells, root_points
+        )
+        inside["candidates"] = False
+        counts["records"] = len(result[0])
+        return result
+
+    def counting_retired(
+        source: CellMesh,
+        target: CellMesh,
+        prior: tuple[tuple[int, tuple[int, ...], int], ...],
+        /,
+    ) -> tuple[tuple[int, tuple[int, ...], int], ...]:
+        counts["prior"] = len(prior)
+        inside["retired"] = True
+        result = retired(source, target, prior)
+        inside["retired"] = False
+        return result
+
+    def counting_keys(mesh: CellMesh, dimension: int, /) -> np.ndarray:
+        if inside["retired"]:
+            counts["lookups"] += 1
+        return keys(mesh, dimension)
+
+    def counting_rows(table: np.ndarray, queries: np.ndarray, /) -> np.ndarray:
+        if inside["retired"]:
+            counts["lookups"] += 1
+        return rows(table, queries)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(mixed, "_mesh_facet_owners", counting_owners)
+        patch.setattr(mixed, "_coarsening_candidates", counting_candidates)
+        patch.setattr(mixed, "_retired_entity_records", counting_retired)
+        patch.setattr(mixed, "entity_keys", counting_keys)
+        patch.setattr(mixed, "key_rows", counting_rows)
+        coarsened = adapt_mixed_mesh(
+            fine,
+            coarsen_cell_ids=np.asarray(fine.entity_set(3).entity_ids),
+            hierarchy=refined.hierarchy,
+        )
+    restored, _, _ = assemble_topology_edit(
+        fine, coarsened.edit, numeric_version=f"hex-column-{count}-restored"
+    )
+    assert set(np.asarray(restored.entity_set(3).entity_ids).tolist()) == set(
+        range(1000, 1000 + count)
+    )
+    return counts["records"], counts["prior"], counts["scans"], counts["lookups"]
+
+
+def test_mixed_coarsening_work_is_independent_of_sibling_and_retired_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Coarsening scans the face table once and batches retired-key lookups.
+
+    Before, every accepted sibling record rescanned all faces and every prior
+    retired entity recomputed the target's entity keys, so R003's layer-core
+    round trip spent hours in quadratic coarsening.
+    """
+
+    small = _coarsening_work(1, monkeypatch)
+    large = _coarsening_work(4, monkeypatch)
+    assert small[0] == 1 and large[0] == 4
+    assert 0 < small[1] < large[1]
+    assert small[2:] == large[2:]
 
 
 def test_mixed_simplex_and_prism_restore_original_root_maps(

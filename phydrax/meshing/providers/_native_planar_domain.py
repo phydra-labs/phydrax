@@ -54,7 +54,9 @@ def source_arrays(
         embedded_vertices = np.asarray(source.embedded.vertices, dtype=np.float64)
         embedded_edges = np.asarray(source.embedded.edges, dtype=np.int64)
         edges = np.concatenate((edges, embedded_edges + vertices.shape[0]), axis=0)
-        loops = np.concatenate((loops, np.full(embedded_edges.shape[0], -1, dtype=np.int64)))
+        loops = np.concatenate(
+            (loops, np.full(embedded_edges.shape[0], -1, dtype=np.int64))
+        )
         vertices = np.concatenate((vertices, embedded_vertices), axis=0)
     return vertices, edges, loops
 
@@ -79,8 +81,6 @@ def source_entity_arrays(
             )
         )
     return vertices, edges
-
-
 
 
 def size_control_issues(
@@ -129,7 +129,9 @@ def size_control_issues(
         ):
             issues.append("size controls scoped to the source region or existing edges")
     if not any(control.scope.entity_dimension == 2 for control in uniform_controls):
-        issues.append("a region-scoped physical resolution control for the source-owned planar region")
+        issues.append(
+            "a region-scoped physical resolution control for the source-owned planar region"
+        )
     for feature in specification.protected_features:
         feature_scope = feature.scope
         if (feature_scope.source_id, feature_scope.source_revision) != (
@@ -166,7 +168,9 @@ def size_control_issues(
         else:
             issues.append(f"{feature.feature_kind.value} protected features")
     if specification.region_controls:
-        issues.append("region controls not represented by the single-region planar source")
+        issues.append(
+            "region controls not represented by the single-region planar source"
+        )
     if specification.patch_controls:
         issues.append("patch/interface controls not represented by the planar source")
     if specification.periodic_constraints:
@@ -198,7 +202,9 @@ def scoped_triangulation(
 
 def interior_point(points: np.ndarray, loop: np.ndarray, /) -> np.ndarray:
     """Choose an interior point from an exact CDT of one simple source loop."""
-    local_edges = np.stack((np.arange(loop.size), np.roll(np.arange(loop.size), -1)), axis=1)
+    local_edges = np.stack(
+        (np.arange(loop.size), np.roll(np.arange(loop.size), -1)), axis=1
+    )
     triangulation = scoped_triangulation(points[loop], local_edges.astype(np.int32))
     if triangulation.triangles.shape[0] == 0:
         raise MeshingFailure(
@@ -222,7 +228,9 @@ def _segment_distances(points: np.ndarray, segments: np.ndarray, /) -> np.ndarra
         if squared == 0.0:
             raise ValueError("Planar size-field source edges must be nondegenerate.")
         along = np.clip(((points - start) @ direction) / squared, 0.0, 1.0)
-        result[:, column] = np.linalg.norm(points - (start + along[:, None] * direction), axis=1)
+        result[:, column] = np.linalg.norm(
+            points - (start + along[:, None] * direction), axis=1
+        )
     return result
 
 
@@ -243,7 +251,9 @@ def _field_sizes(
         return sizes
     if patch_segments.shape != (patch_sizes.size, 2, points.shape[1]):
         raise ValueError("Planar patch segments and patch sizes must align.")
-    for column, (segment, target) in enumerate(zip(patch_segments, patch_sizes, strict=True)):
+    for column, (segment, target) in enumerate(
+        zip(patch_segments, patch_sizes, strict=True)
+    ):
         distance = _segment_distances(points, segment[None, ...])[:, 0]
         if point_sources is not None and patch_source_rows is not None:
             if point_sources.shape != (points.shape[0],):
@@ -305,9 +315,7 @@ def _resolve_field(
             f"planar region size controls do not resolve: {error}",
             provider_code="native_planar_sizing",
             stage="source_inspection",
-            entity_ids=tuple(
-                int(value) for value in region_scope_entity_ids.tolist()
-            ),
+            entity_ids=tuple(int(value) for value in region_scope_entity_ids.tolist()),
         ) from error
     selected_ids = (
         np.unique(
@@ -325,9 +333,7 @@ def _resolve_field(
     sizes = np.empty((0,), dtype=np.float64)
     reports = [region_report.report_id]
     if rows.size:
-        midpoints = 0.5 * (
-            vertices[edges[rows, 0]] + vertices[edges[rows, 1]]
-        )
+        midpoints = 0.5 * (vertices[edges[rows, 0]] + vertices[edges[rows, 1]])
         try:
             patch_field, patch_report = resolve_size_controls(
                 edge_controls,
@@ -342,9 +348,7 @@ def _resolve_field(
                 f"planar source-edge size controls do not resolve: {error}",
                 provider_code="native_planar_sizing",
                 stage="source_inspection",
-                entity_ids=tuple(
-                    int(value) for value in edge_entity_ids[rows].tolist()
-                ),
+                entity_ids=tuple(int(value) for value in edge_entity_ids[rows].tolist()),
             ) from error
         sizes = np.asarray(patch_field.values, dtype=np.float64)
         reports.append(patch_report.report_id)
@@ -355,6 +359,8 @@ def _resolve_field(
     ]
     slope = min(growth_rates) - 1.0 if growth_rates else math.inf
     return float(np.asarray(region_field.values)[0]), rows, sizes, slope, tuple(reports)
+
+
 @final
 class PreparedPlanarDomain(StrictModule, NonTrainableState):
     """Immutable native input complex with per-vertex source ancestry."""
@@ -383,7 +389,10 @@ class PreparedPlanarDomain(StrictModule, NonTrainableState):
 
     @checked
     def __init__(
-        self, source: sources_owner.NativePlanarSource, specification: SurfaceMeshingSpec, /
+        self,
+        source: sources_owner.NativePlanarSource,
+        specification: SurfaceMeshingSpec,
+        /,
     ) -> None:
         vertices, edges, loops = source_arrays(source)
         vertex_ids, edge_ids = source_entity_arrays(source)
@@ -409,9 +418,7 @@ class PreparedPlanarDomain(StrictModule, NonTrainableState):
             region_edges[offsets[index] : offsets[index + 1], 0]
             for index in range(offsets.size - 1)
         ]
-        interior_points = [
-            interior_point(vertices, loop) for loop in loop_vertices
-        ]
+        interior_points = [interior_point(vertices, loop) for loop in loop_vertices]
         region_size, patch_rows, patch_sizes, slope, resolutions = _resolve_field(
             specification,
             vertices,
@@ -454,9 +461,7 @@ class PreparedPlanarDomain(StrictModule, NonTrainableState):
                 selected = np.isin(
                     edge_ids, np.asarray(feature.scope.entity_ids, dtype=np.int64)
                 )
-                bounds[selected] = np.minimum(
-                    bounds[selected], feature.maximum_deviation
-                )
+                bounds[selected] = np.minimum(bounds[selected], feature.maximum_deviation)
         holes = np.asarray(interior_points[1:], dtype=np.float64).reshape((-1, 2))
         self.source = source
         self.points = points
@@ -512,8 +517,6 @@ class PreparedPlanarDomain(StrictModule, NonTrainableState):
 
     def holes_for_cdt(self, /) -> np.ndarray | None:
         return self.holes if self.holes.size else None
-
-
 
 
 def split_constraints(
@@ -581,9 +584,7 @@ def split_constraints(
                 stage="source_inspection",
                 entity_ids=tuple(
                     int(value)
-                    for value in np.unique(
-                        source_edge_ids[owner[unresolved]]
-                    ).tolist()
+                    for value in np.unique(source_edge_ids[owner[unresolved]]).tolist()
                 ),
             )
         if not np.any(long):
@@ -654,9 +655,6 @@ def constrained_edges(
     return pairs[first], source_rows[first]
 
 
-
-
-
 def source_edge_parameters(
     prepared: PreparedPlanarDomain,
     triangulation: triangulation_owner.ConstrainedDelaunayTriangulation,
@@ -673,7 +671,9 @@ def source_edge_parameters(
             points[:prepared_count], np.asarray(prepared.points, dtype=np.float64)
         )
     ):
-        raise ValueError("Native CDT output must preserve every prepared source point in its input prefix.")
+        raise ValueError(
+            "Native CDT output must preserve every prepared source point in its input prefix."
+        )
     sources = np.full(points.shape[0], -1, dtype=np.int64)
     parameters = [Fraction(0) for _ in range(points.shape[0])]
     generated = np.flatnonzero(prepared.point_sources >= 0)
@@ -692,18 +692,27 @@ def source_edge_parameters(
         raise ValueError(
             f"Native CDT constraint ancestry for vertex {vertex} does not lie on source edge entity {int(prepared.source_edge_ids[edge])}."
         )
+
     native_sources = np.asarray(triangulation.constraint_sources, dtype=np.int64)
     native_parents = np.asarray(triangulation.constraint_parents, dtype=np.int64)
     native_ratios = np.asarray(triangulation.constraint_ratios, dtype=np.float64)
-    if native_sources.shape != (points.shape[0],) or native_parents.shape != (points.shape[0], 2) or native_ratios.shape != (points.shape[0],):
-        raise ValueError("Native CDT constraint ancestry arrays must align with output points.")
+    if (
+        native_sources.shape != (points.shape[0],)
+        or native_parents.shape != (points.shape[0], 2)
+        or native_ratios.shape != (points.shape[0],)
+    ):
+        raise ValueError(
+            "Native CDT constraint ancestry arrays must align with output points."
+        )
     for vertex in range(input_count, points.shape[0]):
         segment = int(native_sources[vertex])
         if segment < 0:
             continue
         first, last = native_parents[vertex]
         if not 0 <= first < vertex or not 0 <= last < vertex:
-            raise ValueError(f"Native CDT constraint ancestry is cyclic at vertex {vertex}.")
+            raise ValueError(
+                f"Native CDT constraint ancestry is cyclic at vertex {vertex}."
+            )
         edge = int(prepared.segment_sources[segment])
         ratio = Fraction(float(native_ratios[vertex]))
         low = parameter_on_edge(int(first), edge)

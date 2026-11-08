@@ -1209,8 +1209,10 @@ def _surface_pole_proven(
         None,
     )
 
-type _PatchEndpoints = tuple[tuple[tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]], ...], ...]
 
+type _PatchEndpoints = tuple[
+    tuple[tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]], ...], ...
+]
 
 
 def _cad_pole_lens_endpoint(
@@ -1250,7 +1252,9 @@ def _cad_pole_lens_endpoint(
         patch_endpoints = _rooted_patch_chart_endpoints(charts.domain, patch)
     else:
         if patch not in endpoints_by_patch:
-            endpoints_by_patch[patch] = _rooted_patch_chart_endpoints(charts.domain, patch)
+            endpoints_by_patch[patch] = _rooted_patch_chart_endpoints(
+                charts.domain, patch
+            )
         patch_endpoints = endpoints_by_patch[patch]
     endpoints = patch_endpoints[loop]
     traversal_start = (parameter == 0) == (use.sense > 0)
@@ -1317,11 +1321,21 @@ def _cad_curve_use_lens(
     else:
         source_first, source_last = fraction_up(exact_first), fraction_down(exact_last)
     first_uv = _cad_pole_lens_endpoint(
-        charts, patch, loop, use_index, first_uv, parameters[0],
+        charts,
+        patch,
+        loop,
+        use_index,
+        first_uv,
+        parameters[0],
         endpoints_by_patch=endpoints_by_patch,
     )
     last_uv = _cad_pole_lens_endpoint(
-        charts, patch, loop, use_index, last_uv, parameters[1],
+        charts,
+        patch,
+        loop,
+        use_index,
+        last_uv,
+        parameters[1],
         endpoints_by_patch=endpoints_by_patch,
     )
     lens = _curved_trim_lens(
@@ -2086,7 +2100,9 @@ def _curve_ancestry(
     endpoints_by_patch: dict[int, _PatchEndpoints] = {}
     bound = Fraction.from_float(float(tolerance))
     roots = (
-        _surface_trim_root_index(charts, bound, preparation, endpoints_by_patch=endpoints_by_patch)
+        _surface_trim_root_index(
+            charts, bound, preparation, endpoints_by_patch=endpoints_by_patch
+        )
         if surface_domain and charts.trim_roots
         else {}
     )
@@ -2181,11 +2197,21 @@ def _curve_ancestry(
                             constants.append((0, Fraction.from_float(surface.periods[0])))
                 points = (
                     _cad_pole_lens_endpoint(
-                        charts, patch, loop_index, use_index, first_uv, parameters[0],
+                        charts,
+                        patch,
+                        loop_index,
+                        use_index,
+                        first_uv,
+                        parameters[0],
                         endpoints_by_patch=endpoints_by_patch,
                     ),
                     _cad_pole_lens_endpoint(
-                        charts, patch, loop_index, use_index, last_uv, parameters[1],
+                        charts,
+                        patch,
+                        loop_index,
+                        use_index,
+                        last_uv,
+                        parameters[1],
                         endpoints_by_patch=endpoints_by_patch,
                     ),
                 )
@@ -2199,11 +2225,21 @@ def _curve_ancestry(
                     raise ValueError("Surface coedge is not a regular source curve.")
                 points = (
                     _cad_pole_lens_endpoint(
-                        charts, patch, loop_index, use_index, first_uv, parameters[0],
+                        charts,
+                        patch,
+                        loop_index,
+                        use_index,
+                        first_uv,
+                        parameters[0],
                         endpoints_by_patch=endpoints_by_patch,
                     ),
                     _cad_pole_lens_endpoint(
-                        charts, patch, loop_index, use_index, last_uv, parameters[1],
+                        charts,
+                        patch,
+                        loop_index,
+                        use_index,
+                        last_uv,
+                        parameters[1],
                         endpoints_by_patch=endpoints_by_patch,
                     ),
                 )
@@ -2271,9 +2307,7 @@ def validate_cad_curve_ancestry(
     if proved is None:
         fingerprint = live_content_fingerprint(operands)
         proved = _curve_ancestry(charts, tolerance, surface_domain=False)
-        _CAD_CURVE_ANCESTRY.record(
-            operands, fingerprint, proved, parameters=parameters
-        )
+        _CAD_CURVE_ANCESTRY.record(operands, fingerprint, proved, parameters=parameters)
     else:
         charts.require_current()
     return dict(proved)

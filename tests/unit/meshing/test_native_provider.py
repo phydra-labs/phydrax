@@ -235,7 +235,6 @@ def test_native_cad_volume_soft_shape_strength_softens_boundary_angle() -> None:
     assert "soft_shape_target_unmet_count" in dict(result.compliance.achieved)
 
 
-
 def test_native_provider_preserves_an_explicit_incompatible_route() -> None:
     source, specification = _curve_request()
     provider = NativeMeshingProvider(NativeMeshingOptions("planar_constrained_delaunay"))

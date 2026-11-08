@@ -85,9 +85,7 @@ def _partition(tmp_path: Any, *, hole: Any = False) -> Any:
     )
 
 
-def _semantic_spec(
-    source: Any, kind: Any, *, embedding: Any = _EMBEDDING
-) -> Any:
+def _semantic_spec(source: Any, kind: Any, *, embedding: Any = _EMBEDDING) -> Any:
     scope = phx.meshing.MeshingScope.whole(source.model, 2)
     regions = tuple(
         phx.meshing.RegionControl(

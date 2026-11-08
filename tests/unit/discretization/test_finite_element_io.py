@@ -36,8 +36,10 @@ def test_swept_coordinate_element_recipe_retains_source_and_rejects_tampering(
     path = tmp_path / "swept-element.phx"
     write_model_artifact(path, recipe, limits=None)
     stored = read_model_artifact(
-        path, expected_type=FiniteElementAcceptedElementRecipe,
-        restore=lambda value: _accepted_element_recipe(value.rebuild()), limits=None,
+        path,
+        expected_type=FiniteElementAcceptedElementRecipe,
+        restore=lambda value: _accepted_element_recipe(value.rebuild()),
+        limits=None,
     )
     rebuilt = stored.rebuild()
     assert rebuilt.element_id == element.element_id
@@ -45,9 +47,18 @@ def test_swept_coordinate_element_recipe_retains_source_and_rejects_tampering(
     forged_nodes = np.array(recipe.reference_nodes)
     forged_nodes[0, 0] += 0.25
     forged = FiniteElementAcceptedElementRecipe(
-        recipe.recipe_kind, recipe.family, recipe.cell_kind, recipe.degree,
-        recipe.continuity, recipe.representation, recipe.value_spec, recipe.form_identity,
-        forged_nodes, recipe.entity_dofs, recipe.tabulator_id, recipe.element_id,
+        recipe.recipe_kind,
+        recipe.family,
+        recipe.cell_kind,
+        recipe.degree,
+        recipe.continuity,
+        recipe.representation,
+        recipe.value_spec,
+        recipe.form_identity,
+        forged_nodes,
+        recipe.entity_dofs,
+        recipe.tabulator_id,
+        recipe.element_id,
         recipe.source_recipe,
     )
     with pytest.raises(ValueError, match="mathematical fields"):
@@ -70,7 +81,9 @@ def test_swept_tabulator_equality_rechecks_all_source_fields() -> None:
     assert first == SweptCoordinateTabulator(rebuilt)
     assert hash(first) == hash(SweptCoordinateTabulator(rebuilt))
     assert _same_tree_content(first.source, rebuilt)
-    assert _same_tree_content(swept_coordinate_element(source), swept_coordinate_element(rebuilt))
+    assert _same_tree_content(
+        swept_coordinate_element(source), swept_coordinate_element(rebuilt)
+    )
     altered = object.__new__(type(source))
     for field in fields(source):
         value = getattr(source, field.name)

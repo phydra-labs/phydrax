@@ -29,15 +29,22 @@ def test_topology_derived_knots_have_exact_partition_and_c2_traces() -> None:
     assert certificate.partition_of_unity
     assert certificate.trace_continuous
     assert certificate.continuity_order == 2
-    assert all(isinstance(knot, Fraction) for anchor in mesh.anchors for knot in anchor.local_knots.u)
-    assert all(isinstance(knot, Fraction) for anchor in mesh.anchors for knot in anchor.local_knots.v)
+    assert all(
+        isinstance(knot, Fraction)
+        for anchor in mesh.anchors
+        for knot in anchor.local_knots.u
+    )
+    assert all(
+        isinstance(knot, Fraction)
+        for anchor in mesh.anchors
+        for knot in anchor.local_knots.v
+    )
 
     realization = mesh.realize()
     for extraction in realization.extractions:
         exact = extraction.exact_extraction_operator
         assert all(
-            sum((row[column] for row in exact), Fraction(0)) == 1
-            for column in range(16)
+            sum((row[column] for row in exact), Fraction(0)) == 1 for column in range(16)
         )
         assert all(value >= 0 for row in exact for value in row)
 
@@ -87,6 +94,7 @@ def test_local_bernstein_piece_has_exact_anchor_rows() -> None:
             np.asarray(extraction.coefficient_rows),
             np.asarray(extraction.coefficient_row_ids),
         )
+
 
 def test_realization_recomputes_retained_basis_certificate() -> None:
     mesh = TMesh2D.tensor_product((0, 1), (0, 1))

@@ -76,7 +76,8 @@ def test_prepared_local_cell_gathers_preserve_selection_order(
         transforms = np.asarray(space.dof_maps[0].cell_transforms[0])
         actual_transform = regions[0].reference_actions[0].coefficient_transform
         assert np.array_equal(
-            np.asarray(actual_transform), transforms[np.asarray(expected_rows, dtype=np.int32)]
+            np.asarray(actual_transform),
+            transforms[np.asarray(expected_rows, dtype=np.int32)],
         )
 
 
@@ -87,13 +88,18 @@ def test_workset_region_requires_exact_order_and_action_ids() -> None:
     )
     space = phx.discretization.FiniteElementPlan(mesh, _field()).prepare()
     region = space.prepare_local_regions(
-        space.cell_domain, field_names=("u",), maximum_derivative_order=1,
+        space.cell_domain,
+        field_names=("u",),
+        maximum_derivative_order=1,
         kernel_mode="dense",
     )[0]
 
     def signature(geometry_id: str, reference_ids: tuple[str, ...]) -> WorksetSignature:
         return WorksetSignature(
-            "cell", region.block_name, region.cell_kind, "test-rule",
+            "cell",
+            region.block_name,
+            region.cell_kind,
+            "test-rule",
             {"u": region.reference_actions[0].local_width},
             support_id=space.cell_domain.support_id,
             entity_set_id=space.cell_domain.entity_set_id,
@@ -110,13 +116,17 @@ def test_workset_region_requires_exact_order_and_action_ids() -> None:
     correct = signature(geometry_id, reference_ids)
     _validate_local_region(correct, region, np.asarray((0, 1, 2), dtype=np.int32))
     for values in ((2, 1, 0), (0, 1), (0, 1, 2, 3)):
-        with pytest.raises(ValueError, match="Prepared local region does not match its workset"):
+        with pytest.raises(
+            ValueError, match="Prepared local region does not match its workset"
+        ):
             _validate_local_region(correct, region, np.asarray(values, dtype=np.int32))
     for wrong in (
         signature("wrong-geometry", reference_ids),
         signature(geometry_id, ("wrong-reference",)),
     ):
-        with pytest.raises(ValueError, match="Prepared local region does not match its workset"):
+        with pytest.raises(
+            ValueError, match="Prepared local region does not match its workset"
+        ):
             _validate_local_region(wrong, region, np.asarray((0, 1, 2), dtype=np.int32))
 
 

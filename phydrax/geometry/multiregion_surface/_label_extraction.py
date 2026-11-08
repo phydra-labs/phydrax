@@ -348,9 +348,7 @@ class LabelFieldSurfaceExtractionPlan(StrictModule, NonTrainableState):
     __strict_contract__ = True
 
     label_ids: tuple[str, ...] = eqx.field(static=True)
-    index_to_world: tuple[tuple[float, float, float, float], ...] = eqx.field(
-        static=True
-    )
+    index_to_world: tuple[tuple[float, float, float, float], ...] = eqx.field(static=True)
     boundary_region_id: str = eqx.field(static=True)
     validation_policy: MultiRegionSurfaceValidationPolicy
     source: Identifier = eqx.field(static=True)
@@ -445,6 +443,7 @@ class LabelFieldSurfaceExtractionPlan(StrictModule, NonTrainableState):
         return PreparedLabelFieldSurfaceExtraction(
             self, grid_shape, site_coordinates=site_coordinates
         )
+
 
 @final
 class PreparedLabelFieldSurfaceExtraction(StrictModule, NonTrainableState):
@@ -884,14 +883,14 @@ def _source_vertex_ids(
             for point in offsets
         )
         anchor = origin + 1
-        if any(
-            not 0 <= int(anchor[axis]) < padded_shape[axis] for axis in range(3)
-        ):
+        if any(not 0 <= int(anchor[axis]) < padded_shape[axis] for axis in range(3)):
             raise ValueError("Lattice source key lies outside the prepared image grid.")
         anchor_id = int(np.ravel_multi_index(tuple(anchor), padded_shape))
         suffix = feature * 256 + corner_mask
         if anchor_id > (maximum - suffix) // 1024:
-            raise OverflowError("Lattice source vertex identity exceeds int64 addressing.")
+            raise OverflowError(
+                "Lattice source vertex identity exceeds int64 addressing."
+            )
         result[index] = anchor_id * 1024 + suffix
     if np.unique(result).size != result.size:
         raise RuntimeError("Lattice source vertex identity encoding collided.")
@@ -956,9 +955,7 @@ def _dual_surface(
                     for local, global_index in enumerate(corner_indices)
                 }
                 for permutation in _TETRAHEDRON_PERMUTATIONS:
-                    tetrahedron = _tetrahedron_vertices(
-                        (i, j, k), permutation, shape
-                    )
+                    tetrahedron = _tetrahedron_vertices((i, j, k), permutation, shape)
                     local_tetrahedron = (
                         local_index[tetrahedron[0]],
                         local_index[tetrahedron[1]],
@@ -1213,9 +1210,7 @@ def _extract(
             None, None, None, None, lineage, evidence
         )
 
-    dual = _dual_surface(
-        padded, regions.extraction_affine, regions.lattice_offset
-    )
+    dual = _dual_surface(padded, regions.extraction_affine, regions.lattice_offset)
     seed = MultiRegionSurfaceSeed(
         dual.positions,
         dual.faces,

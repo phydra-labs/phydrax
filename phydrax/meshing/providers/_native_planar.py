@@ -15,7 +15,10 @@ import numpy as np
 import phydrax.discretization as cell_mesh_owner
 import phydrax.meshing._association as association_owner
 from phydrax.geometry import ConstrainedDelaunayTriangulation
-from phydrax.geometry._curve_boundary import ParametricCurveBoundarySource, SegmentChartCurve
+from phydrax.geometry._curve_boundary import (
+    ParametricCurveBoundarySource,
+    SegmentChartCurve,
+)
 from phydrax.geometry._source_boundary_records import (
     rational_chart_tokens,
     SourceBoundaryChartWitness,
@@ -339,7 +342,9 @@ def _planar_curve_source_query(
     selected_rows = (
         np.arange(edge_ids.size, dtype=np.int64)
         if selected_entity_ids is None
-        else np.flatnonzero(np.isin(edge_ids, np.asarray(selected_entity_ids, dtype=np.int64)))
+        else np.flatnonzero(
+            np.isin(edge_ids, np.asarray(selected_entity_ids, dtype=np.int64))
+        )
     )
     if selected_rows.size == 0:
         raise ValueError("A planar curve query requires selected authored source edges.")
@@ -364,7 +369,9 @@ def _planar_curve_source_query(
     ] = []
     curves = []
     chart_ids = []
-    for edge_row, (entity_id, occurrence) in zip(range(edge_rows.shape[0]), keys, strict=True):
+    for edge_row, (entity_id, occurrence) in zip(
+        range(edge_rows.shape[0]), keys, strict=True
+    ):
         first, last = int(edge_rows[edge_row, 0]), int(edge_rows[edge_row, 1])
         curves.append(SegmentChartCurve(points[first], points[last], 0.0, 1.0))
         endpoint_keys.append(
@@ -375,9 +382,7 @@ def _planar_curve_source_query(
         )
         first_point = tuple(float(value) for value in points[first])
         last_point = tuple(float(value) for value in points[last])
-        endpoint_bounds.append(
-            ((first_point, first_point), (last_point, last_point))
-        )
+        endpoint_bounds.append(((first_point, first_point), (last_point, last_point)))
         chart_ids.append(entity_id)
     ranges = tuple((0.0, 1.0) for _ in curves)
     return ParametricCurveBoundarySource(
@@ -391,6 +396,8 @@ def _planar_curve_source_query(
         endpoint_source_keys=tuple(endpoint_keys),
         endpoint_point_bounds=tuple(endpoint_bounds),
     )
+
+
 def _compliance(
     specification: SurfaceMeshingSpec,
     prepared: PreparedPlanarDomain,
@@ -861,7 +868,9 @@ def _planar_curve_chart_witness(
     target_edges = _surface_edges(mesh)
     edge_id_by_vertices = {
         tuple(sorted(map(int, pair))): int(identifier)
-        for pair, identifier in zip(target_edges.tolist(), target_edge_ids.tolist(), strict=True)
+        for pair, identifier in zip(
+            target_edges.tolist(), target_edge_ids.tolist(), strict=True
+        )
     }
     source_row_by_target_edge: dict[int, int] = {}
     expected_target_edges: set[int] = set()
@@ -872,7 +881,9 @@ def _planar_curve_chart_witness(
         or constrained_rows.shape[1] != 2
         or constrained_source_rows.shape != (constrained_rows.shape[0],)
     ):
-        raise ValueError("Planar source constraints require aligned edge endpoint and source rows.")
+        raise ValueError(
+            "Planar source constraints require aligned edge endpoint and source rows."
+        )
     for constraint_row in range(constrained_rows.shape[0]):
         first = int(constrained_rows[constraint_row, 0])
         second = int(constrained_rows[constraint_row, 1])
@@ -885,10 +896,14 @@ def _planar_curve_chart_witness(
         try:
             target_edge_id = edge_id_by_vertices[target_pair]
         except KeyError as error:
-            raise ValueError("Planar source constraint has no target mesh edge identity.") from error
+            raise ValueError(
+                "Planar source constraint has no target mesh edge identity."
+            ) from error
         previous = source_row_by_target_edge.get(target_edge_id)
         if previous is not None and previous != source_row:
-            raise ValueError("One target mesh edge has conflicting planar source ancestry.")
+            raise ValueError(
+                "One target mesh edge has conflicting planar source ancestry."
+            )
         source_row_by_target_edge[target_edge_id] = source_row
         expected_target_edges.add(target_edge_id)
 
@@ -912,7 +927,10 @@ def _planar_curve_chart_witness(
     source_edges = np.asarray(prepared.source_edges, dtype=np.int64)
 
     def parameter(vertex_row: int, source_row: int, /) -> Fraction:
-        if source_dimensions[vertex_row] == 1 and source_indices[vertex_row] == source_row:
+        if (
+            source_dimensions[vertex_row] == 1
+            and source_indices[vertex_row] == source_row
+        ):
             return exact_parameters[vertex_row]
         first, last = int(source_edges[source_row, 0]), int(source_edges[source_row, 1])
         if source_dimensions[vertex_row] == 0:
@@ -921,7 +939,9 @@ def _planar_curve_chart_witness(
                 return Fraction(0)
             if source_vertex == last:
                 return Fraction(1)
-        raise ValueError("Planar target edge endpoint lacks its authored source-chart parameter.")
+        raise ValueError(
+            "Planar target edge endpoint lacks its authored source-chart parameter."
+        )
 
     for cell_row in range(triangles.shape[0]):
         for local_facet in range(local_facets.shape[0]):
@@ -971,7 +991,9 @@ def _planar_curve_chart_witness(
             )
             covered.add(target_edge_id)
     if covered != expected_target_edges:
-        raise ValueError("Planar witness does not cover every target edge in the requested source chart.")
+        raise ValueError(
+            "Planar witness does not cover every target edge in the requested source chart."
+        )
     if not witness_edge_ids:
         raise ValueError("Planar source chart witness cannot be empty.")
     return SourceBoundaryChartWitness(
@@ -987,12 +1009,16 @@ def _planar_curve_chart_witness(
         entity_global_ids=np.asarray(witness_edge_ids, dtype=np.int64),
         local_entity_indices=np.asarray(witness_local_facets, dtype=np.int32),
         target_reference_vertices=np.asarray(target_references, dtype=np.float64),
-        target_reference_rational_tokens=rational_chart_tokens(target_reference_rational_rows),
+        target_reference_rational_tokens=rational_chart_tokens(
+            target_reference_rational_rows
+        ),
         source_chart_ids=tuple(chart_ids),
         source_entity_ids=tuple(entity_ids),
         occurrence_paths=tuple(occurrence_paths),
         source_parameters=np.asarray(source_parameters, dtype=np.float64)[:, :, None],
-        source_parameter_rational_tokens=rational_chart_tokens(source_parameter_rational_rows),
+        source_parameter_rational_tokens=rational_chart_tokens(
+            source_parameter_rational_rows
+        ),
         orientations=np.asarray(orientations, dtype=np.int8),
     )
 
@@ -1009,7 +1035,11 @@ def _planar_point_witness(
     /,
 ) -> SourceBoundaryPointWitness:
     identifiers = np.asarray(requested_point_ids, dtype=np.int64)
-    if identifiers.ndim != 1 or identifiers.size == 0 or np.unique(identifiers).size != identifiers.size:
+    if (
+        identifiers.ndim != 1
+        or identifiers.size == 0
+        or np.unique(identifiers).size != identifiers.size
+    ):
         raise ValueError("Planar point witness needs unique authored source point IDs.")
     target_rows = []
     entity_ids = []
@@ -1025,7 +1055,9 @@ def _planar_point_witness(
             )
         )
         if matches.size != 1:
-            raise ValueError("Every protected planar point must map to one target vertex.")
+            raise ValueError(
+                "Every protected planar point must map to one target vertex."
+            )
         target_rows.append(int(matches[0]))
         entity_id, occurrence = source.source_entity_key_for_scope(0, int(identifier))
         entity_ids.append(entity_id)
@@ -1034,7 +1066,9 @@ def _planar_point_witness(
         np.asarray(target_rows, dtype=np.int64)
     ]
     if np.unique(target_ids).size != target_ids.size:
-        raise ValueError("Distinct planar source points cannot share one target vertex identity.")
+        raise ValueError(
+            "Distinct planar source points cannot share one target vertex identity."
+        )
     return SourceBoundaryPointWitness(
         mesh_id=mesh.mesh_id,
         geometry_id=cell_geometry_id(geometry),
@@ -1047,6 +1081,7 @@ def _planar_point_witness(
         occurrence_paths=tuple(occurrence_paths),
     )
 
+
 def _planar_junction_vertices(
     source: sources_owner.NativePlanarSource,
     prepared: PreparedPlanarDomain,
@@ -1056,7 +1091,9 @@ def _planar_junction_vertices(
     /,
 ) -> np.ndarray:
     """Map authored vertices with at least three distinct source-edge incidents."""
-    incident_edges: dict[tuple[str, tuple[str, ...]], set[tuple[str, tuple[str, ...]]]] = {}
+    incident_edges: dict[
+        tuple[str, tuple[str, ...]], set[tuple[str, tuple[str, ...]]]
+    ] = {}
     edge_ids = np.asarray(prepared.source_edge_ids, dtype=np.int64)
     endpoints = np.asarray(prepared.source_edges, dtype=np.int64)
     if endpoints.shape != (edge_ids.size, 2):
@@ -1087,10 +1124,14 @@ def _planar_junction_vertices(
         key = source.source_entity_key_for_scope(0, vertex_id)
         if key in junction_keys:
             if key in target_row_by_source_key:
-                raise ValueError("An authored planar junction has multiple target vertex rows.")
+                raise ValueError(
+                    "An authored planar junction has multiple target vertex rows."
+                )
             target_row_by_source_key[key] = target_row
     if set(target_row_by_source_key) != junction_keys:
-        raise ValueError("An authored planar junction lacks a unique compact target vertex.")
+        raise ValueError(
+            "An authored planar junction lacks a unique compact target vertex."
+        )
     return np.asarray(
         sorted(
             int(mesh.vertex_global_ids[target_row_by_source_key[key]])

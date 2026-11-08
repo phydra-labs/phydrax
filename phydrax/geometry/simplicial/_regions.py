@@ -80,7 +80,11 @@ class SegmentMesh(StrictModule):
     source_id: str = eqx.field(static=True)
 
     def __init__(
-        self, vertices: ConvertibleToArray, edges: ConvertibleToArray, *, source_id: str | None = None
+        self,
+        vertices: ConvertibleToArray,
+        edges: ConvertibleToArray,
+        *,
+        source_id: str | None = None,
     ) -> None:
         vertices_host = np.asarray(vertices, dtype=np.float64)
         if (

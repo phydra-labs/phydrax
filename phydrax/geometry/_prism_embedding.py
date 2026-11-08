@@ -15,7 +15,9 @@ from ._exact_polyhedral_geometry import Point3
 def prism_facet_routes(cell: EmbeddingCell, /) -> tuple[tuple[int, ...], ...]:
     """Return the outward-oriented triangular and quadrilateral prism faces."""
     if cell.kind != "prism" or cell.dimension != 3 or not cell.affine:
-        raise UnsupportedEmbeddingMap("Prism boundary routing requires an exact affine 3-D prism.")
+        raise UnsupportedEmbeddingMap(
+            "Prism boundary routing requires an exact affine 3-D prism."
+        )
     topology = reference_cell_topology("prism")
     return tuple(tuple(int(index) for index in row) for row in topology.entities[2])
 
@@ -33,7 +35,9 @@ def prism_facet_images(
 ) -> tuple[tuple[tuple[int, ...], tuple[Point3, ...]], ...]:
     """Return each oriented reference face with its exact source-corner image."""
     if cell.kind != "prism" or cell.dimension != 3 or not cell.affine:
-        raise UnsupportedEmbeddingMap("Prism boundary routing requires an exact affine 3-D prism.")
+        raise UnsupportedEmbeddingMap(
+            "Prism boundary routing requires an exact affine 3-D prism."
+        )
     return tuple(
         (
             tuple(cell.vertex_ids[index] for index in route),

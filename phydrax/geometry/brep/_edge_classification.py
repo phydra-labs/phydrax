@@ -122,7 +122,9 @@ def _coedge_face_owners(geometry: BRepGeometry, /) -> tuple[int, ...]:
     return tuple(owners)
 
 
-def _prepare(function: Callable[[Array], Array], dimension: int, /) -> PreparedIntervalFunction | None:
+def _prepare(
+    function: Callable[[Array], Array], dimension: int, /
+) -> PreparedIntervalFunction | None:
     try:
         return prepare_interval_function(function, dimension)
     except (IntervalExtensionError, NotImplementedError, TypeError, ValueError):
@@ -207,9 +209,7 @@ def _curve_derivative_bounds(
         free_axis = 1 - curve.fixed_axis
         lower[curve.fixed_axis] = upper[curve.fixed_axis] = curve.fixed_value
         lower[free_axis], upper[free_axis] = first, last
-        derivatives = _surface_jacobian_bounds(
-            curve.surface, None, lower, upper
-        )
+        derivatives = _surface_jacobian_bounds(curve.surface, None, lower, upper)
         if derivatives is not None and derivatives[0].shape == (3, 2):
             return derivatives[0][:, free_axis], derivatives[1][:, free_axis]
     return _evaluate(prepared, np.asarray((first,)), np.asarray((last,)))
@@ -238,9 +238,7 @@ def _surface_jacobian_bounds(
                 lower_box[axis] = np.nextafter(value, -np.inf)
                 upper_box[axis] = np.nextafter(value, np.inf)
         try:
-            low, high = surface.derivative_bounds(
-                np.stack((lower_box, upper_box))
-            )
+            low, high = surface.derivative_bounds(np.stack((lower_box, upper_box)))
         except (
             IntervalExtensionError,
             NotImplementedError,
@@ -265,7 +263,6 @@ def _surface_jacobian_bounds(
     return _evaluate(prepared, lower, upper)
 
 
-
 def _source_curve_box(
     curve: AbstractCurve,
     prepared: PreparedIntervalFunction | None,
@@ -276,9 +273,19 @@ def _source_curve_box(
     if type(curve).bounding_box is not AbstractCurve.bounding_box:
         try:
             box = np.asarray(curve.bounding_box(first, last), dtype=np.float64)
-        except (IntervalExtensionError, NotImplementedError, TypeError, ValueError, FloatingPointError):
+        except (
+            IntervalExtensionError,
+            NotImplementedError,
+            TypeError,
+            ValueError,
+            FloatingPointError,
+        ):
             return None
-        if box.shape != (2, curve.ambient_dimension) or not np.all(np.isfinite(box)) or np.any(box[1] < box[0]):
+        if (
+            box.shape != (2, curve.ambient_dimension)
+            or not np.all(np.isfinite(box))
+            or np.any(box[1] < box[0])
+        ):
             return None
         return box[0], box[1]
     return _evaluate(prepared, np.asarray((first,)), np.asarray((last,)))
@@ -297,9 +304,7 @@ def _normal(
     uv = _source_curve_box(pcurve_source, pcurve, first, last)
     if uv is None:
         return None
-    derivatives = _surface_jacobian_bounds(
-        surface, surface_jacobian, uv[0], uv[1]
-    )
+    derivatives = _surface_jacobian_bounds(surface, surface_jacobian, uv[0], uv[1])
     if derivatives is None or derivatives[0].shape != (3, 2):
         return None
     normal = _cross(
@@ -350,9 +355,7 @@ def _cell_sign_angle(
         last,
         orientations[1],
     )
-    tangent_value = _curve_derivative_bounds(
-        edge_curve, edge_curve_plan, first, last
-    )
+    tangent_value = _curve_derivative_bounds(edge_curve, edge_curve_plan, first, last)
     if (
         normal_a is None
         or normal_b is None
@@ -425,6 +428,8 @@ def _coedge_source_lift(
         return native_face_gap_squared(curve, pcurve, region, first, last) == 0
     except (NotImplementedError, TypeError, ValueError, FloatingPointError):
         return False
+
+
 def _isoparametric_source_lift(
     curve: AbstractCurve,
     pcurve: AbstractCurve,
@@ -435,9 +440,7 @@ def _isoparametric_source_lift(
         return False
     from ._source_correspondence import _affine_curve_coefficients
 
-    coefficients = _affine_curve_coefficients(
-        pcurve, (Fraction(0), Fraction(0))
-    )
+    coefficients = _affine_curve_coefficients(pcurve, (Fraction(0), Fraction(0)))
     if coefficients is None:
         return False
     origin, direction = coefficients
@@ -556,7 +559,10 @@ def _exact_revolution_circle_classification(
     if curve_index < 0:
         return None
     curve = geometry.curves[curve_index]
-    if not isinstance(curve, CircleCurve) or geometry.edge_vertices[edge][0] != geometry.edge_vertices[edge][1]:
+    if (
+        not isinstance(curve, CircleCurve)
+        or geometry.edge_vertices[edge][0] != geometry.edge_vertices[edge][1]
+    ):
         return None
     first_root, last_root = geometry.edge_endpoint_roots[edge]
     if not (
@@ -580,9 +586,10 @@ def _exact_revolution_circle_classification(
         witness = patch.exact_quadric_witness((float(bounds[0, 1]), float(bounds[1, 1])))
         if witness is None:
             return None
-        if not isinstance(witness.profile_parameter_interval, tuple) or len(
-            witness.profile_parameter_interval
-        ) != 2:
+        if (
+            not isinstance(witness.profile_parameter_interval, tuple)
+            or len(witness.profile_parameter_interval) != 2
+        ):
             return None
         pcurve = geometry.pcurves[coedge]
         if not exact_source_lift(
@@ -608,7 +615,9 @@ def _exact_revolution_circle_classification(
     ):
         return None
 
-    def dot(first: tuple[ExactScalar, ...], second: tuple[ExactScalar, ...], /) -> ExactScalar:
+    def dot(
+        first: tuple[ExactScalar, ...], second: tuple[ExactScalar, ...], /
+    ) -> ExactScalar:
         return sum(
             (left * right for left, right in zip(first, second, strict=True)),
             Fraction(0),
@@ -635,13 +644,13 @@ def _exact_revolution_circle_classification(
     center = curve.center_exact
     for witness in witnesses:
         axis_origin = (
-            witness.center_exact
-            if witness.family == "sphere"
-            else witness.origin_exact
+            witness.center_exact if witness.family == "sphere" else witness.origin_exact
         )
         if axis_origin is None:
             return None
-        offset = tuple(value - base for value, base in zip(center, axis_origin, strict=True))
+        offset = tuple(
+            value - base for value, base in zip(center, axis_origin, strict=True)
+        )
         axial = dot(offset, axis)
         if offset != tuple(axial * value for value in axis):
             return None
@@ -664,15 +673,21 @@ def _exact_revolution_circle_classification(
             return None
         radial_value = curve.radius_exact
         return (
-            witness.frame_sign * radial_value * (
+            witness.frame_sign
+            * radial_value
+            * (
                 axial_direction * witness.radial_axis_exact[0]
                 - radial_direction * witness.axis_exact[0]
             ),
-            witness.frame_sign * radial_value * (
+            witness.frame_sign
+            * radial_value
+            * (
                 axial_direction * witness.radial_axis_exact[1]
                 - radial_direction * witness.axis_exact[1]
             ),
-            witness.frame_sign * radial_value * (
+            witness.frame_sign
+            * radial_value
+            * (
                 axial_direction * witness.radial_axis_exact[2]
                 - radial_direction * witness.axis_exact[2]
             ),
@@ -724,7 +739,10 @@ def _exact_revolution_circle_classification(
     cosine_upper = float(np.clip(cosine[1], -1.0, 1.0))
     dihedral = (
         max(0.0, float(np.nextafter(np.arccos(cosine_upper), -np.inf))),
-        min(float(np.nextafter(np.pi, np.inf)), float(np.nextafter(np.arccos(cosine_lower), np.inf))),
+        min(
+            float(np.nextafter(np.pi, np.inf)),
+            float(np.nextafter(np.arccos(cosine_lower), np.inf)),
+        ),
     )
     radius_bounds = scalar_interval(curve.radius_exact)
     period_bounds = period_scalar_bounds(PeriodOffset(Fraction(0), Fraction(1)))
@@ -772,9 +790,7 @@ def _edge_classification(
     face_orientations: tuple[float, float] = (np.nan, np.nan)
     tangent_sign = 1.0
     pair_pcurve_sources: tuple[AbstractCurve, AbstractCurve] | None = None
-    pair_surface_sources: tuple[
-        AbstractSurfacePatch, AbstractSurfacePatch
-    ] | None = None
+    pair_surface_sources: tuple[AbstractSurfacePatch, AbstractSurfacePatch] | None = None
     pair_pcurves: tuple[
         PreparedIntervalFunction | None, PreparedIntervalFunction | None
     ] = (None, None)
@@ -803,9 +819,7 @@ def _edge_classification(
                     regular = regular and edge_curve.fully_certified
             except (NotImplementedError, TypeError, ValueError):
                 regular = False
-        if (
-            regular and face_pair is not None and edge_curve is not None
-        ):
+        if regular and face_pair is not None and edge_curve is not None:
             pair_pcurves = (pcurve_plans[coedges[0]], pcurve_plans[coedges[1]])
             pair_pcurve_sources = (
                 geometry.pcurves[coedges[0]],
@@ -827,9 +841,7 @@ def _edge_classification(
                 shell_directions[0] == -shell_directions[1]
                 and all(plan is not None for plan in (*pair_pcurves, *pair_surfaces))
                 and all(
-                    _coedge_source_lift(
-                        model, geometry, coedges[index], face_pair[index]
-                    )
+                    _coedge_source_lift(model, geometry, coedges[index], face_pair[index])
                     and _coedge_path_c1(
                         geometry.pcurves[coedges[index]],
                         model.patches[face_pair[index]],
@@ -911,9 +923,7 @@ def _edge_classification(
         if edge_curve is None:
             length_upper = np.inf
             continue
-        speed = _curve_derivative_bounds(
-            edge_curve, edge_plan, start, end
-        )
+        speed = _curve_derivative_bounds(edge_curve, edge_plan, start, end)
         if speed is None or speed[0].shape != (3,):
             length_upper = np.inf
             continue

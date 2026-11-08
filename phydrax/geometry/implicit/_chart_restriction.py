@@ -159,7 +159,9 @@ class ValidatedImplicitChartParent:
         from .._source_fidelity_certificate import SourceFidelityCertificate
 
         if type(certificate) is not SourceFidelityCertificate:
-            raise TypeError("Validated chart parent requires an exact fidelity certificate.")
+            raise TypeError(
+                "Validated chart parent requires an exact fidelity certificate."
+            )
         premise = certificate.chart_premise
         ancestor = (
             None
@@ -245,7 +247,9 @@ class ImplicitChartPremise(StrictModule):
                 raise ValueError("Validated chart parent binds different exact operands.")
             parent.require_current(self.parent_mesh, self.parent_geometry, source)
         else:
-            raise TypeError("validated chart parent must be an exact host proof artifact.")
+            raise TypeError(
+                "validated chart parent must be an exact host proof artifact."
+            )
         normal = (
             None if maximum_normal_deviation is None else float(maximum_normal_deviation)
         )

@@ -67,7 +67,11 @@ def route_checks(
         case "surface":
             return (*_COMMON_CHECKS, "source_fidelity"), _VOLUME_AUDIT[:-1]
         case "curve":
-            return _COMMON_CHECKS, ("coincident_vertices", "collapsed_cells", "inconsistent_orientation")
+            return _COMMON_CHECKS, (
+                "coincident_vertices",
+                "collapsed_cells",
+                "inconsistent_orientation",
+            )
         case "periodic":
             return _COMMON_CHECKS, _VOLUME_AUDIT[:-1]
         case "planar":

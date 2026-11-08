@@ -17,7 +17,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from fractions import Fraction
 from functools import cmp_to_key
-from typing import Literal, TypeAlias, final
+from typing import final, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -30,14 +30,13 @@ from ...typing import checked
 from ._intersection import (
     ConicParameterEndpoint,
     CurveRange,
+    endpoint_root_payload,
+    intersect_curve_ranges,
     NativePeriodEndpoint,
     ParametricIntersectionPolicy,
     RootEndpoint,
-    endpoint_root_payload,
-    intersect_curve_ranges,
 )
 from ._intersection_curve import CurveTrimSegment
-from ._root_bindings import BRepVertexRoot
 from ._model import BRepGeometry
 from ._patches import (
     AbstractCurve,
@@ -47,7 +46,7 @@ from ._patches import (
     ExactLineCurve,
     LineCurve,
 )
-
+from ._root_bindings import BRepVertexRoot
 
 
 BRepSewingContactRelation: TypeAlias = Literal[
@@ -86,7 +85,9 @@ class BRepSewingPolicy(StrictModule):
             else contact_intersection
         )
         if not isinstance(intersection, ParametricIntersectionPolicy):
-            raise TypeError("contact_intersection must be a ParametricIntersectionPolicy.")
+            raise TypeError(
+                "contact_intersection must be a ParametricIntersectionPolicy."
+            )
         self.tolerance = 0.0
         self.contact_intersection = intersection
 
@@ -120,10 +121,17 @@ class BRepSewingFailure(RuntimeError):
             ""
             if not contacts
             else "; contacts="
-            + repr(tuple((value.open_edge, value.candidate_edge, value.relations) for value in contacts))
+            + repr(
+                tuple(
+                    (value.open_edge, value.candidate_edge, value.relations)
+                    for value in contacts
+                )
+            )
         )
         incomplete = "" if contacts_complete else "; contact diagnostics incomplete"
-        super().__init__(f"Native B-Rep sewing failed: {reason}; edges={edges}{evidence}{incomplete}.")
+        super().__init__(
+            f"Native B-Rep sewing failed: {reason}; edges={edges}{evidence}{incomplete}."
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,27 +172,36 @@ class BRepSewingLineage(StrictModule):
         edge_images: tuple[BRepSewingEdgeImage, ...],
         coedge_sources: tuple[int, ...],
     ) -> None:
-        images = tuple(sorted(edge_images, key=lambda image: (image.source_edge, image.target_edge)))
-        if any(image.source_edge < 0 or image.target_edge < 0 or image.scale == 0 for image in images):
-            raise ValueError("BRepSewingLineage.edge_images contains an invalid entity map.")
+        images = tuple(
+            sorted(edge_images, key=lambda image: (image.source_edge, image.target_edge))
+        )
+        if any(
+            image.source_edge < 0 or image.target_edge < 0 or image.scale == 0
+            for image in images
+        ):
+            raise ValueError(
+                "BRepSewingLineage.edge_images contains an invalid entity map."
+            )
         self.vertex_sources = tuple(tuple(values) for values in vertex_sources)
         self.edge_images = images
         self.coedge_sources = tuple(coedge_sources)
-        self.lineage_id = canonical_fingerprint({
-            "kind": "brep-sewing-lineage",
-            "vertex_sources": self.vertex_sources,
-            "edge_images": tuple(
-                (
-                    image.source_edge,
-                    image.target_edge,
-                    str(image.scale),
-                    str(image.offset_rational),
-                    str(image.offset_turns),
-                )
-                for image in images
-            ),
-            "coedge_sources": self.coedge_sources,
-        })
+        self.lineage_id = canonical_fingerprint(
+            {
+                "kind": "brep-sewing-lineage",
+                "vertex_sources": self.vertex_sources,
+                "edge_images": tuple(
+                    (
+                        image.source_edge,
+                        image.target_edge,
+                        str(image.scale),
+                        str(image.offset_rational),
+                        str(image.offset_turns),
+                    )
+                    for image in images
+                ),
+                "coedge_sources": self.coedge_sources,
+            }
+        )
 
     def source_images(self, edge: int, /) -> tuple[BRepSewingEdgeImage, ...]:
         return tuple(image for image in self.edge_images if image.source_edge == edge)
@@ -199,7 +216,9 @@ class BRepSewingResult(StrictModule):
     lineage: BRepSewingLineage = eqx.field(static=True)
 
     @checked
-    def __init__(self, geometry: BRepGeometry, certificate_id: str, lineage: BRepSewingLineage) -> None:
+    def __init__(
+        self, geometry: BRepGeometry, certificate_id: str, lineage: BRepSewingLineage
+    ) -> None:
         if not certificate_id:
             raise ValueError("BRepSewingResult.certificate_id must be nonempty.")
         self.geometry = geometry
@@ -223,7 +242,9 @@ def _parameter(value: object, /) -> _Parameter:
 
 
 def _affine(value: _Parameter, scale: Fraction, offset: _Parameter, /) -> _Parameter:
-    return _Parameter(value.rational * scale + offset.rational, value.turns * scale + offset.turns)
+    return _Parameter(
+        value.rational * scale + offset.rational, value.turns * scale + offset.turns
+    )
 
 
 def _add(first: _Parameter, second: _Parameter, /) -> _Parameter:
@@ -244,8 +265,14 @@ def _period_bounds(value: _Parameter, /) -> tuple[Fraction, Fraction]:
     lower_tau = Fraction.from_float(math.nextafter(math.tau, -math.inf))
     upper_tau = Fraction.from_float(math.nextafter(math.tau, math.inf))
     if value.turns > 0:
-        return value.rational + value.turns * lower_tau, value.rational + value.turns * upper_tau
-    return value.rational + value.turns * upper_tau, value.rational + value.turns * lower_tau
+        return (
+            value.rational + value.turns * lower_tau,
+            value.rational + value.turns * upper_tau,
+        )
+    return (
+        value.rational + value.turns * upper_tau,
+        value.rational + value.turns * lower_tau,
+    )
 
 
 def _compare(first: _Parameter, second: _Parameter, /) -> int:
@@ -257,7 +284,9 @@ def _compare(first: _Parameter, second: _Parameter, /) -> int:
         return 1
     if upper < 0:
         return -1
-    raise BRepSewingFailure("sew_brep.parameter_order is numerically unresolved at binary64 resolution")
+    raise BRepSewingFailure(
+        "sew_brep.parameter_order is numerically unresolved at binary64 resolution"
+    )
 
 
 _ORDER = cmp_to_key(_compare)
@@ -267,7 +296,9 @@ def _turn_floor(value: _Parameter, /) -> int:
     try:
         estimate = math.floor(float(value.rational) / math.tau + float(value.turns))
     except (OverflowError, ValueError) as error:
-        raise BRepSewingFailure("sew_brep.period_station is outside finite numerical range") from error
+        raise BRepSewingFailure(
+            "sew_brep.period_station is outside finite numerical range"
+        ) from error
     while _compare(value, _turns(estimate)) < 0:
         estimate -= 1
     while _compare(value, _turns(estimate + 1)) >= 0:
@@ -288,14 +319,20 @@ class _ParameterMap:
         return _affine(value, self.scale, self.offset)
 
     def inverse(self) -> _ParameterMap:
-        return _ParameterMap(1 / self.scale, _affine(self.offset, -1 / self.scale, _Parameter(Fraction(0))))
+        return _ParameterMap(
+            1 / self.scale, _affine(self.offset, -1 / self.scale, _Parameter(Fraction(0)))
+        )
 
 
 def _rational_vector(values: ArrayLike, /) -> tuple[Fraction, ...]:
-    return tuple(Fraction.from_float(float(value)) for value in np.asarray(values).reshape(-1))
+    return tuple(
+        Fraction.from_float(float(value)) for value in np.asarray(values).reshape(-1)
+    )
 
 
-def _line_coefficients(curve: AbstractCurve, /) -> tuple[tuple[Fraction, ...], tuple[Fraction, ...]] | None:
+def _line_coefficients(
+    curve: AbstractCurve, /
+) -> tuple[tuple[Fraction, ...], tuple[Fraction, ...]] | None:
     if isinstance(curve, ExactLineCurve):
         direction = tuple(
             b - a for a, b in zip(curve.first_exact, curve.last_exact, strict=True)
@@ -309,6 +346,8 @@ def _line_coefficients(curve: AbstractCurve, /) -> tuple[tuple[Fraction, ...], t
 def _projective(values: tuple[Fraction, ...], /) -> tuple[Fraction, ...] | None:
     pivot = next((value for value in values if value), None)
     return None if pivot is None else tuple(value / pivot for value in values)
+
+
 def _circle_frame(
     curve: CircleCurve, /
 ) -> tuple[
@@ -327,13 +366,15 @@ def _circle_frame(
 
 def _curve_payload(curve: AbstractCurve, /) -> str:
     identity = getattr(curve, "identity_payload", None)
-    return canonical_fingerprint({
-        "type": f"{type(curve).__module__}.{type(curve).__qualname__}",
-        "structure": str(jax.tree_util.tree_structure(curve)),
-        "arrays": array_tree_fingerprint(curve),
-        "source": identity() if callable(identity) else None,
-        "degree": getattr(curve, "degree", None),
-    })
+    return canonical_fingerprint(
+        {
+            "type": f"{type(curve).__module__}.{type(curve).__qualname__}",
+            "structure": str(jax.tree_util.tree_structure(curve)),
+            "arrays": array_tree_fingerprint(curve),
+            "source": identity() if callable(identity) else None,
+            "degree": getattr(curve, "degree", None),
+        }
+    )
 
 
 def _support_key(curve: AbstractCurve, /) -> tuple[object, ...]:
@@ -346,7 +387,10 @@ def _support_key(curve: AbstractCurve, /) -> tuple[object, ...]:
             return (
                 "line",
                 _projective(direction),
-                tuple(point - step * slope for point, slope in zip(origin, direction, strict=True)),
+                tuple(
+                    point - step * slope
+                    for point, slope in zip(origin, direction, strict=True)
+                ),
             )
     if isinstance(curve, CircleCurve):
         center, radius, first, second = _circle_frame(curve)
@@ -372,9 +416,14 @@ def _line_map(
         return None
     scale = direction_b[pivot] / direction_a[pivot]
     offset = (origin_b[pivot] - origin_a[pivot]) / direction_a[pivot]
-    if not scale or any(b != scale * a for a, b in zip(direction_a, direction_b, strict=True)):
+    if not scale or any(
+        b != scale * a for a, b in zip(direction_a, direction_b, strict=True)
+    ):
         return None
-    if any(b != a + offset * d for a, b, d in zip(origin_a, origin_b, direction_a, strict=True)):
+    if any(
+        b != a + offset * d
+        for a, b, d in zip(origin_a, origin_b, direction_a, strict=True)
+    ):
         return None
     return _ParameterMap(scale, _Parameter(offset))
 
@@ -391,16 +440,22 @@ def _circle_map(first: CircleCurve, second: CircleCurve, /) -> _ParameterMap | N
         (Fraction(0), Fraction(-1)),
     )
     for quarter, (cosine, sine) in enumerate(quarter_turns):
-        if cosine_b != tuple(cosine * a + sine * b for a, b in zip(cosine_a, sine_a, strict=True)):
+        if cosine_b != tuple(
+            cosine * a + sine * b for a, b in zip(cosine_a, sine_a, strict=True)
+        ):
             continue
-        rotated = tuple(cosine * b - sine * a for a, b in zip(cosine_a, sine_a, strict=True))
+        rotated = tuple(
+            cosine * b - sine * a for a, b in zip(cosine_a, sine_a, strict=True)
+        )
         for scale in (Fraction(1), Fraction(-1)):
             if sine_b == tuple(scale * value for value in rotated):
                 return _ParameterMap(scale, _turns(Fraction(quarter, 4)))
     return None
 
 
-def _prove_curve_map(first: AbstractCurve, second: AbstractCurve, /) -> _ParameterMap | None:
+def _prove_curve_map(
+    first: AbstractCurve, second: AbstractCurve, /
+) -> _ParameterMap | None:
     if first.ambient_dimension != second.ambient_dimension:
         return None
     if _curve_payload(first) == _curve_payload(second):
@@ -439,13 +494,18 @@ def _trim_segment_endpoint(
         number = float(source_parameter.rational)
         if source_parameter.turns:
             number += float(source_parameter.turns) * math.tau
-        lower, upper = (float(value) for value in np.asarray(root.parameter_enclosure()).reshape(-1))
+        lower, upper = (
+            float(value) for value in np.asarray(root.parameter_enclosure()).reshape(-1)
+        )
         if not lower <= number <= upper:
             return None
         return number, root
     if not source_parameter.turns:
         number = float(source_parameter.rational)
-        if np.isfinite(number) and Fraction.from_float(number) == source_parameter.rational:
+        if (
+            np.isfinite(number)
+            and Fraction.from_float(number) == source_parameter.rational
+        ):
             return number, None
     authority = _authority((segment.first_root, segment.last_root))
     if authority is None and not _periodic(segment.curve):
@@ -508,7 +568,9 @@ def _reparameterize_trim_segment(
     )
 
 
-def _reparameterize_pcurve(curve: AbstractCurve, parameter_map: _ParameterMap, /) -> AbstractCurve | None:
+def _reparameterize_pcurve(
+    curve: AbstractCurve, parameter_map: _ParameterMap, /
+) -> AbstractCurve | None:
     scale, offset = parameter_map.scale, parameter_map.offset
     if scale == 1 and offset == _Parameter(Fraction(0)):
         return curve
@@ -524,22 +586,34 @@ def _reparameterize_pcurve(curve: AbstractCurve, parameter_map: _ParameterMap, /
     if isinstance(curve, LineCurve):
         if offset.turns:
             return None
-        origin, direction = _rational_vector(curve.origin), _rational_vector(curve.direction)
-        moved = _binary_vector(tuple(a + offset.rational * d for a, d in zip(origin, direction, strict=True)))
+        origin, direction = (
+            _rational_vector(curve.origin),
+            _rational_vector(curve.direction),
+        )
+        moved = _binary_vector(
+            tuple(a + offset.rational * d for a, d in zip(origin, direction, strict=True))
+        )
         scaled = _binary_vector(tuple(scale * value for value in direction))
         return None if moved is None or scaled is None else LineCurve(moved, scaled)
     if isinstance(curve, CircleCurve):
         if offset.rational or abs(scale) != 1 or (4 * offset.turns).denominator != 1:
             return None
-        quarter_turns = ((Fraction(1), Fraction(0)), (Fraction(0), Fraction(1)),
-                         (Fraction(-1), Fraction(0)), (Fraction(0), Fraction(-1)))
+        quarter_turns = (
+            (Fraction(1), Fraction(0)),
+            (Fraction(0), Fraction(1)),
+            (Fraction(-1), Fraction(0)),
+            (Fraction(0), Fraction(-1)),
+        )
         cosine, sine = quarter_turns[int(4 * offset.turns) % 4]
         _, _, first, second = _circle_frame(curve)
         cosine_axis = _binary_vector(
             tuple(cosine * a + sine * b for a, b in zip(first, second, strict=True))
         )
         sine_axis = _binary_vector(
-            tuple(scale * (cosine * b - sine * a) for a, b in zip(first, second, strict=True))
+            tuple(
+                scale * (cosine * b - sine * a)
+                for a, b in zip(first, second, strict=True)
+            )
         )
         if cosine_axis is None or sine_axis is None:
             return None
@@ -547,10 +621,12 @@ def _reparameterize_pcurve(curve: AbstractCurve, parameter_map: _ParameterMap, /
     if isinstance(curve, BSplineCurve):
         if offset.turns:
             return None
-        knots = _binary_vector(tuple(
-            (Fraction.from_float(float(knot)) - offset.rational) / scale
-            for knot in np.asarray(curve.knots).reshape(-1)
-        ))
+        knots = _binary_vector(
+            tuple(
+                (Fraction.from_float(float(knot)) - offset.rational) / scale
+                for knot in np.asarray(curve.knots).reshape(-1)
+            )
+        )
         if knots is None:
             return None
         controls, weights = np.asarray(curve.control_points), np.asarray(curve.weights)
@@ -671,7 +747,9 @@ def _edge_parameter_range(
             result.append(_Parameter(Fraction.from_float(float(values[endpoint]))))
         elif isinstance(root, NativePeriodEndpoint):
             result.append(_parameter(root.exact_parameter))
-        elif isinstance(root, ConicParameterEndpoint) and root.parameter_exact is not None:
+        elif (
+            isinstance(root, ConicParameterEndpoint) and root.parameter_exact is not None
+        ):
             result.append(_Parameter(root.parameter_exact))
         else:
             return None
@@ -685,7 +763,8 @@ def _exact_range(
         root is not None
         and not (
             isinstance(root, NativePeriodEndpoint)
-            or isinstance(root, ConicParameterEndpoint) and root.parameter_exact is not None
+            or isinstance(root, ConicParameterEndpoint)
+            and root.parameter_exact is not None
         )
         for coedge in coedges
         for root in geometry.coedge_endpoint_roots[coedge]
@@ -717,10 +796,14 @@ def _member(
     if _compare(length, _Parameter(Fraction(0))) <= 0 or (
         periodic and _compare(length, _turns(1)) > 0
     ):
-        raise BRepSewingFailure("sew_brep.edge_ranges must be positive source intervals", (edge,))
+        raise BRepSewingFailure(
+            "sew_brep.edge_ranges must be positive source intervals", (edge,)
+        )
     start, end = geometry.edge_vertices[edge]
     if start == end and (not periodic or _compare(length, _turns(1)) != 0):
-        raise BRepSewingFailure("sew_brep.closed_edges require one exact native period", (edge,))
+        raise BRepSewingFailure(
+            "sew_brep.closed_edges require one exact native period", (edge,)
+        )
     images = frame.apply(lower_source), frame.apply(upper_source)
     lower, upper = images if frame.scale > 0 else (images[1], images[0])
     lower_vertex, upper_vertex = (start, end) if frame.scale > 0 else (end, start)
@@ -736,20 +819,30 @@ def _bucket_pieces(
 ) -> tuple[dict[int, tuple[_Piece, ...]], _Points]:
     points: _Points = {}
     for member in members:
-        points.setdefault(_normalized(member.lower, periodic), []).append(member.lower_vertex)
-        points.setdefault(_normalized(member.upper, periodic), []).append(member.upper_vertex)
+        points.setdefault(_normalized(member.lower, periodic), []).append(
+            member.lower_vertex
+        )
+        points.setdefault(_normalized(member.upper, periodic), []).append(
+            member.upper_vertex
+        )
     ordered = sorted(points, key=_ORDER)
-    stations = ordered + ([_add(value, _turns(1)) for value in ordered] if periodic else [])
+    stations = ordered + (
+        [_add(value, _turns(1)) for value in ordered] if periodic else []
+    )
     keys = [_ORDER(value) for value in stations]
     pieces: dict[int, tuple[_Piece, ...]] = {}
     for member in members:
         inner = stations[
-            bisect_right(keys, _ORDER(member.lower)) : bisect_left(keys, _ORDER(member.upper))
+            bisect_right(keys, _ORDER(member.lower)) : bisect_left(
+                keys, _ORDER(member.upper)
+            )
         ]
         cuts = (member.lower, *inner, member.upper)
         pieces[member.edge] = tuple(
             _Piece(member, position, first, last)
-            for position, (first, last) in enumerate(zip(cuts[:-1], cuts[1:], strict=True))
+            for position, (first, last) in enumerate(
+                zip(cuts[:-1], cuts[1:], strict=True)
+            )
         )
     return pieces, points
 
@@ -757,7 +850,9 @@ def _bucket_pieces(
 def _authority(
     roots: tuple[RootEndpoint | None, ...], /
 ) -> tuple[AbstractSurfacePatch | None, Literal[0, 1] | None] | None:
-    root = next((value for value in roots if isinstance(value, NativePeriodEndpoint)), None)
+    root = next(
+        (value for value in roots if isinstance(value, NativePeriodEndpoint)), None
+    )
     if root is None:
         return None
     if root.axis is None:
@@ -786,13 +881,17 @@ def _endpoint(
             edges,
         )
     patch, axis = (None, None) if authority is None else authority
-    root = NativePeriodEndpoint(carrier, patch, axis, rational=value.rational, turns=value.turns)
+    root = NativePeriodEndpoint(
+        carrier, patch, axis, rational=value.rational, turns=value.turns
+    )
     lower, upper = root.parameter_enclosure()
     parameter = root.parameter
     if not lower <= parameter <= upper:
         parameter = 0.5 * (lower + upper)
     if not np.isfinite(parameter):
-        raise BRepSewingFailure("sew_brep.fragment_endpoint has no finite enclosure", edges)
+        raise BRepSewingFailure(
+            "sew_brep.fragment_endpoint has no finite enclosure", edges
+        )
     return parameter, root
 
 
@@ -856,7 +955,8 @@ def _target_edge_endpoint(
             for _, root in candidates[1:]
         ):
             raise BRepSewingFailure(
-                "sew_brep.conic_endpoint roots disagree at one exact source station", edges
+                "sew_brep.conic_endpoint roots disagree at one exact source station",
+                edges,
             )
         return first
     return _endpoint(value, carrier, authority, edges)
@@ -954,12 +1054,18 @@ def _select_carrier(
     covering: tuple[_Piece, ...],
     periodic: bool,
     /,
-) -> tuple[_Piece, tuple[_Parameter, _Parameter], tuple[tuple[_ParameterMap, dict[int, _Coedge]], ...]]:
+) -> tuple[
+    _Piece,
+    tuple[_Parameter, _Parameter],
+    tuple[tuple[_ParameterMap, dict[int, _Coedge]], ...],
+]:
     for carrier in covering:
         inverse = carrier.member.frame.inverse()
         ends = inverse.apply(carrier.lower), inverse.apply(carrier.upper)
         target = ends if carrier.member.frame.scale > 0 else (ends[1], ends[0])
-        plans = tuple(_transport(staging, carrier, piece, target, periodic) for piece in covering)
+        plans = tuple(
+            _transport(staging, carrier, piece, target, periodic) for piece in covering
+        )
         complete = tuple(plan for plan in plans if plan is not None)
         if len(complete) == len(plans):
             return carrier, target, complete
@@ -1003,7 +1109,9 @@ def _build_group(
         else (carrier.upper, carrier.lower)
     )
     target_index = len(staging.edges)
-    closed = periodic and _compare(_difference(carrier.upper, carrier.lower), _turns(1)) == 0
+    closed = (
+        periodic and _compare(_difference(carrier.upper, carrier.lower), _turns(1)) == 0
+    )
     staging.edges.append(
         _TargetEdge(
             staging.curve(source_curve_index),
@@ -1096,15 +1204,23 @@ def _target_vertices(
                 "sew_brep.vertex_exact_points do not bind every source vertex in an alias class"
             )
         if bindings and any(binding != bindings[0] for binding in bindings[1:]):
-            raise BRepSewingFailure("sew_brep.vertex_exact_points disagree within a source alias class")
+            raise BRepSewingFailure(
+                "sew_brep.vertex_exact_points disagree within a source alias class"
+            )
         point_vertex = next(
-            (vertex for vertex in members if geometry.vertex_exact_points[vertex] is not None),
+            (
+                vertex
+                for vertex in members
+                if geometry.vertex_exact_points[vertex] is not None
+            ),
             members[0],
         )
         points_out.append(points[point_vertex])
         exact_out.append(bindings[0] if bindings else None)
         roots_out.append(bound_roots[0] if bound_roots else None)
-    target = {vertex: index for index, members in enumerate(ordered) for vertex in members}
+    target = {
+        vertex: index for index, members in enumerate(ordered) for vertex in members
+    }
     return (
         target,
         tuple(tuple(members) for members in ordered),
@@ -1119,9 +1235,13 @@ def _stage_buckets(staging: _Staging) -> dict[_GroupKey, tuple[_Points, bool]]:
     buckets: dict[tuple[object, ...], list[int]] = {}
     for edge, curve_index in enumerate(geometry.edge_curves):
         if curve_index >= 0:
-            buckets.setdefault(_support_key(geometry.curves[curve_index]), []).append(edge)
+            buckets.setdefault(_support_key(geometry.curves[curve_index]), []).append(
+                edge
+            )
     contexts: dict[_GroupKey, tuple[_Points, bool]] = {}
-    for bucket, edges in enumerate(values for values in buckets.values() if len(values) > 1):
+    for bucket, edges in enumerate(
+        values for values in buckets.values() if len(values) > 1
+    ):
         reference = geometry.curves[geometry.edge_curves[edges[0]]]
         periodic = _periodic(reference)
         members = tuple(_member(staging, reference, edge, periodic) for edge in edges)
@@ -1181,10 +1301,16 @@ def _target_uses(staging: _Staging, coedge: int, /) -> list[tuple[int, _Coedge]]
     geometry = staging.geometry
     edge, sense = geometry.coedge_edges[coedge], geometry.coedge_senses[coedge]
     if edge in staging.verbatim:
-        return [(
-            staging.verbatim[edge],
-            _Coedge(geometry.pcurves[coedge], sense, geometry.coedge_endpoint_roots[coedge]),
-        )]
+        return [
+            (
+                staging.verbatim[edge],
+                _Coedge(
+                    geometry.pcurves[coedge],
+                    sense,
+                    geometry.coedge_endpoint_roots[coedge],
+                ),
+            )
+        ]
     member_pieces = staging.pieces[edge]
     ascending = (member_pieces[0].member.frame.scale > 0) == (sense > 0)
     ordered = member_pieces if ascending else tuple(reversed(member_pieces))
@@ -1195,9 +1321,13 @@ def _target_uses(staging: _Staging, coedge: int, /) -> list[tuple[int, _Coedge]]
     return result
 
 
-def _publish_correspondence(staging: _Staging, /) -> tuple[BRepGeometry, BRepSewingLineage]:
+def _publish_correspondence(
+    staging: _Staging, /
+) -> tuple[BRepGeometry, BRepSewingLineage]:
     geometry = staging.geometry
-    vertex_ids, vertex_sources, target_points, exact_points, vertex_roots = _target_vertices(staging)
+    vertex_ids, vertex_sources, target_points, exact_points, vertex_roots = (
+        _target_vertices(staging)
+    )
     uses: list[tuple[int, _Coedge]] = []
     coedge_sources: list[int] = []
     face_loops: list[tuple[tuple[int, ...], ...]] = []
@@ -1215,8 +1345,14 @@ def _publish_correspondence(staging: _Staging, /) -> tuple[BRepGeometry, BRepSew
     for index, edge in enumerate(staging.edges):
         ends = vertex_ids[edge.vertices[0]], vertex_ids[edge.vertices[1]]
         if ends[0] == ends[1] and not edge.closed:
-            sources = tuple(image.source_edge for image in staging.images if image.target_edge == index)
-            raise BRepSewingFailure("sew_brep.vertex_classes collapse a nonclosed edge", sources)
+            sources = tuple(
+                image.source_edge
+                for image in staging.images
+                if image.target_edge == index
+            )
+            raise BRepSewingFailure(
+                "sew_brep.vertex_classes collapse a nonclosed edge", sources
+            )
         edge_vertices.append(ends)
     graph = None
     face_gap_bounds = (
@@ -1246,7 +1382,9 @@ def _publish_correspondence(staging: _Staging, /) -> tuple[BRepGeometry, BRepSew
         solid_shells=(),
         assembly_graph=graph,
     )
-    lineage = BRepSewingLineage(vertex_sources, tuple(staging.images), tuple(coedge_sources))
+    lineage = BRepSewingLineage(
+        vertex_sources, tuple(staging.images), tuple(coedge_sources)
+    )
     _require_exhaustive(geometry, target, lineage)
     return target, lineage
 
@@ -1331,9 +1469,13 @@ def _require_exhaustive(
                 "BRepSewingLineage.coedge map disagrees with edge orientation",
                 (source_edge,),
             )
-        mapping = _ParameterMap(image.scale, _Parameter(image.offset_rational, image.offset_turns))
+        mapping = _ParameterMap(
+            image.scale, _Parameter(image.offset_rational, image.offset_turns)
+        )
         expected = _reparameterize_pcurve(source.pcurves[source_coedge], mapping)
-        if expected is None or _curve_payload(expected) != _curve_payload(target.pcurves[target_coedge]):
+        if expected is None or _curve_payload(expected) != _curve_payload(
+            target.pcurves[target_coedge]
+        ):
             raise BRepSewingFailure(
                 "BRepSewingLineage contains an unproved p-curve transport",
                 (source_edge,),
@@ -1352,23 +1494,27 @@ def _require_exhaustive(
         if unsupported_roots:
             source_ids = tuple(_root_identity(root) for root in source_roots)
             target_ids = tuple(_root_identity(root) for root in target_roots)
-            if mapping.scale != 1 or mapping.offset != _Parameter(Fraction(0)) or source_ids != target_ids:
+            if (
+                mapping.scale != 1
+                or mapping.offset != _Parameter(Fraction(0))
+                or source_ids != target_ids
+            ):
                 raise BRepSewingFailure(
                     "A non-scalar source coedge root was not retained verbatim",
                     (source_edge,),
                 )
         else:
-            ordered_roots = source_roots if mapping.scale > 0 else tuple(reversed(source_roots))
+            ordered_roots = (
+                source_roots if mapping.scale > 0 else tuple(reversed(source_roots))
+            )
             inverse = mapping.inverse()
             for source_root, target_root in zip(ordered_roots, target_roots, strict=True):
                 if source_root is None:
                     continue
                 if isinstance(source_root, NativePeriodEndpoint):
-                    if (
-                        not isinstance(target_root, NativePeriodEndpoint)
-                        or _parameter(target_root.exact_parameter)
-                        != inverse.apply(_parameter(source_root.exact_parameter))
-                    ):
+                    if not isinstance(target_root, NativePeriodEndpoint) or _parameter(
+                        target_root.exact_parameter
+                    ) != inverse.apply(_parameter(source_root.exact_parameter)):
                         raise BRepSewingFailure(
                             "BRepSewingLineage has an invalid native-period coedge root map",
                             (source_edge,),
@@ -1385,7 +1531,8 @@ def _require_exhaustive(
                         or not isinstance(target_root, ConicParameterEndpoint)
                         or target_root.parameter_exact != expected.rational
                         or target_root.point_exact != source_root.point_exact
-                        or target_root.root.identity_payload() != source_root.root.identity_payload()
+                        or target_root.root.identity_payload()
+                        != source_root.root.identity_payload()
                     ):
                         raise BRepSewingFailure(
                             "BRepSewingLineage has an invalid conic coedge root map",
@@ -1410,17 +1557,24 @@ def _require_exhaustive(
                     (source_edge,),
                 )
             target_edge = images[0].target_edge
-            source_root_ids = tuple(_root_identity(root) for root in source.edge_endpoint_roots[source_edge])
-            target_root_ids = tuple(_root_identity(root) for root in target.edge_endpoint_roots[target_edge])
+            source_root_ids = tuple(
+                _root_identity(root) for root in source.edge_endpoint_roots[source_edge]
+            )
+            target_root_ids = tuple(
+                _root_identity(root) for root in target.edge_endpoint_roots[target_edge]
+            )
             if source_root_ids != target_root_ids or not np.array_equal(
-                np.asarray(source.edge_ranges)[source_edge], np.asarray(target.edge_ranges)[target_edge]
+                np.asarray(source.edge_ranges)[source_edge],
+                np.asarray(target.edge_ranges)[target_edge],
             ):
                 raise BRepSewingFailure(
                     "A root-bounded source edge was not retained verbatim",
                     (source_edge,),
                 )
             for source_vertex, target_vertex in zip(
-                source.edge_vertices[source_edge], target.edge_vertices[target_edge], strict=True
+                source.edge_vertices[source_edge],
+                target.edge_vertices[target_edge],
+                strict=True,
             ):
                 if source_vertex not in lineage.vertex_sources[target_vertex]:
                     raise BRepSewingFailure(
@@ -1432,8 +1586,12 @@ def _require_exhaustive(
         for image in images:
             target_range = _exact_range_for_lineage(target, image.target_edge)
             if target_range is None:
-                raise BRepSewingFailure("A target edge has an unresolved scalar range", (source_edge,))
-            mapping = _ParameterMap(image.scale, _Parameter(image.offset_rational, image.offset_turns))
+                raise BRepSewingFailure(
+                    "A target edge has an unresolved scalar range", (source_edge,)
+                )
+            mapping = _ParameterMap(
+                image.scale, _Parameter(image.offset_rational, image.offset_turns)
+            )
             first, last = mapping.apply(target_range[0]), mapping.apply(target_range[1])
             low, high = (first, last) if _compare(first, last) <= 0 else (last, first)
             intervals.append((low, high))
@@ -1443,11 +1601,16 @@ def _require_exhaustive(
             ):
                 source_parameter = mapping.apply(parameter)
                 source_vertex = (
-                    start if _compare(source_parameter, source_range[0]) == 0
-                    else end if _compare(source_parameter, source_range[1]) == 0
+                    start
+                    if _compare(source_parameter, source_range[0]) == 0
+                    else end
+                    if _compare(source_parameter, source_range[1]) == 0
                     else None
                 )
-                if source_vertex is not None and source_vertex not in lineage.vertex_sources[target_vertex]:
+                if (
+                    source_vertex is not None
+                    and source_vertex not in lineage.vertex_sources[target_vertex]
+                ):
                     raise BRepSewingFailure(
                         "BRepSewingLineage omits a source endpoint vertex",
                         (source_edge,),
@@ -1458,9 +1621,16 @@ def _require_exhaustive(
             or _compare(intervals[0][0], source_range[0]) != 0
             or _compare(intervals[-1][1], source_range[1]) != 0
         ):
-            raise BRepSewingFailure("BRepSewingLineage does not cover a source edge range", (source_edge,))
-        if any(_compare(first[1], second[0]) != 0 for first, second in zip(intervals[:-1], intervals[1:])):
-            raise BRepSewingFailure("BRepSewingLineage has a gap or overlap in a source edge", (source_edge,))
+            raise BRepSewingFailure(
+                "BRepSewingLineage does not cover a source edge range", (source_edge,)
+            )
+        if any(
+            _compare(first[1], second[0]) != 0
+            for first, second in zip(intervals[:-1], intervals[1:])
+        ):
+            raise BRepSewingFailure(
+                "BRepSewingLineage has a gap or overlap in a source edge", (source_edge,)
+            )
 
 
 def _edge_uses(
@@ -1480,7 +1650,8 @@ def _edge_uses(
 
 def _invalid_edges(uses: dict[int, list[tuple[int, int]]], /) -> tuple[int, ...]:
     return tuple(
-        edge for edge, values in sorted(uses.items())
+        edge
+        for edge, values in sorted(uses.items())
         if len(values) != 2 or sum(sign for _, sign in values) != 0
     )
 
@@ -1520,11 +1691,15 @@ def _region_invalid_edges(
     regions: tuple[tuple[tuple[int, ...], np.ndarray], ...],
     /,
 ) -> tuple[int, ...]:
-    return tuple(sorted({
-        edge
-        for faces, outward in regions
-        for edge in _invalid_edges(_edge_uses(geometry, faces, outward))
-    }))
+    return tuple(
+        sorted(
+            {
+                edge
+                for faces, outward in regions
+                for edge in _invalid_edges(_edge_uses(geometry, faces, outward))
+            }
+        )
+    )
 
 
 def _contact(
@@ -1571,9 +1746,13 @@ def _contacts(
     )
     contacts: list[BRepSewingContact] = []
     for position, first in enumerate(candidates):
-        first_vertices = {vertex_class[vertex] for vertex in geometry.edge_vertices[first]}
+        first_vertices = {
+            vertex_class[vertex] for vertex in geometry.edge_vertices[first]
+        }
         for second in candidates[position + 1 :]:
-            if first_vertices & {vertex_class[vertex] for vertex in geometry.edge_vertices[second]}:
+            if first_vertices & {
+                vertex_class[vertex] for vertex in geometry.edge_vertices[second]
+            }:
                 continue
             contact = _contact(geometry, first, second, policy)
             contacts.append(contact)
@@ -1621,7 +1800,9 @@ def _require_region_connectivity(
         while queue:
             face = queue.popleft()
             for other in faces:
-                if other not in reached and regions.get(face, set()) & regions.get(other, set()):
+                if other not in reached and regions.get(face, set()) & regions.get(
+                    other, set()
+                ):
                     reached.add(other)
                     queue.append(other)
         if len(reached) != len(faces):
@@ -1663,7 +1844,9 @@ def _assemble(
     solid_shells: list[tuple[int, ...]] = []
     for faces, outward in plan.regions:
         components = shells(geometry, faces, outward)
-        solid_shells.append(tuple(range(len(shell_faces), len(shell_faces) + len(components))))
+        solid_shells.append(
+            tuple(range(len(shell_faces), len(shell_faces) + len(components)))
+        )
         shell_faces.extend(components)
         shell_orientations.extend(
             tuple(int(outward[face] * plan.signs[face]) for face in component)
@@ -1690,16 +1873,18 @@ def _assemble(
         solid_shells=tuple(solid_shells),
         assembly_graph=graph,
     )
-    certificate = canonical_fingerprint({
-        "kind": "native-exact-brep-sewing",
-        "source_geometry": plan.source.geometry_id,
-        "target_geometry": assembled.geometry_id,
-        "orientation": plan.signs,
-        "tolerance": plan.policy.tolerance,
-        "solid_faces": plan.solid_faces,
-        "solid_orientations": plan.solid_orientations,
-        "lineage": lineage.lineage_id,
-    })
+    certificate = canonical_fingerprint(
+        {
+            "kind": "native-exact-brep-sewing",
+            "source_geometry": plan.source.geometry_id,
+            "target_geometry": assembled.geometry_id,
+            "orientation": plan.signs,
+            "tolerance": plan.policy.tolerance,
+            "solid_faces": plan.solid_faces,
+            "solid_orientations": plan.solid_orientations,
+            "lineage": lineage.lineage_id,
+        }
+    )
     return BRepSewingResult(assembled, certificate, lineage)
 
 
@@ -1712,9 +1897,13 @@ def _prepare_plan(
     /,
 ) -> _Plan:
     signs = np.asarray(orientation, dtype=np.float64)
-    if signs.shape != (len(geometry.face_loops),) or not np.all(np.isin(signs, (-1.0, 1.0))):
+    if signs.shape != (len(geometry.face_loops),) or not np.all(
+        np.isin(signs, (-1.0, 1.0))
+    ):
         raise ValueError("sew_brep.orientation must contain one -1 or +1 per face.")
-    if not isinstance(solid_faces, tuple) or any(not isinstance(faces, tuple) for faces in solid_faces):
+    if not isinstance(solid_faces, tuple) or any(
+        not isinstance(faces, tuple) for faces in solid_faces
+    ):
         raise TypeError("sew_brep.solid_faces must be a tuple of face-index tuples.")
     owned = [face for faces in solid_faces for face in faces]
     if any(isinstance(face, bool) or not isinstance(face, int) for face in owned):
@@ -1738,7 +1927,9 @@ def _prepare_plan(
         or any(isinstance(value, bool) or value not in (-1, 1) for value in values)
         for faces, values in zip(solid_faces, region_signs, strict=True)
     ):
-        raise ValueError("sew_brep.solid_orientations must align with faces and contain signs.")
+        raise ValueError(
+            "sew_brep.solid_orientations must align with faces and contain signs."
+        )
     face_owners: dict[int, list[int]] = {}
     for region, faces in enumerate(solid_faces):
         if not faces:
@@ -1752,8 +1943,13 @@ def _prepare_plan(
             second_sign = region_signs[second][solid_faces[second].index(face)]
             if first_sign == second_sign:
                 raise ValueError("A shared face must have opposite region orientations.")
-    if geometry.assembly_graph.solid_count and tuple(solid_faces) != geometry.topology.solid_faces:
-        raise BRepSewingFailure("sew_brep.assembly_graph cannot be remapped across changed solid ownership")
+    if (
+        geometry.assembly_graph.solid_count
+        and tuple(solid_faces) != geometry.topology.solid_faces
+    ):
+        raise BRepSewingFailure(
+            "sew_brep.assembly_graph cannot be remapped across changed solid ownership"
+        )
     regions: list[tuple[tuple[int, ...], np.ndarray]] = []
     for faces, values in zip(solid_faces, region_signs, strict=True):
         outward = signs.copy()
@@ -1796,9 +1992,15 @@ def sew_brep(
     _require_region_connectivity(target, tuple(staging.merged), plan.solid_faces)
     open_target = set(_region_invalid_edges(target, plan.regions))
     if open_target:
-        sources = tuple(sorted({
-            image.source_edge for image in lineage.edge_images if image.target_edge in open_target
-        }))
+        sources = tuple(
+            sorted(
+                {
+                    image.source_edge
+                    for image in lineage.edge_images
+                    if image.target_edge in open_target
+                }
+            )
+        )
         vertex_class = {
             vertex: staging.find(vertex)
             for vertex in range(geometry.vertex_points.shape[0])

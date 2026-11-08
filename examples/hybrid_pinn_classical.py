@@ -540,7 +540,9 @@ def classical_field(
     )
     geometry = reconstruction.support_geometry
     if not isinstance(geometry, phx.geometry.CompiledGeometry):
-        raise TypeError("Finite-element reconstruction requires compiled geometry support.")
+        raise TypeError(
+            "Finite-element reconstruction requires compiled geometry support."
+        )
     domain = phx.domain.GeometryDomain(geometry, label="x")
     return phx.discretization.DiscreteFieldFunctionView(
         reconstruction,

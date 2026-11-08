@@ -3340,7 +3340,6 @@ if TYPE_CHECKING:
         FiniteElementPeriodicFacetPair,
         FiniteElementPeriodicTransform,
         FiniteElementPlan,
-        SurfaceFiniteElementGeometry,
         FiniteElementPrecisionPolicy,
         FiniteElementRuntimeData,
         FiniteElementSpec,
@@ -3400,6 +3399,7 @@ if TYPE_CHECKING:
         SimplicialWhitneyKernel,
         SparseCommutingEvidence,
         SparseTransferEntryEvidence,
+        SurfaceFiniteElementGeometry,
         write_finite_element_field,
     )
     from .finite_difference import (

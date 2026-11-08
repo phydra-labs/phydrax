@@ -904,8 +904,6 @@ def test_owner_local_exchange_supports_search_only_owner_and_syncs_failure() -> 
         assert not transposed
 
 
-
-
 def test_native_owner_local_overset_routes_accepted_remote_fields_and_transpose() -> None:
     """Exercise real three-process owner shards, not a forced-device rank simulation."""
     devices = tuple(sorted(jax.devices(), key=lambda device: device.process_index))

@@ -60,7 +60,9 @@ def _monic(values: Polynomial, /) -> Polynomial:
     return tuple(value / leading for value in values_)
 
 
-def _primitive_remainder(left: tuple[int, ...], right: tuple[int, ...], /) -> tuple[int, ...]:
+def _primitive_remainder(
+    left: tuple[int, ...], right: tuple[int, ...], /
+) -> tuple[int, ...]:
     """Positive multiple of the rational remainder, with primitive integer content."""
     if right == (0,):
         raise ZeroDivisionError("Polynomial division by zero.")

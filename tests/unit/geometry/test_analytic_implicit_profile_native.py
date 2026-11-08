@@ -32,7 +32,9 @@ def test_sphere_profile_binds_reach_and_whole_boundary_cover() -> None:
     assert np.all(measured.lower <= measured.upper)
 
 
-def test_full_ring_torus_profile_establishes_positive_reach_and_certified_queries() -> None:
+def test_full_ring_torus_profile_establishes_positive_reach_and_certified_queries() -> (
+    None
+):
     geometry = _G.Torus((0.012, -0.007, 0.017), 0.3, 0.9).compile()
     profile = AnalyticImplicitProfile(geometry, SpatialCoordinateContract(METER))
 
@@ -40,9 +42,7 @@ def test_full_ring_torus_profile_establishes_positive_reach_and_certified_querie
     assert profile.component_count == 1
     assert profile.genus == 1
     assert profile.reach_lower > 0.0
-    query = profile.boundary_distance(
-        np.asarray(((0.012 + 0.9, -0.007, 0.017),))
-    )
+    query = profile.boundary_distance(np.asarray(((0.012 + 0.9, -0.007, 0.017),)))
     assert query.semantics == "certified"
     assert 0.0 <= query.lower[0] <= query.upper[0] <= 1.0e-12
     samples = profile.boundary_cover(0.15)

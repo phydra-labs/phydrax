@@ -24,7 +24,6 @@ from ..geometry._source_boundary_records import (
 )
 from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
 from ..typing import checked
-from ._certification_inputs import ScopedFidelityInput
 from ._association import (
     AssociationEntityClasses,
     GeometryAssociation,
@@ -38,6 +37,7 @@ from ._association_routes import (
     inherit_association_table,
     target_dimension,
 )
+from ._certification_inputs import ScopedFidelityInput
 from ._lineage import MeshLineage, VertexInterpolationStencil
 from ._result import CellMeshingResult
 
@@ -189,7 +189,11 @@ class MappedReferenceAssociationTransfer(StrictModule, NonTrainableState):
         root_dimension = self.domain.reference_mesh.topological_dimension
         declared_roots = set(self.domain.root_cell_ids)
         root_paths = dict(
-            zip(self.domain.root_cell_ids, self.domain.root_cell_occurrence_paths, strict=True)
+            zip(
+                self.domain.root_cell_ids,
+                self.domain.root_cell_occurrence_paths,
+                strict=True,
+            )
         )
         root_role = (
             GeometrySourceEntityRole.REGION
@@ -291,7 +295,9 @@ class MappedReferenceAssociationTransfer(StrictModule, NonTrainableState):
         *,
         vertex_stencil: VertexInterpolationStencil | None,
         geometry_transition: CellGeometryTransition | None,
-        target_fidelity_witness: SourceBoundaryChartWitness | SourceBoundaryFaceImageWitness | None,
+        target_fidelity_witness: SourceBoundaryChartWitness
+        | SourceBoundaryFaceImageWitness
+        | None,
         target_scoped_fidelity: tuple[ScopedFidelityInput, ...],
         validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
     ) -> tuple[GeometryAssociation, ...]:

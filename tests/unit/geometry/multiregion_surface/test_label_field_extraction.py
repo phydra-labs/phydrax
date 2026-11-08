@@ -37,9 +37,7 @@ def _image_affine(
 ) -> np.ndarray:
     affine = np.eye(4)
     affine[:3, :3] *= spacing
-    affine[:3, 3] = (
-        (0.5 * spacing,) * 3 if origin is None else np.asarray(origin)
-    )
+    affine[:3, 3] = (0.5 * spacing,) * 3 if origin is None else np.asarray(origin)
     return affine
 
 
@@ -169,8 +167,7 @@ def test_oblique_reflection_and_tiny_material_survive_image_extraction() -> None
         base.candidate_seed.vertex_global_ids,
     )
     expected_positions = (
-        np.asarray(base.candidate_seed.positions)
-        @ reflection_shear[:3, :3].T
+        np.asarray(base.candidate_seed.positions) @ reflection_shear[:3, :3].T
         + reflection_shear[:3, 3]
     )
     np.testing.assert_allclose(

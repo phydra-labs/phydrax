@@ -115,7 +115,6 @@ def _decided_trigonometric(angles: np.ndarray, /) -> tuple[np.ndarray, np.ndarra
     )
 
 
-
 def _sphere_cube_cover(
     center: np.ndarray,
     radius: float,

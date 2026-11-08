@@ -271,18 +271,20 @@ def test_native_period_and_literal_seam_junction_requires_exact_source() -> None
     assert len(_rooted_patch_chart_junctions(domain, 0)[0]) == 4
     first, second = uses[0], uses[1]
     first_coedge, second_coedge = coedges[:2]
-    assert _exact_line_junction_box(
-        model, face, first_coedge, second_coedge, first, second
-    ) is not None
+    assert (
+        _exact_line_junction_box(model, face, first_coedge, second_coedge, first, second)
+        is not None
+    )
 
     shifted = eqx.tree_at(
         lambda use: use.pcurve,
         second,
         PeriodicPCurve(second.pcurve, model.patches[face], (1, 0)),
     )
-    assert _exact_line_junction_box(
-        model, face, first_coedge, second_coedge, first, shifted
-    ) is None
+    assert (
+        _exact_line_junction_box(model, face, first_coedge, second_coedge, first, shifted)
+        is None
+    )
     end = 1 if first.sense > 0 else 0
     root = model.geometry.coedge_endpoint_roots[first_coedge][end]
     assert isinstance(root, NativePeriodEndpoint)
@@ -291,9 +293,12 @@ def test_native_period_and_literal_seam_junction_requires_exact_source() -> None
         model,
         None,
     )
-    assert _exact_line_junction_box(
-        missing, face, first_coedge, second_coedge, first, second
-    ) is None
+    assert (
+        _exact_line_junction_box(
+            missing, face, first_coedge, second_coedge, first, second
+        )
+        is None
+    )
     wrong = NativePeriodEndpoint(
         root.curve, root.patch, root.axis, rational=root.rational, turns=1
     )
@@ -302,9 +307,12 @@ def test_native_period_and_literal_seam_junction_requires_exact_source() -> None
         model,
         wrong,
     )
-    assert _exact_line_junction_box(
-        tampered, face, first_coedge, second_coedge, first, second
-    ) is None
+    assert (
+        _exact_line_junction_box(
+            tampered, face, first_coedge, second_coedge, first, second
+        )
+        is None
+    )
 
 
 def _rebuild_brep_model(

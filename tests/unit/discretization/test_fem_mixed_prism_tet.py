@@ -1016,28 +1016,44 @@ def test_circulation_basis_reuse_preserves_actual_mixed_edge_tabulations() -> No
     mesh = _mixed_mesh("simplex:3")
     geometry = phx.discretization.CellGeometrySpec.affine(mesh)
     field = next(
-        item for item in _layer_field_plan(SimpleNamespace(mesh=mesh, geometry=geometry)).fields
+        item
+        for item in _layer_field_plan(
+            SimpleNamespace(mesh=mesh, geometry=geometry)
+        ).fields
         if item.name == "Hcurl"
     )
     parameters = np.asarray(_degree_aware_reference_rule("interval", 8)[0]).reshape(-1)
     cache: dict[tuple[int, tuple[int, ...], str, bytes], tuple[Any, np.ndarray]] = {}
     for element in field.resolve(mesh):
-        vertices = np.asarray(phx.discretization.reference_cell_topology(element.cell_kind).vertices)
+        vertices = np.asarray(
+            phx.discretization.reference_cell_topology(element.cell_kind).vertices
+        )
         edges = phx.discretization.reference_cell_topology(element.cell_kind).entities[1]
         for first, last in edges:
             start = vertices[first]
             points = start + parameters[:, None] * (vertices[last] - start)
             expected = np.asarray(element.tabulate(points)[0], dtype=np.float64)
             actual = _layer_circulation_reference_basis(element, points, cache)
-            np.testing.assert_array_equal(actual.view(np.uint64), expected.view(np.uint64))
-            assert _layer_circulation_reference_basis(element, points.copy(), cache) is actual
+            np.testing.assert_array_equal(
+                actual.view(np.uint64), expected.view(np.uint64)
+            )
+            assert (
+                _layer_circulation_reference_basis(element, points.copy(), cache)
+                is actual
+            )
         duplicate = copy(element)
         start = vertices[edges[0][0]]
         points = start + parameters[:, None] * (vertices[edges[0][1]] - start)
         reversed_points = points[::-1].copy()
-        reversed_basis = _layer_circulation_reference_basis(element, reversed_points, cache)
-        expected_reversed = np.asarray(element.tabulate(reversed_points)[0], dtype=np.float64)
-        np.testing.assert_array_equal(reversed_basis.view(np.uint64), expected_reversed.view(np.uint64))
+        reversed_basis = _layer_circulation_reference_basis(
+            element, reversed_points, cache
+        )
+        expected_reversed = np.asarray(
+            element.tabulate(reversed_points)[0], dtype=np.float64
+        )
+        np.testing.assert_array_equal(
+            reversed_basis.view(np.uint64), expected_reversed.view(np.uint64)
+        )
         assert _layer_circulation_reference_basis(duplicate, points, cache) is not (
             _layer_circulation_reference_basis(element, points, cache)
         )

@@ -20,14 +20,14 @@ from fractions import Fraction
 import numpy as np
 
 from ._planar_primitives import (
-    Point,
-    Polygon,
     area2,
     box_overlap_pairs,
     cross,
     interiors_separated,
     intersection,
     oriented_polygon,
+    Point,
+    Polygon,
     polygon_boxes,
     signed_area2,
 )
@@ -50,7 +50,9 @@ class OwnedPolygon:
 
     @property
     def edges(self) -> tuple[tuple[Point, Point], ...]:
-        return tuple(zip(self.vertices, self.vertices[1:] + self.vertices[:1], strict=True))
+        return tuple(
+            zip(self.vertices, self.vertices[1:] + self.vertices[:1], strict=True)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,7 +90,9 @@ def _array(value: object, dtype: np.dtype, columns: int, label: str) -> np.ndarr
 
 
 def _polygon(points: np.ndarray) -> Polygon:
-    return tuple((Fraction.from_float(float(x)), Fraction.from_float(float(y))) for x, y in points)
+    return tuple(
+        (Fraction.from_float(float(x)), Fraction.from_float(float(y))) for x, y in points
+    )
 
 
 def _cavity(points: np.ndarray) -> Polygon:
@@ -194,7 +198,9 @@ def partition_overset_triangles(
             triangles.append(triangle)
             identities.append((name, part_index, cell_index))
 
-    walls = tuple(_cavity(_array(wall, np.dtype(np.float64), 2, "cavity")) for wall in cavities)
+    walls = tuple(
+        _cavity(_array(wall, np.dtype(np.float64), 2, "cavity")) for wall in cavities
+    )
     triangle_boxes = polygon_boxes(triangles)
     candidates: list[list[Polygon]] = [[] for _ in triangles]
     for first, second in box_overlap_pairs(
@@ -222,13 +228,19 @@ def partition_overset_triangles(
     ):
         owned = (triangle,)
         for obstacle in protected:
-            owned = tuple(piece for polygon in owned for piece in _subtract(polygon, obstacle))
+            owned = tuple(
+                piece for polygon in owned for piece in _subtract(polygon, obstacle)
+            )
             if not owned:
                 break
         source_area = area2(triangle) / 2
-        cavity_area = source_area - sum((area2(polygon) / 2 for polygon in owned), Fraction(0))
+        cavity_area = source_area - sum(
+            (area2(polygon) / 2 for polygon in owned), Fraction(0)
+        )
         for obstacle in higher:
-            owned = tuple(piece for polygon in owned for piece in _subtract(polygon, obstacle))
+            owned = tuple(
+                piece for polygon in owned for piece in _subtract(polygon, obstacle)
+            )
             if not owned:
                 break
         owned_area = Fraction(0)
@@ -236,7 +248,9 @@ def partition_overset_triangles(
             area = area2(polygon) / 2
             pieces.append(OwnedPolygon(name, part_index, cell_index, polygon, area))
             owned_area += area
-        cell_areas.append(CellArea(name, part_index, cell_index, source_area, cavity_area, owned_area))
+        cell_areas.append(
+            CellArea(name, part_index, cell_index, source_area, cavity_area, owned_area)
+        )
         total_area += owned_area
     return OversetPartition(tuple(pieces), total_area, tuple(cell_areas))
 

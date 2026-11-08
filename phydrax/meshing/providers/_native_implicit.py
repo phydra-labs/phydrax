@@ -2733,9 +2733,13 @@ def _fixed_source_contract_identity(
         {
             "kind": "fixed-implicit-source-contract",
             "source": source.source_id,
-            "geometry_structure": model_structure_recipe(source.geometry, path="fixed.source.geometry"),
+            "geometry_structure": model_structure_recipe(
+                source.geometry, path="fixed.source.geometry"
+            ),
             "geometry_arrays": array_tree_fingerprint(source.geometry),
-            "grid_structure": model_structure_recipe(source.grid, path="fixed.source.grid"),
+            "grid_structure": model_structure_recipe(
+                source.grid, path="fixed.source.grid"
+            ),
             "grid_arrays": array_tree_fingerprint(source.grid),
             "policy": asdict(policy),
             "coordinate_contract": coordinate_contract.spatial_id,
@@ -2761,17 +2765,29 @@ def _fixed_preparation_identity(
     return canonical_fingerprint(
         {
             "kind": "native-fixed-implicit-preparation",
-            "discovery_structure": model_structure_recipe(discovery_recipe, path="fixed.discovery"),
+            "discovery_structure": model_structure_recipe(
+                discovery_recipe, path="fixed.discovery"
+            ),
             "discovery_arrays": array_tree_fingerprint(discovery_recipe),
-            "specification_structure": model_structure_recipe(specification, path="fixed.specification"),
+            "specification_structure": model_structure_recipe(
+                specification, path="fixed.specification"
+            ),
             "specification_arrays": array_tree_fingerprint(specification),
             "revision_bindings": revision_bindings,
-            "origin_geometry_structure": model_structure_recipe(origin_geometry, path="fixed.origin"),
+            "origin_geometry_structure": model_structure_recipe(
+                origin_geometry, path="fixed.origin"
+            ),
             "origin_geometry_arrays": array_tree_fingerprint(origin_geometry),
-            "origin_grid_structure": model_structure_recipe(origin_grid, path="fixed.grid"),
+            "origin_grid_structure": model_structure_recipe(
+                origin_grid, path="fixed.grid"
+            ),
             "origin_grid_arrays": array_tree_fingerprint(origin_grid),
-            "surface_kernel": model_structure_recipe(surface_plan.kernel, path="fixed.kernel"),
-            "projection_kernel": model_structure_recipe(projection.kernel, path="fixed.projection.kernel"),
+            "surface_kernel": model_structure_recipe(
+                surface_plan.kernel, path="fixed.kernel"
+            ),
+            "projection_kernel": model_structure_recipe(
+                projection.kernel, path="fixed.projection.kernel"
+            ),
             "surface_arrays": array_tree_fingerprint(surface_plan),
             "surface_schema": surface_plan.schema.schema_id,
             "surface_tolerance": asdict(surface_plan.tolerance),
@@ -2826,25 +2842,34 @@ class _PreparedFixedImplicitRoute(StrictModule, NonTrainableState):
             source, domain, _effective_policy(None, specification, domain)
         )
         recipe = discovery.archive_recipe
-        discovery_data = tuple(getattr(recipe, name) for name in recipe.__dataclass_fields__)
+        discovery_data = tuple(
+            getattr(recipe, name) for name in recipe.__dataclass_fields__
+        )
         fresh_recipe = regenerated_discovery.archive_recipe
         fresh_data = tuple(
             getattr(fresh_recipe, name) for name in fresh_recipe.__dataclass_fields__
         )
         if not _same_tree_content(discovery_data, fresh_data):
-            raise ValueError("Fixed implicit discovery is not the current source authority.")
+            raise ValueError(
+                "Fixed implicit discovery is not the current source authority."
+            )
         del regenerated_discovery
-        contract_id = _fixed_source_contract_identity(source, surface_plan.policy, coordinate_contract)
+        contract_id = _fixed_source_contract_identity(
+            source, surface_plan.policy, coordinate_contract
+        )
         bindings = (
             ((source.source_revision, contract_id),)
-            if revision_bindings is None else tuple(sorted(revision_bindings))
+            if revision_bindings is None
+            else tuple(sorted(revision_bindings))
         )
         if (
             len({revision for revision, _ in bindings}) != len(bindings)
             or any(not revision or not identity for revision, identity in bindings)
             or dict(bindings).get(source.source_revision) != contract_id
         ):
-            raise ValueError("Fixed implicit revision bindings do not match the current source.")
+            raise ValueError(
+                "Fixed implicit revision bindings do not match the current source."
+            )
         self.source = source
         self.specification = specification
         self.coordinate_contract = coordinate_contract
@@ -2862,8 +2887,11 @@ class _PreparedFixedImplicitRoute(StrictModule, NonTrainableState):
 
         source = self.source
         rebuilt = NativeImplicitSource(
-            source.geometry, source.source_id, source.source_revision,
-            grid=source.grid, discovery=source.discovery,
+            source.geometry,
+            source.source_id,
+            source.source_revision,
+            grid=source.grid,
+            discovery=source.discovery,
             authoring_profile=source.authoring_profile,
         )
         if not _same_tree_content(rebuilt, source):
@@ -2873,13 +2901,22 @@ class _PreparedFixedImplicitRoute(StrictModule, NonTrainableState):
             or not _same_tree_content(source.grid, self.origin_grid)
             or not _same_tree_content(source.geometry.kernel, self.origin_geometry.kernel)
             or not _same_tree_content(source.geometry.kernel, self.surface_plan.kernel)
-            or not _same_tree_content(self.surface_plan.kernel, self.surface_plan.projection.kernel)
+            or not _same_tree_content(
+                self.surface_plan.kernel, self.surface_plan.projection.kernel
+            )
             or self.revision_bindings != tuple(sorted(self.revision_bindings))
             or dict(self.revision_bindings).get(source.source_revision)
-            != _fixed_source_contract_identity(source, self.surface_plan.policy, self.coordinate_contract)
-            or self.preparation_id != _fixed_preparation_identity(
-                self.origin_geometry, self.origin_grid, self.surface_plan,
-                self.discovery_recipe, self.specification, self.revision_bindings,
+            != _fixed_source_contract_identity(
+                source, self.surface_plan.policy, self.coordinate_contract
+            )
+            or self.preparation_id
+            != _fixed_preparation_identity(
+                self.origin_geometry,
+                self.origin_grid,
+                self.surface_plan,
+                self.discovery_recipe,
+                self.specification,
+                self.revision_bindings,
             )
         ):
             raise ValueError(
@@ -2887,17 +2924,23 @@ class _PreparedFixedImplicitRoute(StrictModule, NonTrainableState):
                 "its current source and plan."
             )
         regenerated = discover_implicit_surface(
-            self.origin_geometry, self.origin_grid,
-            policy=self.surface_plan.policy, source_id=self.surface_plan.source_id,
+            self.origin_geometry,
+            self.origin_grid,
+            policy=self.surface_plan.policy,
+            source_id=self.surface_plan.source_id,
         )
         if not _same_tree_content(regenerated, self.surface_plan):
-            raise ValueError("Fixed implicit plan no longer matches its owning discovery.")
+            raise ValueError(
+                "Fixed implicit plan no longer matches its owning discovery."
+            )
         domain = _grid_domain(source)
         discovery = _discover(
             source, domain, _effective_policy(None, self.specification, domain)
         )
         recipe = discovery.archive_recipe
-        current_data = tuple(getattr(recipe, name) for name in recipe.__dataclass_fields__)
+        current_data = tuple(
+            getattr(recipe, name) for name in recipe.__dataclass_fields__
+        )
         if not _same_tree_content(current_data, self.discovery_recipe):
             raise ValueError("Fixed implicit discovery authority is no longer current.")
         return discovery
@@ -2918,7 +2961,9 @@ class _PreparedFixedImplicitRoute(StrictModule, NonTrainableState):
         vertices = np.asarray(realization.vertices, dtype=np.float64)
         faces = np.asarray(self.surface_plan.faces, dtype=np.int64)
         mesh = cell_mesh_owner.CellMesh.from_triangles(
-            vertices, faces.astype(np.int32, copy=False), numeric_version=source.source_revision
+            vertices,
+            faces.astype(np.int32, copy=False),
+            numeric_version=source.source_revision,
         )
         geometry = CellGeometrySpec.affine(mesh)
         query = _NativeImplicitBoundaryQuery(
@@ -2934,7 +2979,9 @@ class _PreparedFixedImplicitRoute(StrictModule, NonTrainableState):
             or not np.all(np.isfinite(distance.upper))
             or not np.array_equal(mesh.entity_set(0).entity_ids, mesh.vertex_global_ids)
         ):
-            raise ValueError("Fixed implicit vertices require aligned certified source-distance bounds.")
+            raise ValueError(
+                "Fixed implicit vertices require aligned certified source-distance bounds."
+            )
         vertex_bound = np.asarray(distance.upper, dtype=np.float64)
         # Distance to a closed set is 1-Lipschitz.  The L1 diameter bounds
         # the displacement from a corner to any point of its triangle.
@@ -2964,16 +3011,27 @@ class _PreparedFixedImplicitRoute(StrictModule, NonTrainableState):
                 stage="specification_compliance",
             )
         organization = _organization(
-            source, discovery, self.coordinate_contract, mesh, faces, fidelity_bound,
-            vertex_deviations=vertex_bound, fixed_plan_id=self.surface_plan.plan_id,
+            source,
+            discovery,
+            self.coordinate_contract,
+            mesh,
+            faces,
+            fidelity_bound,
+            vertex_deviations=vertex_bound,
+            fixed_plan_id=self.surface_plan.plan_id,
         )
         witness = _implicit_carrier_root_witness(
-            source.source_id, source.source_revision, query, discovery.boundary_source,
-            mesh, geometry,
+            source.source_id,
+            source.source_revision,
+            query,
+            discovery.boundary_source,
+            mesh,
+            geometry,
         )
         scoped = tuple(
             (query, witness, feature.maximum_deviation)
-            for feature in self.specification.protected_features if feature.hard
+            for feature in self.specification.protected_features
+            if feature.hard
         )
         tolerance = self.specification.maximum_deviation
         if tolerance is None:
@@ -2990,8 +3048,12 @@ class _PreparedFixedImplicitRoute(StrictModule, NonTrainableState):
             feature_source=source,
         )
         return NativeMeshConstruction(
-            mesh, self.coordinate_contract, compliance, certification,
-            geometry=geometry, organization=organization,
+            mesh,
+            self.coordinate_contract,
+            compliance,
+            certification,
+            geometry=geometry,
+            organization=organization,
         )
 
 
@@ -3807,17 +3869,22 @@ def prepare_native_fixed_rebind(
 
     prior.require_current()
     surface_plan = prior.surface_plan
-    if (
-        source.source_revision == prior.source.source_revision
-        and not _same_tree_content(source.geometry.state, prior.source.geometry.state)
+    if source.source_revision == prior.source.source_revision and not _same_tree_content(
+        source.geometry.state, prior.source.geometry.state
     ):
-        raise ValueError("Changed fixed implicit geometry requires a new source revision.")
+        raise ValueError(
+            "Changed fixed implicit geometry requires a new source revision."
+        )
     policy = options.implicit_policy
     if not isinstance(policy, ImplicitSurfacePolicy) or source.grid is None:
         raise ValueError("Fixed implicit rebind requires its authored fixed-grid policy.")
     if implicit_support_issues(source, specification, options):
-        raise ValueError("Fixed implicit rebind does not support the requested surface controls.")
-    axes = tuple(np.asarray(axis.point_coordinates) for axis in source.grid.structured_axes)
+        raise ValueError(
+            "Fixed implicit rebind does not support the requested surface controls."
+        )
+    axes = tuple(
+        np.asarray(axis.point_coordinates) for axis in source.grid.structured_axes
+    )
     grid_points = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape((-1, 3))
     if (
         surface_plan.source_id != source.source_id
@@ -3828,12 +3895,16 @@ def prepare_native_fixed_rebind(
         or not _same_tree_content(prior.origin_grid, source.grid)
         or not np.array_equal(np.asarray(surface_plan.grid_points), grid_points)
     ):
-        raise ValueError("Fixed implicit rebind changed its source kernel, schema, lattice, or policy.")
+        raise ValueError(
+            "Fixed implicit rebind changed its source kernel, schema, lattice, or policy."
+        )
     contract_id = _fixed_source_contract_identity(source, policy, coordinate_contract)
     bindings = dict(prior.revision_bindings)
     previous = bindings.get(source.source_revision)
     if previous is not None and previous != contract_id:
-        raise ValueError("A fixed implicit source revision cannot be reused for different scientific content.")
+        raise ValueError(
+            "A fixed implicit source revision cannot be reused for different scientific content."
+        )
     bindings[source.source_revision] = contract_id
     realization = surface_plan.realize(source.geometry.state)
     if not bool(np.asarray(realization.accepted)):
@@ -3842,8 +3913,13 @@ def prepare_native_fixed_rebind(
         )
     discovery = _resolve_discovery(source, specification, None)
     return _PreparedFixedImplicitRoute(
-        source, specification, coordinate_contract, discovery, surface_plan,
-        origin_geometry=prior.origin_geometry, origin_grid=prior.origin_grid,
+        source,
+        specification,
+        coordinate_contract,
+        discovery,
+        surface_plan,
+        origin_geometry=prior.origin_geometry,
+        origin_grid=prior.origin_grid,
         revision_bindings=tuple(sorted(bindings.items())),
     )
 
@@ -3932,10 +4008,14 @@ def prepare_native_implicit(
             )
         if isinstance(options.implicit_policy, ImplicitSurfacePolicy):
             if source.grid is None:
-                raise ValueError("Fixed-lattice implicit meshing requires the authored grid.")
+                raise ValueError(
+                    "Fixed-lattice implicit meshing requires the authored grid."
+                )
             surface_plan = discover_implicit_surface(
-                source.geometry, source.grid,
-                policy=options.implicit_policy, source_id=source.source_id,
+                source.geometry,
+                source.grid,
+                policy=options.implicit_policy,
+                source_id=source.source_id,
             )
             discovery = _resolve_discovery(source, specification, None)
             return _PreparedFixedImplicitRoute(

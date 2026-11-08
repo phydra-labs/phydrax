@@ -26,6 +26,7 @@ from .._controls import FeatureKind
 from .._periodic import PeriodicPointOrbits
 from .._sizing import SizeCompliancePolicy, SizeControlStrength, UniformSizeControl
 
+
 if TYPE_CHECKING:
     from ._native_periodic import NativePeriodicSource
 
@@ -71,7 +72,9 @@ def periodic_quotient_edge_squared_lengths(
     vertex_representatives = np.asarray(topology.vertex_representatives, dtype=np.int64)
     vertex_shifts = np.asarray(topology.vertex_shifts, dtype=np.int64)
     vertex_orbits = (
-        np.asarray(topology.orbit_indices, dtype=np.int64)[lifted_offsets[0]:lifted_offsets[1]]
+        np.asarray(topology.orbit_indices, dtype=np.int64)[
+            lifted_offsets[0] : lifted_offsets[1]
+        ]
         - quotient_offsets[0]
     )
     vertex_ids = np.asarray(topology.quotient.entity_sets[0].entity_ids, dtype=np.int64)
@@ -92,20 +95,28 @@ def periodic_quotient_edge_squared_lengths(
         if exact_points is None:
             first_action = exact_periodic_element(topology.cell, vertex_shifts[first])
             second_action = exact_periodic_element(topology.cell, vertex_shifts[second])
-            first_point = _exact_point(first_action, points[vertex_representatives[first]])
-            second_point = _exact_point(second_action, points[vertex_representatives[second]])
+            first_point = _exact_point(
+                first_action, points[vertex_representatives[first]]
+            )
+            second_point = _exact_point(
+                second_action, points[vertex_representatives[second]]
+            )
         else:
             first_point, second_point = exact_points[first], exact_points[second]
         squared.append(
             sum(
-                ((second_point[axis] - first_point[axis]) ** 2 for axis in range(points.shape[1])),
+                (
+                    (second_point[axis] - first_point[axis]) ** 2
+                    for axis in range(points.shape[1])
+                ),
                 Fraction(),
             )
         )
     if edge_ids.shape != (len(squared),):
-        raise ValueError("Periodic quotient edge IDs do not align with representative rows.")
+        raise ValueError(
+            "Periodic quotient edge IDs do not align with representative rows."
+        )
     return edge_ids, endpoints, tuple(squared)
-
 
 
 type Point = tuple[RadicalElement, RadicalElement]
@@ -114,6 +125,7 @@ type Edge = tuple[int, int, int, int]
 type Corner = tuple[int, Image]
 type SiteIdentity = tuple[str, tuple[int, ...]]
 type _Vector = tuple[Fraction, Fraction]
+
 
 @dataclass(frozen=True, slots=True)
 class ExactAlgebraicCarrier:
@@ -126,6 +138,7 @@ class ExactAlgebraicCarrier:
     site_identities: tuple[SiteIdentity, ...]
     source_identity: str
 
+
 @dataclass(frozen=True, slots=True)
 class _Strata:
     points: tuple[Point, ...]
@@ -135,6 +148,7 @@ class _Strata:
     edges: np.ndarray
     cell: PeriodicCell
     root_ids: np.ndarray
+
 
 @dataclass(frozen=True, slots=True)
 class _Grid:
@@ -153,11 +167,17 @@ class _Grid:
     run: RadicalElement
     height: RadicalElement
 
+
 class _Predicates:
     def __init__(self) -> None:
-        self.boxes: dict[tuple[Point, Point], tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]]] = {}
+        self.boxes: dict[
+            tuple[Point, Point],
+            tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]],
+        ] = {}
 
-    def box(self, a: Point, b: Point) -> tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]]:
+    def box(
+        self, a: Point, b: Point
+    ) -> tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]]:
         key = (a, b)
         if key not in self.boxes:
             ax, ay = a[0].interval(bits=32), a[1].interval(bits=32)
@@ -186,24 +206,30 @@ def _radical_point(row: Sequence[ExactScalar], /) -> Point:
     )
 
 
-def prepare_periodic_source_strata(mesh: CellMesh, regions: np.ndarray | None, features: tuple, /) -> _Strata:
+def prepare_periodic_source_strata(
+    mesh: CellMesh, regions: np.ndarray | None, features: tuple, /
+) -> _Strata:
     """Extract quotient cells and protected lifted-edge orbits using canonical IDs."""
     topology = mesh.periodic_topology
     if topology is None or not isinstance(topology.cell, PeriodicCell) or regions is None:
-        raise ValueError("Material source requires a translational quotient and authored regions.")
+        raise ValueError(
+            "Material source requires a translational quotient and authored regions."
+        )
     topology.require_lifted(mesh.topology, mesh.topology_id, mesh.blocks)
     topology.require_coordinates(mesh.coordinates)
     offsets = np.asarray(topology.lifted_offsets, dtype=np.int64)
     qoffsets = np.asarray(topology.quotient_offsets, dtype=np.int64)
     orbits = np.asarray(topology.orbit_indices, dtype=np.int64)
     representatives = np.asarray(topology.representatives, dtype=np.int64)
-    vertex_rows = orbits[offsets[0]:offsets[1]] - qoffsets[0]
+    vertex_rows = orbits[offsets[0] : offsets[1]] - qoffsets[0]
     quotient_ids = np.asarray(topology.quotient.entity_sets[0].entity_ids, dtype=np.int64)
     order = np.argsort(quotient_ids, kind="stable")
     inverse = np.empty_like(order)
     inverse[order] = np.arange(order.size)
-    quotient_representatives = representatives[qoffsets[0]:qoffsets[1]][order]
-    roots = np.asarray(topology.vertex_representatives, dtype=np.int64)[quotient_representatives]
+    quotient_representatives = representatives[qoffsets[0] : qoffsets[1]][order]
+    roots = np.asarray(topology.vertex_representatives, dtype=np.int64)[
+        quotient_representatives
+    ]
     root_ids = quotient_ids[order]
     vertex_roots = inverse[vertex_rows]
     shifts = np.asarray(topology.vertex_shifts, dtype=np.int64)
@@ -212,7 +238,7 @@ def prepare_periodic_source_strata(mesh: CellMesh, regions: np.ndarray | None, f
     if np.any(shifts[roots]):
         raise ValueError("Canonical source representatives must have zero deck shift.")
     rows = _entity_vertex_rows(mesh)
-    leaders = representatives[qoffsets[2]:qoffsets[3]]
+    leaders = representatives[qoffsets[2] : qoffsets[3]]
     lifted_cell_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
     cells_by_id = {
         int(identifier): np.asarray(row, dtype=np.int64)
@@ -222,29 +248,44 @@ def prepare_periodic_source_strata(mesh: CellMesh, regions: np.ndarray | None, f
     cell_rows = [cells_by_id[int(lifted_cell_ids[i])] for i in leaders]
     if any(row.shape != (3,) for row in cell_rows):
         raise ValueError("Source-action construction requires simplex cells.")
-    block_ids = np.concatenate([np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks])
+    block_ids = np.concatenate(
+        [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
+    )
     values = np.asarray(regions, dtype=np.int64)
     if values.shape != block_ids.shape:
         raise ValueError("Source material rows do not match cells.")
     region_by_id = dict(zip(map(int, block_ids), map(int, values), strict=True))
-    selected_regions = np.asarray([region_by_id[int(lifted_cell_ids[i])] for i in leaders], dtype=np.int64)
-    cell_orbits = orbits[offsets[2]:offsets[3]] - qoffsets[2]
+    selected_regions = np.asarray(
+        [region_by_id[int(lifted_cell_ids[i])] for i in leaders], dtype=np.int64
+    )
+    cell_orbits = orbits[offsets[2] : offsets[3]] - qoffsets[2]
     for row, orbit in enumerate(cell_orbits):
         if region_by_id[int(lifted_cell_ids[row])] != selected_regions[int(orbit)]:
-            raise ValueError("Periodic copies of a source cell must have the same material.")
+            raise ValueError(
+                "Periodic copies of a source cell must have the same material."
+            )
     cells = np.asarray([vertex_roots[row] for row in cell_rows], dtype=np.int64)
     corner_shifts = np.asarray([shifts[row] for row in cell_rows], dtype=np.int64)
     edge_ids = np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64)
     selected_ids = set()
     for feature in features:
-        selected_ids.update(map(int, np.asarray(feature.scope.entity_ids, dtype=np.int64)))
+        selected_ids.update(
+            map(int, np.asarray(feature.scope.entity_ids, dtype=np.int64))
+        )
     if not selected_ids <= set(map(int, edge_ids)):
         raise ValueError("Protected source scope contains unknown lifted edges.")
     protected = set()
     for identifier, row in zip(edge_ids, rows[1], strict=True):
         if int(identifier) in selected_ids:
             first, second = map(int, row)
-            protected.add(_key(int(vertex_roots[first]), _image(shifts[first]), int(vertex_roots[second]), _image(shifts[second]))[0])
+            protected.add(
+                _key(
+                    int(vertex_roots[first]),
+                    _image(shifts[first]),
+                    int(vertex_roots[second]),
+                    _image(shifts[second]),
+                )[0]
+            )
     exact_source = topology.exact_coordinate_source
     if exact_source is None:
         source_points = tuple(
@@ -254,7 +295,15 @@ def prepare_periodic_source_strata(mesh: CellMesh, regions: np.ndarray | None, f
     else:
         bank = exact_source.source_coordinates()
         source_points = tuple(_radical_point(bank[int(root)]) for root in roots)
-    return _Strata(source_points, cells, corner_shifts, selected_regions, np.asarray(sorted(protected), dtype=np.int64).reshape((-1, 4)), topology.cell, root_ids)
+    return _Strata(
+        source_points,
+        cells,
+        corner_shifts,
+        selected_regions,
+        np.asarray(sorted(protected), dtype=np.int64).reshape((-1, 4)),
+        topology.cell,
+        root_ids,
+    )
 
 
 def _compatible_edges(
@@ -267,7 +316,15 @@ def _compatible_edges(
     below_limit: int | None = None,
     above_limit: int | None = None,
 ) -> tuple[Edge, ...]:
-    return _compatible_edges_search(edges, segments, penalties, grid, work, below_limit=below_limit, above_limit=above_limit)
+    return _compatible_edges_search(
+        edges,
+        segments,
+        penalties,
+        grid,
+        work,
+        below_limit=below_limit,
+        above_limit=above_limit,
+    )
 
 
 def _key(a: int, ia: Image, b: int, ib: Image) -> tuple[Edge, int]:
@@ -275,31 +332,46 @@ def _key(a: int, ia: Image, b: int, ib: Image) -> tuple[Edge, int]:
         return ((a, b, ib[0] - ia[0], ib[1] - ia[1]), 1)
     return ((b, a, ia[0] - ib[0], ia[1] - ib[1]), -1)
 
+
 def _add(a: Point, b: Point) -> Point:
     return (a[0] + b[0], a[1] + b[1])
+
 
 def _sub(a: Point, b: Point) -> Point:
     return (a[0] - b[0], a[1] - b[1])
 
+
 def _scale(a: Point, factor: RadicalElement | Fraction | int) -> Point:
     return (a[0] * factor, a[1] * factor)
+
 
 def _square(a: Point, b: Point) -> RadicalElement:
     x, y = _sub(b, a)
     return x * x + y * y
 
+
 def _lift(point: Point, image: Image, vectors: tuple[Point, Point]) -> Point:
     return _add(point, _add(_scale(vectors[0], image[0]), _scale(vectors[1], image[1])))
 
+
 def _fractional(point: Point, grid: _Grid | OrbitLatticeBands) -> Point:
     first, second = grid.dual
-    return (point[0] * first[0] + point[1] * first[1], point[0] * second[0] + point[1] * second[1])
+    return (
+        point[0] * first[0] + point[1] * first[1],
+        point[0] * second[0] + point[1] * second[1],
+    )
+
 
 def _wrap(point: Point, grid: _Grid) -> Point:
     fractional = _fractional(point, grid)
     return _lift(point, (-floor(fractional[0]), -floor(fractional[1])), grid.vectors)
 
-def _recover_grid(source: NativePeriodicSource, specification: SurfaceMeshingSpec | VolumeMeshingSpec, work: _Predicates) -> _Grid | None:
+
+def _recover_grid(
+    source: NativePeriodicSource,
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec,
+    work: _Predicates,
+) -> _Grid | None:
     """Recover one source-action configuration, or refuse the construction's premises.
 
     The admission proof intentionally keeps its commuting actions, metric,
@@ -322,7 +394,11 @@ def _recover_grid(source: NativePeriodicSource, specification: SurfaceMeshingSpe
         case _:
             return None
     policy = specification.size_compliance
-    if policy.absolute_tolerance != 0 or policy.relative_tolerance != 0 or set(policy.target_statistics) != {'p50', 'p95'}:
+    if (
+        policy.absolute_tolerance != 0
+        or policy.relative_tolerance != 0
+        or set(policy.target_statistics) != {"p50", "p95"}
+    ):
         return None
     controls: list[UniformSizeControl] = []
     for control in specification.size_controls:
@@ -349,14 +425,20 @@ def _recover_grid(source: NativePeriodicSource, specification: SurfaceMeshingSpe
     n = isqrt(count)
     if n < 4 or n % 2 or n * n != count:
         return None
-    strata = prepare_periodic_source_strata(mesh, source.cell_regions, specification.protected_features)
+    strata = prepare_periodic_source_strata(
+        mesh, source.cell_regions, specification.protected_features
+    )
     if any(
         len(value.terms) > 1 or (value.terms and value.terms[0][0] != 1)
-        for point in strata.points for value in point
+        for point in strata.points
+        for value in point
     ):
         return None
     raw_vectors = np.asarray(strata.cell.vectors)
-    rational_vectors = ((Fraction(float(raw_vectors[0, 0])), Fraction(float(raw_vectors[0, 1]))), (Fraction(float(raw_vectors[1, 0])), Fraction(float(raw_vectors[1, 1]))))
+    rational_vectors = (
+        (Fraction(float(raw_vectors[0, 0])), Fraction(float(raw_vectors[0, 1]))),
+        (Fraction(float(raw_vectors[1, 0])), Fraction(float(raw_vectors[1, 1]))),
+    )
     a, b = rational_vectors
     determinant = a[0] * b[1] - a[1] * b[0]
     norm = a[0] * a[0] + a[1] * a[1]
@@ -380,18 +462,33 @@ def _recover_grid(source: NativePeriodicSource, specification: SurfaceMeshingSpe
         return None
     if any((control.maximum_size is None for control in controls)):
         return None
-    maximum = min((Fraction(float(control.maximum_size)) for control in controls if control.maximum_size is not None))
+    maximum = min(
+        (
+            Fraction(float(control.maximum_size))
+            for control in controls
+            if control.maximum_size is not None
+        )
+    )
     if maximum < radius or maximum > 3 * radius / 2:
         return None
-    dual = ((b[1] / determinant, -b[0] / determinant), (-a[1] / determinant, a[0] / determinant))
+    dual = (
+        (b[1] / determinant, -b[0] / determinant),
+        (-a[1] / determinant, a[0] / determinant),
+    )
     if any((maximum * (abs(row[0]) + abs(row[1])) >= Fraction(1, 2) for row in dual)):
         return None
     points = strata.points
-    vectors = ((RadicalElement(a[0]), RadicalElement(a[1])), (RadicalElement(b[0]), RadicalElement(b[1])))
+    vectors = (
+        (RadicalElement(a[0]), RadicalElement(a[1])),
+        (RadicalElement(b[0]), RadicalElement(b[1])),
+    )
     incidence_lists: dict[Edge, list[tuple[int, int]]] = {}
     actions: list[dict[int, tuple[int, Image]]] = [{}, {}]
     for ci, (cell, images) in enumerate(zip(strata.cells, strata.shifts, strict=True)):
-        corners = [_lift(points[int(root)], (int(image[0]), int(image[1])), vectors) for root, image in zip(cell, images, strict=True)]
+        corners = [
+            _lift(points[int(root)], (int(image[0]), int(image[1])), vectors)
+            for root, image in zip(cell, images, strict=True)
+        ]
         if work.orient(*corners) <= 0:
             return None
         for first, second in ((0, 1), (1, 2), (2, 0)):
@@ -399,7 +496,12 @@ def _recover_grid(source: NativePeriodicSource, specification: SurfaceMeshingSpe
             ib = (int(images[second, 0]), int(images[second, 1]))
             edge, sign = _key(int(cell[first]), ia, int(cell[second]), ib)
             incidence_lists.setdefault(edge, []).append((ci, sign))
-    if any((len(members) != 2 or sum((sign for _, sign in members)) != 0 for members in incidence_lists.values())):
+    if any(
+        (
+            len(members) != 2 or sum((sign for _, sign in members)) != 0
+            for members in incidence_lists.values()
+        )
+    ):
         return None
     for edge in sorted(incidence_lists):
         first, second, sx, sy = edge
@@ -434,7 +536,9 @@ def _recover_grid(source: NativePeriodicSource, specification: SurfaceMeshingSpe
             xroot, ximage = actions[0][current]
             yxroot, yximage = actions[1][xroot]
             xyroot, xyimage = actions[0][target]
-            if yxroot != xyroot or tuple((ximage[k] + yximage[k] for k in range(2))) != tuple((shift[k] + xyimage[k] for k in range(2))):
+            if yxroot != xyroot or tuple(
+                (ximage[k] + yximage[k] for k in range(2))
+            ) != tuple((shift[k] + xyimage[k] for k in range(2))):
                 return None
             current = target
             winding = (winding[0] + shift[0], winding[1] + shift[1])
@@ -445,11 +549,27 @@ def _recover_grid(source: NativePeriodicSource, specification: SurfaceMeshingSpe
         column_image = (column_image[0] + shift[0], column_image[1] + shift[1])
     if root != anchor or column_image != (1, 0) or len(seen) != count:
         return None
-    protected = tuple(((int(row[0]), int(row[1]), int(row[2]), int(row[3])) for row in strata.edges))
-    material_edges = {edge for edge, members in incidence_lists.items() if len({int(strata.regions[ci]) for ci, _ in members}) == 2}
-    if set(protected) != material_edges or not material_edges <= set(vertical) or len(protected) != 2 * n:
+    protected = tuple(
+        ((int(row[0]), int(row[1]), int(row[2]), int(row[3])) for row in strata.edges)
+    )
+    material_edges = {
+        edge
+        for edge, members in incidence_lists.items()
+        if len({int(strata.regions[ci]) for ci, _ in members}) == 2
+    }
+    if (
+        set(protected) != material_edges
+        or not material_edges <= set(vertical)
+        or len(protected) != 2 * n
+    ):
         return None
-    components = [frozenset(row) for column, row in enumerate(rows) if all((edge in material_edges for edge in vertical[column * n:(column + 1) * n]))]
+    components = [
+        frozenset(row)
+        for column, row in enumerate(rows)
+        if all(
+            (edge in material_edges for edge in vertical[column * n : (column + 1) * n])
+        )
+    ]
     if len(components) != 2:
         return None
     component_columns = [i for i, row in enumerate(rows) if frozenset(row) in components]
@@ -469,13 +589,39 @@ def _recover_grid(source: NativePeriodicSource, specification: SurfaceMeshingSpe
     radical = RadicalElement.sqrt(radicand)
     run = (intercept * closure + height_total * radical) / length2
     height = (intercept * height_total - closure * radical) / length2
-    if not (0 < height < height_total / 4 and run > 0 and (3 * run - closure > 0) and (height_total - 3 * height > 0)):
+    if not (
+        0 < height < height_total / 4
+        and run > 0
+        and (3 * run - closure > 0)
+        and (height_total - 3 * height > 0)
+    ):
         return None
-    return _Grid(strata, points, vectors, dual, tuple(rows), tuple(vertical), {edge: tuple(members) for edge, members in incidence_lists.items()}, protected, max(components, key=min), min(material_ids), radius, maximum, run, height)
+    return _Grid(
+        strata,
+        points,
+        vectors,
+        dual,
+        tuple(rows),
+        tuple(vertical),
+        {edge: tuple(members) for edge, members in incidence_lists.items()},
+        protected,
+        max(components, key=min),
+        min(material_ids),
+        radius,
+        maximum,
+        run,
+        height,
+    )
 
-def _sites(grid: _Grid, work: _Predicates) -> tuple[tuple[Point, ...], tuple[SiteIdentity, ...]]:
+
+def _sites(
+    grid: _Grid, work: _Predicates
+) -> tuple[tuple[Point, ...], tuple[SiteIdentity, ...]]:
     points = list(grid.points)
-    identities: list[SiteIdentity] = [('authored_source_root', (int(grid.strata.root_ids[root]),)) for root in range(len(points))]
+    identities: list[SiteIdentity] = [
+        ("authored_source_root", (int(grid.strata.root_ids[root]),))
+        for root in range(len(points))
+    ]
     normal = (-grid.vectors[0][1], grid.vectors[0][0])
     step = _add(_scale(grid.vectors[0], grid.run), _scale(normal, grid.height))
     n = len(grid.rows)
@@ -485,7 +631,18 @@ def _sites(grid: _Grid, work: _Predicates) -> tuple[tuple[Point, ...], tuple[Sit
                 root = grid.rows[column][row]
                 edge = grid.vertical[column * n + row]
                 points.append(_wrap(_add(grid.points[root], _scale(step, layer)), grid))
-                identities.append(('source_edge_band', (int(grid.strata.root_ids[edge[0]]), int(grid.strata.root_ids[edge[1]]), *edge[2:], int(grid.strata.root_ids[root]), layer)))
+                identities.append(
+                    (
+                        "source_edge_band",
+                        (
+                            int(grid.strata.root_ids[edge[0]]),
+                            int(grid.strata.root_ids[edge[1]]),
+                            *edge[2:],
+                            int(grid.strata.root_ids[root]),
+                            layer,
+                        ),
+                    )
+                )
     for edge in grid.protected:
         first, second, sx, sy = edge
         a, b = (grid.points[first], _lift(grid.points[second], (sx, sy), grid.vectors))
@@ -493,20 +650,47 @@ def _sites(grid: _Grid, work: _Predicates) -> tuple[tuple[Point, ...], tuple[Sit
         square = _square(a, b)
         multiplier2 = grid.radius * grid.radius / square - Fraction(1, 4)
         if multiplier2 <= 0:
-            raise ValueError('periodic.algebraic.protected_apex must have two circle intersections; got an invalid source edge')
+            raise ValueError(
+                "periodic.algebraic.protected_apex must have two circle intersections; got an invalid source edge"
+            )
         if len(multiplier2.terms) != 1 or multiplier2.terms[0][0] != 1:
-            raise ValueError('periodic.algebraic.source_edge must be rational; got a radical source edge')
+            raise ValueError(
+                "periodic.algebraic.source_edge must be rational; got a radical source edge"
+            )
         multiplier = RadicalElement.sqrt(multiplier2.terms[0][1])
         for side in (-1, 1):
-            side_region = next((int(grid.strata.regions[ci]) for ci, sign in grid.incidence[edge] if sign == side))
+            side_region = next(
+                (
+                    int(grid.strata.regions[ci])
+                    for ci, sign in grid.incidence[edge]
+                    if sign == side
+                )
+            )
             if first in grid.omitted_component and side_region == grid.omitted_region:
                 continue
-            point = _add(_scale(_add(a, b), Fraction(1, 2)), _scale((-delta[1], delta[0]), side * multiplier))
+            point = _add(
+                _scale(_add(a, b), Fraction(1, 2)),
+                _scale((-delta[1], delta[0]), side * multiplier),
+            )
             points.append(_wrap(point, grid))
-            identities.append(('protected_edge_side_material', (int(grid.strata.root_ids[edge[0]]), int(grid.strata.root_ids[edge[1]]), *edge[2:], side, side_region)))
+            identities.append(
+                (
+                    "protected_edge_side_material",
+                    (
+                        int(grid.strata.root_ids[edge[0]]),
+                        int(grid.strata.root_ids[edge[1]]),
+                        *edge[2:],
+                        side,
+                        side_region,
+                    ),
+                )
+            )
     if len(set(points)) != len(points):
-        raise ValueError('periodic.algebraic.sites must have distinct field-valued orbit coordinates; got coincident constructed sites')
+        raise ValueError(
+            "periodic.algebraic.sites must have distinct field-valued orbit coordinates; got coincident constructed sites"
+        )
     return (tuple(points), tuple(identities))
+
 
 @dataclass(frozen=True, slots=True)
 class _Segment:
@@ -515,10 +699,12 @@ class _Segment:
     fa: Point
     fb: Point
 
+
 def _segment(edge: Edge, points: tuple[Point, ...], grid: _Grid) -> _Segment:
     a = points[edge[0]]
     b = _lift(points[edge[1]], (edge[2], edge[3]), grid.vectors)
     return _Segment(a, b, _fractional(a, grid), _fractional(b, grid))
+
 
 class _PeriodicBins:
     """Index closed rational enclosures on the unit torus without image banks."""
@@ -535,12 +721,18 @@ class _PeriodicBins:
 
     def _keys(self, segment: _Segment) -> Iterator[tuple[int, int]]:
         box = self.work.box(segment.fa, segment.fb)
-        first, second = (range(floor(lo * self.width), min(floor(hi * self.width) + 1, floor(lo * self.width) + self.width)) for lo, hi in box)
+        first, second = (
+            range(
+                floor(lo * self.width),
+                min(floor(hi * self.width) + 1, floor(lo * self.width) + self.width),
+            )
+            for lo, hi in box
+        )
         for x in first:
             for y in second:
                 yield (x % self.width, y % self.width)
 
-    def candidates(self, segment: _Segment, *, stop: int | None=None) -> Iterator[int]:
+    def candidates(self, segment: _Segment, *, stop: int | None = None) -> Iterator[int]:
         mask = 0
         for key in self._keys(segment):
             mask |= self.bins.get(key, 0)
@@ -553,10 +745,19 @@ class _PeriodicBins:
             mask ^= bit
             other = self.segments[index]
             other_box = self.work.box(other.fa, other.fb)
-            if all((ceil(box[k][0] - other_box[k][1]) <= floor(box[k][1] - other_box[k][0]) for k in range(2))):
+            if all(
+                (
+                    ceil(box[k][0] - other_box[k][1])
+                    <= floor(box[k][1] - other_box[k][0])
+                    for k in range(2)
+                )
+            ):
                 yield index
 
-def _conflict_graph(segments: list[_Segment], grid: _Grid, work: _Predicates) -> list[int]:
+
+def _conflict_graph(
+    segments: list[_Segment], grid: _Grid, work: _Predicates
+) -> list[int]:
     count = len(segments)
     adjacency = [0] * count
     index = _PeriodicBins(segments, work)
@@ -567,20 +768,46 @@ def _conflict_graph(segments: list[_Segment], grid: _Grid, work: _Predicates) ->
                 adjacency[j] |= 1 << i
     return adjacency
 
+
 def _images(first: _Segment, second: _Segment, work: _Predicates) -> Iterator[Image]:
     first_box = work.box(first.fa, first.fb)
     second_box = work.box(second.fa, second.fb)
-    bounds = tuple(((ceil(first_box[k][0] - second_box[k][1]), floor(first_box[k][1] - second_box[k][0])) for k in range(2)))
-    yield from product(range(bounds[0][0], bounds[0][1] + 1), range(bounds[1][0], bounds[1][1] + 1))
+    bounds = tuple(
+        (
+            (
+                ceil(first_box[k][0] - second_box[k][1]),
+                floor(first_box[k][1] - second_box[k][0]),
+            )
+            for k in range(2)
+        )
+    )
+    yield from product(
+        range(bounds[0][0], bounds[0][1] + 1), range(bounds[1][0], bounds[1][1] + 1)
+    )
+
 
 def _interior(a: Point, b: Point, p: Point, work: _Predicates) -> bool:
-    return p != a and p != b and all((min(a[k], b[k]) <= p[k] <= max(a[k], b[k]) for k in range(2))) and (work.orient(a, b, p) == 0)
+    return (
+        p != a
+        and p != b
+        and all((min(a[k], b[k]) <= p[k] <= max(a[k], b[k]) for k in range(2)))
+        and (work.orient(a, b, p) == 0)
+    )
+
 
 def _conflict(first: _Segment, second: _Segment, grid: _Grid, work: _Predicates) -> bool:
     for image in _images(first, second, work):
-        c, d = (_lift(second.a, image, grid.vectors), _lift(second.b, image, grid.vectors))
+        c, d = (
+            _lift(second.a, image, grid.vectors),
+            _lift(second.b, image, grid.vectors),
+        )
         a, b = (first.a, first.b)
-        if any((max(a[k], b[k]) < min(c[k], d[k]) or max(c[k], d[k]) < min(a[k], b[k]) for k in range(2))):
+        if any(
+            (
+                max(a[k], b[k]) < min(c[k], d[k]) or max(c[k], d[k]) < min(a[k], b[k])
+                for k in range(2)
+            )
+        ):
             continue
         ab_c, ab_d = (work.orient(a, b, c), work.orient(a, b, d))
         cd_a, cd_b = (work.orient(c, d, a), work.orient(c, d, b))
@@ -588,19 +815,43 @@ def _conflict(first: _Segment, second: _Segment, grid: _Grid, work: _Predicates)
             return True
         if ab_c == ab_d == cd_a == cd_b == 0:
             axis = 0 if a[0] != b[0] else 1
-            if max(min(a[axis], b[axis]), min(c[axis], d[axis])) < min(max(a[axis], b[axis]), max(c[axis], d[axis])):
+            if max(min(a[axis], b[axis]), min(c[axis], d[axis])) < min(
+                max(a[axis], b[axis]), max(c[axis], d[axis])
+            ):
                 return True
-        if _interior(a, b, c, work) or _interior(a, b, d, work) or _interior(c, d, a, work) or _interior(c, d, b, work):
+        if (
+            _interior(a, b, c, work)
+            or _interior(a, b, d, work)
+            or _interior(c, d, a, work)
+            or _interior(c, d, b, work)
+        ):
             return True
     return False
 
-def _compatible_edges_search(edges: list[Edge], segments: list[_Segment], penalties: list[tuple[int, int, RadicalElement]], grid: _Grid, work: _Predicates, *, below_limit: int | None, above_limit: int | None) -> tuple[Edge, ...]:
+
+def _compatible_edges_search(
+    edges: list[Edge],
+    segments: list[_Segment],
+    penalties: list[tuple[int, int, RadicalElement]],
+    grid: _Grid,
+    work: _Predicates,
+    *,
+    below_limit: int | None,
+    above_limit: int | None,
+) -> tuple[Edge, ...]:
     short_limit = len(edges) if below_limit is None else below_limit
     long_limit = len(edges) if above_limit is None else above_limit
     adjacency = _conflict_graph(segments, grid, work)
-    cache: dict[int, tuple[int, dict[tuple[int, int], tuple[RadicalElement, int]]]] = {0: (0, {(0, 0): (RadicalElement(), 0)})}
+    cache: dict[int, tuple[int, dict[tuple[int, int], tuple[RadicalElement, int]]]] = {
+        0: (0, {(0, 0): (RadicalElement(), 0)})
+    }
 
-    def retain(frontier: dict[tuple[int, int], tuple[RadicalElement, int]], tails: tuple[int, int], cost: RadicalElement, selected: int) -> None:
+    def retain(
+        frontier: dict[tuple[int, int], tuple[RadicalElement, int]],
+        tails: tuple[int, int],
+        cost: RadicalElement,
+        selected: int,
+    ) -> None:
         if tails[0] > short_limit or tails[1] > long_limit:
             return
         old = frontier.get(tails)
@@ -609,7 +860,10 @@ def _compatible_edges_search(edges: list[Edge], segments: list[_Segment], penalt
         elif cost < old[0]:
             frontier[tails] = (cost, selected)
 
-    def independent(mask: int) -> tuple[int, dict[tuple[int, int], tuple[RadicalElement, int]]]:
+    def independent(
+        mask: int,
+    ) -> tuple[int, dict[tuple[int, int], tuple[RadicalElement, int]]]:
+        nonlocal independent
         old = cache.get(mask)
         if old is not None:
             return old
@@ -637,7 +891,12 @@ def _compatible_edges_search(edges: list[Edge], segments: list[_Segment], penalt
                 square += length
                 scan ^= bit
             for tails, (cost, selected) in child.items():
-                retain(frontier, (tails[0] + short_count, tails[1] + long_count), cost + square, selected | isolates)
+                retain(
+                    frontier,
+                    (tails[0] + short_count, tails[1] + long_count),
+                    cost + square,
+                    selected | isolates,
+                )
             result = (size + isolates.bit_count(), frontier)
         else:
             component = pending = mask & -mask
@@ -662,17 +921,25 @@ def _compatible_edges_search(edges: list[Edge], segments: list[_Segment], penalt
                 if included_size + 1 == size:
                     below, above, length = penalties[best]
                     for tails, (cost, selected) in included.items():
-                        retain(frontier, (tails[0] + below, tails[1] + above), cost + length, selected | bit)
+                        retain(
+                            frontier,
+                            (tails[0] + below, tails[1] + above),
+                            cost + length,
+                            selected | bit,
+                        )
                 if excluded_size == size:
                     for tails, (cost, selected) in excluded.items():
                         retain(frontier, tails, cost, selected)
                 result = (size, frontier)
         cache[mask] = result
         return result
+
     try:
         _, frontier = independent((1 << len(edges)) - 1)
         if not frontier:
-            raise ValueError(f'periodic.algebraic.completion must satisfy requested quantile tail bounds; got no maximum-cardinality completion with short_limit={short_limit!r}, long_limit={long_limit!r}')
+            raise ValueError(
+                f"periodic.algebraic.completion must satisfy requested quantile tail bounds; got no maximum-cardinality completion with short_limit={short_limit!r}, long_limit={long_limit!r}"
+            )
         _, selected = min(frontier.values())
         return tuple((edge for i, edge in enumerate(edges) if selected & 1 << i))
     finally:
@@ -680,11 +947,20 @@ def _compatible_edges_search(edges: list[Edge], segments: list[_Segment], penalt
         adjacency.clear()
         del independent
 
-def _target_graph_search(points: tuple[Point, ...], grid: _Grid, work: _Predicates, quantiles: tuple[Fraction, ...]) -> tuple[Edge, ...]:
+
+def _target_graph_search(
+    points: tuple[Point, ...],
+    grid: _Grid,
+    work: _Predicates,
+    quantiles: tuple[Fraction, ...],
+) -> tuple[Edge, ...]:
     protected = {edge: _segment(edge, points, grid) for edge in grid.protected}
     fractional = tuple((_fractional(point, grid) for point in points))
     bounds = tuple((grid.maximum * (abs(row[0]) + abs(row[1])) for row in grid.dual))
-    singletons = [_Segment(point, point, fp, fp) for point, fp in zip(points, fractional, strict=True)]
+    singletons = [
+        _Segment(point, point, fp, fp)
+        for point, fp in zip(points, fractional, strict=True)
+    ]
     singleton_index = _PeriodicBins(singletons, work)
     protected_edges = list(protected)
     protected_segments = list(protected.values())
@@ -694,7 +970,15 @@ def _target_graph_search(points: tuple[Point, ...], grid: _Grid, work: _Predicat
     bank: list[tuple[Edge, _Segment, RadicalElement]] = []
     for a in range(len(points)):
         for b in range(a + 1, len(points)):
-            ranges = tuple((range(ceil(fractional[a][k] - fractional[b][k] - bounds[k]), floor(fractional[a][k] - fractional[b][k] + bounds[k]) + 1) for k in range(2)))
+            ranges = tuple(
+                (
+                    range(
+                        ceil(fractional[a][k] - fractional[b][k] - bounds[k]),
+                        floor(fractional[a][k] - fractional[b][k] + bounds[k]) + 1,
+                    )
+                    for k in range(2)
+                )
+            )
             for sx, sy in product(ranges[0], ranges[1]):
                 edge = (a, b, sx, sy)
                 stop = _lift(points[b], (sx, sy), grid.vectors)
@@ -708,19 +992,42 @@ def _target_graph_search(points: tuple[Point, ...], grid: _Grid, work: _Predicat
             singleton = singletons[root]
             if root in edge[:2]:
                 continue
-            if any((_interior(segment.a, segment.b, _lift(singleton.a, image, grid.vectors), work) for image in _images(segment, singleton, work))):
+            if any(
+                (
+                    _interior(
+                        segment.a,
+                        segment.b,
+                        _lift(singleton.a, image, grid.vectors),
+                        work,
+                    )
+                    for image in _images(segment, singleton, work)
+                )
+            ):
                 return False
         return True
+
     radius_edges: list[Edge] = []
     radius_segments: list[_Segment] = []
     for edge, segment, square in bank:
         if square != radius2:
             continue
-        if any((_conflict(segment, protected_segments[index], grid, work) for index in protected_index.candidates(segment) if protected_edges[index] != edge)) or not visible(edge, segment):
+        if any(
+            (
+                _conflict(segment, protected_segments[index], grid, work)
+                for index in protected_index.candidates(segment)
+                if protected_edges[index] != edge
+            )
+        ) or not visible(edge, segment):
             continue
         radius_edges.append(edge)
         radius_segments.append(segment)
-    selected_radius = _compatible_edges(radius_edges, radius_segments, [(0, 0, RadicalElement()) for _ in radius_edges], grid, work)
+    selected_radius = _compatible_edges(
+        radius_edges,
+        radius_segments,
+        [(0, 0, RadicalElement()) for _ in radius_edges],
+        grid,
+        work,
+    )
     mandatory = dict(protected)
     radius_lookup = dict(zip(radius_edges, radius_segments, strict=True))
     mandatory.update(((edge, radius_lookup[edge]) for edge in selected_radius))
@@ -735,7 +1042,12 @@ def _target_graph_search(points: tuple[Point, ...], grid: _Grid, work: _Predicat
     for edge, segment, square in bank:
         if edge in mandatory:
             continue
-        if any((_conflict(segment, mandatory_segments[index], grid, work) for index in mandatory_index.candidates(segment))):
+        if any(
+            (
+                _conflict(segment, mandatory_segments[index], grid, work)
+                for index in mandatory_index.candidates(segment)
+            )
+        ):
             continue
         if not visible(edge, segment):
             continue
@@ -753,10 +1065,21 @@ def _target_graph_search(points: tuple[Point, ...], grid: _Grid, work: _Predicat
         above_limit -= int(square > radius2)
     mandatory_squares.clear()
     bank.clear()
-    completion = _compatible_edges(optional, optional_segments, optional_penalties, grid, work, below_limit=below_limit, above_limit=above_limit)
+    completion = _compatible_edges(
+        optional,
+        optional_segments,
+        optional_penalties,
+        grid,
+        work,
+        below_limit=below_limit,
+        above_limit=above_limit,
+    )
     return tuple(sorted(set(mandatory) | set(completion)))
 
-def _faces(edges: tuple[Edge, ...], points: tuple[Point, ...], grid: _Grid, work: _Predicates) -> list[list[Corner]]:
+
+def _faces(
+    edges: tuple[Edge, ...], points: tuple[Point, ...], grid: _Grid, work: _Predicates
+) -> list[list[Corner]]:
     half: list[Edge] = []
     outgoing: list[list[int]] = [[] for _ in points]
     directions: list[Point] = []
@@ -777,12 +1100,17 @@ def _faces(edges: tuple[Edge, ...], points: tuple[Point, ...], grid: _Grid, work
             return -1 if ah else 1
         cross = work.orient((RadicalElement(), RadicalElement()), a, b)
         if not cross:
-            raise ValueError('periodic.algebraic.rays must have distinct directions; got coincident source graph rays')
+            raise ValueError(
+                "periodic.algebraic.rays must have distinct directions; got coincident source graph rays"
+            )
         return -cross
+
     positions: dict[int, int] = {}
     for root, star in enumerate(outgoing):
         if len(star) < 2:
-            raise ValueError(f'periodic.algebraic.completed_graph must include every constructed root; got root={root}, degree={len(star)}, edges={len(edges)}')
+            raise ValueError(
+                f"periodic.algebraic.completed_graph must include every constructed root; got root={root}, degree={len(star)}, edges={len(edges)}"
+            )
         star.sort(key=cmp_to_key(compare))
         positions.update(((edge, i) for i, edge in enumerate(star)))
     visited: set[int] = set()
@@ -799,47 +1127,115 @@ def _faces(edges: tuple[Edge, ...], points: tuple[Point, ...], grid: _Grid, work
             image = (image[0] + sx, image[1] + sy)
             current = outgoing[b][(positions[current ^ 1] - 1) % len(outgoing[b])]
         if current != start or image != (0, 0) or len(face) < 3:
-            raise ValueError('periodic.algebraic.faces must be contractible source polygons; got an open or winding face')
+            raise ValueError(
+                "periodic.algebraic.faces must be contractible source polygons; got an open or winding face"
+            )
         faces.append(face)
     return faces
 
-def _bind_materials(triangles: list[tuple[Corner, Corner, Corner]], points: tuple[Point, ...], grid: _Grid, work: _Predicates) -> tuple[np.ndarray, tuple[tuple[int, ...], ...]]:
-    source_triangles = [tuple((_lift(grid.points[int(root)], (int(image[0]), int(image[1])), grid.vectors) for root, image in zip(cell, images, strict=True))) for cell, images in zip(grid.strata.cells, grid.strata.shifts, strict=True)]
-    source_fractional = [tuple((_fractional(point, grid) for point in triangle)) for triangle in source_triangles]
+
+def _bind_materials(
+    triangles: list[tuple[Corner, Corner, Corner]],
+    points: tuple[Point, ...],
+    grid: _Grid,
+    work: _Predicates,
+) -> tuple[np.ndarray, tuple[tuple[int, ...], ...]]:
+    source_triangles = [
+        tuple(
+            (
+                _lift(
+                    grid.points[int(root)], (int(image[0]), int(image[1])), grid.vectors
+                )
+                for root, image in zip(cell, images, strict=True)
+            )
+        )
+        for cell, images in zip(grid.strata.cells, grid.strata.shifts, strict=True)
+    ]
+    source_fractional = [
+        tuple((_fractional(point, grid) for point in triangle))
+        for triangle in source_triangles
+    ]
     regions: list[int] = []
     ancestry: list[tuple[int, ...]] = []
     for triangle in triangles:
-        corners = tuple((_lift(points[root], image, grid.vectors) for root, image in triangle))
+        corners = tuple(
+            (_lift(points[root], image, grid.vectors) for root, image in triangle)
+        )
         fractional = tuple((_fractional(point, grid) for point in corners))
         members: set[int] = set()
-        for parent, (source, sf) in enumerate(zip(source_triangles, source_fractional, strict=True)):
-            ranges = tuple((range(ceil(min((p[k] for p in fractional)) - max((p[k] for p in sf))), floor(max((p[k] for p in fractional)) - min((p[k] for p in sf))) + 1) for k in range(2)))
+        for parent, (source, sf) in enumerate(
+            zip(source_triangles, source_fractional, strict=True)
+        ):
+            ranges = tuple(
+                (
+                    range(
+                        ceil(min((p[k] for p in fractional)) - max((p[k] for p in sf))),
+                        floor(max((p[k] for p in fractional)) - min((p[k] for p in sf)))
+                        + 1,
+                    )
+                    for k in range(2)
+                )
+            )
             for sx, sy in product(ranges[0], ranges[1]):
                 other = tuple((_lift(point, (sx, sy), grid.vectors) for point in source))
                 separated = False
                 for first, second in ((corners, other), (other, corners)):
-                    if any((all((work.orient(first[k], first[(k + 1) % 3], p) <= 0 for p in second)) for k in range(3))):
+                    if any(
+                        (
+                            all(
+                                (
+                                    work.orient(first[k], first[(k + 1) % 3], p) <= 0
+                                    for p in second
+                                )
+                            )
+                            for k in range(3)
+                        )
+                    ):
                         separated = True
                         break
                 if not separated:
                     members.add(parent)
         labels = {int(grid.strata.regions[parent]) for parent in members}
         if len(labels) != 1:
-            raise ValueError('periodic.algebraic.material must resolve one source region per positive cell; got absent or crossed source strata')
+            raise ValueError(
+                "periodic.algebraic.material must resolve one source region per positive cell; got absent or crossed source strata"
+            )
         regions.append(next(iter(labels)))
         ancestry.append(tuple(sorted(members)))
     return (np.asarray(regions, dtype=np.int64), tuple(ancestry))
 
+
 def _source_region_areas(grid: _Grid) -> dict[int, RadicalElement]:
     expected: dict[int, RadicalElement] = {}
-    for cell, images, region in zip(grid.strata.cells, grid.strata.shifts, grid.strata.regions, strict=True):
-        corners = tuple((_lift(grid.points[int(root)], (int(image[0]), int(image[1])), grid.vectors) for root, image in zip(cell, images, strict=True)))
+    for cell, images, region in zip(
+        grid.strata.cells, grid.strata.shifts, grid.strata.regions, strict=True
+    ):
+        corners = tuple(
+            (
+                _lift(
+                    grid.points[int(root)], (int(image[0]), int(image[1])), grid.vectors
+                )
+                for root, image in zip(cell, images, strict=True)
+            )
+        )
         delta, other = (_sub(corners[1], corners[0]), _sub(corners[2], corners[0]))
         label = int(region)
-        expected[label] = expected.get(label, RadicalElement()) + (delta[0] * other[1] - delta[1] * other[0]) / 2
+        expected[label] = (
+            expected.get(label, RadicalElement())
+            + (delta[0] * other[1] - delta[1] * other[0]) / 2
+        )
     return expected
 
-def _certify_carrier(triangles: list[tuple[Corner, Corner, Corner]], regions: np.ndarray, points: tuple[Point, ...], vectors: tuple[Point, Point], protected: tuple[Edge, ...], expected: dict[int, RadicalElement], work: _Predicates) -> None:
+
+def _certify_carrier(
+    triangles: list[tuple[Corner, Corner, Corner]],
+    regions: np.ndarray,
+    points: tuple[Point, ...],
+    vectors: tuple[Point, Point],
+    protected: tuple[Edge, ...],
+    expected: dict[int, RadicalElement],
+    work: _Predicates,
+) -> None:
     """Prove positive cells, closed incidence, manifold links, and region areas."""
     incidence: dict[Edge, list[int]] = {}
     links: dict[int, list[tuple[Corner, Corner]]] = {}
@@ -847,7 +1243,9 @@ def _certify_carrier(triangles: list[tuple[Corner, Corner, Corner]], regions: np
     for triangle, region in zip(triangles, regions, strict=True):
         corners = tuple((_lift(points[root], image, vectors) for root, image in triangle))
         if work.orient(corners[0], corners[1], corners[2]) <= 0:
-            raise ValueError('periodic.algebraic.orientation must be strictly positive; got a nonpositive completion cell')
+            raise ValueError(
+                "periodic.algebraic.orientation must be strictly positive; got a nonpositive completion cell"
+            )
         delta, other = (_sub(corners[1], corners[0]), _sub(corners[2], corners[0]))
         area = (delta[0] * other[1] - delta[1] * other[0]) / 2
         label = int(region)
@@ -858,16 +1256,29 @@ def _certify_carrier(triangles: list[tuple[Corner, Corner, Corner]], regions: np
             second, si = triangle[c]
             edge, sign = _key(root, image, first, fi)
             incidence.setdefault(edge, []).append(sign)
-            links.setdefault(root, []).append(((first, (fi[0] - image[0], fi[1] - image[1])), (second, (si[0] - image[0], si[1] - image[1]))))
-    if len(incidence) != 3 * len(points) or any((sorted(signs) != [-1, 1] for signs in incidence.values())) or (not set(protected) <= incidence.keys()):
-        raise ValueError('periodic.algebraic.incidence must be closed and retain protected windings; got an invalid edge bank')
+            links.setdefault(root, []).append(
+                (
+                    (first, (fi[0] - image[0], fi[1] - image[1])),
+                    (second, (si[0] - image[0], si[1] - image[1])),
+                )
+            )
+    if (
+        len(incidence) != 3 * len(points)
+        or any((sorted(signs) != [-1, 1] for signs in incidence.values()))
+        or (not set(protected) <= incidence.keys())
+    ):
+        raise ValueError(
+            "periodic.algebraic.incidence must be closed and retain protected windings; got an invalid edge bank"
+        )
     for pairs in links.values():
         adjacency: dict[Corner, list[Corner]] = {}
         for a, b in pairs:
             adjacency.setdefault(a, []).append(b)
             adjacency.setdefault(b, []).append(a)
         if any((len(neighbors) != 2 for neighbors in adjacency.values())):
-            raise ValueError('periodic.algebraic.vertex_link must be 2-regular; got a nonmanifold source-action vertex')
+            raise ValueError(
+                "periodic.algebraic.vertex_link must be 2-regular; got a nonmanifold source-action vertex"
+            )
         pending, seen = ([min(adjacency)], set())
         while pending:
             corner = pending.pop()
@@ -875,9 +1286,14 @@ def _certify_carrier(triangles: list[tuple[Corner, Corner, Corner]], regions: np
                 seen.add(corner)
                 pending.extend(adjacency[corner])
         if len(seen) != len(adjacency):
-            raise ValueError('periodic.algebraic.vertex_link must be connected; got multiple source-action link cycles')
+            raise ValueError(
+                "periodic.algebraic.vertex_link must be connected; got multiple source-action link cycles"
+            )
     if areas != expected or len(links) != len(points):
-        raise ValueError('periodic.algebraic.material_areas must equal the source partition and include every site; got an incomplete carrier')
+        raise ValueError(
+            "periodic.algebraic.material_areas must equal the source partition and include every site; got an incomplete carrier"
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class OrbitLatticeBands:
@@ -891,6 +1307,7 @@ class OrbitLatticeBands:
     authoritative zero-tolerance hard verdict passed on the complete closed-form
     edge bank of this carrier.
     """
+
     roots: tuple[_Vector, ...]
     fractional: tuple[_Vector, ...]
     residues: Mapping[_Vector, int]
@@ -901,7 +1318,10 @@ class OrbitLatticeBands:
     lead: int
     target: Fraction
 
-def _hard_uniform_controls(specification: SurfaceMeshingSpec | VolumeMeshingSpec) -> list[UniformSizeControl] | None:
+
+def _hard_uniform_controls(
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec,
+) -> list[UniformSizeControl] | None:
     hard: list[UniformSizeControl] = []
     for control in specification.size_controls:
         match control:
@@ -913,31 +1333,46 @@ def _hard_uniform_controls(specification: SurfaceMeshingSpec | VolumeMeshingSpec
                 return None
     return hard
 
+
 def _dot(a: _Vector, b: _Vector) -> Fraction:
     return a[0] * b[0] + a[1] * b[1]
+
 
 def _cross(a: _Vector, b: _Vector) -> Fraction:
     return a[0] * b[1] - a[1] * b[0]
 
+
 def _combine(m: Fraction | int, a: _Vector, k: Fraction | int, b: _Vector) -> _Vector:
     return (m * a[0] + k * b[0], m * a[1] + k * b[1])
+
 
 def _rational_fractional(point: _Vector, dual: tuple[_Vector, _Vector]) -> _Vector:
     return (_dot(dual[0], point), _dot(dual[1], point))
 
-def _integer_lattice_basis(generators: tuple[tuple[int, int], ...], work: _Predicates) -> tuple[tuple[int, int], tuple[int, int]]:
+
+def _integer_lattice_basis(
+    generators: tuple[tuple[int, int], ...], work: _Predicates
+) -> tuple[tuple[int, int], tuple[int, int]]:
     """Return the Hermite basis ``((alpha, 0), (beta, gamma))`` of a full-rank span."""
     pivot_x = pivot_y = alpha = 0
     for x, y in generators:
         while y:
             quotient = pivot_y // y
-            pivot_x, pivot_y, x, y = (x, y, pivot_x - quotient * x, pivot_y - quotient * y)
+            pivot_x, pivot_y, x, y = (
+                x,
+                y,
+                pivot_x - quotient * x,
+                pivot_y - quotient * y,
+            )
         alpha = gcd(alpha, x)
     if pivot_y < 0:
         pivot_x, pivot_y = (-pivot_x, -pivot_y)
     return ((alpha, 0), (pivot_x % alpha, pivot_y))
 
-def _reduced_basis(first: _Vector, second: _Vector, work: _Predicates) -> tuple[_Vector, _Vector]:
+
+def _reduced_basis(
+    first: _Vector, second: _Vector, work: _Predicates
+) -> tuple[_Vector, _Vector]:
     """Lagrange-reduce a rational lattice basis and orient it positively."""
     while True:
         if _dot(first, first) > _dot(second, second):
@@ -950,6 +1385,7 @@ def _reduced_basis(first: _Vector, second: _Vector, work: _Predicates) -> tuple[
         second = (-second[0], -second[1])
     return (first, second)
 
+
 def _bezout(a: int, b: int) -> tuple[int, int]:
     old_r, r, old_s, s, old_t, t = (a, b, 1, 0, 0, 1)
     while r:
@@ -959,7 +1395,10 @@ def _bezout(a: int, b: int) -> tuple[int, int]:
         old_t, t = (t, old_t - quotient * t)
     return (-old_s, -old_t) if old_r < 0 else (old_s, old_t)
 
-def _target_steps(first: _Vector, second: _Vector, target: Fraction, work: _Predicates) -> list[tuple[_Vector, _Vector, int]]:
+
+def _target_steps(
+    first: _Vector, second: _Vector, target: Fraction, work: _Predicates
+) -> list[tuple[_Vector, _Vector, int]]:
     """Enumerate primitive lattice vectors of exact target length with complements.
 
     The reduced Gram form bounds both coefficients, so every vector of length
@@ -989,24 +1428,46 @@ def _target_steps(first: _Vector, second: _Vector, target: Fraction, work: _Pred
             steps.append((step, rise, int(2 * _dot(step, rise) < square)))
     return sorted(steps, key=lambda item: (item[0][1], item[0][0]))
 
+
 def _band_apex(step: _Vector, predicates: _Predicates) -> Point:
     height = RadicalElement.sqrt(Fraction(3, 4))
-    return (RadicalElement(step[0] / 2) - height * step[1], RadicalElement(step[1] / 2) + height * step[0])
+    return (
+        RadicalElement(step[0] / 2) - height * step[1],
+        RadicalElement(step[1] / 2) + height * step[0],
+    )
+
 
 def _orbit_root(proof: OrbitLatticeBands, point: _Vector, work: _Predicates) -> Corner:
     """Name the seed orbit and lattice image of a point of the admitted coset."""
     fractional = _rational_fractional(point, proof.dual)
-    root = proof.residues[fractional[0] - floor(fractional[0]), fractional[1] - floor(fractional[1])]
+    root = proof.residues[
+        fractional[0] - floor(fractional[0]), fractional[1] - floor(fractional[1])
+    ]
     base = proof.fractional[root]
     image = (fractional[0] - base[0], fractional[1] - base[1])
     if image[0].denominator != 1 or image[1].denominator != 1:
-        raise ValueError('periodic.algebraic.orbit_lattice.image must be an integer lattice action; got a point outside the admitted coset')
+        raise ValueError(
+            "periodic.algebraic.orbit_lattice.image must be an integer lattice action; got a point outside the admitted coset"
+        )
     return (root, (int(image[0]), int(image[1])))
 
-def _band_neighbors(proof: OrbitLatticeBands, root: int, work: _Predicates) -> tuple[Corner, Corner, Corner, Corner]:
+
+def _band_neighbors(
+    proof: OrbitLatticeBands, root: int, work: _Predicates
+) -> tuple[Corner, Corner, Corner, Corner]:
     """Return the next, previous, leading and trailing next-row seed corners."""
     point, step, rise = (proof.roots[root], proof.step, proof.rise)
-    return (_orbit_root(proof, _combine(1, point, 1, step), work), _orbit_root(proof, _combine(1, point, -1, step), work), _orbit_root(proof, _combine(1, _combine(1, point, proof.lead, step), 1, rise), work), _orbit_root(proof, _combine(1, _combine(1, point, proof.lead - 1, step), 1, rise), work))
+    return (
+        _orbit_root(proof, _combine(1, point, 1, step), work),
+        _orbit_root(proof, _combine(1, point, -1, step), work),
+        _orbit_root(
+            proof, _combine(1, _combine(1, point, proof.lead, step), 1, rise), work
+        ),
+        _orbit_root(
+            proof, _combine(1, _combine(1, point, proof.lead - 1, step), 1, rise), work
+        ),
+    )
+
 
 def prove_orbit_lattice_bands(
     source: NativePeriodicSource,
@@ -1062,7 +1523,14 @@ def prove_orbit_lattice_bands(
         (-a[1] / determinant, a[0] / determinant),
     )
     ids = np.asarray(orbits.point_ids, dtype=np.int64)
-    if any(control.scope.source_id != source.source_id or control.scope.source_revision != source.source_revision or control.scope.entity_dimension != 0 or control.scope.entity_set_id != source.scope_entity_set_id(0) or set(map(int, control.scope.entity_ids)) != set(map(int, ids)) for control in controls):
+    if any(
+        control.scope.source_id != source.source_id
+        or control.scope.source_revision != source.source_revision
+        or control.scope.entity_dimension != 0
+        or control.scope.entity_set_id != source.scope_entity_set_id(0)
+        or set(map(int, control.scope.entity_ids)) != set(map(int, ids))
+        for control in controls
+    ):
         return None
     order = np.argsort(ids, kind="stable")
     representatives = np.asarray(orbits.points, dtype=np.float64)[order]
@@ -1117,22 +1585,30 @@ def prove_orbit_lattice_bands(
     return None
 
 
-
-
-
-
-def _size_ok(squares: list[RadicalElement], controls: list[UniformSizeControl], policy: SizeCompliancePolicy) -> bool:
+def _size_ok(
+    squares: list[RadicalElement],
+    controls: list[UniformSizeControl],
+    policy: SizeCompliancePolicy,
+) -> bool:
     if not squares:
         return False
     ordered = sorted(squares)
     for control in controls:
         target = Fraction(float(control.target_size))
-        if control.minimum_size is not None and ordered[0] < Fraction(float(control.minimum_size)) ** 2:
+        if (
+            control.minimum_size is not None
+            and ordered[0] < Fraction(float(control.minimum_size)) ** 2
+        ):
             return False
-        if control.maximum_size is not None and ordered[-1] > Fraction(float(control.maximum_size)) ** 2:
+        if (
+            control.maximum_size is not None
+            and ordered[-1] > Fraction(float(control.maximum_size)) ** 2
+        ):
             return False
         for name in policy.target_statistics:
-            rank = (Fraction(1, 2) if name == "p50" else Fraction(19, 20)) * (len(ordered) - 1)
+            rank = (Fraction(1, 2) if name == "p50" else Fraction(19, 20)) * (
+                len(ordered) - 1
+            )
             low = floor(rank)
             high = ceil(rank)
             weight = rank - low
@@ -1148,23 +1624,43 @@ def _size_ok(squares: list[RadicalElement], controls: list[UniformSizeControl], 
     return True
 
 
-def _orbit_size_ok(proof: OrbitLatticeBands, controls: list[UniformSizeControl], policy: SizeCompliancePolicy, work: _Predicates) -> bool:
+def _orbit_size_ok(
+    proof: OrbitLatticeBands,
+    controls: list[UniformSizeControl],
+    policy: SizeCompliancePolicy,
+    work: _Predicates,
+) -> bool:
     apex = _band_apex(proof.step, work)
+
     def filler(shift: int) -> RadicalElement:
         offset = _combine(shift, proof.step, 1, proof.rise)
         x, y = offset[0] - apex[0], offset[1] - apex[1]
         return x * x + y * y
-    values = [RadicalElement(proof.target ** 2)] * 4 + [filler(proof.lead), filler(proof.lead - 1)]
+
+    values = [RadicalElement(proof.target**2)] * 4 + [
+        filler(proof.lead),
+        filler(proof.lead - 1),
+    ]
     return _size_ok(values * len(proof.roots), controls, policy)
 
 
-def _carrier_squares(triangles: list[tuple[Corner, Corner, Corner]], points: tuple[Point, ...], vectors: tuple[Point, Point]) -> list[RadicalElement]:
+def _carrier_squares(
+    triangles: list[tuple[Corner, Corner, Corner]],
+    points: tuple[Point, ...],
+    vectors: tuple[Point, Point],
+) -> list[RadicalElement]:
     squares: dict[Edge, RadicalElement] = {}
     for triangle in triangles:
-        for (first, fi), (second, si) in ((triangle[0], triangle[1]), (triangle[1], triangle[2]), (triangle[2], triangle[0])):
+        for (first, fi), (second, si) in (
+            (triangle[0], triangle[1]),
+            (triangle[1], triangle[2]),
+            (triangle[2], triangle[0]),
+        ):
             edge, _ = _key(first, fi, second, si)
             if edge not in squares:
-                squares[edge] = _square(points[edge[0]], _lift(points[edge[1]], (edge[2], edge[3]), vectors))
+                squares[edge] = _square(
+                    points[edge[0]], _lift(points[edge[1]], (edge[2], edge[3]), vectors)
+                )
     return list(squares.values())
 
 
@@ -1179,42 +1675,90 @@ def _finish_carrier(
     kind: str,
 ) -> ExactAlgebraicCarrier:
     points = tuple(coordinates)
-    rounded = np.asarray([[value.rounded()[0] for value in point] for point in points], dtype=np.float64)
-    simplices = np.asarray([[root for root, _ in triangle] for triangle in triangles], dtype=np.int64)
-    shifts = np.asarray([[image for _, image in triangle] for triangle in triangles], dtype=np.int64)
+    rounded = np.asarray(
+        [[value.rounded()[0] for value in point] for point in points], dtype=np.float64
+    )
+    simplices = np.asarray(
+        [[root for root, _ in triangle] for triangle in triangles], dtype=np.int64
+    )
+    shifts = np.asarray(
+        [[image for _, image in triangle] for triangle in triangles], dtype=np.int64
+    )
     for array in (rounded, simplices, shifts, regions):
         array.setflags(write=False)
-    identity = canonical_fingerprint({"kind": kind, "source_binding": source.binding_id, "policy": specification.size_compliance.policy_id, "controls": [control.control_id for control in specification.size_controls], "sites": identities})
-    return ExactAlgebraicCarrier(points, rounded, simplices, shifts, regions, ancestry, tuple(identities), identity)
+    identity = canonical_fingerprint(
+        {
+            "kind": kind,
+            "source_binding": source.binding_id,
+            "policy": specification.size_compliance.policy_id,
+            "controls": [control.control_id for control in specification.size_controls],
+            "sites": identities,
+        }
+    )
+    return ExactAlgebraicCarrier(
+        points, rounded, simplices, shifts, regions, ancestry, tuple(identities), identity
+    )
 
 
-def prove_source_action_bands(source: NativePeriodicSource, specification: SurfaceMeshingSpec, /) -> bool:
+def prove_source_action_bands(
+    source: NativePeriodicSource, specification: SurfaceMeshingSpec, /
+) -> bool:
     """Admit the material construction only from the represented source actions."""
     return _recover_grid(source, specification, _Predicates()) is not None
 
 
-def construct_exact_algebraic_carrier(source: NativePeriodicSource, specification: SurfaceMeshingSpec, /) -> ExactAlgebraicCarrier:
+def construct_exact_algebraic_carrier(
+    source: NativePeriodicSource, specification: SurfaceMeshingSpec, /
+) -> ExactAlgebraicCarrier:
     """Construct and certify protected material source-action four-band cells."""
     work = _Predicates()
     grid = _recover_grid(source, specification, work)
     if grid is None:
-        raise ValueError("Source-action four-band construction premises are not satisfied.")
+        raise ValueError(
+            "Source-action four-band construction premises are not satisfied."
+        )
     coordinates, identities = _sites(grid, work)
-    quantiles = tuple(Fraction(1, 2) if name == "p50" else Fraction(19, 20) for name in specification.size_compliance.target_statistics)
+    quantiles = tuple(
+        Fraction(1, 2) if name == "p50" else Fraction(19, 20)
+        for name in specification.size_compliance.target_statistics
+    )
     edges = _target_graph_search(coordinates, grid, work, quantiles)
     faces = _faces(edges, coordinates, grid, work)
     if len(faces) != 2 * len(coordinates) or any(len(face) != 3 for face in faces):
         raise ValueError("Source-action completion must be a closed triangulation.")
     triangles = [(face[0], face[1], face[2]) for face in faces]
     regions, ancestry = _bind_materials(triangles, coordinates, grid, work)
-    _certify_carrier(triangles, regions, coordinates, grid.vectors, grid.protected, _source_region_areas(grid), work)
+    _certify_carrier(
+        triangles,
+        regions,
+        coordinates,
+        grid.vectors,
+        grid.protected,
+        _source_region_areas(grid),
+        work,
+    )
     controls = _hard_uniform_controls(specification)
-    if controls is None or not _size_ok(_carrier_squares(triangles, coordinates, grid.vectors), controls, specification.size_compliance):
+    if controls is None or not _size_ok(
+        _carrier_squares(triangles, coordinates, grid.vectors),
+        controls,
+        specification.size_compliance,
+    ):
         raise ValueError("Source-action carrier violates exact hard size controls.")
-    return _finish_carrier(source, specification, coordinates, triangles, regions, ancestry, identities, "source-action-four-band-algebraic-carrier")
+    return _finish_carrier(
+        source,
+        specification,
+        coordinates,
+        triangles,
+        regions,
+        ancestry,
+        identities,
+        "source-action-four-band-algebraic-carrier",
+    )
 
 
-def construct_orbit_lattice_band_carrier(source: NativePeriodicSource, specification: SurfaceMeshingSpec, /) -> ExactAlgebraicCarrier:
+def construct_orbit_lattice_band_carrier(
+    source: NativePeriodicSource, specification: SurfaceMeshingSpec, /
+) -> ExactAlgebraicCarrier:
     """Construct and certify exact equilateral orbit bands and filler cells."""
     proof = prove_orbit_lattice_bands(source, specification)
     controls = _hard_uniform_controls(specification)
@@ -1222,11 +1766,16 @@ def construct_orbit_lattice_band_carrier(source: NativePeriodicSource, specifica
         raise ValueError("Orbit-lattice band construction premises are not satisfied.")
     domain = source.domain
     if not isinstance(domain, PeriodicPointOrbits):
-        raise ValueError("Orbit-lattice band construction requires periodic point orbits.")
+        raise ValueError(
+            "Orbit-lattice band construction requires periodic point orbits."
+        )
     work = _Predicates()
     roots = len(proof.roots)
     a, b = proof.vectors
-    vectors = ((RadicalElement(a[0]), RadicalElement(a[1])), (RadicalElement(b[0]), RadicalElement(b[1])))
+    vectors = (
+        (RadicalElement(a[0]), RadicalElement(a[1])),
+        (RadicalElement(b[0]), RadicalElement(b[1])),
+    )
     apex = _band_apex(proof.step, work)
     coordinates = [(RadicalElement(x), RadicalElement(y)) for x, y in proof.roots]
     ids = sorted(map(int, domain.point_ids))
@@ -1239,21 +1788,53 @@ def construct_orbit_lattice_band_carrier(source: NativePeriodicSource, specifica
         coordinates.append(_lift(raw, (-image[0], -image[1]), vectors))
         wraps.append(image)
         identities.append(("orbit_lattice_band_apex", (ids[root],)))
+
     def apex_corner(corner: Corner) -> Corner:
         root, image = corner
         return roots + root, (image[0] + wraps[root][0], image[1] + wraps[root][1])
+
     triangles: list[tuple[Corner, Corner, Corner]] = []
     for root in range(roots):
         right, left, ahead, behind = _band_neighbors(proof, root, work)
         here = (root, (0, 0))
         top = apex_corner(here)
-        triangles.extend(((here, right, top), (here, top, apex_corner(left)), (top, apex_corner(right), ahead), (top, ahead, behind)))
+        triangles.extend(
+            (
+                (here, right, top),
+                (here, top, apex_corner(left)),
+                (top, apex_corner(right), ahead),
+                (top, ahead, behind),
+            )
+        )
     points = tuple(coordinates)
     regions = np.zeros(len(triangles), dtype=np.int64)
-    _certify_carrier(triangles, regions, points, vectors, (), {0: RadicalElement(_cross(a, b))}, work)
-    if not _size_ok(_carrier_squares(triangles, points, vectors), controls, specification.size_compliance):
+    _certify_carrier(
+        triangles, regions, points, vectors, (), {0: RadicalElement(_cross(a, b))}, work
+    )
+    if not _size_ok(
+        _carrier_squares(triangles, points, vectors),
+        controls,
+        specification.size_compliance,
+    ):
         raise ValueError("Orbit-lattice carrier violates exact hard size controls.")
-    return _finish_carrier(source, specification, points, triangles, regions, tuple((index,) for index in range(len(triangles))), identities, "orbit-lattice-equilateral-band-algebraic-carrier")
+    return _finish_carrier(
+        source,
+        specification,
+        points,
+        triangles,
+        regions,
+        tuple((index,) for index in range(len(triangles))),
+        identities,
+        "orbit-lattice-equilateral-band-algebraic-carrier",
+    )
 
 
-__all__ = ["ExactAlgebraicCarrier", "OrbitLatticeBands", "prove_source_action_bands", "construct_exact_algebraic_carrier", "prove_orbit_lattice_bands", "construct_orbit_lattice_band_carrier", "periodic_quotient_edge_squared_lengths"]
+__all__ = [
+    "ExactAlgebraicCarrier",
+    "OrbitLatticeBands",
+    "prove_source_action_bands",
+    "construct_exact_algebraic_carrier",
+    "prove_orbit_lattice_bands",
+    "construct_orbit_lattice_band_carrier",
+    "periodic_quotient_edge_squared_lengths",
+]

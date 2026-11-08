@@ -16,8 +16,8 @@ from phydrax.geometry.design._sketch import (
     Vertical,
 )
 from phydrax.geometry.design._sketch_certificate import (
-    LineCircleConstruction,
     certify_line_circle_construction,
+    LineCircleConstruction,
 )
 from phydrax.geometry.design._solve import (
     prepare_sketch_fixed_coordinates,

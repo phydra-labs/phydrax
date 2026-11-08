@@ -11,11 +11,11 @@ from numpy.typing import NDArray
 
 from phydrax.geometry.design import FixedPoint, PointDistance, Sketch
 from phydrax.optim import (
-    LevenbergMarquardt,
+    least_squares,
     LeastSquaresResult,
+    LevenbergMarquardt,
     NonlinearLeastSquaresProblem,
     OptimizationTermination,
-    least_squares,
 )
 
 

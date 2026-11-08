@@ -1474,7 +1474,6 @@ def _compatible_transition(adaptation: Any, /) -> dict[str, Any]:
     }
 
 
-
 def _refinement_parents(adaptation: Any, /) -> dict[int, int]:
     cells = adaptation.transition.lineage.entity_lineage(2)
     return {

@@ -575,11 +575,14 @@ def _collapsed_pole_evidence(
             raise RuntimeError("A collapsed source edge must have one authored vertex.")
         occurrence = domain.source_occurrences[1][curve]
         corners = [
-            row for row, vertex in enumerate(domain.source_indices[0])
+            row
+            for row, vertex in enumerate(domain.source_indices[0])
             if vertex == first_vertex and domain.source_occurrences[0][row] == occurrence
         ]
         if len(corners) != 1:
-            raise RuntimeError("A collapsed source edge lacks its occurrence-bound corner.")
+            raise RuntimeError(
+                "A collapsed source edge lacks its occurrence-bound corner."
+            )
         corner = corners[0]
         proved_uses = 0
         for patch, face in enumerate(domain.source_indices[2]):
@@ -595,13 +598,19 @@ def _collapsed_pole_evidence(
                         not isinstance(use, PatchPoleUse)
                         or use.corner != corner
                         or not _exact_brep_pole_collapse(
-                            None, authority.patches[face], geometry.pcurves[coedge],
-                            first, last, geometry.vertex_exact_points[first_vertex],
+                            None,
+                            authority.patches[face],
+                            geometry.pcurves[coedge],
+                            first,
+                            last,
+                            geometry.vertex_exact_points[first_vertex],
                             geometry.vertex_roots[first_vertex],
                             geometry.coedge_endpoint_roots[coedge],
                         )
                     ):
-                        raise RuntimeError("A declared collapsed edge lacks an exact pole proof.")
+                        raise RuntimeError(
+                            "A declared collapsed edge lacks an exact pole proof."
+                        )
                     proved_uses += 1
         if not proved_uses:
             raise RuntimeError("A declared collapsed edge has no source pole use.")
@@ -628,14 +637,16 @@ def _collapsed_pole_evidence(
         point = np.asarray(result.mesh.coordinates)[vertex_rows[targets[0]]]
         if not np.array_equal(point, domain.corner_points[corner]):
             raise RuntimeError("An associated source pole changed its physical point.")
-        records.append({
-            "source_edge_id": domain.entity_id(1, curve),
-            "source_corner_id": corner_id,
-            "occurrence_path": occurrence,
-            "target_vertex_id": targets[0],
-            "physical_point": tuple(float(value) for value in point),
-            "proved_coedge_uses": proved_uses,
-        })
+        records.append(
+            {
+                "source_edge_id": domain.entity_id(1, curve),
+                "source_corner_id": corner_id,
+                "occurrence_path": occurrence,
+                "target_vertex_id": targets[0],
+                "physical_point": tuple(float(value) for value in point),
+                "proved_coedge_uses": proved_uses,
+            }
+        )
     return tuple(records)
 
 
@@ -669,15 +680,18 @@ def _solve_manufactured_surface(
         if checkpoint is None:
             return
         now = perf_counter()
-        checkpoint({
-            "profile_id": profile,
-            "event": "finite-element-phase",
-            "phase": name,
-            "phase_seconds": now - phase_started,
-            "elapsed_seconds": now - started,
-            "peak_resident_bytes": peak_resident_bytes(),
-        })
+        checkpoint(
+            {
+                "profile_id": profile,
+                "event": "finite-element-phase",
+                "phase": name,
+                "phase_seconds": now - phase_started,
+                "elapsed_seconds": now - started,
+                "peak_resident_bytes": peak_resident_bytes(),
+            }
+        )
         phase_started = now
+
     if result.certification is None or result.certification.inputs.source is None:
         raise RuntimeError("Surface PDE requires the certified source boundary query.")
     source_surface = phx.discretization.SurfaceFiniteElementGeometry.from_result(
@@ -734,20 +748,28 @@ def _solve_manufactured_surface(
         if geometry == "capped_cylinder":
             material = source_surface.material_map
             if not isinstance(material, BRepCappedMaterialMap):
-                raise RuntimeError("Capped surface forcing requires its certified material map.")
+                raise RuntimeError(
+                    "Capped surface forcing requires its certified material map."
+                )
             side_rows = []
             offset = 0
             for mesh_block, material_block in zip(
                 result.mesh.blocks, material.blocks, strict=True
             ):
                 for side in material_block.sides:
-                    side_rows.extend((np.asarray(side.indices, dtype=np.int64) + offset).tolist())
+                    side_rows.extend(
+                        (np.asarray(side.indices, dtype=np.int64) + offset).tolist()
+                    )
                 offset += mesh_block.cell_count
             if not side_rows:
-                raise RuntimeError("Capped surface forcing has no certified cylindrical side.")
+                raise RuntimeError(
+                    "Capped surface forcing has no certified cylindrical side."
+                )
             source_domain = phx.discretization.IntegrationDomain(
-                "cell", np.asarray(sorted(side_rows), dtype=np.int64),
-                space.cell_domain.support_id, space.cell_domain.entity_set_id,
+                "cell",
+                np.asarray(sorted(side_rows), dtype=np.int64),
+                space.cell_domain.support_id,
+                space.cell_domain.entity_set_id,
             )
         actions.append(phx.equations.SourceAction("u", source, domain=source_domain))
     form = phx.equations.FiniteElementForm(
@@ -770,7 +792,8 @@ def _solve_manufactured_surface(
         jax.block_until_ready(rhs)
     phase("form-and-linear-system")
     solved = phx.linalg.solve(
-        operator, rhs,
+        operator,
+        rhs,
         policy=phx.linalg.LinearSolvePolicy(
             tolerance=phx.linalg.TolerancePolicy(relative=1e-12, absolute=1e-14)
         ),
@@ -782,14 +805,16 @@ def _solve_manufactured_surface(
     dof_coordinates = np.asarray(space.dof_maps[0].dof_coordinates, dtype=np.float64)
     expected = np.asarray(exact(jnp.asarray(dof_coordinates)), dtype=np.float64)
     if checkpoint is not None:
-        checkpoint({
-            "profile_id": profile,
-            "event": "finite-element-coefficients",
-            "value_shape": values.shape,
-            "expected_shape": expected.shape,
-            "values_finite": bool(np.all(np.isfinite(values))),
-            "successful": bool(jnp.all(solved.successful)),
-        })
+        checkpoint(
+            {
+                "profile_id": profile,
+                "event": "finite-element-coefficients",
+                "value_shape": values.shape,
+                "expected_shape": expected.shape,
+                "values_finite": bool(np.all(np.isfinite(values))),
+                "successful": bool(jnp.all(solved.successful)),
+            }
+        )
     if values.shape != expected.shape or not np.all(np.isfinite(values)):
         raise RuntimeError(
             "Native surface FE consumer returned malformed manufactured coefficients."
@@ -800,29 +825,41 @@ def _solve_manufactured_surface(
     normalized_residual = residual / max(1.0, rhs_norm)
     phase("residual-and-field-error")
     if checkpoint is not None:
-        checkpoint({
-            "profile_id": profile,
-            "event": "finite-element-measurement",
-            "maximum_dof_solution_error": _checkpoint_number(solution_error),
-            "residual_norm": _checkpoint_number(residual),
-            "rhs_norm": _checkpoint_number(rhs_norm),
-            "normalized_residual": _checkpoint_number(normalized_residual),
-            "normalized_residual_tolerance": _PDE_RESIDUAL_TOLERANCE,
-            "solution_error_tolerance": _PDE_RESIDUAL_TOLERANCE if not closed else None,
-        })
+        checkpoint(
+            {
+                "profile_id": profile,
+                "event": "finite-element-measurement",
+                "maximum_dof_solution_error": _checkpoint_number(solution_error),
+                "residual_norm": _checkpoint_number(residual),
+                "rhs_norm": _checkpoint_number(rhs_norm),
+                "normalized_residual": _checkpoint_number(normalized_residual),
+                "normalized_residual_tolerance": _PDE_RESIDUAL_TOLERANCE,
+                "solution_error_tolerance": _PDE_RESIDUAL_TOLERANCE
+                if not closed
+                else None,
+            }
+        )
     accuracy = None
     if closed:
         accuracy = closed_surface_accuracy(
-            space, source_surface.material_map, geometry, values, expected,
+            space,
+            source_surface.material_map,
+            geometry,
+            values,
+            expected,
         )
         if checkpoint is not None:
-            checkpoint({
-                "profile_id": profile,
-                "event": "finite-element-accuracy",
-                **accuracy,
-            })
+            checkpoint(
+                {
+                    "profile_id": profile,
+                    "event": "finite-element-accuracy",
+                    **accuracy,
+                }
+            )
         if not accuracy["energy_accuracy_passed"]:
-            raise RuntimeError(f"Closed surface manufactured energy oracle failed: {accuracy}.")
+            raise RuntimeError(
+                f"Closed surface manufactured energy oracle failed: {accuracy}."
+            )
     if (
         not bool(jnp.all(solved.successful))
         or not np.isfinite(solution_error)
@@ -852,7 +889,10 @@ def _solve_manufactured_surface(
 
 
 def _qualify_surface(
-    profile: str, geometry: str, /, *,
+    profile: str,
+    geometry: str,
+    /,
+    *,
     checkpoint: Callable[[dict[str, object]], None] | None = None,
 ) -> dict[str, object]:
     definition = _surface_definition(profile, geometry)
@@ -1006,7 +1046,9 @@ def _qualify_surface(
     declared_entities = _domain_source_entities(domain)
     collapsed_ids = {record["source_edge_id"] for record in pole_evidence}
     if len(collapsed_ids) != len(pole_evidence) or not collapsed_ids <= declared_entities:
-        raise RuntimeError("Collapsed-pole evidence does not identify declared source edges.")
+        raise RuntimeError(
+            "Collapsed-pole evidence does not identify declared source edges."
+        )
     association = _association_record(
         result,
         domain.source_id,
@@ -1351,7 +1393,8 @@ def _solve_planar_field(
     )
     operator, rhs = problem.linear_system()
     solved = phx.linalg.solve(
-        operator, rhs,
+        operator,
+        rhs,
         policy=phx.linalg.LinearSolvePolicy(
             tolerance=phx.linalg.TolerancePolicy(relative=1e-12, absolute=1e-14)
         ),
@@ -1364,20 +1407,22 @@ def _solve_planar_field(
     rhs_norm = float(jnp.linalg.norm(rhs))
     normalized_residual = residual / max(1.0, rhs_norm)
     if checkpoint is not None:
-        checkpoint({
-            "profile_id": profile,
-            "event": "finite-element-measurement",
-            "value_shape": values.shape,
-            "expected_shape": expected.shape,
-            "values_finite": bool(np.all(np.isfinite(values))),
-            "successful": bool(jnp.all(solved.successful)),
-            "maximum_dof_solution_error": _checkpoint_number(error),
-            "residual_norm": _checkpoint_number(residual),
-            "rhs_norm": _checkpoint_number(rhs_norm),
-            "normalized_residual": _checkpoint_number(normalized_residual),
-            "normalized_residual_tolerance": _PDE_RESIDUAL_TOLERANCE,
-            "solution_error_tolerance": _PDE_RESIDUAL_TOLERANCE,
-        })
+        checkpoint(
+            {
+                "profile_id": profile,
+                "event": "finite-element-measurement",
+                "value_shape": values.shape,
+                "expected_shape": expected.shape,
+                "values_finite": bool(np.all(np.isfinite(values))),
+                "successful": bool(jnp.all(solved.successful)),
+                "maximum_dof_solution_error": _checkpoint_number(error),
+                "residual_norm": _checkpoint_number(residual),
+                "rhs_norm": _checkpoint_number(rhs_norm),
+                "normalized_residual": _checkpoint_number(normalized_residual),
+                "normalized_residual_tolerance": _PDE_RESIDUAL_TOLERANCE,
+                "solution_error_tolerance": _PDE_RESIDUAL_TOLERANCE,
+            }
+        )
     if (
         not bool(jnp.all(solved.successful))
         or values.shape != expected.shape
@@ -1402,7 +1447,9 @@ def _solve_planar_field(
 
 
 def _qualify_planar(
-    profile: str, /, *,
+    profile: str,
+    /,
+    *,
     checkpoint: Callable[[dict[str, object]], None] | None = None,
 ) -> dict[str, object]:
     source, expected_area, physical_input = _planar_definition(profile)
@@ -1668,9 +1715,13 @@ def native_planar_feature_matrix(
                 )
                 if geometry == "capped_cylinder_features":
                     geometry = "capped_cylinder"
-                records[profile] = _qualify_surface(profile, geometry, checkpoint=checkpoint)
+                records[profile] = _qualify_surface(
+                    profile, geometry, checkpoint=checkpoint
+                )
             elif profile.startswith("sphere-feature-surface"):
-                records[profile] = _qualify_surface(profile, "sphere", checkpoint=checkpoint)
+                records[profile] = _qualify_surface(
+                    profile, "sphere", checkpoint=checkpoint
+                )
             else:
                 records[profile] = _qualify_planar(profile, checkpoint=checkpoint)
         except Exception as error:
@@ -1682,11 +1733,13 @@ def native_planar_feature_matrix(
             }
             failures.append({"profile": profile, "failure": failure})
         if checkpoint is not None:
-            checkpoint({
-                "profile_id": profile,
-                "event": "profile-complete",
-                "record": records[profile],
-            })
+            checkpoint(
+                {
+                    "profile_id": profile,
+                    "event": "profile-complete",
+                    "record": records[profile],
+                }
+            )
     try:
         junction_network = _qualify_junction_network()
     except Exception as error:
@@ -1696,11 +1749,13 @@ def native_planar_feature_matrix(
             {"profile": "planar-feature-junction-network", "failure": failure}
         )
     if checkpoint is not None:
-        checkpoint({
-            "profile_id": "planar-feature-junction-network",
-            "event": "profile-complete",
-            "record": junction_network,
-        })
+        checkpoint(
+            {
+                "profile_id": "planar-feature-junction-network",
+                "event": "profile-complete",
+                "record": junction_network,
+            }
+        )
     status = "passed" if not failures and len(records) == len(_PROFILE_IDS) else "failed"
     return {
         "status": status,

@@ -879,7 +879,8 @@ def mapped_geometry_cells(
 ) -> tuple[MappedGeometryCell, ...]:
     elements, routes, _ = geometry.resolve(mesh)
     return _mapped_geometry_cells(
-        elements, tuple(np.asarray(route, dtype=np.int64) for route in routes),
+        elements,
+        tuple(np.asarray(route, dtype=np.int64) for route in routes),
         geometry.source_coordinates(),
     )
 

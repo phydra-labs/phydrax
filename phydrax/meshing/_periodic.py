@@ -1746,16 +1746,16 @@ class PeriodicQuotientHistory(StrictModule, NonTrainableState):
 
     identification_id: str = eqx.field(static=True)
     source_mesh_id: str = eqx.field(static=True)
-    entity_keys_by_degree: tuple[
-        tuple[tuple[tuple[int, ...], int], ...], ...
-    ] = eqx.field(static=True)
+    entity_keys_by_degree: tuple[tuple[tuple[tuple[int, ...], int], ...], ...] = (
+        eqx.field(static=True)
+    )
     allocator_next_ids: tuple[int, ...] = eqx.field(static=True)
     occurrences_by_degree: tuple[
         tuple[tuple[tuple[int, ...], tuple[int, ...], str], ...], ...
     ] = eqx.field(static=True)
-    vertex_actions_by_id: tuple[
-        tuple[int, tuple[bool, ...], tuple[int, ...]], ...
-    ] = eqx.field(static=True)
+    vertex_actions_by_id: tuple[tuple[int, tuple[bool, ...], tuple[int, ...]], ...] = (
+        eqx.field(static=True)
+    )
     history_id: str = eqx.field(static=True)
 
     def __init__(
@@ -1767,9 +1767,7 @@ class PeriodicQuotientHistory(StrictModule, NonTrainableState):
         occurrences_by_degree: tuple[
             tuple[tuple[tuple[int, ...], tuple[int, ...], str], ...], ...
         ],
-        vertex_actions_by_id: tuple[
-            tuple[int, tuple[bool, ...], tuple[int, ...]], ...
-        ],
+        vertex_actions_by_id: tuple[tuple[int, tuple[bool, ...], tuple[int, ...]], ...],
         /,
     ) -> None:
         if (
@@ -1791,7 +1789,9 @@ class PeriodicQuotientHistory(StrictModule, NonTrainableState):
             zip(entity_keys_by_degree, allocator_next_ids, strict=True)
         ):
             if not isinstance(entries, tuple) or type(next_id) is not int or next_id < 0:
-                raise ValueError("Periodic quotient history rows or allocator are malformed.")
+                raise ValueError(
+                    "Periodic quotient history rows or allocator are malformed."
+                )
             records = []
             for entry in entries:
                 if not isinstance(entry, tuple) or len(entry) != 2:
@@ -1837,7 +1837,9 @@ class PeriodicQuotientHistory(StrictModule, NonTrainableState):
                 rows.append((key, vertices, kind))
             rows.sort()
             if tuple(row[0] for row in rows) != tuple(key for key, _ in records):
-                raise ValueError("Periodic quotient occurrences must cover its issued keys.")
+                raise ValueError(
+                    "Periodic quotient occurrences must cover its issued keys."
+                )
             occurrences.append(tuple(rows))
         action_rows = []
         for entry in vertex_actions_by_id:
@@ -1879,15 +1881,17 @@ class PeriodicQuotientHistory(StrictModule, NonTrainableState):
         self.allocator_next_ids = allocator_next_ids
         self.occurrences_by_degree = tuple(occurrences)
         self.vertex_actions_by_id = tuple(action_rows)
-        self.history_id = canonical_fingerprint({
-            "kind": "periodic-quotient-history",
-            "identification": identification_id,
-            "source_mesh": source_mesh_id,
-            "entity_keys": self.entity_keys_by_degree,
-            "allocator_next_ids": allocator_next_ids,
-            "occurrences": self.occurrences_by_degree,
-            "vertex_actions": self.vertex_actions_by_id,
-        })
+        self.history_id = canonical_fingerprint(
+            {
+                "kind": "periodic-quotient-history",
+                "identification": identification_id,
+                "source_mesh": source_mesh_id,
+                "entity_keys": self.entity_keys_by_degree,
+                "allocator_next_ids": allocator_next_ids,
+                "occurrences": self.occurrences_by_degree,
+                "vertex_actions": self.vertex_actions_by_id,
+            }
+        )
 
 
 def update_periodic_quotient_history(
@@ -1908,14 +1912,18 @@ def update_periodic_quotient_history(
         or previous.identification_id != identity
         or len(previous.entity_keys_by_degree) != source.topological_dimension + 1
     ):
-        raise ValueError("Periodic quotient history has a different identification or dimension.")
+        raise ValueError(
+            "Periodic quotient history has a different identification or dimension."
+        )
     if root is not None and (
         not isinstance(root, CellMesh)
         or root.periodic_topology is None
         or root.topological_dimension != source.topological_dimension
         or identification_id(root.periodic_topology.cell) != identity
     ):
-        raise ValueError("Periodic quotient root has a different identification or dimension.")
+        raise ValueError(
+            "Periodic quotient root has a different identification or dimension."
+        )
     source_next = periodic_next_entity_ids(source)
     root_next = None if root is None else periodic_next_entity_ids(root)
     result = []
@@ -1931,7 +1939,9 @@ def update_periodic_quotient_history(
         }
     )
     orders = identification_orders(source.periodic_topology.cell)
-    fixed_rows = np.asarray(source.periodic_topology.vertex_fixed_generators, dtype=np.bool_)
+    fixed_rows = np.asarray(
+        source.periodic_topology.vertex_fixed_generators, dtype=np.bool_
+    )
     shifts = np.asarray(source.periodic_topology.vertex_shifts, dtype=np.int64)
     vertex_layout = _entity_layout(source, 0)
     quotient_ids = vertex_layout.entity_ids[vertex_layout.orbit_rows]
@@ -1945,7 +1955,9 @@ def update_periodic_quotient_history(
             if old is None:
                 continue
             if old[0] != tuple(bool(value) for value in fixed_rows[row]):
-                raise ValueError("Periodic quotient history changes a vertex fixed action.")
+                raise ValueError(
+                    "Periodic quotient history changes a vertex fixed action."
+                )
             candidate = reduce_periodic_exponents(
                 np.asarray(old[1], dtype=np.int64) - shifts[row], orders
             )
@@ -1953,7 +1965,9 @@ def update_periodic_quotient_history(
             if gauge is None:
                 gauge = candidate
             elif not np.array_equal(candidate, gauge):
-                raise ValueError("Periodic quotient history changes a vertex winding action.")
+                raise ValueError(
+                    "Periodic quotient history changes a vertex winding action."
+                )
         if gauge is None:
             gauge = np.zeros_like(orders, dtype=np.int64)
         for row in rows:
@@ -1965,7 +1979,9 @@ def update_periodic_quotient_history(
             )
             old = vertex_actions.setdefault(int(vertex_ids[row]), value)
             if old != value:
-                raise ValueError("Periodic quotient history changes a vertex winding action.")
+                raise ValueError(
+                    "Periodic quotient history changes a vertex winding action."
+                )
     vertex_rows = _entity_vertex_rows(source)
     cell_kinds = {
         int(identifier): block.cell_kind
@@ -1990,7 +2006,9 @@ def update_periodic_quotient_history(
             key = tuple(int(value) for value in row if value >= 0)
             value = int(identifier)
             if key in records and records[key] != value:
-                raise ValueError("Periodic quotient history disagrees with the current source.")
+                raise ValueError(
+                    "Periodic quotient history disagrees with the current source."
+                )
             records[key] = value
             corners = tuple(int(vertex_ids[int(vertex)]) for vertex in vertices)
             kind = cell_kinds[key[0]] if degree == source.topological_dimension else ""
@@ -2009,22 +2027,31 @@ def update_periodic_quotient_history(
                 )
             )
             if old[1] != kind or not compatible:
-                raise ValueError("Periodic quotient history changes an issued occurrence.")
+                raise ValueError(
+                    "Periodic quotient history changes an issued occurrence."
+                )
         result.append(tuple(sorted(records.items())))
-        occurrences.append(tuple((key, *value) for key, value in sorted(witnesses.items())))
-        next_ids.append(max(
-            source_next[degree],
-            0 if root_next is None else root_next[degree],
-            0 if previous is None else previous.allocator_next_ids[degree],
-        ))
+        occurrences.append(
+            tuple((key, *value) for key, value in sorted(witnesses.items()))
+        )
+        next_ids.append(
+            max(
+                source_next[degree],
+                0 if root_next is None else root_next[degree],
+                0 if previous is None else previous.allocator_next_ids[degree],
+            )
+        )
     return PeriodicQuotientHistory(
         identity,
         source.mesh_id,
         tuple(result),
         tuple(next_ids),
         tuple(occurrences),
-        tuple((identifier, *action) for identifier, action in sorted(vertex_actions.items())),
+        tuple(
+            (identifier, *action) for identifier, action in sorted(vertex_actions.items())
+        ),
     )
+
 
 def reprove_periodic_quotient_history(
     root: CellMesh,
@@ -2049,11 +2076,14 @@ def reprove_periodic_quotient_history(
         or root.topological_dimension != source.topological_dimension
         or (
             root.periodic_topology is not None
-            and identification_id(root.periodic_topology.cell) != history.identification_id
+            and identification_id(root.periodic_topology.cell)
+            != history.identification_id
         )
         or identification_id(source.periodic_topology.cell) != history.identification_id
     ):
-        raise ValueError("Periodic quotient proof has different root or source authorities.")
+        raise ValueError(
+            "Periodic quotient proof has different root or source authorities."
+        )
     rebuilt = PeriodicQuotientHistory(
         history.identification_id,
         history.source_mesh_id,
@@ -2110,9 +2140,7 @@ def reprove_periodic_quotient_history(
     for cell_id, (_, _, vertices) in root_cells.items():
         for vertex in vertices:
             cells_by_vertex.setdefault(vertex, set()).add(cell_id)
-    coordinate_cache: dict[
-        tuple[tuple[int, Fraction], ...], tuple[Fraction, ...]
-    ] = {}
+    coordinate_cache: dict[tuple[tuple[int, Fraction], ...], tuple[Fraction, ...]] = {}
 
     def exact_root_coordinate(
         point: tuple[tuple[int, Fraction], ...], /
@@ -2224,7 +2252,9 @@ def reprove_periodic_quotient_history(
                 value = tuple(item for item in coordinate if isinstance(item, Fraction))
                 previous = prepared.get(point)
                 if previous is not None and previous != value:
-                    raise ValueError("Periodic root geometry disagrees at a shared point.")
+                    raise ValueError(
+                        "Periodic root geometry disagrees at a shared point."
+                    )
                 prepared[point] = value
             coordinate_cache.update(prepared)
     except (ArithmeticError, IndexError, KeyError, TypeError, ValueError):
@@ -2244,9 +2274,7 @@ def reprove_periodic_quotient_history(
             or tuple(sorted(point)) != point
             or len({root_id for root_id, _ in point}) != len(point)
             or any(
-                root_id not in root_ids
-                or not isinstance(weight, Fraction)
-                or weight <= 0
+                root_id not in root_ids or not isinstance(weight, Fraction) or weight <= 0
                 for root_id, weight in point
             )
         ):
@@ -2276,7 +2304,9 @@ def reprove_periodic_quotient_history(
                 )
                 actual_fixed = mapped == rounded[:-1]
             if action[axis] != actual_fixed:
-                raise ValueError("Periodic fixed action conflicts with exact root geometry.")
+                raise ValueError(
+                    "Periodic fixed action conflicts with exact root geometry."
+                )
         old = orbit_coordinates.setdefault(quotient_id, (coordinate, winding))
         difference = reduce_periodic_exponents(winding - old[1], orders)
         matrix = exact_periodic_element(topology.cell, difference)
@@ -2300,19 +2330,27 @@ def reprove_periodic_quotient_history(
             records, occurrences, strict=True
         ):
             if key != occurrence_key:
-                raise ValueError("Periodic quotient occurrence does not match its entity.")
+                raise ValueError(
+                    "Periodic quotient occurrence does not match its entity."
+                )
             corner_ids = np.asarray(
                 [vertex_ids[(vertex,)] for vertex in vertices], dtype=np.int64
             )
-            corner_shifts = np.asarray([anchors[vertex] for vertex in vertices], dtype=np.int64)
-            corner_fixed = np.asarray([fixed_bank[vertex] for vertex in vertices], dtype=np.bool_)
+            corner_shifts = np.asarray(
+                [anchors[vertex] for vertex in vertices], dtype=np.int64
+            )
+            corner_fixed = np.asarray(
+                [fixed_bank[vertex] for vertex in vertices], dtype=np.bool_
+            )
             if degree == dimension and kind == "polyhedron":
                 canonical, _, _ = _canonical_unordered_form(
                     corner_ids, corner_shifts, corner_fixed, orders
                 )
             else:
-                simplex = degree == dimension and len(vertices) == degree + 1 and kind.startswith(
-                    ("simplex:", "triangle", "tetrahedron")
+                simplex = (
+                    degree == dimension
+                    and len(vertices) == degree + 1
+                    and kind.startswith(("simplex:", "triangle", "tetrahedron"))
                 )
                 values, _, _ = _canonical_forms(
                     corner_ids[None, :],
@@ -2326,9 +2364,10 @@ def reprove_periodic_quotient_history(
                 ids_by_key.setdefault(canonical, identifier) != identifier
                 or keys_by_id.setdefault(identifier, canonical) != canonical
             ):
-                raise ValueError("Periodic quotient occurrence conflicts with its orbit identity.")
+                raise ValueError(
+                    "Periodic quotient occurrence conflicts with its orbit identity."
+                )
     return history
-
 
 
 def periodic_topology_after_edit(
@@ -2416,11 +2455,18 @@ def periodic_topology_after_edit(
     if (
         stencil_valid.ndim != 2
         or len(stencil.exact_weights) != stencil_valid.shape[0]
-        or any(len(weights) != stencil_valid.shape[1] for weights in stencil.exact_weights)
+        or any(
+            len(weights) != stencil_valid.shape[1] for weights in stencil.exact_weights
+        )
     ):
-        raise ValueError("Periodic edit stencil validity and exact weights are not aligned.")
+        raise ValueError(
+            "Periodic edit stencil validity and exact weights are not aligned."
+        )
     if any(
-        not any(stencil_valid[row, column] and weight != 0 for column, weight in enumerate(weights))
+        not any(
+            stencil_valid[row, column] and weight != 0
+            for column, weight in enumerate(weights)
+        )
         for row, weights in enumerate(stencil.exact_weights)
     ):
         raise ValueError(
@@ -2672,9 +2718,10 @@ def require_periodic_geometry_face_maps(
                 vertices = tuple(int(cell[local]) for local in facet)
                 face_row = face_rows[tuple(sorted(vertices))]
                 incidences[face_row].append(
-                    (offset + local_row, {
-                        int(cell[local]): corners[local] for local in facet
-                    })
+                    (
+                        offset + local_row,
+                        {int(cell[local]): corners[local] for local in facet},
+                    )
                 )
         offset += block.cell_count
     orbits = np.asarray(orbit_map.lifted_to_quotient, dtype=np.int64)
@@ -2682,19 +2729,22 @@ def require_periodic_geometry_face_maps(
     canonical: dict[int, tuple[Any, ...]] = {}
     for row, face in enumerate(faces):
         if len(face) not in (3, 4) or not incidences[row]:
-            raise ValueError("Periodic face geometry requires incident triangle or quad faces.")
+            raise ValueError(
+                "Periodic face geometry requires incident triangle or quad faces."
+            )
         permutation = orbit_map.corner_permutation_row(row)
         ordered = [int(face[int(index)]) for index in permutation]
         inverse = exact_periodic_element(topology.cell, -shifts[row])
         for cell_row, references in incidences[row]:
             physical_map = maps.expressions(int(cell_ids[cell_row]))
-            chart = _face_chart(tuple(
-                (references[vertex][0], references[vertex][1], references[vertex][2])
-                for vertex in ordered
-            ))
+            chart = _face_chart(
+                tuple(
+                    (references[vertex][0], references[vertex][1], references[vertex][2])
+                    for vertex in ordered
+                )
+            )
             physical = tuple(
-                compose_expression(expression, chart)
-                for expression in physical_map
+                compose_expression(expression, chart) for expression in physical_map
             )
             basis: tuple[ExpressionInput, ...] = (*physical, {(0, 0): Fraction(1)})
             normalized = linear_combinations(
@@ -3204,7 +3254,10 @@ def _uniform_orbit_operations(
 
 
 def _periodic_geometry_after_reorder(
-    source: CellMesh, target: CellMesh, /, *,
+    source: CellMesh,
+    target: CellMesh,
+    /,
+    *,
     exact_coordinate_source: ExactPeriodicCoordinateSource | None,
 ) -> CellGeometrySpec | None:
     topology = source.periodic_topology
@@ -3276,8 +3329,11 @@ def _periodic_geometry_after_reorder(
     if geometry.source_map is not None and source_map is None:
         raise ValueError("Periodic geometry lost its actual exact coordinate witness.")
     return CellGeometrySpec(
-        target_elements, target_routes, target_coordinates,
-        source_map=source_map, source_mesh=None if source_map is None else target,
+        target_elements,
+        target_routes,
+        target_coordinates,
+        source_map=source_map,
+        source_mesh=None if source_map is None else target,
     )
 
 

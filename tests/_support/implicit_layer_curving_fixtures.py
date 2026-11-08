@@ -62,7 +62,10 @@ def certified_implicit_layer_wall(
 
 
 def make_implicit_layer_curving_archive_case() -> tuple[
-    LayerCurvingConstructionResult, BoundaryLayerMesh, BoundaryLayerControl, BoundaryLayerPolicy
+    LayerCurvingConstructionResult,
+    BoundaryLayerMesh,
+    BoundaryLayerControl,
+    BoundaryLayerPolicy,
 ]:
     """Build accepted high-order layer evidence from an adaptive smooth implicit source."""
     geometry = phx.geometry.Sphere((0.0, 0.0, 0.0), 0.04).compile()

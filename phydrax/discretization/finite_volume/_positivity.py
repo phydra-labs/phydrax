@@ -849,8 +849,7 @@ class FluxPositivityPlan(StrictModule):
                 secondary_reduction_factor=one,
             )
             return StageRatePositivityResult(
-                euler_content=content
-                + increment * high.scatter_content_rate(),
+                euler_content=content + increment * high.scatter_content_rate(),
                 euler_cell_average=jnp.empty_like(content),
                 ledger=high,
                 report=report,

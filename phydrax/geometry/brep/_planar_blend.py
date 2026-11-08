@@ -578,7 +578,9 @@ def _merged_cap_loop(model: BRepModel, cap: int, /) -> tuple[tuple[int, ...], np
             and len(geometry.face_loops[face]) == 1
             and int(orientation[face]) == int(orientation[cap])
             and all(
-                np.array_equal(np.asarray(getattr(other, name)), np.asarray(getattr(patch, name)))
+                np.array_equal(
+                    np.asarray(getattr(other, name)), np.asarray(getattr(patch, name))
+                )
                 for name in ("origin", "first_axis", "second_axis")
             )
         )
@@ -668,9 +670,7 @@ def _certified_profile_junctions(
         ProfileCurveUse(pcurve, first, last)
         if isinstance(pcurve, CircleCurve)
         else segment
-        for (_, first, last, pcurve), segment in zip(
-            edges, loop.segments, strict=True
-        )
+        for (_, first, last, pcurve), segment in zip(edges, loop.segments, strict=True)
     )
     certified_loop = ProfileLoop(loop.vertices, segments)
     rows = tuple(

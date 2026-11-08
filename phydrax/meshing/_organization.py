@@ -109,9 +109,8 @@ class MeshPatch(StrictModule, NonTrainableState):
                 )
             first, second = source_pair
             paths = source_paths
-            if (
-                (first is None) != (paths[0] is None)
-                or (second is None) != (paths[1] is None)
+            if (first is None) != (paths[0] is None) or (second is None) != (
+                paths[1] is None
             ):
                 raise ValueError(
                     "Each source patch side requires both a region ID and occurrence path."
@@ -370,18 +369,13 @@ class RegionBoundaryEvidence(StrictModule, NonTrainableState):
             )
         resolve_mesh_scope(mesh, target)
         region = canonical_identifier(source_region_id, "source_region_id")
-        if (
-            not isinstance(source_occurrence_path, tuple)
-            or any(
-                not isinstance(part, str) or not part or part != part.strip()
-                for part in source_occurrence_path
-            )
+        if not isinstance(source_occurrence_path, tuple) or any(
+            not isinstance(part, str) or not part or part != part.strip()
+            for part in source_occurrence_path
         ):
             raise ValueError("Source occurrence path must contain canonical names.")
         control = (
-            None
-            if control_id is None
-            else canonical_identifier(control_id, "control_id")
+            None if control_id is None else canonical_identifier(control_id, "control_id")
         )
         material = (
             None

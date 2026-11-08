@@ -1863,7 +1863,8 @@ def _mapped_root_quality(
             if expressions is None:
                 basis = coordinate_effective_basis(element, cell_row=row)
                 components: tuple[tuple[ExactScalar, ...], ...] = tuple(
-                    tuple(local[dof][axis] for dof in range(len(local))) for axis in range(3)
+                    tuple(local[dof][axis] for dof in range(len(local)))
+                    for axis in range(3)
                 )
                 expressions = linear_combinations(basis, components)
             jacobian = tuple(

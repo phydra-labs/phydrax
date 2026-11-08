@@ -7,6 +7,7 @@ This is only a cell-local theorem. It does not prove agreement with another
 cell, source trim containment, or a periodic/pole identification. In particular,
 no rounded angle is promoted to a symbolic source period or pole.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -15,7 +16,11 @@ from fractions import Fraction
 from ._interval_enclosure import interval_multiply, interval_subtract
 from .brep._boolean_core import chart_add, chart_scale, ChartScalar
 from .brep._patches import AbstractSurfacePatch
-from .brep._source_embedding import _sheet_sign, certify_source_embedding, SourceEmbeddingProof
+from .brep._source_embedding import (
+    _sheet_sign,
+    certify_source_embedding,
+    SourceEmbeddingProof,
+)
 from .brep._trim_helpers import period_scalar_bounds, PeriodOffset
 
 

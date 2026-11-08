@@ -203,8 +203,6 @@ def test_omega_h_contracts() -> None:
     assert failure.value.category is M.MeshingFailureCategory.UNSUPPORTED_CAPABILITY
 
 
-
-
 @requires_worker
 def test_omega_h_reuses_one_worker_session() -> None:
     mesh = _grid(2)

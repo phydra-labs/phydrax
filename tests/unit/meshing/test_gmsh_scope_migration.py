@@ -1,4 +1,3 @@
-
 from pathlib import Path
 
 import numpy as np
@@ -92,8 +91,7 @@ def _entity_map(source: BRepModel) -> tuple[_CadEntityMap, dict[int, tuple[int, 
     keys = _source_entity_key_banks(source, domain)
     tag_banks = {
         dimension: tuple(
-            20_000 * dimension + 100 + 17 * (count - row)
-            for row in range(count)
+            20_000 * dimension + 100 + 17 * (count - row) for row in range(count)
         )
         for dimension, count in enumerate(
             (
@@ -129,8 +127,7 @@ def test_source_directed_provider_tags_resolve_through_canonical_source_rows() -
     )
     tag_banks = tuple(
         tuple(
-            1_000_003 + 1_000_000 * dimension + 97 * (count - row)
-            for row in range(count)
+            1_000_003 + 1_000_000 * dimension + 97 * (count - row) for row in range(count)
         )
         for dimension, count in enumerate(counts)
     )
@@ -154,9 +151,7 @@ def test_source_directed_provider_tags_resolve_through_canonical_source_rows() -
     records = _scope_source_records(source, scope, 2)
     assert records is not None
     expected = tuple(tag_banks[2][row] for _, _, row in records)
-    assert (
-        _resolve_entities(source, scope, cad_entities=entity_map) == expected
-    )
+    assert _resolve_entities(source, scope, cad_entities=entity_map) == expected
 
     with pytest.raises(MeshingFailure) as missing_map:
         _resolve_entities(source, scope, cad_entities=None)
@@ -177,8 +172,7 @@ def test_exporter_provenance_roots_exact_native_source_entities(
         policy = CadImportPolicy(
             source.coordinate_contract,
             relative_geometric_tolerance=(
-                source.report.curve_surface_tolerance
-                / source.report.curve_surface_scale
+                source.report.curve_surface_tolerance / source.report.curve_surface_scale
             ),
         )
         for dimension, bank in enumerate(references):

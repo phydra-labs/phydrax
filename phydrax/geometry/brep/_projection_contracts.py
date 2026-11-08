@@ -32,6 +32,7 @@ class BRepEntityDimension(IntEnum):
     FACE = 2
     SOLID = 3
 
+
 class BRepProjectionStatus(IntEnum):
     """Pointwise query outcome, preserving unresolved and non-isolated cases."""
 
@@ -173,7 +174,9 @@ class BRepProjectionResult(StrictModule, NonTrainableState):
             not np.issubdtype(value.dtype, np.integer)
             for value in (raw_dims, raw_rows, raw_state)
         ):
-            raise TypeError("Projection dimensions, indices, and status must be integer arrays.")
+            raise TypeError(
+                "Projection dimensions, indices, and status must be integer arrays."
+            )
         query = np.asarray(queries, dtype=np.float64)
         closest = np.asarray(points, dtype=np.float64)
         params = np.asarray(parameters, dtype=np.float64)
@@ -224,17 +227,23 @@ class BRepProjectionResult(StrictModule, NonTrainableState):
             or normal.shape != (count, ambient)
             or tangent.shape != (count, 2, ambient)
         ):
-            raise ValueError("Projection arrays must be row-aligned with one ambient dimension.")
+            raise ValueError(
+                "Projection arrays must be row-aligned with one ambient dimension."
+            )
         if not np.all(np.isfinite(query)):
             raise ValueError("Projection queries must be finite.")
         if np.any(np.isinf(closest)) or np.any(np.isinf(params)):
-            raise ValueError("Projection points and parameters may contain NaN but not infinity.")
+            raise ValueError(
+                "Projection points and parameters may contain NaN but not infinity."
+            )
         if np.any(np.isinf(normal)) or np.any(np.isinf(tangent)):
             raise ValueError("Projection frames may contain NaN but not infinity.")
         if np.any(np.isnan(upper) | (upper < 0.0)) or np.any(
             ~np.isfinite(lower) | (lower < 0.0) | (lower > upper)
         ):
-            raise ValueError("Projection distance bounds must be ordered and nonnegative.")
+            raise ValueError(
+                "Projection distance bounds must be ordered and nonnegative."
+            )
         resolved = np.isin(
             state,
             (
@@ -253,11 +262,17 @@ class BRepProjectionResult(StrictModule, NonTrainableState):
                 | ~np.all(np.isfinite(closest), axis=1)
             )
         ):
-            raise ValueError("Resolved projection rows require finite points, bounds, and source identity.")
+            raise ValueError(
+                "Resolved projection rows require finite points, bounds, and source identity."
+            )
         parametric = np.isin(dims, (BRepEntityDimension.EDGE, BRepEntityDimension.FACE))
         if np.any(resolved & parametric & ~np.isfinite(params[:, 0])):
-            raise ValueError("Resolved edge and face rows require a finite first parameter.")
-        if np.any(resolved & (dims == BRepEntityDimension.FACE) & ~np.isfinite(params[:, 1])):
+            raise ValueError(
+                "Resolved edge and face rows require a finite first parameter."
+            )
+        if np.any(
+            resolved & (dims == BRepEntityDimension.FACE) & ~np.isfinite(params[:, 1])
+        ):
             raise ValueError("Resolved face rows require two finite parameters.")
         unclassified = dims < 0
         if np.any(unclassified & (rows >= 0)):
@@ -270,7 +285,9 @@ class BRepProjectionResult(StrictModule, NonTrainableState):
             or np.any(~np.all(np.isnan(closest[fiber]), axis=1))
             or np.any(~np.any(np.isnan(params[fiber]), axis=1))
         ):
-            raise ValueError("NON_ISOLATED rows must retain bounded source identity without a selected point.")
+            raise ValueError(
+                "NON_ISOLATED rows must retain bounded source identity without a selected point."
+            )
         self.source_id = source_id
         self.frame_id = frame_id
         self.source_revision = revision
@@ -310,7 +327,6 @@ class BRepProjectionResult(StrictModule, NonTrainableState):
             self.status == BRepProjectionStatus.SEAM
         )
 
-
     def entity_ids(self) -> tuple[str, ...]:
         return tuple(
             brep_entity_id(
@@ -331,7 +347,9 @@ class BRepProjectionResult(StrictModule, NonTrainableState):
         )
 
 
-def _matches(sorted_keys: np.ndarray, queries: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+def _matches(
+    sorted_keys: np.ndarray, queries: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
     start = np.searchsorted(sorted_keys, queries, side="left")
     counts = np.searchsorted(sorted_keys, queries, side="right") - start
     owners = np.repeat(np.arange(queries.size), counts)
@@ -360,7 +378,11 @@ def closure_codes(
     )
     edge_vertex = edge_vertex[edge_vertex[:, 1] >= 0]
     face_edge = np.asarray(
-        [(face, edge) for face, edges in enumerate(topology.face_edges) for edge in edges],
+        [
+            (face, edge)
+            for face, edges in enumerate(topology.face_edges)
+            for edge in edges
+        ],
         dtype=np.int64,
     ).reshape((-1, 2))
     face_vertex = np.concatenate(
@@ -372,7 +394,11 @@ def closure_codes(
     )
     face_vertex = face_vertex[face_vertex[:, 1] >= 0]
     solid_face = np.asarray(
-        [(solid, face) for solid, faces in enumerate(topology.solid_faces) for face in faces],
+        [
+            (solid, face)
+            for solid, faces in enumerate(topology.solid_faces)
+            for face in faces
+        ],
         dtype=np.int64,
     ).reshape((-1, 2))
 

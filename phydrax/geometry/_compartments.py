@@ -655,16 +655,24 @@ class CompartmentMeshingSource:
         from ..discretization._cell_geometry import CellGeometrySpec
         from ..discretization._cell_mesh import CellMesh
         from ..imaging._core import LabelVolume
-        from ..imaging._segmentation import build_compartment_complex, extract_compartment_surfaces
+        from ..imaging._segmentation import (
+            build_compartment_complex,
+            extract_compartment_surfaces,
+        )
         from .surface._contracts import (
-            SurfaceInterface, SurfaceMetadata, SurfaceOrientationRepair, SurfaceSelection,
+            SurfaceInterface,
+            SurfaceMetadata,
+            SurfaceOrientationRepair,
+            SurfaceSelection,
         )
         from .surface._model import SurfaceModel
 
         labels = LabelVolume.from_stored_fields(labels)
         mesh = CellMesh.from_stored_fields(outer_surface.mesh)
         stored_metadata = outer_surface.metadata
-        contract = SpatialCoordinateContract.from_dict(stored_metadata.coordinate_contract.to_dict())
+        contract = SpatialCoordinateContract.from_dict(
+            stored_metadata.coordinate_contract.to_dict()
+        )
         metadata = SurfaceMetadata(
             source_id=stored_metadata.source_id,
             source_revision=stored_metadata.source_revision,
@@ -677,8 +685,10 @@ class CompartmentMeshingSource:
 
         def selection(value: SurfaceSelection) -> SurfaceSelection:
             rebuilt = SurfaceSelection(
-                value.name, value.cell_global_ids,
-                cell_entity_set_id=value.cell_entity_set_id, role=value.role,
+                value.name,
+                value.cell_global_ids,
+                cell_entity_set_id=value.cell_entity_set_id,
+                role=value.role,
             )
             if rebuilt.selection_id != value.selection_id:
                 raise ValueError("Stored surface selection identity changed.")
@@ -688,8 +698,10 @@ class CompartmentMeshingSource:
         restored_interfaces = []
         for value in outer_surface.interfaces:
             item = SurfaceInterface(
-                value.name, selection(value.support),
-                minus_region=value.minus_region, plus_region=value.plus_region,
+                value.name,
+                selection(value.support),
+                minus_region=value.minus_region,
+                plus_region=value.plus_region,
             )
             if item.interface_id != value.interface_id:
                 raise ValueError("Stored surface interface identity changed.")
@@ -707,8 +719,11 @@ class CompartmentMeshingSource:
                 raise ValueError("Stored surface orientation repair identity changed.")
             repair = rebuilt_repair
         rebuilt_surface = SurfaceModel(
-            mesh, metadata, selections=selections,
-            interfaces=tuple(restored_interfaces), orientation_repair=repair,
+            mesh,
+            metadata,
+            selections=selections,
+            interfaces=tuple(restored_interfaces),
+            orientation_repair=repair,
         )
         if rebuilt_surface.model_id != outer_surface.model_id:
             raise ValueError("Stored outer surface identity changed.")
@@ -718,28 +733,42 @@ class CompartmentMeshingSource:
                 source_mesh=mesh,
                 source_map=outer_geometry.source_map,
                 restriction_source=outer_geometry.restriction_source,
-                elements=dict(zip(outer_geometry.block_names, outer_geometry.elements, strict=True)),
+                elements=dict(
+                    zip(outer_geometry.block_names, outer_geometry.elements, strict=True)
+                ),
             )
         restored_compartments = tuple(
             CompartmentDefinition(
-                value.compartment_id, value.label_ids, value.material_role,
-                value.containment_parent_id, value.allowed_neighbor_ids,
+                value.compartment_id,
+                value.label_ids,
+                value.material_role,
+                value.containment_parent_id,
+                value.allowed_neighbor_ids,
             )
             for value in compartments
         )
         restored_definitions = tuple(
             CompartmentInterfaceDefinition(
-                value.interface_id, value.first_compartment_id,
-                value.second_compartment_id, value.interface_role, value.required,
+                value.interface_id,
+                value.first_compartment_id,
+                value.second_compartment_id,
+                value.interface_role,
+                value.required,
             )
             for value in interfaces
         )
         if restored_compartments != compartments or restored_definitions != interfaces:
             raise ValueError("Stored compartment declarations are not canonical.")
-        complex_ = build_compartment_complex(labels, restored_compartments, restored_definitions)
+        complex_ = build_compartment_complex(
+            labels, restored_compartments, restored_definitions
+        )
         extracted = extract_compartment_surfaces(labels, complex_)
         source = cls(
-            labels, complex_, rebuilt_surface, extracted, interpretation,
+            labels,
+            complex_,
+            rebuilt_surface,
+            extracted,
+            interpretation,
             outer_geometry=outer_geometry,
         )
         if (

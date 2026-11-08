@@ -314,13 +314,17 @@ def _owner_local_fv_continuation() -> dict[str, object]:
     writer_pids = {report["pid"] for report in writers}
     reader_pids = {report["pid"] for report in readers}
     if len(writer_pids) != 3 or len(reader_pids) != 3 or writer_pids & reader_pids:
-        raise RuntimeError("Owner-local FV producer and reader processes are not independent.")
+        raise RuntimeError(
+            "Owner-local FV producer and reader processes are not independent."
+        )
     for writer, reader in zip(writers, readers, strict=True):
         if any(
             writer[key] != reader[key]
             for key in ("state_id", "source_runtime_id", "target_connectivity_id")
         ):
-            raise RuntimeError("Owner-local FV cold restore changed scientific authority.")
+            raise RuntimeError(
+                "Owner-local FV cold restore changed scientific authority."
+            )
         if reader["source_partition"] == reader["target_partition"]:
             raise RuntimeError("Owner-local FV continuation did not change placement.")
     return {
@@ -433,9 +437,8 @@ def native_cold_fe_fv_continuation() -> dict[str, object]:
 
     try:
         owner_local_fv = _owner_local_fv_continuation()
-        if (
-            owner_local_fv.get("status") != "passed"
-            or not owner_local_fv.get("producer_processes_exited_before_reader")
+        if owner_local_fv.get("status") != "passed" or not owner_local_fv.get(
+            "producer_processes_exited_before_reader"
         ):
             raise RuntimeError(f"Owner-local FV restart did not pass: {owner_local_fv!r}")
     except Exception as error:

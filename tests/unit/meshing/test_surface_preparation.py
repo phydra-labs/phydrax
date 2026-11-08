@@ -529,8 +529,10 @@ def _junction_construction(shared: bool) -> SurfaceConstruction:
             (1, np.asarray((0.0, 1.0, 2.0), dtype=np.float64)),
         ),
         curve_intervals_exact=(
-            (Fraction(0), Fraction(1)), (Fraction(1), Fraction(2)),
-            (Fraction(0), Fraction(1)), (Fraction(1), Fraction(2)),
+            (Fraction(0), Fraction(1)),
+            (Fraction(1), Fraction(2)),
+            (Fraction(0), Fraction(1)),
+            (Fraction(1), Fraction(2)),
         ),
         minimum_angle=0.0,
     )

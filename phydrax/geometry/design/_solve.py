@@ -16,7 +16,6 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._tree_math import tree_norm
-
 from ...optim import (
     BoundedLevenbergMarquardt,
     Bounds,
@@ -27,6 +26,7 @@ from ...optim import (
     OptimizationTermination,
 )
 from ...optim._least_squares import _prepare_residual_model
+
 
 if TYPE_CHECKING:
     from ._reduced import _SketchGroundedRigidParameterization
@@ -290,7 +290,6 @@ def seed_sketch_circle_intersections(
     """
     from ._sketch import Horizontal, PointDistance, Vertical
     from ._sketch_certificate import (
-        LineCircleConstruction,
         certify_line_circle_construction,
         certify_two_circle_construction,
     )

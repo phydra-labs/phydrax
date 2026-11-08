@@ -62,18 +62,29 @@ def _fail_if_numpy_loads(*args: object, **kwargs: object) -> None:
 
 def test_compact_canonical_manifest_preserves_legacy_json_reads(tmp_path: Path) -> None:
     path = write_array_archive(
-        tmp_path / "compact.zip", manifest={"kind": "example", "nested": {"value": 1}},
+        tmp_path / "compact.zip",
+        manifest={"kind": "example", "nested": {"value": 1}},
         arrays={"array": np.asarray((1, 2), dtype=np.int64)},
     )
     with zipfile.ZipFile(path) as source:
         manifest = json.loads(source.read("manifest.json"))
         assert source.read("manifest.json") == json.dumps(
-            manifest, allow_nan=False, separators=(",", ":"), sort_keys=True,
+            manifest,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
         ).encode("utf-8")
-        arrays = {name: source.read(name) for name in source.namelist() if name != "manifest.json"}
+        arrays = {
+            name: source.read(name)
+            for name in source.namelist()
+            if name != "manifest.json"
+        }
     legacy = tmp_path / "indented.zip"
     with zipfile.ZipFile(legacy, "w", compression=zipfile.ZIP_STORED) as destination:
-        destination.writestr("manifest.json", json.dumps(manifest, allow_nan=False, indent=2, sort_keys=True))
+        destination.writestr(
+            "manifest.json",
+            json.dumps(manifest, allow_nan=False, indent=2, sort_keys=True),
+        )
         for name, payload in arrays.items():
             destination.writestr(name, payload)
     first_manifest, first_arrays = read_array_archive(path)
@@ -90,9 +101,14 @@ def test_internal_immutable_snapshot_preserves_array_contract(tmp_path: Path) ->
         "text": np.asarray(("ab", "cd"), dtype="S2"),
     }
     path = write_array_archive(
-        tmp_path / "immutable.zip", manifest={"kind": "test"}, arrays=arrays, limits=None,
+        tmp_path / "immutable.zip",
+        manifest={"kind": "test"},
+        arrays=arrays,
+        limits=None,
     )
-    _, immutable = archive_module._read_array_archive(path, limits=None, immutable_arrays=True)
+    _, immutable = archive_module._read_array_archive(
+        path, limits=None, immutable_arrays=True
+    )
     _, ordinary = read_array_archive(path, limits=None)
     for name, expected in arrays.items():
         actual = immutable[name]
@@ -110,8 +126,10 @@ def test_immutable_snapshot_rejects_unselected_malformed_member(tmp_path: Path) 
     path = tmp_path / "malformed.zip"
     _write_raw_archive(
         path,
-        {"first": (first, _npy_payload(first)),
-         "second": (second, _npy_payload(second) + b"trailing")},
+        {
+            "first": (first, _npy_payload(first)),
+            "second": (second, _npy_payload(second) + b"trailing"),
+        },
     )
     with pytest.raises(ArrayArchiveCorruptionError):
         archive_module._read_array_archive(path, immutable_arrays=True)

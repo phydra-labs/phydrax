@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from phydrax.geometry.design import (
+    continue_sketch,
     FixedPoint,
     ParameterId,
     PointDistance,
@@ -16,7 +17,6 @@ from phydrax.geometry.design import (
     SketchContinuationReference,
     SketchContinuationResult,
     SketchSolution,
-    continue_sketch,
 )
 from phydrax.geometry.design._continuation import (
     _same_array_bytes,

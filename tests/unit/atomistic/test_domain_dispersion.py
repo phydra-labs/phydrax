@@ -116,9 +116,7 @@ def _plan(
     roles = tuple(
         AtomisticDomainRolePlan(
             requirement,
-            cell.image_stencil(
-                requirement.bounded_cutoff() + SKIN
-            ),
+            cell.image_stencil(requirement.bounded_cutoff() + SKIN),
             streaming=StreamedRelationPlan(accumulation="deterministic"),
             skin=SKIN,
             edge_capacity=4096,

@@ -5531,7 +5531,8 @@ def _qualify_profile(
             or not record["coarsening_committed"]
             or not record["coarsening_refusal_atomic"]
             or not record["forged_transfer_claims_refused"]
-            or tuple(record["forged_transfer_claims_refused"]) != get_args(_FalseTransferClaim)
+            or tuple(record["forged_transfer_claims_refused"])
+            != get_args(_FalseTransferClaim)
             or not record["material_history_rng_clock_preserved"]
         ):
             raise RuntimeError(

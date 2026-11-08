@@ -6,7 +6,6 @@ import pytest
 
 from phydrax import SpatialCoordinateContract
 from phydrax.geometry.brep import boolean_brep, brep_box
-
 from phydrax.geometry.brep._boolean_arrangement import _spatial_root_vertex
 from phydrax.geometry.brep._intersection import (
     _cardinal_conic_angle_bounds,
@@ -105,7 +104,13 @@ def test_branch_endpoint_gap_requires_real_root_incidence() -> None:
 
     def gap(vertex: BRepVertexRoot) -> tuple[tuple[float, float], ...] | None:
         return _certify_edge_vertex_gap_bounds(
-            points, (None,), (vertex,), (branch,), (0,), ranges, ((0, 0),),
+            points,
+            (None,),
+            (vertex,),
+            (branch,),
+            (0,),
+            ranges,
+            ((0, 0),),
             ((endpoint, endpoint),),
         )
 

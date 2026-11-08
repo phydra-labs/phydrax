@@ -25,9 +25,7 @@ def _problem() -> tuple[
     seed = seed_double_bubble(1.0, 0.8, ring_points=12)
     topology = seed.topology(seed.capacity_plan(resource_id="foam-rupture-test"))
     base = seed.state(topology)
-    sheet = np.zeros(
-        (topology.vertex_capacity, topology.slot_width, 2), dtype=np.float64
-    )
+    sheet = np.zeros((topology.vertex_capacity, topology.slot_width, 2), dtype=np.float64)
     sheet[np.asarray(topology.slot_active), 0] = 1.0e-9
     sheet[np.asarray(topology.slot_active), 1] = 2.0e-6
     region = np.zeros((topology.region_capacity, 2), dtype=np.float64)
@@ -192,9 +190,7 @@ def test_failed_candidate_validation_rolls_back_rim_and_surface() -> None:
     topology, state, thickness, pair_slots = _problem()
     evidence = _film_evidence(thickness, pair_slots)
     restrictive = SurfaceEventPolicy(
-        validation=MultiRegionSurfaceValidationPolicy(
-            profile="manifold_two_region"
-        )
+        validation=MultiRegionSurfaceValidationPolicy(profile="manifold_two_region")
     )
 
     result = apply_foam_rupture(

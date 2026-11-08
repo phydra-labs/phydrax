@@ -17,11 +17,7 @@ from phydrax.discretization.vem import prepare_polyhedral_h1_virtual_element_3d
 
 
 def test_fvb_shared_cutovers_scenario_1() -> None:
-    cell = PeriodicCell(
-        np.asarray(
-            [[2.0, 0.0, 0.0], [0.5, 1.5, 0.0]], dtype=np.float64
-        )
-    )
+    cell = PeriodicCell(np.asarray([[2.0, 0.0, 0.0], [0.5, 1.5, 0.0]], dtype=np.float64))
     point = jnp.asarray([2.25, -0.1, 3.0])
     wrapped, images = cell.wrap(point)
     assert cell.rank == 2
@@ -146,9 +142,7 @@ def test_mixed_contracts() -> None:
                 ),
             )
         },
-        vertex_global_ids=np.asarray(
-            (50, 10, 70, 20, 80, 30, 90), dtype=np.int64
-        ),
+        vertex_global_ids=np.asarray((50, 10, 70, 20, 80, 30, 90), dtype=np.int64),
         polyhedral_cell_global_ids={"cap": np.asarray((42,), dtype=np.int64)},
     )
     geometry = prepare_polyhedral_finite_volume_geometry(mesh)

@@ -1020,7 +1020,9 @@ def certify_child_chart_partition(
                 and restriction.source_topology_id == domain.reference_mesh.topology_id
             )
         ):
-            raise ValueError("Validated parent embedding requires an intermediate chart parent.")
+            raise ValueError(
+                "Validated parent embedding requires an intermediate chart parent."
+            )
         _validated_parent_embedding.require(
             chart_parent[0], chart_parent[1], _validated_parent_embedding.validity
         )

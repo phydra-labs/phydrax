@@ -252,8 +252,12 @@ def test_prepared_chart_moment_signature_preserves_all_entry_evidence() -> None:
     )
 
     element = form_element(
-        "prism", 1, 2, family="prism-trimmed",
-        twist="untwisted", proxy="circulation",
+        "prism",
+        1,
+        2,
+        family="prism-trimmed",
+        twist="untwisted",
+        proxy="circulation",
     )
     assert element.form_basis is not None
     vertices = tuple(
@@ -263,8 +267,12 @@ def test_prepared_chart_moment_signature_preserves_all_entry_evidence() -> None:
     first = tuple((x, y, z / 2) for x, y, z in vertices)
     second = tuple((x, y, z / 2 + Fraction(1, 2)) for x, y, z in vertices)
     witnesses = ReferenceCellMapWitnesses(
-        np.asarray((11, 12)), np.asarray((21, 21)), "prism", "prism",
-        np.asarray((first, second), dtype=float), (first, second),
+        np.asarray((11, 12)),
+        np.asarray((21, 21)),
+        "prism",
+        "prism",
+        np.asarray((first, second), dtype=float),
+        (first, second),
     )
     first_map, wrong_chart = nested_cell_reference_maps(witnesses)
     same_chart = replace(first_map, target_cell_id=31, source_cell_id=41)
@@ -276,13 +284,23 @@ def test_prepared_chart_moment_signature_preserves_all_entry_evidence() -> None:
         element, element, first_map, identity, identity, None
     )
     replay = exact_reference_form_moments(
-        element, element, same_chart, identity, identity, None,
+        element,
+        element,
+        same_chart,
+        identity,
+        identity,
+        None,
         prepared_orientation=prepared,
     )
     for name in ("values", "errors", "exact", "enclosed"):
         np.testing.assert_array_equal(getattr(direct, name), getattr(replay, name))
     with pytest.raises(ValueError, match="different exact map"):
         exact_reference_form_moments(
-            element, element, wrong_chart, identity, identity, None,
+            element,
+            element,
+            wrong_chart,
+            identity,
+            identity,
+            None,
             prepared_orientation=prepared,
         )

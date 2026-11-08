@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from math import isnan
-from typing import Literal, TypeAlias, final
+from typing import final, Literal, TypeAlias
 
 import equinox as eqx
 
@@ -37,9 +37,15 @@ class CertifiedParameterRange(StrictModule):
 
     parameter: str = eqx.field(static=True)
     interval: tuple[float | None, float | None] = eqx.field(static=True)
-    end_status: tuple[ParameterRangeEndStatus, ParameterRangeEndStatus] = eqx.field(static=True)
-    constraints: tuple[ParameterRangeConstraint, ParameterRangeConstraint] = eqx.field(static=True)
-    entity_ids: tuple[tuple[BRepEntityId, ...], tuple[BRepEntityId, ...]] = eqx.field(static=True)
+    end_status: tuple[ParameterRangeEndStatus, ParameterRangeEndStatus] = eqx.field(
+        static=True
+    )
+    constraints: tuple[ParameterRangeConstraint, ParameterRangeConstraint] = eqx.field(
+        static=True
+    )
+    entity_ids: tuple[tuple[BRepEntityId, ...], tuple[BRepEntityId, ...]] = eqx.field(
+        static=True
+    )
     evidence: tuple[str, ...] = eqx.field(static=True)
 
     def __init__(
@@ -53,11 +59,15 @@ class CertifiedParameterRange(StrictModule):
         evidence: tuple[str, ...],
     ) -> None:
         if not isinstance(parameter, str) or not parameter or not evidence:
-            raise ValueError("A parameter range requires a named parameter and proof evidence.")
+            raise ValueError(
+                "A parameter range requires a named parameter and proof evidence."
+            )
         if any(
             len(values) != 2 for values in (interval, end_status, constraints, entity_ids)
         ):
-            raise ValueError("A parameter range must provide exactly two endpoint records.")
+            raise ValueError(
+                "A parameter range must provide exactly two endpoint records."
+            )
         statuses = tuple(
             parse(value, ParameterRangeEndStatus, "range.end_status")
             for value in end_status
@@ -70,16 +80,20 @@ class CertifiedParameterRange(StrictModule):
             if (value is None) != (status == "unknown") or (
                 value is not None and isnan(value)
             ):
-                raise ValueError("Unknown range ends must use None and certified ends cannot be NaN.")
+                raise ValueError(
+                    "Unknown range ends must use None and certified ends cannot be NaN."
+                )
         lower, upper = interval
         if lower is not None and upper is not None and lower >= upper:
-            raise ValueError("A certified parameter interval must have strictly ordered endpoints.")
+            raise ValueError(
+                "A certified parameter interval must have strictly ordered endpoints."
+            )
         if any(
-            not isinstance(entity, BRepEntityId)
-            for row in entity_ids
-            for entity in row
+            not isinstance(entity, BRepEntityId) for row in entity_ids for entity in row
         ):
-            raise TypeError("Parameter-range entity bindings must be BRepEntityId values.")
+            raise TypeError(
+                "Parameter-range entity bindings must be BRepEntityId values."
+            )
         evidence_ = tuple(evidence)
         if any(not isinstance(item, str) or not item for item in evidence_):
             raise ValueError("Parameter-range evidence entries must be nonempty strings.")
@@ -109,7 +123,9 @@ def attach_parameter_range(
     if not isinstance(error, ValueError) or not isinstance(
         parameter_range, CertifiedParameterRange
     ):
-        raise TypeError("attach_parameter_range requires a ValueError and range certificate.")
+        raise TypeError(
+            "attach_parameter_range requires a ValueError and range certificate."
+        )
     error.__dict__["parameter_range"] = parameter_range
     return error
 

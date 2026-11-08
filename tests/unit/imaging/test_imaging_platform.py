@@ -385,7 +385,6 @@ def test_imaging_platform_scenario_3() -> None:
     assert transition.target.asset.quality_flags[0] is source_flag
 
 
-
 def test_compartment_source_scopes_follow_image_lattice_keys() -> None:
     import json
 
@@ -406,7 +405,9 @@ def test_compartment_source_scopes_follow_image_lattice_keys() -> None:
             phx.imaging.LabelDefinition(2, "right-label", "Right"),
         ),
     )
-    labels = phx.imaging.LabelVolume(_asset(values, layout, asset_id="scope-labels"), ontology)
+    labels = phx.imaging.LabelVolume(
+        _asset(values, layout, asset_id="scope-labels"), ontology
+    )
     compartments = (
         phx.geometry.CompartmentDefinition(
             "left", ("left-label",), "material", allowed_neighbor_ids=("right",)
@@ -446,7 +447,10 @@ def test_compartment_source_scopes_follow_image_lattice_keys() -> None:
         )
         for region in ("left", "right")
     }
-    assert facet_keys == {(expected_interface, ()), *((name, ()) for name in expected_outer)}
+    assert facet_keys == {
+        (expected_interface, ()),
+        *((name, ()) for name in expected_outer),
+    }
 
     expected_vertex = source_entity_id(
         source.source_id,
@@ -458,6 +462,7 @@ def test_compartment_source_scopes_follow_image_lattice_keys() -> None:
     assert keys(3) == {("left", ()), ("right", ())}
     assert source.scope_entity_ids(1).size > 0
     assert all(source.scope_entity_set_id(dimension) for dimension in range(4))
+
 
 def test_real_nifti_roundtrip_preserves_values_affine_and_rights(tmp_path: Any) -> None:
     nib = pytest.importorskip("nibabel")

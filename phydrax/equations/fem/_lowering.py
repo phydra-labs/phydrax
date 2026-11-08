@@ -921,7 +921,10 @@ def compile_workset_program(
             )
             volume_data = None
             if domain.kind == "cell" and reference is None:
-                from .._finite_element_variational import _action_rule, _reference_rule_data
+                from .._finite_element_variational import (
+                    _action_rule,
+                    _reference_rule_data,
+                )
 
                 volume_data = _reference_rule_data(
                     _action_rule(action, block.name, block.cell_kind)

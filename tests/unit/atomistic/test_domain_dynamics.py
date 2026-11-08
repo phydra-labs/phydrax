@@ -312,9 +312,7 @@ def _domain_plan(
     )
     role = AtomisticDomainRolePlan(
         requirement,
-        periodic.image_stencil(
-            CUTOFF + SKIN + (0.6 if dynamic_cell else 0.0)
-        ),
+        periodic.image_stencil(CUTOFF + SKIN + (0.6 if dynamic_cell else 0.0)),
         streaming=StreamedRelationPlan(
             receiver_tile=4,
             edge_tile=32,

@@ -7,9 +7,9 @@ from fractions import Fraction
 import pytest
 
 from phydrax.discretization._exact_algebraic_geometry import (
-    RadicalElement,
     _prime_uint64,
     _squarefree,
+    RadicalElement,
 )
 
 

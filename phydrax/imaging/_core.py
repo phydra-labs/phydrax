@@ -31,9 +31,9 @@ from ..measurement import (
     QualityFlag,
     QuantityField,
     QuantitySpec,
-    TemporalSampling,
     SampleTimeAxis,
     SamplingSemantics,
+    TemporalSampling,
     ValueKind,
     ValueLayout,
 )
@@ -627,6 +627,7 @@ class LabelVolume:
                 }
             ),
         )
+
     @classmethod
     def from_stored_fields(cls, value: LabelVolume, /) -> LabelVolume:
         """Reconstruct a stored label volume through its scientific constructors.
@@ -658,8 +659,12 @@ class LabelVolume:
         affine_new = verify(
             affine,
             ImageIndexAffine(
-                affine.matrix, affine.source_frame_id, spatial_new,
-                affine.axis_convention, affine.voxel_reference, affine.provenance,
+                affine.matrix,
+                affine.source_frame_id,
+                spatial_new,
+                affine.axis_convention,
+                affine.voxel_reference,
+                affine.provenance,
             ),
             "affine_id",
         )
@@ -668,18 +673,28 @@ class LabelVolume:
         quantity_new = verify(
             quantity,
             QuantitySpec(
-                quantity.namespace, quantity.name, quantity.quantity_kind,
-                unit(quantity.unit), quantity.compatibility_key, quantity.axes,
-                quantity.sign_convention, quantity.support_association,
+                quantity.namespace,
+                quantity.name,
+                quantity.quantity_kind,
+                unit(quantity.unit),
+                quantity.compatibility_key,
+                quantity.axes,
+                quantity.sign_convention,
+                quantity.support_association,
                 quantity.reference_configuration,
             ),
-            "quantity_id", "compatibility_id",
+            "quantity_id",
+            "compatibility_id",
         )
         layout = spec.layout
         layout_new = verify(
             layout,
-            ValueLayout(layout.kind, layout.component_shape, layout.component_labels,
-                        layout.component_frame_id),
+            ValueLayout(
+                layout.kind,
+                layout.component_shape,
+                layout.component_labels,
+                layout.component_frame_id,
+            ),
             "layout_id",
         )
         sampling = spec.sampling
@@ -687,7 +702,8 @@ class LabelVolume:
         temporal_new = verify(
             temporal,
             TemporalSampling(
-                temporal.kind, temporal.interval_bounds,
+                temporal.kind,
+                temporal.interval_bounds,
                 None if temporal.interval_unit is None else unit(temporal.interval_unit),
                 temporal.origin,
             ),
@@ -695,8 +711,12 @@ class LabelVolume:
         )
         sampling_new = verify(
             sampling,
-            SamplingSemantics(sampling.spatial_kind, temporal_new,
-                              sampling.footprint_id, sampling.normalization),
+            SamplingSemantics(
+                sampling.spatial_kind,
+                temporal_new,
+                sampling.footprint_id,
+                sampling.normalization,
+            ),
             "sampling_id",
         )
         spec_new = verify(
@@ -704,8 +724,11 @@ class LabelVolume:
         )
         evidence = asset.deidentification
         evidence_new = DeidentificationEvidence(
-            evidence.evidence_id, evidence.pseudonymous_subject_id, evidence.protocol_id,
-            evidence.direct_identifiers_removed, evidence.burned_in_annotations_removed,
+            evidence.evidence_id,
+            evidence.pseudonymous_subject_id,
+            evidence.protocol_id,
+            evidence.direct_identifiers_removed,
+            evidence.burned_in_annotations_removed,
             evidence.facial_features_removed,
         )
         references = tuple(
@@ -717,18 +740,28 @@ class LabelVolume:
         differentiation_new = None
         if differentiation is not None:
             regularity = differentiation.regularity
-            regularity_new = None if regularity is None else DerivativeRegularity(
-                continuity=regularity.continuity, pieces=regularity.pieces,
-                degree_bound=regularity.degree_bound, conditions=regularity.conditions,
-                support=regularity.support,
+            regularity_new = (
+                None
+                if regularity is None
+                else DerivativeRegularity(
+                    continuity=regularity.continuity,
+                    pieces=regularity.pieces,
+                    degree_bound=regularity.degree_bound,
+                    conditions=regularity.conditions,
+                    support=regularity.support,
+                )
             )
             differentiation_new = verify(
                 differentiation,
                 DerivativeContract(
-                    tuple(SurfaceDerivative(entry.surface, entry.level,
-                                            conditions=entry.conditions)
-                          for entry in differentiation.surfaces),
-                    route=differentiation.route, regularity=regularity_new,
+                    tuple(
+                        SurfaceDerivative(
+                            entry.surface, entry.level, conditions=entry.conditions
+                        )
+                        for entry in differentiation.surfaces
+                    ),
+                    route=differentiation.route,
+                    regularity=regularity_new,
                     conditions=differentiation.conditions,
                     nondifferentiable_outputs=differentiation.nondifferentiable_outputs,
                 ),
@@ -737,26 +770,45 @@ class LabelVolume:
         derivation_new = verify(
             derivation,
             DerivationRecord(
-                derivation.origin, derivation.stage, derivation.parent_ids,
-                derivation.transformation_id, derivation.adapter_report_ids,
-                derivation.calibration_ids, differentiation_new,
+                derivation.origin,
+                derivation.stage,
+                derivation.parent_ids,
+                derivation.transformation_id,
+                derivation.adapter_report_ids,
+                derivation.calibration_ids,
+                differentiation_new,
             ),
             "derivation_id",
         )
         acquisition = asset.acquisition
-        acquisition_new = None if acquisition is None else verify(
-            acquisition,
-            AcquisitionIdentity(
-                acquisition.acquisition_id, acquisition.series_id, acquisition.modality,
-                acquisition.protocol_id, acquisition.instrument_id,
-                acquisition.calibration_ids, acquisition.clock_id,
-            ),
-            "identity_id",
+        acquisition_new = (
+            None
+            if acquisition is None
+            else verify(
+                acquisition,
+                AcquisitionIdentity(
+                    acquisition.acquisition_id,
+                    acquisition.series_id,
+                    acquisition.modality,
+                    acquisition.protocol_id,
+                    acquisition.instrument_id,
+                    acquisition.calibration_ids,
+                    acquisition.clock_id,
+                ),
+                "identity_id",
+            )
         )
         uncertainty = asset.uncertainty
-        uncertainty_new = None if uncertainty is None else verify(
-            uncertainty, IndependentStandardUncertainty(uncertainty.values, unit(uncertainty.unit)),
-            "uncertainty_id",
+        uncertainty_new = (
+            None
+            if uncertainty is None
+            else verify(
+                uncertainty,
+                IndependentStandardUncertainty(
+                    uncertainty.values, unit(uncertainty.unit)
+                ),
+                "uncertainty_id",
+            )
         )
         flags = tuple(
             verify(flag, QualityFlag(flag.name, flag.mask, flag.meaning), "flag_id")
@@ -767,10 +819,19 @@ class LabelVolume:
         asset_new = verify(
             asset,
             MedicalImageAsset(
-                asset.asset_id, asset.modality, asset.values, affine_new, spec_new,
-                evidence_new, references, derivation_new, valid_mask=asset.valid_mask,
-                uncertainty=uncertainty_new, quality_flags=flags,
-                acquisition=acquisition_new, metadata=asset.metadata,
+                asset.asset_id,
+                asset.modality,
+                asset.values,
+                affine_new,
+                spec_new,
+                evidence_new,
+                references,
+                derivation_new,
+                valid_mask=asset.valid_mask,
+                uncertainty=uncertainty_new,
+                quality_flags=flags,
+                acquisition=acquisition_new,
+                metadata=asset.metadata,
                 intended_use=asset.intended_use,
             ),
             "content_id",
@@ -779,13 +840,19 @@ class LabelVolume:
         verify(asset.measurement, asset_new.measurement, "content_id")
         ontology = value.ontology
         definitions = tuple(
-            LabelDefinition(label.value, label.label_id, label.name, label.parent_id, label.roles)
+            LabelDefinition(
+                label.value, label.label_id, label.name, label.parent_id, label.roles
+            )
             for label in ontology.labels
         )
         ontology_new = verify(
             ontology,
-            LabelOntology(ontology.ontology_id, ontology.source_system,
-                          ontology.source_version, definitions),
+            LabelOntology(
+                ontology.ontology_id,
+                ontology.source_system,
+                ontology.source_version,
+                definitions,
+            ),
             "ontology_content_id",
         )
         return verify(value, cls(asset_new, ontology_new), "label_volume_id")

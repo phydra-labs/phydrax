@@ -18,7 +18,12 @@ import numpy as np
 
 from ._overset_partition import OversetPartition
 from ._planar_primitives import (
-    Point, area2, box_overlap_pairs, cross, intersection, polygon_boxes,
+    area2,
+    box_overlap_pairs,
+    cross,
+    intersection,
+    Point,
+    polygon_boxes,
     signed_area2,
 )
 
@@ -60,9 +65,11 @@ def _subtract(a: Point, b: Point) -> Point:
 
 
 def _on_segment(point: Point, a: Point, b: Point) -> bool:
-    return (cross(a, b, point) == 0 and
-            min(a[0], b[0]) <= point[0] <= max(a[0], b[0]) and
-            min(a[1], b[1]) <= point[1] <= max(a[1], b[1]))
+    return (
+        cross(a, b, point) == 0
+        and min(a[0], b[0]) <= point[0] <= max(a[0], b[0])
+        and min(a[1], b[1]) <= point[1] <= max(a[1], b[1])
+    )
 
 
 def partition_overset_interfaces(partition: OversetPartition) -> tuple[AtomicEdge, ...]:
@@ -76,18 +83,24 @@ def partition_overset_interfaces(partition: OversetPartition) -> tuple[AtomicEdg
     polygons = tuple(piece.vertices for piece in pieces)
     for piece in pieces:
         vertices = piece.vertices
-        if (len(vertices) < 3 or len(set(vertices)) != len(vertices) or
-                any(not isinstance(c, Fraction) for p in vertices for c in p) or
-                signed_area2(vertices) <= 0 or
-                signed_area2(vertices) != 2 * piece.area or
-                any(cross(a, b, p) < 0
-                    for a, b in piece.edges for p in vertices)):
+        if (
+            len(vertices) < 3
+            or len(set(vertices)) != len(vertices)
+            or any(not isinstance(c, Fraction) for p in vertices for c in p)
+            or signed_area2(vertices) <= 0
+            or signed_area2(vertices) != 2 * piece.area
+            or any(cross(a, b, p) < 0 for a, b in piece.edges for p in vertices)
+        ):
             raise ValueError("partition contains an invalid convex CCW polygon")
     names_by_index: dict[int, str] = {}
     indices_by_name: dict[str, int] = {}
     for piece in pieces:
-        if (piece.part_index in names_by_index and names_by_index[piece.part_index] != piece.part_name
-                or piece.part_name in indices_by_name and indices_by_name[piece.part_name] != piece.part_index):
+        if (
+            piece.part_index in names_by_index
+            and names_by_index[piece.part_index] != piece.part_name
+            or piece.part_name in indices_by_name
+            and indices_by_name[piece.part_name] != piece.part_index
+        ):
             raise ValueError("inconsistent partition part identity")
         names_by_index[piece.part_index] = piece.part_name
         indices_by_name[piece.part_name] = piece.part_index
@@ -95,8 +108,9 @@ def partition_overset_interfaces(partition: OversetPartition) -> tuple[AtomicEdg
         if area2(intersection(polygons[int(i)], polygons[int(j)])):
             raise ValueError("partition polygons overlap in their interiors")
 
-    segments = tuple((a, b, index) for index, piece in enumerate(pieces)
-                     for a, b in piece.edges)
+    segments = tuple(
+        (a, b, index) for index, piece in enumerate(pieces) for a, b in piece.edges
+    )
     cuts = [{a, b} for a, b, _ in segments]
     segment_boxes = tuple((a, b) for a, b, _ in segments)
     for i, j in _candidates(segment_boxes):
@@ -126,16 +140,24 @@ def partition_overset_interfaces(partition: OversetPartition) -> tuple[AtomicEdg
         ordered = sorted(points)
         orientation = 1 if a < b else -1
         for start, end in zip(ordered, ordered[1:]):
-            owner = EdgeOwner(piece.part_name, piece.part_index, piece.cell_index,
-                              orientation, piece_index)
+            owner = EdgeOwner(
+                piece.part_name,
+                piece.part_index,
+                piece.cell_index,
+                orientation,
+                piece_index,
+            )
             adjacency.setdefault((start, end), []).append(owner)
 
     result = []
     boundary_degree: dict[Point, int] = {}
     for (start, end), owner_list in sorted(adjacency.items()):
         owners = tuple(sorted(owner_list, key=lambda owner: owner.piece_index))
-        if (len(owners) > 2 or len({o.piece_index for o in owners}) != len(owners)
-                or (len(owners) == 2 and owners[0].orientation == owners[1].orientation)):
+        if (
+            len(owners) > 2
+            or len({o.piece_index for o in owners}) != len(owners)
+            or (len(owners) == 2 and owners[0].orientation == owners[1].orientation)
+        ):
             raise ValueError("nonmanifold or inconsistently oriented partition edge")
         if len(owners) == 1:
             kind = "physical_boundary"

@@ -176,7 +176,6 @@ class ProviderWorker:
             except NativeWorkerError as error:
                 raise _failure(self.provider, operation, error) from error
 
-
     def close(self) -> None:
         with self._lock:
             if self._worker is not None:

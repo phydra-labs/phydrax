@@ -744,7 +744,9 @@ class _PreparedDirectBRepCadVolume(StrictModule, NonTrainableState):
             meshcore_identity(),
             self.boundary_plan_id,
             "parametric_surface",
-            computed_surface_out=None if self.specification.layer_controls else surface_proofs,
+            computed_surface_out=None
+            if self.specification.layer_controls
+            else surface_proofs,
         )
         if self.specification.layer_controls:
             from .._layer_core_brep import brep_layer_core_source
@@ -1338,9 +1340,13 @@ def _require_fixed_plan_current(
         or not _same_tree_content(plan.source, prepared.source)
         or not _same_tree_content(plan.specification, prepared.specification)
         or not _same_tree_content(plan.coordinate_contract, prepared.coordinate_contract)
-        or not _same_tree_content(plan.route_options, _options_for_route(plan.options, plan.route))
+        or not _same_tree_content(
+            plan.route_options, _options_for_route(plan.options, plan.route)
+        )
     ):
-        raise ValueError("The fixed plan no longer matches its source or request binding.")
+        raise ValueError(
+            "The fixed plan no longer matches its source or request binding."
+        )
     _validate_scope_binding(plan.source, plan.specification)
     if check_prepared:
         prepared.require_current()
@@ -1437,9 +1443,13 @@ class NativeMeshingProvider:
                 or not isinstance(fixed_plan.prepared, _PreparedFixedImplicitRoute)
                 or fixed_plan.coordinate_contract.spatial_id != contract.spatial_id
             ):
-                raise ValueError("A fixed plan requires the same fixed implicit route and coordinate frame.")
+                raise ValueError(
+                    "A fixed plan requires the same fixed implicit route and coordinate frame."
+                )
             if not _same_tree_content(fixed_plan.options, self.options):
-                raise ValueError("The fixed rebind cannot change its authored policy or options.")
+                raise ValueError(
+                    "The fixed rebind cannot change its authored policy or options."
+                )
             _require_fixed_plan_current(fixed_plan)
             prepared = prepare_native_fixed_rebind(
                 source, specification, route_options, contract, fixed_plan.prepared

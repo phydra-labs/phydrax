@@ -11,9 +11,9 @@ from dataclasses import dataclass
 from fractions import Fraction
 
 import numpy as np
+
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-
 from ...discretization import (
     _cell_geometry as cell_geometry_owner,
     CellGeometrySpec,
@@ -35,8 +35,8 @@ from ...discretization._nested_reference_types import (
 from ...discretization._reference_cell import reference_cell_topology
 from ...geometry._affine_plc_domain import AffinePlcDomain
 from ...geometry._domain_coverage import PiecewiseLinearDomain
-from ...geometry._piecewise_linear_boundary import PiecewiseLinearBoundarySource
 from ...geometry._mapped_reference_boundary import MappedReferenceBoundarySource
+from ...geometry._piecewise_linear_boundary import PiecewiseLinearBoundarySource
 from ...geometry._planar_primitives import intersection as planar_intersection
 from ...geometry._source_boundary_records import (
     rational_chart_tokens,
@@ -75,9 +75,9 @@ class _PlcCurveAuthority(StrictModule, NonTrainableState):
 
     @property
     def edges(self) -> np.ndarray:
-        return np.asarray(
-            self.source.complex.plc_edge_vertices, dtype=np.int64
-        ).reshape((-1, 2))
+        return np.asarray(self.source.complex.plc_edge_vertices, dtype=np.int64).reshape(
+            (-1, 2)
+        )
 
     @property
     def scope_entity_ids_by_mesh_row(self) -> tuple[np.ndarray, ...]:
@@ -1365,7 +1365,9 @@ def plc_curve_chart_witness(
         if row is None or row not in owners:
             raise ValueError("A recovered PLC curve segment has no target cell edge.")
         cell_id, local_index, pair, reference = owners[row]
-        endpoints = np.asarray(source.complex.plc_edge_vertices[complex_row], dtype=np.int64)
+        endpoints = np.asarray(
+            source.complex.plc_edge_vertices[complex_row], dtype=np.int64
+        )
         first, last = (
             tuple(Fraction.from_float(float(value)) for value in source_points[index])
             for index in endpoints
@@ -1381,7 +1383,9 @@ def plc_curve_chart_witness(
             if not 0 <= parameter <= 1 or any(
                 point[i] != first[i] + parameter * direction[i] for i in range(3)
             ):
-                raise ValueError("A recovered PLC curve vertex is not exactly on its source.")
+                raise ValueError(
+                    "A recovered PLC curve vertex is not exactly on its source."
+                )
             source_parameters.append(parameter)
         a, b = source_parameters
         if a == b:
@@ -1393,7 +1397,10 @@ def plc_curve_chart_witness(
         target_edges.append(int(edge_ids[row]))
         local_indices.append(local_index)
         target_references.append(
-            tuple(tuple(Fraction.from_float(float(value)) for value in point) for point in reference)
+            tuple(
+                tuple(Fraction.from_float(float(value)) for value in point)
+                for point in reference
+            )
         )
         parameters.append(((a,), (b,)))
         chart_ids.append(chart)

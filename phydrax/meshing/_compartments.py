@@ -246,12 +246,15 @@ def _verify_outer_surface_lattice(
         group_rectangles.append(bounds)
 
     actual_by_plane: dict[tuple[int, int, int], list[tuple[_Point2, ...]]] = {}
-    reflected = determinant_exact(
-        tuple(
-            tuple(Fraction.from_float(float(value)) for value in row)
-            for row in affine.matrix[:3, :3]
+    reflected = (
+        determinant_exact(
+            tuple(
+                tuple(Fraction.from_float(float(value)) for value in row)
+                for row in affine.matrix[:3, :3]
+            )
         )
-    ) < 0
+        < 0
+    )
     for block in surface.mesh.blocks:
         if block.cell_kind != "triangle":
             raise ValueError("Outer compartment surface must use triangle cells.")

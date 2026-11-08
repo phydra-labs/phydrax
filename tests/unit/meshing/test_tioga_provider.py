@@ -303,4 +303,3 @@ def test_tioga_contracts() -> None:
         ).execute(assembly)
 
     assert failure.value.category is MeshingFailureCategory.PROVIDER_UNAVAILABLE
-

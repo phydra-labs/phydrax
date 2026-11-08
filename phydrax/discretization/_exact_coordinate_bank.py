@@ -87,7 +87,9 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
             or len(values) != index.size
             or np.any(sig.reshape(-1)[marked] != 0)
         ):
-            raise ValueError("Exact coordinate bank sparse entries must match their marks.")
+            raise ValueError(
+                "Exact coordinate bank sparse entries must match their marks."
+            )
         dense = flat != _SPARSE
         dense_sig = sig.reshape(-1)[dense]
         dense_exp = flat[dense]
@@ -127,9 +129,7 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
         raise AttributeError("ExactCoordinateBank is immutable.")
 
     @classmethod
-    def from_rows(
-        cls, rows: Sequence[Sequence[ExactScalar]], /
-    ) -> ExactCoordinateBank:
+    def from_rows(cls, rows: Sequence[Sequence[ExactScalar]], /) -> ExactCoordinateBank:
         """Pack regular rows of ``Fraction``/``RadicalElement`` values exactly."""
         if isinstance(rows, ExactCoordinateBank):
             return rows
@@ -238,7 +238,9 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
         for row in range(len(self)):
             yield self._row(row)
 
-    def rows(self, indices: NDArray[np.integer[Any]], /) -> tuple[tuple[ExactScalar, ...], ...]:
+    def rows(
+        self, indices: NDArray[np.integer[Any]], /
+    ) -> tuple[tuple[ExactScalar, ...], ...]:
         """Materialize the selected rows (bounds-checked int vector)."""
         selected = np.asarray(indices)
         if selected.ndim != 1 or selected.dtype.kind not in "iu":
@@ -277,7 +279,11 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
         ):
             raise ValueError("Replacement rows must align with their row indices.")
         rows = selected.astype(np.int64)
-        if np.any(rows < 0) or np.any(rows >= len(self)) or np.unique(rows).size != rows.size:
+        if (
+            np.any(rows < 0)
+            or np.any(rows >= len(self))
+            or np.unique(rows).size != rows.size
+        ):
             raise IndexError("Replacement rows must be unique rows of the bank.")
         significands = np.array(self._significands, copy=True)
         exponents = np.array(self._exponents, copy=True)
@@ -326,7 +332,10 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
 
     def coefficient_payloads(
         self,
-    ) -> tuple[tuple[tuple[str, int, int] | tuple[str, tuple[tuple[int, int, int], ...]], ...], ...]:
+    ) -> tuple[
+        tuple[tuple[str, int, int] | tuple[str, tuple[tuple[int, int, int], ...]], ...],
+        ...,
+    ]:
         """``coefficient_payload`` of every entry, row by row, without Fractions."""
         width = self._shape[1]
         result = []

@@ -88,10 +88,8 @@ class VoroCrustOptions:
             raise ValueError("relative_volume_tolerance must lie in (0, 1).")
 
 
-
 def _conversion(message: str, /) -> MeshingFailure:
     return MeshingFailure(MeshingFailureCategory.CONVERSION_FAILED, message)
-
 
 
 def _executable(value: str | Path) -> str:
@@ -234,11 +232,7 @@ def _read_seeds(path: Path, /) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     )
 
 
-
-
-def _extraction_arrays(
-    arrays: Mapping[str, np.ndarray], /
-) -> tuple[np.ndarray, ...]:
+def _extraction_arrays(arrays: Mapping[str, np.ndarray], /) -> tuple[np.ndarray, ...]:
     """Validate the extraction worker's packed output before any assembly."""
     if set(arrays) != _OUTPUT_ARRAYS:
         raise _conversion("VoroCrust extraction output arrays are incomplete.")

@@ -203,9 +203,7 @@ class TiogaDonorEvidence(StrictModule, NonTrainableState):
         /,
     ) -> None:
         if coupling.donor_weights is None:
-            raise ValueError(
-                "TIOGA donor evidence requires an explicit overset stencil."
-            )
+            raise ValueError("TIOGA donor evidence requires an explicit overset stencil.")
         cells, weights = (
             np.asarray(donor_cell_ids),
             np.asarray(raw_weights, dtype=np.float64),
@@ -446,6 +444,7 @@ def _admit_parts(assembly: MeshAssembly, /) -> None:
                 "Mesh exceeds TIOGA int32 local indexing capacity.",
             )
 
+
 def _boundaries(
     assembly: MeshAssembly, scopes: tuple[MeshingScope, ...], /
 ) -> tuple[np.ndarray, ...]:
@@ -516,8 +515,6 @@ def _registration_arrays(
         "overset_offsets": overset_offsets,
         "overset_nodes": overset_nodes,
     }
-
-
 
 
 @dataclass(frozen=True, slots=True)
@@ -1094,8 +1091,6 @@ class TiogaProvider:
         return TiogaAssemblyResult(
             assembly, blanking, evidence, registration, provider, runtime, provenance
         )
-
-
 
 
 __all__ = [

@@ -7,6 +7,7 @@ This owner proves the whole-cell map, not the caller's source occurrence,
 coedge correspondence, trim containment, or adjacency. Those must be proved
 separately on the current source before composing the chart into a mesh.
 """
+
 from __future__ import annotations
 
 from fractions import Fraction
@@ -19,8 +20,17 @@ from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization._exact_algebraic_geometry import coefficient_interval, ExactScalar, RadicalElement
-from ._interval_enclosure import interval_add, interval_cos, interval_multiply, interval_sin
+from ..discretization._exact_algebraic_geometry import (
+    coefficient_interval,
+    ExactScalar,
+    RadicalElement,
+)
+from ._interval_enclosure import (
+    interval_add,
+    interval_cos,
+    interval_multiply,
+    interval_sin,
+)
 from ._rational import fraction_down, fraction_up
 from .brep._boolean_core import chart_add, chart_scale, ChartScalar
 from .brep._patches import _validate_source_shadows, CircleCurve
@@ -28,8 +38,14 @@ from .brep._source_embedding import _sheet_sign
 from .brep._trim_helpers import period_scalar_bounds, PeriodOffset
 
 
-def _cross(a: tuple[ExactScalar, ...], b: tuple[ExactScalar, ...], /) -> tuple[ExactScalar, ...]:
-    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+def _cross(
+    a: tuple[ExactScalar, ...], b: tuple[ExactScalar, ...], /
+) -> tuple[ExactScalar, ...]:
+    return (
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    )
 
 
 def _dot(a: tuple[ExactScalar, ...], b: tuple[ExactScalar, ...], /) -> ExactScalar:
@@ -42,11 +58,19 @@ def _coefficient(value: ExactScalar, /) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _star_bound(
-    curve: CircleCurve, apex: tuple[ExactScalar, ExactScalar, ExactScalar],
-    first: ChartScalar, last: ChartScalar, /
+    curve: CircleCurve,
+    apex: tuple[ExactScalar, ExactScalar, ExactScalar],
+    first: ChartScalar,
+    last: ChartScalar,
+    /,
 ) -> tuple[int, float]:
     """Enclose n·((C-A)×C') on every exact phase subinterval."""
-    a, b, center, r = curve.first_axis_exact, curve.second_axis_exact, curve.center_exact, curve.radius_exact
+    a, b, center, r = (
+        curve.first_axis_exact,
+        curve.second_axis_exact,
+        curve.center_exact,
+        curve.radius_exact,
+    )
     normal = _cross(a, b)
     if not any(normal) or _dot(tuple(center[i] - apex[i] for i in range(3)), normal) != 0:
         raise ValueError("The fan apex and source circle must span one exact plane.")
@@ -56,7 +80,9 @@ def _star_bound(
         raise ValueError("The exact source arc must have nonzero directed span.")
     absolute = chart_scale(delta, Fraction(orientation))
     if _sheet_sign(chart_add(absolute, PeriodOffset(Fraction(0), Fraction(-1)))) != -1:
-        raise ValueError("A source fan arc must be strictly shorter than one native turn.")
+        raise ValueError(
+            "A source fan arc must be strictly shorter than one native turn."
+        )
     displacement = tuple(center[i] - apex[i] for i in range(3))
     constant = r * r * _dot(normal, normal)
     cosine = r * _dot(_cross(displacement, b), normal)
@@ -70,8 +96,16 @@ def _star_bound(
         p = chart_add(first, chart_scale(delta, lower))
         q = chart_add(first, chart_scale(delta, upper))
         p_bounds, q_bounds = period_scalar_bounds(p), period_scalar_bounds(q)
-        phase = (np.minimum(p_bounds[0], q_bounds[0]), np.maximum(p_bounds[1], q_bounds[1]))
-        enclosure = interval_add(interval_add(intervals[0], interval_multiply(intervals[1], interval_cos(phase))), interval_multiply(intervals[2], interval_sin(phase)))
+        phase = (
+            np.minimum(p_bounds[0], q_bounds[0]),
+            np.maximum(p_bounds[1], q_bounds[1]),
+        )
+        enclosure = interval_add(
+            interval_add(
+                intervals[0], interval_multiply(intervals[1], interval_cos(phase))
+            ),
+            interval_multiply(intervals[2], interval_sin(phase)),
+        )
         lo, hi = float(enclosure[0]), float(enclosure[1])
         if lo > 0:
             signs.add(1)
@@ -109,30 +143,46 @@ class CircleFanMaterialMap(StrictModule, NonTrainableState):
     star_lower: float = eqx.field(static=True)
 
     def __init__(
-        self, curve: CircleCurve, apex: tuple[ExactScalar, ExactScalar, ExactScalar],
-        first: ChartScalar, last: ChartScalar, /
+        self,
+        curve: CircleCurve,
+        apex: tuple[ExactScalar, ExactScalar, ExactScalar],
+        first: ChartScalar,
+        last: ChartScalar,
+        /,
     ) -> None:
         if not isinstance(curve, CircleCurve) or curve.ambient_dimension != 3:
-            raise TypeError("A fan chart requires a three-dimensional source CircleCurve.")
-        if (not isinstance(apex, tuple) or len(apex) != 3
-                or any(not isinstance(value, (Fraction, RadicalElement)) for value in apex)
-                or any(
-                    not isinstance(value, Fraction)
-                    and not (
-                        isinstance(value, PeriodOffset)
-                        and isinstance(value.rational, Fraction)
-                        and isinstance(value.turns, Fraction)
-                    )
-                    for value in (first, last)
-                )):
-            raise TypeError("A fan chart requires exact apex and source parameter expressions.")
+            raise TypeError(
+                "A fan chart requires a three-dimensional source CircleCurve."
+            )
+        if (
+            not isinstance(apex, tuple)
+            or len(apex) != 3
+            or any(not isinstance(value, (Fraction, RadicalElement)) for value in apex)
+            or any(
+                not isinstance(value, Fraction)
+                and not (
+                    isinstance(value, PeriodOffset)
+                    and isinstance(value.rational, Fraction)
+                    and isinstance(value.turns, Fraction)
+                )
+                for value in (first, last)
+            )
+        ):
+            raise TypeError(
+                "A fan chart requires exact apex and source parameter expressions."
+            )
         _validate_source_shadows(curve, set())
         orientation, lower = _star_bound(curve, apex, first, last)
-        first_bounds, last_bounds = period_scalar_bounds(first), period_scalar_bounds(last)
+        first_bounds, last_bounds = (
+            period_scalar_bounds(first),
+            period_scalar_bounds(last),
+        )
         first_float = (float(first_bounds[0]) + float(first_bounds[1])) / 2
         last_float = (float(last_bounds[0]) + float(last_bounds[1])) / 2
         if not np.isfinite(first_float) or not np.isfinite(last_float - first_float):
-            raise ValueError("The exact source arc has no finite executable parameter shadow.")
+            raise ValueError(
+                "The exact source arc has no finite executable parameter shadow."
+            )
         self.curve = curve
         self.apex = jnp.asarray(tuple(float(value) for value in apex))
         self.first = jnp.asarray(first_float)
@@ -148,10 +198,14 @@ class CircleFanMaterialMap(StrictModule, NonTrainableState):
     def evaluate(self, reference_points: ArrayLike, /) -> tuple[Array, Array]:
         points, jacobian = self._evaluate(reference_points, derivative=True)
         if jacobian is None:
-            raise RuntimeError("Circle fan derivative evaluation did not produce a Jacobian.")
+            raise RuntimeError(
+                "Circle fan derivative evaluation did not produce a Jacobian."
+            )
         return points, jacobian
 
-    def _evaluate(self, reference_points: ArrayLike, /, *, derivative: bool) -> tuple[Array, Array | None]:
+    def _evaluate(
+        self, reference_points: ArrayLike, /, *, derivative: bool
+    ) -> tuple[Array, Array | None]:
         points = jnp.asarray(reference_points)
         x, y = points[..., 0], points[..., 1]
         q = x + y
@@ -169,8 +223,8 @@ class CircleFanMaterialMap(StrictModule, NonTrainableState):
         physical = apex + q[..., None] * radial
         if not derivative:
             return physical, None
-        tangent = self.span * self.curve.radius * (
-            -sine * first_axis + cosine * second_axis
+        tangent = (
+            self.span * self.curve.radius * (-sine * first_axis + cosine * second_axis)
         )
         dx = radial - t[..., None] * tangent
         dy = radial + (1 - t)[..., None] * tangent

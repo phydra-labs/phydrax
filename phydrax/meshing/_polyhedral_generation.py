@@ -1769,7 +1769,9 @@ def generate_polyhedral_volume(
         sites, weights, site_parents, site_ids, site_parent_ids = _source_sites(source)
     else:
         if not tetrahedra.shape[0]:
-            raise ValueError("Automatic power-site placement requires a recovered carrier cell.")
+            raise ValueError(
+                "Automatic power-site placement requires a recovered carrier cell."
+            )
         sites = np.mean(carrier_points[tetrahedra[0]], axis=0, dtype=np.float64)[None, :]
         weights = np.zeros((1,), dtype=np.float64)
         site_parents = np.zeros((1,), dtype=np.int64)

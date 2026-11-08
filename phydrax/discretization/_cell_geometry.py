@@ -670,6 +670,7 @@ def _same_exact_stored_field(stored: object, canonical: object, /) -> bool:
         )
     return bool(stored == canonical)
 
+
 def _coordinate_coefficient_identity(
     value: ExactScalar | int | float, /
 ) -> _CoordinateCoefficientIdentity:

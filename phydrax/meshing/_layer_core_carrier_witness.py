@@ -15,14 +15,15 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 
+
 if TYPE_CHECKING:
+    from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
     from ._association import _LayerImageSupportPreparation
     from ._contracts import VolumeMeshingSpec
-    from ._volume_generation import VolumeConstruction
-    from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
     from ._layer_core_root_geometry import ComputedLayerCoreRoot, LayerCoreRootGeometry
-    from ._plc_source import PiecewiseLinearComplex
     from ._layer_core_topology import LayerCoreConstruction
+    from ._plc_source import PiecewiseLinearComplex
+    from ._volume_generation import VolumeConstruction
     from .providers._native_sources import NativeLayerCoreSource
 
 
@@ -45,7 +46,9 @@ def _native_recovered_rows(
     active = np.asarray(core.source_segment_complex_rows, dtype=np.int64)
     raw_to_active = np.asarray(core.plc_edge_source_rows, dtype=np.int64)
     raw_edges = np.asarray(core.plc_edges, dtype=np.int64)
-    expected_edges = np.asarray(execution.plc_edge_vertices, dtype=np.int64).reshape((-1, 2))
+    expected_edges = np.asarray(execution.plc_edge_vertices, dtype=np.int64).reshape(
+        (-1, 2)
+    )
     if (
         core.complex_id != execution.complex_id
         or active.ndim != 1
@@ -54,18 +57,26 @@ def _native_recovered_rows(
         or np.any(active >= expected_edges.shape[0])
         or raw_edges.shape != (active.size, 2)
         or raw_to_active.shape != (active.size,)
-        or not np.array_equal(np.sort(raw_to_active), np.arange(active.size, dtype=np.int64))
+        or not np.array_equal(
+            np.sort(raw_to_active), np.arange(active.size, dtype=np.int64)
+        )
     ):
         raise ValueError("Native recovery carriers do not bind their execution PLC.")
     for raw_row, active_row in enumerate(raw_to_active.tolist()):
-        if set(raw_edges[raw_row].tolist()) != set(expected_edges[active[active_row]].tolist()):
-            raise ValueError("Native recovery carrier changed its execution PLC endpoints.")
+        if set(raw_edges[raw_row].tolist()) != set(
+            expected_edges[active[active_row]].tolist()
+        ):
+            raise ValueError(
+                "Native recovery carrier changed its execution PLC endpoints."
+            )
     segment_sources = np.asarray(core.segment_source_edges, dtype=np.int64)
     segments = np.asarray(core.segments, dtype=np.int64)
     if (
-        segments.ndim != 2 or segments.shape[1] != 2
+        segments.ndim != 2
+        or segments.shape[1] != 2
         or segment_sources.shape != (segments.shape[0],)
-        or np.any(segment_sources < 0) or np.any(segment_sources >= active.size)
+        or np.any(segment_sources < 0)
+        or np.any(segment_sources >= active.size)
         or set(segment_sources.tolist()) != set(range(active.size))
     ):
         raise ValueError("Native recovery did not retain every execution carrier chain.")
@@ -84,7 +95,10 @@ def _conforming_recovered_source_rows(
     preparation: _LayerImageSupportPreparation | None = None,
 ) -> tuple[int, ...]:
     """Map actual recovered target segments to proved original source edges."""
-    from ..geometry._source_boundary_records import SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness
+    from ..geometry._source_boundary_records import (
+        SourceBoundaryChartWitness,
+        SourceBoundaryFaceImageWitness,
+    )
     from ._association import _prepare_layer_image_support
     from ._layer_core_boundary_replay import (
         _require_layer_fidelity_token,
@@ -104,7 +118,6 @@ def _conforming_recovered_source_rows(
     from ._topology_edit import entity_keys
     from ._volume_generation import VolumeConstruction
 
-
     mesh, geometry, core = construction.mesh, construction.geometry, construction.core
     if not isinstance(core, VolumeConstruction):
         raise TypeError("Conforming source carrier proof requires a native simplex core.")
@@ -118,46 +131,86 @@ def _conforming_recovered_source_rows(
         or root.column_certification is not construction.layer_core_column_certification
         or root.layer_root_partition is not construction.layer_root_partition
     ):
-        raise ValueError("Mapped carrier construction changed its independently proved reference operands.")
+        raise ValueError(
+            "Mapped carrier construction changed its independently proved reference operands."
+        )
     if source.cap_refinement == "conforming":
         require_scoped_cap_coverage(mesh, geometry, scoped, source)
     primary_witness = _require_layer_fidelity_token(mesh, geometry, primary, source)
-    if not isinstance(primary_witness, (SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness)):
+    if not isinstance(
+        primary_witness, (SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness)
+    ):
         raise ValueError("Conforming carrier requires an exact source face witness.")
     layer = replay_layer_source_associations(
         source, mesh, geometry, root, computed_root=computed_root
     )
     if preparation is None:
         preparation = _prepare_layer_image_support(
-            source, mesh, geometry, layer.core_cell_ids, root=root, computed_root=computed_root
+            source,
+            mesh,
+            geometry,
+            layer.core_cell_ids,
+            root=root,
+            computed_root=computed_root,
         )
     else:
-        preparation.require(source, mesh, geometry, layer.core_cell_ids, root=root, computed_root=computed_root)
+        preparation.require(
+            source,
+            mesh,
+            geometry,
+            layer.core_cell_ids,
+            root=root,
+            computed_root=computed_root,
+        )
     core_ids = set(layer.core_cell_ids)
     eligible = frozenset(
-        int(face) for cell, face in zip(
-            primary_witness.cell_global_ids, primary_witness.entity_global_ids, strict=True
-        ) if int(cell) in core_ids
+        int(face)
+        for cell, face in zip(
+            primary_witness.cell_global_ids,
+            primary_witness.entity_global_ids,
+            strict=True,
+        )
+        if int(cell) in core_ids
     )
-    face_tables = list(replay_core_boundary_faces(source, mesh, geometry, primary, eligible))
+    face_tables = list(
+        replay_core_boundary_faces(source, mesh, geometry, primary, eligible)
+    )
     chart_support = _source_face_support(mesh, geometry, primary_witness, preparation)
     cap_keys = core_cap_source_keys(source)
     for token in scoped:
-        if not isinstance(token.witness, (SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness)):
+        if not isinstance(
+            token.witness, (SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness)
+        ):
             continue
-        keys = set(zip(token.witness.source_entity_ids, token.witness.occurrence_paths, strict=True))
+        keys = set(
+            zip(
+                token.witness.source_entity_ids,
+                token.witness.occurrence_paths,
+                strict=True,
+            )
+        )
         if not keys & cap_keys:
             continue
         witness = _require_layer_fidelity_token(mesh, geometry, token, source)
-        assert isinstance(witness, (SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness))
-        cap_faces = frozenset(
-            int(face) for face, identity, path in zip(
-                witness.entity_global_ids, witness.source_entity_ids,
-                witness.occurrence_paths, strict=True,
-            ) if (identity, path) in cap_keys
+        assert isinstance(
+            witness, (SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness)
         )
-        face_tables.extend(replay_core_boundary_faces(source, mesh, geometry, token, cap_faces))
-        for key, (vertices, edges) in _source_face_support(mesh, geometry, witness, preparation).items():
+        cap_faces = frozenset(
+            int(face)
+            for face, identity, path in zip(
+                witness.entity_global_ids,
+                witness.source_entity_ids,
+                witness.occurrence_paths,
+                strict=True,
+            )
+            if (identity, path) in cap_keys
+        )
+        face_tables.extend(
+            replay_core_boundary_faces(source, mesh, geometry, token, cap_faces)
+        )
+        for key, (vertices, edges) in _source_face_support(
+            mesh, geometry, witness, preparation
+        ).items():
             current = chart_support.setdefault(key, (set(), set()))
             current[0].update(vertices)
             current[1].update(edges)
@@ -166,7 +219,9 @@ def _conforming_recovered_source_rows(
     )
     if cap is not None:
         face_tables.append(cap)
-    carriers = incident_core_source_facets(source, mesh, layer, tuple(face_tables), chart_support)
+    carriers = incident_core_source_facets(
+        source, mesh, layer, tuple(face_tables), chart_support
+    )
     for edge, facets in mapped_internal_facet_carriers(
         source, mesh, geometry, layer, root, scoped, computed_root=computed_root
     ).items():
@@ -177,10 +232,14 @@ def _conforming_recovered_source_rows(
     segments = np.asarray(core.segments, dtype=np.int64)
     if (
         vertex_map.shape != (core.mesh.coordinates.shape[0],)
-        or np.any(vertex_map < 0) or np.any(vertex_map >= target_ids.size)
-        or np.any(segments < 0) or np.any(segments >= vertex_map.size)
+        or np.any(vertex_map < 0)
+        or np.any(vertex_map >= target_ids.size)
+        or np.any(segments < 0)
+        or np.any(segments >= vertex_map.size)
     ):
-        raise ValueError("Native recovered segment vertices lack exact combined-mesh ancestry.")
+        raise ValueError(
+            "Native recovered segment vertices lack exact combined-mesh ancestry."
+        )
     edge_by_key = {
         tuple(int(value) for value in key if value >= 0): int(identifier)
         for key, identifier in zip(
@@ -192,7 +251,9 @@ def _conforming_recovered_source_rows(
         key = tuple(sorted(int(value) for value in target_ids[vertex_map[segment]]))
         edge_id = edge_by_key.get(key)
         if edge_id is None:
-            raise ValueError("A native recovered carrier is absent from the combined mesh.")
+            raise ValueError(
+                "A native recovered carrier is absent from the combined mesh."
+            )
         recovered.update(source_row for source_row, _, _ in matches.get(edge_id, ()))
     return tuple(sorted(recovered))
 
@@ -218,11 +279,16 @@ class NativeLayerCoreCarrierWitness(StrictModule, NonTrainableState):
         /,
     ) -> None:
         from ._contracts import VolumeMeshingSpec
-        from .providers._native_sources import NativeLayerCoreSource
         from ._layer_core_edge_policy import required_core_source_edge_rows
+        from .providers._native_sources import NativeLayerCoreSource
 
-        if type(source) is not NativeLayerCoreSource or type(specification) is not VolumeMeshingSpec:
-            raise TypeError("Carrier inventory requires the exact layer/core source and volume request.")
+        if (
+            type(source) is not NativeLayerCoreSource
+            or type(specification) is not VolumeMeshingSpec
+        ):
+            raise TypeError(
+                "Carrier inventory requires the exact layer/core source and volume request."
+            )
         source.validate_restored()
         require_layer_core_specification(source, specification)
         authored = source if source.reference_source is None else source.reference_source
@@ -231,13 +297,15 @@ class NativeLayerCoreCarrierWitness(StrictModule, NonTrainableState):
         self.specification_id = specification.specification_id
         self.original_source_edge_rows = tuple(range(len(authored.complex.plc_edge_ids)))
         self.required_source_edge_rows = required_rows
-        self.witness_id = canonical_fingerprint({
-            "kind": "native-layer-core-carrier-witness",
-            "source": source.binding_id,
-            "specification": specification.specification_id,
-            "original_source_edge_rows": self.original_source_edge_rows,
-            "required_source_edge_rows": required_rows,
-        })
+        self.witness_id = canonical_fingerprint(
+            {
+                "kind": "native-layer-core-carrier-witness",
+                "source": source.binding_id,
+                "specification": specification.specification_id,
+                "original_source_edge_rows": self.original_source_edge_rows,
+                "required_source_edge_rows": required_rows,
+            }
+        )
 
     @classmethod
     def from_construction(
@@ -254,8 +322,14 @@ class NativeLayerCoreCarrierWitness(StrictModule, NonTrainableState):
     ) -> NativeLayerCoreCarrierWitness:
         """Bind the native recovery carrier/source relation at construction."""
         return cls._from_construction(
-            source, specification, construction, primary, scoped, root,
-            computed_root=computed_root, preparation=None,
+            source,
+            specification,
+            construction,
+            primary,
+            scoped,
+            root,
+            computed_root=computed_root,
+            preparation=None,
         )
 
     @classmethod
@@ -281,22 +355,35 @@ class NativeLayerCoreCarrierWitness(StrictModule, NonTrainableState):
             raise TypeError("Core carrier issuance requires layer/core construction.")
         core = construction.core
         if not isinstance(core, VolumeConstruction):
-            raise TypeError("Core carrier issuance requires native simplex volume construction.")
+            raise TypeError(
+                "Core carrier issuance requires native simplex volume construction."
+            )
         authored = source if source.reference_source is None else source.reference_source
         if source.conforming_execution:
             execution = construction.execution_carrier
             if not isinstance(execution, LayerCoreExecution) or root is None:
-                raise ValueError("Conforming carrier issuance requires its execution and root authorities.")
+                raise ValueError(
+                    "Conforming carrier issuance requires its execution and root authorities."
+                )
             _native_recovered_rows(core, execution.complex)
             active = _conforming_recovered_source_rows(
-                source, construction, primary, scoped, root,
-                computed_root=computed_root, preparation=preparation,
+                source,
+                construction,
+                primary,
+                scoped,
+                root,
+                computed_root=computed_root,
+                preparation=preparation,
             )
         else:
             if computed_root is not None:
-                raise ValueError("Fixed carrier construction cannot consume a conforming root proof.")
+                raise ValueError(
+                    "Fixed carrier construction cannot consume a conforming root proof."
+                )
             if preparation is not None:
-                raise ValueError("Fixed carrier construction cannot consume layer image preparation.")
+                raise ValueError(
+                    "Fixed carrier construction cannot consume layer image preparation."
+                )
             active = _native_recovered_rows(core, authored.complex)
         from ._layer_core_edge_policy import required_core_source_edge_rows
 

@@ -138,9 +138,7 @@ def _specifications(
             phx.meshing.VolumeFillStrategy.SIMPLEX,
             size_controls=(phx.meshing.UniformSizeControl(boundary, 0.5),),
             region_controls=regions,
-            patch_controls=(
-                PatchControl("interface", scope, ("region-0", "region-1")),
-            ),
+            patch_controls=(PatchControl("interface", scope, ("region-0", "region-1")),),
             maximum_deviation=0.05,
         )
 
@@ -370,7 +368,8 @@ def test_source_association_selects_the_shared_interface(
         association
         for association in shared_volume.associations
         if association.association_kind is GeometryAssociationKind.BREP
-        and association.target_entity_set_id == shared_volume.mesh.entity_set(2).entity_set_id
+        and association.target_entity_set_id
+        == shared_volume.mesh.entity_set(2).entity_set_id
         and association.source_id == model.source_id
         and association.source_revision == model.source_revision
     )
@@ -405,9 +404,10 @@ def test_source_association_selects_the_shared_interface(
     np.testing.assert_allclose(
         np.asarray(shared_volume.mesh.coordinates)[vertices, 0], 1.0, atol=1e-10
     )
-    assert {
-        _expected_side_value(shared_volume, model, scope) for scope in scopes
-    } == {-1.0, 1.0}
+    assert {_expected_side_value(shared_volume, model, scope) for scope in scopes} == {
+        -1.0,
+        1.0,
+    }
 
 
 def _permuted_mesh(mesh: CellMesh) -> CellMesh:
@@ -484,9 +484,7 @@ def _expected_side_value(
     centers = np.asarray(result.mesh.coordinates)[np.asarray(block.vertices)].mean(axis=1)
     selected_centers = centers[np.isin(np.asarray(block.global_ids), selected)]
     assert selected_centers.shape[0] == selected.size
-    assert np.all(selected_centers[:, 0] < 1.0) or np.all(
-        selected_centers[:, 0] > 1.0
-    )
+    assert np.all(selected_centers[:, 0] < 1.0) or np.all(selected_centers[:, 0] > 1.0)
     return -1.0 if selected_centers[0, 0] < 1.0 else 1.0
 
 
@@ -502,7 +500,9 @@ def test_shared_face_drives_sided_fe_trace(
 ) -> None:
     model, _, _, scopes, _ = shared_face
     mesh = _permuted_mesh(shared_volume.mesh) if reverse else shared_volume.mesh
-    centers = np.asarray(mesh.coordinates)[np.asarray(mesh.blocks[0].vertices)].mean(axis=1)
+    centers = np.asarray(mesh.coordinates)[np.asarray(mesh.blocks[0].vertices)].mean(
+        axis=1
+    )
     field = phx.discretization.FiniteElementFieldSpec(
         "u", phx.discretization.discontinuous_element("simplex:3", 1)
     )
@@ -547,9 +547,7 @@ def test_shared_face_drives_sided_fv_trace(
         vertex_global_ids=np.asarray(mesh.vertex_global_ids),
         cell_global_ids=np.asarray(mesh.blocks[0].global_ids),
     ).prepare(numeric_version=mesh.numeric_version)
-    values = np.where(
-        np.asarray(prepared.cell_centers)[:, 0] < 1.0, -1.0, 1.0
-    )[:, None]
+    values = np.where(np.asarray(prepared.cell_centers)[:, 0] < 1.0, -1.0, 1.0)[:, None]
     scope = scopes[side_index]
     expected = _expected_side_value(shared_volume, model, scope)
     domains = phx.meshing.resolve_sided_integration_domains(
@@ -660,9 +658,7 @@ def test_coincident_repeated_shared_copies_refuse_ordinal_pairing(
         with pytest.raises(ValueError):
             MeshingScope.from_geometry(
                 repeated,
-                CADSelectionSet.from_revision(
-                    revision, (_entity_occurrence_id(member),)
-                ),
+                CADSelectionSet.from_revision(revision, (_entity_occurrence_id(member),)),
             )
 
 
@@ -675,7 +671,8 @@ def test_gmsh_periodic_preflight_preserves_cad_sides_without_gmsh(
 
     model, face, _, shared_sides, _ = shared_face
     exterior = next(
-        index for index, owners in enumerate(model.topology.face_solids)
+        index
+        for index, owners in enumerate(model.topology.face_solids)
         if len(owners) == 1
     )
     revision = cad_revision_from_brep_model(model)

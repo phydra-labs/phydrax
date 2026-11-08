@@ -50,6 +50,7 @@ def _active_cell_mask(value: ArrayLike, /, *, cell_count: int) -> Array:
         )
     return mask
 
+
 def _owned_cell_mask(value: ArrayLike | None, /, *, cell_count: int) -> Array | None:
     if value is None:
         return None

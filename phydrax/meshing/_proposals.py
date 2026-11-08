@@ -1334,9 +1334,8 @@ def prepare_mesh_proposal(
     """
     if not isinstance(compatibility, BisectionCompatibility):
         raise TypeError("compatibility must be BisectionCompatibility.")
-    if (
-        compatibility is not BisectionCompatibility.REJECT
-        and not isinstance(proposal, MeshMarkingProposal)
+    if compatibility is not BisectionCompatibility.REJECT and not isinstance(
+        proposal, MeshMarkingProposal
     ):
         raise ValueError("Bisection compatibility applies only to marking proposals.")
     projection = project_mesh_proposal(source, proposal, policy)

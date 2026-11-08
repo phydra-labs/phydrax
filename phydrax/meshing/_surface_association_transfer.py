@@ -20,11 +20,13 @@ from ..discretization import CellBlock, CellMesh
 from ..discretization._cell_geometry_transition_types import CellGeometryTransition
 from ..discretization._exact_algebraic_geometry import rational_coefficient
 from ..geometry._meshing_domain import MeshingDomain, PatchCurveUse
-from ..geometry._source_boundary_records import SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness
+from ..geometry._source_boundary_records import (
+    SourceBoundaryChartWitness,
+    SourceBoundaryFaceImageWitness,
+)
 from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
 from ..geometry.surface import SurfaceMetadata, SurfaceModel
 from ..typing import checked
-from ._certification_inputs import ScopedFidelityInput
 from ._association import (
     _child_sources,
     AssociationEntityClasses,
@@ -42,6 +44,7 @@ from ._association_routes import (
     require_transfer_lineage,
     target_dimension,
 )
+from ._certification_inputs import ScopedFidelityInput
 from ._lineage import EntityLineageKind, MeshLineage, VertexInterpolationStencil
 from ._result import CellMeshingResult
 
@@ -126,9 +129,7 @@ def _target_edge_parameter(
     parameter = sum(
         (
             weight
-            for identifier, weight in zip(
-                support.tolist(), coefficients, strict=True
-            )
+            for identifier, weight in zip(support.tolist(), coefficients, strict=True)
             if identifier == source_endpoint_ids[1]
         ),
         Fraction(0),
@@ -485,7 +486,9 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
         *,
         vertex_stencil: VertexInterpolationStencil | None,
         geometry_transition: CellGeometryTransition | None,
-        target_fidelity_witness: SourceBoundaryChartWitness | SourceBoundaryFaceImageWitness | None,
+        target_fidelity_witness: SourceBoundaryChartWitness
+        | SourceBoundaryFaceImageWitness
+        | None,
         target_scoped_fidelity: tuple[ScopedFidelityInput, ...],
         validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
     ) -> tuple[GeometryAssociation, ...]:
@@ -1137,13 +1140,17 @@ def _curve_edges_with_root_ancestry(
                 ),
             )
         ):
-            raise ValueError("CAD curve edges require exact retained, refined or coarsened lineage.")
+            raise ValueError(
+                "CAD curve edges require exact retained, refined or coarsened lineage."
+            )
         parents = old_ids[rows].tolist()
         if any(identifier not in parent_roots for identifier in parents):
             raise ValueError("CAD curve edge lineage includes an unassociated parent.")
         root_ids = {parent_roots[identifier] for identifier in parents}
         if len(root_ids) != 1 or next(iter(root_ids)) < 0:
-            raise ValueError("CAD curve coarsening crosses original source-edge ancestry.")
+            raise ValueError(
+                "CAD curve coarsening crosses original source-edge ancestry."
+            )
         roots.append(next(iter(root_ids)))
     return GeometryAssociation(
         inherited.association_kind,

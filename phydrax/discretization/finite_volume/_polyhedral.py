@@ -207,7 +207,9 @@ def prepare_polyhedral_finite_volume_geometry(
         triangles, area_vector, measure = _face_triangles(polygon, planarity)
         anchor = polygon[0]
         face_centers[face] = anchor + np.average(
-            np.asarray([np.mean(triangle - anchor, axis=0) for _, triangle, _ in triangles]),
+            np.asarray(
+                [np.mean(triangle - anchor, axis=0) for _, triangle, _ in triangles]
+            ),
             axis=0,
             weights=np.asarray([weight for _, _, weight in triangles]),
         )
@@ -228,7 +230,9 @@ def prepare_polyhedral_finite_volume_geometry(
     face_q_valid = np.zeros((face_count, face_capacity), dtype=np.bool_)
     for face, triangles in enumerate(face_triangles):
         for slot, triangle, weight in triangles:
-            face_q_points[face, slot] = triangle[0] + np.mean(triangle - triangle[0], axis=0)
+            face_q_points[face, slot] = triangle[0] + np.mean(
+                triangle - triangle[0], axis=0
+            )
             face_q_weights[face, slot] = weight
             face_q_valid[face, slot] = True
     cell_faces = np.asarray(worksets.cell_faces, dtype=np.int32)

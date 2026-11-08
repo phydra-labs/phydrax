@@ -390,7 +390,9 @@ class PeriodicCell(StrictModule, NonTrainableState):
             maximum_condition_number=value.certified_condition_number,
         )
         if renewed.cell_id != value.cell_id:
-            raise ValueError("Stored periodic cell fields do not reproduce their identity.")
+            raise ValueError(
+                "Stored periodic cell fields do not reproduce their identity."
+            )
         return renewed
 
     @property

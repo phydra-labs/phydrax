@@ -711,24 +711,28 @@ def test_tet_quality_can_omit_radius_without_omitting_validity() -> None:
     with _declared_unit_tet(plane, 0.0) as state:
         points = state.arrays().points
         identifiers = state.arrays().vertex_ids
-        quality = state.evaluate_quality(
-            radius_edge_bound=None, min_dihedral_degrees=0.0
-        )
+        quality = state.evaluate_quality(radius_edge_bound=None, min_dihedral_degrees=0.0)
         assert not np.any(quality.criteria == 0)
         candidate = state.evaluate_candidate_quality(
-            points, vertex_ids=identifiers, radius_edge_bound=None,
+            points,
+            vertex_ids=identifiers,
+            radius_edge_bound=None,
             min_dihedral_degrees=0.0,
         )
         np.testing.assert_array_equal(candidate.criteria, quality.criteria)
         bounded = state.evaluate_candidate_quality(
-            points, vertex_ids=identifiers, radius_edge_bound=2.0,
+            points,
+            vertex_ids=identifiers,
+            radius_edge_bound=2.0,
             min_dihedral_degrees=0.0,
         )
         assert bounded.candidate_id != candidate.candidate_id
         sliver = points.copy()
         sliver[3, 2] = 0.01
         angle_quality = state.evaluate_candidate_quality(
-            sliver, vertex_ids=identifiers, radius_edge_bound=None,
+            sliver,
+            vertex_ids=identifiers,
+            radius_edge_bound=None,
             min_dihedral_degrees=10.0,
         )
         assert 2 in angle_quality.criteria
@@ -736,7 +740,9 @@ def test_tet_quality_can_omit_radius_without_omitting_validity() -> None:
         inverted = points.copy()
         inverted[3, 2] = -1.0
         invalid = state.evaluate_candidate_quality(
-            inverted, vertex_ids=identifiers, radius_edge_bound=None,
+            inverted,
+            vertex_ids=identifiers,
+            radius_edge_bound=None,
             min_dihedral_degrees=0.0,
         )
         assert np.any((invalid.criteria == 4) & (invalid.reasons == 2))
@@ -745,7 +751,9 @@ def test_tet_quality_can_omit_radius_without_omitting_validity() -> None:
             state.evaluate_quality(radius_edge_bound=0.0, min_dihedral_degrees=0.0)
         with pytest.raises(ValueError, match="radius_edge_bound"):
             state.evaluate_candidate_quality(
-                points, vertex_ids=identifiers, radius_edge_bound=0.0,
+                points,
+                vertex_ids=identifiers,
+                radius_edge_bound=0.0,
                 min_dihedral_degrees=0.0,
             )
         with pytest.raises(ValueError, match="radius_edge_bound"):
@@ -758,7 +766,9 @@ def test_tet_quality_can_omit_radius_without_omitting_validity() -> None:
         stretched = updated.points.copy()
         stretched[3, 2] = 10.0
         sized = state.evaluate_candidate_quality(
-            stretched, vertex_ids=updated.vertex_ids, radius_edge_bound=None,
+            stretched,
+            vertex_ids=updated.vertex_ids,
+            radius_edge_bound=None,
             min_dihedral_degrees=0.0,
         )
         assert 1 in sized.criteria

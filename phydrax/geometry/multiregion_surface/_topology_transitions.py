@@ -425,9 +425,7 @@ def propose_t1_pops(
     The bounding-box filter keeps every qualifying film; each remaining
     candidate is certified by complete branch-and-bound over its film vertices.
     """
-    diameter_limit = positive_finite_float(
-        maximum_film_diameter, "maximum_film_diameter"
-    )
+    diameter_limit = positive_finite_float(maximum_film_diameter, "maximum_film_diameter")
     topology = prepared.topology
     state.require_topology(topology)
     faces = topology.host_faces()

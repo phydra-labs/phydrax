@@ -519,9 +519,7 @@ def _recorded_projection_policy(
     The bound only replaces the default tolerance when it is larger.
     """
     default = ImplicitProjectionPolicy()
-    bound = float(
-        np.nextafter(source.table.gradient_bound * volume.root_error, np.inf)
-    )
+    bound = float(np.nextafter(source.table.gradient_bound * volume.root_error, np.inf))
     if source.region == "sheet":
         assert source.half_width is not None
         bound = float(

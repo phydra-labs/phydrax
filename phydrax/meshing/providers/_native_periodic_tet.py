@@ -140,7 +140,9 @@ def tet_mesh_periodic_state(
     for quotient_row, quotient_id in enumerate(vertex_quotient_ids):
         rows = vertex_member_rows[quotient_row]
         if rows.size == 0:
-            raise ValueError("Every periodic vertex quotient ID must have lifted members.")
+            raise ValueError(
+                "Every periodic vertex quotient ID must have lifted members."
+            )
         representative_row = int(vertex_rep_rows[quotient_row])
         representative_id = int(vertex_lifted_ids[representative_row])
         members = tuple(
@@ -199,7 +201,9 @@ def tet_mesh_periodic_state(
         representative_id = int(cell_lifted_ids[representative_row])
         cell_row = cell_rows_by_id.get(representative_id)
         if cell_row is None:
-            raise ValueError("Periodic representative cell ID is absent from the lifted mesh.")
+            raise ValueError(
+                "Periodic representative cell ID is absent from the lifted mesh."
+            )
         lifted_vertex_rows = np.asarray(top_entity_vertices[cell_row], dtype=np.int64)
         corner_permutation = cell_corners[
             int(cell_corner_offsets[representative_row]) : int(
@@ -216,9 +220,13 @@ def tet_mesh_periodic_state(
                 region_by_cell_id[int(cell_lifted_ids[row])] for row in members
             }
         except KeyError as error:
-            raise ValueError("Periodic cell references an absent source entity identity.") from error
+            raise ValueError(
+                "Periodic cell references an absent source entity identity."
+            ) from error
         if len(region_values) != 1:
-            raise ValueError("Periodic material regions must agree over each quotient cell orbit.")
+            raise ValueError(
+                "Periodic material regions must agree over each quotient cell orbit."
+            )
         lifted_cell_ids = np.sort(cell_lifted_ids[members]).astype(np.uint64, copy=False)
         staged.append(
             (
@@ -268,7 +276,9 @@ def tet_mesh_periodic_state(
                 ]
             )
         except KeyError as error:
-            raise ValueError("Periodic cell references an absent source entity identity.") from error
+            raise ValueError(
+                "Periodic cell references an absent source entity identity."
+            ) from error
         # TetMesh3D quotients are simplicial: a cell whose corners include two
         # lifted copies of one vertex orbit wraps the torus and has no native
         # quotient cell, so the state (and an edit staging it) is refused.
@@ -302,7 +312,9 @@ def _require_periodic_tetra_mesh(mesh: CellMesh, /) -> None:
         raise ValueError("TetMesh periodic maps require tetrahedron or 3-simplex blocks.")
     topology = mesh.periodic_topology
     if topology is None:
-        raise ValueError("TetMesh periodic maps require an attached PeriodicMeshTopology.")
+        raise ValueError(
+            "TetMesh periodic maps require an attached PeriodicMeshTopology."
+        )
     topology.require_lifted(mesh.topology, mesh.lifted_topology_id, mesh.blocks)
     topology.require_coordinates(mesh.coordinates)
 
@@ -316,13 +328,17 @@ def _winding_3d(winding: ArrayLike, /) -> np.ndarray:
     return result
 
 
-def _representative_to_member(topology: PeriodicMeshTopology, winding: ArrayLike, /) -> np.ndarray:
+def _representative_to_member(
+    topology: PeriodicMeshTopology, winding: ArrayLike, /
+) -> np.ndarray:
     matrix = np.asarray(
         exact_periodic_element(topology.cell, np.asarray(winding, dtype=np.int64)),
         dtype=np.float64,
     )
     if matrix.shape != (4, 4) or np.any(~np.isfinite(matrix)):
-        raise ValueError("Periodic vertex isometry must be a finite homogeneous 4x4 matrix.")
+        raise ValueError(
+            "Periodic vertex isometry must be a finite homogeneous 4x4 matrix."
+        )
     return np.ascontiguousarray(matrix[:3, :4], dtype=np.float64)
 
 
@@ -343,14 +359,17 @@ def _region_by_cell_id(
             or (values.size and np.any(values < 0))
             or (values.size and np.any(values > np.iinfo(np.int32).max))
         ):
-            raise ValueError("Periodic TetMesh region IDs must be one nonnegative int32 per lifted cell.")
+            raise ValueError(
+                "Periodic TetMesh region IDs must be one nonnegative int32 per lifted cell."
+            )
         values = values.astype(np.int32, copy=False)
     cell_ids = np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64)
-    if (
-        np.unique(block_cell_ids).size != block_cell_ids.size
-        or not np.array_equal(np.sort(block_cell_ids), np.sort(cell_ids))
+    if np.unique(block_cell_ids).size != block_cell_ids.size or not np.array_equal(
+        np.sort(block_cell_ids), np.sort(cell_ids)
     ):
-        raise ValueError("Periodic TetMesh block cell IDs must cover every lifted cell exactly once.")
+        raise ValueError(
+            "Periodic TetMesh block cell IDs must cover every lifted cell exactly once."
+        )
     return {
         int(identifier): int(region)
         for identifier, region in zip(block_cell_ids, values, strict=True)
@@ -389,7 +408,9 @@ def tet_mesh_periodic_edit(
     if source_topology is None or target_topology is None:
         raise ValueError("Periodic edit endpoints require quotient descriptors.")
     if identification_id(source_topology.cell) != identification_id(target_topology.cell):
-        raise ValueError("Periodic edit endpoints must retain the same exact identification.")
+        raise ValueError(
+            "Periodic edit endpoints must retain the same exact identification."
+        )
     _require_edit_target(source, target, edit)
 
     for mesh, topology, state in (
@@ -400,7 +421,9 @@ def tet_mesh_periodic_edit(
             state.identity_map.source_mesh_id != mesh.mesh_id
             or state.identity_map.periodic_topology_id != topology.periodic_topology_id
         ):
-            raise ValueError("A supplied periodic state belongs to another mesh revision.")
+            raise ValueError(
+                "A supplied periodic state belongs to another mesh revision."
+            )
     if source_state is None:
         source_state = tet_mesh_periodic_state(source, source_regions)
     target_regions = _target_regions_after_edit(
@@ -415,21 +438,28 @@ def tet_mesh_periodic_edit(
         if not isinstance(operation_members, tuple) or not all(
             isinstance(member, TetMeshPeriodicMember) for member in operation_members
         ):
-            raise TypeError("operation_members must be a tuple of TetMeshPeriodicMember values.")
+            raise TypeError(
+                "operation_members must be a tuple of TetMeshPeriodicMember values."
+            )
         actual_by_id = {int(member.vertex_id): member for member in operation_members}
         expected_by_id = {int(member.vertex_id): member for member in expected_members}
-        if len(actual_by_id) != len(operation_members) or set(actual_by_id) != set(expected_by_id):
-            raise ValueError("Periodic operation members must exactly cover affected orbit members.")
+        if len(actual_by_id) != len(operation_members) or set(actual_by_id) != set(
+            expected_by_id
+        ):
+            raise ValueError(
+                "Periodic operation members must exactly cover affected orbit members."
+            )
         for identifier, expected in expected_by_id.items():
             actual = actual_by_id[identifier]
-            if (
-                not np.array_equal(np.asarray(actual.winding), np.asarray(expected.winding))
-                or not np.array_equal(
-                    np.asarray(actual.representative_to_member),
-                    np.asarray(expected.representative_to_member),
-                )
+            if not np.array_equal(
+                np.asarray(actual.winding), np.asarray(expected.winding)
+            ) or not np.array_equal(
+                np.asarray(actual.representative_to_member),
+                np.asarray(expected.representative_to_member),
             ):
-                raise ValueError("Periodic operation member winding/isometry disagrees with source ancestry.")
+                raise ValueError(
+                    "Periodic operation member winding/isometry disagrees with source ancestry."
+                )
 
     source_cell_map = periodic_entity_orbit_map(source, 3)
     target_cell_map = periodic_entity_orbit_map(target, 3)
@@ -449,7 +479,9 @@ def tet_mesh_periodic_edit(
         int(identifier): int(quotient_id)
         for identifier, quotient_id in zip(target_cell_ids, target_cell_qids, strict=True)
     }
-    removed_lifted_cell_ids = set(map(int, source_cell_ids)) - set(map(int, target_cell_ids))
+    removed_lifted_cell_ids = set(map(int, source_cell_ids)) - set(
+        map(int, target_cell_ids)
+    )
     source_cells_by_qid: dict[int, set[int]] = {}
     for identifier, quotient_id in source_q_by_cell_id.items():
         source_cells_by_qid.setdefault(quotient_id, set()).add(identifier)
@@ -457,7 +489,9 @@ def tet_mesh_periodic_edit(
     for quotient_id, member_ids in source_cells_by_qid.items():
         removed = member_ids & removed_lifted_cell_ids
         if removed and removed != member_ids:
-            raise ValueError("Periodic topology edits must remove complete lifted quotient-cell orbits.")
+            raise ValueError(
+                "Periodic topology edits must remove complete lifted quotient-cell orbits."
+            )
         if removed:
             removed_qcell_ids.add(quotient_id)
 
@@ -472,7 +506,9 @@ def tet_mesh_periodic_edit(
         or target_keys.shape != source_keys.shape
         or kinds.shape != (source_keys.shape[0],)
     ):
-        raise ValueError("Tetra periodic cell lineage must use one source/target cell ID per row.")
+        raise ValueError(
+            "Tetra periodic cell lineage must use one source/target cell ID per row."
+        )
     topology_changed = (kinds != int(EntityLineageKind.PRESERVED)) & (
         kinds != int(EntityLineageKind.RELOCATED)
     )
@@ -491,12 +527,16 @@ def tet_mesh_periodic_edit(
     for quotient_id in changed_source_qcells:
         member_ids = source_cells_by_qid[quotient_id]
         if not member_ids <= removed_lifted_cell_ids:
-            raise ValueError("Changed periodic source cell orbits must be removed atomically.")
+            raise ValueError(
+                "Changed periodic source cell orbits must be removed atomically."
+            )
         removed_qcell_ids.add(quotient_id)
     removed_qcell_ids.update(source_qcell_ids - target_qcell_ids)
     for quotient_id in source_qcell_ids - target_qcell_ids:
         if not source_cells_by_qid[quotient_id] <= removed_lifted_cell_ids:
-            raise ValueError("A removed periodic quotient-cell ID must lose every lifted member.")
+            raise ValueError(
+                "A removed periodic quotient-cell ID must lose every lifted member."
+            )
     replacement_qcell_ids = (
         (target_qcell_ids - source_qcell_ids)
         | changed_target_qcells
@@ -510,7 +550,9 @@ def tet_mesh_periodic_edit(
     if replacement_qcell_ids != {
         int(cell.cell_id) for cell in replacement_quotient_cells
     }:
-        raise ValueError("Periodic edit replacement cells must cover every affected target quotient cell.")
+        raise ValueError(
+            "Periodic edit replacement cells must cover every affected target quotient cell."
+        )
 
     source_orbit_members = {
         int(orbit.orbit_id): {int(member.vertex_id) for member in orbit.members}
@@ -578,9 +620,7 @@ def _periodic_operation_member_records(
     ]
     q_by_lifted_id = {
         int(identifier): int(quotient_id)
-        for identifier, quotient_id in zip(
-            source_lifted_ids, source_qids, strict=True
-        )
+        for identifier, quotient_id in zip(source_lifted_ids, source_qids, strict=True)
     }
     source_orbits = {
         int(orbit.orbit_id): tuple(orbit.members) for orbit in source_state.orbits
@@ -609,10 +649,7 @@ def _periodic_operation_member_records(
         orbit_id
         for orbit_id, members in source_orbits.items()
         if {int(member.vertex_id) for member in members}
-        != {
-            int(member.vertex_id)
-            for member in target_orbits.get(orbit_id, ())
-        }
+        != {int(member.vertex_id) for member in target_orbits.get(orbit_id, ())}
     }
     touched.update(changed_orbits)
     expected_ids = {
@@ -625,7 +662,9 @@ def _periodic_operation_member_records(
     for identifier in sorted(expected_ids):
         member = source_members.get(identifier, target_members.get(identifier))
         if member is None:
-            raise ValueError("Periodic edit member ancestry is absent from both endpoint meshes.")
+            raise ValueError(
+                "Periodic edit member ancestry is absent from both endpoint meshes."
+            )
         records.append(member)
     return tuple(records)
 
@@ -634,19 +673,20 @@ def _require_edit_target(
     source: CellMesh, target: CellMesh, edit: CellTopologyEdit, /
 ) -> None:
     if len(edit.relations) != source.topological_dimension + 1:
-        raise ValueError("Periodic tetra edits require one relation bank per entity dimension.")
-    if (
-        not np.array_equal(np.asarray(edit.coordinates), np.asarray(target.coordinates))
-        or not np.array_equal(
-            np.asarray(edit.vertex_global_ids, dtype=np.int64),
-            np.asarray(target.vertex_global_ids, dtype=np.int64),
+        raise ValueError(
+            "Periodic tetra edits require one relation bank per entity dimension."
         )
+    if not np.array_equal(
+        np.asarray(edit.coordinates), np.asarray(target.coordinates)
+    ) or not np.array_equal(
+        np.asarray(edit.vertex_global_ids, dtype=np.int64),
+        np.asarray(target.vertex_global_ids, dtype=np.int64),
     ):
-        raise ValueError("Staged periodic target must retain the edit's exact vertex bank.")
+        raise ValueError(
+            "Staged periodic target must retain the edit's exact vertex bank."
+        )
     edit_blocks = {
-        block.name: block
-        for block in edit.blocks
-        if isinstance(block, TopologyEditBlock)
+        block.name: block for block in edit.blocks if isinstance(block, TopologyEditBlock)
     }
     if len(edit_blocks) != len(edit.blocks):
         raise ValueError("Periodic tetra edits require fixed-family simplex blocks.")
@@ -666,14 +706,18 @@ def _require_edit_target(
                 np.asarray(target_block.vertices, dtype=np.int32),
             )
         ):
-            raise ValueError("Staged periodic target must retain exact edit cell IDs and connectivity.")
+            raise ValueError(
+                "Staged periodic target must retain exact edit cell IDs and connectivity."
+            )
 
 
 def _source_vertices_touched_by_edit(
     source: CellMesh, target: CellMesh, edit: CellTopologyEdit, /
 ) -> set[int]:
     if len(edit.relations) != source.topological_dimension + 1:
-        raise ValueError("Periodic topology edit requires one relation bank per entity dimension.")
+        raise ValueError(
+            "Periodic topology edit requires one relation bank per entity dimension."
+        )
     source_entity_vertices = _entity_vertex_rows(source)
     source_vertex_ids = np.asarray(source.vertex_global_ids, dtype=np.int64)
     affected: set[int] = set()
@@ -686,9 +730,7 @@ def _source_vertices_touched_by_edit(
             or int(relation.dimension) != degree
         ):
             raise ValueError("Periodic topology edit relation bank is malformed.")
-        changed_rows = np.flatnonzero(
-            kinds != int(EntityLineageKind.PRESERVED)
-        )
+        changed_rows = np.flatnonzero(kinds != int(EntityLineageKind.PRESERVED))
         if changed_rows.size == 0:
             continue
         selected_keys = source_keys[changed_rows]
@@ -702,7 +744,9 @@ def _source_vertices_touched_by_edit(
             vertex_rows = np.asarray(
                 source_entity_vertices[degree][entity_row], dtype=np.int64
             )
-            affected.update(int(identifier) for identifier in source_vertex_ids[vertex_rows])
+            affected.update(
+                int(identifier) for identifier in source_vertex_ids[vertex_rows]
+            )
     target_cell_ids = set(
         map(int, np.asarray(target.entity_set(source.topological_dimension).entity_ids))
     )
@@ -757,15 +801,21 @@ def _target_regions_after_edit(
     target_keys = np.asarray(relation.target_keys, dtype=np.int64).reshape(-1)
     for source_id, target_id in zip(source_keys, target_keys, strict=True):
         if int(source_id) not in source_by_id:
-            raise ValueError("Periodic material ancestry references an absent source cell.")
+            raise ValueError(
+                "Periodic material ancestry references an absent source cell."
+            )
         inherited.setdefault(int(target_id), set()).add(source_by_id[int(source_id)])
     result = np.empty((target_block_ids.size,), dtype=np.int32)
     for row, identifier in enumerate(target_block_ids):
         values = inherited.get(int(identifier), set())
         if len(values) != 1:
-            raise ValueError("Periodic material edits require one exact parent region per target cell.")
+            raise ValueError(
+                "Periodic material edits require one exact parent region per target cell."
+            )
         result[row] = next(iter(values))
     return result
+
+
 __all__ = [
     "tet_mesh_periodic_edit",
     "tet_mesh_periodic_identity_map",

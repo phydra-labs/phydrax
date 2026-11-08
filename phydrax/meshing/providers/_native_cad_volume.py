@@ -41,6 +41,7 @@ from .._association import (
     GeometryAssociationProvenance,
     GeometrySourceEntityRole,
 )
+from .._certification import _ComputedSurfaceAcceptance
 from .._certification_schedule import MeshCertificationSchedule
 from .._contracts import VolumeMeshingSpec
 from .._controls import (
@@ -51,7 +52,6 @@ from .._controls import (
     RegionControl,
     RegionSeed,
 )
-from .._certification import _ComputedSurfaceAcceptance
 from .._native_construction import (
     NativeCertificationRequest,
     NativeMeshConstruction,
@@ -997,7 +997,11 @@ class NativeCadVolumeSource(StrictModule, NonTrainableState):
             if deviation < 0.0:
                 raise ValueError("maximum_deviation must be non-negative.")
         data = _cad_plc_data(
-            domain, surface, surface_source, boundary, deviation,
+            domain,
+            surface,
+            surface_source,
+            boundary,
+            deviation,
             computed_surface=_computed_surface,
         )
         plc_source = NativePlcSource(

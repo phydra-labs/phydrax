@@ -203,40 +203,52 @@ def test_periodic_prism_form_transfer_uses_normalized_entity_actions() -> None:
         lifted_action = result.lifted_transfer_result.complex_map.map(degree)
         lifted_values = jnp.sin(jnp.arange(lifted_action.source.size, dtype=jnp.float64))
         np.testing.assert_allclose(
-            run_owned_program(lifted_action, "layer-form-action", _layer_form_action, lifted_values),
-            lifted_action.mv(lifted_values), atol=1e-10, rtol=1e-10,
+            run_owned_program(
+                lifted_action, "layer-form-action", _layer_form_action, lifted_values
+            ),
+            lifted_action.mv(lifted_values),
+            atol=1e-10,
+            rtol=1e-10,
         )
         dual = jnp.cos(jnp.arange(lifted_action.target.size, dtype=jnp.float64))
-        pullback = jax.linear_transpose(lifted_action.mv, jnp.zeros_like(lifted_values))(dual)[0]
+        pullback = jax.linear_transpose(lifted_action.mv, jnp.zeros_like(lifted_values))(
+            dual
+        )[0]
         compiled_pullback = run_owned_program(
-            lifted_action, "layer-form-transpose", _layer_form_transpose, lifted_values, dual
+            lifted_action,
+            "layer-form-transpose",
+            _layer_form_transpose,
+            lifted_values,
+            dual,
         )
         np.testing.assert_allclose(compiled_pullback, pullback, atol=1e-10, rtol=1e-10)
         np.testing.assert_allclose(
             jnp.vdot(lifted_action.mv(lifted_values), dual),
-            jnp.vdot(lifted_values, pullback), atol=1e-10, rtol=1e-10,
+            jnp.vdot(lifted_values, pullback),
+            atol=1e-10,
+            rtol=1e-10,
         )
     assert len(result.support_report()) == 4
 
 
 @pytest.mark.parametrize("twist", ("untwisted", "twisted"))
 def test_periodic_mixed_prism_tetrahedron_quotient_uses_real_orbits(
-    twist: FormTwist, monkeypatch: pytest.MonkeyPatch,
+    twist: FormTwist,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from copy import copy
     import pickle
     import weakref
+    from copy import copy
 
     import phydrax.discretization.fem._de_rham as de_rham
-
+    from phydrax.discretization._cell_complex import PolyhedralConnectivity
+    from phydrax.discretization._periodic_topology import _entity_vertex_rows
     from phydrax.discretization.fem._de_rham import (
-        _PeriodicFormTopology,
         _periodic_entity_coordinate_maps,
+        _PeriodicFormTopology,
     )
     from phydrax.geometry._mesh_certificates import _same_tree_content
 
-    from phydrax.discretization._cell_complex import PolyhedralConnectivity
-    from phydrax.discretization._periodic_topology import _entity_vertex_rows
     coordinates = np.asarray(
         tuple((x, y, z) for z in (0, 1, 2) for x, y in ((0, 0), (1, 0), (0, 1))),
         dtype=np.float64,
@@ -263,7 +275,9 @@ def test_periodic_mixed_prism_tetrahedron_quotient_uses_real_orbits(
     assert isinstance(mesh.connectivity, PolyhedralConnectivity)
     edge_rows = _entity_vertex_rows(mesh)[1]
     assert all(row.dtype == np.dtype(np.int64) for row in edge_rows)
-    np.testing.assert_array_equal(np.stack(edge_rows), np.asarray(mesh.connectivity.edges))
+    np.testing.assert_array_equal(
+        np.stack(edge_rows), np.asarray(mesh.connectivity.edges)
+    )
     orbit = periodic_entity_orbit_map(mesh, 1)
     np.testing.assert_array_equal(orbit.lifted_entity_ids, mesh.entity_set(1).entity_ids)
     malformed = copy(mesh)
@@ -305,8 +319,14 @@ def test_periodic_mixed_prism_tetrahedron_quotient_uses_real_orbits(
         tracking.setattr(de_rham, "_periodic_entity_coordinate_maps", tracked_actions)
         distinct_result = complex_.transfer_periodic_quotient(target_complex)
     assert distinct_result.transfer_id == result.transfer_id
-    assert distinct_result.lifted_transfer_result.evidence_id == result.lifted_transfer_result.evidence_id
-    assert distinct_result.quotient_transfer_result.evidence_id == result.quotient_transfer_result.evidence_id
+    assert (
+        distinct_result.lifted_transfer_result.evidence_id
+        == result.lifted_transfer_result.evidence_id
+    )
+    assert (
+        distinct_result.quotient_transfer_result.evidence_id
+        == result.quotient_transfer_result.evidence_id
+    )
     original_matrix = de_rham._periodic_matrix
     matrices = []
 
@@ -325,8 +345,11 @@ def test_periodic_mixed_prism_tetrahedron_quotient_uses_real_orbits(
     assert _same_tree_content(replayed, quotient.commuting_evidence)
     for actual, expected in zip(replayed, quotient.commuting_evidence, strict=True):
         for name in (
-            "target_indices", "source_indices", "observed_defects",
-            "integration_error_bounds", "roundoff_error_bounds",
+            "target_indices",
+            "source_indices",
+            "observed_defects",
+            "integration_error_bounds",
+            "roundoff_error_bounds",
         ):
             np.testing.assert_array_equal(
                 np.asarray(getattr(actual, name)).view(np.uint8),
@@ -345,11 +368,11 @@ def test_periodic_mixed_prism_tetrahedron_quotient_uses_real_orbits(
 def test_periodic_form_phases_preserve_full_transition_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import weakref
     from fractions import Fraction
     from types import SimpleNamespace
 
     import phydrax as phx
-    import weakref
 
     original_complex = phx.discretization.FiniteElementDeRhamComplex
     complex_refs = []
@@ -377,15 +400,20 @@ def test_periodic_form_phases_preserve_full_transition_evidence(
     blocks = (
         CellBlock("prisms", "prism", ((0, 1, 2, 3, 4, 5),), global_ids=(41,)),
         CellBlock(
-            "tetrahedra", "tetrahedron", ((3, 4, 5, 6), (4, 5, 6, 7), (5, 7, 8, 6)),
+            "tetrahedra",
+            "tetrahedron",
+            ((3, 4, 5, 6), (4, 5, 6, 7), (5, 7, 8, 6)),
             global_ids=(51, 52, 53),
         ),
     )
     lifted = CellMesh(coordinates, blocks)
     periodic = PeriodicMeshTopology(
-        lifted, PeriodicCell(np.asarray(((0.0, 0.0, 2.0),))),
+        lifted,
+        PeriodicCell(np.asarray(((0.0, 0.0, 2.0),))),
         np.asarray((0, 1, 2, 3, 4, 5, 0, 1, 2), dtype=np.int32),
-        np.asarray(((0,), (0,), (0,), (0,), (0,), (0,), (1,), (1,), (1,)), dtype=np.int32),
+        np.asarray(
+            ((0,), (0,), (0,), (0,), (0,), (0,), (1,), (1,), (1,)), dtype=np.int32
+        ),
     )
     mesh = CellMesh(coordinates, blocks, periodic_topology=periodic)
     geometry = phx.discretization.CellGeometrySpec.affine(mesh)
@@ -393,21 +421,36 @@ def test_periodic_form_phases_preserve_full_transition_evidence(
     for block in blocks:
         vertices = tuple(
             tuple(Fraction(int(value)) for value in point)
-            for point in phx.discretization.reference_cell_topology(block.cell_kind).vertices
+            for point in phx.discretization.reference_cell_topology(
+                block.cell_kind
+            ).vertices
         )
         corners = tuple(vertices for _ in range(block.cell_count))
         identifiers = np.asarray(block.global_ids)
-        witnesses.append(ReferenceCellMapWitnesses(
-            identifiers, identifiers, block.cell_kind, block.cell_kind,
-            np.asarray(corners, dtype=np.float64), corners,
-        ))
+        witnesses.append(
+            ReferenceCellMapWitnesses(
+                identifiers,
+                identifiers,
+                block.cell_kind,
+                block.cell_kind,
+                np.asarray(corners, dtype=np.float64),
+                corners,
+            )
+        )
     transition = CellGeometryTransition(
-        mesh, geometry, mesh, geometry, reference_map=tuple(witnesses),
-        evidence=CellGeometryTransitionEvidence("nested_restriction", reference_map_count=4),
+        mesh,
+        geometry,
+        mesh,
+        geometry,
+        reference_map=tuple(witnesses),
+        evidence=CellGeometryTransitionEvidence(
+            "nested_restriction", reference_map_count=4
+        ),
     )
     endpoint = SimpleNamespace(mesh=mesh, geometry=geometry)
     adaptation = SimpleNamespace(
-        source=endpoint, target=endpoint,
+        source=endpoint,
+        target=endpoint,
         transition=SimpleNamespace(geometry_transition=transition),
     )
     declarations = _layer_field_plan(endpoint).fields
@@ -415,32 +458,56 @@ def test_periodic_form_phases_preserve_full_transition_evidence(
     for spec in declarations:
         if spec.name in ("Hcurl", "Hdiv"):
             dofs = phx.discretization.FiniteElementDofMap(
-                mesh, spec.resolve(mesh), component_shape=spec.component_shape,
+                mesh,
+                spec.resolve(mesh),
+                component_shape=spec.component_shape,
                 coordinate_spec=geometry,
             )
             banks[spec.name] = np.sin(np.arange(dofs.global_dof_count, dtype=np.float64))
     checkpoints = []
+
     def checkpoint(name: str, values: np.ndarray, record: Any) -> None:
         checkpoints.append((name, values.copy(), record))
         assert all(reference() is None for reference in complex_refs)
 
     full, full_records = _layer_form_transition(
-        adaptation, declarations, declarations, banks, on_field=checkpoint, hodge_resources=None
+        adaptation,
+        declarations,
+        declarations,
+        banks,
+        on_field=checkpoint,
+        hodge_resources=None,
     )
     assert tuple(item[0] for item in checkpoints) == ("Hcurl", "Hdiv")
     for name, values, record in checkpoints:
         np.testing.assert_array_equal(values, full[name])
         assert record == full_records[name]
         one, one_record = _layer_form_transition(
-            adaptation, declarations, declarations, banks, fields=(name,), hodge_resources=None
+            adaptation,
+            declarations,
+            declarations,
+            banks,
+            fields=(name,),
+            hodge_resources=None,
         )
         np.testing.assert_array_equal(one[name], full[name])
         assert one_record[name] == full_records[name]
     for invalid in ((), ("Hcurl", "Hcurl"), ("H1",)):
         with pytest.raises(ValueError, match="field phases"):
-            _layer_form_transition(adaptation, declarations, declarations, banks, fields=invalid, hodge_resources=None)
+            _layer_form_transition(
+                adaptation,
+                declarations,
+                declarations,
+                banks,
+                fields=invalid,
+                hodge_resources=None,
+            )
     with pytest.raises(ValueError, match="Hcurl and Hdiv"):
         _layer_form_transition(
-            adaptation, tuple(item for item in declarations if item.name != "Hdiv"),
-            declarations, banks, fields=("Hcurl",), hodge_resources=None,
+            adaptation,
+            tuple(item for item in declarations if item.name != "Hdiv"),
+            declarations,
+            banks,
+            fields=("Hcurl",),
+            hodge_resources=None,
         )

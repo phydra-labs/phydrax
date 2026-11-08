@@ -355,7 +355,6 @@ class GmshProvider:
             execution_modes=(MeshingExecutionMode.IN_PROCESS,),
         )
 
-
     def inspect_source(
         self, source: _BRepMeshingSource | SurfaceModel | CellMesh, /
     ) -> MeshingSourceDescriptor:

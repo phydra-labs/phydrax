@@ -775,7 +775,9 @@ def _geometry_with_exact_coordinate_bank(
         overrides.shape != (override_rows.size, execution.shape[1])
         or not np.array_equal(overrides.binary64(), execution[override_rows])
     ):
-        raise ValueError("Exact candidate coordinates do not round to their execution row.")
+        raise ValueError(
+            "Exact candidate coordinates do not round to their execution row."
+        )
     # Unmoved rows keep their exact straight value; moved rows are exact binary64.
     fresh = ~np.all(straight_bank.binary64() == execution, axis=1)
     fresh[override_rows] = False
@@ -1244,7 +1246,9 @@ def _distortion_blocks(
         samples = _control_lattice(block.cell_kind, degree, embedded)
         if isinstance(element, PerCellRestrictedCellGeometryElement):
             if not block.cell_count:
-                raise ValueError("Curving requires at least one cell per restricted block.")
+                raise ValueError(
+                    "Curving requires at least one cell per restricted block."
+                )
             # Cells with one exact chart share one tabulation; the result is
             # the per-cell tabulation of each cell's own chart.
             gradients = np.asarray(

@@ -215,6 +215,12 @@
   qualification profiles declare a refinement memory budget, and all-cell
   marked refinement refuses with `MemoryBudgetError("refinement_memory_bytes",
   estimate, budget)` before any adaptation work when its estimate exceeds it.
+- Mixed coarsening indexes the shared faces by cell once per candidate search
+  and looks the prior retired entities up in one batched key query per degree.
+  Each accepted sibling record used to rescan every face and each prior
+  retired entity recomputed the target's entity keys, which made coarsening
+  quadratic in the number of records. Candidates, retired records and
+  outcomes are bit-identical.
 - `CellGeometrySpec.exact_coordinate_bank`, `_ExactCoordinateBankMap.exact_coordinates`
   and `_RetainedCoordinateBank.exact_coordinates` hold an immutable
   integer-dyadic `ExactCoordinateBank` (an int64 odd significand and int16
@@ -483,9 +489,18 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
-- Native PLC recovery terminates on every input. Suppression could grow a
-  merged wedge cavity layer by layer and rewrap it without end on inputs a few
-  ulp from ones that recover (the scale-2 torus reconstruction on every
+- Native PLC suppression can peel a thin wedge along directions toward its
+  incident cells when the existing inward-normal direction cannot fill it.
+  Directions are tried lazily in deterministic cell order, without additional
+  ray buffers; every replacement still passes exact orientation, facet
+  preservation and cavity-coverage checks. This closes the perturbed
+  lobed-sphere recovery refusal without changing successful earlier choices.
+- Portable meshing archives register the canonical `PlcSearchBudget` value,
+  preserving declared search limits and schedule identity through cold
+  reconstruction of image and PLC sources.
+- Native PLC suppression stops repeated cavity growth. It could grow a merged
+  wedge cavity layer by layer and rewrap it without end on inputs a few ulp
+  from ones that recover (the scale-2 torus reconstruction on every
   platform); growth now stops at the first exactly repeated obstruction state
   (the first unfilled wedge and its sorted open sides), which terminates because
   the state set is finite, and a last-resort pass cones or peels the remaining
@@ -814,7 +829,16 @@
 - Particle-grid splat balance evidence sums the active, supported and dropped
   source totals and absolute totals over the active sources (`certified_sum`
   takes `where`), so they no longer depend on particle capacity or inactive slot
-  positions. Target totals, which carry no target-validity mask, are unchanged.
+  positions.
+- Mapped particle-grid splat deposits take an optional `target_valid` mask of
+  logical storage slots, and block-sparse MPM storage passes its valid nodes, so
+  splat target totals and absolute totals sum only logical slots. The balance
+  tolerance and its roundoff-model gate count the routes of the active sources,
+  the active sources and the logical target slots instead of the route,
+  particle and storage capacities. Target totals and the tolerance no longer
+  depend on block-sparse storage capacity, and the tolerance no longer depends
+  on particle capacity (for example 60 active particles at capacity 60, 70 or
+  128). Dense, fully active configurations keep their bits.
 - Adaptive cubature sums the active cell estimates and errors through their
   activity mask, so the returned value, error estimate and termination decision
   no longer depend on `max_cells`; they previously could change when

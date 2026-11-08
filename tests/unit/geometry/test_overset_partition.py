@@ -9,14 +9,20 @@ from itertools import combinations
 import numpy as np
 import pytest
 
-from phydrax.geometry._overset_partition import OversetPartition, partition_overset_triangles
+from phydrax.geometry._overset_partition import (
+    OversetPartition,
+    partition_overset_triangles,
+)
 from phydrax.geometry._planar_primitives import area2, cross, intersection
+
 
 type Part = tuple[str, np.ndarray, np.ndarray]
 type Points = tuple[tuple[float, float], ...]
 
 
-def _part(name: str, points: Points, cells: tuple[tuple[int, int, int], ...] = ((0, 1, 2),)) -> Part:
+def _part(
+    name: str, points: Points, cells: tuple[tuple[int, int, int], ...] = ((0, 1, 2),)
+) -> Part:
     return name, np.asarray(points, dtype=np.float64), np.asarray(cells, dtype=np.int64)
 
 
@@ -29,17 +35,29 @@ def _wall(points: Points) -> np.ndarray:
 
 
 def _exact_wall(wall: np.ndarray) -> tuple[tuple[Fraction, Fraction], ...]:
-    return tuple((Fraction.from_float(float(x)), Fraction.from_float(float(y))) for x, y in wall)
+    return tuple(
+        (Fraction.from_float(float(x)), Fraction.from_float(float(y))) for x, y in wall
+    )
 
 
-def _assert_exact_partition(result: OversetPartition, parts: tuple[Part, ...], cavities: tuple[np.ndarray, ...] = ()) -> None:
+def _assert_exact_partition(
+    result: OversetPartition,
+    parts: tuple[Part, ...],
+    cavities: tuple[np.ndarray, ...] = (),
+) -> None:
     assert result.total_area == sum((piece.area for piece in result.pieces), Fraction(0))
-    assert result.total_area == sum((cell.owned_area for cell in result.cells), Fraction(0))
+    assert result.total_area == sum(
+        (cell.owned_area for cell in result.cells), Fraction(0)
+    )
     assert len(result.cells) == sum(len(part[2]) for part in parts)
     for cell in result.cells:
         owned = sum(
-            (piece.area for piece in result.pieces
-             if (piece.part_index, piece.cell_index) == (cell.part_index, cell.cell_index)),
+            (
+                piece.area
+                for piece in result.pieces
+                if (piece.part_index, piece.cell_index)
+                == (cell.part_index, cell.cell_index)
+            ),
             Fraction(0),
         )
         assert owned == cell.owned_area
@@ -50,15 +68,19 @@ def _assert_exact_partition(result: OversetPartition, parts: tuple[Part, ...], c
         name, coordinates, cells = parts[piece.part_index]
         assert piece.part_name == name
         source = tuple(
-            (Fraction.from_float(float(coordinates[i, 0])), Fraction.from_float(float(coordinates[i, 1])))
+            (
+                Fraction.from_float(float(coordinates[i, 0])),
+                Fraction.from_float(float(coordinates[i, 1])),
+            )
             for i in cells[piece.cell_index]
         )
         assert piece.area == area2(piece.vertices) / 2 > 0
         assert piece.area == area2(intersection(piece.vertices, source)) / 2
-        assert piece.edges == tuple(zip(piece.vertices, piece.vertices[1:] + piece.vertices[:1], strict=True))
+        assert piece.edges == tuple(
+            zip(piece.vertices, piece.vertices[1:] + piece.vertices[:1], strict=True)
+        )
         assert all(
-            cross(a, b, point) >= 0
-            for a, b in piece.edges for point in piece.vertices
+            cross(a, b, point) >= 0 for a, b in piece.edges for point in piece.vertices
         )
         for wall in cavities:
             assert area2(intersection(piece.vertices, _exact_wall(wall))) == 0
@@ -72,8 +94,16 @@ def test_three_overlapping_parts_are_owned_once_in_priority_order() -> None:
     _assert_exact_partition(result, parts)
     assert result.total_area == 15
     assert [cell.source_area for cell in result.cells] == [8, 8, 8]
-    assert [cell.owned_area for cell in result.cells] == [8, Fraction(7, 2), Fraction(7, 2)]
-    assert [cell.excluded_area for cell in result.cells] == [0, Fraction(9, 2), Fraction(9, 2)]
+    assert [cell.owned_area for cell in result.cells] == [
+        8,
+        Fraction(7, 2),
+        Fraction(7, 2),
+    ]
+    assert [cell.excluded_area for cell in result.cells] == [
+        0,
+        Fraction(9, 2),
+        Fraction(9, 2),
+    ]
 
 
 def test_priority_order_changes_ownership_not_union() -> None:
@@ -83,8 +113,14 @@ def test_priority_order_changes_ownership_not_union() -> None:
     _assert_exact_partition(forward, (first, second))
     _assert_exact_partition(backward, (second, first))
     assert forward.total_area == backward.total_area == Fraction(23, 2)
-    assert {c.part_name: c.owned_area for c in forward.cells} == {"left": 8, "right": Fraction(7, 2)}
-    assert {c.part_name: c.owned_area for c in backward.cells} == {"left": Fraction(7, 2), "right": 8}
+    assert {c.part_name: c.owned_area for c in forward.cells} == {
+        "left": 8,
+        "right": Fraction(7, 2),
+    }
+    assert {c.part_name: c.owned_area for c in backward.cells} == {
+        "left": Fraction(7, 2),
+        "right": 8,
+    }
 
 
 def test_overlapping_cavities_are_subtracted_once_from_the_union() -> None:
@@ -96,8 +132,16 @@ def test_overlapping_cavities_are_subtracted_once_from_the_union() -> None:
     result = partition_overset_triangles(parts, cavities)
     _assert_exact_partition(result, parts, cavities)
     assert result.total_area == Fraction(27, 2)
-    assert [cell.owned_area for cell in result.cells] == [Fraction(13, 2), Fraction(7, 2), Fraction(7, 2)]
-    assert [cell.cavity_area for cell in result.cells] == [Fraction(3, 2), Fraction(3, 2), Fraction(1, 2)]
+    assert [cell.owned_area for cell in result.cells] == [
+        Fraction(13, 2),
+        Fraction(7, 2),
+        Fraction(7, 2),
+    ]
+    assert [cell.cavity_area for cell in result.cells] == [
+        Fraction(3, 2),
+        Fraction(3, 2),
+        Fraction(1, 2),
+    ]
 
 
 def test_original_cells_and_zero_owned_cells_are_recorded() -> None:
@@ -107,7 +151,10 @@ def test_original_cells_and_zero_owned_cells_are_recorded() -> None:
     _assert_exact_partition(result, (square, duplicate))
     assert result.total_area == 4
     assert [(c.part_index, c.cell_index, c.owned_area) for c in result.cells] == [
-        (0, 0, 2), (0, 1, 2), (1, 0, 0), (1, 1, 0)
+        (0, 0, 2),
+        (0, 1, 2),
+        (1, 0, 0),
+        (1, 1, 0),
     ]
     assert {piece.part_name for piece in result.pieces} == {"square"}
 
@@ -138,19 +185,24 @@ def test_empty_meshes_reversed_cells_and_cavity_cover() -> None:
     assert partition_overset_triangles((), ()).total_area == 0
 
 
-@pytest.mark.parametrize("wall", [
-    ((0, 0), (2, 0), (1, 1), (2, 2), (0, 2)),
-    ((0, 0), (2, 2), (0, 2), (2, 0)),
-    ((0, 0), (1, 0), (2, 0)),
-    ((0, 0), (2, 0), (1, 0), (2, 2), (0, 2)),
-])
+@pytest.mark.parametrize(
+    "wall",
+    [
+        ((0, 0), (2, 0), (1, 1), (2, 2), (0, 2)),
+        ((0, 0), (2, 2), (0, 2), (2, 0)),
+        ((0, 0), (1, 0), (2, 0)),
+        ((0, 0), (2, 0), (1, 0), (2, 2), (0, 2)),
+    ],
+)
 def test_rejects_nonconvex_degenerate_and_backtracking_cavities(wall: Points) -> None:
     with pytest.raises(ValueError):
         partition_overset_triangles((_triangle("part", 0),), (_wall(wall),))
 
 
 def test_rejects_overlapping_cells_within_one_part() -> None:
-    part = _part("bad", ((0, 0), (4, 0), (0, 4), (1, 0), (5, 0), (1, 4)), ((0, 1, 2), (3, 4, 5)))
+    part = _part(
+        "bad", ((0, 0), (4, 0), (0, 4), (1, 0), (5, 0), (1, 4)), ((0, 1, 2), (3, 4, 5))
+    )
     with pytest.raises(ValueError, match="disjoint interiors"):
         partition_overset_triangles((part,), ())
 
@@ -159,7 +211,9 @@ def test_rejects_invalid_inputs() -> None:
     with pytest.raises(ValueError, match="positive area"):
         partition_overset_triangles((_part("bad", ((0, 0), (1, 0), (2, 0))),), ())
     with pytest.raises(ValueError, match="out of range"):
-        partition_overset_triangles((_part("bad", ((0, 0), (1, 0), (0, 1)), ((0, 1, 3),)),), ())
+        partition_overset_triangles(
+            (_part("bad", ((0, 0), (1, 0), (0, 1)), ((0, 1, 3),)),), ()
+        )
     with pytest.raises(ValueError, match="finite"):
         partition_overset_triangles((_part("bad", ((0, 0), (1, 0), (0, np.nan))),), ())
     with pytest.raises(ValueError, match="strings"):

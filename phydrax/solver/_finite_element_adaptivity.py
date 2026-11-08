@@ -739,13 +739,18 @@ class FiniteElementConservativeSurfaceEvidence(StrictModule, NonTrainableState):
         /,
     ) -> None:
         if not isinstance(transfer, FiniteElementTopologyTransfer) or not (
-            transfer.conservative and transfer.preserves_constants and transfer.positivity_preserving
+            transfer.conservative
+            and transfer.preserves_constants
+            and transfer.positivity_preserving
         ):
-            raise ValueError("Surface content requires a conservative positive constant-preserving transfer.")
+            raise ValueError(
+                "Surface content requires a conservative positive constant-preserving transfer."
+            )
         source_measures = np.asarray(source_measures, dtype=np.float64)
         target_measures = np.asarray(target_measures, dtype=np.float64)
         if (
-            not layout_id or not geometry_transition_id
+            not layout_id
+            or not geometry_transition_id
             or source_measures.shape != (transfer.source_size,)
             or target_measures.shape != (transfer.target_size,)
             or np.any(~np.isfinite(source_measures))
@@ -755,13 +760,20 @@ class FiniteElementConservativeSurfaceEvidence(StrictModule, NonTrainableState):
             or not np.isfinite(conservation_bound)
             or conservation_bound < 0.0
         ):
-            raise ValueError("Surface content evidence bindings or measures are malformed.")
+            raise ValueError(
+                "Surface content evidence bindings or measures are malformed."
+            )
         action_defect = np.asarray(transfer.pullback(target_measures)) - source_measures
         action_bound = _measure_defect_bound(
-            np.dtype(np.float64), transfer.action_condition, source_measures, target_measures
+            np.dtype(np.float64),
+            transfer.action_condition,
+            source_measures,
+            target_measures,
         )
         if np.any(np.abs(action_defect) > action_bound):
-            raise ValueError("Surface content transfer does not conserve its bound measures.")
+            raise ValueError(
+                "Surface content transfer does not conserve its bound measures."
+            )
         defect = jnp.asarray(target_integral) - jnp.asarray(source_integral)
         if not np.all(np.isfinite(np.asarray(defect))) or np.any(
             np.abs(np.asarray(defect)) > conservation_bound
@@ -776,16 +788,18 @@ class FiniteElementConservativeSurfaceEvidence(StrictModule, NonTrainableState):
         self.conservation_bound = conservation_bound
         self.layout_id = layout_id
         self.geometry_transition_id = geometry_transition_id
-        self.evidence_id = canonical_fingerprint({
-            "kind": "finite-element-conservative-surface-content",
-            "layout": layout_id,
-            "geometry_transition": geometry_transition_id,
-            "transfer": transfer.transfer_id,
-            "source_measures": array_tree_fingerprint(source_measures),
-            "target_measures": array_tree_fingerprint(target_measures),
-            "source_integral": array_tree_fingerprint(np.asarray(source_integral)),
-            "target_integral": array_tree_fingerprint(np.asarray(target_integral)),
-        })
+        self.evidence_id = canonical_fingerprint(
+            {
+                "kind": "finite-element-conservative-surface-content",
+                "layout": layout_id,
+                "geometry_transition": geometry_transition_id,
+                "transfer": transfer.transfer_id,
+                "source_measures": array_tree_fingerprint(source_measures),
+                "target_measures": array_tree_fingerprint(target_measures),
+                "source_integral": array_tree_fingerprint(np.asarray(source_integral)),
+                "target_integral": array_tree_fingerprint(np.asarray(target_integral)),
+            }
+        )
 
 
 def _surface_p1_corners(
@@ -803,14 +817,18 @@ def _surface_p1_corners(
         if _same_tree_content(element, canonical):
             continue
         if not isinstance(element, PerCellRestrictedCellGeometryElement):
-            raise ValueError("Conservative surface content requires affine triangle maps.")
+            raise ValueError(
+                "Conservative surface content requires affine triangle maps."
+            )
         if not _same_tree_content(element.source_element, canonical) or any(
             any(sum(exponent) > 1 for exponent, _ in numerator)
             or any(sum(exponent) != 0 for exponent, _ in denominator)
             for row in element.chart_coefficients
             for numerator, denominator in row
         ):
-            raise ValueError("Conservative surface content refuses nonlinear or rational charts.")
+            raise ValueError(
+                "Conservative surface content refuses nonlinear or rational charts."
+            )
     reference = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
     for block in mesh.blocks:
         ids = np.asarray(block.global_ids, dtype=np.int64)
@@ -819,13 +837,17 @@ def _surface_p1_corners(
 
 def _surface_p1_measures(mesh: CellMesh, geometry: CellGeometrySpec, /) -> np.ndarray:
     measures = np.zeros(mesh.coordinates.shape[0], dtype=np.float64)
-    for block, corners in zip(mesh.blocks, _surface_p1_corners(mesh, geometry), strict=True):
+    for block, corners in zip(
+        mesh.blocks, _surface_p1_corners(mesh, geometry), strict=True
+    ):
         area = 0.5 * np.linalg.norm(
             np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]),
             axis=1,
         )
         if np.any(~np.isfinite(area)) or np.any(area <= 0.0):
-            raise ValueError("Conservative surface content requires positive finite cell measures.")
+            raise ValueError(
+                "Conservative surface content requires positive finite cell measures."
+            )
         vertices = np.asarray(block.vertices, dtype=np.int64)
         for local in range(3):
             np.add.at(measures, vertices[:, local], area / 3.0)
@@ -844,7 +866,9 @@ def _conservative_surface_content_transfer(
 
     source, target = adaptation.source, adaptation.target
     if np.asarray(values).dtype.kind != "f":
-        raise ValueError("Conservative surface content requires real floating-point values.")
+        raise ValueError(
+            "Conservative surface content requires real floating-point values."
+        )
     transition = adaptation.transition
     if (
         transition is None
@@ -857,7 +881,9 @@ def _conservative_surface_content_transfer(
         or not _vertex_p1_field_layout(layout, target.mesh)
         or adaptation.transfer is None
     ):
-        raise ValueError("Surface content requires a fully bound exact nested P1 transition.")
+        raise ValueError(
+            "Surface content requires a fully bound exact nested P1 transition."
+        )
     canonical = lagrange_element("triangle", 1)
     if any(
         not _same_tree_content(element, canonical)
@@ -872,7 +898,9 @@ def _conservative_surface_content_transfer(
         or geometry_transition.source_mesh.mesh_id != source.mesh.mesh_id
         or geometry_transition.target_mesh.mesh_id != target.mesh.mesh_id
     ):
-        raise ValueError("Surface content geometry endpoints do not match the transition.")
+        raise ValueError(
+            "Surface content geometry endpoints do not match the transition."
+        )
     source_measures = _surface_p1_measures(source.mesh, source.geometry)
     target_measures = _surface_p1_measures(target.mesh, target.geometry)
     transfer = FiniteElementTopologyTransfer(
@@ -894,8 +922,14 @@ def _conservative_surface_content_transfer(
     source_integral = compensated_sum_chunks((source_content,), output_ndim=0)
     target_integral = compensated_sum_chunks((target_content,), output_ndim=0)
     evidence = FiniteElementConservativeSurfaceEvidence(
-        layout.layout_id, geometry_transition.transition_id, transfer,
-        source_measures, target_measures, source_integral, target_integral, bound,
+        layout.layout_id,
+        geometry_transition.transition_id,
+        transfer,
+        source_measures,
+        target_measures,
+        source_integral,
+        target_integral,
+        bound,
     )
     return target_values, evidence
 
@@ -939,12 +973,16 @@ class FiniteElementReanalysisResult(StrictModule):
         if state_problem is not None and not isinstance(
             state_problem, CompiledFiniteElementProblem
         ):
-            raise TypeError("state_problem must be a compiled finite-element problem or None.")
+            raise TypeError(
+                "state_problem must be a compiled finite-element problem or None."
+            )
         if any(
             identifier is not None and (not isinstance(identifier, str) or not identifier)
             for identifier in (rhs_id, operator_numeric_id)
         ):
-            raise ValueError("Reanalysis numerical identity values must be nonempty strings.")
+            raise ValueError(
+                "Reanalysis numerical identity values must be nonempty strings."
+            )
         if not isinstance(check_policy, LinearSolveCheckPolicy):
             raise TypeError("check_policy must be LinearSolveCheckPolicy.")
         checks = check_policy
@@ -972,7 +1010,8 @@ class FiniteElementReanalysisResult(StrictModule):
                     "nullspace_tolerance": checks.nullspace_tolerance,
                     "require_nullspace": checks.require_nullspace,
                     "stability_certificate": (
-                        None if checks.stability_lower_bound is None
+                        None
+                        if checks.stability_lower_bound is None
                         else checks.stability_lower_bound.certificate_id
                     ),
                 },
@@ -984,8 +1023,13 @@ class FiniteElementReanalysisResult(StrictModule):
                 "operator": solve_check.operator_id,
                 "solution": array_tree_fingerprint(solution.value),
                 "check": array_tree_fingerprint(
-                    (solve_check.status, solve_check.true_residual_norm, solve_check.rhs_norm,
-                     solve_check.residual_threshold, solve_check.valid)
+                    (
+                        solve_check.status,
+                        solve_check.true_residual_norm,
+                        solve_check.rhs_norm,
+                        solve_check.residual_threshold,
+                        solve_check.valid,
+                    )
                 ),
             }
         )
@@ -1002,7 +1046,9 @@ class FiniteElementTopologyResult(StrictModule, NonTrainableState):
     periodic_transfers: tuple[PeriodicFiniteElementTransfer, ...] = ()
     field_transfers: tuple[FiniteElementTransferResult, ...] = ()
     conservative_transfers: tuple[FiniteElementConservativeContentEvidence, ...] = ()
-    surface_conservative_transfers: tuple[FiniteElementConservativeSurfaceEvidence, ...] = ()
+    surface_conservative_transfers: tuple[
+        FiniteElementConservativeSurfaceEvidence, ...
+    ] = ()
     reanalysis: FiniteElementReanalysisResult | None = None
 
 
@@ -4377,7 +4423,10 @@ def _migrate_finite_element_owner_local_adaptive_fields(
         target_ownership: FiniteElementDofOwnership | None = None
         target_structure_id = ""
         try:
-            if layout.transfer_semantics is FiniteElementFieldTransferSemantics.CONSERVATIVE_SURFACE_CONTENT:
+            if (
+                layout.transfer_semantics
+                is FiniteElementFieldTransferSemantics.CONSERVATIVE_SURFACE_CONTENT
+            ):
                 raise ValueError(
                     "Owner-local conservative surface content transfer is not supported."
                 )
@@ -5799,7 +5848,9 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         periodic_transfers: Sequence[PeriodicFiniteElementTransfer] = (),
         field_transfers: Sequence[FiniteElementTransferResult] = (),
         conservative_transfers: Sequence[FiniteElementConservativeContentEvidence] = (),
-        surface_conservative_transfers: Sequence[FiniteElementConservativeSurfaceEvidence] = (),
+        surface_conservative_transfers: Sequence[
+            FiniteElementConservativeSurfaceEvidence
+        ] = (),
         reanalysis: FiniteElementReanalysisResult | None = None,
     ) -> FiniteElementTopologyResult:
         return FiniteElementTopologyResult(
@@ -6241,7 +6292,9 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         periodic_transfers: list[PeriodicFiniteElementTransfer] = []
         field_transfers: list[FiniteElementTransferResult] = []
         conservative_transfers: list[FiniteElementConservativeContentEvidence] = []
-        surface_conservative_transfers: list[FiniteElementConservativeSurfaceEvidence] = []
+        surface_conservative_transfers: list[
+            FiniteElementConservativeSurfaceEvidence
+        ] = []
         transfer_cache: dict[
             tuple[int, int, int, str, str, bool],
             tuple[FiniteElementTransferResult, PeriodicFiniteElementTransfer | None],
@@ -6310,7 +6363,9 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                         )
                     except (TypeError, ValueError, NotImplementedError) as error:
                         return self._retained(
-                            accepted, mesh, f"conservative-surface-transfer-refused: {error}",
+                            accepted,
+                            mesh,
+                            f"conservative-surface-transfer-refused: {error}",
                             periodic_transfers=periodic_transfers,
                             field_transfers=field_transfers,
                             conservative_transfers=conservative_transfers,
@@ -6563,20 +6618,31 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             candidate_materials = transferred
         reanalysis = None
         prepared_id = f"{accepted.prepared_id}:transition:{transition.transition_id}"
-        compilation_id = f"{accepted.compilation_id}:transition:{transition.transition_id}"
+        compilation_id = (
+            f"{accepted.compilation_id}:transition:{transition.transition_id}"
+        )
         if reanalysis_action is not None:
             try:
                 reanalysis = reanalysis_action(
-                    candidate_mesh, completed_fields, candidate_materials, adaptation, args
+                    candidate_mesh,
+                    completed_fields,
+                    candidate_materials,
+                    adaptation,
+                    args,
                 )
                 if not isinstance(reanalysis, FiniteElementReanalysisResult):
-                    raise TypeError("Reanalysis must return FiniteElementReanalysisResult.")
+                    raise TypeError(
+                        "Reanalysis must return FiniteElementReanalysisResult."
+                    )
                 problem = reanalysis.problem
                 discretization = problem.discretization
                 if not isinstance(discretization, FiniteElementDiscretization):
-                    raise TypeError("Reanalysis requires a finite-element discretization.")
+                    raise TypeError(
+                        "Reanalysis requires a finite-element discretization."
+                    )
                 matching = [
-                    index for index, layout in enumerate(accepted.field_layouts)
+                    index
+                    for index, layout in enumerate(accepted.field_layouts)
                     if layout.name == reanalysis.field_name
                 ]
                 if len(matching) != 1 or len(discretization.field_spaces) != 1:
@@ -6609,19 +6675,24 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                         for left, right in zip(declared, actual, strict=True)
                     )
                 ):
-                    raise ValueError("Reanalysis problem does not bind the candidate field and geometry.")
+                    raise ValueError(
+                        "Reanalysis problem does not bind the candidate field and geometry."
+                    )
                 context = problem._execution_context(args)
                 runtime = context.runtime
                 if (
                     not isinstance(runtime, FiniteElementRuntimeData)
                     or runtime.topology_id != candidate_mesh.topology_id
-                    or runtime.geometry_layout_id != adaptation.target.geometry.geometry_layout_id
+                    or runtime.geometry_layout_id
+                    != adaptation.target.geometry.geometry_layout_id
                     or not np.array_equal(
                         np.asarray(runtime.coordinates),
                         np.asarray(adaptation.target.geometry.coordinates),
                     )
                 ):
-                    raise ValueError("Reanalysis runtime does not bind the candidate geometry.")
+                    raise ValueError(
+                        "Reanalysis runtime does not bind the candidate geometry."
+                    )
                 system, rhs = problem.linear_system(context)
                 original_check = reanalysis.solve_check
                 if original_check.kind != "primal" or not bool(
@@ -6632,12 +6703,21 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                 from ..linalg._runtime import _assess_linear_system_result
 
                 current_check = _assess_linear_system_result(
-                    system, rhs, reanalysis.solution, reanalysis.check_policy,
-                    kind="primal", stability_operator=system.operator, primal_valid=True,
+                    system,
+                    rhs,
+                    reanalysis.solution,
+                    reanalysis.check_policy,
+                    kind="primal",
+                    stability_operator=system.operator,
+                    primal_valid=True,
                 )
                 context_values = (
-                    context.user_args, context.time, context.lift, context.lift_rate,
-                    context.lift_acceleration, context.metric_data,
+                    context.user_args,
+                    context.time,
+                    context.lift,
+                    context.lift_rate,
+                    context.lift_acceleration,
+                    context.metric_data,
                 )
                 operator_numeric_id = canonical_fingerprint(
                     {
@@ -6652,25 +6732,38 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                     }
                 )
                 reanalysis = FiniteElementReanalysisResult(
-                    problem, reanalysis.solution, current_check, reanalysis.field_name,
+                    problem,
+                    reanalysis.solution,
+                    current_check,
+                    reanalysis.field_name,
                     state_problem=reanalysis.state_problem,
                     check_policy=reanalysis.check_policy,
                     rhs_id=canonical_fingerprint(array_tree_fingerprint(rhs)),
                     operator_numeric_id=operator_numeric_id,
                 )
                 if not bool(np.all(np.asarray(current_check.valid))):
-                    raise ValueError("Reanalysis state fails the current system's solve check.")
-                residual = np.asarray(problem.residual(reanalysis.solution.value, context))
+                    raise ValueError(
+                        "Reanalysis state fails the current system's solve check."
+                    )
+                residual = np.asarray(
+                    problem.residual(reanalysis.solution.value, context)
+                )
                 if residual.ndim != 1 or not np.all(np.isfinite(residual)):
-                    raise ValueError("Reanalysis state has an invalid current physical residual.")
+                    raise ValueError(
+                        "Reanalysis state has an invalid current physical residual."
+                    )
                 state_problem = reanalysis.state_problem
                 if state_problem is None:
                     if len(accepted.field_layouts) != 1:
-                        raise ValueError("Multi-field reanalysis requires the complete candidate state program.")
+                        raise ValueError(
+                            "Multi-field reanalysis requires the complete candidate state program."
+                        )
                     state_problem = problem
                 state_space = state_problem.discretization
                 if not isinstance(state_space, FiniteElementDiscretization):
-                    raise TypeError("State program requires a finite-element discretization.")
+                    raise TypeError(
+                        "State program requires a finite-element discretization."
+                    )
                 if (
                     state_space.mesh.mesh_id != candidate_mesh.mesh_id
                     or state_space.default_runtime.geometry_layout_id
@@ -6684,18 +6777,26 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                     or state_problem.form.field_names
                     != tuple(item.name for item in accepted.field_layouts)
                 ):
-                    raise ValueError("Complete state program does not bind all candidate fields and geometry.")
+                    raise ValueError(
+                        "Complete state program does not bind all candidate fields and geometry."
+                    )
                 from ..equations._finite_element_variational import _action_output_fields
 
                 reanalyzed_actions = tuple(
-                    action for action in state_problem.form.actions
+                    action
+                    for action in state_problem.form.actions
                     if reanalysis.field_name in _action_output_fields(action)
                 )
                 if not _same_tree_content(reanalyzed_actions, problem.form.actions):
-                    raise ValueError("Complete state program does not bind the actual reanalysis actions.")
+                    raise ValueError(
+                        "Complete state program does not bind the actual reanalysis actions."
+                    )
                 for field_layout, actual_elements, dof_map, field_value in zip(
-                    accepted.field_layouts, state_space.elements, state_space.dof_maps,
-                    completed_fields, strict=True,
+                    accepted.field_layouts,
+                    state_space.elements,
+                    state_space.dof_maps,
+                    completed_fields,
+                    strict=True,
                 ):
                     if (
                         dof_map.component_shape != field_layout.field_spec.component_shape
@@ -6703,21 +6804,31 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                         != (dof_map.global_dof_count, *dof_map.component_shape)
                         or np.dtype(field_value.dtype) != state_space.coefficient_dtype
                     ):
-                        raise ValueError("Complete state program changed a declared field DOF layout.")
+                        raise ValueError(
+                            "Complete state program changed a declared field DOF layout."
+                        )
                     declared_elements = field_layout.field_spec.resolve(candidate_mesh)
                     if not all(
                         _same_tree_content(left, right)
-                        for left, right in zip(declared_elements, actual_elements, strict=True)
+                        for left, right in zip(
+                            declared_elements, actual_elements, strict=True
+                        )
                     ):
-                        raise ValueError("Complete state program changed a declared field basis.")
-                refreshed = jnp.asarray(problem.expand(reanalysis.solution.value, context))
+                        raise ValueError(
+                            "Complete state program changed a declared field basis."
+                        )
+                refreshed = jnp.asarray(
+                    problem.expand(reanalysis.solution.value, context)
+                )
                 if (
                     refreshed.shape != completed_fields[index].shape
                     or np.dtype(refreshed.dtype) != state_space.coefficient_dtype
                     or np.dtype(refreshed.dtype) != discretization.coefficient_dtype
                     or not bool(np.all(np.isfinite(np.asarray(refreshed))))
                 ):
-                    raise ValueError("Reanalysis changed the declared field layout or is nonfinite.")
+                    raise ValueError(
+                        "Reanalysis changed the declared field layout or is nonfinite."
+                    )
                 fields = list(completed_fields)
                 fields[index] = refreshed
                 completed_fields = tuple(fields)
@@ -6725,12 +6836,16 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                 compilation_id = state_problem.compilation_id
             except (TypeError, ValueError, RuntimeError, NotImplementedError) as error:
                 return self._retained(
-                    accepted, mesh, f"candidate-reanalysis-refused: {error}",
+                    accepted,
+                    mesh,
+                    f"candidate-reanalysis-refused: {error}",
                     periodic_transfers=periodic_transfers,
                     field_transfers=field_transfers,
                     conservative_transfers=conservative_transfers,
                     surface_conservative_transfers=surface_conservative_transfers,
-                    reanalysis=reanalysis if isinstance(reanalysis, FiniteElementReanalysisResult) else None,
+                    reanalysis=reanalysis
+                    if isinstance(reanalysis, FiniteElementReanalysisResult)
+                    else None,
                 )
         certified = self.certify(
             candidate_mesh,
@@ -6835,7 +6950,9 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                         "conservative-cell-average-hp-storage-is-not-supported"
                     )
                 case FiniteElementFieldTransferSemantics.CONSERVATIVE_SURFACE_CONTENT:
-                    return retained("conservative-surface-content-hp-storage-is-not-supported")
+                    return retained(
+                        "conservative-surface-content-hp-storage-is-not-supported"
+                    )
                 case other:
                     assert_never(other)
         all_nested_hp = all(

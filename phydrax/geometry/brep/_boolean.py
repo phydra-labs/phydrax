@@ -15,7 +15,6 @@ from __future__ import annotations
 from dataclasses import replace
 from fractions import Fraction
 from itertools import product
-from ._assembly import BRepAffinePlacement
 
 import phydrax.geometry.brep._boolean_coincidence as boolean_coincidence_owner
 import phydrax.geometry.brep._boolean_full_overlay as boolean_full_overlay_owner
@@ -29,9 +28,10 @@ from .._cad_revision import (
     OccurrenceCorrespondence,
     OccurrenceCorrespondenceTransaction,
 )
+from ._assembly import BRepAffinePlacement
 from ._boolean_core import (
-    BooleanSourceLineage,
     assemble,
+    BooleanSourceLineage,
     boundary,
     BoundaryFace,
     BRepBooleanFailure,
@@ -50,11 +50,11 @@ from ._boolean_core import (
     target_assembly_occurrence_id,
 )
 from ._model import BRepEntityId, BRepModel
-from ._patches import LineCurve
 from ._partition import (
     _assembly_namespace_occurrence_id,
     cad_revision_from_brep_model,
 )
+from ._patches import LineCurve
 
 
 def _line_data(
@@ -69,9 +69,7 @@ def _line_data(
         return None
     origin = tuple(Fraction(float(value)) for value in curve.origin)
     direction = tuple(Fraction(float(value)) for value in curve.direction)
-    first, last = (
-        Fraction(float(value)) for value in geometry.edge_ranges[edge]
-    )
+    first, last = (Fraction(float(value)) for value in geometry.edge_ranges[edge])
     if first >= last or not any(direction):
         return None
     return origin, direction, first, last
@@ -88,10 +86,13 @@ def _line_parameter(
         return None
     axis = axes[0]
     parameter = (point[axis] - origin[axis]) / direction[axis]
-    if any(
-        origin[coordinate] + parameter * direction[coordinate] != point[coordinate]
-        for coordinate in range(3)
-    ) or not first <= parameter <= last:
+    if (
+        any(
+            origin[coordinate] + parameter * direction[coordinate] != point[coordinate]
+            for coordinate in range(3)
+        )
+        or not first <= parameter <= last
+    ):
         return None
     return parameter
 
@@ -142,7 +143,9 @@ def _rectilinear_entity_pairs(
                     source_edges[source_edge] = data
                     origin, direction, first, last = data
                     endpoints = (
-                        tuple(origin[axis] + first * direction[axis] for axis in range(3)),
+                        tuple(
+                            origin[axis] + first * direction[axis] for axis in range(3)
+                        ),
                         tuple(origin[axis] + last * direction[axis] for axis in range(3)),
                     )
                     for vertex, point in zip(
@@ -206,7 +209,10 @@ def _rectilinear_entity_pairs(
                                     ("vertex", target_vertex), ()
                                 ):
                                     pairs.add(
-                                        (source_vertex_occurrence, target_vertex_occurrence)
+                                        (
+                                            source_vertex_occurrence,
+                                            target_vertex_occurrence,
+                                        )
                                     )
     return pairs
 
@@ -227,9 +233,7 @@ def _graph(
         ancestors = {ancestor for cell in component for ancestor in membership[cell]}
         target_occurrences = target_index.get(("solid", solid), ())
         for operand, parent_solid in ancestors:
-            source_entities = source.entities_for_index(
-                operand, "solid", parent_solid
-            )
+            source_entities = source.entities_for_index(operand, "solid", parent_solid)
             for source_entity in source_entities:
                 source_occurrence = source.occurrence_id(operand, source_entity)
                 source_assembly = source_assembly_occurrence_id(
@@ -287,6 +291,7 @@ def _namespace_paths(model: BRepModel, /) -> tuple[tuple[str, ...], ...]:
         )
     )
 
+
 def _coincident_result(
     models: tuple[BRepModel, BRepModel],
     operation: BRepBooleanOperation,
@@ -326,9 +331,7 @@ def _coincident_result(
         for (kind, index), target_entities in target_index.items():
             for target_entity, target_occurrence in target_entities:
                 for operand in range(len(models)):
-                    for source_entity in source.entities_for_index(
-                        operand, kind, index
-                    ):
+                    for source_entity in source.entities_for_index(operand, kind, index):
                         if source_entity.occurrence_path == target_entity.occurrence_path:
                             pair_values.add(
                                 (
@@ -503,10 +506,7 @@ def boolean_brep(
         used_solids: set[int] = set()
         for occurrence in geometry.iter_occurrences():
             occurrence_count += 1
-            if (
-                occurrence.placement != identity
-                or occurrence.solid_index in used_solids
-            ):
+            if occurrence.placement != identity or occurrence.solid_index in used_solids:
                 physical_instances = True
                 break
             used_solids.add(occurrence.solid_index)
@@ -520,9 +520,7 @@ def boolean_brep(
         )
         for model in originals
     )
-    result = _boolean_world(
-        lifts[0].model, lifts[1].model, operation, policy=policy_
-    )
+    result = _boolean_world(lifts[0].model, lifts[1].model, operation, policy=policy_)
     certificate = canonical_fingerprint(
         {
             "kind": "exact-placed-cad-boolean-lineage",
@@ -532,9 +530,7 @@ def boolean_brep(
         }
     )
     source = source_lineage(originals, certificate)
-    intermediate = source_lineage(
-        (lifts[0].model, lifts[1].model), result.certificate_id
-    )
+    intermediate = source_lineage((lifts[0].model, lifts[1].model), result.certificate_id)
     replacement: dict[str, set[str]] = {}
     unresolved_source: set[str] = set()
     for operand, lift in enumerate(lifts):
@@ -561,9 +557,7 @@ def boolean_brep(
     }
     for intermediate_id in result.association_graph.transaction.unresolved_source_ids:
         unresolved_source.update(replacement.get(intermediate_id, ()))
-    unresolved_target = set(
-        result.association_graph.transaction.unresolved_target_ids
-    )
+    unresolved_target = set(result.association_graph.transaction.unresolved_target_ids)
     transaction = OccurrenceCorrespondenceTransaction(
         certificate,
         source.revision.revision_id,
@@ -575,9 +569,15 @@ def boolean_brep(
         frozenset(unresolved_source),
         frozenset(unresolved_target),
         AssociationCoverageEvidence(
-            all(lift.association_graph.transaction.coverage.source_exhaustive for lift in lifts)
+            all(
+                lift.association_graph.transaction.coverage.source_exhaustive
+                for lift in lifts
+            )
             and result.association_graph.transaction.coverage.source_exhaustive,
-            all(lift.association_graph.transaction.coverage.target_exhaustive for lift in lifts)
+            all(
+                lift.association_graph.transaction.coverage.target_exhaustive
+                for lift in lifts
+            )
             and result.association_graph.transaction.coverage.target_exhaustive,
             certificate,
             "native-exact-placed-cad-boolean",

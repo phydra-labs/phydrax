@@ -801,7 +801,10 @@ def _mapped_layer_core_construction_for_fixture() -> tuple[
 
 
 def make_mapped_layer_curving_archive_case() -> tuple[
-    LayerCurvingConstructionResult, BoundaryLayerMesh, BoundaryLayerControl, BoundaryLayerPolicy
+    LayerCurvingConstructionResult,
+    BoundaryLayerMesh,
+    BoundaryLayerControl,
+    BoundaryLayerPolicy,
 ]:
     mapped_source, domain, _, query, _, layers, source, construction, control, policy = (
         _mapped_layer_core_construction_for_fixture()
@@ -834,7 +837,10 @@ def make_mapped_layer_curving_archive_case() -> tuple[
 def make_layer_curving_archive_case(
     degree: int = 2,
 ) -> tuple[
-    LayerCurvingConstructionResult, BoundaryLayerMesh, BoundaryLayerControl, BoundaryLayerPolicy
+    LayerCurvingConstructionResult,
+    BoundaryLayerMesh,
+    BoundaryLayerControl,
+    BoundaryLayerPolicy,
 ]:
     mapped_source, _, _, _, wall, layers, _, construction, control, policy = (
         _mapped_layer_core_construction_for_fixture()
@@ -862,7 +868,10 @@ def make_layer_curving_archive_case(
 
 
 def make_restricted_layer_curving_archive_case() -> tuple[
-    LayerCurvingConstructionResult, BoundaryLayerMesh, BoundaryLayerControl, BoundaryLayerPolicy
+    LayerCurvingConstructionResult,
+    BoundaryLayerMesh,
+    BoundaryLayerControl,
+    BoundaryLayerPolicy,
 ]:
     """Return accepted layer evidence on an exact per-cell restricted map."""
     original, layers, control, policy = make_layer_curving_archive_case()

@@ -60,7 +60,6 @@ from phydrax.meshing import (
     mesh_periodic_trigonometric_region,
     PeriodicImplicitVolume,
 )
-from phydrax.meshing._sizing import SizeControlStrength
 from phydrax.meshing._volume_generation import NativeVolumeSchedule
 from phydrax.units import METER
 
@@ -99,8 +98,21 @@ _ELASTIC_FACTORIZATION = SparseFactorizationPolicy(
 # acceptance is the unit suite's, not relaxed.
 _CUBIC_DEFECT_ACCEPTANCE = 1.0e-2
 # Declared symbolic-analysis budget of the reverse Cuthill-McKee comparison
-# (no numeric factorization is performed with it).
-_RCM_COMPARISON_FACTOR_NNZ = 16_000_000
+# (no numeric factorization is performed with it). On the hard-target sheet
+# mesh (155705 cells) the measured RCM fill is 44,000,700 nonzeros and
+# 420,332,290 factor bytes; both limits are explicit profile inputs.
+_RCM_COMPARISON_FACTOR_NNZ = 64_000_000
+_RCM_COMPARISON_FACTOR_BYTES = 512 * 1024 * 1024
+# Declared budget of the gyroid-sheet conductivity Cholesky (nested
+# dissection). The hard-target sheet fill at maximum_edge_length=0.03 has
+# 155705 cells; its measured factor needs 8,692,671 nonzeros, above the
+# library default of 2,000,000, so the profile declares this envelope.
+_SHEET_CONDUCTIVITY_FACTORIZATION = SparseFactorizationPolicy(
+    "cholesky",
+    ordering="nested-dissection",
+    max_factor_nnz=16_000_000,
+    max_factor_bytes=256 * 1024 * 1024,
+)
 
 
 def _policy(diameter: float, root_tolerance: float = _ROOT_TOLERANCE) -> Any:
@@ -300,8 +312,12 @@ def _fill_record(volume: PeriodicImplicitVolume) -> dict[str, Any]:
     }
 
 
-def _conductivity(mesh: Any) -> Any:
-    problem = PeriodicCellProblem(mesh, physics="conductivity")
+def _conductivity(
+    mesh: Any, factorization: SparseFactorizationPolicy | None = None
+) -> Any:
+    problem = PeriodicCellProblem(
+        mesh, physics="conductivity", factorization=factorization
+    )
     return problem, problem.solve(1.0)
 
 
@@ -383,16 +399,13 @@ def _gyroid_sheet_cell() -> dict[str, Any]:
         lambda: mesh_periodic_trigonometric_region(
             surface,
             # The sheet (half-width 0.3) is about one default target edge
-            # thick, so the hard default shape targets fail at this resolution
-            # (1138 radius-edge and 995 dihedral rows); they pass only at
-            # maximum_edge_length=0.03 (2-3 edges across: 155705 cells, about
-            # 2.5x the wall and 7x the peak memory). This profile keeps the
-            # default resolution and enforces cell validity only.
-            volume_schedule=NativeVolumeSchedule(
-                radius_edge_bound=None,
-                minimum_dihedral_degrees=0.0,
-                shape_strength=SizeControlStrength.SOFT,
-            ),
+            # thick, so the library's sheet default is validity-only; this
+            # qualification profile requires the hard shape targets at
+            # maximum_edge_length=0.03, which puts 2-3 edges across the sheet
+            # (155705 cells; about 2.5x the wall and 7x the peak memory of the
+            # validity-only default resolution).
+            maximum_edge_length=0.03,
+            volume_schedule=NativeVolumeSchedule(),
         ),
     )
     fill = _fill_record(volume)
@@ -406,12 +419,14 @@ def _gyroid_sheet_cell() -> dict[str, Any]:
     if invariant != 1:
         raise RuntimeError("The proved gyroid point group does not force isotropy.")
     problem, result = _timed(
-        timings, "homogenization_seconds", lambda: _conductivity(volume.mesh)
+        timings,
+        "homogenization_seconds",
+        lambda: _conductivity(volume.mesh, _SHEET_CONDUCTIVITY_FACTORIZATION),
     )
     conduction = _conductivity_record(problem, result)
-    # Symbolic comparison only: the solve uses the default nested-dissection
-    # Cholesky under the library's default budget; the reverse Cuthill-McKee
-    # analysis declares its own budget so its fill can be reported.
+    # Symbolic comparison only: the solve uses the nested-dissection Cholesky
+    # under the profile's declared budget; the reverse Cuthill-McKee analysis
+    # declares its own budget so its fill can be reported.
     bandwidth = PeriodicSimplexOperatorPattern(
         problem.space,
         components=1,
@@ -419,12 +434,13 @@ def _gyroid_sheet_cell() -> dict[str, Any]:
             "cholesky",
             ordering="reverse-cuthill-mckee",
             max_factor_nnz=_RCM_COMPARISON_FACTOR_NNZ,
+            max_factor_bytes=_RCM_COMPARISON_FACTOR_BYTES,
         ),
     )
     orderings = {
         "nested_dissection_factor_nnz": int(problem.pattern.plan.factor_nnz),
         "reverse_cuthill_mckee_factor_nnz": int(bandwidth.plan.factor_nnz),
-        "default_max_factor_nnz": SparseFactorizationPolicy().max_factor_nnz,
+        "declared_max_factor_nnz": _SHEET_CONDUCTIVITY_FACTORIZATION.max_factor_nnz,
     }
     if conduction["cubic_symmetry_defect"] > _CUBIC_DEFECT_ACCEPTANCE:
         raise RuntimeError("The measured cubic-symmetry defect exceeds its acceptance.")

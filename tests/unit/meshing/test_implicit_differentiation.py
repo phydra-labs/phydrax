@@ -44,11 +44,12 @@ def test_fixed_lattice_implicit_surface_volume_observable_differentiates() -> No
         state = geometry.state.replace_at(radius_index, radius)
         realization = plan.realize(state)
         corners = realization.vertices[realization.faces]
-        return jnp.sum(
+        return (
             jnp.sum(
-                corners[:, 0] * jnp.cross(corners[:, 1], corners[:, 2]), axis=-1
+                jnp.sum(corners[:, 0] * jnp.cross(corners[:, 1], corners[:, 2]), axis=-1)
             )
-        ) / 6.0
+            / 6.0
+        )
 
     radius = jnp.asarray(0.75)
     step = 1.0e-4

@@ -1252,7 +1252,9 @@ def certify_reference_chain_embedding(
             type(_validated_parent_embedding) is not ValidatedGlobalEmbedding
             or _validated_parent_embedding.certificate is not parent_embedding
         ):
-            raise ValueError("Reference-chain proof requires its actual validated embedding.")
+            raise ValueError(
+                "Reference-chain proof requires its actual validated embedding."
+            )
         _validated_parent_embedding.require(
             parent_mesh, parent_geometry, parent_embedding.validity
         )

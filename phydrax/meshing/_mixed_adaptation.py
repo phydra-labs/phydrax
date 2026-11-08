@@ -1594,13 +1594,18 @@ def _coarsening_candidates(
         candidates.append(record)
     rejected.update(marks - known_children)
     accepted = {record.parent_id: record for record in candidates}
+    faces = _mesh_facet_owners(cells)
+    interior_faces = [owners for owners in faces.values() if len(owners) == 2]
+    faces_by_cell: dict[int, list[int]] = defaultdict(list)
+    for index, ((first, _, _), (second, _, _)) in enumerate(interior_faces):
+        faces_by_cell[cells[first].identifier].append(index)
+        faces_by_cell[cells[second].identifier].append(index)
     changed = True
     while changed:
         changed = False
         removed_children = {
             child for record in accepted.values() for child in record.child_ids
         }
-        faces = _mesh_facet_owners(cells)
         reject_parents: set[int] = set()
         for record in accepted.values():
             parent_points = tuple(root_points[value] for value in record.parent_vertices)
@@ -1613,9 +1618,15 @@ def _coarsening_candidates(
                 frozenset(root for point in face for root, _ in point)
                 for face in coarse_faces
             )
-            for owners in faces.values():
-                if len(owners) != 2:
-                    continue
+            incident = sorted(
+                {
+                    index
+                    for child in record.child_ids
+                    for index in faces_by_cell.get(child, ())
+                }
+            )
+            for index in incident:
+                owners = interior_faces[index]
                 (first, _, _), (second, _, _) = owners
                 first_id, second_id = cells[first].identifier, cells[second].identifier
                 if (first_id in record.child_ids) == (second_id in record.child_ids):
@@ -2234,15 +2245,29 @@ def _retired_entity_records(
 ) -> tuple[tuple[int, tuple[int, ...], int], ...]:
     restored: set[tuple[int, tuple[int, ...]]] = set()
     retained: list[tuple[int, tuple[int, ...], int]] = []
-    for degree, key, identifier in prior:
-        target_keys = entity_keys(target, degree)
-        if key_rows(target_keys, np.asarray([key], dtype=np.int64))[0] >= 0:
+    target_keys_by_degree: dict[int, np.ndarray] = {}
+    positions_by_degree: dict[int, list[int]] = defaultdict(list)
+    for index, (degree, _, _) in enumerate(prior):
+        positions_by_degree[degree].append(index)
+    found = np.zeros((len(prior),), dtype=np.bool_)
+    for degree, positions in positions_by_degree.items():
+        width = max(len(prior[index][1]) for index in positions)
+        queries = np.full((len(positions), width), -1, dtype=np.int64)
+        for row, index in enumerate(positions):
+            key = prior[index][1]
+            queries[row, : len(key)] = key
+        target_keys_by_degree[degree] = entity_keys(target, degree)
+        found[positions] = key_rows(target_keys_by_degree[degree], queries) >= 0
+    for (degree, key, identifier), present in zip(prior, found, strict=True):
+        if present:
             restored.add((degree, key))
         else:
             retained.append((degree, key, identifier))
     for degree in (1, 2):
         source_keys = entity_keys(source, degree)
-        target_keys = entity_keys(target, degree)
+        if degree not in target_keys_by_degree:
+            target_keys_by_degree[degree] = entity_keys(target, degree)
+        target_keys = target_keys_by_degree[degree]
         ids = np.asarray(source.entity_set(degree).entity_ids, dtype=np.int64)
         rows = key_rows(target_keys, source_keys)
         retained.extend(

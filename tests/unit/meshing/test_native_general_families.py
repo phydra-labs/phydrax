@@ -36,8 +36,8 @@ from phydrax.linalg._exact import solve_exact
 from phydrax.meshing import (
     CellFamilyPolicy,
     CellMeshingTarget,
-    MeshQualityTarget,
     MeshingScope,
+    MeshQualityTarget,
     NativeMeshingOptions,
     NativeMeshingProvider,
     RegionRole,

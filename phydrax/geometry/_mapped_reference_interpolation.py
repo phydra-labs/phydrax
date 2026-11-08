@@ -383,9 +383,13 @@ def _mapped_chart_maps(
     target_base = target_maps.get(target_row)
     if target_base is None:
         preparation = root_preparations.get(block_index)
-        if preparation is None and isinstance(element, PerCellRestrictedCellGeometryElement):
+        if preparation is None and isinstance(
+            element, PerCellRestrictedCellGeometryElement
+        ):
             preparation = RestrictedCoordinateMapPreparation(
-                element, coordinates, np.asarray(routes[block_index], dtype=np.int64),
+                element,
+                coordinates,
+                np.asarray(routes[block_index], dtype=np.int64),
                 mode="source",
             )
             root_preparations[block_index] = preparation

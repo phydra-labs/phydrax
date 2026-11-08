@@ -812,7 +812,9 @@ def _rebase_source_state(
         epoch=topology.epoch,
         domain=topology.domain,
     )
-    positions = np.zeros((plan.vertex_capacity, 3), dtype=np.asarray(state.positions).dtype)
+    positions = np.zeros(
+        (plan.vertex_capacity, 3), dtype=np.asarray(state.positions).dtype
+    )
     velocities = np.zeros_like(positions)
     positions[: topology.vertex_capacity] = np.asarray(state.positions)
     velocities[: topology.vertex_capacity] = np.asarray(state.velocities)
@@ -821,7 +823,9 @@ def _rebase_source_state(
     sheet = np.zeros(
         (plan.vertex_capacity, slots, fields), dtype=np.asarray(state.sheet_fields).dtype
     )
-    sheet[: topology.vertex_capacity, : topology.slot_width] = np.asarray(state.sheet_fields)
+    sheet[: topology.vertex_capacity, : topology.slot_width] = np.asarray(
+        state.sheet_fields
+    )
     region_fields = np.zeros(
         (plan.region_capacity, len(state.region_field_names)),
         dtype=np.asarray(state.region_fields).dtype,
@@ -869,9 +873,7 @@ def _assemble(
         maximum_edge_valence=int(
             np.max(np.sum(incidence.edge_faces >= 0, axis=1), initial=1)
         ),
-        maximum_vertex_region_pairs=int(
-            np.max(incidence.vertex_slot_count, initial=1)
-        ),
+        maximum_vertex_region_pairs=int(np.max(incidence.vertex_slot_count, initial=1)),
     )
     candidate_plan = mesh.capacity_plan
     kinds = tuple(regions.kinds[index] for index in order.tolist())
@@ -895,9 +897,7 @@ def _assemble(
     )
     if not validation.accepted:
         return _Candidate(candidate, validation, None)
-    source_topology, source_state = _rebase_source_state(
-        topology, state, candidate_plan
-    )
+    source_topology, source_state = _rebase_source_state(topology, state, candidate_plan)
     source_points = np.asarray(
         source_state.positions[: source_topology.vertex_count], dtype=np.float64
     )
@@ -1115,9 +1115,7 @@ def apply_surface_events(
             target_epoch=target_epoch,
         )
         return SurfaceEventPassResult(topology, state, evidence, None, None, None, None)
-    _, commit_source = _rebase_source_state(
-        topology, state, candidate.topology.plan
-    )
+    _, commit_source = _rebase_source_state(topology, state, candidate.topology.plan)
     transaction = TransactionalCandidate(
         _payload(commit_source),
         _payload(transfers.state),

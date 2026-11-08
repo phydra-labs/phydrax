@@ -1708,9 +1708,7 @@ def _host_pair_blocks(
     second_item_min, second_item_max = second[6:]
     first_size = np.sum(first_max - first_min, axis=-1)
     second_size = np.sum(second_max - second_min, axis=-1)
-    leaf_pair_block = max(
-        1, item_block // (first_items.shape[1] * second_items.shape[1])
-    )
+    leaf_pair_block = max(1, item_block // (first_items.shape[1] * second_items.shape[1]))
     root = np.zeros((1,), dtype=np.int64)
     pending = (
         [(root, root)]

@@ -47,13 +47,13 @@ if TYPE_CHECKING:
     from ...optim import DifferentialEvolutionSearch
     from ...typing import PRNGKey
     from ..analytic import Circle
+    from ..brep._constructors import PlanarProfile, ProfilePlane
+    from ..brep._model import BRepModel
+    from ..simplicial import PlanarMeshRegion
     from ._reduced import (
         _SketchDistanceRigidityWitness,
         _SketchGroundedRigidParameterization,
     )
-    from ..brep._constructors import PlanarProfile, ProfilePlane
-    from ..brep._model import BRepModel
-    from ..simplicial import PlanarMeshRegion
     from ._search_result import SketchSearchResult
 
 
@@ -1611,6 +1611,7 @@ class Sketch(StrictModule):
         recipe_name = name.strip()
         if not recipe_name:
             raise ValueError("name must be non-empty.")
+        from ...discretization._exact_algebraic_geometry import RadicalElement
         from ..analytic import Circle
         from ..brep._constructors import (
             PlanarProfile,
@@ -1620,7 +1621,6 @@ class Sketch(StrictModule):
             ProfileLoop,
             ProfilePlane,
         )
-        from ...discretization._exact_algebraic_geometry import RadicalElement
         from ..brep._patches import CircleCurve
         from ..simplicial import PlanarMeshRegion
 

@@ -51,7 +51,9 @@ from ._gmsh_options import (
 )
 
 
-def _complete_face_sides(scope: MeshingScope, face: int, owners: tuple[int, ...], /) -> bool:
+def _complete_face_sides(
+    scope: MeshingScope, face: int, owners: tuple[int, ...], /
+) -> bool:
     """Whether a source-face selection covers every incident solid side."""
     sides = tuple(side for side in scope.side_records if side.face_index == face)
     return (

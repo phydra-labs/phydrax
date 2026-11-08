@@ -128,7 +128,9 @@ def _sphere_source(
         ).compile()
     else:
         if not isinstance(fixed_plan.source, NativeImplicitSource):
-            raise ValueError("Fixed sphere realization requires its original implicit source.")
+            raise ValueError(
+                "Fixed sphere realization requires its original implicit source."
+            )
         original = fixed_plan.source.geometry
         index = original.schema.index(phx.geometry.ParameterId("design-sphere", "radius"))
         geometry = original.with_state(
@@ -191,13 +193,19 @@ def _sphere_source(
         implicit_policy=implicit_policy,
     )
     plan = NativeMeshingProvider(options).plan(
-        source, specification, coordinate_contract=coordinate_contract, fixed_plan=fixed_plan
+        source,
+        specification,
+        coordinate_contract=coordinate_contract,
+        fixed_plan=fixed_plan,
     )
     result = plan.execute()
     accepted = accepted_result_record(result)
     vertices = np.asarray(result.mesh.coordinates, dtype=np.float64)
     triangles = np.concatenate(
-        [vertices[np.asarray(block.vertices, dtype=np.int64)] for block in result.mesh.blocks]
+        [
+            vertices[np.asarray(block.vertices, dtype=np.int64)]
+            for block in result.mesh.blocks
+        ]
     )
     centers = np.mean(triangles, axis=1)
     normals = np.cross(
@@ -205,7 +213,9 @@ def _sphere_source(
     )
     orientation = np.einsum("ij,ij->i", normals, centers)
     if not np.all(np.isfinite(vertices)) or np.any(orientation <= 0.0):
-        raise ValueError("Independent sphere audit found nonfinite or non-outward facets.")
+        raise ValueError(
+            "Independent sphere audit found nonfinite or non-outward facets."
+        )
     independent_source_audit = {
         "maximum_vertex_radial_error_m": float(
             np.max(np.abs(np.linalg.norm(vertices, axis=1) - radius))
@@ -266,13 +276,18 @@ def _physical_oracle(
 ) -> _PhysicalOracleRecord:
     barycentric, reference_weights = _duffy_rule(order)
     from phydrax.solver._finite_element_adaptivity import _surface_p1_corners
+
     squared_error = 0.0
     represented_qoi = 0.0
     represented_exact_qoi = 0.0
     surface_area = 0.0
     maximum_radial_deviation = 0.0
     for index, (block, triangles) in enumerate(
-        zip(result.mesh.blocks, _surface_p1_corners(result.mesh, result.geometry), strict=True)
+        zip(
+            result.mesh.blocks,
+            _surface_p1_corners(result.mesh, result.geometry),
+            strict=True,
+        )
     ):
         dof_map = space.dof_maps[0]
         if block.cell_kind != "triangle":
@@ -407,6 +422,7 @@ def _proposal_features(
     del radius
     scope = mesh_proposal_scope(source, source.mesh.topological_dimension)
     from phydrax.solver._finite_element_adaptivity import _surface_p1_corners
+
     barycentric, reference_weights = _duffy_rule(8)
     cell_errors: list[np.ndarray] = []
     cell_ids: list[np.ndarray] = []
@@ -415,7 +431,11 @@ def _proposal_features(
     values = np.asarray(source_solve["values"], dtype=np.float64)
     space = source_solve["space"]
     for block_index, (block, triangles) in enumerate(
-        zip(source.mesh.blocks, _surface_p1_corners(source.mesh, source.geometry), strict=True)
+        zip(
+            source.mesh.blocks,
+            _surface_p1_corners(source.mesh, source.geometry),
+            strict=True,
+        )
     ):
         if block.cell_kind != "triangle":
             raise ValueError("Learned sphere marking requires native triangle blocks.")
@@ -442,8 +462,11 @@ def _proposal_features(
         energy = np.sum(np.square(edges[..., 0]), axis=1)
         features.append(
             np.stack(
-                (measures * energy**2, measures * energy * diameter**2,
-                 measures * diameter**4),
+                (
+                    measures * energy**2,
+                    measures * energy * diameter**2,
+                    measures * diameter**4,
+                ),
                 axis=1,
             )
         )
@@ -501,7 +524,9 @@ def _learned_from_uniform(
         or not np.isfinite(teacher_scale)
         or teacher_scale <= 0.0
     ):
-        raise ValueError("Learned comparator training scales must be finite and positive.")
+        raise ValueError(
+            "Learned comparator training scales must be finite and positive."
+        )
     design = train_features / scales
     target = teacher / teacher_scale
     weights, _, rank, _ = np.linalg.lstsq(design, target, rcond=None)
@@ -528,9 +553,12 @@ def _learned_from_uniform(
     scores = np.asarray(proposal.values, dtype=np.float64)
     correlation = _rank_correlation(scores, held_out)
     if (
-        rank != 3 or not np.all(np.isfinite(scores))
-        or not np.isfinite(residual) or residual > 0.5
-        or not np.isfinite(correlation) or correlation < 0.5
+        rank != 3
+        or not np.all(np.isfinite(scores))
+        or not np.isfinite(residual)
+        or residual > 0.5
+        or not np.isfinite(correlation)
+        or correlation < 0.5
     ):
         raise ValueError(
             f"Learned comparator trust failed: {rank=}, {residual=}, {correlation=}."
@@ -554,7 +582,9 @@ def _learned_from_uniform(
     selected_scores = -np.ones(scores.size, dtype=np.float64)
     selected_scores[selected] = scores[selected]
     selected_proposal = MeshMarkingProposal(
-        source, scope, selected_scores,
+        source,
+        scope,
+        selected_scores,
         proposer_id="supervised-native-design-observed-error-marker-top-third",
     )
     return selected_proposal, {
@@ -647,12 +677,19 @@ def _fresh_candidate_solve(
     args: object,
 ) -> phx.solver.FiniteElementReanalysisResult:
     del fields, materials, args
-    if candidate_mesh.mesh_id != target.mesh.mesh_id or adaptation.target.result_id != target.result_id:
+    if (
+        candidate_mesh.mesh_id != target.mesh.mesh_id
+        or adaptation.target.result_id != target.result_id
+    ):
         raise ValueError("Reanalysis must bind the selected target result.")
     fresh = _physical_solve(target, radius)
     return phx.solver.FiniteElementReanalysisResult(
-        fresh["problem"], fresh["solve_result"], fresh["solve_check"], "u",
-        state_problem=state_problem, check_policy=phx.linalg.LinearSolveCheckPolicy(),
+        fresh["problem"],
+        fresh["solve_result"],
+        fresh["solve_check"],
+        "u",
+        state_problem=state_problem,
+        check_policy=phx.linalg.LinearSolveCheckPolicy(),
     )
 
 
@@ -677,7 +714,11 @@ def _certify_candidate_fields(
         np.all(np.isfinite(u))
         and np.max(np.abs(u - np.asarray(expected_u)), initial=0.0) <= 1.0e-10
         and np.max(np.abs(density - 2.0), initial=0.0) <= 1.0e-10
-        and np.max(np.abs(history - (np.asarray(candidate_mesh.coordinates)[:, 1] + 0.5)), initial=0.0) <= 1.0e-10
+        and np.max(
+            np.abs(history - (np.asarray(candidate_mesh.coordinates)[:, 1] + 0.5)),
+            initial=0.0,
+        )
+        <= 1.0e-10
         and abs(float(np.dot(measures, density)) - source_inventory) <= 1.0e-9
     )
 
@@ -716,17 +757,21 @@ def _stage_all_fields(
     all_space = FiniteElementPlan(
         target.mesh, fields, coordinate_spec=target.geometry
     ).prepare()
-    if not isinstance(source_all, phx.discretization.FiniteElementDiscretization) or not isinstance(
-        all_space, phx.discretization.FiniteElementDiscretization
-    ):
+    if not isinstance(
+        source_all, phx.discretization.FiniteElementDiscretization
+    ) or not isinstance(all_space, phx.discretization.FiniteElementDiscretization):
         raise TypeError("All-field reanalysis requires finite-element discretizations.")
     state_form = phx.equations.FiniteElementForm(
         "native-design-surface-reaction",
         tuple(field.name for field in fields),
         source_solve["problem"].form.actions,
     )
-    source_state_problem = phx.equations.compile_finite_element_problem(state_form, source_all)
-    target_state_problem = phx.equations.compile_finite_element_problem(state_form, all_space)
+    source_state_problem = phx.equations.compile_finite_element_problem(
+        state_form, source_all
+    )
+    target_state_problem = phx.equations.compile_finite_element_problem(
+        state_form, all_space
+    )
     source_points = np.asarray(source.mesh.coordinates, dtype=np.float64)
     accepted = phx.solver.FiniteElementAcceptedState(
         (
@@ -741,9 +786,14 @@ def _stage_all_fields(
         source_state_problem.compilation_id,
         field_layouts=layouts,
     )
-    source_inventory = float(2.0 * np.sum(_surface_p1_measures(source.mesh, source.geometry)))
+    source_inventory = float(
+        2.0 * np.sum(_surface_p1_measures(source.mesh, source.geometry))
+    )
     certify = eqx.Partial(
-        _certify_candidate_fields, target, jnp.asarray(target_solve["values"]), source_inventory
+        _certify_candidate_fields,
+        target,
+        jnp.asarray(target_solve["values"]),
+        source_inventory,
     )
     rollback = phx.solver.FiniteElementTopologyTransaction(certify).execute(
         accepted, source.mesh, adaptation
@@ -754,10 +804,14 @@ def _stage_all_fields(
         or rollback.mesh is not source.mesh
         or rollback.diagnostics != "candidate-certification-rejected"
     ):
-        raise RuntimeError(f"Unrefreshed reanalysis did not exercise physical rollback: {rollback.diagnostics}")
+        raise RuntimeError(
+            f"Unrefreshed reanalysis did not exercise physical rollback: {rollback.diagnostics}"
+        )
     executor = phx.solver.FiniteElementTopologyTransaction(certify)
     staged = executor.execute(
-        accepted, source.mesh, adaptation,
+        accepted,
+        source.mesh,
+        adaptation,
         reanalysis_action=eqx.Partial(
             _fresh_candidate_solve, target, radius, target_state_problem
         ),
@@ -768,18 +822,29 @@ def _stage_all_fields(
         raise RuntimeError("Density transfer omitted its surface conservation proof.")
     evidence = staged.surface_conservative_transfers[0]
     if adaptation.transfer is None:
-        raise ValueError("The fixed transfer derivative requires the actual native transfer.")
+        raise ValueError(
+            "The fixed transfer derivative requires the actual native transfer."
+        )
     transfer = adaptation.transfer
     linearization = phx.linalg.prepare_linearization(transfer.apply, accepted.fields[0])
     direction = jnp.linspace(-0.5, 0.5, accepted.fields[0].size)
     tangent = linearization.jvp(direction)
     cotangent = jnp.linspace(-0.3, 0.8, tangent.size)
-    duality = abs(float(jnp.vdot(tangent, cotangent) - jnp.vdot(direction, linearization.vjp(cotangent))))
-    finite = (transfer.apply(accepted.fields[0] + 1.0e-5 * direction)
-              - transfer.apply(accepted.fields[0] - 1.0e-5 * direction)) / 2.0e-5
+    duality = abs(
+        float(
+            jnp.vdot(tangent, cotangent)
+            - jnp.vdot(direction, linearization.vjp(cotangent))
+        )
+    )
+    finite = (
+        transfer.apply(accepted.fields[0] + 1.0e-5 * direction)
+        - transfer.apply(accepted.fields[0] - 1.0e-5 * direction)
+    ) / 2.0e-5
     transfer_fd = float(jnp.max(jnp.abs(tangent - finite)))
     if transfer_fd > 2.0e-6 or duality > 2.0e-8:
-        raise ValueError("Fixed native transfer failed its finite-difference or duality oracle.")
+        raise ValueError(
+            "Fixed native transfer failed its finite-difference or duality oracle."
+        )
     return {
         "source_accepted_id": accepted.accepted_id,
         "target_accepted_id": staged.state.accepted_id,
@@ -790,7 +855,8 @@ def _stage_all_fields(
         "source_inventory": float(evidence.source_integral),
         "target_inventory": float(evidence.target_integral),
         "inventory_error": abs(float(evidence.conservation_defect)),
-        "source_retained_after_unrefreshed_refusal": rollback.state is accepted and rollback.mesh is source.mesh,
+        "source_retained_after_unrefreshed_refusal": rollback.state is accepted
+        and rollback.mesh is source.mesh,
         "unrefreshed_refusal": rollback.diagnostics,
         "reanalysis_operator_id": staged.reanalysis.solve_check.operator_id,
         "reanalysis_evidence_id": staged.reanalysis.evidence_id,
@@ -798,8 +864,6 @@ def _stage_all_fields(
         "transfer_jvp_vjp_duality_error": duality,
         "reanalysis_valid": bool(np.all(np.asarray(staged.reanalysis.solve_check.valid))),
     }, all_space
-
-
 
 
 def _execute_proposal(
@@ -812,9 +876,12 @@ def _execute_proposal(
     qoi_certificate_id: str,
     /,
 ) -> tuple[
-    dict[str, object], phx.meshing.MeshAdaptationCandidate,
-    phx.meshing.CellMeshingResult, _PhysicalSolveRecord,
-    phx.meshing.MeshAdaptationResult, phx.meshing.PhysicalErrorEvidence,
+    dict[str, object],
+    phx.meshing.MeshAdaptationCandidate,
+    phx.meshing.CellMeshingResult,
+    _PhysicalSolveRecord,
+    phx.meshing.MeshAdaptationResult,
+    phx.meshing.PhysicalErrorEvidence,
 ]:
     preparation_start = perf_counter()
     transaction = prepare_mesh_proposal(
@@ -836,7 +903,9 @@ def _execute_proposal(
     except ValueError as error:
         stale_refusal = f"{type(error).__name__}: {error}"
     else:
-        raise RuntimeError("A proposal bound to the old source was accepted on its target.")
+        raise RuntimeError(
+            "A proposal bound to the old source was accepted on its target."
+        )
     if (
         not target.audit.passed
         or not target.compliance.passed
@@ -880,12 +949,19 @@ def _execute_proposal(
     reanalysis_seconds += perf_counter() - staging_start
 
     candidate_error = _field_error(
-        target, target_solve, radius, f"{name}-independent-duffy-field",
+        target,
+        target_solve,
+        radius,
+        f"{name}-independent-duffy-field",
         quadrature_order=8,
     )
     candidate_qoi = _qoi_error(
-        target, target_solve, radius, f"{name}-independent-duffy-qoi",
-        qoi_certificate_id, quadrature_order=8,
+        target,
+        target_solve,
+        radius,
+        f"{name}-independent-duffy-qoi",
+        qoi_certificate_id,
+        quadrature_order=8,
     )
     solve_check = target_solve["solve_check"]
     feasibility = phx.meshing.RouteFeasibility(
@@ -1039,8 +1115,13 @@ def _fixed_epoch_derivative(
         geometry_layout_id=result.geometry.geometry_layout_id,
     )
     problem = solve["problem"]
-    cells = tuple(jnp.asarray(block.vertices, dtype=jnp.int32) for block in result.mesh.blocks)
-    dofs = tuple(jnp.asarray(rows, dtype=jnp.int32) for rows in solve["space"].dof_maps[0].cell_dofs)
+    cells = tuple(
+        jnp.asarray(block.vertices, dtype=jnp.int32) for block in result.mesh.blocks
+    )
+    dofs = tuple(
+        jnp.asarray(rows, dtype=jnp.int32)
+        for rows in solve["space"].dof_maps[0].cell_dofs
+    )
     policy = phx.linalg.LinearSolvePolicy(
         derivative_solve=phx.linalg.LinearDerivativeSolvePolicy(
             relative_tolerance=1.0e-12, absolute_tolerance=1.0e-14
@@ -1073,7 +1154,9 @@ def _fixed_epoch_derivative(
     taylor_distance = max(-lower, upper)
     taylor_sign = 1.0 if upper >= -lower else -1.0
     offsets = (
-        0.0, -step, step,
+        0.0,
+        -step,
+        step,
         taylor_sign * taylor_distance / 8.0,
         taylor_sign * taylor_distance / 16.0,
         taylor_sign * taylor_distance / 32.0,
@@ -1083,7 +1166,9 @@ def _fixed_epoch_derivative(
             geometry.state.replace_at(radius_index, radius + offset)
         ).evidence
         if int(np.asarray(evidence.status)) != 0:
-            raise ValueError(f"Fixed implicit realization refused derivative offset {offset}.")
+            raise ValueError(
+                f"Fixed implicit realization refused derivative offset {offset}."
+            )
     base, tangent = jax.jvp(represented, (radius,), (jnp.ones_like(radius),))
     adjoint = jax.grad(represented)(radius)
     minus = represented(radius - step)
@@ -1100,7 +1185,9 @@ def _fixed_epoch_derivative(
             primal.shape
         )
         duality = abs(
-            float(jnp.vdot(derivative, cotangent) - direction * linearization.vjp(cotangent))
+            float(
+                jnp.vdot(derivative, cotangent) - direction * linearization.vjp(cotangent)
+            )
         )
         finite = (function(radius + step) - function(radius - step)) / 2.0e-5
         return float(jnp.max(jnp.abs(derivative - finite))), duality
@@ -1117,13 +1204,17 @@ def _fixed_epoch_derivative(
         normal = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
         lengths = np.linalg.norm(normal, axis=1)
         if np.any(lengths <= 0.0):
-            raise ValueError("Independent moment oracle requires nondegenerate triangles.")
+            raise ValueError(
+                "Independent moment oracle requires nondegenerate triangles."
+            )
         area = 0.5 * lengths
         unit = normal / lengths[:, None]
         x = corners[..., 0]
         local_moment = (
-            np.sum(x * x, axis=1) + x[:, 0] * x[:, 1]
-            + x[:, 0] * x[:, 2] + x[:, 1] * x[:, 2]
+            np.sum(x * x, axis=1)
+            + x[:, 0] * x[:, 1]
+            + x[:, 0] * x[:, 2]
+            + x[:, 1] * x[:, 2]
         ) / 6.0
         moment += float(np.sum(area * local_moment))
         for local in range(3):
@@ -1141,12 +1232,12 @@ def _fixed_epoch_derivative(
     if any(not np.isfinite(value) or value <= 0.0 for value in remainder):
         raise ValueError("The fixed-event Taylor remainders are not resolved.")
     slopes = [
-        float(np.log(remainder[i] / remainder[i + 1]) / np.log(2.0))
-        for i in range(2)
+        float(np.log(remainder[i] / remainder[i + 1]) / np.log(2.0)) for i in range(2)
     ]
     roundoff_bound = (
         sum(block.cell_count for block in result.mesh.blocks)
-        * np.finfo(np.float64).eps * abs(base_value)
+        * np.finfo(np.float64).eps
+        * abs(base_value)
     )
     checks = {
         "geometry_finite_difference": geometry_fd,
@@ -1199,9 +1290,9 @@ def _fixed_epoch_derivative(
         root_problem = phx.nonlinear.ScalarRootProblem(
             lambda value, _: compiled_qoi(value) - design_target,
             bracket=bracket,
-            validity=lambda value, _residual, _args: surface.realize(
-                geometry.state.replace_at(radius_index, value)
-            ).accepted,
+            validity=lambda value, _residual, _args: (
+                surface.realize(geometry.state.replace_at(radius_index, value)).accepted
+            ),
             problem_id="fixed-epoch-represented-sphere-moment",
         )
         solved = phx.nonlinear.scalar_root(
@@ -1218,7 +1309,9 @@ def _fixed_epoch_derivative(
             or not bracket[0] < root < bracket[1]
             or abs(float(solved.value)) > 1.0e-9
         ):
-            raise ValueError("The represented FE design root did not converge inside its event.")
+            raise ValueError(
+                "The represented FE design root did not converge inside its event."
+            )
         root_points = np.asarray(coordinates(jnp.asarray(root)), dtype=np.float64)
         independent = 0.0
         for cell in cells:
@@ -1228,12 +1321,22 @@ def _fixed_epoch_derivative(
                 axis=1,
             )
             x = corners[..., 0]
-            independent += float(np.sum(area * (
-                np.sum(x * x, axis=1) + x[:, 0] * x[:, 1]
-                + x[:, 0] * x[:, 2] + x[:, 1] * x[:, 2]
-            ) / 6.0))
+            independent += float(
+                np.sum(
+                    area
+                    * (
+                        np.sum(x * x, axis=1)
+                        + x[:, 0] * x[:, 1]
+                        + x[:, 0] * x[:, 2]
+                        + x[:, 1] * x[:, 2]
+                    )
+                    / 6.0
+                )
+            )
         if abs(independent - design_target) > 1.0e-8:
-            raise ValueError("The designed root failed its independent represented-moment oracle.")
+            raise ValueError(
+                "The designed root failed its independent represented-moment oracle."
+            )
         record["design_step"] = {
             "target": design_target,
             "initial_radius": float(radius),
@@ -1257,10 +1360,21 @@ def _fixed_epoch_margins(
     signed = jnp.where(surface.inside_pattern, -values, values)
     return (
         ("lattice-sign", float(jnp.min(signed)) - surface.policy.lattice_zero_tolerance),
-        ("face-area", float(realization.evidence.minimum_face_area) - surface.policy.minimum_face_area),
+        (
+            "face-area",
+            float(realization.evidence.minimum_face_area)
+            - surface.policy.minimum_face_area,
+        ),
         ("orientation", float(realization.evidence.minimum_orientation_margin)),
-        ("gradient", float(realization.evidence.projection.minimum_gradient_norm) - surface.policy.projection.minimum_gradient_norm),
-        ("projection-trust", 1.0 - float(realization.evidence.projection.maximum_displacement_ratio)),
+        (
+            "gradient",
+            float(realization.evidence.projection.minimum_gradient_norm)
+            - surface.policy.projection.minimum_gradient_norm,
+        ),
+        (
+            "projection-trust",
+            1.0 - float(realization.evidence.projection.maximum_displacement_ratio),
+        ),
     )
 
 
@@ -1279,11 +1393,17 @@ def _fixed_epoch_evidence(
     surface = prepared.surface_plan
     realization = surface.realize(geometry.state)
     margins = _fixed_epoch_margins(surface, geometry.state)
-    if not bool(np.asarray(realization.accepted)) or any(value <= 0.0 for _, value in margins):
-        raise ValueError("Fixed-epoch evidence requires positive branch and regularity margins.")
+    if not bool(np.asarray(realization.accepted)) or any(
+        value <= 0.0 for _, value in margins
+    ):
+        raise ValueError(
+            "Fixed-epoch evidence requires positive branch and regularity margins."
+        )
     transfer_id = transaction.get("transfer_plan_id")
     if not isinstance(transfer_id, str) or not transaction.get("reanalysis_valid"):
-        raise ValueError("Fixed-epoch transfer requires actual accepted transfer evidence.")
+        raise ValueError(
+            "Fixed-epoch transfer requires actual accepted transfer evidence."
+        )
     routes = (
         ("geometry", surface.plan_id),
         ("pde", solve["problem"].compilation_id),
@@ -1318,7 +1438,8 @@ def _recordable_solve(value: _PhysicalSolveRecord, /) -> dict[str, object]:
     return {
         key: item
         for key, item in value.items()
-        if key not in {"space", "problem", "solve_check", "solve_result", "values", "residual"}
+        if key
+        not in {"space", "problem", "solve_check", "solve_result", "values", "residual"}
     }
 
 
@@ -1360,7 +1481,9 @@ def _profile_case(
     }
     failures = profile["failures"]
     try:
-        geometry, _, _, native_plan, source, source_record = _sphere_source(lattice_factor)
+        geometry, _, _, native_plan, source, source_record = _sphere_source(
+            lattice_factor
+        )
         profile["source"] = source_record
     except Exception as error:
         failures.append(f"native implicit sphere source: {type(error).__name__}: {error}")
@@ -1384,7 +1507,10 @@ def _profile_case(
     fixed_derivative: dict[str, object] | None = None
     try:
         fixed_derivative = _fixed_epoch_derivative(
-            geometry, native_plan, source, source_solve,
+            geometry,
+            native_plan,
+            source,
+            source_solve,
             design_target=(4.0 * np.pi * 0.75**4 / 3.0 if combined_target else None),
         )
         profile["fixed_epoch_derivative"] = fixed_derivative
@@ -1393,7 +1519,9 @@ def _profile_case(
         if combined_target:
             design_step = fixed_derivative["design_step"]
             if not isinstance(design_step, dict):
-                raise TypeError("Combined design must retain its nonlinear root evidence.")
+                raise TypeError(
+                    "Combined design must retain its nonlinear root evidence."
+                )
             current_radius = float(design_step["root_radius"])
             initial_result_id = source.result_id
             geometry, _, _, native_plan, source, source_record = _sphere_source(
@@ -1419,7 +1547,9 @@ def _profile_case(
                 geometry, native_plan, source, source_solve
             )
             if not requalified["passed"]:
-                raise ValueError("Designed source did not requalify its fixed derivatives.")
+                raise ValueError(
+                    "Designed source did not requalify its fixed derivatives."
+                )
             fixed_derivative = requalified
             profile["designed_state"] = {
                 "root": design_step,
@@ -1456,12 +1586,19 @@ def _profile_case(
         "represented-surface-reaction-L2", objective_tolerance, intent="improve"
     )
     baseline = _field_error(
-        source, source_solve, current_radius, "native-source-duffy-order-10",
+        source,
+        source_solve,
+        current_radius,
+        "native-source-duffy-order-10",
         quadrature_order=10,
     )
     baseline_qoi = _qoi_error(
-        source, source_solve, current_radius, "native-source-duffy-order-10-qoi",
-        qoi_certificate_id, quadrature_order=10,
+        source,
+        source_solve,
+        current_radius,
+        "native-source-duffy-order-10-qoi",
+        qoi_certificate_id,
+        quadrature_order=10,
     )
     profile["objective"] = {
         "objective_id": objective.objective_id,
@@ -1549,30 +1686,42 @@ def _profile_case(
             failures.append(f"analytic proposal creation: {detail}")
 
     candidates: list[phx.meshing.MeshAdaptationCandidate] = []
-    targets: dict[str, tuple[
-        phx.meshing.CellMeshingResult, _PhysicalSolveRecord,
-        phx.meshing.MeshAdaptationResult,
-    ]] = {}
+    targets: dict[
+        str,
+        tuple[
+            phx.meshing.CellMeshingResult,
+            _PhysicalSolveRecord,
+            phx.meshing.MeshAdaptationResult,
+        ],
+    ] = {}
     qoi_candidates: list[phx.meshing.MeshAdaptationCandidate] = []
     if safety is not None:
         for proposal_name, proposal in proposals:
             try:
-                record, candidate, target, target_solve, adaptation, qoi = _execute_proposal(
-                    source,
-                    source_solve,
-                    proposal_name,
-                    proposal,
-                    safety,
-                    current_radius,
-                    qoi_certificate_id,
+                record, candidate, target, target_solve, adaptation, qoi = (
+                    _execute_proposal(
+                        source,
+                        source_solve,
+                        proposal_name,
+                        proposal,
+                        safety,
+                        current_radius,
+                        qoi_certificate_id,
+                    )
                 )
                 profile["proposal_attempts"].append(record)
                 candidates.append(candidate)
                 targets[candidate.candidate_id] = (target, target_solve, adaptation)
-                qoi_candidates.append(phx.meshing.MeshAdaptationCandidate(
-                    candidate.action, candidate.candidate_id, candidate.feasibility,
-                    qoi, candidate.cost, candidate.solve_check,
-                ))
+                qoi_candidates.append(
+                    phx.meshing.MeshAdaptationCandidate(
+                        candidate.action,
+                        candidate.candidate_id,
+                        candidate.feasibility,
+                        qoi,
+                        candidate.cost,
+                        candidate.solve_check,
+                    )
+                )
                 if proposal_name == "uniform":
                     try:
                         learned, training = _learned_from_uniform(
@@ -1616,7 +1765,9 @@ def _profile_case(
         "satisfied_without_adaptation": decision.satisfied_without_adaptation,
     }
     qoi_objective = phx.meshing.MeshAdaptationObjective(
-        "authored-continuous-sphere-x2-moment", 1.0e-8, quantity="qoi",
+        "authored-continuous-sphere-x2-moment",
+        1.0e-8,
+        quantity="qoi",
         intent="improve",
     )
     qoi_decision = qoi_objective.decide(baseline_qoi, qoi_candidates)
@@ -1651,18 +1802,29 @@ def _profile_case(
     derivative_evidence = None
     derivative_margins: tuple[tuple[str, float], ...] = ()
     if decision.selected is not None:
-        target, target_solve, selected_adaptation = targets[decision.selected.candidate_id]
+        target, target_solve, selected_adaptation = targets[
+            decision.selected.candidate_id
+        ]
         try:
             reanalysis_start = perf_counter()
             selected_state, _ = _stage_all_fields(
-                source, source_solve, target, target_solve, selected_adaptation,
+                source,
+                source_solve,
+                target,
+                target_solve,
+                selected_adaptation,
                 current_radius,
             )
             profile["selected_all_field_transaction"] = selected_state
             if fixed_derivative is None:
                 raise ValueError("The source fixed-epoch derivative was not qualified.")
             derivative_evidence, derivative_margins = _fixed_epoch_evidence(
-                geometry, native_plan, source, source_solve, fixed_derivative, selected_state
+                geometry,
+                native_plan,
+                source,
+                source_solve,
+                fixed_derivative,
+                selected_state,
             )
             profile["fixed_epoch_qualification"] = {
                 "evidence_id": derivative_evidence.evidence_id,
@@ -1672,7 +1834,10 @@ def _profile_case(
             }
             fresh_solve = _physical_solve(target, current_radius)
             fresh_error = _field_error(
-                target, fresh_solve, current_radius, "fresh-independent-duffy-order-14",
+                target,
+                fresh_solve,
+                current_radius,
+                "fresh-independent-duffy-order-14",
                 quadrature_order=14,
             )
             decision.require_reanalysis(fresh_error, fresh_solve["solve_check"])
@@ -1705,32 +1870,50 @@ def _profile_case(
         changed_signs = np.sum(np.square(lattice), axis=-1) < changed_radius**2
         event_crossed = not np.array_equal(initial_signs, changed_signs)
         if not isinstance(native_plan.prepared, _PreparedFixedImplicitRoute):
-            raise TypeError("Event invalidation requires the published fixed implicit plan.")
+            raise TypeError(
+                "Event invalidation requires the published fixed implicit plan."
+            )
         surface_plan = native_plan.prepared.surface_plan
         radius_index = geometry.schema.index(
             phx.geometry.ParameterId("design-sphere", "radius")
         )
-        initial_status = int(np.asarray(surface_plan.realize(geometry.state).evidence.status))
-        changed_state = geometry.state.replace_at(radius_index, jnp.asarray(changed_radius))
-        changed_status = int(np.asarray(surface_plan.realize(changed_state).evidence.status))
+        initial_status = int(
+            np.asarray(surface_plan.realize(geometry.state).evidence.status)
+        )
+        changed_state = geometry.state.replace_at(
+            radius_index, jnp.asarray(changed_radius)
+        )
+        changed_status = int(
+            np.asarray(surface_plan.realize(changed_state).evidence.status)
+        )
         sign_bit = int(phx.geometry.ImplicitSurfaceStatus.SIGN_PATTERN_CHANGED)
         if derivative_evidence is None or decision.selected is None:
-            raise ValueError("Event invalidation requires the selected derivative evidence.")
+            raise ValueError(
+                "Event invalidation requires the selected derivative evidence."
+            )
         parameter_id = phx.geometry.ParameterId("design-sphere", "radius")
         initial_issues = derivative_evidence.invalidation_issues(
-            source.result_id, parameter_id, routes=derivative_evidence.routes,
+            source.result_id,
+            parameter_id,
+            routes=derivative_evidence.routes,
             event_margins=derivative_margins,
         )
         changed_issues = derivative_evidence.invalidation_issues(
-            source.result_id, parameter_id, routes=derivative_evidence.routes,
+            source.result_id,
+            parameter_id,
+            routes=derivative_evidence.routes,
             event_margins=_fixed_epoch_margins(surface_plan, changed_state),
             geometry_realization_id=event_source.result_id,
             topology_event_id=decision.selected.candidate_id,
         )
         if initial_issues or not {
-            "event-boundary", "stopped-geometry-realization-event", "stopped-topology-event"
+            "event-boundary",
+            "stopped-geometry-realization-event",
+            "stopped-topology-event",
         }.issubset(changed_issues):
-            raise ValueError("Fixed-epoch derivative invalidation omitted a stopped event.")
+            raise ValueError(
+                "Fixed-epoch derivative invalidation omitted a stopped event."
+            )
         refused = []
         for proposal_name, proposal in proposals:
             try:
@@ -1767,7 +1950,10 @@ def _profile_case(
 
     profile_gaps = []
     for key, detail in (
-        ("fixed_epoch_qualification", "fixed geometry/PDE/transfer derivative qualification"),
+        (
+            "fixed_epoch_qualification",
+            "fixed geometry/PDE/transfer derivative qualification",
+        ),
         ("selected_all_field_transaction", "selected all-field physical transaction"),
         ("fresh_physical_reanalysis", "independent selected physical reanalysis"),
         ("learned_training", "held-out learned comparator"),

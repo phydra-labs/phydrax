@@ -205,6 +205,7 @@ def test_objective_stops_without_remeshing_when_baseline_meets_tolerance() -> No
         "baseline-already-meets-target",
     )
 
+
 def test_explicit_improve_intent_preserves_target_and_admissibility_gates() -> None:
     objective = MeshAdaptationObjective("sphere-field-error", 0.1, intent="improve")
     default = MeshAdaptationObjective("sphere-field-error", 0.1)
@@ -212,20 +213,37 @@ def test_explicit_improve_intent_preserves_target_and_admissibility_gates() -> N
     baseline = _error("accepted", "baseline", field=0.03, geometry=0.01)
     check = _solve_check()
     good = _candidate(
-        "good", AdaptationAction.H, field=0.005, geometry=0.005,
-        seconds=1.0, solve_check=check,
+        "good",
+        AdaptationAction.H,
+        field=0.005,
+        geometry=0.005,
+        seconds=1.0,
+        solve_check=check,
     )
     unchanged = _candidate(
-        "unchanged", AdaptationAction.H, field=0.03, geometry=0.01,
-        seconds=0.0, solve_check=check,
+        "unchanged",
+        AdaptationAction.H,
+        field=0.03,
+        geometry=0.01,
+        seconds=0.0,
+        solve_check=check,
     )
     invalid = _candidate(
-        "invalid", AdaptationAction.H, field=0.001, geometry=0.001,
-        seconds=0.0, solve_check=check, issues=("transfer-unavailable",),
+        "invalid",
+        AdaptationAction.H,
+        field=0.001,
+        geometry=0.001,
+        seconds=0.0,
+        solve_check=check,
+        issues=("transfer-unavailable",),
     )
     unmet = _candidate(
-        "unmet", AdaptationAction.H, field=0.2, geometry=0.0,
-        seconds=0.0, solve_check=check,
+        "unmet",
+        AdaptationAction.H,
+        field=0.2,
+        geometry=0.0,
+        seconds=0.0,
+        solve_check=check,
     )
     decision = objective.decide(baseline, (good, unchanged, invalid, unmet))
     assert decision.selected is good
@@ -240,7 +258,6 @@ def test_explicit_improve_intent_preserves_target_and_admissibility_gates() -> N
     assert stale.selected is None
     assert "stale-source" in dict(stale.dispositions)["good"]
     assert not stale.satisfied_without_adaptation
-
 
 
 def test_foreign_solver_evidence_cannot_admit_a_route() -> None:

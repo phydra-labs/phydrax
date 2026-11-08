@@ -460,20 +460,26 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
                 and feature_source.conforming_execution
                 and layer_core_root_geometry is None
             ):
-                raise ValueError("Conforming layer/core certification requires its root geometry.")
+                raise ValueError(
+                    "Conforming layer/core certification requires its root geometry."
+                )
         if layer_core_root_geometry is not None:
             if type(layer_core_root_geometry) is not LayerCoreRootGeometry:
                 raise TypeError("layer_core_root_geometry must be LayerCoreRootGeometry.")
             if type(feature_source) is not NativeLayerCoreSource:
-                raise TypeError("Layer root geometry requires its actual layer/core source.")
+                raise TypeError(
+                    "Layer root geometry requires its actual layer/core source."
+                )
             if computed_root is None:
                 layer_core_root_geometry.require_current(
                     feature_source, layer_core_root_geometry.specification
                 )
             elif type(computed_root) is ComputedLayerCoreRoot:
                 computed_root.require(
-                    feature_source, layer_core_root_geometry.specification,
-                    layer_core_root_geometry.mesh, layer_core_root_geometry.geometry,
+                    feature_source,
+                    layer_core_root_geometry.specification,
+                    layer_core_root_geometry.mesh,
+                    layer_core_root_geometry.geometry,
                     layer_core_root_geometry,
                 )
             else:
@@ -547,7 +553,8 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
                     feature_source.source_revision,
                 ),
                 **(
-                    {} if layer_core_root_geometry is None
+                    {}
+                    if layer_core_root_geometry is None
                     else {"layer_core_root_geometry": layer_core_root_geometry.root_id}
                 ),
                 "junctions": None
@@ -661,7 +668,9 @@ def validate_fidelity_witnesses(
     if fidelity_witness is not None and source is not None:
         tokens.append(
             validate_source_fidelity_witness(
-                mesh, geometry, source,
+                mesh,
+                geometry,
+                source,
                 validated_fidelity_witness(
                     validated, mesh, geometry, source, fidelity_witness
                 ),
@@ -670,7 +679,9 @@ def validate_fidelity_witnesses(
     for query, witness, _ in scoped_fidelity:
         tokens.append(
             validate_source_fidelity_witness(
-                mesh, geometry, query,
+                mesh,
+                geometry,
+                query,
                 validated_fidelity_witness(
                     (*validated, *tokens), mesh, geometry, query, witness
                 ),

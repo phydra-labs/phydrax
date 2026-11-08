@@ -11,16 +11,16 @@ from fractions import Fraction
 
 import numpy as np
 
-from ..discretization._cell_complex import PolyhedralConnectivity, polyhedral_connectivity
+from ..discretization._cell_complex import polyhedral_connectivity, PolyhedralConnectivity
 from ..discretization._cell_mesh import CellMesh
 from ._contracts import MeshingFailure, MeshingFailureCategory
 from ._lineage import EntityLineageKind
 from ._topology_edit import (
     CellTopologyEdit,
+    entity_keys,
     EntityRelations,
     PolyhedralTopologyEditBlock,
     SharedFaceWitnesses,
-    entity_keys,
 )
 
 
@@ -41,8 +41,6 @@ class PolyhedralAdaptationError(MeshingFailure):
             stage="polyhedral_adaptation",
             entity_ids=entity_ids,
         )
-
-
 
 
 def polyhedral_face_loops(mesh: CellMesh, /) -> tuple[tuple[np.ndarray, ...], ...]:
@@ -108,10 +106,7 @@ def _shared_face_witnesses(target: CellMesh, /) -> SharedFaceWitnesses:
     first_facets = owner_local[shared]
     second_facets = neighbor_local[shared]
     width = max(
-        (
-            len(loops[int(owner[row])][int(owner_local[row])])
-            for row in shared
-        ),
+        (len(loops[int(owner[row])][int(owner_local[row])]) for row in shared),
         default=3,
     )
     permutations = np.full((shared.size, width), -1, dtype=np.int64)
@@ -149,15 +144,21 @@ def _vertex_stencil(
         row = supports.get(int(identifier))
         if row is None and int(identifier) in source_ids:
             row = {int(identifier): Fraction(1)}
-        active = () if row is None else tuple(
-            sorted(
-                (int(source_id), coefficient)
-                for source_id, coefficient in row.items()
-                if coefficient != 0
+        active = (
+            ()
+            if row is None
+            else tuple(
+                sorted(
+                    (int(source_id), coefficient)
+                    for source_id, coefficient in row.items()
+                    if coefficient != 0
+                )
             )
         )
         if active and sum((value for _, value in active), Fraction(0)) != 1:
-            raise ValueError("Polyhedral vertex ancestry must preserve constants exactly.")
+            raise ValueError(
+                "Polyhedral vertex ancestry must preserve constants exactly."
+            )
         rows.append(active)
     width = max(1, max((len(row) for row in rows), default=0))
     source_rows = np.full((len(rows), width), -1, dtype=np.int64)
@@ -182,8 +183,12 @@ def _relation_records(
 ) -> tuple[EntityRelations, ...]:
     source_cells = entity_keys(source, source.topological_dimension)[:, 0]
     target_cells = entity_keys(target, target.topological_dimension)[:, 0]
-    source_cell_rows = {int(identifier): row for row, identifier in enumerate(source_cells)}
-    target_cell_rows = {int(identifier): row for row, identifier in enumerate(target_cells)}
+    source_cell_rows = {
+        int(identifier): row for row, identifier in enumerate(source_cells)
+    }
+    target_cell_rows = {
+        int(identifier): row for row, identifier in enumerate(target_cells)
+    }
     top_sources: list[np.ndarray] = []
     top_targets: list[np.ndarray] = []
     top_kinds: list[int] = []
@@ -227,10 +232,7 @@ def _relation_records(
             if supports is None:
                 continue
             ancestry = set().union(
-                *(
-                    set(supports.get(vertex, {vertex}))
-                    for vertex in child_vertices
-                )
+                *(set(supports.get(vertex, {vertex})) for vertex in child_vertices)
             )
             if not ancestry:
                 continue
@@ -238,7 +240,10 @@ def _relation_records(
             for source_key in source_keys:
                 parent_vertices = tuple(int(value) for value in source_key if value >= 0)
                 parent_identity = set(parent_vertices)
-                if ancestry.issubset(parent_identity) and child_identity != parent_identity:
+                if (
+                    ancestry.issubset(parent_identity)
+                    and child_identity != parent_identity
+                ):
                     parent_rows.append(source_key)
                     child_rows.append(target_key)
         ordering = sorted(
@@ -251,13 +256,15 @@ def _relation_records(
         records.append(
             EntityRelations(
                 dimension,
-                np.asarray([parent_rows[index] for index in ordering], dtype=np.int64).reshape(
-                    (-1, source_keys.shape[1])
+                np.asarray(
+                    [parent_rows[index] for index in ordering], dtype=np.int64
+                ).reshape((-1, source_keys.shape[1])),
+                np.asarray(
+                    [child_rows[index] for index in ordering], dtype=np.int64
+                ).reshape((-1, target_keys.shape[1])),
+                np.full(
+                    len(ordering), int(EntityLineageKind.REFINED_FROM), dtype=np.int32
                 ),
-                np.asarray([child_rows[index] for index in ordering], dtype=np.int64).reshape(
-                    (-1, target_keys.shape[1])
-                ),
-                np.full(len(ordering), int(EntityLineageKind.REFINED_FROM), dtype=np.int32),
             )
         )
     return tuple(records)
@@ -276,7 +283,9 @@ def build_polyhedral_topology_edit(
     if not isinstance(source_connectivity, PolyhedralConnectivity) or not isinstance(
         target_connectivity, PolyhedralConnectivity
     ):
-        raise TypeError("Polyhedral topology edits require polyhedral source and target meshes.")
+        raise TypeError(
+            "Polyhedral topology edits require polyhedral source and target meshes."
+        )
     target_loops = polyhedral_face_loops(target)
     target_cell_ids = np.asarray(target_connectivity.cell_global_ids, dtype=np.int64)
     rows_by_id = {
@@ -285,7 +294,9 @@ def build_polyhedral_topology_edit(
     blocks: list[PolyhedralTopologyEditBlock] = []
     for block in target.blocks:
         identifiers = np.asarray(block.global_ids, dtype=np.int64)
-        loops = tuple(target_loops[rows_by_id[int(identifier)]] for identifier in identifiers)
+        loops = tuple(
+            target_loops[rows_by_id[int(identifier)]] for identifier in identifiers
+        )
         connectivity = polyhedral_connectivity(
             loops,
             target.coordinates.shape[0],

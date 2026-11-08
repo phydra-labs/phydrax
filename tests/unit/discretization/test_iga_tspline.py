@@ -117,8 +117,7 @@ def test_local_refinement_prolongs_geometry_and_weighted_field_separately() -> N
     target_plan = refinement.target_plan
     target_prepared = target_plan.prepare(numeric_version="target")
     exact_coefficients = tuple(
-        (Fraction((index % 7) - 3, 11),)
-        for index in range(mesh.coefficient_count)
+        (Fraction((index % 7) - 3, 11),) for index in range(mesh.coefficient_count)
     )
     source_coefficients = jnp.asarray(
         [float(row[0]) for row in exact_coefficients], dtype=jnp.float64
@@ -392,5 +391,3 @@ def test_reference_hessian_and_transpose_share_the_exact_local_route() -> None:
         rtol=2.0e-13,
         atol=2.0e-13,
     )
-
-

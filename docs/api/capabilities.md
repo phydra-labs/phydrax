@@ -4,14 +4,14 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `8a358800146cc625750f2abd5734e37edf66c692f4f615249a98cd0a50bcca13`
+Catalog ID: `a2f166364c63514f19871aa1bcb7c98f58f74b467b1f7df06e6005e4625f99cd`
 
 ## Dispositions
 
 | Disposition | Count |
 | --- | ---: |
 | released | 0 |
-| candidate | 340 |
+| candidate | 354 |
 | research | 172 |
 | internal | 5 |
 | retired | 0 |
@@ -320,6 +320,20 @@ Catalog ID: `8a358800146cc625750f2abd5734e37edf66c692f4f615249a98cd0a50bcca13`
 | `meshfree.strong-form` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
 | `meshfree.surface-operators` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
 | `meshfree.surface-stokes` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshing.native-cad` | `phydrax.meshing` | candidate | candidate | 1 |
+| `meshing.native-constrained-solids` | `phydrax.meshing` | candidate | candidate | 1 |
+| `meshing.native-curves-planar-surfaces` | `phydrax.meshing` | candidate | candidate | 1 |
+| `meshing.native-design` | `phydrax.meshing` | candidate | candidate | 1 |
+| `meshing.native-distributed` | `phydrax.meshing` | candidate | candidate | 1 |
+| `meshing.native-hybrid-layers` | `phydrax.meshing` | candidate | candidate | 1 |
+| `meshing.native-implicit` | `phydrax.meshing` | candidate | candidate | 1 |
+| `meshing.native-labeled-images` | `phydrax.meshing` | candidate | candidate | 1 |
+| `meshing.native-moving-overset` | `phydrax.meshing` | candidate | candidate | 1 |
+| `meshing.native-periodic` | `phydrax.meshing` | candidate | candidate | 1 |
+| `meshing.native-polyhedral` | `phydrax.meshing` | candidate | candidate | 1 |
+| `meshing.native-quads-hexes` | `phydrax.meshing` | candidate | candidate | 1 |
+| `meshing.native-reconstruction` | `phydrax.meshing` | candidate | candidate | 1 |
+| `meshing.native-tspline-cad-analysis` | `phydrax.meshing` | candidate | candidate | 1 |
 | `multiregion-surface.geometry` | `phydrax.geometry.multiregion_surface` | candidate | candidate | 1 |
 | `multiregion-surface.label-field-extraction` | `phydrax.geometry.multiregion_surface` | candidate | candidate | 1 |
 | `multiregion-surface.remeshing` | `phydrax.geometry.multiregion_surface` | candidate | candidate | 1 |

@@ -10,13 +10,13 @@ import jax.numpy as jnp
 import numpy as np
 
 from phydrax.geometry.design import (
+    continue_sketch,
     FixedPoint,
     ParameterId,
     PointDistance,
     Sketch,
     SketchBranchWitness,
     SketchContinuationReference,
-    continue_sketch,
 )
 from phydrax.lifecycle import Composition, CompositionEntry
 from phydrax.meshing._model_codec import (

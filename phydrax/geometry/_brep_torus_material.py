@@ -13,9 +13,10 @@ from typing import TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import phydrax.ein as ein
 from jax import Array
 from jax.typing import ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -33,12 +34,13 @@ from ._interval_enclosure import (
 from ._rational import fraction_down, fraction_up, rational_vector
 from ._volume_material_map import require_polyhedral_carrier_geometry
 from .brep._patches import (
+    _validate_surface_source_shadows,
     CircleCurve,
     RevolutionSurface,
-    _validate_surface_source_shadows,
 )
 from .brep._source_embedding import _family
 from .brep._source_shell_admissibility import _single_shell_topology
+
 
 if TYPE_CHECKING:
     from ..meshing._result import CellMeshingResult

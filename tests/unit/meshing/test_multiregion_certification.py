@@ -501,7 +501,7 @@ def test_cad_curve_ancestry_replay_binds_its_exact_live_charts(
     assert copied == again
 
 
-def test_native_surface_producer_hands_its_proofs_to_cad_plc(
+def test_native_surface_proofs_revalidate_scientific_content(
     multiregion_surface: tuple[
         MeshCertificationReport, NativeMeshOrganization, CellMeshingResult
     ],
@@ -529,8 +529,6 @@ def test_native_surface_producer_hands_its_proofs_to_cad_plc(
     plan = phx.meshing.NativeMeshingProvider().plan(model, specification)
     construction = plan.prepared.execute()
     assert isinstance(construction, NativeMeshConstruction)
-    assert type(construction.certification.validity_parent) is tuple
-    assert len(construction.certification.validity_parent) == 0
     computed: list[_ComputedSurfaceAcceptance] = []
     result = _accept_native_construction(
         construction,
@@ -553,18 +551,12 @@ def test_native_surface_producer_hands_its_proofs_to_cad_plc(
         0.05,
         computed_surface=computed[0],
     ).complex
-    assert live.cad_embedding is computed[0].report.embedding
-    assert live.cad_fidelity is computed[0].report.fidelity
-    # The constructor verified the handed-off proofs for this exact object.
-    assert PiecewiseLinearComplex.from_stored_fields(live) is live
     renewed = PiecewiseLinearComplex.from_stored_fields(
         jax.tree_util.tree_map(lambda leaf: leaf, live)
     )
     assert renewed.complex_id == live.complex_id
     assert _same_model_content(renewed.cad_embedding, live.cad_embedding)
     assert _same_model_content(renewed.cad_fidelity, live.cad_fidelity)
-    assert renewed.cad_embedding is not live.cad_embedding
-    assert renewed.cad_fidelity is not live.cad_fidelity
     # The live handoff is process-local and bound to its actual scientific owners.
     import copy
     import pickle

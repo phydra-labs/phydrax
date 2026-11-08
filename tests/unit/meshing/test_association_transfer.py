@@ -21,13 +21,22 @@ from tests._support.volume_material_map_fixtures import (
 )
 
 
-def test_material_association_transfer_keeps_region_occurrence_and_overlap_measure() -> None:
+def test_material_association_transfer_keeps_region_occurrence_and_overlap_measure() -> (
+    None
+):
     mesh = CellMesh(
         np.asarray(
             ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
             dtype=np.float64,
         ),
-        (CellBlock("cells", "tetrahedron", np.asarray(((0, 1, 2, 3),)), global_ids=np.asarray((17,))),),
+        (
+            CellBlock(
+                "cells",
+                "tetrahedron",
+                np.asarray(((0, 1, 2, 3),)),
+                global_ids=np.asarray((17,)),
+            ),
+        ),
     )
     geometry = CellGeometrySpec.affine(mesh)
     domain, source_coverage, target_coverage = make_material_coverage_pair(
@@ -59,13 +68,17 @@ def test_material_association_transfer_keeps_region_occurrence_and_overlap_measu
     )
 
     transfer = prepare_eulerian_material_source_association_transfer(eulerian_overlap)
-    source_side, = transfer.source_sides_for_target(0)
+    (source_side,) = transfer.source_sides_for_target(0)
     target_side = transfer.target_side(0)
     assert (source_side.cell_global_id, source_side.entity_id) == (17, "solid-17")
     assert source_side.region_id == target_side.region_id == "steel"
-    assert source_side.occurrence_path == target_side.occurrence_path == (
-        "assembly-0",
-        "occurrence-3",
+    assert (
+        source_side.occurrence_path
+        == target_side.occurrence_path
+        == (
+            "assembly-0",
+            "occurrence-3",
+        )
     )
     assert source_side.overlap_measure == target_side.physical_measure == 1.0 / 6.0
     assert transfer.unmatched_source_rows.size == transfer.unmatched_target_rows.size == 0

@@ -21,7 +21,9 @@ from phydrax.meshing._model_codec import (
 from tests._support.tiny_mapped_lifecycle import tiny_affine_mapped_lifecycle
 
 
-@pytest.mark.skipif(not meshcore_available(), reason="native layer/core generation requires meshcore")
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native layer/core generation requires meshcore"
+)
 def test_mapped_lifecycle_recipe_reuses_only_the_actual_shared_root() -> None:
     source, spec, initial, prepared, adaptation = tiny_affine_mapped_lifecycle()
     root = initial.layer_core_root_geometry
@@ -48,7 +50,10 @@ def test_mapped_lifecycle_recipe_reuses_only_the_actual_shared_root() -> None:
             combined[0], combined[2], combined[1], source, spec
         )
     )
-    assert restored_initial.layer_core_root_geometry is restored_target.layer_core_root_geometry
+    assert (
+        restored_initial.layer_core_root_geometry
+        is restored_target.layer_core_root_geometry
+    )
     assert _same_model_content(restored_initial, initial)
     assert _same_model_content(restored_target, adaptation.target)
     assert restored_adaptation.result_id == adaptation.result_id
@@ -78,7 +83,11 @@ def test_mapped_lifecycle_recipe_reuses_only_the_actual_shared_root() -> None:
     object.__setattr__(forged_parent, "mesh", forged_mesh)
     with pytest.raises((ValueError, TypeError)):
         _restore_layer_core_accepted_lifecycle(
-            combined[0]._replace(result=forged_parent), combined[2], combined[1], source, spec
+            combined[0]._replace(result=forged_parent),
+            combined[2],
+            combined[1],
+            source,
+            spec,
         )
 
     wrong_reference = copy(root.reference_mesh)
@@ -97,7 +106,11 @@ def test_mapped_lifecycle_recipe_reuses_only_the_actual_shared_root() -> None:
         )
     with pytest.raises((ValueError, TypeError)):
         _restore_layer_core_accepted_lifecycle(
-            combined[0], combined[2]._replace(result=wrong_target), combined[1], source, spec
+            combined[0],
+            combined[2]._replace(result=wrong_target),
+            combined[1],
+            source,
+            spec,
         )
 
     changed_geometry = copy(adaptation.target.geometry)
@@ -118,11 +131,17 @@ def test_mapped_lifecycle_recipe_reuses_only_the_actual_shared_root() -> None:
         )
     with pytest.raises((ValueError, TypeError)):
         _restore_layer_core_accepted_lifecycle(
-            combined[0], combined[2]._replace(result=changed_target), combined[1], source, spec
+            combined[0],
+            combined[2]._replace(result=changed_target),
+            combined[1],
+            source,
+            spec,
         )
 
 
-@pytest.mark.skipif(not meshcore_available(), reason="native layer/core generation requires meshcore")
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native layer/core generation requires meshcore"
+)
 def test_mapped_inverse_preserves_multiple_source_charts_on_one_parent() -> None:
     import phydrax as phx
     from phydrax._model._structure import MixedAdaptationPolicyArchiveRecipe
@@ -131,8 +150,10 @@ def test_mapped_inverse_preserves_multiple_source_charts_on_one_parent() -> None
 
     _register_model_archive_types()
     source, spec, initial, prepared, refinement = tiny_affine_mapped_lifecycle()
-    initial_recipe, adaptation_recipe, target_recipe = _layer_core_accepted_lifecycle_recipes(
-        initial, prepared, refinement, source, spec
+    initial_recipe, adaptation_recipe, target_recipe = (
+        _layer_core_accepted_lifecycle_recipes(
+            initial, prepared, refinement, source, spec
+        )
     )
     restored_initial, restored_target, restored_refinement, adapter = (
         _restore_layer_core_accepted_lifecycle(
@@ -158,16 +179,22 @@ def test_mapped_inverse_preserves_multiple_source_charts_on_one_parent() -> None
     )
     inverse_prepared = phx.meshing.prepare_mesh_adaptation(
         restored_target,
-        phx.meshing.MarkedMeshAdaptation((), children, hierarchy=restored_refinement.hierarchy),
+        phx.meshing.MarkedMeshAdaptation(
+            (), children, hierarchy=restored_refinement.hierarchy
+        ),
         policy=policy,
     )
     inverse = phx.meshing.execute_mesh_adaptation(inverse_prepared)
     assert inverse.status is phx.meshing.MeshAdaptationStatus.COMPLETE
     assert inverse.target.mesh.topology_id == restored_initial.mesh.topology_id
-    assert inverse.target.certification is not None and inverse.target.certification.passed
+    assert (
+        inverse.target.certification is not None and inverse.target.certification.passed
+    )
     witness = inverse.target.certification.inputs.fidelity_witness
     assert isinstance(witness, SourceBoundaryChartWitness)
     charts: dict[int, set[str]] = {}
-    for entity, chart in zip(witness.entity_global_ids, witness.source_chart_ids, strict=True):
+    for entity, chart in zip(
+        witness.entity_global_ids, witness.source_chart_ids, strict=True
+    ):
         charts.setdefault(int(entity), set()).add(chart)
     assert any(len(identities) > 1 for identities in charts.values())

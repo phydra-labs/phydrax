@@ -446,6 +446,8 @@ def _padded_balance(
             balance.supported_source_total,
             balance.dropped_source_total,
             balance.dropped_source_absolute_total,
+            balance.tolerance,
+            balance.closed_domain_conservation_valid,
         )
     )
 

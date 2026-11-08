@@ -23,9 +23,7 @@ def test_two_sided_distributed_sparse_transfer_handles_empty_source_owners() -> 
 
     np.testing.assert_allclose(transfer.serial_reference(source), expected)
     np.testing.assert_allclose(
-        transfer.serial_transpose_reference(
-            np.asarray(((7.0, 11.0), (13.0, 17.0)))
-        ),
+        transfer.serial_transpose_reference(np.asarray(((7.0, 11.0), (13.0, 17.0)))),
         np.asarray(((14.0, 22.0), (-13.0, -17.0), (7.0, 11.0))),
     )
     packed = transfer.pack_source_owned(source)
@@ -58,9 +56,7 @@ def test_distributed_de_rham_transfer_matches_sparse_complex_actions() -> None:
         np.zeros(dof_map.global_dof_count, dtype=np.int32)
         for dof_map in target.discretization.dof_maps
     )
-    transfer = source.distributed_transfer(
-        target, source_owners, target_owners, 1
-    )
+    transfer = source.distributed_transfer(target, source_owners, target_owners, 1)
     assert transfer.transfer_result.complex_map.map_id == transfer.complex_map.map_id
     assert transfer.transfer_result.entry_evidence
     generator = np.random.default_rng(7)

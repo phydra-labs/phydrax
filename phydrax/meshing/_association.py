@@ -427,26 +427,41 @@ class _LayerImageSupportPreparation:
             int,
             tuple[
                 SourceBoundaryFaceImageWitness,
-                dict[tuple[int, int, str, tuple[str, ...]], tuple[tuple[Fraction, Fraction], ...]],
+                dict[
+                    tuple[int, int, str, tuple[str, ...]],
+                    tuple[tuple[Fraction, Fraction], ...],
+                ],
             ],
         ] = {}
 
     def require(
-        self, source: NativeLayerCoreSource, mesh: CellMesh, geometry: CellGeometrySpec,
-        core_cell_ids: tuple[int, ...], /, *,
+        self,
+        source: NativeLayerCoreSource,
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        core_cell_ids: tuple[int, ...],
+        /,
+        *,
         root: LayerCoreRootGeometry | None = None,
         computed_root: ComputedLayerCoreRoot | None = None,
     ) -> None:
         if (
-            self.source is not source or self.mesh is not mesh or self.geometry is not geometry
+            self.source is not source
+            or self.mesh is not mesh
+            or self.geometry is not geometry
             or self.core_cell_ids != tuple(sorted(core_cell_ids))
-            or self.root is not root or self.computed_root is not computed_root
+            or self.root is not root
+            or self.computed_root is not computed_root
             or len(set(core_cell_ids)) != len(core_cell_ids)
         ):
-            raise ValueError("Layer image preparation belongs to other source, mesh, geometry or core cells.")
+            raise ValueError(
+                "Layer image preparation belongs to other source, mesh, geometry or core cells."
+            )
 
     def __reduce_ex__(self, protocol: SupportsIndex, /) -> NoReturn:
-        raise TypeError("Layer image preparation is operation-local and cannot be serialized.")
+        raise TypeError(
+            "Layer image preparation is operation-local and cannot be serialized."
+        )
 
 
 def _prepare_layer_image_support(
@@ -460,7 +475,12 @@ def _prepare_layer_image_support(
     computed_root: ComputedLayerCoreRoot | None = None,
 ) -> _LayerImageSupportPreparation:
     return _LayerImageSupportPreparation(
-        source, mesh, geometry, core_cell_ids, root=root, computed_root=computed_root,
+        source,
+        mesh,
+        geometry,
+        core_cell_ids,
+        root=root,
+        computed_root=computed_root,
     )
 
 
@@ -610,7 +630,10 @@ def _source_boundary_image_edge_pieces(
 
 
 def _source_boundary_image_edge_intervals(
-    mesh: CellMesh, geometry: CellGeometrySpec, witness: SourceBoundaryFaceImageWitness, /,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    witness: SourceBoundaryFaceImageWitness,
+    /,
     preparation: _LayerImageSupportPreparation | None,
 ) -> dict[tuple[int, str, tuple[str, ...]], tuple[tuple[Fraction, Fraction], ...]]:
     """Union exact source-facet image coverage along target edges."""
@@ -1775,18 +1798,23 @@ def _association_optional_value(value: str, /) -> str | None:
     return value[1:]
 
 
-def _association_exact_row(association: GeometryAssociation, row: int, /) -> tuple[str, ...]:
+def _association_exact_row(
+    association: GeometryAssociation, row: int, /
+) -> tuple[str, ...]:
     role = association.source_roles[row]
     path = association.source_occurrence_paths[row]
     sides = association.source_region_sides[row]
     values = [
         association.source_entity_ids[row],
         _association_optional_text(None if role is None else role.value),
-        str(len(path)), *path,
-        _association_optional_text(sides[0]), _association_optional_text(sides[1]),
+        str(len(path)),
+        *path,
+        _association_optional_text(sides[0]),
+        _association_optional_text(sides[1]),
     ]
     for interval in (
-        association.source_parameter_intervals[row], association.target_parameter_intervals[row],
+        association.source_parameter_intervals[row],
+        association.target_parameter_intervals[row],
     ):
         values.append("0" if interval is None else "1")
         if interval is not None:
@@ -1800,14 +1828,30 @@ def _association_exact_row(association: GeometryAssociation, row: int, /) -> tup
     if pieces is not None:
         for piece in pieces:
             if isinstance(piece, SourceBoundaryImagePullback):
-                values.extend(("I", str(piece.cell_global_id), str(piece.local_entity_index),
-                               piece.source_chart_id, str(len(piece.image_rational_tokens)), "3"))
+                values.extend(
+                    (
+                        "I",
+                        str(piece.cell_global_id),
+                        str(piece.local_entity_index),
+                        piece.source_chart_id,
+                        str(len(piece.image_rational_tokens)),
+                        "3",
+                    )
+                )
                 points = piece.image_rational_tokens
             else:
                 cell, local, vertices, points = piece
-                values.extend(("R", str(cell), str(local), str(len(vertices)),
-                               *(str(vertex) for vertex in vertices),
-                               str(len(points)), str(len(points[0]))))
+                values.extend(
+                    (
+                        "R",
+                        str(cell),
+                        str(local),
+                        str(len(vertices)),
+                        *(str(vertex) for vertex in vertices),
+                        str(len(points)),
+                        str(len(points[0])),
+                    )
+                )
             for coordinates in points:
                 for numerator, denominator in coordinates:
                     values.extend((str(numerator), str(denominator)))
@@ -1884,7 +1928,9 @@ def _association_decode_row(values: tuple[str, ...], /) -> tuple[Any, ...]:
         else:
             raise ValueError("Association bank piece kind is invalid.")
         point_count, dimension = count(), integer()
-        if dimension not in (2, 3) or point_count > (len(values) - index) // (2 * dimension):
+        if dimension not in (2, 3) or point_count > (len(values) - index) // (
+            2 * dimension
+        ):
             raise ValueError("Association bank piece coordinates have an invalid extent.")
         points = tuple(
             tuple((integer(), integer()) for _ in range(dimension))
@@ -1899,8 +1945,14 @@ def _association_decode_row(values: tuple[str, ...], /) -> tuple[Any, ...]:
     if index != len(values):
         raise ValueError("Association bank row has trailing data.")
     return (
-        source, role, path, sides, source_interval, target_interval,
-        None if piece_count == -1 else tuple(pieces), point,
+        source,
+        role,
+        path,
+        sides,
+        source_interval,
+        target_interval,
+        None if piece_count == -1 else tuple(pieces),
+        point,
     )
 
 
@@ -1917,45 +1969,78 @@ class GeometryAssociationBankArchiveRecipe(NamedTuple):
         cls, values: tuple[GeometryAssociation, ...], /
     ) -> GeometryAssociationBankArchiveRecipe:
         if not values or any(type(value) is not GeometryAssociation for value in values):
-            raise TypeError("Association bank requires exact nonempty association owners.")
+            raise TypeError(
+                "Association bank requires exact nonempty association owners."
+            )
         names = (
-            "target_global_ids", "residuals", "resolved", "ambiguous",
-            "source_dimensions", "source_indices", "parameters", "orientations",
-            "parent_dimensions", "parent_ids",
+            "target_global_ids",
+            "residuals",
+            "resolved",
+            "ambiguous",
+            "source_dimensions",
+            "source_indices",
+            "parameters",
+            "orientations",
+            "parent_dimensions",
+            "parent_ids",
         )
         metadata = tuple(
-            (value.association_kind.value, value.source_id, value.source_revision,
-             value.target_entity_set_id, _association_optional_text(value.source_boundary_witness_id),
-             "1" if value.exact else "0", value.provenance.value,
-             _association_optional_text(value.parent_association_id), value.association_id)
+            (
+                value.association_kind.value,
+                value.source_id,
+                value.source_revision,
+                value.target_entity_set_id,
+                _association_optional_text(value.source_boundary_witness_id),
+                "1" if value.exact else "0",
+                value.provenance.value,
+                _association_optional_text(value.parent_association_id),
+                value.association_id,
+            )
             for value in values
         )
         lengths = tuple(len(value.source_entity_ids) for value in values)
         ends = np.cumsum(np.asarray(lengths, dtype=np.int64), dtype=np.int64)
         rows = tuple(
             _association_exact_row(value, row)
-            for value in values for row in range(len(value.source_entity_ids))
+            for value in values
+            for row in range(len(value.source_entity_ids))
         )
         arrays = tuple(
-            np.concatenate(tuple(np.asarray(getattr(value, name)) for value in values), axis=0)
+            np.concatenate(
+                tuple(np.asarray(getattr(value, name)) for value in values), axis=0
+            )
             for name in names
         )
-        return cls(TextRowsArchiveRecipe.encode(metadata), TextRowsArchiveRecipe.encode(rows), ends, arrays)
+        return cls(
+            TextRowsArchiveRecipe.encode(metadata),
+            TextRowsArchiveRecipe.encode(rows),
+            ends,
+            arrays,
+        )
 
     def restore(self) -> tuple[GeometryAssociation, ...]:
         metadata = self.metadata.decode()
         rows = self.rows.decode()
         ends = np.asarray(self.ends)
         if (
-            ends.dtype != np.int64 or ends.ndim != 1 or len(metadata) != len(ends)
-            or not len(ends) or np.any(ends <= np.concatenate((np.asarray((0,), dtype=np.int64), ends[:-1])))
-            or int(ends[-1]) != len(rows) or len(self.numeric) != 10
+            ends.dtype != np.int64
+            or ends.ndim != 1
+            or len(metadata) != len(ends)
+            or not len(ends)
+            or np.any(
+                ends <= np.concatenate((np.asarray((0,), dtype=np.int64), ends[:-1]))
+            )
+            or int(ends[-1]) != len(rows)
+            or len(self.numeric) != 10
         ):
             raise ValueError("Association bank offsets or field inventory are invalid.")
         arrays = tuple(np.asarray(array) for array in self.numeric)
-        if any(array.ndim != (2 if index == 6 else 1) or array.shape[0] != len(rows)
-               or (index == 6 and array.shape[1] != 2)
-               for index, array in enumerate(arrays)):
+        if any(
+            array.ndim != (2 if index == 6 else 1)
+            or array.shape[0] != len(rows)
+            or (index == 6 and array.shape[1] != 2)
+            for index, array in enumerate(arrays)
+        ):
             raise ValueError("Association bank numeric arrays are not row aligned.")
         from .._array_archive import array_payload_digest
 
@@ -1972,9 +2057,16 @@ class GeometryAssociationBankArchiveRecipe(NamedTuple):
                 np.all(dimensions == -1) and np.all(indices == -1)
             )
             item = GeometryAssociation(
-                kind, meta[1], meta[2], meta[3], columns[0],
-                tuple(row[0] for row in parsed), columns[1],
-                resolved=columns[2], ambiguous=columns[3], exact=meta[5] == "1",
+                kind,
+                meta[1],
+                meta[2],
+                meta[3],
+                columns[0],
+                tuple(row[0] for row in parsed),
+                columns[1],
+                resolved=columns[2],
+                ambiguous=columns[3],
+                exact=meta[5] == "1",
                 source_dimensions=None if absent else dimensions,
                 source_indices=None if absent else indices,
                 source_roles=tuple(row[1] for row in parsed),
@@ -1985,18 +2077,28 @@ class GeometryAssociationBankArchiveRecipe(NamedTuple):
                 target_reference_pieces=tuple(row[6] for row in parsed),
                 source_parameter_points=tuple(row[7] for row in parsed),
                 source_boundary_witness_id=_association_optional_value(meta[4]),
-                parameters=columns[6], orientations=columns[7],
-                parent_dimensions=columns[8], parent_ids=columns[9],
+                parameters=columns[6],
+                orientations=columns[7],
+                parent_dimensions=columns[8],
+                parent_ids=columns[9],
                 parent_association_id=_association_optional_value(meta[7]),
                 provenance=GeometryAssociationProvenance(meta[6]),
             )
             names = (
-                "target_global_ids", "residuals", "resolved", "ambiguous",
-                "source_dimensions", "source_indices", "parameters", "orientations",
-                "parent_dimensions", "parent_ids",
+                "target_global_ids",
+                "residuals",
+                "resolved",
+                "ambiguous",
+                "source_dimensions",
+                "source_indices",
+                "parameters",
+                "orientations",
+                "parent_dimensions",
+                "parent_ids",
             )
             if item.association_id != meta[8] or any(
-                array_payload_digest(np.asarray(getattr(item, name))) != array_payload_digest(value)
+                array_payload_digest(np.asarray(getattr(item, name)))
+                != array_payload_digest(value)
                 for name, value in zip(names, columns, strict=True)
             ):
                 raise ValueError("Association bank row differs from its canonical owner.")
@@ -3569,7 +3671,8 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
             witness = source.certification.inputs.fidelity_witness
             if (
                 isinstance(witness, SourceBoundaryChartWitness)
-                and (witness.source_id, witness.source_revision) == self.source_namespaces[0]
+                and (witness.source_id, witness.source_revision)
+                == self.source_namespaces[0]
                 and witness.cad_plc is not None
                 and witness.cad_plc.cad_segment_edge_ids is not None
                 and np.asarray(witness.cad_plc.cad_segment_edge_ids).size
@@ -3593,18 +3696,27 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
             or (witness.source_id, witness.source_revision) != self.source_namespaces[0]
             or charts is None
         ):
-            raise ValueError("CAD curve association lacks its current source chart witness.")
+            raise ValueError(
+                "CAD curve association lacks its current source chart witness."
+            )
         charts.require_current()
         roots = tuple(
-            item for item in charts.associations
+            item
+            for item in charts.associations
             if item.association_kind is GeometryAssociationKind.CURVE
             and item.association_id == curve.parent_association_id
         )
-        if len(roots) != 1 or (
-            roots[0].source_id,
-            roots[0].source_revision,
-        ) != self.source_namespaces[0]:
-            raise ValueError("CAD curve association lost its original source-edge authority.")
+        if (
+            len(roots) != 1
+            or (
+                roots[0].source_id,
+                roots[0].source_revision,
+            )
+            != self.source_namespaces[0]
+        ):
+            raise ValueError(
+                "CAD curve association lost its original source-edge authority."
+            )
         curve.validate_target(source.mesh.entity_set(1))
 
         plc = witness.cad_plc
@@ -3628,7 +3740,8 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
             charts.domain, source.mesh, witness, patch_rows, plc.cad_fidelity_tolerance
         )
         edge_tables = tuple(
-            item for item in source.associations
+            item
+            for item in source.associations
             if item.association_kind is GeometryAssociationKind.BREP
             and (item.source_id, item.source_revision) == self.source_namespaces[0]
             and item.target_entity_set_id == source.mesh.entity_set(1).entity_set_id
@@ -3650,13 +3763,16 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
                 or bool(edge_table.ambiguous[edge])
                 or edge_table.source_entity_ids[edge] != curve.source_entity_ids[row]
                 or int(edge_table.source_indices[edge]) != int(curve.source_indices[row])
-                or edge_table.source_occurrence_paths[edge] != curve.source_occurrence_paths[row]
+                or edge_table.source_occurrence_paths[edge]
+                != curve.source_occurrence_paths[row]
                 or (
                     int(edge_table.orientations[edge]) != 0
                     and int(edge_table.orientations[edge]) != int(curve.orientations[row])
                 )
             ):
-                raise ValueError("CAD curve association changes its target-edge authority.")
+                raise ValueError(
+                    "CAD curve association changes its target-edge authority."
+                )
 
     def classes(
         self, source: CellMeshingResult, /
@@ -3724,7 +3840,8 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
         )
         output = self._derived(propagated, dimensions, target)
         curves = tuple(
-            item for item in source.associations
+            item
+            for item in source.associations
             if (item.source_id, item.source_revision) == self.source_namespaces[0]
             and item.association_kind is GeometryAssociationKind.CURVE
         )
@@ -3736,11 +3853,16 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
             not isinstance(target_fidelity_witness, SourceBoundaryChartWitness)
             or target_fidelity_witness.mesh_id != target.mesh_id
             or target_fidelity_witness.topology_id != target.topology_id
-            or (target_fidelity_witness.source_id, target_fidelity_witness.source_revision)
+            or (
+                target_fidelity_witness.source_id,
+                target_fidelity_witness.source_revision,
+            )
             != self.source_namespaces[0]
             or target_fidelity_witness.cad_curve_association is None
         ):
-            raise ValueError("CAD curve transfer requires the current target chart witness.")
+            raise ValueError(
+                "CAD curve transfer requires the current target chart witness."
+            )
         if target.topology_id == source.mesh.topology_id:
             curve = curves[0]
         else:
@@ -3749,7 +3871,10 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
             curve = _curve_edges_with_root_ancestry(
                 source, lineage, target, vertex_stencil, curves[0]
             )
-        if curve.association_id != target_fidelity_witness.cad_curve_association.association_id:
+        if (
+            curve.association_id
+            != target_fidelity_witness.cad_curve_association.association_id
+        ):
             raise ValueError("CAD curve transfer differs from the target chart ancestry.")
         curve.validate_target(target.entity_set(1))
         return (*output, curve)

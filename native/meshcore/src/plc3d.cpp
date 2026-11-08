@@ -5585,9 +5585,10 @@ class PlcRecoveryBuilder {
   // Relocation by peeling (option 8 of remove_witnessed_vertex): the
   // suppressed point s moves into the volume, to a binary64 point y of the
   // ray `origin` + l `direction` / `norm` (l = reach / 4, reach / 8, ...,
-  // above 2^-40 reach, the ray of option 4), and the cavity is filled by the
-  // cones from y over the sides y sees, after the sides it does not see were
-  // closed by the peel of wrap_cavity (`center`) with cavity vertices.
+  // above 2^-40 reach; the ray of option 4, or one toward a star cell), and
+  // the cavity is filled by the cones from y over the sides y sees, after
+  // the sides it does not see were closed by the peel of wrap_cavity
+  // (`center`) with cavity vertices.
   //
   // Why the cavity needs it. s lies on its new subfaces' planes and
   // strictly inside every link face, so the kernel of the cavity near s is
@@ -6173,13 +6174,40 @@ class PlcRecoveryBuilder {
       }
       // 8. (`pinched` passes, after every option above has failed in the
       // passes before) Relocation of s with peeling (relocate_by_peeling)
-      // along the ray of 4.
+      // along the ray of 4, then along the rays from s toward the centroids
+      // of the blocked star cells (the cells of 3), in their order. In a
+      // thin wedge (a crease of a few degrees between its subface planes)
+      // the points of the ray of 4 within reach can all leave a side that
+      // neither they see nor a cavity vertex closes, while a point toward
+      // the inside of one of its cells peels (R002: lobed-sphere-1 with 64
+      // ulps, a 9.5 degree crease). Each ray has at most 40 points and
+      // there are at most as many rays as star cells, so this ends; every
+      // relocation is checked exactly as before.
       if (pinched && !normals.empty()) {
         const int32_t apex = kPlaceholder + 1 + static_cast<int32_t>(centers.size());
         std::array<double, 3> location{};
         bool centered = false;
-        if (relocate_by_peeling(cavity, kPlaceholder, apex, point(s), index_direction, norm, reach,
-                                lineage, wrapped, location, centered)) {
+        bool relocated = relocate_by_peeling(cavity, kPlaceholder, apex, point(s),
+                                             index_direction, norm, reach, lineage, wrapped,
+                                             location, centered);
+        if (!relocated) {
+          for (std::size_t row : blocked) {
+            const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cells[row])];
+            std::array<double, 3> toward{0.0, 0.0, 0.0};
+            for (int32_t vertex : tet.v) {
+              for (int axis = 0; axis < 3; ++axis) {
+                toward[static_cast<std::size_t>(axis)] +=
+                    0.25 * (point(vertex)[axis] - point(s)[axis]);
+              }
+            }
+            const double length = std::sqrt(geometry::dot(toward.data(), toward.data()));
+            if (!(length > 0.0)) continue;
+            relocated = relocate_by_peeling(cavity, kPlaceholder, apex, point(s), toward,
+                                            length, reach, lineage, wrapped, location, centered);
+            if (relocated) break;
+          }
+        }
+        if (relocated) {
           if (centered) centers.push_back(location);
           proposals.insert(proposals.end(), wrapped.begin(), wrapped.end());
           const auto first = inconclusive_.find(s);

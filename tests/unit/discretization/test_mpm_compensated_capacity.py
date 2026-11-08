@@ -242,3 +242,56 @@ def test_block_sparse_storage_capacity_keeps_conservation_bits() -> None:
     assert bool(narrow.successful)
     assert bool(narrow.diagnostics.transfer.successful)
     assert _conservation_bits(wide) == _conservation_bits(narrow)
+
+
+def _block_sparse_deposit(
+    storage_blocks: int, /
+) -> phx.discretization.SplatDepositResult:
+    count = 49
+    bounds = jnp.asarray(((-0.25, -0.25), (1.25, 1.25)), dtype=jnp.float64)
+    grid_plan = phx.discretization.TensorGridPlan(
+        tuple(
+            phx.discretization.UniformAxisSpec(13, periodic=False, endpoint=True)
+            for _ in range(2)
+        ),
+        axis_names=("x", "y"),
+    )
+    masses = _discriminator(count)
+    particles = phx.discretization.ParticleSetPlan(
+        np.arange(count), masses, ambient_dimension=2
+    ).prepare()
+    splat = phx.discretization.ParticleGridSplatPlan(
+        grid_plan.prepare(bounds),
+        assignment=phx.discretization.TensorBSplineSplatAssignment(1),
+        boundary="reject",
+    ).prepare(particles)
+    index = grid_plan.prepare_index_space(bounds)
+    storage = phx.discretization.BlockSparseMPMNodalStoragePlan(
+        phx.discretization.SparseBlockTopologyPlan(
+            index, (1, 1), storage_blocks, layout=index.vertices()
+        )
+    )
+    routes = splat.build(jnp.asarray(_lattice(count, "nodal")))
+    topology = storage.build(routes)
+    return storage.deposit_content(splat, routes, topology, jnp.asarray(masses))
+
+
+def _balance_bits(balance: phx.discretization.SplatBalanceEvidence) -> dict[str, bytes]:
+    values = {
+        "target_total": balance.target_total,
+        "balance_defect": balance.balance_defect,
+        "maximum_absolute_balance_defect": balance.maximum_absolute_balance_defect,
+        "tolerance": balance.tolerance,
+        "closed_domain_conservation_valid": balance.closed_domain_conservation_valid,
+    }
+    return {name: np.asarray(value).tobytes() for name, value in values.items()}
+
+
+def test_block_sparse_storage_capacity_keeps_splat_balance_bits() -> None:
+    # Every mass lands alone on one node: the target stream is the discriminator.
+    narrow = _block_sparse_deposit(64).balance
+    wide = _block_sparse_deposit(100).balance
+
+    assert bool(narrow.closed_domain_conservation_valid)
+    assert np.asarray(narrow.target_total) == np.asarray(narrow.active_source_total)
+    assert _balance_bits(wide) == _balance_bits(narrow)

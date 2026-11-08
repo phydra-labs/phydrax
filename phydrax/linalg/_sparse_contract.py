@@ -86,8 +86,6 @@ class SparseStorage(StrictModule):
         self.canonical = bool(canonical)
 
 
-
-
 class AbstractSparseLinearOperator(AbstractLinearOperator):
     """Linear operator exposing validated canonical sparse storage."""
 

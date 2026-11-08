@@ -118,7 +118,9 @@ class PolyhedralAdaptationRequest(StrictModule, NonTrainableState):
         if not np.all(np.isfinite(plane_array)) or np.any(
             ~np.any(plane_array[:, :3] != 0.0, axis=1)
         ):
-            raise ValueError("Every plane requires finite coefficients and a nonzero normal.")
+            raise ValueError(
+                "Every plane requires finite coefficients and a nonzero normal."
+            )
         groups: list[tuple[int, ...]] = []
         for group in agglomerations:
             values = tuple(group)
@@ -128,7 +130,9 @@ class PolyhedralAdaptationRequest(StrictModule, NonTrainableState):
                 or value < 0
                 for value in values
             ):
-                raise ValueError("Each agglomeration needs at least two nonnegative cell IDs.")
+                raise ValueError(
+                    "Each agglomeration needs at least two nonnegative cell IDs."
+                )
             normalized = tuple(sorted(int(value) for value in values))
             if len(set(normalized)) != len(normalized):
                 raise ValueError("Agglomeration cell IDs must be distinct.")
@@ -140,7 +144,9 @@ class PolyhedralAdaptationRequest(StrictModule, NonTrainableState):
         schedule_ = NativePolyhedralSchedule() if schedule is None else schedule
         if not isinstance(schedule_, NativePolyhedralSchedule):
             raise TypeError("schedule must be NativePolyhedralSchedule.")
-        if volume_schedule is not None and not isinstance(volume_schedule, NativeVolumeSchedule):
+        if volume_schedule is not None and not isinstance(
+            volume_schedule, NativeVolumeSchedule
+        ):
             raise TypeError("volume_schedule must be NativeVolumeSchedule or None.")
         if volume_schedule is not None and not _shape_targets_gated(volume_schedule):
             raise ValueError(
@@ -159,12 +165,16 @@ class PolyhedralAdaptationRequest(StrictModule, NonTrainableState):
             raise ValueError("frame_id must be non-empty.")
         match operation_:
             case PolyhedralAdaptationOperation.PLANE_SPLIT:
-                valid = bool(plane_array.shape[0]) and not normalized_groups and (
-                    regeneration_source is None and volume_specification is None
+                valid = (
+                    bool(plane_array.shape[0])
+                    and not normalized_groups
+                    and (regeneration_source is None and volume_specification is None)
                 )
             case PolyhedralAdaptationOperation.AGGLOMERATE:
-                valid = bool(normalized_groups) and not plane_array.shape[0] and (
-                    regeneration_source is None and volume_specification is None
+                valid = (
+                    bool(normalized_groups)
+                    and not plane_array.shape[0]
+                    and (regeneration_source is None and volume_specification is None)
                 )
             case PolyhedralAdaptationOperation.REGENERATE:
                 valid = (
@@ -176,7 +186,9 @@ class PolyhedralAdaptationRequest(StrictModule, NonTrainableState):
             case _:
                 raise ValueError("operation is not a supported polyhedral operation.")
         if not valid:
-            raise ValueError("Request controls must match exactly one polyhedral operation.")
+            raise ValueError(
+                "Request controls must match exactly one polyhedral operation."
+            )
         self.operation = operation_
         self.planes = jnp.asarray(plane_array)
         self.agglomerations = normalized_groups
@@ -192,7 +204,9 @@ class PolyhedralAdaptationRequest(StrictModule, NonTrainableState):
                 "planes": array_tree_fingerprint(plane_array),
                 "agglomerations": normalized_groups,
                 "regeneration_source": (
-                    None if regeneration_source is None else regeneration_source.binding_id
+                    None
+                    if regeneration_source is None
+                    else regeneration_source.binding_id
                 ),
                 "volume_specification": (
                     None
@@ -385,12 +399,16 @@ def _exact_coordinate_bank(
     return tuple(coordinates)
 
 
-def _require_piecewise_linear_geometry(mesh: CellMesh, geometry: CellGeometrySpec, /) -> None:
+def _require_piecewise_linear_geometry(
+    mesh: CellMesh, geometry: CellGeometrySpec, /
+) -> None:
     elements, _, _ = geometry.resolve(mesh)
     if len(elements) != len(mesh.blocks) or any(
         type(element) is not CellVertexGeometryElement for element in elements
     ):
-        raise ValueError("Polyhedral adaptation requires straight-sided P1 cell geometry.")
+        raise ValueError(
+            "Polyhedral adaptation requires straight-sided P1 cell geometry."
+        )
 
 
 def _bind_exact_polyhedral_geometry(
@@ -409,9 +427,7 @@ def _bind_exact_polyhedral_geometry(
     source_revision = (
         mesh.numeric_version if source_map is None else source_map.source_revision
     )
-    parent_map_id = (
-        mesh.geometry_id if source_map is None else source_map.source_map_id
-    )
+    parent_map_id = mesh.geometry_id if source_map is None else source_map.source_map_id
     exact_source = _PolyhedralExactCoordinateSource(
         source_id,
         source_revision,
@@ -538,8 +554,7 @@ def _split_candidate(
         )
     )
     target_classes = {
-        identifier: classes[parents[0]]
-        for identifier, parents in ancestors.items()
+        identifier: classes[parents[0]] for identifier, parents in ancestors.items()
     }
     return (
         current,
@@ -675,7 +690,9 @@ def _agglomerate_candidate(
                     "Agglomeration produced a nonpositive whole-cell volume.",
                     entity_ids=parent_ids[identifier],
                 )
-    changed = tuple(sorted(identifier for identifier in output_ids if identifier not in row_by_id))
+    changed = tuple(
+        sorted(identifier for identifier in output_ids if identifier not in row_by_id)
+    )
     return target, exact_coordinates, supports, parent_ids, target_classes, changed
 
 
@@ -687,7 +704,9 @@ def _regenerate_candidate(
     source = request.regeneration_source
     specification = request.volume_specification
     if source is None or specification is None:
-        raise ValueError("Regeneration requires an authored source and volume specification.")
+        raise ValueError(
+            "Regeneration requires an authored source and volume specification."
+        )
     construction = generate_polyhedral_volume(
         source,
         specification,
@@ -703,7 +722,9 @@ def _regenerate_candidate(
     ):
         raise TypeError("Polyhedral regeneration requires polyhedral endpoint meshes.")
     vertex_start = int(np.max(np.asarray(mesh.vertex_global_ids, dtype=np.int64))) + 1
-    cell_start = int(np.max(np.asarray(source_connectivity.cell_global_ids, dtype=np.int64))) + 1
+    cell_start = (
+        int(np.max(np.asarray(source_connectivity.cell_global_ids, dtype=np.int64))) + 1
+    )
     vertex_count = generated.coordinates.shape[0]
     cell_count = generated_connectivity.cell_count
     if (
@@ -730,7 +751,11 @@ def _region_classes_from_overlap(
     refinement: PreparedCommonRefinement,
     source_classes: Mapping[int, int],
     /,
-) -> tuple[dict[int, int], dict[int, tuple[int, ...]], tuple[tuple[int, int, EntityLineageKind], ...]]:
+) -> tuple[
+    dict[int, int],
+    dict[int, tuple[int, ...]],
+    tuple[tuple[int, int, EntityLineageKind], ...],
+]:
     source_connectivity = source.connectivity
     target_connectivity = target.connectivity
     if not isinstance(source_connectivity, PolyhedralConnectivity) or not isinstance(
@@ -831,7 +856,9 @@ def _physical_transfer(
     UnstructuredConservativeRemapPlan,
 ]:
     if policy.coverage_tolerance <= 0.0:
-        raise ValueError("Physical conservative remapping requires positive coverage tolerance.")
+        raise ValueError(
+            "Physical conservative remapping requires positive coverage tolerance."
+        )
     refinement = prepare_common_refinement(source, target, policy=policy)
     if refinement.status is not CommonRefinementStatus.SUCCESS:
         raise PolyhedralAdaptationError(
@@ -903,7 +930,9 @@ def _renew_restricted_coverage(
     )
     target_connectivity = target.connectivity
     if not isinstance(target_connectivity, PolyhedralConnectivity):
-        raise TypeError("Restricted coverage renewal requires polyhedral target incidence.")
+        raise TypeError(
+            "Restricted coverage renewal requires polyhedral target incidence."
+        )
     boundary = np.asarray(target_connectivity.face_neighbor, dtype=np.int64) < 0
     target_face_ids = np.sort(
         np.asarray(target_connectivity.face_global_ids, dtype=np.int64)[boundary]
@@ -992,7 +1021,9 @@ def _cell_relations_from_parents(
         target_connectivity, PolyhedralConnectivity
     ):
         raise TypeError("Cell relations require polyhedral endpoint meshes.")
-    source_ids = set(int(value) for value in np.asarray(source_connectivity.cell_global_ids))
+    source_ids = set(
+        int(value) for value in np.asarray(source_connectivity.cell_global_ids)
+    )
     relations: list[tuple[int, int, EntityLineageKind]] = []
     match operation:
         case PolyhedralAdaptationOperation.PLANE_SPLIT:
@@ -1004,7 +1035,11 @@ def _cell_relations_from_parents(
         case _:
             raise ValueError("Unsupported polyhedral operation.")
     for target_id, source_parents in parents.items():
-        if len(source_parents) == 1 and target_id == source_parents[0] and target_id in source_ids:
+        if (
+            len(source_parents) == 1
+            and target_id == source_parents[0]
+            and target_id in source_ids
+        ):
             continue
         relations.extend((source_id, target_id, kind) for source_id in source_parents)
     return tuple(relations)
@@ -1032,16 +1067,24 @@ def adapt_polyhedral_mesh(
     Optional restricted-coverage inputs are fully revalidated at both endpoints:
     volume overlap alone is never treated as a boundary-degree proof.
     """
-    if not isinstance(mesh, CellMesh) or not isinstance(request, PolyhedralAdaptationRequest):
-        raise TypeError("mesh and request must be CellMesh and PolyhedralAdaptationRequest.")
+    if not isinstance(mesh, CellMesh) or not isinstance(
+        request, PolyhedralAdaptationRequest
+    ):
+        raise TypeError(
+            "mesh and request must be CellMesh and PolyhedralAdaptationRequest."
+        )
     connectivity = mesh.connectivity
     if (
         mesh.topological_dimension != 3
         or mesh.ambient_dimension != 3
         or not isinstance(connectivity, PolyhedralConnectivity)
     ):
-        raise ValueError("Polyhedral adaptation requires a three-dimensional polyhedral mesh.")
-    geometry = CellGeometrySpec.affine(mesh) if source_geometry is None else source_geometry
+        raise ValueError(
+            "Polyhedral adaptation requires a three-dimensional polyhedral mesh."
+        )
+    geometry = (
+        CellGeometrySpec.affine(mesh) if source_geometry is None else source_geometry
+    )
     if not isinstance(geometry, CellGeometrySpec):
         raise TypeError("source_geometry must be CellGeometrySpec or None.")
     _require_piecewise_linear_geometry(mesh, geometry)
@@ -1060,7 +1103,9 @@ def adapt_polyhedral_mesh(
         source_coverage_witness,
         (RestrictedDelaunayBoundaryWitness, RestrictedDelaunayCoverageTransportWitness),
     ):
-        raise TypeError("source_coverage_witness has an unsupported restricted coverage type.")
+        raise TypeError(
+            "source_coverage_witness has an unsupported restricted coverage type."
+        )
     if source_distance_witness is not None and not isinstance(
         source_distance_witness, SourceBoundaryDistanceWitness
     ):
@@ -1072,9 +1117,15 @@ def adapt_polyhedral_mesh(
     geometry.resolve(mesh)
     classes = _classes_by_cell(mesh, cell_classes)
     protected = _protected_faces(mesh, protected_face_ids)
-    policy = CommonRefinementPolicy() if common_refinement_policy is None else common_refinement_policy
+    policy = (
+        CommonRefinementPolicy()
+        if common_refinement_policy is None
+        else common_refinement_policy
+    )
     if not isinstance(policy, CommonRefinementPolicy):
-        raise TypeError("common_refinement_policy must be CommonRefinementPolicy or None.")
+        raise TypeError(
+            "common_refinement_policy must be CommonRefinementPolicy or None."
+        )
     construction: PolyhedralConstruction | None = None
     changed: tuple[int, ...]
     maximum_coordinate_rounding_error = 0.0
@@ -1120,7 +1171,9 @@ def adapt_polyhedral_mesh(
         changed_connectivity = candidate.connectivity
         if not isinstance(changed_connectivity, PolyhedralConnectivity):
             raise TypeError("Regenerated target lost polyhedral connectivity.")
-        changed = tuple(int(value) for value in np.asarray(changed_connectivity.cell_global_ids))
+        changed = tuple(
+            int(value) for value in np.asarray(changed_connectivity.cell_global_ids)
+        )
         relations = ()
     edit = build_polyhedral_topology_edit(mesh, candidate, supports, relations)
     target, lineage, stencil = assemble_topology_edit(
@@ -1134,9 +1187,7 @@ def adapt_polyhedral_mesh(
         target_geometry = _bind_exact_polyhedral_geometry(
             target, target_geometry_source, exact_coordinates
         )
-    refinement, source_fv, target_fv, remap = _physical_transfer(
-        mesh, target, policy
-    )
+    refinement, source_fv, target_fv, remap = _physical_transfer(mesh, target, policy)
     if construction is not None:
         target_classes, parent_map, overlap_relations = _region_classes_from_overlap(
             mesh, target, refinement, classes
@@ -1153,7 +1204,9 @@ def adapt_polyhedral_mesh(
                 edit,
                 numeric_version=candidate.numeric_version,
             )
-            target_geometry = CellGeometrySpec.power(target, construction.coordinate_source)
+            target_geometry = CellGeometrySpec.power(
+                target, construction.coordinate_source
+            )
             refinement, source_fv, target_fv, remap = _physical_transfer(
                 mesh, target, policy
             )
@@ -1164,16 +1217,20 @@ def adapt_polyhedral_mesh(
             not isinstance(candidate_connectivity, PolyhedralConnectivity)
             or not isinstance(target_connectivity, PolyhedralConnectivity)
             or not np.array_equal(
-                candidate_connectivity.cell_global_ids, target_connectivity.cell_global_ids
+                candidate_connectivity.cell_global_ids,
+                target_connectivity.cell_global_ids,
             )
             or not np.array_equal(candidate.coordinates, target.coordinates)
             or not np.array_equal(candidate.vertex_global_ids, target.vertex_global_ids)
         ):
-            raise ValueError("Regenerated construction rows do not match the target mesh.")
+            raise ValueError(
+                "Regenerated construction rows do not match the target mesh."
+            )
         generated_connectivity = construction.mesh.connectivity
         if not isinstance(generated_connectivity, PolyhedralConnectivity) or any(
             not np.array_equal(
-                getattr(generated_connectivity, field), getattr(target_connectivity, field)
+                getattr(generated_connectivity, field),
+                getattr(target_connectivity, field),
             )
             for field in (
                 "edges",
@@ -1186,7 +1243,9 @@ def adapt_polyhedral_mesh(
                 "face_neighbor",
             )
         ):
-            raise ValueError("Regenerated source incidence changed during target binding.")
+            raise ValueError(
+                "Regenerated source incidence changed during target binding."
+            )
         construction = replace(construction, mesh=target, geometry=target_geometry)
     target_connectivity = target.connectivity
     if not isinstance(target_connectivity, PolyhedralConnectivity):
@@ -1242,7 +1301,9 @@ def adapt_polyhedral_mesh(
             "request": request.request_id,
             "source_mesh": mesh.mesh_id,
             "target_mesh": target.mesh_id,
-            "changed_cell_ids": array_tree_fingerprint(np.asarray(changed, dtype=np.int64)),
+            "changed_cell_ids": array_tree_fingerprint(
+                np.asarray(changed, dtype=np.int64)
+            ),
             "target_region_classes": array_tree_fingerprint(hierarchy.region_classes),
             "common_refinement": refinement.refinement_id,
             "conservative_remap": remap.plan_id,

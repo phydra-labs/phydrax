@@ -75,9 +75,7 @@ def _collapse(ratio: float, neck: float, epochs: int = 60) -> dict[str, Any]:
     """Overdamped collapse past the limit with remeshing, pinch and region split."""
     seed = seed_catenoid(1.0, ratio, ring_points=16, rows=10, neck_radius=neck)
     topology = seed.topology(
-        seed.capacity_plan(
-            resource_id="catenoid-collapse", headroom=3.0
-        )
+        seed.capacity_plan(resource_id="catenoid-collapse", headroom=3.0)
     )
     base = seed.state(topology)
     slot_area = PreparedMultiRegionSurface(topology, base).slot_areas(base.positions)

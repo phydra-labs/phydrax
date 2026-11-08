@@ -200,9 +200,7 @@ def _copy_geometry(
     return BRepGeometry(
         vertex_points=geometry.vertex_points,
         vertex_exact_points=geometry.vertex_exact_points,
-        vertex_roots=(
-            geometry.vertex_roots if vertex_roots is None else vertex_roots
-        ),
+        vertex_roots=(geometry.vertex_roots if vertex_roots is None else vertex_roots),
         edge_endpoint_roots=(
             geometry.edge_endpoint_roots
             if edge_endpoint_roots is None
@@ -238,12 +236,8 @@ def _rooted_square_geometry() -> BRepGeometry:
         parameter_lower=np.asarray((0.4, 0.4)),
         parameter_upper=np.asarray((0.6, 0.6)),
     )
-    start_root = TrimRootEndpoint(
-        trim_root, "first", affine_parameter_offset=-0.5
-    )
-    end_root = TrimRootEndpoint(
-        trim_root, "first", affine_parameter_offset=0.5
-    )
+    start_root = TrimRootEndpoint(trim_root, "first", affine_parameter_offset=-0.5)
+    end_root = TrimRootEndpoint(trim_root, "first", affine_parameter_offset=0.5)
     endpoint_roots = (
         (start_root, None),
         (None, None),
@@ -334,20 +328,12 @@ def test_nested_root_branch_arrays_refuse_fresh_and_stale_models() -> None:
     root = vertex.primary.root
     assert isinstance(root, TrimIntersectionRoot)
     changed_parameters = root.parameters.at[0].add(0.125)
-    changed_root = eqx.tree_at(
-        lambda value: value.parameters, root, changed_parameters
-    )
-    changed_primary = eqx.tree_at(
-        lambda value: value.root, vertex.primary, changed_root
-    )
-    changed_vertex = eqx.tree_at(
-        lambda value: value.primary, vertex, changed_primary
-    )
+    changed_root = eqx.tree_at(lambda value: value.parameters, root, changed_parameters)
+    changed_primary = eqx.tree_at(lambda value: value.root, vertex.primary, changed_root)
+    changed_vertex = eqx.tree_at(lambda value: value.primary, vertex, changed_primary)
     changed_roots = (changed_vertex, None, None, None)
     with pytest.raises(ValueError):
-        _copy_geometry(
-            geometry, curves=geometry.curves, vertex_roots=changed_roots
-        )
+        _copy_geometry(geometry, curves=geometry.curves, vertex_roots=changed_roots)
 
     stale_geometry = eqx.tree_at(
         lambda value: value.vertex_roots[0].primary.root.parameters,

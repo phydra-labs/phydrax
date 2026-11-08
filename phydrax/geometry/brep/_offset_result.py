@@ -13,10 +13,11 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from ...discretization._exact_algebraic_geometry import ExactScalar
 
 from ..._fingerprint import canonical_fingerprint
+from ..._interpolation._bspline_extraction import RationalBSplineCurveSpan
 from ..._strict import StrictModule
+from ...discretization._exact_algebraic_geometry import ExactScalar
 from ...typing import checked, parse
 from .._cad_revision import (
     AssociationCoverageEvidence,
@@ -28,7 +29,6 @@ from .._cad_revision import (
 from ._model import BRepEntityId, BRepModel
 from ._parameter_range import CertifiedParameterRange, unknown_parameter_range
 from ._patches import BSplineCurve, OffsetSurface, RevolutionSurface
-from ..._interpolation._bspline_extraction import RationalBSplineCurveSpan
 
 
 BRepOffsetVolumeStatus: TypeAlias = Literal["certified", "unresolved"]
@@ -701,12 +701,12 @@ def certify_revolution_offset_embedding(
     no interior parameter value, which returns unresolved rather than relying on
     samples or work quotas.
     """
+    from ..._interpolation import rational_bspline_curve_spans
+    from .._rational import rational_vector
     from ._assembly import BRepAffinePlacement
     from ._carrier_pieces import carrier_payload
     from ._intersection import NativePeriodEndpoint
     from ._patches import BSplineCurve, CircleCurve, LineCurve, RevolutionSurface
-    from ..._interpolation import rational_bspline_curve_spans
-    from .._rational import rational_vector
 
     if not isinstance(offset, OffsetSurface):
         return _offset_certificate(

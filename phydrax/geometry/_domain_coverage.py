@@ -104,7 +104,9 @@ class PiecewiseLinearDomain(StrictModule, NonTrainableState):
         points = np.array(points, copy=True)
         rows = np.array(rows, copy=True)
         pairs = np.array(pairs, copy=True)
-        identifiers = tuple(canonical_identifier(value, "region_ids") for value in region_ids)
+        identifiers = tuple(
+            canonical_identifier(value, "region_ids") for value in region_ids
+        )
         paths = (
             tuple(() for _ in identifiers)
             if region_occurrence_paths is None

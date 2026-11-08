@@ -1237,7 +1237,9 @@ def test_g9_finite_element_field_view_feeds_the_same_closure_and_ports_must_matc
     )
     support_geometry = reconstruction.support_geometry
     if not isinstance(support_geometry, phx.geometry.CompiledGeometry):
-        raise RuntimeError("Affine triangular FE fixture must produce compiled mesh support.")
+        raise RuntimeError(
+            "Affine triangular FE fixture must produce compiled mesh support."
+        )
     domain = phx.domain.GeometryDomain(support_geometry, label="x")
     cell_dofs = finite_element.dof_maps[0].cell_dofs[0][:, 0]
     view = phx.discretization.DiscreteFieldFunctionView(
@@ -2064,7 +2066,9 @@ def test_g5_native_corrector_owns_the_answer_and_exposes_both_fields_as_views() 
     )
     support_geometry = reconstruction.support_geometry
     if not isinstance(support_geometry, phx.geometry.CompiledGeometry):
-        raise RuntimeError("Affine triangular FE fixture must produce compiled mesh support.")
+        raise RuntimeError(
+            "Affine triangular FE fixture must produce compiled mesh support."
+        )
     domain = phx.domain.GeometryDomain(support_geometry, label="x")
 
     def field(coefficients: Any, name: Any) -> Any:
@@ -3275,7 +3279,9 @@ def _kinked_finite_element_view() -> Any:
     coefficients = jnp.maximum(nodes[:, 0] - nodes[:, 1], 0.0)
     support_geometry = reconstruction.support_geometry
     if not isinstance(support_geometry, phx.geometry.CompiledGeometry):
-        raise RuntimeError("Affine triangular FE fixture must produce compiled mesh support.")
+        raise RuntimeError(
+            "Affine triangular FE fixture must produce compiled mesh support."
+        )
     domain = phx.domain.GeometryDomain(support_geometry, label="x")
     return phx.discretization.DiscreteFieldFunctionView(
         reconstruction, coefficients, domain, variable="x", field_name="u"

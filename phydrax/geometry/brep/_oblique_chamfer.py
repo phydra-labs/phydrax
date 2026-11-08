@@ -48,6 +48,7 @@ def _dot(first: _Vector, second: _Vector, /) -> ExactScalar:
         Fraction(0),
     )
 
+
 def _binary(values: _Vector, /) -> np.ndarray:
     """Publish rounded coordinates for exact rational-radical sources."""
     try:
@@ -373,9 +374,7 @@ def _stage_edges(
         for index, point in enumerate(vertices)
         if index not in corner.endpoints
     }
-    new_vertices = tuple(
-        tuple(add_vertex(point) for point in row) for row in contacts
-    )
+    new_vertices = tuple(tuple(add_vertex(point) for point in row) for row in contacts)
     replacements = {
         (corner.neighbors[side][end], corner.endpoints[end]): new_vertices[side][end]
         for side in range(2)
@@ -560,9 +559,7 @@ def oblique_chamfer(
         )
     geometry = model.geometry
     vertices = tuple(
-        exact
-        if exact is not None
-        else rational_vector(np.asarray(point))
+        exact if exact is not None else rational_vector(np.asarray(point))
         for exact, point in zip(
             geometry.vertex_exact_points, geometry.vertex_points, strict=True
         )
@@ -602,9 +599,7 @@ def oblique_chamfer(
         solid=True,
         assembly_graph=geometry.assembly_graph,
     )
-    provisional_geometry, provisional_patches, provisional_bounds, _, _, _ = (
-        provisional
-    )
+    provisional_geometry, provisional_patches, provisional_bounds, _, _, _ = provisional
     try:
         face_gaps = _certify_edge_face_gap_bounds(
             provisional_geometry,
@@ -728,9 +723,7 @@ def oblique_chamfer_parameter_range(
 
     geometry = model.geometry
     vertices = tuple(
-        exact
-        if exact is not None
-        else rational_vector(np.asarray(point))
+        exact if exact is not None else rational_vector(np.asarray(point))
         for exact, point in zip(
             geometry.vertex_exact_points, geometry.vertex_points, strict=True
         )
@@ -763,9 +756,7 @@ def oblique_chamfer_parameter_range(
         limits.extend(_cutting_plane_scale_limits(corner, vertices, motions, direction))
         limit = min(limits)
         limit_lower, _ = coefficient_interval(limit, bits=128)
-        upper = fraction_down(
-            min(limit_lower, Fraction(float(np.finfo(np.float64).max)))
-        )
+        upper = fraction_down(min(limit_lower, Fraction(float(np.finfo(np.float64).max))))
         if upper <= 0:
             raise BRepBlendUnsupported(
                 "oblique chamfer range: no positive representable certified interval"

@@ -504,8 +504,8 @@ def test_wrong_concrete_parent_certificate_is_rejected() -> None:
 
 
 def test_reference_chain_reuses_only_actual_validated_parent_embedding() -> None:
-    from copy import copy
     import pickle
+    from copy import copy
 
     from phydrax.geometry._global_embedding import ValidatedGlobalEmbedding
 
@@ -514,7 +514,12 @@ def test_reference_chain_reuses_only_actual_validated_parent_embedding() -> None
     validity = certify_cell_geometry_validity(parent_geometry, mesh=parent_mesh)
     computed = ValidatedGlobalEmbedding(parent_mesh, parent_geometry, validity)
     independent = certify_reference_chain_embedding(
-        parent_mesh, parent_geometry, target_mesh, target_geometry, maps, computed.certificate
+        parent_mesh,
+        parent_geometry,
+        target_mesh,
+        target_geometry,
+        maps,
+        computed.certificate,
     )
     reused = certify_reference_chain_embedding(
         parent_mesh,

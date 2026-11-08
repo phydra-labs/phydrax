@@ -7,13 +7,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from fractions import Fraction
-
 from dataclasses import dataclass
+from fractions import Fraction
 from functools import cmp_to_key
 from itertools import pairwise
 
 import numpy as np
+
 from .._rational import rational_cross_2d
 
 
@@ -348,7 +348,9 @@ def selected_cell_boundaries(cells: tuple[Cell, ...], /) -> tuple[Loops, ...]:
     incoming: dict[Point, Point] = {}
     for start, end in boundary:
         if start in outgoing or end in incoming:
-            raise ValueError("Selected planar cell boundary is nonmanifold or self-touching.")
+            raise ValueError(
+                "Selected planar cell boundary is nonmanifold or self-touching."
+            )
         outgoing[start] = end
         incoming[end] = start
     if outgoing.keys() != incoming.keys():
@@ -382,12 +384,12 @@ def selected_cell_boundaries(cells: tuple[Cell, ...], /) -> tuple[Loops, ...]:
             index for index, outer in enumerate(outers) if inside_loop(loop[0], outer)
         ]
         if not candidates:
-            raise ValueError("Selected planar cell hole has no containing outer boundary.")
+            raise ValueError(
+                "Selected planar cell hole has no containing outer boundary."
+            )
         owner = min(candidates, key=lambda index: area(outers[index]))
         holes[owner].append(loop)
-    return tuple(
-        (outer, *sorted(holes[index])) for index, outer in enumerate(outers)
-    )
+    return tuple((outer, *sorted(holes[index])) for index, outer in enumerate(outers))
 
 
 __all__ = [

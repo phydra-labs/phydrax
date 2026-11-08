@@ -8,19 +8,19 @@ import numpy as np
 from jax import Array
 
 from ..design._schema import (
+    _ParameterCollector,
     DesignState,
     ParameterBinding,
-    _ParameterCollector,
     ParameterId,
 )
 from ._differentiable import (
-    AbstractBoundBRepParameterMap,
-    AbstractBRepParameterMap,
-    BRepParameterGeometry,
     _RealizedConicCurve,
     _RealizedCylinderPatch,
     _RealizedLineCurve,
     _RealizedPlanePatch,
+    AbstractBoundBRepParameterMap,
+    AbstractBRepParameterMap,
+    BRepParameterGeometry,
 )
 from ._fillet import BRepBlendUnsupported
 from ._model import BRepModel
@@ -62,11 +62,15 @@ class PlanarFilletRadiusMap(AbstractBRepParameterMap):
         geometry = reference.geometry
         supported_curves = (CircleCurve, ExactLineCurve, LineCurve)
         supported_pcurves = (*supported_curves, ConicRootLinePCurve)
-        if any(index < 0 for index in geometry.edge_curves) or any(
-            not isinstance(geometry.curves[index], supported_curves)
-            for index in geometry.edge_curves
-        ) or any(
-            not isinstance(pcurve, supported_pcurves) for pcurve in geometry.pcurves
+        if (
+            any(index < 0 for index in geometry.edge_curves)
+            or any(
+                not isinstance(geometry.curves[index], supported_curves)
+                for index in geometry.edge_curves
+            )
+            or any(
+                not isinstance(pcurve, supported_pcurves) for pcurve in geometry.pcurves
+            )
         ):
             raise BRepBlendUnsupported(
                 "planar fillet radius sensitivity requires native line and circle carriers throughout the fixed topology"
@@ -81,8 +85,13 @@ class PlanarFilletRadiusMap(AbstractBRepParameterMap):
     ) -> AbstractBoundBRepParameterMap:
         if model.model_id != self.reference.model_id:
             raise ValueError("The radius map model must match its source-bound result.")
-        if model.coordinate_contract.spatial_id != self.source.coordinate_contract.spatial_id:
-            raise ValueError("The radius map source and result coordinate contracts differ.")
+        if (
+            model.coordinate_contract.spatial_id
+            != self.source.coordinate_contract.spatial_id
+        ):
+            raise ValueError(
+                "The radius map source and result coordinate contracts differ."
+            )
         if model.tessellation is not None:
             raise BRepBlendUnsupported(
                 "planar fillet radius sensitivity cannot retain a tessellation fidelity certificate under parameter motion"
@@ -106,7 +115,9 @@ class PlanarFilletRadiusMap(AbstractBRepParameterMap):
         )
         cylinder = model.patches[cylinder_face]
         if not isinstance(cylinder, CylinderPatch):
-            raise RuntimeError("The admitted planar fillet cylinder changed carrier type.")
+            raise RuntimeError(
+                "The admitted planar fillet cylinder changed carrier type."
+            )
         side_faces = tuple(
             face
             for face, patch in enumerate(model.patches)
@@ -260,7 +271,10 @@ class _BoundPlanarRadiusMap(AbstractBoundBRepParameterMap):
 
                     match curve:
                         case _RealizedLineCurve():
-                            uv_first, uv_last = chart(vertices[first]), chart(vertices[last])
+                            uv_first, uv_last = (
+                                chart(vertices[first]),
+                                chart(vertices[last]),
+                            )
                             template = pcurves[coedge]
                             width = ranges[edge, 1] - ranges[edge, 0]
                             if not isinstance(template, (LineCurve, ExactLineCurve)):

@@ -437,12 +437,13 @@ def test_image_material_cli_qualifies_original_slab_and_reflected_junction(
         assert case["measured_region_volumes_m3"] == pytest.approx(
             volumes, rel=0.0, abs=1e-10
         )
-        assert case["measured_total_volume_m3"] == pytest.approx(
-            1.0, rel=0.0, abs=1e-10
-        )
+        assert case["measured_total_volume_m3"] == pytest.approx(1.0, rel=0.0, abs=1e-10)
         interface = case["interface_oracle"]
         assert interface["voxel_face_count"] == face_count
-        assert interface["method"] == "oriented voxel faces and exact rational planar clipping"
+        assert (
+            interface["method"]
+            == "oriented voxel faces and exact rational planar clipping"
+        )
         witness = case["source_chart_witness"]
         assert witness["witness_id"]
         assert witness["source_id"] == case["source_id"]
@@ -474,9 +475,11 @@ def test_oblique_image_cold_source_and_accepted_evidence_replay(tmp_path: Path) 
     source, specification, options, contract = _image_profile_inputs(
         "native-image-lifecycle:oblique-junction-transport", oblique=True
     )
-    result = NativeMeshingProvider(options).plan(
-        source, specification, coordinate_contract=contract
-    ).execute()
+    result = (
+        NativeMeshingProvider(options)
+        .plan(source, specification, coordinate_contract=contract)
+        .execute()
+    )
     expected = _image_result_evidence(result)
     assert expected["source_id"] == source.source_id
     assert expected["source_revision"] == source.source_revision

@@ -2274,10 +2274,12 @@ def _compliance(
     requested: list[tuple[str, float]] = []
     if schedule.radius_edge_bound is not None:
         requested.append(("radius_edge_bound", schedule.radius_edge_bound))
-    requested.extend((
-        ("minimum_dihedral_degrees", schedule.minimum_dihedral_degrees),
-        ("source_fidelity_tolerance", fidelity_tolerance),
-    ))
+    requested.extend(
+        (
+            ("minimum_dihedral_degrees", schedule.minimum_dihedral_degrees),
+            ("source_fidelity_tolerance", fidelity_tolerance),
+        )
+    )
     achieved: list[tuple[str, float]] = [
         ("maximum_radius_edge_ratio", maximum_radius_edge),
         ("minimum_dihedral_degrees", minimum_dihedral),
@@ -2288,7 +2290,10 @@ def _compliance(
         issues.append("nonrepresentable_radius_edge")
     if schedule.minimum_dihedral_degrees == 0.0 and not np.isfinite(minimum_dihedral):
         issues.append("nonrepresentable_dihedral")
-    if schedule.radius_edge_bound is not None and maximum_radius_edge > schedule.radius_edge_bound:
+    if (
+        schedule.radius_edge_bound is not None
+        and maximum_radius_edge > schedule.radius_edge_bound
+    ):
         issues.append("radius_edge_bound")
     if minimum_dihedral < schedule.minimum_dihedral_degrees:
         issues.append("minimum_dihedral_degrees")

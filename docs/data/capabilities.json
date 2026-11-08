@@ -1,5 +1,5 @@
 {
-  "catalog_id": "8a358800146cc625750f2abd5734e37edf66c692f4f615249a98cd0a50bcca13",
+  "catalog_id": "a2f166364c63514f19871aa1bcb7c98f58f74b467b1f7df06e6005e4625f99cd",
   "declarations": [
     {
       "capability": "accelerator.csr-1d",
@@ -50490,6 +50490,793 @@
               "capability": "meshfree.surface-stokes",
               "kind": "capability-support-tuple",
               "support_tuple_id": "fd00c211d5300d9636af6d052e97b3c94914ad6dae23b1d28a441e9987701e0a"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshing.native-cad",
+      "declaration_id": "469bb57a0f63160ee3c36f3691d8579e5dc1a3e413c3f7340a75c498d2b0ceda",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.meshing",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshing.native-cad.profile",
+          "profile_id": "5db9b7ff8812a78343862b044e09cf6fab3c0ca5110c53c51b29dd7fc28bb5c8",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "documentation-nonclaims",
+            "independent-cold-restoration",
+            "installed-native-isolation",
+            "physical-consumer",
+            "public-workflow",
+            "qualification-campaign",
+            "source-and-topology-evidence"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "backend": "cpu",
+                "consumer": "certified-curved-finite-elements",
+                "external-geometry-engine": false,
+                "operations": "qualified-construction-query-boolean-partition-exchange",
+                "precision": "float64",
+                "repair": "explicit-derived-source-with-displacement-evidence",
+                "source": "native-brep-step-iges"
+              },
+              "capability": "meshing.native-cad",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "2a43cf69eb87170090c79a68285bb200327b1816ac5eb175eb0bb4518f71f6ea"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshing.native-constrained-solids",
+      "declaration_id": "1699aaed8f0b0796b288f809d0456ed5106df862ac91e2bbf8d54400615210b7",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.meshing",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshing.native-constrained-solids.profile",
+          "profile_id": "993a18b1b6c0b2504b746a20e38a9d81225889ca8b009c7c79a5929dd4c30069",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "documentation-nonclaims",
+            "independent-cold-restoration",
+            "installed-native-isolation",
+            "physical-consumer",
+            "public-workflow",
+            "qualification-campaign",
+            "source-and-topology-evidence"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "backend": "cpu",
+                "boundary": "fixed-or-certified-conforming",
+                "consumer": "finite-elements-and-finite-volumes",
+                "coverage": "independent-source-bound-proof",
+                "precision": "float64",
+                "source": "declared-plc-regions-materials-cavities-and-features"
+              },
+              "capability": "meshing.native-constrained-solids",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c84869c12a54ceb68b41270d7ac06e3b0543f8b8f25dbedca02f1da5044b1ee2"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshing.native-curves-planar-surfaces",
+      "declaration_id": "ceb04a05092f66958e030a5a7b371f9185b3e679d97af39837ed92400624d156",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.meshing",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshing.native-curves-planar-surfaces.profile",
+          "profile_id": "bbccc1a9b2e3d0ae61a004e5b3a996168cc02f18f853f7827bb35fbbc8d2485f",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "documentation-nonclaims",
+            "independent-cold-restoration",
+            "installed-native-isolation",
+            "physical-consumer",
+            "public-workflow",
+            "qualification-campaign",
+            "source-and-topology-evidence"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "backend": "cpu",
+                "family": "requested-native-family-without-silent-substitution",
+                "fidelity": "source-bound-deviation-and-coverage",
+                "identity": "explicit-source-entity-and-occurrence",
+                "precision": "float64",
+                "source": "junction-networks-planar-holes-open-and-closed-surfaces"
+              },
+              "capability": "meshing.native-curves-planar-surfaces",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b29a58b43b3cf6614425d0d5423736519d9910244548f2da8ef04712d4ecea95"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshing.native-design",
+      "declaration_id": "d76991d70d372aa31a53eef6552e7cedb80b6ac944af9a5bdb2d376bff9d2ff4",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.meshing",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshing.native-design.profile",
+          "profile_id": "eca1ee33e4c816f2683a7ac8dd527dd33a6d75222000e12818901d24bd35e904",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "documentation-nonclaims",
+            "independent-cold-restoration",
+            "installed-native-isolation",
+            "physical-consumer",
+            "public-workflow",
+            "qualification-campaign",
+            "source-and-topology-evidence"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "backend": "cpu",
+                "derivative": "qualified-fixed-event-only",
+                "objective": "identified-physical-error-or-well-posed-qoi",
+                "precision": "float64",
+                "proposals": "analytic-uniform-and-trained-decision-components",
+                "publication": "fresh-source-bound-physical-reanalysis-and-atomic-rollback"
+              },
+              "capability": "meshing.native-design",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c57c5aadac8cf4697b9ed768cebe29de50265a856439893acc4cc1545532885d"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshing.native-distributed",
+      "declaration_id": "79f935a90a0e87d21f0aa3fc76fcae3f85fa4792624972f759fd22f22890bb60",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.meshing",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshing.native-distributed.profile",
+          "profile_id": "a5e18274679dbae9d5833073880d8e9b68f1c89b1f66959edaf77dcd16295d8e",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "documentation-nonclaims",
+            "independent-cold-restoration",
+            "installed-native-isolation",
+            "physical-consumer",
+            "public-workflow",
+            "qualification-campaign",
+            "source-and-topology-evidence"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "backend": "cpu",
+                "execution": "owner-local-generation-adaptation-repartition",
+                "identity": "explicit-global-entity-and-owner-placement",
+                "precision": "float64",
+                "restart": "producer-exit-fresh-reader-changed-placement",
+                "state": "declared-fe-fv-material-history-auxiliary-integrator-rng-clock"
+              },
+              "capability": "meshing.native-distributed",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "3d59a21e28a3ed5b43535ed38130ebbd924b797df5815c8b1bb7cbc1b8b7309b"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshing.native-hybrid-layers",
+      "declaration_id": "1ea1b2bb3c94671ead905a17d5dbe2ad877da68d0c6d4b9d2e1c22d43997deca",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.meshing",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshing.native-hybrid-layers.profile",
+          "profile_id": "c7bd0a0da070cb8fee2d56c5461ff93d79803f76ef48a1251074046ef7f571f3",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "documentation-nonclaims",
+            "independent-cold-restoration",
+            "installed-native-isolation",
+            "physical-consumer",
+            "public-workflow",
+            "qualification-campaign",
+            "source-and-topology-evidence"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "backend": "cpu",
+                "family": "requested-mixed-and-high-order-cells",
+                "geometry": "physical-layer-height-collision-policy-cap-and-native-core",
+                "precision": "float64",
+                "source": "qualified-convex-concave-curved-and-periodic-walls",
+                "transfer": "field-specific-conservative-and-compatible"
+              },
+              "capability": "meshing.native-hybrid-layers",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "0eef76e47c906dcc9a422f25661cfba41571c72ca8d4a2ea600c1b00c5905c06"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshing.native-implicit",
+      "declaration_id": "c8378ee62d4ab9228f070f1f708922936e15b094b5a3fdd88d8fee0324a0c464",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.meshing",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshing.native-implicit.profile",
+          "profile_id": "ecb8ce1f4981e29cca788f0edbddcf23d7f1b75fc2b0400344fb6652630fb031",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "documentation-nonclaims",
+            "independent-cold-restoration",
+            "installed-native-isolation",
+            "physical-consumer",
+            "public-workflow",
+            "qualification-campaign",
+            "source-and-topology-evidence"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "backend": "cpu",
+                "consumer": "source-faithful-adaptation-and-physical-convergence",
+                "discovery": "adaptive-or-explicit-fixed-lattice-policy",
+                "events": "topology-and-branch-changes-are-discrete",
+                "precision": "float64",
+                "singularity": "explicit-unresolved-or-refusal",
+                "source": "explicit-implicit-field-contract"
+              },
+              "capability": "meshing.native-implicit",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "348b4b1f48761662294ae0923acb99b32397d02fcdc76c072389bbf44c75a70f"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshing.native-labeled-images",
+      "declaration_id": "88ed80b9dee6b4314c8dc4cf676319604d73a5e0c4ecd3cbcaf2ede6937f09be",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.meshing",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshing.native-labeled-images.profile",
+          "profile_id": "3efab562a11a186a80a8e408c5f284d8c4afc009be43e5965901dd6b30150f7f",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "documentation-nonclaims",
+            "independent-cold-restoration",
+            "installed-native-isolation",
+            "physical-consumer",
+            "public-workflow",
+            "qualification-campaign",
+            "source-and-topology-evidence"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "backend": "cpu",
+                "consumer": "inventory-and-interface-flux-balance",
+                "identity": "declared-label-to-region-binding",
+                "precision": "float64",
+                "regions": "material-interfaces-and-junctions",
+                "source": "labels-with-explicit-geometric-interpretation-and-frame"
+              },
+              "capability": "meshing.native-labeled-images",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "43f7db5852f458ba68e1a427f8cc78a1fffe69e968532488475f3451be3086d6"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshing.native-moving-overset",
+      "declaration_id": "c7fdf7f4c8c905c8658fd57a57abba078e510267cfc5d27b8f8ddd8dd1d651ce",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.meshing",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshing.native-moving-overset.profile",
+          "profile_id": "4bd7f22a93608503ced747c9748c97acdd1e31d0edad78116ca5b6a3e5c0610b",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "documentation-nonclaims",
+            "independent-cold-restoration",
+            "installed-native-isolation",
+            "physical-consumer",
+            "public-workflow",
+            "qualification-campaign",
+            "source-and-topology-evidence"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "backend": "cpu",
+                "consumer": "continued-physical-update",
+                "coupling": "interpolation-distinct-from-conservative-overlap",
+                "failure": "orphan-refusal-and-complete-rollback",
+                "precision": "float64",
+                "source": "accepted-moving-source-and-exact-priority-partition"
+              },
+              "capability": "meshing.native-moving-overset",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "8d1eb3bc39c8f1e66af7bde12b8a94ab17381dfec703ca1302a6d8ccc7979729"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshing.native-periodic",
+      "declaration_id": "0499c86201628960b32a8c2215ffad22199996eb8a301dff63ae89fa543a2992",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.meshing",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshing.native-periodic.profile",
+          "profile_id": "8098fa9eb1f0f8d2a250b5350903ca712a7b5230bcff393ceffa0cec54b645cb",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "documentation-nonclaims",
+            "independent-cold-restoration",
+            "installed-native-isolation",
+            "physical-consumer",
+            "public-workflow",
+            "qualification-campaign",
+            "source-and-topology-evidence"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "adaptation": "orbit-synchronized-refine-coarsen-and-metric-change",
+                "backend": "cpu",
+                "identity": "winding-occurrence-and-source-vertex-witnesses",
+                "precision": "float64",
+                "source": "admitted-exact-periodic-actions-and-region-sides",
+                "transfer": "declared-compatible-field-actions"
+              },
+              "capability": "meshing.native-periodic",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "5f0a6437665f1be6cc5fecec69f9b9e1632d7232a0cd6a91c5cad5a55f8eb2cc"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshing.native-polyhedral",
+      "declaration_id": "35af0f5def4c2603e6a9a49f7a7f41dd1a545e61d1abdc54f93851c3ebfc6359",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.meshing",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshing.native-polyhedral.profile",
+          "profile_id": "04ceee4095ea54054be44ace5917100beb4fea860f26946ec3f1412d5189947c",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "documentation-nonclaims",
+            "independent-cold-restoration",
+            "installed-native-isolation",
+            "physical-consumer",
+            "public-workflow",
+            "qualification-campaign",
+            "source-and-topology-evidence"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "backend": "cpu",
+                "consumer": "finite-volumes-and-virtual-elements",
+                "precision": "float64",
+                "remap": "independently-checked-nonnested-conservative-overlap",
+                "source": "restricted-voronoi-power-with-material-and-periodic-ancestry",
+                "topology": "reciprocal-oriented-faces-and-explicit-site-components"
+              },
+              "capability": "meshing.native-polyhedral",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a477d2268b65d957c3e6e035846cd1b275104c42a910cb1a0d83b4e9f98c8beb"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshing.native-quads-hexes",
+      "declaration_id": "3bde88880c48634d2ddfb98e8c06db0ac5951a755f6c5a4cbd958b585e95aa63",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.meshing",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshing.native-quads-hexes.profile",
+          "profile_id": "2b03228775236a4391d165b006cb5566df448f555a49edfaed8ab77b6eae39a7",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "documentation-nonclaims",
+            "independent-cold-restoration",
+            "installed-native-isolation",
+            "physical-consumer",
+            "public-workflow",
+            "qualification-campaign",
+            "source-and-topology-evidence"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "backend": "cpu",
+                "family": "all-quad-or-all-hex-without-mixed-family-fallback",
+                "hex-guidance": "feature-aware-cut-cells-and-admitted-frame-grid-maps",
+                "precision": "float64",
+                "quad-guidance": "source-bound-field-changes-validated-layout-topology",
+                "routes": "structured-sweep-multiblock-dual-and-qualified-general-routes"
+              },
+              "capability": "meshing.native-quads-hexes",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "feaf1842995416a51061bee3b0577e85320b7647032e4017c6606d4f7112a611"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshing.native-reconstruction",
+      "declaration_id": "9cc8bc23dda5242ec3efd04b4ba508893438b3ff4cc6a6d4f6bdd037f361e579",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.meshing",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshing.native-reconstruction.profile",
+          "profile_id": "7e81e458925862ffeadf1121135946ee0b559d4dabadd04389e1c645b17f2d2f",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "documentation-nonclaims",
+            "independent-cold-restoration",
+            "installed-native-isolation",
+            "physical-consumer",
+            "public-workflow",
+            "qualification-campaign",
+            "source-and-topology-evidence"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "approximation": "explicit-original-source-deviation-evidence",
+                "backend": "cpu",
+                "precision": "float64",
+                "repair": "explicit-source-revision-not-silent-healing",
+                "source": "declared-noisy-point-or-envelope-interpretation",
+                "topology": "components-and-genus-checked-independently"
+              },
+              "capability": "meshing.native-reconstruction",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "43455f809ff47069994d3f7e87694623984b9afe8fc491f592ac851448307e81"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "meshing.native-tspline-cad-analysis",
+      "declaration_id": "96aafd039c5497feeca8fd0b3f4c0b6c338bdc78a6e8c020db60589b32454466",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.meshing",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "meshing.native-tspline-cad-analysis.profile",
+          "profile_id": "598d7bded142c85e30cb0511f7a74847d07456cda2a3e660fa048e7cb56c8fe2",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "documentation-nonclaims",
+            "independent-cold-restoration",
+            "installed-native-isolation",
+            "physical-consumer",
+            "public-workflow",
+            "qualification-campaign",
+            "source-and-topology-evidence"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "backend": "cpu",
+                "consumer": "native-cad-meshing-and-qualified-isogeometric-analysis",
+                "derivative": "fixed-topology-and-qualified-physical-regularity",
+                "exchange": "lossless-native-and-explicit-external-format-limits",
+                "precision": "float64",
+                "refinement": "genuinely-local-geometry-preserving-weighted-prolongation",
+                "source": "admitted-analysis-suitable-tspline-with-explicit-axis-identity"
+              },
+              "capability": "meshing.native-tspline-cad-analysis",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "8486cc1d860b515a165f4164eee099868c98278b07029e42026ccf5d8d438912"
             }
           ],
           "version": "candidate"

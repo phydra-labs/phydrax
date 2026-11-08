@@ -561,16 +561,31 @@ def test_cad_pole_lens_uses_exact_collapsed_corner_only(
                     (midpoint, Fraction(1, 2)),
                 ):
                     assert _cad_pole_lens_endpoint(
-                        charts, patch, loop_index, index, candidate, candidate_parameter,
+                        charts,
+                        patch,
+                        loop_index,
+                        index,
+                        candidate,
+                        candidate_parameter,
                         endpoints_by_patch=cache,
                     ) == _cad_pole_lens_endpoint(
-                        charts, patch, loop_index, index, candidate, candidate_parameter,
+                        charts,
+                        patch,
+                        loop_index,
+                        index,
+                        candidate,
+                        candidate_parameter,
                     )
                 assert cache[patch] == _rooted_patch_chart_endpoints(domain, patch)
                 for candidate_cache in (None, {}):
                     with pytest.raises(IndexError):
                         _cad_pole_lens_endpoint(
-                            charts, patch, len(surface.loops), index, midpoint, parameter,
+                            charts,
+                            patch,
+                            len(surface.loops),
+                            index,
+                            midpoint,
+                            parameter,
                             endpoints_by_patch=candidate_cache,
                         )
                 junction = endpoints[index][0]

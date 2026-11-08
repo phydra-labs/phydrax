@@ -1055,8 +1055,8 @@ def test_exact_surface_spans_preserve_subfloat_source_coefficients() -> None:
 def test_interval_span_restriction_contains_exact_restricted_nets() -> None:
     from phydrax._interpolation._bspline_extraction import (
         _bernstein_restrict,
-        _interval_tensor_stack,
         _interval_tensor_restrict,
+        _interval_tensor_stack,
     )
 
     generator = np.random.default_rng(20261031)

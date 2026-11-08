@@ -1105,7 +1105,11 @@ def _coverage_boundary_partition(
         from ._domain_chart_chain import certify_child_chart_partition
 
         chart_proof = certify_child_chart_partition(
-            domain, mesh, geometry, preparation.cell_regions, chart_parent=chart_parent,
+            domain,
+            mesh,
+            geometry,
+            preparation.cell_regions,
+            chart_parent=chart_parent,
             _validated_parent_embedding=validated_parent_embedding,
         )
         findings.extend(chart_proof.findings)

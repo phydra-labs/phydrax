@@ -335,9 +335,7 @@ def test_pic_advanced_scenario_1() -> None:
             jnp.zeros((reference_points.shape[0],), dtype=jnp.int32),
             reference_points,
         ).physical_points
-        locator = PreparedMappedCellLocator.from_cell_geometry(
-            mesh, coordinate_spec, 0
-        )
+        locator = PreparedMappedCellLocator.from_cell_geometry(mesh, coordinate_spec, 0)
         located = locator.locate(physical)
 
         assert located.successful.all()

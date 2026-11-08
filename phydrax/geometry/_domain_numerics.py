@@ -62,13 +62,16 @@ def cell_coordinate_expressions(
             RestrictedCoordinateMapPreparation(
                 element, coefficients, routes_host, mode="source"
             )
-            if routes_host.shape[0] and isinstance(element, PerCellRestrictedCellGeometryElement)
+            if routes_host.shape[0]
+            and isinstance(element, PerCellRestrictedCellGeometryElement)
             else None
         )
         for row_index in range(routes_host.shape[0]):
             route = routes_host[row_index]
             local = tuple(coefficients[int(index)] for index in route)
-            expressions = None if preparation is None else preparation.expressions(row_index)
+            expressions = (
+                None if preparation is None else preparation.expressions(row_index)
+            )
             if expressions is None:
                 basis = coordinate_effective_basis(element, cell_row=row_index)
                 if len(basis) != len(local):

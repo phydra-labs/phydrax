@@ -167,11 +167,6 @@ if TYPE_CHECKING:
         BRepBooleanResult as BRepBooleanResult,
     )
     from ._bridge_embedding_proof import BridgeSeparation as BridgeSeparation
-    from ._surface_bridge import (
-        brep_surface_bridge as brep_surface_bridge,
-        BRepSurfaceBridgeEvidence as BRepSurfaceBridgeEvidence,
-        BRepSurfaceBridgeResult as BRepSurfaceBridgeResult,
-    )
     from ._constructors import (
         assemble_brep_model as assemble_brep_model,
         brep_box as brep_box,
@@ -259,10 +254,6 @@ if TYPE_CHECKING:
         cad_revision_from_brep_model as cad_revision_from_brep_model,
         partition_brep as partition_brep,
     )
-    from ._placement import (
-        BRepPlacementEditResult as BRepPlacementEditResult,
-        edit_brep_occurrence_placement as edit_brep_occurrence_placement,
-    )
     from ._patches import (
         AbstractCurve as AbstractCurve,
         AbstractSurfacePatch as AbstractSurfacePatch,
@@ -289,6 +280,10 @@ if TYPE_CHECKING:
         SurfaceIsoparametricCurve as SurfaceIsoparametricCurve,
         SurfacePatch as SurfacePatch,
         TorusPatch as TorusPatch,
+    )
+    from ._placement import (
+        BRepPlacementEditResult as BRepPlacementEditResult,
+        edit_brep_occurrence_placement as edit_brep_occurrence_placement,
     )
     from ._planar import (
         partition_planar as partition_planar,
@@ -321,5 +316,10 @@ if TYPE_CHECKING:
     from ._source_repair import (
         BRepSourceRepairResult as BRepSourceRepairResult,
         repair_brep_source as repair_brep_source,
+    )
+    from ._surface_bridge import (
+        brep_surface_bridge as brep_surface_bridge,
+        BRepSurfaceBridgeEvidence as BRepSurfaceBridgeEvidence,
+        BRepSurfaceBridgeResult as BRepSurfaceBridgeResult,
     )
     from ._tspline import TSplineSurfacePatch as TSplineSurfacePatch

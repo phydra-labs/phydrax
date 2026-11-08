@@ -165,9 +165,7 @@ def _uniform_size_fields(
             groups = [
                 (
                     outside_size,
-                    _resolve_entities(
-                        source, top_scope, cad_entities=cad_entities
-                    ),
+                    _resolve_entities(source, top_scope, cad_entities=cad_entities),
                     top_scope.entity_dimension,
                 )
             ]
@@ -175,9 +173,7 @@ def _uniform_size_fields(
             groups = [
                 (
                     control.target_size,
-                    _resolve_entities(
-                        source, control.scope, cad_entities=cad_entities
-                    ),
+                    _resolve_entities(source, control.scope, cad_entities=cad_entities),
                     control.scope.entity_dimension,
                 )
                 for control in controls
@@ -275,12 +271,8 @@ def _proximity_field(
     """Local gap width is the sum of distances to both walls; size is gap / count."""
     dimension = control.source_scope.entity_dimension
     scale = _source_scale(source)
-    sources = _resolve_entities(
-        source, control.source_scope, cad_entities=cad_entities
-    )
-    targets = _resolve_entities(
-        source, control.target_scope, cad_entities=cad_entities
-    )
+    sources = _resolve_entities(source, control.source_scope, cad_entities=cad_entities)
+    targets = _resolve_entities(source, control.target_scope, cad_entities=cad_entities)
     gap = _proximity_gap(
         gmsh,
         dimension,
@@ -374,9 +366,7 @@ def _apply_size_fields(
     if view is not None and background.mode is BackgroundMetricMode.ANISOTROPIC:
         gmsh.model.mesh.field.setAsBackgroundMesh(view.field)
         return _SizeFields((view.field,), (), view)
-    fields = _uniform_size_fields(
-        gmsh, source, specification, cad_entities, outside_size
-    )
+    fields = _uniform_size_fields(gmsh, source, specification, cad_entities, outside_size)
     proximity = tuple(
         _proximity_field(gmsh, source, control, cad_entities=cad_entities)
         for control in specification.size_controls

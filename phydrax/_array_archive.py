@@ -1152,8 +1152,12 @@ def _read_array_archive(
                             header_size = stream.tell()
                             container.seek(member.header_offset)
                             local_header = container.read(30)
-                            name_size, extra_size = struct.unpack_from("<HH", local_header, 26)
-                            member_start = member.header_offset + 30 + name_size + extra_size
+                            name_size, extra_size = struct.unpack_from(
+                                "<HH", local_header, 26
+                            )
+                            member_start = (
+                                member.header_offset + 30 + name_size + extra_size
+                            )
                             container.seek(member_start)
                             header = container.read(header_size)
                             byte_count = elements * dtype.itemsize
@@ -1165,11 +1169,16 @@ def _read_array_archive(
                             digest = hashlib.sha256()
                             digest.update(header)
                             digest.update(payload)
-                            if len(header) != header_size or digest.hexdigest() != record["sha256"]:
+                            if (
+                                len(header) != header_size
+                                or digest.hexdigest() != record["sha256"]
+                            ):
                                 raise ArrayArchiveCorruptionError(
                                     f"Archive array {logical_name!r} changed while loading."
                                 )
-                            value = np.ndarray(shape, dtype=dtype, buffer=payload, order="C")
+                            value = np.ndarray(
+                                shape, dtype=dtype, buffer=payload, order="C"
+                            )
                         else:
                             value = np.load(
                                 stream,

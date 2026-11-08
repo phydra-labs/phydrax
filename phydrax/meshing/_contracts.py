@@ -726,7 +726,9 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
             if cross_field.source.ambient_dimension != target.ambient_dimension:
                 raise ValueError("The cross field must use the target ambient space.")
             if cross_field.field_id != cross_field._scientific_id():
-                raise ValueError("The cross field does not match its scientific identity.")
+                raise ValueError(
+                    "The cross field does not match its scientific identity."
+                )
         self.target = target
         self.planar_embedding = planar_embedding
         self.scope = scope
@@ -899,9 +901,7 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
                 if value.background_metric is None
                 else value.background_metric.control_id
             )
-            or (
-                None if rebuilt.cross_field is None else rebuilt.cross_field.field_id
-            )
+            or (None if rebuilt.cross_field is None else rebuilt.cross_field.field_id)
             != (None if value.cross_field is None else value.cross_field.field_id)
             or rebuilt.deterministic is not value.deterministic
         ):

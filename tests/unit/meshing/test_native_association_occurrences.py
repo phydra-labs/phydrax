@@ -427,7 +427,6 @@ def test_cad_selection_scope_authenticates_occurrences_and_revision() -> None:
         MeshingScope.from_geometry(model, selections[0], dimension=3)
 
 
-
 def test_partition_descendants_bind_region_control_exactly() -> None:
     coordinates = SpatialCoordinateContract.si()
     region = brep_box((0.0, 0.0, 0.0), (3.0, 1.0, 1.0), coordinate_contract=coordinates)
@@ -727,5 +726,3 @@ def test_split_face_descendants_drive_fe_and_fv_boundary_conditions() -> None:
     ).size
     selection = phx.meshing.resolve_mesh_scope(result.mesh, scopes[0].union(scopes[1]))
     _assert_fe_fv_boundary_conditions(result, selection)
-
-

@@ -21,8 +21,12 @@ def test_physical_oracle_uses_each_block_of_the_single_field_dof_map() -> None:
     mesh = phx.discretization.CellMesh(
         coordinates,
         (
-            phx.discretization.CellBlock("upper", "triangle", np.array([[0, 1, 2]]), global_ids=(0,)),
-            phx.discretization.CellBlock("lower", "triangle", np.array([[1, 0, 3]]), global_ids=(1,)),
+            phx.discretization.CellBlock(
+                "upper", "triangle", np.array([[0, 1, 2]]), global_ids=(0,)
+            ),
+            phx.discretization.CellBlock(
+                "lower", "triangle", np.array([[1, 0, 3]]), global_ids=(1,)
+            ),
         ),
     )
     result = certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
@@ -47,9 +51,7 @@ def test_fixed_lattice_publication_and_event_refusal() -> None:
     assert result.certification is not None and result.certification.passed
     assert isinstance(plan.prepared, _PreparedFixedImplicitRoute)
     surface = plan.prepared.surface_plan
-    index = geometry.schema.index(
-        phx.geometry.ParameterId("design-sphere", "radius")
-    )
+    index = geometry.schema.index(phx.geometry.ParameterId("design-sphere", "radius"))
     before = surface.realize(geometry.state)
     after = surface.realize(geometry.state.replace_at(index, np.asarray(0.68)))
     assert int(np.asarray(before.evidence.status)) == 0
@@ -68,7 +70,9 @@ def test_fixed_lattice_publication_and_event_refusal() -> None:
     assert rebound_plan.prepared.surface_plan.plan_id == surface.plan_id
     expected = surface.realize(rebound_geometry.state)
     np.testing.assert_array_equal(rebound.mesh.coordinates, np.asarray(expected.vertices))
-    qoi = _physical_solve(rebound, 0.7557322279455441)["physical_oracle"]["represented_fe_qoi"]
+    qoi = _physical_solve(rebound, 0.7557322279455441)["physical_oracle"][
+        "represented_fe_qoi"
+    ]
     assert abs(qoi - 4.0 * np.pi * 0.75**4 / 3.0) <= 1.0e-8
     wrong_policy = phx.meshing.NativeMeshingOptions(
         "implicit_surface",
@@ -78,8 +82,10 @@ def test_fixed_lattice_publication_and_event_refusal() -> None:
     )
     with pytest.raises(ValueError, match="policy"):
         phx.meshing.NativeMeshingProvider(wrong_policy).plan(
-            source, plan.specification,
-            coordinate_contract=plan.coordinate_contract, fixed_plan=plan,
+            source,
+            plan.specification,
+            coordinate_contract=plan.coordinate_contract,
+            fixed_plan=plan,
         )
     wrong_geometry = phx.geometry.Box(
         (0.0, 0.0, 0.0), (1.5, 1.5, 1.5), feature_id="design-sphere"
@@ -88,30 +94,40 @@ def test_fixed_lattice_publication_and_event_refusal() -> None:
         wrong_geometry, source.source_id, "different-kernel-revision", grid=grid
     )
     wrong_scope = phx.meshing.MeshingScope(
-        wrong_source.source_id, wrong_source.source_revision,
-        phx.meshing.MeshingEntityKind.GEOMETRY, 2,
-        wrong_source.scope_entity_set_id(2), wrong_source.scope_entity_ids(2),
+        wrong_source.source_id,
+        wrong_source.source_revision,
+        phx.meshing.MeshingEntityKind.GEOMETRY,
+        2,
+        wrong_source.scope_entity_set_id(2),
+        wrong_source.scope_entity_ids(2),
     )
     control = plan.specification.size_controls[0]
     assert isinstance(control, phx.meshing.UniformSizeControl)
     wrong_specification = phx.meshing.SurfaceMeshingSpec(
-        plan.specification.target, wrong_scope,
-        size_controls=(phx.meshing.UniformSizeControl(
-            wrong_scope, control.target_size, strength=control.strength
-        ),),
+        plan.specification.target,
+        wrong_scope,
+        size_controls=(
+            phx.meshing.UniformSizeControl(
+                wrong_scope, control.target_size, strength=control.strength
+            ),
+        ),
     )
     with pytest.raises(ValueError, match="kernel|schema"):
         phx.meshing.NativeMeshingProvider(plan.options).plan(
-            wrong_source, wrong_specification,
-            coordinate_contract=plan.coordinate_contract, fixed_plan=plan,
+            wrong_source,
+            wrong_specification,
+            coordinate_contract=plan.coordinate_contract,
+            fixed_plan=plan,
         )
     foreign_source = NativeImplicitSource(
         geometry, "other-sphere", source.source_revision, grid=grid
     )
     with pytest.raises((ValueError, phx.meshing.MeshingFailure)):
         phx.meshing.NativeMeshingProvider(plan.options).plan(
-            foreign_source, plan.specification,
-            coordinate_contract=plan.coordinate_contract, fixed_plan=plan,
+            foreign_source,
+            plan.specification,
+            coordinate_contract=plan.coordinate_contract,
+            fixed_plan=plan,
         )
 
 
@@ -126,7 +142,9 @@ def test_surface_content_all_coefficients_and_reanalysis_rollback() -> None:
         source, minimum_size=0.04, maximum_size=0.35, maximum_displacement=0.0
     )
     proposal_transaction = phx.meshing.prepare_mesh_proposal(
-        source, proposal, safety,
+        source,
+        proposal,
+        safety,
         compatibility=phx.meshing.BisectionCompatibility.UNIFORM_REFINEMENT,
     )
     adaptation = proposal_transaction.adaptation
@@ -159,8 +177,12 @@ def test_surface_content_all_coefficients_and_reanalysis_rollback() -> None:
     target_program = phx.equations.compile_finite_element_problem(full_form, target_all)
     density = 1.0 + np.asarray(source.mesh.coordinates)[:, 0]
     accepted = phx.solver.FiniteElementAcceptedState(
-        (solve["values"], density), 0.0, 0, source.mesh.topology_id,
-        source_all.prepared_id, source_program.compilation_id,
+        (solve["values"], density),
+        0.0,
+        0,
+        source.mesh.topology_id,
+        source_all.prepared_id,
+        source_program.compilation_id,
         field_layouts=layouts,
     )
     executor = phx.solver.FiniteElementTopologyTransaction(
@@ -172,22 +194,33 @@ def test_surface_content_all_coefficients_and_reanalysis_rollback() -> None:
         jnp.zeros_like(target_solve["solve_result"].value),
     )
     bad = phx.solver.FiniteElementReanalysisResult(
-        target_solve["problem"], bad_solution, target_solve["solve_check"], "u",
-        state_problem=target_program, check_policy=phx.linalg.LinearSolveCheckPolicy(),
+        target_solve["problem"],
+        bad_solution,
+        target_solve["solve_check"],
+        "u",
+        state_problem=target_program,
+        check_policy=phx.linalg.LinearSolveCheckPolicy(),
     )
     refused = executor.execute(
-        accepted, source.mesh, adaptation,
+        accepted,
+        source.mesh,
+        adaptation,
         reanalysis_action=lambda *args: bad,
     )
     assert not bool(np.asarray(refused.committed))
     assert refused.state is accepted and refused.mesh is source.mesh
     good = phx.solver.FiniteElementReanalysisResult(
-        target_solve["problem"], target_solve["solve_result"],
-        target_solve["solve_check"], "u",
-        state_problem=target_program, check_policy=phx.linalg.LinearSolveCheckPolicy(),
+        target_solve["problem"],
+        target_solve["solve_result"],
+        target_solve["solve_check"],
+        "u",
+        state_problem=target_program,
+        check_policy=phx.linalg.LinearSolveCheckPolicy(),
     )
     committed = executor.execute(
-        accepted, source.mesh, adaptation,
+        accepted,
+        source.mesh,
+        adaptation,
         reanalysis_action=lambda *args: good,
     )
     assert bool(np.asarray(committed.committed))
@@ -195,7 +228,10 @@ def test_surface_content_all_coefficients_and_reanalysis_rollback() -> None:
     assert evidence.transfer.conservative
     probe = np.linspace(-0.4, 0.8, len(density))
     assert np.dot(np.asarray(evidence.source_measures), probe) == pytest.approx(
-        np.dot(np.asarray(evidence.target_measures), np.asarray(evidence.transfer.apply(probe))),
+        np.dot(
+            np.asarray(evidence.target_measures),
+            np.asarray(evidence.transfer.apply(probe)),
+        ),
         abs=1.0e-11,
     )
 
@@ -214,7 +250,10 @@ def test_surface_content_refuses_nonaffine_restriction() -> None:
     u, v = axes(2)
     element = PerCellRestrictedCellGeometryElement(
         phx.discretization.lagrange_element("triangle", 1),
-        "triangle", (cell_id,), (cell_id,), ((multiply(u, u), v),),
+        "triangle",
+        (cell_id,),
+        (cell_id,),
+        ((multiply(u, u), v),),
     )
     geometry = phx.discretization.CellGeometrySpec(
         {block.name: element},

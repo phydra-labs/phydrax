@@ -7,7 +7,9 @@ import pytest
 
 
 _GATE = runpy.run_path(
-    str(Path(__file__).resolve().parents[2] / "tools/check_native_dependency_isolation.py")
+    str(
+        Path(__file__).resolve().parents[2] / "tools/check_native_dependency_isolation.py"
+    )
 )
 NATIVE_SCENARIOS = _GATE["NATIVE_SCENARIOS"]
 _check_backend = _GATE["_check_backend"]
@@ -24,6 +26,7 @@ def _passed_records() -> dict[str, dict[str, object]]:
         }
         for name in NATIVE_SCENARIOS
     }
+
 
 def test_native_results_reject_missing_and_extra_scenarios() -> None:
     records = _passed_records()
@@ -111,7 +114,9 @@ def test_backend_check_uses_consumer_evidence_for_any_scenario_name() -> None:
         )
 
 
-def test_clean_environment_removes_source_and_library_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_clean_environment_removes_source_and_library_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("PHYDRAX_MESHCORE_LIBRARY", "/tmp/override/libmeshcore.dylib")
     monkeypatch.setenv("PHYDRAX_SOURCE_ROOT", "/tmp/source")
     monkeypatch.setenv("PYTHONPATH", "/tmp/source")

@@ -47,10 +47,9 @@ def _image_affine(
 ) -> np.ndarray:
     affine = np.eye(4)
     affine[:3, :3] *= spacing
-    affine[:3, 3] = (
-        (0.5 * spacing,) * 3 if origin is None else np.asarray(origin)
-    )
+    affine[:3, 3] = (0.5 * spacing,) * 3 if origin is None else np.asarray(origin)
     return affine
+
 
 def _state(labels: np.ndarray, label_ids: tuple[str, ...]) -> LabelFieldState:
     counts = np.bincount(labels.reshape(-1), minlength=len(label_ids))
@@ -298,7 +297,8 @@ def _source_semantics() -> dict[str, Any]:
     else:
         missing_samples_rejected = False
     passed = bool(
-        unsupported.evidence.status is LabelFieldSurfaceExtractionStatus.UNSUPPORTED_VALENCE
+        unsupported.evidence.status
+        is LabelFieldSurfaceExtractionStatus.UNSUPPORTED_VALENCE
         and unsupported.surface is None
         and missing_samples_rejected
     )
@@ -307,8 +307,6 @@ def _source_semantics() -> dict[str, Any]:
         "unknown_sparse_samples_rejected": missing_samples_rejected,
         "passed": passed,
     }
-
-
 
 
 def run() -> dict[str, Any]:

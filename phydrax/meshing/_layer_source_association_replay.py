@@ -625,12 +625,16 @@ def replay_layer_source_associations(
         if computed_root is None:
             root.require_current(source, root.specification)
         elif type(computed_root) is ComputedLayerCoreRoot:
-            computed_root.require(source, root.specification, root.mesh, root.geometry, root)
+            computed_root.require(
+                source, root.specification, root.mesh, root.geometry, root
+            )
         else:
             raise TypeError("computed_root must be ComputedLayerCoreRoot or None.")
     else:
         if root is not None:
-            raise ValueError("Fixed layer replay cannot borrow a conforming root authority.")
+            raise ValueError(
+                "Fixed layer replay cannot borrow a conforming root authority."
+            )
         if computed_root is not None:
             raise ValueError("Fixed layer replay cannot use a conforming root proof.")
     operands = (source, mesh, geometry, root)

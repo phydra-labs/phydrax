@@ -30,21 +30,19 @@ def _affine_arguments(
     parameter_dimension = len(points) - 1
     result: list[Polynomial] = []
     for axis in range(dimension):
-        expression: Polynomial = {
-            (0,) * parameter_dimension: points[0][axis]
-        }
+        expression: Polynomial = {(0,) * parameter_dimension: points[0][axis]}
         for parameter in range(parameter_dimension):
             coefficient = points[parameter + 1][axis] - points[0][axis]
             if coefficient:
-                exponent = tuple(int(index == parameter) for index in range(parameter_dimension))
+                exponent = tuple(
+                    int(index == parameter) for index in range(parameter_dimension)
+                )
                 expression[exponent] = coefficient
         result.append(expression)
     return tuple(result)
 
 
-def _restrict(
-    expression: Expression, arguments: tuple[Polynomial, ...], /
-) -> Expression:
+def _restrict(expression: Expression, arguments: tuple[Polynomial, ...], /) -> Expression:
     if isinstance(expression, RationalPolynomial):
         numerator = compose(expression.numerator, arguments)
         denominator = compose(expression.denominator, arguments)
@@ -166,6 +164,7 @@ def _trace_equal_on_stratum(
     /,
 ) -> bool | None:
     try:
+
         def trace(cell: EmbeddingCell) -> tuple[Expression, ...] | None:
             if cache is None:
                 return _stratum_trace(cell, ordered_ids)
@@ -188,18 +187,14 @@ def _trace_equal_on_stratum(
         return None
 
 
-def _cell_coordinate_expressions(
-    cell: EmbeddingCell, /
-) -> tuple[Expression, ...] | None:
+def _cell_coordinate_expressions(cell: EmbeddingCell, /) -> tuple[Expression, ...] | None:
     if cell.coordinates:
         return cell.coordinates
     if cell.affine_offset is None or cell.affine_matrix is None:
         return None
     variables = axes(cell.dimension)
     result: list[Expression] = []
-    for offset, row in zip(
-        cell.affine_offset, cell.affine_matrix, strict=True
-    ):
+    for offset, row in zip(cell.affine_offset, cell.affine_matrix, strict=True):
         if len(row) != cell.dimension:
             return None
         expression: Expression = constant(offset, cell.dimension)
@@ -269,9 +264,7 @@ def reference_chart_composition_equal(
             )
         return all(
             expression_equal(expected, actual)
-            for expected, actual in zip(
-                composed, target_coordinates, strict=True
-            )
+            for expected, actual in zip(composed, target_coordinates, strict=True)
         )
     except (TypeError, ValueError, ZeroDivisionError):
         return None
@@ -301,7 +294,9 @@ def restriction_trace_equal(
         first_index = first.vertex_ids.index(shared[0])
         second_index = second.vertex_ids.index(shared[0])
         return first.corner_images[first_index] == second.corner_images[second_index]
-    if (first.affine or not first.coordinates) and (second.affine or not second.coordinates):
+    if (first.affine or not first.coordinates) and (
+        second.affine or not second.coordinates
+    ):
         return all(
             first.corner_images[first.vertex_ids.index(identifier)]
             == second.corner_images[second.vertex_ids.index(identifier)]
@@ -311,10 +306,18 @@ def restriction_trace_equal(
         return _trace_equal_on_stratum(first, second, shared, cache)
     if len(shared) == 3 and first.dimension == second.dimension == 3:
         ordered = _triangle_vertex_order(first, shared)
-        return None if not ordered else _trace_equal_on_stratum(first, second, ordered, cache)
+        return (
+            None
+            if not ordered
+            else _trace_equal_on_stratum(first, second, ordered, cache)
+        )
     if len(shared) == 4 and first.dimension == second.dimension == 3:
         ordered = _quadrilateral_vertex_order(first, shared)
-        return None if not ordered else _trace_equal_on_stratum(first, second, ordered, cache)
+        return (
+            None
+            if not ordered
+            else _trace_equal_on_stratum(first, second, ordered, cache)
+        )
     return None
 
 

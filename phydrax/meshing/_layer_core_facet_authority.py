@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import TYPE_CHECKING, final
+from typing import final, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
@@ -20,9 +20,10 @@ from ..geometry._mapped_reference_boundary import MappedReferenceBoundarySource
 from ..geometry._mapped_reference_domain import MappedReferenceDomain
 from ..geometry._source_identity import source_entity_id
 from ._layer_core_topology import prepare_identity
-from ._topology_edit import entity_keys
-from .providers._native_sources import NativeLayerCoreSource, _MappedPlcRootRelation
 from ._plc_source import PiecewiseLinearComplex
+from ._topology_edit import entity_keys
+from .providers._native_sources import _MappedPlcRootRelation, NativeLayerCoreSource
+
 
 if TYPE_CHECKING:
     from ..discretization import CellGeometrySpec, CellMesh
@@ -433,10 +434,11 @@ def issue_mapped_core_facet_witness(
     from fractions import Fraction
 
     from ..discretization._cell_geometry_validity import cell_geometry_id
+    from ..geometry._coplanar_overlap import exact_coplanar_triangle_partitions
     from ..geometry._planar_primitives import signed_area2
     from ..geometry._source_boundary_records import (
-        SourceBoundaryChartWitness,
         rational_chart_tokens,
+        SourceBoundaryChartWitness,
     )
     from ..geometry._source_fidelity import (
         _face_reference_chart,
@@ -447,7 +449,6 @@ def issue_mapped_core_facet_witness(
         mapped_local_reference_maps,
     )
     from .providers._native_layer import _layer_output_boundary_faces
-    from ..geometry._coplanar_overlap import exact_coplanar_triangle_partitions
 
     if source.mapped_domain is None or source.reference_source is None:
         if query is not None:
@@ -506,7 +507,9 @@ def issue_mapped_core_facet_witness(
             raise ValueError(
                 "Internal facet renewal changed its original source or facet scope."
             )
-    local_maps = mapped_local_reference_maps(source, mesh, geometry, root, computed_root=computed_root)
+    local_maps = mapped_local_reference_maps(
+        source, mesh, geometry, root, computed_root=computed_root
+    )
     owners = {cell: value[0] for cell, value in local_maps.items()}
     target_maps = {cell: value[1] for cell, value in local_maps.items()}
     source_triangles = tuple(

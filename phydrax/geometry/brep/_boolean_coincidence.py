@@ -79,6 +79,7 @@ type _UVVector = tuple[Fraction, Fraction]
 type _Matrix = tuple[_UVVector, _UVVector]
 type _Parent = tuple[int, int]
 
+
 def _source_root_endpoint(value: object | None, /) -> RootEndpoint | None:
     if value is None or isinstance(value, RootEndpoint):
         return value
@@ -589,8 +590,7 @@ class CoincidentFaceOverlay(StrictModule):
         )
         first_loops = tuple(
             tuple(
-                CoincidentFaceArc(first, first_face, coedge, identity)
-                for coedge in loop
+                CoincidentFaceArc(first, first_face, coedge, identity) for coedge in loop
             )
             for loop in first_geometry.face_loops[first_face]
         )
@@ -719,14 +719,6 @@ def prepare_coincident_face_overlay(
         raise BRepBooleanFailure(
             "prepare_coincident_face_overlay.models.geometry must contain source trims; got None"
         )
-    count = sum(
-        len(loop)
-        for geometry, face in (
-            (first.geometry, first_face),
-            (second.geometry, second_face),
-        )
-        for loop in geometry.face_loops[face]
-    )
     return CoincidentFaceOverlay(first, first_face, second, second_face, proof, policy)
 
 
@@ -935,7 +927,10 @@ def prove_source_ring_pair_coverage(
             ),
             "height": (height.numerator, height.denominator),
             "lifts": tuple(lift.root_id for lift in lifts),
-            "native_period_roots": (endpoint_root_payload(first_root), endpoint_root_payload(last_root)),
+            "native_period_roots": (
+                endpoint_root_payload(first_root),
+                endpoint_root_payload(last_root),
+            ),
         }
     )
     return SourceEdgeFacePairCoverage(
@@ -1450,10 +1445,12 @@ def _source_entity(model: BRepModel, kind: str, index: int, /) -> BRepEntityId:
         )
     return next(iter(matches))
 
+
 def _same_periodic_angle(value: Fraction | PeriodOffset, /) -> bool:
     if isinstance(value, PeriodOffset):
         return value.rational == 0 and value.turns.denominator == 1
     return value == 0
+
 
 def _stage_component(
     builder: _Builder,
@@ -1498,7 +1495,10 @@ def _stage_component(
         )
         edge_sources.append(
             {
-                (ring_source.model, _source_entity(models[ring_source.model], "edge", ring_edge))
+                (
+                    ring_source.model,
+                    _source_entity(models[ring_source.model], "edge", ring_edge),
+                )
                 for ring_source, _, ring_edge in rings[value]
             }
         )
@@ -1542,7 +1542,10 @@ def _stage_component(
         )
         edge_sources.append(
             {
-                (operand, _source_entity(models[operand], "edge", regions[operand].seam_edge))
+                (
+                    operand,
+                    _source_entity(models[operand], "edge", regions[operand].seam_edge),
+                )
                 for operand, _ in cell.members
                 if operand in seam_lineage_operands
             }
@@ -1642,9 +1645,7 @@ def _coincidence_graph(
     for solid, (faces, cells) in enumerate(
         zip(model.topology.solid_faces, components, strict=True)
     ):
-        source_solids = {
-            member for cell in cells for member in cell.members
-        }
+        source_solids = {member for cell in cells for member in cell.members}
         target_solid_entities = target_index.get(("solid", solid), ())
         for target_solid_entity, target_solid_id in target_solid_entities:
             target_assembly = target_assembly_occurrence_id(
@@ -1676,7 +1677,10 @@ def _coincidence_graph(
                         for target_face, target_face_id in target_index.get(
                             ("face", face), ()
                         ):
-                            if target_face.occurrence_path == target_solid_entity.occurrence_path:
+                            if (
+                                target_face.occurrence_path
+                                == target_solid_entity.occurrence_path
+                            ):
                                 pairs.add(
                                     (
                                         source.occurrence_id(operand, source_face),
@@ -1692,7 +1696,9 @@ def _coincidence_graph(
         for staging_vertex in source_vertices:
             for operand, source_vertex in vertex_sources[staging_vertex]:
                 source_id = source.occurrence_id(operand, source_vertex)
-                for _, target_vertex_id in target_index.get(("vertex", target_vertex), ()):
+                for _, target_vertex_id in target_index.get(
+                    ("vertex", target_vertex), ()
+                ):
                     pairs.add((source_id, target_vertex_id))
     transaction = OccurrenceCorrespondenceTransaction(
         certificate,

@@ -7,8 +7,8 @@ from types import MappingProxyType
 from typing import NamedTuple
 
 import numpy as np
-from ..linalg._exact import solve_exact
 
+from ..linalg._exact import solve_exact
 from ._coordinate_enclosure import (
     add,
     axes,
@@ -923,16 +923,21 @@ def _partition_interiors_disjoint(
     /,
 ) -> bool:
     if first_kind == second_kind == "prism":
+
         def extruded(vertices: tuple[tuple[Fraction, ...], ...]) -> bool:
             return (
                 len(vertices) == 6
-                and all(vertices[index][:2] == vertices[index + 3][:2] for index in range(3))
+                and all(
+                    vertices[index][:2] == vertices[index + 3][:2] for index in range(3)
+                )
                 and len({vertices[index][2] for index in range(3)}) == 1
                 and len({vertices[index][2] for index in range(3, 6)}) == 1
                 and (
                     (vertices[1][0] - vertices[0][0]) * (vertices[2][1] - vertices[0][1])
-                    - (vertices[1][1] - vertices[0][1]) * (vertices[2][0] - vertices[0][0])
-                ) != 0
+                    - (vertices[1][1] - vertices[0][1])
+                    * (vertices[2][0] - vertices[0][0])
+                )
+                != 0
                 and vertices[0][2] != vertices[3][2]
             )
 
@@ -999,16 +1004,17 @@ def _partition_interiors_disjoint(
 
 
 def _partition_aabb_candidates(
-    children: Sequence[
-        tuple[str, tuple[tuple[Fraction, ...], ...], Fraction]
-    ],
+    children: Sequence[tuple[str, tuple[tuple[Fraction, ...], ...], Fraction]],
     /,
 ) -> Iterator[tuple[int, int]]:
     """Yield pairs whose exact axis-aligned bounding boxes overlap."""
     dimension = len(children[0][1][0]) if children else 3
     bounds = tuple(
         tuple(
-            (min(point[axis] for point in vertices), max(point[axis] for point in vertices))
+            (
+                min(point[axis] for point in vertices),
+                max(point[axis] for point in vertices),
+            )
             for axis in range(dimension)
         )
         for _, vertices, _ in children
@@ -1082,10 +1088,7 @@ def validate_reference_cell_partition(partition: ReferenceCellPartition, /) -> N
     for group in partition.maps:
         if not isinstance(group, ReferenceCellMapWitnesses):
             raise TypeError("Reference partition groups must be reference map witnesses.")
-        if (
-            group.target_cell_kind not in volumes
-            or group.source_cell_kind not in volumes
-        ):
+        if group.target_cell_kind not in volumes or group.source_cell_kind not in volumes:
             raise ValueError("Reference partitions require affine standard-volume maps.")
         group_dimension = 2 if group.target_cell_kind in planar else 3
         if (group.source_cell_kind in planar) != (group_dimension == 2) or (
@@ -1094,21 +1097,27 @@ def validate_reference_cell_partition(partition: ReferenceCellPartition, /) -> N
             raise ValueError("Reference partition cells must share one dimension.")
         partition_dimension = group_dimension
         exact = exact_reference_cell_vertices(group)
-        for row, (fine, coarse, vertices) in enumerate(zip(
-            np.asarray(group.target_cell_ids, dtype=np.int64),
-            np.asarray(group.source_cell_ids, dtype=np.int64),
-            exact,
-            strict=True,
-        )):
+        for row, (fine, coarse, vertices) in enumerate(
+            zip(
+                np.asarray(group.target_cell_ids, dtype=np.int64),
+                np.asarray(group.source_cell_ids, dtype=np.int64),
+                exact,
+                strict=True,
+            )
+        ):
             fine_id, coarse_id = int(fine), int(coarse)
             if fine_id in fine_ids:
-                raise ValueError("A fine cell occurs more than once in a reference partition.")
+                raise ValueError(
+                    "A fine cell occurs more than once in a reference partition."
+                )
             fine_ids.add(fine_id)
             parent_kind, children = parents.setdefault(
                 coarse_id, (group.source_cell_kind, [])
             )
             if parent_kind != group.source_cell_kind:
-                raise ValueError("A reference partition parent has conflicting cell families.")
+                raise ValueError(
+                    "A reference partition parent has conflicting cell families."
+                )
             coefficients, determinant = _partition_affine_coefficients(
                 group.target_cell_kind, vertices
             )
@@ -1125,9 +1134,13 @@ def validate_reference_cell_partition(partition: ReferenceCellPartition, /) -> N
                             expected,
                             scale(variables[column], coefficients[column + 1][axis]),
                         )
-                    actual_expression = actual if isinstance(actual, RationalPolynomial) else dict(actual)
+                    actual_expression = (
+                        actual if isinstance(actual, RationalPolynomial) else dict(actual)
+                    )
                     if not expression_equal(expected, actual_expression):
-                        raise ValueError("Reference partition chart is not its affine corner map.")
+                        raise ValueError(
+                            "Reference partition chart is not its affine corner map."
+                        )
             children.append((group.target_cell_kind, vertices, determinant))
     if not fine_ids:
         raise ValueError("A reference partition cannot be empty.")
@@ -1137,7 +1150,9 @@ def validate_reference_cell_partition(partition: ReferenceCellPartition, /) -> N
             Fraction(0),
         )
         if total != volumes[parent_kind]:
-            raise ValueError("Reference partition does not cover its parent volume exactly.")
+            raise ValueError(
+                "Reference partition does not cover its parent volume exactly."
+            )
         for index, other_index in _partition_aabb_candidates(children):
             kind, vertices, _ = children[index]
             other_kind, other_vertices, _ = children[other_index]

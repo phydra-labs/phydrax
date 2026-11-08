@@ -159,9 +159,7 @@ def prepare_foam(
     quad_point_capacity: int,
 ) -> Foam:
     """Uniform films and borders on one validated dry-foam epoch."""
-    topology = seed.topology(
-        seed.capacity_plan(resource_id=resource_id, headroom=2.0)
-    )
+    topology = seed.topology(seed.capacity_plan(resource_id=resource_id, headroom=2.0))
     geometry = seed.state(topology)
     surface = PreparedMultiRegionSurface(topology, geometry, policy=VALIDATION)
     film_slots = prepare_film_sheet_slots(surface, geometry)

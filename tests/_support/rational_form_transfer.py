@@ -54,9 +54,7 @@ def make_rational_form_transfer_case(
         ),
         vertex_global_ids=np.asarray((0, 1), dtype=np.int64),
     )
-    coordinate_element = form_element(
-        "interval", 0, 1, family="trimmed", proxy="scalar"
-    )
+    coordinate_element = form_element("interval", 0, 1, family="trimmed", proxy="scalar")
     source_geometry = CellGeometrySpec(
         {"edge": coordinate_element}, {"edge": route}, coordinates
     )

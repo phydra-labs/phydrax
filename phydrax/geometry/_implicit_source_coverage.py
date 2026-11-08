@@ -51,9 +51,8 @@ def _validate_oriented_implicit_triangles(faces: np.ndarray, /) -> None:
         raise SourceCoverageUnavailable(
             "Implicit source boundary is not triangular.", status="unresolved"
         )
-    compact = (
-        face_rows.size == 0
-        or (np.min(face_rows) >= 0 and np.max(face_rows) <= np.iinfo(np.uint32).max)
+    compact = face_rows.size == 0 or (
+        np.min(face_rows) >= 0 and np.max(face_rows) <= np.iinfo(np.uint32).max
     )
     index_dtype = np.dtype(np.uint32 if compact else np.int64)
     triangles = np.empty(face_rows.shape, dtype=index_dtype)
@@ -77,7 +76,9 @@ def _validate_oriented_implicit_triangles(faces: np.ndarray, /) -> None:
     del triangles, triangle_keys
 
     count = len(face_rows)
-    edges = np.empty(3 * count, dtype=[("low", index_dtype), ("high", index_dtype), ("sign", "i1")])
+    edges = np.empty(
+        3 * count, dtype=[("low", index_dtype), ("high", index_dtype), ("sign", "i1")]
+    )
     for axis in range(3):
         for start in range(0, count, 65536):
             stop = min(start + 65536, count)
@@ -110,7 +111,9 @@ class _SortedIntegerKeys:
     """Compact lookup for canonical lexicographically sorted integer tuples."""
 
     def __init__(self, rows: np.ndarray) -> None:
-        self.rows = np.asarray(rows, dtype=np.int64).reshape(len(rows), math.prod(rows.shape[1:]))
+        self.rows = np.asarray(rows, dtype=np.int64).reshape(
+            len(rows), math.prod(rows.shape[1:])
+        )
         self.keys = _integer_rows(self.rows)
 
     def get(self, key: Any, default: Any = None) -> Any:
@@ -138,11 +141,15 @@ class _SourceTriangles:
     """Exact coordinate-ranked triangle keys and source row ancestry."""
 
     def __init__(self, vertices: np.ndarray, faces: np.ndarray) -> None:
-        index_dtype = np.uint32 if max(len(vertices), len(faces)) <= np.iinfo(np.uint32).max else np.uint64
-        self.vertices = vertices
-        self.vertex_order = np.lexsort((vertices[:, 2], vertices[:, 1], vertices[:, 0])).astype(
-            index_dtype, copy=False
+        index_dtype = (
+            np.uint32
+            if max(len(vertices), len(faces)) <= np.iinfo(np.uint32).max
+            else np.uint64
         )
+        self.vertices = vertices
+        self.vertex_order = np.lexsort(
+            (vertices[:, 2], vertices[:, 1], vertices[:, 0])
+        ).astype(index_dtype, copy=False)
         vertex_ranks = np.empty(len(vertices), dtype=index_dtype)
         previous_rank = 0
         for start in range(0, len(vertices), 65536):
@@ -150,7 +157,7 @@ class _SourceTriangles:
             rows = self.vertex_order[start:stop]
             ranks = np.arange(start, stop, dtype=index_dtype)
             if start:
-                previous = vertices[self.vertex_order[start - 1:stop - 1]]
+                previous = vertices[self.vertex_order[start - 1 : stop - 1]]
                 equal = np.all(vertices[rows] == previous, axis=1)
                 ranks[equal] = previous_rank
             elif stop > 1:
@@ -161,8 +168,13 @@ class _SourceTriangles:
             previous_rank = int(ranks[-1])
 
         self.records = np.empty(
-            len(faces), dtype=[("a", index_dtype), ("b", index_dtype),
-                               ("c", index_dtype), ("row", index_dtype)]
+            len(faces),
+            dtype=[
+                ("a", index_dtype),
+                ("b", index_dtype),
+                ("c", index_dtype),
+                ("row", index_dtype),
+            ],
         )
         for start in range(0, len(faces), 4096):
             stop = min(start + 4096, len(faces))
@@ -176,7 +188,10 @@ class _SourceTriangles:
             stop = min(start + 65536, len(faces) - 1)
             duplicate = np.ones(stop - start, dtype=np.bool_)
             for name in ("a", "b", "c"):
-                duplicate &= self.records[name][start:stop] == self.records[name][start + 1:stop + 1]
+                duplicate &= (
+                    self.records[name][start:stop]
+                    == self.records[name][start + 1 : stop + 1]
+                )
             for offset in np.flatnonzero(duplicate):
                 row = int(self.records["row"][start + offset])
                 # The former coordinate comparison never equated NaNs.
@@ -192,12 +207,16 @@ class _SourceTriangles:
             values = [float(value) for point in points for value in point]
         except (OverflowError, ValueError):
             return default
-        if any(not math.isfinite(value) or Fraction(value) != exact
-               for value, exact in zip(values, (x for point in points for x in point), strict=True)):
+        if any(
+            not math.isfinite(value) or Fraction(value) != exact
+            for value, exact in zip(
+                values, (x for point in points for x in point), strict=True
+            )
+        ):
             return default
         ranks = []
         for offset in range(0, 9, 3):
-            target = values[offset:offset + 3]
+            target = values[offset : offset + 3]
             low, high = 0, len(self.vertex_order)
             while low < high:
                 middle = (low + high) // 2
@@ -263,9 +282,12 @@ class _DyadicPartition:
         for level_, index_, box in zip(levels, indices, boxes, strict=True):
             level = int(level_)
             index = tuple(int(value) for value in index_)
-            if (level < 0 or level > self.target_level
+            if (
+                level < 0
+                or level > self.target_level
                 or any(value < 0 or value >= (1 << level) for value in index)
-                or self.position >= len(self.intervals)):
+                or self.position >= len(self.intervals)
+            ):
                 self._fail()
             for axis, coordinate in enumerate(index):
                 lower_num, extent_num, domain_exponent = self.domain[axis]
@@ -280,13 +302,18 @@ class _DyadicPartition:
                     shift = max(exponent, exact_exponent)
                     observed = numerator << (shift - exponent)
                     expected = exact << (shift - exact_exponent)
-                    if (side == 0 and observed > expected) or (side == 1 and observed < expected):
+                    if (side == 0 and observed > expected) or (
+                        side == 1 and observed < expected
+                    ):
                         self._fail()
             morton = 0
             for bit in range(level - 1, -1, -1):
-                morton = (morton << 3) | (((index[0] >> bit) & 1) << 2) | (
-                    ((index[1] >> bit) & 1) << 1
-                ) | ((index[2] >> bit) & 1)
+                morton = (
+                    (morton << 3)
+                    | (((index[0] >> bit) & 1) << 2)
+                    | (((index[1] >> bit) & 1) << 1)
+                    | ((index[2] >> bit) & 1)
+                )
             remaining = 3 * (self.target_level - level)
             first = morton << remaining
             last = first + (1 << remaining)
@@ -308,7 +335,9 @@ class _DyadicPartition:
             self._fail()
 
 
-def _check_leaf_replay(surface: AdaptiveImplicitSurface, bounds: _FieldEnclosures, /) -> None:
+def _check_leaf_replay(
+    surface: AdaptiveImplicitSurface, bounds: _FieldEnclosures, /
+) -> None:
     """Replay every octree leaf against both retained cover and root cells."""
     from .implicit._adaptive_packed_frontier import discover_leaves
 
@@ -334,9 +363,15 @@ def _check_leaf_replay(surface: AdaptiveImplicitSurface, bounds: _FieldEnclosure
         )
 
     def consume(
-        level: np.ndarray, index: np.ndarray, boxes: np.ndarray,
-        lower: np.ndarray, upper: np.ndarray, grad_lower: np.ndarray,
-        grad_upper: np.ndarray, issue: np.ndarray, mask: np.ndarray,
+        level: np.ndarray,
+        index: np.ndarray,
+        boxes: np.ndarray,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        grad_lower: np.ndarray,
+        grad_upper: np.ndarray,
+        issue: np.ndarray,
+        mask: np.ndarray,
     ) -> None:
         nonlocal leaf_row, cell_row
         count = len(level)
@@ -385,7 +420,9 @@ def _check_leaf_replay(surface: AdaptiveImplicitSurface, bounds: _FieldEnclosure
     partition.finish()
 
 
-def _check_scaffold_lattice(surface: AdaptiveImplicitSurface, bounds: _FieldEnclosures, /) -> None:
+def _check_scaffold_lattice(
+    surface: AdaptiveImplicitSurface, bounds: _FieldEnclosures, /
+) -> None:
     """Re-evaluate lattice, point enclosures, roots and tetrahedral incidence."""
     from .implicit._adaptive_discovery import (
         _CORNER_OFFSETS,
@@ -405,6 +442,7 @@ def _check_scaffold_lattice(surface: AdaptiveImplicitSurface, bounds: _FieldEncl
             "Implicit discovery does not cold-reproduce its retained roots and intervals.",
             status="violated",
         )
+
     def strictly_sorted(rows: np.ndarray) -> bool:
         before, after = rows[:-1], rows[1:]
         less = np.zeros(len(before), dtype=np.bool_)
@@ -414,11 +452,13 @@ def _check_scaffold_lattice(surface: AdaptiveImplicitSurface, bounds: _FieldEncl
             equal &= before[:, axis] == after[:, axis]
         return bool(np.all(less))
 
-
     if (
-        ids.ndim != 2 or ids.shape[1:] != (3,)
-        or cell_ids.ndim != 2 or cell_ids.shape[1:] != (4,)
-        or edges.ndim != 3 or edges.shape[1:] != (2, 3)
+        ids.ndim != 2
+        or ids.shape[1:] != (3,)
+        or cell_ids.ndim != 2
+        or cell_ids.shape[1:] != (4,)
+        or edges.ndim != 3
+        or edges.shape[1:] != (2, 3)
         or not strictly_sorted(ids)
         or not strictly_sorted(edges.reshape(-1, 6))
         or np.any(cell_ids[:, 0] != scaffold.target_level)
@@ -432,8 +472,10 @@ def _check_scaffold_lattice(surface: AdaptiveImplicitSurface, bounds: _FieldEncl
     seen_corners = np.zeros(len(ids), dtype=np.bool_)
     tetra_pattern = np.asarray(_TETRAHEDRA, dtype=np.int64)
     tetra_count = len(tetra_pattern)
-    if (scaffold.tetrahedra.shape != (len(cell_ids) * tetra_count, 4)
-        or scaffold.tetrahedron_cell_rows.shape != (len(cell_ids) * tetra_count,)):
+    if scaffold.tetrahedra.shape != (
+        len(cell_ids) * tetra_count,
+        4,
+    ) or scaffold.tetrahedron_cell_rows.shape != (len(cell_ids) * tetra_count,):
         fail()
 
     def corner_lookup(query: np.ndarray) -> np.ndarray:
@@ -469,12 +511,9 @@ def _check_scaffold_lattice(surface: AdaptiveImplicitSurface, bounds: _FieldEncl
         seen_corners[rows] = True
         tetra = rows[:, tetra_pattern].reshape(-1, 4)
         lo, hi = start * tetra_count, stop * tetra_count
-        if (
-            not np.array_equal(tetra, scaffold.tetrahedra[lo:hi])
-            or not np.array_equal(
-                np.repeat(np.arange(start, stop), tetra_count),
-                scaffold.tetrahedron_cell_rows[lo:hi],
-            )
+        if not np.array_equal(tetra, scaffold.tetrahedra[lo:hi]) or not np.array_equal(
+            np.repeat(np.arange(start, stop), tetra_count),
+            scaffold.tetrahedron_cell_rows[lo:hi],
         ):
             fail()
     if not np.all(seen_corners):
@@ -489,18 +528,25 @@ def _check_scaffold_lattice(surface: AdaptiveImplicitSurface, bounds: _FieldEncl
         endpoint_signs = np.asarray(scaffold.corner_signs)[rows]
         if np.any(endpoint_signs[:, 0] * endpoint_signs[:, 1] != -1):
             fail()
-        if (
-            not _same_bits(scaffold.corner_value_lower[rows], scaffold.root_endpoint_value_lower[start:stop])
-            or not _same_bits(scaffold.corner_value_upper[rows], scaffold.root_endpoint_value_upper[start:stop])
+        if not _same_bits(
+            scaffold.corner_value_lower[rows],
+            scaffold.root_endpoint_value_lower[start:stop],
+        ) or not _same_bits(
+            scaffold.corner_value_upper[rows],
+            scaffold.root_endpoint_value_upper[start:stop],
         ):
             fail()
         endpoints = np.asarray(scaffold.corner_coordinates)[rows]
-        records = _root_on_edges(bounds, endpoints, endpoint_signs, surface.policy.root_tolerance)
+        records = _root_on_edges(
+            bounds, endpoints, endpoint_signs, surface.policy.root_tolerance
+        )
         for offset, record in enumerate(records):
             row = start + offset
             if (
                 not _same_bits(record[0], scaffold.root_points[row])
-                or not _same_bits(np.asarray(record[1]), np.asarray(scaffold.root_errors[row]))
+                or not _same_bits(
+                    np.asarray(record[1]), np.asarray(scaffold.root_errors[row])
+                )
                 or record[2] != scaffold.root_issues[row]
                 or not _same_bits(record[3], scaffold.root_brackets[row, 0])
                 or not _same_bits(record[4], scaffold.root_brackets[row, 1])
@@ -508,7 +554,9 @@ def _check_scaffold_lattice(surface: AdaptiveImplicitSurface, bounds: _FieldEncl
                 fail()
 
 
-def _check_discovery_metadata(surface: AdaptiveImplicitSurface, bounds: _FieldEnclosures, /) -> None:
+def _check_discovery_metadata(
+    surface: AdaptiveImplicitSurface, bounds: _FieldEnclosures, /
+) -> None:
     """Bind retained identities and evidence to the replayed source content."""
     from .implicit._adaptive_discovery import (
         _cover_identity,
@@ -539,8 +587,14 @@ def _check_discovery_metadata(surface: AdaptiveImplicitSurface, bounds: _FieldEn
         and np.all(domain[1] >= geometry_bounds[1])
     )
     cover_id = _cover_identity(
-        cover.boxes, cover.value_lower, cover.value_upper, domain,
-        surface.source_id, state_id, surface.policy.enclosure, bool(source_in_domain),
+        cover.boxes,
+        cover.value_lower,
+        cover.value_upper,
+        domain,
+        surface.source_id,
+        state_id,
+        surface.policy.enclosure,
+        bool(source_in_domain),
     )
     query_id = canonical_fingerprint(
         {
@@ -580,7 +634,8 @@ def _check_discovery_metadata(surface: AdaptiveImplicitSurface, bounds: _FieldEn
     if (
         not source_in_domain
         or not bool(np.asarray(surface.geometry.validity().accepted))
-        or not cover.complete or not cover.certified
+        or not cover.complete
+        or not cover.certified
         or cover.source_id != surface.source_id
         or cover.state_id != state_id
         or cover.enclosure != surface.policy.enclosure
@@ -589,7 +644,8 @@ def _check_discovery_metadata(surface: AdaptiveImplicitSurface, bounds: _FieldEn
         or not np.array_equal(volume.domain, domain)
         or volume.source_id != surface.source_id
         or not volume.certified
-        or array_tree_fingerprint(volume.geometry) != array_tree_fingerprint(surface.geometry)
+        or array_tree_fingerprint(volume.geometry)
+        != array_tree_fingerprint(surface.geometry)
         or volume.query_id != query_id
         or evidence.accuracy != "enclosed"
         or evidence.enclosure != surface.policy.enclosure
@@ -715,22 +771,26 @@ def _implicit_root_derivation(
     order = np.lexsort(root_point_rows.T[::-1])
     for start in range(0, max(0, len(order) - 1), 65536):
         stop = min(start + 65536, len(order) - 1)
-        if np.any(np.all(
-            root_point_rows[order[start:stop]] == root_point_rows[order[start + 1:stop + 1]],
-            axis=1,
-        )):
+        if np.any(
+            np.all(
+                root_point_rows[order[start:stop]]
+                == root_point_rows[order[start + 1 : stop + 1]],
+                axis=1,
+            )
+        ):
             raise SourceCoverageUnavailable(
                 "Implicit scaffold merges distinct source root identities.",
                 status="violated",
             )
     del order
 
-    def certify_zero_free_segments(endpoints: np.ndarray, brackets: np.ndarray) -> np.ndarray:
+    def certify_zero_free_segments(
+        endpoints: np.ndarray, brackets: np.ndarray
+    ) -> np.ndarray:
         # Each stack is bounded to one root; only the current frontier of this
         # fixed-size batch is passed to the interval evaluator.
         stacks = [
-            [(endpoints[row, 0], brackets[row, 0]),
-             (brackets[row, 1], endpoints[row, 1])]
+            [(endpoints[row, 0], brackets[row, 0]), (brackets[row, 1], endpoints[row, 1])]
             for row in range(len(endpoints))
         ]
         certified = np.ones(len(stacks), dtype=np.bool_)
@@ -759,15 +819,16 @@ def _implicit_root_derivation(
         stop = min(start + 256, len(root_edge_rows))
         edge_records = _integer_rows(root_edge_rows[start:stop].reshape(-1, 3))
         corner_positions = np.searchsorted(corner_rows.keys, edge_records)
-        if (
-            np.any(corner_positions >= len(corner_rows.keys))
-            or np.any(corner_rows.keys[corner_positions] != edge_records)
+        if np.any(corner_positions >= len(corner_rows.keys)) or np.any(
+            corner_rows.keys[corner_positions] != edge_records
         ):
             raise SourceCoverageUnavailable(
                 "Implicit root ancestry references absent grid corners.",
                 status="violated",
             )
-        endpoints = np.asarray(scaffold.corner_coordinates)[corner_positions].reshape(-1, 2, 3)
+        endpoints = np.asarray(scaffold.corner_coordinates)[corner_positions].reshape(
+            -1, 2, 3
+        )
         brackets = np.asarray(scaffold.root_brackets[start:stop], dtype=np.float64)
         endpoint_values = bounds.point_values(endpoints.reshape(-1, 3))
         bracket_values = bounds.point_values(brackets.reshape(-1, 3))
@@ -791,9 +852,14 @@ def _implicit_root_derivation(
                 )
             signs = endpoint_signs[local]
             bracket_pair = bracket_signs[local]
-            if (not signs[0] or not signs[1] or signs[0] == signs[1]
-                or not bracket_pair[0] or not bracket_pair[1]
-                or bracket_pair[0] == bracket_pair[1]):
+            if (
+                not signs[0]
+                or not signs[1]
+                or signs[0] == signs[1]
+                or not bracket_pair[0]
+                or not bracket_pair[1]
+                or bracket_pair[0] == bracket_pair[1]
+            ):
                 raise SourceCoverageUnavailable(
                     "Implicit root endpoints lack opposite strict interval signs.",
                     status="unresolved",
@@ -805,7 +871,9 @@ def _implicit_root_derivation(
             )
             derivative_sign = _strict_sign(
                 _interval_dot(
-                    derivatives.gradient_lower[local], derivatives.gradient_upper[local], direction
+                    derivatives.gradient_lower[local],
+                    derivatives.gradient_upper[local],
+                    direction,
                 )
             )
             if derivative_sign == 0:
@@ -843,8 +911,17 @@ def _implicit_root_derivation(
     from ._implicit_target_coverage import prove_implicit_target_coverage
 
     prove_implicit_target_coverage(
-        mesh, geometry, cell_regions, witness, bounds, source_vertices,
-        source_face_rows, triangle_cells, triangle_roots, root_keys, scaffold,
+        mesh,
+        geometry,
+        cell_regions,
+        witness,
+        bounds,
+        source_vertices,
+        source_face_rows,
+        triangle_cells,
+        triangle_roots,
+        root_keys,
+        scaffold,
     )
 
     degree = canonical_fingerprint(
@@ -872,4 +949,3 @@ def _implicit_root_derivation(
         }
     )
     return degree, source_mesh.faces.shape[0]
-

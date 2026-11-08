@@ -509,20 +509,27 @@ class SourceSurfaceGeometryActions(LocalGeometryActions):
         self.cached_inverse_jacobian = inverse
         self.cached_measure = measure
         self.cache_reference = (
-            physical, jacobian, inverse, measure,
-            self.reference_points, self.reference_weights, self.rows,
+            physical,
+            jacobian,
+            inverse,
+            measure,
+            self.reference_points,
+            self.reference_weights,
+            self.rows,
         )
         self.runtime_layout_id = source.geometry_layout_id
         self.entity_count = int(self.rows.shape[0])
         self.domain_kind = "cell"
-        self.action_id = canonical_fingerprint({
-            "kind": "source-surface-local-geometry",
-            "source": source.source_geometry_id,
-            "block": self.block_index,
-            "rows": array_tree_fingerprint(self.rows),
-            "points": array_tree_fingerprint(self.reference_points),
-            "weights": array_tree_fingerprint(self.reference_weights),
-        })
+        self.action_id = canonical_fingerprint(
+            {
+                "kind": "source-surface-local-geometry",
+                "source": source.source_geometry_id,
+                "block": self.block_index,
+                "rows": array_tree_fingerprint(self.rows),
+                "points": array_tree_fingerprint(self.reference_points),
+                "weights": array_tree_fingerprint(self.reference_weights),
+            }
+        )
 
     def realize(self, runtime: object, /) -> LocalMetricResult:
         from ._generic import FiniteElementRuntimeData
@@ -541,10 +548,17 @@ class SourceSurfaceGeometryActions(LocalGeometryActions):
         changed = self.source.source_changed() | ~source_arrays_equal(
             coordinates, self.source.carrier_coordinates
         )
-        current_values = (*cached, self.reference_points, self.reference_weights, self.rows)
+        current_values = (
+            *cached,
+            self.reference_points,
+            self.reference_weights,
+            self.rows,
+        )
         for current, original in zip(current_values, self.cache_reference, strict=True):
             if current.shape != original.shape or current.dtype != original.dtype:
-                raise ValueError("Source surface metric cache layout changed after proof.")
+                raise ValueError(
+                    "Source surface metric cache layout changed after proof."
+                )
             changed = changed | ~source_arrays_equal(current, original)
         points, jacobian, inverse, measure = eqx.error_if(
             cached, changed, "Source surface metric or carrier changed after proof."
@@ -805,7 +819,9 @@ class FiniteElementLocalProvider(StrictModule):
                 gathers.append(cell_dofs if all_block_rows else cell_dofs[selected])
             if discretization.source_surface is not None:
                 if maximum_derivative_order == 2:
-                    raise ValueError("Source surface local geometry does not provide inverse-map Hessians.")
+                    raise ValueError(
+                        "Source surface local geometry does not provide inverse-map Hessians."
+                    )
                 geometry = SourceSurfaceGeometryActions(
                     discretization.source_surface, block_index, selected, points, weights
                 )

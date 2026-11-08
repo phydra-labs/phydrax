@@ -202,8 +202,8 @@ class _PreparedProjection:
     tolerance: Fraction
     uncertain: bool
 
-    def seam_order(self, 
-        root_index: int, seam_index: int
+    def seam_order(
+        self, root_index: int, seam_index: int
     ) -> tuple[int, Fraction, Fraction, Fraction, Fraction]:
         """Order two isolated algebraic roots, proving equality by their gcd."""
         assert self.seam_polynomial is not None and self.seam_isolator is not None
@@ -224,8 +224,8 @@ class _PreparedProjection:
                     return 0, rl, rh, sl, sh
             width /= 16
 
-    def angle_order(self, 
-        root_index: int, turn: int, target: Fraction
+    def angle_order(
+        self, root_index: int, turn: int, target: Fraction
     ) -> tuple[int, Fraction, Fraction]:
         """Compare an algebraic half-angle root to an exact rational angle."""
         width = self.tolerance
@@ -248,8 +248,16 @@ class _PreparedProjection:
             digits += 20
 
     def finite_node_order(
-        self, index: int, turn: int, node: int, node_lo: float, node_hi: float,
-    ) -> tuple[int, Fraction, Fraction, tuple[Fraction, Fraction] | None, Fraction | None] | None:
+        self,
+        index: int,
+        turn: int,
+        node: int,
+        node_lo: float,
+        node_hi: float,
+    ) -> (
+        tuple[int, Fraction, Fraction, tuple[Fraction, Fraction] | None, Fraction | None]
+        | None
+    ):
         """Compare one stationary root to the exact source-node authority."""
         if int(self.curve.node_axes[node]) == self.axis:
             target = F.from_float(float(self.curve.node_values[node]))
@@ -257,7 +265,10 @@ class _PreparedProjection:
             return order, lo, hi, None, target
         possible = []
         for seam_index, (sl, sh, _) in enumerate(self.seam_roots):
-            theta = 2 * self.ctx.atan2(_interval(self.ctx, sl, sh), self.ctx.mpf(1)) + turn * 2 * self.ctx.pi
+            theta = (
+                2 * self.ctx.atan2(_interval(self.ctx, sl, sh), self.ctx.mpf(1))
+                + turn * 2 * self.ctx.pi
+            )
             lower, upper = _bounds(theta)
             if upper >= node_lo and lower <= node_hi:
                 possible.append(seam_index)
@@ -267,8 +278,14 @@ class _PreparedProjection:
         return order, lo, hi, (sl, sh), None
 
     def finite_adjacent_candidate(
-        self, index: int, multiplicity: int, turn: int, node: int,
-        node_order: tuple[int, Fraction, Fraction, tuple[Fraction, Fraction] | None, Fraction | None],
+        self,
+        index: int,
+        multiplicity: int,
+        turn: int,
+        node: int,
+        node_order: tuple[
+            int, Fraction, Fraction, tuple[Fraction, Fraction] | None, Fraction | None
+        ],
     ) -> None:
         """Place a certified stationary root on the proved side of its node."""
         order, refined_lo, refined_hi, seam_interval, target = node_order
@@ -283,7 +300,8 @@ class _PreparedProjection:
         left = s + (F.from_float(cfirst) - chart) * (e - s)
         right = s + (F.from_float(clast) - chart) * (e - s)
         refined_angle = (
-            2 * self.ctx.atan2(_interval(self.ctx, refined_lo, refined_hi), self.ctx.mpf(1))
+            2
+            * self.ctx.atan2(_interval(self.ctx, refined_lo, refined_hi), self.ctx.mpf(1))
             + turn * 2 * self.ctx.pi
         )
         rlo, rhi = _bounds(refined_angle)
@@ -300,9 +318,7 @@ class _PreparedProjection:
                 local = interval_context(digits)
                 root_angle = (
                     2
-                    * local.atan2(
-                        _interval(local, refined_lo, refined_hi), local.mpf(1)
-                    )
+                    * local.atan2(_interval(local, refined_lo, refined_hi), local.mpf(1))
                     + turn * 2 * local.pi
                 )
                 if seam_interval is None:
@@ -310,20 +326,17 @@ class _PreparedProjection:
                     node_angle = _scalar(local, target)
                 else:
                     node_angle = (
-                        2
-                        * local.atan2(
-                            _interval(local, *seam_interval), local.mpf(1)
-                        )
+                        2 * local.atan2(_interval(local, *seam_interval), local.mpf(1))
                         + turn * 2 * local.pi
                     )
                 delta = root_angle - node_angle
                 if (order < 0 and delta.b < 0) or (order > 0 and delta.a > 0):
                     break
                 digits += 20
-            parameter = node + (float(delta.a) + float(delta.b)) / (
-                2 * float(e - s)
+            parameter = node + (float(delta.a) + float(delta.b)) / (2 * float(e - s))
+            bounds = _distance(
+                self.ctx, self.family, self.sign, refined_angle, self.qx, self.qn, self.qz
             )
-            bounds = _distance(self.ctx, self.family, self.sign, refined_angle, self.qx, self.qn, self.qz)
             if bounds is None or not chart <= parameter <= chart + 1:
                 self.uncertain = True
             else:
@@ -344,7 +357,9 @@ class _PreparedProjection:
                     )
                 )
 
-    def finite_node_candidates(self, index: int, multiplicity: int, turn: int, tl: float, th: float) -> bool:
+    def finite_node_candidates(
+        self, index: int, multiplicity: int, turn: int, tl: float, th: float
+    ) -> bool:
         handled = False
         for node in range(1, self.curve.num_charts):
             if self.last < node - 1 or self.first > node + 1:
@@ -368,7 +383,15 @@ class _PreparedProjection:
                         )
                         + turn * 2 * self.ctx.pi
                     )
-                    bounds = _distance(self.ctx, self.family, self.sign, refined_angle, self.qx, self.qn, self.qz)
+                    bounds = _distance(
+                        self.ctx,
+                        self.family,
+                        self.sign,
+                        refined_angle,
+                        self.qx,
+                        self.qn,
+                        self.qz,
+                    )
                     if bounds is None:
                         self.uncertain = True
                     else:
@@ -388,14 +411,29 @@ class _PreparedProjection:
                             )
                         )
             else:
-                self.finite_adjacent_candidate(index, multiplicity, turn, node, node_order)
+                self.finite_adjacent_candidate(
+                    index, multiplicity, turn, node, node_order
+                )
             handled = True
             break
         return handled
 
-    def finite_chart_candidates(self, index: int, lo: Fraction, hi: Fraction, multiplicity: int, turn: int, lifted: Any, tl: float, th: float) -> tuple[Fraction, Fraction]:
+    def finite_chart_candidates(
+        self,
+        index: int,
+        lo: Fraction,
+        hi: Fraction,
+        multiplicity: int,
+        turn: int,
+        lifted: Any,
+        tl: float,
+        th: float,
+    ) -> tuple[Fraction, Fraction]:
         for chart in range(self.curve.num_charts):
-            cfirst, clast = max(self.first, float(chart)), min(self.last, float(chart + 1))
+            cfirst, clast = (
+                max(self.first, float(chart)),
+                min(self.last, float(chart + 1)),
+            )
             if cfirst > clast:
                 continue
             s, e = (
@@ -450,14 +488,17 @@ class _PreparedProjection:
                 continue
             if upper_proved:
                 displacement = lifted - (
-                    _scalar(self.ctx, F.from_float(float(self.starts[0]))) + 2 * self.ctx.pi
+                    _scalar(self.ctx, F.from_float(float(self.starts[0])))
+                    + 2 * self.ctx.pi
                 )
                 parameter = self.curve.num_charts + (
                     float(displacement.a) + float(displacement.b)
                 ) / (2 * float(e - s))
             else:
                 parameter = chart + ((tl + th) / 2 - float(s)) / float(e - s)
-            bounds = _distance(self.ctx, self.family, self.sign, lifted, self.qx, self.qn, self.qz)
+            bounds = _distance(
+                self.ctx, self.family, self.sign, lifted, self.qx, self.qn, self.qz
+            )
             if bounds is None:
                 self.uncertain = True
                 continue
@@ -487,9 +528,14 @@ class _PreparedProjection:
         possible = []
         for seam_index, (sl, sh, _) in enumerate(self.seam_roots):
             for seam_turn in (turn, turn + 1):
-                seam_theta = 2 * self.ctx.atan2(_interval(self.ctx, sl, sh), self.ctx.mpf(1)) + seam_turn * 2 * self.ctx.pi
+                seam_theta = (
+                    2 * self.ctx.atan2(_interval(self.ctx, sl, sh), self.ctx.mpf(1))
+                    + seam_turn * 2 * self.ctx.pi
+                )
                 lower, upper = _bounds(seam_theta)
-                if upper >= float(self.curve.node_lower[node, self.axis]) and lower <= float(self.curve.node_upper[node, self.axis]):
+                if upper >= float(
+                    self.curve.node_lower[node, self.axis]
+                ) and lower <= float(self.curve.node_upper[node, self.axis]):
                     possible.append((seam_index, seam_turn))
         if len(possible) != 1:
             return None
@@ -498,7 +544,10 @@ class _PreparedProjection:
         while True:
             sl, sh, _ = self.seam_isolator.isolate(tolerance=width)[seam_index]
             local = interval_context(digits)
-            seam_theta = 2 * local.atan2(_interval(local, sl, sh), local.mpf(1)) + seam_turn * 2 * local.pi
+            seam_theta = (
+                2 * local.atan2(_interval(local, sl, sh), local.mpf(1))
+                + seam_turn * 2 * local.pi
+            )
             exact_angle = (2 * turn + 1) * local.pi
             if exact_angle.b < seam_theta.a:
                 return -1
@@ -507,7 +556,9 @@ class _PreparedProjection:
             width /= 16
             digits += 20
 
-    def infinity_node_candidates(self, turn: int, angle: Any, tl: float, th: float) -> bool:
+    def infinity_node_candidates(
+        self, turn: int, angle: Any, tl: float, th: float
+    ) -> bool:
         handled = False
         for node in range(1, self.curve.num_charts):
             if self.last < node - 1 or self.first > node + 1:
@@ -523,7 +574,9 @@ class _PreparedProjection:
                 break
             if order == 0:
                 if self.first <= node <= self.last:
-                    bounds = _distance(self.ctx, self.family, self.sign, angle, self.qx, self.qn, self.qz)
+                    bounds = _distance(
+                        self.ctx, self.family, self.sign, angle, self.qx, self.qn, self.qz
+                    )
                     if bounds is None:
                         self.uncertain = True
                     else:
@@ -535,9 +588,14 @@ class _PreparedProjection:
                                 float(node) in self.edge_range,
                             )
                         )
-            elif not ((order < 0 and self.first >= node) or (order > 0 and self.last <= node)):
+            elif not (
+                (order < 0 and self.first >= node) or (order > 0 and self.last <= node)
+            ):
                 chart = node - 1 if order < 0 else node
-                cfirst, clast = max(self.first, float(chart)), min(self.last, float(chart + 1))
+                cfirst, clast = (
+                    max(self.first, float(chart)),
+                    min(self.last, float(chart + 1)),
+                )
                 s, e = (
                     F.from_float(float(self.starts[chart])),
                     F.from_float(float(self.ends[chart])),
@@ -545,7 +603,8 @@ class _PreparedProjection:
                 left = s + (F.from_float(cfirst) - chart) * (e - s)
                 right = s + (F.from_float(clast) - chart) * (e - s)
                 right_bound = (
-                    _scalar(self.ctx, F.from_float(float(self.starts[0]))) + 2 * self.ctx.pi
+                    _scalar(self.ctx, F.from_float(float(self.starts[0])))
+                    + 2 * self.ctx.pi
                     if clast == self.curve.num_charts
                     else _scalar(self.ctx, right)
                 )
@@ -553,7 +612,9 @@ class _PreparedProjection:
                 upper_ok = clast == node or angle.b < right_bound.a
                 if lower_ok and upper_ok:
                     parameter = chart + ((tl + th) / 2 - float(s)) / float(e - s)
-                    bounds = _distance(self.ctx, self.family, self.sign, angle, self.qx, self.qn, self.qz)
+                    bounds = _distance(
+                        self.ctx, self.family, self.sign, angle, self.qx, self.qn, self.qz
+                    )
                     if bounds is None:
                         self.uncertain = True
                     else:
@@ -568,9 +629,14 @@ class _PreparedProjection:
             break
         return handled
 
-    def infinity_chart_candidates(self, turn: int, angle: Any, tl: float, th: float) -> None:
+    def infinity_chart_candidates(
+        self, turn: int, angle: Any, tl: float, th: float
+    ) -> None:
         for chart in range(self.curve.num_charts):
-            cfirst, clast = max(self.first, float(chart)), min(self.last, float(chart + 1))
+            cfirst, clast = (
+                max(self.first, float(chart)),
+                min(self.last, float(chart + 1)),
+            )
             if cfirst > clast:
                 continue
             s, e = (
@@ -590,7 +656,9 @@ class _PreparedProjection:
                 self.uncertain = True
                 continue
             parameter = chart + ((tl + th) / 2 - float(s)) / float(e - s)
-            bounds = _distance(self.ctx, self.family, self.sign, angle, self.qx, self.qn, self.qz)
+            bounds = _distance(
+                self.ctx, self.family, self.sign, angle, self.qx, self.qn, self.qz
+            )
             if bounds is None:
                 self.uncertain = True
             else:
@@ -691,24 +759,34 @@ def _append_endpoint_candidate(
         bounds = _distance(ctx, family, sign, _interval(ctx, lo, hi), *query_frame)
         if bounds is None:
             return False
-        candidates.append(_Candidate(*bounds, parameter, ("node", node), parameter in edge_range))
+        candidates.append(
+            _Candidate(*bounds, parameter, ("node", node), parameter in edge_range)
+        )
         return True
     bounds = _distance(ctx, family, sign, _scalar(ctx, theta), *query_frame)
     if bounds is None:
         return False
-    candidates.append(_Candidate(*bounds, parameter, ("endpoint", parameter), parameter in edge_range))
+    candidates.append(
+        _Candidate(*bounds, parameter, ("endpoint", parameter), parameter in edge_range)
+    )
     return True
 
 
 def _select_candidate_projection(
-    curve: IntersectionCurve, parameter_range: tuple[float, float], query: np.ndarray,
-    policy: BRepProjectionPolicy, candidates: list[_Candidate], ctx: Any,
+    curve: IntersectionCurve,
+    parameter_range: tuple[float, float],
+    query: np.ndarray,
+    policy: BRepProjectionPolicy,
+    candidates: list[_Candidate],
+    ctx: Any,
 ) -> CurveProjection:
     """Compare certified distance enclosures and preserve distinct roots."""
     first, last = parameter_range
     best = min(candidates, key=lambda item: item.upper)
     if best.upper - best.lower > policy.ambiguity_tolerance:
-        return CurveProjection(np.full(3, np.nan), np.nan, 0.0, np.inf, int(BRepProjectionStatus.UNRESOLVED))
+        return CurveProjection(
+            np.full(3, np.nan), np.nan, 0.0, np.inf, int(BRepProjectionStatus.UNRESOLVED)
+        )
     others = [
         item
         for item in candidates
@@ -759,7 +837,10 @@ def _select_candidate_projection(
 
 
 def _prepare_seam_roots(
-    family: _OrthogonalCylinderFamily, sign: int, polynomial: P, tolerance: Fraction,
+    family: _OrthogonalCylinderFamily,
+    sign: int,
+    polynomial: P,
+    tolerance: Fraction,
 ) -> tuple[
     P | None, RealRootIsolator | None, tuple[tuple[Fraction, Fraction, int], ...], P
 ]:
@@ -767,13 +848,17 @@ def _prepare_seam_roots(
     _, sine_frame, seam_angle = _large_seam_frame(family)
     if seam_angle != 0 or not sine_frame[1]:
         return None, None, (), (F(1),)
-    seam_n = -sign * (1 if sine_frame[1] > 0 else -1) * sine_frame[0] * family.large_radius
+    seam_n = (
+        -sign * (1 if sine_frame[1] > 0 else -1) * sine_frame[0] * family.large_radius
+    )
     a, b = family.small_normal_coefficients
-    seam_polynomial = _trim((
-        family.delta_n + family.small_radius * a - seam_n,
-        2 * family.small_radius * b,
-        family.delta_n - family.small_radius * a - seam_n,
-    ))
+    seam_polynomial = _trim(
+        (
+            family.delta_n + family.small_radius * a - seam_n,
+            2 * family.small_radius * b,
+            family.delta_n - family.small_radius * a - seam_n,
+        )
+    )
     isolator = RealRootIsolator(seam_polynomial)
     return (
         seam_polynomial,
@@ -818,7 +903,9 @@ def project_intersection_curve(
         tuple(value for value in vector if isinstance(value, Fraction))
         for vector in vectors
     )
-    delta = tuple(F.from_float(float(q)) - o for q, o in zip(query, rational_origin, strict=True))
+    delta = tuple(
+        F.from_float(float(q)) - o for q, o in zip(query, rational_origin, strict=True)
+    )
     qx, qn, qz = (
         sum((x * y for x, y in zip(delta, v, strict=True)), F(0))
         for v in rational_vectors
@@ -839,14 +926,21 @@ def project_intersection_curve(
     ):
         return unresolved()
     if first == last:
-        return _select_candidate_projection(curve, (first, last), query, policy, candidates, ctx)
+        return _select_candidate_projection(
+            curve, (first, last), query, policy, candidates, ctx
+        )
     if polynomial == (F(0),):
         if aa != (F(0),) or bb != (F(0),):
             return unresolved()
         best = min(candidates, key=lambda item: item.upper)
         return CurveProjection(
-            np.full(3, np.nan), np.nan, best.lower, best.upper,
-            int(BRepProjectionStatus.NON_ISOLATED), ("intersection", curve.branch_id), best.root_id,
+            np.full(3, np.nan),
+            np.nan,
+            best.lower,
+            best.upper,
+            int(BRepProjectionStatus.NON_ISOLATED),
+            ("intersection", curve.branch_id),
+            best.root_id,
         )
 
     tolerance = (
@@ -895,4 +989,6 @@ def project_intersection_curve(
     prepared.collect_infinity_candidates()
     if prepared.uncertain:
         return unresolved()
-    return _select_candidate_projection(curve, (first, last), query, policy, candidates, ctx)
+    return _select_candidate_projection(
+        curve, (first, last), query, policy, candidates, ctx
+    )

@@ -447,9 +447,7 @@ def _closed_seam_range_source(model: BRepModel, /) -> bool:
         for face, family in enumerate(families)
         if family in ("cylinder", "cone", "sphere")
     )
-    plane_faces = tuple(
-        face for face, family in enumerate(families) if family == "plane"
-    )
+    plane_faces = tuple(face for face, family in enumerate(families) if family == "plane")
     if (
         len(curved_faces) != 1
         or not plane_faces
@@ -473,10 +471,7 @@ def _closed_seam_range_source(model: BRepModel, /) -> bool:
     if axis_squared == 0:
         return False
     for face in plane_faces:
-        if (
-            len(geometry.face_loops[face]) != 1
-            or len(geometry.face_loops[face][0]) != 1
-        ):
+        if len(geometry.face_loops[face]) != 1 or len(geometry.face_loops[face][0]) != 1:
             return False
         plane_frame = _exact_surface_frame(model, face)
         if plane_frame is None:
@@ -484,9 +479,7 @@ def _closed_seam_range_source(model: BRepModel, /) -> bool:
         _, plane_origin, _, plane_radial, plane_second_radial = plane_frame
         if plane_radial != radial_axis or plane_second_radial != second_radial_axis:
             return False
-        shift = tuple(
-            plane_origin[index] - curved_origin[index] for index in range(3)
-        )
+        shift = tuple(plane_origin[index] - curved_origin[index] for index in range(3))
         height = _vector_dot_exact(shift, axis) / axis_squared
         if shift != tuple(height * value for value in axis):
             return False
@@ -500,9 +493,7 @@ def _vector_dot_exact(first: _ExactVector, second: _ExactVector, /) -> ExactScal
     )
 
 
-def _vector_cross_exact(
-    first: _ExactVector, second: _ExactVector, /
-) -> _ExactVector:
+def _vector_cross_exact(first: _ExactVector, second: _ExactVector, /) -> _ExactVector:
     return (
         first[1] * second[2] - first[2] * second[1],
         first[2] * second[0] - first[0] * second[2],
@@ -517,14 +508,10 @@ def _revolution_quadric_witness(
     if not isinstance(patch, RevolutionSurface):
         return None
     bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
-    return patch.exact_quadric_witness(
-        (float(bounds[0, 1]), float(bounds[1, 1]))
-    )
+    return patch.exact_quadric_witness((float(bounds[0, 1]), float(bounds[1, 1])))
 
 
-def _face_analytic_family(
-    model: BRepModel, face: int, /
-) -> _AnalyticFaceFamily | None:
+def _face_analytic_family(model: BRepModel, face: int, /) -> _AnalyticFaceFamily | None:
     patch = model.patches[face]
     if isinstance(patch, PlanePatch):
         return "plane"
@@ -540,9 +527,10 @@ def _face_analytic_family(
 
 def _exact_surface_frame(
     model: BRepModel, face: int, /
-) -> tuple[
-    _AnalyticFaceFamily, _ExactVector, _ExactVector, _ExactVector, _ExactVector
-] | None:
+) -> (
+    tuple[_AnalyticFaceFamily, _ExactVector, _ExactVector, _ExactVector, _ExactVector]
+    | None
+):
     family = _face_analytic_family(model, face)
     if family is None:
         return None
@@ -603,9 +591,9 @@ def _blend_family(model: BRepModel, faces: tuple[int, int], /) -> _BlendFamily:
         return "parallel_cylinders"
     families = tuple(_face_analytic_family(model, face) for face in faces)
     curved_families = ("cylinder", "cone", "sphere")
-    if (
-        families[0] == "plane" and families[1] in curved_families
-    ) or (families[1] == "plane" and families[0] in curved_families):
+    if (families[0] == "plane" and families[1] in curved_families) or (
+        families[1] == "plane" and families[0] in curved_families
+    ):
         return "closed_seam"
     return "unsupported"
 
@@ -754,6 +742,7 @@ def _planar_g1_bounds(result: BRepModel, /) -> Array:
         tuple(records[edge].dihedral_range for edge in sorted(boundary_edges))
     )
 
+
 def _radius_source(
     source: BRepModel,
     result: BRepModel,
@@ -814,9 +803,7 @@ def _perpendicular_plane_ends(model: BRepModel, edge_index: int, /) -> bool:
     last_point = geometry.vertex_exact_points[last]
     if last_point is None:
         last_point = rational_vector(np.asarray(geometry.vertex_points[last]))
-    direction = tuple(
-        b - a for a, b in zip(first_point, last_point, strict=True)
-    )
+    direction = tuple(b - a for a, b in zip(first_point, last_point, strict=True))
     for face, loops in enumerate(geometry.face_loops):
         edges = {geometry.coedge_edges[coedge] for loop in loops for coedge in loop}
         if edge_index in edges:

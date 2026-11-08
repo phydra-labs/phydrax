@@ -72,7 +72,11 @@ def logical_face_vertices(shape: tuple[int, ...], face: int, /) -> np.ndarray:
         isinstance(size, bool) or not isinstance(size, int) or size < 2 for size in shape
     ):
         raise ValueError("A logical block shape must have two or three nontrivial axes.")
-    if isinstance(face, bool) or not isinstance(face, int) or not 0 <= face < 2 * len(shape):
+    if (
+        isinstance(face, bool)
+        or not isinstance(face, int)
+        or not 0 <= face < 2 * len(shape)
+    ):
         raise ValueError("A logical face index must belong to its block dimension.")
     axis, side = divmod(face, 2)
     strides = tuple(prod(shape[index + 1 :]) for index in range(len(shape)))
@@ -85,7 +89,9 @@ def logical_face_vertices(shape: tuple[int, ...], face: int, /) -> np.ndarray:
     for position, logical_axis in enumerate(free):
         reshape = [1] * len(free)
         reshape[position] = shape[logical_axis]
-        ids += (np.arange(shape[logical_axis], dtype=np.int64) * strides[logical_axis]).reshape(reshape)
+        ids += (
+            np.arange(shape[logical_axis], dtype=np.int64) * strides[logical_axis]
+        ).reshape(reshape)
     return ids
 
 
@@ -96,10 +102,15 @@ def _face_correspondence(
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
     if len(first.logical_shape) != len(second.logical_shape):
-        raise ValueError("Conforming interfaces require blocks of the same topological dimension.")
+        raise ValueError(
+            "Conforming interfaces require blocks of the same topological dimension."
+        )
     first_ids = logical_face_vertices(first.logical_shape, interface.first_face)
     second_ids = logical_face_vertices(second.logical_shape, interface.second_face)
-    if len(interface.permutation) != first_ids.ndim or len(interface.flips) != first_ids.ndim:
+    if (
+        len(interface.permutation) != first_ids.ndim
+        or len(interface.flips) != first_ids.ndim
+    ):
         raise ValueError("Interface permutation and flips must match the face dimension.")
     second_ids = second_ids.transpose(interface.permutation)
     for axis, flip in enumerate(interface.flips):
@@ -132,7 +143,9 @@ def _reconcile_pairs(
     representatives, inverse = sets.inverse()
     for first, second, tolerance, identity in pairs:
         for rows in (first, second):
-            final_distances = np.linalg.norm(points[rows] - points[representatives[inverse[rows]]], axis=-1)
+            final_distances = np.linalg.norm(
+                points[rows] - points[representatives[inverse[rows]]], axis=-1
+            )
             displacement = float(np.max(final_distances, initial=0.0))
             if displacement > tolerance:
                 raise ValueError(
@@ -148,7 +161,9 @@ def _geometry_face_shape(
     /,
 ) -> tuple[int, ...]:
     if not isinstance(element, FiniteElementSpec) or element.degree < 1:
-        raise ValueError("Structured coordinate maps require a positive-degree polynomial element.")
+        raise ValueError(
+            "Structured coordinate maps require a positive-degree polynomial element."
+        )
     return tuple((size - 1) * element.degree + 1 for size in construction.logical_shape)
 
 
@@ -165,22 +180,35 @@ def construct_glued_structured_blocks(
     if len(set(names)) != len(names):
         raise ValueError("Structured block names must be unique.")
     if any(len(block.mesh.blocks) != 1 for block in ordered):
-        raise ValueError("Each structured construction must contain exactly one cell block.")
-    dimensions = {(block.mesh.topological_dimension, block.mesh.ambient_dimension) for block in ordered}
+        raise ValueError(
+            "Each structured construction must contain exactly one cell block."
+        )
+    dimensions = {
+        (block.mesh.topological_dimension, block.mesh.ambient_dimension)
+        for block in ordered
+    }
     if len(dimensions) != 1:
-        raise ValueError("Conforming structured blocks must share topology and ambient dimensions.")
+        raise ValueError(
+            "Conforming structured blocks must share topology and ambient dimensions."
+        )
     by_name = dict(zip(names, ordered, strict=True))
     occupied: set[tuple[str, int]] = set()
     vertex_offsets: dict[str, int] = {}
     vertex_count = 0
     for name, construction in zip(names, ordered, strict=True):
         if prod(construction.logical_shape) != construction.mesh.coordinates.shape[0]:
-            raise ValueError(f"Block {name!r} logical shape does not match its mesh vertex count.")
+            raise ValueError(
+                f"Block {name!r} logical shape does not match its mesh vertex count."
+            )
         vertex_offsets[name] = vertex_count
         vertex_count += construction.mesh.coordinates.shape[0]
     if vertex_count - 1 > np.iinfo(np.int32).max:
-        raise OverflowError("Glued block vertex identities exceed int32 connectivity range.")
-    local_points = tuple(np.asarray(block.mesh.coordinates, dtype=np.float64) for block in ordered)
+        raise OverflowError(
+            "Glued block vertex identities exceed int32 connectivity range."
+        )
+    local_points = tuple(
+        np.asarray(block.mesh.coordinates, dtype=np.float64) for block in ordered
+    )
     points = np.concatenate(local_points, axis=0)
     vertex_pairs: list[tuple[np.ndarray, np.ndarray, float, str]] = []
     geometry_pair_records: list[tuple[np.ndarray, np.ndarray, float, str]] = []
@@ -200,7 +228,9 @@ def construct_glued_structured_blocks(
         local_geometry_routes[name] = np.asarray(routes[0], dtype=np.int32)
         values = np.asarray(coordinates, dtype=np.float64)
         if values.ndim != 2 or values.shape[1] != ordered[0].mesh.ambient_dimension:
-            raise ValueError("Structured block coordinate maps must match the mesh ambient dimension.")
+            raise ValueError(
+                "Structured block coordinate maps must match the mesh ambient dimension."
+            )
         geometry_offsets[name] = geometry_count
         geometry_count += values.shape[0]
         geometry_banks.append(values)
@@ -210,17 +240,27 @@ def construct_glued_structured_blocks(
     geometry_points = np.concatenate(geometry_banks, axis=0)
     for interface in interfaces:
         if not isinstance(interface, BlockInterfaceControl) or not interface.conforming:
-            raise ValueError("Only explicitly declared conforming block interfaces can be glued.")
+            raise ValueError(
+                "Only explicitly declared conforming block interfaces can be glued."
+            )
         if interface.first_block not in by_name or interface.second_block not in by_name:
             raise ValueError("Every interface must name two constructed blocks.")
         first_endpoint = (interface.first_block, interface.first_face)
         second_endpoint = (interface.second_block, interface.second_face)
-        if first_endpoint == second_endpoint or first_endpoint in occupied or second_endpoint in occupied:
-            raise ValueError("Each logical block face may participate in only one gluing.")
+        if (
+            first_endpoint == second_endpoint
+            or first_endpoint in occupied
+            or second_endpoint in occupied
+        ):
+            raise ValueError(
+                "Each logical block face may participate in only one gluing."
+            )
         occupied.update((first_endpoint, second_endpoint))
         first_block = by_name[interface.first_block]
         second_block = by_name[interface.second_block]
-        first_local, second_local = _face_correspondence(first_block, second_block, interface)
+        first_local, second_local = _face_correspondence(
+            first_block, second_block, interface
+        )
         vertex_pairs.append(
             (
                 first_local + vertex_offsets[interface.first_block],
@@ -232,15 +272,21 @@ def construct_glued_structured_blocks(
         first_geometry_shape = geometry_shapes[interface.first_block]
         second_geometry_shape = geometry_shapes[interface.second_block]
         first_geometry = logical_face_vertices(first_geometry_shape, interface.first_face)
-        second_geometry = logical_face_vertices(second_geometry_shape, interface.second_face)
+        second_geometry = logical_face_vertices(
+            second_geometry_shape, interface.second_face
+        )
         if len(interface.permutation) != first_geometry.ndim:
-            raise ValueError("Interface permutation does not match the high-order trace dimension.")
+            raise ValueError(
+                "Interface permutation does not match the high-order trace dimension."
+            )
         second_geometry = second_geometry.transpose(interface.permutation)
         for axis, flip in enumerate(interface.flips):
             if flip:
                 second_geometry = np.flip(second_geometry, axis=axis)
         if first_geometry.shape != second_geometry.shape:
-            raise ValueError("High-order coordinate trace counts differ across an interface.")
+            raise ValueError(
+                "High-order coordinate trace counts differ across an interface."
+            )
         geometry_pairs = (
             first_geometry.reshape(-1) + geometry_offsets[interface.first_block],
             second_geometry.reshape(-1) + geometry_offsets[interface.second_block],
@@ -248,7 +294,9 @@ def construct_glued_structured_blocks(
             interface.control_id,
         )
         geometry_pair_records.append(geometry_pairs)
-    vertex_representatives, vertex_inverse, vertex_residual = _reconcile_pairs(points, tuple(vertex_pairs))
+    vertex_representatives, vertex_inverse, vertex_residual = _reconcile_pairs(
+        points, tuple(vertex_pairs)
+    )
     geometry_representatives, geometry_inverse, geometry_residual = _reconcile_pairs(
         geometry_points, tuple(geometry_pair_records)
     )
@@ -266,9 +314,15 @@ def construct_glued_structured_blocks(
         vertex_map = vertex_inverse[vertex_start:vertex_end].copy()
         block_vertex_maps.append((name, vertex_map))
         connectivity = vertex_map[np.asarray(source_block.vertices, dtype=np.int64)]
-        cell_ids = np.arange(cell_offset, cell_offset + source_block.cell_count, dtype=np.int64)
-        cell_blocks.append(CellBlock(name, source_block.cell_kind, connectivity, global_ids=cell_ids))
-        cell_parents.append((name, np.asarray(source_block.global_ids, dtype=np.int64).copy()))
+        cell_ids = np.arange(
+            cell_offset, cell_offset + source_block.cell_count, dtype=np.int64
+        )
+        cell_blocks.append(
+            CellBlock(name, source_block.cell_kind, connectivity, global_ids=cell_ids)
+        )
+        cell_parents.append(
+            (name, np.asarray(source_block.global_ids, dtype=np.int64).copy())
+        )
         cell_offset += source_block.cell_count
         element = geometry_elements[name]
         output_elements[name] = element

@@ -17,6 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
+
 import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -26,8 +27,9 @@ from ..discretization._cell_complex import PolygonalConnectivity
 from ..linalg._exact import determinant_exact
 from ._sphere_material_atlas import _require_center_winding_one
 from ._volume_material_map import require_polyhedral_carrier_geometry
-from .brep._patches import RevolutionSurface, _validate_surface_source_shadows
+from .brep._patches import _validate_surface_source_shadows, RevolutionSurface
 from .brep._source_shell_admissibility import _single_shell_topology
+
 
 if TYPE_CHECKING:
     from ..meshing._result import CellMeshingResult

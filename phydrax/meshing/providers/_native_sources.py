@@ -5,8 +5,8 @@
 """Scientific source bindings consumed by the native meshing routes."""
 
 from __future__ import annotations
-from dataclasses import dataclass
 
+from dataclasses import dataclass
 from fractions import Fraction
 from typing import final, Literal, TYPE_CHECKING
 
@@ -42,12 +42,12 @@ from ...geometry._source_boundary_records import (
 )
 from ...geometry._source_identity import source_entity_id
 from ...geometry._surface_source_support import SurfaceSourceCharts
-from ...geometry.surface import SurfaceModel
 from ...geometry.brep._projection import NativeBRepProjection, prepare_brep_projection
 from ...geometry.brep._projection_contracts import BRepProjectionPolicy
 from ...geometry.implicit._adaptive_discovery import AdaptiveImplicitSurface
 from ...geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from ...geometry.simplicial._regions import PlanarMeshRegion, SegmentMesh
+from ...geometry.surface import SurfaceModel
 from ...typing import checked
 from .._association import (
     AssociationPropagationPolicy,
@@ -4487,7 +4487,9 @@ class NativeLayerCoreSource(StrictModule, NonTrainableState):
             raise ValueError(
                 "Authored layer control and policy must be retained together."
             )
-        if (cap_refinement == "conforming" or noncap_refinement == "conforming") and layer_control is None:
+        if (
+            cap_refinement == "conforming" or noncap_refinement == "conforming"
+        ) and layer_control is None:
             raise ValueError(
                 "Conforming execution requires the authored layer control and policy."
             )
@@ -4530,10 +4532,9 @@ class NativeLayerCoreSource(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Authored control and policy must match the accepted layers."
                 )
-        if (
-            reference_source is not None
-            and (reference_source.cap_refinement != cap_refinement
-                 or reference_source.noncap_refinement != noncap_refinement)
+        if reference_source is not None and (
+            reference_source.cap_refinement != cap_refinement
+            or reference_source.noncap_refinement != noncap_refinement
         ):
             raise ValueError(
                 "Mapped physical and reference sources must share cap refinement."
@@ -4700,7 +4701,11 @@ class NativeLayerCoreSource(StrictModule, NonTrainableState):
                 "layers": layers.result_id,
                 "complex": complex_.complex_id,
                 "cap_refinement": cap_refinement,
-                **({"noncap_refinement": noncap_refinement} if noncap_refinement != "fixed" else {}),
+                **(
+                    {"noncap_refinement": noncap_refinement}
+                    if noncap_refinement != "fixed"
+                    else {}
+                ),
                 "layer_control": None
                 if layer_control is None
                 else layer_control.control_id,
@@ -4778,11 +4783,17 @@ class NativeLayerCoreSource(StrictModule, NonTrainableState):
         from .._layer_core_topology import closed_fixed_core_source
 
         if type(layers) is not BoundaryLayerMesh or type(outer) is not SurfaceModel:
-            raise TypeError("Fixed core requires accepted layers and an authoritative outer surface.")
+            raise TypeError(
+                "Fixed core requires accepted layers and an authoritative outer surface."
+            )
         if not isinstance(coordinate_contract, SpatialCoordinateContract):
             raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
-        if not _same_tree_content(coordinate_contract, outer.metadata.coordinate_contract):
-            raise ValueError("Outer surface and fixed core must use the same coordinate contract.")
+        if not _same_tree_content(
+            coordinate_contract, outer.metadata.coordinate_contract
+        ):
+            raise ValueError(
+                "Outer surface and fixed core must use the same coordinate contract."
+            )
         if not isinstance(layers.source_wall, CellMesh):
             raise ValueError("Fixed core must retain the actual authored layer wall.")
         if isinstance(region_entity_id, bool) or not isinstance(region_entity_id, int):
@@ -4795,22 +4806,40 @@ class NativeLayerCoreSource(StrictModule, NonTrainableState):
             or not wall_occurrence_path
             or not outer_occurrence_path
         ):
-            raise ValueError("Fixed core requires explicit wall and outer occurrence paths.")
-        wall_path = (layers.source_wall.mesh_id, layers.source_wall.numeric_version, *wall_occurrence_path)
-        outer_path = (outer.metadata.source_id, outer.metadata.source_revision, *outer_occurrence_path)
+            raise ValueError(
+                "Fixed core requires explicit wall and outer occurrence paths."
+            )
+        wall_path = (
+            layers.source_wall.mesh_id,
+            layers.source_wall.numeric_version,
+            *wall_occurrence_path,
+        )
+        outer_path = (
+            outer.metadata.source_id,
+            outer.metadata.source_revision,
+            *outer_occurrence_path,
+        )
         return closed_fixed_core_source(
-            layers, outer.mesh, coordinate_contract, source_id, source_revision,
-            region_id=region_id, region_entity_id=region_entity_id,
+            layers,
+            outer.mesh,
+            coordinate_contract,
+            source_id,
+            source_revision,
+            region_id=region_id,
+            region_entity_id=region_entity_id,
             region_occurrence_path=region_occurrence_path,
             wall_occurrence_path=wall_path,
             outer_occurrence_path=outer_path,
-            layer_control=layer_control, layer_policy=layer_policy,
+            layer_control=layer_control,
+            layer_policy=layer_policy,
         )
 
     @property
     def conforming_execution(self) -> bool:
         """Whether the core uses the source-authoritative conforming carrier."""
-        return self.cap_refinement == "conforming" or self.noncap_refinement == "conforming"
+        return (
+            self.cap_refinement == "conforming" or self.noncap_refinement == "conforming"
+        )
 
     @classmethod
     def from_stored_fields(

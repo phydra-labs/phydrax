@@ -101,8 +101,11 @@ def implicit_case() -> tuple[NativeImplicitSource, AdaptiveImplicitSurface]:
         source_id=source_id,
     )
     profile = AnalyticImplicitProfile(
-        geometry, SpatialCoordinateContract.si(), tube_radius=0.03,
-        source_id=source_id, source_revision=revision,
+        geometry,
+        SpatialCoordinateContract.si(),
+        tube_radius=0.03,
+        source_id=source_id,
+        source_revision=revision,
     )
     return NativeImplicitSource(
         geometry, source_id, revision, discovery=surface, authoring_profile=profile
@@ -116,10 +119,19 @@ def test_discovery_refuses_forged_cover(
     source, surface = implicit_case
     _validate_discovery(source, surface)
     altered = AdaptiveImplicitSurface(
-        surface.mesh, surface.evidence, None if forgery == "cover" else surface.cover,
-        surface.topology, surface.volume, surface.scaffold, surface.feature_edges,
-        surface.boundary_witness_boxes, surface.boundary_witnesses, surface.boundary_errors,
-        surface.geometry, surface.policy, "foreign-source" if forgery == "source" else surface.source_id,
+        surface.mesh,
+        surface.evidence,
+        None if forgery == "cover" else surface.cover,
+        surface.topology,
+        surface.volume,
+        surface.scaffold,
+        surface.feature_edges,
+        surface.boundary_witness_boxes,
+        surface.boundary_witnesses,
+        surface.boundary_errors,
+        surface.geometry,
+        surface.policy,
+        "foreign-source" if forgery == "source" else surface.source_id,
     )
     with pytest.raises(MeshingFailure):
         _validate_discovery(source, altered)
@@ -221,7 +233,9 @@ def test_nearest_scaffold_reduces_unsorted_overlap_blocks(
     carrier_vertices = np.zeros((1, 3), dtype=np.float64)
     carrier = np.zeros((1, 3), dtype=np.int64)
 
-    def blocks(*args: object, **kwargs: object) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+    def blocks(
+        *args: object, **kwargs: object
+    ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
         assert kwargs["item_block"] == 4096
         for row in (0, 4, 2):
             yield np.asarray((0,), dtype=np.int64), np.asarray((row,), dtype=np.int64)
@@ -235,8 +249,12 @@ def test_nearest_scaffold_reduces_unsorted_overlap_blocks(
 
 def _surface_scope(source: NativeImplicitSource) -> MeshingScope:
     return MeshingScope(
-        source.source_id, source.source_revision, MeshingEntityKind.GEOMETRY, 2,
-        source.scope_entity_set_id(2), source.scope_entity_ids(2),
+        source.source_id,
+        source.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        source.scope_entity_set_id(2),
+        source.scope_entity_ids(2),
     )
 
 
@@ -247,8 +265,11 @@ def _volume_spec(
 ) -> VolumeMeshingSpec:
     return VolumeMeshingSpec(
         CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
-        _surface_scope(source), VolumeFillStrategy.SIMPLEX,
-        size_controls=(), protected_features=features, maximum_deviation=maximum_deviation,
+        _surface_scope(source),
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(),
+        protected_features=features,
+        maximum_deviation=maximum_deviation,
     )
 
 
@@ -258,20 +279,35 @@ def test_carrier_band_respects_declared_feature_and_source_bounds(
     from phydrax.meshing.providers import _native_implicit as owner
 
     source, _ = implicit_case
-    assert owner._implicit_carrier_admission_tolerance(source, _volume_spec(source, 0.02)) == 0.02
-    assert owner._implicit_carrier_admission_tolerance(source, _volume_spec(source, 0.05)) == 0.03
+    assert (
+        owner._implicit_carrier_admission_tolerance(source, _volume_spec(source, 0.02))
+        == 0.02
+    )
+    assert (
+        owner._implicit_carrier_admission_tolerance(source, _volume_spec(source, 0.05))
+        == 0.03
+    )
     scope = _surface_scope(source)
     hard = ProtectedFeature(scope, FeatureKind.SURFACE, maximum_deviation=0.005)
-    soft = ProtectedFeature(scope, FeatureKind.SURFACE, maximum_deviation=0.001, hard=False)
-    assert owner._implicit_carrier_admission_tolerance(
-        source, _volume_spec(source, 0.02, (hard, soft))
-    ) == 0.005
-    assert owner._implicit_carrier_admission_tolerance(
-        source, _volume_spec(source, None, (hard,))
-    ) == 0.005
+    soft = ProtectedFeature(
+        scope, FeatureKind.SURFACE, maximum_deviation=0.001, hard=False
+    )
+    assert (
+        owner._implicit_carrier_admission_tolerance(
+            source, _volume_spec(source, 0.02, (hard, soft))
+        )
+        == 0.005
+    )
+    assert (
+        owner._implicit_carrier_admission_tolerance(
+            source, _volume_spec(source, None, (hard,))
+        )
+        == 0.005
+    )
     exact = ProtectedFeature(scope, FeatureKind.SURFACE, maximum_deviation=0.0)
     for specification in (
-        _volume_spec(source, None, (exact,)), _volume_spec(source, None),
+        _volume_spec(source, None, (exact,)),
+        _volume_spec(source, None),
         _volume_spec(source, 0.0),
     ):
         with pytest.raises(MeshingFailure):
@@ -285,12 +321,18 @@ def test_carrier_band_rejects_foreign_feature_scope(
 
     source, _ = implicit_case
     foreign = MeshingScope(
-        source.source_id, source.source_revision, MeshingEntityKind.GEOMETRY, 2,
-        "foreign-surface-set", source.scope_entity_ids(2),
+        source.source_id,
+        source.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        "foreign-surface-set",
+        source.scope_entity_ids(2),
     )
     feature = ProtectedFeature(foreign, FeatureKind.SURFACE, maximum_deviation=0.005)
     with pytest.raises(MeshingFailure):
-        owner._implicit_carrier_admission_tolerance(source, _volume_spec(source, 0.02, (feature,)))
+        owner._implicit_carrier_admission_tolerance(
+            source, _volume_spec(source, 0.02, (feature,))
+        )
 
 
 def test_carrier_identity_binds_new_and_untouched_face_bounds(

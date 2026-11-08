@@ -1437,6 +1437,8 @@ def _periodic_entity_coordinate_maps(
     def exact_cell_transform(
         block_index: int, cell_row: int, /
     ) -> tuple[tuple[Fraction, ...], ...]:
+        nonlocal cell_transform_cache, orientation_transform_cache
+        nonlocal reference_gradient_cache, prism_normalizations
         key = (block_index, cell_row)
         cached = cell_transform_cache.get(key)
         if cached is not None:
@@ -1465,6 +1467,7 @@ def _periodic_entity_coordinate_maps(
         return result
 
     def cell_coorientation(block_index: int, cell_row: int, /) -> int:
+        nonlocal cell_sign_cache, reference_gradient_cache
         key = (block_index, cell_row)
         sign = cell_sign_cache.get(key)
         if sign is None:

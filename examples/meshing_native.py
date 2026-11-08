@@ -14,6 +14,7 @@ import numpy as np
 
 import phydrax as phx
 
+
 library = os.environ.get("PHYDRAX_MESHCORE_LIBRARY")
 if not library:
     raise RuntimeError("Set PHYDRAX_MESHCORE_LIBRARY to the native meshcore library.")

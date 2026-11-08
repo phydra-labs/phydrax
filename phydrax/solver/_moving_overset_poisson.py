@@ -72,7 +72,10 @@ from ..meshing._overset_exchange import (
 )
 from ..meshing._result import CellMeshingResult
 from ..typing import checked
-from ._composite_overset_poisson import CompositeOversetPoissonResult, solve_composite_poisson
+from ._composite_overset_poisson import (
+    CompositeOversetPoissonResult,
+    solve_composite_poisson,
+)
 
 
 @final
@@ -90,7 +93,9 @@ class MovingOversetPoissonPart(StrictModule, NonTrainableState):
     conservative_remap: (
         PreparedOversetConservativeRemap | PreparedOwnerLocalConservativeRemap | None
     )
-    overlap_evidence: PhysicalOverlapActionEvidence | OwnerLocalConservativeRemapResult | None
+    overlap_evidence: (
+        PhysicalOverlapActionEvidence | OwnerLocalConservativeRemapResult | None
+    )
     remap_complete: bool = eqx.field(static=True)
     source_content: float = eqx.field(static=True)
     target_content: float = eqx.field(static=True)
@@ -147,7 +152,9 @@ class MovingOversetPoissonPart(StrictModule, NonTrainableState):
             # an extensive remap of a body's predecessor support.
             remap_complete = False
             if not reanalysis_id:
-                raise ValueError("Composite reanalysis requires its physical solve identity.")
+                raise ValueError(
+                    "Composite reanalysis requires its physical solve identity."
+                )
             remap_id = None
             overlap_values = None
         elif isinstance(conservative_remap, PreparedOversetConservativeRemap):
@@ -195,7 +202,9 @@ class MovingOversetPoissonPart(StrictModule, NonTrainableState):
                 "reanalysis": reanalysis_id,
                 "discretization": discretization.prepared_id,
                 "coefficients": array_tree_fingerprint(coefficients),
-                "overlap": None if overlap_values is None else array_tree_fingerprint(overlap_values),
+                "overlap": None
+                if overlap_values is None
+                else array_tree_fingerprint(overlap_values),
                 "source_content": self.source_content,
                 "target_content": self.target_content,
                 "boundary_flux": self.boundary_flux,
@@ -1293,9 +1302,8 @@ def _vertex_dof_rows(
         raise ValueError("P1 DOF routes must cover every mesh vertex exactly.")
     return rows
 
-def _p1_vertex_coordinates(
-    discretization: FiniteElementDiscretization, /
-) -> np.ndarray:
+
+def _p1_vertex_coordinates(discretization: FiniteElementDiscretization, /) -> np.ndarray:
     """Route the affine geometry bank onto the original mesh vertices."""
     coordinates = np.asarray(discretization.default_runtime.coordinates, dtype=np.float64)
     vertices = np.empty((len(discretization.mesh.vertex_global_ids), 2), dtype=np.float64)
@@ -1306,11 +1314,15 @@ def _p1_vertex_coordinates(
         rows = np.asarray(block.vertices, dtype=np.int64)
         routes = np.asarray(geometry_dofs, dtype=np.int64)
         if rows.ndim != 2 or rows.shape[1] != 3 or routes.shape != rows.shape:
-            raise ValueError("Composite Poisson requires affine triangular coordinate elements.")
+            raise ValueError(
+                "Composite Poisson requires affine triangular coordinate elements."
+            )
         for vertex, coordinate in zip(rows.flat, routes.flat, strict=True):
             value = coordinates[coordinate]
             if assigned[vertex] and not np.array_equal(vertices[vertex], value):
-                raise ValueError("Shared mesh vertices must have identical physical coordinates.")
+                raise ValueError(
+                    "Shared mesh vertices must have identical physical coordinates."
+                )
             vertices[vertex] = value
             assigned[vertex] = True
     if not np.all(assigned):
@@ -1328,18 +1340,26 @@ def _require_physical_partition_boundary(
     _, coordinates, triangles = background
     counts: dict[tuple[int, int], int] = {}
     for triangle in triangles:
-        for a, b in ((triangle[0], triangle[1]), (triangle[1], triangle[2]), (triangle[2], triangle[0])):
+        for a, b in (
+            (triangle[0], triangle[1]),
+            (triangle[1], triangle[2]),
+            (triangle[2], triangle[0]),
+        ):
             key = (min(int(a), int(b)), max(int(a), int(b)))
             counts[key] = counts.get(key, 0) + 1
+
     def point(value: np.ndarray) -> tuple[Fraction, Fraction]:
         return (Fraction(float(value[0])), Fraction(float(value[1])))
 
     support: dict[tuple[int, int, int], list[tuple[Fraction, Fraction]]] = {}
+
     def add(a: np.ndarray, b: np.ndarray) -> None:
         first, second = point(a), point(b)
         key = line_key((first, second))
         axis = 0 if first[0] != second[0] else 1
-        support.setdefault(key, []).append((min(first[axis], second[axis]), max(first[axis], second[axis])))
+        support.setdefault(key, []).append(
+            (min(first[axis], second[axis]), max(first[axis], second[axis]))
+        )
 
     for (a, b), count in counts.items():
         if count == 1:
@@ -1464,11 +1484,19 @@ def prepare_moving_overset_poisson_update(
         )
     candidate = previous.moved_from_advances(advances)
     candidate.require_complete()
-    if part_priority is None or len(part_priority) != len(names) or set(part_priority) != set(names):
-        raise ValueError("part_priority must name every serial overset part exactly once.")
+    if (
+        part_priority is None
+        or len(part_priority) != len(names)
+        or set(part_priority) != set(names)
+    ):
+        raise ValueError(
+            "part_priority must name every serial overset part exactly once."
+        )
     partition = candidate.bound_partition
     if partition is None:
-        raise ValueError("Serial composite Poisson requires a connectivity-bound partition.")
+        raise ValueError(
+            "Serial composite Poisson requires a connectivity-bound partition."
+        )
     if tuple(part_priority) != candidate.partition_priority:
         raise ValueError("part_priority must match the connectivity-bound partition.")
     if len(cavities) != len(candidate.partition_cavities) or any(
@@ -1547,7 +1575,10 @@ def prepare_moving_overset_poisson_update(
         background_name,
         _p1_vertex_coordinates(target_discretizations[background_name]),
         np.concatenate(
-            [np.asarray(block.vertices, dtype=np.int64) for block in background_result.mesh.blocks],
+            [
+                np.asarray(block.vertices, dtype=np.int64)
+                for block in background_result.mesh.blocks
+            ],
             axis=0,
         ),
     )
@@ -1555,7 +1586,10 @@ def prepare_moving_overset_poisson_update(
         partition, background, candidate.partition_cavities
     )
     composite = solve_composite_poisson(
-        partition, target_discretizations, field, boundary_values,
+        partition,
+        target_discretizations,
+        field,
+        boundary_values,
         solve_tolerance=tolerances[0],
         interfaces=interfaces,
     )

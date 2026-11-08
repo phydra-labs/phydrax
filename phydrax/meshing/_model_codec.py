@@ -188,6 +188,7 @@ def _register_model_archive_types() -> None:
     )
     from .._geometry_predicates import PredicateMode
     from .._identity import SemanticProvenance
+    from .._meshcore import PlcSearchBudget
     from .._model._artifacts import register_artifact_value
     from .._physical import SpatialCoordinateContract
     from ..discretization._adaptive_simplex import AdaptiveSimplexStatus
@@ -1321,6 +1322,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.meshing", NativeMeshingOptions),
         ("phydrax.meshing", NativePolyhedralSchedule),
         ("phydrax.meshing", NativeVolumeSchedule),
+        ("phydrax._meshcore", PlcSearchBudget),
         ("phydrax.meshing", NativeCurveSchedule),
         ("phydrax.meshing", NativeSurfaceSchedule),
         ("phydrax.meshing", NativePeriodicSource),

@@ -68,14 +68,22 @@ class NestedSimplexMap:
             or dimension < 1
             or len(self.vertices) != dimension + 1
             or any(len(vertex) != dimension for vertex in self.vertices)
-            or not all(isinstance(value, Fraction) for vertex in self.vertices for value in vertex)
+            or not all(
+                isinstance(value, Fraction)
+                for vertex in self.vertices
+                for value in vertex
+            )
         ):
-            raise ValueError("A nested simplex map needs exact, aligned reference corners.")
+            raise ValueError(
+                "A nested simplex map needs exact, aligned reference corners."
+            )
         if any(
             any(value < 0 for value in (*vertex, Fraction(1) - sum(vertex)))
             for vertex in self.vertices
         ):
-            raise ValueError("Nested reference corners must remain inside the parent simplex.")
+            raise ValueError(
+                "Nested reference corners must remain inside the parent simplex."
+            )
 
     @property
     def dimension(self) -> int:
@@ -88,7 +96,10 @@ class NestedSimplexMap:
     @property
     def matrix(self) -> tuple[tuple[Fraction, ...], ...]:
         return tuple(
-            tuple(self.vertices[column + 1][row] - self.vertices[0][row] for column in range(self.dimension))
+            tuple(
+                self.vertices[column + 1][row] - self.vertices[0][row]
+                for column in range(self.dimension)
+            )
             for row in range(self.dimension)
         )
 
@@ -101,7 +112,10 @@ class NestedSimplexMap:
         barycentric = (Fraction(1) - sum(coordinate), *coordinate)
         return tuple(
             sum(
-                (barycentric[corner] * self.vertices[corner][axis] for corner in range(self.dimension + 1)),
+                (
+                    barycentric[corner] * self.vertices[corner][axis]
+                    for corner in range(self.dimension + 1)
+                ),
                 Fraction(0),
             )
             for axis in range(self.dimension)
@@ -138,7 +152,9 @@ def nested_reference_vertices(
         or sources.shape[:2] != coarse.shape
         or not np.all(np.isfinite(weights))
     ):
-        raise ValueError("Fine stencils and coarse simplex rows have incompatible shapes.")
+        raise ValueError(
+            "Fine stencils and coarse simplex rows have incompatible shapes."
+        )
     matches = (sources[..., None] == coarse[:, None, None, :]) & (sources[..., None] >= 0)
     if np.any(np.any(matches, axis=-1) != (sources >= 0)):
         raise ValueError("Every fine stencil source must be a corner of its coarse cell.")
@@ -170,7 +186,9 @@ def exact_nested_reference_vertices(
         or not np.all(np.isfinite(homogeneous))
         or np.any(homogeneous < 0.0)
     ):
-        raise ValueError("Homogeneous stencils and coarse simplex rows have incompatible shapes.")
+        raise ValueError(
+            "Homogeneous stencils and coarse simplex rows have incompatible shapes."
+        )
     matches = (sources[..., None] == coarse[:, None, None, :]) & (sources[..., None] >= 0)
     if np.any(np.any(matches, axis=-1) != (sources >= 0)):
         raise ValueError("Every homogeneous stencil source must be a coarse-cell corner.")
@@ -186,15 +204,21 @@ def exact_nested_reference_vertices(
                 if source_id < 0:
                     continue
                 corner = int(np.flatnonzero(coarse[cell] == source_id)[0])
-                accumulated[corner] += Fraction(float(homogeneous[cell, vertex, source_slot]))
+                accumulated[corner] += Fraction(
+                    float(homogeneous[cell, vertex, source_slot])
+                )
             total = sum(accumulated, Fraction(0))
             if total < 0:
-                raise ValueError("Nested homogeneous barycentrics must have nonnegative sum.")
+                raise ValueError(
+                    "Nested homogeneous barycentrics must have nonnegative sum."
+                )
             bank[cell, vertex] = [float(value) for value in accumulated]
             if total:
                 result[cell, vertex] = [float(value / total) for value in accumulated]
             elif any(accumulated):
-                raise ValueError("A nonempty homogeneous row must have positive total weight.")
+                raise ValueError(
+                    "A nonempty homogeneous row must have positive total weight."
+                )
     return result[..., 1:], bank
 
 
@@ -206,7 +230,9 @@ def _reference_shape_weights(
     topology = reference_cell_topology(cell_kind)
     if len(point) != topology.dimension:
         raise ValueError("Target reference coordinates must match their cell dimension.")
-    if cell_kind in ("interval", "triangle", "tetrahedron") or cell_kind.startswith("simplex:"):
+    if cell_kind in ("interval", "triangle", "tetrahedron") or cell_kind.startswith(
+        "simplex:"
+    ):
         weights = (Fraction(1) - sum(point), *point)
         if len(weights) != len(topology.vertices):
             raise ValueError("Simplex reference corner count is inconsistent.")
@@ -215,9 +241,7 @@ def _reference_shape_weights(
         return tuple(
             math.prod(
                 (
-                    point[axis]
-                    if int(vertex[axis])
-                    else Fraction(1) - point[axis]
+                    point[axis] if int(vertex[axis]) else Fraction(1) - point[axis]
                     for axis in range(topology.dimension)
                 ),
                 start=Fraction(1),
@@ -342,7 +366,6 @@ def coordinate_reference_arguments(
     raise KeyError(f"No nested reference map for target cell {target_cell_id}.")
 
 
-
 def _reference_map_index_by_intermediate_id(
     witness: ReferenceCellMapWitnesses,
     intermediate_cell_global_ids: Sequence[int] | np.ndarray | None,
@@ -363,7 +386,9 @@ def _reference_map_index_by_intermediate_id(
         or np.unique(global_ids).size != global_ids.size
         or np.any(global_ids < 0)
     ):
-        raise ValueError("Intermediate global cell IDs must align unique block-local target rows.")
+        raise ValueError(
+            "Intermediate global cell IDs must align unique block-local target rows."
+        )
     return {
         int(global_id): reference_map
         for global_id, reference_map in zip(global_ids.tolist(), maps, strict=True)
@@ -381,7 +406,9 @@ def compose_reference_cell_maps(
     validate_reference_cell_map_witnesses(target_to_intermediate)
     validate_reference_cell_map_witnesses(intermediate_to_source)
     if target_to_intermediate.source_cell_kind != intermediate_to_source.target_cell_kind:
-        raise ValueError("Reference-map composition requires matching intermediate cell kinds.")
+        raise ValueError(
+            "Reference-map composition requires matching intermediate cell kinds."
+        )
     source_maps = _reference_map_index_by_intermediate_id(
         intermediate_to_source, intermediate_cell_global_ids
     )
@@ -397,7 +424,9 @@ def compose_reference_cell_maps(
                 f"Reference-map composition names absent intermediate cell {target_map.source_cell_id}."
             )
         if target_map.arguments is None or intermediate_map.arguments is None:
-            raise ValueError("Exact reference-map composition requires complete chart arguments.")
+            raise ValueError(
+                "Exact reference-map composition requires complete chart arguments."
+            )
         arguments = tuple(
             compose_expression(expression, target_map.arguments)
             for expression in intermediate_map.arguments
@@ -408,11 +437,7 @@ def compose_reference_cell_maps(
             )
             for point in target_corners
         )
-        if any(
-            not isinstance(value, Fraction)
-            for point in corners
-            for value in point
-        ):
+        if any(not isinstance(value, Fraction) for point in corners for value in point):
             raise ValueError("Composed reference-map corners must be exact rationals.")
         output_source_ids.append(intermediate_map.source_cell_id)
         output_exact_vertices.append(
@@ -427,9 +452,7 @@ def compose_reference_cell_maps(
         [[[float(value) for value in point] for point in cell] for cell in exact_bank],
         dtype=np.float64,
     )
-    target_ids = np.asarray(
-        [value.target_cell_id for value in targets], dtype=np.int64
-    )
+    target_ids = np.asarray([value.target_cell_id for value in targets], dtype=np.int64)
     source_ids = np.asarray(output_source_ids, dtype=np.int64)
     for value in (execution, target_ids, source_ids):
         value.setflags(write=False)
@@ -454,7 +477,9 @@ def _mesh_cell_kinds(mesh: CellMesh, /) -> dict[int, tuple[str, int, str]]:
         ):
             cell_id = int(raw_cell_id)
             if cell_id in result:
-                raise ValueError("Coarsening cell global IDs must be unique across blocks.")
+                raise ValueError(
+                    "Coarsening cell global IDs must be unique across blocks."
+                )
             result[cell_id] = (block.name, row, block.cell_kind)
     return result
 
@@ -503,7 +528,9 @@ def coarsen_reference_cell_maps(
             or not np.array_equal(local_target_ids, np.arange(block.cell_count))
             or np.asarray(witness.source_cell_ids).shape != (block.cell_count,)
         ):
-            raise ValueError("Fine-to-root witness rows must align block-local fine cells.")
+            raise ValueError(
+                "Fine-to-root witness rows must align block-local fine cells."
+            )
         global_ids = np.asarray(block.global_ids, dtype=np.int64)
         for reference_map in nested_cell_reference_maps(witness):
             fine_id = int(global_ids[reference_map.target_cell_id])
@@ -527,7 +554,9 @@ def coarsen_reference_cell_maps(
         parent_kind_record = coarse_kinds.get(parent_id)
         root_map = fine_to_root.get(fine_id)
         if fine_kind_record is None or parent_kind_record is None or root_map is None:
-            raise ValueError("Coarsening ancestry must bind present fine, parent, and root cells.")
+            raise ValueError(
+                "Coarsening ancestry must bind present fine, parent, and root cells."
+            )
         fine_kind = fine_kind_record[2]
         parent_block_name, parent_row, parent_kind = parent_kind_record
         if not (
@@ -537,7 +566,9 @@ def coarsen_reference_cell_maps(
             parent_kind in ("interval", "triangle", "tetrahedron")
             or parent_kind.startswith("simplex:")
         ):
-            raise ValueError("Nested coarsening witnesses require simplex child and parent cells.")
+            raise ValueError(
+                "Nested coarsening witnesses require simplex child and parent cells."
+            )
         if (
             reference_cell_topology(fine_kind).dimension != dimension
             or reference_cell_topology(parent_kind).dimension != dimension
@@ -545,10 +576,14 @@ def coarsen_reference_cell_maps(
             or reference_cell_topology(root_map.source_cell_kind).dimension != dimension
             or root_map.arguments is None
         ):
-            raise ValueError("Coarsening chart kinds must preserve one exact simplex dimension.")
+            raise ValueError(
+                "Coarsening chart kinds must preserve one exact simplex dimension."
+            )
         matrix = child.matrix
         if determinant_exact(matrix) == 0:
-            raise ValueError("A coarsening child-to-parent reference map must be nonsingular.")
+            raise ValueError(
+                "A coarsening child-to-parent reference map must be nonsingular."
+            )
         inverse = tuple(tuple(row) for row in solve_exact(matrix, identity))
         child_from_parent = tuple(
             _linear_expression(
@@ -615,9 +650,7 @@ def coarsen_reference_cell_maps(
         chart_rows = tuple(value[3] for value in rows)
         exact_cells = tuple(
             tuple(
-                evaluate_reference_chart_arguments(
-                    block.cell_kind, cell_arguments, point
-                )
+                evaluate_reference_chart_arguments(block.cell_kind, cell_arguments, point)
                 for point in target_corners
             )
             for cell_arguments in chart_rows
@@ -637,7 +670,10 @@ def coarsen_reference_cell_maps(
             for cell in exact_cells
         )
         execution = np.asarray(
-            [[[float(value) for value in point] for point in cell] for cell in exact_bank],
+            [
+                [[float(value) for value in point] for point in cell]
+                for cell in exact_bank
+            ],
             dtype=np.float64,
         )
         for value in (execution, target_ids, source_ids):
@@ -654,6 +690,7 @@ def coarsen_reference_cell_maps(
         validate_reference_cell_map_witnesses(witness)
         result[block_name] = witness
     return MappingProxyType(result)
+
 
 @dataclass(frozen=True, slots=True)
 class ExactReferenceChartControl:
@@ -682,7 +719,12 @@ class ExactReferenceChartControl:
 
     def _witness(self, target_id: int, /) -> ReferenceCellMapWitnesses:
         points = np.asarray(
-            [[tuple(float(value) for value in point) for point in self.source_reference_vertices]],
+            [
+                [
+                    tuple(float(value) for value in point)
+                    for point in self.source_reference_vertices
+                ]
+            ],
             dtype=np.float64,
         )
         target_ids = np.asarray((target_id,), dtype=np.int64)
@@ -717,7 +759,9 @@ def _reference_shape_polynomials(cell_kind: str, /) -> tuple[Expression, ...]:
     dimension = topology.dimension
     variables = axes(dimension)
     one = constant(1, dimension)
-    if cell_kind in ("interval", "triangle", "tetrahedron") or cell_kind.startswith("simplex:"):
+    if cell_kind in ("interval", "triangle", "tetrahedron") or cell_kind.startswith(
+        "simplex:"
+    ):
         total: Expression = constant(0, dimension)
         for variable in variables:
             total = add(total, variable)
@@ -777,9 +821,7 @@ def _chart_from_corners(
         raise ValueError("Reference-chart corner coordinates must share one dimension.")
     maps: list[Expression] = []
     for axis in range(ambient_dimension):
-        coordinate: Expression = constant(
-            0, reference_cell_topology(cell_kind).dimension
-        )
+        coordinate: Expression = constant(0, reference_cell_topology(cell_kind).dimension)
         for weight, point in zip(weights, corners, strict=True):
             coordinate = add(coordinate, scale(weight, point[axis]))
         maps.append(coordinate)
@@ -792,8 +834,6 @@ def _freeze_expression(
     if isinstance(value, RationalPolynomial):
         return RationalPolynomial(dict(value.numerator), dict(value.denominator))
     return MappingProxyType(dict(value))
-
-
 
 
 def _reference_cell_topology_signature(
@@ -815,9 +855,7 @@ def _reference_cell_topology_signature(
 def _canonical_mapped_reference_cell_kind(cell_kind: str, /) -> str | None:
     from ._reference_cell import reference_cell_topology
 
-    actual = _reference_cell_topology_signature(
-        reference_cell_topology(cell_kind)
-    )
+    actual = _reference_cell_topology_signature(reference_cell_topology(cell_kind))
     for canonical_kind in ("tetrahedron", "prism", "hexahedron", "pyramid"):
         canonical = _reference_cell_topology_signature(
             reference_cell_topology(canonical_kind)
@@ -838,7 +876,9 @@ def _reference_interior_point(cell_kind: str, /) -> tuple[Fraction, ...]:
         case "pyramid":
             return (Fraction(1, 2), Fraction(1, 2), Fraction(1, 5))
         case _:
-            raise ValueError(f"Exact reference-cell interiors do not support {cell_kind!r}.")
+            raise ValueError(
+                f"Exact reference-cell interiors do not support {cell_kind!r}."
+            )
 
 
 def _fraction_corners(cell_kind: str, /) -> tuple[tuple[Fraction, ...], ...]:
@@ -872,12 +912,8 @@ def _pyramid_affine_chart_from_corners(
     ):
         return None
     origin = corners[origin_index]
-    x_axis = tuple(
-        corners[x_index][axis] - origin[axis] for axis in range(3)
-    )
-    y_axis = tuple(
-        corners[y_index][axis] - origin[axis] for axis in range(3)
-    )
+    x_axis = tuple(corners[x_index][axis] - origin[axis] for axis in range(3))
+    y_axis = tuple(corners[y_index][axis] - origin[axis] for axis in range(3))
     z_axis = tuple(
         corners[apex_index][axis]
         - origin[axis]
@@ -936,21 +972,15 @@ def _root_affine_inverse(
         raise ValueError("Reference-root chart coefficients must be exact rationals.")
     exact_offset = tuple(value for value in offset if isinstance(value, Fraction))
     exact_matrix = tuple(
-        tuple(value for value in row if isinstance(value, Fraction))
-        for row in matrix
+        tuple(value for value in row if isinstance(value, Fraction)) for row in matrix
     )
     if determinant_exact(exact_matrix) <= 0:
         raise ValueError("Reference-root charts must have positive exact orientation.")
     identity = tuple(
-        tuple(Fraction(int(row == column)) for column in range(3))
-        for row in range(3)
+        tuple(Fraction(int(row == column)) for column in range(3)) for row in range(3)
     )
     inverse_values = tuple(tuple(row) for row in solve_exact(exact_matrix, identity))
-    if any(
-        not isinstance(value, Fraction)
-        for row in inverse_values
-        for value in row
-    ):
+    if any(not isinstance(value, Fraction) for row in inverse_values for value in row):
         raise ValueError("Reference-root inverse coefficients must be exact rationals.")
     inverse = tuple(
         tuple(value for value in row if isinstance(value, Fraction))
@@ -1009,7 +1039,9 @@ def _validate_reference_chart_target(
     ):
         raise TypeError("target_mesh and target_geometry must be canonical cell owners.")
     if target_mesh.topological_dimension != 3 or target_mesh.ambient_dimension != 3:
-        raise ValueError("Exact mapped-root localization requires three-dimensional target cells.")
+        raise ValueError(
+            "Exact mapped-root localization requires three-dimensional target cells."
+        )
     regions = np.asarray(target_cell_regions)
     cell_count = sum(block.cell_count for block in target_mesh.blocks)
     if (
@@ -1023,7 +1055,9 @@ def _validate_reference_chart_target(
         )
     regions = regions.astype(np.int64, copy=False)
     if np.any(regions < 0) or np.any(regions >= len(domain.region_ids)):
-        raise ValueError("target_cell_regions must name declared mapped reference regions.")
+        raise ValueError(
+            "target_cell_regions must name declared mapped reference regions."
+        )
     return regions
 
 
@@ -1091,12 +1125,10 @@ def _exact_degree_one_target_chart(
         evaluate_reference_chart_arguments(target_cell_kind, expressions, point)
         for point in reference_corners
     )
-    if any(
-        not isinstance(value, Fraction)
-        for point in corner_values
-        for value in point
-    ):
-        raise ValueError("Reference-chart corner controls must be exact rational coordinates.")
+    if any(not isinstance(value, Fraction) for point in corner_values for value in point):
+        raise ValueError(
+            "Reference-chart corner controls must be exact rational coordinates."
+        )
     exact_corners = tuple(
         tuple(value for value in point if isinstance(value, Fraction))
         for point in corner_values
@@ -1143,10 +1175,7 @@ def _reference_root_candidate(
             target_chart,
             tuple(root.inverse[parameter][axis] for axis in range(3)),
             -sum(
-                (
-                    root.inverse[parameter][axis] * root.offset[axis]
-                    for axis in range(3)
-                ),
+                (root.inverse[parameter][axis] * root.offset[axis] for axis in range(3)),
                 Fraction(0),
             ),
             3,
@@ -1161,11 +1190,7 @@ def _reference_root_candidate(
         evaluate_reference_chart_arguments(target_cell_kind, arguments, point)
         for point in target_reference_corners
     )
-    if any(
-        not isinstance(value, Fraction)
-        for point in corner_images
-        for value in point
-    ):
+    if any(not isinstance(value, Fraction) for point in corner_images for value in point):
         raise ValueError("Exact target-to-root chart controls must be rational.")
     exact_corner_images = tuple(
         tuple(value for value in point if isinstance(value, Fraction))
@@ -1176,9 +1201,7 @@ def _reference_root_candidate(
         target_cell_kind, arguments, interior
     )
     interior_owned = reference_cell_strictly_contains(root.cell_kind, interior_image)
-    return _ReferenceRootCandidate(
-        root, arguments, exact_corner_images, interior_owned
-    )
+    return _ReferenceRootCandidate(root, arguments, exact_corner_images, interior_owned)
 
 
 def _unique_reference_root(
@@ -1315,7 +1338,6 @@ def exact_reference_chart_controls(
     return tuple(controls)
 
 
-
 def reference_chart_controls_by_target_id(
     controls: Sequence[ExactReferenceChartControl], /
 ) -> Mapping[int, ExactReferenceChartControl]:
@@ -1327,9 +1349,12 @@ def reference_chart_controls_by_target_id(
     indexed: dict[int, ExactReferenceChartControl] = {}
     for control in controls:
         if control.target_cell_id in indexed:
-            raise ValueError("Reference chart controls must have unique target global IDs.")
+            raise ValueError(
+                "Reference chart controls must have unique target global IDs."
+            )
         indexed[control.target_cell_id] = control
     return MappingProxyType(indexed)
+
 
 __all__ = [
     "ExactReferenceChartControl",

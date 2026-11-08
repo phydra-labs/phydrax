@@ -16,7 +16,10 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellMesh
 from ..discretization._cell_geometry_transition_types import CellGeometryTransition
-from ..geometry._source_boundary_records import SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness
+from ..geometry._source_boundary_records import (
+    SourceBoundaryChartWitness,
+    SourceBoundaryFaceImageWitness,
+)
 from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
 from ..typing import checked
 from ._association import (
@@ -168,7 +171,9 @@ class ComposedAssociationTransfer(StrictModule, NonTrainableState):
         *,
         vertex_stencil: VertexInterpolationStencil | None,
         geometry_transition: CellGeometryTransition | None,
-        target_fidelity_witness: SourceBoundaryChartWitness | SourceBoundaryFaceImageWitness | None,
+        target_fidelity_witness: SourceBoundaryChartWitness
+        | SourceBoundaryFaceImageWitness
+        | None,
         target_scoped_fidelity: tuple[ScopedFidelityInput, ...],
         validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
     ) -> tuple[GeometryAssociation, ...]:

@@ -146,9 +146,7 @@ def role_plan(
     periodic = PeriodicCell(cell)
     return AtomisticDomainRolePlan(
         requirement,
-        periodic.image_stencil(
-            requirement.bounded_cutoff() + skin
-        ),
+        periodic.image_stencil(requirement.bounded_cutoff() + skin),
         streaming=streaming(model, accumulation) if stream is None else stream,
         skin=skin,
         edge_capacity=edge_capacity,

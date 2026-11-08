@@ -15,9 +15,7 @@ def _size_tolerance(specification: SurfaceMeshingSpec, size: float, /) -> float:
     return policy.absolute_tolerance + policy.relative_tolerance * size
 
 
-def uniform_median_strategy(
-    specification: SurfaceMeshingSpec, size: float, /
-) -> bool:
+def uniform_median_strategy(specification: SurfaceMeshingSpec, size: float, /) -> bool:
     """Whether the physical upper tolerance permits constructing for a hard median."""
     hard = tuple(
         control
@@ -38,9 +36,7 @@ def uniform_median_strategy(
     )
 
 
-def uniform_construction_size(
-    specification: SurfaceMeshingSpec, size: float, /
-) -> float:
+def uniform_construction_size(specification: SurfaceMeshingSpec, size: float, /) -> float:
     """Use only the hard request's physical upper tolerance for construction."""
     if not uniform_median_strategy(specification, size):
         return size
@@ -53,8 +49,6 @@ def uniform_construction_size(
         ):
             upper = min(upper, control.maximum_size)
     return upper
-
-
 
 
 __all__ = ["uniform_construction_size", "uniform_median_strategy"]

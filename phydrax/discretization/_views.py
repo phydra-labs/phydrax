@@ -424,9 +424,7 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
             raise ValueError(
                 "support_geometry ambient dimension must equal physical_dimension."
             )
-        if isinstance(
-            support_geometry, (MappedFieldSupport, OwnerLocalFieldSupport)
-        ):
+        if isinstance(support_geometry, (MappedFieldSupport, OwnerLocalFieldSupport)):
             support_geometry.require_kernel(kernel)
         for order in range(1, maximum + 1):
             level, _ = regularity.admits_order(order)

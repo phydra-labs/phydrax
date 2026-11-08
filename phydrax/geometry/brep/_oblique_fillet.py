@@ -7,28 +7,28 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
-from ...discretization._exact_algebraic_geometry import (
-    ExactScalar,
-    RadicalElement,
-    coefficient_interval,
-)
-from ...linalg._exact import factor_exact
 from math import pi
 
 import numpy as np
 
+from ...discretization._exact_algebraic_geometry import (
+    coefficient_interval,
+    ExactScalar,
+    RadicalElement,
+)
+from ...linalg._exact import factor_exact
 from .._rational import fraction_down, fraction_up, rational_cross, rational_vector
 from ._assembly import BRepAffinePlacement
-from ._constructors import _Builder, BRepTessellationPolicy, assemble_brep_model
-from ._fillet import BRepBlendUnresolved, BRepBlendUnsupported
+from ._constructors import _Builder, assemble_brep_model, BRepTessellationPolicy
 from ._correspondence import exact_source_lift, native_edge_pcurve
+from ._fillet import BRepBlendUnresolved, BRepBlendUnsupported
 from ._intersection import (
     ConicParameterEndpoint,
+    exact_plane_cylinder_conic_section,
+    intersect_surface_regions,
     ParametricIntersectionPolicy,
     PlaneCylinderConicSection,
     RootEndpoint,
-    exact_plane_cylinder_conic_section,
-    intersect_surface_regions,
 )
 from ._intersection_curve import IntersectionCurve, SurfaceRegion
 from ._model import BRepGeometry, BRepModel
@@ -70,9 +70,7 @@ class _Blend:
     orientation: int
     contacts: tuple[tuple[_Vector, _Vector], tuple[_Vector, _Vector]]
     heights: tuple[tuple[ExactScalar, ExactScalar], tuple[ExactScalar, ExactScalar]]
-    height_bounds: tuple[
-        tuple[ExactScalar, ExactScalar], tuple[ExactScalar, ExactScalar]
-    ]
+    height_bounds: tuple[tuple[ExactScalar, ExactScalar], tuple[ExactScalar, ExactScalar]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +106,6 @@ class _StagedEdges:
         tuple[RootEndpoint | None, RootEndpoint | None],
         tuple[RootEndpoint | None, RootEndpoint | None],
     ]
-
 
 
 def _dot(first: _Vector, second: _Vector, /) -> ExactScalar:
@@ -166,7 +163,9 @@ def _lower_float(value: ExactScalar, /) -> float:
 
 def _point3(point: _Vector, /) -> _Point3:
     if len(point) != 3:
-        raise BRepBlendUnsupported("unsupported plane-pair fillet: expected a 3D exact point")
+        raise BRepBlendUnsupported(
+            "unsupported plane-pair fillet: expected a 3D exact point"
+        )
     return point[0], point[1], point[2]
 
 
@@ -552,9 +551,7 @@ def _cap(model: BRepModel, junction: _Junction, blend: _Blend, end: int, /) -> _
             blend.angle_roots[1].sine_exact,
         ),
     )
-    section = exact_plane_cylinder_conic_section(
-        plane, cylinder, cylinder_angle_roots
-    )
+    section = exact_plane_cylinder_conic_section(plane, cylinder, cylinder_angle_roots)
     if section is None:
         raise BRepBlendUnsupported(
             "unsupported plane-pair fillet: exact plane/cylinder cap section is unavailable"
@@ -587,11 +584,7 @@ def _cap(model: BRepModel, junction: _Junction, blend: _Blend, end: int, /) -> _
     return _Cap(curve, section, 0 if float(curve.node_values[0]) == 0.0 else 1)
 
 
-
-
-def _trim_parameter(
-    geometry: BRepGeometry, edge: int, point: _Vector, /
-) -> ExactScalar:
+def _trim_parameter(geometry: BRepGeometry, edge: int, point: _Vector, /) -> ExactScalar:
     curve_index = geometry.edge_curves[edge]
     if curve_index < 0:
         raise RuntimeError("plane-pair fillet cap boundary lost its admitted source line")
@@ -653,10 +646,6 @@ def _line_curve(first: _Vector, last: _Vector, /) -> LineCurve:
     )
 
 
-
-
-
-
 def _certify_clearance(
     model: BRepModel,
     junction: _Junction,
@@ -696,9 +685,7 @@ def _stage_edges(
 ) -> _StagedEdges:
     geometry, builder = junction.geometry, _Builder()
 
-    def add_vertex(
-        point: _Vector, vertex_root: BRepVertexRoot | None = None, /
-    ) -> int:
+    def add_vertex(point: _Vector, vertex_root: BRepVertexRoot | None = None, /) -> int:
         if vertex_root is not None:
             return builder.vertex(_array(point), root=vertex_root)
         if any(not isinstance(value, Fraction) for value in point):
@@ -814,15 +801,11 @@ def _stage_edges(
             (
                 (
                     0.0,
-                    _lower_float(
-                        min(bounds[0] for bounds in blend.height_bounds)
-                    ),
+                    _lower_float(min(bounds[0] for bounds in blend.height_bounds)),
                 ),
                 (
                     blend.angle,
-                    _upper_float(
-                        max(bounds[1] for bounds in blend.height_bounds)
-                    ),
+                    _upper_float(max(bounds[1] for bounds in blend.height_bounds)),
                 ),
             ),
             dtype=np.float64,
@@ -840,9 +823,7 @@ def _stage_edges(
                 "unsupported plane-pair fillet: exact contact line lacks its source cylinder p-curve"
             )
     vertex_roots = {
-        (side, end): BRepVertexRoot(
-            BRepConicVertex(contact_conics[side][end])
-        )
+        (side, end): BRepVertexRoot(BRepConicVertex(contact_conics[side][end]))
         for side in range(2)
         for end in range(2)
     }
@@ -912,9 +893,7 @@ def _stage_edges(
             )
 
     coedge_pcurves: dict[int, BRepCurve] = {}
-    coedge_root_overrides: dict[
-        int, tuple[RootEndpoint | None, RootEndpoint | None]
-    ] = {}
+    coedge_root_overrides: dict[int, tuple[RootEndpoint | None, RootEndpoint | None]] = {}
     edge_owner = {
         edge: (side, end)
         for side, source_edges in enumerate(junction.cap_edges)
@@ -940,18 +919,13 @@ def _stage_edges(
 
     contact_edges: list[int] = []
     contact_pcurves: list[BRepCurve] = []
-    contact_side_roots: list[
-        tuple[RootEndpoint | None, RootEndpoint | None]
-    ] = []
-    contact_blend_roots: list[
-        tuple[RootEndpoint | None, RootEndpoint | None]
-    ] = []
+    contact_side_roots: list[tuple[RootEndpoint | None, RootEndpoint | None]] = []
+    contact_blend_roots: list[tuple[RootEndpoint | None, RootEndpoint | None]] = []
     for side, face in enumerate(junction.sides):
         for end in range(2):
             root_point = contact_blend_angle_roots[side].exact_point()
             lifted_point = tuple(
-                root_point[axis]
-                + blend.heights[side][end] * blend.patch.axis_exact[axis]
+                root_point[axis] + blend.heights[side][end] * blend.patch.axis_exact[axis]
                 for axis in range(3)
             )
             if lifted_point != contact_conics[side][end].exact_point():
@@ -1033,22 +1007,14 @@ def _stage_edges(
         )
         cap_plane_roots.append(
             (
-                endpoint(
-                    section.endpoint_roots[0], section.plane_pcurve, None
-                ),
-                endpoint(
-                    section.endpoint_roots[1], section.plane_pcurve, None
-                ),
+                endpoint(section.endpoint_roots[0], section.plane_pcurve, None),
+                endpoint(section.endpoint_roots[1], section.plane_pcurve, None),
             )
         )
         cap_cylinder_roots.append(
             (
-                endpoint(
-                    section.endpoint_roots[0], section.cylinder_pcurve, None
-                ),
-                endpoint(
-                    section.endpoint_roots[1], section.cylinder_pcurve, None
-                ),
+                endpoint(section.endpoint_roots[0], section.cylinder_pcurve, None),
+                endpoint(section.endpoint_roots[1], section.cylinder_pcurve, None),
             )
         )
 
@@ -1306,9 +1272,7 @@ def oblique_fillet_parameter_range(
         clearance = _clearance_radius_limits(model, junction, delta, normals)
         limit = min((*contacts, *clearance))
         limit_lower, _ = coefficient_interval(limit, bits=128)
-        upper = fraction_down(
-            min(limit_lower, Fraction(float(np.finfo(np.float64).max)))
-        )
+        upper = fraction_down(min(limit_lower, Fraction(float(np.finfo(np.float64).max))))
         if upper <= 0:
             raise BRepBlendUnsupported(
                 "oblique fillet range: no positive representable certified interval"

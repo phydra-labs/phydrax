@@ -65,9 +65,7 @@ def test_native_ftetwild_filters_exterior_and_handles_duplicate_surface_seams() 
                 maximum_iterations=20,
             )
         )
-        result = provider.plan(
-            source, _specification(source, 0.3 * scale)
-        ).execute()
+        result = provider.plan(source, _specification(source, 0.3 * scale)).execute()
         points = np.asarray(result.mesh.coordinates)
         cells = points[np.asarray(result.mesh.blocks[0].vertices)]
         volumes = np.linalg.det(cells[:, 1:] - cells[:, :1]) / 6

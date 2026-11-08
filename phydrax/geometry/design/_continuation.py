@@ -3,11 +3,11 @@
 #
 from __future__ import annotations
 
+import inspect
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-import inspect
 from math import isfinite
-from typing import Any, NamedTuple, cast
+from typing import Any, cast, NamedTuple
 
 import equinox as eqx
 import jax
@@ -18,7 +18,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint, iter_array_bytes
-from ..._geometry_predicates import PredicateMode, orient2d
+from ..._geometry_predicates import orient2d, PredicateMode
 from ..._strict import StrictModule
 from ...optim import DifferentialEvolutionSearch
 from ...typing import PRNGKey

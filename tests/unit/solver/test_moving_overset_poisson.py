@@ -165,7 +165,9 @@ def _owned_boundary_ids(view: OwnerLocalCellGeometry, /) -> np.ndarray:
     )
 
 
-def _case(*, bound: bool = True) -> tuple[
+def _case(
+    *, bound: bool = True
+) -> tuple[
     OversetConnectivity,
     dict[str, FiniteElementPlan],
     Composition,
@@ -255,15 +257,21 @@ def _advance(
         numeric_version="moving-overset-test",
     )
 
+
 def test_serial_composite_rejects_unbound_connectivity() -> None:
     connectivity, plans, composition, receptor = _case(bound=False)
     advance = _advance(receptor, (0.01, 0.0))
     with pytest.raises(ValueError, match="connectivity-bound partition"):
         prepare_moving_overset_poisson_update(
-            composition, connectivity, {"receptor": advance}, plans, "u",
+            composition,
+            connectivity,
+            {"receptor": advance},
+            plans,
+            "u",
             part_priority=("receptor", "donor"),
             boundary_values=lambda points: jnp.zeros(points.shape[0]),
         )
+
 
 def test_serial_composite_rejects_partition_input_mismatch() -> None:
     connectivity, plans, composition, receptor = _case()
@@ -271,17 +279,26 @@ def test_serial_composite_rejects_partition_input_mismatch() -> None:
     boundary = lambda points: jnp.zeros(points.shape[0])
     with pytest.raises(ValueError, match="part_priority must match"):
         prepare_moving_overset_poisson_update(
-            composition, connectivity, {"receptor": advance}, plans, "u",
-            part_priority=("donor", "receptor"), boundary_values=boundary,
+            composition,
+            connectivity,
+            {"receptor": advance},
+            plans,
+            "u",
+            part_priority=("donor", "receptor"),
+            boundary_values=boundary,
         )
     cavity = np.asarray(((0.1, 0.1), (0.2, 0.1), (0.1, 0.2)))
     with pytest.raises(ValueError, match="cavities must match"):
         prepare_moving_overset_poisson_update(
-            composition, connectivity, {"receptor": advance}, plans, "u",
-            part_priority=("receptor", "donor"), cavities=(cavity,),
+            composition,
+            connectivity,
+            {"receptor": advance},
+            plans,
+            "u",
+            part_priority=("receptor", "donor"),
+            cavities=(cavity,),
             boundary_values=boundary,
         )
-
 
 
 def test_moving_overset_poisson_commits_one_physical_partition() -> None:
@@ -321,7 +338,9 @@ def test_moving_overset_poisson_commits_one_physical_partition() -> None:
     assert update.interfaces is not None
     assert float(update.partition.total_area) == pytest.approx(2.0)
     assert update.composite.flux_defect <= 1e-9
-    assert sum(part.overset_flux for part in update.parts) == pytest.approx(0.0, abs=1e-12)
+    assert sum(part.overset_flux for part in update.parts) == pytest.approx(
+        0.0, abs=1e-12
+    )
     assert any(edge.kind == "inter_part" for edge in update.interfaces)
     receptor_part = next(part for part in update.parts if part.part_name == "receptor")
     assert abs(receptor_part.overset_flux) > 0.1
@@ -340,12 +359,22 @@ def test_composite_solution_uses_current_boundary_not_predecessor_receptors() ->
     connectivity, plans, composition, receptor = _case()
     advance = _advance(receptor, (0.01, 0.0), move_all=True)
     zero = prepare_moving_overset_poisson_update(
-        composition, connectivity, {"receptor": advance}, plans, "u",
-        boundary_values=lambda points: jnp.zeros(points.shape[0]), part_priority=("receptor", "donor"),
+        composition,
+        connectivity,
+        {"receptor": advance},
+        plans,
+        "u",
+        boundary_values=lambda points: jnp.zeros(points.shape[0]),
+        part_priority=("receptor", "donor"),
     )
     one = prepare_moving_overset_poisson_update(
-        composition, connectivity, {"receptor": advance}, plans, "u",
-        boundary_values=lambda points: jnp.ones(points.shape[0]), part_priority=("receptor", "donor"),
+        composition,
+        connectivity,
+        {"receptor": advance},
+        plans,
+        "u",
+        boundary_values=lambda points: jnp.ones(points.shape[0]),
+        part_priority=("receptor", "donor"),
     )
     assert zero.update_id != one.update_id
     assert zero.accepted and one.accepted
@@ -358,8 +387,13 @@ def test_composite_solution_uses_current_boundary_not_predecessor_receptors() ->
     assert receipt.published
     with pytest.raises(ValueError, match="current overset source result"):
         prepare_moving_overset_poisson_update(
-            receipt.composition, zero.candidate, {"receptor": advance}, plans, "u",
-            boundary_values=lambda points: jnp.zeros(points.shape[0]), part_priority=("receptor", "donor"),
+            receipt.composition,
+            zero.candidate,
+            {"receptor": advance},
+            plans,
+            "u",
+            boundary_values=lambda points: jnp.zeros(points.shape[0]),
+            part_priority=("receptor", "donor"),
         )
     successor_parts = {part.name: part for part in zero.candidate.assembly.parts}
     successor_plans = {}
@@ -367,18 +401,26 @@ def test_composite_solution_uses_current_boundary_not_predecessor_receptors() ->
         result = _cell_result(part)
         old = plans[name]
         successor_plans[name] = FiniteElementPlan(
-            result.mesh, old.fields, precision_policy=old.precision_policy,
-            coordinate_spec=result.geometry, coefficient_dtype=old.coefficient_dtype,
+            result.mesh,
+            old.fields,
+            precision_policy=old.precision_policy,
+            coordinate_spec=result.geometry,
+            coefficient_dtype=old.coefficient_dtype,
             coordinate_measure=old.coordinate_measure,
         )
     second = prepare_moving_overset_poisson_update(
-        receipt.composition, zero.candidate,
+        receipt.composition,
+        zero.candidate,
         {
             "donor": _advance(successor_parts["donor"], (0.002, 0.0)),
-            "receptor": _advance(successor_parts["receptor"], (0.005, 0.0), move_all=True),
+            "receptor": _advance(
+                successor_parts["receptor"], (0.005, 0.0), move_all=True
+            ),
         },
-        successor_plans, "u",
-        boundary_values=lambda points: jnp.ones(points.shape[0]), part_priority=("receptor", "donor"),
+        successor_plans,
+        "u",
+        boundary_values=lambda points: jnp.ones(points.shape[0]),
+        part_priority=("receptor", "donor"),
     )
     assert second.previous.connectivity_id == zero.candidate.connectivity_id
     assert second.accepted
@@ -387,9 +429,11 @@ def test_composite_solution_uses_current_boundary_not_predecessor_receptors() ->
 
 def test_composite_boundary_support_distinguishes_cavity_and_unmatched_edges() -> None:
     from phydrax.geometry._overset_partition import partition_overset_triangles
-    from phydrax.solver._moving_overset_poisson import _require_physical_partition_boundary
+    from phydrax.solver._moving_overset_poisson import (
+        _require_physical_partition_boundary,
+    )
 
-    points = np.asarray(((0., 0.), (1., 0.), (1., 1.), (0., 1.)))
+    points = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
     triangles = np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int64)
     background = ("background", points, triangles)
     cavity = np.asarray(((0.25, 0.25), (0.75, 0.25), (0.75, 0.75), (0.25, 0.75)))
@@ -400,7 +444,7 @@ def test_composite_boundary_support_distinguishes_cavity_and_unmatched_edges() -
 
     rogue = (
         "rogue",
-        np.asarray(((1., 0.), (1.5, 0.5), (1., 1.))),
+        np.asarray(((1.0, 0.0), (1.5, 0.5), (1.0, 1.0))),
         np.asarray(((0, 1, 2),), dtype=np.int64),
     )
     partition = partition_overset_triangles((rogue, background), ())

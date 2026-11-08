@@ -41,7 +41,9 @@ from ._topology import CellComplexTopology, EntitySet, EntitySubset, OrientedInc
 _INT32_MAX = np.iinfo(np.int32).max
 # Exact vertex banks that can witness a quotient's deck action on lifted rows.
 ExactPeriodicCoordinateSource = (
-    ExactPowerCellGeometrySource | ExactPlcCellGeometrySource | ExactPeriodicAlgebraicSource
+    ExactPowerCellGeometrySource
+    | ExactPlcCellGeometrySource
+    | ExactPeriodicAlgebraicSource
 )
 
 
@@ -78,7 +80,11 @@ def _require_acyclic_periodic_witness(source: ExactPeriodicCoordinateSource, /) 
         geometry = periodic._actual_geometry
         if geometry is not None and isinstance(
             geometry.source_map,
-            (ExactPowerCellGeometrySource, ExactPlcCellGeometrySource, ExactPeriodicAlgebraicSource),
+            (
+                ExactPowerCellGeometrySource,
+                ExactPlcCellGeometrySource,
+                ExactPeriodicAlgebraicSource,
+            ),
         ):
             pending.append((geometry.source_map, False))
 
@@ -767,7 +773,11 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
             raise ValueError("lifted must be a nonperiodic fundamental-cover carrier.")
         if exact_coordinate_source is not None and not isinstance(
             exact_coordinate_source,
-            (ExactPowerCellGeometrySource, ExactPlcCellGeometrySource, ExactPeriodicAlgebraicSource),
+            (
+                ExactPowerCellGeometrySource,
+                ExactPlcCellGeometrySource,
+                ExactPeriodicAlgebraicSource,
+            ),
         ):
             raise TypeError(
                 "exact_coordinate_source must be an exact periodic coordinate bank."
@@ -779,7 +789,11 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
             else:
                 if not isinstance(
                     source_map,
-                    (ExactPowerCellGeometrySource, ExactPlcCellGeometrySource, ExactPeriodicAlgebraicSource),
+                    (
+                        ExactPowerCellGeometrySource,
+                        ExactPlcCellGeometrySource,
+                        ExactPeriodicAlgebraicSource,
+                    ),
                 ):
                     raise ValueError(
                         "Periodic mapped geometry requires its exact coordinate witness."
@@ -833,15 +847,16 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
             exact_coordinate_source = _rebuild_periodic_witness(
                 exact_coordinate_source, cell
             )
-        if isinstance(exact_coordinate_source, (ExactPlcCellGeometrySource, ExactPeriodicAlgebraicSource)) and (
+        if isinstance(
+            exact_coordinate_source,
+            (ExactPlcCellGeometrySource, ExactPeriodicAlgebraicSource),
+        ) and (
             not np.array_equal(
                 np.asarray(exact_coordinate_source.vertex_global_ids, dtype=np.int64),
                 np.asarray(lifted.vertex_global_ids, dtype=np.int64),
             )
         ):
-            raise ValueError(
-                "Exact coordinate rows must follow the lifted vertex order."
-            )
+            raise ValueError("Exact coordinate rows must follow the lifted vertex order.")
         representatives, shifts = _validate_vertex_orbits(
             lifted.coordinates,
             cell,
@@ -1165,7 +1180,11 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
         if self.exact_coordinate_source is not None and (
             not isinstance(
                 self.exact_coordinate_source,
-                (ExactPowerCellGeometrySource, ExactPlcCellGeometrySource, ExactPeriodicAlgebraicSource),
+                (
+                    ExactPowerCellGeometrySource,
+                    ExactPlcCellGeometrySource,
+                    ExactPeriodicAlgebraicSource,
+                ),
             )
             or self.exact_coordinate_source.source_map_id != self.coordinate_source_map_id
         ):
@@ -1320,7 +1339,9 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
             raise ValueError(
                 "Periodic exact witness does not cover the mesh vertex bank."
             )
-        if isinstance(source, (ExactPlcCellGeometrySource, ExactPeriodicAlgebraicSource)) and not np.array_equal(
+        if isinstance(
+            source, (ExactPlcCellGeometrySource, ExactPeriodicAlgebraicSource)
+        ) and not np.array_equal(
             np.asarray(source.vertex_global_ids, dtype=np.int64), vertex_ids
         ):
             raise ValueError("Periodic exact witness changed vertex identities or order.")
@@ -1611,7 +1632,10 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
             )
             return
         if isinstance(self.exact_coordinate_source, ExactPeriodicAlgebraicSource):
-            if self.exact_coordinate_source.source_map_id != self.coordinate_source_map_id:
+            if (
+                self.exact_coordinate_source.source_map_id
+                != self.coordinate_source_map_id
+            ):
                 raise ValueError("Periodic exact coordinate witness identity changed.")
             self.exact_coordinate_source.require_periodic_lift(
                 coordinates, self.cell, self.vertex_representatives, self.vertex_shifts

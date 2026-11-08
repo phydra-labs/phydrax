@@ -18,18 +18,18 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._frozendict import frozendict
-from ..._geometry_predicates import PredicateMode, orient2d
+from ..._geometry_predicates import orient2d, PredicateMode
 from ..._strict import StrictModule
 from ...optim._residual_graph import (
     ParameterBlock,
+    prepare_residual_graph,
     PreparedResidualGraph,
     ResidualBlock,
     ResidualGraphProblem,
-    prepare_residual_graph,
 )
 from ...typing import checked
 from ._schema import DesignState, ParameterBinding, ParameterId, ParameterSchema
-from ._sketch import FixedPoint, PointDistance, Sketch, _finite_norm
+from ._sketch import _finite_norm, FixedPoint, PointDistance, Sketch
 from ._sketch_certificate import RootDOFEvidence
 
 

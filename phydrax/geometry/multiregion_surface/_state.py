@@ -148,8 +148,7 @@ class MultiRegionSurfaceState(StrictModule):
             or self.vertex_capacity != topology.vertex_capacity
             or self.slot_width != topology.slot_width
             or self.region_capacity != topology.region_capacity
-            or np.dtype(self.positions.dtype)
-            != np.dtype(topology.plan.coordinate_dtype)
+            or np.dtype(self.positions.dtype) != np.dtype(topology.plan.coordinate_dtype)
         ):
             raise ValueError(
                 "State belongs to a different multiregion topology epoch or storage layout."

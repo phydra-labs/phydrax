@@ -160,17 +160,22 @@ def _wall_face_sources(source: sources_owner.NativeLayerCoreSource, /) -> dict[i
             for identifier in charts.domain.scope_entity_ids(2)
         }
         chart_sources = {
-            int(cell): scope_by_key[(
-                charts.domain.entity_id(2, int(patch)),
-                tuple(charts.domain.source_occurrences[2][int(patch)]),
-            )]
-            for cell, patch in zip(charts.cell_global_ids, charts.root_patches, strict=True)
+            int(cell): scope_by_key[
+                (
+                    charts.domain.entity_id(2, int(patch)),
+                    tuple(charts.domain.source_occurrences[2][int(patch)]),
+                )
+            ]
+            for cell, patch in zip(
+                charts.cell_global_ids, charts.root_patches, strict=True
+            )
         }
     if source.source_boundary_scope is None:
         allowed = set(
             np.asarray(
                 source.complex.facet_entity_ids
-                if charts is None else charts.domain.scope_entity_ids(2),
+                if charts is None
+                else charts.domain.scope_entity_ids(2),
                 dtype=np.int64,
             ).tolist()
         )
@@ -419,8 +424,8 @@ def _conforming_cap_control_keys(
     from fractions import Fraction
 
     from ..discretization._exact_plc_geometry import ExactPlcCellGeometrySource
-    from ._layer_core_subdivision import require_overlap_source_provenance
     from ..geometry._coplanar_overlap import exact_coplanar_triangle_partitions
+    from ._layer_core_subdivision import require_overlap_source_provenance
 
     carrier = construction.overlap_exact_geometry
     if not isinstance(carrier, ExactPlcCellGeometrySource):
@@ -437,13 +442,20 @@ def _conforming_cap_control_keys(
     source_points = np.asarray(source.complex.vertices, dtype=np.float64)
     original = []
     for polygon in cap_ids:
-        row = vertices[offsets[int(polygon)]:offsets[int(polygon) + 1]]
+        row = vertices[offsets[int(polygon)] : offsets[int(polygon) + 1]]
         if row.shape != (3,):
-            raise ValueError("Conforming cap controls require original triangular facets.")
-        original.append(tuple(
-            tuple(Fraction.from_float(float(value)) for value in source_points[int(vertex)])
-            for vertex in row
-        ))
+            raise ValueError(
+                "Conforming cap controls require original triangular facets."
+            )
+        original.append(
+            tuple(
+                tuple(
+                    Fraction.from_float(float(value))
+                    for value in source_points[int(vertex)]
+                )
+                for vertex in row
+            )
+        )
     ids = np.sort(np.asarray(construction.mesh.entity_set(3).entity_ids, dtype=np.int64))
     core = set(np.asarray(construction.core_cell_ids, dtype=np.int64).tolist())
     keys = []
@@ -518,20 +530,30 @@ def compose_layer_controls(
     cap_scope: set[int] = set()
     cap_owners: dict[tuple[int, ...], set[int]] = {}
     if source.conforming_execution:
-        cap_scope, cap_owners = _conforming_cap_control_keys(source, construction, incidents)
+        cap_scope, cap_owners = _conforming_cap_control_keys(
+            source, construction, incidents
+        )
     patches = list(construction.patches)
     for control in specification.patch_controls:
         selected = set(np.asarray(control.scope.entity_ids, dtype=np.int64).tolist())
         if source.conforming_execution and selected <= cap_scope:
-            if any(owners & selected and not owners <= selected for owners in cap_owners.values()):
-                raise ValueError("A source patch cuts a realized face and cannot be a whole-face MeshPatch.")
+            if any(
+                owners & selected and not owners <= selected
+                for owners in cap_owners.values()
+            ):
+                raise ValueError(
+                    "A source patch cuts a realized face and cannot be a whole-face MeshPatch."
+                )
             keys = [key for key, owners in cap_owners.items() if owners <= selected]
-            represented = set().union(*(cap_owners[key] for key in keys)) if keys else set()
+            represented = (
+                set().union(*(cap_owners[key] for key in keys)) if keys else set()
+            )
         else:
             if source.conforming_execution:
                 authored = layer_source_face_ancestry(source)
             keys = [
-                key for key, owner in authored.items()
+                key
+                for key, owner in authored.items()
                 if owner in selected and key in incidents
             ]
             represented = {authored[key] for key in keys}
@@ -647,7 +669,9 @@ def _mapped_wall_source_cells(
     query = source.fidelity_source
     domain = source.mapped_domain
     if not isinstance(query, MappedReferenceBoundarySource) or domain is None:
-        raise ValueError("Mapped wall controls require their original mapped boundary query.")
+        raise ValueError(
+            "Mapped wall controls require their original mapped boundary query."
+        )
     authority = query.authority
     if not isinstance(
         authority, (sources_owner.NativePlcSource, sources_owner.NativeMappedHexSource)
@@ -658,7 +682,9 @@ def _mapped_wall_source_cells(
     relation = authority.root_relation
     root_ids = domain.reference_domain_vertex_root_ids
     if relation is None or root_ids is None:
-        raise ValueError("Mapped wall controls require declared source-root vertex ancestry.")
+        raise ValueError(
+            "Mapped wall controls require declared source-root vertex ancestry."
+        )
     complex_ = authority.complex
     polygon_offsets = np.asarray(complex_.polygon_offsets, dtype=np.int64)
     polygon_vertices = np.asarray(complex_.polygon_vertices, dtype=np.int64)
@@ -727,7 +753,8 @@ def _mapped_wall_layer_control(
         control.route is not BoundaryLayerRoute.ADVANCING
         or scope.entity_kind is not MeshingEntityKind.GEOMETRY
         or scope.entity_dimension != 2
-        or (scope.source_id, scope.source_revision) != (source.source_id, source.source_revision)
+        or (scope.source_id, scope.source_revision)
+        != (source.source_id, source.source_revision)
         or scope.entity_set_id != authority.scope_entity_set_id(2)
     ):
         raise ValueError("Mapped wall control must bind the original full-source faces.")
@@ -736,15 +763,23 @@ def _mapped_wall_layer_control(
         or volume.entity_set_id != source.scope_entity_set_id(3)
         or not np.array_equal(
             np.sort(np.asarray(volume.entity_ids, dtype=np.int64)),
-            np.sort(np.asarray(source.region_entity_ids, dtype=np.int64)[
-                np.unique(np.asarray(source.layer_regions, dtype=np.int64))
-            ]),
+            np.sort(
+                np.asarray(source.region_entity_ids, dtype=np.int64)[
+                    np.unique(np.asarray(source.layer_regions, dtype=np.int64))
+                ]
+            ),
         )
     ):
-        raise ValueError("Mapped wall control must bind its actual layer material regions.")
+        raise ValueError(
+            "Mapped wall control must bind its actual layer material regions."
+        )
     selected_ids = np.asarray(scope.entity_ids, dtype=np.int64).tolist()
-    if not selected_ids or any(int(identifier) not in cells for identifier in selected_ids):
-        raise ValueError("Mapped wall scope selects faces outside the authored layer wall.")
+    if not selected_ids or any(
+        int(identifier) not in cells for identifier in selected_ids
+    ):
+        raise ValueError(
+            "Mapped wall scope selects faces outside the authored layer wall."
+        )
     selected = np.asarray(
         sorted(cell for identifier in selected_ids for cell in cells[int(identifier)]),
         dtype=np.int64,
@@ -752,8 +787,12 @@ def _mapped_wall_layer_control(
     wall = source.layers.source_wall
     return BoundaryLayerControl(
         MeshingScope(
-            wall.mesh_id, wall.numeric_version, MeshingEntityKind.MESH, 2,
-            wall.entity_set(2).entity_set_id, selected,
+            wall.mesh_id,
+            wall.numeric_version,
+            MeshingEntityKind.MESH,
+            2,
+            wall.entity_set(2).entity_set_id,
+            selected,
         ),
         control.schedule,
         route=BoundaryLayerRoute.ADVANCING,

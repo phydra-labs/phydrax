@@ -92,6 +92,7 @@ def _adapt(
         prepare_mesh_adaptation(source, request, policy=policy)
     )
 
+
 def test_coarsening_defers_early_chart_replay_error_for_unchanged_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -124,16 +125,22 @@ def test_coarsening_defers_early_chart_replay_error_for_unchanged_request(
     monkeypatch.setattr(_adaptation, "execute_bisection", checked_bisection)
     monkeypatch.setattr(_adaptation, "_validated_source_chart_parent", fail_replay)
     unchanged = _adapt(
-        refined.target, (), _cell_ids(refined.target.mesh)[:1],
+        refined.target,
+        (),
+        _cell_ids(refined.target.mesh)[:1],
         hierarchy=refined.hierarchy,
     )
-    assert unchanged.status in (MeshAdaptationStatus.UNCHANGED, MeshAdaptationStatus.PARTIAL)
+    assert unchanged.status in (
+        MeshAdaptationStatus.UNCHANGED,
+        MeshAdaptationStatus.PARTIAL,
+    )
     with pytest.raises(ValueError, match="chart replay refused"):
         _adapt(
-            refined.target, (), _cell_ids(refined.target.mesh),
+            refined.target,
+            (),
+            _cell_ids(refined.target.mesh),
             hierarchy=refined.hierarchy,
         )
-
 
 
 def _cells(mesh: CellMesh) -> np.ndarray:
@@ -786,10 +793,13 @@ def test_bisection_remaps_declared_cell_materials_through_exact_ancestry() -> No
     )
     assert coarse.target.mesh.topology_id == mesh.topology_id
     (restored,) = coarse.target.attributes
-    assert dict(
-        zip(
-            np.asarray(restored.scope.entity_ids).tolist(),
-            np.asarray(restored.values).tolist(),
-            strict=True,
+    assert (
+        dict(
+            zip(
+                np.asarray(restored.scope.entity_ids).tolist(),
+                np.asarray(restored.values).tolist(),
+                strict=True,
+            )
         )
-    ) == by_id
+        == by_id
+    )

@@ -58,7 +58,11 @@ def _face_soup(top_height: float = 1.0) -> BRepModel:
         for edge_position in range(4):
             next_position = (edge_position + 1) % 4
             edge = len(curves)
-            curves.append(ExactLineCurve(exact_face_points[edge_position], exact_face_points[next_position]))
+            curves.append(
+                ExactLineCurve(
+                    exact_face_points[edge_position], exact_face_points[next_position]
+                )
+            )
             ranges.append((0.0, 1.0))
             edge_vertices.append((vertices[edge_position], vertices[next_position]))
             pcurves.append(ExactLineCurve(uv[edge_position], uv[next_position]))
@@ -146,21 +150,34 @@ def test_exact_split_face_shell_sewing_publishes_verified_lineage() -> None:
     assert source.geometry_id == source_id
     np.testing.assert_array_equal(np.asarray(source.vertex_points), original_points)
     assert target.solid_shells == ((0,),)
-    assert (target.topology.num_vertices, target.topology.num_edges, target.topology.num_faces) == (
+    assert (
+        target.topology.num_vertices,
+        target.topology.num_edges,
+        target.topology.num_faces,
+    ) == (
         10,
         15,
         7,
     )
     assert len(result.lineage.vertex_sources) == target.topology.num_vertices
-    assert sorted(vertex for values in result.lineage.vertex_sources for vertex in values) == list(
-        range(source.topology.num_vertices)
-    )
+    assert sorted(
+        vertex for values in result.lineage.vertex_sources for vertex in values
+    ) == list(range(source.topology.num_vertices))
     assert {image.source_edge for image in result.lineage.edge_images} == set(
         range(source.topology.num_edges)
     )
     assert set(result.lineage.coedge_sources) == set(range(len(source.coedge_edges)))
-    assert sum(len(result.lineage.source_images(edge)) == 2 for edge in range(source.topology.num_edges)) == 2
-    assert any(len(result.lineage.target_sources(edge)) > 1 for edge in range(target.topology.num_edges))
+    assert (
+        sum(
+            len(result.lineage.source_images(edge)) == 2
+            for edge in range(source.topology.num_edges)
+        )
+        == 2
+    )
+    assert any(
+        len(result.lineage.target_sources(edge)) > 1
+        for edge in range(target.topology.num_edges)
+    )
     assert {image.orientation for image in result.lineage.edge_images} == {-1, 1}
 
     for image in result.lineage.edge_images:
@@ -172,7 +189,9 @@ def test_exact_split_face_shell_sewing_publishes_verified_lineage() -> None:
         for target_parameter in np.asarray(target.edge_ranges)[image.target_edge]:
             exact_target = Fraction.from_float(float(target_parameter))
             exact_source = image.scale * exact_target + image.offset_rational
-            assert source_curve.evaluate_exact(exact_source) == target_curve.evaluate_exact(exact_target)
+            assert source_curve.evaluate_exact(
+                exact_source
+            ) == target_curve.evaluate_exact(exact_target)
 
     rebuilt = _model_for_result(source_model, target)
     assert rebuilt.geometry is target

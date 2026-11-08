@@ -43,7 +43,9 @@ def test_primitive_integer_remainder_matches_exact_rational_division() -> None:
             continue
         factor = F(remainder[-1]) / exact[-1]
         assert factor > 0
-        assert tuple(F(value) for value in remainder) == tuple(factor * value for value in exact)
+        assert tuple(F(value) for value in remainder) == tuple(
+            factor * value for value in exact
+        )
 
 
 def test_interval_only_isolation_preserves_nondyadic_rational_root() -> None:
@@ -75,7 +77,10 @@ def test_primitive_sturm_retains_distinct_roots_and_multiplicities() -> None:
     assert (F(1, 3), F(1, 3), 2) in roots
     assert sum(multiplicity for _, _, multiplicity in roots) == 7
     assert all(left[1] < right[0] for left, right in zip(roots, roots[1:]))
-    assert isolate_real_roots(tuple(-value for value in polynomial), tolerance=F(1, 4096)) == roots
+    assert (
+        isolate_real_roots(tuple(-value for value in polynomial), tolerance=F(1, 4096))
+        == roots
+    )
     assert isolate_real_roots((3,), tolerance=F(1, 4096)) == ()
     from phydrax.algebraic._exact_univariate import _gcd
 
@@ -87,7 +92,9 @@ def test_stationary_elimination_matches_unsquared_derivative() -> None:
     large = CylinderPatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 2.0)
     small = CylinderPatch((0, 0.125, -0.25), (0, 1, 0), (0, 0, 1), (1, 0, 0), 0.5)
     box = np.asarray(((0.0, -3.0), (math.tau, 3.0)))
-    family = orthogonal_cylinder_family(SurfaceRegion(large, box), SurfaceRegion(small, box))
+    family = orthogonal_cylinder_family(
+        SurfaceRegion(large, box), SurfaceRegion(small, box)
+    )
     assert family is not None
     for sign in (-1, 1):
         aa, bb, h, polynomial = _stationary_polynomials(
@@ -150,7 +157,11 @@ def test_stationary_root_at_exact_large_seam_node() -> None:
     result = intersect_surface_regions(
         SurfaceRegion(large, box), SurfaceRegion(small, box)
     )
-    curve = next(curve for curve in result.curves if float(curve.evaluate_coupled(0.0).point[0]) > 0)
+    curve = next(
+        curve
+        for curve in result.curves
+        if float(curve.evaluate_coupled(0.0).point[0]) > 0
+    )
     query = np.asarray((1.0, 0.0, 0.5))
     projection = project_intersection_curve(
         curve,
@@ -193,7 +204,11 @@ def test_pi_chart_node_does_not_confuse_symbolic_closing_turn() -> None:
     result = intersect_surface_regions(
         SurfaceRegion(large, box), SurfaceRegion(small, box)
     )
-    curve = next(curve for curve in result.curves if float(curve.evaluate_coupled(0.0).point[0]) < 0)
+    curve = next(
+        curve
+        for curve in result.curves
+        if float(curve.evaluate_coupled(0.0).point[0]) < 0
+    )
     theta = np.asarray(curve.chart_start)[:, 2]
     node = int(np.argmin(abs(theta - math.pi)))
     assert node > 0 and theta[node] == math.pi
@@ -217,8 +232,16 @@ def test_projection_preserves_sheet_for_query_on_other_branch() -> None:
     result = intersect_surface_regions(
         SurfaceRegion(large, box), SurfaceRegion(small, box)
     )
-    positive = next(curve for curve in result.curves if float(curve.evaluate_coupled(0.0).point[0]) > 0)
-    negative = next(curve for curve in result.curves if float(curve.evaluate_coupled(0.0).point[0]) < 0)
+    positive = next(
+        curve
+        for curve in result.curves
+        if float(curve.evaluate_coupled(0.0).point[0]) > 0
+    )
+    negative = next(
+        curve
+        for curve in result.curves
+        if float(curve.evaluate_coupled(0.0).point[0]) < 0
+    )
     query = np.asarray(negative.evaluate_coupled(0.37).point, dtype=np.float64)
     projection = project_intersection_curve(
         positive,
@@ -242,7 +265,11 @@ def test_two_distinct_source_minima_are_ambiguous() -> None:
     result = intersect_surface_regions(
         SurfaceRegion(large, box), SurfaceRegion(small, box)
     )
-    curve = next(curve for curve in result.curves if float(curve.evaluate_coupled(0.0).point[0]) < 0)
+    curve = next(
+        curve
+        for curve in result.curves
+        if float(curve.evaluate_coupled(0.0).point[0]) < 0
+    )
     projection = project_intersection_curve(
         curve,
         (0.0, float(curve.num_charts)),

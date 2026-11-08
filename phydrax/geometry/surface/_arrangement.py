@@ -301,9 +301,7 @@ def _prepared_surface(
         if np.issubdtype(raw_points.dtype, np.unsignedinteger):
             inexact_integer = np.any(raw_points > 2**53)
         else:
-            inexact_integer = np.any(
-                (raw_points > 2**53) | (raw_points < -(2**53))
-            )
+            inexact_integer = np.any((raw_points > 2**53) | (raw_points < -(2**53)))
         if inexact_integer:
             raise ValueError(
                 "Integer surface coordinates must be exactly representable as float64."
@@ -363,9 +361,9 @@ def _prepared_surface(
     collinear = np.ones((source_faces.shape[0],), dtype=np.bool_)
     for axes in ((0, 1), (1, 2), (2, 0)):
         projection = corners[..., axes]
-        collinear &= exact_orient2d(
-            projection[:, 0], projection[:, 1], projection[:, 2]
-        ) == 0
+        collinear &= (
+            exact_orient2d(projection[:, 0], projection[:, 1], projection[:, 2]) == 0
+        )
     degenerate = np.flatnonzero(collinear)
     if degenerate.size:
         raise SurfaceArrangementError(
@@ -410,7 +408,9 @@ def _candidate_pairs(
         if first_ids.size:
             pair_count += int(first_ids.size)
             if pair_count > _PAIR_INDEX_MAX:
-                raise OverflowError("Triangle candidate pairs exceed host index capacity.")
+                raise OverflowError(
+                    "Triangle candidate pairs exceed host index capacity."
+                )
             blocks.append(
                 np.column_stack((first_ids, second_ids)).astype(np.int64, copy=False)
             )
@@ -443,7 +443,8 @@ def _feature_simplices(faces: np.ndarray, features: np.ndarray, /) -> np.ndarray
 
 
 def _embedding_violations(
-    surface: _SurfaceInput, /,
+    surface: _SurfaceInput,
+    /,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return illegal or refused self-contact pairs for one triangle mesh."""
     pairs = _candidate_pairs(surface, surface, self_pairs=True)
@@ -579,9 +580,7 @@ def _publish(
 ) -> SurfaceArrangement:
     surfaces = prepared.surfaces
     face_offsets = prepared.face_offsets
-    owners = np.repeat(
-        np.arange(len(surfaces), dtype=np.int32), np.diff(face_offsets)
-    )
+    owners = np.repeat(np.arange(len(surfaces), dtype=np.int32), np.diff(face_offsets))
     source_surface = owners[native.fragment_faces].astype(np.int64, copy=False)
     source_face = native.fragment_faces - face_offsets[source_surface]
     for operand in range(len(surfaces)):
@@ -602,10 +601,9 @@ def _publish(
                 faces=tuple(source_rows.tolist()),
             )
     max_int64_elements = np.iinfo(np.intp).max // np.dtype(np.int64).itemsize
-    if (
-        native.vertices.shape[0] > max_int64_elements // (3 * len(surfaces))
-        or native.fragments.shape[0] > max_int64_elements // len(surfaces)
-    ):
+    if native.vertices.shape[0] > max_int64_elements // (
+        3 * len(surfaces)
+    ) or native.fragments.shape[0] > max_int64_elements // len(surfaces):
         raise OverflowError("Arrangement provenance exceeds host index capacity.")
     features = np.full((native.vertices.shape[0], len(surfaces), 3), -1, dtype=np.int64)
     locations = native.locations
@@ -636,7 +634,9 @@ def _publish(
         local_face = int(other_face - face_offsets[owner])
         prior = coincident[fragment, owner]
         if prior >= 0 and orientation[fragment, owner] != sign:
-            raise RuntimeError("Native coplanar fragments report conflicting orientations.")
+            raise RuntimeError(
+                "Native coplanar fragments report conflicting orientations."
+            )
         if prior < 0 or local_face < prior:
             coincident[fragment, owner] = local_face
             orientation[fragment, owner] = sign
@@ -738,7 +738,11 @@ def arrange_triangle_surfaces(
     """
     if not isinstance(operands, tuple):
         raise TypeError("operands must be an immutable tuple of vertex/triangle pairs.")
-    inputs = ((first_vertices, first_triangles), (second_vertices, second_triangles), *operands)
+    inputs = (
+        (first_vertices, first_triangles),
+        (second_vertices, second_triangles),
+        *operands,
+    )
     if any(not isinstance(item, tuple) or len(item) != 2 for item in inputs):
         raise TypeError("Each arrangement operand must be a (vertices, triangles) tuple.")
     arrangement, _ = _arrange(inputs, classify=False)

@@ -2660,7 +2660,9 @@ class _PreparedNativeDualQuad(StrictModule, NonTrainableState):
         feature_edges = _feature_scaffold_edges(source, specification, scaffold)
         field = specification.cross_field
         if field is None:
-            field = prepare_surface_cross_field(scaffold.mesh, feature_edges=feature_edges)
+            field = prepare_surface_cross_field(
+                scaffold.mesh, feature_edges=feature_edges
+            )
         else:
             if field.source.mesh_id != scaffold.mesh.mesh_id:
                 raise QuadLayoutObstruction(
@@ -2679,7 +2681,9 @@ class _PreparedNativeDualQuad(StrictModule, NonTrainableState):
                 raise QuadLayoutObstruction(
                     "field_feature_integrity",
                     "The requested cross field must preserve exactly the scaffold's physical features.",
-                    source_edge_rows=np.setxor1d(field.feature_edges, expected_features).tolist(),
+                    source_edge_rows=np.setxor1d(
+                        field.feature_edges, expected_features
+                    ).tolist(),
                 )
         extraction = extract_surface_quads(
             scaffold.mesh,

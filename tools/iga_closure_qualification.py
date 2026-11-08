@@ -153,9 +153,7 @@ def _tspline_local_refinement() -> dict[str, object]:
     numeric_points = np.asarray(
         [[float(value) for value in row] for row in exact_points], dtype=np.float64
     )
-    exact_weights = tuple(
-        Fraction(1) + v / 5 for _, v in greville_points
-    )
+    exact_weights = tuple(Fraction(1) + v / 5 for _, v in greville_points)
     numeric_weights = np.asarray(
         [float(weight) for weight in exact_weights], dtype=np.float64
     )
@@ -201,11 +199,14 @@ def _tspline_local_refinement() -> dict[str, object]:
         target_plan.exact_geometry_certificate.passed
         and target_plan.geometry_certificate.passed
     )
-    local_structure = target_mesh.cell_count < tensor_cell_count and target_mesh.t_junction_count > 0
+    local_structure = (
+        target_mesh.cell_count < tensor_cell_count and target_mesh.t_junction_count > 0
+    )
     target_patch = target_plan.geometry.surface_patch
     shared_source = (
         target_patch.source_mesh.mesh_id == source_mesh.mesh_id
-        and target_patch.exact_source_control_points == source_patch.exact_source_control_points
+        and target_patch.exact_source_control_points
+        == source_patch.exact_source_control_points
         and target_patch.exact_source_weights == source_patch.exact_source_weights
     )
     target_patch.validate_exact_transfer_chain()

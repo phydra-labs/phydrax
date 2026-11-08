@@ -2,19 +2,21 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from fractions import Fraction
 import os
-from pathlib import Path
 import subprocess
 import sys
+from fractions import Fraction
+from pathlib import Path
 from typing import Any
+
 import jax
 import jax.numpy as jnp
-
 import numpy as np
 import pytest
 
 from phydrax.geometry.design import (
+    _solve,
+    continue_sketch,
     FixedPoint,
     LineAngle,
     ParameterId,
@@ -22,9 +24,7 @@ from phydrax.geometry.design import (
     Sketch,
     SketchBranchWitness,
     SketchContinuationReference,
-    continue_sketch,
 )
-from phydrax.geometry.design import _solve
 from phydrax.geometry.design._sketch_certificate import TwoCircleConstruction
 
 

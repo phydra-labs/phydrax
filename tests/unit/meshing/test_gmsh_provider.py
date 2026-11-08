@@ -806,10 +806,12 @@ def test_gmsh_preflight_authenticates_and_preserves_shared_face_sides(
     )
     cap = phx.meshing.MeshingScope.from_geometry(source, source.face_ids[exterior])
     exterior_use = next(
-        item for item in source.geometry.qualified_entity_incidence(
+        item
+        for item in source.geometry.qualified_entity_incidence(
             source.source_id, source.source_revision
         )
-        if item.container.kind == "solid" and item.member.kind == "face"
+        if item.container.kind == "solid"
+        and item.member.kind == "face"
         and item.member.index == exterior
     )
     exterior_side = phx.meshing.MeshingScope.from_geometry(
@@ -828,11 +830,18 @@ def test_gmsh_preflight_authenticates_and_preserves_shared_face_sides(
         )
         return issues
 
-    assert any("individual incident side" in issue for issue in periodic_issues(scopes[0], whole))
-    assert any("individual incident side" in issue for issue in periodic_issues(whole, scopes[0]))
+    assert any(
+        "individual incident side" in issue for issue in periodic_issues(scopes[0], whole)
+    )
+    assert any(
+        "individual incident side" in issue for issue in periodic_issues(whole, scopes[0])
+    )
     assert not periodic_issues(both, whole)
     assert not periodic_issues(exterior_side, cap)
-    assert any("source BRep curves or surfaces" in issue for issue in periodic_issues(forged, whole))
+    assert any(
+        "source BRep curves or surfaces" in issue
+        for issue in periodic_issues(forged, whole)
+    )
     schedule = phx.meshing.LayerSchedule((0.1, 0.1))
 
     def sweep_issues(wall: Any, target: Any) -> list[str]:

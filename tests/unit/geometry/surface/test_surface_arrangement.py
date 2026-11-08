@@ -22,13 +22,9 @@ pytestmark = [
 
 
 def test_crossing_open_triangles_publish_welded_split_features() -> None:
-    first_vertices = np.asarray(
-        ((0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 2.0, 0.0))
-    )
+    first_vertices = np.asarray(((0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 2.0, 0.0)))
     first_faces = np.asarray(((0, 1, 2),), dtype=np.int64)
-    second_vertices = np.asarray(
-        ((0.5, 0.5, -1.0), (0.7, 0.4, 1.0), (0.4, 0.9, 1.0))
-    )
+    second_vertices = np.asarray(((0.5, 0.5, -1.0), (0.7, 0.4, 1.0), (0.4, 0.9, 1.0)))
     second_faces = np.asarray(((0, 1, 2),), dtype=np.int64)
 
     arrangement = arrange_triangle_surfaces(
@@ -50,15 +46,9 @@ def test_crossing_open_triangles_publish_welded_split_features() -> None:
 
 
 def test_nary_arrangement_retains_triple_operand_feature_incidence() -> None:
-    first_vertices = np.asarray(
-        ((0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 2.0, 0.0))
-    )
-    second_vertices = np.asarray(
-        ((0.5, 0.5, -1.0), (0.7, 0.4, 1.0), (0.4, 0.9, 1.0))
-    )
-    third_vertices = np.asarray(
-        ((0.5, -1.0, -1.0), (0.5, 2.0, -1.0), (0.5, 0.0, 1.0))
-    )
+    first_vertices = np.asarray(((0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 2.0, 0.0)))
+    second_vertices = np.asarray(((0.5, 0.5, -1.0), (0.7, 0.4, 1.0), (0.4, 0.9, 1.0)))
+    third_vertices = np.asarray(((0.5, -1.0, -1.0), (0.5, 2.0, -1.0), (0.5, 0.0, 1.0)))
     faces = np.asarray(((0, 1, 2),), dtype=np.int64)
 
     arrangement = arrange_triangle_surfaces(

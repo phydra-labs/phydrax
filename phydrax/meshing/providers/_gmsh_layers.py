@@ -222,9 +222,7 @@ def _apply_planar_band_constraints(
             )
         source = bands.partition.model
         face_scope = _scope_for_entity(source, 2, layer.face_entity_ids[0])
-        surface = _resolve_entities(
-            source, face_scope, cad_entities=cad_entities
-        )[0]
+        surface = _resolve_entities(source, face_scope, cad_entities=cad_entities)[0]
         boundary = gmsh.model.getBoundary(
             [(2, surface)], combined=False, oriented=False, recursive=False
         )
@@ -477,9 +475,7 @@ def _certify_swept_volume(
     return face_difference, volume_difference
 
 
-def _prepare_swept_geometry(
-    gmsh: Any, plan: Any, cad_entities: Any, /
-) -> Any:
+def _prepare_swept_geometry(gmsh: Any, plan: Any, cad_entities: Any, /) -> Any:
     controls = plan.specification.layer_controls
     if not controls or any(
         control.route is not BoundaryLayerRoute.EXACT_SWEEP for control in controls
@@ -1200,11 +1196,7 @@ def _apply_boundary_layer_field(
             stage=MeshingStageKind.SCOPE_RESOLUTION.value,
         )
     curves = tuple(
-        sorted(
-            _resolve_entities(
-                source, control.wall_scope, cad_entities=cad_entities
-            )
-        )
+        sorted(_resolve_entities(source, control.wall_scope, cad_entities=cad_entities))
     )
     thicknesses = np.asarray(control.schedule.thicknesses, dtype=np.float64)
     rates = thicknesses[1:] / thicknesses[:-1]

@@ -78,7 +78,9 @@ def _cube_plc_and_fill() -> tuple[PiecewiseLinearComplex, CellMesh]:
             tet.append(row[(point[0], point[1], point[2])])
         local = vertices[np.asarray(tet)]
         determinant = np.linalg.det(
-            np.stack((local[1] - local[0], local[2] - local[0], local[3] - local[0]), axis=-1)
+            np.stack(
+                (local[1] - local[0], local[2] - local[0], local[3] - local[0]), axis=-1
+            )
         )
         if determinant < 0.0:
             tet[1], tet[2] = tet[2], tet[1]
@@ -141,9 +143,7 @@ def _two_disconnected_tetrahedra() -> tuple[PiecewiseLinearComplex, CellMesh, np
         np.asarray(((0, 1, 2, 3), (4, 5, 6, 7)), dtype=np.int64),
     )
     centers = np.mean(
-        np.asarray(fill.coordinates)[
-            np.asarray(fill.blocks[0].vertices, dtype=np.int64)
-        ],
+        np.asarray(fill.coordinates)[np.asarray(fill.blocks[0].vertices, dtype=np.int64)],
         axis=1,
     )
     regions = (centers[:, 0] > 2.0).astype(np.int64)
@@ -272,7 +272,9 @@ def test_integrable_per_cell_frame_layout_preserves_hex_quality_and_map() -> Non
     assert prepared.grid is not None
     assert prepared.obstruction is None
     assert prepared.grid.frame_layout_id == prepared.layout.layout_id
-    assert prepared.layout.cell_block_indices.tolist() == list(range(fill.connectivity.cell_count))
+    assert prepared.layout.cell_block_indices.tolist() == list(
+        range(fill.connectivity.cell_count)
+    )
 
     result = generate_frame_hexes(
         source,
@@ -284,7 +286,9 @@ def test_integrable_per_cell_frame_layout_preserves_hex_quality_and_map() -> Non
 
     assert {block.cell_kind for block in result.mesh.blocks} == {"hexahedron"}
     assert result.validity.all_certified
-    assert set(np.asarray(result.integer_blocks).tolist()) == set(range(fill.connectivity.cell_count))
+    assert set(np.asarray(result.integer_blocks).tolist()) == set(
+        range(fill.connectivity.cell_count)
+    )
     assert _hex_volume(result.mesh) == pytest.approx(1.0, rel=1.0e-12)
     assert result.geometry.source_map is not None
 
@@ -308,8 +312,6 @@ def test_integrable_per_cell_frame_layout_preserves_hex_quality_and_map() -> Non
         result.global_embedding
     )
     assert rebuilt_embedding.certificate_id == result.global_embedding.certificate_id
-
-
 
 
 def test_connected_varying_field_returns_a_typed_integrability_obstruction() -> None:
@@ -349,6 +351,8 @@ def test_connected_varying_field_returns_a_typed_integrability_obstruction() -> 
             schedule,
         )
     assert refusal.value.kind == prepared.obstruction.kind
+
+
 def test_varying_multiblock_field_generates_certified_hexes() -> None:
     source, fill, regions = _two_disconnected_tetrahedra()
     schedule = NativeHexGridSchedule(
@@ -396,8 +400,6 @@ def test_varying_multiblock_field_generates_certified_hexes() -> None:
     assert set(np.asarray(result.integer_blocks).tolist()) == {0, 1}
     assert _hex_volume(result.mesh) == pytest.approx((1.0 + 1.2 * 0.8 * 1.1) / 6.0)
     assert result.geometry.source_map is not None
-
-
 
 
 def test_exact_rotated_block_transition_retains_integer_offset() -> None:
@@ -450,6 +452,8 @@ def test_frame_integer_layout_refuses_odd_boundary_parity() -> None:
             "frame",
         )
     assert refusal.value.kind == "boundary-parity"
+
+
 def test_frame_integer_layout_refuses_nontrivial_cycle_holonomy() -> None:
     identity = np.eye(3, dtype=np.int64)
     quarter_turn = np.asarray(((0, -1, 0), (1, 0, 0), (0, 0, 1)), dtype=np.int64)

@@ -34,7 +34,6 @@ if TYPE_CHECKING:
     from ._search import DesignSearchResult
 
 
-
 class AbstractDesignConstraint(StrictModule):
     """Residual constraint evaluated against a compiled geometry state."""
 
@@ -494,7 +493,9 @@ class DesignConstraintSystem(StrictModule):
         return canonical_fingerprint(
             {
                 "kind": "compiled-design-constraint-system",
-                "parameter_ids": [str(value) for value in self.geometry.schema.parameter_ids],
+                "parameter_ids": [
+                    str(value) for value in self.geometry.schema.parameter_ids
+                ],
                 "kernel_type": type(self.geometry.kernel).__qualname__,
                 "constraints": [type(value).__qualname__ for value in self.constraints],
             }

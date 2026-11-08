@@ -8,12 +8,17 @@ import numpy as np
 import pytest
 
 from phydrax.geometry._overset_interfaces import partition_overset_interfaces
-from phydrax.geometry._overset_partition import OwnedPolygon, OversetPartition
+from phydrax.geometry._overset_partition import (
+    OversetPartition,
+    OwnedPolygon,
+    partition_overset_triangles,
+)
 from phydrax.geometry._planar_primitives import signed_area2
-from phydrax.geometry._overset_partition import partition_overset_triangles
 
 
-def _piece(name: str, part: int, cell: int, points: list[tuple[int | F, int | F]]) -> OwnedPolygon:
+def _piece(
+    name: str, part: int, cell: int, points: list[tuple[int | F, int | F]]
+) -> OwnedPolygon:
     vertices = tuple((F(x), F(y)) for x, y in points)
     return OwnedPolygon(name, part, cell, vertices, signed_area2(vertices) / 2)
 
@@ -32,9 +37,9 @@ def test_t_junction_and_multiple_parts_have_exact_atomic_ownership() -> None:
     for lo, hi, name, part, cell in [(0, 1, "lower", 1, 11), (1, 2, "upper", 2, 13)]:
         edge = by_endpoints[((F(1), F(lo)), (F(1), F(hi)))]
         assert edge.kind == "inter_part"
-        assert [(o.part_name, o.part_index, o.cell_index, o.orientation) for o in edge.owners] == [
-            ("left", 0, 7, 1), (name, part, cell, -1)
-        ]
+        assert [
+            (o.part_name, o.part_index, o.cell_index, o.orientation) for o in edge.owners
+        ] == [("left", 0, 7, 1), (name, part, cell, -1)]
         assert edge.normal == (F(1), F(0))
         assert edge.length_squared == 1
     assert sum(e.kind == "inter_part" for e in edges) == 3
@@ -95,7 +100,9 @@ def test_point_touching_components_are_nonmanifold() -> None:
         partition_overset_interfaces(_partition(a, b))
 
 
-def test_priority_partition_with_multiple_bodies_and_cavities_has_exact_coverage() -> None:
+def test_priority_partition_with_multiple_bodies_and_cavities_has_exact_coverage() -> (
+    None
+):
     def square(name: str, x: int) -> tuple[str, np.ndarray, np.ndarray]:
         points = np.array([[x, 0], [x + 2, 0], [x + 2, 2], [x, 2]], dtype=np.float64)
         cells = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int64)
@@ -112,13 +119,26 @@ def test_priority_partition_with_multiple_bodies_and_cavities_has_exact_coverage
     assert {o.part_name for e in edges for o in e.owners} == {"a", "b", "c"}
     assert {e.kind for e in edges} == {"physical_boundary", "same_part", "inter_part"}
     for index, piece in enumerate(partition.pieces):
-        expected = tuple(sum((abs(b[axis] - a[axis]) for a, b in piece.edges), F(0))
-                         for axis in range(2))
-        actual = tuple(sum((abs(e.end[axis] - e.start[axis]) for e in edges
-                            for owner in e.owners if owner.piece_index == index), F(0))
-                       for axis in range(2))
+        expected = tuple(
+            sum((abs(b[axis] - a[axis]) for a, b in piece.edges), F(0))
+            for axis in range(2)
+        )
+        actual = tuple(
+            sum(
+                (
+                    abs(e.end[axis] - e.start[axis])
+                    for e in edges
+                    for owner in e.owners
+                    if owner.piece_index == index
+                ),
+                F(0),
+            )
+            for axis in range(2)
+        )
         assert actual == expected
     for cavity in cavities:
         for x, y in cavity:
             point = (F.from_float(float(x)), F.from_float(float(y)))
-            assert any(point in (e.start, e.end) and e.kind == "physical_boundary" for e in edges)
+            assert any(
+                point in (e.start, e.end) and e.kind == "physical_boundary" for e in edges
+            )

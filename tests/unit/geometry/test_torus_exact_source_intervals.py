@@ -222,7 +222,9 @@ def test_placed_sphere_program_encloses_binary_source_and_derivatives(
                 cv, sv = mp.cos(mp.mpf(v)), mp.sin(mp.mpf(v))
                 values = np.empty(((3,), (3, 2), (3, 2, 2))[order], dtype=object)
                 for i in range(3):
-                    c, a, b, z, r = map(mp.mpf, (center[i], first[i], second[i], axis[i], radius))
+                    c, a, b, z, r = map(
+                        mp.mpf, (center[i], first[i], second[i], axis[i], radius)
+                    )
                     radial, tangent = cu * a + su * b, -su * a + cu * b
                     if order == 0:
                         values[i] = c + r * (cv * radial + sv * z)
@@ -400,7 +402,9 @@ def test_repaired_step_cylinder_cover_uses_exact_source(tmp_path: Path) -> None:
     triangle = ((F(0), F(0)), (F(1, 10), F(0)), (F(0), F(1, 10)))
     charts = np.asarray([[tuple(map(float, point)) for point in triangle]])
     for index, surface in cylinder_faces:
-        interpolation = domain.interpolation_bounds(index, charts, preparation=preparation)
+        interpolation = domain.interpolation_bounds(
+            index, charts, preparation=preparation
+        )
         assert np.all(np.isfinite(interpolation))
         jacobian = _surface_jacobian_bounds(surface, triangle, preparation)
         assert jacobian is not None

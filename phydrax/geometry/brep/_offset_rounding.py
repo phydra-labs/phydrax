@@ -29,9 +29,7 @@ def vertex_rounding_bounds(
     vertices: tuple[tuple[Fraction, ...], ...], /
 ) -> tuple[float, ...]:
     return tuple(
-        rounding_norm(
-            tuple(Fraction(float(value)) - value for value in vertex)
-        )
+        rounding_norm(tuple(Fraction(float(value)) - value for value in vertex))
         for vertex in vertices
     )
 
@@ -81,8 +79,7 @@ def publish_endpoint_rounding(
             point = _vertex_exact(builder, vertex)
             t = Fraction.from_float(float(parameter))
             difference = tuple(
-                a + t * b - c
-                for a, b, c in zip(origin, direction, point, strict=True)
+                a + t * b - c for a, b, c in zip(origin, direction, point, strict=True)
             )
             bounds.append(rounding_norm(difference))
         rows.append((bounds[0], bounds[1]))
@@ -201,9 +198,7 @@ def offset_rounding_evidence(
                     lo, hi = -hi, -lo
                 lower += lo / 6
                 upper += hi / 6
-    edge_face_gap_bounds = (
-        tuple(edge_face_bounds) if any(edge_face_bounds) else None
-    )
+    edge_face_gap_bounds = tuple(edge_face_bounds) if any(edge_face_bounds) else None
     evidence = BRepOffsetEvidence(
         face_rounding_bounds=np.asarray(face_bounds, dtype=np.float64),
         vertex_rounding_bounds=np.asarray(vertex_bounds, dtype=np.float64),

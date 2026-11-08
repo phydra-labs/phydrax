@@ -691,7 +691,13 @@ def execute_tensor_quads(
             if domain.source_kinds == ("vertex", "edge", "face")
             else tuple(
                 SurfaceTrimRoot(
-                    patch, 0, position, Fraction(0), Fraction(1), endpoints[0], endpoints[1]
+                    patch,
+                    0,
+                    position,
+                    Fraction(0),
+                    Fraction(1),
+                    endpoints[0],
+                    endpoints[1],
                 )
                 for position, (_, endpoints) in enumerate(uses)
             )

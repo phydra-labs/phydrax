@@ -145,10 +145,7 @@ def _dense_source_reference(
         prepared.plan.surface_tension_scale
         * (0.5 * prepared.pair_tension[pair_slots])
         * (slot_curvature[..., 0] - slot_curvature[..., 1])
-        / (
-            prepared.plan.air_density
-            * jnp.where(topology.slot_active, areas, 1.0)
-        )
+        / (prepared.plan.air_density * jnp.where(topology.slot_active, areas, 1.0))
     )
     return prepared.gauge(raw)[0]
 
@@ -405,9 +402,9 @@ def test_quad_junction_curvature_preserves_canonical_pair_signs() -> None:
 def test_curvature_source_jit_matches_bounded_dense_reference() -> None:
     prepared, dynamics = _problem(subdivisions=1)
     state = prepared.initialize(dynamics)
-    source = eqx.filter_jit(
-        lambda compiled, value: compiled.circulation_source(value)
-    )(prepared, state)
+    source = eqx.filter_jit(lambda compiled, value: compiled.circulation_source(value))(
+        prepared, state
+    )
 
     np.testing.assert_allclose(
         source,

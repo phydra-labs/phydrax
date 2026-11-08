@@ -131,8 +131,12 @@ class FiniteElementAcceptedElementRecipe(StrictModule, NonTrainableState):
             raise ValueError("Accepted FE element recipe identities must be non-empty.")
         if (recipe_kind == "form") != (form_identity is not None):
             raise ValueError("Only canonical form element recipes carry a form identity.")
-        if (recipe_kind == "swept") != (type(source_recipe) is FiniteElementAcceptedElementRecipe):
-            raise ValueError("Swept element recipes require exactly one source element recipe.")
+        if (recipe_kind == "swept") != (
+            type(source_recipe) is FiniteElementAcceptedElementRecipe
+        ):
+            raise ValueError(
+                "Swept element recipes require exactly one source element recipe."
+            )
 
     def rebuild(self, /) -> FiniteElementSpec:
         dimension, form_degree, twist, fiber_shape, ambient_dimension, proxy = (
@@ -200,13 +204,18 @@ class FiniteElementAcceptedElementRecipe(StrictModule, NonTrainableState):
                 tuple(int(value) for value in element.value_spec.form_type.fiber_shape),
                 int(element.value_spec.form_type.ambient_dimension),
                 str(element.value_spec.proxy),
-            ) != self.value_spec
+            )
+            != self.value_spec
             or str(element.representation) != self.representation
             or element.entity_dofs != self.entity_dofs
             or element.tabulator_id != self.tabulator_id
-            or not np.array_equal(np.asarray(element.reference_nodes), np.asarray(self.reference_nodes))
+            or not np.array_equal(
+                np.asarray(element.reference_nodes), np.asarray(self.reference_nodes)
+            )
         ):
-            raise ValueError("Swept element recipe changes its stored mathematical fields.")
+            raise ValueError(
+                "Swept element recipe changes its stored mathematical fields."
+            )
         return element
 
 

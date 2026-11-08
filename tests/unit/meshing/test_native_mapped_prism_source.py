@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from fractions import Fraction
 import subprocess
 import sys
+from fractions import Fraction
 
 import numpy as np
 import pytest
