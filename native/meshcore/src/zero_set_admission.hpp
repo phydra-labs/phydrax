@@ -108,8 +108,7 @@ class ZeroSetBandAdmission final : public TriangleAdmission {
   // Certified: no point of the piece lies within the tolerance of Z.
   bool piece_refuted(const Point& a, const Point& b, const Point& c) const;
   double split_distance(const Point& a, const Point& b, const Point& c,
-                        const std::array<VertexEvidence, 3>& evidence, int depth,
-                        double slack) const;
+                        const std::array<VertexEvidence, 3>& evidence, double slack) const;
 
   const IntervalBoxProgram& value_;
   const IntervalBoxProgram& gradient_;

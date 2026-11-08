@@ -126,6 +126,11 @@ class AdaptiveImplicitBoxIssue(IntFlag):
     gradient enclosure excludes zero in some component, and whose possible
     zeros are proved to lie in the slab of one face no wider than
     ``2**-8`` of the box: the zero set touches or hugs a lattice face there.
+    Such a box is first decided locally on a group of lattice cells around
+    the touched face (the pair across it, or the cells around one of its
+    edges or vertices): a gradient component strict on the group and proved
+    boundary arcs make the group's existing contours span the zero set there,
+    and the box is resolved. Only a box that no group proves keeps the issue.
     Every finer lattice keeps that face, so discovery re-anchors the lattice
     instead of refining it; a box that remains on the final lattice is an
     unresolved tangency event.

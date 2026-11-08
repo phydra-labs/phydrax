@@ -43,6 +43,12 @@ STATUS_NONPOSITIVE_PIVOT = 2
 STATUS_NONFINITE = 3
 TRIANGULAR_SUCCESS = 0
 TRIANGULAR_NONFINITE = 2
+# Pivot kinds of one refresh, per elimination column: the front's blocked
+# ``potrf`` accepted it, the pivot-by-pivot route accepted it, or it is a
+# replaced or continued constant.
+PIVOT_BLOCKED = 0
+PIVOT_ACCEPTED = 1
+PIVOT_CONSTANT = 2
 
 
 def retained_index_bytes(size: int, supernodes: int, rows: int, entries: int, /) -> int:
@@ -557,7 +563,7 @@ class _PivotState:
 
 def _unblocked_front(
     front: np.ndarray,
-    tangent: np.ndarray | None,
+    kinds: np.ndarray,
     columns: int,
     offset: int,
     state: _PivotState,
@@ -570,8 +576,10 @@ def _unblocked_front(
 
     Reproduces the scalar route's per-pivot acceptance, replacement and status
     rules exactly; it runs only for fronts whose blocked factorization met a
-    rejected or non-finite pivot. Replaced and continued pivots are constants,
-    so their tangents vanish. ``offset`` is the front's first panel position.
+    rejected or non-finite pivot. ``kinds`` receives each pivot's
+    `PIVOT_ACCEPTED` or `PIVOT_CONSTANT` (replaced or continued) mark; constant
+    pivots have vanishing derivatives. ``offset`` is the front's first panel
+    position.
     """
     real_dtype = np.finfo(front.dtype).dtype
     epsilon = float(np.finfo(real_dtype).eps)
@@ -607,22 +615,10 @@ def _unblocked_front(
             abs(effective),
             offset + pivot_index * (height + 1) if acceptable else -1,
         )
+        kinds[pivot_index] = PIVOT_ACCEPTED if acceptable else PIVOT_CONSTANT
         root = np.sqrt(effective)
         column = front[pivot_index + 1 :, pivot_index]
         column /= root
-        if tangent is not None:
-            root_tangent = (
-                float(np.real(tangent[pivot_index, pivot_index])) / (2.0 * root)
-                if acceptable
-                else 0.0
-            )
-            tangent[pivot_index, pivot_index] = root_tangent
-            column_tangent = tangent[pivot_index + 1 :, pivot_index]
-            column_tangent -= column * root_tangent
-            column_tangent /= root
-            tangent[pivot_index + 1 :, pivot_index + 1 :] -= np.outer(
-                column_tangent, np.conj(column)
-            ) + np.outer(column, np.conj(column_tangent))
         front[pivot_index, pivot_index] = root
         front[pivot_index + 1 :, pivot_index + 1 :] -= np.outer(column, np.conj(column))
 
@@ -655,10 +651,13 @@ def _extend_add(
 
 @dataclass(frozen=True)
 class FactorResult:
-    """Panels, pivot evidence and optional panel tangent of one refresh.
+    """Panels, pivot evidence and per-column pivot kinds of one refresh.
 
     ``minimum_position`` is the panel position of the minimum accepted pivot
     (``-1`` when the minimum is a replaced or continued constant pivot).
+    ``pivot_kinds`` holds one `PIVOT_BLOCKED`, `PIVOT_ACCEPTED` or
+    `PIVOT_CONSTANT` mark per elimination column; `tangent_values` reads it to
+    differentiate the panels without refactoring.
     """
 
     panels: np.ndarray
@@ -667,7 +666,7 @@ class FactorResult:
     minimum_position: int
     replaced: int
     rejected: int
-    tangent: np.ndarray | None
+    pivot_kinds: np.ndarray
 
 
 def factor_values(
@@ -678,26 +677,14 @@ def factor_values(
     allow_replacement: bool,
     replacement_value: float,
     /,
-    tangent: np.ndarray | None = None,
 ) -> FactorResult:
-    """Multifrontal numeric factorization of one value vector.
-
-    With ``tangent`` (a value-vector direction), the exact forward-mode
-    derivative of the panels is propagated through the same fronts:
-    ``dL₁₁ = L₁₁ Φ(L₁₁⁻¹ dF₁₁ L₁₁⁻ᴴ)`` (``Φ`` keeps the strict lower triangle and
-    half the diagonal), ``dL₂₁ = (dF₂₁ − L₂₁ dL₁₁ᴴ) L₁₁⁻ᴴ`` and the update
-    tangent ``dF₂₂ − dL₂₁ L₂₁ᴴ − L₂₁ dL₂₁ᴴ``.
-    """
+    """Multifrontal numeric factorization of one value vector."""
     dtype = values.dtype
     complex_, potrf, trsm, _, rank_update = _kernels(dtype)
     panels = _scatter_input(analysis, values, complex_)
     if diagonal_shift:
         panels[analysis.diagonal_targets] += diagonal_shift
-    panel_tangents = (
-        None
-        if tangent is None
-        else _scatter_input(analysis, tangent.astype(dtype, copy=False), complex_)
-    )
+    kinds = np.full(analysis.size, PIVOT_BLOCKED, dtype=np.int8)
     state = _PivotState()
     boundaries = analysis.supernode_columns.tolist()
     value_offsets = analysis.value_offsets.tolist()
@@ -708,7 +695,7 @@ def factor_values(
     relative = analysis.relative
     real_dtype = np.finfo(dtype).dtype
     epsilon = float(np.finfo(real_dtype).eps)
-    stack: list[tuple[int, np.ndarray, np.ndarray | None]] = []
+    stack: list[tuple[int, np.ndarray]] = []
     transpose = 2 if complex_ else 1
     for node in range(len(boundaries) - 1):
         columns = boundaries[node + 1] - boundaries[node]
@@ -716,20 +703,12 @@ def factor_values(
         start, stop = value_offsets[node], value_offsets[node + 1]
         front = np.zeros((height, height), dtype=dtype, order="F")
         front[:, :columns] = panels[start:stop].reshape((columns, height)).T
-        front_tangent = None
-        if panel_tangents is not None:
-            front_tangent = np.zeros((height, height), dtype=dtype, order="F")
-            front_tangent[:, :columns] = (
-                panel_tangents[start:stop].reshape((columns, height)).T
-            )
         for _ in range(child_counts[node]):
-            child, update, update_tangent = stack.pop()
+            child, update = stack.pop()
             if update.size == 0:
                 continue
             located = relative[update_offsets[child] : update_offsets[child + 1]]
             _extend_add(front, update, located, contiguous[child])
-            if front_tangent is not None and update_tangent is not None:
-                _extend_add(front_tangent, update_tangent, located, contiguous[child])
         diagonal = np.diagonal(front)[:columns]
         blocked = True
         if complex_:
@@ -752,12 +731,9 @@ def factor_values(
                     state.observe(
                         float(pivots[smallest]), start + smallest * (height + 1)
                     )
-        update_tangent = None
-        panel_tangent = None
         if blocked and factor is not None:
             panel = np.empty((height, columns), dtype=dtype, order="F")
             panel[:columns] = factor
-            lower = None
             if height > columns:
                 lower = trsm(
                     1.0,
@@ -778,37 +754,11 @@ def factor_values(
                 )
             else:
                 update = np.empty((0, 0), dtype=dtype)
-            if front_tangent is not None:
-                block = front_tangent[:columns, :columns]
-                hermitian = np.tril(block) + np.tril(block, -1).conj().T
-                scaled = trsm(1.0, factor, hermitian, lower=1)
-                scaled = trsm(1.0, factor, scaled, side=1, lower=1, trans_a=transpose)
-                phi = np.tril(scaled, -1) + np.diag(0.5 * np.real(np.diagonal(scaled)))
-                factor_tangent = factor @ phi
-                panel_tangent = np.empty((height, columns), dtype=dtype, order="F")
-                panel_tangent[:columns] = factor_tangent
-                if lower is not None:
-                    lower_tangent = trsm(
-                        1.0,
-                        factor,
-                        front_tangent[columns:, :columns]
-                        - lower @ factor_tangent.conj().T,
-                        side=1,
-                        lower=1,
-                        trans_a=transpose,
-                    )
-                    panel_tangent[columns:] = lower_tangent
-                    product = lower_tangent @ lower.conj().T
-                    update_tangent = np.asfortranarray(
-                        front_tangent[columns:, columns:]
-                        - np.tril(product + product.conj().T)
-                    )
-                else:
-                    update_tangent = np.empty((0, 0), dtype=dtype)
         else:
+            first = boundaries[node]
             _unblocked_front(
                 front,
-                front_tangent,
+                kinds[first : first + columns],
                 columns,
                 start,
                 state,
@@ -819,16 +769,8 @@ def factor_values(
             panel = np.asfortranarray(front[:, :columns])
             panel[:columns] = np.tril(panel[:columns])
             update = np.asfortranarray(np.tril(front[columns:, columns:]))
-            if front_tangent is not None:
-                panel_tangent = np.asfortranarray(front_tangent[:, :columns])
-                panel_tangent[:columns] = np.tril(panel_tangent[:columns])
-                update_tangent = np.asfortranarray(
-                    np.tril(front_tangent[columns:, columns:])
-                )
         panels[start:stop] = panel.reshape(-1, order="F")
-        if panel_tangents is not None and panel_tangent is not None:
-            panel_tangents[start:stop] = panel_tangent.reshape(-1, order="F")
-        stack.append((node, update, update_tangent))
+        stack.append((node, update))
     if not np.all(np.isfinite(panels)):
         state.status = STATUS_NONFINITE
     return FactorResult(
@@ -838,8 +780,152 @@ def factor_values(
         minimum_position=state.minimum_position,
         replaced=state.replaced,
         rejected=state.rejected,
-        tangent=panel_tangents,
+        pivot_kinds=kinds,
     )
+
+
+def tangent_values(
+    analysis: SupernodalAnalysis,
+    panels: np.ndarray,
+    pivot_kinds: np.ndarray,
+    seed: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Panel tangent ``dL`` of refreshed panels for a panel-pattern seed ``dF``.
+
+    Solves the linearized factor identity ``tril(dL Lᴴ + L dLᴴ) = dF`` on the
+    factor pattern by one multifrontal sweep over the stored panels, without
+    refactoring: ``dL₁₁ = L₁₁ Φ(L₁₁⁻¹ dF₁₁ L₁₁⁻ᴴ)`` (``Φ`` keeps the strict
+    lower triangle and half the diagonal), ``dL₂₁ = (dF₂₁ − L₂₁ dL₁₁ᴴ) L₁₁⁻ᴴ``
+    and the update tangent ``dF₂₂ − dL₂₁ L₂₁ᴴ − L₂₁ dL₂₁ᴴ``. Fronts the refresh
+    eliminated pivot by pivot repeat that order; a constant pivot ignores its
+    diagonal seed, so its column tangent only rescales. The seed may carry
+    fill-pattern entries, which is how higher derivatives recurse.
+    """
+    dtype = np.result_type(panels.dtype, seed.dtype)
+    complex_, _, trsm, _, _ = _kernels(dtype)
+    panels = panels.astype(dtype, copy=False)
+    tangents = np.zeros(analysis.factor_size, dtype=dtype)
+    boundaries = analysis.supernode_columns.tolist()
+    value_offsets = analysis.value_offsets.tolist()
+    row_offsets = analysis.row_offsets.tolist()
+    update_offsets = analysis.update_offsets.tolist()
+    child_counts = analysis.child_counts.tolist()
+    contiguous = analysis.contiguous_update.tolist()
+    relative = analysis.relative
+    stack: list[tuple[int, np.ndarray]] = []
+    transpose = 2 if complex_ else 1
+    for node in range(len(boundaries) - 1):
+        first = boundaries[node]
+        columns = boundaries[node + 1] - first
+        height = row_offsets[node + 1] - row_offsets[node]
+        start, stop = value_offsets[node], value_offsets[node + 1]
+        panel = panels[start:stop].reshape((columns, height)).T
+        front = np.zeros((height, height), dtype=dtype, order="F")
+        front[:, :columns] = seed[start:stop].reshape((columns, height)).T
+        for _ in range(child_counts[node]):
+            child, update = stack.pop()
+            if update.size == 0:
+                continue
+            located = relative[update_offsets[child] : update_offsets[child + 1]]
+            _extend_add(front, update, located, contiguous[child])
+        if pivot_kinds[first] == PIVOT_BLOCKED:
+            factor = np.asfortranarray(panel[:columns])
+            block = front[:columns, :columns]
+            hermitian = np.tril(block) + np.tril(block, -1).conj().T
+            scaled = trsm(1.0, factor, hermitian, lower=1)
+            scaled = trsm(1.0, factor, scaled, side=1, lower=1, trans_a=transpose)
+            phi = np.tril(scaled, -1) + np.diag(0.5 * np.real(np.diagonal(scaled)))
+            factor_tangent = factor @ phi
+            panel_tangent = np.empty((height, columns), dtype=dtype, order="F")
+            panel_tangent[:columns] = factor_tangent
+            if height > columns:
+                lower = np.asfortranarray(panel[columns:])
+                lower_tangent = trsm(
+                    1.0,
+                    factor,
+                    front[columns:, :columns] - lower @ factor_tangent.conj().T,
+                    side=1,
+                    lower=1,
+                    trans_a=transpose,
+                )
+                panel_tangent[columns:] = lower_tangent
+                product = lower_tangent @ lower.conj().T
+                update = np.asfortranarray(
+                    front[columns:, columns:] - np.tril(product + product.conj().T)
+                )
+            else:
+                update = np.empty((0, 0), dtype=dtype)
+        else:
+            for pivot_index in range(columns):
+                root = float(np.real(panel[pivot_index, pivot_index]))
+                column = panel[pivot_index + 1 :, pivot_index]
+                root_tangent = (
+                    float(np.real(front[pivot_index, pivot_index])) / (2.0 * root)
+                    if pivot_kinds[first + pivot_index] == PIVOT_ACCEPTED
+                    else 0.0
+                )
+                front[pivot_index, pivot_index] = root_tangent
+                column_tangent = front[pivot_index + 1 :, pivot_index]
+                column_tangent -= column * root_tangent
+                column_tangent /= root
+                front[pivot_index + 1 :, pivot_index + 1 :] -= np.outer(
+                    column_tangent, np.conj(column)
+                ) + np.outer(column, np.conj(column_tangent))
+            panel_tangent = np.asfortranarray(front[:, :columns])
+            panel_tangent[:columns] = np.tril(panel_tangent[:columns])
+            update = np.asfortranarray(np.tril(front[columns:, columns:]))
+        tangents[start:stop] = panel_tangent.reshape(-1, order="F")
+        stack.append((node, update))
+    return tangents
+
+
+def symmetric_product(
+    analysis: SupernodalAnalysis,
+    left: np.ndarray,
+    right: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Panels of ``tril(X Yᴴ + Y Xᴴ)`` for two panel-stored lower factors.
+
+    The Cholesky fill pattern is closed under this product: column ``k``
+    couples only rows of its own supernode's structure, so each supernode's
+    outer products land in its panel and, through the multifrontal update
+    matrices, in its ancestors' panels.
+    """
+    dtype = np.result_type(left.dtype, right.dtype)
+    product_panels = np.zeros(analysis.factor_size, dtype=dtype)
+    boundaries = analysis.supernode_columns.tolist()
+    value_offsets = analysis.value_offsets.tolist()
+    row_offsets = analysis.row_offsets.tolist()
+    update_offsets = analysis.update_offsets.tolist()
+    child_counts = analysis.child_counts.tolist()
+    contiguous = analysis.contiguous_update.tolist()
+    relative = analysis.relative
+    stack: list[tuple[int, np.ndarray]] = []
+    for node in range(len(boundaries) - 1):
+        columns = boundaries[node + 1] - boundaries[node]
+        height = row_offsets[node + 1] - row_offsets[node]
+        start, stop = value_offsets[node], value_offsets[node + 1]
+        first_panel = np.asfortranarray(
+            left[start:stop].reshape((columns, height)).T, dtype=dtype
+        )
+        second_panel = np.asfortranarray(
+            right[start:stop].reshape((columns, height)).T, dtype=dtype
+        )
+        product = first_panel @ second_panel.conj().T
+        front = np.asfortranarray(product + product.conj().T)
+        for _ in range(child_counts[node]):
+            child, update = stack.pop()
+            if update.size == 0:
+                continue
+            located = relative[update_offsets[child] : update_offsets[child + 1]]
+            _extend_add(front, update, located, contiguous[child])
+        panel = np.asfortranarray(front[:, :columns])
+        panel[:columns] = np.tril(panel[:columns])
+        product_panels[start:stop] = panel.reshape(-1, order="F")
+        stack.append((node, np.asfortranarray(np.tril(front[columns:, columns:]))))
+    return product_panels
 
 
 def solve_values(
@@ -905,4 +991,6 @@ __all__ = [
     "solve_values",
     "symbolic_counts",
     "symmetric_entries",
+    "symmetric_product",
+    "tangent_values",
 ]

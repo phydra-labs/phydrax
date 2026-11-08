@@ -19,8 +19,10 @@ from .._meshcore import (
     exact_orient3d,
     MeshcoreError,
     MeshcoreStatus,
+    PLC_SEARCH_BUDGET,
     PlcBoundaryPolicy as NativePlcBoundaryPolicy,
     PlcRecovery3D,
+    PlcSearchBudget,
     PlcSuppressionSearch,
     recover_plc_3d,
     TetMesh3D,
@@ -92,12 +94,20 @@ class NativeVolumeSchedule(StrictModule, NonTrainableState):
     evidence instead of an issue. Validity, determinant, orientation,
     representability, size, fidelity and coverage stay hard for both. Soft
     strength enters ``schedule_id``; hard schedules keep their identity.
+
+    ``plc_search_budget`` is the one work allowance: the declared budget of
+    the exhaustive Steiner-free suppression search of PLC recovery
+    (``PlcSearchBudget``; NP-complete, so it has no structural bound). Over
+    it, recovery refuses ``STEINER_SUPPRESSION`` with search evidence. A
+    budget other than the documented ``PLC_SEARCH_BUDGET`` enters
+    ``schedule_id``; default schedules keep their identity.
     """
 
     radius_edge_bound: float | None = eqx.field(static=True)
     minimum_dihedral_degrees: float = eqx.field(static=True)
     minimum_relative_determinant: float = eqx.field(static=True)
     shape_strength: SizeControlStrength = eqx.field(static=True)
+    plc_search_budget: PlcSearchBudget = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
     def __init__(
@@ -106,6 +116,7 @@ class NativeVolumeSchedule(StrictModule, NonTrainableState):
         radius_edge_bound: float | None = 2.0,
         minimum_dihedral_degrees: float = 10.0,
         shape_strength: SizeControlStrength = SizeControlStrength.HARD,
+        plc_search_budget: PlcSearchBudget = PLC_SEARCH_BUDGET,
     ) -> None:
         strength = parse(
             shape_strength, SizeControlStrength, "NativeVolumeSchedule.shape_strength"
@@ -125,12 +136,20 @@ class NativeVolumeSchedule(StrictModule, NonTrainableState):
             raise ValueError("radius_edge_bound must be at least one.")
         if not 0.0 <= dihedral < 70.0:
             raise ValueError("minimum_dihedral_degrees must lie in [0, 70).")
+        if not isinstance(plc_search_budget, PlcSearchBudget) or any(
+            not isinstance(value, int) or isinstance(value, bool) or not 0 < value < 2**63
+            for value in plc_search_budget
+        ):
+            raise ValueError(
+                "plc_search_budget must be a PlcSearchBudget of positive int64 values."
+            )
         self.radius_edge_bound = radius_edge
         self.minimum_dihedral_degrees = dihedral
         self.minimum_relative_determinant = (
             _VOLUME_VALIDITY_POLICY.relative_determinant_floor
         )
         self.shape_strength = strength
+        self.plc_search_budget = plc_search_budget
         identity: dict[str, object] = {
             "kind": "native-volume-schedule",
             "radius_edge_bound": radius_edge,
@@ -139,6 +158,8 @@ class NativeVolumeSchedule(StrictModule, NonTrainableState):
         }
         if not _shape_targets_gated(self):
             identity["shape_strength"] = strength.value
+        if plc_search_budget != PLC_SEARCH_BUDGET:
+            identity["plc_search_budget"] = list(plc_search_budget)
         self.schedule_id = canonical_fingerprint(identity)
 
 
@@ -1847,7 +1868,7 @@ def _kept_carrier_recovery(
         np.full((vertex_count,), -1, dtype=np.int32),
         np.zeros((vertex_count, 2), dtype=np.float64),
         np.zeros((vertex_count,), dtype=np.float64),
-        PlcSuppressionSearch(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+        PlcSuppressionSearch(*(0,) * len(PlcSuppressionSearch._fields)),
     )
 
 
@@ -2049,6 +2070,7 @@ def generate_plc_volume(
             affine_metric=None if global_affine is None else global_affine[:3, :3],
             protected_facets=protected_facets,
             facet_plane_tolerances=complex_.facet_plane_tolerances,
+            search_budget=schedule.plc_search_budget,
         )
     else:
         recovery = _kept_carrier_recovery(complex_, carrier, active_segment_vertices)

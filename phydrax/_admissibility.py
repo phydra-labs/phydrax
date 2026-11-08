@@ -88,26 +88,34 @@ def _guard_derivative_leaf_jvp(
     primals: tuple[Array, Array, Array],
     tangents: tuple[Array, Array, Array],
 ) -> tuple[Array, Array]:
-    value, _, valid = primals
+    value, dependency, valid = primals
     value_tangent, dependency_tangent, _ = tangents
     valid_ = jnp.asarray(valid, dtype=jnp.bool_)
     if failure == "error":
         value_tangent = _refuse_invalid_tangent(value_tangent, ~jnp.all(valid_), message)
     else:
-        value_scale = jnp.where(
-            valid_,
-            jnp.asarray(1.0, dtype=value_tangent.dtype),
-            jnp.asarray(jnp.nan, dtype=value_tangent.dtype),
+        # The scales are guarded primal coefficients carried by the value and the
+        # dependencies. Reverse mode keeps them as residuals of its linear map,
+        # so an enclosing derivative of a cotangent differentiates them and is
+        # poisoned too; on valid input their derivatives are exact zeros.
+        carrier = dependency + jnp.sum(jnp.real(value))
+        dtype = value_tangent.dtype
+        nan = jnp.asarray(jnp.nan, dtype=dtype)
+
+        def scale(accepted: float) -> Array:
+            factor = jnp.where(valid_, jnp.asarray(accepted, dtype=dtype), nan)
+            return _guard_derivative_leaf(factor, carrier, valid, failure, message)
+
+        value_tangent = scale(1.0) * value_tangent + scale(0.0) * jnp.asarray(
+            dependency_tangent, dtype=dtype
         )
-        dependency_scale = jnp.where(
-            valid_,
-            jnp.asarray(0.0, dtype=value_tangent.dtype),
-            jnp.asarray(jnp.nan, dtype=value_tangent.dtype),
-        )
-        value_tangent = value_scale * value_tangent + dependency_scale * jnp.asarray(
-            dependency_tangent, dtype=value_tangent.dtype
-        )
-    return value, value_tangent
+    # Both outputs stay guarded so every derivative order re-applies the guard:
+    # an enclosing JVP (the outer pass of a nested or mixed derivative)
+    # differentiates these outputs, not the unguarded primal and tangent.
+    return (
+        _guard_derivative_leaf(value, dependency, valid, failure, message),
+        _guard_derivative_leaf(value_tangent, dependency, valid, failure, message),
+    )
 
 
 def guard_derivative_validity(
@@ -119,7 +127,15 @@ def guard_derivative_validity(
     failure: DerivativeFailureMode = "status",
     message: str = "Derivative is invalid for the accepted primal result.",
 ) -> Any:
-    """Keep a primal inspectable while poisoning or rejecting invalid derivatives."""
+    """Keep a primal inspectable while poisoning or rejecting invalid derivatives.
+
+    When ``valid`` is false, every derivative of ``tree`` through its values or
+    through ``dependencies`` is NaN (``failure="status"``) or fails at run time
+    through ``eqx.error_if`` (``failure="error"``). This holds in forward and
+    reverse mode and at every order and composition, including outputs whose
+    lower-order tangents are constant. On valid input the guard is the identity
+    for primals and derivatives of every order.
+    """
     failure = parse(failure, DerivativeFailureMode, "failure")
     message_ = str(message).strip()
     if not message_:

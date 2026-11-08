@@ -17,6 +17,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array, core as jax_core
+from jax._src import dispatch
+from jax._src.core import ShapedArray
+from jax.extend import core as jex_core
+from jax.interpreters import ad, batching, mlir
 from jax.typing import ArrayLike, DTypeLike
 
 from .._strict import StrictModule
@@ -249,8 +253,11 @@ class PreparedSparseFactorization(StrictModule):
 
     Supernodal factors keep the refreshed ``input_values``: their solves are
     implicit linear solves whose derivatives with respect to the values and
-    right-hand sides come from the factored operator, while the factor panels
-    themselves differentiate in forward mode only.
+    right-hand sides are solves with the same prepared panels, in forward and
+    reverse mode and at every order, so no derivative refactors the values.
+    The factor panels and minimum pivot differentiate in forward mode at every
+    order from the stored panels; reverse mode through them raises
+    `SparseFactorDerivativeError`.
     """
 
     plan: SparseFactorizationPlan
@@ -1733,9 +1740,9 @@ class _SupernodalFactorCallback:
     """Host multifrontal refresh over any leading batch axes of the values.
 
     Returns panels, status, minimum pivot, replaced and rejected pivot counts,
-    realized nonzeros, finiteness and the minimum pivot's panel position;
-    `tangent` returns only the forward-mode panel tangent, so linearization
-    computes every primal output from the values alone.
+    realized nonzeros, finiteness, the minimum pivot's panel position and the
+    per-column pivot kinds that `_panel_tangent_p` reads to differentiate the
+    panels without refactoring.
     """
 
     analysis: SupernodalAnalysis
@@ -1747,7 +1754,7 @@ class _SupernodalFactorCallback:
     def result_shapes(self, values: Array, /) -> tuple[jax.ShapeDtypeStruct, ...]:
         batch = values.shape[:-1]
         return (
-            self.panel_shape(values),
+            jax.ShapeDtypeStruct(batch + (self.analysis.factor_size,), values.dtype),
             jax.ShapeDtypeStruct(batch, jnp.int32),
             jax.ShapeDtypeStruct(batch, jnp.finfo(values.dtype).dtype),
             jax.ShapeDtypeStruct(batch, jnp.int32),
@@ -1755,28 +1762,13 @@ class _SupernodalFactorCallback:
             jax.ShapeDtypeStruct(batch, jnp.int32),
             jax.ShapeDtypeStruct(batch, jnp.bool_),
             jax.ShapeDtypeStruct(batch, jnp.int32),
-        )
-
-    def panel_shape(self, values: Array, /) -> jax.ShapeDtypeStruct:
-        return jax.ShapeDtypeStruct(
-            values.shape[:-1] + (self.analysis.factor_size,), values.dtype
+            jax.ShapeDtypeStruct(batch + (self.analysis.size,), jnp.int8),
         )
 
     def __call__(self, values: np.ndarray, /) -> tuple[np.ndarray, ...]:
-        return self._run(np.asarray(values), None)
-
-    def tangent(self, values: np.ndarray, tangents: np.ndarray, /) -> np.ndarray:
-        return self._run(np.asarray(values), np.asarray(tangents))[-1]
-
-    def _run(
-        self, values: np.ndarray, tangents: np.ndarray | None, /
-    ) -> tuple[np.ndarray, ...]:
+        values = np.asarray(values)
         batch = values.shape[:-1]
-        if tangents is not None:
-            tangents = np.broadcast_to(tangents, values.shape)
-        size = (self.analysis.factor_size,)
-        panels = np.empty(batch + size, dtype=values.dtype)
-        panel_tangents = np.empty(batch + size, dtype=values.dtype)
+        panels = np.empty(batch + (self.analysis.factor_size,), dtype=values.dtype)
         status = np.empty(batch, dtype=np.int32)
         minimum_pivot = np.empty(batch, dtype=np.finfo(values.dtype).dtype)
         replaced = np.empty(batch, dtype=np.int32)
@@ -1784,6 +1776,7 @@ class _SupernodalFactorCallback:
         nonzeros = np.empty(batch, dtype=np.int32)
         finite = np.empty(batch, dtype=bool)
         position = np.empty(batch, dtype=np.int32)
+        kinds = np.empty(batch + (self.analysis.size,), dtype=np.int8)
         for index in np.ndindex(*batch):
             result = _supernodal.factor_values(
                 self.analysis,
@@ -1792,7 +1785,6 @@ class _SupernodalFactorCallback:
                 self.pivot_tolerance,
                 self.allow_replacement,
                 self.replacement_value,
-                None if tangents is None else tangents[index],
             )
             panels[index] = result.panels
             status[index] = result.status
@@ -1802,9 +1794,8 @@ class _SupernodalFactorCallback:
             nonzeros[index] = np.count_nonzero(result.panels)
             finite[index] = result.status != _supernodal.STATUS_NONFINITE
             position[index] = result.minimum_position
-            if result.tangent is not None:
-                panel_tangents[index] = result.tangent
-        outputs = (
+            kinds[index] = result.pivot_kinds
+        return (
             panels,
             status,
             minimum_pivot,
@@ -1813,8 +1804,172 @@ class _SupernodalFactorCallback:
             nonzeros,
             finite,
             position,
+            kinds,
         )
-        return outputs if tangents is None else outputs + (panel_tangents,)
+
+
+class SparseFactorDerivativeError(LinearCapabilityError):
+    """A reverse-mode cotangent reached supernodal factor panels.
+
+    Supernodal solves differentiate at every order in forward and reverse mode
+    through the retained input values. The factor panels and minimum pivot
+    carry exact forward-mode derivatives at every order, but their tangents
+    have no transpose, so reverse mode through them is refused at trace time.
+    """
+
+
+@dataclass(frozen=True)
+class _SupernodalPanelCallback:
+    """Host panel tangent or symmetric panel product over broadcast batch axes."""
+
+    analysis: SupernodalAnalysis
+    product: bool
+
+    def __call__(self, *operands: np.ndarray) -> np.ndarray:
+        arrays = tuple(np.asarray(operand) for operand in operands)
+        batch = np.broadcast_shapes(*(array.shape[:-1] for array in arrays))
+        floating = (arrays[0], arrays[-1])
+        dtype = np.result_type(*floating)
+        arrays = tuple(
+            np.broadcast_to(array, batch + array.shape[-1:]) for array in arrays
+        )
+        kernel = (
+            _supernodal.symmetric_product if self.product else _supernodal.tangent_values
+        )
+        result = np.empty(batch + (self.analysis.factor_size,), dtype=dtype)
+        for index in np.ndindex(*batch):
+            result[index] = kernel(self.analysis, *(array[index] for array in arrays))
+        return result
+
+
+def _panel_abstract(*operands: ShapedArray, analysis: SupernodalAnalysis) -> ShapedArray:
+    batch = np.broadcast_shapes(*(operand.shape[:-1] for operand in operands))
+    dtype = jnp.result_type(operands[0].dtype, operands[-1].dtype)
+    return ShapedArray(batch + (analysis.factor_size,), dtype)
+
+
+def _panel_host(*operands: Array, analysis: SupernodalAnalysis, product: bool) -> Array:
+    result = _panel_abstract(*map(jax.typeof, operands), analysis=analysis)
+    return jax.pure_callback(
+        _SupernodalPanelCallback(analysis, product),
+        jax.ShapeDtypeStruct(result.shape, result.dtype),
+        *operands,
+        vmap_method="broadcast_all",
+    )
+
+
+def _panel_batch(
+    primitive: jex_core.Primitive,
+    operands: tuple[Array, ...],
+    axes: tuple[int | None, ...],
+    *,
+    analysis: SupernodalAnalysis,
+) -> tuple[Array, int]:
+    """Lead with the mapped axis; unmapped operands broadcast against it."""
+    rank = max(operand.ndim - (axis is not None) for operand, axis in zip(operands, axes))
+    aligned = []
+    for operand, axis in zip(operands, axes):
+        leading = operand[None] if axis is None else jnp.moveaxis(operand, axis, 0)
+        padding = (1,) * (rank + 1 - leading.ndim)
+        aligned.append(leading.reshape(leading.shape[:1] + padding + leading.shape[1:]))
+    return primitive.bind(*aligned, analysis=analysis), 0
+
+
+def _refuse_panel_transpose(
+    cotangent: Array | ad.Zero,
+    *operands: Array | ad.UndefinedPrimal,
+    analysis: SupernodalAnalysis,
+) -> tuple[ad.Zero | None, ...]:
+    del analysis
+    if not isinstance(cotangent, ad.Zero):
+        raise SparseFactorDerivativeError(
+            "Reverse-mode differentiation of supernodal factor panels or the "
+            "minimum pivot is unsupported; differentiate the solve, whose "
+            "derivatives are solves with the prepared factor, or use forward mode."
+        )
+    return tuple(
+        ad.Zero(operand.aval.to_tangent_aval())
+        if ad.is_undefined_primal(operand)
+        else None
+        for operand in operands
+    )
+
+
+# ``tril(X Yᴴ + Y Xᴴ)`` of two panel-stored lower factors (bilinear).
+_panel_product_p = jex_core.Primitive("phydrax_supernodal_panel_product")
+_panel_product_p.def_impl(partial(dispatch.apply_primitive, _panel_product_p))
+_panel_product_p.def_abstract_eval(_panel_abstract)
+mlir.register_lowering(
+    _panel_product_p,
+    mlir.lower_fun(partial(_panel_host, product=True), multiple_results=False),
+)
+
+# Panel tangent ``dL`` solving ``tril(dL Lᴴ + L dLᴴ) = seed`` with stored panels
+# ``L`` and their pivot kinds (linear in the seed).
+_panel_tangent_p = jex_core.Primitive("phydrax_supernodal_panel_tangent")
+_panel_tangent_p.def_impl(partial(dispatch.apply_primitive, _panel_tangent_p))
+_panel_tangent_p.def_abstract_eval(_panel_abstract)
+mlir.register_lowering(
+    _panel_tangent_p,
+    mlir.lower_fun(partial(_panel_host, product=False), multiple_results=False),
+)
+
+
+def _panel_product_jvp(
+    primals: tuple[Array, Array],
+    tangents: tuple[Array | ad.Zero, Array | ad.Zero],
+    *,
+    analysis: SupernodalAnalysis,
+) -> tuple[Array, Array | ad.Zero]:
+    (left, right), (left_tangent, right_tangent) = primals, tangents
+    result = _panel_product_p.bind(left, right, analysis=analysis)
+    terms = []
+    if not isinstance(left_tangent, ad.Zero):
+        terms.append(_panel_product_p.bind(left_tangent, right, analysis=analysis))
+    if not isinstance(right_tangent, ad.Zero):
+        terms.append(_panel_product_p.bind(left, right_tangent, analysis=analysis))
+    if not terms:
+        return result, ad.Zero(jax.typeof(result))
+    return result, terms[0] if len(terms) == 1 else terms[0] + terms[1]
+
+
+def _panel_tangent_jvp(
+    primals: tuple[Array, Array, Array],
+    tangents: tuple[Array | ad.Zero, Array | ad.Zero, Array | ad.Zero],
+    *,
+    analysis: SupernodalAnalysis,
+) -> tuple[Array, Array | ad.Zero]:
+    """Differentiate ``tril(X Lᴴ + L Xᴴ) = seed`` implicitly in ``L`` and seed.
+
+    ``dX`` solves the same identity for ``d seed − tril(dL Xᴴ + X dLᴴ)``, so
+    every order reuses the stored panels and this primitive.
+    """
+    (panels, kinds, seed), (panel_tangent, _, seed_tangent) = primals, tangents
+    result = _panel_tangent_p.bind(panels, kinds, seed, analysis=analysis)
+    right = seed_tangent
+    if not isinstance(panel_tangent, ad.Zero):
+        coupling = _panel_product_p.bind(panel_tangent, result, analysis=analysis)
+        right = -coupling if isinstance(right, ad.Zero) else right - coupling
+    if isinstance(right, ad.Zero):
+        return result, ad.Zero(jax.typeof(result))
+    return result, _panel_tangent_p.bind(panels, kinds, right, analysis=analysis)
+
+
+ad.primitive_jvps[_panel_product_p] = _panel_product_jvp
+ad.primitive_transposes[_panel_product_p] = _refuse_panel_transpose
+batching.primitive_batchers[_panel_product_p] = partial(_panel_batch, _panel_product_p)
+ad.primitive_jvps[_panel_tangent_p] = _panel_tangent_jvp
+ad.primitive_transposes[_panel_tangent_p] = _refuse_panel_transpose
+batching.primitive_batchers[_panel_tangent_p] = partial(_panel_batch, _panel_tangent_p)
+
+
+def _panel_seed(analysis: SupernodalAnalysis, direction: Array, /) -> Array:
+    """Scatter a value direction onto the panel pattern, as the refresh does."""
+    gathered = direction[..., analysis.input_sources]
+    if jnp.iscomplexobj(direction):
+        gathered = jnp.where(analysis.input_conjugate, jnp.conj(gathered), gathered)
+    seed = jnp.zeros(direction.shape[:-1] + (analysis.factor_size,), direction.dtype)
+    return seed.at[..., analysis.input_targets].set(gathered)
 
 
 @partial(jax.custom_jvp, nondiff_argnums=(0,))
@@ -1832,22 +1987,22 @@ def _supernodal_refresh_jvp(
     primals: tuple[Array],
     tangents: tuple[Array],
 ) -> tuple[tuple[Array, ...], tuple[Array, ...]]:
-    """Exact forward-mode panel tangents from the host multifrontal sweep.
+    """Exact panel tangents from the refreshed panels, at every order.
 
-    The minimum pivot ``|L_kk|²`` moves with ``2 Re(conj(L_kk) dL_kk)`` when it
-    is an accepted pivot and is constant when replaced or continued. Integer
-    and boolean evidence has no tangent.
+    The panel tangent solves the linearized factor identity with the stored
+    panels (`_panel_tangent_p`), so no tangent refactors the values and every
+    higher derivative recurses through the same primitive. The minimum pivot
+    ``|L_kk|²`` moves with ``2 Re(conj(L_kk) dL_kk)`` when it is an accepted
+    pivot and is constant when replaced or continued. Integer and boolean
+    evidence has no tangent.
     """
     (values,), (direction,) = primals, tangents
     primal = _supernodal_refresh(callback, values)
-    panel_tangent = jax.pure_callback(
-        callback.tangent,
-        callback.panel_shape(values),
-        values,
-        direction,
-        vmap_method="broadcast_all",
+    panels, _, minimum_pivot, *_, position, kinds = primal
+    analysis = callback.analysis
+    panel_tangent = _panel_tangent_p.bind(
+        panels, kinds, _panel_seed(analysis, direction), analysis=analysis
     )
-    panels, _, minimum_pivot, *_, position = primal
     safe = jnp.maximum(position, 0)[..., None]
     pivot = jnp.take_along_axis(panels, safe, axis=-1)[..., 0]
     pivot_tangent = jnp.take_along_axis(panel_tangent, safe, axis=-1)[..., 0]
@@ -1856,7 +2011,15 @@ def _supernodal_refresh_jvp(
     ).astype(minimum_pivot.dtype)
     integer_tangents = tuple(
         np.zeros(output.shape, dtype=jax.dtypes.float0)
-        for output in (primal[1], primal[3], primal[4], primal[5], primal[6], primal[7])
+        for output in (
+            primal[1],
+            primal[3],
+            primal[4],
+            primal[5],
+            primal[6],
+            primal[7],
+            primal[8],
+        )
     )
     return primal, (
         panel_tangent,
@@ -1871,7 +2034,7 @@ def _refresh_supernodal(
 ) -> PreparedSparseFactorization:
     """Multifrontal numeric refresh through one host callback per value set."""
     policy = plan.policy
-    panels, status, minimum_pivot, replaced, rejected, nonzeros, finite, _ = (
+    panels, status, minimum_pivot, replaced, rejected, nonzeros, finite, _, _ = (
         _supernodal_refresh(
             _SupernodalFactorCallback(
                 analysis,
@@ -1909,6 +2072,7 @@ def factorize_sparse(
 
 __all__ = [
     "PreparedSparseFactorization",
+    "SparseFactorDerivativeError",
     "SparseFactorizationDiagnostics",
     "SparseFactorizationKind",
     "SparseFactorizationPlan",

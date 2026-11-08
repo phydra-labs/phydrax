@@ -14,6 +14,7 @@ import pytest
 
 import phydrax as phx
 from phydrax._admissibility import (
+    DerivativeFailureMode,
     first_order_only,
     guard_derivative_validity,
     refuse_derivative_dependencies,
@@ -149,6 +150,62 @@ def test_admissibility_is_jittable_and_transition_is_diagnostic_only() -> None:
     assert int(request.requested_epoch) == 3
     assert request.current_model_id == "continuum"
     assert request.target_model_id == "kinetic"
+
+
+def _unguarded(x: jax.Array, k: jax.Array) -> jax.Array:
+    # Linear in x: inner tangents in x are constants, which an enclosing pass
+    # differentiates to symbolic zeros unless the guard is re-applied there.
+    return 2.0 * x + k**3
+
+
+def _guarded(
+    valid: bool, failure: DerivativeFailureMode = "status"
+) -> Callable[..., jax.Array]:
+    def owner(x: jax.Array, k: jax.Array) -> jax.Array:
+        return guard_derivative_validity(
+            _unguarded(x, k),
+            jnp.asarray(valid),
+            dependencies=(x, k),
+            failure=failure,
+            message="invalid nested derivative",
+        )
+
+    return owner
+
+
+_NESTED_ROUTES: dict[str, Callable[[Callable[..., jax.Array]], Callable[..., Any]]] = {
+    "forward-over-forward": lambda f: jax.jacfwd(jax.jacfwd(f, 0), 0),
+    "reverse-over-forward": lambda f: jax.jacrev(jax.jacfwd(f, 0), 0),
+    "forward-over-reverse": lambda f: jax.jacfwd(jax.grad(f, 0), 0),
+    "reverse-over-reverse": lambda f: jax.grad(jax.grad(f, 0), 0),
+    "mixed-forward-over-reverse": lambda f: jax.jacfwd(jax.grad(f, 0), 1),
+    "mixed-reverse-over-forward": lambda f: jax.jacrev(jax.jacfwd(f, 0), 1),
+    "hessian": lambda f: jax.hessian(f, (0, 1)),
+    "third-forward": lambda f: jax.jacfwd(jax.jacfwd(jax.jacfwd(f, 0), 0), 1),
+    "third-reverse": lambda f: jax.grad(jax.grad(jax.grad(f, 1), 1), 0),
+    "third-mixed": lambda f: jax.jacfwd(jax.jacrev(jax.jacfwd(f, 1), 1), 1),
+}
+
+
+@pytest.mark.parametrize("route", _NESTED_ROUTES)
+def test_guard_applies_at_every_derivative_order(route: str) -> None:
+    nested = _NESTED_ROUTES[route]
+    expected = jax.tree.leaves(nested(_unguarded)(_X, _K))
+    # Valid input: both modes (the error mode through its identity linear
+    # solve) reproduce the unguarded derivative exactly at every order.
+    for failure in ("status", "error"):
+        actual = jax.tree.leaves(nested(_guarded(True, failure))(_X, _K))
+        for leaf, value in zip(expected, actual, strict=True):
+            np.testing.assert_array_equal(value, leaf)
+    for leaf in jax.tree.leaves(jax.jit(nested(_guarded(False)))(_X, _K)):
+        assert bool(jnp.all(jnp.isnan(leaf)))
+    # The check fails at run time: EquinoxRuntimeError eagerly, and the runtime's
+    # callback error carrying the same message from a staged (transposed) check.
+    with pytest.raises(
+        (eqx.EquinoxRuntimeError, jax.errors.JaxRuntimeError, ValueError),
+        match="invalid nested derivative",
+    ):
+        jax.block_until_ready(nested(_guarded(False, "error"))(_X, _K))
 
 
 def _refused_owner(x: jax.Array, k: jax.Array) -> jax.Array:

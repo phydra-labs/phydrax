@@ -358,6 +358,10 @@ class _NativeState:
     source_metric: np.ndarray
     source_metric_log: np.ndarray
     periodic_vertex_windings: dict[int, np.ndarray]
+    # ``tet_mesh_periodic_state`` of ``target_mesh`` with its cell regions in
+    # block order, replaced with every committed periodic edit (``None`` off a
+    # periodic lift); the next edit's source quotient state.
+    periodic_state: TetMeshPeriodicState | None
     source_cell_ids: np.ndarray
     source_vertex_ids: np.ndarray
     source_vertex_rows: dict[int, int]
@@ -432,6 +436,7 @@ class _SnapshotTables:
     edge_orbits: tuple[tuple[tuple[int, int], ...], ...] | None = None
     face_orbits: tuple[tuple[tuple[int, int, int], ...], ...] | None = None
     vertex_orbits: tuple[tuple[int, ...], ...] | None = None
+    vertex_orbit_members: dict[int, tuple[int, ...]] | None = None
     replacement_keys: (
         dict[str, tuple[tuple[tuple[int, ...], ...], frozenset[tuple[int, ...]]]] | None
     ) = None
@@ -1550,8 +1555,11 @@ def _refresh_native_periodic_windings(state: _NativeState, /) -> None:
     if mesh.periodic_topology is None:
         state.periodic_vertex_windings = {}
         return
-    periodic_state = _native_periodic_state(mesh, None)
-    if periodic_state is None:
+    periodic_state = state.periodic_state
+    if (
+        periodic_state is None
+        or periodic_state.identity_map.source_mesh_id != mesh.mesh_id
+    ):
         raise ValueError("Periodic native windings require a bound periodic target.")
     native_by_target = {
         int(target): int(native) for native, target in state.vertex_target_ids.items()
@@ -1569,11 +1577,14 @@ def _refresh_native_periodic_windings(state: _NativeState, /) -> None:
 def _validate_periodic_metric_values(
     mesh: CellMesh,
     metric_by_vertex_id: dict[int, np.ndarray],
+    periodic_state: TetMeshPeriodicState | None = None,
     /,
 ) -> None:
+    """``periodic_state``: the mesh's native quotient state when already built."""
     if mesh.periodic_topology is None:
         return
-    periodic_state = _native_periodic_state(mesh, None)
+    if periodic_state is None:
+        periodic_state = _native_periodic_state(mesh, None)
     if periodic_state is None:
         raise ValueError("Periodic metric validation requires a native quotient state.")
     epsilon = np.finfo(np.float64).eps
@@ -1772,6 +1783,7 @@ def _prepare_native_state(
                 int(identifier): metric[row]
                 for row, identifier in enumerate(vertex_ids.tolist())
             },
+            periodic_state,
         )
 
     edge_keys = np.asarray(entity_keys(mesh, 1), dtype=np.int64)
@@ -1870,19 +1882,16 @@ def _prepare_native_state(
         dtype=np.int32,
     ).reshape((-1, 2))
     segment_groups = np.arange(source_segment_ids.size, dtype=np.int32)
-    # Off a periodic lift, exactly coplanar source triangles joined across
-    # non-segment edges form one planar source facet (one group): boundary
-    # vertices then move and collapse across the facet's internal diagonals.
-    # Lifted periodic seams keep one group per triangle.
-    row_groups = (
-        _coplanar_face_groups(
-            points,
-            source_faces,
-            [sides for *_, sides in constrained_faces],
-            {_edge_key(row) for row in source_segments.tolist()},
-        )
-        if periodic_state is None
-        else np.arange(source_face_row_ids.size, dtype=np.int64)
+    # Exactly coplanar source triangles joined across non-segment edges form
+    # one planar source facet (one group): boundary vertices then move and
+    # collapse across the facet's internal diagonals. On a periodic lift each
+    # paired cell-face cap is such a facet, so seam vertices collapse within
+    # their cap plane (or along the cell edge two caps share).
+    row_groups = _coplanar_face_groups(
+        points,
+        source_faces,
+        [sides for *_, sides in constrained_faces],
+        {_edge_key(row) for row in source_segments.tolist()},
     )
     implicit_rows: list[int] = []
     if implicit_source is not None:
@@ -2095,6 +2104,7 @@ def _prepare_native_state(
         implicit_groups=implicit_groups,
         target_mesh=mesh,
         periodic_vertex_windings=periodic_vertex_windings,
+        periodic_state=periodic_state,
         source_metric=metric,
         source_metric_log=_metric_logarithms(metric),
         source_cell_ids=source_cell_ids,
@@ -2850,7 +2860,13 @@ def _prepare_periodic_native_edit(
     native_edit: TetMeshEdit,
     metadata: dict[str, Any],
     /,
-) -> tuple[TetMeshEdit, CellMesh | None]:
+) -> tuple[TetMeshEdit, tuple[CellMesh, TetMeshPeriodicState] | None]:
+    """Stage one native edit as a complete periodic quotient edit.
+
+    Returns the edit with its periodic payload and, on a periodic lift, the
+    staged target mesh with its native quotient state (committed together by
+    ``_commit_periodic_target`` once the native edit applies).
+    """
     source = state.target_mesh
     if source.periodic_topology is None:
         return native_edit, None
@@ -3343,6 +3359,11 @@ def _prepare_periodic_native_edit(
             proposal_metric_by_native[int(proposal["vertex"])] = np.asarray(
                 proposal["metric"], dtype=np.float64
             )
+        elif isinstance(proposal, dict) and proposal.get("survivor") is not None:
+            # A moved collapse survivor carries the metric of its new carrier.
+            proposal_metric_by_native[int(proposal["kept"])] = np.asarray(
+                proposal["survivor"]["metric"], dtype=np.float64
+            )
     periodic_metrics = {
         int(vertex_target_by_native[int(native_id)]): (
             proposal_metric_by_native[int(native_id)]
@@ -3352,21 +3373,28 @@ def _prepare_periodic_native_edit(
         for native_id in candidate.vertex_ids.tolist()
     }
     try:
-        _validate_periodic_metric_values(target, periodic_metrics)
-    except ValueError as error:
-        raise _PeriodicCandidateRejected(str(error)) from error
-
-    try:
+        target_state = tet_mesh_periodic_state(target, target_regions)
+        _validate_periodic_metric_values(target, periodic_metrics, target_state)
         periodic = tet_mesh_periodic_edit(
             source,
             target,
             transition,
             source_regions=source_regions,
             target_regions=target_regions,
+            source_state=state.periodic_state,
+            target_state=target_state,
         )
     except (TypeError, ValueError) as error:
         raise _PeriodicCandidateRejected(str(error)) from error
-    return replace(native_edit, periodic=periodic), target
+    return replace(native_edit, periodic=periodic), (target, target_state)
+
+
+def _commit_periodic_target(
+    state: _NativeState, staged: tuple[CellMesh, TetMeshPeriodicState] | None, /
+) -> None:
+    """Bind the staged periodic target and its quotient state after an applied edit."""
+    if staged is not None:
+        state.target_mesh, state.periodic_state = staged
 
 
 def _apply_split_batch(
@@ -3374,14 +3402,13 @@ def _apply_split_batch(
 ) -> TetMeshEditStatus:
     edit, metadata = _split_edit(state, split_parameters)
     try:
-        edit, target_mesh = _prepare_periodic_native_edit(state, edit, metadata)
+        edit, staged = _prepare_periodic_native_edit(state, edit, metadata)
     except _PeriodicCandidateRejected:
         return TetMeshEditStatus.REJECTED_TOPOLOGY
     status = state.native.apply_edit(edit)
     if status is not TetMeshEditStatus.APPLIED:
         return status
-    if target_mesh is not None:
-        state.target_mesh = target_mesh
+    _commit_periodic_target(state, staged)
     state.snapshot = state.native.arrays()
     proposals: list[_SplitProposal] = metadata["proposals"]
     for proposal in proposals:
@@ -3618,6 +3645,18 @@ def _periodic_vertex_orbit_groups(state: _NativeState, /) -> tuple[tuple[int, ..
         groups.append(tuple(member[0] for member in orbit))
     tables.vertex_orbits = tuple(groups)
     return tables.vertex_orbits
+
+
+def _periodic_vertex_orbit_members(state: _NativeState, /) -> dict[int, tuple[int, ...]]:
+    """Native vertex -> every lifted native member of its vertex orbit."""
+    tables = _snapshot_tables(state)
+    if tables.vertex_orbit_members is None:
+        tables.vertex_orbit_members = {
+            vertex: orbit
+            for orbit in _periodic_vertex_orbit_groups(state)
+            for vertex in orbit
+        }
+    return tables.vertex_orbit_members
 
 
 def _periodic_vertex_quotient_ids(state: _NativeState, /) -> dict[int, int]:
@@ -4033,20 +4072,24 @@ def _source_permits_collapse(
     The removed vertex is neither fixed nor protected, carries no protected
     facet or segment, and is interior or carried by a source triangle or edge
     holding the kept vertex (a constrained segment collapses only along
-    itself); periodic lifts collapse only interior vertices.
+    itself). On a periodic lift a seam vertex is carried by its planar cell-face
+    cap, so it collapses only within the cap (or along the cell edge two caps
+    share); the orbit-locked candidate applies the same collapse to every
+    lifted copy (``_collapse_metric_candidates``). The native mesh refuses a
+    protected survivor; a periodic lift, whose fixed lattice contour borders
+    many short interior edges, rules that out here rather than paying for a
+    refused staged quotient edit (off the lift the proposal set is unchanged).
     """
-    removed_row = topology.vertex_row[removed]
+    protected_vertices = np.asarray(state.snapshot.protected_vertices)
     if removed in state.fixed_vertices or bool(
-        np.asarray(state.snapshot.protected_vertices)[removed_row]
+        protected_vertices[topology.vertex_row[removed]]
+    ):
+        return False
+    if state.target_mesh.periodic_topology is not None and bool(
+        protected_vertices[topology.vertex_row[kept]]
     ):
         return False
     entity = _carrier_entity(state, records, removed)
-    if state.target_mesh.periodic_topology is not None and (
-        entity is not None or _carrier_entity(state, records, kept) is not None
-    ):
-        # Lifted periodic seams are constrained facets: their orbit copies
-        # collapse only through interior vertices.
-        return False
     if entity is not None and (
         len(entity) < 2 or not set(state.vertex_stencils[kept]) <= entity
     ):
@@ -4457,15 +4500,20 @@ def _survivor_moves(
     it; each is projected onto the survivor's carrier and quantized by
     ``_quantized_relocation``: an interior survivor moves in its source cell, a
     boundary survivor within its source facet or curve (on a declared plane
-    when its carrier rounds). Survivors that are fixed, protected, pinned at a
-    source corner or in a periodic lift do not move.
+    when its carrier rounds). Survivors that are fixed, protected or pinned at a
+    source corner do not move. On a periodic lift only a survivor whose vertex
+    orbit has a single lifted member moves: its star is the whole quotient star,
+    so no deck partner has to follow it; a seam survivor stays in place.
     """
     row = topology.vertex_row[kept]
     snapshot = state.snapshot
     if (
-        state.target_mesh.periodic_topology is not None
-        or kept in state.fixed_vertices
+        kept in state.fixed_vertices
         or bool(np.asarray(snapshot.protected_vertices)[row])
+        or (
+            state.target_mesh.periodic_topology is not None
+            and len(_periodic_vertex_orbit_members(state)[kept]) != 1
+        )
     ):
         return
     implicit_only = _implicit_only_vertex(state, records, kept)
@@ -4750,14 +4798,13 @@ def _apply_collapse_batch(
 ) -> TetMeshEditStatus:
     edit, metadata = _collapse_edit(state, proposals)
     try:
-        edit, target_mesh = _prepare_periodic_native_edit(state, edit, metadata)
+        edit, staged = _prepare_periodic_native_edit(state, edit, metadata)
     except _PeriodicCandidateRejected:
         return TetMeshEditStatus.REJECTED_TOPOLOGY
     status = state.native.apply_edit(edit)
     if status is not TetMeshEditStatus.APPLIED:
         return status
-    if target_mesh is not None:
-        state.target_mesh = target_mesh
+    _commit_periodic_target(state, staged)
     state.snapshot = state.native.arrays()
     source_vertex_ids = {
         int(identifier) for identifier in state.source_vertex_ids.tolist()
@@ -4828,6 +4875,74 @@ def _apply_collapse_batch(
     return status
 
 
+def _orbit_directed_collapses(
+    state: _NativeState,
+    topology: _TetTopology,
+    records: _BoundaryRecords,
+    protected: dict[tuple[int, int], bool],
+    orbit: tuple[tuple[int, int], ...],
+    vertex_quotient: dict[int, int],
+    /,
+) -> tuple[dict[str, Any], ...] | None:
+    """Members of one periodic edge orbit collapsing toward one quotient vertex.
+
+    Each member ranks its own direction over its partial star, so lifted copies
+    of one seam edge may disagree. Each quotient direction is then evaluated on
+    every member; among the directions every member admits, the one with the
+    least worst member violation wins (ties: the larger least removed target
+    ID, as ``_collapse_proposal`` breaks ties). ``None``: no common direction.
+    """
+
+    def quotient(vertex: int, /) -> int:
+        return vertex_quotient[int(state.vertex_target_ids[int(vertex)])]
+
+    best: tuple[dict[str, Any], ...] | None = None
+    best_key: tuple[Any, ...] | None = None
+    for removed_orbit in sorted({quotient(vertex) for vertex in orbit[0]}):
+        members: list[dict[str, Any]] = []
+        for edge in orbit:
+            removed, kept = (
+                (edge[0], edge[1])
+                if quotient(edge[0]) == removed_orbit
+                else (edge[1], edge[0])
+            )
+            proposal = _directed_collapse(
+                state, topology, records, protected, removed, kept
+            )
+            if proposal is None:
+                break
+            members.append(proposal)
+        else:
+            key = (
+                max(member["added_violations"] for member in members),
+                -min(
+                    int(state.vertex_target_ids[int(member["removed"])])
+                    for member in members
+                ),
+            )
+            if best_key is None or key < best_key:
+                best, best_key = tuple(members), key
+    return best
+
+
+def _complete_collapse_orbit(
+    state: _NativeState, proposals: tuple[dict[str, Any], ...], /
+) -> bool:
+    """Whether one orbit's collapses remove a whole quotient vertex.
+
+    Every lifted member of the removed vertex orbit is removed (no copy of a
+    removed quotient vertex survives) and every member keeps a distinct lifted
+    survivor.
+    """
+    removed = {int(proposal["removed"]) for proposal in proposals}
+    kept = {int(proposal["kept"]) for proposal in proposals}
+    members = _periodic_vertex_orbit_members(state)
+    return (
+        len(removed) == len(kept) == len(proposals)
+        and set(members[next(iter(removed))]) == removed
+    )
+
+
 def _collapse_metric_candidates(
     state: _NativeState,
     cache: dict[tuple[int, int], tuple[dict[str, Any] | None, frozenset[int]]],
@@ -4840,6 +4955,12 @@ def _collapse_metric_candidates(
     only on those stars (their vertices, metrics and constrained facets).
     Topology edits retire changed cells; relocation explicitly evicts entries
     intersecting a moved star even when the cell IDs themselves survive.
+
+    On a periodic lift one candidate is one quotient edge orbit: every lifted
+    member collapses toward the same quotient vertex
+    (``_orbit_directed_collapses``), the removed members are the whole removed
+    vertex orbit and the survivors are distinct (``_complete_collapse_orbit``),
+    and member cavities are disjoint.
     """
     topology = _state_topology(state)
     for old_edge in cache.keys() - topology.edge_cells.keys():
@@ -4896,8 +5017,26 @@ def _collapse_metric_candidates(
             vertex_quotient[int(state.vertex_target_ids[int(proposal["kept"])])]
             for proposal in proposals
         }
-        if len(quotient_edges) != 1 or len(kept_orbits) != 1:
+        if len(quotient_edges) != 1:
             continue
+        if nonperiodic:
+            if len(kept_orbits) != 1:
+                continue
+        else:
+            if len(next(iter(quotient_edges))) != 2:
+                # Both endpoints are lifted copies of one quotient vertex.
+                continue
+            if len(kept_orbits) != 1:
+                if records is None:
+                    records = _boundary_records(state)
+                directed = _orbit_directed_collapses(
+                    state, topology, records, protected, orbit, vertex_quotient
+                )
+                if directed is None:
+                    continue
+                proposals = directed
+            if not _complete_collapse_orbit(state, proposals):
+                continue
         cavities = [proposal["cavity"] for proposal in proposals]
         cavity = frozenset().union(*cavities)
         if sum(map(len, cavities)) != len(cavity):
@@ -5096,14 +5235,13 @@ def _apply_replacement_batch(
 ) -> TetMeshEditStatus:
     edit, metadata = _replacement_edit(state, kind, groups)
     try:
-        edit, target_mesh = _prepare_periodic_native_edit(state, edit, metadata)
+        edit, staged = _prepare_periodic_native_edit(state, edit, metadata)
     except _PeriodicCandidateRejected:
         return TetMeshEditStatus.REJECTED_TOPOLOGY
     status = state.native.apply_edit(edit)
     if status is not TetMeshEditStatus.APPLIED:
         return status
-    if target_mesh is not None:
-        state.target_mesh = target_mesh
+    _commit_periodic_target(state, staged)
     state.snapshot = state.native.arrays()
     for native_cell_id in metadata["removed_cells"]:
         state.cell_target_ids.pop(native_cell_id)
@@ -7000,7 +7138,7 @@ def _apply_relocation_batch(
 ) -> TetMeshEditStatus:
     edit = _relocation_edit(state, proposals)
     try:
-        edit, target_mesh = _prepare_periodic_native_edit(
+        edit, staged = _prepare_periodic_native_edit(
             state, edit, {"proposals": proposals}
         )
     except _PeriodicCandidateRejected:
@@ -7008,8 +7146,7 @@ def _apply_relocation_batch(
     status = state.native.apply_edit(edit)
     if status is not TetMeshEditStatus.APPLIED:
         return status
-    if target_mesh is not None:
-        state.target_mesh = target_mesh
+    _commit_periodic_target(state, staged)
     state.snapshot = state.native.arrays()
     source_vertex_ids = {
         int(identifier) for identifier in state.source_vertex_ids.tolist()

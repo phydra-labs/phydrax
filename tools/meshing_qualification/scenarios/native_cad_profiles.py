@@ -1669,6 +1669,19 @@ def _volume_run(
     measured_mesh_volume = float(
         np.sum(np.asarray(straight.quality.evaluation.measures, dtype=np.float64))
     )
+    fidelity_record = (
+        None
+        if fidelity is None
+        else {
+            "certificate_id": fidelity.certificate_id,
+            "tolerance_m": fidelity.tolerance,
+            "mesh_to_source_upper_m": fidelity.mesh_to_source_upper,
+            "source_to_mesh_upper_m": fidelity.source_to_mesh_upper,
+            "migration_maximum_deviation_m": _SOURCE_DEVIATION_TOLERANCE_M,
+        }
+    )
+    route, plan_id = plan.route, plan.plan_id
+    del certification, fidelity, plan
 
     curved_result = straight
     try:
@@ -1690,10 +1703,13 @@ def _volume_run(
                 "detail": str(error),
             }
         )
+    # The FE stage reads only the curved mesh and geometry: release both meshing
+    # results (reports, certificates, exact witnesses) before it allocates.
+    fe_mesh, fe_geometry = curved_result.mesh, curved_result.geometry
+    fe_result_id = curved_result.result_id
+    del straight, curved_result
     try:
-        fe = _solve_curved_cad_p2_fe(
-            curved_result.mesh, curved_result.geometry, manufactured_length
-        )
+        fe = _solve_curved_cad_p2_fe(fe_mesh, fe_geometry, manufactured_length)
     except Exception as error:
         fe = None
         acceptance_failures.append(
@@ -1703,20 +1719,9 @@ def _volume_run(
                 "detail": str(error),
             }
         )
-    fidelity_record = (
-        None
-        if fidelity is None
-        else {
-            "certificate_id": fidelity.certificate_id,
-            "tolerance_m": fidelity.tolerance,
-            "mesh_to_source_upper_m": fidelity.mesh_to_source_upper,
-            "source_to_mesh_upper_m": fidelity.source_to_mesh_upper,
-            "migration_maximum_deviation_m": _SOURCE_DEVIATION_TOLERANCE_M,
-        }
-    )
     return {
-        "route": plan.route,
-        "plan_id": plan.plan_id,
+        "route": route,
+        "plan_id": plan_id,
         "volume_schedule": {
             "schedule_id": schedule.schedule_id,
             "radius_edge_bound": schedule.radius_edge_bound,
@@ -1734,7 +1739,7 @@ def _volume_run(
         / expected_volume,
         "mesh_measure": "straight tetrahedral cell volume",
         "p2_curving": curving,
-        "p2_fe_result_id": curved_result.result_id,
+        "p2_fe_result_id": fe_result_id,
         "fe_solve": fe,
         "acceptance_failures": acceptance_failures,
         "passed": not acceptance_failures,

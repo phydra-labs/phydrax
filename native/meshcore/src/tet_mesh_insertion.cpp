@@ -2279,11 +2279,11 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
       return TetEditStatus::kRejectedTopology;
     }
     const std::int32_t current_slot = mesh.vertex_slot(vertex.id);
+    // On a periodic lift a moved survivor is admitted like any changed vertex:
+    // validate_periodic_closure requires every surviving member of its orbit to
+    // stay the exact deck image of the orbit representative at the new carriers.
     const bool moved_survivor =
         collapse && current_slot >= 0 && paired_survivors.contains(vertex.id);
-    if (moved_survivor && mesh.periodic_identity_.bound) {
-      return TetEditStatus::kRejectedTopology;
-    }
     if (current_slot >= 0) {
       if (!vertex.ancestry.empty()) return TetEditStatus::kRejectedTopology;
       if (!relocation && !split && !moved_survivor) return TetEditStatus::kRejectedTopology;

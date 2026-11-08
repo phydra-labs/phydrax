@@ -27,10 +27,12 @@ from phydrax._meshcore import (
     mixed_template_counts,
     MixedElementKind,
     parallel_for,
+    PLC_SEARCH_BUDGET,
     PlcBoundaryPolicy,
     PlcEntityKind,
     PlcFailureReason,
     PlcRecovery3D,
+    PlcSearchBudget,
     PlcSourceFailure,
     polygon_intersection_moments,
     polygon_intersection_simplices,
@@ -1571,6 +1573,41 @@ def test_fixed_cad_sphere_recovery_suppresses_its_splits_with_bounded_wraps() ->
     assert (evidence.wraps, evidence.wrap_cells, evidence.max_wrap_cells) == (3, 101, 52)
     assert evidence.searches == 0
     assert evidence.max_wrap_cells < recovered.tetrahedra.shape[0]
+
+
+def test_plc_recovery_declares_its_suppression_search_budget() -> None:
+    # The exhaustive suppression search budget is part of the recovery
+    # request: the documented default unless declared, echoed in the
+    # evidence, positive int64 only, and refused for source preparation.
+    points = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    )
+    banks = (
+        points,
+        np.arange(0, 13, 3, dtype=np.int64),
+        np.asarray((1, 2, 3, 0, 3, 2, 0, 1, 3, 0, 2, 1), dtype=np.int32),
+        np.arange(4, dtype=np.int32),
+        np.tile(np.asarray((-1, 1), dtype=np.int32), (4, 1)),
+    )
+    default = recover_plc_3d(*banks).suppression_search
+    assert (default.node_budget, default.byte_budget) == PLC_SEARCH_BUDGET
+    assert (default.searches, default.exceeded) == (0, 0)
+    declared = recover_plc_3d(*banks, search_budget=PlcSearchBudget(5, 1 << 20))
+    assert (
+        declared.suppression_search.node_budget,
+        declared.suppression_search.byte_budget,
+    ) == (
+        5,
+        1 << 20,
+    )
+    for invalid in (
+        PlcSearchBudget(0, 1),
+        PlcSearchBudget(1, -1),
+        (1, 1),
+        PlcSearchBudget(True, 1),
+    ):
+        with pytest.raises(ValueError, match="search_budget"):
+            recover_plc_3d(*banks, search_budget=invalid)
 
 
 @pytest.mark.parametrize(

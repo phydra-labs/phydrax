@@ -47,6 +47,19 @@ enum PlcEntityKind : int32_t {
   kPlcSeed = 6,
 };
 
+// Documented default resource budget of the exhaustive Steiner-free
+// suppression search (Steiner-free fill existence is NP-complete, so the
+// search has no structural bound): the states the searches of one recovery
+// may expand in total, and the bytes one search may hold (its memo of
+// visited states and its ranked apex lists, counted as in
+// PlcRecoveryBuilder::wrap_cavity). A recovery request declares its own
+// budget; 0 selects these defaults. An over-budget search is inconclusive:
+// recovery goes on to relocation by peeling, and a point that also fails
+// it refuses STEINER_SUPPRESSION with the search evidence
+// (PlcSuppressionSearch, PlcSuppressionRoute).
+inline constexpr int64_t kPlcSearchNodeBudget = int64_t{1} << 24;
+inline constexpr int64_t kPlcSearchByteBudget = int64_t{1} << 30;
+
 struct PlcInput {
   int64_t point_count = 0;
   const double* points = nullptr;
@@ -77,6 +90,11 @@ struct PlcInput {
   // Facet-count flags: protect these input facets and all their boundary edges.
   // Null means no selective protection.
   const std::uint8_t* protected_facets = nullptr;
+  // Declared budget of the exhaustive suppression search (see
+  // kPlcSearchNodeBudget); nonnegative, used as given (0 refuses at the
+  // first state a search would expand).
+  int64_t search_node_budget = kPlcSearchNodeBudget;
+  int64_t search_byte_budget = kPlcSearchByteBudget;
 };
 
 namespace detail {
@@ -94,15 +112,32 @@ struct SuppressionCavity {
   std::span<const std::array<int32_t, 4>> walls;
   std::span<const std::array<int32_t, 4>> wall_marks;
   int32_t placeholder = std::numeric_limits<int32_t>::min() / 2;
+  int64_t search_node_budget = kPlcSearchNodeBudget;
+  int64_t search_byte_budget = kPlcSearchByteBudget;
+  // Optional relocation ray of the suppressed point (empty, or 7 values:
+  // its carrier, the sum of the inner unit normals of its subface planes,
+  // and its reach), tried when the Steiner-free fill fails.
+  std::span<const double> relocation;
 };
 
 // The Steiner-free fill of Steiner suppression: whether the constrained
-// Delaunay fill succeeded, else whether the exhaustive search did and the
-// states it expanded; the cells of the fill.
+// Delaunay fill succeeded, else whether the exhaustive search did, the
+// states it expanded, the bytes it held at most and its deepest state
+// (cells placed), and whether it stopped over the declared budget; the
+// cells of the fill. Else, with a relocation ray, whether relocation by
+// peeling filled the cavity: `peeled` cells (first in `cells`) closed by
+// cavity vertices and cones from `center`, numbered one past the last
+// fixture point.
 struct SuppressionCavityFill {
   bool delaunay = false;
   bool filled = false;
   std::size_t nodes = 0;
+  int64_t bytes = 0;
+  int64_t depth = 0;
+  bool exceeded = false;
+  bool relocated = false;
+  std::size_t peeled = 0;
+  std::array<double, 3> center{};
   std::vector<std::array<int32_t, 4>> cells;
 };
 
@@ -135,6 +170,15 @@ struct PlcSourceRefusal {
 // merge at all). Last, the work of the gift-wrapped constrained Delaunay
 // fills (complete, stopped at a stuck side, or partial): how many ran, the
 // cells they laid in total and at most in one fill (each cell is one step).
+// Then the declared search budget (states per recovery, bytes per search),
+// the most bytes one search held and its deepest state (cells placed),
+// and, when a search went over that budget, whether one did and the
+// states, bytes and depth of the first such search when it stopped. An
+// over-budget search is inconclusive (no fill found, none ruled out): the
+// point stays pending and the later passes, the pinched pass's relocation
+// by peeling last, may still remove it. Last, how many searches were
+// inconclusive, the points removed by relocation by peeling, and how many
+// of them after an inconclusive search (PlcSuppressionRoute per point).
 struct PlcSuppressionSearch {
   int64_t searches = 0;
   int64_t fills = 0;
@@ -148,6 +192,38 @@ struct PlcSuppressionSearch {
   int64_t wraps = 0;
   int64_t wrap_cells = 0;
   int64_t max_wrap_cells = 0;
+  int64_t node_budget = 0;
+  int64_t byte_budget = 0;
+  int64_t max_bytes = 0;
+  int64_t max_depth = 0;
+  int64_t exceeded = 0;
+  int64_t exceeded_nodes = 0;
+  int64_t exceeded_bytes = 0;
+  int64_t exceeded_depth = 0;
+  int64_t inconclusive = 0;
+  int64_t peeled = 0;
+  int64_t peeled_after_inconclusive = 0;
+};
+
+// The route that removed a suppressed point when it took the exhaustive
+// search or relocation by peeling, one row per wedge so filled, in removal
+// order: the point (work id, as refusals name it), its witness stratum and
+// carrier entity, the route, and the states, bytes and depth of the search
+// (the filling search; for peeling after an inconclusive search, the
+// point's first inconclusive search; zeros for peeling without one).
+enum PlcSuppressionRouteKind : int64_t {
+  kPlcRouteSearch = 1,
+  kPlcRoutePeel = 2,
+  kPlcRoutePeelAfterInconclusive = 3,
+};
+struct PlcSuppressionRoute {
+  int64_t point = -1;
+  int64_t stratum = 0;
+  int64_t entity = -1;
+  int64_t route = 0;
+  int64_t states = 0;
+  int64_t bytes = 0;
+  int64_t depth = 0;
 };
 
 // Recovered complex: input point ids are preserved and new vertices follow.
@@ -177,6 +253,7 @@ struct PlcRecovery {
   std::vector<PlcRecoveryWitness> witnesses;
   PlcSourceRefusal source_refusal;
   PlcSuppressionSearch suppression_search;
+  std::vector<PlcSuppressionRoute> suppression_routes;
   PlcFailure failure;
 };
 

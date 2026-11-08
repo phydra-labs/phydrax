@@ -21,6 +21,8 @@ from dataclasses import replace
 from typing import final
 
 import equinox as eqx
+import jax
+import jax.numpy as jnp
 import numpy as np
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -41,6 +43,7 @@ from ._adaptive_discovery import (
     _FieldEnclosures,
     _LATTICE_ANCHORS,
     _PACKED_OWNERSHIP,
+    _root_on_edges,
     _state_identity,
     _target_level,
     _validate_discovery_inputs,
@@ -673,3 +676,123 @@ def discover_periodic_trigonometric_surface(
         policy=current,
         source_id=source_id,
     )
+
+
+# Float Newton steps toward the zero set before the certified bracket search.
+_NEWTON_STEPS = 3
+
+
+class QuotientZeroSet:
+    """Certified points of a resolved quotient discovery's zero set.
+
+    ``project`` places points on ``{f = 0}`` of the reduced source with the
+    discovery's own root certificate. A float Newton search along the gradient
+    is followed by a bracket ``q +- s d`` of strictly opposite interval point
+    signs and the scaffold's interval bisection (`_root_on_edges`) to the
+    discovery's ``root_tolerance``. A row may hold one reduced axis fixed. Its
+    search direction then has an exact zero in that axis, so the coordinate is
+    kept bit for bit (a point of the zero set's trace on a cell-face plane).
+    Callers evaluate only canonical representatives: the field is exactly
+    lattice periodic, so the certificate holds for every exact translate.
+    """
+
+    def __init__(self, surface: PeriodicImplicitSurface, /) -> None:
+        if not surface.resolved:
+            raise ValueError("Only a resolved quotient discovery has a zero set.")
+        geometry = reduced_trigonometric_source(surface.source).compile()
+        kernel, state = geometry.kernel, geometry.state
+
+        def value(point: jax.Array) -> jax.Array:
+            return kernel.boundary_field(state, point[None, :])[0]
+
+        self._bounds = _FieldEnclosures(geometry, "interval")
+        self._values = jax.jit(jax.vmap(value))
+        self._gradients = jax.jit(jax.vmap(jax.grad(value)))
+        self.tolerance = float(surface.policy.root_tolerance)
+
+    def gradients(self, points: np.ndarray, /) -> np.ndarray:
+        """Float field gradients (search directions and orientation tests only)."""
+        values = np.asarray(points, dtype=np.float64).reshape((-1, 3))
+        if not values.shape[0]:
+            return np.empty((0, 3), dtype=np.float64)
+        return np.asarray(self._gradients(jnp.asarray(values)), dtype=np.float64)
+
+    def signs(self, points: np.ndarray, /) -> np.ndarray:
+        """Certified field signs at points; zero where the enclosure is undecided."""
+        values = np.asarray(points, dtype=np.float64).reshape((-1, 3))
+        lower, upper = self._bounds.point_values(values)
+        signs = np.zeros(values.shape[0], dtype=np.int8)
+        signs[upper < 0.0] = -1
+        signs[lower > 0.0] = 1
+        return signs
+
+    def project(
+        self, starts: np.ndarray, axes: np.ndarray, reach: float, /
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Certified zero-set points near ``starts`` within distance ``reach``.
+
+        ``axes[i]`` is the reduced axis row ``i`` keeps exactly, or ``-1``.
+        Returns the points, their certified distance bounds to a root (in the
+        kept plane for a fixed axis), the float gradients there and the rows
+        that were certified. A refused row is never widened past ``reach``.
+        """
+        origins = np.asarray(starts, dtype=np.float64).reshape((-1, 3))
+        points = np.array(origins, copy=True)
+        count = points.shape[0]
+        mask = np.ones((count, 3), dtype=np.float64)
+        fixed = np.flatnonzero(np.asarray(axes) >= 0)
+        mask[fixed, np.asarray(axes)[fixed]] = 0.0
+        for _ in range(_NEWTON_STEPS):
+            gradient = self.gradients(points) * mask
+            value = np.asarray(self._values(jnp.asarray(points)), dtype=np.float64)
+            squared = np.sum(gradient * gradient, axis=1)
+            step = np.divide(value, squared, out=np.zeros(count), where=squared > 0.0)
+            points = points - step[:, None] * gradient
+        gradient = self.gradients(points) * mask
+        norms = np.linalg.norm(gradient, axis=1)
+        usable = np.isfinite(points).all(axis=1) & (norms > 0.0)
+        direction = np.divide(
+            gradient, norms[:, None], out=np.zeros_like(gradient), where=usable[:, None]
+        )
+        brackets, signs, found = self._brackets(points, direction, usable, reach)
+        result = np.array(points, copy=True)
+        errors = np.full(count, np.inf)
+        rows = np.flatnonzero(found)
+        if rows.size:
+            records = _root_on_edges(
+                self._bounds, brackets[rows], signs[rows], self.tolerance
+            )
+            for row, record in zip(rows.tolist(), records, strict=True):
+                point, error, issue = record[0], record[1], record[2]
+                if issue == 0 and np.linalg.norm(point - origins[row]) <= reach:
+                    result[row] = point
+                    errors[row] = error
+        certified = np.isfinite(errors)
+        return result, errors, self.gradients(result), certified
+
+    def _brackets(
+        self, points: np.ndarray, direction: np.ndarray, usable: np.ndarray, reach: float
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Smallest doubling half-width ``s`` with opposite certified end signs."""
+        count = points.shape[0]
+        half = np.full(count, 2.0 * self.tolerance)
+        brackets = np.empty((count, 2, 3), dtype=np.float64)
+        signs = np.zeros((count, 2), dtype=np.int8)
+        found = np.zeros(count, dtype=np.bool_)
+        pending = usable.copy()
+        while np.any(pending):
+            rows = np.flatnonzero(pending)
+            offset = half[rows, None] * direction[rows]
+            low, high = points[rows] - offset, points[rows] + offset
+            ends = self.signs(np.concatenate((low, high)))
+            first, second = ends[: rows.size], ends[rows.size :]
+            done = (first != 0) & (second != 0) & (first != second)
+            brackets[rows[done], 0] = low[done]
+            brackets[rows[done], 1] = high[done]
+            signs[rows[done], 0] = first[done]
+            signs[rows[done], 1] = second[done]
+            found[rows[done]] = True
+            pending[rows[done]] = False
+            half[rows[~done]] *= 2.0
+            pending &= half <= reach
+        return brackets, signs, found

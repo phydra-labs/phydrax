@@ -13,7 +13,9 @@ import pytest
 
 from phydrax._meshcore import (
     MeshcoreStatus,
+    PLC_SEARCH_BUDGET,
     PlcRecovery3D,
+    PlcSearchBudget,
     prepare_plc_source,
 )
 from phydrax._physical import SpatialCoordinateContract
@@ -441,6 +443,35 @@ def test_native_volume_shape_strength_keeps_hard_identity() -> None:
     assert rebuilt.schedule_id == soft.schedule_id
     with pytest.raises(TypeError, match="shape_strength"):
         NativeVolumeSchedule(shape_strength=cast(Any, "soft"))
+
+
+def test_native_volume_schedule_declares_the_plc_search_budget() -> None:
+    from phydrax._fingerprint import canonical_fingerprint
+    from phydrax.meshing._model_codec import restore_model_archive_value
+
+    default = NativeVolumeSchedule()
+    explicit = NativeVolumeSchedule(plc_search_budget=PLC_SEARCH_BUDGET)
+    declared = NativeVolumeSchedule(plc_search_budget=PlcSearchBudget(1 << 20, 1 << 28))
+    payload: dict[str, object] = {
+        "kind": "native-volume-schedule",
+        "radius_edge_bound": 2.0,
+        "minimum_dihedral_degrees": 10.0,
+        "minimum_relative_determinant": default.minimum_relative_determinant,
+    }
+    # The documented default keeps the schedule identity; a declared budget
+    # is part of it.
+    assert default.plc_search_budget == PLC_SEARCH_BUDGET
+    assert default.schedule_id == explicit.schedule_id == canonical_fingerprint(payload)
+    assert declared.schedule_id == canonical_fingerprint(
+        {**payload, "plc_search_budget": [1 << 20, 1 << 28]}
+    )
+    rebuilt = restore_model_archive_value(declared)
+    assert isinstance(rebuilt, NativeVolumeSchedule)
+    assert rebuilt.plc_search_budget == PlcSearchBudget(1 << 20, 1 << 28)
+    assert rebuilt.schedule_id == declared.schedule_id
+    for invalid in (PlcSearchBudget(0, 1), PlcSearchBudget(1, 1 << 63), (1, 1)):
+        with pytest.raises(ValueError, match="plc_search_budget"):
+            NativeVolumeSchedule(plc_search_budget=cast(Any, invalid))
 
 
 def test_soft_shape_strength_is_refused_where_shape_rows_are_not_published() -> None:

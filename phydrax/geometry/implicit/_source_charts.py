@@ -49,6 +49,7 @@ from ...geometry._certificate import FieldRegularity
 from ...geometry._contracts import CompiledGeometry
 from ...geometry._embedding_state import MeshCertificateFinding
 from ...geometry._interval_enclosure import (
+    interval_acos,
     IntervalExtensionError,
     prepare_interval_function,
     PreparedIntervalFunction,
@@ -945,18 +946,38 @@ def _tangent_conditioner(
     )
     if not np.all(np.isfinite(matrix)):
         return None
-    singular = np.linalg.svd(matrix, compute_uv=False)
-    if singular[1] <= 0.0 or singular[0] <= _CONDITIONING_THRESHOLD * singular[1]:
+    # The Gram matrix decides the conditioning exactly: with trace t and
+    # determinant d, sigma_0 > k sigma_1 iff k^2 t^2 > (k^2 + 1)^2 d. The
+    # Gram-Schmidt factor then uses correctly rounded operations only, so the
+    # conditioner is the same on every platform (no LAPACK reduction order).
+    columns = tuple(
+        tuple(Fraction(float(matrix[row, column])) for row in range(3))
+        for column in range(2)
+    )
+    first_square = sum((value * value for value in columns[0]), Fraction(0))
+    product = sum(
+        (left * right for left, right in zip(*columns, strict=True)), Fraction(0)
+    )
+    second_square = sum((value * value for value in columns[1]), Fraction(0))
+    trace = first_square + second_square
+    determinant = first_square * second_square - product * product
+    threshold = Fraction(_CONDITIONING_THRESHOLD) ** 2
+    if determinant <= 0 or threshold * trace * trace <= (threshold + 1) ** 2 * determinant:
         return None
-    _, upper = np.linalg.qr(matrix)
-    if upper[0, 0] == 0.0 or upper[1, 1] == 0.0:
+    diagonal_first = math.sqrt(float(first_square))
+    diagonal_second = math.sqrt(float(determinant / first_square))
+    if not (0.0 < diagonal_first < math.inf and 0.0 < diagonal_second < math.inf):
         return None
-    inverse = np.linalg.inv(upper)
-    if not np.all(np.isfinite(inverse)):
+    off_diagonal = float(product) / diagonal_first
+    inverse = (
+        (1.0 / diagonal_first, -off_diagonal / (diagonal_first * diagonal_second)),
+        (0.0, 1.0 / diagonal_second),
+    )
+    if not all(math.isfinite(value) for row in inverse for value in row):
         return None
     return (
-        (Fraction(float(inverse[0, 0])), Fraction(float(inverse[0, 1]))),
-        (Fraction(float(inverse[1, 0])), Fraction(float(inverse[1, 1]))),
+        (Fraction(inverse[0][0]), Fraction(inverse[0][1])),
+        (Fraction(inverse[1][0]), Fraction(inverse[1][1])),
     )
 
 
@@ -1231,10 +1252,8 @@ def _normal_angle_bounds(
     cosine_upper = math.nextafter(max(cosines), math.inf)
     cosine_lower = min(1.0, max(-1.0, cosine_lower))
     cosine_upper = min(1.0, max(-1.0, cosine_upper))
-    return (
-        math.nextafter(math.acos(cosine_upper), 0.0),
-        math.nextafter(math.acos(cosine_lower), math.inf),
-    )
+    lower, upper = interval_acos((np.float64(cosine_lower), np.float64(cosine_upper)))
+    return float(lower), float(upper)
 
 
 def _chart_derivative_intervals(
@@ -3040,12 +3059,31 @@ def _injectivity_preconditioners(
     if weight <= 0.0:
         return ()
     mean = total / weight
-    if not np.all(np.isfinite(mean)) or np.linalg.det(mean) == 0.0:
+    if not np.all(np.isfinite(mean)):
         return ()
+    exact = tuple(tuple(Fraction(float(value)) for value in row) for row in mean)
+    determinant = exact[0][0] * exact[1][1] - exact[0][1] * exact[1][0]
+    if determinant == 0:
+        return ()
+    # The exact inverse, correctly rounded: no LAPACK pivoting decides it.
     candidates: list[np.ndarray] = []
     try:
-        candidates.append(np.linalg.inv(mean))
-    except np.linalg.LinAlgError:
+        candidates.append(
+            np.asarray(
+                (
+                    (
+                        float(exact[1][1] / determinant),
+                        float(-exact[0][1] / determinant),
+                    ),
+                    (
+                        float(-exact[1][0] / determinant),
+                        float(exact[0][0] / determinant),
+                    ),
+                ),
+                dtype=np.float64,
+            )
+        )
+    except OverflowError:
         pass
     candidates.append(mean.T / float(np.sum(mean * mean)))
     return tuple(
@@ -4849,6 +4887,14 @@ def _inside_standard_triangle(
     return first, second
 
 
+def _ordered_contraction(coefficients: np.ndarray, values: np.ndarray, /) -> np.ndarray:
+    """``einsum("nam,nm->na")`` summed in monomial order on every platform."""
+    total = coefficients[..., 0] * values[:, None, 0]
+    for index in range(1, values.shape[-1]):
+        total = total + coefficients[..., index] * values[:, None, index]
+    return total
+
+
 def _nearest_face_parameters(
     maps: _FaceMaps, faces: np.ndarray, points: np.ndarray, /
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -4863,11 +4909,11 @@ def _nearest_face_parameters(
     zero = np.zeros_like(first)
     one = np.ones_like(first)
     for _ in range(8):
-        residual = np.einsum(
-            "nam,nm->na", coefficients, _monomial_values(first, second)
-        ) - (points)
-        along_first = np.einsum(
-            "nam,nm->na",
+        residual = (
+            _ordered_contraction(coefficients, _monomial_values(first, second))
+            - points
+        )
+        along_first = _ordered_contraction(
             coefficients,
             np.stack(
                 (
@@ -4885,8 +4931,7 @@ def _nearest_face_parameters(
                 axis=-1,
             ),
         )
-        along_second = np.einsum(
-            "nam,nm->na",
+        along_second = _ordered_contraction(
             coefficients,
             np.stack(
                 (

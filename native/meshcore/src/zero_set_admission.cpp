@@ -9,8 +9,8 @@
 #include <memory>
 #include <numeric>
 #include <system_error>
-#include <tuple>
 #include <utility>
+#include <vector>
 
 #include "capi_guard.hpp"
 #include "floating_point_mode.hpp"
@@ -200,8 +200,14 @@ double ZeroSetBandAdmission::piece_distance(
 
 // Pieces whose bound misses the tolerance split into four at edge midpoints
 // until each piece is decided: certified within the tolerance, refuted (no
-// point of it lies within the tolerance), or at binary64 resolution (a rounded
-// midpoint coincides with an endpoint), which refuses. Rounded midpoints leave
+// point of it lies within the tolerance), or at binary64 resolution, which
+// refuses. Binary64 resolution is relative to the triangle: a piece whose
+// corners all lie within one slack (two coordinate ulps at the triangle's
+// scale) of each other cannot be split into representable distinct pieces at
+// that scale. An absolute test alone (a rounded midpoint equal to an endpoint)
+// would run to subnormal spacing near a zero coordinate, about 1074 levels.
+// Each level halves the piece's extent, so the depth is at most about 53, and
+// the pieces are kept on an explicit stack in any case. Rounded midpoints leave
 // every point of T within one coordinate ulp per level of the union of the
 // pieces, so a piece at depth k adds k such slacks.
 double ZeroSetBandAdmission::distance_bound(
@@ -211,7 +217,7 @@ double ZeroSetBandAdmission::distance_bound(
   for (const Point* p : {&a, &b, &c})
     for (double coordinate : *p) scale = std::max(scale, std::fabs(coordinate));
   const double slack = next_up(2 * std::numeric_limits<double>::epsilon() * scale);
-  return split_distance(a, b, c, evidence, 0, slack);
+  return split_distance(a, b, c, evidence, slack);
 }
 
 // No point of the piece lies within the tolerance of Z: otherwise a zero of f
@@ -239,25 +245,52 @@ bool ZeroSetBandAdmission::piece_refuted(const Point& a, const Point& b,
   return mignitude(field) > next_up(lipschitz * tolerance_);
 }
 
+// Depth-first over the pieces, in the order of the four sub-pieces; the first
+// piece that is neither certified nor splittable refuses the whole triangle.
+// An undecided root reports its own bound, a refused sub-piece +inf.
 double ZeroSetBandAdmission::split_distance(const Point& a, const Point& b, const Point& c,
                                             const std::array<VertexEvidence, 3>& evidence,
-                                            int depth, double slack) const {
-  const double piece = piece_distance(a, b, c, evidence);
-  const double bound =
-      std::isfinite(piece) ? next_up(piece + next_up(depth * slack)) : kInfinity;
-  if (bound <= tolerance_ || piece_refuted(a, b, c)) return bound;
+                                            double slack) const {
+  struct Piece {
+    Point a, b, c;
+    std::array<VertexEvidence, 3> evidence;
+    int depth;
+  };
   const auto middle = [](const Point& p, const Point& q) {
     return Point{0.5 * (p[0] + q[0]), 0.5 * (p[1] + q[1]), 0.5 * (p[2] + q[2])};
   };
-  const Point ab = middle(a, b), bc = middle(b, c), ca = middle(c, a);
-  if (ab == a || ab == b || bc == b || bc == c || ca == c || ca == a) return kInfinity;
-  const VertexEvidence eab = evaluate(ab), ebc = evaluate(bc), eca = evaluate(ca);
+  std::vector<Piece> stack{{a, b, c, evidence, 0}};
   double worst = 0;
-  for (const auto& [p, q, r, ep, eq, er] :
-       {std::tuple{a, ab, ca, evidence[0], eab, eca}, std::tuple{ab, b, bc, eab, evidence[1], ebc},
-        std::tuple{ca, bc, c, eca, ebc, evidence[2]}, std::tuple{bc, ca, ab, ebc, eca, eab}}) {
-    worst = std::max(worst, split_distance(p, q, r, {ep, eq, er}, depth + 1, slack));
-    if (!(worst <= tolerance_)) return kInfinity;
+  while (!stack.empty()) {
+    const Piece piece = stack.back();
+    stack.pop_back();
+    const double own = piece_distance(piece.a, piece.b, piece.c, piece.evidence);
+    const double bound =
+        std::isfinite(own) ? next_up(own + next_up(piece.depth * slack)) : kInfinity;
+    if (bound <= tolerance_) {
+      worst = std::max(worst, bound);
+      continue;
+    }
+    if (piece_refuted(piece.a, piece.b, piece.c)) return piece.depth == 0 ? bound : kInfinity;
+    const Point ab = middle(piece.a, piece.b), bc = middle(piece.b, piece.c),
+                ca = middle(piece.c, piece.a);
+    if (ab == piece.a || ab == piece.b || bc == piece.b || bc == piece.c || ca == piece.c ||
+        ca == piece.a)
+      return kInfinity;
+    double extent = 0;
+    for (int d = 0; d < 3; ++d) {
+      extent = std::max({extent, std::fabs(piece.a[d] - piece.b[d]),
+                         std::fabs(piece.b[d] - piece.c[d]), std::fabs(piece.c[d] - piece.a[d])});
+    }
+    if (extent <= slack) return kInfinity;
+    const VertexEvidence eab = evaluate(ab), ebc = evaluate(bc), eca = evaluate(ca);
+    const auto& e = piece.evidence;
+    const int depth = piece.depth + 1;
+    // Pushed in reverse so the first sub-piece is decided first.
+    stack.push_back({bc, ca, ab, {ebc, eca, eab}, depth});
+    stack.push_back({ca, bc, piece.c, {eca, ebc, e[2]}, depth});
+    stack.push_back({ab, piece.b, bc, {eab, e[1], ebc}, depth});
+    stack.push_back({piece.a, ab, ca, {e[0], eab, eca}, depth});
   }
   return worst;
 }

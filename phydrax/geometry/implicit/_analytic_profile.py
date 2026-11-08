@@ -25,8 +25,11 @@ from .._certificate import SignReliability, ZeroSetAccuracy
 from .._contracts import CompiledGeometry
 from .._interval_enclosure import (
     interval_add,
+    interval_center,
+    interval_cos,
     interval_divide,
     interval_multiply,
+    interval_sin,
     interval_sqrt,
     interval_square,
     IntervalExtensionError,
@@ -99,6 +102,20 @@ def _evaluate_interval_boxes(
     return np.concatenate(lower_parts, axis=0), np.concatenate(upper_parts, axis=0)
 
 
+def _decided_trigonometric(angles: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+    """Cosine and sine of binary64 angles at their rigorous enclosure centers.
+
+    The centers lie within their enclosures' few-ulp width of the exact values
+    and are the same on every platform, unlike a platform libm evaluation.
+    """
+    values = np.asarray(angles, dtype=np.float64)
+    return (
+        interval_center(interval_cos((values, values))),
+        interval_center(interval_sin((values, values))),
+    )
+
+
+
 def _sphere_cube_cover(
     center: np.ndarray,
     radius: float,
@@ -127,8 +144,9 @@ def _sphere_cube_cover(
     second_direction = interval_multiply(second_interval, inverse_norm)
     first_center = first_lower + 0.5 * (first_upper - first_lower)
     second_center = second_lower + 0.5 * (second_upper - second_lower)
-    center_norm = np.hypot(
-        np.hypot(np.ones_like(first_center), first_center), second_center
+    # Correctly rounded IEEE operations only: the same sample on every platform.
+    center_norm = np.sqrt(
+        1.0 + first_center * first_center + second_center * second_center
     )
     normalized_first = first_center / center_norm
     normalized_second = second_center / center_norm
@@ -999,12 +1017,14 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
             first = first_edges[:-1] + 0.5 * np.diff(first_edges)
             second = second_edges[:-1] + 0.5 * np.diff(second_edges)
             first_grid, second_grid = np.meshgrid(first, second, indexing="ij")
-            radial = self.major_radius + self.radius * np.cos(second_grid)
+            first_cosine, first_sine = _decided_trigonometric(first_grid)
+            second_cosine, second_sine = _decided_trigonometric(second_grid)
+            radial = self.major_radius + self.radius * second_cosine
             points = np.stack(
                 (
-                    self.center[0] + radial * np.cos(first_grid),
-                    self.center[1] + radial * np.sin(first_grid),
-                    self.center[2] + self.radius * np.sin(second_grid),
+                    self.center[0] + radial * first_cosine,
+                    self.center[1] + radial * first_sine,
+                    self.center[2] + self.radius * second_sine,
                 ),
                 axis=-1,
             ).reshape((-1, 3))

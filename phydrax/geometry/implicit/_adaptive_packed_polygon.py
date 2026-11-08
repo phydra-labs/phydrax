@@ -373,6 +373,7 @@ def polygonize(
     # Imports are deferred because the owning discovery module calls this function.
     from ._adaptive_discovery import (
         _Cell,
+        _classify_constant_sign_cells,
         _CORNER_OFFSETS,
         _CUBE_EDGES,
         _CUBE_FACES,
@@ -381,9 +382,7 @@ def polygonize(
         _faces_exclude_zero,
         _grid_coordinate,
         _norm_upper_rows,
-        _prove_constant_signs,
         _root_on_edges,
-        _tangency_faces,
         _TETRAHEDRA,
         _triangulate_cell_band,
         AdaptiveImplicitBoxIssue as Issue,
@@ -476,8 +475,13 @@ def polygonize(
     point_signs[point_upper < 0] = -1
 
     cell_issue = np.zeros(count, dtype=np.int64)
-    # Band cells proved free of the zero set: no contour, no issue.
+    # Band cells with no contour and no issue: proved free of the zero set, or
+    # a tangency resolved on its cell group (rows of ``resolution_rows``, with
+    # a witness root inside the cell).
     empty = np.zeros(count, dtype=np.bool_)
+    resolution_rows: list[np.ndarray] = []
+    resolution_points: list[np.ndarray] = []
+    resolution_errors: list[np.ndarray] = []
     status = 0
     # Classify cells before collecting any crossing edge, as in the original.
     for start in range(0, count, _CHUNK):
@@ -485,41 +489,32 @@ def polygonize(
         signs = point_signs[cell_corner_rows[start:stop]]
         singular = np.any(signs == 0, axis=1)
         no_crossing = ~singular & ~(np.any(signs < 0, axis=1) & np.any(signs > 0, axis=1))
-        gradient = np.any(
-            (leaves.gradient_lower[mesh_rows[start:stop]] > 0)
-            | (leaves.gradient_upper[mesh_rows[start:stop]] < 0),
-            axis=1,
-        )
         cell_issue[start:stop][singular] = int(Issue.SINGULAR)
-        cell_issue[start:stop][no_crossing & gradient] = int(Issue.EDGE)
-        cell_issue[start:stop][no_crossing & ~gradient] = int(Issue.SINGULAR)
         candidates = np.flatnonzero(no_crossing)
         if len(candidates):
             leaf_rows = mesh_rows[start + candidates]
-            proved = _prove_constant_signs(
+            issues, resolutions, points, errors = _classify_constant_sign_cells(
                 bounds,
+                domain,
+                target_level,
+                cell_indices[start + candidates, 1:],
                 cell_boxes[start + candidates, 0],
                 cell_boxes[start + candidates, 1],
                 signs[candidates, 0],
                 leaves.gradient_lower[leaf_rows],
                 leaves.gradient_upper[leaf_rows],
+                policy.root_tolerance,
+                resolve=not periodic and clipped is None,
             )
-            empty[start + candidates[proved]] = True
-            cell_issue[start + candidates[proved]] = 0
-            edge = ~proved & gradient[candidates]
-            if np.any(edge):
-                tangent = np.any(
-                    _tangency_faces(
-                        bounds,
-                        cell_boxes[start + candidates[edge], 0],
-                        cell_boxes[start + candidates[edge], 1],
-                        signs[candidates[edge], 0],
-                        leaves.gradient_lower[leaf_rows[edge]],
-                        leaves.gradient_upper[leaf_rows[edge]],
-                    ),
-                    axis=1,
+            cell_issue[start + candidates] = issues
+            empty[start + candidates[issues == 0]] = True
+            resolved = np.flatnonzero(resolutions[:, -1] >= 0)
+            if len(resolved):
+                resolution_rows.append(
+                    np.column_stack((start + candidates[resolved], resolutions[resolved]))
                 )
-                cell_issue[start + candidates[edge][tangent]] = int(Issue.TANGENCY)
+                resolution_points.append(points[resolved])
+                resolution_errors.append(errors[resolved])
     unresolved_faces = None if clipped is None else clipped.unresolved_face_keys()
     for row in range(count):
         if periodic or cell_issue[row] or empty[row]:
@@ -900,7 +895,14 @@ def polygonize(
     leaves._release_auxiliary()
     del surface_rows, surface_issue, mesh_mask, mesh_surface_rows, unresolved_mask
     # All mesh cells are at one level, so sorting their indices gives legacy key order.
+    tangency_resolutions = (
+        np.concatenate(resolution_rows)
+        if resolution_rows
+        else np.empty((0, 8), dtype=np.int64)
+    )
     witness_cells = np.flatnonzero(witness_root >= 0)
+    if len(tangency_resolutions):
+        witness_cells = np.union1d(witness_cells, tangency_resolutions[:, 0])
     if len(witness_cells):
         witness_cells = witness_cells[np.lexsort(cell_indices[witness_cells, 1:].T[::-1])]
     # The full inverse corner map is needed during contouring, but retaining it
@@ -951,8 +953,21 @@ def polygonize(
                 status |= int(Status.DEGENERATE_EXTRACTION)
             del vertex_array
     witness_boxes = cell_boxes[witness_cells]
-    witness_values = root_points[witness_root[witness_cells]]
-    witness_errors = root_errors[witness_root[witness_cells]]
+    if len(tangency_resolutions):
+        # A resolved tangency cell has no crossing edge; its witness is the
+        # root found inside it during classification.
+        rooted = witness_root[witness_cells]
+        has_root = rooted >= 0
+        hugged = np.searchsorted(tangency_resolutions[:, 0], witness_cells[~has_root])
+        witness_values = np.empty((len(witness_cells), 3), dtype=np.float64)
+        witness_errors = np.empty(len(witness_cells), dtype=np.float64)
+        witness_values[has_root] = root_points[rooted[has_root]]
+        witness_errors[has_root] = root_errors[rooted[has_root]]
+        witness_values[~has_root] = np.concatenate(resolution_points)[hugged]
+        witness_errors[~has_root] = np.concatenate(resolution_errors)[hugged]
+    else:
+        witness_values = root_points[witness_root[witness_cells]]
+        witness_errors = root_errors[witness_root[witness_cells]]
     del witness_root, witness_cells
     triangle_root_rows = vertex_roots[face_array]
     del vertex_roots, face_array
@@ -991,6 +1006,7 @@ def polygonize(
         root_issues=root_issues,
         root_endpoint_value_lower=point_lower[pairs],
         root_endpoint_value_upper=point_upper[pairs],
+        tangency_resolutions=tangency_resolutions,
         triangle_cell_rows=triangle_cell_array,
         triangle_root_edge_rows=triangle_root_rows,
     )

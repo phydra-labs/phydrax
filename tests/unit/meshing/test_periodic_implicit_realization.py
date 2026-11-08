@@ -202,6 +202,28 @@ def test_leaving_the_fixed_topology_window_is_an_event() -> None:
     ):
         swept.require_sensitivities()
     assert bool(jnp.isnan(jax.grad(fraction)(0.8)))
+
+    def realized(value: ArrayLike) -> tuple[Array, Array, Array]:
+        realization = plan.realize(_level_state(plan, value))
+        return (
+            realization.volume_fraction,
+            realization.representative_coordinates,
+            # Independent of the level: its tangents are constants.
+            realization.lattice_vectors,
+        )
+
+    # Every order and composition is poisoned, including outputs whose inner
+    # tangent is constant in the level.
+    level = jnp.asarray(0.8)
+    for nested in (
+        jax.jacfwd(jax.jacfwd(realized)),
+        jax.jacrev(jax.jacfwd(realized)),
+        jax.jacfwd(jax.jacrev(realized)),
+        jax.jacrev(jax.jacrev(realized)),
+        jax.jacfwd(jax.jacfwd(jax.jacfwd(realized))),
+    ):
+        for leaf in jax.tree.leaves(nested(level)):
+            assert bool(jnp.all(jnp.isnan(leaf)))
     # Past the certified critical-value enclosure of the maximum F = 1.
     past = plan.realize(_level_state(plan, 0.9995))
     assert int(past.status) & PeriodicImplicitRealizationStatus.CRITICAL_GAP_EXIT
@@ -366,6 +388,29 @@ def test_schwarz_p_higher_level_derivatives_follow_the_normal_gauge_flow() -> No
             if function is coordinates and order == 2:
                 # The flow's curvature term moves the vertices at second order.
                 assert float(np.max(np.abs(derivative))) > 1.0e-2
+
+
+def test_schwarz_p_conductivity_second_derivative_follows_the_normal_gauge_flow() -> None:
+    source, plan = _schwarz_p_plan()
+    _, volume = _schwarz_p_volume()
+    conduction = PeriodicCellProblem(volume.mesh, physics="conductivity")
+
+    def conductivity(level: ArrayLike) -> Array:
+        realization = plan.realize(_level_state(plan, level))
+        return conduction.solve_realization(1.0, realization).effective_tensor
+
+    second = np.asarray(_nested_jacfwd(conductivity, 2)(0.0))
+    # Rounding as in the first-order check: the solve's audited energy and
+    # symmetry defects bound it relative to the tensor.
+    difference, bound = _central_difference_bound(
+        _nested_jacfwd(conductivity, 1),
+        _HIGHER_ORDER_STEP,
+        second,
+        rounding=max(1.0e-12, plan.space.cell_count * float(np.finfo(np.float64).eps)),
+        gauge=_normal_gauge_offset(source, plan),
+    )
+    assert float(np.max(np.abs(second - difference))) <= bound
+    assert float(np.max(np.abs(second))) > 0.0
 
 
 def test_schwarz_p_quotient_mesh_homogenizes_and_differentiates() -> None:

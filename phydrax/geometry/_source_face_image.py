@@ -10,6 +10,7 @@ from fractions import Fraction
 
 import numpy as np
 
+from .._live_proofs import live_content_fingerprint, LiveProofLedger
 from ..discretization._cell_geometry import CellGeometrySpec, ScalarCoordinateElement
 from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._cell_mesh import CellBlock, CellMesh
@@ -30,6 +31,11 @@ type _Point2 = tuple[Fraction, Fraction]
 type _Triangle2 = tuple[_Point2, _Point2, _Point2]
 
 
+# Face-image proofs bound to the exact live mesh, map, source and witness that
+# earned them (see validate_source_face_image).
+_PROVEN_FACE_IMAGES: LiveProofLedger[tuple[int, ...]] = LiveProofLedger()
+
+
 def validate_source_face_image(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -45,7 +51,35 @@ def validate_source_face_image(
     polygon; each image triangle is independently partitioned both on that
     face and on its occurrence-qualified source trim. No affine inverse of a
     bilinear face is constructed or asserted.
+
+    The proof is made once per exact live ``(mesh, geometry, source,
+    witness)``: a later call on the same unchanged objects reuses its patches
+    after the source's own currentness check. ``preparation`` is only a cache
+    of the source domain and does not change the outcome. Any copy, rebuild or
+    changed content reproves in full.
     """
+    operands = (mesh, geometry, source, witness)
+    proven = _PROVEN_FACE_IMAGES.find(operands)
+    if proven is not None:
+        source.require_current()
+        return proven
+    fingerprint = live_content_fingerprint(operands)
+    patches = _prove_source_face_image(
+        mesh, geometry, source, witness, preparation=preparation
+    )
+    _PROVEN_FACE_IMAGES.record(operands, fingerprint, patches)
+    return patches
+
+
+def _prove_source_face_image(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    source: MeshingDomainBoundarySource,
+    witness: SourceBoundaryFaceImageWitness,
+    /,
+    *,
+    preparation: SourcePreparation | None,
+) -> tuple[int, ...]:
     from ._source_fidelity import (
         _curved_trim_lens_caps,
         _exact_affine_target_charts,

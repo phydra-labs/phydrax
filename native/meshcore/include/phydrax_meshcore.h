@@ -1585,6 +1585,14 @@ enum phx_mc_plc_entity_kind {
   PHX_MC_PLC_ENTITY_SEED = 6
 };
 #define PHX_MC_PLC3D_SIZES 6
+#define PHX_MC_PLC3D_SEARCH_NODES_DEFAULT (INT64_C(1) << 24)
+#define PHX_MC_PLC3D_SEARCH_BYTES_DEFAULT (INT64_C(1) << 30)
+#define PHX_MC_PLC3D_SEARCH_VALUES 23
+/* Routes of phx_mc_plc3d_suppression_routes (column 3). */
+#define PHX_MC_PLC3D_ROUTE_SEARCH 1
+#define PHX_MC_PLC3D_ROUTE_PEEL 2
+#define PHX_MC_PLC3D_ROUTE_PEEL_AFTER_INCONCLUSIVE 3
+#define PHX_MC_PLC3D_ROUTE_VALUES 7
 typedef struct phx_mc_plc3d_result phx_mc_plc3d_result;
 typedef struct phx_mc_plc3d_prepare_source_request {
   int64_t point_count;
@@ -1612,6 +1620,21 @@ typedef struct phx_mc_plc3d_prepare_source_request {
    * refuses with SOURCE_DEVIATION naming the vertex. */
   const double* facet_planes;
   const double* facet_plane_tolerances;
+  /* Declared budget of the exhaustive Steiner-free suppression search of
+   * recovery (deciding whether a cavity has a Steiner-free fill is
+   * NP-complete, so the search has no structural bound): the states the
+   * searches of one recovery may expand in total, and the bytes one search
+   * may hold (40 per expanded state, 4 per memo table slot, 64 per ranked
+   * open side plus 4 per apex). Part of the request; 0 selects the
+   * documented defaults PHX_MC_PLC3D_SEARCH_NODES_DEFAULT and
+   * PHX_MC_PLC3D_SEARCH_BYTES_DEFAULT; negative is INVALID_ARGUMENT. An
+   * over-budget search is inconclusive: recovery goes on to relocation by
+   * peeling, and a point that also fails it refuses UNRESOLVED /
+   * STEINER_SUPPRESSION naming the point, with the search evidence
+   * (phx_mc_plc3d_suppression_search, phx_mc_plc3d_suppression_routes).
+   * Source preparation runs no search and ignores them. */
+  int64_t search_node_budget;
+  int64_t search_byte_budget;
   phx_mc_plc3d_result** result;
 } phx_mc_plc3d_prepare_source_request;
 PHX_MC_API int32_t phx_mc_plc3d_prepare_source(
@@ -1652,14 +1675,30 @@ PHX_MC_API int32_t phx_mc_plc3d_failure(
     const phx_mc_plc3d_result* result, int32_t* reason, int32_t* first_kind,
     int64_t* first, int32_t* second_kind, int64_t* second, double* certified_deviation,
     double* declared_bound);
-// Steiner-suppression search evidence: values[0..11] = wedges searched,
+// Steiner-suppression search evidence: values[0..22] = wedges searched,
 // wedges filled, states expanded, most states in one wedge, largest searched
 // wedge (cells), wedges filled after merging with neighbouring cells, most
 // merged layers, wedges whose region was exhausted unfilled, largest
-// exhausted region (cells), constrained Delaunay wraps run, cells they laid,
-// most cells laid by one wrap. Available after a refusal too.
+// exhausted region (cells), constrained Delaunay wraps run (relocation peels
+// included), cells they laid, most cells laid by one wrap; the declared
+// state and byte budgets, the most bytes one search held, its deepest state
+// (cells placed); 1 when a search went over budget (it is inconclusive and
+// recovery goes on), and the first such search's states, bytes and depth
+// when it stopped; the inconclusive searches, the points removed by
+// relocation by peeling, and those of them that had an inconclusive search.
+// Available after a refusal too.
 PHX_MC_API int32_t phx_mc_plc3d_suppression_search(
     const phx_mc_plc3d_result* result, int64_t* values);
+// The route of every suppressed point removed by the exhaustive search or
+// by relocation by peeling, one row of PHX_MC_PLC3D_ROUTE_VALUES per wedge
+// so filled, in removal order: the point (work id, as refusals name it),
+// its witness stratum and carrier entity (as phx_mc_plc3d_source_witnesses),
+// the route (PHX_MC_PLC3D_ROUTE_*), and the search's states, bytes and depth
+// (the filling search; the point's first inconclusive search before
+// peeling; zeros for peeling without one). `count` receives the rows;
+// `rows` (null to query the count) needs capacity for all of them.
+PHX_MC_API int32_t phx_mc_plc3d_suppression_routes(
+    const phx_mc_plc3d_result* result, int64_t capacity, int64_t* count, int64_t* rows);
 PHX_MC_API void phx_mc_plc3d_free(phx_mc_plc3d_result* result);
 
 enum phx_mc_intersection_class {

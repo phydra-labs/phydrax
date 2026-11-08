@@ -33,19 +33,28 @@ def _tet_mesh_corner_permutation_bank(
     if orbit_map.degree != degree:
         raise ValueError("Periodic TetMesh entity-map dimension is inconsistent.")
     arity = degree + 1
-    rows = tuple(
-        np.asarray(orbit_map.corner_permutation_row(row), dtype=np.int32)
-        for row in range(np.asarray(orbit_map.lifted_entity_ids).size)
-    )
-    if not rows or any(
-        row.shape != (arity,)
-        or not np.array_equal(np.sort(row), np.arange(arity, dtype=np.int32))
-        for row in rows
+    offsets = np.asarray(orbit_map.corner_permutation_offsets, dtype=np.int64)
+    values = np.asarray(orbit_map.corner_permutations, dtype=np.int32)
+    count = np.asarray(orbit_map.lifted_entity_ids).size
+    if (
+        count == 0
+        or offsets.shape != (count + 1,)
+        or np.any(np.diff(offsets) != arity)
+        or offsets[0] != 0
+        or values.shape != (count * arity,)
     ):
         raise ValueError(
             "TetMesh periodic maps require one fixed simplex permutation row per lifted entity."
         )
-    return np.ascontiguousarray(np.stack(rows), dtype=np.int32)
+    rows = values.reshape((count, arity))
+    if not np.array_equal(
+        np.sort(rows, axis=1),
+        np.broadcast_to(np.arange(arity, dtype=np.int32), rows.shape),
+    ):
+        raise ValueError(
+            "TetMesh periodic maps require one fixed simplex permutation row per lifted entity."
+        )
+    return np.ascontiguousarray(rows, dtype=np.int32)
 
 
 def tet_mesh_periodic_identity_map(mesh: CellMesh, /) -> TetMeshPeriodicIdentityMap:
@@ -84,6 +93,17 @@ def tet_mesh_periodic_identity_map(mesh: CellMesh, /) -> TetMeshPeriodicIdentity
     )
 
 
+def _quotient_member_rows(
+    lifted_to_quotient: np.ndarray, quotient_count: int, /
+) -> list[np.ndarray]:
+    """Ascending lifted rows of each quotient row, one stable sort for all rows."""
+    order = np.argsort(lifted_to_quotient, kind="stable")
+    bounds = np.searchsorted(
+        lifted_to_quotient[order], np.arange(quotient_count + 1, dtype=np.int64)
+    )
+    return [order[bounds[row] : bounds[row + 1]] for row in range(quotient_count)]
+
+
 def tet_mesh_periodic_state(
     mesh: CellMesh, regions: ArrayLike | None, /
 ) -> TetMeshPeriodicState:
@@ -102,9 +122,23 @@ def tet_mesh_periodic_state(
     vertex_lifted_to_quotient = np.asarray(vertex_map.lifted_to_quotient, dtype=np.int64)
     vertex_windings = np.asarray(vertex_map.winding_shifts, dtype=np.int64)
     vertex_rep_rows = np.asarray(vertex_map.representative_lifted_rows, dtype=np.int64)
+    vertex_member_rows = _quotient_member_rows(
+        vertex_lifted_to_quotient, vertex_quotient_ids.size
+    )
+    # Few distinct windings occur; each exact deck isometry is evaluated once.
+    isometries: dict[tuple[int, ...], np.ndarray] = {}
+
+    def isometry(winding: np.ndarray, /) -> np.ndarray:
+        key = tuple(int(value) for value in winding)
+        matrix = isometries.get(key)
+        if matrix is None:
+            matrix = _representative_to_member(topology, winding)
+            isometries[key] = matrix
+        return matrix.copy()
+
     orbit_members = []
     for quotient_row, quotient_id in enumerate(vertex_quotient_ids):
-        rows = np.flatnonzero(vertex_lifted_to_quotient == quotient_row)
+        rows = vertex_member_rows[quotient_row]
         if rows.size == 0:
             raise ValueError("Every periodic vertex quotient ID must have lifted members.")
         representative_row = int(vertex_rep_rows[quotient_row])
@@ -113,7 +147,7 @@ def tet_mesh_periodic_state(
             TetMeshPeriodicMember(
                 int(vertex_lifted_ids[row]),
                 _winding_3d(vertex_windings[row]),
-                _representative_to_member(topology, vertex_windings[row]),
+                isometry(vertex_windings[row]),
             )
             for row in rows
         )
@@ -151,8 +185,14 @@ def tet_mesh_periodic_state(
     top_entity_vertices = _entity_vertex_rows(mesh)[3]
     vertex_global_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     staged: list[tuple[int, np.ndarray, int, np.ndarray]] = []
+    cell_member_rows = _quotient_member_rows(
+        cell_lifted_to_quotient, cell_quotient_ids.size
+    )
+    cell_corner_offsets = np.asarray(cell_map.corner_permutation_offsets, dtype=np.int64)
+    cell_corners = np.asarray(cell_map.corner_permutations, dtype=np.int32)
+    cell_orientations = np.asarray(cell_map.orientation_signs)
     for quotient_row, quotient_id in enumerate(cell_quotient_ids):
-        members = np.flatnonzero(cell_lifted_to_quotient == quotient_row)
+        members = cell_member_rows[quotient_row]
         if members.size == 0:
             raise ValueError("Every periodic cell quotient ID must have lifted members.")
         representative_row = int(cell_rep_rows[quotient_row])
@@ -161,12 +201,12 @@ def tet_mesh_periodic_state(
         if cell_row is None:
             raise ValueError("Periodic representative cell ID is absent from the lifted mesh.")
         lifted_vertex_rows = np.asarray(top_entity_vertices[cell_row], dtype=np.int64)
-        corner_permutation = np.array(
-            cell_map.corner_permutation_row(representative_row),
-            dtype=np.int64,
-            copy=True,
-        )
-        orientation = int(np.asarray(cell_map.orientation_signs)[representative_row])
+        corner_permutation = cell_corners[
+            int(cell_corner_offsets[representative_row]) : int(
+                cell_corner_offsets[representative_row + 1]
+            )
+        ].astype(np.int64)
+        orientation = int(cell_orientations[representative_row])
         if orientation not in (-1, 1):
             raise ValueError("Periodic quotient cell has an invalid corner orientation.")
         if orientation < 0:
@@ -319,13 +359,19 @@ def tet_mesh_periodic_edit(
     *,
     source_regions: ArrayLike | None = None,
     target_regions: ArrayLike | None = None,
+    source_state: TetMeshPeriodicState | None = None,
+    target_state: TetMeshPeriodicState | None = None,
 ) -> TetMeshPeriodicEdit:
     """Build the periodic delta for one staged tetrahedral topology edit.
 
     ``target`` must be the bound candidate returned by
     :func:`stage_periodic_topology_edit`. Supplied ``operation_members`` are
     checked against exact source winding and target ancestry; omission derives
-    that complete bank from the edit relations.
+    that complete bank from the edit relations. A caller that already holds
+    ``tet_mesh_periodic_state(source, source_regions)`` or
+    ``tet_mesh_periodic_state(target, target_regions)`` passes it as
+    ``source_state``/``target_state`` instead of rebuilding it; each must be
+    bound to its endpoint's mesh and periodic topology.
     """
     _require_periodic_tetra_mesh(source)
     _require_periodic_tetra_mesh(target)
@@ -339,11 +385,22 @@ def tet_mesh_periodic_edit(
         raise ValueError("Periodic edit endpoints must retain the same exact identification.")
     _require_edit_target(source, target, edit)
 
-    source_state = tet_mesh_periodic_state(source, source_regions)
+    for mesh, topology, state in (
+        (source, source_topology, source_state),
+        (target, target_topology, target_state),
+    ):
+        if state is not None and (
+            state.identity_map.source_mesh_id != mesh.mesh_id
+            or state.identity_map.periodic_topology_id != topology.periodic_topology_id
+        ):
+            raise ValueError("A supplied periodic state belongs to another mesh revision.")
+    if source_state is None:
+        source_state = tet_mesh_periodic_state(source, source_regions)
     target_regions = _target_regions_after_edit(
         source, target, edit, source_regions, target_regions
     )
-    target_state = tet_mesh_periodic_state(target, target_regions)
+    if target_state is None:
+        target_state = tet_mesh_periodic_state(target, target_regions)
     expected_members = _periodic_operation_member_records(
         source, target, edit, source_state, target_state
     )

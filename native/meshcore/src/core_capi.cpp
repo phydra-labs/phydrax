@@ -128,6 +128,14 @@ int32_t validate_plc3d_prepare_request(const phx_mc_plc3d_prepare_source_request
   return PHX_MC_OK;
 }
 
+static_assert(phx::mc::kPlcSearchNodeBudget == PHX_MC_PLC3D_SEARCH_NODES_DEFAULT);
+static_assert(phx::mc::kPlcSearchByteBudget == PHX_MC_PLC3D_SEARCH_BYTES_DEFAULT);
+static_assert(sizeof(phx::mc::PlcSuppressionSearch) == PHX_MC_PLC3D_SEARCH_VALUES * sizeof(int64_t));
+static_assert(sizeof(phx::mc::PlcSuppressionRoute) == PHX_MC_PLC3D_ROUTE_VALUES * sizeof(int64_t));
+static_assert(phx::mc::kPlcRouteSearch == PHX_MC_PLC3D_ROUTE_SEARCH &&
+              phx::mc::kPlcRoutePeel == PHX_MC_PLC3D_ROUTE_PEEL &&
+              phx::mc::kPlcRoutePeelAfterInconclusive == PHX_MC_PLC3D_ROUTE_PEEL_AFTER_INCONCLUSIVE);
+
 using PlcBuilder = int32_t (*)(const phx::mc::PlcInput&, phx::mc::PlcRecovery&);
 
 int32_t run_plc3d_request(const phx_mc_plc3d_prepare_source_request* request,
@@ -166,6 +174,13 @@ int32_t run_plc3d_request(const phx_mc_plc3d_prepare_source_request* request,
     input.facet_plane_tolerances = request->facet_plane_tolerances;
     input.affine_metric = affine_metric;
     input.protected_facets = protected_facets;
+    if (request->search_node_budget < 0 || request->search_byte_budget < 0) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    input.search_node_budget = request->search_node_budget == 0
+        ? phx::mc::kPlcSearchNodeBudget : request->search_node_budget;
+    input.search_byte_budget = request->search_byte_budget == 0
+        ? phx::mc::kPlcSearchByteBudget : request->search_byte_budget;
     auto result = std::make_unique<phx_mc_plc3d_result>();
     const int32_t status = builder(input, result->recovery);
     if (status == PHX_MC_OK ||
@@ -758,6 +773,37 @@ int32_t phx_mc_plc3d_suppression_search(const phx_mc_plc3d_result* result, int64
   values[9] = search.wraps;
   values[10] = search.wrap_cells;
   values[11] = search.max_wrap_cells;
+  values[12] = search.node_budget;
+  values[13] = search.byte_budget;
+  values[14] = search.max_bytes;
+  values[15] = search.max_depth;
+  values[16] = search.exceeded;
+  values[17] = search.exceeded_nodes;
+  values[18] = search.exceeded_bytes;
+  values[19] = search.exceeded_depth;
+  values[20] = search.inconclusive;
+  values[21] = search.peeled;
+  values[22] = search.peeled_after_inconclusive;
+  return PHX_MC_OK;
+}
+
+int32_t phx_mc_plc3d_suppression_routes(const phx_mc_plc3d_result* result, int64_t capacity,
+                                        int64_t* count, int64_t* rows) {
+  if (result == nullptr || count == nullptr || capacity < 0) return PHX_MC_INVALID_ARGUMENT;
+  const auto& routes = result->recovery.suppression_routes;
+  *count = static_cast<int64_t>(routes.size());
+  if (rows == nullptr) return PHX_MC_OK;
+  if (capacity < *count) return PHX_MC_INVALID_ARGUMENT;
+  for (std::size_t row = 0; row < routes.size(); ++row) {
+    int64_t* out = rows + PHX_MC_PLC3D_ROUTE_VALUES * row;
+    out[0] = routes[row].point;
+    out[1] = routes[row].stratum;
+    out[2] = routes[row].entity;
+    out[3] = routes[row].route;
+    out[4] = routes[row].states;
+    out[5] = routes[row].bytes;
+    out[6] = routes[row].depth;
+  }
   return PHX_MC_OK;
 }
 

@@ -519,8 +519,10 @@ def test_native_sphere_polygon_matches_legacy_identity_and_replay() -> None:
     # Captured before the packed cutover from the original scalar implementation,
     # then with every triangle (and its root-edge row) cyclically rotated to
     # start at its corner opposite the longest edge; all other arrays and the
-    # cyclic faces are bit-identical to the original capture.
+    # cyclic faces are bit-identical to the original capture. The sphere has no
+    # lattice-face tangency, so its tangency resolution record is empty.
     arrays = dict(candidate.scaffold_arrays)
+    assert arrays.pop("tangency_resolutions").shape == (0, 8)
     arrays.update(
         mesh_faces=np.asarray(candidate.mesh.faces),
         mesh_vertices=np.asarray(candidate.mesh.vertices),

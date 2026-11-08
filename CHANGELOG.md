@@ -199,6 +199,41 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native PLC recovery bounds its exhaustive Steiner-free suppression search
+  (fill existence is NP-complete) by a declared `PlcSearchBudget` (states per
+  recovery, counted bytes per search), a field of the recover request and of
+  `NativeVolumeSchedule.plc_search_budget` (in `schedule_id` when not the
+  default `PLC_SEARCH_BUDGET`). The search's memo of failed states holds 40
+  bytes per expanded state instead of a copy of the closed-side set and
+  expands the same states in the same order, so outputs are bit-identical;
+  recovering the scale-2 torus reconstruction PLC peaks at 130 MB instead of
+  407 MB. Power-of-two rounding of split parameters uses exact `ilogb`/`ldexp`
+  instead of `log2`/`exp2`, which are not correctly rounded on every libm.
+- A suppression search that exhausts its budget is inconclusive rather than
+  final: recovery continues to a polynomial relocation-by-peeling pass and
+  refuses `STEINER_SUPPRESSION` only if that also fails. `PlcSuppressionSearch`
+  reports inconclusive and peeled points, and `PlcSuppressionRoute` records per
+  point whether a search fill or peeling recovered it. Pinched and sliver
+  wedges whose non-representable split point no search fill can remove now
+  recover, so inputs a few ulp apart no longer split between recovery and
+  refusal.
+- Periodic tetrahedral metric adaptation collapses seam vertices: each paired
+  cell-face cap is one planar source facet, and a collapse removes the whole
+  lifted vertex orbit in one step (every copy collapses toward the same quotient
+  vertex and no copy of a removed vertex survives). A survivor whose vertex
+  orbit has a single lifted copy may move; the native mesh checks every
+  surviving copy with exact deck images. On Schwarz P, out-of-range edges drop
+  from 1031 to 642, all with typed reasons; quotient states are built in one
+  sort and reused, so the first pass is about 18× faster. Non-periodic outputs
+  are bit-identical.
+- `phydrax.linalg` supernodal sparse Cholesky factors differentiate at every
+  order. Solve tangents and cotangents reuse the prepared panels; factor-panel
+  and minimum-pivot tangents solve the linearised identity
+  `tril(dL Lᴴ + L dLᴴ) = dA` in one sweep over the stored panels, and higher
+  orders reapply it, so one numeric factorization serves a whole nested
+  derivative (first-order derivatives no longer refactor). Existing
+  first-order outputs are bit-identical. Reverse mode through factor panels or
+  the minimum pivot raises the new `SparseFactorDerivativeError` at trace time.
 - Host interval enclosures of `exp`, `log`, `sin`, `cos`, `tan`, `atan`,
   `tanh`, `asin` and `acos` come from rigorous native elementary kernels
   without libm on both interval routes, so they are identical on every
@@ -398,6 +433,50 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- `ImplicitPointProjectionPlan` second and higher derivatives were silently
+  zero because the normal-gauge JVP returned a stop-gradient primal. They are
+  now total derivatives along the normal-gauge level-set flow
+  dx/dθ = −F_θ ∇F/|∇F|² for nested forward, reverse and mixed modes, checked
+  against exact sphere and rotating-plane flows; first-order results are
+  bit-identical.
+- Adaptive implicit discovery resolves lattice-face tangencies ("hugs") on the
+  lattice where they occur: a group of cells around the touched face with a
+  strict gradient component, proved boundary arcs and contours forming one disk
+  proves that the existing contours span the zero set there, and the tangency
+  cell is resolved with a witness inside it. Resolutions are recorded in
+  `AdaptiveImplicitScaffold.tangency_resolutions` and checked by polygon and
+  history replay; only tangencies no group proves still re-anchor or remain
+  unresolved events.
+- Zero-set band admission no longer overflows the native stack: piece
+  splitting uses an explicit work stack and refuses at binary64 resolution
+  relative to the triangle's scale.
+- High-order curving relaxation repairs locally: round `k` frees the nodes of
+  the cells the latest certified candidate does not prove valid plus `k` rings
+  of node-sharing cells, averages the distortion over the cells sharing a freed
+  node, and solves that star with the native `NewtonTrustRegion` on nodal
+  displacements in units of the mean straight edge length, so the trust radius
+  and step tolerances do not depend on the model's length unit. Every other
+  node keeps its projected position and no round runs once every cell is
+  proved valid. Curving the external-combined STEP model, whose projection
+  inverted a cap tetrahedron, now certifies in the first round.
+- Layer source evidence carries over through complete mixed coarsening: a
+  coarse wall chart is accepted when its coarsened child charts exactly
+  partition it (contained, same orientation, no overlap, areas summing exactly)
+  and agree with its affine source parameters, and the children share one layer
+  column and source-wall identity. Coarsening previously failed with "no unique
+  exact source-face/reference-map ancestor".
+- Certification accepts layer wall faces of the authored wall association kind
+  (B-Rep or surface), so layer/core meshing of a non-B-Rep surface domain no
+  longer fails `association_source_witness: face_kind`.
+- Endpoint replay in layer/core association transfer is reused: scoped fidelity
+  inputs bind through their live query and witness and their exact tolerance.
+  Previously nothing was recorded, so every validation replayed every endpoint.
+- Certified source-fidelity bounds hold on every platform without libm or
+  LAPACK: angles, cosines and tangent conditioners in source fidelity, domain
+  and curve boundaries, analytic implicit profiles and implicit source charts
+  are decided by the rigorous native elementary kernels or correctly rounded
+  IEEE operations, including inputs one ulp around the cardinal angles where a
+  libm result's last bit decided a bound.
 - Certified geometric bounds use per-operation rounding and exact predicates
   throughout: B-Rep bounds and normal ranges (including conic-root revolution
   poles); exact candidate distances in B-Rep projection instead of a fixed

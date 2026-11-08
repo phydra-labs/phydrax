@@ -26073,6 +26073,7 @@
       "phydrax.linalg.SparseAssemblyPlan",
       "phydrax.linalg.SparseAssemblyPolicy",
       "phydrax.linalg.SparseCholesky",
+      "phydrax.linalg.SparseFactorDerivativeError",
       "phydrax.linalg.SparseFactorizationDiagnostics",
       "phydrax.linalg.SparseFactorizationKind",
       "phydrax.linalg.SparseFactorizationPlan",

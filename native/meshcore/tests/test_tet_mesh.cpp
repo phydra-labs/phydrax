@@ -1247,6 +1247,16 @@ void persistent_periodic_state_and_atomic_relocation() {
   constexpr char collapsed_source_mesh_id[] = "mesh:collapsed";
   target_identity_map.source_mesh_id = collapsed_source_mesh_id;
   target_identity_map.source_mesh_id_length = sizeof(collapsed_source_mesh_id) - 1;
+  // A moved survivor is admitted on a periodic lift like any changed vertex
+  // and checked exactly at its new carrier: moving 101 off its source facets
+  // is invalid geometry, not a refused periodic topology edit.
+  constexpr std::array<double, 3> off_facet_survivor{0x1p-4, 0x1p-4, 0x1p-4};
+  phx_mc_tet_mesh_edit_request moved_survivor = periodic_collapse;
+  moved_survivor.changed_vertex_count = 1;
+  moved_survivor.changed_vertex_ids = collapse_survivor_id.data();
+  moved_survivor.changed_vertex_points = off_facet_survivor.data();
+  PHX_CHECK(phx_mc_tet_mesh_apply_edit(mesh, &moved_survivor, &edit_status) == PHX_MC_OK);
+  PHX_CHECK(edit_status == PHX_MC_TET_EDIT_INVALID_GEOMETRY);
   PHX_CHECK(phx_mc_tet_mesh_apply_edit(mesh, &periodic_collapse, &edit_status) == PHX_MC_OK);
   PHX_CHECK(edit_status == PHX_MC_TET_EDIT_APPLIED);
   std::array<int64_t, 6> rebound_lengths{};

@@ -55,6 +55,16 @@ struct IdTupleHash {
   }
 };
 
+// 2^floor(log2 x) and 2^ceil(log2 x) of a finite x > 0, from its exact
+// binary exponent. std::log2 is not correctly rounded in every platform's
+// libm, so the floor or ceiling of its result could differ across platforms
+// next to a power of two.
+double power_of_two_floor(double x) { return std::ldexp(1.0, std::ilogb(x)); }
+double power_of_two_ceil(double x) {
+  const double below = power_of_two_floor(x);
+  return below == x ? x : 2.0 * below;
+}
+
 bool legal_contact(int8_t kind) {
   return kind == PHX_MC_DISJOINT || kind == PHX_MC_SHARED_VERTEX ||
          kind == PHX_MC_SHARED_EDGE;
@@ -1257,6 +1267,8 @@ class PlcRecoveryBuilder {
       : input_(input), candidate_(source),
         visible_edges_(source.plc_edges.size() / 2 -
                        static_cast<std::size_t>(source.hidden_plc_edges)) {
+    candidate_.suppression_search.node_budget = input_.search_node_budget;
+    candidate_.suppression_search.byte_budget = input_.search_byte_budget;
     if (input_.facet_planes == nullptr) return;
     plane_normals_.resize(static_cast<std::size_t>(input_.facet_count));
     for (std::size_t facet = 0; facet < plane_normals_.size(); ++facet) {
@@ -1325,7 +1337,9 @@ class PlcRecoveryBuilder {
     if (input.points.size() % 3 != 0 || input.witness_strata.size() != witnesses ||
         input.witness_corners.size() != 9 * witnesses ||
         input.witness_parameters.size() != 2 * witnesses ||
-        input.walls.size() != input.wall_marks.size() || input.placeholder >= 0) {
+        input.walls.size() != input.wall_marks.size() || input.placeholder >= 0 ||
+        input.search_node_budget < 0 || input.search_byte_budget < 0 ||
+        (!input.relocation.empty() && input.relocation.size() != 7)) {
       return PHX_MC_INVALID_INPUT;
     }
     const std::size_t point_count = input.points.size() / 3;
@@ -1364,10 +1378,32 @@ class PlcRecoveryBuilder {
     std::vector<SuppressionCell> filled;
     result.delaunay =
         builder.wrap_cavity(boundary, input.placeholder, {}, false, filled, result.nodes);
-    result.filled = result.delaunay ||
-        builder.wrap_cavity(boundary, input.placeholder, {}, true, filled, result.nodes);
+    result.filled = result.delaunay;
+    if (!result.delaunay) {
+      SearchAccount account{input.search_node_budget, input.search_byte_budget};
+      result.filled = builder.wrap_cavity(boundary, input.placeholder, {}, true, filled,
+                                          result.nodes, nullptr, nullptr, &account);
+      result.bytes = account.bytes;
+      result.depth = account.depth;
+      result.exceeded = account.exceeded;
+    }
     if (result.filled) {
       for (const SuppressionCell& cell : filled) result.cells.push_back(cell.v);
+    } else if (!input.relocation.empty() && !result.exceeded) {
+      const double* ray = input.relocation.data();
+      const std::array<double, 3> direction{ray[3], ray[4], ray[5]};
+      const double norm = std::sqrt(geometry::dot(direction.data(), direction.data()));
+      const auto apex = static_cast<int32_t>(point_count);
+      bool centered = false;
+      result.relocated = builder.relocate_by_peeling(boundary, input.placeholder, apex, ray,
+                                                     direction, norm, ray[6], nullptr, filled,
+                                                     result.center, centered);
+      if (result.relocated) {
+        for (const SuppressionCell& cell : filled) {
+          if (std::find(cell.v.begin(), cell.v.end(), apex) == cell.v.end()) ++result.peeled;
+          result.cells.push_back(cell.v);
+        }
+      }
     }
     return PHX_MC_OK;
   }
@@ -2026,7 +2062,7 @@ class PlcRecoveryBuilder {
       }
       double reach = 0.0;
       for (int axis = 0; axis < 3; ++axis) reach = std::max(reach, upper[axis] - lower[axis]);
-      reach = std::exp2(std::ceil(std::log2(std::max(reach, 0x1p-60))) + 2.0);
+      reach = 4.0 * power_of_two_ceil(std::max(reach, 0x1p-60));
       for (int32_t corner = 0; corner < corner_count_; ++corner) {
         for (int axis = 0; axis < 3; ++axis) {
           const double center = lower[axis] + 0.5 * (upper[axis] - lower[axis]);
@@ -2666,7 +2702,7 @@ class PlcRecoveryBuilder {
     const bool second_apex = second.vertex == source_second &&
                              shell_apex_[static_cast<std::size_t>(source_second)] != 0;
     if (first_apex == second_apex || !(length > 0.0)) return first.parameter + 0.5 * span;
-    const double shell = std::exp2(std::floor(std::log2(2.0 * span * length / 3.0)));
+    const double shell = power_of_two_floor(2.0 * span * length / 3.0);
     return first_apex ? first.parameter + shell / length : second.parameter - shell / length;
   }
 
@@ -4608,9 +4644,13 @@ class PlcRecoveryBuilder {
   // ones they refined), in passes: a point none of whose replacements
   // applies is retried after the others have been removed. A pass that
   // removes nothing is repeated once with grown wedge cavities (see
-  // remove_witnessed_vertex), and a grown pass that removes nothing refuses
-  // its first remaining point. Every other pass removes at least one point,
-  // so there are at most twice as many passes as points.
+  // remove_witnessed_vertex), a grown pass that removes nothing once as a
+  // pinched pass (relocation by peeling), and a pinched pass that removes
+  // nothing refuses its first remaining point. Every other pass removes at
+  // least one point, so there are at most three times as many passes as
+  // points. The grown and pinched passes run only where every pass before
+  // them failed, so recoveries that never need them are unchanged.
+  enum class SuppressionPass { kOrdinary, kGrown, kPinched };
   int32_t suppress_witnessed_vertices() {
     const int32_t count = static_cast<int32_t>(candidate_.points.size() / 3);
     suppressed_.assign(static_cast<std::size_t>(count), 0);
@@ -4622,21 +4662,24 @@ class PlcRecoveryBuilder {
       }
       pending.push_back(vertex);
     }
-    bool grow = false;
+    SuppressionPass pass = SuppressionPass::kOrdinary;
     while (!pending.empty()) {
       std::vector<int32_t> remaining;
       for (int32_t vertex : pending) {
         bool removed = false;
-        const int32_t status = suppress_vertex(vertex, grow, removed);
+        const int32_t status = suppress_vertex(vertex, pass, removed);
         if (status != PHX_MC_OK) return status;
         if (!removed) remaining.push_back(vertex);
       }
       if (remaining.size() == pending.size()) {
-        if (grow) return refuse_suppression(remaining.front());
-        grow = true;
+        if (pass == SuppressionPass::kPinched) {
+          return refuse_suppression(remaining.front(), inconclusive_.contains(remaining.front()));
+        }
+        pass = pass == SuppressionPass::kOrdinary ? SuppressionPass::kGrown
+                                                  : SuppressionPass::kPinched;
         continue;
       }
-      grow = false;
+      pass = SuppressionPass::kOrdinary;
       pending = std::move(remaining);
     }
     return PHX_MC_OK;
@@ -4851,6 +4894,18 @@ class PlcRecoveryBuilder {
     }
   };
 
+  // The declared budget of the exhaustive search (PlcInput) and what one
+  // search used: the states the recovery may still expand, the bytes one
+  // search may hold, the bytes the last search held (at most, at its end),
+  // its deepest state (cells placed), and whether it stopped over budget.
+  struct SearchAccount {
+    int64_t nodes_left = 0;
+    int64_t byte_limit = 0;
+    int64_t bytes = 0;
+    int64_t depth = 0;
+    bool exceeded = false;
+  };
+
   // Steiner-free fill of a closed cavity. Each boundary cell carries
   // `placeholder` in one slot: the face opposite it is a boundary face (a
   // wall) and a cavity vertex x lies on its inner side exactly when the cell
@@ -4890,13 +4945,18 @@ class PlcRecoveryBuilder {
   // tetrahedralization is NP-complete (Ruppert and Seidel, "On the
   // difficulty of triangulating three-dimensional nonconvex polyhedra",
   // DCG 7, 1992), so no polynomial method is complete; the caller reaches
-  // this search only after its polynomial fills have failed. `nodes`
-  // receives the number of states expanded.
+  // this search only after its polynomial fills have failed, and bounds it
+  // by the declared budget in `account` (required with `exhaustive`): over
+  // it the search fails with `account->exceeded` set. `nodes` receives the
+  // number of states expanded. `center` selects the relocation peel (see
+  // below).
   bool wrap_cavity(const std::vector<SuppressionCell>& boundary, int32_t placeholder,
                    const std::vector<int32_t>& interior, bool exhaustive,
                    std::vector<SuppressionCell>& filled, std::size_t& nodes,
                    std::vector<SuppressionCell>* remainder = nullptr,
-                   SuppressionMemo::Lineage* lineage = nullptr) const {
+                   SuppressionMemo::Lineage* lineage = nullptr,
+                   SearchAccount* account = nullptr,
+                   const ExactPointRef* center = nullptr) const {
     struct Open {
       std::array<int32_t, 4> cell;
       int slot;
@@ -5088,6 +5148,8 @@ class PlcRecoveryBuilder {
     // for every inner vertex and O(candidates^2) insphere tests. Both depend
     // only on the oriented side and are kept per fill.
     std::map<FacetKey, std::vector<int32_t>> apices;
+    // Counted bytes of the ranked apex lists (see the exhaustive search).
+    int64_t apex_bytes = 0;
     const auto apices_of = [&](const FacetKey& side, const Open& open) -> const std::vector<int32_t>& {
       const auto known = apices.find(side);
       if (known != apices.end()) return known->second;
@@ -5109,7 +5171,7 @@ class PlcRecoveryBuilder {
             ref(tet[0]), ref(tet[1]), ref(tet[2]), ref(tet[3]), ref(rival),
             tet[0], tet[1], tet[2], tet[3], rival) > 0;
       };
-      if (!exhaustive) {
+      if (!exhaustive && center == nullptr) {
         std::vector<int32_t> remaining = inner;
         while (!remaining.empty()) {
           std::size_t best = 0;
@@ -5148,6 +5210,7 @@ class PlcRecoveryBuilder {
       std::vector<int32_t> order;
       order.reserve(ranked.size());
       for (const auto& entry : ranked) order.push_back(entry.second);
+      apex_bytes += 64 + 4 * static_cast<int64_t>(order.size());
       return apices.emplace(side, std::move(order)).first->second;
     };
     // Closing side `key` by `apex`: the new cell, the open sides its other
@@ -5233,6 +5296,55 @@ class PlcRecoveryBuilder {
         }
         return false;
       };
+      // With `center` (and `remainder`), the peel of a relocation: only the
+      // sides that the point `center` does not see (the cone from it over
+      // the side is not exactly positive) are closed, the least such side
+      // first, each by the first apex in pencil order whose cell is
+      // visible, plans (repeats no closed side, lies inside every wall) and
+      // meets no face the peel opened, preferring the first that opens only
+      // sides `center` sees. The verdict is whether every side left open is
+      // seen from `center`; `filled` holds the peeled cells and `remainder`
+      // the open sides, whose cones from `center` complete the fill. Each
+      // step closes its side for good, so the peel takes at most one step
+      // per oriented triangle of cavity vertices.
+      if (center != nullptr) {
+        const auto sees = [&](const Open& open) {
+          ExactPointRef corners[4];
+          for (int k = 0; k < 4; ++k) {
+            corners[k] = k == open.slot ? *center : ref(open.cell[static_cast<std::size_t>(k)]);
+          }
+          return orient3d(corners[0], corners[1], corners[2], corners[3]) > 0;
+        };
+        for (;;) {
+          auto next = front.begin();
+          while (next != front.end() && sees(next->second)) ++next;
+          if (next == front.end()) break;
+          const FacetKey key = next->first;
+          const Open open = next->second;
+          Step chosen;
+          bool found = false;
+          for (int32_t apex : apices_of(key, open)) {
+            Step step;
+            if (!plan(open, apex, step) || overlaps(step.cell.v)) continue;
+            const bool seen = std::all_of(step.opened.begin(), step.opened.end(),
+                                          [&](const auto& entry) { return sees(entry.second); });
+            if (!found || seen) chosen = std::move(step);
+            found = true;
+            if (seen) break;
+          }
+          if (!found) return false;
+          apply(key, chosen);
+          ++nodes;
+        }
+        remainder->clear();
+        for (const auto& [side, open] : front) {
+          (void)side;
+          SuppressionCell wall{open.cell, {kNoConstraint, kNoConstraint, kNoConstraint, kNoConstraint}};
+          wall.constraints[static_cast<std::size_t>(open.slot)] = open.constraint;
+          remainder->push_back(wall);
+        }
+        return true;
+      }
       for (;;) {
         auto next = front.begin();
         while (next != front.end() && stuck.contains(next->first)) ++next;
@@ -5274,12 +5386,131 @@ class PlcRecoveryBuilder {
       closed.erase(key);
       front.emplace(key, open);
     };
-    std::set<std::vector<FacetKey>> failed;
-    std::function<bool()> search = [&]() -> bool {
+    if (account == nullptr) return false;
+    // Failed states, kept compactly and exactly. Each step closes the four
+    // faces of its cell (as the cell sees them), none closed before, so a
+    // state's closed sides are the faces of the cells placed on the way to
+    // it, four per cell. An expanded state is stored as a node: the cell
+    // its step placed and its parent node, so the faces of the cells on its
+    // chain to the root are its closed set. Its fingerprint is the sum, in
+    // two 64-bit lanes, of a mix of each closed side, updated with each
+    // step. Failed nodes are indexed by fingerprint in an open-addressing
+    // table, and a match is confirmed exactly: the node's chain has as many
+    // cells as the current state and every face of them is closed now
+    // (both sets have four sides per cell, so containment is equality). So
+    // the memo answers as a set of full copies of the closed sets would,
+    // and the search expands the same states in the same order, in 40
+    // bytes per expanded state and 4 per table slot instead of 12 per
+    // closed side and a set node per state.
+    //
+    // Counted bytes (fixed-width, the same on every platform): the node
+    // chunks allocated, the table slots, and 64 per ranked side plus 4 per
+    // apex of the apex lists. A state is expanded only while the recovery
+    // may still expand one (`nodes_left`) and the count, with the chunk or
+    // table it would allocate, stays within `byte_limit`; otherwise the
+    // search stops with `exceeded`.
+    struct Node {
+      std::array<std::uint64_t, 2> print;
+      std::array<int32_t, 4> cell;
+      uint32_t parent;
+      uint32_t unused;
+    };
+    static_assert(sizeof(Node) == 40);
+    constexpr uint32_t kRoot = std::numeric_limits<uint32_t>::max();
+    constexpr std::size_t kChunk = 4096;
+    constexpr int64_t kChunkBytes = static_cast<int64_t>(kChunk * sizeof(Node));
+    std::vector<std::unique_ptr<Node[]>> chunks;
+    std::size_t node_count = 0;
+    std::vector<uint32_t> table;  // node id + 1, 0 when empty
+    std::size_t stored = 0;
+    const auto node_at = [&](uint32_t id) -> Node& { return chunks[id / kChunk][id % kChunk]; };
+    const auto counted = [&]() {
+      return kChunkBytes * static_cast<int64_t>(chunks.size()) +
+             4 * static_cast<int64_t>(table.size()) + apex_bytes;
+    };
+    const auto mix = [](std::uint64_t x) {
+      x += 0x9E3779B97F4A7C15ULL;
+      x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ULL;
+      x = (x ^ (x >> 27)) * 0x94D049BB133111EBULL;
+      return x ^ (x >> 31);
+    };
+    std::array<std::uint64_t, 2> print{0, 0};
+    const auto stamp = [&](const std::array<int32_t, 4>& cell, bool add) {
+      constexpr std::uint64_t kSeeds[2] = {0x243F6A8885A308D3ULL, 0x13198A2E03707344ULL};
+      for (int slot = 0; slot < 4; ++slot) {
+        const FacetKey side = side_of(cell, slot);
+        for (std::size_t lane = 0; lane < 2; ++lane) {
+          std::uint64_t h = mix(kSeeds[lane] ^ static_cast<uint32_t>(side.a));
+          h = mix(h ^ static_cast<uint32_t>(side.b));
+          h = mix(h ^ static_cast<uint32_t>(side.c));
+          print[lane] = add ? print[lane] + h : print[lane] - h;
+        }
+      }
+    };
+    const auto same_state = [&](uint32_t id) {
+      std::size_t cells = 0;
+      for (uint32_t at = id; node_at(at).parent != kRoot; at = node_at(at).parent) {
+        if (++cells > filled.size()) return false;
+        const Node& node = node_at(at);
+        for (int slot = 0; slot < 4; ++slot) {
+          if (!closed.contains(side_of(node.cell, slot))) return false;
+        }
+      }
+      return cells == filled.size();
+    };
+    const auto known_failed = [&]() {
+      if (table.empty()) return false;
+      const std::size_t mask = table.size() - 1;
+      for (std::size_t at = static_cast<std::size_t>(print[0]) & mask;; at = (at + 1) & mask) {
+        const uint32_t entry = table[at];
+        if (entry == 0) return false;
+        if (node_at(entry - 1).print == print && same_state(entry - 1)) return true;
+      }
+    };
+    const auto place = [&](std::vector<uint32_t>& slots, uint32_t id) {
+      const std::size_t mask = slots.size() - 1;
+      std::size_t at = static_cast<std::size_t>(node_at(id).print[0]) & mask;
+      while (slots[at] != 0) at = (at + 1) & mask;
+      slots[at] = id + 1;
+    };
+    const auto over = [&]() {
+      account->exceeded = true;
+      return false;
+    };
+    const auto remember_failed = [&](uint32_t id) {
+      if (2 * (stored + 1) > table.size()) {
+        const std::size_t size = table.empty() ? 64 : 2 * table.size();
+        if (counted() + 4 * static_cast<int64_t>(size - table.size()) > account->byte_limit) {
+          return over();
+        }
+        std::vector<uint32_t> grown(size, 0U);
+        for (uint32_t entry : table) {
+          if (entry != 0) place(grown, entry - 1);
+        }
+        table = std::move(grown);
+      }
+      place(table, id);
+      ++stored;
+      return false;
+    };
+    std::function<bool(uint32_t)> search = [&](uint32_t parent) -> bool {
       if (front.empty()) return true;
-      std::vector<FacetKey> state(closed.begin(), closed.end());
-      if (failed.contains(state)) return false;
+      if (known_failed()) return false;
+      if (account->nodes_left <= 0 || counted() > account->byte_limit) return over();
+      if (node_count % kChunk == 0) {
+        if (counted() + kChunkBytes > account->byte_limit ||
+            node_count >= static_cast<std::size_t>(kRoot)) {
+          return over();
+        }
+        chunks.push_back(std::make_unique<Node[]>(kChunk));
+      }
+      const auto id = static_cast<uint32_t>(node_count++);
+      node_at(id) = Node{print,
+                         parent == kRoot ? std::array<int32_t, 4>{} : filled.back().v,
+                         parent, 0U};
       ++nodes;
+      --account->nodes_left;
+      account->depth = std::max(account->depth, static_cast<int64_t>(filled.size()));
       FacetKey key{};
       Open open{};
       const std::vector<int32_t>* order = nullptr;
@@ -5296,13 +5527,19 @@ class PlcRecoveryBuilder {
         Step step;
         if (!plan(open, apex, step)) continue;
         apply(key, step);
-        if (search()) return true;
+        stamp(step.cell.v, true);
+        if (search(id)) return true;
+        stamp(step.cell.v, false);
         undo(key, open, step);
+        if (account->exceeded) return false;
       }
-      failed.insert(std::move(state));
-      return false;
+      return remember_failed(id);
     };
-    return search();
+    account->exceeded = false;
+    account->depth = 0;
+    const bool found = search(kRoot);
+    account->bytes = counted();
+    return found;
   }
 
   // A cell equal to `cell` except that the face opposite `slot` is `face`,
@@ -5327,6 +5564,80 @@ class PlcRecoveryBuilder {
                 result[static_cast<std::size_t>(others[1])]);
     }
     return result;
+  }
+
+  // Relocation by peeling (option 8 of remove_witnessed_vertex): the
+  // suppressed point s moves into the volume, to a binary64 point y of the
+  // ray `origin` + l `direction` / `norm` (l = reach / 4, reach / 8, ...,
+  // above 2^-40 reach, the ray of option 4), and the cavity is filled by the
+  // cones from y over the sides y sees, after the sides it does not see were
+  // closed by the peel of wrap_cavity (`center`) with cavity vertices.
+  //
+  // Why the cavity needs it. s lies on its new subfaces' planes and
+  // strictly inside every link face, so the kernel of the cavity near s is
+  // the wedge between its subface planes cut by the link half-spaces; cones
+  // from one point (option 4) need a binary64 point in it. A sliver cell
+  // (s, a, b, v) over a subface (s, a, b), with v almost in the facet plane
+  // (such as a volume Steiner point that recovery placed by halving toward
+  // that plane), has a link face abv whose plane passes closer to s than
+  // the spacing of binary64 points near s (in LIN's torus-1 input, 6e-18
+  // from s, a tenth of an ulp of its coordinates): the kernel is pinched
+  // into the thin wedge between that plane and the facet plane, and the
+  // new subface under it admits no apex but v, so neither option 4 nor a
+  // Steiner-free fill need exist. When every cell over a half-fan has the
+  // apex v, their union is the cone from v over the new subfaces (s lies
+  // on the segment), and peeling closes the sliver's link face by a cavity
+  // vertex (that union), leaving beyond it the star of s whose subface
+  // plane is turned by the sliver's tiny angle: its kernel near s is again
+  // the dihedral wedge of the facets, which holds binary64 points.
+  //
+  // Correctness. Every cell is exactly positive (peeled cells by
+  // wrap_cavity, cones because y sees their sides exactly), and the cells
+  // pair every face with the walls as their boundary, so as a 3-chain
+  // their sum has the walls as boundary and every point off the faces is
+  // covered by as many cells as the walls wind around it, 1 inside the
+  // cavity and 0 outside: they tile the cavity. The walls are kept with
+  // their marks, so every subface stays on its source facet with its
+  // exact vertices; only the volume point y is new. The caller's cavity
+  // edit checks the pairing again before committing. Termination: each
+  // peel step closes one side for good, so a peel takes at most one step
+  // per oriented triangle of cavity vertices, and the ray has at most 40
+  // points.
+  //
+  // On success `filled` holds the peeled cells followed by the cones with
+  // `apex` in place of the placeholder, `location` is y and `centered`
+  // whether any cone uses it (none when the peel closed every side).
+  bool relocate_by_peeling(const std::vector<SuppressionCell>& cavity, int32_t placeholder,
+                           int32_t apex, const double* origin,
+                           const std::array<double, 3>& direction, double norm, double reach,
+                           SuppressionMemo::Lineage* lineage, std::vector<SuppressionCell>& filled,
+                           std::array<double, 3>& location, bool& centered) {
+    centered = false;
+    if (!(norm > 0.0) || !std::isfinite(reach) || !(reach > 0.0)) return false;
+    PlcSuppressionSearch& evidence = candidate_.suppression_search;
+    for (double step = 0.25 * reach; step > 0x1p-40 * reach; step *= 0.5) {
+      for (int axis = 0; axis < 3; ++axis) {
+        location[static_cast<std::size_t>(axis)] =
+            origin[axis] + step * direction[static_cast<std::size_t>(axis)] / norm;
+      }
+      if (!geometry::point_in_domain(location.data())) continue;
+      const ExactPointRef center{location.data(), nullptr};
+      std::vector<SuppressionCell> rest;
+      std::size_t nodes = 0;
+      const bool peeled = wrap_cavity(cavity, placeholder, {}, false, filled, nodes, &rest,
+                                      lineage, nullptr, &center);
+      ++evidence.wraps;
+      evidence.wrap_cells += static_cast<int64_t>(nodes);
+      evidence.max_wrap_cells = std::max(evidence.max_wrap_cells, static_cast<int64_t>(nodes));
+      if (!peeled) continue;
+      for (SuppressionCell& cone : rest) {
+        std::replace(cone.v.begin(), cone.v.end(), placeholder, apex);
+      }
+      centered = !rest.empty();
+      filled.insert(filled.end(), rest.begin(), rest.end());
+      return true;
+    }
+    return false;
   }
 
   // Removes the witnessed vertex s from the complex. With t >= 0 every
@@ -5368,12 +5679,16 @@ class PlcRecoveryBuilder {
   // boundary vertex but s (only volume Steiner points besides, which no
   // witness or constraint involves) and moves no subface, so the
   // termination argument of the pass is unchanged; ordinary passes are as
-  // without merging. Every finite proposed cell is exactly positive on
-  // exact positions and the cavity edit checks that the proposal's boundary
-  // is the link of the removed cells with its marks, so the proposal tiles
-  // them. Otherwise nothing changes.
+  // without merging. With `pinched` (passes after a grown pass that
+  // removed no point; layers 0) the exhaustive search is skipped and a
+  // finite wedge none of the polynomial options fill is relocated with
+  // peeling (option 8 of fill_wedge). Every finite proposed cell is exactly
+  // positive on exact positions and the cavity edit checks that the
+  // proposal's boundary is the link of the removed cells with its marks, so
+  // the proposal tiles them. Otherwise nothing changes.
   int32_t remove_witnessed_vertex(int32_t s, int32_t t, int32_t p, int32_t q, int layers,
-                                  SuppressionMemo& memo, bool& removed, bool& extended) {
+                                  bool pinched, SuppressionMemo& memo, bool& removed,
+                                  bool& extended) {
     removed = false;
     extended = false;
     TetrahedralComplex& complex = triangulation_->complex();
@@ -5496,6 +5811,14 @@ class PlcRecoveryBuilder {
     std::vector<Proposal> proposals;
     std::vector<std::array<double, 3>> centers;
     std::vector<int32_t> added;
+    // The search and peeling routes of the wedges filled so far, recorded
+    // when the removal commits.
+    std::vector<PlcSuppressionRoute> routes;
+    const auto stratum = static_cast<int64_t>(candidate_.witnesses[static_cast<std::size_t>(s)].stratum);
+    const int64_t entity = candidate_.witnesses[static_cast<std::size_t>(s)].entity;
+    const auto route = [&](int64_t kind, int64_t states, int64_t bytes, int64_t depth) {
+      routes.push_back({s, stratum, entity, kind, states, bytes, depth});
+    };
     // Volume points appended for a replacement that is not committed die.
     const auto abandon = [&]() {
       for (int32_t vertex : added) alive_[static_cast<std::size_t>(vertex)] = 0;
@@ -5677,21 +6000,58 @@ class PlcRecoveryBuilder {
       // only after every polynomial option has failed, and only for the
       // wedge itself and its first merged layer: Steiner-free fill existence
       // is NP-complete, while a larger merged cavity gives the polynomial
-      // fills more room.
+      // fills more room. A search over the declared budget is inconclusive:
+      // the wedge stays unfilled here and the point's first such search is
+      // kept as the evidence of a later peeling (or of its refusal).
       if (search) {
         nodes = 0;
-        const bool searched =
-            wrap_cavity(cavity, kPlaceholder, {}, true, wrapped, nodes, nullptr, lineage);
         PlcSuppressionSearch& evidence = candidate_.suppression_search;
+        SearchAccount account{evidence.node_budget - evidence.nodes, evidence.byte_budget};
+        const bool searched = wrap_cavity(cavity, kPlaceholder, {}, true, wrapped, nodes,
+                                          nullptr, lineage, &account);
         ++evidence.searches;
         evidence.nodes += static_cast<int64_t>(nodes);
         evidence.max_nodes = std::max(evidence.max_nodes, static_cast<int64_t>(nodes));
         evidence.max_wedge_cells = std::max(evidence.max_wedge_cells, static_cast<int64_t>(size));
-        if (searched) {
+        evidence.max_bytes = std::max(evidence.max_bytes, account.bytes);
+        evidence.max_depth = std::max(evidence.max_depth, account.depth);
+        if (account.exceeded) {
+          ++evidence.inconclusive;
+          if (evidence.exceeded == 0) {
+            evidence.exceeded = 1;
+            evidence.exceeded_nodes = static_cast<int64_t>(nodes);
+            evidence.exceeded_bytes = account.bytes;
+            evidence.exceeded_depth = account.depth;
+          }
+          inconclusive_.emplace(s, std::array<int64_t, 3>{static_cast<int64_t>(nodes),
+                                                          account.bytes, account.depth});
+        } else if (searched) {
           ++evidence.fills;
+          route(kPlcRouteSearch, static_cast<int64_t>(nodes), account.bytes, account.depth);
           proposals.insert(proposals.end(), wrapped.begin(), wrapped.end());
           done = true;
           return PHX_MC_OK;
+        }
+      }
+      // 8. (`pinched` passes, after every option above has failed in the
+      // passes before) Relocation of s with peeling (relocate_by_peeling)
+      // along the ray of 4.
+      if (pinched && !normals.empty()) {
+        const int32_t apex = kPlaceholder + 1 + static_cast<int32_t>(centers.size());
+        std::array<double, 3> location{};
+        bool centered = false;
+        if (relocate_by_peeling(cavity, kPlaceholder, apex, point(s), index_direction, norm, reach,
+                                lineage, wrapped, location, centered)) {
+          if (centered) centers.push_back(location);
+          proposals.insert(proposals.end(), wrapped.begin(), wrapped.end());
+          const auto first = inconclusive_.find(s);
+          if (first == inconclusive_.end()) {
+            route(kPlcRoutePeel, 0, 0, 0);
+          } else {
+            route(kPlcRoutePeelAfterInconclusive, first->second[0], first->second[1],
+                  first->second[2]);
+          }
+          done = true;
         }
       }
       return PHX_MC_OK;
@@ -5917,8 +6277,8 @@ class PlcRecoveryBuilder {
       }
       bool done = false;
       SuppressionMemo::Lineage* own = memo.lineage(t, ordinal, 0);
-      int32_t status =
-          fill_wedge(cavity, blocked, normals, reach, layers <= 1, false, rows.size(), own, done);
+      int32_t status = fill_wedge(cavity, blocked, normals, reach, layers <= 1 && !pinched, false,
+                                  rows.size(), own, done);
       if (status != PHX_MC_OK) return status;
       // 7. With layers > 0, the wedge merged with that many layers of cells
       // around it (grow_wedge), filled by options 1 to 5 (the exhaustive
@@ -6072,6 +6432,15 @@ class PlcRecoveryBuilder {
       });
       if (!used) alive_[static_cast<std::size_t>(vertex)] = 0;
     }
+    PlcSuppressionSearch& evidence = candidate_.suppression_search;
+    const auto took = [&](int64_t kind) {
+      return std::any_of(routes.begin(), routes.end(),
+                         [&](const PlcSuppressionRoute& entry) { return entry.route == kind; });
+    };
+    if (took(kPlcRoutePeel) || took(kPlcRoutePeelAfterInconclusive)) ++evidence.peeled;
+    if (took(kPlcRoutePeelAfterInconclusive)) ++evidence.peeled_after_inconclusive;
+    candidate_.suppression_routes.insert(candidate_.suppression_routes.end(), routes.begin(),
+                                         routes.end());
     removed = true;
     return PHX_MC_OK;
   }
@@ -6080,9 +6449,13 @@ class PlcRecoveryBuilder {
   // its source segment or facet; under FIXED it is the FIXED_SEGMENT /
   // FIXED_FACET refusal of that entity (its boundary could not be recovered
   // unmodified). A point on a hidden internal edge names the edge's facet.
-  int32_t refuse_suppression(int32_t s) {
+  // A point with an inconclusive (`over_budget`) exhaustive search is
+  // always the STEINER_SUPPRESSION refusal (UNRESOLVED): no fill was ruled
+  // out.
+  int32_t refuse_suppression(int32_t s, bool over_budget) {
     const PlcRecoveryWitness& witness = candidate_.witnesses[static_cast<std::size_t>(s)];
-    const bool fixed = input_.policy == BoundaryPolicy::kFixed || protected_witness(s);
+    const bool fixed =
+        !over_budget && (input_.policy == BoundaryPolicy::kFixed || protected_witness(s));
     const int32_t status = fixed ? PHX_MC_CONSTRAINT_INTERSECTION : PHX_MC_UNRESOLVED;
     int32_t triangle = witness.entity;
     if (witness.stratum == SourceStratum::kSegment) {
@@ -6101,11 +6474,14 @@ class PlcRecoveryBuilder {
 
   // Suppresses one witnessed vertex if it can: contraction onto a chain
   // neighbour (a segment point) or a disk neighbour (a facet point), else
-  // the ear-clipped half-fans. With `grow`, the targets are retried with
-  // wedge cavities merged with 1, 2, ... layers of cells; a target leaves
-  // the rotation once its unfillable wedge has exhausted its region (layer
-  // `layers` admitted no cell). A layer is a breadth-first level, and no
-  // region has more levels than the complex has cells, so this ends.
+  // the ear-clipped half-fans. In a kGrown pass, the targets are retried
+  // with wedge cavities merged with 1, 2, ... layers of cells; a target
+  // leaves the rotation once its unfillable wedge has exhausted its region
+  // (layer `layers` admitted no cell). A layer is a breadth-first level, and
+  // no region has more levels than the complex has cells, so this ends. A
+  // kPinched pass tries the targets once more on the wedges themselves with
+  // relocation by peeling in place of the exhaustive search
+  // (remove_witnessed_vertex).
   //
   // Work bound, with no cap: let n be the cells of the region a target's
   // wedge grows into (its constraint-delimited region, at most the
@@ -6125,7 +6501,7 @@ class PlcRecoveryBuilder {
   // exhaustive search (option 5; Steiner-free fill existence is
   // NP-complete) is not polynomial, and it runs on the wedge and its first
   // layer only, never on the region beyond.
-  int32_t suppress_vertex(int32_t s, bool grow, bool& removed) {
+  int32_t suppress_vertex(int32_t s, SuppressionPass pass, bool& removed) {
     removed = false;
     const PlcRecoveryWitness& witness = candidate_.witnesses[static_cast<std::size_t>(s)];
     const bool segment = witness.stratum == SourceStratum::kSegment;
@@ -6166,10 +6542,10 @@ class PlcRecoveryBuilder {
     };
     bool extended = false;
     SuppressionMemo memo;
-    if (!grow) {
+    if (pass != SuppressionPass::kGrown) {
       for (int32_t target : targets) {
-        const int32_t status =
-            remove_witnessed_vertex(s, target, p, q, 0, memo, removed, extended);
+        const int32_t status = remove_witnessed_vertex(
+            s, target, p, q, 0, pass == SuppressionPass::kPinched, memo, removed, extended);
         if (status != PHX_MC_OK) return status;
         if (removed) return committed();
       }
@@ -6179,8 +6555,8 @@ class PlcRecoveryBuilder {
     for (int layers = 1; std::find(open.begin(), open.end(), 1) != open.end(); ++layers) {
       for (std::size_t row = 0; row < targets.size(); ++row) {
         if (open[row] == 0) continue;
-        const int32_t status =
-            remove_witnessed_vertex(s, targets[row], p, q, layers, memo, removed, extended);
+        const int32_t status = remove_witnessed_vertex(s, targets[row], p, q, layers, false, memo,
+                                                       removed, extended);
         if (status != PHX_MC_OK) return status;
         if (removed) return committed();
         if (!extended) open[row] = 0;
@@ -6496,6 +6872,9 @@ class PlcRecoveryBuilder {
   std::vector<char> shell_apex_;
   // Exact positions of witnessed split vertices, keyed by work vertex.
   ExactVertexBank exact_points_;
+  // The first inconclusive (over-budget) exhaustive search of each point:
+  // states, bytes and depth when it stopped.
+  std::map<int32_t, std::array<int64_t, 3>> inconclusive_;
   // Current chain intervals, which recovery edits must never remove, and
   // the row of each.
   std::unordered_map<uint64_t, std::size_t> chain_intervals_;
@@ -6528,6 +6907,9 @@ int32_t fill_suppression_cavity(const SuppressionCavity& cavity, SuppressionCavi
 
 int32_t recover_plc(const PlcInput& input, PlcRecovery& result) {
   try {
+    if (input.search_node_budget < 0 || input.search_byte_budget < 0) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
     if (input.affine_metric != nullptr) {
       TetMesh metric;
       const int32_t status = metric.set_affine_metric({input.affine_metric, 9});

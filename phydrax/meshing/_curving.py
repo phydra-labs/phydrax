@@ -1241,12 +1241,12 @@ def _distortion_blocks(
         embedded = ambient > dimension
         samples = _control_lattice(block.cell_kind, degree, embedded)
         if isinstance(element, PerCellRestrictedCellGeometryElement):
-            gradients = np.stack(
-                tuple(
-                    np.asarray(element.tabulate_cell(cell_row, samples)[1])
-                    for cell_row in range(block.cell_count)
-                ),
-                axis=0,
+            if not block.cell_count:
+                raise ValueError("Curving requires at least one cell per restricted block.")
+            # Cells with one exact chart share one tabulation; the result is
+            # the per-cell tabulation of each cell's own chart.
+            gradients = np.asarray(
+                element.tabulate_cells(np.arange(block.cell_count), samples)[1]
             )
             per_cell_gradients = True
         else:

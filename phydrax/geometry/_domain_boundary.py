@@ -33,7 +33,12 @@ from ..linalg._exact import determinant_exact
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
 from ..typing import checked
 from ._embedding_state import MeshCertificateFinding
-from ._interval_enclosure import PreparedIntervalFunction
+from ._interval_enclosure import (
+    interval_center,
+    interval_cos,
+    interval_sin,
+    PreparedIntervalFunction,
+)
 from ._meshing_domain import (
     MeshingDomain,
     PatchCurveUse,
@@ -995,17 +1000,20 @@ class ExactPlaneChart(NamedTuple):
         The plane point is ``r (cos angle, -sign sin angle)`` with radius
         ``r = sign (offset + profile)``; the authored seam's turn end is the
         angle-zero side, and an angle-zero point is exact, as is a trim circle's
-        start point.
+        start point. Cosine and sine are the centers of their rigorous
+        enclosures, so the chart point is the same on every platform.
         """
         angle, profile = parameters
         radius = self.radius_sign * (self.radius_offset + profile)
         if radius < 0:
             raise ValueError("Authored point lies outside the planar revolution chart.")
-        turn_angle = 0.0 if float(angle) == _TURN else float(angle)
+        turn = np.float64(0.0 if float(angle) == _TURN else float(angle))
+        cosine = float(interval_center(interval_cos((turn, turn))))
+        sine = float(interval_center(interval_sin((turn, turn))))
         scale = float(radius)
         return (
-            Fraction.from_float(scale * math.cos(turn_angle)),
-            Fraction.from_float(-self.radius_sign * scale * math.sin(turn_angle)),
+            Fraction.from_float(scale * cosine),
+            Fraction.from_float(-self.radius_sign * scale * sine),
         )
 
     def coordinate_expressions(self, /) -> tuple[Polynomial, ...]:

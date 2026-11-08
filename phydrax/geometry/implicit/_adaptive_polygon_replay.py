@@ -105,13 +105,12 @@ def replay_polygon(
     """
     from ._adaptive_discovery import (
         _Cell,
+        _classify_constant_sign_cells,
         _CUBE_EDGES,
         _CUBE_FACES,
         _domain_boundary_faces,
         _edge_key,
         _faces_exclude_zero,
-        _prove_constant_signs,
-        _tangency_faces,
         _triangulate_cell_band,
         AdaptiveImplicitBoxIssue as Issue,
     )
@@ -228,6 +227,8 @@ def replay_polygon(
 
     vertices, keys, edges = Vertices(), VertexKeys(), EdgeRows()
     face_edge_order = np.asarray((0, 1, 2, 3, 4, 5, 6, 7, 9, 8, 10, 11))
+    resolution_rows: list[np.ndarray] = []
+    hug_witnesses: dict[int, tuple[np.ndarray, float]] = {}
     try:
         for start in range(0, count, _CHUNK):
             stop = min(start + _CHUNK, count)
@@ -238,42 +239,34 @@ def replay_polygon(
                 cell_signs > 0, axis=1
             )
             no_crossing = ~singular & ~crossing_signs
-            gradient = np.any(
-                (s.cell_gradient_lower[start:stop] > 0)
-                | (s.cell_gradient_upper[start:stop] < 0),
-                axis=1,
-            )
             preliminary = np.zeros(stop - start, dtype=np.int64)
             preliminary[singular] = int(Issue.SINGULAR)
-            preliminary[no_crossing & gradient] = int(Issue.EDGE)
-            preliminary[no_crossing & ~gradient] = int(Issue.SINGULAR)
             empty = np.zeros(stop - start, dtype=np.bool_)
             candidates = np.flatnonzero(no_crossing)
             if len(candidates):
-                proved = _prove_constant_signs(
+                issues, resolutions, points, errors = _classify_constant_sign_cells(
                     bounds,
+                    np.asarray(s.domain),
+                    int(s.cell_indices[start + candidates[0], 0]),
+                    np.asarray(s.cell_indices[start + candidates, 1:]),
                     s.cell_boxes[start + candidates, 0],
                     s.cell_boxes[start + candidates, 1],
                     cell_signs[candidates, 0],
                     s.cell_gradient_lower[start + candidates],
                     s.cell_gradient_upper[start + candidates],
+                    surface.policy.root_tolerance,
+                    resolve=clipped is None,
                 )
-                empty[candidates[proved]] = True
-                preliminary[candidates[proved]] = 0
-                edge = candidates[~proved & gradient[candidates]]
-                if len(edge):
-                    tangent = np.any(
-                        _tangency_faces(
-                            bounds,
-                            s.cell_boxes[start + edge, 0],
-                            s.cell_boxes[start + edge, 1],
-                            cell_signs[edge, 0],
-                            s.cell_gradient_lower[start + edge],
-                            s.cell_gradient_upper[start + edge],
-                        ),
-                        axis=1,
-                    )
-                    preliminary[edge[tangent]] = int(Issue.TANGENCY)
+                preliminary[candidates] = issues
+                empty[candidates[issues == 0]] = True
+                resolved = np.flatnonzero(resolutions[:, -1] >= 0)
+                if len(resolved):
+                    rows = start + candidates[resolved]
+                    resolution_rows.append(np.column_stack((rows, resolutions[resolved])))
+                    for row, point, error in zip(
+                        rows.tolist(), points[resolved], errors[resolved], strict=True
+                    ):
+                        hug_witnesses[row] = (point, float(error))
             boundary_mask = np.any(
                 (s.cell_boxes[start:stop, 0] == s.domain[0])
                 | (s.cell_boxes[start:stop, 1] == s.domain[1]),
@@ -487,11 +480,21 @@ def replay_polygon(
         return False
     if not np.all(root_used) or triangle_count != len(s.triangle_cell_rows):
         return False
+    replayed_resolutions = (
+        np.concatenate(resolution_rows)
+        if resolution_rows
+        else np.empty((0, 8), dtype=np.int64)
+    )
+    if not np.array_equal(replayed_resolutions, s.tangency_resolutions):
+        return False
     if np.asarray(surface.feature_edges).shape != (0, 2):
         return False
     del root_used, amb_keys, amb_records, amb_signs
     vertex_by_root = root_by_vertex = None
+    # A resolved tangency cell's witness is the root found inside it.
     witness_cells = np.flatnonzero(witness_root >= 0)
+    if len(replayed_resolutions):
+        witness_cells = np.union1d(witness_cells, replayed_resolutions[:, 0])
     if len(witness_cells):
         witness_cells = witness_cells[
             np.lexsort(np.asarray(s.cell_indices)[witness_cells, 1:].T[::-1])
@@ -506,16 +509,23 @@ def replay_polygon(
         stop = min(start + _CHUNK, len(witness_cells))
         rows = witness_cells[start:stop]
         roots = witness_root[rows]
+        rooted = roots >= 0
+        expected_points = np.empty((len(rows), 3), dtype=np.float64)
+        expected_errors = np.empty(len(rows), dtype=np.float64)
+        expected_points[rooted] = s.root_points[roots[rooted]]
+        expected_errors[rooted] = s.root_errors[roots[rooted]]
+        for local in np.flatnonzero(~rooted).tolist():
+            expected_points[local], expected_errors[local] = hug_witnesses[
+                int(rows[local])
+            ]
         if (
             not _same_float_bits(
                 surface.boundary_witness_boxes[start:stop], s.cell_boxes[rows]
             )
             or not _same_float_bits(
-                surface.boundary_witnesses[start:stop], s.root_points[roots]
+                surface.boundary_witnesses[start:stop], expected_points
             )
-            or not _same_float_bits(
-                surface.boundary_errors[start:stop], s.root_errors[roots]
-            )
+            or not _same_float_bits(surface.boundary_errors[start:stop], expected_errors)
         ):
             return False
     if surface.mesh is not None and (
@@ -596,6 +606,7 @@ def replay_history_attempt(
     from ._adaptive_discovery import (
         _Cell,
         _cell_diagonal,
+        _classify_constant_sign_cells,
         _CORNER_OFFSETS,
         _CUBE_EDGES,
         _CUBE_FACES,
@@ -604,10 +615,8 @@ def replay_history_attempt(
         _faces_exclude_zero,
         _FieldEnclosures,
         _GridEdge,
-        _prove_constant_signs,
         _ROOT_PROBE_OFFSETS,
         _ROOT_PROBE_SCALE,
-        _tangency_faces,
         _target_level,
         _triangulate_cell_band,
         AdaptiveImplicitBoxIssue as Issue,
@@ -772,34 +781,28 @@ def replay_history_attempt(
                 if len(zero):
                     issue = int(Issue.SINGULAR)
                 elif not (np.any(signs < 0) and np.any(signs > 0)):
-                    if bool(
-                        _prove_constant_signs(
+                    issue = int(
+                        _classify_constant_sign_cells(
                             bounds,
+                            domain,
+                            level,
+                            indices[row : row + 1],
                             boxes[row : row + 1, 0],
                             boxes[row : row + 1, 1],
                             signs[:1],
                             grad_lower[row : row + 1],
                             grad_upper[row : row + 1],
-                        )[0]
-                    ):
-                        # Proved free of the zero set: no contour, no issue.
+                            policy.root_tolerance,
+                            resolve=clipped is None,
+                        )[0][0]
+                    )
+                    if not issue:
+                        # Proved free of the zero set, or a tangency resolved
+                        # on its cell group: no contour, no issue.
                         continue
-                    gradient = np.any((grad_lower[row] > 0) | (grad_upper[row] < 0))
-                    issue = int(Issue.EDGE if gradient else Issue.SINGULAR)
-                    if gradient and bool(
-                        np.any(
-                            _tangency_faces(
-                                bounds,
-                                boxes[row : row + 1, 0],
-                                boxes[row : row + 1, 1],
-                                signs[:1],
-                                grad_lower[row : row + 1],
-                                grad_upper[row : row + 1],
-                            )
-                        )
-                    ):
-                        # A lattice-face tangency is not refined; the
-                        # lattice is re-anchored instead.
+                    if issue == int(Issue.TANGENCY):
+                        # An unresolved lattice-face tangency is not refined;
+                        # the lattice is re-anchored instead.
                         tangency_boxes.append(np.array(boxes[row], dtype=np.float64))
                         continue
                 else:

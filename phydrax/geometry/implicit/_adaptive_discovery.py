@@ -803,7 +803,14 @@ class AdaptiveImplicitSurfaceEvidence(StrictModule, NonTrainableState):
 
 
 class AdaptiveImplicitScaffold(StrictModule, NonTrainableState):
-    """Retained boundary-band P1 scaffold and source-root ancestry."""
+    """Retained boundary-band P1 scaffold and source-root ancestry.
+
+    ``tangency_resolutions`` rows ``(cell row, group lower index, group upper
+    index, graph axis)`` record each lattice-face tangency cell decided locally
+    (`_resolve_tangencies`): its target-level cell group ``[lower, upper)``
+    and the gradient component proved strict on it. Such a cell has no issue
+    and no contour of its own.
+    """
 
     domain: np.ndarray
     cell_indices: np.ndarray
@@ -829,6 +836,7 @@ class AdaptiveImplicitScaffold(StrictModule, NonTrainableState):
     root_issues: np.ndarray
     root_endpoint_value_lower: np.ndarray
     root_endpoint_value_upper: np.ndarray
+    tangency_resolutions: np.ndarray
     triangle_cell_rows: np.ndarray
     triangle_root_edge_rows: np.ndarray
     target_level: int = eqx.field(static=True)
@@ -860,6 +868,7 @@ class AdaptiveImplicitScaffold(StrictModule, NonTrainableState):
         root_issues: np.ndarray,
         root_endpoint_value_lower: np.ndarray,
         root_endpoint_value_upper: np.ndarray,
+        tangency_resolutions: np.ndarray,
         triangle_cell_rows: np.ndarray,
         triangle_root_edge_rows: np.ndarray,
         target_level: int,
@@ -920,6 +929,9 @@ class AdaptiveImplicitScaffold(StrictModule, NonTrainableState):
             "root_endpoint_value_upper": _discovery_array(
                 root_endpoint_value_upper, np.float64, (-1, 2), _ownership
             ),
+            "tangency_resolutions": _discovery_array(
+                tangency_resolutions, np.int64, (-1, 2 * _DIMENSION + 2), _ownership
+            ),
             "triangle_cell_rows": _discovery_array(
                 triangle_cell_rows, np.int64, (-1,), _ownership
             ),
@@ -955,6 +967,17 @@ class AdaptiveImplicitScaffold(StrictModule, NonTrainableState):
             or arrays["root_endpoint_value_upper"].shape != (root_count, 2)
             or arrays["triangle_cell_rows"].shape != (triangle_count,)
             or arrays["triangle_root_edge_rows"].shape != (triangle_count, 3)
+            or (
+                arrays["tangency_resolutions"].size
+                and (
+                    np.any(np.diff(arrays["tangency_resolutions"][:, 0]) <= 0)
+                    or np.min(arrays["tangency_resolutions"][:, 0]) < 0
+                    or np.max(arrays["tangency_resolutions"][:, 0]) >= cell_count
+                    or np.any(
+                        arrays["cell_issues"][arrays["tangency_resolutions"][:, 0]] != 0
+                    )
+                )
+            )
             or (
                 arrays["tetrahedron_cell_rows"].size
                 and (
@@ -1745,9 +1768,33 @@ def _prove_constant_signs(
     the opposite sign proves the zero set meets the box, or a piece cannot be
     bisected in binary64. A box is proved only when all its pieces are.
     """
+    return _constant_sign_search(
+        bounds, lower, upper, signs, gradient_lower, gradient_upper
+    )[0]
+
+
+def _constant_sign_search(
+    bounds: _FieldEnclosures,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    signs: np.ndarray,
+    gradient_lower: np.ndarray,
+    gradient_upper: np.ndarray,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """`_prove_constant_signs` and, per box, where its search stopped.
+
+    Also returns the first piece midpoint, in piece order, whose point
+    enclosure has the sign opposite to the corners', and the first midpoint
+    of a piece binary64 cannot bisect further when no such point was found
+    (``NaN`` rows where there is none). Each box's pieces evolve independently
+    of the others, so all three results are row-wise.
+    """
     count = int(lower.shape[0])
+    points = np.full((count, _DIMENSION), np.nan, dtype=np.float64)
+    stalls = np.full((count, _DIMENSION), np.nan, dtype=np.float64)
     if not count or not bounds.value_rigorous:
-        return np.zeros(count, dtype=np.bool_)
+        return np.zeros(count, dtype=np.bool_), points, stalls
     failed = np.zeros(count, dtype=np.bool_)
     owner = np.arange(count, dtype=np.int64)
     low = np.array(lower, dtype=np.float64, copy=True)
@@ -1767,7 +1814,7 @@ def _prove_constant_signs(
             evidence = bounds.boxes(low, high)
         except IntervalExtensionError:
             # No interval extension over a piece is no proof.
-            return np.zeros(count, dtype=np.bool_)
+            return np.zeros(count, dtype=np.bool_), points * np.nan, stalls * np.nan
         value_lower = np.asarray(evidence.value_lower, dtype=np.float64)
         value_upper = np.asarray(evidence.value_upper, dtype=np.float64)
         positive = positive[:, 0]
@@ -1776,10 +1823,17 @@ def _prove_constant_signs(
         open_rows = np.flatnonzero(~settled)
         point_lower, point_upper = bounds.point_values(middle[open_rows])
         opposite = np.where(positive[open_rows], point_upper < 0.0, point_lower > 0.0)
-        failed[owner[open_rows[opposite]]] = True
+        hits = open_rows[opposite]
+        _, first = np.unique(owner[hits], return_index=True)
+        points[owner[hits[first]]] = middle[hits[first]]
+        failed[owner[hits]] = True
         splittable = (middle > low) & (middle < high)
         divisible = np.any(splittable, axis=1)
-        failed[owner[open_rows[~divisible[open_rows]]]] = True
+        stalled = open_rows[~divisible[open_rows]]
+        stalled = stalled[~failed[owner[stalled]]]
+        _, first = np.unique(owner[stalled], return_index=True)
+        stalls[owner[stalled[first]]] = middle[stalled[first]]
+        failed[owner[stalled]] = True
         keep = ~settled & divisible & ~failed[owner]
         owner, low, high, middle = owner[keep], low[keep], high[keep], middle[keep]
         splittable = splittable[keep]
@@ -1796,7 +1850,7 @@ def _prove_constant_signs(
         high = np.concatenate((left_high, high))
         slope_lower = np.concatenate((slope_lower, slope_lower))
         slope_upper = np.concatenate((slope_upper, slope_upper))
-    return ~failed
+    return ~failed, points, stalls
 
 
 # Width, as a fraction of a box's extent, of the face slab that confines the
@@ -1890,6 +1944,439 @@ def _tangency_slabs(
             )
         )
     return tuple(slabs)
+
+
+def _hug_groups(
+    axis: int, side: int, /
+) -> tuple[tuple[tuple[int, int, int], tuple[int, int, int]], ...]:
+    """Cell groups that may resolve a tangency on face ``(axis, side)``.
+
+    Each group is an index box ``[lower, upper)`` relative to the tangency cell:
+    the pair across the face, then the 2x2 blocks around each edge of the face,
+    then the 2x2x2 blocks around each of its vertices, in a fixed order.
+    """
+    tangential = tuple(other for other in range(_DIMENSION) if other != axis)
+
+    def group(sides: dict[int, int]) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+        lower = [0, 0, 0]
+        upper = [1, 1, 1]
+        for direction, toward in sides.items():
+            lower[direction], upper[direction] = (-1, 1) if toward == 0 else (0, 2)
+        return (lower[0], lower[1], lower[2]), (upper[0], upper[1], upper[2])
+
+    groups = [group({axis: side})]
+    for other in tangential:
+        for toward in range(2):
+            groups.append(group({axis: side, other: toward}))
+    for first, second in itertools.product(range(2), repeat=2):
+        groups.append(group({axis: side, tangential[0]: first, tangential[1]: second}))
+    return tuple(groups)
+
+
+def _hug_certificate(
+    bounds: _FieldEnclosures,
+    domain: np.ndarray,
+    level: int,
+    lower: tuple[int, int, int],
+    upper: tuple[int, int, int],
+    /,
+) -> int | None:
+    """Graph axis proving the target-level cell group ``[lower, upper)``, if any.
+
+    The group ``G`` is the box of lattice cells between the binary64 lattice
+    planes, the partition the polygonizer contours. It is proved when
+
+    1. one gradient component ``c`` is strict on ``G`` (one box enclosure), so
+       every component of ``Z ∩ G`` is a graph along ``c`` that reaches ``∂G``;
+    2. every lattice edge on ``∂G`` holds exactly the zeros its corner signs
+       name: monotone along it, or zero-free without a sign change;
+    3. every lattice face on ``∂G`` has 0 or 2 crossing edges and holds exactly
+       one arc between them, or none: a strict tangential gradient component
+       excludes closed curves, or a strict value excludes every zero;
+    4. those arcs form at most one loop ``L``, so ``Z ∩ G`` is one disk spanning
+       ``L``, or empty;
+    5. the cell contours of ``G``, whose cycles are fixed by the corner signs
+       (no face with four crossings), form one connected complex of Euler
+       characteristic 1 spanning ``L``, a disk, or nothing when ``L`` is empty.
+
+    The contoured surface then agrees with the zero set on ``G`` up to a
+    homeomorphism fixing ``∂G``. Corner signs are evaluated at the binary64
+    lattice points, as everywhere else in discovery.
+    """
+    span = 1 << level
+    counts = tuple(upper[axis] - lower[axis] for axis in range(_DIMENSION))
+    if any(lower[axis] < 0 or upper[axis] > span for axis in range(_DIMENSION)):
+        return None
+    planes = tuple(
+        np.asarray(
+            [
+                _grid_coordinate(
+                    lower[axis] + offset, level, domain[0, axis], domain[1, axis]
+                )
+                for offset in range(counts[axis] + 1)
+            ],
+            dtype=np.float64,
+        )
+        for axis in range(_DIMENSION)
+    )
+    grid = np.stack(np.meshgrid(*planes, indexing="ij"), axis=-1)
+    try:
+        point_lower, point_upper = bounds.point_values(grid.reshape(-1, _DIMENSION))
+        hull = bounds.boxes(grid[0, 0, 0][None, :], grid[-1, -1, -1][None, :])
+    except IntervalExtensionError:
+        return None
+    signs = np.where(point_lower > 0.0, 1, np.where(point_upper < 0.0, -1, 0)).reshape(
+        grid.shape[:3]
+    )
+    strict = (np.asarray(hull.gradient_lower)[0] > 0.0) | (
+        np.asarray(hull.gradient_upper)[0] < 0.0
+    )
+    if np.any(signs == 0) or not np.any(strict):
+        return None
+
+    def step(point: _GridIndex, axis: int, /) -> _GridIndex:
+        moved = [point[0], point[1], point[2]]
+        moved[axis] += 1
+        return (moved[0], moved[1], moved[2])
+
+    def crossing(edge: tuple[int, _GridIndex], /) -> bool:
+        axis, start = edge
+        return bool(signs[start] != signs[step(start, axis)])
+
+    def face_edges(
+        axis: int, corner: _GridIndex, /
+    ) -> tuple[tuple[int, _GridIndex], ...]:
+        first, second = (other for other in range(_DIMENSION) if other != axis)
+        return (
+            (first, corner),
+            (first, step(corner, second)),
+            (second, corner),
+            (second, step(corner, first)),
+        )
+
+    def components(links: Sequence[tuple[object, object]], /) -> int:
+        parent: dict[object, object] = {}
+
+        def find(node: object, /) -> object:
+            parent.setdefault(node, node)
+            while parent[node] != node:
+                parent[node] = parent[parent[node]]
+                node = parent[node]
+            return node
+
+        for first, second in links:
+            parent[find(first)] = find(second)
+        return len({find(node) for node in list(parent)})
+
+    def cyclic(links: Sequence[tuple[object, object]], /) -> bool:
+        """Whether ``links`` form disjoint cycles: every endpoint used twice."""
+        degree: dict[object, int] = {}
+        for first, second in links:
+            degree[first] = degree.get(first, 0) + 1
+            degree[second] = degree.get(second, 0) + 1
+        return all(value == 2 for value in degree.values())
+
+    # Boundary edges and faces the hull does not prove are decided with one
+    # batch of their own enclosures.
+    open_edges: list[tuple[int, _GridIndex]] = []
+    for axis in range(_DIMENSION):
+        others = tuple(other for other in range(_DIMENSION) if other != axis)
+        for start in itertools.product(
+            *(range(counts[other] + (other != axis)) for other in range(_DIMENSION))
+        ):
+            point = (start[0], start[1], start[2])
+            if not strict[axis] and any(
+                point[other] in (0, counts[other]) for other in others
+            ):
+                open_edges.append((axis, point))
+    open_faces: list[tuple[int, _GridIndex, bool]] = []
+    arcs: list[tuple[tuple[int, _GridIndex], tuple[int, _GridIndex]]] = []
+    for axis in range(_DIMENSION):
+        first, second = (other for other in range(_DIMENSION) if other != axis)
+        for position in sorted({0, counts[axis]}):
+            for a, b in itertools.product(range(counts[first]), range(counts[second])):
+                start = [0, 0, 0]
+                start[axis], start[first], start[second] = position, a, b
+                corner = (start[0], start[1], start[2])
+                crossed = tuple(
+                    edge for edge in face_edges(axis, corner) if crossing(edge)
+                )
+                if len(crossed) not in (0, 2):
+                    return None
+                if crossed:
+                    arcs.append((crossed[0], crossed[1]))
+                if not (strict[first] or strict[second]):
+                    open_faces.append((axis, corner, bool(crossed)))
+    if open_edges or open_faces:
+        low = [grid[start] for _, start in open_edges] + [
+            grid[corner] for _, corner, _ in open_faces
+        ]
+        high = [grid[step(start, axis)] for axis, start in open_edges] + [
+            grid[step(step(corner, (axis + 1) % 3), (axis + 2) % 3)]
+            for axis, corner, _ in open_faces
+        ]
+        try:
+            evidence = bounds.boxes(np.stack(low), np.stack(high))
+        except IntervalExtensionError:
+            return None
+        free = (np.asarray(evidence.value_lower) > 0.0) | (
+            np.asarray(evidence.value_upper) < 0.0
+        )
+        monotone = (np.asarray(evidence.gradient_lower) > 0.0) | (
+            np.asarray(evidence.gradient_upper) < 0.0
+        )
+        for row, edge in enumerate(open_edges):
+            if not (monotone[row, edge[0]] or (free[row] and not crossing(edge))):
+                return None
+        for row, (axis, _, crossed) in enumerate(open_faces, len(open_edges)):
+            tangential = [other for other in range(_DIMENSION) if other != axis]
+            if not (np.any(monotone[row, tangential]) or (free[row] and not crossed)):
+                return None
+    if not cyclic(arcs) or components(arcs) > 1:
+        return None
+
+    # Contour cycles of the group's cells, fixed by their corner signs.
+    segments: set[tuple[tuple[int, _GridIndex], tuple[int, _GridIndex]]] = set()
+    cycles = 0
+    for cell in itertools.product(*(range(count) for count in counts)):
+        origin = (cell[0], cell[1], cell[2])
+        local: list[tuple[tuple[int, _GridIndex], tuple[int, _GridIndex]]] = []
+        for axis, side in itertools.product(range(_DIMENSION), range(2)):
+            corner = step(origin, axis) if side else origin
+            crossed = tuple(edge for edge in face_edges(axis, corner) if crossing(edge))
+            if len(crossed) == 4:
+                return None
+            if crossed:
+                local.append((min(crossed), max(crossed)))
+        if not local:
+            continue
+        if not cyclic(local) or components(local) != 1:
+            return None
+        cycles += 1
+        segments.update(local)
+    vertices = {vertex for segment in segments for vertex in segment}
+    if not arcs:
+        return int(np.flatnonzero(strict)[0]) if not cycles else None
+    if components(sorted(segments)) != 1 or len(vertices) - len(segments) + cycles != 1:
+        return None
+    return int(np.flatnonzero(strict)[0])
+
+
+# Half-lengths of the axis segments bracketing a zero next to a stalled point
+# of a tangency cell: 2**-k of the cell extent for k = _WITNESS_STEPS..0.
+_WITNESS_STEPS = 44
+
+
+def _tangency_witness(
+    bounds: _FieldEnclosures,
+    corner: np.ndarray,
+    extent: np.ndarray,
+    sign: int,
+    opposite: np.ndarray,
+    stall: np.ndarray,
+    tolerance: float,
+    /,
+) -> tuple[np.ndarray, float] | None:
+    """A point of a tangency cell and a certified bound on its distance to ``Z``.
+
+    With a point of the opposite sign in the cell, the witness is the root
+    bracketed between it and the cell's lattice corner ``corner``
+    (`_root_on_edges`): a zero in the cell, with its root error. A zero set
+    that only touches the cell (a pole on a lattice face) has no such point;
+    then the witness is the stalled point ``stall`` of the cell's search, and
+    its bound is the half-length of the shortest axis segment centred there
+    whose endpoints have strict opposite signs, which therefore holds a zero.
+    ``None`` when neither is available.
+    """
+    if np.all(np.isfinite(opposite)):
+        point, error, issue = _root_on_edges(
+            bounds,
+            np.stack((opposite, corner))[None, :, :],
+            np.asarray([[-sign, sign]], dtype=np.int8),
+            tolerance,
+        )[0][:3]
+        return None if issue else (np.asarray(point, dtype=np.float64), float(error))
+    if not np.all(np.isfinite(stall)):
+        return None
+    steps = [
+        (axis, 2.0 ** (-power) * float(extent[axis]))
+        for axis in range(_DIMENSION)
+        for power in range(_WITNESS_STEPS, -1, -1)
+    ]
+    ends = np.empty((len(steps), 2, _DIMENSION), dtype=np.float64)
+    for row, (axis, length) in enumerate(steps):
+        ends[row] = stall
+        ends[row, 0, axis] = stall[axis] - length
+        ends[row, 1, axis] = stall[axis] + length
+    value_lower, value_upper = bounds.point_values(ends.reshape(-1, _DIMENSION))
+    signs = np.where(value_lower > 0.0, 1, np.where(value_upper < 0.0, -1, 0)).reshape(
+        -1, 2
+    )
+    bracketed = np.flatnonzero(signs[:, 0] * signs[:, 1] == -1)
+    if not len(bracketed):
+        return None
+    row = int(bracketed[0])
+    axis = steps[row][0]
+    error = float(
+        np.nextafter(
+            max(stall[axis] - ends[row, 0, axis], ends[row, 1, axis] - stall[axis]),
+            np.inf,
+        )
+    )
+    return np.array(stall, dtype=np.float64), error
+
+
+def _resolve_tangencies(
+    bounds: _FieldEnclosures,
+    domain: np.ndarray,
+    level: int,
+    indices: np.ndarray,
+    faces: np.ndarray,
+    signs: np.ndarray,
+    opposite: np.ndarray,
+    stalls: np.ndarray,
+    tolerance: float,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Decide each tangency cell locally on a group of lattice cells around it.
+
+    Row ``i`` is a target-level cell index whose zeros lie in the slabs of the
+    faces marked in ``faces[i]`` (`_tangency_faces`), whose corners have sign
+    ``signs[i]``, and where ``opposite[i]`` and ``stalls[i]`` are where its
+    constant-sign search stopped (`_constant_sign_search`). The cell first
+    needs a witness, a point of the cell within a certified distance of the
+    zero set like every other band cell's root (`_tangency_witness`). The
+    candidate groups of each marked face (`_hug_groups`) are then tried in
+    order, and the first proved one (`_hug_certificate`) resolves the cell:
+    its own contour is empty, because the contours of its group already span
+    the zero set there.
+
+    Returns the group's absolute index box ``[lower, upper)`` and graph axis
+    per row (``-1`` for a refusal), and the witness points and distance
+    bounds (``NaN`` for a refusal).
+    """
+    count = len(indices)
+    result = np.full((count, 2 * _DIMENSION + 1), -1, dtype=np.int64)
+    witness_points = np.full((count, _DIMENSION), np.nan, dtype=np.float64)
+    witness_errors = np.full(count, np.nan, dtype=np.float64)
+    if not (bounds.value_rigorous and bounds.gradient_rigorous):
+        return result, witness_points, witness_errors
+    for row in range(count):
+        cell = tuple(int(value) for value in indices[row])
+        corner, far = (
+            np.asarray(
+                [
+                    _grid_coordinate(
+                        cell[axis] + offset, level, domain[0, axis], domain[1, axis]
+                    )
+                    for axis in range(_DIMENSION)
+                ],
+                dtype=np.float64,
+            )
+            for offset in (0, 1)
+        )
+        witness = _tangency_witness(
+            bounds,
+            corner,
+            far - corner,
+            int(signs[row]),
+            opposite[row],
+            stalls[row],
+            tolerance,
+        )
+        if witness is None:
+            continue
+        for column in np.flatnonzero(faces[row]).tolist():
+            for offset_lower, offset_upper in _hug_groups(column // 2, column % 2):
+                lower = (
+                    cell[0] + offset_lower[0],
+                    cell[1] + offset_lower[1],
+                    cell[2] + offset_lower[2],
+                )
+                upper = (
+                    cell[0] + offset_upper[0],
+                    cell[1] + offset_upper[1],
+                    cell[2] + offset_upper[2],
+                )
+                axis = _hug_certificate(bounds, domain, level, lower, upper)
+                if axis is not None:
+                    result[row] = (*lower, *upper, axis)
+                    witness_points[row], witness_errors[row] = witness
+                    break
+            if result[row, -1] >= 0:
+                break
+    return result, witness_points, witness_errors
+
+
+def _classify_constant_sign_cells(
+    bounds: _FieldEnclosures,
+    domain: np.ndarray,
+    level: int,
+    indices: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    signs: np.ndarray,
+    gradient_lower: np.ndarray,
+    gradient_upper: np.ndarray,
+    tolerance: float,
+    /,
+    *,
+    resolve: bool,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Issues of band cells whose eight corners share one strict sign.
+
+    The one classification of the polygonizer, `replay_polygon` and the history
+    replay. A cell proved free of the zero set (`_prove_constant_signs`) has no
+    issue; otherwise a cell with no strict gradient component is ``SINGULAR``,
+    one whose zeros lie in a face slab (`_tangency_faces`) is ``TANGENCY``, and
+    any other is ``EDGE``. With ``resolve`` a tangency proved on a group of
+    cells around it (`_resolve_tangencies`, roots within ``tolerance``) has no
+    issue either. Also returns the resolution rows (``-1`` where none) and the
+    resolved cells' witness points and distance bounds (``NaN`` where none).
+    """
+    count = int(lower.shape[0])
+    issues = np.zeros(count, dtype=np.int64)
+    resolutions = np.full((count, 2 * _DIMENSION + 1), -1, dtype=np.int64)
+    witness_points = np.full((count, _DIMENSION), np.nan, dtype=np.float64)
+    witness_errors = np.full(count, np.nan, dtype=np.float64)
+    if not count:
+        return issues, resolutions, witness_points, witness_errors
+    gradient = np.any((gradient_lower > 0) | (gradient_upper < 0), axis=1)
+    proved, opposite, stalls = _constant_sign_search(
+        bounds, lower, upper, signs, gradient_lower, gradient_upper
+    )
+    issues[~proved & gradient] = int(AdaptiveImplicitBoxIssue.EDGE)
+    issues[~proved & ~gradient] = int(AdaptiveImplicitBoxIssue.SINGULAR)
+    edge = np.flatnonzero(~proved & gradient)
+    if len(edge):
+        faces = _tangency_faces(
+            bounds,
+            lower[edge],
+            upper[edge],
+            signs[edge],
+            gradient_lower[edge],
+            gradient_upper[edge],
+        )
+        tangent = np.any(faces, axis=1)
+        rows = edge[tangent]
+        issues[rows] = int(AdaptiveImplicitBoxIssue.TANGENCY)
+        if resolve and len(rows):
+            groups, points, errors = _resolve_tangencies(
+                bounds,
+                domain,
+                level,
+                indices[rows],
+                faces[tangent],
+                signs[rows],
+                opposite[rows],
+                stalls[rows],
+                tolerance,
+            )
+            resolutions[rows] = groups
+            witness_points[rows] = points
+            witness_errors[rows] = errors
+            issues[rows[groups[:, -1] >= 0]] = 0
+    return issues, resolutions, witness_points, witness_errors
 
 
 def _cell_box(
@@ -2766,8 +3253,10 @@ def _discover_adaptive_implicit_surface_once(
     Possible-zero leaves are resolved to the requested physical cell diameter.
     Pure edge-ambiguous leaves trigger finer dyadic discovery until their roots
     are witnessed or their diameter reaches the requested root tolerance.
-    Lattice-face tangencies, singular and otherwise unresolved leaves remain
-    explicit.
+    A lattice-face tangency proved on a group of cells around it is resolved
+    there (`_resolve_tangencies`, recorded in the scaffold's
+    ``tangency_resolutions``); other tangencies, singular and otherwise
+    unresolved leaves remain explicit.
     """
     _validate_discovery_inputs(geometry, policy, source_id)
     domain_ = np.asarray(domain, dtype=np.float64)
@@ -3252,18 +3741,25 @@ def discover_adaptive_implicit_surface(
       lie in a slab of ``2**-8`` of its width along one face: the zero set
       touches or hugs that lattice face, which every finer lattice keeps.
 
-    Either restarts discovery on the first later lattice of a fixed sequence
-    of deterministic, exactly computed re-anchored lattices (covering the
-    declared domain at the declared physical resolution) whose target-level
-    planes are proved to avoid the neighbourhood of every tangency face. A
-    tangency defect leaves a lattice at once; refinement never targets it.
-    Any other singular cell (a touching or degenerate vertex zero, or a
-    possible zero without a corner sign change or a nonvanishing gradient
-    component) is refused on the current lattice without re-anchoring. When
-    no later anchor separates the current tangencies, or the sequence is
-    exhausted, the current lattice's ``TANGENCY`` and singular cells remain
-    the refusal: a tangency that persists on every lattice tried is an
-    unresolved tangency event.
+    A tangency is first decided locally, on the lattice it occurs on: on the
+    pair of cells across the touched face, or the block of cells around one of
+    that face's edges or vertices, a gradient component strict on the whole
+    group, proved boundary arcs and the group's cell contours forming one disk
+    prove that those contours already span the zero set there
+    (`_hug_certificate`). Such a tangency is resolved without moving or
+    refining the lattice. Either defect left undecided restarts discovery on
+    the first later lattice of a fixed sequence of deterministic, exactly
+    computed re-anchored lattices (covering the declared domain at the
+    declared physical resolution) whose target-level planes are proved to
+    avoid the neighbourhood of every unresolved tangency face. A tangency
+    defect leaves a lattice at once; refinement never targets it. Any other
+    singular cell (a touching or degenerate vertex zero, or a possible zero
+    without a corner sign change or a nonvanishing gradient component) is
+    refused on the current lattice without re-anchoring. When no later anchor
+    separates the current tangencies, or the sequence is exhausted, the
+    current lattice's ``TANGENCY`` and singular cells remain the refusal: a
+    tangency that no cell group proves and that persists on every lattice
+    tried is an unresolved tangency event.
 
     Termination: anchors strictly increase through the finite sequence, and
     on one lattice each refinement strictly deepens the target level of
@@ -3344,6 +3840,7 @@ def restore_adaptive_implicit_surface(
                 np.int64,
                 np.float64,
                 np.float64,
+                np.int64,
                 np.int64,
                 np.int64,
             ),

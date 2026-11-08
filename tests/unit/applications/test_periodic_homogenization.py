@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -14,6 +18,7 @@ from phydrax.applications.solid_mechanics import (
 )
 from phydrax.discretization import CellMesh
 from phydrax.discretization.fem import PeriodicSimplexSpace
+from phydrax.linalg import _sparse_supernodal
 from tests._support.periodic_simplex_cells import kuhn_cell, octahedral_cell
 
 
@@ -250,3 +255,48 @@ def test_isolated_inclusion_gauges_conduction_and_refuses_elasticity() -> None:
     np.testing.assert_allclose(result.effective_tensor, 0.0, atol=1e-13)
     gauge = np.asarray(space.gauge_dofs)
     assert np.all(np.asarray(result.fluctuation)[:, gauge] == 0.0)
+
+
+def test_laminate_conductivity_derivatives_follow_the_series_mean_at_every_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The P1 laminate field is exact, so K(k₁) and its derivatives are the
+    # series (Reuss) and parallel (Voigt) means to rounding, and one numeric
+    # factorization serves the whole nested derivative.
+    second = 10.0
+    phi1, phi2 = _layer_fractions()
+    problem = PeriodicCellProblem(_laminate_mesh(), physics="conductivity")
+    assert problem.pattern.plan.supernodal is not None
+    factor_values = _sparse_supernodal.factor_values
+    factorizations = []
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        factorizations.append(None)
+        return factor_values(*args, **kwargs)
+
+    monkeypatch.setattr(_sparse_supernodal, "factor_values", counted)
+
+    def effective(first: jax.Array) -> jax.Array:
+        return problem.solve({"first": first, "second": second}).effective_tensor
+
+    def means(first: jax.Array) -> jax.Array:
+        reuss = 1.0 / (phi1 / first + phi2 / second)
+        voigt = phi1 * first + phi2 * second
+        return jnp.diag(jnp.stack((reuss, voigt, voigt)))
+
+    first = jnp.asarray(1.5)
+    solved: list[Callable[[jax.Array], jax.Array]] = [effective]
+    exact: list[Callable[[jax.Array], jax.Array]] = [means]
+    for _ in range(3):
+        solved.append(jax.jacfwd(solved[-1]))
+        exact.append(jax.jacfwd(exact[-1]))
+    for derivative, reference in zip(solved, exact, strict=True):
+        factorizations.clear()
+        expected = reference(first)
+        np.testing.assert_allclose(
+            derivative(first),
+            expected,
+            rtol=0.0,
+            atol=1e-12 * max(1.0, float(jnp.max(jnp.abs(expected)))),
+        )
+        assert len(factorizations) == 1

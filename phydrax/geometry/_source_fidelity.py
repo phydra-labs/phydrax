@@ -44,6 +44,8 @@ from ._domain_boundary import (
 from ._embedding_state import MeshCertificateFinding
 from ._interval_enclosure import (
     Interval,
+    interval_acos,
+    interval_asin,
     interval_cos,
     interval_sin,
     IntervalExtensionError,
@@ -62,7 +64,12 @@ from ._planar_primitives import (
     signed_area2 as _polygon_signed_area2,
     triangle_pair_separation,
 )
-from ._rational import fraction_endpoint, rational_vector
+from ._rational import (
+    fraction_down,
+    fraction_endpoint,
+    fraction_up,
+    rational_vector,
+)
 from ._source_boundary_records import (
     _fractions_from_chart_tokens,
     SourceBoundaryChartCover,
@@ -1083,59 +1090,27 @@ def _normal_cosine_bounds(
 
 
 def _acos_lower(cosine_upper: Fraction, /) -> Fraction:
+    """Outward lower bound of ``acos`` at a cosine upper bound (acos decreases)."""
     if cosine_upper >= 1:
         return Fraction(0)
-    if cosine_upper <= -1:
-        return Fraction(math.pi)
-    lower, upper = 0.0, float(np.nextafter(math.pi, math.inf))
-    while np.nextafter(lower, math.inf) < upper:
-        midpoint = lower + (upper - lower) / 2
-        if midpoint == lower or midpoint == upper:
-            break
-        interval = interval_cos((np.asarray(midpoint), np.asarray(midpoint)))
-        if Fraction(float(interval[0])) >= cosine_upper:
-            lower = midpoint
-        else:
-            upper = midpoint
-    return Fraction(lower)
+    point = np.float64(max(fraction_up(cosine_upper), -1.0))
+    return Fraction(float(interval_acos((point, point))[0]))
 
 
 def _acos_upper(cosine_lower: Fraction, /) -> Fraction:
+    """Outward upper bound of ``acos`` at a cosine lower bound (acos decreases)."""
     if cosine_lower >= 1:
         return Fraction(0)
-    if cosine_lower <= -1:
-        return Fraction(float(np.nextafter(math.pi, math.inf)))
-    lower, upper = 0.0, float(np.nextafter(math.pi, math.inf))
-    while np.nextafter(lower, math.inf) < upper:
-        midpoint = lower + (upper - lower) / 2
-        if midpoint == lower or midpoint == upper:
-            break
-        interval = interval_cos((np.asarray(midpoint), np.asarray(midpoint)))
-        if Fraction(float(interval[1])) <= cosine_lower:
-            upper = midpoint
-        else:
-            lower = midpoint
-    return Fraction(upper)
+    point = np.float64(max(fraction_down(cosine_lower), -1.0))
+    return Fraction(float(interval_acos((point, point))[1]))
 
 
 def _asin_upper(sine_upper: Fraction, /) -> Fraction:
-    """Outward upper bound of ``asin`` on ``[0, 1]`` by certified bisection."""
+    """Outward upper bound of ``asin`` at a sine upper bound in ``[0, 1]``."""
     if sine_upper <= 0:
         return Fraction(0)
-    half_pi = float(np.nextafter(math.pi / 2, math.inf))
-    if sine_upper >= 1:
-        return Fraction(half_pi)
-    lower, upper = 0.0, half_pi
-    while np.nextafter(lower, math.inf) < upper:
-        midpoint = lower + (upper - lower) / 2
-        if midpoint == lower or midpoint == upper:
-            break
-        interval = interval_sin((np.asarray(midpoint), np.asarray(midpoint)))
-        if Fraction(float(interval[0])) >= sine_upper:
-            upper = midpoint
-        else:
-            lower = midpoint
-    return Fraction(upper)
+    point = np.float64(min(fraction_up(sine_upper), 1.0))
+    return Fraction(float(interval_asin((point, point))[1]))
 
 
 def _normal_angle_upper(

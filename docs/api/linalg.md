@@ -1256,6 +1256,19 @@ result shapes, so one analysis serves every refreshed value set under JIT and
 `vmap`; the plan identity covers the analysis identity, and equal inputs give
 bit-identical factors.
 
+Supernodal derivatives never differentiate through the factorization and never
+refactor. A solve `x = A⁻¹b` is an implicit linear solve: its tangent
+`A⁻¹(db − dA x)` and its cotangent are solves with the same prepared panels
+(the Cholesky factor is self-adjoint), so forward, reverse, and nested
+derivatives of every order are exact and one numeric factorization serves a whole
+nested derivative evaluation. The panels and minimum pivot carry exact
+forward-mode derivatives of every order: a panel tangent solves the linearized
+identity `tril(dL Lᴴ + L dLᴴ) = dA` by one multifrontal sweep over the stored
+panels (replaced or continued pivots are constants), and each higher order
+solves the same identity with the product of lower-order tangents moved to the
+right-hand side. Reverse mode through the panels or minimum pivot raises
+`SparseFactorDerivativeError` at trace time.
+
 Incomplete factors and static-pivot LU keep a `SparseEliminationSchedule`: the
 CSR rows of `L + U` and a column-major index of the strictly lower entries. That
 numeric kernel is right-looking. For each pivot it derives the update targets at
@@ -3609,6 +3622,10 @@ runtime.
 ---
 
 ::: phydrax.linalg.PreparedSparseFactorization
+
+---
+
+::: phydrax.linalg.SparseFactorDerivativeError
 
 ---
 

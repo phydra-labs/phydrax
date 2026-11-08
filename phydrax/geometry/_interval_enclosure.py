@@ -491,6 +491,25 @@ def interval_tan(value: Interval, /) -> Interval:
     return _elementary("tan", value)
 
 
+def interval_asin(value: Interval, /) -> Interval:
+    return _elementary("asin", value)
+
+
+def interval_acos(value: Interval, /) -> Interval:
+    return _elementary("acos", value)
+
+
+def interval_center(value: Interval, /) -> NDArray[np.float64]:
+    """Binary64 center of an enclosure, by correctly rounded operations only.
+
+    A rigorous enclosure is bit-identical on every platform, so its center is
+    a platform-independent representative of the enclosed value.
+    """
+    lower = np.asarray(value[0], dtype=np.float64)
+    upper = np.asarray(value[1], dtype=np.float64)
+    return lower + 0.5 * (upper - lower)
+
+
 def interval_absolute(value: Interval, /) -> Interval:
     lower, upper = np.asarray(value[0]), np.asarray(value[1])
     crosses = (lower <= 0.0) & (upper >= 0.0)
@@ -3013,7 +3032,10 @@ __all__ = [
     "IntervalExecution",
     "IntervalExtensionError",
     "PreparedIntervalFunction",
+    "interval_acos",
     "interval_add",
+    "interval_asin",
+    "interval_center",
     "interval_cos",
     "interval_divide",
     "interval_exp",

@@ -15,6 +15,7 @@
 #include <new>
 #include <span>
 #include <map>
+#include <tuple>
 #include <utility>
 #include <vector>
 #include <set>
@@ -2636,6 +2637,40 @@ void test_suppression_wedge_without_delaunay_fill_is_searched() {
   PHX_CHECK(!fill.delaunay);
   PHX_CHECK(fill.filled);
   PHX_CHECK(fill.nodes > 0);
+  // The compact memo expands exactly the states the full-copy memo did, in
+  // the same order, and lays the same cells (recorded from the full-copy
+  // search).
+  const std::vector<std::array<int32_t, 4>> recorded{
+      {0, 5, 2, 3},   {3, 5, 10, 0},  {9, 10, 1, 13}, {13, 10, 11, 9}, {10, 11, 12, 13},
+      {4, 6, 2, 5},   {3, 2, 6, 5},   {5, 3, 10, 12}, {5, 11, 12, 10}, {3, 7, 5, 6},
+      {12, 5, 7, 6},  {7, 3, 5, 12},  {12, 3, 8, 7}};
+  PHX_CHECK(fill.nodes == 13);
+  PHX_CHECK(fill.cells == recorded);
+  PHX_CHECK(!fill.exceeded && fill.depth == 12);
+  // Counted bytes: one chunk of 4096 states of 40 bytes, no failed state,
+  // and the ranked apex lists.
+  PHX_CHECK(fill.bytes > 4096 * 40 && fill.bytes < 4096 * 40 + 13 * 64 * 4);
+  // The declared budget: exactly the states it needs fill it; one fewer, or
+  // fewer bytes than one chunk, stop it over budget with nothing laid.
+  for (const auto& [nodes, bytes, filled] :
+       {std::tuple<int64_t, int64_t, bool>{13, kPlcSearchByteBudget, true},
+        std::tuple<int64_t, int64_t, bool>{12, kPlcSearchByteBudget, false},
+        std::tuple<int64_t, int64_t, bool>{kPlcSearchNodeBudget, 4096 * 40 - 1, false}}) {
+    detail::SuppressionCavity bounded = cavity;
+    bounded.search_node_budget = nodes;
+    bounded.search_byte_budget = bytes;
+    detail::SuppressionCavityFill limited;
+    PHX_CHECK(detail::fill_suppression_cavity(bounded, limited) == PHX_MC_OK);
+    PHX_CHECK(limited.filled == filled && limited.exceeded == !filled);
+    PHX_CHECK(limited.nodes == static_cast<std::size_t>(std::min<int64_t>(nodes, bytes < 4096 * 40 ? 0 : 13)));
+    if (filled) PHX_CHECK(limited.cells == recorded);
+    if (!filled) PHX_CHECK(limited.cells.empty());
+  }
+  detail::SuppressionCavity negative = cavity;
+  negative.search_node_budget = -1;
+  PHX_CHECK(detail::fill_suppression_cavity(negative, fill) == PHX_MC_INVALID_INPUT);
+  fill = detail::SuppressionCavityFill{};
+  PHX_CHECK(detail::fill_suppression_cavity(cavity, fill) == PHX_MC_OK);
   if (!fill.filled) return;
   // Every wall side is closed by exactly one cell; every other cell face is
   // shared with exactly one cell seeing it reversed.
@@ -2660,6 +2695,146 @@ void test_suppression_wedge_without_delaunay_fill_is_searched() {
     PHX_CHECK(count == 1);
     if (!wall_sides.contains(side)) PHX_CHECK(sides.contains(side.reversed()));
   }
+}
+
+// The pinched wedge of LIN's wave-6.1 torus-1 recovery input
+// (LIN-20261107T1815Z): the cavity of the split point 2228 of PLC edge
+// 5375 (source vertices 1764, 1799; here 0 and 3), contracted onto 1764,
+// in the recovery that refused STEINER_SUPPRESSION before relocation by
+// peeling. Vertex 7 is a volume Steiner point of recovery lying almost in
+// the plane of facet 3570 (the wall (3, 2, kP, 0)) over its half-fan: the
+// link faces (3, 2, 7) and (2, 0, 7) of the two sliver cells over that
+// subface pass 6e-18 and 3e-17 from the split point, below the spacing of
+// binary64 points there. The exhaustive search fails at its first state
+// (an open side no cavity vertex closes) and no point of the ray of
+// option 4 sees every wall. Peeling closes the sliver walls by cavity
+// vertices and the cones from one binary64 point of the ray fill the rest;
+// the cells are exactly positive and pair every face with the walls as
+// boundary, so they tile the cavity. With the ray reversed (pointing out
+// of the cavity) the relocation fails too, and the fixture reports neither
+// fill: the refusal case.
+void test_relocation_peels_a_pinched_wedge() {
+  constexpr int32_t kP = std::numeric_limits<int32_t>::min() / 2;
+  const std::array<double, 54> points{
+      0x1.e9f3465c7578fp-2, -0x1.cc3696d1898f1p-3, -0x1.09c8cc258b83cp-4,
+      0x1.fc4e23e5c4d5ep-2, -0x1.06d69844974aap-2, 0x1.aecae4a101944p-7,
+      0x1.01091af5bf7fcp-1, -0x1.ff4cc136ab6fp-3, 0x1.33a692ac2363cp-6,
+      0x1.013b20686970ep-1, -0x1.fd3c8bba44609p-3, 0x1.39e7410161886p-6,
+      0x1.017d2717f652bp-1, -0x1.c7dbccd972c84p-3, -0x1.1f5fa8cd898b4p-7,
+      0x1.006c9dbbedc5fp-1, -0x1.fdad41ba5212cp-3, 0x1.00f9fb5ed4b6dp-6,
+      0x1.ff1e0c3c3896bp-2, -0x1.efb0d2b29a5fcp-3, 0x1.44d7c5fa3c67fp-5,
+      0x1.fa16bae108cdap-2, -0x1.ed6f262fe565fp-3, -0x1.2e9054bad136ep-7,
+      0x1.fdf4c1a984f9cp-2, -0x1.f62986f029e8ep-3, 0x1.323627b982bbap-8,
+      0x1.ff07134f8c032p-2, -0x1.f85783e013bfdp-3, 0x1.0cd8fb9605a4dp-7,
+      0x1.0185fb68d5716p-1, -0x1.f195866adc6abp-3, 0x1.e43cf6e671561p-7,
+      0x1.f32a6b8c8eb95p-2, -0x1.11c3ba7ce226cp-2, 0x1.40bac02dd3e8ep-5,
+      0x1.ffce0277aee0cp-2, -0x1.ecebba1fa01fap-3, 0x1.66bd5964d7d64p-6,
+      0x1.f9d03c708b8c6p-2, -0x1.08167e86ec50ep-2, 0x1.0dbd832b50d18p-7,
+      0x1.fe66747f152f5p-2, -0x1.f5d4e99b62c0cp-3, 0x1.26110c365ab69p-5,
+      0x1.f40ce6c57e2f5p-2, -0x1.0ef1bd7f79dfep-2, 0x1.346a32d260341p-9,
+      0x1.013204ded54f1p-1, -0x1.e724713264b51p-3, 0x1.01493dd3dc01ap-7,
+      0x1.f624285806fafp-2, -0x1.e4ade63457505p-3, -0x1.7637b5a73e255p-6};
+  const std::array<std::array<int32_t, 4>, 32> walls{{
+      {3, 2, kP, 0},   {kP, 0, 4, 3},   {3, 2, 7, kP},   {2, kP, 0, 7},   {3, kP, 7, 9},
+      {7, kP, 0, 17},  {8, 7, kP, 9},   {5, 9, kP, 3},   {4, 0, kP, 17},  {17, kP, 15, 7},
+      {9, kP, 8, 1},   {kP, 7, 8, 15},  {5, 10, 3, kP},  {kP, 9, 5, 12},  {4, 17, kP, 16},
+      {11, kP, 15, 17}, {13, 8, kP, 1}, {1, kP, 12, 9},  {kP, 11, 15, 8}, {10, kP, 16, 3},
+      {5, 12, 10, kP}, {16, kP, 4, 3},  {16, 17, kP, 10}, {17, 14, 11, kP}, {13, 1, kP, 14},
+      {8, kP, 14, 13}, {12, kP, 1, 14}, {8, 11, 14, kP}, {kP, 10, 17, 12}, {kP, 17, 14, 6},
+      {kP, 6, 14, 12}, {kP, 17, 6, 12}}};
+  std::array<std::array<int32_t, 4>, 32> marks{};
+  for (auto& row : marks) row.fill(-1);
+  marks[0][2] = 3570;
+  marks[1][0] = 3571;
+  // The split point's carrier, the sum of the inner unit normals of the
+  // planes of facets 3570 and 3571, and the reach of its star.
+  const std::array<double, 7> ray{0x1.fe3c2be428ef6p-2, -0x1.f4c861e0f07bep-3,
+                                  0x1.31c3a2c1974fap-8, -0x1.c40d010c11ecep+0,
+                                  0x1.3da04fd8a7af2p-1, 0x1.5bf3d3f2be44ap-1,
+                                  0x1.7cf3b55f35fabp-11};
+  const std::size_t point_count = points.size() / 3;
+  const auto at = [&](int32_t vertex, const std::array<double, 3>& center) {
+    return static_cast<std::size_t>(vertex) == point_count
+        ? center.data() : points.data() + 3 * static_cast<std::size_t>(vertex);
+  };
+  const auto wall_side = [&](const std::array<int32_t, 4>& wall) {
+    const int slot = static_cast<int>(std::find(wall.begin(), wall.end(), kP) - wall.begin());
+    int32_t face[3];
+    oriented_facet(wall.data(), slot, face);
+    return FacetKey::of(face);
+  };
+  // No binary64 point of the ray sees every wall (option 4).
+  const double norm = std::sqrt(ray[3] * ray[3] + ray[4] * ray[4] + ray[5] * ray[5]);
+  for (double step = 0.25 * ray[6]; step > 0x1p-40 * ray[6]; step *= 0.5) {
+    std::array<double, 3> center{};
+    for (int axis = 0; axis < 3; ++axis) center[axis] = ray[axis] + step * ray[3 + axis] / norm;
+    PHX_CHECK(std::any_of(walls.begin(), walls.end(), [&](const auto& wall) {
+      std::array<int32_t, 4> cone = wall;
+      std::replace(cone.begin(), cone.end(), kP, static_cast<int32_t>(point_count));
+      return orient3d_exact(at(cone[0], center), at(cone[1], center), at(cone[2], center),
+                            at(cone[3], center)).sign() <= 0;
+    }));
+  }
+  detail::SuppressionCavity cavity;
+  cavity.points = points;
+  cavity.walls = walls;
+  cavity.wall_marks = marks;
+  cavity.placeholder = kP;
+  cavity.relocation = ray;
+  detail::SuppressionCavityFill fill;
+  PHX_CHECK(detail::fill_suppression_cavity(cavity, fill) == PHX_MC_OK);
+  PHX_CHECK(!fill.delaunay && !fill.filled && !fill.exceeded && fill.nodes == 1);
+  PHX_CHECK(fill.relocated);
+  PHX_CHECK(fill.peeled > 0 && fill.peeled < fill.cells.size());
+  if (!fill.relocated) return;
+  // The forced sliver: the subface wall (3, 2, kP, 0) is closed by the
+  // volume Steiner point 7, as peeled cell.
+  const std::set<int32_t> sliver{0, 2, 3, 7};
+  PHX_CHECK(std::any_of(fill.cells.begin(), fill.cells.begin() + static_cast<std::ptrdiff_t>(fill.peeled),
+                        [&](const auto& cell) { return std::set<int32_t>(cell.begin(), cell.end()) == sliver; }));
+  // Every cell is exactly positive; the peeled cells come first and use no
+  // relocated point, the cones use it.
+  std::map<FacetKey, int> sides;
+  for (std::size_t row = 0; row < fill.cells.size(); ++row) {
+    const auto& cell = fill.cells[row];
+    const bool cone = std::find(cell.begin(), cell.end(), static_cast<int32_t>(point_count)) != cell.end();
+    PHX_CHECK(cone == (row >= fill.peeled));
+    PHX_CHECK(orient3d_exact(at(cell[0], fill.center), at(cell[1], fill.center),
+                             at(cell[2], fill.center), at(cell[3], fill.center)).sign() > 0);
+    for (int slot = 0; slot < 4; ++slot) {
+      int32_t face[3];
+      oriented_facet(cell.data(), slot, face);
+      ++sides[FacetKey::of(face)];
+    }
+  }
+  // Every wall side is closed once; every other face is shared with one
+  // cell seeing it reversed: the cells tile the cavity.
+  std::set<FacetKey> wall_sides;
+  for (const auto& wall : walls) {
+    wall_sides.insert(wall_side(wall));
+    PHX_CHECK(sides[wall_side(wall)] == 1);
+  }
+  for (const auto& [side, count] : sides) {
+    PHX_CHECK(count == 1);
+    if (!wall_sides.contains(side)) PHX_CHECK(sides.contains(side.reversed()));
+  }
+  // Deterministic: the same fixture relocates to the same point and cells.
+  detail::SuppressionCavityFill again;
+  PHX_CHECK(detail::fill_suppression_cavity(cavity, again) == PHX_MC_OK);
+  PHX_CHECK(again.relocated && again.center == fill.center && again.cells == fill.cells);
+  // Reversed ray: every candidate point lies outside the cavity, where
+  // positive cones over a closed boundary cannot tile it; neither route
+  // fills the cavity.
+  std::array<double, 7> reversed = ray;
+  for (int axis = 3; axis < 6; ++axis) reversed[static_cast<std::size_t>(axis)] = -ray[static_cast<std::size_t>(axis)];
+  detail::SuppressionCavity outward = cavity;
+  outward.relocation = reversed;
+  detail::SuppressionCavityFill refused;
+  PHX_CHECK(detail::fill_suppression_cavity(outward, refused) == PHX_MC_OK);
+  PHX_CHECK(!refused.filled && !refused.relocated && refused.cells.empty());
+  detail::SuppressionCavity malformed = cavity;
+  malformed.relocation = std::span<const double>(ray.data(), 6);
+  PHX_CHECK(detail::fill_suppression_cavity(malformed, refused) == PHX_MC_INVALID_INPUT);
 }
 
 // A 26-triangle patch of the scale-2 torus reconstruction envelope (nearly
@@ -2788,6 +2963,60 @@ void test_suppression_merges_a_sliver_wedge_with_its_neighbours() {
   PHX_CHECK(result.suppression_search.merges > 0);
   PHX_CHECK(result.suppression_search.max_merge_layers >= 1);
   PHX_CHECK(result.suppression_search.exhausted == 0);
+  // The declared search budget bounds the exhaustive searches of the whole
+  // recovery. With exactly the states they expand it recovers the same
+  // complex. Since PlcPinchedWedge (relocation by peeling, wave 7), a search
+  // over the budget is inconclusive rather than a refusal: with one state
+  // fewer the over-budget search is recorded (exceeded, its states, bytes
+  // and depth) and the later passes still remove the point, here the grown
+  // pass; the route rows record the search fills. With fewer bytes than
+  // one chunk of states every search is inconclusive and the recovery does
+  // not publish (it stops with the search evidence of all of them).
+  const PlcSuppressionSearch evidence = result.suppression_search;
+  PHX_CHECK(evidence.node_budget == kPlcSearchNodeBudget);
+  PHX_CHECK(evidence.byte_budget == kPlcSearchByteBudget);
+  PHX_CHECK(evidence.exceeded == 0 && evidence.exceeded_nodes == 0 && evidence.inconclusive == 0);
+  PHX_CHECK(evidence.max_bytes >= 4096 * 40 && evidence.max_depth > 0);
+  PHX_CHECK(evidence.peeled == 0 && evidence.peeled_after_inconclusive == 0);
+  PHX_CHECK(static_cast<int64_t>(result.suppression_routes.size()) >= evidence.fills);
+  for (const PlcSuppressionRoute& route : result.suppression_routes) {
+    PHX_CHECK(route.route == kPlcRouteSearch && route.states > 0 && route.point >= 0);
+  }
+  PlcInput exact = input;
+  exact.search_node_budget = evidence.nodes;
+  PlcRecovery same;
+  PHX_CHECK(recover_plc(exact, same) == PHX_MC_OK);
+  PHX_CHECK(same.points == result.points && same.tets == result.tets &&
+            same.faces == result.faces && same.segments == result.segments);
+  PHX_CHECK(same.suppression_search.nodes == evidence.nodes);
+  PlcInput short_nodes = input;
+  short_nodes.search_node_budget = evidence.nodes - 1;
+  PlcRecovery inconclusive;
+  PHX_CHECK(recover_plc(short_nodes, inconclusive) == PHX_MC_OK);
+  {
+    const PlcSuppressionSearch& over = inconclusive.suppression_search;
+    PHX_CHECK(over.node_budget == evidence.nodes - 1 && over.exceeded == 1);
+    PHX_CHECK(over.inconclusive >= 1 && over.exceeded_nodes <= evidence.max_nodes);
+    PHX_CHECK(over.nodes == evidence.nodes - 1);
+    check_conforming_recovery(inconclusive, point_count, faces);
+    check_fixed_boundary(inconclusive, point_count);
+    // Deterministic in the declared budget: the same route again.
+    PlcRecovery again;
+    PHX_CHECK(recover_plc(short_nodes, again) == PHX_MC_OK);
+    PHX_CHECK(again.points == inconclusive.points && again.tets == inconclusive.tets);
+    PHX_CHECK(again.suppression_routes.size() == inconclusive.suppression_routes.size());
+  }
+  PlcInput short_bytes = input;
+  short_bytes.search_byte_budget = 4096 * 40 - 1;
+  PlcRecovery stopped;
+  PHX_CHECK(recover_plc(short_bytes, stopped) != PHX_MC_OK);
+  PHX_CHECK(stopped.suppression_search.byte_budget == 4096 * 40 - 1);
+  PHX_CHECK(stopped.suppression_search.inconclusive == stopped.suppression_search.searches);
+  PHX_CHECK(stopped.suppression_search.nodes == 0 && stopped.suppression_search.exceeded == 1);
+  PlcInput negative = input;
+  negative.search_byte_budget = -1;
+  PlcRecovery invalid;
+  PHX_CHECK(recover_plc(negative, invalid) == PHX_MC_INVALID_ARGUMENT);
 }
 
 // A capped patch of the original lobed-r4 reconstruction surface, whose full
@@ -3075,6 +3304,12 @@ void test_affine_recovery_c_api_guards() {
   bad.polygon_vertex_count = 11;
   invalid(bad, identity.data(), PHX_MC_INVALID_ARGUMENT);
   bad = request;
+  bad.search_node_budget = -1;
+  invalid(bad, identity.data(), PHX_MC_INVALID_ARGUMENT);
+  bad = request;
+  bad.search_byte_budget = -1;
+  invalid(bad, identity.data(), PHX_MC_INVALID_ARGUMENT);
+  bad = request;
   bad.point_count = std::numeric_limits<int32_t>::max();
   invalid(bad, identity.data(), PHX_MC_INDEX_RANGE_ERROR);
   const std::array<int32_t, 4> bad_facets{4, 1, 2, 3};
@@ -3097,6 +3332,23 @@ void test_affine_recovery_c_api_guards() {
       std::array<int64_t, PHX_MC_PLC3D_SIZES> sizes{};
       PHX_CHECK(phx_mc_plc3d_sizes(result, sizes.data()) == PHX_MC_OK);
       PHX_CHECK(sizes[0] == 4 && sizes[1] == 1 && sizes[2] == 4);
+      // A zero budget selects the documented defaults.
+      std::array<int64_t, PHX_MC_PLC3D_SEARCH_VALUES> search{};
+      PHX_CHECK(phx_mc_plc3d_suppression_search(result, search.data()) == PHX_MC_OK);
+      PHX_CHECK(search[12] == PHX_MC_PLC3D_SEARCH_NODES_DEFAULT);
+      PHX_CHECK(search[13] == PHX_MC_PLC3D_SEARCH_BYTES_DEFAULT);
+      PHX_CHECK(search[0] == 0 && search[16] == 0);
+      PHX_CHECK(search[20] == 0 && search[21] == 0 && search[22] == 0);
+      // No point needed the search or peeling: no route rows.
+      int64_t routes = -1;
+      PHX_CHECK(phx_mc_plc3d_suppression_routes(result, 0, &routes, nullptr) == PHX_MC_OK);
+      PHX_CHECK(routes == 0);
+      PHX_CHECK(phx_mc_plc3d_suppression_routes(result, -1, &routes, nullptr) ==
+                PHX_MC_INVALID_ARGUMENT);
+      PHX_CHECK(phx_mc_plc3d_suppression_routes(result, 0, nullptr, nullptr) ==
+                PHX_MC_INVALID_ARGUMENT);
+      PHX_CHECK(phx_mc_plc3d_suppression_routes(nullptr, 0, &routes, nullptr) ==
+                PHX_MC_INVALID_ARGUMENT);
       phx_mc_plc3d_free(result);
     }
   }
@@ -3308,6 +3560,7 @@ int main() {
   test_recover_plc_corner_scaffold_tracks_inserted_points_and_region_interface();
   test_offset_tie_envelope_recovers_under_both_policies();
   test_suppression_wedge_without_delaunay_fill_is_searched();
+  test_relocation_peels_a_pinched_wedge();
   test_suppression_merges_a_sliver_wedge_with_its_neighbours();
   test_suppression_merges_enclose_volume_steiner_points();
   return phx::mc::test::finish("test_plc3d");

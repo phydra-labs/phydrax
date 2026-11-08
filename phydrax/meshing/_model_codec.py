@@ -1515,6 +1515,7 @@ def restore_model_archive_value(
 
     import numpy as np
 
+    from .._meshcore import PlcSearchBudget
     from .._model._structure import _FiniteElementSpecArchiveProjection
     from .._physical import SpatialCoordinateContract
     from ..discretization._cell_geometry_transition_types import (
@@ -3110,6 +3111,7 @@ def restore_model_archive_value(
                 radius_edge_bound=item.radius_edge_bound,
                 minimum_dihedral_degrees=item.minimum_dihedral_degrees,
                 shape_strength=item.shape_strength,
+                plc_search_budget=PlcSearchBudget(*item.plc_search_budget),
             )
             if schedule.schedule_id != item.schedule_id:
                 raise ValueError("Stored native volume schedule changed.")

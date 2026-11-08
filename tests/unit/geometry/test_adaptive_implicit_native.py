@@ -650,12 +650,114 @@ _POLE_DOMAIN = np.asarray(((-1.0, -1.0, -1.0), (1.0, 1.0, 1.0)))
 _POLE_POLICY = AdaptiveImplicitSurfacePolicy(
     relative_cell_diameter=0.05, root_tolerance=1.0e-8
 )
+# Level-5 cells of width 2**-4: each pole lies in the interior of one face of
+# exactly one zero-free-cornered cell beyond it.
+_POLE_BOXES = np.asarray(
+    [
+        [[0.1875, 0.0, -0.0625], [0.25, 0.0625, 0.0]],
+        [[0.5, 0.0, -0.0625], [0.5625, 0.0625, 0.0]],
+    ]
+)
+
+
+def _refuse_hugs(monkeypatch: pytest.MonkeyPatch, /) -> None:
+    from phydrax.geometry.implicit import _adaptive_discovery as owner
+
+    monkeypatch.setattr(owner, "_hug_certificate", lambda *args: None)
 
 
 def test_lattice_face_tangency_is_proved_on_the_touched_face() -> None:
     from phydrax.geometry.implicit import _adaptive_discovery as owner
+
+    geometry = _G.Sphere(*_POLE_SPHERE).compile()
+    bounds = owner._FieldEnclosures(geometry, _POLE_POLICY.enclosure)
+    # Only the touched faces (upper x of the first box, lower x of the second)
+    # confine the zeros; their neighbourhoods are [p - 2**-12, p + 2**-12],
+    # widened by one rounding step.
+    width = 2.0**-12
+    assert owner._tangency_slabs(bounds, _POLE_BOXES) == tuple(
+        (0, np.nextafter(plane - width, -np.inf), np.nextafter(plane + width, np.inf))
+        for plane in (0.25, 0.5)
+    )
+
+
+def test_lattice_face_tangency_resolves_on_its_cell_pair() -> None:
+    from phydrax.geometry.implicit import _adaptive_discovery as owner
+    from phydrax.geometry.implicit._adaptive_polygon_replay import (
+        replay_history_attempt,
+        replay_polygon,
+    )
+
+    geometry = _G.Sphere(*_POLE_SPHERE).compile()
+    result = discover_adaptive_implicit_surface(
+        geometry, domain=_POLE_DOMAIN, policy=_POLE_POLICY, source_id="pole-tangency"
+    )
+    # Both pole cells are decided on the first lattice, each on the pair of
+    # cells across its touched x face, with the x gradient strict on the pair.
+    assert result.evidence.lattice_anchor == 0
+    assert result.scaffold.target_level == 5
+    assert result.evidence.unresolved_count == 0
+    resolutions = np.asarray(result.scaffold.tangency_resolutions)
+    np.testing.assert_array_equal(
+        resolutions[:, 1:],
+        [[19, 16, 15, 21, 17, 16, 0], [23, 16, 15, 25, 17, 16, 0]],
+    )
+    np.testing.assert_array_equal(
+        result.scaffold.cell_boxes[resolutions[:, 0]], _POLE_BOXES
+    )
+    assert np.all(result.scaffold.cell_issues[resolutions[:, 0]] == 0)
+    assert not np.any(np.isin(result.scaffold.triangle_cell_rows, resolutions[:, 0]))
+    mesh = result.mesh
+    assert mesh is not None and mesh.topology.watertight
+    faces = np.asarray(mesh.faces)
+    edges = {
+        tuple(sorted(edge))
+        for face in faces.tolist()
+        for edge in ((face[0], face[1]), (face[1], face[2]), (face[2], face[0]))
+    }
+    assert len(mesh.vertices) - len(edges) + len(faces) == 2
+    center, radius = _POLE_SPHERE
+    distance = np.abs(np.linalg.norm(np.asarray(mesh.vertices) - center, axis=1) - radius)
+    assert np.all(distance <= np.max(result.scaffold.root_errors))
+    # Each resolved cell keeps a witness like every other band cell: a point
+    # of the cell (here next to the pole on its touched face) within its
+    # certified bound of the sphere.
+    for box in _POLE_BOXES:
+        rows = np.flatnonzero(np.all(result.boundary_witness_boxes == box, axis=(1, 2)))
+        assert rows.shape == (1,)
+        point = result.boundary_witnesses[rows[0]]
+        assert np.all((box[0] <= point) & (point <= box[1]))
+        bound = result.boundary_errors[rows[0]]
+        assert abs(np.linalg.norm(point - center) - radius) <= bound
+    bounds = owner._FieldEnclosures(geometry, _POLE_POLICY.enclosure)
+    assert replay_polygon(result, bounds)
+    assert owner.verify_discovery_history(result)
+    retry, coincidence, tangencies = replay_history_attempt(
+        geometry, _POLE_DOMAIN, _POLE_POLICY
+    )
+    assert (retry, coincidence, tangencies.shape) == (False, False, (0, 2, 3))
+    # The record is bound by replay: a scaffold without it is refused.
+    recipe = result.archive_recipe
+    names = [
+        name
+        for name in AdaptiveImplicitScaffold.__annotations__
+        if name != "target_level"
+    ]
+    arrays = list(recipe.scaffold_arrays)
+    arrays[names.index("tangency_resolutions")] = np.empty((0, 8), dtype=np.int64)
+    with pytest.raises(ValueError):
+        restore_adaptive_implicit_surface(
+            replace(recipe, scaffold_arrays=tuple(arrays)), geometry, _POLE_POLICY
+        )
+
+
+def test_refused_lattice_face_tangency_reanchors_without_refinement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry.implicit import _adaptive_discovery as owner
     from phydrax.geometry.implicit._adaptive_polygon_replay import replay_history_attempt
 
+    _refuse_hugs(monkeypatch)
     geometry = _G.Sphere(*_POLE_SPHERE).compile()
     first = owner._discover_adaptive_implicit_surface_once(
         geometry,
@@ -665,43 +767,19 @@ def test_lattice_face_tangency_is_proved_on_the_touched_face() -> None:
         declared_domain=_POLE_DOMAIN,
         lattice_anchor=0,
     )
-    # Level-5 cells of width 2**-4: each pole lies in the interior of one face
-    # of exactly one zero-free-cornered cell beyond it.
-    assert first.scaffold.target_level == 5
-    np.testing.assert_array_equal(
-        first.evidence.unresolved_boxes,
-        [
-            [[0.1875, 0.0, -0.0625], [0.25, 0.0625, 0.0]],
-            [[0.5, 0.0, -0.0625], [0.5625, 0.0625, 0.0]],
-        ],
-    )
+    np.testing.assert_array_equal(first.evidence.unresolved_boxes, _POLE_BOXES)
     assert (
         first.evidence.unresolved_issues.tolist()
         == [int(AdaptiveImplicitBoxIssue.TANGENCY)] * 2
     )
+    assert first.scaffold.tangency_resolutions.shape == (0, 8)
     assert owner._next_discovery_resolution(first, _POLE_POLICY) is None
-    # Only the touched faces (upper x of the first box, lower x of the second)
-    # confine the zeros; their neighbourhoods are [p - 2**-12, p + 2**-12],
-    # widened by one rounding step.
-    bounds = owner._FieldEnclosures(geometry, _POLE_POLICY.enclosure)
-    width = 2.0**-12
-    assert owner._tangency_slabs(bounds, owner._tangency_boxes(first)) == tuple(
-        (0, np.nextafter(plane - width, -np.inf), np.nextafter(plane + width, np.inf))
-        for plane in (0.25, 0.5)
-    )
     retry, coincidence, tangencies = replay_history_attempt(
         geometry, _POLE_DOMAIN, _POLE_POLICY
     )
     assert (retry, coincidence) == (False, False)
-    np.testing.assert_array_equal(tangencies, first.evidence.unresolved_boxes)
+    np.testing.assert_array_equal(tangencies, _POLE_BOXES)
 
-
-def test_lattice_face_tangency_reanchors_without_refinement(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from phydrax.geometry.implicit import _adaptive_discovery as owner
-
-    geometry = _G.Sphere(*_POLE_SPHERE).compile()
     result = discover_adaptive_implicit_surface(
         geometry, domain=_POLE_DOMAIN, policy=_POLE_POLICY, source_id="pole-tangency"
     )
@@ -738,30 +816,32 @@ def test_lattice_face_tangency_reanchors_without_refinement(
     np.testing.assert_array_equal(restored.mesh.faces, result.mesh.faces)
 
 
-def test_persistent_lattice_face_tangency_is_an_unresolved_event(
+def test_straddling_hidden_ball_tangency_is_an_unresolved_event(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from phydrax.geometry.implicit import _adaptive_discovery as owner
 
-    # Without a later anchor the tangency persists on every lattice tried.
+    # A ball of radius 1e-4 centred 5e-5 beyond the lattice plane x = 0.25
+    # pokes 5e-5 into the cell below it, inside that face's slab (2**-12):
+    # the cell is a tangency, but every cell group around it holds the
+    # ball's centre, where no gradient component is strict, so none is proved.
     monkeypatch.setattr(owner, "_LATTICE_ANCHORS", ())
-    geometry = _G.Sphere(*_POLE_SPHERE).compile()
+    geometry = _G.Sphere((0.25 + 5.0e-5, 0.013, -0.021), 1.0e-4).compile()
     result = discover_adaptive_implicit_surface(
-        geometry, domain=_POLE_DOMAIN, policy=_POLE_POLICY, source_id="pole-tangency"
+        geometry, domain=_POLE_DOMAIN, policy=_POLE_POLICY, source_id="hidden-ball"
     )
     assert result.evidence.lattice_anchor == 0
     assert result.scaffold.target_level == 5
     assert result.mesh is None
-    assert (
-        result.evidence.unresolved_issues.tolist()
-        == [int(AdaptiveImplicitBoxIssue.TANGENCY)] * 2
+    assert result.scaffold.tangency_resolutions.shape == (0, 8)
+    issues = result.evidence.unresolved_issues.tolist()
+    assert int(AdaptiveImplicitBoxIssue.TANGENCY) in issues
+    tangent = result.evidence.unresolved_boxes[
+        result.evidence.unresolved_issues == int(AdaptiveImplicitBoxIssue.TANGENCY)
+    ]
+    np.testing.assert_array_equal(
+        tangent, [[[0.1875, 0.0, -0.0625], [0.25, 0.0625, 0.0]]]
     )
-    assert result.evidence.status_flags == (
-        AdaptiveImplicitSurfaceStatus.UNRESOLVED_BOXES
-        | AdaptiveImplicitSurfaceStatus.PHYSICAL_RESOLUTION_REACHED
-    )
-    for pole in ((0.25, 0.013, -0.021), (0.5, 0.013, -0.021)):
-        assert _contains(result.evidence.unresolved_boxes, np.asarray(pole))
     assert owner.verify_discovery_history(result)
 
 

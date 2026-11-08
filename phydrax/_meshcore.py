@@ -510,6 +510,8 @@ class _Plc3DPrepareSourceRequest(ctypes.Structure):
         ("segment_tolerances", _P),
         ("facet_planes", _P),
         ("facet_plane_tolerances", _P),
+        ("search_node_budget", _I64),
+        ("search_byte_budget", _I64),
         ("result", _P),
     )
 
@@ -1119,6 +1121,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     ),
     "phx_mc_plc3d_failure": (_I32, (_P, *(_P,) * 7)),
     "phx_mc_plc3d_suppression_search": (_I32, (_P, _P)),
+    "phx_mc_plc3d_suppression_routes": (_I32, (_P, _I64, _P, _P)),
     "phx_mc_plc3d_free": (None, (_P,)),
     "phx_mc_tet_mesh_create": (
         _I32,
@@ -2720,9 +2723,17 @@ class PlcSuppressionSearch(NamedTuple):
     their own are merged with neighbouring cells layer by layer: wedges
     filled that way and the most layers one needed, and wedges whose
     constraint-delimited region was exhausted without a fill with the
-    largest such region in cells. Last, the gift-wrapped constrained
+    largest such region in cells. Then the gift-wrapped constrained
     Delaunay fills: how many ran and the cells they laid in total and at
     most in one fill (one step per cell), a deterministic work measure.
+    Then the declared ``PlcSearchBudget``, the most counted bytes one search
+    held and its deepest state (cells placed), and whether a search went over
+    the budget with the states, bytes and depth of the first such search when
+    it stopped. An over-budget search is inconclusive: the recovery goes on
+    to relocation by peeling and refuses ``STEINER_SUPPRESSION`` only if that
+    fails too. Last, the inconclusive searches, the points removed by
+    relocation by peeling, and those of them after an inconclusive search
+    (``PlcSuppressionRoute`` rows give each such point).
     """
 
     searches: int
@@ -2737,6 +2748,64 @@ class PlcSuppressionSearch(NamedTuple):
     wraps: int
     wrap_cells: int
     max_wrap_cells: int
+    node_budget: int
+    byte_budget: int
+    max_bytes: int
+    max_depth: int
+    exceeded: int
+    exceeded_nodes: int
+    exceeded_bytes: int
+    exceeded_depth: int
+    inconclusive: int
+    peeled: int
+    peeled_after_inconclusive: int
+
+
+class PlcSuppressionRouteKind(IntEnum):
+    SEARCH = 1
+    PEEL = 2
+    PEEL_AFTER_INCONCLUSIVE = 3
+
+
+class PlcSuppressionRoute(NamedTuple):
+    """Route that removed one suppressed split point, one row per wedge.
+
+    Recorded for the exhaustive search and for relocation by peeling, in
+    removal order: the point (work id, as refusals name it), its witness
+    stratum and carrier entity, the route, and the search's states, bytes and
+    depth (the filling search; the point's first inconclusive search before
+    peeling; zeros for peeling without one). A deterministic function of the
+    declared inputs, the search budget included.
+    """
+
+    point: int
+    stratum: int
+    entity: int
+    route: PlcSuppressionRouteKind
+    states: int
+    bytes: int
+    depth: int
+
+
+class PlcSearchBudget(NamedTuple):
+    """Declared resource budget of the exhaustive suppression search.
+
+    Deciding whether a cavity has a Steiner-free fill is NP-complete, so the
+    search has no structural bound. ``nodes`` bounds the states the searches
+    of one recovery expand in total, ``bytes`` the counted bytes one search
+    holds (40 per expanded state in chunks of 4096, 4 per memo table slot,
+    64 per ranked open side plus 4 per apex; the same on every platform).
+    An over-budget search is inconclusive (``PlcSuppressionSearch``): recovery
+    goes on to relocation by peeling. It is a plan
+    input, never derived from host memory; ``PLC_SEARCH_BUDGET`` is the
+    documented default (the native ``PHX_MC_PLC3D_SEARCH_*_DEFAULT``).
+    """
+
+    nodes: int
+    bytes: int
+
+
+PLC_SEARCH_BUDGET = PlcSearchBudget(nodes=1 << 24, bytes=1 << 30)
 
 
 class PlcSourceData(NamedTuple):
@@ -2765,6 +2834,7 @@ class PlcSourceData(NamedTuple):
     source_parameters: np.ndarray
     source_deviations: np.ndarray
     suppression_search: PlcSuppressionSearch
+    suppression_routes: tuple[PlcSuppressionRoute, ...] = ()
 
 
 class TetMeshEditKind(IntEnum):
@@ -2814,6 +2884,7 @@ class PlcRecovery3D(NamedTuple):
     witness_parameters: np.ndarray
     witness_deviations: np.ndarray
     suppression_search: PlcSuppressionSearch
+    suppression_routes: tuple[PlcSuppressionRoute, ...] = ()
 
 
 class TetMeshSourceComplex(NamedTuple):
@@ -5500,6 +5571,7 @@ def _plc3d_build(
     facet_plane_tolerances: object | None = None,
     affine_metric: object | None = None,
     protected_facets: object | None = None,
+    search_budget: PlcSearchBudget | None = None,
 ) -> PlcSourceData:
     """Run native PLC source preparation or full protected tetrahedral recovery."""
 
@@ -5606,6 +5678,21 @@ def _plc3d_build(
         ):
             raise ValueError("protected_facets must contain one boolean flag per facet.")
         protected_array = np.ascontiguousarray(flags, dtype=np.uint8)
+    if search_budget is None:
+        if operation != "phx_mc_plc3d_prepare_source":
+            raise ValueError("PLC recovery requires a declared search budget.")
+        budget = (0, 0)
+    else:
+        if operation == "phx_mc_plc3d_prepare_source":
+            raise ValueError("Source preparation runs no suppression search.")
+        if not isinstance(search_budget, PlcSearchBudget) or any(
+            not isinstance(value, int) or isinstance(value, bool) or not 0 < value < 2**63
+            for value in search_budget
+        ):
+            raise ValueError(
+                "search_budget must be a PlcSearchBudget of positive int64 values."
+            )
+        budget = (search_budget.nodes, search_budget.bytes)
 
     library = load_meshcore()
     handle = ctypes.c_void_p()
@@ -5629,6 +5716,7 @@ def _plc3d_build(
         None if segment_tolerance_array is None else segment_tolerance_array.ctypes.data,
         None if plane_array is None else plane_array.ctypes.data,
         None if plane_tolerance_array is None else plane_tolerance_array.ctypes.data,
+        *budget,
         ctypes.addressof(handle),
     )
     metric = (
@@ -5685,6 +5773,37 @@ def _plc3d_build(
             "plc3d_suppression_search",
         )
         suppression_search = PlcSuppressionSearch(*(int(value) for value in search))
+        route_count = np.zeros((1,), dtype=np.int64)
+        _raise_for_call(
+            library["phx_mc_plc3d_suppression_routes"](
+                handle, 0, route_count.ctypes.data, None
+            ),
+            "plc3d_suppression_routes",
+        )
+        route_rows = np.zeros(
+            (int(route_count[0]), len(PlcSuppressionRoute._fields)), dtype=np.int64
+        )
+        _raise_for_call(
+            library["phx_mc_plc3d_suppression_routes"](
+                handle,
+                route_rows.shape[0],
+                route_count.ctypes.data,
+                route_rows.ctypes.data,
+            ),
+            "plc3d_suppression_routes",
+        )
+        suppression_routes = tuple(
+            PlcSuppressionRoute(
+                int(row[0]),
+                int(row[1]),
+                int(row[2]),
+                PlcSuppressionRouteKind(int(row[3])),
+                int(row[4]),
+                int(row[5]),
+                int(row[6]),
+            )
+            for row in route_rows
+        )
         if code != MeshcoreStatus.OK:
             if failure_reason[0] != PlcFailureReason.NONE:
                 raise PlcSourceFailure(
@@ -5732,6 +5851,7 @@ def _plc3d_build(
             np.empty((point_count, 2), dtype=np.float64),
             np.empty((point_count,), dtype=np.float64),
             suppression_search,
+            suppression_routes,
         )
         _raise_for_call(
             library["phx_mc_plc3d_export"](
@@ -5839,6 +5959,7 @@ def recover_plc(
     facet_plane_tolerances: object | None = None,
     affine_metric: object | None = None,
     protected_facets: object | None = None,
+    search_budget: PlcSearchBudget = PLC_SEARCH_BUDGET,
 ) -> PlcSourceData:
     """Recover a PLC with witnesses indexed by exported raw carrier banks.
 
@@ -5849,7 +5970,8 @@ def recover_plc(
     optional nonsingular (3, 3) index-to-physical linear map. Coordinates,
     topology and witnesses remain in index space; distances are physical.
     ``protected_facets`` fixes the selected facets and all their incident edges
-    while other facets may be conformingly subdivided.
+    while other facets may be conformingly subdivided. ``search_budget`` is the
+    declared budget of the exhaustive suppression search (``PlcSearchBudget``).
     """
 
     return _plc3d_build(
@@ -5869,6 +5991,7 @@ def recover_plc(
         facet_plane_tolerances=facet_plane_tolerances,
         affine_metric=affine_metric,
         protected_facets=protected_facets,
+        search_budget=search_budget,
     )
 
 
@@ -5890,6 +6013,7 @@ def recover_plc_3d(
     facet_plane_tolerances: object | None = None,
     affine_metric: object | None = None,
     protected_facets: object | None = None,
+    search_budget: PlcSearchBudget = PLC_SEARCH_BUDGET,
 ) -> PlcRecovery3D:
     """Recover a PLC with raw carrier-row witnesses and region labels.
 
@@ -5897,6 +6021,7 @@ def recover_plc_3d(
     ``input_triangles``. These are not persistent canonical source-bank rows.
     Declared facet planes are as for ``prepare_plc_source``. ``affine_metric``
     is an optional nonsingular (3, 3) index-to-physical linear map.
+    ``search_budget`` is as for ``recover_plc``.
     """
 
     segment_bank = np.empty((0, 2), dtype=np.int32) if segments is None else segments
@@ -5916,6 +6041,7 @@ def recover_plc_3d(
         facet_plane_tolerances=facet_plane_tolerances,
         affine_metric=affine_metric,
         protected_facets=protected_facets,
+        search_budget=search_budget,
     )
     return PlcRecovery3D(
         recovered.status,
@@ -5937,6 +6063,7 @@ def recover_plc_3d(
         recovered.source_parameters,
         recovered.source_deviations,
         recovered.suppression_search,
+        recovered.suppression_routes,
     )
 
 
@@ -9104,6 +9231,8 @@ __all__ = [
     "PlcRecovery3D",
     "PlcSourceData",
     "PlcSuppressionSearch",
+    "PlcSearchBudget",
+    "PLC_SEARCH_BUDGET",
     "PlcSourceFailure",
     "prepare_plc_source",
     "recover_plc",

@@ -21,7 +21,11 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier, finite_real_scalar
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
-from ._interval_enclosure import prepare_interval_function, PreparedIntervalFunction
+from ._interval_enclosure import (
+    interval_center,
+    prepare_interval_function,
+    PreparedIntervalFunction,
+)
 from ._rational import fraction_down, fraction_up
 from ._source_boundary_records import SourceBoundaryDistance, SourceBoundarySamples
 from .brep._patches import AbstractCurve, SurfaceMappedCurve
@@ -496,10 +500,13 @@ class ParametricCurveBoundarySource(StrictModule, NonTrainableState):
             midpoint = _parameter_midpoint(
                 *_interior_interval((first, last), parameter_bounds[row])
             )
-            sample = np.asarray(
-                curve.evaluate(jnp.asarray(midpoint, dtype=jnp.float64)),
-                dtype=np.float64,
+            point_lower, point_upper = _interval_bounds(
+                curve, evaluator, midpoint, midpoint
             )
+            # The representative is the center of its certified point enclosure,
+            # not a floating-point evaluation, so the query identity that hashes
+            # it is the same on every platform.
+            sample = interval_center((point_lower, point_upper))
             if sample.shape != (dimensions[0],) or not np.all(np.isfinite(sample)):
                 raise ValueError(
                     "Curve source representatives must evaluate to finite points."
@@ -507,13 +514,6 @@ class ParametricCurveBoundarySource(StrictModule, NonTrainableState):
             if np.any(boxes[row, 0] > sample) or np.any(sample > boxes[row, 1]):
                 raise ValueError(
                     "Curve interval bounds do not enclose their evaluated representative."
-                )
-            point_lower, point_upper = _interval_bounds(
-                curve, evaluator, midpoint, midpoint
-            )
-            if np.any(point_lower > sample) or np.any(sample > point_upper):
-                raise ValueError(
-                    "Curve point error bounds do not enclose their evaluated representative."
                 )
             representatives[row] = sample
             cover_radii[row] = _box_radius(boxes[row, 0], boxes[row, 1], sample)
@@ -871,18 +871,12 @@ class ParametricCurveBoundarySource(StrictModule, NonTrainableState):
                 split = _parameter_midpoint(interval_first, interval_last)
                 inner_lower, inner_upper = _interior_interval((first, last), root_bounds)
                 parameter = min(max(split, inner_lower), inner_upper)
-                sample = np.asarray(
-                    curve.evaluate(jnp.asarray(parameter, dtype=jnp.float64)),
-                    dtype=np.float64,
-                )
                 point_lower, point_upper = _interval_bounds(
                     curve, evaluator, parameter, parameter
                 )
-                if (
-                    sample.shape != (self.ambient_dimension,)
-                    or not np.all(np.isfinite(sample))
-                    or np.any(point_lower > sample)
-                    or np.any(sample > point_upper)
+                sample = interval_center((point_lower, point_upper))
+                if sample.shape != (self.ambient_dimension,) or not np.all(
+                    np.isfinite(sample)
                 ):
                     raise ValueError(
                         "Curve boundary cover has no finite representative enclosure."

@@ -8,22 +8,20 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._geometry_predicates import PredicateMode
 from phydrax.discretization import PeriodicCell
 from phydrax.discretization._cell_mesh import CellMesh
 from phydrax.geometry.implicit import (
     AdaptiveImplicitSurfacePolicy,
     discover_periodic_trigonometric_surface,
 )
+from phydrax.meshing._lineage import EntityLineageKind
 from phydrax.meshing._periodic import stage_periodic_topology_edit
 from phydrax.meshing._periodic_implicit_volume import (
     mesh_periodic_trigonometric_region,
     PeriodicImplicitVolume,
 )
-from phydrax.meshing._tetra_metric import (
-    _assemble_native_edit,
-    _prepare_native_state,
-    _split_phase,
-)
+from phydrax.meshing._tetra_metric import execute_tetra_metric_adaptation
 from phydrax.meshing._topology_edit import entity_keys
 
 
@@ -108,15 +106,14 @@ def _surface_census(faces: list[tuple[_Key, ...]]) -> tuple[int, int]:
     return len(vertices) - len(owners) + len(faces), components
 
 
-def _cell_face_pairs(volume: PeriodicImplicitVolume, axis: int, /) -> int:
+def _cell_face_pairs(mesh: CellMesh, domain: np.ndarray, axis: int, /) -> int:
     """Require the upper cell-face triangulation to be the lower one's translate."""
-    mesh = volume.mesh
     topology = mesh.periodic_topology
     assert topology is not None
     coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
     representatives = np.asarray(topology.vertex_representatives, dtype=np.int64)
     shifts = np.asarray(topology.vertex_shifts, dtype=np.int64)
-    lower, upper = volume.surface.reduced_domain[:, axis]
+    lower, upper = domain[:, axis]
     in_plane = [index for index in range(3) if index != axis]
     counts: dict[frozenset[int], int] = {}
     for cell in _tetrahedra(mesh).tolist():
@@ -158,8 +155,12 @@ def test_periodic_network_mesh_certifies_and_closes_through_paired_cell_faces(
     assert volume.mesh.periodic_topology is not None
     # Every cap triangle on a lower cell face has its exact lattice translate
     # on the paired upper face, and no other boundary triangle lies there.
-    assert sum(_cell_face_pairs(volume, axis) for axis in range(3)) == (
-        volume.cap_triangle_count
+    assert (
+        sum(
+            _cell_face_pairs(volume.mesh, surface.reduced_domain, axis)
+            for axis in range(3)
+        )
+        == volume.cap_triangle_count
     )
     # Paired caps become interior quotient faces: only the contour bounds the
     # quotient region, with the topology of the discovery's surface report.
@@ -181,7 +182,7 @@ def test_periodic_network_mesh_certifies_and_closes_through_paired_cell_faces(
     assert volume.construction.compliance.issues == ()
 
 
-def test_periodic_network_adaptation_step_splits_complete_lattice_orbits() -> None:
+def test_periodic_network_public_adaptation_edits_complete_lattice_orbits() -> None:
     volume = _volume("schwarz_p", 0.2)
     source = volume.result
     mesh = source.mesh
@@ -204,53 +205,57 @@ def test_periodic_network_adaptation_step_splits_complete_lattice_orbits() -> No
     )
     lengths = np.linalg.norm(coordinates[rows[:, 1]] - coordinates[rows[:, 0]], axis=1)
     # A uniform isotropic metric is lattice-equivariant; it asks for edges
-    # shorter than the mean, so the step must split complete edge orbits.
+    # shorter than the mean, so adaptation splits and collapses complete edge
+    # orbits, including seam orbits on the paired cell faces.
     size = 0.75 * float(np.mean(lengths))
     metric = np.broadcast_to(np.eye(3) / size**2, (vertex_ids.size, 3, 3)).copy()
-    state = _prepare_native_state(
-        mesh,
-        source.geometry,
-        source.coordinate_contract,
+
+    outcome = execute_tetra_metric_adaptation(
+        source,
         metric,
         cell_classes=np.zeros(mesh.entity_set(3).entity_ids.size, dtype=np.int64),
         facet_classes=np.zeros(mesh.entity_set(2).entity_ids.size, dtype=np.int64),
         edge_classes=np.zeros(edges.shape[0], dtype=np.int64),
         protected_edges=protected,
         fixed_vertices=fixed,
-    )
-    counters = dict.fromkeys(
-        (
-            "splits",
-            "collapses",
-            "flips23",
-            "flips32",
-            "ring_reconnections",
-            "relocations",
-            "rejected_topology",
-            "rejected_protected",
-            "rejected_uncertain",
-            "rejected_invalid",
-        ),
-        0,
+        predicate_mode=PredicateMode.EXACT,
+        topology_operations=True,
+        relocation=False,
     )
 
-    # One adaptation step: a single disjoint batch of orbit-locked splits.
-    applied = _split_phase(state, counters, one_batch=True)
-
-    assert applied == counters["splits"] > 0
-    edit, _ = _assemble_native_edit(state)
-    target = stage_periodic_topology_edit(mesh, edit)
+    evidence = outcome.evidence
+    assert evidence.splits > 0 and evidence.collapses > 0
+    assert evidence.maximum_region_volume_error <= 1.0e-12
+    target = stage_periodic_topology_edit(mesh, outcome.edit)
     assert target is not None and target.periodic_topology is not None
     target_topology = target.periodic_topology
     target_topology.require_lifted(
         target.topology, target.lifted_topology_id, target.blocks
     )
     target_topology.require_coordinates(target.coordinates)
-    assert target_topology.vertex_orbit_count > topology.vertex_orbit_count
-    # Seam splits insert whole orbits: the new vertices on paired cell faces
-    # arrive with their lattice translates.
-    lifted_extra = target.coordinates.shape[0] - target_topology.vertex_orbit_count
-    assert lifted_extra > mesh.coordinates.shape[0] - topology.vertex_orbit_count
+    # Seam edits keep or remove whole vertex orbits: a source vertex orbit
+    # never loses only some of its lifted copies on the paired cell faces.
+    copies = np.bincount(representatives, minlength=vertex_ids.size)
+    retained = np.isin(vertex_ids, np.asarray(target.vertex_global_ids))
+    for root in np.unique(representatives).tolist():
+        members = retained[representatives == root]
+        assert members.all() or not members.any()
+    # Moved collapse survivors are the only relocated vertices without the
+    # relocation phase: a periodic survivor moves when its orbit is one copy.
+    vertex_relation = outcome.edit.relations[0]
+    relocated = {
+        int(source_key[0])
+        for source_key, kind in zip(
+            np.asarray(vertex_relation.source_keys).tolist(),
+            np.asarray(vertex_relation.kinds).tolist(),
+            strict=True,
+        )
+        if kind == int(EntityLineageKind.RELOCATED)
+    }
+    assert relocated and all(copies[representatives[row_of[v]]] == 1 for v in relocated)
+    # The upper cell-face triangulations stay the exact translates of the lower.
+    domain = volume.surface.reduced_domain
+    assert sum(_cell_face_pairs(target, domain, axis) for axis in range(3)) > 0
     # The fixed contour still alone bounds the quotient region, unchanged.
     target_boundary = _quotient_boundary(target)
     assert len(target_boundary) == len(boundary)
