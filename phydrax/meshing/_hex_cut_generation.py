@@ -1323,11 +1323,11 @@ class _CutCoordinateMap(StrictModule, NonTrainableState):
 
     def source_coordinates(
         self, indices: ConvertibleToArray | None = None, /
-    ) -> tuple[ExactPoint3, ...]:
+    ) -> Sequence[ExactPoint3]:
         """Expose exact parent controls; output vertex images remain in exact_vertices."""
         selected = None if indices is None else np.asarray(indices)
         return cast(
-            tuple[ExactPoint3, ...],
+            Sequence[ExactPoint3],
             self.source_geometry.source_coordinates(selected),
         )
 

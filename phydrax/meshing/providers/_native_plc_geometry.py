@@ -54,7 +54,7 @@ class _PlcCurveAuthority(StrictModule, NonTrainableState):
     source: NativePlcSource
     domain: AffinePlcDomain
 
-    def __init__(self, source: NativePlcSource, domain: PiecewiseLinearDomain, /):
+    def __init__(self, source: NativePlcSource, domain: PiecewiseLinearDomain, /) -> None:
         self.source = source
         self.domain = AffinePlcDomain(
             domain, np.eye(3), np.zeros(3), source_revision=source.source_revision
@@ -75,13 +75,15 @@ class _PlcCurveAuthority(StrictModule, NonTrainableState):
 
     @property
     def edges(self) -> np.ndarray:
-        return self.source.complex.plc_edge_vertices
+        return np.asarray(
+            self.source.complex.plc_edge_vertices, dtype=np.int64
+        ).reshape((-1, 2))
 
     @property
     def scope_entity_ids_by_mesh_row(self) -> tuple[np.ndarray, ...]:
         return (
-            self.source.complex.vertex_entity_ids,
-            self.source.complex.plc_edge_entity_ids,
+            np.asarray(self.source.complex.vertex_entity_ids, dtype=np.int64),
+            np.asarray(self.source.complex.plc_edge_entity_ids, dtype=np.int64),
         )
 
     def scope_entity_ids(self, dimension: int, /) -> np.ndarray:
@@ -1329,7 +1331,11 @@ def plc_curve_chart_witness(
             cell_id = int(raw_cell_id)
             for local_edge, local_vertices in enumerate(topology.entities[1]):
                 row = int(cell_edges[cells_by_id[cell_id], local_edge])
-                pair = tuple(int(vertices[block_row, index]) for index in local_vertices)
+                first, second = local_vertices
+                pair = (
+                    int(vertices[block_row, first]),
+                    int(vertices[block_row, second]),
+                )
                 candidate = (
                     cell_id,
                     local_edge,

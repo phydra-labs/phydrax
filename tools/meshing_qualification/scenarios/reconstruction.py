@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 import math
 import os
-import resource
-import sys
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path
@@ -16,6 +14,7 @@ import numpy as np
 
 import phydrax as phx
 from phydrax._array_archive import ArrayArchiveLimits
+from phydrax._execution_sampling import process_peak_memory
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry.reconstruction import (
@@ -482,14 +481,14 @@ def _stage(profile: str, stage: str, /) -> None:
     path = os.environ.get(_STAGE_LOG)
     if not path:
         raise RuntimeError(f"Reconstruction workflows require {_STAGE_LOG}.")
-    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    peak = process_peak_memory()
     record = {
         "profile": profile,
         "stage": stage,
         "pid": os.getpid(),
         "elapsed_seconds": perf_counter() - _PROCESS_STARTED,
-        # Darwin reports ru_maxrss in bytes, Linux in KiB.
-        "peak_rss_bytes": peak if sys.platform == "darwin" else 1024 * peak,
+        "peak_rss_bytes": peak.value_bytes,
+        "peak_rss_unavailable": peak.unavailable_reason,
     }
     with open(path, "a", encoding="utf-8") as stream:
         stream.write(json.dumps(record) + "\n")

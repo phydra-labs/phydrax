@@ -93,11 +93,13 @@ _COLUMNS = {
         "source_reference_exact_vertices": "exact",
         "source_reference_chart_arguments": "expressions",
     },
-    "_ExactCoordinateBankMap": {"exact_coordinates": "exact"},
-    "_RetainedCoordinateBank": {"exact_coordinates": "exact"},
+    # Archived as the "exact" column text of the materialized rows (byte-identical);
+    # restored as the integer-dyadic ExactCoordinateBank.
+    "_ExactCoordinateBankMap": {"exact_coordinates": "exact_bank"},
+    "_RetainedCoordinateBank": {"exact_coordinates": "exact_bank"},
     "ExactPlcCellGeometrySource": {"exact_coordinates": "exact"},
     "PeriodicSimplexForest": {"exact_vertex_coordinates": "exact"},
-    "CellGeometrySpec": {"exact_coordinate_bank": "exact"},
+    "CellGeometrySpec": {"exact_coordinate_bank": "exact_bank"},
     "PerCellRestrictedCellGeometryElement": {
         "target_cell_ids": "integer_tensor",
         "source_cell_ids": "integer_tensor",
@@ -410,13 +412,14 @@ def _encode_column(value: Any, kind: str) -> Any:
         return byte_rows_column(value, _MAP_DIGEST_ROW_BYTES)
     if kind == "integer_tensor":
         return ExactTensorArchiveRecipe.encode(value, rational=False)
-    if kind == "exact":
+    if kind in ("exact", "exact_bank"):
+        rows = tuple(value) if kind == "exact_bank" else value
         # Rational coordinates use exact decimal text. Algebraic coordinates
         # retain their registered exact scalar representation, deduplicated by row.
         try:
-            return ExactTensorArchiveRecipe.encode(value, rational=True)
+            return ExactTensorArchiveRecipe.encode(rows, rational=True)
         except (TypeError, ValueError):
-            return StaticColumnArchiveRecipe.encode(value)
+            return StaticColumnArchiveRecipe.encode(rows)
     if kind == "implicit":
         return ImplicitChartRowsArchiveRecipe.encode(value)
     if kind in ("expressions", "rational_terms"):
@@ -448,6 +451,7 @@ def _decode_column(value: Any, kind: str) -> Any:
         "map_digest_rows": (np.ndarray,),
         "integer_tensor": (ExactTensorArchiveRecipe,),
         "exact": (ExactTensorArchiveRecipe, StaticColumnArchiveRecipe),
+        "exact_bank": (ExactTensorArchiveRecipe, StaticColumnArchiveRecipe),
         "implicit": (ImplicitChartRowsArchiveRecipe,),
         "expressions": (ExactExpressionRowsArchiveRecipe,),
         "rational_terms": (ExactExpressionRowsArchiveRecipe,),
@@ -455,7 +459,7 @@ def _decode_column(value: Any, kind: str) -> Any:
     if type(value) not in allowed:
         raise TypeError("Layer record column has an unexpected recipe type.")
     if isinstance(value, ExactTensorArchiveRecipe) and value.rational != (
-        kind == "exact"
+        kind in ("exact", "exact_bank")
     ):
         raise ValueError("Layer record column has an unexpected exact scalar type.")
     if kind == "integer":
@@ -487,6 +491,10 @@ def _decode_column(value: Any, kind: str) -> Any:
                 rows[row] = rebuilt
             result.append(rebuilt)
         return tuple(result)
+    if kind == "exact_bank":
+        from ..discretization._exact_coordinate_bank import ExactCoordinateBank
+
+        return ExactCoordinateBank.from_rows(decoded)
     return decoded
 
 

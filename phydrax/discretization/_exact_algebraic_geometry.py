@@ -17,7 +17,7 @@ from .._trainable import NonTrainableState
 
 
 if TYPE_CHECKING:
-    from ._periodic_cell import PeriodicCell
+    from ._periodic_exact import PeriodicMeshIdentification
 
 
 type RationalScalar = int | np.integer | Fraction
@@ -646,7 +646,7 @@ class ExactPeriodicAlgebraicSource(StrictModule, NonTrainableState):
     def require_periodic_lift(
         self,
         coordinates: ArrayLike,
-        cell: PeriodicCell,
+        cell: PeriodicMeshIdentification,
         representatives: ArrayLike,
         shifts: ArrayLike,
         /,

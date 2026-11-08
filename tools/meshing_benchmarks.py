@@ -1897,10 +1897,17 @@ def _native_brep_plc_refinement_sample(
     live_face_sources = tables.facet_labels[face_rows]
     live_segment_sources = tables.edge_labels[edge_rows]
     source = tables.source
+    # The direct BRep volume route fills with the default edge-length convention.
     sizes, size_field_preparation_seconds = _timed(
-        lambda: _size_field(complex_, plc_specification, recovery, tables)
+        lambda: _size_field(
+            complex_,
+            plc_specification,
+            recovery,
+            tables,
+            size_convention="edge-length",
+        )
     )
-    if sizes.shape != (recovery.points.shape[0],):
+    if sizes is not None and sizes.shape != (recovery.points.shape[0],):
         raise RuntimeError("Native BRep volume sizing does not align with PLC points.")
 
     points = np.asarray(source.points, dtype=np.float64)

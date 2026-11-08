@@ -182,7 +182,8 @@ def test_restricted_child_evaluates_parent_map_on_exact_coordinate_bank() -> Non
         ),
         source_mesh=mesh,
     )
-    assert geometry.exact_coordinate_bank == exact_bank
+    assert geometry.exact_coordinate_bank is not None
+    assert tuple(geometry.exact_coordinate_bank) == exact_bank
     elements, routes, coordinates = geometry.resolve(mesh)
     # Child edge midpoint (0, 1/2, 0) is parent (0, 1/4, 0): the exact P2 image
     # y = 3/4 * 7/160 - 1/8 * 1/8 = 11/640, compared with a 0.0 tolerance.

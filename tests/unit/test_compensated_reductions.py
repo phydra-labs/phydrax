@@ -304,3 +304,129 @@ def test_zero_primal_retains_curvature_through_constant_chunks(
     assert value == 1
     np.testing.assert_array_equal(gradient, jnp.zeros_like(values))
     np.testing.assert_array_equal(hvp, 2 * direction)
+
+
+def _assert_bitwise(actual: jax.Array, expected: jax.Array) -> None:
+    actual_, expected_ = np.asarray(actual), np.asarray(expected)
+    assert actual_.dtype == expected_.dtype
+    assert actual_.shape == expected_.shape
+    assert actual_.tobytes() == expected_.tobytes()
+
+
+def _boundary_stream(length: int) -> np.ndarray:
+    # 1 + 2**-53 ties to 1. Summed one by one, each 2**-108 tail term is below
+    # half an ulp of the 2**-53 correction and vanishes; a 32-term block sums
+    # the tail exactly first and keeps it. Sixty terms sum to 1 sequentially
+    # but to 1 + 2**-52 once zero padding past 64 makes the sum blocked.
+    stream = np.full((length,), 2.0**-108, dtype=np.float64)
+    stream[:2] = (1.0, 2.0**-53)
+    return stream
+
+
+def _scatter(
+    terms: np.ndarray, positions: np.ndarray, capacity: int
+) -> tuple[np.ndarray, np.ndarray]:
+    # Excluded slots hold NaN: their values must never reach the sum.
+    values = np.full((capacity,) + terms.shape[1:], np.nan, dtype=terms.dtype)
+    values[positions] = terms
+    selected = np.zeros((capacity,), dtype=np.bool_)
+    selected[positions] = True
+    return values, selected
+
+
+@pytest.mark.parametrize(
+    "logical,capacities",
+    [
+        pytest.param(8, (12, 64, 65, 128), id="logical-8"),
+        pytest.param(60, (64, 65, 70, 128), id="logical-60"),
+        pytest.param(64, (65, 70, 128), id="logical-64"),
+        pytest.param(65, (70, 128), id="logical-65"),
+        pytest.param(100, (128, 200), id="logical-100"),
+    ],
+)
+def test_selected_sum_is_bitwise_independent_of_padded_capacity(
+    logical: int, capacities: tuple[int, ...]
+) -> None:
+    stream = _boundary_stream(logical)
+    expected = jax.jit(compensated_sum)(stream)
+    reduce = jax.jit(lambda values, where: compensated_sum(values, where=where))
+    rng = np.random.default_rng(logical)
+    for capacity in capacities:
+        trailing = np.arange(logical)
+        interleaved = np.sort(rng.choice(capacity, size=logical, replace=False))
+        for positions in (trailing, interleaved):
+            values, selected = _scatter(stream, positions, capacity)
+            _assert_bitwise(reduce(values, selected), expected)
+
+
+def _random_streams(
+    rng: np.random.Generator, length: int, dtype: type[np.inexact]
+) -> np.ndarray:
+    nonnegative = rng.random(length) * 2.0 ** rng.integers(-20, 20, length)
+    mixed = rng.standard_normal(length) * 2.0 ** rng.integers(-40, 40, length)
+    if np.issubdtype(dtype, np.complexfloating):
+        return (nonnegative + 1j * mixed).astype(dtype)[:, None]
+    return np.stack((nonnegative, mixed), axis=-1).astype(dtype)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [np.float32, np.float64, np.complex128],
+    ids=["float32", "float64", "complex128"],
+)
+def test_selected_sum_equals_unmasked_sum_of_selected_terms(
+    dtype: type[np.inexact],
+) -> None:
+    rng = np.random.default_rng(20261107)
+    unmasked = jax.jit(lambda values: compensated_sum(values, axis=0))
+    reduce = jax.jit(
+        lambda values, where: compensated_sum(values, axis=0, where=where[:, None])
+    )
+    for logical in (8, 60, 64, 65, 100):
+        terms = _random_streams(rng, logical, dtype)
+        expected = unmasked(terms)
+        for capacity in (logical + 4, 70, 128):
+            if capacity < logical:
+                continue
+            trailing = np.arange(logical)
+            interleaved = np.sort(rng.choice(capacity, size=logical, replace=False))
+            for positions in (trailing, interleaved):
+                values, selected = _scatter(terms, positions, capacity)
+                _assert_bitwise(reduce(values, selected), expected)
+
+
+def test_selected_sum_follows_each_lane_logical_count() -> None:
+    rng = np.random.default_rng(64)
+    capacity = 128
+    values = np.full((5, capacity), np.nan, dtype=np.float64)
+    selected = np.zeros((5, capacity), dtype=np.bool_)
+    expected = []
+    for lane, count in enumerate((8, 60, 64, 65, 100)):
+        stream = _boundary_stream(count)
+        positions = np.sort(rng.choice(capacity, size=count, replace=False))
+        values[lane], selected[lane] = _scatter(stream, positions, capacity)
+        expected.append(compensated_sum(stream))
+    lanes = jax.jit(lambda value, where: compensated_sum(value, axis=1, where=where))
+    batched = jax.jit(jax.vmap(lambda value, where: compensated_sum(value, where=where)))
+    _assert_bitwise(lanes(values, selected), jnp.stack(expected))
+    _assert_bitwise(batched(values, selected), jnp.stack(expected))
+
+
+def test_selected_sum_derivative_and_mask_contract() -> None:
+    values = jnp.linspace(-2.0, 3.0, 70, dtype=jnp.float64)
+    rng = np.random.default_rng(70)
+    for count in (60, 66):
+        where = np.zeros((70,), dtype=np.bool_)
+        where[rng.choice(70, size=count, replace=False)] = True
+        gradient = jax.jit(
+            jax.grad(
+                lambda candidate: compensated_sum(candidate * candidate, where=where)
+            )
+        )(values)
+        np.testing.assert_array_equal(gradient, jnp.where(where, 2 * values, 0.0))
+    np.testing.assert_array_equal(
+        compensated_sum(values, axis=(), where=values > 0),
+        jnp.where(values > 0, values, 0.0),
+    )
+    with pytest.raises(TypeError, match="boolean mask"):
+        compensated_sum(values, where=jnp.ones((70,), dtype=jnp.int32))

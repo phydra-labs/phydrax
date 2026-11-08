@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from functools import cmp_to_key
@@ -24,7 +24,7 @@ from ...typing import checked
 from .._contracts import SurfaceMeshingSpec, VolumeMeshingSpec
 from .._controls import FeatureKind
 from .._periodic import PeriodicPointOrbits
-from .._sizing import SizeControlStrength, UniformSizeControl
+from .._sizing import SizeCompliancePolicy, SizeControlStrength, UniformSizeControl
 
 if TYPE_CHECKING:
     from ._native_periodic import NativePeriodicSource
@@ -160,13 +160,30 @@ class _Predicates:
     def box(self, a: Point, b: Point) -> tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]]:
         key = (a, b)
         if key not in self.boxes:
-            ai = tuple(value.interval(bits=32) for value in a)
-            bi = tuple(value.interval(bits=32) for value in b)
-            self.boxes[key] = tuple((min(x[0], y[0]), max(x[1], y[1])) for x, y in zip(ai, bi, strict=True))
+            ax, ay = a[0].interval(bits=32), a[1].interval(bits=32)
+            bx, by = b[0].interval(bits=32), b[1].interval(bits=32)
+            self.boxes[key] = (
+                (min(ax[0], bx[0]), max(ax[1], bx[1])),
+                (min(ay[0], by[0]), max(ay[1], by[1])),
+            )
         return self.boxes[key]
 
     def orient(self, a: Point, b: Point, c: Point) -> int:
         return ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).sign()
+
+
+def _image(row: np.ndarray, /) -> Image:
+    return (int(row[0]), int(row[1]))
+
+
+def _radical_point(row: Sequence[ExactScalar], /) -> Point:
+    if len(row) != 2:
+        raise ValueError("Source-action construction requires planar source coordinates.")
+    x, y = row
+    return (
+        x if isinstance(x, RadicalElement) else RadicalElement(x),
+        y if isinstance(y, RadicalElement) else RadicalElement(y),
+    )
 
 
 def prepare_periodic_source_strata(mesh: CellMesh, regions: np.ndarray | None, features: tuple, /) -> _Strata:
@@ -190,6 +207,8 @@ def prepare_periodic_source_strata(mesh: CellMesh, regions: np.ndarray | None, f
     root_ids = quotient_ids[order]
     vertex_roots = inverse[vertex_rows]
     shifts = np.asarray(topology.vertex_shifts, dtype=np.int64)
+    if shifts.ndim != 2 or shifts.shape[1] != 2:
+        raise ValueError("Source-action construction requires planar deck shifts.")
     if np.any(shifts[roots]):
         raise ValueError("Canonical source representatives must have zero deck shift.")
     rows = _entity_vertex_rows(mesh)
@@ -225,26 +244,29 @@ def prepare_periodic_source_strata(mesh: CellMesh, regions: np.ndarray | None, f
     for identifier, row in zip(edge_ids, rows[1], strict=True):
         if int(identifier) in selected_ids:
             first, second = map(int, row)
-            protected.add(_key(int(vertex_roots[first]), tuple(map(int, shifts[first])), int(vertex_roots[second]), tuple(map(int, shifts[second])))[0])
+            protected.add(_key(int(vertex_roots[first]), _image(shifts[first]), int(vertex_roots[second]), _image(shifts[second]))[0])
     exact_source = topology.exact_coordinate_source
     if exact_source is None:
         source_points = tuple(
-            tuple(RadicalElement(Fraction(float(value))) for value in row)
+            _radical_point(tuple(Fraction(float(value)) for value in row))
             for row in np.asarray(mesh.coordinates, dtype=np.float64)[roots]
         )
     else:
         bank = exact_source.source_coordinates()
-        source_points = tuple(
-            tuple(
-                value if isinstance(value, RadicalElement) else RadicalElement(value)
-                for value in bank[int(root)]
-            )
-            for root in roots
-        )
+        source_points = tuple(_radical_point(bank[int(root)]) for root in roots)
     return _Strata(source_points, cells, corner_shifts, selected_regions, np.asarray(sorted(protected), dtype=np.int64).reshape((-1, 4)), topology.cell, root_ids)
 
 
-def _compatible_edges(edges, segments, penalties, grid, work, *, below_limit=None, above_limit=None):
+def _compatible_edges(
+    edges: list[Edge],
+    segments: list[_Segment],
+    penalties: list[tuple[int, int, RadicalElement]],
+    grid: _Grid,
+    work: _Predicates,
+    *,
+    below_limit: int | None = None,
+    above_limit: int | None = None,
+) -> tuple[Edge, ...]:
     return _compatible_edges_search(edges, segments, penalties, grid, work, below_limit=below_limit, above_limit=above_limit)
 
 
@@ -1099,7 +1121,7 @@ def prove_orbit_lattice_bands(
 
 
 
-def _size_ok(squares: list[RadicalElement], controls: list[UniformSizeControl], policy) -> bool:
+def _size_ok(squares: list[RadicalElement], controls: list[UniformSizeControl], policy: SizeCompliancePolicy) -> bool:
     if not squares:
         return False
     ordered = sorted(squares)
@@ -1126,7 +1148,7 @@ def _size_ok(squares: list[RadicalElement], controls: list[UniformSizeControl], 
     return True
 
 
-def _orbit_size_ok(proof: OrbitLatticeBands, controls: list[UniformSizeControl], policy, work: _Predicates) -> bool:
+def _orbit_size_ok(proof: OrbitLatticeBands, controls: list[UniformSizeControl], policy: SizeCompliancePolicy, work: _Predicates) -> bool:
     apex = _band_apex(proof.step, work)
     def filler(shift: int) -> RadicalElement:
         offset = _combine(shift, proof.step, 1, proof.rise)
@@ -1136,8 +1158,8 @@ def _orbit_size_ok(proof: OrbitLatticeBands, controls: list[UniformSizeControl],
     return _size_ok(values * len(proof.roots), controls, policy)
 
 
-def _carrier_squares(triangles, points, vectors):
-    squares = {}
+def _carrier_squares(triangles: list[tuple[Corner, Corner, Corner]], points: tuple[Point, ...], vectors: tuple[Point, Point]) -> list[RadicalElement]:
+    squares: dict[Edge, RadicalElement] = {}
     for triangle in triangles:
         for (first, fi), (second, si) in ((triangle[0], triangle[1]), (triangle[1], triangle[2]), (triangle[2], triangle[0])):
             edge, _ = _key(first, fi, second, si)
@@ -1146,7 +1168,16 @@ def _carrier_squares(triangles, points, vectors):
     return list(squares.values())
 
 
-def _finish_carrier(source, specification, coordinates, triangles, regions, ancestry, identities, kind):
+def _finish_carrier(
+    source: NativePeriodicSource,
+    specification: SurfaceMeshingSpec,
+    coordinates: Sequence[Point],
+    triangles: list[tuple[Corner, Corner, Corner]],
+    regions: np.ndarray,
+    ancestry: tuple[tuple[int, ...], ...],
+    identities: Sequence[SiteIdentity],
+    kind: str,
+) -> ExactAlgebraicCarrier:
     points = tuple(coordinates)
     rounded = np.asarray([[value.rounded()[0] for value in point] for point in points], dtype=np.float64)
     simplices = np.asarray([[root for root, _ in triangle] for triangle in triangles], dtype=np.int64)
@@ -1189,15 +1220,18 @@ def construct_orbit_lattice_band_carrier(source: NativePeriodicSource, specifica
     controls = _hard_uniform_controls(specification)
     if proof is None or not controls:
         raise ValueError("Orbit-lattice band construction premises are not satisfied.")
+    domain = source.domain
+    if not isinstance(domain, PeriodicPointOrbits):
+        raise ValueError("Orbit-lattice band construction requires periodic point orbits.")
     work = _Predicates()
     roots = len(proof.roots)
     a, b = proof.vectors
     vectors = ((RadicalElement(a[0]), RadicalElement(a[1])), (RadicalElement(b[0]), RadicalElement(b[1])))
     apex = _band_apex(proof.step, work)
     coordinates = [(RadicalElement(x), RadicalElement(y)) for x, y in proof.roots]
-    ids = sorted(map(int, source.domain.point_ids))
+    ids = sorted(map(int, domain.point_ids))
     identities = [("authored_source_root", (identifier,)) for identifier in ids]
-    wraps = []
+    wraps: list[Image] = []
     for root in range(roots):
         raw = _add(coordinates[root], apex)
         fractional = _fractional(raw, proof)
@@ -1205,10 +1239,10 @@ def construct_orbit_lattice_band_carrier(source: NativePeriodicSource, specifica
         coordinates.append(_lift(raw, (-image[0], -image[1]), vectors))
         wraps.append(image)
         identities.append(("orbit_lattice_band_apex", (ids[root],)))
-    def apex_corner(corner):
+    def apex_corner(corner: Corner) -> Corner:
         root, image = corner
         return roots + root, (image[0] + wraps[root][0], image[1] + wraps[root][1])
-    triangles = []
+    triangles: list[tuple[Corner, Corner, Corner]] = []
     for root in range(roots):
         right, left, ahead, behind = _band_neighbors(proof, root, work)
         here = (root, (0, 0))

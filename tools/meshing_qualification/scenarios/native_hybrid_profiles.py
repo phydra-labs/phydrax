@@ -42,8 +42,9 @@ _VOLUME_TOLERANCE = 1.0e-10
 _GROWTH_RATE = 1.2
 # Declared symbolic work (ordering, elimination tree, counts) of every
 # harmonic-history Cholesky analysis: the refined archived-layer-core operator
-# (238,387 P2 DOFs) needs 111,319,274 under minimum degree, so 2**30 leaves ~10x.
-_SYMBOLIC_WORK_BUDGET = 1 << 30
+# (238,387 P2 DOFs) needs 1,111,891,428 under nested dissection, so 2**33
+# leaves ~7.7x.
+_SYMBOLIC_WORK_BUDGET = 1 << 33
 # Run envelope 24 GiB per layer/core profile (25.77 GB). One declared execution
 # budget serves every harmonic-history solve and every de Rham Hodge admission
 # factorization. Measured needs: the unit-box target's degree-1 Hodge factor
@@ -828,6 +829,26 @@ def _layer_core_initial_history(
     return accepted, space, defect
 
 
+# Declared per-chunk geometry/Hodge-assembly workset of the de Rham complexes:
+# 512 MiB is the workset validated on the unit-box target (38,696 cells;
+# geometry setup peak 7.95 GiB). It only changes chunking, never values.
+_LAYER_CORE_HODGE_WORKSET = 512 << 20
+
+
+def _layer_core_hodge_resources(
+    controls: _LayerCoreLifecycle, /
+) -> phx.linalg.SolveResourcePolicy:
+    """The profile's declared budget of every de Rham Hodge admission and solve."""
+    budget = controls.solve_memory_bytes
+    return phx.linalg.SolveResourcePolicy(
+        factorization_bytes=budget,
+        workspace_bytes=_LAYER_CORE_HODGE_WORKSET,
+        krylov_basis_bytes=budget,
+        preconditioner_bytes=budget,
+        recycling_state_bytes=budget,
+    )
+
+
 def _harmonic_history_policy(budget: int, /) -> phx.linalg.LinearSolvePolicy:
     """PCG on the exact supernodal Cholesky factor under one declared byte budget.
 
@@ -835,13 +856,12 @@ def _harmonic_history_policy(budget: int, /) -> phx.linalg.LinearSolvePolicy:
     budget: all fields are static, so they enter plan_id, and the writer and
     the cold reader prepare under the same declaration. The factor's
     structural nonzeros are bounded by the same bytes (one float64 each).
-    Minimum degree is the ordering. Nested dissection is refused on the
-    unit-box refined target: its 3,690-vertex separator exceeds the library's
-    fixed 2,048 separator capacity, which the factorization policy cannot
-    declare. On the refined archived-layer-core operator (238,387 P2 DOFs)
-    minimum degree needs 88,052,378 factor nonzeros (1.25 GB) and 111 M
-    symbolic work, against 70,816,866 nonzeros and 1.11 G work for nested
-    dissection.
+    Nested dissection is the ordering. Its separator capacity follows the
+    declared factor nonzeros, so the unit-box target's 3,690-vertex separator
+    is admitted. On the refined archived-layer-core operator (238,387 P2 DOFs)
+    it needs 70,816,866 factor nonzeros (1.10 GB), 6.3e10 flops and a 14.1 s
+    symbolic analysis. Minimum degree needs 88,052,378 (1.25 GB), 1.0e11 flops
+    and 21.0 s.
     """
     return phx.linalg.LinearSolvePolicy(
         phx.linalg.PCG(),
@@ -850,7 +870,7 @@ def _harmonic_history_policy(budget: int, /) -> phx.linalg.LinearSolvePolicy:
             phx.linalg.SparseFactorizationPreconditionerBuilder(
                 phx.linalg.SparseFactorizationPolicy(
                     "cholesky",
-                    ordering="approximate-minimum-degree",
+                    ordering="nested-dissection",
                     max_factor_nnz=budget // np.dtype(np.float64).itemsize,
                     max_factor_bytes=budget,
                     max_symbolic_work=_SYMBOLIC_WORK_BUDGET,
@@ -1637,6 +1657,8 @@ def _resume_mapped_refinement(path: Path, content_id: str, /) -> dict[str, objec
             for row, name in enumerate(names)
             if row >= 2
         },
+        # Mapped wall profiles declare no run envelope yet: library defaults.
+        hodge_resources=None,
     )
     forward = {**scalar_forward, **form_forward}
     if any(
@@ -1673,6 +1695,7 @@ def _resume_mapped_refinement(path: Path, content_id: str, /) -> dict[str, objec
             target_fields,
             {name: np.asarray(refined_values[names.index(name)])},
             fields=(name,),
+            hodge_resources=None,
         )
         form_back.update(values)
         backward_forms.update(evidence)
@@ -2247,10 +2270,16 @@ def _layer_form_transition(
     banks: dict[str, np.ndarray],
     /,
     *,
+    hodge_resources: phx.linalg.SolveResourcePolicy | None,
     fields: tuple[str, ...] = ("Hcurl", "Hdiv"),
     on_field: Any | None = None,
 ) -> tuple[dict[str, np.ndarray], dict[str, object]]:
-    """Move the original lifted H(curl)/H(div) banks and prove periodic descent."""
+    """Move the original lifted H(curl)/H(div) banks and prove periodic descent.
+
+    ``hodge_resources`` is the profile's declared budget of both complexes'
+    Hodge admission factorizations, assembly workset and Riesz solves; ``None``
+    keeps the documented library defaults (unbudgeted callers).
+    """
     import jax.numpy as jnp
 
     from phydrax._owned_programs import run_owned_program
@@ -2293,6 +2322,7 @@ def _layer_form_transition(
             order=2,
             twist=twist,
             coordinate_spec=adaptation.source.geometry,
+            hodge_resources=hodge_resources,
         )
         target_complex = phx.discretization.FiniteElementDeRhamComplex(
             adaptation.target.mesh,
@@ -2300,6 +2330,7 @@ def _layer_form_transition(
             order=2,
             twist=twist,
             coordinate_spec=adaptation.target.geometry,
+            hodge_resources=hodge_resources,
         )
         for endpoint, spec, complex_ in (
             (adaptation.source, source_spec, source_complex),
@@ -2318,17 +2349,35 @@ def _layer_form_transition(
             ):
                 raise ValueError(f"{name} field changed its canonical moment layout.")
             del actual, expected, elements
-        periodic = source_complex.transfer_periodic_quotient(
-            target_complex, geometry_transition=transition
-        )
-        action = periodic.lifted_transfer_result.complex_map.map(degree)
-        commuting = np.asarray(periodic.commuting_defects, dtype=np.float64)
-        bounds = np.asarray(periodic.commuting_error_bounds, dtype=np.float64)
-        periodic_transfer_id = periodic.transfer_id
-        lifted_evidence_id = periodic.lifted_transfer_result.evidence_id
-        # All complex, Hodge, periodic-descent and commuting checks have
-        # completed. Release their owners before the selected action's consumers.
-        del periodic, source_complex, target_complex, complex_
+        # The route follows the meshes' declared periodicity: a periodic pair
+        # descends to its quotients, a non-periodic pair uses the nested
+        # h/Piola transfer itself.
+        source_periodic = adaptation.source.mesh.periodic_topology is not None
+        if source_periodic != (adaptation.target.mesh.periodic_topology is not None):
+            raise ValueError("Form transfer endpoints must agree on periodicity.")
+        if source_periodic:
+            periodic = source_complex.transfer_periodic_quotient(
+                target_complex, geometry_transition=transition
+            )
+            route = "periodic-quotient"
+            transferred = periodic.lifted_transfer_result
+            commuting = np.asarray(periodic.commuting_defects, dtype=np.float64)
+            bounds = np.asarray(periodic.commuting_error_bounds, dtype=np.float64)
+            transfer_id = periodic.transfer_id
+            del periodic
+        else:
+            transferred = source_complex.transfer(
+                target_complex, geometry_transition=transition
+            )
+            route = "nested"
+            commuting = np.asarray(transferred.commuting_defects, dtype=np.float64)
+            bounds = np.asarray(transferred.commuting_error_bounds, dtype=np.float64)
+            transfer_id = transferred.transfer_id
+        action = transferred.complex_map.map(degree)
+        evidence_id = transferred.evidence_id
+        # All complex, Hodge, descent and commuting checks have completed.
+        # Release their owners before the selected action's consumers.
+        del transferred, source_complex, target_complex, complex_
         source_values = np.asarray(banks[name], dtype=np.float64)
         target_values = np.asarray(
             action.mv(jnp.asarray(source_values)), dtype=np.float64
@@ -2363,7 +2412,7 @@ def _layer_form_transition(
             or not np.all(np.isfinite(bounds))
             or np.max(commuting + bounds, initial=0.0) > 3.0e-11
         ):
-            raise ValueError(f"{name} periodic compatible transfer did not commute.")
+            raise ValueError(f"{name} compatible transfer did not commute.")
         physical_defect = None
         partition = transition.coarsening_partition
 
@@ -2428,10 +2477,12 @@ def _layer_form_transition(
         ):
             raise ValueError(f"{name} physical compatible content changed.")
         record = {
-            "field_space": "lifted-canonical-dofs",
-            "periodic_quotient_is_operator_evidence_only": True,
-            "periodic_transfer_id": periodic_transfer_id,
-            "lifted_evidence_id": lifted_evidence_id,
+            "field_space": "lifted-canonical-dofs"
+            if source_periodic
+            else "canonical-dofs",
+            "route": route,
+            "transfer_id": transfer_id,
+            "evidence_id": evidence_id,
             "adjoint_defect": adjoint_defect,
             "physical_defect": physical_defect,
             "compiled_defect": float(np.max(np.abs(compiled_values - target_values))),
@@ -3718,7 +3769,11 @@ def _run_wall_profile(
             target_form_fields = _layer_field_plan(refinement.target).fields
             del scalar_space, refined_space
             refined_forms, forward_forms = _layer_form_transition(
-                refinement, source_form_fields, target_form_fields, form_banks
+                refinement,
+                source_form_fields,
+                target_form_fields,
+                form_banks,
+                hodge_resources=None,
             )
             form_space = _layer_field_plan(accepted).prepare()
             refined_form_space = _layer_field_plan(refinement.target).prepare()
@@ -3762,7 +3817,11 @@ def _run_wall_profile(
             inverse_form_fields = _layer_field_plan(coarsening.target).fields
             del refined_space, restored_space
             restored_forms, backward_forms = _layer_form_transition(
-                coarsening, target_form_fields, inverse_form_fields, refined_forms
+                coarsening,
+                target_form_fields,
+                inverse_form_fields,
+                refined_forms,
+                hodge_resources=None,
             )
             for field_name in ("H1", "DG"):
                 if not np.allclose(
@@ -5315,6 +5374,7 @@ def _resume_layer_core_cycle(
             for row, name in enumerate(names)
             if row >= 2
         },
+        hodge_resources=_layer_core_hodge_resources(controls),
     )
     replayed = {**replayed_scalars, **replayed_forms}
     if any(
@@ -5347,6 +5407,7 @@ def _resume_layer_core_cycle(
             for row, name in enumerate(names)
             if row >= 2
         },
+        hodge_resources=_layer_core_hodge_resources(controls),
     )
     restored = {**restored_scalars, **restored_forms}
     if any(
@@ -5459,6 +5520,7 @@ def _run_layer_core_lifecycle(
             source_form_fields,
             refined_plan.fields,
             {name: banks[name] for name in ("Hcurl", "Hdiv")},
+            hodge_resources=_layer_core_hodge_resources(controls),
         )
         del source_form_fields
         refined_space = refined_plan.prepare()
@@ -5545,6 +5607,7 @@ def _run_layer_core_lifecycle(
             refined_plan.fields,
             field_plan.fields,
             {name: refined_banks[name] for name in ("Hcurl", "Hdiv")},
+            hodge_resources=_layer_core_hodge_resources(controls),
         )
         del refined_space
         banks = {**restored_scalars, **restored_forms}

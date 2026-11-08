@@ -32,7 +32,8 @@ from ...geometry._supermesh import (
 
 if TYPE_CHECKING:
     from .._cell_geometry_transition_types import CellGeometryTransition
-    from .._coordinate_enclosure import ExactScalar
+    from .._coordinate_enclosure import CoordinateSourceBank, ExactScalar
+    from .._exact_coordinate_bank import ExactCoordinateBank
     from .._view_support import OwnerLocalCellGeometry
 
 
@@ -3173,13 +3174,15 @@ def _subset_owner_local_geometry(
 class _ExactCoordinateSourceProjection:
     __slots__ = ("source_id", "source_revision", "source_map_id", "_coordinates")
 
-    def __init__(self, source_map: Any, coordinates: Any, /) -> None:
+    def __init__(self, source_map: Any, coordinates: CoordinateSourceBank, /) -> None:
+        from .._exact_coordinate_bank import ExactCoordinateBank
+
         self.source_id = source_map.source_id
         self.source_revision = source_map.source_revision
         self.source_map_id = source_map.source_map_id
-        self._coordinates = tuple(tuple(value for value in row) for row in coordinates)
+        self._coordinates = ExactCoordinateBank.from_rows(coordinates)
 
-    def source_coordinates(self, /) -> tuple[tuple[Any, ...], ...]:
+    def source_coordinates(self, /) -> ExactCoordinateBank:
         return self._coordinates
 
 

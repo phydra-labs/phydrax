@@ -14,6 +14,7 @@ point clouds, shifted to be positive definite.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import jax.numpy as jnp
@@ -319,6 +320,55 @@ def test_separator_capacity_refuses_nested_dissection() -> None:
         _ordering(operator, "nested-dissection", separator_capacity=largest - 1)
     tight = _ordering(operator, "nested-dissection", separator_capacity=largest)
     assert np.array_equal(tight.permutation, admitted.permutation)
+
+
+def _grid_laplacian(side: int, /) -> sp.csr_matrix:
+    """Shifted 7-point graph Laplacian of a ``side**3`` grid."""
+    path = sp.diags(np.ones((2, side - 1)), [-1, 1])
+    identity = sp.identity(side)
+    graph = sp.csr_matrix(
+        sp.kron(sp.kron(path, identity), identity)
+        + sp.kron(sp.kron(identity, path), identity)
+        + sp.kron(sp.kron(identity, identity), path)
+    )
+    degree = np.asarray(graph.sum(axis=1)).ravel()
+    laplacian = sp.csr_matrix(sp.diags(degree + 0.5) - graph)
+    laplacian.sort_indices()
+    return laplacian
+
+
+def test_factorization_separator_capacity_follows_declared_factor_nonzeros() -> None:
+    # The graph nested dissection of a 54**3 grid needs a 2,187-vertex separator,
+    # above the standalone default capacity of 2,048.
+    operator = _operator(_grid_laplacian(54))
+    width = 2187
+    capacity = (math.isqrt(8 * 2_000_000 + 1) - 1) // 2
+    with pytest.raises(
+        la.LinearCapabilityError,
+        match=f"separator of {width} vertices exceeds separator_capacity {capacity}",
+    ):
+        la.prepare_sparse_factorization(
+            operator,
+            la.SparseFactorizationPolicy(
+                "cholesky", ordering="nested-dissection", max_factor_nnz=2_000_000
+            ),
+        )
+
+    def declared(max_factor_nnz: int, /) -> la.SparseFactorizationPolicy:
+        return la.SparseFactorizationPolicy(
+            "cholesky",
+            ordering="nested-dissection",
+            max_factor_nnz=max_factor_nnz,
+            max_factor_bytes=1 << 31,
+            max_symbolic_work=1 << 31,
+        )
+
+    plan = la.prepare_sparse_factorization(operator, declared(1 << 27))
+    larger = la.prepare_sparse_factorization(operator, declared(1 << 28))
+    assert larger.factor_nnz == plan.factor_nnz
+    assert larger.plan_id != plan.plan_id
+    factorization = la.refresh_sparse_factorization(plan, operator)
+    assert int(factorization.status) == int(la.SparseFactorizationStatus.SUCCESS)
 
 
 def test_prepared_ordering_is_reused_by_plans_and_numeric_refresh() -> None:

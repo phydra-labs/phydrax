@@ -23,6 +23,7 @@ from ..typing import checked
 from ._cell_geometry import CellGeometrySpec
 from ._cell_mesh import CellBlock, CellMesh, PolyhedralBlock
 from ._exact_algebraic_geometry import ExactPeriodicAlgebraicSource
+from ._exact_coordinate_bank import ExactCoordinateBank
 from ._exact_plc_geometry import ExactPlcCellGeometrySource
 from ._exact_power_geometry import ExactPowerCellGeometrySource
 from ._periodic_cell import PeriodicCell
@@ -1338,7 +1339,7 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
                 np.array_equal(np.asarray(left), np.asarray(right))
                 for left, right in zip(routes, affine_routes, strict=True)
             )
-            and geometry.source_coordinates() == expected
+            and geometry.source_coordinates() == ExactCoordinateBank.from_rows(expected)
         ):
             return
 

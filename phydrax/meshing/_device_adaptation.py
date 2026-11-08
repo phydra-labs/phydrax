@@ -63,6 +63,7 @@ from ..discretization._adaptive_simplex import (
 )
 from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._cell_mesh import CellBlock, CellMesh
+from ..discretization._exact_algebraic_geometry import rational_coefficient
 from ..discretization.fem import FiniteElementTopologyTransfer
 from ..linalg._exact import determinant_exact
 from ._adaptation import (
@@ -5813,12 +5814,17 @@ def _owner_local_periodic_finish(
                 tuple(
                     (
                         int(source_id),
-                        weight.numerator,
-                        weight.denominator,
+                        rational.numerator,
+                        rational.denominator,
                     )
-                    for source_id, weight, active in zip(
+                    for source_id, rational, active in zip(
                         stencil.source_global_ids[row],
-                        stencil.exact_weights[row],
+                        (
+                            rational_coefficient(
+                                weight, role="Owner-local periodic stencil weight"
+                            )
+                            for weight in stencil.exact_weights[row]
+                        ),
                         stencil.valid[row],
                         strict=True,
                     )

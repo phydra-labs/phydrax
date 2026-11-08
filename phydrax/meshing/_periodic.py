@@ -29,6 +29,7 @@ from ..discretization._cell_geometry import (
     PerCellRestrictedCellGeometryElement,
 )
 from ..discretization._cell_mesh import CellBlock, CellMesh
+from ..discretization._exact_algebraic_geometry import rational_coefficient
 from ..discretization._exact_plc_geometry import ExactPlcCellGeometrySource
 from ..discretization._partition import CellAdjacency
 from ..discretization._periodic_cell import PeriodicCell
@@ -742,7 +743,7 @@ def _candidate_vertex_ancestry(
     for row, weights in enumerate(stencil.exact_weights):
         coordinate = list(offsets[row])
         weight_sum = Fraction(0)
-        for identifier, weight, active in zip(
+        for identifier, exact_weight, active in zip(
             source_ids[row].tolist(), weights, valid[row].tolist(), strict=True
         ):
             if not active:
@@ -753,6 +754,9 @@ def _candidate_vertex_ancestry(
                     "Adapted periodic vertex ancestry references a source site "
                     "outside the resident point bank."
                 )
+            weight = rational_coefficient(
+                exact_weight, role="Adapted periodic vertex ancestry weight"
+            )
             weight_sum += weight
             for axis, value in enumerate(root):
                 coordinate[axis] += weight * value
@@ -2557,7 +2561,7 @@ def periodic_topology_after_edit(
                 active = stencil_valid[target_row]
                 rows = source_rows[target_row, active]
                 row_weights = tuple(
-                    weight
+                    rational_coefficient(weight, role="Periodic orbit stencil weight")
                     for weight, is_valid in zip(weights[target_row], active, strict=True)
                     if is_valid
                 )

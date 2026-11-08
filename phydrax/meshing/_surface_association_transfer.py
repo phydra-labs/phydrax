@@ -18,6 +18,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellBlock, CellMesh
 from ..discretization._cell_geometry_transition_types import CellGeometryTransition
+from ..discretization._exact_algebraic_geometry import rational_coefficient
 from ..geometry._meshing_domain import MeshingDomain, PatchCurveUse
 from ..geometry._source_boundary_records import SourceBoundaryChartWitness, SourceBoundaryFaceImageWitness
 from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
@@ -112,7 +113,10 @@ def _target_edge_parameter(
         [value != 0 for value in exact], dtype=np.bool_
     )
     support = source_ids[valid]
-    coefficients = tuple(exact[index] for index in np.flatnonzero(valid))
+    coefficients = tuple(
+        rational_coefficient(exact[index], role="Trim-edge split stencil weight")
+        for index in np.flatnonzero(valid)
+    )
     if not np.all(np.isin(support, np.asarray(source_endpoint_ids, dtype=np.int64))):
         raise ValueError(
             "A trim-edge split stencil must remain on its exact source edge."

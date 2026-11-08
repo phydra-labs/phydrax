@@ -33,11 +33,20 @@ class _PiecewiseLinearBoundaryOwner(Protocol):
     @property
     def domain(self) -> PiecewiseLinearDomain | AffinePlcDomain: ...
 
-    edges: np.ndarray
-    envelope_id: str
-    scope_entity_ids_by_mesh_row: tuple[np.ndarray, ...]
-    source_id: str
-    source_revision: str
+    @property
+    def edges(self) -> np.ndarray: ...
+
+    @property
+    def envelope_id(self) -> str: ...
+
+    @property
+    def scope_entity_ids_by_mesh_row(self) -> tuple[np.ndarray, ...]: ...
+
+    @property
+    def source_id(self) -> str: ...
+
+    @property
+    def source_revision(self) -> str: ...
 
     def require_current(self, /) -> None: ...
 

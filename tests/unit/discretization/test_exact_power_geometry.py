@@ -161,7 +161,7 @@ def test_exact_power_geometry_cold_reconstruction_retains_source_mapping() -> No
         (Fraction(0), Fraction(1), Fraction(0)),
         (Fraction(0), Fraction(0), Fraction(1)),
     )
-    assert restored_geometry.source_coordinates() == expected_coordinates
+    assert tuple(restored_geometry.source_coordinates()) == expected_coordinates
     assert (
         restored_geometry.source_coordinates() == original_geometry.source_coordinates()
     )
@@ -188,7 +188,7 @@ def test_exact_power_geometry_cold_reconstruction_retains_source_mapping() -> No
     restored_selected_geometry = CellGeometrySpec.power(selected_mesh, restored_selected)
     expected_selected = tuple(expected_coordinates[index] for index in selected_rows)
     assert restored_selected.output_vertex_indices.tolist() == selected_rows.tolist()
-    assert restored_selected_geometry.source_coordinates() == expected_selected
+    assert tuple(restored_selected_geometry.source_coordinates()) == expected_selected
     assert restored_selected_geometry.source_coordinates() == (
         selected_geometry.source_coordinates()
     )

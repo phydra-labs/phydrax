@@ -1381,7 +1381,7 @@ def test_affine_simplex_preparation_retains_exact_corners_without_polynomials(
         compact.setattr(_embedding_cells, "_affine_expressions", unexpected_polynomial)
         (cell,) = prepare_embedding_cells(mesh, geometry)
     assert cell.coordinate_expressions is None
-    assert cell.corner_images == geometry.source_coordinates()
+    assert cell.corner_images == tuple(geometry.source_coordinates())
     assert (
         tuple(
             tuple(

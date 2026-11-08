@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -34,7 +35,9 @@ from .native_family_matrix import (
 )
 
 
-def _physical_state(result: CellMeshingResult, profile_id: str):
+def _physical_state(
+    result: CellMeshingResult, profile_id: str
+) -> tuple[dict[str, object], np.ndarray, Any]:
     if profile_id == "native-family-lifecycle:curved-quarter-extrusion-quad":
         return _solve_quarter_quadratic(result)
     return _solve_family_affine_state(result)

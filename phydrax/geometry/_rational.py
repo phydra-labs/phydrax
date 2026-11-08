@@ -222,22 +222,61 @@ def binary64_norm_lower(components: ArrayLike, /) -> NDArray[np.float64]:
     return _directed_norm(components, False)
 
 
+def binary64_dyadic_entries(
+    values: np.ndarray, /
+) -> tuple[NDArray[np.int64], NDArray[np.int64]]:
+    """Return per-entry odd significands ``s`` and exponents ``e`` with ``value == s*2**e``.
+
+    Zero (including ``-0.0``) is ``(0, 0)``; every other significand is odd, so the
+    pair is the canonical integer-dyadic form of each finite binary64 entry.
+    """
+    array = np.asarray(values, dtype=np.float64)
+    if not np.all(np.isfinite(array)):
+        raise ValueError("binary64_dyadic_entries.values must be finite binary64 values.")
+    mantissa, exponent = np.frexp(array)
+    significand = np.ldexp(mantissa, 53).astype(np.int64)
+    nonzero = significand != 0
+    # The lowest set bit is a power of two below 2**53, so binary64 holds it exactly.
+    lowest = np.where(nonzero, significand & -significand, 1)
+    trailing = np.frexp(lowest.astype(np.float64))[1].astype(np.int64) - 1
+    significands = np.where(nonzero, significand >> trailing, 0)
+    exponents = np.where(nonzero, exponent.astype(np.int64) - 53 + trailing, 0)
+    return significands, exponents
+
+
+def dyadic_entry(value: Fraction, /) -> tuple[int, int] | None:
+    """Canonical ``(odd significand, exponent)`` of a dyadic rational, else ``None``."""
+    numerator, denominator = value.numerator, value.denominator
+    if denominator & (denominator - 1):
+        return None
+    if numerator == 0:
+        return 0, 0
+    if denominator > 1:
+        return numerator, 1 - denominator.bit_length()
+    trailing = (numerator & -numerator).bit_length() - 1
+    return numerator >> trailing, trailing
+
+
 def dyadic_integers(values: np.ndarray, /) -> tuple[np.ndarray, int]:
-    """Return integers ``n`` and one exponent ``e`` with ``values == n*2**e``."""
+    """Return integers ``n`` and one exponent ``e`` with ``values == n*2**e``.
+
+    ``e`` is the least exponent of the 53-bit binary64 significands of the
+    nonzero entries (``0`` when every entry is zero).
+    """
     array = np.asarray(values, dtype=np.float64)
     if not np.all(np.isfinite(array)):
         raise ValueError("dyadic_integers.values must be finite binary64 values.")
-    mantissa, exponent = np.frexp(array)
-    significand = np.ldexp(mantissa, 53).astype(np.int64)
-    shift = exponent.astype(np.int64) - 53
-    nonzero = significand != 0
-    base = int(np.min(shift[nonzero])) if np.any(nonzero) else 0
-    shift = np.where(nonzero, shift - base, 0)
+    significands, exponents = binary64_dyadic_entries(array)
+    nonzero = significands != 0
+    widths = np.frexp(np.abs(significands).astype(np.float64))[1].astype(np.int64)
+    base = int(np.min((exponents + widths - 53)[nonzero])) if np.any(nonzero) else 0
     integers = np.asarray(
         [
-            int(value) << int(amount)
+            int(value) << int(amount - base) if value else 0
             for value, amount in zip(
-                significand.reshape(-1).tolist(), shift.reshape(-1).tolist(), strict=True
+                significands.reshape(-1).tolist(),
+                exponents.reshape(-1).tolist(),
+                strict=True,
             )
         ],
         dtype=object,
@@ -310,8 +349,10 @@ def translation_ranges(
 __all__ = [
     "RationalVector",
     "binary64_difference_magnitude",
+    "binary64_dyadic_entries",
     "binary64_norm_lower",
     "binary64_norm_upper",
+    "dyadic_entry",
     "dyadic_integers",
     "exact_float",
     "fraction_down",

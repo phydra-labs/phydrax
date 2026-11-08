@@ -49,6 +49,7 @@ from ..discretization._coordinate_enclosure import (
     sum_polynomials,
 )
 from ..discretization._exact_algebraic_geometry import coefficient_payload, RadicalElement
+from ..discretization._exact_coordinate_bank import ExactCoordinateBank
 from ..discretization._reference_cell import reference_cell_topology
 from ..discretization._surface_chart_records import (
     _exact_chart_from_tokens,
@@ -3666,7 +3667,7 @@ def _validate_root_atlas(
     if (
         source_map.source_id != domain.source_id
         or source_map.source_revision != domain.source_revision
-        or source_map.exact_coordinates != coefficients
+        or ExactCoordinateBank.from_rows(source_map.exact_coordinates) != coefficients
     ):
         raise ValueError(
             "Spline root source map must bind the current exact coefficient bank."

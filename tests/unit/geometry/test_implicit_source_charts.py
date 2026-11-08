@@ -951,6 +951,7 @@ def test_implicit_root_bracket_widens_until_a_far_normal_root_is_signed() -> Non
         (result,) = source_charts._evaluate_box_requests(
             surface.volume.bounds, hessian, [request]
         )
+        assert result is not None
         try:
             request = steps.send(result)
         except StopIteration as stop:
@@ -1075,11 +1076,13 @@ def _near_band_face_proof(
             maximum_normal_deviation=None,
         )
 
-    ((pieces, detail),) = source_charts._run_faces(
+    (outcome,) = source_charts._run_faces(
         bounds,
         hessian,
         [source_charts._prove_face_triangles(prove, (_corner_triangle(4),))],
     )
+    assert outcome is not None
+    pieces, detail = outcome
     return pieces, detail, rounds
 
 

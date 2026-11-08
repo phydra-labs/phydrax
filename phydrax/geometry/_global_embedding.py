@@ -48,6 +48,7 @@ from ..discretization._coordinate_enclosure import (
     coefficient_endpoint,
     compose_expression,
     constant,
+    CoordinateSourceBank,
     derivative,
     evaluate_expression,
     ExactScalar as CoordinateExactScalar,
@@ -1426,7 +1427,7 @@ def _retained_root_charts(
         elements, routes, _ = geometry.resolve(mesh)
     except (ValueError, TypeError, IndexError):
         return tuple(None for _ in cells)
-    coefficient_bank: tuple[tuple[CoordinateExactScalar, ...], ...] | None = None
+    coefficient_bank: CoordinateSourceBank | None = None
     chart_witnesses = dict(
         zip(source.block_names, source.parent_reference_maps, strict=True)
     )

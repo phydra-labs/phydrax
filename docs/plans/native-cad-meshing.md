@@ -470,6 +470,17 @@ with no compatibility reads.
    `CellValidityCertificate.cell_map_digests`) are stored as integer and byte
    array columns through the existing column recipes; identities are
    unchanged. Raising the manifest limit was rejected.
+6. The exact coordinate bank of `CellGeometrySpec.exact_coordinate_bank` and
+   `_ExactCoordinateBankMap.exact_coordinates` is an immutable integer-dyadic
+   bank (int64 odd significand and int16 exponent per entry, a sparse overflow
+   table for wider significands and a sparse table of non-dyadic
+   `RadicalElement` entries) instead of per-entry `Fraction` tuples. Only the
+   static PyTree payload type changes: fingerprints, identities and archives
+   (the existing `"exact"` column projection) stay byte-identical and earlier
+   archives restore. `_RetainedCoordinateBank.exact_coordinates` holds the same
+   owner. Measured on the STEP external-combined curved geometry: 132.6 MB in
+   3.2M objects becomes 9.77 MB, and its identities and re-packed archive bytes
+   are unchanged.
 
 **Resource budget policy:** solver, factorization, Krylov and Hodge memory
 budgets are explicit plan inputs and part of plan identity. Library defaults

@@ -10,7 +10,7 @@ import math
 from collections import OrderedDict
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import cast, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 import numpy as np
 from jax import Array
@@ -38,7 +38,6 @@ from ..discretization._coordinate_enclosure import (
     RestrictedCoordinateMapPreparation,
     subtract,
 )
-from ..discretization._exact_algebraic_geometry import RadicalElement
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
 from ._embedding_state import MeshCertificateFinding
 from ._mapped_reference_boundary import MappedReferenceBoundarySource
@@ -54,18 +53,6 @@ Point2 = tuple[Fraction, Fraction]
 Triangle = tuple[Point2, Point2, Point2]
 LinePoints = tuple[tuple[Fraction, ...], tuple[Fraction, ...]]
 _Point3Exact = tuple[ExactScalar, ExactScalar, ExactScalar]
-
-
-def _source_coordinate_bank(
-    values: tuple[tuple[object, ...], ...], /
-) -> CoordinateSourceBank:
-    if any(
-        not isinstance(value, (Fraction, RadicalElement))
-        for row in values
-        for value in row
-    ):
-        raise TypeError("Source coordinate rows must retain exact scalar coefficients.")
-    return cast(CoordinateSourceBank, values)
 
 
 def _coordinate_expression(value: ExpressionInput, /) -> Expression:
@@ -665,7 +652,7 @@ def certify_surface_chart_maps(
     if len(target_rows) != len(witness.source_chart_ids):
         raise ValueError("Mapped source and target chart rows must align.")
     elements, routes, _ = geometry.resolve(mesh)
-    coordinates = _source_coordinate_bank(geometry.source_coordinates())
+    coordinates = geometry.source_coordinates()
     polyhedral = np.asarray(witness.target_face_vertex_global_ids).size != 0
     if polyhedral:
         from ._source_fidelity import _polyhedral_vertex_source_coordinates
@@ -966,7 +953,7 @@ def certify_mapped_reference_curve_charts(
     if len(target_rows) != len(witness.source_chart_ids):
         raise ValueError("Mapped source and target curve rows must align.")
     elements, routes, _ = geometry.resolve(mesh)
-    coefficients = _source_coordinate_bank(geometry.source_coordinates())
+    coefficients = geometry.source_coordinates()
     limit = Fraction.from_float(float(tolerance))
     count = len(target_rows)
     deviations = np.full((count, 2), (0.0, math.inf), dtype=np.float64)

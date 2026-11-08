@@ -31,7 +31,8 @@ type ExactScalar = Fraction | RadicalElement
 type Polynomial = dict[tuple[int, ...], ExactScalar]
 type Expression = Polynomial | RationalPolynomial
 type ExpressionInput = Mapping[tuple[int, ...], ExactScalar] | RationalPolynomial
-type CoordinateSourceBank = tuple[tuple[ExactScalar, ...], ...]
+# Read-only exact coordinate rows: a tuple of row tuples, or an ExactCoordinateBank.
+type CoordinateSourceBank = Sequence[tuple[ExactScalar, ...]]
 type CoordinateCoefficients = np.ndarray | CoordinateSourceBank
 type BernsteinDomain = Literal["simplex", "prism", "box"]
 type AffineMap = tuple[tuple[ExactScalar, ...], tuple[tuple[ExactScalar, ...], ...]]

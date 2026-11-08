@@ -347,6 +347,107 @@ def test_uncovered_and_overcovered_targets_fail_closed_without_plan() -> None:
     assert over.plan is None
 
 
+_HEXAHEDRON_FACES = (
+    (0, 3, 2, 1),
+    (4, 5, 6, 7),
+    (0, 1, 5, 4),
+    (1, 2, 6, 5),
+    (2, 3, 7, 6),
+    (3, 0, 4, 7),
+)
+
+
+def _polyhedral_hexahedra(points: Any, corners: Any) -> Any:
+    from phydrax.discretization import CellMesh
+
+    mesh = CellMesh.from_polyhedra(
+        np.asarray(points, dtype=np.float64),
+        [
+            [np.asarray(cell)[list(face)] for face in _HEXAHEDRON_FACES]
+            for cell in corners
+        ],
+    )
+    return UnstructuredFiniteVolumePlan.from_cell_mesh(mesh).prepare()
+
+
+@pytest.mark.meshcore
+@requires_meshcore
+def test_warped_polyhedral_faces_remap_onto_finite_volume_cell_volumes() -> None:
+    # Corner (1, 1, 1) moved to x = 1.1 warps only the face the two hexahedra
+    # share; their union stays the box [0, 2] x [0, 1] x [0, 1].
+    points = (
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (1.0, 1.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+        (1.0, 0.0, 1.0),
+        (1.1, 1.0, 1.0),
+        (0.0, 1.0, 1.0),
+        (2.0, 0.0, 0.0),
+        (2.0, 1.0, 0.0),
+        (2.0, 0.0, 1.0),
+        (2.0, 1.0, 1.0),
+    )
+    source = _polyhedral_hexahedra(
+        points, ((0, 1, 2, 3, 4, 5, 6, 7), (1, 8, 9, 2, 5, 10, 11, 6))
+    )
+    box = _polyhedral_hexahedra(
+        (
+            (0.0, 0.0, 0.0),
+            (2.0, 0.0, 0.0),
+            (2.0, 1.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0),
+            (2.0, 0.0, 1.0),
+            (2.0, 1.0, 1.0),
+            (0.0, 1.0, 1.0),
+        ),
+        ((0, 1, 2, 3, 4, 5, 6, 7),),
+    )
+    volumes = np.asarray(source.cell_volumes)
+    assert np.sum(volumes) == pytest.approx(2.0, rel=1e-15)
+
+    identity = prepare_unstructured_conservative_remap(
+        source, source, provenance="warped-identity"
+    )
+    assert identity.status is CommonRefinementStatus.SUCCESS
+    # ty: ignore[unresolved-attribute]
+    np.testing.assert_array_equal(identity.plan.source_indices, (0, 1))
+    np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
+        identity.plan.intersection_measures,
+        volumes,
+        rtol=1e-14,
+    )
+
+    forward = prepare_unstructured_conservative_remap(
+        source, box, provenance="warped-forward"
+    )
+    reverse = prepare_unstructured_conservative_remap(
+        box, source, provenance="warped-reverse"
+    )
+    assert forward.status is reverse.status is CommonRefinementStatus.SUCCESS
+    np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
+        forward.plan.intersection_measures,
+        volumes,
+        rtol=1e-14,
+    )
+    values = jnp.asarray([[1.0], [3.0]])
+    # ty: ignore[unresolved-attribute]
+    mapped = forward.plan.apply(values)
+    np.testing.assert_allclose(mapped, [[(volumes[0] + 3.0 * volumes[1]) / 2.0]])
+    np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
+        forward.plan.conservation_defect(values, mapped),
+        0.0,
+        atol=1e-14,
+    )
+    # ty: ignore[unresolved-attribute]
+    np.testing.assert_allclose(reverse.plan.apply(mapped), [mapped[0], mapped[0]])
+
+
 @pytest.mark.meshcore
 @requires_meshcore
 def test_first_order_remap_is_dual_to_the_reverse_remap() -> None:

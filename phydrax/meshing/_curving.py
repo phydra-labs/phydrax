@@ -67,11 +67,9 @@ from ..discretization._cell_geometry_validity import (
     cell_geometry_id,
     ComputedCellValidity,
 )
-from ..discretization._exact_algebraic_geometry import (
-    coefficient_payload,
-    ExactScalar,
-    RadicalElement,
-)
+from ..discretization._coordinate_enclosure import CoordinateSourceBank
+from ..discretization._exact_algebraic_geometry import ExactScalar, RadicalElement
+from ..discretization._exact_coordinate_bank import ExactCoordinateBank
 from ..discretization.fem import (
     canonical_nodal_entity_identity,
     lagrange_element,
@@ -621,7 +619,7 @@ class _ExactCoordinateBankMap(StrictModule, NonTrainableState):
     source_map_id: str = eqx.field(static=True)
     identity_context: tuple[str, ...] = eqx.field(static=True)
     rounded_vertices: np.ndarray
-    exact_coordinates: tuple[tuple[ExactScalar, ...], ...] = eqx.field(static=True)
+    exact_coordinates: ExactCoordinateBank = eqx.field(static=True)
 
     def __init__(
         self,
@@ -629,15 +627,24 @@ class _ExactCoordinateBankMap(StrictModule, NonTrainableState):
         source_id: str,
         source_revision: str,
         identity_context: tuple[str, ...],
-        exact_coordinates: tuple[tuple[ExactScalar, ...], ...],
+        exact_coordinates: CoordinateSourceBank,
         execution_coordinates: np.ndarray,
         /,
     ) -> None:
-        exact_coordinates_ = tuple(tuple(row) for row in exact_coordinates)
         execution = np.asarray(execution_coordinates, dtype=np.float64)
         try:
-            rounded_exact = np.asarray(exact_coordinates_, dtype=np.float64)
-        except (OverflowError, TypeError, ValueError) as error:
+            bank = ExactCoordinateBank.from_rows(exact_coordinates)
+        except TypeError as error:
+            raise ValueError(
+                "Exact coordinate-bank rows must round to their execution coordinates."
+            ) from error
+        except ValueError as error:
+            raise ValueError(
+                "Exact coordinate-bank values require finite binary64 shadows."
+            ) from error
+        try:
+            rounded_exact = bank.binary64()
+        except OverflowError as error:
             raise ValueError(
                 "Exact coordinate-bank values require finite binary64 shadows."
             ) from error
@@ -648,21 +655,12 @@ class _ExactCoordinateBankMap(StrictModule, NonTrainableState):
             or rounded_exact.shape != execution.shape
             or not np.all(np.isfinite(execution))
             or not np.array_equal(rounded_exact, execution)
-            or any(
-                not isinstance(value, (Fraction, RadicalElement))
-                for row in exact_coordinates_
-                for value in row
-            )
         ):
             raise ValueError(
                 "Exact coordinate-bank rows must round to their execution coordinates."
             )
         vertices = np.array(mesh.coordinates, dtype=np.float64, copy=True)
         vertices.setflags(write=False)
-        exact_payload = tuple(
-            tuple(coefficient_payload(value) for value in row)
-            for row in exact_coordinates_
-        )
         self.source_id = str(source_id)
         self.source_revision = str(source_revision)
         self.identity_context = tuple(identity_context)
@@ -675,11 +673,11 @@ class _ExactCoordinateBankMap(StrictModule, NonTrainableState):
                 "source_id": self.source_id,
                 "source_revision": self.source_revision,
                 "identity_context": self.identity_context,
-                "exact_coordinate_bank": exact_payload,
+                "exact_coordinate_bank": bank.coefficient_payloads(),
             }
         )
         self.rounded_vertices = vertices
-        self.exact_coordinates = exact_coordinates_
+        self.exact_coordinates = bank
 
     @classmethod
     def from_stored_fields(
@@ -688,14 +686,14 @@ class _ExactCoordinateBankMap(StrictModule, NonTrainableState):
         """Renew an archived bank on its target mesh and require its identity."""
         if type(value) is not cls:
             raise TypeError("value must be an exact coordinate-bank map.")
-        exact = tuple(tuple(row) for row in value.exact_coordinates)
+        exact = value.exact_coordinates
         rebuilt = cls(
             mesh,
             value.source_id,
             value.source_revision,
             value.identity_context,
             exact,
-            np.asarray(exact, dtype=np.float64),
+            exact.binary64(),
         )
         if rebuilt.source_map_id != value.source_map_id or not np.array_equal(
             rebuilt.rounded_vertices, np.asarray(value.rounded_vertices)
@@ -707,7 +705,7 @@ class _ExactCoordinateBankMap(StrictModule, NonTrainableState):
 
     def source_coordinates(
         self, indices: ArrayLike | None = None, /
-    ) -> tuple[tuple[ExactScalar, ...], ...]:
+    ) -> CoordinateSourceBank:
         if indices is None:
             return self.exact_coordinates
         selected = np.asarray(indices)
@@ -716,7 +714,7 @@ class _ExactCoordinateBankMap(StrictModule, NonTrainableState):
         rows = selected.astype(np.int64)
         if np.any(rows < 0) or np.any(rows >= len(self.exact_coordinates)):
             raise IndexError("Exact-coordinate-bank index is out of range.")
-        return tuple(self.exact_coordinates[int(row)] for row in rows)
+        return self.exact_coordinates.rows(rows)
 
 
 def _exact_coordinate_bank_source_map(
@@ -724,7 +722,7 @@ def _exact_coordinate_bank_source_map(
     source_id: str,
     source_revision: str,
     identity_context: tuple[str, ...],
-    exact_coordinates: tuple[tuple[ExactScalar, ...], ...],
+    exact_coordinates: CoordinateSourceBank,
     execution_coordinates: np.ndarray,
     /,
 ) -> _ExactCoordinateBankMap:
@@ -761,30 +759,34 @@ def _geometry_with_exact_coordinate_bank(
         row < 0 or row >= len(straight_bank) for row in exact_overrides
     ):
         raise IndexError("Exact candidate-coordinate row is outside the geometry bank.")
-    candidate_bank: list[tuple[ExactScalar, ...]] = []
-    execution_rows = tuple(
-        tuple(float(execution[row, axis]) for axis in range(execution.shape[1]))
-        for row in range(execution.shape[0])
-    )
-    for row, point in enumerate(execution_rows):
-        exact = None if exact_overrides is None else exact_overrides.get(row)
-        if exact is None:
-            straight_row = straight_bank[row]
-            if np.array_equal(
-                np.asarray(tuple(float(value) for value in straight_row)),
-                np.asarray(point, dtype=np.float64),
-            ):
-                exact = straight_row
-            else:
-                exact = tuple(Fraction(value) for value in point)
-        if not np.array_equal(
-            np.asarray(tuple(float(value) for value in exact)),
-            np.asarray(point, dtype=np.float64),
-        ):
-            raise ValueError(
-                "Exact candidate coordinates do not round to their execution row."
+    try:
+        override_rows = np.asarray(sorted(exact_overrides or ()), dtype=np.int64)
+        overrides = ExactCoordinateBank.from_rows(
+            tuple(
+                tuple(cast(dict[int, tuple[ExactScalar, ...]], exact_overrides)[row])
+                for row in override_rows.tolist()
             )
-        candidate_bank.append(tuple(exact))
+        )
+    except TypeError as error:
+        raise ValueError(
+            "Exact coordinate-bank rows must round to their execution coordinates."
+        ) from error
+    if override_rows.size and (
+        overrides.shape != (override_rows.size, execution.shape[1])
+        or not np.array_equal(overrides.binary64(), execution[override_rows])
+    ):
+        raise ValueError("Exact candidate coordinates do not round to their execution row.")
+    # Unmoved rows keep their exact straight value; moved rows are exact binary64.
+    fresh = ~np.all(straight_bank.binary64() == execution, axis=1)
+    fresh[override_rows] = False
+    fresh_rows = np.flatnonzero(fresh)
+    candidate_bank = straight_bank
+    if fresh_rows.size:
+        candidate_bank = candidate_bank.replace_rows(
+            fresh_rows, ExactCoordinateBank.from_binary64(execution[fresh_rows])
+        )
+    if override_rows.size:
+        candidate_bank = candidate_bank.replace_rows(override_rows, overrides)
     straight_map_id = straight.source_map_id
     if not isinstance(straight_map_id, str) or not straight_map_id:
         raise ValueError(
@@ -795,7 +797,7 @@ def _geometry_with_exact_coordinate_bank(
         mesh.mesh_id,
         mesh.numeric_version,
         ("curving-candidate", straight_map_id, *identity_context),
-        tuple(candidate_bank),
+        candidate_bank,
         execution,
     )
     return CellGeometrySpec(

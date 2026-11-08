@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -40,24 +42,56 @@ class PreparedPolyhedralFiniteVolumeGeometry(StrictModule, NonTrainableState):
     geometry_id: str = eqx.field(static=True)
 
 
-def _face_triangles(
-    polygon: np.ndarray, planarity: float
-) -> tuple[list[tuple[int, np.ndarray, float]], np.ndarray, float]:
-    """Positive sub-triangles ``(slot, corners, weight)``, area vector, measure.
+# Relative distance to its Newell plane within which a face loop is planar.
+POLYHEDRAL_PLANARITY_TOLERANCE = 1.0e-10
+
+
+class PolyhedralFaceFan(NamedTuple):
+    """Positive sub-triangles of one face loop in the polyhedral FV geometry.
+
+    ``corners`` index the loop; index ``-1`` names ``apex``, the vertex centroid
+    of a warped face (``None`` for a planar face). Triangle ``k`` occupies FV
+    face quadrature slot ``slots[k]`` with area weight ``weights[k]``.
+    ``failure`` is empty exactly when the face is admissible.
+    """
+
+    slots: tuple[int, ...]
+    corners: tuple[tuple[int, int, int], ...]
+    weights: tuple[float, ...]
+    apex: np.ndarray | None
+    area_vector: np.ndarray
+    measure: float
+    failure: str
+
+
+def _failed_fan(
+    area_vector: np.ndarray, measure: float, failure: str
+) -> PolyhedralFaceFan:
+    return PolyhedralFaceFan((), (), (), None, area_vector, measure, failure)
+
+
+def polyhedral_face_fan(polygon: np.ndarray, planarity: float, /) -> PolyhedralFaceFan:
+    """Triangulate one face loop as every polyhedral cell measure consumes it.
 
     A face within ``planarity`` (relative to its diameter) of its Newell plane
     fans from its first vertex. A warped face is decomposed about its vertex
     centroid and its area vector is the sum of those triangle area vectors.
+    Finite-volume geometry and the common refinement of polyhedral meshes both
+    integrate exactly these triangles, so their cell measures agree.
     """
     relative = polygon - polygon[0]
     newell = 0.5 * np.sum(np.cross(relative, np.roll(relative, -1, axis=0)), axis=0)
     measure = float(np.linalg.norm(newell))
     if not np.isfinite(measure) or measure <= 0:
-        raise ValueError("Polyhedral faces require positive finite measure.")
+        return _failed_fan(
+            newell, measure, "Polyhedral faces require positive finite measure."
+        )
     unit = newell / measure
     distance = (polygon - polygon[0]) @ unit
     scale = max(1.0, float(np.max(np.linalg.norm(polygon - polygon[0], axis=1))))
-    triangles: list[tuple[int, np.ndarray, float]] = []
+    slots: list[int] = []
+    corners: list[tuple[int, int, int]] = []
+    weights: list[float] = []
     if np.max(np.abs(distance)) <= planarity * scale:
         # Conforming faces may carry collinear vertices on their edges; the
         # zero-area fan triangles they produce carry no measure and are skipped.
@@ -67,37 +101,69 @@ def _face_triangles(
             vector = 0.5 * np.cross(triangle[1] - triangle[0], triangle[2] - triangle[0])
             weight = float(np.dot(vector, unit))
             if not np.isfinite(weight) or weight < -degenerate_area:
-                raise ValueError(
-                    "Polyhedral face loop is not consistently oriented/convex."
+                return _failed_fan(
+                    newell,
+                    measure,
+                    "Polyhedral face loop is not consistently oriented/convex.",
                 )
             if weight > degenerate_area:
-                triangles.append((local - 1, triangle, weight))
-        return triangles, newell, measure
+                slots.append(local - 1)
+                corners.append((0, local, local + 1))
+                weights.append(weight)
+        if not corners:
+            return _failed_fan(
+                newell, measure, "Polyhedral faces require positive finite measure."
+            )
+        return PolyhedralFaceFan(
+            tuple(slots), tuple(corners), tuple(weights), None, newell, measure, ""
+        )
     apex = np.mean(polygon, axis=0)
     following = np.roll(polygon, -1, axis=0)
     vectors = 0.5 * np.cross(polygon - apex, following - apex)
     area_vector = np.sum(vectors, axis=0)
     measure = float(np.linalg.norm(area_vector))
     if not np.isfinite(measure) or measure <= 0:
-        raise ValueError("Polyhedral faces require positive finite measure.")
+        return _failed_fan(
+            area_vector, measure, "Polyhedral faces require positive finite measure."
+        )
     unit = area_vector / measure
-    for local in range(polygon.shape[0]):
+    count = polygon.shape[0]
+    for local in range(count):
         weight = float(np.dot(vectors[local], unit))
         if not np.isfinite(weight) or weight <= 0:
-            raise ValueError(
-                "Warped polyhedral face is not star-shaped about its vertex centroid."
+            return _failed_fan(
+                area_vector,
+                measure,
+                "Warped polyhedral face is not star-shaped about its vertex centroid.",
             )
-        triangles.append(
-            (local, np.stack((apex, polygon[local], following[local])), weight)
-        )
-    return triangles, area_vector, measure
+        slots.append(local)
+        corners.append((-1, local, (local + 1) % count))
+        weights.append(weight)
+    return PolyhedralFaceFan(
+        tuple(slots), tuple(corners), tuple(weights), apex, area_vector, measure, ""
+    )
+
+
+def _face_triangles(
+    polygon: np.ndarray, planarity: float
+) -> tuple[list[tuple[int, np.ndarray, float]], np.ndarray, float]:
+    """Positive sub-triangles ``(slot, corners, weight)``, area vector, measure."""
+    fan = polyhedral_face_fan(polygon, planarity)
+    if fan.failure:
+        raise ValueError(fan.failure)
+    points = polygon if fan.apex is None else np.concatenate((polygon, fan.apex[None]))
+    triangles = [
+        (slot, points[list(corner)], weight)
+        for slot, corner, weight in zip(fan.slots, fan.corners, fan.weights, strict=True)
+    ]
+    return triangles, fan.area_vector, fan.measure
 
 
 def prepare_polyhedral_finite_volume_geometry(
     mesh: CellMesh,
     /,
     *,
-    planarity_tolerance: float = 1.0e-10,
+    planarity_tolerance: float = POLYHEDRAL_PLANARITY_TOLERANCE,
     closure_tolerance: float = 1.0e-10,
 ) -> PreparedPolyhedralFiniteVolumeGeometry:
     """Prepare Newell/divergence geometry from canonical polyhedral connectivity.
@@ -139,8 +205,6 @@ def prepare_polyhedral_finite_volume_geometry(
         if polygon.shape[0] < 3:
             raise ValueError("Every polyhedral face requires at least three vertices.")
         triangles, area_vector, measure = _face_triangles(polygon, planarity)
-        if not triangles:
-            raise ValueError("Polyhedral faces require positive finite measure.")
         anchor = polygon[0]
         face_centers[face] = anchor + np.average(
             np.asarray([np.mean(triangle - anchor, axis=0) for _, triangle, _ in triangles]),

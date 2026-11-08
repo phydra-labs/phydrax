@@ -1520,9 +1520,9 @@ class PreparedMappedCellLocator(AbstractCellLocator, NonTrainableState):
         expressions = []
         for cell, route in enumerate(routes):
             local = (
-                tuple(source_values[int(index)] for index in route)
-                if isinstance(source_values, tuple)
-                else np.asarray(source_values, dtype=np.float64)[route]
+                np.asarray(source_values, dtype=np.float64)[route]
+                if isinstance(source_values, np.ndarray)
+                else tuple(source_values[int(index)] for index in route)
             )
             row = (
                 cell

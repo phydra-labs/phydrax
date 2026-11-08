@@ -722,7 +722,7 @@ def test_retained_coordinate_bank_rebuilds_data_without_source_authority() -> No
     rebuilt = _RetainedCoordinateBank.from_stored_fields(
         bank, coordinates=np.asarray(exact, dtype=np.float64)
     )
-    assert rebuilt.source_coordinates() == exact
+    assert tuple(rebuilt.source_coordinates() or ()) == exact
     assert rebuilt.source_map_id == "provenance-map"
     with pytest.raises(ValueError, match="execution shadows"):
         _RetainedCoordinateBank.from_stored_fields(bank, coordinates=np.zeros((2, 2)))
@@ -914,7 +914,7 @@ def test_mixed_simplex_and_prism_restore_original_root_maps(
     assert refined.target_geometry is not None
     assert refined.target_geometry.source_map is not None
     assert refined.target_geometry.source_map.source_map_id == source_map.source_map_id
-    assert refined.target_geometry.source_coordinates() == exact
+    assert tuple(refined.target_geometry.source_coordinates()) == exact
     fine, _, _ = assemble_topology_edit(
         tet_prism_mesh, refined.edit, numeric_version="mixed-adaptation-mapped-geometry"
     )
@@ -932,7 +932,7 @@ def test_mixed_simplex_and_prism_restore_original_root_maps(
     assert restored.target_geometry is not None
     assert restored.target_geometry.source_map is not None
     assert restored.target_geometry.source_map.source_map_id == source_map.source_map_id
-    assert restored.target_geometry.source_coordinates() == exact
+    assert tuple(restored.target_geometry.source_coordinates()) == exact
     root = restored.target_geometry.restriction_source
     assert root is not None
     assert root.source_geometry_id == cell_geometry_id(geometry)
@@ -1660,6 +1660,19 @@ def test_periodic_mixed_edit_is_stable_under_vertex_row_permutation(
         assert _periodic_entity_ids(first, degree) == _periodic_entity_ids(second, degree)
 
 
+def _stored(result: MeshAdaptationResult, /) -> MeshAdaptationResult:
+    """The archived form of a live result: wall time is runtime evidence only.
+
+    Model archives do not persist ``elapsed_seconds`` (the approved change in
+    docs/plans/native-cad-meshing.md §10 "Approved archive representation
+    changes" item 2), so stored fields carry ``None`` and restore refuses a value.
+    """
+    assert result.elapsed_seconds is not None
+    stored = copy.copy(result)
+    object.__setattr__(stored, "elapsed_seconds", None)
+    return stored
+
+
 def test_retained_mixed_result_reproof_and_tampering(hex_pyramid_mesh: CellMesh) -> None:
     source = certify_cell_mesh(
         hex_pyramid_mesh,
@@ -1690,8 +1703,12 @@ def test_retained_mixed_result_reproof_and_tampering(hex_pyramid_mesh: CellMesh)
             expected_result_id=result.result_id,
         )
 
-    restored = restore(result, result.hierarchy)
+    stored = _stored(result)
+    restored = restore(stored, result.hierarchy)
     assert restored.result_id == result.result_id
+    assert restored.elapsed_seconds is None
+    with pytest.raises(ValueError, match="wall time"):
+        restore(result, result.hierarchy)
     assert restored.cell_content_transfer is not None
     assert result.cell_content_transfer is not None
     assert (
@@ -1759,12 +1776,12 @@ def test_retained_mixed_result_reproof_and_tampering(hex_pyramid_mesh: CellMesh)
     )
     cases.append(replacement(retired_entities=tuple(retired)))
     for bad in cases:
-        raw = copy.copy(result)
+        raw = copy.copy(stored)
         object.__setattr__(raw, "hierarchy", bad)
         with pytest.raises(ValueError):
             restore(raw, bad)
 
-    raw = copy.copy(result)
+    raw = copy.copy(stored)
     object.__setattr__(raw, "source", result.target)
     with pytest.raises(ValueError):
         restore(raw, hierarchy)
@@ -1777,7 +1794,7 @@ def test_retained_mixed_result_reproof_and_tampering(hex_pyramid_mesh: CellMesh)
     object.__setattr__(
         changed_lineage, "entities", (*result.lineage.entities[:-1], changed_record)
     )
-    raw = copy.copy(result)
+    raw = copy.copy(stored)
     object.__setattr__(raw, "lineage", changed_lineage)
     with pytest.raises(ValueError):
         restore(raw, hierarchy)
@@ -1805,19 +1822,19 @@ def test_retained_periodic_mixed_result_rejects_changed_action(
     )
     history = hierarchy.periodic_quotient_history
     assert history is not None
-    assert (
-        MeshAdaptationResult.from_stored_fields(
-            result,
-            source=source,
-            target=result.target,
-            policy=policy,
-            request=request,
-            geometry_transition=result.transition.geometry_transition,
-            expected_result_id=result.result_id,
-            hierarchy=hierarchy,
-        ).result_id
-        == result.result_id
+    stored = _stored(result)
+    restored = MeshAdaptationResult.from_stored_fields(
+        stored,
+        source=source,
+        target=result.target,
+        policy=policy,
+        request=request,
+        geometry_transition=result.transition.geometry_transition,
+        expected_result_id=result.result_id,
+        hierarchy=hierarchy,
     )
+    assert restored.result_id == result.result_id
+    assert restored.elapsed_seconds is None
     actions = list(history.vertex_actions_by_id)
     identifier, fixed, winding = actions[0]
     assert winding
@@ -1844,7 +1861,7 @@ def test_retained_periodic_mixed_result_rejects_changed_action(
             changed_history,
             hierarchy.active_lifted_topology_id,
         )
-        raw = copy.copy(result)
+        raw = copy.copy(stored)
         object.__setattr__(raw, "hierarchy", changed_hierarchy)
         MeshAdaptationResult.from_stored_fields(
             raw,

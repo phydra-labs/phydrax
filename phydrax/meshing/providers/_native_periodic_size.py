@@ -86,7 +86,7 @@ def periodic_size_compliance(
                 if selected_edge
             )
             if exact_zero
-            else ()
+            else []
         )
         target_square = Fraction.from_float(control.target_size) ** 2
         for statistic in statistics:

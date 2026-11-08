@@ -19,6 +19,7 @@ from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
 from .._fingerprint import canonical_fingerprint
 from .._live_proofs import live_content_fingerprint, LiveProofLedger
 from ..discretization import CellMesh
+from ..discretization._exact_algebraic_geometry import rational_coefficient
 from ..discretization._exact_plc_geometry import ExactPlcCellGeometrySource
 from ..discretization._periodic_exact import exact_periodic_element
 from ..geometry._rational import fraction_down, fraction_up
@@ -1565,7 +1566,10 @@ def renew_refined_column_certification(
         if identifier not in positions:
             raise ValueError("Mixed stencil references an absent target layer vertex.")
         active = [
-            (int(root), weight)
+            (
+                int(root),
+                rational_coefficient(weight, role="Mixed layer vertex stencil weight"),
+            )
             for root, flag, weight in zip(roots, flags, weights, strict=True)
             if flag and weight
         ]

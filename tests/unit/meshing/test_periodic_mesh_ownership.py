@@ -21,6 +21,7 @@ from phydrax.discretization._cell_geometry import (
 )
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
 from phydrax.discretization._coordinate_enclosure import ExpressionInput
+from phydrax.discretization._exact_coordinate_bank import ExactCoordinateBank
 from phydrax.discretization._periodic_cell import PeriodicCell
 from phydrax.discretization._periodic_exact import apply_periodic
 from phydrax.discretization._periodic_topology import (
@@ -1394,7 +1395,7 @@ def test_periodic_topology_edit_stages_non_binary64_split_roots_with_exact_bank(
     object.__setattr__(
         changed_geometry,
         "exact_coordinate_bank",
-        tuple(tuple(row) for row in altered_coefficients),
+        ExactCoordinateBank.from_rows(tuple(tuple(row) for row in altered_coefficients)),
     )
     with pytest.raises(ValueError, match="actual periodic cell map|vertex witness"):
         staged_topology.require_exact_geometry(target, changed_geometry)

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 from functools import partial
 from hashlib import sha256
-from math import isfinite, prod
+from math import isfinite, isqrt, prod
 from numbers import Integral
 from typing import Any, Literal, NoReturn, TypeAlias
 
@@ -751,14 +751,22 @@ def _resolved_ordering(
 
     Ordering work is symbolic work: it is charged to ``max_symbolic_work``
     before diagonal or fill entries are reserved, whether it was prepared here
-    or earlier, so equal orderings give equal plans.
+    or earlier, so equal orderings give equal plans. A nested-dissection
+    separator of ``s`` vertices is eliminated as one dense block of
+    ``s(s+1)/2`` factor entries, so its capacity is the largest ``s`` that the
+    declared ``max_factor_nnz`` admits.
     """
     if ordering is None:
         return _order_pattern(
             storage.shape[0],
             indices,
             indptr,
-            SparseOrderingPolicy(policy.ordering),
+            SparseOrderingPolicy(policy.ordering)
+            if policy.ordering != "nested-dissection"
+            else SparseOrderingPolicy(
+                policy.ordering,
+                separator_capacity=(isqrt(8 * policy.max_factor_nnz + 1) - 1) // 2,
+            ),
             None,
             _WorkMeter(None, tracker.add_work),
         )

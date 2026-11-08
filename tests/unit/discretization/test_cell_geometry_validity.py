@@ -119,7 +119,7 @@ def test_exact_coordinate_bank_is_an_immutable_snapshot() -> None:
         source_map=provider,
     )
     provider.bank = ((Fraction(2),), (Fraction(3),))
-    assert geometry.source_coordinates() == original
+    assert tuple(geometry.source_coordinates()) == original
     assert geometry.source_coordinates(np.asarray((1,), dtype=np.int64)) == (original[1],)
 
 

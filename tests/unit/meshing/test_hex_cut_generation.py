@@ -253,8 +253,8 @@ def test_exact_partial_cut_cells_close_a_positive_tetrahedral_domain() -> None:
         tuple(Fraction.from_float(float(value)) for value in point)
         for point in np.asarray(fill.coordinates, dtype=np.float64)
     )
-    assert result.geometry.source_coordinates() == expected_coefficients
-    assert cut_map.source_coordinates() == expected_coefficients
+    assert tuple(result.geometry.source_coordinates()) == expected_coefficients
+    assert tuple(cut_map.source_coordinates()) == expected_coefficients
     restriction = result.geometry.restriction_source
     assert restriction is not None
     reference_map = restriction.block_parent_reference_maps["cells"]

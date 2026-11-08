@@ -76,6 +76,7 @@ def _nested_periodic_cone(
     Requiring the exact stencil action to reproduce the supplied lifted
     coordinates rejects quotient IDs used with an inconsistent winding.
     """
+    from phydrax.discretization._exact_algebraic_geometry import rational_coefficient
     from phydrax.meshing._lineage import VertexInterpolationStencil
 
     if not isinstance(stencil, VertexInterpolationStencil):
@@ -117,7 +118,9 @@ def _nested_periodic_cone(
             parent_row = parent_rows.get(int(source))
             if parent_row is None:
                 raise ValueError("Child stencil references a vertex outside its parent.")
-            barycentric[parent_row] += coefficient
+            barycentric[parent_row] += rational_coefficient(
+                coefficient, role="Nested periodic cone stencil weight"
+            )
         if sum(barycentric, zero) != one or any(value < 0 for value in barycentric):
             raise ValueError("Child vertex is not in the parent triangle.")
         reconstructed = tuple(

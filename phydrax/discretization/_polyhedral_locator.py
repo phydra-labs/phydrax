@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from fractions import Fraction
 from typing import Any, cast, final, Literal
 
@@ -34,6 +35,7 @@ from ._cell_locator import AbstractCellLocator, CellLocationResult, CellLocation
 from ._cell_mesh import CellMesh
 from ._coordinate_enclosure import CoordinateSourceBank
 from ._exact_algebraic_geometry import coefficient_payload
+from ._exact_coordinate_bank import ExactCoordinateBank
 
 
 class _PolyhedralCoordinateDim(Dim):
@@ -42,15 +44,21 @@ class _PolyhedralCoordinateDim(Dim):
 
 type _ExactPoint2 = tuple[Fraction, Fraction]
 type _ExactPoint3 = tuple[Fraction, Fraction, Fraction]
-type _ExactCoordinateBank = tuple[_ExactPoint3, ...]
+type _ExactCoordinateBank = Sequence[_ExactPoint3]
 
 
 def _exact_coordinate_bank(values: CoordinateSourceBank, /) -> _ExactCoordinateBank:
-    if any(len(row) != 3 for row in values):
+    if isinstance(values, ExactCoordinateBank):
+        three = not len(values) or values.shape[1] == 3
+        rational = values.rational
+    else:
+        three = all(len(row) == 3 for row in values)
+        rational = all(isinstance(value, Fraction) for row in values for value in row)
+    if not three:
         raise ValueError(
             "Polyhedral coordinate maps must have three coordinates per vertex."
         )
-    if any(not isinstance(value, Fraction) for row in values for value in row):
+    if not rational:
         raise TypeError("Polyhedral point location requires rational coordinate maps.")
     return cast(_ExactCoordinateBank, values)
 

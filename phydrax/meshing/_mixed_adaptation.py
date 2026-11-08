@@ -44,7 +44,7 @@ from ..discretization._coordinate_enclosure import (
     scale,
     sum_polynomials,
 )
-from ..discretization._exact_algebraic_geometry import RadicalElement
+from ..discretization._exact_coordinate_bank import ExactCoordinateBank
 from ..discretization._exact_plc_geometry import ExactPlcCellGeometrySource
 from ..discretization._nested_reference import (
     _reference_shape_weights,
@@ -144,7 +144,7 @@ class _RetainedCoordinateBank(StrictModule, NonTrainableState):
     source_id: str = eqx.field(static=True)
     source_revision: str = eqx.field(static=True)
     source_map_id: str = eqx.field(static=True)
-    exact_coordinates: CoordinateSourceBank | None = eqx.field(static=True)
+    exact_coordinates: ExactCoordinateBank | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -161,35 +161,28 @@ class _RetainedCoordinateBank(StrictModule, NonTrainableState):
             raise ValueError(
                 "Retained coordinate provenance requires full source identities."
             )
+        bank = None
         if exact_coordinates is not None:
-            exact_coordinates = tuple(tuple(row) for row in exact_coordinates)
-            if (
-                not exact_coordinates
-                or not exact_coordinates[0]
-                or any(len(row) != len(exact_coordinates[0]) for row in exact_coordinates)
-                or any(
-                    not isinstance(value, (Fraction, RadicalElement))
-                    for row in exact_coordinates
-                    for value in row
-                )
-            ):
+            try:
+                bank = ExactCoordinateBank.from_rows(exact_coordinates)
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    "Retained coordinate coefficients must form an exact scalar bank."
+                ) from error
+            if not len(bank) or not bank.shape[1]:
                 raise ValueError(
                     "Retained coordinate coefficients must form an exact scalar bank."
                 )
             try:
-                rounded = np.asarray(exact_coordinates, dtype=np.float64)
-            except (OverflowError, TypeError, ValueError) as error:
+                bank.binary64()
+            except OverflowError as error:
                 raise ValueError(
                     "Retained coordinate coefficients must have finite shadows."
                 ) from error
-            if not np.all(np.isfinite(rounded)):
-                raise ValueError(
-                    "Retained coordinate coefficients must have finite shadows."
-                )
         self.source_id = source_id
         self.source_revision = source_revision
         self.source_map_id = source_map_id
-        self.exact_coordinates = exact_coordinates
+        self.exact_coordinates = bank
 
     @classmethod
     def from_stored_fields(
@@ -205,7 +198,7 @@ class _RetainedCoordinateBank(StrictModule, NonTrainableState):
             value.exact_coordinates,
         )
         if rebuilt.exact_coordinates is not None and not np.array_equal(
-            np.asarray(rebuilt.exact_coordinates, dtype=np.float64),
+            rebuilt.exact_coordinates.binary64(),
             np.asarray(coordinates, dtype=np.float64),
         ):
             raise ValueError(
@@ -213,7 +206,7 @@ class _RetainedCoordinateBank(StrictModule, NonTrainableState):
             )
         return rebuilt
 
-    def source_coordinates(self) -> CoordinateSourceBank | None:
+    def source_coordinates(self) -> ExactCoordinateBank | None:
         return self.exact_coordinates
 
 
@@ -572,7 +565,7 @@ class MixedAdaptationOutcome(NamedTuple):
     coarsening_maps: tuple[MixedCoarseningMap, ...]
     reference_maps: tuple[ReferenceCellMapWitnesses, ...]
     target_geometry: CellGeometrySpec | None
-    exact_vertex_coordinates: CoordinateSourceBank | None
+    exact_vertex_coordinates: tuple[tuple[ExactScalar, ...], ...] | None
     coarsening_partition: ReferenceCellPartition | None
 
 
@@ -3033,7 +3026,7 @@ def _exact_target_vertex_coordinates(
     mesh: CellMesh,
     edit_vertex_ids: NDArray[np.int64],
     /,
-) -> CoordinateSourceBank:
+) -> tuple[tuple[ExactScalar, ...], ...]:
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     exact_coordinates: dict[int, tuple[ExactScalar, ...]] = {}
     for block in mesh.blocks:

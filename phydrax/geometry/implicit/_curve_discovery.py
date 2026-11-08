@@ -1341,8 +1341,6 @@ def discover_parametric_chart_curve(
     """
     from ._adaptive_discovery import _FieldEnclosures, _validate_discovery_inputs
 
-    if not isinstance(geometry, CompiledGeometry):
-        raise TypeError("geometry must be CompiledGeometry.")
     _validate_discovery_inputs(geometry, policy, source_id)
     if policy.enclosure != "interval":
         raise ValueError("Parametric-chart crease discovery needs interval enclosures.")

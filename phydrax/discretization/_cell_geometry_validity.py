@@ -119,9 +119,9 @@ from ._coordinate_enclosure import (
 )
 from ._exact_algebraic_geometry import (
     coefficient_endpoint,
-    coefficient_payload,
     RadicalElement,
 )
+from ._exact_coordinate_bank import ExactCoordinateBank
 from ._reference_cell import reference_cell_topology
 from .fem._reference import FiniteElementSpec
 
@@ -148,10 +148,7 @@ def cell_geometry_id(geometry: CellGeometrySpec, /) -> str:
             "exact_coordinate_bank": (
                 None
                 if geometry.exact_coordinate_bank is None
-                else tuple(
-                    tuple(coefficient_payload(value) for value in row)
-                    for row in geometry.exact_coordinate_bank
-                )
+                else geometry.exact_coordinate_bank.coefficient_payloads()
             ),
             "content": array_tree_fingerprint(geometry),
         }
@@ -2431,9 +2428,8 @@ class _CellProofs:
                     np.asarray(value, dtype=np.int64) for value in resolved_routes
                 )
                 kinds = tuple(block.cell_kind for block in mesh.blocks)
-            execution = tuple(
-                tuple(Fraction(float(value)) for value in point)
-                for point in np.asarray(geometry.coordinates, dtype=np.float64)
+            execution = ExactCoordinateBank.from_binary64(
+                np.asarray(geometry.coordinates, dtype=np.float64)
             )
             source = (
                 geometry.source_coordinates()
@@ -3384,9 +3380,7 @@ def certify_cell_geometry_validity(
         names = tuple(block.name for block in mesh_.blocks)
         kinds = tuple(block.cell_kind for block in mesh_.blocks)
     values = np.asarray(spec.coordinates, dtype=np.float64)
-    execution_coordinates: CoordinateSourceBank = tuple(
-        tuple(Fraction(float(value)) for value in row) for row in values
-    )
+    execution_coordinates = ExactCoordinateBank.from_binary64(values)
     source_coordinates = (
         spec.source_coordinates() if spec.exact_coordinate_bank is not None else None
     )

@@ -850,14 +850,13 @@ def test_mapped_fidelity_target_map_reuse_preserves_exact_maps_and_refusal() -> 
     from phydrax.geometry._mapped_reference_interpolation import (
         _coordinate_expression,
         _mapped_chart_maps,
-        _source_coordinate_bank,
     )
 
     source, domain = _mapped_cube_source(curved=True)
     mesh, geometry = domain.reference_mesh, domain.source_geometry
     query, witness = _mapped_surface_chart_witness(source, domain, geometry)
     elements, routes, _ = geometry.resolve(mesh)
-    coordinates = _source_coordinate_bank(geometry.source_coordinates())
+    coordinates = geometry.source_coordinates()
     cache = OrderedDict()
     preparations = {}
     for row in (0, 1):

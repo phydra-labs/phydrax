@@ -10,7 +10,7 @@ from collections.abc import Callable, Mapping, Sequence
 from fractions import Fraction
 from itertools import product
 from math import comb
-from typing import Any, cast, Literal, Protocol, runtime_checkable, TypedDict
+from typing import Any, Literal, overload, Protocol, runtime_checkable, TypedDict
 
 import equinox as eqx
 import jax
@@ -51,7 +51,8 @@ from ._coordinate_enclosure import (
     scale,
     sum_polynomials,
 )
-from ._exact_algebraic_geometry import coefficient_payload, ExactScalar, RadicalElement
+from ._exact_algebraic_geometry import ExactScalar, RadicalElement
+from ._exact_coordinate_bank import ExactCoordinateBank
 from ._nested_reference_types import (
     exact_reference_cell_vertices,
     freeze_reference_chart_arguments,
@@ -219,32 +220,38 @@ class CellGeometryCoordinateMap(Protocol):
 
 def _capture_exact_coordinate_bank(
     source_map: CellGeometryCoordinateMap, coordinates: np.ndarray, /
-) -> CoordinateSourceBank | None:
+) -> ExactCoordinateBank | None:
     prepare = getattr(source_map, "source_coordinates", None)
     if prepare is None:
         return None
     if not callable(prepare):
         raise TypeError("A source coordinate bank provider must be callable.")
     raw = prepare()
-    if not isinstance(raw, tuple) or any(
-        not isinstance(row, tuple)
-        or any(not isinstance(value, (Fraction, RadicalElement)) for value in row)
-        for row in raw
-    ):
-        raise TypeError(
-            "Exact coordinate banks require immutable tuple rows of canonical exact scalars."
-        )
-    # The boundary above owns the nested runtime kind check.
-    bank = cast(CoordinateSourceBank, raw)
-    if len(bank) != coordinates.shape[0] or any(
-        len(row) != coordinates.shape[1] for row in bank
+    if isinstance(raw, ExactCoordinateBank):
+        bank = raw
+    else:
+        if not isinstance(raw, tuple) or any(
+            not isinstance(row, tuple)
+            or any(not isinstance(value, (Fraction, RadicalElement)) for value in row)
+            for row in raw
+        ):
+            raise TypeError(
+                "Exact coordinate banks require immutable tuple rows of canonical exact scalars."
+            )
+        if any(len(row) != coordinates.shape[1] for row in raw):
+            raise ValueError(
+                "Exact source coordinates must match the coefficient bank shape."
+            )
+        bank = ExactCoordinateBank.from_rows(raw)
+    if len(bank) != coordinates.shape[0] or (
+        len(bank) and bank.shape[1] != coordinates.shape[1]
     ):
         raise ValueError(
             "Exact source coordinates must match the coefficient bank shape."
         )
-    if bank:
+    if len(bank):
         try:
-            rounded = np.asarray(bank, dtype=np.float64)
+            rounded = bank.binary64()
         except OverflowError as error:
             raise ValueError(
                 "Exact source coordinates require a finite binary64 realization."
@@ -261,7 +268,7 @@ def _quotient_chart_lift(
     mesh: CellMesh,
     routes: Sequence[ArrayLike],
     /,
-) -> Callable[[ArrayLike], CoordinateSourceBank] | None:
+) -> Callable[[ArrayLike], tuple[tuple[ExactScalar, ...], ...]] | None:
     """Exact lifted-vertex rows of a periodic vertex-indexed carrier, or ``None``.
 
     Without an admitted exact bank, a periodic quotient's exact vertex is its
@@ -293,7 +300,7 @@ def _quotient_chart_lift(
     transforms: dict[tuple[int, ...], Any] = {}
     lifted: dict[int, tuple[Fraction, ...]] = {}
 
-    def lift(indices: ArrayLike, /) -> CoordinateSourceBank:
+    def lift(indices: ArrayLike, /) -> tuple[tuple[ExactScalar, ...], ...]:
         rows = np.asarray(indices, dtype=np.int64)
         if rows.ndim != 1 or np.any(rows < 0) or np.any(rows >= points.shape[0]):
             raise IndexError("Quotient-chart coordinate rows lie outside the carrier.")
@@ -3309,7 +3316,7 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
     elements: tuple[CellGeometryElement, ...]
     geometry_dofs: tuple[Array, ...]
     coordinates: Array
-    exact_coordinate_bank: CoordinateSourceBank | None = eqx.field(static=True)
+    exact_coordinate_bank: ExactCoordinateBank | None = eqx.field(static=True)
     source_map: CellGeometryCoordinateMap | None
     restriction_source: CellGeometryRestrictionSource | None
     source_mesh_id: str | None = eqx.field(static=True)
@@ -3505,17 +3512,7 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
                 )
             source_map.require_periodic_mesh(source_mesh)
 
-        def bank_payload(bank: CoordinateSourceBank | None, /) -> object:
-            if bank is None:
-                return None
-            return tuple(
-                tuple(coefficient_payload(coefficient) for coefficient in row)
-                for row in bank
-            )
-
-        if bank_payload(rebuilt.exact_coordinate_bank) != bank_payload(
-            value.exact_coordinate_bank
-        ):
+        if rebuilt.exact_coordinate_bank != value.exact_coordinate_bank:
             raise ValueError(
                 "Stored exact coordinate snapshot differs from its renewed source map."
             )
@@ -3606,33 +3603,49 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
             source_mesh=mesh,
         )
 
+    @overload
+    def source_coordinates(self, indices: None = None, /) -> ExactCoordinateBank: ...
+
+    @overload
+    def source_coordinates(
+        self, indices: ArrayLike, /
+    ) -> tuple[tuple[ExactScalar, ...], ...]: ...
+
+    @overload
+    def source_coordinates(
+        self, indices: ArrayLike | None, /
+    ) -> CoordinateSourceBank: ...
+
     def source_coordinates(
         self, indices: ArrayLike | None = None, /
     ) -> CoordinateSourceBank:
-        """Index the admitted immutable exact bank, or lift ordinary execution values."""
+        """Index the admitted immutable exact bank, or lift ordinary execution values.
+
+        Without ``indices`` the whole bank is returned as an ``ExactCoordinateBank``
+        (rows are materialized only when indexed); selected rows are tuples.
+        """
         values = np.asarray(self.coordinates, dtype=np.float64)
+        bank = self.exact_coordinate_bank
         if indices is None:
-            rows = np.arange(values.shape[0], dtype=np.int64)
-        else:
-            selection = np.asarray(indices)
-            if selection.dtype.kind not in "iu" or selection.ndim != 1:
-                raise TypeError("Coordinate source indices must be an integer vector.")
-            rows = selection.astype(np.int64)
-            if np.any(rows < 0) or np.any(rows >= values.shape[0]):
-                raise IndexError(
-                    "Coordinate source index lies outside the coefficient bank."
-                )
-        if self.exact_coordinate_bank is not None:
-            bank = self.exact_coordinate_bank
-            selected = bank if indices is None else tuple(bank[row] for row in rows)
-            expected = values if indices is None else values[rows]
-            if selected and not np.array_equal(
-                np.asarray(selected, dtype=np.float64), expected
-            ):
+            if bank is None:
+                return ExactCoordinateBank.from_binary64(values)
+            if len(bank) and not np.array_equal(bank.binary64(), values):
                 raise ValueError(
                     "Exact source coordinates no longer match their execution shadows."
                 )
-            return selected
+            return bank
+        selection = np.asarray(indices)
+        if selection.dtype.kind not in "iu" or selection.ndim != 1:
+            raise TypeError("Coordinate source indices must be an integer vector.")
+        rows = selection.astype(np.int64)
+        if np.any(rows < 0) or np.any(rows >= values.shape[0]):
+            raise IndexError("Coordinate source index lies outside the coefficient bank.")
+        if bank is not None:
+            if rows.size and not np.array_equal(bank.take(rows).binary64(), values[rows]):
+                raise ValueError(
+                    "Exact source coordinates no longer match their execution shadows."
+                )
+            return bank.rows(rows)
         return tuple(
             tuple(Fraction(float(value)) for value in values[row]) for row in rows
         )
@@ -3742,7 +3755,7 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
         plain_bases: dict[int, tuple[tuple[Any, ...], bool]] = {}
 
         def combine(
-            coefficients: tuple[tuple[Any, ...], ...], weights: tuple[Any, ...], /
+            coefficients: Sequence[tuple[Any, ...]], weights: tuple[Any, ...], /
         ) -> tuple[Any, ...]:
             return tuple(
                 sum(

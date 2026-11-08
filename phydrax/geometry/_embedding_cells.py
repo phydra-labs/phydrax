@@ -690,7 +690,7 @@ def _iter_embedding_cells(
                     raise UnsupportedEmbeddingMap(
                         "Reference corners do not match cell vertex incidence."
                     )
-                local = tuple(bank[index] for index in route)
+                local = tuple(bank[index] for index in route.tolist())
                 if not local or any(len(value) != len(local[0]) for value in local):
                     raise UnsupportedEmbeddingMap(
                         "Coordinate source rows have inconsistent ambient dimension."

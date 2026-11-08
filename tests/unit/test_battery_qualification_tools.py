@@ -809,7 +809,9 @@ def test_runtime_identity_admits_any_marker_forked_lock_version(tmp_path: Any) -
             source_root=source_root,
             installed_versions={**versions, "jaxlib": jaxlib},
         )
-        assert identity.environment_record["runtime_dependencies"]["jaxlib"] == jaxlib
+        runtime_dependencies = identity.environment_record["runtime_dependencies"]
+        assert isinstance(runtime_dependencies, dict)
+        assert runtime_dependencies["jaxlib"] == jaxlib
     with pytest.raises(ValueError, match="does not match uv.lock"):
         battery_qualification.capture_runtime_identity(
             source_root=source_root,

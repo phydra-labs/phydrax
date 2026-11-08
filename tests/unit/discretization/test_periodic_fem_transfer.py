@@ -425,22 +425,22 @@ def test_periodic_form_phases_preserve_full_transition_evidence(
         assert all(reference() is None for reference in complex_refs)
 
     full, full_records = _layer_form_transition(
-        adaptation, declarations, declarations, banks, on_field=checkpoint
+        adaptation, declarations, declarations, banks, on_field=checkpoint, hodge_resources=None
     )
     assert tuple(item[0] for item in checkpoints) == ("Hcurl", "Hdiv")
     for name, values, record in checkpoints:
         np.testing.assert_array_equal(values, full[name])
         assert record == full_records[name]
         one, one_record = _layer_form_transition(
-            adaptation, declarations, declarations, banks, fields=(name,)
+            adaptation, declarations, declarations, banks, fields=(name,), hodge_resources=None
         )
         np.testing.assert_array_equal(one[name], full[name])
         assert one_record[name] == full_records[name]
     for invalid in ((), ("Hcurl", "Hcurl"), ("H1",)):
         with pytest.raises(ValueError, match="field phases"):
-            _layer_form_transition(adaptation, declarations, declarations, banks, fields=invalid)
+            _layer_form_transition(adaptation, declarations, declarations, banks, fields=invalid, hodge_resources=None)
     with pytest.raises(ValueError, match="Hcurl and Hdiv"):
         _layer_form_transition(
             adaptation, tuple(item for item in declarations if item.name != "Hdiv"),
-            declarations, banks, fields=("Hcurl",),
+            declarations, banks, fields=("Hcurl",), hodge_resources=None,
         )

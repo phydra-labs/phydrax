@@ -21,6 +21,7 @@ from ._exact_algebraic_geometry import (
     coefficient_interval,
     RadicalElement,
 )
+from ._exact_coordinate_bank import ExactCoordinateBank
 
 
 if TYPE_CHECKING:
@@ -497,17 +498,24 @@ def certify_exact_variable_topology_block(
         raise TypeError("policy must be CellValidityPolicy.")
     if not isinstance(block_name, str) or not block_name:
         raise ValueError("block_name must be a non-empty mesh block name.")
-    if not isinstance(exact_coordinate_bank, tuple) or not exact_coordinate_bank:
+    if (
+        not isinstance(exact_coordinate_bank, (tuple, ExactCoordinateBank))
+        or not exact_coordinate_bank
+    ):
         raise TypeError("exact_coordinate_bank must be a non-empty immutable exact bank.")
     ambient = mesh.ambient_dimension
-    for coefficient_row in exact_coordinate_bank:
-        if len(coefficient_row) != ambient or any(
-            not isinstance(value, (Fraction, RadicalElement)) for value in coefficient_row
-        ):
-            raise TypeError(
-                "Every exact geometry coefficient row must contain one ExactScalar "
-                "per ambient axis."
-            )
+    try:
+        bank = ExactCoordinateBank.from_rows(exact_coordinate_bank)
+    except (TypeError, ValueError) as error:
+        raise TypeError(
+            "Every exact geometry coefficient row must contain one ExactScalar "
+            "per ambient axis."
+        ) from error
+    if bank.shape[1] != ambient:
+        raise TypeError(
+            "Every exact geometry coefficient row must contain one ExactScalar "
+            "per ambient axis."
+        )
     mesh_names = tuple(block.name for block in mesh.blocks)
     if set(geometry_dof_routes) != set(mesh_names):
         raise ValueError("Geometry DOF routes must match the mesh block names exactly.")
@@ -548,7 +556,7 @@ def certify_exact_variable_topology_block(
     routes = np.asarray(raw_routes, dtype=np.int64)
     active_routes = routes[vertex_valid]
     if active_routes.size and (
-        np.any(active_routes < 0) or np.any(active_routes >= len(exact_coordinate_bank))
+        np.any(active_routes < 0) or np.any(active_routes >= len(bank))
     ):
         raise ValueError("Geometry DOF routes index outside the exact coordinate bank.")
     exact_by_vertex: dict[int, ExactPoint] = {}
@@ -558,7 +566,7 @@ def certify_exact_variable_topology_block(
             routes[cell_row, vertex_valid[cell_row]].tolist(),
             strict=True,
         ):
-            point = exact_coordinate_bank[int(dof)]
+            point = bank[int(dof)]
             previous = exact_by_vertex.get(int(vertex))
             if previous is not None and previous != point:
                 raise ValueError(

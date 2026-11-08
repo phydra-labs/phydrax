@@ -566,7 +566,7 @@ def test_bspline_root_atlas_preserves_exact_control_and_weight_banks() -> None:
     exact_control_rows = tuple(point for row in exact_controls for point in row)
     exact_weight_rows = tuple(value for row in exact_weights for value in row)
     assert float(subfloat) == 0.0
-    assert atlas.geometry.source_coordinates() == exact_control_rows
+    assert tuple(atlas.geometry.source_coordinates()) == exact_control_rows
     source_map = atlas.geometry.source_map
     assert source_map is not None
     assert getattr(source_map, "coefficient_keys") == tuple(

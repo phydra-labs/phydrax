@@ -48,7 +48,7 @@ def test_affine_domain_reflection_and_exact_mesh_source() -> None:
     assert np.array_equal(physical.blocks[0].global_ids, mesh.blocks[0].global_ids)
     assert tuple(np.asarray(physical.blocks[0].vertices)[0]) == (1, 0, 2, 3)
     assert (
-        geometry.source_coordinates()
+        tuple(geometry.source_coordinates())
         == AffinePlcGeometrySource(domain, mesh).source_coordinates()
     )
     assert (

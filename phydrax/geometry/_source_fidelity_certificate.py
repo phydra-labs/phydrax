@@ -620,6 +620,7 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
             (stored_normal is None) != (fresh_normal is None)
             or (
                 stored_normal is not None
+                and fresh_normal is not None
                 and np.shape(stored_normal) != np.shape(fresh_normal)
             )
             or (self.maximum_normal_deviation_lower is None)

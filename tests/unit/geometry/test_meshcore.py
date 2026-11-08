@@ -1603,11 +1603,12 @@ def test_plc_recovery_declares_its_suppression_search_budget() -> None:
     for invalid in (
         PlcSearchBudget(0, 1),
         PlcSearchBudget(1, -1),
-        (1, 1),
         PlcSearchBudget(True, 1),
     ):
         with pytest.raises(ValueError, match="search_budget"):
             recover_plc_3d(*banks, search_budget=invalid)
+    with pytest.raises(ValueError, match="search_budget"):
+        recover_plc_3d(*banks, search_budget=(1, 1))  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.parametrize(

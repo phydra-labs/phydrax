@@ -129,6 +129,7 @@ from phydrax.discretization._coordinate_enclosure import (
 from phydrax.discretization._exact_algebraic_geometry import (
     coefficient_payload,
     RadicalElement,
+    rational_coefficient,
 )
 from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
 from phydrax.discretization._exact_power_geometry import ExactPowerCellGeometrySource
@@ -297,6 +298,7 @@ from phydrax.geometry.reconstruction._core import (
     ReconstructedGeometrySourceArchiveRecipe,
     ReconstructionReport,
 )
+from phydrax.geometry.reconstruction._envelope import parse_envelope_mode
 from phydrax.geometry.simplicial._regions import MeshRegion
 from phydrax.geometry.surface._contracts import (
     SurfaceInterface,
@@ -3465,7 +3467,13 @@ def _vertex_interpolation_stencil_metadata(
         "weights": np.asarray(value.weights, dtype=np.float64).tolist(),
         "valid": np.asarray(value.valid, dtype=np.bool_).tolist(),
         "exact_weights": [
-            [[weight.numerator, weight.denominator] for weight in row]
+            [
+                [rational.numerator, rational.denominator]
+                for rational in (
+                    rational_coefficient(weight, role="Archived stencil weight")
+                    for weight in row
+                )
+            ]
             for row in value.exact_weights
         ],
         "preserves_constants": value.preserves_constants,
@@ -5147,7 +5155,7 @@ def _rebuild_continuation_value(
             spacing=value.spacing,
             certificate_spacing=value.certificate_spacing,
             maximum_deviation=value.maximum_deviation,
-            envelope_mode=value.envelope_mode,
+            envelope_mode=parse_envelope_mode(value.envelope_mode),
         )
         if type(source) is not SurfaceEnvelopeSource:
             raise TypeError(
