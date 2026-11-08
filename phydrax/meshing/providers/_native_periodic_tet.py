@@ -269,6 +269,13 @@ def tet_mesh_periodic_state(
             )
         except KeyError as error:
             raise ValueError("Periodic cell references an absent source entity identity.") from error
+        # TetMesh3D quotients are simplicial: a cell whose corners include two
+        # lifted copies of one vertex orbit wraps the torus and has no native
+        # quotient cell, so the state (and an edit staging it) is refused.
+        if np.unique(representative_vertices).size != 4:
+            raise ValueError(
+                "A periodic quotient cell joins two lifted copies of one vertex orbit."
+            )
         quotient_cells.append(
             TetMeshPeriodicQuotientCell(
                 quotient_id,
