@@ -44,7 +44,7 @@ from ._periodic_box_boundary import periodic_box_boundary
 from ._plc_source import PiecewiseLinearComplex
 from ._result import CellMeshingResult
 from ._scope import MeshingEntityKind, MeshingScope
-from ._sizing import SizeControlStrength, UniformSizeControl
+from ._sizing import UniformSizeControl
 from ._volume_generation import NativeVolumeSchedule
 
 
@@ -212,12 +212,15 @@ def mesh_periodic_trigonometric_region(
     """Fill the quotient region of a resolved periodic discovery with tetrahedra.
 
     ``maximum_edge_length`` is an optional hard uniform size target on the
-    contour scope. The native route keeps every contour and cap vertex and
-    facet (``boundary="fixed"``), so the paired cell-face triangulations stay
-    identical; the periodic topology then identifies them exactly. The fixed
-    contour is the discovery's lattice contour, so the default schedule makes
-    tetrahedral shape targets soft: unmet shapes are reported in the result's
-    compliance (``soft_shape_target_unmet_count``), never silently passed.
+    contour scope; it also sets the rebuilt boundary's reduced edge length. The
+    native route keeps every contour and cap vertex and facet
+    (``boundary="fixed"``), so the paired cell-face triangulations stay
+    identical; the periodic topology then identifies them exactly. The default
+    schedule is `NativeVolumeSchedule()`: hard shape targets (radius-edge 2,
+    dihedral 10 degrees), met by the rebuilt boundary. The soft default that the
+    discovery's marching-tetrahedra contour required (PeriodicCollapseSupport /
+    TpmsDerivativeCheck) is gone; a region thinner than about two target edges,
+    such as a thin sheet, declares its own schedule.
     """
     from ._contracts import VolumeMeshingSpec
     from .providers._native import NativeMeshingProvider
@@ -330,9 +333,7 @@ def mesh_periodic_trigonometric_region(
             NativeMeshingOptions(
                 "plc_tetrahedral",
                 volume_schedule=(
-                    NativeVolumeSchedule(shape_strength=SizeControlStrength.SOFT)
-                    if volume_schedule is None
-                    else volume_schedule
+                    NativeVolumeSchedule() if volume_schedule is None else volume_schedule
                 ),
             )
         )

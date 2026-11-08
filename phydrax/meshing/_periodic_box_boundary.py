@@ -131,7 +131,8 @@ class _Patch:
         self.triangles: list[_Triangle | None] = []
         self.edges: dict[tuple[int, int], list[int]] = {}
         self.stars: list[set[int]] = [set() for _ in self.points]
-        self.samples: list[tuple[np.ndarray, float]] = []
+        self.centers = np.empty((0, 3), dtype=np.float64)
+        self.targets = np.empty(0, dtype=np.float64)
         for row in np.asarray(triangles, dtype=np.int64).tolist():
             self._add((row[0], row[1], row[2]))
         self.seams_frozen = False
@@ -314,10 +315,9 @@ class _Patch:
         coarsens smoothly from refined seam pieces toward ``length``.
         """
         values = np.full(points.shape[0], self.length)
-        if not self.samples or not points.shape[0]:
+        if not self.targets.size or not points.shape[0]:
             return values
-        centers = np.asarray([center for center, _ in self.samples], dtype=np.float64)
-        targets = np.asarray([size for _, size in self.samples], dtype=np.float64)
+        centers, targets = self.centers, self.targets
         distance = np.linalg.norm(points[:, None, :] - centers[None, :, :], axis=2)
         graded = np.min(targets[None, :] + _GRADATION * distance, axis=1)
         return np.minimum(values, graded)
@@ -338,11 +338,17 @@ class _Patch:
         self.seams_frozen = True
         seams = [edge for edge, faces in self.edges.items() if len(faces) == 1]
         lengths, _ = self._edge_sizes(seams)
-        self.samples = [
-            (0.5 * (self.points[a] + self.points[b]), float(length))
-            for (a, b), length in zip(seams, lengths, strict=True)
+        short = [
+            (edge, float(length))
+            for edge, length in zip(seams, lengths, strict=True)
             if length < self.length
         ]
+        # Built once per freeze: ``sizes`` runs for every candidate edge.
+        self.centers = np.asarray(
+            [0.5 * (self.points[a] + self.points[b]) for (a, b), _ in short],
+            dtype=np.float64,
+        ).reshape(-1, 3)
+        self.targets = np.asarray([length for _, length in short], dtype=np.float64)
 
     def split_pass(self) -> bool:
         candidates: list[tuple[float, tuple[int, int], int]] = []
@@ -1022,19 +1028,20 @@ def _box_contour(
 
 
 def periodic_box_boundary(
-    surface: PeriodicImplicitSurface, edge_length: float | None, /
+    surface: PeriodicImplicitSurface, maximum_edge_length: float | None, /
 ) -> PeriodicBoxBoundary:
     """Remeshed contour and refined cell-face caps of a resolved discovery.
 
-    ``edge_length`` is the reduced target edge length; ``None`` takes the
-    box contour's mean edge length.
+    ``maximum_edge_length`` is the reduced length no remeshed contour edge may
+    exceed, so the target length is ``maximum_edge_length / _LONG``; ``None``
+    targets the box contour's mean edge length.
     """
     zero_set = QuotientZeroSet(surface)
     contour = _box_contour(surface, zero_set)
     length = (
         _surface_edge_length(contour.points, contour.faces)
-        if edge_length is None
-        else edge_length
+        if maximum_edge_length is None
+        else maximum_edge_length / _LONG
     )
     patch = _Patch(
         zero_set,

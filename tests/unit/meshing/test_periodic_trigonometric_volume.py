@@ -176,9 +176,9 @@ def test_periodic_network_mesh_certifies_and_closes_through_paired_cell_faces(
     enclosure = surface.cover.volume_enclosure()
     assert enclosure.fraction_lower <= volume.measure <= enclosure.fraction_upper
     assert volume.measure == pytest.approx(0.5, abs=0.02)
-    # Shape targets on the fixed lattice contour are soft and reported.
+    # The default schedule is hard: every tetrahedral shape target is met.
     achieved = dict(volume.construction.compliance.achieved)
-    assert achieved["soft_shape_target_unmet_count"] >= 0.0
+    assert achieved["final_quality_unmet_count"] == 0.0
     assert volume.construction.compliance.issues == ()
 
 
@@ -241,7 +241,10 @@ def test_periodic_network_public_adaptation_edits_complete_lattice_orbits() -> N
         members = retained[representatives == root]
         assert members.all() or not members.any()
     # Moved collapse survivors are the only relocated vertices without the
-    # relocation phase: a periodic survivor moves when its orbit is one copy.
+    # relocation phase, and only a single-copy orbit's survivor may move. The
+    # rebuilt contour leaves this mesh almost no interior vertices, so its
+    # collapses relocate none; the relocation contract itself is exercised by
+    # test_periodic_network_adaptation_relocates_a_single_copy_survivor.
     vertex_relation = outcome.edit.relations[0]
     relocated = {
         int(source_key[0])
@@ -252,7 +255,7 @@ def test_periodic_network_public_adaptation_edits_complete_lattice_orbits() -> N
         )
         if kind == int(EntityLineageKind.RELOCATED)
     }
-    assert relocated and all(copies[representatives[row_of[v]]] == 1 for v in relocated)
+    assert all(copies[representatives[row_of[v]]] == 1 for v in relocated)
     # The upper cell-face triangulations stay the exact translates of the lower.
     domain = volume.reduced_domain
     assert sum(_cell_face_pairs(target, domain, axis) for axis in range(3)) > 0
