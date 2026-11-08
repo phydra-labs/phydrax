@@ -647,24 +647,26 @@ class PolytopeClipper {
         const double* corners[4] = {o, x0, vertices[loops[face.start + i]].x,
                                     vertices[loops[face.start + i + 1]].x};
         double* row = out.simplices + 12 * static_cast<int64_t>(written);
+        Dyadic points[4][3];
         for (int corner = 0; corner < 4; ++corner) {
           for (int k = 0; k < 3; ++k) {
             row[3 * corner + k] = corners[corner][k];
+            points[corner][k] = Dyadic(row[3 * corner + k]);
           }
         }
         Dyadic edges[3][3];
         for (int k = 0; k < 3; ++k) {
-          const Dyadic origin(row[k]);
-          edges[0][k] = Dyadic(row[3 + k]) - origin;
-          edges[1][k] = Dyadic(row[6 + k]) - origin;
-          edges[2][k] = Dyadic(row[9 + k]) - origin;
+          const Dyadic& origin = points[0][k];
+          edges[0][k] = points[1][k] - origin;
+          edges[1][k] = points[2][k] - origin;
+          edges[2][k] = points[3][k] - origin;
         }
         const Dyadic determinant = exact::det3(edges[0], edges[1], edges[2]);
         if (!determinant.is_zero()) {
           six = six + determinant;
           for (int k = 0; k < 3; ++k) {
-            const Dyadic centroid_sum = Dyadic(row[k]) + Dyadic(row[3 + k]) +
-                                        Dyadic(row[6 + k]) + Dyadic(row[9 + k]);
+            const Dyadic centroid_sum =
+                points[0][k] + points[1][k] + points[2][k] + points[3][k];
             sum[k] = sum[k] + determinant * centroid_sum;
           }
         }
