@@ -4,14 +4,14 @@
 
 
 from fractions import Fraction
-from itertools import permutations
+from itertools import combinations, permutations
 from typing import Any
 
 import numpy as np
 import pytest
 
 from phydrax._geometry_precision import GeometryPrecisionPolicy
-from phydrax._geometry_predicates import PredicateMode
+from phydrax._geometry_predicates import PredicateMode, resolve_host_predicate_mode
 from phydrax._meshcore import meshcore_available
 from phydrax.geometry import _tetra_intersections as tetra_module
 from phydrax.geometry._tetra_intersections import (
@@ -288,32 +288,22 @@ SLIVER = np.asarray(
 ZERO_TOLERANCE = TetraIntersectionTolerance(absolute=0.0, relative=0.0)
 
 
-def test_unresolved_filtered_orientation_fails_closed(unit_tetrahedron: Any) -> None:
+@pytest.mark.parametrize("mode", (PredicateMode.FILTERED, PredicateMode.EXACT))
+def test_sliver_orientation_is_decided_in_every_predicate_mode(
+    unit_tetrahedron: Any, mode: PredicateMode
+) -> None:
+    # The sliver's exact determinant is nonzero, so its orientation is decided
+    # even where the filtered orient3d bound cannot certify the sign.
     result = intersect_tetrahedra(
         SLIVER,
         unit_tetrahedron + 100.0,
         tolerance=ZERO_TOLERANCE,
-        precision=GeometryPrecisionPolicy(predicate_mode=PredicateMode.FILTERED),
-    )
-
-    assert result.status is TetraIntersectionStatus.UNCERTAIN_PREDICATE
-    assert result.evidence.predicate_uncertain
-    assert result.evidence.predicate_mode is PredicateMode.FILTERED
-
-
-@pytest.mark.meshcore
-@pytest.mark.skipif(not meshcore_available(), reason="phydrax-meshcore unavailable")
-def test_exact_orientation_certifies_the_sliver(unit_tetrahedron: Any) -> None:
-    result = intersect_tetrahedra(
-        SLIVER,
-        unit_tetrahedron + 100.0,
-        tolerance=ZERO_TOLERANCE,
-        precision=GeometryPrecisionPolicy(predicate_mode=PredicateMode.EXACT),
+        precision=GeometryPrecisionPolicy(predicate_mode=mode),
     )
 
     assert result.status is TetraIntersectionStatus.DISJOINT
     assert not result.evidence.predicate_uncertain
-    assert result.evidence.predicate_mode is PredicateMode.EXACT
+    assert result.evidence.predicate_mode is resolve_host_predicate_mode(mode)
 
 
 # A unit-sized tetrahedron at offset 2**30 and its exact translate by
@@ -386,35 +376,16 @@ def test_far_corner_overlap_constructs_the_exact_polytope() -> None:
     _assert_far_overlap_topology(intersect_tetrahedra(FAR, FAR_TRANSLATED))
 
 
-def _lose_every_triple(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Only the input corners FAR[1] and FAR_TRANSLATED[2] remain in the
-    # tolerance construction, which cannot close the solid overlap.
-    monkeypatch.setattr(
-        tetra_module, "_triple_intersection", lambda *arguments: (None, False)
-    )
-
-
-def test_far_corner_overlap_lost_by_the_tolerance_construction_is_rebuilt_exactly(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _assert_far_translate_is_exact()
-    _lose_every_triple(monkeypatch)
-
-    _assert_far_overlap_topology(intersect_tetrahedra(FAR, FAR_TRANSLATED))
-
-
 def test_far_corner_overlap_lost_by_the_constructed_topology_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _assert_far_translate_is_exact()
-    _lose_every_triple(monkeypatch)
-    # The exact construction fails as well.
-    monkeypatch.setattr(tetra_module, "_exact_polytope_topology", lambda *arguments: None)
+    # The exact construction loses its closure: it refuses loudly instead of
+    # reporting a SUCCESS with an unclosed topology.
+    monkeypatch.setattr(tetra_module, "_closed_surface", lambda *arguments: False)
 
-    result = intersect_tetrahedra(FAR, FAR_TRANSLATED)
-
-    assert result.status is TetraIntersectionStatus.UNCERTAIN_PREDICATE
-    assert result.evidence.predicate_uncertain
+    with pytest.raises(RuntimeError, match="does not close"):
+        intersect_tetrahedra(FAR, FAR_TRANSLATED)
 
 
 # beta = 1 + 2**-30: det[(1, 0, 0), (0, beta, 1), (0, 1, beta)] = beta**2 - 1 is
@@ -546,6 +517,99 @@ COINCIDENT_TARGET = np.asarray(
     ),
     dtype=np.float64,
 )
+
+
+def _determinant(rows: list[list[Fraction]]) -> Fraction:
+    return (
+        rows[0][0] * (rows[1][1] * rows[2][2] - rows[1][2] * rows[2][1])
+        - rows[0][1] * (rows[1][0] * rows[2][2] - rows[1][2] * rows[2][0])
+        + rows[0][2] * (rows[1][0] * rows[2][1] - rows[1][1] * rows[2][0])
+    )
+
+
+def _rounded_exact_vertices(source: np.ndarray, target: np.ndarray) -> np.ndarray:
+    """Correctly rounded vertices of the exact intersection, independently."""
+    halfspaces: list[tuple[list[Fraction], Fraction]] = []
+    for cell in (source, target):
+        points = [[Fraction(float(value)) for value in row] for row in cell]
+        for opposite in range(4):
+            origin, first, second = (points[i] for i in range(4) if i != opposite)
+            u = [a - b for a, b in zip(first, origin, strict=True)]
+            v = [a - b for a, b in zip(second, origin, strict=True)]
+            normal = [
+                u[1] * v[2] - u[2] * v[1],
+                u[2] * v[0] - u[0] * v[2],
+                u[0] * v[1] - u[1] * v[0],
+            ]
+            offset = -sum(
+                (a * b for a, b in zip(normal, origin, strict=True)), Fraction(0)
+            )
+            if (
+                sum(a * b for a, b in zip(normal, points[opposite], strict=True))
+                < -offset
+            ):
+                normal, offset = [-a for a in normal], -offset
+            halfspaces.append((normal, offset))
+    exact: set[tuple[Fraction, ...]] = set()
+    for triple in combinations(halfspaces, 3):
+        matrix = [normal for normal, _ in triple]
+        determinant = _determinant(matrix)
+        if determinant == 0:
+            continue
+        point = tuple(
+            _determinant(
+                [
+                    [-offset if column == axis else row[column] for column in range(3)]
+                    for row, (_, offset) in zip(matrix, triple, strict=True)
+                ]
+            )
+            / determinant
+            for axis in range(3)
+        )
+        if all(
+            sum(a * b for a, b in zip(normal, point, strict=True)) + offset >= 0
+            for normal, offset in halfspaces
+        ):
+            exact.add(point)
+    return np.asarray(
+        [[float(value) for value in point] for point in sorted(exact)], dtype=np.float64
+    )
+
+
+# A generic overlap: its exact vertices differ by up to 119 ulps from the
+# intersections of the rounded np.cross normal planes.
+GENERIC_SOURCE = _hex_rows(
+    (
+        ("0x1.911924f1561c9p-1", "0x1.e57dc3e1048e2p-1", "0x1.1103a5bb45834p-3"),
+        ("0x1.6881b3714921fp-1", "0x1.78bb935de7596p-2", "0x1.46d7ca30d4f8fp-1"),
+        ("0x1.3fa44de5cfc68p-4", "0x1.9713a804e7131p-1", "0x1.13030f41ab727p-1"),
+        ("0x1.c6ff5711523a0p-6", "0x1.c21d8d593b5c8p-3", "0x1.c691bdc876e70p-5"),
+    )
+)
+GENERIC_TARGET = _hex_rows(
+    (
+        ("0x1.0500f6325897ep-1", "0x1.59bbaf1345c4ap-1", "0x1.e3a5140f733cdp-3"),
+        ("0x1.492e59a1fe5bfp-1", "0x1.2dd650754f7bbp-1", "0x1.d51a48c47185cp-2"),
+        ("0x1.1677bac319ca0p-3", "0x1.0e14c047f5b22p-1", "0x1.7482020b09f68p-2"),
+        ("0x1.0ab117c8232e6p-1", "0x1.556152c47049ep-1", "0x1.02ff23208440cp-2"),
+    )
+)
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    ((GENERIC_SOURCE, GENERIC_TARGET), (FAR, FAR_TRANSLATED)),
+    ids=("generic", "far"),
+)
+def test_success_vertices_are_the_correctly_rounded_exact_vertices(
+    source: np.ndarray, target: np.ndarray
+) -> None:
+    result = intersect_tetrahedra(source, target)
+
+    assert result.status is TetraIntersectionStatus.SUCCESS
+    np.testing.assert_array_equal(
+        result.vertices, _rounded_exact_vertices(source, target)
+    )
 
 
 def test_closed_surface_requires_consistently_oriented_faces() -> None:

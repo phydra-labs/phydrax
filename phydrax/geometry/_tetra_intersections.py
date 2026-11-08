@@ -8,22 +8,20 @@ The implementation deliberately does not contain JAX primitives.  A tetrahedron
 intersection is a small, topology-changing geometry operation and is therefore
 prepared on the host before a remap is committed.  The status and volume are
 decided exactly: the source is clipped by the closed target half-spaces in
-rational arithmetic on the binary64 inputs.  The reported intersection polytope
-is formed by enumerating vertices of the eight half-spaces (four from each input
-cell).  Every numerical decision is conservative: malformed cells, uncertain
-predicates, and unresolved constructions return a typed non-success result,
-never a plausible but unverifiable volume. Orientation and plane-triple singularity
-decisions are certified by the geometric predicates of the precision policy
-(exact with meshcore; otherwise filtered, with unresolved signs reported as
-``UNCERTAIN_PREDICATE`` for contacts).  Degeneracy compares the exact
-determinant with an exact threshold.  Half-space admission and face membership
-are exact residual decisions on the binary64 face normals (a fixed-order filter
-with a derived rounding bound, then rational arithmetic), and plane-triple
-vertices are exact rational points reported correctly rounded, so no decision
-depends on the BLAS accumulation order of a dot product.  A solid intersection
-whose tolerance enumeration is unresolved or does not close is rebuilt from the
-exact half-spaces of the binary64 vertices, the same ones that decide the status
-and volume.
+rational arithmetic on the binary64 inputs.  A positive-volume intersection is
+reported as the exact polytope of those half-spaces (four from each input
+cell), with correctly rounded vertices; a zero-measure contact is enumerated
+with coordinate tolerances.  Every numerical decision is conservative:
+malformed cells, uncertain predicates, and unresolved constructions return a
+typed non-success result, never a plausible but unverifiable volume.  Degeneracy
+and orientation of an input cell come from its exact determinant, compared with
+an exact threshold.  Plane-triple singularity decisions of a contact are
+certified by the geometric predicates of the precision policy (exact with
+meshcore; otherwise filtered, with unresolved signs reported as
+``UNCERTAIN_PREDICATE``).  Contact admission and face membership are exact
+residual decisions on the binary64 face normals (a fixed-order filter with a
+derived rounding bound, then rational arithmetic), so no decision depends on the
+BLAS accumulation order of a dot product.
 """
 
 from __future__ import annotations
@@ -110,12 +108,16 @@ class TetraIntersectionResult:
 
     ``vertices`` is a read-only ``(N, 3)`` array in lexicographic order and
     ``faces`` contains outward-oriented polygon index tuples in canonical
-    order.  The vertex indices and faces are the constructed topology; for
-    ``SUCCESS`` they close an oriented polytope surface.  Each vertex
-    coordinate is the correctly rounded value of its vertex, and vertices are
-    never merged after rounding: distinct exact vertices of the exact
-    construction can share a binary64 coordinate, so an edge may have zero
-    length and a face zero area.  For ``volume_only=True`` the topology is not
+    order.  The vertex indices and faces are the constructed topology.  For
+    ``SUCCESS`` they are the exact polytope of the exact half-spaces of the
+    binary64 inputs and close an oriented surface; each coordinate is the
+    correctly rounded value of its exact vertex, and vertices are never merged
+    after rounding, so distinct exact vertices can share a binary64 coordinate
+    and an edge may have zero length or a face zero area.  For
+    ``ZERO_MEASURE_CONTACT`` they come from the tolerance enumeration over the
+    binary64 face normals: each coordinate is the correctly rounded intersection
+    point of those planes or an input vertex, merged within the coordinate
+    tolerance.  For ``volume_only=True`` the topology is not
     constructed: the arrays are empty and the vertex and face counts are zero
     while the exact status, certified volume, and remaining evidence stay
     available.
@@ -332,37 +334,34 @@ def _volume_threshold(tolerance: TetraIntersectionTolerance, scale: float, /) ->
 def _validate_tetrahedron(
     vertices: np.ndarray,
     tolerance: TetraIntersectionTolerance,
-    mode: PredicateMode,
-) -> tuple[TetraIntersectionStatus | None, float, float, bool]:
+) -> tuple[TetraIntersectionStatus | None, float, float]:
+    """Failure status (or ``None``), reported volume, and edge scale of a cell.
+
+    Degeneracy and orientation come from the exact determinant of the binary64
+    vertices: it is compared with the exact volume threshold, and a determinant
+    beyond the threshold is nonzero, so its sign is decided in every predicate
+    mode.
+    """
     scale = _edge_scale(vertices)
     if not math.isfinite(scale) or scale == 0.0:
-        return TetraIntersectionStatus.DEGENERATE_TETRAHEDRON, 0.0, scale, False
+        return TetraIntersectionStatus.DEGENERATE_TETRAHEDRON, 0.0, scale
     determinant = _det3(
         vertices[1] - vertices[0],
         vertices[2] - vertices[0],
         vertices[3] - vertices[0],
     )
     if not math.isfinite(determinant):
-        return TetraIntersectionStatus.NONFINITE_INPUT, 0.0, scale, False
-    # The tolerance is a volume admissibility threshold: the exact determinant of
-    # the binary64 vertices is compared with the exact threshold.  The
-    # orientation sign itself comes from the certified predicate.
+        return TetraIntersectionStatus.NONFINITE_INPUT, 0.0, scale
     first, second, third, fourth = _exact_tetrahedron(vertices)
     exact_determinant = rational_dot(
         _exact_difference(second, first),
         rational_cross(_exact_difference(third, first), _exact_difference(fourth, first)),
     )
     if abs(exact_determinant) <= _volume_threshold(tolerance, scale):
-        return TetraIntersectionStatus.DEGENERATE_TETRAHEDRON, 0.0, scale, False
-    orientation = orient3d(vertices[0], vertices[1], vertices[2], vertices[3], mode=mode)
-    if not bool(orientation.certain):
-        return TetraIntersectionStatus.UNCERTAIN_PREDICATE, 0.0, scale, True
-    sign = int(orientation.signs)
-    if sign < 0:
-        return TetraIntersectionStatus.INVERTED_TETRAHEDRON, 0.0, scale, False
-    if sign == 0:
-        return TetraIntersectionStatus.DEGENERATE_TETRAHEDRON, 0.0, scale, False
-    return None, abs(determinant) / 6.0, scale, False
+        return TetraIntersectionStatus.DEGENERATE_TETRAHEDRON, 0.0, scale
+    if exact_determinant < 0:
+        return TetraIntersectionStatus.INVERTED_TETRAHEDRON, 0.0, scale
+    return None, abs(determinant) / 6.0, scale
 
 
 _UNIT_ROUNDOFF = float(np.finfo(np.float64).eps) / 2.0
@@ -511,10 +510,9 @@ def _triple_intersection(
     matrix = np.stack([planes[index].normal for index in indices], axis=0)
     # Coincident source/target faces are represented by independently built
     # normals.  Their cross product can carry a few ulps even though the
-    # geometric planes are identical; the tolerance enumeration treats such a
-    # pair as rank zero.  This is a tolerance decision, not a certified one: a
-    # solid intersection whose tolerance faces then fail to close is rebuilt by
-    # ``_exact_polytope_topology``, which decides rank exactly.
+    # geometric planes are identical; the contact enumeration treats such a pair
+    # as rank zero.  This is a tolerance decision; positive-volume intersections
+    # are built by ``_exact_polytope_topology``, which decides rank exactly.
     for first, second in combinations(range(3), 2):
         normal_scale = max(
             1.0,
@@ -849,18 +847,20 @@ def _closed_surface(vertex_count: int, faces: tuple[tuple[int, ...], ...], /) ->
 
 def _exact_polytope_topology(
     source: np.ndarray, target: np.ndarray, /
-) -> tuple[np.ndarray, tuple[tuple[int, ...], ...]] | None:
-    """Exact vertices and faces of a solid intersection, or ``None``.
+) -> tuple[np.ndarray, tuple[tuple[int, ...], ...]]:
+    """Exact vertices and faces of a positive-volume intersection.
 
-    The eight closed half-spaces are exact on the binary64 vertices.  The common
-    point of every nonsingular plane triple that satisfies all of them is a
-    vertex, and equal points merge.  The vertices on one plane form a face when
-    there are at least three; coincident planes give the same vertex set and
-    merge.  Each face runs counterclockwise about its outward normal from its
-    smallest vertex, ordered by exact orientation signs.  Vertices are reported
-    correctly rounded in exact lexicographic order.  ``None`` means the exact
-    construction does not close a polytope surface or leaves the binary64
-    range; neither happens for a solid intersection of finite cells.
+    The eight closed half-spaces are exact on the binary64 vertices, the ones
+    that decide the status and volume.  The common point of every nonsingular
+    plane triple that satisfies all of them is a vertex, and equal points merge.
+    The vertices on one plane form a face when there are at least three;
+    coincident planes give the same vertex set and merge.  Each face runs
+    counterclockwise about its outward normal from its smallest vertex, ordered
+    by exact orientation signs.  Vertices are reported correctly rounded in
+    exact lexicographic order and are never merged after rounding.  The
+    vertices lie in the convex hull of finite cells and a bounded
+    full-dimensional polytope closes, so a non-finite vertex or an unclosed
+    surface is an internal error.
     """
     halfspaces = _exact_halfspaces(_exact_tetrahedron(source)) + _exact_halfspaces(
         _exact_tetrahedron(target)
@@ -890,7 +890,7 @@ def _exact_polytope_topology(
     exact_vertices = sorted(points)
     rounded = [_rounded_point(point) for point in exact_vertices]
     if not all(bool(np.all(np.isfinite(point))) for point in rounded):
-        return None
+        raise RuntimeError("an exact intersection vertex left the binary64 range")
     faces_by_key: dict[tuple[int, ...], tuple[int, ...]] = {}
     for normal, offset in halfspaces:
         boundary = tuple(
@@ -921,7 +921,7 @@ def _exact_polytope_topology(
         )
     faces = tuple(faces_by_key[key] for key in sorted(faces_by_key))
     if not _closed_surface(len(exact_vertices), faces):
-        return None
+        raise RuntimeError("the exact intersection polytope does not close")
     vertices = np.asarray(rounded, dtype=np.float64)
     vertices.setflags(write=False)
     return vertices, faces
@@ -977,23 +977,18 @@ def _tolerance_topology(
     return vertices, faces
 
 
-def _polytope_topology(
+def _contact_topology(
     source: np.ndarray,
     target: np.ndarray,
     tolerance: TetraIntersectionTolerance,
     scale: float,
     mode: PredicateMode,
-    solid: bool,
     /,
 ) -> tuple[np.ndarray, tuple[tuple[int, ...], ...]] | None:
-    """Constructed vertices and faces of a nonempty intersection, or ``None``.
+    """Tolerance-merged vertices and faces of a zero-measure contact, or ``None``.
 
-    The tolerance-based enumeration runs first.  For a ``solid`` intersection
-    whose enumeration meets an uncertain plane-triple orientation, is
-    unresolved, or whose faces do not close a polytope surface (near-coincident
-    faces within the coordinate tolerance), the exact polytope replaces it.
-    ``None`` reports, for a contact, an uncertain plane-triple orientation or
-    an unresolved enumeration, and for a solid a failed exact construction.
+    ``None`` reports an uncertain plane-triple orientation or an unresolved
+    enumeration.
     """
     planes = _tetra_planes(source) + _tetra_planes(target)
     triples = tuple(combinations(range(len(planes)), 3))
@@ -1017,17 +1012,10 @@ def _polytope_topology(
             bool(triple_orientation.certain[triple_index]),
         )
         if point_uncertain:
-            return _exact_polytope_topology(source, target) if solid else None
+            return None
         if point is not None:
             triple_points.append(point)
-    topology = _tolerance_topology(
-        source, target, planes, triple_points, tolerance, scale
-    )
-    if not solid:
-        return topology
-    if topology is not None and _closed_surface(len(topology[0]), topology[1]):
-        return topology
-    return _exact_polytope_topology(source, target)
+    return _tolerance_topology(source, target, planes, triple_points, tolerance, scale)
 
 
 def intersect_tetrahedra(
@@ -1047,18 +1035,17 @@ def intersect_tetrahedra(
     means the closed tetrahedra share no point, and a nonempty intersection is
     ``SUCCESS`` when its exact volume exceeds the volume tolerance and
     ``ZERO_MEASURE_CONTACT`` otherwise.  ``volume`` and ``volume_error`` enclose
-    that exact volume.  The reported vertices and faces come from the
-    tolerance-based enumeration: input vertices and exact plane-triple points
-    are admitted by exact residual predicates and reported correctly rounded,
-    so no decision depends on the platform's dot-product accumulation order.
-    When that enumeration meets an uncertain filtered plane-triple orientation
-    or does not close a ``SUCCESS`` polytope (faces within the coordinate
-    tolerance of each other), the exact polytope of the exact half-spaces
-    replaces it.  For a ``ZERO_MEASURE_CONTACT`` an uncertain plane-triple
-    orientation or an unresolved enumeration, and for a ``SUCCESS`` a failed
-    exact construction, returns ``UNCERTAIN_PREDICATE``.  ``volume_only`` skips
-    that construction, so its status never depends on it.  No candidate-count or
-    topology cap truncates work.
+    that exact volume.  A ``SUCCESS`` reports the exact polytope of those
+    half-spaces: its vertices are exact plane-triple points reported correctly
+    rounded, and its faces are exact incidences ordered by exact orientation
+    signs.  A ``ZERO_MEASURE_CONTACT`` reports the tolerance-based enumeration
+    over the binary64 face normals: input vertices and exact plane-triple points
+    are admitted by exact residual predicates, reported correctly rounded, and
+    merged within the coordinate tolerance; an uncertain plane-triple
+    orientation or an unresolved enumeration returns ``UNCERTAIN_PREDICATE``.
+    No decision depends on the platform's dot-product accumulation order.
+    ``volume_only`` skips the construction, so its status never depends on it.
+    No candidate-count or topology cap truncates work.
     """
 
     policy = GeometryPrecisionPolicy() if precision is None else precision
@@ -1088,8 +1075,8 @@ def intersect_tetrahedra(
         )
     if source is None or target is None:
         raise RuntimeError("tetrahedron coercion lost a validated input")
-    source_failure, source_volume, source_scale, source_uncertain = _validate_tetrahedron(
-        source, tolerance_, mode
+    source_failure, source_volume, source_scale = _validate_tetrahedron(
+        source, tolerance_
     )
     if source_failure is not None:
         return _empty_result(
@@ -1098,11 +1085,10 @@ def intersect_tetrahedra(
             target_id,
             pair_id,
             source_volume=source_volume,
-            predicate_uncertain=source_uncertain,
             predicate_mode=mode,
         )
-    target_failure, target_volume, target_scale, target_uncertain = _validate_tetrahedron(
-        target, tolerance_, mode
+    target_failure, target_volume, target_scale = _validate_tetrahedron(
+        target, tolerance_
     )
     if target_failure is not None:
         return _empty_result(
@@ -1112,7 +1098,6 @@ def intersect_tetrahedra(
             pair_id,
             source_volume=source_volume,
             target_volume=target_volume,
-            predicate_uncertain=target_uncertain,
             predicate_mode=mode,
         )
     scale = max(source_scale, target_scale)
@@ -1137,15 +1122,10 @@ def intersect_tetrahedra(
     )
     vertices = np.empty((0, 3), dtype=np.float64)
     faces: tuple[tuple[int, ...], ...] = ()
-    if not volume_only:
-        topology = _polytope_topology(
-            source,
-            target,
-            tolerance_,
-            scale,
-            mode,
-            status is TetraIntersectionStatus.SUCCESS,
-        )
+    if status is TetraIntersectionStatus.SUCCESS and not volume_only:
+        vertices, faces = _exact_polytope_topology(source, target)
+    elif not volume_only:
+        topology = _contact_topology(source, target, tolerance_, scale, mode)
         if topology is None:
             return _empty_result(
                 TetraIntersectionStatus.UNCERTAIN_PREDICATE,
