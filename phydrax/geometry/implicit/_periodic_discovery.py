@@ -625,8 +625,6 @@ def discover_periodic_trigonometric_surface(
     unresolved cells reach ``root_tolerance``. Undecided results keep the last
     attempt's unresolved boxes as evidence and carry no mesh.
     """
-    if not isinstance(source, TrigonometricLevelSet):
-        raise TypeError("source must be a TrigonometricLevelSet.")
     if policy.enclosure != "interval":
         raise ValueError("Quotient discovery requires the interval enclosure policy.")
     reduced = reduced_trigonometric_source(source)
