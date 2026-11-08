@@ -174,6 +174,7 @@ class BlockSparseMPMNodalStoragePlan(AbstractMPMNodalStoragePlan):
             content,
             mapped,
             self.target_measure(topology),
+            target_valid=topology.node_valid.reshape((-1,)),
         )
 
     def scatter_route_payload(

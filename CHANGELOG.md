@@ -788,7 +788,16 @@
 - Particle-grid splat balance evidence sums the active, supported and dropped
   source totals and absolute totals over the active sources (`certified_sum`
   takes `where`), so they no longer depend on particle capacity or inactive slot
-  positions. Target totals, which carry no target-validity mask, are unchanged.
+  positions.
+- Mapped particle-grid splat deposits take an optional `target_valid` mask of
+  logical storage slots, and block-sparse MPM storage passes its valid nodes, so
+  splat target totals and absolute totals sum only logical slots. The balance
+  tolerance and its roundoff-model gate count the routes of the active sources,
+  the active sources and the logical target slots instead of the route,
+  particle and storage capacities. Target totals and the tolerance no longer
+  depend on block-sparse storage capacity, and the tolerance no longer depends
+  on particle capacity (for example 60 active particles at capacity 60, 70 or
+  128). Dense, fully active configurations keep their bits.
 - Adaptive cubature sums the active cell estimates and errors through their
   activity mask, so the returned value, error estimate and termination decision
   no longer depend on `max_cells`; they previously could change when
