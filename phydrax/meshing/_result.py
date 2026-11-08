@@ -1338,7 +1338,9 @@ class CellMeshingResult(StrictModule, NonTrainableState):
                 else witness
             )
 
-        fidelity_witness = stored_witness(original.fidelity_witness)
+        fidelity_witness = (
+            stored_witness(original.fidelity_witness) if shared_implicit else None
+        )
 
         def restore_scoped(
             query: Any, witness: Any, tolerance: float
@@ -1369,6 +1371,8 @@ class CellMeshingResult(StrictModule, NonTrainableState):
             restore_scoped(query, witness, tolerance)
             for query, witness, tolerance in original.scoped_fidelity
         )
+        if not shared_implicit:
+            fidelity_witness = stored_witness(original.fidelity_witness)
         validated = validate_fidelity_witnesses(
             mesh, geometry, source, fidelity_witness, scoped
         )
