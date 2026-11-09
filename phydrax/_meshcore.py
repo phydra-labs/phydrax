@@ -859,6 +859,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (_I64, _P, _P, _P, _P, _P),
     ),
+    "phx_mc_tetrahedron_intersection_quadratic_moments": (
+        _I32,
+        (_I64, _P, _P, _P, _P, _P, _P),
+    ),
     "phx_mc_polygon_intersection_simplices": (
         _I32,
         (_I64, _I32, _P, _P, _I32, _P, _P, _I32, _P, _P, _P, _P, _P),
@@ -2267,6 +2271,33 @@ def tetrahedron_intersection_moments(
     )
     _raise_for_call(call, "tetrahedron_intersection_moments")
     return volume, moment, status
+
+
+def tetrahedron_intersection_quadratic_moments(
+    first: object, second: object, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Symbolic tetrahedron intersections through the full second moment."""
+    library = load_meshcore()
+    first_array = _tetrahedra(first, "first")
+    second_array = _tetrahedra(second, "second")
+    if first_array.shape[0] != second_array.shape[0]:
+        raise ValueError("first and second tetrahedron batches must have equal length.")
+    count = first_array.shape[0]
+    volume = np.zeros((count,), dtype=np.float64)
+    moment = np.zeros((count, 3), dtype=np.float64)
+    second_moment = np.zeros((count, 3, 3), dtype=np.float64)
+    status = np.zeros((count,), dtype=np.int32)
+    call = library["phx_mc_tetrahedron_intersection_quadratic_moments"](
+        count,
+        first_array.ctypes.data,
+        second_array.ctypes.data,
+        volume.ctypes.data,
+        moment.ctypes.data,
+        second_moment.ctypes.data,
+        status.ctypes.data,
+    )
+    _raise_for_call(call, "tetrahedron_intersection_quadratic_moments")
+    return volume, moment, second_moment, status
 
 
 def tetrahedron_intersection_simplices(
@@ -9306,6 +9337,7 @@ __all__ = [
     "symbolic_orient2d",
     "symbolic_orient3d",
     "tetrahedron_intersection_moments",
+    "tetrahedron_intersection_quadratic_moments",
     "tetrahedron_intersection_simplices",
     "tetrahedron_dual_hexes",
     "triangle_dual_quads",

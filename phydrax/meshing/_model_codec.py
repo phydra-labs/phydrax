@@ -31,6 +31,7 @@ from .._model._structure import (
     _recipe_array_nodes,
     _require_model_array_content,
     _row_record_recipe_types,
+    _same_array_bytes,
     AdaptiveImplicitBoundarySourceArchiveRecipe,
     AffinePlcBoundarySourceArchiveRecipe,
     AffinePlcDomainArchiveRecipe,
@@ -360,6 +361,40 @@ def _restore_hp_epoch_archive_recipe(
     ):
         raise ValueError("Stored hp epoch identity differs from canonical preparation.")
     return epoch
+
+
+def _same_implicit_archive(left: Any, right: Any, /) -> bool:
+    """Compare implicit owner inputs directly, including every stored byte."""
+    from ..geometry._source_boundary_records import SourceBoundaryChartWitness
+    from ..geometry.implicit._adaptive_discovery import (
+        AdaptiveImplicitSurfaceArchiveRecipe,
+    )
+
+    if type(left) not in (
+        AdaptiveImplicitSurfaceArchiveRecipe,
+        AdaptiveImplicitBoundarySourceArchiveRecipe,
+        NativeImplicitBoundaryQueryArchiveRecipe,
+        SourceBoundaryChartWitness,
+    ) or type(right) is not type(left):
+        return False
+    if type(left) is SourceBoundaryChartWitness and not left.implicit_cell_keys.size:
+        return False
+    if left is right:
+        return True
+    recipe = model_structure_recipe(left, path="compare")
+    if _canonical_recipe_payload(recipe) != _canonical_recipe_payload(
+        model_structure_recipe(right, path="compare")
+    ):
+        return False
+    left_arrays = _pack_projected_model_array_tree(
+        left, recipe, prefix="compare", limits=None
+    )
+    right_arrays = _pack_projected_model_array_tree(
+        right, recipe, prefix="compare", limits=None
+    )
+    return left_arrays.keys() == right_arrays.keys() and all(
+        _same_array_bytes(left_arrays[key], right_arrays[key]) for key in left_arrays
+    )
 
 
 def _register_model_archive_types() -> None:

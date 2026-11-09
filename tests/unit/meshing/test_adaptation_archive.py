@@ -1104,9 +1104,17 @@ def test_hp_adaptation_cold_archive_and_coarsening(tmp_path: Path) -> None:
     from phydrax.discretization.fem import (
         finite_element_hp_transfer_plan,
         initial_finite_element_hp_topology,
-        prepare_finite_element_hp_epoch,
+        prepare_multi_field_finite_element_hp_epoch,
     )
+    from phydrax.discretization.fem._hp_runtime import _prepare_hp_transition_epoch
     from phydrax.lifecycle._composition_rebind import Composition, CompositionEntry
+    from phydrax.meshing._adaptation import (
+        _compliance,
+        _RouteOutcome,
+        _StoredAdaptationBinding,
+        project_hp_lineage,
+    )
+    from phydrax.meshing._lineage import CellMeshTransition, MeshTransitionKind
 
     mesh = CellMesh(
         np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
@@ -1119,13 +1127,24 @@ def test_hp_adaptation_cold_archive_and_coarsening(tmp_path: Path) -> None:
             ),
         ),
     )
-    topology, geometry = initial_finite_element_hp_topology(mesh, 2, 16)
-    epoch = prepare_finite_element_hp_epoch(topology, geometry, "u", conformity="L2")
+    topology, geometry = initial_finite_element_hp_topology(mesh, (1, 2), 16)
+    epoch = prepare_multi_field_finite_element_hp_epoch(
+        topology, geometry, {"u": ("H1", (), (0, 0)), "q": ("L2", (2,), (-1, 1))}
+    )
     source = _certified(epoch.mesh)
     request = MarkedMeshAdaptation(np.asarray((10,), dtype=np.int64), hierarchy=epoch)
     epoch_id = epoch.epoch_id
     epoch_reference = weakref.ref(epoch)
     result = _adapt(source, request, MeshAdaptationRoute.HP)
+    assert epoch.discretization is not None
+    assert result.hierarchy.discretization is not None
+    assert tuple(
+        field.name for field in result.hierarchy.discretization.field_spaces
+    ) == ("u", "q")
+    assert tuple(name for name, _ in result.hierarchy.constraints) == ("u",)
+    assert tuple(
+        group[0].element_id for group in result.hierarchy.discretization.elements
+    ) == tuple(group[0].element_id for group in epoch.discretization.elements)
     del request, epoch
     gc.collect()
     assert epoch_reference() is None
@@ -1135,9 +1154,7 @@ def test_hp_adaptation_cold_archive_and_coarsening(tmp_path: Path) -> None:
     source_epoch = restore_model_archive_value(restored.evidence.source_epoch)
     assert source_epoch.epoch_id == epoch_id
     refined = restored.evidence.refinement
-    target_epoch = prepare_finite_element_hp_epoch(
-        refined.topology, refined.geometry, "u", conformity="L2"
-    )
+    target_epoch = restored.hierarchy
     transfer = finite_element_hp_transfer_plan(
         source_epoch,
         target_epoch,
@@ -1149,6 +1166,52 @@ def test_hp_adaptation_cold_archive_and_coarsening(tmp_path: Path) -> None:
     transferred = np.asarray(transfer.apply_primal(values))
     for slot, count in zip(transfer.target_slots, transfer.target_dof_count, strict=True):
         np.testing.assert_allclose(transferred[int(slot), : int(count)], 1.0)
+    vector_transfer = finite_element_hp_transfer_plan(
+        source_epoch, target_epoch, refined.lineage, "q", "h-refinement"
+    )
+    vector_values = (
+        jnp.zeros((topology.capacity, vector_transfer.primal.shape[2], 2)).at[0].set(1.0)
+    )
+    vector_mapped = np.asarray(vector_transfer.apply_primal(vector_values))
+    for slot, count in zip(
+        vector_transfer.target_slots, vector_transfer.target_dof_count, strict=True
+    ):
+        np.testing.assert_allclose(vector_mapped[int(slot), : int(count)], 1.0)
+    forged_mesh = result.target.mesh.with_coordinates(
+        result.target.mesh.coordinates, numeric_version="forged-hp-version"
+    )
+    forged_target = _certified(forged_mesh)
+    forged_epoch = _prepare_hp_transition_epoch(
+        source_epoch, refined.topology, refined.geometry, refined.lineage, forged_mesh
+    )
+    forged_lineage = project_hp_lineage(source_epoch, forged_epoch, refined.lineage)
+    forged_transition = CellMeshTransition(
+        source.mesh.mesh_id,
+        source.mesh.topology_id,
+        forged_target,
+        forged_lineage,
+        MeshTransitionKind.REFINE,
+    )
+    binding = _StoredAdaptationBinding(result.route, source, result.prepared_id)
+    forged_result = MeshAdaptationResult(
+        binding,
+        _RouteOutcome(
+            result.status,
+            forged_target,
+            forged_transition,
+            forged_lineage,
+            None,
+            None,
+            None,
+            result.evidence,
+            forged_epoch,
+        ),
+        _compliance(binding, forged_target),
+        None,
+        None,
+    )
+    with pytest.raises(ArrayArchiveCorruptionError):
+        _round_trip(tmp_path / "forged-hp.phx", forged_result, MeshAdaptationResult)
     _refuses_tamper(
         path,
         MeshAdaptationResult,
@@ -1189,7 +1252,7 @@ def test_hp_adaptation_cold_archive_and_coarsening(tmp_path: Path) -> None:
     script = """
 import sys
 import numpy as np
-from phydrax.discretization.fem import finite_element_hp_transfer_plan, prepare_finite_element_hp_epoch
+from phydrax.discretization.fem import finite_element_hp_transfer_plan
 from phydrax.lifecycle._composition_rebind import Composition
 from phydrax.meshing import MarkedMeshAdaptation, MeshAdaptationPolicy, MeshAdaptationResult, MeshAdaptationRoute, execute_mesh_adaptation, prepare_mesh_adaptation
 from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS, read_model_artifact, restore_model_archive_value, write_model_artifact
@@ -1200,7 +1263,7 @@ assert result.result_id == sys.argv[3]
 assert np.all(np.asarray(values)[0] == 1.0) and np.all(np.asarray(values)[1:] == 0.0)
 refined = result.evidence.refinement
 source_epoch = restore_model_archive_value(result.evidence.source_epoch)
-prepared_target = prepare_finite_element_hp_epoch(refined.topology, refined.geometry, "u", conformity="L2")
+prepared_target = result.hierarchy
 transfer = finite_element_hp_transfer_plan(source_epoch, prepared_target, refined.lineage, "u", "h-refinement")
 mapped = np.asarray(transfer.apply_primal(values))
 for slot, count in zip(transfer.target_slots, transfer.target_dof_count, strict=True):
@@ -1234,15 +1297,7 @@ write_model_artifact(sys.argv[2], coarsened, limits=MODEL_ARCHIVE_LIMITS)
     assert coarsened.hierarchy.topology.active_count == 1
     coarsened_evidence = coarsened.evidence.refinement
     coarsened_source = restore_model_archive_value(coarsened.evidence.source_epoch)
-    coarsened_source = prepare_finite_element_hp_epoch(
-        coarsened_source.topology,
-        coarsened_source.geometry,
-        "u",
-        conformity="L2",
-    )
-    coarsened_target = prepare_finite_element_hp_epoch(
-        coarsened_evidence.topology, coarsened_evidence.geometry, "u", conformity="L2"
-    )
+    coarsened_target = coarsened.hierarchy
     reverse = finite_element_hp_transfer_plan(
         coarsened_source,
         coarsened_target,
@@ -1258,6 +1313,31 @@ write_model_artifact(sys.argv[2], coarsened, limits=MODEL_ARCHIVE_LIMITS)
     mapped = np.asarray(reverse.apply_primal(reverse_values))
     for slot, count in zip(reverse.target_slots, reverse.target_dof_count, strict=True):
         np.testing.assert_allclose(mapped[int(slot), : int(count)], 1.0)
+    reverse_q = finite_element_hp_transfer_plan(
+        coarsened_source,
+        coarsened_target,
+        coarsened_evidence.lineage,
+        "q",
+        "h-coarsening",
+    )
+    assert coarsened_target.discretization is not None
+    assert tuple(
+        field.name for field in coarsened_target.discretization.field_spaces
+    ) == ("u", "q")
+    assert tuple(name for name, _ in coarsened_target.constraints) == ("u",)
+    assert reverse_q.source_plan_id == coarsened_source.topology.plan_id
+    reverse_vector = jnp.zeros(
+        (coarsened_source.topology.capacity, reverse_q.primal.shape[2], 2)
+    )
+    for slot, count in zip(
+        reverse_q.source_slots, reverse_q.source_dof_count, strict=True
+    ):
+        reverse_vector = reverse_vector.at[int(slot), : int(count)].set(1.0)
+    mapped_q = np.asarray(reverse_q.apply_primal(reverse_vector))
+    for slot, count in zip(
+        reverse_q.target_slots, reverse_q.target_dof_count, strict=True
+    ):
+        np.testing.assert_allclose(mapped_q[int(slot), : int(count)], 1.0)
 
 
 def test_hp_nonconforming_cell_mesh_is_refused_by_audit() -> None:
@@ -1290,3 +1370,189 @@ def test_hp_nonconforming_cell_mesh_is_refused_by_audit() -> None:
             MeshAdaptationRoute.HP,
         )
     assert failure.value.category is MeshingFailureCategory.AUDIT_FAILED
+
+
+def test_hp_preparation_refuses_stale_mesh_and_coordinate_chart() -> None:
+    import equinox as eqx
+
+    from phydrax.discretization import CellBlock, CellGeometrySpec
+    from phydrax.discretization.fem import (
+        finite_element_hp_interface_plan,
+        FiniteElementHPEpoch,
+        FiniteElementHPGeometry,
+        initial_finite_element_hp_topology,
+        prepare_finite_element_hp_epoch,
+    )
+
+    mesh = CellMesh(
+        np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
+        (
+            CellBlock(
+                "q",
+                "quadrilateral",
+                np.asarray(((0, 1, 2, 3),), dtype=np.int32),
+                global_ids=np.asarray((10,), dtype=np.int64),
+            ),
+        ),
+    )
+    topology, geometry = initial_finite_element_hp_topology(mesh, 1, 8)
+    epoch = prepare_finite_element_hp_epoch(topology, geometry, "u")
+    request = MarkedMeshAdaptation(np.asarray((10,), dtype=np.int64), hierarchy=epoch)
+    policy = MeshAdaptationPolicy(MeshAdaptationRoute.HP, relocation=False)
+    moved = epoch.mesh.with_coordinates(
+        epoch.mesh.coordinates + 0.125, numeric_version="moved"
+    )
+    assert moved.topology_id == epoch.mesh.topology_id
+    with pytest.raises(ValueError, match="coordinates differ"):
+        prepare_mesh_adaptation(_certified(moved), request, policy=policy)
+    affine = CellGeometrySpec.affine(epoch.mesh)
+    altered = CellGeometrySpec(
+        dict(zip(affine.block_names, affine.elements, strict=True)),
+        dict(zip(affine.block_names, affine.geometry_dofs, strict=True)),
+        affine.coordinates + 0.125,
+    )
+    source = eqx.tree_at(lambda value: value.geometry, _certified(epoch.mesh), altered)
+    with pytest.raises(ValueError, match="exact multilinear geometry"):
+        prepare_mesh_adaptation(source, request, policy=policy)
+    corners = np.asarray(geometry.cell_vertices).copy()
+    corners[0, 0, 0] += 0.125
+    stale_geometry = FiniteElementHPGeometry(
+        topology, corners, geometry.reference_lower, geometry.reference_upper
+    )
+    stale_epoch = FiniteElementHPEpoch(
+        epoch.mesh,
+        topology,
+        stale_geometry,
+        finite_element_hp_interface_plan(topology, stale_geometry),
+    )
+    stale_request = MarkedMeshAdaptation(
+        np.asarray((10,), dtype=np.int64), hierarchy=stale_epoch
+    )
+    with pytest.raises(ValueError, match="forest geometry"):
+        prepare_mesh_adaptation(_certified(epoch.mesh), stale_request, policy=policy)
+
+
+def test_hp_protected_cells_and_balance_closure_refuse_changes() -> None:
+    from phydrax.discretization import CellBlock
+    from phydrax.discretization.fem import (
+        balanced_hp_refinement_ids,
+        finite_element_hp_interface_plan,
+        hp_active_cell_mesh,
+        initial_finite_element_hp_topology,
+        prepare_finite_element_hp_epoch,
+        refine_tensor_hp_cells,
+    )
+    from phydrax.meshing._adaptation import _require_hp_protected_scopes
+
+    mesh = CellMesh(
+        np.asarray(
+            ((0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (0.0, 1.0), (1.0, 1.0), (2.0, 1.0))
+        ),
+        (
+            CellBlock(
+                "q",
+                "quadrilateral",
+                np.asarray(((0, 1, 4, 3), (1, 2, 5, 4)), dtype=np.int32),
+                global_ids=np.asarray((10, 20), dtype=np.int64),
+            ),
+        ),
+    )
+    topology, geometry = initial_finite_element_hp_topology(mesh, 1, 24)
+    epoch = prepare_finite_element_hp_epoch(topology, geometry, "u")
+    source = _certified(epoch.mesh)
+    cells = source.mesh.entity_set(2)
+    protected = MeshingScope(
+        source.mesh.mesh_id,
+        source.mesh.numeric_version,
+        MeshingEntityKind.MESH,
+        2,
+        cells.entity_set_id,
+        np.asarray((10,), dtype=np.int64),
+    )
+    policy = MeshAdaptationPolicy(
+        MeshAdaptationRoute.HP, protected_scopes=(protected,), relocation=False
+    )
+    request = MarkedMeshAdaptation(np.asarray((10,), dtype=np.int64), hierarchy=epoch)
+    with pytest.raises(ValueError, match="protected entity"):
+        execute_mesh_adaptation(prepare_mesh_adaptation(source, request, policy=policy))
+
+    first = refine_tensor_hp_cells(topology, geometry, np.asarray((10,), dtype=np.int64))
+    nonconforming, _, _ = hp_active_cell_mesh(first.topology, first.geometry)
+    unaffected = MeshingScope(
+        source.mesh.mesh_id,
+        source.mesh.numeric_version,
+        MeshingEntityKind.MESH,
+        2,
+        cells.entity_set_id,
+        np.asarray((20,), dtype=np.int64),
+    )
+    _require_hp_protected_scopes(source.mesh, nonconforming, (unaffected,))
+    interfaces = finite_element_hp_interface_plan(first.topology, first.geometry)
+    child_ids = np.asarray(first.topology.cell_global_ids)[2:6]
+    closed = next(
+        values
+        for identifier in child_ids
+        if 20
+        in (
+            values := np.asarray(
+                balanced_hp_refinement_ids(
+                    first.topology, interfaces, np.asarray((identifier,), dtype=np.int64)
+                )[0]
+            )
+        )
+    )
+    second = refine_tensor_hp_cells(first.topology, first.geometry, closed)
+    target, _, _ = hp_active_cell_mesh(second.topology, second.geometry)
+    scope = MeshingScope(
+        nonconforming.mesh_id,
+        nonconforming.numeric_version,
+        MeshingEntityKind.MESH,
+        2,
+        nonconforming.entity_set(2).entity_set_id,
+        np.asarray((20,), dtype=np.int64),
+    )
+    with pytest.raises(ValueError, match="protected entity"):
+        _require_hp_protected_scopes(nonconforming, target, (scope,))
+
+
+def test_hp_unmodified_protected_vertex_survives_archive(tmp_path: Path) -> None:
+    from phydrax.discretization import CellBlock
+    from phydrax.discretization.fem import (
+        initial_finite_element_hp_topology,
+        prepare_finite_element_hp_epoch,
+    )
+
+    mesh = CellMesh(
+        np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
+        (
+            CellBlock(
+                "q",
+                "quadrilateral",
+                np.asarray(((0, 1, 2, 3),), dtype=np.int32),
+                global_ids=np.asarray((10,), dtype=np.int64),
+            ),
+        ),
+    )
+    topology, geometry = initial_finite_element_hp_topology(mesh, 1, 8)
+    epoch = prepare_finite_element_hp_epoch(topology, geometry, "u", conformity="L2")
+    source = _certified(epoch.mesh)
+    vertices = source.mesh.entity_set(0)
+    scope = MeshingScope(
+        source.mesh.mesh_id,
+        source.mesh.numeric_version,
+        MeshingEntityKind.MESH,
+        0,
+        vertices.entity_set_id,
+        np.asarray(vertices.entity_ids[:1], dtype=np.int64),
+    )
+    policy = MeshAdaptationPolicy(
+        MeshAdaptationRoute.HP, protected_scopes=(scope,), relocation=False
+    )
+    request = MarkedMeshAdaptation(np.asarray((10,), dtype=np.int64), hierarchy=epoch)
+    result = execute_mesh_adaptation(
+        prepare_mesh_adaptation(source, request, policy=policy)
+    )
+    assert result.status is MeshAdaptationStatus.COMPLETE
+    restored = _round_trip(tmp_path / "protected-hp.phx", result, MeshAdaptationResult)
+    assert restored.result_id == result.result_id
+    assert restored.evidence.protected_scopes[0].scope_id == scope.scope_id

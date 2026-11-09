@@ -58,7 +58,7 @@ from .._spaces import DiscreteFieldSpace
 from .._topology_epoch import TopologyEpoch, TopologyEpochTransition
 from .._transfer import FieldTransfer, TransferProperties
 from ._generic import FiniteElementDiscretization
-from ._reference import FiniteElementSpec, lagrange_element
+from ._reference import discontinuous_element, FiniteElementSpec, lagrange_element
 
 
 if TYPE_CHECKING:
@@ -1455,8 +1455,8 @@ def _validated_overlaps(
     source: CellMesh,
     target: CellMesh,
     /,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Overlap simplices ``(S, d+1, d)`` with their source and target cells."""
+) -> None:
+    """Validate status and mesh identities before consuming any overlap data."""
 
     from ...geometry import CommonRefinementStatus, PreparedCommonRefinement
 
@@ -1474,9 +1474,16 @@ def _validated_overlaps(
         raise ValueError(
             "The common refinement does not join the source and target meshes."
         )
+    return
+
+
+def _overlap_simplices(
+    refinement: PreparedCommonRefinement, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     if refinement.simplices is None or refinement.simplex_offsets is None:
         raise ValueError(
-            "L2 projection requires CommonRefinementPolicy(overlap_simplices=True)."
+            "L2 projection requires CommonRefinementPolicy(overlap_simplices=True), "
+            "or second_moments=True for scalar affine P1 Cartesian fields."
         )
     offsets = np.asarray(refinement.simplex_offsets, dtype=np.int64)
     simplices = np.asarray(refinement.simplices, dtype=np.float64)
@@ -1701,6 +1708,57 @@ def _overlap_basis(
             reference[rows],
         )
     return routes, valid, values
+
+
+def _p1_moment_basis(
+    discretization: FiniteElementDiscretization,
+    field_index: int,
+    cells: np.ndarray,
+    origin: np.ndarray,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Routes and affine basis coefficients about each requested physical origin."""
+    origins, frames = _affine_frames(discretization)
+    cell_origins = origins[cells]
+    cell_frames = frames[cells]
+    vertices = np.concatenate(
+        (cell_origins[:, None, :], cell_origins[:, None, :] + cell_frames.swapaxes(1, 2)),
+        axis=1,
+    )
+    routes, valid, values = _overlap_basis(discretization, field_index, cells, vertices)
+    # Values at the canonical simplex vertices determine an affine P1 basis
+    # exactly; solve the physical frame rather than forming an inverse.
+    gradients = np.linalg.solve(
+        cell_frames.swapaxes(1, 2), values[:, 1:, :] - values[:, :1, :]
+    ).swapaxes(1, 2)
+    constants = values[:, 0, :] + (gradients @ (origin - cell_origins)[..., None])[..., 0]
+    return routes, valid, constants, gradients
+
+
+def _canonical_p1(elements: tuple[FiniteElementSpec, ...], /) -> bool:
+    """Only canonical scalar P1 elements prove affine basis maps."""
+    for element in elements:
+        base = lagrange_element(element.cell_kind, 1)
+        if element.family == "Lagrange":
+            if element.element_id != base.element_id or element.tabulator is not None:
+                return False
+        else:
+            canonical = discontinuous_element(element.cell_kind, 1)
+            tabulator = element.tabulator
+            # Equinox binds methods as callable PyTrees, not MethodType. Match
+            # the actual provider type before inspecting its public bound state.
+            if type(tabulator) is not type(base.tabulate):
+                return False
+            owner = getattr(tabulator, "__self__", None)
+            if (
+                element.element_id != canonical.element_id
+                or getattr(tabulator, "__func__", None) is not FiniteElementSpec.tabulate
+                or not isinstance(owner, FiniteElementSpec)
+                or owner.element_id != base.element_id
+                or owner.tabulator is not None
+            ):
+                return False
+    return True
 
 
 def _cell_integrals(
@@ -1967,6 +2025,89 @@ def _coverage_claims(refinement: PreparedCommonRefinement, /) -> tuple[bool, boo
             raise ValueError(f"Unknown common-refinement coverage {coverage!r}.")
 
 
+def _projection_overlap_blocks(
+    source: FiniteElementDiscretization,
+    source_index: int,
+    space: FiniteElementDiscretization,
+    target_index: int,
+    refinement: PreparedCommonRefinement,
+    source_elements: tuple[FiniteElementSpec, ...],
+    target_elements: tuple[FiniteElementSpec, ...],
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, str]:
+    """Integrate local mixed-mass blocks with their routes and rule evidence."""
+    use_moments = (
+        refinement.second_moments is not None
+        and _canonical_p1(source_elements)
+        and _canonical_p1(target_elements)
+        and _measure_degree(space.coordinate_measure) == 0
+    )
+    if use_moments:
+        source_cells = np.asarray(refinement.source_cells, dtype=np.int64)
+        target_cells = np.asarray(refinement.target_cells, dtype=np.int64)
+        if source_cells.size == 0:
+            raise ValueError("The common refinement has no overlaps.")
+        origin = _affine_frames(space)[0][target_cells]
+        target_routes, target_valid, target_constant, target_gradient = _p1_moment_basis(
+            space, target_index, target_cells, origin
+        )
+        source_routes, source_valid, source_constant, source_gradient = _p1_moment_basis(
+            source, source_index, source_cells, origin
+        )
+        volume = np.asarray(refinement.volumes, dtype=np.float64)
+        first = np.asarray(refinement.first_moments, dtype=np.float64)
+        second = np.asarray(refinement.second_moments, dtype=np.float64)
+        centered_first = first - volume[:, None] * origin
+        centered_second = (
+            second
+            - first[:, :, None] * origin[:, None, :]
+            - origin[:, :, None] * first[:, None, :]
+            + volume[:, None, None] * origin[:, :, None] * origin[:, None, :]
+        )
+        source_first = (source_gradient @ centered_first[..., None])[..., 0]
+        target_first = (target_gradient @ centered_first[..., None])[..., 0]
+        local = (
+            volume[:, None, None]
+            * target_constant[:, :, None]
+            * source_constant[:, None, :]
+            + target_constant[:, :, None] * source_first[:, None, :]
+            + target_first[:, :, None] * source_constant[:, None, :]
+            + target_gradient @ centered_second @ source_gradient.swapaxes(1, 2)
+        )
+        # A canonical P1 simplex basis has Lebesgue constant exactly one.
+        lebesgue = 1.0
+        rule_id = "cartesian-affine-p1-quadratic-moments"
+    else:
+        simplices, source_cells, target_cells = _overlap_simplices(refinement)
+        points, weights, rule_id = _overlap_quadrature(
+            simplices,
+            max(element.degree for element in source_elements)
+            + max(element.degree for element in target_elements),
+            coordinate_measure=space.coordinate_measure,
+            coordinate_frame=space.default_runtime.coordinate_frame,
+        )
+        target_routes, target_valid, target_basis = _overlap_basis(
+            space, target_index, target_cells, points
+        )
+        source_routes, source_valid, source_basis = _overlap_basis(
+            source, source_index, source_cells, points
+        )
+        local = np.swapaxes(weights[:, :, None] * target_basis, 1, 2) @ source_basis
+        lebesgue = max(
+            float(np.max(np.sum(np.abs(target_basis), axis=-1))),
+            float(np.max(np.sum(np.abs(source_basis), axis=-1))),
+        )
+    return (
+        source_routes,
+        source_valid,
+        target_routes,
+        target_valid,
+        local,
+        lebesgue,
+        rule_id,
+    )
+
+
 def prepare_l2_projection_transfer(
     source: FiniteElementDiscretization,
     target: PreparedL2ProjectionTarget,
@@ -1979,13 +2120,15 @@ def prepare_l2_projection_transfer(
 
     ``target`` is a :func:`prepare_l2_projection_target` artifact and
     ``refinement`` the common refinement of ``source.mesh`` and the target mesh
-    prepared with ``CommonRefinementPolicy(overlap_simplices=True)``. The source
-    field ``field_name`` is a scalar Lagrange field (continuous or discontinuous,
-    any degree) on affine triangles or tetrahedra; component axes of the field
-    are carried as payload. Only the mixed mass ``B`` is assembled here, exactly
-    on the overlap simplices with a rule for the product of source and target
-    degrees; the prepared target factor is shared (``FiniteElementL2Projection``).
-    The transfer applies ``M_T^{-1} B`` and pulls duals back through
+    prepared with ``CommonRefinementPolicy(overlap_simplices=True)``. For scalar
+    affine P1 fields on both sides with Cartesian measure, second moments instead
+    suffice: request ``second_moments=True`` without geometric overlap carriers.
+    The source field ``field_name`` is a scalar Lagrange field (continuous or
+    discontinuous, any degree) on affine triangles or tetrahedra; component axes
+    are carried as payload. The mixed mass integrates basis products using either
+    the overlap moments or exact quadrature on overlap simplices; the prepared
+    target factor is shared (``FiniteElementL2Projection``). The transfer applies
+    ``M_T^{-1} B`` and pulls duals back through
     ``B^T M_T^{-1}``.
 
     Claims follow the certified coverage: constants (and, for degrees >= 1, linear
@@ -2010,25 +2153,26 @@ def prepare_l2_projection_transfer(
         or _coordinate_measure_key(source) != _coordinate_measure_key(space)
     ):
         raise ValueError("L2 projection requires matching coordinate frame and measure.")
-    simplices, source_cells, target_cells = _validated_overlaps(
-        refinement, source.mesh, space.mesh
-    )
+    _validated_overlaps(refinement, source.mesh, space.mesh)
     source_elements = _projection_elements(source, source_index, "source")
-    target_elements = space.elements[target_index]
-    points, weights, rule_id = _overlap_quadrature(
-        simplices,
-        max(element.degree for element in source_elements)
-        + max(element.degree for element in target_elements),
-        coordinate_measure=space.coordinate_measure,
-        coordinate_frame=space.default_runtime.coordinate_frame,
+    target_elements = _projection_elements(space, target_index, "target")
+    (
+        source_routes,
+        source_valid,
+        target_routes,
+        target_valid,
+        local,
+        lebesgue,
+        rule_id,
+    ) = _projection_overlap_blocks(
+        source,
+        source_index,
+        space,
+        target_index,
+        refinement,
+        source_elements,
+        target_elements,
     )
-    target_routes, target_valid, target_basis = _overlap_basis(
-        space, target_index, target_cells, points
-    )
-    source_routes, source_valid, source_basis = _overlap_basis(
-        source, source_index, source_cells, points
-    )
-    local = np.swapaxes(weights[:, :, None] * target_basis, 1, 2) @ source_basis
     routed = target_valid[:, :, None] & source_valid[:, None, :]
     source_dofs = source.dof_maps[source_index]
     target_dofs = space.dof_maps[target_index]
@@ -2071,10 +2215,7 @@ def prepare_l2_projection_transfer(
     # Claims hold to the accuracy the refinement certified: an accepted relative
     # coverage defect r perturbs B by at most r times the basis Lebesgue constant,
     # and the target solve amplifies that by the mass condition.
-    lebesgue = max(
-        float(np.max(np.sum(np.abs(target_basis), axis=-1))),
-        float(np.max(np.sum(np.abs(source_basis), axis=-1))),
-    )
+    # ``lebesgue`` is obtained from quadrature or exactly for canonical P1.
     coverage = _coverage_bound(refinement) / (_CLAIM_ULPS * np.finfo(np.float64).eps)
     condition = float(target.mass_condition.value)
     return FiniteElementTopologyTransfer(

@@ -45,19 +45,16 @@ _GROWTH_RATE = 1.2
 # (238,387 P2 DOFs) needs 1,111,891,428 under nested dissection, so 2**33
 # leaves ~7.7x.
 _SYMBOLIC_WORK_BUDGET = 1 << 33
-# Run envelope 24 GiB per layer/core profile (25.77 GB). One declared execution
-# budget serves every harmonic-history solve and every de Rham Hodge admission
-# factorization. Measured needs: the unit-box target's degree-1 Hodge factor
-# is 2,934,501,142 bytes, so the budget must exceed 2.73 GiB. Measured peaks:
-# 11.67 GB at the archived-layer-core history-transition solve, and a
-# 20.90 GB process peak for unit-box at its target complex, which holds that
-# Hodge factor. Hence 4 GiB: it admits the Hodge factor, and the history
-# transition plus a factor and workspace at the budget (11.67 + 2 x 4.29 =
-# 20.3 GB) fits the envelope.
+# One declared execution budget serves every harmonic-history solve and Hodge
+# admission in each profile. The unit-box refined target's untwisted order-2
+# complex refused at 4 GiB: numeric admission required 6,804,653,553 bytes.
+# Round that measured requirement upward to the next 256 MiB; later Hodges
+# remain subject to the same declared limit.
+_UNIT_BOX_SOLVE_BUDGET = 26 << 28
 _LAYER_CORE_SOLVE_BUDGET = 4 << 30
 # MAC-20261107T1759Z: declared byte budget of every layer/core cycle archive,
 # writer and cold reader alike. The cold reader materializes the archive's
-# logical aggregate, so it is bounded by the same 4 GiB execution budget.
+# logical aggregate, so writer and reader share this declared archive budget.
 _LAYER_CORE_ARCHIVE_BUDGET = 4 << 30
 
 
@@ -130,7 +127,7 @@ _LAYER_CORE_LIFECYCLES = {
         1,
         "original-unit-box",
         "fluid-cell-average-density",
-        _LAYER_CORE_SOLVE_BUDGET,
+        _UNIT_BOX_SOLVE_BUDGET,
         _LAYER_CORE_ARCHIVE_BUDGET,
     ),
 }

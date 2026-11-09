@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from fractions import Fraction
 from pathlib import Path
 from time import perf_counter
@@ -1511,6 +1511,8 @@ def _write_accepted_archive(
         "label": label,
         "solve_memory_budget_bytes": _SOLVE_MEMORY_BUDGET_BYTES[profile],
         "archive_budget_bytes": _ARCHIVE_BUDGET_BYTES[profile],
+        "archive_member_limit": _ARCHIVE_MEMBER_LIMITS[profile],
+        "resource_plan_id": _resource_plan_id(profile, limits),
     }
 
 
@@ -1532,11 +1534,18 @@ def _resume_accepted_archive(
         raise RuntimeError(
             "Cold reader's declared archive budget differs from the writer's."
         )
+    if _ARCHIVE_MEMBER_LIMITS[profile] != expected["archive_member_limit"]:
+        raise RuntimeError(
+            "Cold reader's declared archive member limit differs from the writer's."
+        )
+    limits = _archive_limits(profile)
+    if _resource_plan_id(profile, limits) != expected["resource_plan_id"]:
+        raise RuntimeError("Cold reader's resource plan differs from the writer's.")
     archive = read_model_artifact(
         path,
         expected_type=Composition,
         restore=restore_model_archive_value,
-        limits=_archive_limits(profile),
+        limits=limits,
         expected_content_id=content_id,
     )
     _stage(str(expected["profile"]), "cold-archive-restore")
@@ -1991,8 +2000,13 @@ _ARCHIVE_BUDGET_BYTES = {
     },
     _ENVELOPE_PROFILE: 4 << 30,
 }
-# Member count: 3,521 measured, against the model codec's 4,097.
-_ARCHIVE_MEMBERS = 8193
+# The larger rotated ellipsoid has 9,964 stored array owners plus its manifest
+# (LIN 20261108). Give that profile a fixed 16,384-array envelope; the other
+# profiles retain their prior 8,192-array envelope.
+_ARCHIVE_MEMBER_LIMITS = {
+    **{profile: 8193 for profile in _ARCHIVE_BUDGET_BYTES},
+    _profile_id("rotated-ellipsoid", 2): 16385,
+}
 
 
 def _archive_limits(profile: str, /) -> ArrayArchiveLimits:
@@ -2013,11 +2027,25 @@ def _archive_limits(profile: str, /) -> ArrayArchiveLimits:
         max_aggregate_bytes=budget,
         max_member_bytes=budget,
         max_manifest_bytes=budget // 64,
-        max_members=_ARCHIVE_MEMBERS,
+        max_members=_ARCHIVE_MEMBER_LIMITS[profile],
         max_central_directory_bytes=budget // 1024,
         max_axis_length=budget,
         max_array_elements=budget,
         max_total_array_elements=budget,
+    )
+
+
+def _resource_plan_id(profile: str, limits: ArrayArchiveLimits, /) -> str:
+    """Fingerprint the complete archive policy and lifecycle resource budgets."""
+    archive = asdict(limits)
+    archive["allowed_dtype_kinds"] = sorted(limits.allowed_dtype_kinds)
+    return canonical_fingerprint(
+        {
+            "profile": profile,
+            "archive": archive,
+            "solve_memory_budget_bytes": _SOLVE_MEMORY_BUDGET_BYTES[profile],
+            "refinement_memory_budget_bytes": _REFINEMENT_MEMORY_BUDGET_BYTES[profile],
+        }
     )
 
 

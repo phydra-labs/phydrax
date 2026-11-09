@@ -17,6 +17,19 @@ Poisson problem on the actual rational map. Its archive reader starts only after
 the producer exits and continues the restored analysis. Exact STEP/IGES export
 of the unsupported multi-piece source must refuse rather than approximate it.
 
+The locality benchmark constructs both a locally refined space and the actual
+full tensor grid on the same union of knots, preserving one exact planar source.
+Both solve the same sine-forced Poisson problem. It reports physical L2 error
+estimates on a shared independent grid, preparation, lowering, compilation,
+first/warm solve times, compiler storage and logical retained bytes. Fewer cells
+do not imply faster execution or lower memory; compare the measured costs at
+comparable error. Run without competing numerical jobs:
+
+```sh
+python tools/meshing_benchmarks.py --case native-tspline-locality \
+  --resolution 4 8 --repeats 5
+```
+
 ```sh
 python -m tools.meshing_qualification --scenario native-corpus
 python -m tools.meshing_qualification --scenario native-brep-workflow

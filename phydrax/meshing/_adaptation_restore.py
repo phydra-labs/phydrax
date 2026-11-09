@@ -38,7 +38,7 @@ from ._polyhedral_adaptation import (
     PolyhedralAdaptationHierarchy,
     PolyhedralAdaptationOperation,
 )
-from ._scope import MeshingEntityKind, MeshingScope
+from ._scope import MeshingEntityKind, MeshingScope, resolve_mesh_scope
 from ._surface_metric import (
     SurfaceMetricGeometryRelation,
     SurfaceMetricOutcome,
@@ -1575,6 +1575,8 @@ def _restore_hp_adaptation_result(raw: MeshAdaptationResult, /) -> MeshAdaptatio
     from ._adaptation import (
         _complete_hp_parents,
         _compliance,
+        _prepare_hp_adaptation_epoch,
+        _require_hp_source_binding,
         _RouteOutcome,
         _StoredAdaptationBinding,
         HPAdaptationEvidence,
@@ -1591,6 +1593,8 @@ def _restore_hp_adaptation_result(raw: MeshAdaptationResult, /) -> MeshAdaptatio
     stored_evidence = raw.evidence
     if type(stored_evidence) is not HPAdaptationEvidence:
         raise TypeError("Stored HP adaptation lacks its source replay evidence.")
+    if not isinstance(raw.prepared_id, str) or not raw.prepared_id:
+        raise ValueError("Stored HP adaptation lost its prepared identity.")
     source_epoch = restore_model_archive_value(stored_evidence.source_epoch)
     source = CellMeshingResult.from_stored_fields(raw.source)
     stored_lock = stored_evidence.periodic_edge_lock
@@ -1613,6 +1617,12 @@ def _restore_hp_adaptation_result(raw: MeshAdaptationResult, /) -> MeshAdaptatio
     )
     if request.request_id != stored_evidence.request_id:
         raise ValueError("Stored HP request identity changed.")
+    _require_hp_source_binding(source, source_epoch)
+    scopes = tuple(
+        restore_model_archive_value(scope) for scope in stored_evidence.protected_scopes
+    )
+    for scope in scopes:
+        resolve_mesh_scope(source.mesh, scope)
     if (
         source_epoch.mesh.topology_id != source.mesh.topology_id
         or not np.array_equal(source_epoch.mesh.coordinates, source.mesh.coordinates)
@@ -1663,7 +1673,7 @@ def _restore_hp_adaptation_result(raw: MeshAdaptationResult, /) -> MeshAdaptatio
         and not _same_model_content(refinement, stored_evidence.refinement)
     ):
         raise ValueError("Stored HP refinement differs from source replay.")
-    evidence = HPAdaptationEvidence(request, refinement)
+    evidence = HPAdaptationEvidence(request, refinement, scopes)
     if evidence.result_id != stored_evidence.result_id or raw.status is not status:
         raise ValueError("Stored HP request, evidence, or status changed.")
     hierarchy = restore_model_archive_value(raw.hierarchy)
@@ -1687,6 +1697,11 @@ def _restore_hp_adaptation_result(raw: MeshAdaptationResult, /) -> MeshAdaptatio
             or not _same_model_content(hierarchy.mesh, target.mesh)
         ):
             raise ValueError("Stored HP target does not match the replayed forest.")
+        expected_epoch = _prepare_hp_adaptation_epoch(
+            source_epoch, refinement, raw.prepared_id, source.mesh, scopes
+        )
+        if not _same_model_content(expected_epoch, hierarchy):
+            raise ValueError("Stored HP target mesh or fields differ from source replay.")
         lineage = project_hp_lineage(source_epoch, hierarchy, refinement.lineage)
         stored = raw.transition
         if (

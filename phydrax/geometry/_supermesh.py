@@ -46,10 +46,12 @@ from jax import Array
 from .. import _meshcore
 from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._geometry_predicates import orient2d, orient3d, PredicateMode
+from .._geometry_predicates import _orient3d_kernel, orient2d, orient3d, PredicateMode
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..ein import contract
+from ._exact_polyhedral_geometry import determinant3
+from ._rational import rational_vector
 
 
 if TYPE_CHECKING:
@@ -96,6 +98,9 @@ class CommonRefinementPolicy(StrictModule):
     ``coverage_tolerance`` is relative to the certified cell measure, with a
     roundoff floor proportional to the cell-box diameter raised to the dimension.
     Batch size is private scheduling and cannot change accepted problem sizes.
+    For 3D second moments alone, the symbolic intersections are integrated
+    directly. When overlap simplices are requested, all moments instead belong
+    to their rounded carriers, and unrepresentable carriers are refused.
     """
 
     predicate_mode: PredicateMode = eqx.field(static=True)
@@ -968,6 +973,7 @@ class _Batch(NamedTuple):
     status: np.ndarray
     simplices: np.ndarray | None
     simplex_counts: np.ndarray | None
+    second: np.ndarray | None
 
 
 def _clip_batch(
@@ -976,6 +982,7 @@ def _clip_batch(
     target_cells: np.ndarray,
     source_cells: np.ndarray,
     simplices: bool,
+    quadratic: bool,
     /,
 ) -> _Batch:
     """Clip every piece pair of the given cell pairs with meshcore."""
@@ -994,9 +1001,14 @@ def _clip_batch(
             parts, counts, volume, moment, status = (
                 _meshcore.tetrahedron_intersection_simplices(first, second)
             )
-            return _Batch(pair, volume, moment, status, parts, counts)
+            return _Batch(pair, volume, moment, status, parts, counts, None)
+        if quadratic:
+            volume, moment, second_moment, status = (
+                _meshcore.tetrahedron_intersection_quadratic_moments(first, second)
+            )
+            return _Batch(pair, volume, moment, status, None, None, second_moment)
         volume, moment, status = _meshcore.tetrahedron_intersection_moments(first, second)
-        return _Batch(pair, volume, moment, status, None, None)
+        return _Batch(pair, volume, moment, status, None, None, None)
     arguments = (
         source.pieces[source_piece],
         source.piece_counts[source_piece],
@@ -1008,35 +1020,93 @@ def _clip_batch(
         parts, counts, volume, moment, status = _meshcore.polygon_intersection_simplices(
             *arguments
         )
-        return _Batch(pair, volume, moment, status, parts, counts)
+        return _Batch(pair, volume, moment, status, parts, counts, None)
     volume, moment, status = _meshcore.polygon_intersection_moments(*arguments)
-    return _Batch(pair, volume, moment, status, None, None)
+    return _Batch(pair, volume, moment, status, None, None, None)
 
 
 def _simplex_second_moments(simplices: np.ndarray, /) -> np.ndarray:
-    """Integral of ``x x^T`` over signed simplices ``(S, d + 1, d)``."""
+    """Integral of ``x x^T`` over signed simplices ``(S, d + 1, d)``.
 
+    A three-dimensional carrier can be so thin that its ordinary cross product
+    loses most of the signed determinant. Reuse the orientation filter's
+    determinant and permanent, and integrate uncertain carriers over their
+    represented binary64 vertices with exact rational arithmetic.
+    """
     dimension = simplices.shape[2]
-    edges = simplices[:, 1:] - simplices[:, :1]
     match dimension:
         case 2:
+            edges = simplices[:, 1:] - simplices[:, :1]
             measure = 0.5 * (
                 edges[:, 0, 0] * edges[:, 1, 1] - edges[:, 0, 1] * edges[:, 1, 0]
             )
             scale = measure / 12.0
         case 3:
-            measure = (
-                contract("ij,ij->i", edges[:, 0], np.cross(edges[:, 1], edges[:, 2]))
-                / 6.0
-            )
-            scale = measure / 20.0
+            # The predicate kernel uses the last point as origin; rotating the
+            # corners by one position reverses the package orientation.
+            with np.errstate(over="ignore", invalid="ignore", under="ignore"):
+                determinant, permanent, _, largest = _orient3d_kernel(
+                    np, simplices[:, 1], simplices[:, 2], simplices[:, 3], simplices[:, 0]
+                )
+                determinant = -determinant
+                info = np.finfo(np.float64)
+                unit = float(info.eps) / 2.0
+                bound = (7.0 + 56.0 * unit) * unit * permanent + (
+                    144.0 * float(info.tiny) * (1.0 + largest) ** 2
+                )
+            scale = determinant / 120.0
         case _:
             raise ValueError("Simplex second moments need dimension 2 or 3.")
     total = np.sum(simplices, axis=1)
     products = contract("skd,ske->sde", simplices, simplices) + contract(
         "sd,se->sde", total, total
     )
-    return scale[:, None, None] * products
+    result = scale[:, None, None] * products
+    if dimension == 3:
+        # Bound cancellation in the quadratic carrier polynomial as well as
+        # the determinant. These error budgets do not alter coverage tolerances.
+        with np.errstate(over="ignore", invalid="ignore", under="ignore"):
+            absolute = np.abs(simplices)
+            absolute_total = np.sum(absolute, axis=1)
+            product_permanent = contract("skd,ske->sde", absolute, absolute) + contract(
+                "sd,se->sde", absolute_total, absolute_total
+            )
+            largest_coordinate = np.max(absolute, axis=(1, 2))
+            product_bound = (
+                32.0 * float(info.eps) * product_permanent
+                + 128.0
+                * float(info.tiny)
+                * (1.0 + largest_coordinate[:, None, None]) ** 2
+            )
+            identically_zero = np.all(simplices == 0.0, axis=1)
+            structural_zero = identically_zero[:, :, None] | identically_zero[:, None, :]
+            reliable = (
+                np.isfinite(determinant)
+                & np.isfinite(bound)
+                & (bound <= 2.0**-46 * np.abs(determinant))
+                & np.all(
+                    np.isfinite(products)
+                    & np.isfinite(product_bound)
+                    & (structural_zero | (product_bound <= 2.0**-45 * np.abs(products))),
+                    axis=(1, 2),
+                )
+            )
+        for row in np.flatnonzero(~reliable):
+            points = tuple(
+                rational_vector((float(point[0]), float(point[1]), float(point[2])))
+                for point in simplices[row]
+            )
+            first, second, third, fourth = points
+            exact_determinant = determinant3(first, second, third, fourth)
+            exact_total = tuple(sum(point[k] for point in points) for k in range(3))
+            for j in range(3):
+                for k in range(j, 3):
+                    polynomial = sum(point[j] * point[k] for point in points) + (
+                        exact_total[j] * exact_total[k]
+                    )
+                    result[row, j, k] = float(exact_determinant * polynomial / 120)
+                    result[row, k, j] = result[row, j, k]
+    return result
 
 
 class _BatchResult(NamedTuple):
@@ -1067,6 +1137,15 @@ def _reduce_batch(batch: _Batch, pair_count: int, policy: Any, dimension: int, /
     second = None
     kept_simplices = None
     kept_counts = None
+    if batch.second is not None:
+        products = batch.second.reshape((-1, dimension * dimension))
+        second = np.stack(
+            [
+                np.bincount(batch.pair, weights=products[:, k], minlength=pair_count)
+                for k in range(products.shape[1])
+            ],
+            axis=1,
+        ).reshape((pair_count, dimension, dimension))[keep]
     if batch.simplices is not None:
         slots = np.arange(batch.simplices.shape[1])
         # ty: ignore[not-subscriptable]
@@ -1126,12 +1205,14 @@ def _batch_bounds(
 def _piece_pair_bytes(
     source: _Decomposition, target: _Decomposition, policy: Any, /
 ) -> Any:
-    simplices = policy.second_moments or policy.overlap_simplices
     if source.piece_counts is None:
         inputs = 2 * 12 * 8
         outputs = 8 + 3 * 8 + 4
-        partition = _TETRAHEDRON_SIMPLICES * 12 * 8 + 4 if simplices else 0
+        if policy.second_moments and not policy.overlap_simplices:
+            outputs += 9 * 8
+        partition = _TETRAHEDRON_SIMPLICES * 12 * 8 + 4 if policy.overlap_simplices else 0
     else:
+        simplices = policy.second_moments or policy.overlap_simplices
         width = source.pieces.shape[1] + target.pieces.shape[1]
         inputs = width * 2 * 8 + 8
         outputs = 8 + 2 * 8 + 4
@@ -1155,14 +1236,20 @@ def _narrow_phase(
 ) -> _NarrowResult:
     dimension = source.first_moments.shape[1]
     pair_bytes = _piece_pair_bytes(source, target, policy)
-    simplices = policy.second_moments or policy.overlap_simplices
+    simplices = policy.overlap_simplices or (dimension == 2 and policy.second_moments)
+    quadratic = dimension == 3 and policy.second_moments and not policy.overlap_simplices
     bounds = _batch_bounds(source, target, target_cells, source_cells, pair_bytes)
     parts: list[_BatchResult] = []
     kept_pairs: list[np.ndarray] = []
     accepted = piece_pairs = uncertain = failures = 0
     for start, stop in zip(bounds[:-1], bounds[1:], strict=True):
         batch = _clip_batch(
-            source, target, target_cells[start:stop], source_cells[start:stop], simplices
+            source,
+            target,
+            target_cells[start:stop],
+            source_cells[start:stop],
+            simplices,
+            quadratic,
         )
         piece_pairs += batch.pair.size
         result = _reduce_batch(batch, stop - start, policy, dimension)

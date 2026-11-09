@@ -865,11 +865,13 @@ class CellMeshingResult(StrictModule, NonTrainableState):
         from copy import copy
 
         from .._model._structure import (
+            AdaptiveImplicitBoundarySourceArchiveRecipe,
             LayerCoreFidelitySourceReferenceArchiveRecipe,
             LayerCoreSourceReferenceArchiveRecipe,
             MappedCoreFacetAuthorityArchiveRecipe,
             MappedReferenceBoundarySourceArchiveRecipe,
             model_archive_projection,
+            NativeImplicitBoundaryQueryArchiveRecipe,
         )
         from ..discretization._cell_geometry_validity import CellValidityPolicy
         from ..geometry._surface_source_archive import (
@@ -888,6 +890,7 @@ class CellMeshingResult(StrictModule, NonTrainableState):
         from ._controls import ProtectedFeature
         from ._model_codec import (
             _register_model_archive_types,
+            _same_implicit_archive,
             _same_model_content,
             restore_mapped_layer_core_boundary_source,
             restore_model_archive_value,
@@ -1204,13 +1207,43 @@ class CellMeshingResult(StrictModule, NonTrainableState):
             restored_owners.append((stored, owner))
             return owner
 
-        domain = None if original.domain is None else restored_owner(original.domain)
-        source = (
-            None
-            if original.source is None
-            or type(original.source) is LayerCoreFidelitySourceReferenceArchiveRecipe
-            else restored_owner(original.source)
+        implicit_query = (
+            original.source.query
+            if type(original.source) is NativeImplicitBoundaryQueryArchiveRecipe
+            else original.source
         )
+        shared_implicit = type(
+            implicit_query
+        ) is AdaptiveImplicitBoundarySourceArchiveRecipe and _same_implicit_archive(
+            original.domain, implicit_query.surface
+        )
+        if shared_implicit:
+            # The complete stored discovery recipes agree byte-for-byte. Restore
+            # their shared scientific owner once through the query's normal
+            # constructor and full discovery replay, rather than independently
+            # rebuilding callback-bearing interval owners that compare by identity.
+            source = restored_owner(original.source)
+            adaptive = (
+                source.adaptive_source
+                if type(original.source) is NativeImplicitBoundaryQueryArchiveRecipe
+                else source
+            )
+            from ..geometry.implicit._adaptive_discovery import (
+                AdaptiveImplicitBoundarySource,
+            )
+
+            if type(adaptive) is not AdaptiveImplicitBoundarySource:
+                raise TypeError("Restored implicit query lost its adaptive source owner.")
+            domain = adaptive.surface
+            restored_owners.append((original.domain, domain))
+        else:
+            domain = None if original.domain is None else restored_owner(original.domain)
+            source = (
+                None
+                if original.source is None
+                or type(original.source) is LayerCoreFidelitySourceReferenceArchiveRecipe
+                else restored_owner(original.source)
+            )
         if type(original.feature_source) is LayerCoreSourceReferenceArchiveRecipe:
             reference = original.feature_source
             if (
@@ -1305,20 +1338,41 @@ class CellMeshingResult(StrictModule, NonTrainableState):
                 else witness
             )
 
-        scoped = tuple(
-            (
-                restore_mapped_layer_core_boundary_source(
+        fidelity_witness = (
+            stored_witness(original.fidelity_witness) if shared_implicit else None
+        )
+
+        def restore_scoped(
+            query: Any, witness: Any, tolerance: float
+        ) -> tuple[Any, Any, float]:
+            same_query = shared_implicit and _same_implicit_archive(
+                query, original.source
+            )
+            if same_query:
+                restored_query = source
+            elif (
+                type(query) is MappedReferenceBoundarySourceArchiveRecipe
+                and type(query.authority) is MappedCoreFacetAuthorityArchiveRecipe
+            ):
+                restored_query = restore_mapped_layer_core_boundary_source(
                     query, layer_core_feature_source
                 )
-                if type(query) is MappedReferenceBoundarySourceArchiveRecipe
-                and type(query.authority) is MappedCoreFacetAuthorityArchiveRecipe
-                else restore_model_archive_value(query),
-                stored_witness(witness),
-                tolerance,
+            else:
+                restored_query = restore_model_archive_value(query)
+            restored_witness = (
+                fidelity_witness
+                if same_query
+                and _same_implicit_archive(witness, original.fidelity_witness)
+                else stored_witness(witness)
             )
+            return restored_query, restored_witness, tolerance
+
+        scoped = tuple(
+            restore_scoped(query, witness, tolerance)
             for query, witness, tolerance in original.scoped_fidelity
         )
-        fidelity_witness = stored_witness(original.fidelity_witness)
+        if not shared_implicit:
+            fidelity_witness = stored_witness(original.fidelity_witness)
         validated = validate_fidelity_witnesses(
             mesh, geometry, source, fidelity_witness, scoped
         )

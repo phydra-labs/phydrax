@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "check.hpp"
+#include "exact_scalar.hpp"
 #include "fp_hazards.hpp"
 #include "phydrax_meshcore.h"
 #include "spatial_sort.hpp"
@@ -438,6 +439,27 @@ void test_tetrahedron_overlaps() {
   }
 }
 
+void test_tetrahedron_quadratic_moments() {
+  double volume = -1.0, moment[3] = {}, second[9] = {};
+  int32_t status = -1;
+  PHX_CHECK(phx_mc_tetrahedron_intersection_quadratic_moments(
+                1, kUnitTet.data(), kUnitTet.data(), &volume, moment, second, &status) == PHX_MC_OK);
+  PHX_CHECK(status == PHX_MC_OK);
+  const Volume first = tetrahedra(kUnitTet, kUnitTet);
+  PHX_CHECK(volume == first.volume);
+  for (int j = 0; j < 3; ++j) {
+    PHX_CHECK(moment[j] == first.moment[j]);
+    for (int k = 0; k < 3; ++k) {
+      PHX_CHECK_NEAR(second[3 * j + k], j == k ? 1.0 / 60.0 : 1.0 / 120.0, 1e-16);
+    }
+  }
+  PHX_CHECK(phx_mc_tetrahedron_intersection_quadratic_moments(
+                1, kUnitTet.data(), kUnitTet.data(), &volume, moment, nullptr, &status) ==
+            PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_tetrahedron_intersection_quadratic_moments(
+                0, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr) == PHX_MC_OK);
+}
+
 void test_tetrahedron_sliver_measures() {
   // The overlap is a tetrahedron of edge length delta. All coordinates and
   // translations are dyadic, so these are exact rational references.
@@ -508,6 +530,60 @@ void test_tetrahedron_batch_scratch_reuse() {
     PHX_CHECK(statuses[i] == reference.status && volumes[i] == reference.volume);
     for (int k = 0; k < 3; ++k) PHX_CHECK(moments[3 * i + k] == reference.moment[k]);
   }
+}
+
+void test_tetrahedron_unrepresentable_overlap() {
+  // Binary64 translation of the captured unit-box pair 0. Independent exact
+  // rational clipping gives positive volume 2.0102052517994655e-48, while
+  // the rounded carrier fan has exactly zero signed volume.
+  const std::array<double, 12> source = {
+      0x1.c5ad1c6273193p+0, 0x1p+0, 0x1.a07e9952a3352p+0,
+      0x1.ccc0acdb1535cp+0, 0x1p+0, 0x1.a009daac47ca6p+0,
+      0x1.c8e65498785eap+0, 0x1p+0, 0x1.9b621c92a1cf9p+0,
+      0x1.cdda71ff9f4cep+0, 0x1.037cc3d785075p+0, 0x1.9d24b78b07436p+0};
+  const std::array<double, 12> target = {
+      0x1.c7f32a4c3c2f5p+0, 0x1.0166666666666p+0, 0x1.9a7ddb161db4ap+0,
+      0x1.cab4c9e394c00p+0, 0x1p+0, 0x1.9bd961884391fp+0,
+      0x1.cd2ed89728372p+0, 0x1.01be61ebc283bp+0, 0x1.9cbaaf04764bep+0,
+      0x1.cb60634c0bd5cp+0, 0x1.01be61ebc283bp+0, 0x1.9c436a0ed4898p+0};
+  const Volume exact = tetrahedra(source, target);
+  PHX_CHECK(exact.status == PHX_MC_OK);
+  PHX_CHECK(std::abs(exact.volume - 2.0102052517994655e-48) < 1e-62);
+  std::array<double, 20 * 12> simplices{};
+  int32_t count = -1, status = -1;
+  double volume = -1.0, moment[3] = {-1.0, -1.0, -1.0};
+  PHX_CHECK(phx_mc_tetrahedron_intersection_simplices(
+                1, source.data(), target.data(), 20, simplices.data(), &count, &volume,
+                moment, &status) == PHX_MC_OK);
+  PHX_CHECK(status == PHX_MC_UNRESOLVED && count == 0 && volume == 0.0);
+  PHX_CHECK(moment[0] == 0.0 && moment[1] == 0.0 && moment[2] == 0.0);
+
+  // Exact overlap is positive but smaller than half the least subnormal
+  // binary64 volume. All input coordinates remain in the native exact domain.
+  const double small = 0x1p-120, large = 0x1p120;
+  const std::array<double, 12> underflow = {
+      small, -large, large, -large, large, 0, 0, small, -small, -large, -large, -large};
+  const Volume underflow_moments = tetrahedra(kUnitTet, underflow);
+  PHX_CHECK(underflow_moments.status == PHX_MC_UNRESOLVED && underflow_moments.volume == 0.0);
+  double quadratic[9];
+  std::fill(quadratic, quadratic + 9, -1.0);
+  PHX_CHECK(phx_mc_tetrahedron_intersection_quadratic_moments(
+                1, kUnitTet.data(), underflow.data(), &volume, moment, quadratic, &status) ==
+            PHX_MC_OK);
+  PHX_CHECK(status == PHX_MC_UNRESOLVED && volume == 0.0);
+  for (double value : quadratic) PHX_CHECK(value == 0.0);
+  PHX_CHECK(phx_mc_tetrahedron_intersection_simplices(
+                1, kUnitTet.data(), underflow.data(), 20, simplices.data(), &count, &volume,
+                moment, &status) == PHX_MC_OK);
+  PHX_CHECK(status == PHX_MC_UNRESOLVED && count == 0 && volume == 0.0);
+
+  // An exact shared-face contact is genuinely empty, not unresolved.
+  const std::array<double, 12> contact = {0, 0, 0, -1, 0, 0, 0, 1, 0, 0, 0, 1};
+  check_volume(tetrahedra(kUnitTet, contact), 0, 0, 0, 0);
+  PHX_CHECK(phx_mc_tetrahedron_intersection_simplices(
+                1, kUnitTet.data(), contact.data(), 20, simplices.data(), &count, &volume,
+                moment, &status) == PHX_MC_OK);
+  PHX_CHECK(status == PHX_MC_OK && count == 0 && volume == 0.0);
 }
 
 void test_tetrahedron_contacts() {
@@ -906,8 +982,57 @@ void test_determinism() {
             first.moment[1] == second.moment[1] && first.moment[2] == second.moment[2]);
 }
 
-// Simplex partitions reproduce the reported moments term by term, match the
-// moments-only entry points bitwise, and report capacity refusal.
+// Independently integrate the emitted binary64 tetrahedra, including signed
+// terms: rounding the fan origin can put it slightly outside a thin polytope.
+void check_tetrahedron_simplex_integrals(const std::array<double, 12>& a,
+                                         const std::array<double, 12>& b) {
+  std::vector<double> simplices(20 * 12);
+  int32_t simplex_count = -1;
+  double volume = -1.0;
+  double moment[3] = {0.0, 0.0, 0.0};
+  int32_t status = -1;
+  PHX_CHECK(phx_mc_tetrahedron_intersection_simplices(1, a.data(), b.data(), 20,
+                                                      simplices.data(), &simplex_count, &volume,
+                                                      moment, &status) == PHX_MC_OK);
+  PHX_CHECK(status == PHX_MC_OK);
+  PHX_CHECK((volume == 0.0) == (simplex_count == 0));
+  using phx::mc::Dyadic;
+  using phx::mc::exact::rounded_quotient;
+  Dyadic total;
+  Dyadic centroid_sum[3];
+  double absolute_total = 0.0;
+  double absolute_moment[3] = {0.0, 0.0, 0.0};
+  for (int32_t s = 0; s < simplex_count; ++s) {
+    const double* p = simplices.data() + 12 * s;
+    Dyadic edge[3][3];
+    for (int j = 0; j < 3; ++j) {
+      for (int k = 0; k < 3; ++k) {
+        edge[j][k] = Dyadic(p[3 * (j + 1) + k]) - Dyadic(p[k]);
+      }
+    }
+    const auto& u = edge[0];
+    const auto& v = edge[1];
+    const auto& w = edge[2];
+    const Dyadic det = u[0] * (v[1] * w[2] - v[2] * w[1]) -
+                       u[1] * (v[0] * w[2] - v[2] * w[0]) +
+                       u[2] * (v[0] * w[1] - v[1] * w[0]);
+    total = total + det;
+    absolute_total += std::abs(rounded_quotient(det, Dyadic(6.0)));
+    for (int k = 0; k < 3; ++k) {
+      const Dyadic first = det * (Dyadic(p[k]) + Dyadic(p[3 + k]) +
+                                   Dyadic(p[6 + k]) + Dyadic(p[9 + k]));
+      centroid_sum[k] = centroid_sum[k] + first;
+      absolute_moment[k] += std::abs(rounded_quotient(first, Dyadic(24.0)));
+    }
+  }
+  PHX_CHECK(std::abs(rounded_quotient(total, Dyadic(6.0)) - volume) <= 1e-13 * absolute_total);
+  for (int k = 0; k < 3; ++k) {
+    PHX_CHECK(std::abs(rounded_quotient(centroid_sum[k], Dyadic(24.0)) - moment[k]) <=
+              1e-13 * absolute_moment[k]);
+  }
+}
+
+// Simplex partitions reproduce their own integrals and report capacity refusal.
 void test_intersection_simplices() {
   std::uint64_t state = 17;
   for (int trial = 0; trial < 50; ++trial) {
@@ -918,38 +1043,21 @@ void test_intersection_simplices() {
     for (double& x : b) {
       x = 0.2 + uniform(state);
     }
-    std::vector<double> simplices(20 * 12);
-    int32_t simplex_count = -1;
-    double volume = -1.0;
-    double moment[3] = {0.0, 0.0, 0.0};
-    int32_t status = -1;
-    PHX_CHECK(phx_mc_tetrahedron_intersection_simplices(1, a.data(), b.data(), 20,
-                                                        simplices.data(), &simplex_count, &volume,
-                                                        moment, &status) == PHX_MC_OK);
-    PHX_CHECK(status == PHX_MC_OK);
-    const Volume reference = tetrahedra(a, b);
-    PHX_CHECK(reference.volume == volume && reference.moment[0] == moment[0]);
-    PHX_CHECK((volume == 0.0) == (simplex_count == 0));
-    double total = 0.0;
-    double centroid_sum[3] = {0.0, 0.0, 0.0};
-    for (int32_t s = 0; s < simplex_count; ++s) {
-      const double* p = simplices.data() + 12 * s;
-      const double u[3] = {p[3] - p[0], p[4] - p[1], p[5] - p[2]};
-      const double v[3] = {p[6] - p[0], p[7] - p[1], p[8] - p[2]};
-      const double w[3] = {p[9] - p[0], p[10] - p[1], p[11] - p[2]};
-      const double det = u[0] * (v[1] * w[2] - v[2] * w[1]) - u[1] * (v[0] * w[2] - v[2] * w[0]) +
-                         u[2] * (v[0] * w[1] - v[1] * w[0]);
-      PHX_CHECK(det >= -1e-15);
-      total += det / 6.0;
-      for (int k = 0; k < 3; ++k) {
-        centroid_sum[k] += det / 6.0 * 0.25 * (p[k] + p[3 + k] + p[6 + k] + p[9 + k]);
-      }
-    }
-    PHX_CHECK_NEAR(total, volume, 1e-14);
-    for (int k = 0; k < 3; ++k) {
-      PHX_CHECK_NEAR(centroid_sum[k], moment[k], 1e-14);
-    }
+    check_tetrahedron_simplex_integrals(a, b);
   }
+  // A non-dyadic, thin captured overlap whose symbolic volume is substantially
+  // different from the volume of its rounded simplex carriers.
+  const std::array<double, 12> thin_source = {
+      0x1.998159b62a6b7p-1, 0x0p+0, 0x1.4013b5588f94dp-1,
+      0x1.91cca930f0bd5p-1, 0x0p+0, 0x1.36c43925439f2p-1,
+      0x1.9bb4e3ff3e99dp-1, 0x1.be61ebc283a9fp-7, 0x1.3a496f160e86bp-1,
+      0x1.99067e5d6242ap-1, 0x0p+0, 0x1.38a14cfbcaa8ap-1};
+  const std::array<double, 12> thin_target = {
+      0x1.8fe65498785eap-1, 0x1.6666666666666p-8, 0x1.34fbb62c3b693p-1,
+      0x1.956993c7297ffp-1, 0x0p+0, 0x1.37b2c3108723ep-1,
+      0x1.9a5db12e506e4p-1, 0x1.be61ebc283a9fp-8, 0x1.39755e08ec97bp-1,
+      0x1.96c0c69817ab9p-1, 0x1.be61ebc283a9fp-8, 0x1.3886d41da912fp-1};
+  check_tetrahedron_simplex_integrals(thin_source, thin_target);
   // The unit tetrahedron against its point reflection has eight faces.
   const auto reflected = affine(kUnitTet, -1.0, 0.6, 0.6, 0.6);
   std::vector<double> simplices(4 * 12);
@@ -1136,9 +1244,11 @@ int main() {
   test_box_halfplanes();
   test_box_halfplanes_voronoi();
   test_tetrahedron_overlaps();
+  test_tetrahedron_quadratic_moments();
   test_tetrahedron_sliver_measures();
   test_unitbox_overlap_measures();
   test_tetrahedron_batch_scratch_reuse();
+  test_tetrahedron_unrepresentable_overlap();
   test_tetrahedron_contacts();
   test_tetrahedron_statuses();
   test_tetrahedron_invariance();

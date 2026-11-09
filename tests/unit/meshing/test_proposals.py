@@ -1,4 +1,5 @@
 from fractions import Fraction
+from pathlib import Path
 from typing import Any
 
 import equinox as eqx
@@ -1115,3 +1116,116 @@ def test_implicit_surface_metric_proposals_preserve_exact_source_classes(
         np.sort(np.asarray(stencil.target_global_ids, dtype=np.int64)),
         np.sort(np.asarray(target.mesh.vertex_global_ids, dtype=np.int64)),
     )
+
+
+def test_implicit_volume_archive_reuses_reproved_query_domain(
+    tmp_path: Path, _implicit_volume_source: tuple[Any, Any, Any]
+) -> None:
+    from phydrax.meshing._model_codec import (
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+    from phydrax.meshing._result import CellMeshingResult
+    from phydrax.meshing.providers._native_implicit import _NativeImplicitBoundaryQuery
+
+    _, source, _ = _implicit_volume_source
+    assert source.certification is not None and source.certification.passed
+    archive = write_model_artifact(tmp_path / "volume.phx", source, limits=None)
+    restored = read_model_artifact(
+        archive,
+        expected_type=CellMeshingResult,
+        restore=restore_model_archive_value,
+        limits=None,
+    )
+    assert restored.certification is not None and restored.certification.passed
+    inputs = restored.certification.inputs
+    assert isinstance(inputs.source, _NativeImplicitBoundaryQuery)
+    assert inputs.domain is inputs.source.adaptive_source.surface
+    assert (inputs.source_id, inputs.source_revision) == (
+        source.certification.inputs.source_id,
+        source.certification.inputs.source_revision,
+    )
+    assert restored.result_id == source.result_id
+    assert restored.certification.report_id == source.certification.report_id
+
+
+def test_implicit_volume_archive_preserves_tighter_scoped_metric_tolerance(
+    tmp_path: Path, _implicit_volume_source: tuple[Any, Any, Any]
+) -> None:
+    from phydrax.geometry.implicit._adaptive_discovery import AdaptiveImplicitSurface
+    from phydrax.meshing._controls import FeatureKind, ProtectedFeature
+    from phydrax.meshing._model_codec import (
+        _same_implicit_archive,
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+    from phydrax.meshing._result import CellMeshingResult
+    from phydrax.meshing._tetra_metric import _implicit_metric_source
+    from phydrax.meshing.providers._native_implicit import _NativeImplicitBoundaryQuery
+
+    profile, seed, _ = _implicit_volume_source
+    assert seed.certification is not None
+    authority = seed.certification.inputs.feature_source
+    assert isinstance(authority, NativeImplicitSource)
+    assert authority.discovery is not None
+    scope = MeshingScope(
+        authority.source_id,
+        authority.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        authority.scope_entity_set_id(2),
+        authority.scope_entity_ids(2),
+    )
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+        scope,
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(),
+        maximum_deviation=0.8,
+        protected_features=(
+            ProtectedFeature(
+                scope, FeatureKind.SURFACE, maximum_deviation=0.4, hard=True
+            ),
+        ),
+    )
+    source = (
+        NativeMeshingProvider(
+            NativeMeshingOptions(
+                "implicit_adaptive_tetrahedral",
+                implicit_policy=authority.discovery.policy,
+                volume_schedule=NativeVolumeSchedule(),
+            )
+        )
+        .plan(authority, specification, coordinate_contract=seed.coordinate_contract)
+        .execute()
+    )
+    assert source.certification is not None and source.certification.passed
+    before_metric_source = _implicit_metric_source(source)
+    assert before_metric_source is not None and before_metric_source.tolerance == 0.4
+    archive = write_model_artifact(tmp_path / "scoped-volume.phx", source, limits=None)
+    restored = read_model_artifact(
+        archive,
+        expected_type=CellMeshingResult,
+        restore=restore_model_archive_value,
+        limits=None,
+    )
+    assert restored.certification is not None and restored.certification.passed
+    inputs = restored.certification.inputs
+    assert isinstance(inputs.source, _NativeImplicitBoundaryQuery)
+    assert isinstance(inputs.feature_source, NativeImplicitSource)
+    assert isinstance(inputs.domain, AdaptiveImplicitSurface)
+    assert inputs.feature_source.discovery is not None
+    assert _same_implicit_archive(
+        inputs.domain.archive_recipe,
+        inputs.feature_source.discovery.archive_recipe,
+    )
+    assert len(inputs.scoped_fidelity) == 1
+    query, witness, tolerance = inputs.scoped_fidelity[0]
+    assert query is inputs.source and witness is inputs.fidelity_witness
+    assert inputs.fidelity_tolerance == 0.8 and tolerance == 0.4
+    metric_source = _implicit_metric_source(restored)
+    assert metric_source is not None and metric_source.tolerance == 0.4
+    assert inputs.feature_source.authoring_profile is not None
+    assert inputs.feature_source.authoring_profile.profile_id == profile.profile_id
