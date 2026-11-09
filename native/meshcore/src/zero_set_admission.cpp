@@ -70,6 +70,34 @@ bool gradient_over(const IntervalBoxProgram& program, const Point& lower, const 
   if (!program.evaluate(lower, upper, gradient.data())) return false;
   return finite(gradient[0]) && finite(gradient[1]) && finite(gradient[2]);
 }
+
+// Translation preserves these edge vectors exactly. Anchor enclosures may
+// therefore describe either the original triangle or an outward-enclosed
+// translate without rounding its geometry into a different triangle.
+bool tighten_triangle_field(const Point& a, const Point& b, const Point& c,
+                            const std::array<VertexEvidence, 3>& evidence,
+                            const std::array<Interval, 3>& gradient, Interval& field) {
+  const std::array<const Point*, 3> corners{&a, &b, &c};
+  for (size_t k = 0; k < 3; ++k) {
+    Interval form{evidence[k].lower, evidence[k].upper};
+    if (!finite(form)) continue;
+    const Point& p = *corners[k];
+    const Point& q = *corners[(k + 1) % 3];
+    const Point& r = *corners[(k + 2) % 3];
+    Interval along_q{0, 0}, along_r{0, 0};
+    for (int d = 0; d < 3; ++d) {
+      const Interval& g = gradient[static_cast<size_t>(d)];
+      along_q = add(along_q, multiply(g, subtract(point(q[d]), point(p[d]))));
+      along_r = add(along_r, multiply(g, subtract(point(r[d]), point(p[d]))));
+    }
+    form = add(form, {std::min({0.0, along_q.lower, along_r.lower}),
+                      std::max({0.0, along_q.upper, along_r.upper})});
+    if (!finite(form)) continue;
+    field = {std::max(field.lower, form.lower), std::min(field.upper, form.upper)};
+    if (field.lower > field.upper) return false;
+  }
+  return true;
+}
 }  // namespace
 
 int32_t IntervalBoxProgram::bind(const int64_t* instructions, int64_t instruction_count,
@@ -156,25 +184,7 @@ double ZeroSetBandAdmission::piece_distance(
   // s (g . e1) + t (g . e2) for some g = grad f(xi), xi on [p, x] in bbox(T).
   // Over the simplex this lies in the hull of 0, G . e1 and G . e2; tangent
   // edges make it second order in the triangle size.
-  const std::array<const Point*, 3> corners{&a, &b, &c};
-  for (size_t k = 0; k < 3; ++k) {
-    Interval form{evidence[k].lower, evidence[k].upper};
-    if (!finite(form)) continue;
-    const Point& p = *corners[k];
-    const Point& q = *corners[(k + 1) % 3];
-    const Point& r = *corners[(k + 2) % 3];
-    Interval along_q{0, 0}, along_r{0, 0};
-    for (int d = 0; d < 3; ++d) {
-      const Interval& g = gradient[static_cast<size_t>(d)];
-      along_q = add(along_q, multiply(g, subtract(point(q[d]), point(p[d]))));
-      along_r = add(along_r, multiply(g, subtract(point(r[d]), point(p[d]))));
-    }
-    form = add(form, {std::min({0.0, along_q.lower, along_r.lower}),
-                      std::max({0.0, along_q.upper, along_r.upper})});
-    if (!finite(form)) continue;
-    field = {std::max(field.lower, form.lower), std::min(field.upper, form.upper)};
-    if (field.lower > field.upper) return kInfinity;  // inconsistent enclosures
-  }
+  if (!tighten_triangle_field(a, b, c, evidence, gradient, field)) return kInfinity;
   const double residual = magnitude(field);
   if (residual == 0) return 0;
   const double bbox_norm = norm_lower(gradient);
@@ -195,6 +205,86 @@ double ZeroSetBandAdmission::piece_distance(
     const double bound = next_up(residual / norm);
     if (bound <= radius) return bound;
   }
+  return kInfinity;
+}
+
+bool ZeroSetBandAdmission::translated_field(const Point& a, const Point& b, const Point& c,
+                                           const Point& displacement, double sign,
+                                           Interval& field) const {
+  Point lower{}, upper{};
+  bounding_box(a, b, c, lower, upper);
+  for (int d = 0; d < 3; ++d) {
+    const double shift = sign * displacement[d];
+    lower[d] = next_down(lower[d] + shift);
+    upper[d] = next_up(upper[d] + shift);
+  }
+  std::array<Interval, 3> gradient{};
+  if (!gradient_over(gradient_, lower, upper, gradient) ||
+      !value_.evaluate(lower, upper, &field) || !finite(field))
+    return false;
+  std::array<VertexEvidence, 3> evidence{};
+  const std::array<const Point*, 3> corners{&a, &b, &c};
+  for (size_t k = 0; k < corners.size(); ++k) {
+    for (int d = 0; d < 3; ++d) {
+      const Interval shifted = add(point((*corners[k])[d]), point(sign * displacement[d]));
+      lower[d] = shifted.lower;
+      upper[d] = shifted.upper;
+    }
+    Interval value{};
+    if (!value_.evaluate(lower, upper, &value) || !finite(value)) return false;
+    evidence[k] = {value.lower, value.upper};
+  }
+  return tighten_triangle_field(a, b, c, evidence, gradient, field);
+}
+
+double ZeroSetBandAdmission::extrusion_distance(const Point& a, const Point& b,
+                                                const Point& c, double radius) const {
+  if (!(radius > 0) || !std::isfinite(radius)) return kInfinity;
+  Point lower{}, upper{}, center{}, direction{}, displacement{};
+  bounding_box(a, b, c, lower, upper);
+  for (int d = 0; d < 3; ++d) center[d] = 0.5 * lower[d] + 0.5 * upper[d];
+  std::array<Interval, 3> gradient{};
+  if (!gradient_over(gradient_, center, center, gradient)) return kInfinity;
+  double scale = 0;
+  for (int d = 0; d < 3; ++d) {
+    direction[d] = 0.5 * gradient[d].lower + 0.5 * gradient[d].upper;
+    scale = std::max(scale, std::fabs(direction[d]));
+  }
+  if (!(scale > 0) || !std::isfinite(scale)) return kInfinity;
+  double squared = 0;
+  for (double& component : direction) {
+    component /= scale;
+    squared = next_up(squared + next_up(component * component));
+  }
+  const double norm = next_up(std::sqrt(squared));
+  const double length = next_down(radius / norm);
+  if (!(length > 0)) return kInfinity;
+  for (int d = 0; d < 3; ++d) {
+    const double component = length * direction[d];
+    // Each magnitude is no larger than the exact product; length is no
+    // larger than radius / norm, so the real displacement norm is <= radius.
+    displacement[d] =
+        std::copysign(std::max(0.0, next_down(std::fabs(component))), component);
+    lower[d] = next_down(lower[d] - std::fabs(displacement[d]));
+    upper[d] = next_up(upper[d] + std::fabs(displacement[d]));
+  }
+  Interval slab_value{};
+  if (!value_.evaluate(lower, upper, &slab_value) || !finite(slab_value) ||
+      !gradient_over(gradient_, lower, upper, gradient))
+    return kInfinity;
+  Interval along{0, 0};
+  for (int d = 0; d < 3; ++d)
+    along = add(along, multiply(gradient[d], point(displacement[d])));
+  if (!finite(along) || !(along.lower > 0 || along.upper < 0)) return kInfinity;
+  Interval minus{}, plus{};
+  if (!translated_field(a, b, c, displacement, -1.0, minus) ||
+      !translated_field(a, b, c, displacement, 1.0, plus))
+    return kInfinity;
+  // Uniform signs on both complete endpoint triangles and a strict derivative
+  // sign on the entire extrusion isolate one zero along every point's segment.
+  if ((along.lower > 0 && minus.upper <= 0 && plus.lower >= 0) ||
+      (along.upper < 0 && minus.lower >= 0 && plus.upper <= 0))
+    return radius;
   return kInfinity;
 }
 
@@ -272,6 +362,17 @@ double ZeroSetBandAdmission::split_distance(const Point& a, const Point& b, cons
       continue;
     }
     if (piece_refuted(piece.a, piece.b, piece.c)) return piece.depth == 0 ? bound : kInfinity;
+    const double charge = next_up(piece.depth * slack);
+    // Leave room for the final outward addition, without a heuristic tolerance
+    // reduction. Existing subdivision-rounding evidence remains authoritative.
+    const double radius = next_down(next_down(tolerance_) - charge);
+    const double translated = extrusion_distance(piece.a, piece.b, piece.c, radius);
+    const double translated_bound =
+        std::isfinite(translated) ? next_up(translated + charge) : kInfinity;
+    if (translated_bound <= tolerance_) {
+      worst = std::max(worst, translated_bound);
+      continue;
+    }
     const Point ab = middle(piece.a, piece.b), bc = middle(piece.b, piece.c),
                 ca = middle(piece.c, piece.a);
     if (ab == piece.a || ab == piece.b || bc == piece.b || bc == piece.c || ca == piece.c ||

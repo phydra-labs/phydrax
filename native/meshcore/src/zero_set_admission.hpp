@@ -10,8 +10,12 @@
 //    within |f(x)| / m. Hence sup |F| <= r m certifies dist(x, Z) <= sup |F| / m
 //    <= r for every x in T; r is tried at twice the bbox estimate and at the
 //    tolerance itself. F intersects the natural enclosure over bbox(T) with
-//    corner-anchored mean-value forms along the triangle's edges; an
-//    undecided piece splits into four until certified, refuted (|f| exceeds
+//    corner-anchored mean-value forms along the triangle's edges. A second
+//    proof outward-encloses T-d, T+d and their complete extrusion: uniform
+//    opposite endpoint signs and a strict sign of grad f . d throughout it
+//    isolate a zero along every point's segment, at distance <= |d|. Directed
+//    normalization bounds |d| and retains the subdivision-rounding slack.
+//    An undecided piece splits into four until certified, refuted (|f| exceeds
 //    the gradient-norm upper bound times the tolerance), or at binary64
 //    resolution, which refuses;
 //  * transversality: the triangle normal n satisfies orientation * (n . g) > 0
@@ -105,6 +109,10 @@ class ZeroSetBandAdmission final : public TriangleAdmission {
   // One unsplit piece: the residual/gradient bound over its (widened) box.
   double piece_distance(const Point& a, const Point& b, const Point& c,
                         const std::array<VertexEvidence, 3>& evidence) const;
+  bool translated_field(const Point& a, const Point& b, const Point& c,
+                        const Point& displacement, double sign, Interval& field) const;
+  double extrusion_distance(const Point& a, const Point& b, const Point& c,
+                            double radius) const;
   // Certified: no point of the piece lies within the tolerance of Z.
   bool piece_refuted(const Point& a, const Point& b, const Point& c) const;
   double split_distance(const Point& a, const Point& b, const Point& c,

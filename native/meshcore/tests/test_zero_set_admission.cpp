@@ -252,6 +252,65 @@ void torus_cases() {
   admission_soundness(value, gradient, torus_point, outward_torus, torus_distance, 11u);
 }
 
+void near_band_distance_cases() {
+  IntervalBoxProgram value, gradient;
+  PHX_CHECK(sphere_value().bind(value));
+  PHX_CHECK(sphere_gradient().bind(gradient));
+  constexpr double tolerance = 0.02;
+  const ZeroSetBandAdmission admission(value, gradient, tolerance, 1);
+  const Point a{0.0, 0.0, 1.0199}, b{0.001, 0.0, 1.0199}, c{0.0, 0.001, 1.0199};
+  // The entire triangle has 1 < z <= |x| <= max(vertex norms) < 1+tolerance.
+  // The tolerance-wide gradient-flow ratio nevertheless exceeds tolerance,
+  // even at a single vertex: subdivision alone cannot close that gap.
+  const double independent_upper = std::max({sphere_distance(a), sphere_distance(b),
+                                             sphere_distance(c)});
+  PHX_CHECK(independent_upper < tolerance);
+  const double bound = admission.distance_bound(a, b, c, evidence_of(admission, a, b, c));
+  PHX_CHECK(independent_upper <= bound && bound <= tolerance);
+  PHX_CHECK(admission.admits(a, b, c, evidence_of(admission, a, b, c)));
+  PHX_CHECK(!admission.admits(a, c, b, evidence_of(admission, a, c, b)));
+  const double outside_z =
+      std::nextafter(1.0 + tolerance, std::numeric_limits<double>::infinity());
+  const Point outside_a{0.0, 0.0, outside_z}, outside_b{0.001, 0.0, outside_z},
+              outside_c{0.0, 0.001, outside_z};
+  PHX_CHECK(!admission.admits(outside_a, outside_b, outside_c,
+                             evidence_of(admission, outside_a, outside_b, outside_c)));
+}
+
+void whole_piece_bracketing_cases() {
+  // f=z-x*y*(1-x-y): all three corners lie on Z, but the triangle's center
+  // has no zero in its tolerance ball. Corner-only brackets are insufficient.
+  Program field = seeded({1.0}, 9);
+  field.row(kAdd, 4, 1, 0, -1, 1, -1, 0);
+  field.row(kSubtract, 5, 1, 3, -1, 4, -1, 0);
+  field.row(kMultiply, 6, 1, 0, -1, 1, -1, 0);
+  field.row(kMultiply, 7, 1, 6, -1, 5, -1, 0);
+  field.row(kSubtract, 8, 1, 2, -1, 7, -1, 0);
+  field.outputs = {8};
+  Program derivative = seeded({1.0, 2.0, -1.0}, 16);
+  derivative.row(kMultiply, 6, 1, 0, -1, 4, -1, 0);
+  derivative.row(kSubtract, 7, 1, 3, -1, 6, -1, 0);
+  derivative.row(kSubtract, 8, 1, 7, -1, 1, -1, 0);
+  derivative.row(kMultiply, 9, 1, 1, -1, 8, -1, 0);
+  derivative.row(kMultiply, 10, 1, 9, -1, 5, -1, 0);
+  derivative.row(kMultiply, 11, 1, 1, -1, 4, -1, 0);
+  derivative.row(kSubtract, 12, 1, 3, -1, 0, -1, 0);
+  derivative.row(kSubtract, 13, 1, 12, -1, 11, -1, 0);
+  derivative.row(kMultiply, 14, 1, 0, -1, 13, -1, 0);
+  derivative.row(kMultiply, 15, 1, 14, -1, 5, -1, 0);
+  derivative.outputs = {10, 15, 3};
+  IntervalBoxProgram value, gradient;
+  PHX_CHECK(field.bind(value));
+  PHX_CHECK(derivative.bind(gradient));
+  constexpr double tolerance = 0.01;
+  const ZeroSetBandAdmission admission(value, gradient, tolerance, 1);
+  const Point a{0.0, 0.0, 0.0}, b{1.0, 0.0, 0.0}, c{0.0, 1.0, 0.0};
+  // In the center's enclosing radius-0.01 box, x,y>0.32 and
+  // 1-x-y>0.31, hence f < 0.01-0.32*0.32*0.31 < 0 everywhere.
+  PHX_CHECK(admission.transversal_sign(a, b, c) == 1);
+  PHX_CHECK(!admission.admits(a, b, c, evidence_of(admission, a, b, c)));
+}
+
 struct Surface {
   std::vector<double> vertices;
   std::vector<int64_t> triangles;
@@ -976,6 +1035,8 @@ void scratch_faces_eviction() {
 int main() {
   sphere_cases();
   torus_cases();
+  near_band_distance_cases();
+  whole_piece_bracketing_cases();
   remesh_sphere_carrier();
   remesh_coarsening_absorbs_rosette();
   remesh_lens_crease();

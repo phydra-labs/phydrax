@@ -525,6 +525,12 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Native zero-set triangle admission can certify a whole-triangle translated
+  extrusion when the tolerance-wide gradient-flow bound is inconclusive.
+  Uniform endpoint signs, a strict directional derivative, outward interval
+  coordinates, and subdivision-rounding slack remain required. Distance bounds
+  may be more conservative when the new proof stops subdivision earlier;
+  outside-band geometry and reversed orientation remain refused.
 - Reconstruction transfer and reanalysis consume explicit source coefficients
   and the owning form, so retained numerical fields can continue without a
   fabricated completed-solve object or a repeated source PDE solve.
