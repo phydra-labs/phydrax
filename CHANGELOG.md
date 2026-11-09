@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Reconstruction qualification exposes the actual prepared refinement alongside
+  its accepted result and supports an optional host checkpoint after physical
+  reanalysis, before topology-result construction. Checkpoints retain the
+  candidate fields, existing prepared spaces, compiled problems, and genuine
+  solve/check evidence; writer failures propagate without fabricating a commit.
+  Field-bank archives alone do not restore native solve evidence after process
+  loss. Ordinary callers retain the existing scientific archive limits.
 - The `native-tspline-locality` benchmark measures actual local and full-tensor
   refinement of one exact source at shared knot coordinates. Both solve the
   same manufactured Poisson problem, with independent physical-error estimates
