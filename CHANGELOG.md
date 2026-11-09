@@ -525,6 +525,9 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Layer/core lifecycle qualification sums per-material physical content accurately
+  across highly refined meshes. The inventory check retains its original tolerance
+  without mistaking sequential accumulation roundoff for failed conservation.
 - Native tetrahedron moments-only intersections integrate exact symbolic
   construction coordinates rather than rounded physical vertices. Exact term
   contributions feed compensated binary64 sums, avoiding the thin-overlap
