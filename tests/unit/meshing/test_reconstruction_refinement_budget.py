@@ -58,3 +58,19 @@ def test_every_lifecycle_profile_declares_its_refinement_budget() -> None:
     declared = reconstruction._REFINEMENT_MEMORY_BUDGET_BYTES
     assert set(declared) == set(reconstruction._SOLVE_MEMORY_BUDGET_BYTES)
     assert all(isinstance(value, int) and value > 0 for value in declared.values())
+
+
+def test_larger_torus_admits_measured_refinement_and_changes_plan_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = reconstruction._profile_id("torus", 2)
+    budget = reconstruction._REFINEMENT_MEMORY_BUDGET_BYTES[profile]
+    required = 84_366 * 8 * (48 << 10)
+    assert budget == 32 << 30
+    assert required == 33_174_061_056
+    assert required <= budget
+    limits = reconstruction._archive_limits(profile)
+    current = reconstruction._resource_plan_id(profile, limits)
+    monkeypatch.setitem(reconstruction._REFINEMENT_MEMORY_BUDGET_BYTES, profile, 10 << 30)
+    assert required > reconstruction._REFINEMENT_MEMORY_BUDGET_BYTES[profile]
+    assert reconstruction._resource_plan_id(profile, limits) != current
