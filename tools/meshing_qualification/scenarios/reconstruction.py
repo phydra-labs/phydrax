@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from fractions import Fraction
 from pathlib import Path
@@ -795,7 +796,7 @@ def _refinement_admission(mesh: phx.discretization.CellMesh, budget: int, /) -> 
 
 def _refine_every_cell(
     plc: NativePlcSource, result: phx.meshing.CellMeshingResult, budget: int, /
-) -> tuple[phx.meshing.MeshAdaptationResult, int]:
+) -> tuple[phx.meshing.PreparedMeshAdaptation, phx.meshing.MeshAdaptationResult, int]:
     admitted = _refinement_admission(result.mesh, budget)
     marks = np.concatenate(
         [np.asarray(block.global_ids, dtype=np.int64) for block in result.mesh.blocks]
@@ -820,7 +821,7 @@ def _refine_every_cell(
         raise RuntimeError(
             f"Marked reconstructed-volume refinement was not accepted: {adaptation.status}."
         )
-    return adaptation, admitted
+    return prepared, adaptation, admitted
 
 
 def _all_field_layouts(
@@ -876,6 +877,18 @@ class _CarriedState:
     fresh: _ManufacturedSolve | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _ReanalysisCheckpoint:
+    """Live pre-commit operands; field archives cannot replace solve evidence."""
+
+    adaptation: phx.meshing.MeshAdaptationResult
+    target_space: phx.discretization.FiniteElementDiscretization
+    fields: tuple[object, ...]
+    source_state: phx.equations.CompiledFiniteElementProblem
+    target_state: phx.equations.CompiledFiniteElementProblem
+    fresh: _ManufacturedSolve
+
+
 def _transfer_accepted_state(
     source: phx.meshing.CellMeshingResult,
     source_values: np.ndarray,
@@ -884,6 +897,8 @@ def _transfer_accepted_state(
     label: str,
     budget: int,
     /,
+    *,
+    on_reanalysis: Callable[[_ReanalysisCheckpoint], None] | None = None,
 ) -> tuple[dict[str, object], phx.solver.FiniteElementTopologyResult, _ManufacturedSolve]:
     """Carry actual source fields without retaining a completed solve's workspace."""
     target = adaptation.target
@@ -934,6 +949,13 @@ def _transfer_accepted_state(
         carried.transferred_l2_error = _quadratic_l2_error(candidate_mesh, u)
         fresh = _manufactured_solve(target, f"{label}-reanalysis", budget)
         carried.fresh = fresh
+        if on_reanalysis is not None:
+            checkpoint = _ReanalysisCheckpoint(
+                candidate, target_space, fields, source_state, target_state, fresh
+            )
+            # A failing writer retains the genuine solve in this frame and carried.
+            # The callback must retain checkpoint before starting its own I/O.
+            on_reanalysis(checkpoint)
         return phx.solver.FiniteElementReanalysisResult(
             fresh.problem,
             fresh.solution,
@@ -1290,7 +1312,10 @@ def _volume_lifecycle(
     initial = _manufactured_solve(result, f"{label}-epoch-0", budget)
     _stage(profile, "marked-refinement")
     refinement_budget = _REFINEMENT_MEMORY_BUDGET_BYTES[profile]
-    adaptation, refinement_admitted = _refine_every_cell(plc, result, refinement_budget)
+    prepared, adaptation, refinement_admitted = _refine_every_cell(
+        plc, result, refinement_budget
+    )
+    del prepared
     target = adaptation.target
     _stage(profile, "target-acceptance")
     target_acceptance = _volume_acceptance(plc, target)
