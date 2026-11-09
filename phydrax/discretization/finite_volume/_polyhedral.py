@@ -38,12 +38,14 @@ class PreparedPolyhedralFiniteVolumeGeometry(StrictModule, NonTrainableState):
     owner_cells: Array
     neighbor_cells: Array
     closure_residual: Array
+    closure_tolerance: Array
     mesh_id: str = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
 
 
 # Relative distance to its Newell plane within which a face loop is planar.
 POLYHEDRAL_PLANARITY_TOLERANCE = 1.0e-10
+POLYHEDRAL_CLOSURE_TOLERANCE = 1.0e-10
 
 
 class PolyhedralFaceFan(NamedTuple):
@@ -164,7 +166,7 @@ def prepare_polyhedral_finite_volume_geometry(
     /,
     *,
     planarity_tolerance: float = POLYHEDRAL_PLANARITY_TOLERANCE,
-    closure_tolerance: float = 1.0e-10,
+    closure_tolerance: float = POLYHEDRAL_CLOSURE_TOLERANCE,
 ) -> PreparedPolyhedralFiniteVolumeGeometry:
     """Prepare Newell/divergence geometry from canonical polyhedral connectivity.
 
@@ -327,6 +329,7 @@ def prepare_polyhedral_finite_volume_geometry(
         jnp.asarray(owner),
         jnp.asarray(neighbor),
         jnp.asarray(closure_residual),
+        jnp.asarray(closure),
         mesh.mesh_id,
         geometry_id,
     )

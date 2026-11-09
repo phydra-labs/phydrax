@@ -68,6 +68,8 @@ if TYPE_CHECKING:
 
 Connectivity = PolygonalConnectivity | TetrahedralConnectivity | PolyhedralConnectivity
 
+_DEFAULT_MAPPED_MEASURE_RELATIVE_TOLERANCE = 1.0e-12
+
 _TETRAHEDRAL_FACE_QUADRATURE_BARYCENTRIC = (
     (0.445948490915965, 0.445948490915965, 0.108103018168070),
     (0.445948490915965, 0.108103018168070, 0.445948490915965),
@@ -84,6 +86,27 @@ _TETRAHEDRAL_FACE_QUADRATURE_NORMALIZED_WEIGHTS = (
     0.109951743655322,
     0.109951743655322,
 )
+
+
+def _published_measure_errors(
+    measures: np.ndarray, errors: np.ndarray, published: Array, /
+) -> Array:
+    """Include publication rounding while preserving componentwise error bounds."""
+    encoded = np.asarray(published)
+    exact_values = np.asarray(measures, dtype=np.float64)
+    original_errors = np.asarray(errors, dtype=np.float64)
+    total = np.nextafter(
+        original_errors + np.abs(encoded.astype(np.float64) - exact_values), np.inf
+    )
+    rounded = total.astype(encoded.dtype)
+    rounded = np.where(
+        rounded.astype(np.float64) < total,
+        np.nextafter(rounded, np.asarray(np.inf, dtype=encoded.dtype)),
+        rounded,
+    )
+    tiny = np.finfo(encoded.dtype).tiny
+    rounded = np.where((rounded > 0) & (rounded < tiny), tiny, rounded)
+    return jnp.asarray(rounded)
 
 
 def _stable_global_ids(name: str, value: ArrayLike | None, count: int, /) -> np.ndarray:
@@ -1358,6 +1381,7 @@ class _PreparedUnstructuredFiniteVolumeData:
     periodic_face_translations: Array | None = None
     coordinate_spec: CellGeometrySpec | None = None
     embedding: GlobalEmbeddingCertificate | None = None
+    measure_relative_tolerance: float = _DEFAULT_MAPPED_MEASURE_RELATIVE_TOLERANCE
 
 
 class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
@@ -1384,6 +1408,7 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
     owner_local_view: Any | None = None
     coordinate_spec: CellGeometrySpec | None = None
     embedding: GlobalEmbeddingCertificate | None = None
+    measure_relative_tolerance: float = _DEFAULT_MAPPED_MEASURE_RELATIVE_TOLERANCE
     # Owner-local periodic seam faces joined across lattice images: topology
     # faces ``(kept, merged)`` and the ambient translation from the kept
     # owner's frame to the neighbor's frame; ``None`` when nothing is joined.
@@ -1428,6 +1453,7 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
             self.periodic_face_translations = _prepared.periodic_face_translations
             self.coordinate_spec = _prepared.coordinate_spec
             self.embedding = _prepared.embedding
+            self.measure_relative_tolerance = _prepared.measure_relative_tolerance
             return
         if vertices is None:
             raise TypeError("vertices must be supplied for direct construction.")
@@ -1642,6 +1668,7 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         self.periodic_face_translations = None
         self.coordinate_spec = None
         self.embedding = None
+        self.measure_relative_tolerance = _DEFAULT_MAPPED_MEASURE_RELATIVE_TOLERANCE
 
     @classmethod
     @checked
@@ -1655,6 +1682,7 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         boundary_face_groups: Mapping[str, ArrayLike] | None = None,
         coordinate_spec: CellGeometrySpec | None = None,
         embedding: GlobalEmbeddingCertificate | None = None,
+        measure_relative_tolerance: float = _DEFAULT_MAPPED_MEASURE_RELATIVE_TOLERANCE,
     ) -> "UnstructuredFiniteVolumePlan":
         """Construct directly from canonical polyhedral CellMesh."""
         if not isinstance(mesh.connectivity, PolyhedralConnectivity):
@@ -1662,6 +1690,14 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
                 "CellMesh FV cutover currently targets polyhedral connectivity; "
                 "legacy tetrahedral callers use the direct constructor."
             )
+        relative_tolerance = float(measure_relative_tolerance)
+        if not np.isfinite(relative_tolerance) or relative_tolerance <= 0.0:
+            raise ValueError("measure_relative_tolerance must be positive and finite.")
+        if (
+            coordinate_spec is None
+            and relative_tolerance != _DEFAULT_MAPPED_MEASURE_RELATIVE_TOLERANCE
+        ):
+            raise ValueError("Mapped measure accuracy requires a coordinate_spec.")
         if coordinate_spec is not None:
             if not isinstance(coordinate_spec, CellGeometrySpec):
                 raise TypeError("coordinate_spec must be a CellGeometrySpec.")
@@ -1766,13 +1802,14 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
             "unstructured_finite_volume",
             DiscretizationRole.PHYSICAL,
         )
-        plan_id = canonical_fingerprint(
-            {
-                "kind": "unstructured-finite-volume-plan",
-                "topology": topology_id,
-                "geometry": geometry_id,
-            }
-        )
+        plan_identity: dict[str, str | float] = {
+            "kind": "unstructured-finite-volume-plan",
+            "topology": topology_id,
+            "geometry": geometry_id,
+        }
+        if coordinate_spec is not None:
+            plan_identity["measure_relative_tolerance"] = relative_tolerance
+        plan_id = canonical_fingerprint(plan_identity)
         prepared = _PreparedUnstructuredFiniteVolumeData(
             mesh=mesh,
             vertices=mesh.coordinates,
@@ -1793,6 +1830,7 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
             plan_id=plan_id,
             coordinate_spec=coordinate_spec,
             embedding=embedding,
+            measure_relative_tolerance=relative_tolerance,
         )
         return cls(None, _prepared=prepared)
 
@@ -2184,6 +2222,7 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
                 plan_id=canonical_fingerprint(plan_identity),
                 coordinate_spec=plan.coordinate_spec,
                 embedding=plan.embedding,
+                measure_relative_tolerance=plan.measure_relative_tolerance,
                 owner_local_view=view,
                 periodic_face_joins=jnp.asarray(joins) if joins.size else None,
                 periodic_face_translations=(
@@ -2259,6 +2298,9 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
     coordinate_spec: CellGeometrySpec | None
     coordinate_validity: CellValidityCertificate | None
     cell_measure_errors: Array | None
+    measure_relative_tolerance: float
+    polyhedral_closure_tolerance: Array | None
+    polyhedral_closure_geometry_id: str | None = eqx.field(static=True)
     vertices: Array
     triangles: Array
     quadrilaterals: Array
@@ -2356,6 +2398,9 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
             self.coordinate_spec = plan.coordinate_spec
             self.coordinate_validity = None
             self.cell_measure_errors = None
+            self.measure_relative_tolerance = plan.measure_relative_tolerance
+            self.polyhedral_closure_tolerance = None
+            self.polyhedral_closure_geometry_id = None
             self.vertices = plan.vertices
             self.triangles = plan.triangles
             self.quadrilaterals = plan.quadrilaterals
@@ -2435,6 +2480,8 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         topology = mesh.topology
         moments = None
         mapped_quadrature_degree = -1
+        polyhedral_closure_tolerance = None
+        polyhedral_closure_geometry_id = None
         if plan.coordinate_spec is not None:
             from .._mapped_geometry_measure import certified_cell_moments
 
@@ -2445,6 +2492,7 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
             moments = certified_cell_moments(
                 mesh,
                 plan.coordinate_spec,
+                measure_relative_tolerance=plan.measure_relative_tolerance,
                 validity=None if plan.embedding is None else plan.embedding.validity,
             )
         cell_count = connectivity.cell_count
@@ -2455,6 +2503,8 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
                 from ._polyhedral import prepare_polyhedral_finite_volume_geometry
 
                 polyhedral = prepare_polyhedral_finite_volume_geometry(mesh)
+                polyhedral_closure_tolerance = polyhedral.closure_tolerance
+                polyhedral_closure_geometry_id = polyhedral.geometry_id
                 cell_volumes = polyhedral.cell_volumes
                 cell_centers = polyhedral.cell_centers
                 face_centers = polyhedral.face_centers
@@ -2737,8 +2787,15 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         self.coordinate_spec = plan.coordinate_spec
         self.coordinate_validity = None if moments is None else moments.validity
         self.cell_measure_errors = (
-            None if moments is None else jnp.asarray(moments.measure_errors)
+            None
+            if moments is None
+            else _published_measure_errors(
+                moments.measures, moments.measure_errors, cell_volumes
+            )
         )
+        self.measure_relative_tolerance = plan.measure_relative_tolerance
+        self.polyhedral_closure_tolerance = polyhedral_closure_tolerance
+        self.polyhedral_closure_geometry_id = polyhedral_closure_geometry_id
         self.vertices = plan.vertices
         self.triangles = plan.triangles
         self.quadrilaterals = plan.quadrilaterals

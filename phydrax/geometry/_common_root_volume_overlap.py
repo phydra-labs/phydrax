@@ -460,6 +460,7 @@ def _integrate_nested_endpoint(
             mesh,
             geometry,
             second_moments=policy.second_moments,
+            measure_relative_tolerance=min(1e-12, policy.coverage_tolerance / 16),
             validity=validity,
         )
     except (ValueError, ArithmeticError) as error:

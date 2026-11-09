@@ -69,12 +69,18 @@ quadrature then come from that map, not from its rounded vertex carriers.
 Geometry identities distinguish these meanings even when the carrier coordinates
 coincide. Integration errors and coordinate validity remain available on the
 prepared discretization; quadrature exactness is advertised only when proved.
+`measure_relative_tolerance` defaults to `1e-12` and drives rational cell-volume
+integration without an absolute cutoff. Published `cell_measure_errors` include
+rounding into the prepared array dtype; unrepresentable requested integration
+accuracy is refused.
 
 Face fluxes retain their existing face-averaged scalar convention. An integrated
 face area vector is not a pointwise normal on a curved face. Carrier-only field
 queries and vertex-only motion are refused for this geometry mode rather than
 silently changing its meaning. Static stage evidence measures actual oriented
-face closure; it does not assume a zero defect.
+face closure; it does not assume a zero defect. Ordinary polyhedral stages retain
+their producer's admitted closure bound in addition to dtype roundoff. This does
+not relax mapped-geometry closure admission.
 
 ## Conservation dynamics
 
@@ -701,6 +707,12 @@ The resulting `refinement.geometry_evidence` retains the endpoint certificates,
 integration errors, partition findings and geometry/transition identities.
 Material labels are not used to discard overlaps; positive carrier crossings are
 not rounded to zero. FV coverage still has to satisfy the original tolerance.
+The nested route budgets rational measure error at
+`min(1e-12, policy.coverage_tolerance / 16)`. Prepare both FV endpoints with
+`measure_relative_tolerance` at least this accurate when requesting tighter
+coverage. Remap admission checks their actual published error arrays, not merely
+the requested preparation setting; insufficient precision returns
+`PREDICATE_UNCERTAIN` without a plan. Neither volumes nor weights are normalized.
 Requests for physical overlap simplices are refused when this mapped route cannot
 represent them faithfully; no weighted or collapsed carrier is presented as
 geometric output.

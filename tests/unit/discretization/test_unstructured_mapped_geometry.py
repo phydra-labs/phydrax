@@ -46,6 +46,25 @@ def test_native_restriction_prepares_mapped_fv_geometry() -> None:
         target_plan = UnstructuredFiniteVolumePlan.from_cell_mesh(
             transition.target_mesh, coordinate_spec=transition.target_geometry
         )
+        tighter = UnstructuredFiniteVolumePlan.from_cell_mesh(
+            transition.source_mesh,
+            coordinate_spec=transition.source_geometry,
+            measure_relative_tolerance=1.0e-13 / 16.0,
+        )
+        assert source_plan.geometry_id == tighter.geometry_id
+        assert source_plan.plan_id != tighter.plan_id
+        assert tighter.measure_relative_tolerance == 1.0e-13 / 16.0
+        for invalid in (0.0, -1.0, float("nan"), float("inf")):
+            with pytest.raises(ValueError, match="positive and finite"):
+                UnstructuredFiniteVolumePlan.from_cell_mesh(
+                    transition.source_mesh,
+                    coordinate_spec=transition.source_geometry,
+                    measure_relative_tolerance=invalid,
+                )
+        with pytest.raises(ValueError, match="requires a coordinate_spec"):
+            UnstructuredFiniteVolumePlan.from_cell_mesh(
+                transition.source_mesh, measure_relative_tolerance=1.0e-15
+            )
         source = source_plan.prepare()
         target = target_plan.prepare()
         assert source.cell_quadrature_degree >= 0
@@ -53,6 +72,8 @@ def test_native_restriction_prepares_mapped_fv_geometry() -> None:
         assert target.coordinate_validity.all_certified
         assert source.cell_measure_errors is not None
         assert target.cell_measure_errors is not None
+        assert source.polyhedral_closure_tolerance is None
+        assert target.polyhedral_closure_tolerance is None
         for region in (0, 1):
             np.testing.assert_allclose(
                 np.sum(np.asarray(source.cell_volumes)[fixture.source_regions == region]),
@@ -200,3 +221,72 @@ def test_curved_coordinate_map_changes_physical_fv_centroid_and_face_measure() -
         assert np.count_nonzero(np.asarray(mapped.face_measures) > 1.0001) == 2
         carrier = UnstructuredFiniteVolumePlan.from_cell_mesh(mesh).prepare()
         np.testing.assert_allclose(carrier.cell_centers, ((0.5, 0.5, 0.5),))
+
+
+@pytest.mark.parametrize(
+    "accuracy", (1e-3, 1e-11 / 16), ids=("refuse-loose", "accept-tight")
+)
+def test_mapped_remap_admits_actual_prepared_measure_accuracy(accuracy: float) -> None:
+    from fractions import Fraction
+
+    from phydrax.discretization._cell_geometry_transition_types import (
+        CellGeometryTransition,
+        CellGeometryTransitionEvidence,
+    )
+    from phydrax.discretization._nested_reference_types import ReferenceCellMapWitnesses
+    from phydrax.discretization.finite_volume import (
+        prepare_unstructured_conservative_remap,
+    )
+    from phydrax.geometry import CommonRefinementPolicy, CommonRefinementStatus
+    from tests._support.rational_geometry import _rational_box
+
+    with jax.enable_x64():
+        original, geometry = _rational_box(scale=2.0**-20)
+        cells = np.arange(8, dtype=np.int32)[None, :]
+        mesh = CellMesh(
+            original.coordinates,
+            original.blocks,
+            polyhedral_connectivity=polyhedral_connectivity((("hexahedron", cells),), 8),
+        )
+        ids = np.asarray(mesh.blocks[0].global_ids)
+        corners = np.asarray(
+            reference_cell_topology("hexahedron").vertices, dtype=np.float64
+        )
+        exact = tuple(
+            tuple(Fraction(float(value)) for value in point) for point in corners
+        )
+        maps = ReferenceCellMapWitnesses(
+            ids, ids, "hexahedron", "hexahedron", corners[None], (exact,)
+        )
+        transition = CellGeometryTransition(
+            mesh,
+            geometry,
+            mesh,
+            geometry,
+            evidence=CellGeometryTransitionEvidence(
+                "nested_restriction", reference_map_count=1
+            ),
+            reference_map=maps,
+        )
+        endpoint = UnstructuredFiniteVolumePlan.from_cell_mesh(
+            mesh, coordinate_spec=geometry, measure_relative_tolerance=accuracy
+        ).prepare()
+        remap = prepare_unstructured_conservative_remap(
+            endpoint,
+            endpoint,
+            provenance="rational-precision-regression",
+            policy=CommonRefinementPolicy(coverage_tolerance=1e-11),
+            geometry_transition=transition,
+        )
+        if accuracy == 1e-3:
+            assert remap.status == CommonRefinementStatus.PREDICATE_UNCERTAIN
+            assert remap.plan is None
+        else:
+            assert remap.succeeded
+            assert remap.plan is not None
+            np.testing.assert_allclose(
+                remap.plan.apply(np.asarray([2.0], dtype=np.float64)),
+                [2.0],
+                rtol=1e-11,
+                atol=0.0,
+            )

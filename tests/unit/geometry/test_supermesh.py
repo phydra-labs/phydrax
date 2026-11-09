@@ -132,6 +132,7 @@ def _exact_intersection_second(source: np.ndarray, target: np.ndarray, /) -> np.
         dtype=np.float64,
     )
 
+
 @pytest.mark.parametrize(
     "scale,shift",
     [(1.0, (0.0, 0.0, 0.0)), (8.0, (2.0, -4.0, 6.0)), (0.25, (0.125, -0.25, 0.5))],
@@ -181,6 +182,7 @@ def test_symbolic_quadratic_moments_preserve_signed_coordinates() -> None:
     np.testing.assert_allclose(
         second[0], _exact_intersection_second(source, source), rtol=2e-14, atol=0.0
     )
+
 
 def test_thin_common_refinement_carrier_second_moments() -> None:
     source, target = _thin_overlap_tetrahedra()
@@ -1030,3 +1032,111 @@ def test_nested_coarsening_partition_with_unchanged_direct_cell() -> None:
     np.testing.assert_array_equal(result.target_offsets, [0, 2, 3])
     np.testing.assert_array_equal(result.source_cells, [0, 1, 2])
     np.testing.assert_allclose(result.volumes, [1 / 12, 1 / 12, 1 / 6], rtol=1e-12)
+
+
+def test_nested_scaled_rational_geometry_meets_relative_coverage() -> None:
+    from phydrax.discretization import CellGeometrySpec
+    from phydrax.discretization._cell_geometry import (
+        PerCellRestrictedCellGeometryElement,
+        RationalComposedCellGeometryElement,
+    )
+    from phydrax.discretization._cell_geometry_transition_types import (
+        CellGeometryTransition,
+        CellGeometryTransitionEvidence,
+    )
+    from phydrax.discretization._coordinate_enclosure import add, axes, constant, scale
+    from phydrax.discretization._nested_reference_types import ReferenceCellMapWitnesses
+    from phydrax.discretization._reference_cell import reference_cell_topology
+    from tests._support.rational_geometry import _rational_box
+
+    size = 2.0**-20
+    source, source_geometry = _rational_box(scale=size)
+    elements, routes, coefficients = source_geometry.resolve(source)
+    if not isinstance(elements[0], RationalComposedCellGeometryElement):
+        raise TypeError("Rational box fixture requires its rational coordinate element.")
+    parent_id = int(np.asarray(source.blocks[0].global_ids)[0])
+    u, v, w = axes(3)
+    charts = (
+        (scale(u, Fraction(1, 2)), v, w),
+        (add(constant(Fraction(1, 2), 3), scale(u, Fraction(1, 2))), v, w),
+    )
+    corners = tuple(
+        tuple(Fraction(float(value)) for value in point)
+        for point in reference_cell_topology("hexahedron").vertices
+    )
+    mapped_corners = tuple(
+        tuple(((point[0] + shift) / 2, point[1], point[2]) for point in corners)
+        for shift in (Fraction(0), Fraction(1))
+    )
+    physical = np.asarray(
+        [
+            [
+                [
+                    float(Fraction(size) * point[0] / (1 + point[0])),
+                    float(Fraction(size) * point[1]),
+                    float(Fraction(size) * point[2]),
+                ]
+                for point in cell
+            ]
+            for cell in mapped_corners
+        ]
+    )
+    target = CellMesh(
+        physical.reshape((-1, 3)),
+        (
+            CellBlock(
+                "mapped",
+                "hexahedron",
+                np.arange(16).reshape((2, 8)),
+                global_ids=np.asarray([10, 11]),
+            ),
+        ),
+    )
+    restricted = PerCellRestrictedCellGeometryElement(
+        elements[0], "hexahedron", (10, 11), (parent_id, parent_id), charts
+    )
+    target_geometry = CellGeometrySpec(
+        {"mapped": restricted},
+        {"mapped": np.repeat(np.asarray(routes[0]), 2, axis=0)},
+        coefficients,
+    )
+    maps = ReferenceCellMapWitnesses(
+        np.asarray([10, 11]),
+        np.asarray([parent_id, parent_id]),
+        "hexahedron",
+        "hexahedron",
+        np.asarray(mapped_corners, dtype=np.float64),
+        mapped_corners,
+    )
+    transition = CellGeometryTransition(
+        source,
+        source_geometry,
+        target,
+        target_geometry,
+        evidence=CellGeometryTransitionEvidence(
+            "nested_restriction", reference_map_count=2
+        ),
+        reference_map=maps,
+    )
+    policy = CommonRefinementPolicy(coverage_tolerance=1e-11)
+    result = prepare_common_refinement(
+        source, target, geometry_transition=transition, policy=policy
+    )
+    assert result.succeeded
+    assert abs(float(np.sum(result.volumes)) - float(result.source_measures[0])) <= (
+        policy.coverage_tolerance * float(result.source_measures[0])
+    )
+    evidence = result.geometry_evidence
+    assert evidence is not None
+    assert (
+        evidence.source_measure_errors is not None
+        and evidence.target_measure_errors is not None
+    )
+    assert np.all(
+        np.asarray(evidence.source_measure_errors)
+        <= 1e-12 * np.asarray(result.source_measures)
+    )
+    assert np.all(
+        np.asarray(evidence.target_measure_errors)
+        <= 1e-12 * np.asarray(result.target_measures)
+    )

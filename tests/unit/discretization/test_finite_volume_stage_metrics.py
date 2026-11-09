@@ -168,6 +168,50 @@ def _stage_metrics(**overrides: Any) -> Any:
     return FiniteVolumeStageMetrics(**values)
 
 
+def test_published_measure_error_includes_float32_rounding() -> None:
+    from phydrax.discretization.finite_volume._unstructured import (
+        _published_measure_errors,
+    )
+
+    exact = np.asarray((0.1, 1.0 / 3.0), dtype=np.float64)
+    source_errors = np.asarray((1.0e-18, 1.0e-19), dtype=np.float64)
+    with jax.enable_x64(False):
+        values = jnp.asarray(exact, dtype=jnp.float32)
+        published_errors = _published_measure_errors(exact, source_errors, values)
+    expected = source_errors + np.abs(np.asarray(values, dtype=np.float64) - exact)
+    assert published_errors.dtype == jnp.float32
+    assert np.all(np.asarray(published_errors, dtype=np.float64) >= expected)
+
+
+def test_static_polyhedral_stage_uses_its_producer_closure_certificate() -> None:
+    from phydrax.discretization.finite_volume._polyhedral import (
+        prepare_polyhedral_finite_volume_geometry,
+    )
+
+    # A convex, highly skew parallelepiped makes opposite face cross-products
+    # take different floating-point paths without modifying prepared geometry.
+    reference_cell = phx.discretization.reference_cell_topology("hexahedron")
+    corners = np.asarray(reference_cell.vertices)
+    matrix = np.asarray(((1.1, 1.1, 1.1), (1.1, 1.1001, 1.1), (1.1, 1.1, 1.1001)))
+    faces = reference_cell.entities[2]
+    with jax.enable_x64():
+        points = 1000.0 * (corners @ matrix.T)
+        mesh = phx.discretization.CellMesh.from_polyhedra(points, (faces,))
+        producer = prepare_polyhedral_finite_volume_geometry(mesh)
+        discretization = phx.discretization.UnstructuredFiniteVolumePlan.from_cell_mesh(
+            mesh
+        ).prepare()
+        metrics = lower_static_unstructured_stage_metrics(discretization)
+        reference = max(float(np.sum(np.asarray(discretization.face_measures))), 1.0)
+        defect = float(np.asarray(metrics.evidence.face_closure_defect)[0])
+    assert defect > 32.0 * np.finfo(np.float64).eps * reference
+    assert float(np.asarray(producer.closure_residual)[0]) <= float(
+        np.asarray(producer.closure_tolerance)
+    )
+    assert defect <= float(np.asarray(metrics.evidence.face_closure_tolerance)[0])
+    assert bool(metrics.evidence.passed)
+
+
 def test_static_stage_refuses_nonclosing_oriented_face_geometry() -> None:
     discretization: UnstructuredFiniteVolumeDiscretization = _unstructured()
     original = discretization.face_blocks[0]

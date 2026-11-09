@@ -3,23 +3,23 @@ from __future__ import annotations
 from fractions import Fraction
 
 import numpy as np
+import pytest
 from numpy.typing import NDArray
 
 import phydrax.discretization._mapped_geometry_measure as mapped_measure
 from phydrax.discretization import CellBlock, CellGeometrySpec, CellMesh
 from phydrax.discretization._cell_geometry import (
     PerCellRestrictedCellGeometryElement,
-    RationalComposedCellGeometryElement,
 )
 from phydrax.discretization._coordinate_enclosure import (
     ExpressionInput,
-    RationalPolynomial,
 )
 from phydrax.discretization._mapped_geometry_measure import (
     certified_cell_measures,
     certified_cell_moments,
 )
 from phydrax.discretization.fem import lagrange_element
+from tests._support.rational_geometry import _rational_box
 
 
 def test_restricted_polynomial_measures_across_distinct_charts() -> None:
@@ -49,45 +49,6 @@ def test_restricted_polynomial_measures_across_distinct_charts() -> None:
     validity = mapped_measure.certify_cell_geometry_validity(geometry, mesh=mesh)
     measures = certified_cell_measures(mesh, geometry, validity=validity)
     np.testing.assert_allclose(measures.values, (0.75, 0.75, 13 / 12))
-
-
-def _rational_box(offset: float = 0.0) -> tuple[CellMesh, CellGeometrySpec]:
-    source_element = lagrange_element("hexahedron", 1)
-    reference_nodes = np.asarray(source_element.reference_nodes, dtype=np.float64)
-    unit: dict[tuple[int, ...], Fraction] = {(0, 0, 0): Fraction(1)}
-    element = RationalComposedCellGeometryElement(
-        source_element,
-        "hexahedron",
-        (
-            RationalPolynomial(
-                {(1, 0, 0): Fraction(1)},
-                {(0, 0, 0): Fraction(1), (1, 0, 0): Fraction(1)},
-            ),
-            RationalPolynomial({(0, 1, 0): Fraction(1)}, unit),
-            RationalPolynomial({(0, 0, 1): Fraction(1)}, unit),
-        ),
-    )
-    physical_vertices = np.array(reference_nodes, copy=True)
-    physical_vertices[:, 0] /= 1.0 + physical_vertices[:, 0]
-    physical_vertices[:, 0] += offset
-    mesh = CellMesh(
-        physical_vertices,
-        (
-            CellBlock(
-                "mapped",
-                "hexahedron",
-                np.arange(reference_nodes.shape[0], dtype=np.int32)[None, :],
-            ),
-        ),
-    )
-    coordinate_values = np.array(reference_nodes, copy=True)
-    coordinate_values[:, 0] += offset
-    geometry = CellGeometrySpec(
-        {"mapped": element},
-        {"mapped": np.arange(reference_nodes.shape[0], dtype=np.int64)[None, :]},
-        coordinate_values,
-    )
-    return mesh, geometry
 
 
 def test_rational_mapped_cell_measure_matches_independent_gauss_quadrature() -> None:
@@ -180,3 +141,71 @@ def test_signed_rational_volume_moments_enclose_independent_box_integrals() -> N
         ),
         tolerance,
     )
+
+
+def test_scaled_rational_moments_use_relative_measure_and_signed_budgets() -> None:
+    scale = 2.0**-20
+    mesh, geometry = _rational_box(-scale / 4, scale)
+    tolerance = 1e-12
+    moments = certified_cell_moments(
+        mesh,
+        geometry,
+        second_moments=True,
+        measure_relative_tolerance=tolerance,
+    )
+    s = Fraction(scale)
+    assert moments.measure_errors[0] <= tolerance * moments.measures[0]
+    expected_first = (Fraction(0), s**4 / 4, s**4 / 4)
+    expected_second = (
+        s**5 / 96,
+        Fraction(0),
+        Fraction(0),
+        Fraction(0),
+        s**5 / 6,
+        s**5 / 8,
+        Fraction(0),
+        s**5 / 8,
+        s**5 / 6,
+    )
+    assert abs(Fraction(float(moments.measures[0])) - s**3 / 2) <= Fraction(
+        float(moments.measure_errors[0])
+    )
+    for value, error, exact in zip(
+        moments.first_moments.flat,
+        moments.first_moment_errors.flat,
+        expected_first,
+        strict=True,
+    ):
+        assert abs(Fraction(float(value)) - exact) <= Fraction(float(error))
+    assert moments.second_moments is not None and moments.second_moment_errors is not None
+    for value, error, exact in zip(
+        moments.second_moments.flat,
+        moments.second_moment_errors.flat,
+        expected_second,
+        strict=True,
+    ):
+        assert abs(Fraction(float(value)) - exact) <= Fraction(float(error))
+
+
+def test_relative_measure_budget_refuses_below_binary64_resolution() -> None:
+    mesh, geometry = _rational_box(scale=2.0**-20)
+    with pytest.raises(ValueError, match="relative error budget"):
+        certified_cell_moments(mesh, geometry, measure_relative_tolerance=1e-20)
+
+
+def test_relative_measure_budget_does_not_change_polynomial_moments() -> None:
+    points = np.asarray(
+        ((0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 3.0, 0.0), (0.0, 0.0, 4.0))
+    )
+    mesh = CellMesh.from_tetrahedra(points, np.asarray(((0, 1, 2, 3),)))
+    geometry = CellGeometrySpec.affine(mesh)
+    before = certified_cell_moments(mesh, geometry, second_moments=True)
+    after = certified_cell_moments(
+        mesh,
+        geometry,
+        second_moments=True,
+        measure_relative_tolerance=1e-12,
+    )
+    np.testing.assert_array_equal(before.measures, after.measures)
+    np.testing.assert_array_equal(before.first_moments, after.first_moments)
+    np.testing.assert_array_equal(before.second_moments, after.second_moments)

@@ -967,6 +967,51 @@ def _static_face_closure(
     return jnp.asarray(np.linalg.norm(closure, axis=1)), jnp.asarray(reference)
 
 
+def _polyhedral_closure_bound(
+    discretization: UnstructuredFiniteVolumeDiscretization
+    | DyadicFiniteVolumeDiscretization,
+    /,
+) -> tuple[float, str | None]:
+    """Recover the current raw polyhedral producer's admitted closure bound."""
+    from ._polyhedral import (
+        POLYHEDRAL_CLOSURE_TOLERANCE,
+        POLYHEDRAL_PLANARITY_TOLERANCE,
+    )
+    from ._unstructured import UnstructuredFiniteVolumeDiscretization
+
+    if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
+        return 0.0, None
+    tolerance = discretization.polyhedral_closure_tolerance
+    identity = discretization.polyhedral_closure_geometry_id
+    if tolerance is None and identity is None:
+        return 0.0, None
+    mesh = discretization.mesh
+    if (
+        tolerance is None
+        or identity is None
+        or mesh is None
+        or discretization.coordinate_spec is not None
+    ):
+        raise ValueError("Raw polyhedral closure evidence is not bound to its producer.")
+    expected = canonical_fingerprint(
+        {
+            "kind": "prepared-polyhedral-finite-volume-geometry",
+            "mesh": mesh.mesh_id,
+            "planarity_tolerance": POLYHEDRAL_PLANARITY_TOLERANCE,
+            "closure_tolerance": POLYHEDRAL_CLOSURE_TOLERANCE,
+        }
+    )
+    admitted = np.asarray(tolerance)
+    represented = np.asarray(POLYHEDRAL_CLOSURE_TOLERANCE, dtype=admitted.dtype)
+    if (
+        admitted.shape != ()
+        or not np.array_equal(admitted, represented)
+        or identity != expected
+    ):
+        raise ValueError("Raw polyhedral closure evidence differs from its producer.")
+    return POLYHEDRAL_CLOSURE_TOLERANCE, identity
+
+
 def lower_static_unstructured_stage_metrics(
     discretization: UnstructuredFiniteVolumeDiscretization
     | DyadicFiniteVolumeDiscretization,
@@ -1076,11 +1121,11 @@ def lower_static_unstructured_stage_metrics(
         discretization.cell_centers.shape[1],
         discretization.cell_volumes.dtype,
     )
+    producer_bound, producer_geometry_id = _polyhedral_closure_bound(discretization)
     closure_tolerance = (
-        roundoff_multiplier
-        * jnp.finfo(discretization.cell_volumes.dtype).eps
-        * jnp.maximum(closure_reference, 1.0)
-    )
+        producer_bound
+        + roundoff_multiplier * jnp.finfo(discretization.cell_volumes.dtype).eps
+    ) * jnp.maximum(closure_reference, 1.0)
     passed = jnp.all(closure_defect <= closure_tolerance)
     evidence_policy_id = canonical_fingerprint(
         {
@@ -1097,6 +1142,8 @@ def lower_static_unstructured_stage_metrics(
                 "roundoff_multiplier": roundoff_multiplier,
                 "reference_floor": 1.0,
                 "face_closure_reference": "incident-face-measures",
+                "polyhedral_closure_bound": producer_bound,
+                "polyhedral_producer_geometry": producer_geometry_id,
             },
             "numeric_version": discretization.numeric_version,
         }

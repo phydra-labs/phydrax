@@ -802,6 +802,7 @@ def _layer_core_density(
         result.mesh,
         coordinate_spec=result.geometry,
         embedding=result.certification.embedding,
+        measure_relative_tolerance=1.0e-13 / 16.0,
     ).prepare()
     fv_ids = np.asarray(volume.cell_global_ids, dtype=np.int64)
     try:

@@ -184,6 +184,20 @@ def prepare_unstructured_conservative_remap(
             status=refinement.status,
             reason=f"{refinement.status.name}: {refinement.evidence.reason}",
         )
+    if geometry_transition is not None:
+        relative_budget = min(1.0e-12, policy_.coverage_tolerance / 16.0)
+        for endpoint in (source, target):
+            errors = endpoint.cell_measure_errors
+            if errors is None or np.any(
+                np.asarray(errors, dtype=np.float64)
+                > relative_budget * np.asarray(endpoint.cell_volumes, dtype=np.float64)
+            ):
+                return PreparedUnstructuredConservativeRemap(
+                    refinement,
+                    None,
+                    status=CommonRefinementStatus.PREDICATE_UNCERTAIN,
+                    reason="prepared FV cell measure errors exceed the requested relative budget",
+                )
     require_complete = policy_.coverage is CommonRefinementCoverage.COMPLETE
     if require_complete:
         target_defect, source_defect, target_limit, source_limit = _coverage_ledger(

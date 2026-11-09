@@ -500,6 +500,15 @@ def _integrate_rational_patch(
         * patch.numerator_bound
         / (patch.center * (1 - patch.contraction))
     )
+    if (
+        absolute_tolerance == 0
+        and relative_tolerance == 0
+        and tail_scale
+        and patch.contraction
+    ):
+        raise ValueError(
+            "Zero integration tolerance requires an exact rational integral."
+        )
     total = Fraction(0)
     order = 0
     while True:
@@ -515,6 +524,10 @@ def _integrate_rational_patch(
         if remainder <= permitted:
             return total - remainder, total + remainder, remainder == 0
         weighted = multiply(weighted, ratio)
+        if order >= 2048:
+            raise ValueError(
+                "Rational mapped integral did not reach its requested error budget."
+            )
         order += 1
 
 
@@ -954,6 +967,74 @@ def _integrate_volume_density(
     return value, error, True
 
 
+def _integrate_volume_with_accuracy(
+    density: Expression,
+    cell_kind: str,
+    absolute_tolerance: Fraction,
+    relative_tolerance: Fraction,
+    measure_budget: Fraction | None,
+    series_budget: Fraction | None,
+    /,
+) -> tuple[float, float, bool]:
+    """Enforce rational-volume accuracy after binary64 publication."""
+    rational_density = measure_budget is not None and (
+        isinstance(density, RationalPolynomial)
+        or (
+            cell_kind == "pyramid"
+            and isinstance(_pyramid_weighted_density(density), RationalPolynomial)
+        )
+    )
+    value, error, exact = _integrate_volume_density(
+        density,
+        cell_kind,
+        Fraction(0)
+        if measure_budget is not None and rational_density
+        else absolute_tolerance,
+        series_budget
+        if series_budget is not None and rational_density
+        else relative_tolerance,
+    )
+    if (
+        measure_budget is not None
+        and rational_density
+        and Fraction(error) > measure_budget * Fraction(value)
+    ):
+        raise ValueError(
+            "Mapped cell measure cannot meet its requested relative error budget."
+        )
+    return value, error, exact
+
+
+def _signed_component_budget(
+    density: Expression, cell_kind: str, relative: Fraction, /
+) -> Fraction:
+    """Bound the absolute integrand on the reference box, including its Jacobian."""
+    if cell_kind == "pyramid":
+        density = _pyramid_weighted_density(density)
+        cell_kind = "hexahedron"
+    if not isinstance(density, RationalPolynomial):
+        return Fraction(0)
+    dimension = reference_cell_topology(cell_kind).dimension
+    arguments, jacobian = _reference_box_map(cell_kind)
+    mapped = compose_expression(density, arguments)
+    if not isinstance(mapped, RationalPolynomial):
+        return Fraction(0)
+    patches = _rational_series_patches(
+        multiply(dict(mapped.numerator), jacobian),
+        dict(mapped.denominator),
+        dimension,
+    )
+    return relative * sum(
+        (
+            patch.volume_scale
+            * patch.numerator_bound
+            / (patch.center * (1 - patch.contraction))
+            for patch in patches
+        ),
+        Fraction(0),
+    )
+
+
 def _integrate_coordinate_moments(
     row: int,
     coordinates: tuple[Expression, ...],
@@ -961,6 +1042,7 @@ def _integrate_coordinate_moments(
     cell_kind: str,
     absolute_tolerance: Fraction,
     relative_tolerance: Fraction,
+    component_relative_budget: Fraction | None,
     first: np.ndarray,
     first_errors: np.ndarray,
     second: np.ndarray | None,
@@ -971,16 +1053,31 @@ def _integrate_coordinate_moments(
     exact = True
     for axis, coordinate in enumerate(coordinates):
         first_density = multiply(density, coordinate)
+        first_absolute = (
+            absolute_tolerance
+            if component_relative_budget is None
+            else _signed_component_budget(
+                first_density, cell_kind, component_relative_budget
+            )
+        )
         first[row, axis], first_errors[row, axis], cell_exact = _integrate_volume_density(
-            first_density, cell_kind, absolute_tolerance, relative_tolerance
+            first_density, cell_kind, first_absolute, relative_tolerance
         )
         exact = exact and cell_exact
         if second is not None and second_errors is not None:
             for other in range(axis, len(coordinates)):
+                second_density = multiply(first_density, coordinates[other])
+                second_absolute = (
+                    absolute_tolerance
+                    if component_relative_budget is None
+                    else _signed_component_budget(
+                        second_density, cell_kind, component_relative_budget
+                    )
+                )
                 value, error, cell_exact = _integrate_volume_density(
-                    multiply(first_density, coordinates[other]),
+                    second_density,
                     cell_kind,
-                    absolute_tolerance,
+                    second_absolute,
                     relative_tolerance,
                 )
                 second[row, axis, other] = second[row, other, axis] = value
@@ -1020,6 +1117,7 @@ def certified_cell_moments(
     second_moments: bool = False,
     absolute_tolerance: float = 1e-12,
     relative_tolerance: float = 1e-12,
+    measure_relative_tolerance: float | None = None,
     validity: CellValidityCertificate | None = None,
 ) -> MappedCellMoments:
     """Integrate volume, first and optional second moments of the actual map.
@@ -1027,6 +1125,9 @@ def certified_cell_moments(
     Polynomial densities use exact reference moments; rational densities use
     the owning Bernstein-enclosed series. Errors bound each physical component
     separately. This is immutable host preparation, not a device iteration.
+    When ``measure_relative_tolerance`` is supplied, rational cell measures
+    use that per-cell relative error budget with no absolute cutoff. Signed
+    component budgets scale with certified bounds on their absolute integrands.
     """
     if not isinstance(second_moments, bool):
         raise TypeError("second_moments must be bool.")
@@ -1034,6 +1135,13 @@ def certified_cell_moments(
     relative = finite_real_scalar(relative_tolerance, "relative_tolerance")
     if relative < 0.0:
         raise ValueError("relative_tolerance must be nonnegative.")
+    measure_relative = (
+        None
+        if measure_relative_tolerance is None
+        else finite_real_scalar(measure_relative_tolerance, "measure_relative_tolerance")
+    )
+    if measure_relative is not None and not 0.0 <= measure_relative < 1.0:
+        raise ValueError("measure_relative_tolerance must be in [0, 1).")
     if mesh.topological_dimension != mesh.ambient_dimension:
         raise ValueError("Mapped cell moments require full-dimensional volume maps.")
     if validity is None:
@@ -1059,6 +1167,8 @@ def certified_cell_moments(
     second_errors = None if second is None else np.empty_like(second)
     absolute_per_cell = Fraction(absolute) / max(count, 1)
     relative_fraction = Fraction(relative)
+    measure_budget = None if measure_relative is None else Fraction(measure_relative)
+    series_budget = None if measure_budget is None else measure_budget / 4
     exact = True
     jacobian_degrees: list[int | None] = []
     for row, (element, coordinates) in enumerate(
@@ -1073,8 +1183,13 @@ def certified_cell_moments(
             if isinstance(density, RationalPolynomial)
             else max((sum(exponent) for exponent in density), default=0)
         )
-        measures[row], measure_errors[row], cell_exact = _integrate_volume_density(
-            density, element.cell_kind, absolute_per_cell, relative_fraction
+        measures[row], measure_errors[row], cell_exact = _integrate_volume_with_accuracy(
+            density,
+            element.cell_kind,
+            absolute_per_cell,
+            relative_fraction,
+            measure_budget,
+            series_budget,
         )
         exact = exact and cell_exact
         coordinate_exact = _integrate_coordinate_moments(
@@ -1083,7 +1198,8 @@ def certified_cell_moments(
             density,
             element.cell_kind,
             absolute_per_cell,
-            relative_fraction,
+            relative_fraction if series_budget is None else series_budget,
+            series_budget,
             first,
             first_errors,
             second,
