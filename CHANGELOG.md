@@ -525,6 +525,11 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- The mixed layer/core source-strata test preserves witness-bound grouping
+  across numeric mesh versions, uses finite per-case archive limits, and
+  rebuilds optional source metadata correctly for cold forgery checks. Its
+  cold subprocess uses a case-specific 21,600-second deadline after measured
+  restoration exceeded 900 seconds; library limits and global timeouts are unchanged.
 - Legendre–Lobatto preparation now certifies binary64 node and weight rounding
   through native exact polynomial isolation, including rounding-boundary ties.
   Immutable host tables are reused; Gauss and Radau routes are unchanged.
