@@ -47,7 +47,6 @@ from phydrax.meshing._association import (
     GeometryAssociationKind,
     GeometryAssociationProvenance,
     GeometrySourceEntityRole,
-    SourceBoundaryTargetPieceRow,
 )
 from phydrax.meshing._association_composition import ComposedAssociationTransfer
 from phydrax.meshing._association_routes import (
@@ -95,6 +94,7 @@ from phydrax.meshing.providers._native_schedules import (
     NativeSurfaceSchedule,
 )
 from phydrax.meshing.providers._native_sources import NativeImplicitSource
+from tests._support.source_associations import replace_association_support
 from tests.unit.geometry.test_implicit_source_charts import _retarget_implicit_witness
 from tests.unit.interchange.test_native_cad_archive import _worker_oracle
 from tests.unit.meshing.test_native_mapped_hex_routes import _mapped_plc_tetra_source
@@ -1066,53 +1066,6 @@ def accepted_native_layer_core() -> _NativeLayerCoreFixture:
     return source, specification, result, adapter, _accepted_layer_columns(result)
 
 
-def _replace_association_support(
-    table: GeometryAssociation,
-    /,
-    *,
-    pieces: tuple[SourceBoundaryTargetPieceRow | None, ...] | None = None,
-    exact: bool | None = None,
-) -> GeometryAssociation:
-    return GeometryAssociation(
-        table.association_kind,
-        table.source_id,
-        table.source_revision,
-        table.target_entity_set_id,
-        table.target_global_ids,
-        table.source_entity_ids,
-        table.residuals,
-        resolved=table.resolved,
-        ambiguous=table.ambiguous,
-        exact=table.exact if exact is None else exact,
-        source_dimensions=(
-            table.source_dimensions
-            if np.any(np.asarray(table.source_dimensions) >= 0)
-            else None
-        ),
-        source_indices=(
-            table.source_indices
-            if np.any(np.asarray(table.source_indices) >= 0)
-            else None
-        ),
-        source_roles=table.source_roles,
-        source_occurrence_paths=table.source_occurrence_paths,
-        source_region_sides=table.source_region_sides,
-        source_parameter_intervals=table.source_parameter_intervals,
-        source_parameter_points=table.source_parameter_points,
-        target_parameter_intervals=table.target_parameter_intervals,
-        target_reference_pieces=table.target_reference_pieces
-        if pieces is None
-        else pieces,
-        source_boundary_witness_id=table.source_boundary_witness_id,
-        parameters=table.parameters,
-        orientations=table.orientations,
-        parent_dimensions=table.parent_dimensions,
-        parent_ids=table.parent_ids,
-        parent_association_id=table.parent_association_id,
-        provenance=table.provenance,
-    )
-
-
 def test_face_image_association_consumer_preserves_distinct_source_strata(
     tmp_path: Path,
 ) -> None:
@@ -1680,7 +1633,7 @@ def test_native_layer_core_mixed_round_trip_preserves_source_strata(
             key=_target_piece_sort_key,
         )
     )
-    forged_overlay = _replace_association_support(overlay, pieces=tuple(altered_pieces))
+    forged_overlay = replace_association_support(overlay, pieces=tuple(altered_pieces))
     with pytest.raises(ValueError):
         forged_overlay.validate_source_boundary_support(
             overlay_endpoint.mesh,
@@ -1841,9 +1794,8 @@ import json
 import sys
 from dataclasses import replace
 import equinox as eqx
-import numpy as np
 from phydrax.lifecycle import Composition
-from phydrax.meshing._association import GeometryAssociation, GeometrySourceEntityRole
+from phydrax.meshing._association import GeometrySourceEntityRole
 from phydrax.geometry._source_boundary_records import SourceBoundaryFaceImageWitness, SourceBoundaryImagePullback
 from phydrax.meshing._contracts import VolumeMeshingSpec
 from phydrax.meshing._layer_core_association_transfer import NativeLayerCoreAssociationTransfer
@@ -1851,6 +1803,7 @@ from phydrax.meshing._model_codec import (
     MODEL_ARCHIVE_LIMITS, read_model_artifact, restore_layer_core_accepted_result,
     restore_layer_core_authoring, restore_model_archive_value,
 )
+from tests._support.source_associations import replace_association_support
 archive_limits = replace(MODEL_ARCHIVE_LIMITS, **json.loads(sys.argv[3]))
 
 archive = read_model_artifact(
@@ -1892,30 +1845,11 @@ for _, table, query, witness in (facet, edge):
         association_source=source, layer_core_root_geometry=result.layer_core_root_geometry,
     )
 
-def rebuilt(table, *, sides=None, witness_id=None):
-    return GeometryAssociation(
-        table.association_kind, table.source_id, table.source_revision,
-        table.target_entity_set_id, table.target_global_ids, table.source_entity_ids,
-        table.residuals, resolved=table.resolved, ambiguous=table.ambiguous, exact=table.exact,
-        source_dimensions=table.source_dimensions if np.any(np.asarray(table.source_dimensions) >= 0) else None,
-        source_indices=table.source_indices if np.any(np.asarray(table.source_indices) >= 0) else None,
-        source_roles=table.source_roles, source_occurrence_paths=table.source_occurrence_paths,
-        source_region_sides=table.source_region_sides if sides is None else sides,
-        source_parameter_intervals=table.source_parameter_intervals,
-        source_parameter_points=table.source_parameter_points,
-        target_parameter_intervals=table.target_parameter_intervals,
-        target_reference_pieces=table.target_reference_pieces,
-        source_boundary_witness_id=table.source_boundary_witness_id if witness_id is None else witness_id,
-        parameters=table.parameters, orientations=table.orientations,
-        parent_dimensions=table.parent_dimensions, parent_ids=table.parent_ids,
-        parent_association_id=table.parent_association_id, provenance=table.provenance,
-    )
-
 _, table, query, witness = facet
 sides = list(table.source_region_sides)
 row = next(i for i, (a, b) in enumerate(sides) if a is not None and b is not None and a != b)
 sides[row] = tuple(reversed(sides[row]))
-for forged in (rebuilt(table, sides=tuple(sides)), rebuilt(table, witness_id="forged-image-witness")):
+for forged in (replace_association_support(table, sides=tuple(sides)), replace_association_support(table, witness_id="forged-image-witness")):
     try:
         forged.validate_source_boundary_support(result.mesh, result.geometry, query, witness,
             association_source=source, layer_core_root_geometry=result.layer_core_root_geometry)
@@ -2001,7 +1935,7 @@ def test_native_layer_core_refuses_stale_forged_and_conflicting_sources(
                 MeshAdaptationRoute.NATIVE_MIXED, association_transfer=adapter
             ),
         )
-    forged_exactness = _replace_association_support(original, exact=False)
+    forged_exactness = replace_association_support(original, exact=False)
     altered[table_index] = forged_exactness
     forged_result = eqx.tree_at(lambda value: value.associations, result, tuple(altered))
     with pytest.raises(ValueError):
