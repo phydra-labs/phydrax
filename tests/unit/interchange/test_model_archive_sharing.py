@@ -19,6 +19,8 @@ from phydrax._array_archive import (
 from phydrax.discretization._cell_mesh import CellMesh
 from phydrax.lifecycle._composition_rebind import Composition, CompositionEntry
 from phydrax.meshing._model_codec import (
+    _same_model_content,
+    MODEL_ARCHIVE_LIMITS,
     read_model_archive,
     read_model_artifact,
     restore_model_archive_value,
@@ -97,6 +99,41 @@ def _read(path: Path, /) -> Composition:
         restore=restore_model_archive_value,
         limits=None,
     )
+
+
+def test_content_comparison_preserves_large_admitted_payloads(tmp_path: Path) -> None:
+    extent = MODEL_ARCHIVE_LIMITS.max_axis_length + 1
+    payload = np.zeros(extent, dtype=np.uint8)
+    limits = dataclasses.replace(
+        MODEL_ARCHIVE_LIMITS,
+        max_axis_length=extent,
+        max_array_elements=extent,
+    )
+    path = tmp_path / "large-payload.phx"
+    value = Composition(
+        (
+            CompositionEntry(
+                payload,
+                entry_id="payload",
+                role="model-state",
+                owner_id="phydrax.meshing",
+                structure_id="large-byte-column",
+                revision_id="original",
+                semantics_id="coverage-witness-bytes",
+            ),
+        ),
+        boundary_id="large-payload",
+    )
+    write_model_artifact(path, value, limits=limits)
+    restored = read_model_artifact(
+        path,
+        expected_type=Composition,
+        restore=restore_model_archive_value,
+        limits=limits,
+    )
+    assert _same_model_content((payload,), (restored.value("payload"),))
+    payload[-1] = 1
+    assert not _same_model_content((payload,), (restored.value("payload"),))
 
 
 def test_pack_and_restore_reuse_one_validated_descriptor_tree(

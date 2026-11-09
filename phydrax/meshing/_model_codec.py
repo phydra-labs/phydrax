@@ -159,11 +159,13 @@ def _same_model_content(left: Any, right: Any, /) -> bool:
         model_structure_recipe(right, path="compare")
     ):
         return False
+    # These are existing operands, not an archive admission. A caller may have
+    # admitted them under a larger policy than the generic archive defaults.
     left_arrays = _pack_projected_model_array_tree(
-        left, recipe, prefix="compare", limits=MODEL_ARCHIVE_LIMITS
+        left, recipe, prefix="compare", limits=None
     )
     right_arrays = _pack_projected_model_array_tree(
-        right, recipe, prefix="compare", limits=MODEL_ARCHIVE_LIMITS
+        right, recipe, prefix="compare", limits=None
     )
     return left_arrays.keys() == right_arrays.keys() and all(
         array_payload_digest(left_arrays[key]) == array_payload_digest(right_arrays[key])

@@ -525,6 +525,10 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Canonical model-content comparison accepts existing payloads admitted under
+  larger archive policies instead of reapplying the generic archive size limits.
+  Recipe, dtype and byte equality remain exact; external archive read/write
+  admission limits are unchanged.
 - Mixed adaptation archives restore a later refinement cycle after complete
   coarsening without requiring an unrelated layer-root owner. Restoration
   proves the returned root's retained cell identities and exact identity charts,
