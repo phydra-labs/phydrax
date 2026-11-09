@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import math
+from fractions import Fraction
 from numbers import Integral
 from typing import Any, Literal, TypeAlias
 
@@ -320,6 +322,151 @@ def _canonical_arrays(
     )
 
 
+def _legendre_coefficients(order: int, /) -> tuple[Fraction, ...]:
+    """Monomial coefficients in ascending order, computed by the exact recurrence."""
+    previous, current = (Fraction(1),), (Fraction(0), Fraction(1))
+    for degree in range(2, order + 1):
+        shifted = (Fraction(0), *(Fraction(2 * degree - 1, degree) * c for c in current))
+        padded = previous + (Fraction(0),) * (len(shifted) - len(previous))
+        previous, current = (
+            current,
+            tuple(
+                a - Fraction(degree - 1, degree) * b
+                for a, b in zip(shifted, padded, strict=True)
+            ),
+        )
+    return current
+
+
+def _polynomial_interval(
+    coefficients: tuple[Fraction, ...], lower: Fraction, upper: Fraction, /
+) -> tuple[Fraction, Fraction]:
+    """Exact rational interval Horner evaluation, without floating point rounding."""
+    lo = hi = coefficients[-1]
+    for coefficient in reversed(coefficients[:-1]):
+        products = (lo * lower, lo * upper, hi * lower, hi * upper)
+        lo, hi = min(products) + coefficient, max(products) + coefficient
+    return lo, hi
+
+
+def _rounding_boundary(lower: Fraction, upper: Fraction, /) -> Fraction | None:
+    """Return the unique binary64 midpoint between adjacent rounded endpoints."""
+    low, high = float(lower), float(upper)
+    if low == high or math.nextafter(low, math.inf) != high:
+        return None
+    return (Fraction(low) + Fraction(high)) / 2
+
+
+def _common_root_in_interval(
+    first: tuple[Fraction, ...],
+    second: tuple[Fraction, ...],
+    lower: Fraction,
+    upper: Fraction,
+    /,
+) -> bool:
+    """Decide equality at a uniquely isolated root using an exact polynomial GCD."""
+    from ..algebraic._exact_univariate import _gcd, RealRootIsolator
+
+    common = _gcd(first, second)
+    if len(common) == 1:
+        return False
+    if lower == upper:
+        return _polynomial_interval(common, lower, lower)[0] == 0
+    # A derivative isolator's nonsingleton endpoints are not roots. Therefore
+    # each common-root interval eventually lies wholly inside or outside them.
+    isolator = RealRootIsolator(common)
+    tolerance = (upper - lower) / 2
+    while True:
+        intervals = isolator.isolate(tolerance=tolerance, recognize_rational_roots=False)
+        if any(lower < a and b < upper for a, b, _ in intervals):
+            return True
+        if all(b < lower or upper < a for a, b, _ in intervals):
+            return False
+        tolerance /= 2
+
+
+def _round_root(
+    derivative: tuple[Fraction, ...], lower: Fraction, upper: Fraction, /
+) -> float | None:
+    if float(lower) == float(upper):
+        return float(lower)
+    boundary = _rounding_boundary(lower, upper)
+    if (
+        boundary is not None
+        and _polynomial_interval(derivative, boundary, boundary)[0] == 0
+    ):
+        return float(boundary)
+    return None
+
+
+def _round_weight(
+    coefficients: tuple[Fraction, ...],
+    derivative: tuple[Fraction, ...],
+    lower: Fraction,
+    upper: Fraction,
+    numerator: Fraction,
+    /,
+) -> float | None:
+    p_lo, p_hi = _polynomial_interval(coefficients, lower, upper)
+    if p_lo <= 0 <= p_hi:
+        return None
+    minimum, maximum = sorted((p_lo * p_lo, p_hi * p_hi))
+    weight_lower, weight_upper = numerator / maximum, numerator / minimum
+    if float(weight_lower) == float(weight_upper):
+        return float(weight_lower)
+    boundary = _rounding_boundary(weight_lower, weight_upper)
+    if boundary is None or boundary <= 0:
+        return None
+    # w = numerator / P(x)^2 equals the midpoint iff the isolated
+    # derivative root is also a root of boundary * P(x)^2 - numerator.
+    square = [Fraction(0)] * (2 * len(coefficients) - 1)
+    for i, left in enumerate(coefficients):
+        for j, right in enumerate(coefficients):
+            square[i + j] += boundary * left * right
+    square[0] -= numerator
+    if _common_root_in_interval(derivative, tuple(square), lower, upper):
+        return float(boundary)
+    return None
+
+
+@host_table_cache(max_entries=256, max_bytes=16777216)
+def _lobatto_host_table(count: int, /) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """Round exact Lobatto roots and weights to binary64 with interval certificates."""
+    from ..algebraic._exact_univariate import RealRootIsolator
+
+    order = count - 1
+    coefficients = _legendre_coefficients(order)
+    derivative = tuple(index * coefficients[index] for index in range(1, count))
+    isolator = RealRootIsolator(derivative)
+    endpoint_weight = float(Fraction(2, count * order))
+    # Enclosures contract to each simple root and its nonzero Legendre value.
+    # Midpoint equalities are decided exactly, so refinement cannot stall there.
+    numerator = Fraction(2, count * order)
+    bits = 96
+    while True:
+        roots = isolator.isolate(
+            tolerance=Fraction(1, 1 << bits), recognize_rational_roots=False
+        )
+        if len(roots) != count - 2 or any(
+            multiplicity != 1 for _, _, multiplicity in roots
+        ):
+            raise ArithmeticError(
+                "Legendre derivative root isolation lost an interior root."
+            )
+        nodes: list[float] = [-1.0]
+        weights: list[float] = [endpoint_weight]
+        for lower, upper, _ in roots:
+            node = _round_root(derivative, lower, upper)
+            weight = _round_weight(coefficients, derivative, lower, upper, numerator)
+            if node is None or weight is None:
+                break
+            nodes.append(node)
+            weights.append(weight)
+        else:
+            return (*nodes, 1.0), (*weights, endpoint_weight)
+        bits *= 2
+
+
 def legendre_rule_data(
     num_nodes: int,
     kind: LegendreRuleKind = "gauss",
@@ -362,18 +509,8 @@ def legendre_rule_data(
         endpoint_policy = "both"
         exact_degree = 1
     else:
-        interior, _ = roots_jacobi(count - 2, 1.0, 1.0)
-        values = eval_legendre(count - 1, interior)
-        endpoint_weight = 2.0 / (count * (count - 1))
-        nodes = np.concatenate((np.asarray([-1.0]), interior, np.asarray([1.0])))
-        weights = np.concatenate(
-            (
-                np.asarray([endpoint_weight]),
-                2.0 / (count * (count - 1) * values**2),
-                np.asarray([endpoint_weight]),
-            )
-        )
-        backend = "scipy"
+        nodes, weights = _lobatto_host_table(count)
+        backend = "exact-rational-isolation"
         endpoint_policy = "both"
         exact_degree = 2 * count - 3
 

@@ -282,6 +282,13 @@ x_j=\tfrac{b-a}{2}\,\xi_j+\tfrac{a+b}{2},\qquad
 \tilde w_j=\tfrac{b-a}{2}\,w_j.
 $$
 
+Lobatto preparation isolates the roots of the exact Legendre derivative and
+uses rational interval bounds to certify rounding of the canonical nodes and
+weights to binary64 before conversion to the requested dtype; exact midpoint
+ties are decided algebraically. This changes the numerical arrays and rule
+identities from earlier SciPy-realized Lobatto rules; identities are not
+rewritten for old data.
+
 ## Probability reference transports
 
 `ProbabilityDomain.reference_transport` is the sole canonical-coordinate

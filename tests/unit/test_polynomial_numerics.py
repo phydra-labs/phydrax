@@ -11,6 +11,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import mpmath as mp
 import numpy as np
 import pytest
 from jax import Array
@@ -31,7 +32,11 @@ from phydrax._polynomial._cubature import (
 from phydrax._polynomial._endpoint import EndpointJetBasis
 from phydrax._polynomial._lebedev_cubature_data import LEBEDEV_RULES
 from phydrax._polynomial._orthogonal import (
+    _lobatto_host_table,
+    _round_root,
+    _round_weight,
     legendre_rule_data,
+    OrthogonalRuleData,
     standard_affine_coefficients,
     standard_normal_hermite_rule_data,
     standard_series_value,
@@ -125,6 +130,127 @@ def test_polynomial_numerics_scenario_1() -> None:
         assert jnp.all(rule.weights > 0.0)
         assert np.allclose(np.asarray(rule.nodes), -np.asarray(rule.nodes)[::-1])
         assert np.allclose(np.asarray(rule.weights), np.asarray(rule.weights)[::-1])
+
+
+@pytest.mark.parametrize("count", [2, 3, 4, 5, 8, 16])
+def test_lobatto_certified_rounding_and_moments(count: int) -> None:
+    rule = legendre_rule_data(count, "lobatto", dtype=np.float64)
+    nodes, weights = np.asarray(rule.nodes), np.asarray(rule.weights)
+    assert np.array_equal(nodes, -nodes[::-1])
+    assert np.array_equal(weights, weights[::-1])
+    assert rule.backend == ("analytic" if count == 2 else "exact-rational-isolation")
+    for degree in range(2 * count - 2):
+        expected = 0.0 if degree % 2 else 2.0 / (degree + 1)
+        assert np.dot(weights, nodes**degree) == pytest.approx(expected, abs=2e-14)
+
+    # Independent high-precision special-function evaluation, rather than the
+    # implementation's exact-coefficient isolation and interval Horner scheme.
+    with mp.workdps(100):
+        order = count - 1
+        for index, (node, weight) in enumerate(zip(nodes, weights, strict=True)):
+            if index == 0 or index == count - 1:
+                exact_node = mp.mpf(-1 if index == 0 else 1)
+            elif 2 * index == count - 1:
+                exact_node = mp.mpf(0)
+            else:
+                exact_node = mp.findroot(
+                    lambda x: mp.diff(lambda t: mp.legendre(order, t), x),
+                    mp.mpf(float(node)),
+                )
+            exact_weight = 2 / (count * order * mp.legendre(order, exact_node) ** 2)
+            assert float(exact_node) == node
+            assert float(exact_weight) == weight
+
+
+def test_lobatto_dtype() -> None:
+    rule = legendre_rule_data(5, "lobatto", dtype=np.float32)
+    assert np.asarray(rule.nodes).dtype == np.float32
+    assert np.asarray(rule.weights).dtype == np.float32
+    interior = np.float32(math.sqrt(3 / 7))
+    np.testing.assert_array_equal(
+        np.asarray(rule.nodes),
+        np.asarray([-1, -interior, 0, interior, 1], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(rule.weights),
+        np.asarray([1 / 10, 49 / 90, 32 / 45, 49 / 90, 1 / 10], dtype=np.float32),
+    )
+
+
+def test_lobatto_rounding_midpoint_ties() -> None:
+    boundary = (Fraction(1) + Fraction(math.nextafter(1.0, math.inf))) / 2
+    epsilon = Fraction(1, 1 << 56)
+    assert (
+        _round_root((-boundary, Fraction(1)), boundary - epsilon, boundary + epsilon)
+        == 1.0
+    )
+
+    # sqrt(2) is irrational, but the weight 2*boundary/x**2 is exactly
+    # the binary64 midpoint there. This exercises the algebraic GCD decision.
+    scale = 1 << 200
+    lower = Fraction(math.isqrt(2 * scale**2), scale)
+    upper = lower + Fraction(1, scale)
+    coefficients = (Fraction(0), Fraction(1))
+    derivative = (Fraction(-2), Fraction(0), Fraction(1))
+    assert _round_weight(coefficients, derivative, lower, upper, 2 * boundary) == 1.0
+    assert (
+        _round_weight(
+            coefficients, derivative, lower, upper, 2 * boundary + Fraction(1, 1 << 400)
+        )
+        is None
+    )
+
+
+def test_lobatto_invalid_kind() -> None:
+    with pytest.raises(ValueError, match="kind"):
+        # ty: ignore[invalid-argument-type]
+        legendre_rule_data(3, "invalid")
+
+
+def test_lobatto_invalid_counts() -> None:
+    with pytest.raises(TypeError, match="integer"):
+        legendre_rule_data(True, "lobatto")
+    with pytest.raises(TypeError, match="integer"):
+        # ty: ignore[invalid-argument-type]
+        legendre_rule_data(2.5, "lobatto")
+    with pytest.raises(ValueError, match="positive"):
+        legendre_rule_data(0, "lobatto")
+    with pytest.raises(ValueError, match="at least two"):
+        legendre_rule_data(1, "lobatto")
+
+
+def test_lobatto_invalid_weights() -> None:
+    rule = legendre_rule_data(4, "lobatto")
+    with pytest.raises(ValueError, match="weights"):
+        OrthogonalRuleData(
+            rule.nodes,
+            np.asarray([1.0, 0.0, 1.0, 1.0]),
+            exact_degree=rule.exact_degree,
+            family=rule.family,
+            node_rule=rule.node_rule,
+            reference_domain=rule.reference_domain,
+            basis_measure=rule.basis_measure,
+            integration_measure=rule.integration_measure,
+            measure_mass=rule.measure_mass,
+            endpoint_policy=rule.endpoint_policy,
+            backend=rule.backend,
+        )
+
+
+def test_lobatto_corrupt_root_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    from phydrax.algebraic import _exact_univariate
+
+    class CorruptIsolator:
+        def __init__(self, coefficients: object) -> None:
+            pass
+
+        def isolate(self, **kwargs: object) -> tuple[()]:
+            return ()
+
+    _lobatto_host_table.cache_clear()
+    monkeypatch.setattr(_exact_univariate, "RealRootIsolator", CorruptIsolator)
+    with pytest.raises(ArithmeticError, match="lost an interior root"):
+        legendre_rule_data(4, "lobatto")
 
 
 def test_polynomial_numerics_scenario_2() -> None:

@@ -525,6 +525,12 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Legendre–Lobatto preparation now certifies binary64 node and weight rounding
+  through native exact polynomial isolation, including rounding-boundary ties.
+  Immutable host tables are reused; Gauss and Radau routes are unchanged.
+  Corrected Lobatto rules and derived tensor-field identities are regenerated
+  rather than retaining platform-dependent SciPy rounding. HP archive replay
+  continues to require exact stored element identities.
 - Native tetrahedron moments-only intersections integrate exact symbolic
   construction coordinates rather than rounded physical vertices. Exact term
   contributions feed compensated binary64 sums, avoiding the thin-overlap
