@@ -1829,6 +1829,104 @@ def _stored(result: MeshAdaptationResult, /) -> MeshAdaptationResult:
     return stored
 
 
+@pytest.mark.parametrize("mutation", ("exact", "changed-map", "foreign-root"))
+def test_retained_mixed_second_cycle_reproves_returned_root(
+    hex_pyramid_mesh: CellMesh, mutation: str
+) -> None:
+    source = certify_cell_mesh(
+        hex_pyramid_mesh,
+        SpatialCoordinateContract.si(),
+        geometry=_curved_hex_pyramid_geometry(hex_pyramid_mesh),
+    )
+    policy = MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_MIXED)
+    first = execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            source,
+            MarkedMeshAdaptation(np.asarray((505,), dtype=np.int64)),
+            policy=policy,
+        )
+    )
+    assert isinstance(first.hierarchy, MixedAdaptationHierarchy)
+    children = np.concatenate(
+        tuple(np.asarray(block.global_ids) for block in first.target.mesh.blocks)
+    )
+    coarsened = execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            first.target,
+            MarkedMeshAdaptation((), children, hierarchy=first.hierarchy),
+            policy=policy,
+        )
+    )
+    assert isinstance(coarsened.hierarchy, MixedAdaptationHierarchy)
+    request = MarkedMeshAdaptation(
+        np.asarray((505,), dtype=np.int64), hierarchy=coarsened.hierarchy
+    )
+    second = execute_mesh_adaptation(
+        prepare_mesh_adaptation(coarsened.target, request, policy=policy)
+    )
+    assert isinstance(second.hierarchy, MixedAdaptationHierarchy)
+    assert second.transition is not None
+    transition = second.transition.geometry_transition
+    assert transition is not None
+    stored = _stored(second)
+    target = second.target
+    if mutation != "exact":
+        geometry = copy.copy(target.geometry)
+        if mutation == "changed-map":
+            coordinates = np.asarray(geometry.coordinates).copy()
+            coordinates[0, 0] += 0.125
+            object.__setattr__(geometry, "coordinates", coordinates)
+        else:
+            restriction = copy.copy(geometry.restriction_source)
+            assert restriction is not None
+            object.__setattr__(restriction, "source_geometry_id", "foreign-root")
+            object.__setattr__(geometry, "restriction_source", restriction)
+        target = copy.copy(target)
+        object.__setattr__(target, "geometry", geometry)
+        object.__setattr__(stored, "target", target)
+        with pytest.raises(ValueError):
+            MeshAdaptationResult.from_stored_fields(
+                stored,
+                source=coarsened.target,
+                target=target,
+                policy=policy,
+                request=request,
+                geometry_transition=transition,
+                hierarchy=second.hierarchy,
+                expected_result_id=second.result_id,
+            )
+        return
+    restored = MeshAdaptationResult.from_stored_fields(
+        stored,
+        source=coarsened.target,
+        target=target,
+        policy=policy,
+        request=request,
+        geometry_transition=transition,
+        hierarchy=second.hierarchy,
+        expected_result_id=second.result_id,
+    )
+    assert restored.result_id == second.result_id
+    assert isinstance(restored.hierarchy, MixedAdaptationHierarchy)
+    assert restored.cell_content_transfer is not None
+    assert second.cell_content_transfer is not None
+    assert (
+        restored.cell_content_transfer.transfer_id
+        == second.cell_content_transfer.transfer_id
+    )
+    children = np.concatenate(
+        tuple(np.asarray(block.global_ids) for block in restored.target.mesh.blocks)
+    )
+    inverse = execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            restored.target,
+            MarkedMeshAdaptation((), children, hierarchy=restored.hierarchy),
+            policy=policy,
+        )
+    )
+    assert inverse.target.mesh.topology_id == source.mesh.topology_id
+
+
 def test_retained_mixed_result_reproof_and_tampering(hex_pyramid_mesh: CellMesh) -> None:
     source = certify_cell_mesh(
         hex_pyramid_mesh,

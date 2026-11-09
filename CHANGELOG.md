@@ -525,6 +525,11 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Mixed adaptation archives restore a later refinement cycle after complete
+  coarsening without requiring an unrelated layer-root owner. Restoration
+  proves the returned root's retained cell identities and exact identity charts,
+  then rechecks target coordinate maps, hierarchy, lineage and material classes.
+  The original root geometry identity remains bound to the retained ancestry.
 - The original larger-torus reconstruction profile declares 32 GiB for
   refinement, admitting its measured 674,928 children under the unchanged
   48 KiB-per-child estimate. Other profiles retain their prior declarations;
