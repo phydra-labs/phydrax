@@ -5118,12 +5118,17 @@ def _stall_relocation_round(
         tuple(Fraction(int(row == column)) for column in range(state.points.shape[1] + 1))
         for row in range(state.points.shape[1] + 1)
     )
+    visited: set[int] = set()
+    rejected: list[int] = []
     for edge in short.tolist():
         endpoints = topology.edges[edge]
         ball = _ball_cells(topology, endpoints)
         vertices = np.unique(state.cells[ball])
         vertices = np.concatenate((endpoints, vertices[~np.isin(vertices, endpoints)]))
         for vertex in vertices.tolist():
+            if vertex in visited:
+                continue
+            visited.add(vertex)
             if topology.kind[vertex] != _INTERIOR:
                 continue
             if periodic_context is not None:
@@ -5135,6 +5140,11 @@ def _stall_relocation_round(
                     or periodic_context.vertex_exact_isometries[vertex] != identity
                 ):
                     continue
+            row = np.asarray((vertex,), dtype=np.int64)
+            points: np.ndarray | None = None
+            tensors: np.ndarray | None = None
+            had_invalid = False
+            had_uncertain = False
             neighbors = topology.neighbor_values[
                 topology.neighbor_offsets[vertex] : topology.neighbor_offsets[vertex + 1]
             ]
@@ -5145,7 +5155,6 @@ def _stall_relocation_round(
                     target = state.points[vertex] + scale * direction
                     if np.array_equal(target, state.points[vertex]):
                         break
-                    row = np.asarray((vertex,), dtype=np.int64)
                     candidate = target[None, :]
                     metric = _field_metric(
                         source,
@@ -5153,9 +5162,16 @@ def _stall_relocation_round(
                         _proposal_metric(state, topology, row, candidate),
                         mode,
                     )
-                    status, _ = _proposal_checks(state, topology, row, candidate, metric, mode)
-                    if status[0] == _OK:
-                        points, tensors = state.points.copy(), state.metric.copy()
+                    status, quality = _proposal_checks(
+                        state, topology, row, candidate, metric, mode
+                    )
+                    had_uncertain |= bool(status[0] == _UNCERTAIN)
+                    had_invalid |= bool(status[0] >= _INVALID)
+                    quality_valid = bool(np.isfinite(quality[0]) and quality[0] > 0.0)
+                    had_invalid |= bool(status[0] == _OK and not quality_valid)
+                    if status[0] == _OK and quality_valid:
+                        if points is None or tensors is None:
+                            points, tensors = state.points.copy(), state.metric.copy()
                         points[vertex], tensors[vertex] = target, metric[0]
                         lengths = _metric_lengths(tensors, points, topology.edges)
                         if periodic_context is not None:
@@ -5172,6 +5188,7 @@ def _stall_relocation_round(
                                 allow_invalid_rows=True,
                                 stencil_width=state.source_stencil_weights.shape[1],
                             )
+                            had_uncertain |= not bool(stencils[3][0])
                             if stencils[3][0]:
                                 sources, weights, valid = _pad_stencil_columns(
                                     state.source_stencil_sources,
@@ -5200,9 +5217,13 @@ def _stall_relocation_round(
                                     row,
                                     _RELOCATED,
                                 )
+                                counts = _tally(counts, np.asarray(rejected, dtype=np.int64))
                                 return updated, counts._replace(relocations=counts.relocations + 1), 1
                     scale *= 0.5
-    return state, counts, 0
+            rejected.append(
+                _INVALID if had_invalid else _UNCERTAIN if had_uncertain else _OK
+            )
+    return state, _tally(counts, np.asarray(rejected, dtype=np.int64)), 0
 
 
 def _relocation_round_nonperiodic(
