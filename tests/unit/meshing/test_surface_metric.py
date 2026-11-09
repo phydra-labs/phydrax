@@ -1028,5 +1028,7 @@ def test_chart_lift_stall_relocation_reduces_out_of_band_edges() -> None:
     assert changed == counts.relocations == 1
     after = local._topology(updated, PredicateMode.EXACT)
     assert local._stall_potential(after)[0] < before
-    assert np.all(local._chart_lift_status(updated, updated.points, updated.cells) == local._OK)
+    assert np.all(
+        local._chart_lift_status(updated, updated.points, updated.cells) == local._OK
+    )
     np.testing.assert_array_equal(updated.points[:4], points[:4])

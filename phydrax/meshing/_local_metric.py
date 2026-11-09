@@ -5180,7 +5180,10 @@ def _stall_relocation_round(
                                     periodic_context.edge_orbits
                                 ]
                             ]
-                        if _stall_potential(topology._replace(lengths=lengths))[0] < before:
+                        if (
+                            _stall_potential(topology._replace(lengths=lengths))[0]
+                            < before
+                        ):
                             stencils = _located_stencil_bank(
                                 source,
                                 candidate,
@@ -5196,9 +5199,15 @@ def _stall_relocation_round(
                                     state.source_stencil_valid,
                                     stencils[0].shape[1],
                                 )
-                                sources, weights, valid = sources.copy(), weights.copy(), valid.copy()
+                                sources, weights, valid = (
+                                    sources.copy(),
+                                    weights.copy(),
+                                    valid.copy(),
+                                )
                                 sources[vertex], weights[vertex], valid[vertex] = (
-                                    stencils[0][0], stencils[1][0], stencils[2][0]
+                                    stencils[0][0],
+                                    stencils[1][0],
+                                    stencils[2][0],
                                 )
                                 exact = list(state.source_stencil_exact)
                                 exact[vertex] = stencils[4][0]
@@ -5217,8 +5226,14 @@ def _stall_relocation_round(
                                     row,
                                     _RELOCATED,
                                 )
-                                counts = _tally(counts, np.asarray(rejected, dtype=np.int64))
-                                return updated, counts._replace(relocations=counts.relocations + 1), 1
+                                counts = _tally(
+                                    counts, np.asarray(rejected, dtype=np.int64)
+                                )
+                                return (
+                                    updated,
+                                    counts._replace(relocations=counts.relocations + 1),
+                                    1,
+                                )
                     scale *= 0.5
             rejected.append(
                 _INVALID if had_invalid else _UNCERTAIN if had_uncertain else _OK
