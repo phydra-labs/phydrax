@@ -13,7 +13,7 @@ import stat
 import struct
 import zipfile
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import numpy as np
 import pytest
@@ -491,6 +491,90 @@ def test_external_archive_counts_headers_before_zipinfo_materialization(
     assert caught.value.reason == "malformed"
 
 
+@pytest.mark.parametrize("api", ["bytes", "file"])
+@pytest.mark.parametrize("mode", ["exclusive", "atomic_replace"])
+def test_file_publication_preserves_other_staging_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    api: str,
+    mode: publication.PublicationMode,
+) -> None:
+    destination = tmp_path / "artifact.bin"
+    token = "0" * 32
+    staging = tmp_path / f".{destination.name}.{token}.tmp"
+    staging.write_bytes(b"other publisher")
+    monkeypatch.setattr(publication.secrets, "token_hex", lambda _: token)
+
+    def write_payload(stream: BinaryIO) -> None:
+        stream.write(b"new payload")
+
+    with pytest.raises(FileExistsError):
+        if api == "bytes":
+            publish_bytes(destination, b"new payload", maximum_bytes=32, mode=mode)
+        else:
+            publication.publish_file(
+                destination, write_payload, maximum_bytes=32, mode=mode
+            )
+    assert staging.read_bytes() == b"other publisher"
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize("mode", ["exclusive", "atomic_replace"])
+def test_resource_publication_preserves_other_staging_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: publication.PublicationMode
+) -> None:
+    destination = tmp_path / "bundle"
+    token = "0" * 32
+    staging = tmp_path / f".{destination.name}.{token}.tmp"
+    staging.mkdir()
+    (staging / "other.bin").write_bytes(b"other publisher")
+    monkeypatch.setattr(publication.secrets, "token_hex", lambda _: token)
+
+    with pytest.raises(FileExistsError):
+        publish_resource_set(
+            destination,
+            {"value.bin": b"new"},
+            limits=ResourceSetLimits(1024, 512, 4, 4),
+            mode=mode,
+        )
+    assert (staging / "other.bin").read_bytes() == b"other publisher"
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize("resource_set", [False, True], ids=["file", "resource-set"])
+def test_publication_does_not_clean_reused_staging_name_after_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, resource_set: bool
+) -> None:
+    destination = tmp_path / "artifact"
+    token = "1" * 32
+    staging = tmp_path / f".{destination.name}.{token}.tmp"
+    sync_directory = publication.sync_directory
+    monkeypatch.setattr(publication.secrets, "token_hex", lambda _: token)
+
+    def reuse_staging_name(descriptor: int) -> None:
+        if destination.exists() and not staging.exists():
+            if resource_set:
+                staging.mkdir()
+                (staging / "other.bin").write_bytes(b"other publisher")
+            else:
+                staging.write_bytes(b"other publisher")
+        sync_directory(descriptor)
+
+    monkeypatch.setattr(publication, "sync_directory", reuse_staging_name)
+    if resource_set:
+        publish_resource_set(
+            destination,
+            {"value.bin": b"new"},
+            limits=ResourceSetLimits(1024, 512, 4, 4),
+        )
+        assert (destination / "value.bin").read_bytes() == b"new"
+        assert (staging / "other.bin").read_bytes() == b"other publisher"
+    else:
+        publish_bytes(destination, b"new", maximum_bytes=32)
+        assert destination.read_bytes() == b"new"
+        assert staging.read_bytes() == b"other publisher"
+
+
 def test_resource_publication_preflights_parent_directories_as_entries(
     tmp_path: Path,
 ) -> None:
@@ -573,9 +657,7 @@ def test_posix_resource_publication_preserves_concurrent_directory_semantics(
         assert (destination / "existing.bin").read_bytes() == b"existing generation"
         assert not (destination / "value.bin").exists()
     else:
-        receipt = publish_resource_set(
-            destination, {"value.bin": b"new"}, limits=limits
-        )
+        receipt = publish_resource_set(destination, {"value.bin": b"new"}, limits=limits)
         assert not receipt.replaced_existing
         assert (destination / "value.bin").read_bytes() == b"new"
     assert {entry.name for entry in tmp_path.iterdir()} == {"bundle"}

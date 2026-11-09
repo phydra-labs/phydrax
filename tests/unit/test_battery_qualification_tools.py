@@ -7,12 +7,14 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+import phydrax._publication as publication
 from benchmarks import battery_performance
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax.applications.battery._qualification import (
@@ -31,6 +33,7 @@ from phydrax.qualification import (
     SupportDependency,
     validate_qualification_causality,
 )
+from tests._support.filesystem import create_directory_link, create_file_link
 from tools import battery_qualification
 from tools.battery_campaign_registry import (
     get_campaign_entry,
@@ -819,15 +822,150 @@ def test_runtime_identity_admits_any_marker_forked_lock_version(tmp_path: Any) -
         )
 
 
+def test_immutable_output_is_exact_idempotent_and_refuses_conflicts(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "record.json"
+    record = {"z": 2, "a": 1}
+    expected = b'{"a":1,"z":2}\n'
+    battery_qualification.write_json_immutable(output, record)
+    assert output.read_bytes() == expected
+    battery_qualification.write_json_immutable(output, record)
+    assert output.read_bytes() == expected
+    with pytest.raises(FileExistsError, match="Immutable campaign record"):
+        battery_qualification.write_json_immutable(output, {"different": True})
+    assert output.read_bytes() == expected
+
+
+@pytest.mark.parametrize(
+    "directory_link", [False, True], ids=["file-symlink", "directory-ancestor"]
+)
+def test_immutable_output_refuses_linked_namespace(
+    tmp_path: Path, directory_link: bool
+) -> None:
+    outside = tmp_path.parent / f"{tmp_path.name}-immutable-outside"
+    outside.mkdir()
+    victim = outside / "record.json"
+    victim.write_bytes(b'{"a":1}\n')
+    if directory_link:
+        alias = tmp_path / "alias"
+        create_directory_link(alias, outside)
+        output = alias / victim.name
+    else:
+        output = tmp_path / victim.name
+        create_file_link(output, victim)
+    with pytest.raises((OSError, ValueError)):
+        battery_qualification.write_json_immutable(output, {"a": 1})
+    assert victim.read_bytes() == b'{"a":1}\n'
+
+
+@pytest.mark.parametrize("existing", [False, True], ids=["new", "idempotent"])
+def test_immutable_output_propagates_directory_sync_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing: bool
+) -> None:
+    output = tmp_path / "record.json"
+    if existing:
+        battery_qualification.write_json_immutable(output, {"a": 1})
+
+    def fail_sync(descriptor: int) -> None:
+        raise OSError("directory sync failed")
+
+    owner = battery_qualification if existing else publication
+    monkeypatch.setattr(owner, "sync_directory", fail_sync)
+    with pytest.raises(OSError, match="directory sync failed"):
+        battery_qualification.write_json_immutable(output, {"a": 1})
+    if existing:
+        assert output.read_bytes() == b'{"a":1}\n'
+
+
+def test_immutable_existing_output_propagates_file_sync_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "record.json"
+    battery_qualification.write_json_immutable(output, {"a": 1})
+    original_fsync = os.fsync
+    expected_file = output.stat()
+
+    def fail_existing_sync(descriptor: int) -> None:
+        if os.path.samestat(os.fstat(descriptor), expected_file):
+            raise OSError("existing file sync failed")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(battery_qualification.os, "fsync", fail_existing_sync)
+    with pytest.raises(OSError, match="existing file sync failed"):
+        battery_qualification.write_json_immutable(output, {"a": 1})
+    assert output.read_bytes() == b'{"a":1}\n'
+
+
+def test_immutable_output_does_not_hide_staging_collision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "record.json"
+    original_open = publication.open_file_at
+    collision_name: str | None = None
+
+    def collide(
+        parent: int,
+        name: str,
+        *,
+        write: bool = False,
+        create: bool = False,
+        exclusive: bool = False,
+    ) -> int:
+        nonlocal collision_name
+        if create and exclusive:
+            other = original_open(parent, name, write=True, create=True, exclusive=True)
+            with os.fdopen(other, "wb") as stream:
+                stream.write(b"other publisher")
+            collision_name = name
+        return original_open(
+            parent, name, write=write, create=create, exclusive=exclusive
+        )
+
+    monkeypatch.setattr(publication, "open_file_at", collide)
+    with pytest.raises(FileExistsError):
+        battery_qualification.write_json_immutable(output, {"a": 1})
+    assert collision_name is not None
+    assert (tmp_path / collision_name).read_bytes() == b"other publisher"
+    assert not output.exists()
+
+
+def test_immutable_output_does_not_hide_cleanup_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "record.json"
+    battery_qualification.write_json_immutable(output, {"a": 1})
+
+    def fail_cleanup(parent: int, name: str) -> None:
+        raise OSError("staging cleanup failed")
+
+    monkeypatch.setattr(publication, "unlink_at", fail_cleanup)
+    with pytest.raises(FileExistsError):
+        battery_qualification.write_json_immutable(output, {"a": 1})
+    assert output.read_bytes() == b'{"a":1}\n'
+
+
+@pytest.mark.parametrize(
+    "directory_link", [False, True], ids=["file-symlink", "directory-ancestor"]
+)
 def test_atomic_output_does_not_follow_predictable_temporary_symlink(
-    tmp_path: Any,
+    tmp_path: Path, directory_link: bool
 ) -> None:
     output = tmp_path / "result.json"
-    victim = tmp_path / "victim.txt"
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    victim = outside / "victim.txt"
     victim.write_text("unchanged", encoding="utf-8")
-    (tmp_path / ".result.json.tmp").symlink_to(victim)
+    alias = tmp_path / ".result.json.tmp"
+    if not directory_link:
+        create_file_link(alias, victim)
+    else:
+        create_directory_link(alias, outside)
+        assert (alias / victim.name).read_text(encoding="utf-8") == "unchanged"
     battery_qualification.write_json_atomic(output, {"kind": "synthetic"})
     assert victim.read_text(encoding="utf-8") == "unchanged"
+    if directory_link:
+        assert (alias / victim.name).read_text(encoding="utf-8") == "unchanged"
     assert json.loads(output.read_text(encoding="utf-8")) == {"kind": "synthetic"}
 
 

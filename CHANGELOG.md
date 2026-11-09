@@ -514,6 +514,12 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- File and resource-set publication preserve other publishers' staging entries
+  on allocation collisions and after a committed staging name is reused.
+- Battery immutable campaign records use durable cross-platform publication,
+  including Windows directory flushing and no-follow namespace admission.
+- ROCm confinement and battery atomic-output tests cover unprivileged Windows
+  directory reparse links while retaining file-symlink coverage where available.
 - Native tetrahedron intersection volumes and first moments integrate exact
   symbolic construction coordinates rather than rounded physical vertices.
   Exact term contributions feed compensated binary64 sums, avoiding the

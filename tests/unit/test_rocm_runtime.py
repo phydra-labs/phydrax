@@ -15,6 +15,8 @@ from typing import NoReturn, TypedDict
 
 import pytest
 
+from tests._support.filesystem import create_directory_link, create_file_link
+
 
 # Owned ROCm activation is a Linux x86_64 provider; on any other host the
 # loader refuses before inspection (test_activation_refuses_unsupported_host).
@@ -291,14 +293,24 @@ def test_inventory_digest_and_versions_are_checked(
         runtime.inspect_rocm_bundle()
 
 
+@pytest.mark.parametrize(
+    "directory_link", [False, True], ids=["file-symlink", "directory-ancestor"]
+)
 def test_architecture_asset_cannot_escape_installation(
-    runtime: ModuleType, installed: SimpleNamespace, tmp_path: Path
+    runtime: ModuleType, installed: SimpleNamespace, tmp_path: Path, directory_link: bool
 ) -> None:
     path = installed.root / installed.manifest["loader"]["kpack"]["gfx950"][0]
-    outside = tmp_path.parent / f"{tmp_path.name}-outside.kpack"
-    outside.write_bytes(path.read_bytes())
-    path.unlink()
-    path.symlink_to(outside)
+    original = path.read_bytes()
+    if not directory_link:
+        outside = tmp_path.parent / f"{tmp_path.name}-outside.kpack"
+        outside.write_bytes(original)
+        path.unlink()
+        create_file_link(path, outside)
+    else:
+        outside = tmp_path.parent / f"{tmp_path.name}-outside-kpack"
+        path.parent.rename(outside)
+        create_directory_link(path.parent, outside)
+    assert path.read_bytes() == original
     with pytest.raises(runtime.RocmRuntimeError, match="escapes"):
         runtime.inspect_rocm_bundle()
 

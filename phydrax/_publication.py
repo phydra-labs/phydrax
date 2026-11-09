@@ -102,6 +102,7 @@ def _cleanup_publication(
     descriptor: int,
     *,
     tree: bool,
+    owned: bool,
 ) -> None:
     # Nested finally blocks release the held parent even if closing the staged
     # descriptor or removing the staging entry fails. Cleanup failure on an
@@ -112,14 +113,15 @@ def _cleanup_publication(
                 os.close(descriptor)
     finally:
         try:
-            with _preserve_publication_error():
-                try:
-                    if tree:
-                        _remove_tree_at(parent, temporary_name)
-                    else:
-                        unlink_at(parent, temporary_name)
-                except FileNotFoundError:
-                    pass
+            if owned:
+                with _preserve_publication_error():
+                    try:
+                        if tree:
+                            _remove_tree_at(parent, temporary_name)
+                        else:
+                            unlink_at(parent, temporary_name)
+                    except FileNotFoundError:
+                        pass
         finally:
             with _preserve_publication_error():
                 os.close(parent)
@@ -173,11 +175,13 @@ def publish_file(
     parent_descriptor, destination_name = open_parent_descriptor(path, create=True)
     temporary_name = f".{destination_name}.{secrets.token_hex(16)}.tmp"
     descriptor = -1
+    temporary_owned = False
     replaced = False
     try:
         descriptor = open_file_at(
             parent_descriptor, temporary_name, write=True, create=True, exclusive=True
         )
+        temporary_owned = True
         with os.fdopen(descriptor, "w+b") as stream:
             descriptor = -1
             writer(stream)
@@ -199,6 +203,7 @@ def publish_file(
             unlink_at(parent_descriptor, temporary_name)
         else:
             rename_at(parent_descriptor, temporary_name, destination_name, replace=True)
+        temporary_owned = False
         sync_directory(parent_descriptor)
         payload = {
             "kind": "file-publication-receipt",
@@ -217,7 +222,13 @@ def publish_file(
             canonical_fingerprint(payload),
         )
     finally:
-        _cleanup_publication(parent_descriptor, temporary_name, descriptor, tree=False)
+        _cleanup_publication(
+            parent_descriptor,
+            temporary_name,
+            descriptor,
+            tree=False,
+            owned=temporary_owned,
+        )
 
 
 def publish_resource_set(
@@ -245,8 +256,10 @@ def publish_resource_set(
     parent_descriptor, destination_name = open_parent_descriptor(destination, create=True)
     temporary_name = f".{destination_name}.{secrets.token_hex(16)}.tmp"
     temporary_descriptor = -1
+    temporary_owned = False
     try:
         create_directory_at(parent_descriptor, temporary_name)
+        temporary_owned = True
         temporary_descriptor = open_directory_at(parent_descriptor, temporary_name)
         receipts: list[PublishedMemberReceipt] = []
         total = 0
@@ -349,6 +362,7 @@ def publish_resource_set(
                 if error.errno in (errno.EEXIST, errno.ENOTEMPTY):
                     raise FileExistsError(destination) from error
                 raise
+            temporary_owned = False
         if temporary_descriptor >= 0:
             os.close(temporary_descriptor)
             temporary_descriptor = -1
@@ -377,6 +391,7 @@ def publish_resource_set(
             temporary_name,
             temporary_descriptor,
             tree=True,
+            owned=temporary_owned,
         )
 
 

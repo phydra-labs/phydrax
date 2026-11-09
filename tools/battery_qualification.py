@@ -33,6 +33,8 @@ import numpy as np
 
 import phydrax
 from phydrax._fingerprint import canonical_fingerprint, canonical_json
+from phydrax._host_io import open_file_at, open_parent_descriptor, sync_directory
+from phydrax._publication import publish_bytes
 from phydrax.artifacts import ArtifactManifest
 from phydrax.lifecycle import ResolvedRunSpec
 from phydrax.qualification import (
@@ -1438,32 +1440,35 @@ def campaign_attempt_record(error: Exception, /, **inputs: object) -> dict[str, 
 
 
 def write_json_immutable(path: Path, result: Mapping[str, object], /) -> None:
-    """Publish durable immutable bytes; never replace a prior attempt or observation."""
+    """Publish durable immutable bytes; never replace a prior record.
+
+    Identical existing regular files require write access for a data flush
+    before flushing their parent. Linked and non-regular destinations are
+    refused by the canonical publication/host-I/O boundary.
+    """
     payload = (canonical_json(result) + "\n").encode("utf-8")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", dir=path.parent
-    )
-    temporary = Path(temporary_name)
     try:
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(payload)
-            stream.flush()
-            os.fsync(stream.fileno())
+        publish_bytes(path, payload, maximum_bytes=len(payload), mode="exclusive")
+    except FileExistsError as error:
+        # Host I/O reports the destination as filename2 on POSIX link and as
+        # filename on Windows; a staging collision is not an idempotent write.
+        # Optional notes carry cleanup failures, which must not become success.
+        if (error.filename2 or error.filename) != path.name or getattr(
+            error, "__notes__", None
+        ):
+            raise
+        parent, name = open_parent_descriptor(path, create=False)
         try:
-            os.link(temporary, path)
-        except FileExistsError:
-            if path.is_symlink() or path.read_bytes() != payload:
-                raise FileExistsError(
-                    f"Immutable campaign record already exists: {path}"
-                ) from None
-        directory_descriptor = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_descriptor)
+            descriptor = open_file_at(parent, name, write=True)
+            with os.fdopen(descriptor, "r+b") as stream:
+                if stream.read(len(payload) + 1) != payload:
+                    raise FileExistsError(
+                        f"Immutable campaign record already exists: {path}"
+                    ) from None
+                os.fsync(stream.fileno())
+            sync_directory(parent)
         finally:
-            os.close(directory_descriptor)
-    finally:
-        temporary.unlink(missing_ok=True)
+            os.close(parent)
 
 
 def write_json_atomic(path: Path, result: Mapping[str, object], /) -> None:
