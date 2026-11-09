@@ -192,6 +192,28 @@ def test_archive_resource_plan_identity_covers_complete_policy() -> None:
     )
 
 
+def test_larger_torus_cold_reader_rejects_previous_archive_plan(
+    tmp_path: Path,
+) -> None:
+    profile = reconstruction._profile_id("torus", 2)
+    limits = reconstruction._archive_limits(profile)
+    assert limits.max_members == 32769
+    previous = replace(limits, max_members=8193)
+    current_id = reconstruction._resource_plan_id(profile, limits)
+    previous_id = reconstruction._resource_plan_id(profile, previous)
+    assert current_id != previous_id
+    expected: dict[str, object] = {
+        "profile": profile,
+        "archive_budget_bytes": reconstruction._ARCHIVE_BUDGET_BYTES[profile],
+        "archive_member_limit": limits.max_members,
+        "resource_plan_id": previous_id,
+    }
+    with pytest.raises(RuntimeError, match="resource plan"):
+        reconstruction._resume_accepted_archive(
+            str(tmp_path / "missing.phx"), "", expected
+        )
+
+
 @pytest.mark.parametrize(
     ("archive_bytes_delta", "members_delta", "message"),
     [(1, 1, "archive budget"), (0, 1, "archive member limit"), (0, 0, "resource plan")],

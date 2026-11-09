@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- The larger native reconstruction torus declares a 32,769-member archive
+  limit, accommodating its measured pre-refinement capture while retaining
+  the existing archive byte and solve budgets. Its refined accepted-state
+  archive remains subject to the same admission checks.
 - The `native-tspline-locality` benchmark measures actual local and full-tensor
   refinement of one exact source at shared knot coordinates. Both solve the
   same manufactured Poisson problem, with independent physical-error estimates

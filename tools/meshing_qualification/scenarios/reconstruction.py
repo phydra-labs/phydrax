@@ -2003,11 +2003,14 @@ _ARCHIVE_BUDGET_BYTES = {
     _ENVELOPE_PROFILE: 4 << 30,
 }
 # The larger rotated ellipsoid has 9,964 stored array owners plus its manifest
-# (LIN 20261108). Give that profile a fixed 16,384-array envelope; the other
-# profiles retain their prior 8,192-array envelope.
+# (LIN 20261108). The larger torus pre-refinement source capture has 30,503
+# distinct stored arrays plus its manifest (LIN 20261109); this is not a
+# measurement of its refined accepted-state archive. Other profiles retain
+# their prior 8,192-array envelope.
 _ARCHIVE_MEMBER_LIMITS = {
     **{profile: 8193 for profile in _ARCHIVE_BUDGET_BYTES},
     _profile_id("rotated-ellipsoid", 2): 16385,
+    _profile_id("torus", 2): 32769,
 }
 
 
