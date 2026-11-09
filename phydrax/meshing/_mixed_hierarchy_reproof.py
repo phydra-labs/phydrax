@@ -35,6 +35,7 @@ from ._lineage import MeshLineage, VertexInterpolationStencil
 from ._mixed_adaptation import (
     _affine_chart,
     _exact_child_to_parent_affine_map,
+    _source_root_charts,
     _templates,
     MixedAdaptationHierarchy,
     MixedCellContentTransfer,
@@ -505,12 +506,39 @@ def require_rooted_mixed_hierarchy_geometry(
         raise ValueError("Mixed hierarchy is bound to another target topology.")
 
 
+def _returned_root_geometry_id(
+    source: CellMeshingResult, hierarchy: MixedAdaptationHierarchy, /
+) -> str:
+    """Bind a fully coarsened endpoint to its retained root reference frame."""
+    restriction = source.geometry.restriction_source
+    if restriction is None:
+        raise ValueError("Mixed source hierarchy lost its retained root restriction.")
+    charts = _source_root_charts(source.mesh, source.geometry, hierarchy, source.mesh)
+    identity = axes(source.mesh.topological_dimension)
+    for identifier, (_, kind, vertices) in _cell_rows(source.mesh).items():
+        chart = charts[identifier]
+        if (
+            chart.root_cell_id != identifier
+            or chart.root_cell_kind != kind
+            or chart.root_vertices != vertices
+            or len(chart.arguments) != len(identity)
+            or not all(
+                expression_equal(actual, expected)
+                for actual, expected in zip(chart.arguments, identity, strict=True)
+            )
+        ):
+            raise ValueError("Mixed source has not returned to its retained root cells.")
+    return restriction.source_geometry_id
+
+
 def _root_partition(
     root: CellMesh,
     root_geometry: CellGeometrySpec,
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     /,
+    *,
+    ancestral_geometry_id: str | None = None,
 ) -> ReferenceCellPartition:
     """Reprove the complete current-to-root map against actual coordinate maps."""
     restriction = geometry.restriction_source
@@ -541,7 +569,12 @@ def _root_partition(
     else:
         if restriction is None or (
             restriction.source_topology_id != root.topology_id
-            or restriction.source_geometry_id != cell_geometry_id(root_geometry)
+            or restriction.source_geometry_id
+            != (
+                cell_geometry_id(root_geometry)
+                if ancestral_geometry_id is None
+                else ancestral_geometry_id
+            )
         ):
             raise ValueError(
                 "Mixed geometry does not retain the independently proved root."
@@ -696,8 +729,16 @@ def validate_mixed_restoration(
     """Reprove a retained mixed adaptation without executing its request."""
     root_owner = target.layer_core_root_geometry
     source_root = source.layer_core_root_geometry
-    if root_owner is None and source_root is None and request.hierarchy is None:
+    source_hierarchy = request.hierarchy
+    if source_hierarchy is not None and not isinstance(
+        source_hierarchy, MixedAdaptationHierarchy
+    ):
+        raise TypeError("Mixed restoration requires mixed source hierarchy ancestry.")
+    ancestral_geometry_id = None
+    if root_owner is None and source_root is None:
         root, root_geometry = source.mesh, source.geometry
+        if source_hierarchy is not None:
+            ancestral_geometry_id = _returned_root_geometry_id(source, source_hierarchy)
     else:
         if (
             root_owner is None
@@ -707,7 +748,13 @@ def validate_mixed_restoration(
             raise ValueError("Mixed endpoints have different retained root authorities.")
         root, root_geometry = root_owner.mesh, root_owner.geometry
     source_partition = _root_partition(root, root_geometry, source.mesh, source.geometry)
-    target_partition = _root_partition(root, root_geometry, target.mesh, target.geometry)
+    target_partition = _root_partition(
+        root,
+        root_geometry,
+        target.mesh,
+        target.geometry,
+        ancestral_geometry_id=ancestral_geometry_id,
+    )
     root_cells = _cell_rows(root)
     source_cells = _cell_rows(source.mesh)
     source_to_root: dict[int, int] = {}
@@ -749,11 +796,6 @@ def validate_mixed_restoration(
     if classes.shape != (len(ordered_source_ids),):
         raise ValueError("Mixed source material classes do not cover its cells.")
     source_classes = dict(zip(ordered_source_ids, map(int, classes), strict=True))
-    source_hierarchy = request.hierarchy
-    if source_hierarchy is not None and not isinstance(
-        source_hierarchy, MixedAdaptationHierarchy
-    ):
-        raise TypeError("Mixed restoration requires mixed source hierarchy ancestry.")
     forest = {record.cell_id: record for record in hierarchy.forest_roots}
     root_classes = {
         identifier: record.cell_class for identifier, record in forest.items()
