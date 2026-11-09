@@ -525,6 +525,13 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Reconstruction transfer and reanalysis consume explicit source coefficients
+  and the owning form, so retained numerical fields can continue without a
+  fabricated completed-solve object or a repeated source PDE solve.
+- Committing a certified finite-element topology result no longer materializes
+  every numerical and exact-reference PyTree leaf solely to detect transformed
+  callbacks. Nested callback warnings, dynamic leaves, and promoted identities
+  remain unchanged.
 - Canonical model-content comparison accepts existing payloads admitted under
   larger archive policies instead of reapplying the generic archive size limits.
   Recipe, dtype and byte equality remain exact; external archive read/write

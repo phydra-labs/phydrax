@@ -1,11 +1,16 @@
+import dataclasses
+import warnings
+from collections.abc import Callable
 from fractions import Fraction
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from jax import Array
 
 import phydrax as phx
+from phydrax._strict import StrictModule
 from phydrax.meshing._adaptation import _finalize_native
 from phydrax.meshing._topology_edit import (
     CellTopologyEdit,
@@ -105,6 +110,132 @@ def test_triangle_transition_lineage_stencil_and_atomic_commit() -> None:
     assert result.adaptation is adaptation
     assert result.mesh.topology_id == transition.target.mesh.topology_id
     assert jnp.allclose(result.state.fields[0], transition.target.mesh.coordinates[:, 0])
+
+
+class _PointwiseTriangleTabulator(StrictModule):
+    scale: Array
+
+    def __call__(self, point: Array) -> tuple[Array, Array]:
+        x, y = point[0], point[1]
+        return (
+            self.scale * jnp.stack((1.0 - x - y, x, y)),
+            self.scale
+            * jnp.asarray(((-1.0, -1.0), (1.0, 0.0), (0.0, 1.0)), dtype=point.dtype),
+        )
+
+
+class _TabulatorChain(StrictModule):
+    actions: tuple[Callable[[Array], tuple[Array, Array]], ...]
+
+    def __init__(self, action: Callable[[Array], tuple[Array, Array]]) -> None:
+        self.actions = (action,)
+
+    def __call__(self, points: Array) -> tuple[Array, Array]:
+        return self.actions[0](points)
+
+
+@pytest.mark.strict_jax
+def test_committed_topology_result_preserves_nested_callback_warning_and_fields() -> None:
+    source = _source()
+    mesh = source.mesh
+    adaptation = phx.meshing.execute_mesh_adaptation(
+        phx.meshing.prepare_mesh_adaptation(
+            source,
+            phx.meshing.MarkedMeshAdaptation(np.asarray((10,), dtype=np.int64)),
+            policy=phx.meshing.MeshAdaptationPolicy(
+                phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
+            ),
+        )
+    )
+    base = phx.discretization.lagrange_element("triangle", 1)
+    tabulator = _TabulatorChain(
+        jax.vmap(_PointwiseTriangleTabulator(jnp.asarray(1.0, dtype=jnp.float64)))
+    )
+    element = phx.discretization.FiniteElementSpec(
+        base.family,
+        base.cell_kind,
+        base.degree,
+        base.reference_nodes,
+        base.entity_dofs,
+        value_spec=base.value_spec,
+        continuity=base.continuity,
+        representation=base.representation,
+        tabulator=tabulator,
+        tabulator_id="linear-triangle-callback",
+    )
+    field = phx.discretization.FiniteElementFieldSpec("u", element)
+    layout = phx.solver.FiniteElementAcceptedFieldLayout(
+        field,
+        transfer_semantics=phx.solver.FiniteElementFieldTransferSemantics.NONCONSERVATIVE_INTERPOLATION,
+    )
+    second_field = phx.discretization.FiniteElementFieldSpec("v", element)
+    second_layout = phx.solver.FiniteElementAcceptedFieldLayout(
+        second_field,
+        transfer_semantics=phx.solver.FiniteElementFieldTransferSemantics.NONCONSERVATIVE_INTERPOLATION,
+    )
+    space = phx.discretization.FiniteElementPlan(
+        mesh, (field, second_field), coordinate_spec=source.geometry
+    ).prepare()
+    form = phx.equations.FiniteElementForm(
+        "topology-callback",
+        ("u", "v"),
+        (
+            phx.equations.DiffusionAction("u", 1.0, action_id="diffusion-u"),
+            phx.equations.DiffusionAction("v", 1.0, action_id="diffusion-v"),
+        ),
+    )
+    problem = phx.equations.compile_finite_element_problem(form, space)
+    accepted = phx.solver.FiniteElementAcceptedState(
+        (mesh.coordinates[:, 0], mesh.coordinates[:, 1]),
+        0.0,
+        0,
+        mesh.topology_id,
+        space.prepared_id,
+        problem.compilation_id,
+        field_layouts=(layout, second_layout),
+    )
+    transaction = phx.solver.FiniteElementTopologyTransaction(
+        lambda candidate, fields, materials, lineage, args: (
+            candidate.topology_id == lineage.target_topology_id
+            and bool(jnp.allclose(fields[0], candidate.coordinates[:, 0]))
+            and bool(jnp.allclose(fields[1], candidate.coordinates[:, 1]))
+        )
+    )
+    with warnings.catch_warnings(record=True) as actual:
+        warnings.simplefilter("always")
+        result = transaction.execute(accepted, mesh, adaptation)
+    assert bool(result.committed)
+    assert result.adaptation is adaptation
+    assert result.mesh is adaptation.target.mesh
+    assert result.state.field_layouts[0] is layout
+    assert result.state.field_layouts[1] is second_layout
+    assert result.state.state_version == accepted.state_version + 1
+    assert jnp.allclose(result.state.fields[0], result.mesh.coordinates[:, 0])
+    assert jnp.allclose(result.state.fields[1], result.mesh.coordinates[:, 1])
+    fields = {
+        field.name: getattr(result, field.name) for field in dataclasses.fields(result)
+    }
+    with warnings.catch_warnings(record=True) as expected:
+        warnings.simplefilter("always")
+        direct = phx.solver.FiniteElementTopologyResult(**fields)
+    assert [(str(item.message), item.category) for item in actual] == [
+        (str(item.message), item.category) for item in expected
+    ]
+    assert len(actual) == 2
+    actual_leaves, actual_tree = jax.tree.flatten(result)
+    direct_leaves, direct_tree = jax.tree.flatten(direct)
+    assert any(leaf is result.state.fields[0] for leaf in actual_leaves)
+    assert actual_tree == direct_tree
+    assert all(
+        left is right for left, right in zip(actual_leaves, direct_leaves, strict=True)
+    )
+    assert all(getattr(direct, name) is value for name, value in fields.items())
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        setattr(result, "diagnostics", "changed")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        with pytest.raises(UserWarning, match="JAX-transformed callable"):
+            transaction.execute(accepted, mesh, adaptation)
 
 
 def test_non_dyadic_stencil_weights_remain_exact_and_unique() -> None:

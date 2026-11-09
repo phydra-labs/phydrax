@@ -19,7 +19,7 @@ from .._array_archive import read_array_archive, write_array_archive
 from .._execution_runtime import ExecutionGroup
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._numerics._compensated import compensated_sum_chunks
-from .._strict import StrictModule
+from .._strict import reconstruct_strict, register_strict_reconstruction, StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellGeometrySpec, CellMesh
 from ..discretization._cell_geometry import PerCellRestrictedCellGeometryElement
@@ -1050,6 +1050,9 @@ class FiniteElementTopologyResult(StrictModule, NonTrainableState):
         FiniteElementConservativeSurfaceEvidence, ...
     ] = ()
     reanalysis: FiniteElementReanalysisResult | None = None
+
+
+register_strict_reconstruction(FiniteElementTopologyResult)
 
 
 class FiniteElementHPTopologyResult(StrictModule, NonTrainableState):
@@ -6877,17 +6880,25 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             schedule_cursor=accepted.schedule_cursor,
             state_version=accepted.state_version + 1,
         )
-        return FiniteElementTopologyResult(
-            state=promoted,
-            mesh=candidate_mesh,
-            adaptation=adaptation,
-            committed=jnp.asarray(True),
-            diagnostics="committed",
-            periodic_transfers=tuple(periodic_transfers),
-            field_transfers=tuple(field_transfers),
-            conservative_transfers=tuple(conservative_transfers),
-            surface_conservative_transfers=tuple(surface_conservative_transfers),
-            reanalysis=reanalysis,
+        # Certification and promotion own the semantic checks. This exact
+        # result has only dynamic, init-enabled fields and no converters or
+        # init hooks; reconstruction checks the complete field set and replays
+        # transformed-callable warnings without materializing numerical leaves.
+        return reconstruct_strict(
+            FiniteElementTopologyResult,
+            {
+                "state": promoted,
+                "mesh": candidate_mesh,
+                "adaptation": adaptation,
+                "committed": jnp.asarray(True),
+                "diagnostics": "committed",
+                "periodic_transfers": tuple(periodic_transfers),
+                "field_transfers": tuple(field_transfers),
+                "conservative_transfers": tuple(conservative_transfers),
+                "surface_conservative_transfers": tuple(surface_conservative_transfers),
+                "reanalysis": reanalysis,
+            },
+            check_transformed_callables=True,
         )
 
     @checked

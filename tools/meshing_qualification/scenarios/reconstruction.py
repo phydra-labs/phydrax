@@ -878,26 +878,27 @@ class _CarriedState:
 
 def _transfer_accepted_state(
     source: phx.meshing.CellMeshingResult,
-    source_solve: _ManufacturedSolve,
+    source_values: np.ndarray,
+    source_form: phx.equations.FiniteElementForm,
     adaptation: phx.meshing.MeshAdaptationResult,
     label: str,
     budget: int,
     /,
 ) -> tuple[dict[str, object], phx.solver.FiniteElementTopologyResult, _ManufacturedSolve]:
-    """Carry u/density/history atomically, then refresh u by physical reanalysis."""
+    """Carry actual source fields without retaining a completed solve's workspace."""
     target = adaptation.target
     layouts = _all_field_layouts(source.mesh)
     source_space = _all_field_space(source)
     target_space = _all_field_space(target)
     state_form = phx.equations.FiniteElementForm(
-        f"{label}-state", _FIELD_NAMES, source_solve.form.actions
+        f"{label}-state", _FIELD_NAMES, source_form.actions
     )
     source_state = phx.equations.compile_finite_element_problem(state_form, source_space)
     target_state = phx.equations.compile_finite_element_problem(state_form, target_space)
     coordinates = np.asarray(source.mesh.coordinates, dtype=np.float64)
     accepted = phx.solver.FiniteElementAcceptedState(
         (
-            jnp.asarray(source_solve.values),
+            jnp.asarray(source_values),
             jnp.full((coordinates.shape[0],), _DENSITY),
             jnp.asarray(coordinates[:, 0] + 0.5),
         ),
@@ -908,7 +909,7 @@ def _transfer_accepted_state(
         source_state.compilation_id,
         field_layouts=layouts,
     )
-    source_inventory = _p1_integral(source.mesh, source_solve.values)
+    source_inventory = _p1_integral(source.mesh, source_values)
     source_density = _p1_integral(source.mesh, np.full(coordinates.shape[0], _DENSITY))
     carried = _CarriedState()
 
@@ -1295,7 +1296,7 @@ def _volume_lifecycle(
     target_acceptance = _volume_acceptance(plc, target)
     _stage(profile, "all-field-transfer-reanalysis")
     transfer, staged, refreshed = _transfer_accepted_state(
-        result, initial, adaptation, label, budget
+        result, initial.values, initial.form, adaptation, label, budget
     )
     path = archive_directory / f"{label}.phx"
     _stage(profile, "archive-write")
