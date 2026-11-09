@@ -1829,7 +1829,9 @@ def _stored(result: MeshAdaptationResult, /) -> MeshAdaptationResult:
     return stored
 
 
-@pytest.mark.parametrize("mutation", ("exact", "changed-map", "foreign-root"))
+@pytest.mark.parametrize(
+    "mutation", ("exact", "changed-map", "foreign-root", "coherent-root")
+)
 def test_retained_mixed_second_cycle_reproves_returned_root(
     hex_pyramid_mesh: CellMesh, mutation: str
 ) -> None:
@@ -1871,6 +1873,11 @@ def test_retained_mixed_second_cycle_reproves_returned_root(
     stored = _stored(second)
     target = second.target
     if mutation != "exact":
+        if mutation == "coherent-root":
+            for endpoint in (coarsened.target, target):
+                restriction = endpoint.geometry.restriction_source
+                assert restriction is not None
+                object.__setattr__(restriction, "source_geometry_id", "foreign-root")
         geometry = copy.copy(target.geometry)
         if mutation == "changed-map":
             coordinates = np.asarray(geometry.coordinates).copy()

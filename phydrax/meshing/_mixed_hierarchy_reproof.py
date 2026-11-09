@@ -510,10 +510,15 @@ def _returned_root_geometry_id(
     source: CellMeshingResult, hierarchy: MixedAdaptationHierarchy, /
 ) -> str:
     """Bind a fully coarsened endpoint to its retained root reference frame."""
-    restriction = source.geometry.restriction_source
+    from ..geometry._surface_source_archive import _geometry
+
+    # Reconstruct cached restriction/layout identities before using the retained
+    # label. Matching endpoint labels alone do not authenticate root provenance.
+    geometry = _geometry(source.geometry, source.mesh)
+    restriction = geometry.restriction_source
     if restriction is None:
         raise ValueError("Mixed source hierarchy lost its retained root restriction.")
-    charts = _source_root_charts(source.mesh, source.geometry, hierarchy, source.mesh)
+    charts = _source_root_charts(source.mesh, geometry, hierarchy, source.mesh)
     identity = axes(source.mesh.topological_dimension)
     for identifier, (_, kind, vertices) in _cell_rows(source.mesh).items():
         chart = charts[identifier]
