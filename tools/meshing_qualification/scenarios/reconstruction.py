@@ -1968,9 +1968,10 @@ _SOLVE_MEMORY_BUDGET_BYTES = {
 # tetrahedra -> 80,760 children) after the organization membership went
 # sparse: 3,189,260,288 and 3,356,000,256 bytes of stage growth in two runs,
 # at most 41,555 per child. The estimate charges 48 KiB per child (18% over
-# that rate): 8.84 GB for torus-1 (179,944 children). 10 GiB keeps every
-# admitted row inside the 16 GiB run envelope (largest stage-start resident:
-# 4.9 GB, torus-2 on wave-7) and refuses rows whose refinement cannot fit.
+# that rate): 8.84 GB for torus-1 (179,944 children). R009 A1 measured
+# 33,174,061,056 bytes required for torus-2, and A2 observed 15.169 GB peak
+# during its 674,928-child refinement. That profile declares 32 GiB; all
+# other profiles retain 10 GiB. The estimate and admission remain unchanged.
 _REFINED_CHILDREN_PER_TETRAHEDRON = 8
 _REFINEMENT_BYTES_PER_TARGET_CELL = 48 << 10
 _REFINEMENT_MEMORY_BUDGET_BYTES = {
@@ -1979,6 +1980,7 @@ _REFINEMENT_MEMORY_BUDGET_BYTES = {
         for kind in ("lobed-sphere", "torus", "rotated-ellipsoid")
         for scale in (1, 2)
     },
+    _profile_id("torus", 2): 32 << 30,
     _ENVELOPE_PROFILE: 10 << 30,
 }
 

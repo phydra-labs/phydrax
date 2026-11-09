@@ -355,6 +355,9 @@ class _RelocationSearch:
     proposal: dict[str, Any] | None = None
 
 
+type _RelocationCaches = tuple[dict[int, _RelocationSearch | None], ...]
+
+
 @dataclass(slots=True)
 class _NativeState:
     native: TetMesh3D
@@ -7303,6 +7306,22 @@ def _relocation_unblocks_collapse(
     return False
 
 
+def _invalidate_relocation_searches(
+    caches: _RelocationCaches,
+    moved: list[dict[str, Any]] | None = None,
+    /,
+) -> None:
+    """Evict moved closed stars, or every search after topology/periodic edits."""
+    if moved is None:
+        for cached in caches:
+            cached.clear()
+    else:
+        for proposal in moved:
+            for vertex in proposal["star_vertices"]:
+                for cached in caches:
+                    cached.pop(int(vertex), None)
+
+
 def _relocation_phase(
     state: _NativeState,
     counters: dict[str, int],
@@ -7311,6 +7330,7 @@ def _relocation_phase(
     topology_operations: bool = True,
     collapse_cache: dict[tuple[int, int], tuple[dict[str, Any] | None, frozenset[int]]]
     | None = None,
+    caches: _RelocationCaches | None = None,
 ) -> int:
     """Relocate until no vertex has an applicable objective-decreasing move.
 
@@ -7319,12 +7339,13 @@ def _relocation_phase(
     A moved vertex evicts the searches of its closed star.
     """
     applied = 0
-    # The four search stages have different proposal sets. Preserve each
-    # stage's results across a restart, invalidating only changed closed stars.
-    # Periodic edits can change lifted representatives outside the local star,
-    # so retain the conservative whole-cache invalidation for those meshes.
-    caches: list[dict[int, _RelocationSearch | None]] = [{}, {}, {}, {}]
+    # The executor retains stage-local searches across speculative returns;
+    # only changed closed stars invalidate a nonperiodic search.
     periodic = state.target_mesh.periodic_topology is not None
+    if caches is None:
+        caches = ({}, {}, {}, {})
+    elif periodic:
+        _invalidate_relocation_searches(caches)
     stage = 0
     prepared: _RelocationPreparation | None = None
     while True:
@@ -7380,21 +7401,13 @@ def _relocation_phase(
                 previous=(previous_snapshot, prepared),
                 moved_vertices=frozenset(int(proposal["vertex"]) for proposal in moved),
             )
+            _invalidate_relocation_searches(caches, None if periodic else moved)
         if topology_operations and _relocation_unblocks_collapse(
             state, moved, collapse_cache if collapse_cache is not None else {}, prepared
         ):
             return applied
-        if moved:
-            if periodic:
-                for cached in caches:
-                    cached.clear()
-            else:
-                for proposal in moved:
-                    for vertex in proposal["star_vertices"]:
-                        for cached in caches:
-                            cached.pop(int(vertex), None)
-            if stage:
-                stage = 0
+        if moved and stage:
+            stage = 0
 
 
 def _native_metric_measurements(
@@ -7608,6 +7621,9 @@ def _execute_native_state(
     collapse_cache: dict[
         tuple[int, int], tuple[dict[str, Any] | None, frozenset[int]]
     ] = {}
+    # Host collapse proposals can yield from relocation without a later native
+    # mutation. Such yields must not restart searches on unchanged stars.
+    relocation_caches: _RelocationCaches = ({}, {}, {}, {}) if relocation else ()
     while True:
         converged, _, _, _, _ = _unit_metric_status(state)
         if converged:
@@ -7623,6 +7639,7 @@ def _execute_native_state(
                 # Revisit the remaining long edges after coarsening the short
                 # spokes created by this disjoint split batch. Both edits
                 # strictly decrease the same objective; there is no pass cap.
+                _invalidate_relocation_searches(relocation_caches)
                 continue
             for kind, name in (
                 (TetMeshEditKind.FLIP23, "flips23"),
@@ -7640,12 +7657,15 @@ def _execute_native_state(
                     else None,
                     memo=replacement_memos[kind],
                 )
+            if applied:
+                _invalidate_relocation_searches(relocation_caches)
         if relocation:
             applied += _relocation_phase(
                 state,
                 counters,
                 topology_operations=topology_operations,
                 collapse_cache=collapse_cache,
+                caches=relocation_caches,
             )
         if applied == 0:
             status = TetraMetricStatus.STALLED

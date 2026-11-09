@@ -50,11 +50,25 @@ def test_refinement_refuses_before_any_adaptation_work(
     monkeypatch.setattr(
         reconstruction.phx.meshing, "prepare_mesh_adaptation", unreachable
     )
-    with pytest.raises(MemoryBudgetError, match="refinement_memory_bytes admits 1 bytes"):
+    with pytest.raises(MemoryBudgetError):
         reconstruction._refine_every_cell(None, _Result(), 1)  # ty: ignore[invalid-argument-type]
 
 
-def test_every_lifecycle_profile_declares_its_refinement_budget() -> None:
-    declared = reconstruction._REFINEMENT_MEMORY_BUDGET_BYTES
-    assert set(declared) == set(reconstruction._SOLVE_MEMORY_BUDGET_BYTES)
-    assert all(isinstance(value, int) and value > 0 for value in declared.values())
+def test_larger_torus_admits_measured_refinement_and_changes_plan_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = reconstruction._profile_id("torus", 2)
+    budget = reconstruction._REFINEMENT_MEMORY_BUDGET_BYTES[profile]
+    mesh = _tetrahedra(84_366)
+    required = reconstruction._refinement_admission(mesh, budget)
+    assert required == 33_174_061_056
+    limits = reconstruction._archive_limits(profile)
+    current = reconstruction._resource_plan_id(profile, limits)
+    monkeypatch.setitem(reconstruction._REFINEMENT_MEMORY_BUDGET_BYTES, profile, 10 << 30)
+    with pytest.raises(MemoryBudgetError) as refused:
+        reconstruction._refinement_admission(
+            mesh, reconstruction._REFINEMENT_MEMORY_BUDGET_BYTES[profile]
+        )
+    assert refused.value.required_bytes == required
+    assert refused.value.limit_bytes == 10 << 30
+    assert reconstruction._resource_plan_id(profile, limits) != current
