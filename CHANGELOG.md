@@ -525,6 +525,9 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Native intersection tests no longer require incidental bitwise equality
+  between symbolic moments and moments of rounded simplex carriers. Independent
+  carrier volume/first-moment checks retain their original tolerances.
 - Legendre–Lobatto preparation now certifies binary64 node and weight rounding
   through native exact polynomial isolation, including rounding-boundary ties.
   Immutable host tables are reused; Gauss and Radau routes are unchanged.
