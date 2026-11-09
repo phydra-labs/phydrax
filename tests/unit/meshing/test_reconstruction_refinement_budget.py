@@ -65,12 +65,16 @@ def test_larger_torus_admits_measured_refinement_and_changes_plan_identity(
 ) -> None:
     profile = reconstruction._profile_id("torus", 2)
     budget = reconstruction._REFINEMENT_MEMORY_BUDGET_BYTES[profile]
-    required = 84_366 * 8 * (48 << 10)
-    assert budget == 32 << 30
+    mesh = _tetrahedra(84_366)
+    required = reconstruction._refinement_admission(mesh, budget)
     assert required == 33_174_061_056
-    assert required <= budget
     limits = reconstruction._archive_limits(profile)
     current = reconstruction._resource_plan_id(profile, limits)
     monkeypatch.setitem(reconstruction._REFINEMENT_MEMORY_BUDGET_BYTES, profile, 10 << 30)
-    assert required > reconstruction._REFINEMENT_MEMORY_BUDGET_BYTES[profile]
+    with pytest.raises(MemoryBudgetError) as refused:
+        reconstruction._refinement_admission(
+            mesh, reconstruction._REFINEMENT_MEMORY_BUDGET_BYTES[profile]
+        )
+    assert refused.value.required_bytes == required
+    assert refused.value.limit_bytes == 10 << 30
     assert reconstruction._resource_plan_id(profile, limits) != current

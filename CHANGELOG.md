@@ -525,6 +525,10 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- The original larger-torus reconstruction profile declares 32 GiB for
+  refinement, admitting its measured 674,928 children under the unchanged
+  48 KiB-per-child estimate. Other profiles retain their prior declarations;
+  solve, archive and scientific acceptance criteria are unchanged.
 - Finite-volume preparation and nested conservative remapping now use declared
   coordinate geometry rather than rounded carriers. Exact partition/embedding
   evidence, physical moment errors and material-side identity reach the consumer.
