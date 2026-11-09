@@ -192,12 +192,34 @@ def test_archive_resource_plan_identity_covers_complete_policy() -> None:
     )
 
 
+def test_larger_torus_cold_reader_rejects_previous_archive_plan(
+    tmp_path: Path,
+) -> None:
+    profile = reconstruction._profile_id("torus", 2)
+    limits = reconstruction._archive_limits(profile)
+    previous = replace(limits, max_members=8193)
+    current_id = reconstruction._resource_plan_id(profile, limits)
+    previous_id = reconstruction._resource_plan_id(profile, previous)
+    assert current_id != previous_id
+    expected: dict[str, object] = {
+        "profile": profile,
+        "archive_budget_bytes": reconstruction._ARCHIVE_BUDGET_BYTES[profile],
+        "archive_member_limit": limits.max_members,
+        "resource_plan_id": previous_id,
+    }
+    with pytest.raises(RuntimeError):
+        reconstruction._resume_accepted_archive(
+            str(tmp_path / "missing.phx"), "", expected
+        )
+
+
 @pytest.mark.parametrize(
-    ("archive_bytes_delta", "members_delta", "message"),
-    [(1, 1, "archive budget"), (0, 1, "archive member limit"), (0, 0, "resource plan")],
+    ("archive_bytes_delta", "members_delta", "invalid_plan"),
+    [(1, 0, False), (0, 1, False), (0, 0, True)],
+    ids=("archive-bytes", "archive-members", "resource-plan"),
 )
 def test_cold_reader_refuses_resource_identity_before_io(
-    tmp_path: Path, archive_bytes_delta: int, members_delta: int, message: str
+    tmp_path: Path, archive_bytes_delta: int, members_delta: int, invalid_plan: bool
 ) -> None:
     profile = reconstruction._profile_id("rotated-ellipsoid", 2)
     expected: dict[str, object] = {
@@ -206,9 +228,15 @@ def test_cold_reader_refuses_resource_identity_before_io(
         + archive_bytes_delta,
         "archive_member_limit": reconstruction._ARCHIVE_MEMBER_LIMITS[profile]
         + members_delta,
-        "resource_plan_id": "incorrect",
+        "resource_plan_id": (
+            "incorrect"
+            if invalid_plan
+            else reconstruction._resource_plan_id(
+                profile, reconstruction._archive_limits(profile)
+            )
+        ),
     }
-    with pytest.raises(RuntimeError, match=message):
+    with pytest.raises(RuntimeError):
         reconstruction._resume_accepted_archive(
             str(tmp_path / "missing.phx"), "", expected
         )

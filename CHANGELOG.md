@@ -528,7 +528,11 @@
 - The original larger-torus reconstruction profile declares 32 GiB for
   refinement, admitting its measured 674,928 children under the unchanged
   48 KiB-per-child estimate. Other profiles retain their prior declarations;
-  solve, archive and scientific acceptance criteria are unchanged.
+  solve budgets and scientific acceptance criteria are unchanged.
+- The larger native reconstruction torus declares a 32,769-member archive
+  limit, accommodating its measured pre-refinement capture while retaining
+  the existing archive byte and solve budgets. Its refined accepted-state
+  archive remains subject to the same admission checks.
 - Finite-volume preparation and nested conservative remapping now use declared
   coordinate geometry rather than rounded carriers. Exact partition/embedding
   evidence, physical moment errors and material-side identity reach the consumer.
