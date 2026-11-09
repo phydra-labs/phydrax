@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- The `native-tspline-locality` benchmark measures actual local and full-tensor
+  refinement of one exact source at shared knot coordinates. Both solve the
+  same manufactured Poisson problem, with independent physical-error estimates
+  and separate preparation, compiler, execution and retained-storage costs.
 - Native T-spline intersections use exact local rational Bézier extraction,
   interval source bounds and Krawczyk-certified graph branches against planes,
   quadrics, NURBS and T-splines. Tangent and non-graph cases retain typed
@@ -224,6 +228,13 @@
   extra; `meshing-gmsh` includes its CAD-validation dependency. Checked OCCT
   projection types still load the real provider on explicit access, while
   native-only imports and archive reconstruction leave it unloaded.
+- Reconstruction qualification declares per-profile archive member limits and
+  fingerprints the complete lifecycle resource plan. Cold readers refuse a
+  mismatched policy before archive admission. The larger ellipsoid's measured
+  archive uses its explicit member allowance; library defaults are unchanged.
+- Unit-box hybrid qualification declares the measured Hodge admission budget
+  across source/target degrees, twists and boundary conditions. Other profiles
+  and the library's resource defaults are unchanged.
 - The `SparseHodge` SPD admission decides positive definiteness with
   `admit_sparse_factorization_values`, which keeps only the pivot evidence
   (status, minimum pivot, replaced/rejected pivots, finiteness) instead of
@@ -514,12 +525,24 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
-- Native tetrahedron intersection volumes and first moments integrate exact
-  symbolic construction coordinates rather than rounded physical vertices.
-  Exact term contributions feed compensated binary64 sums, avoiding the
-  thin-overlap error that caused a false finite-volume double-coverage refusal.
-  The ABI and coverage tolerances are unchanged; numerical measures may change,
-  and the exact route has an explicit higher kernel cost.
+- Native tetrahedron moments-only intersections integrate exact symbolic
+  construction coordinates rather than rounded physical vertices. Exact term
+  contributions feed compensated binary64 sums, avoiding the thin-overlap
+  error that caused a false finite-volume double-coverage refusal.
+  Simplex-partition results instead integrate the actual emitted dyadic
+  carriers, so their measures and first moments agree with their signed
+  quadrature partition. Thin-carrier second moments use a reliability filter
+  and exact rational fallback. Existing ABI and coverage tolerances are preserved;
+  numerical measures may change, and the exact route has a higher kernel cost.
+- Native tetrahedron quadratic moments integrate symbolic intersections directly.
+  Second-moments-only common-refinement requests no longer require a representable
+  rounded geometric fan. Actual simplex-partition requests still refuse positive
+  intersections whose rounded carriers collapse.
+- Scalar affine-P1 L2 transfer can assemble mixed mass from certified zeroth,
+  first and second overlap moments with Cartesian measure. Canonical basis and
+  physical-geometry checks, conservation, pullback and native solve evidence are
+  retained. Higher-order fields and non-Cartesian measures still require their
+  geometric quadrature data.
 - Layer transition archives validate retained coordinate provenance against
   the independently restored preceding endpoint. Standalone retained banks
   remain data rather than source authority: their coefficients, execution
@@ -550,6 +573,15 @@
   and exact publication. Collapsed boundary corners remain explicit; uncertain
   candidate lifts are refused. Planar and other periodic adaptation paths retain
   their existing decisions, and final scientific certificates remain required.
+- Nonperiodic tetrahedral metric relocation continues its finite source-candidate
+  search after a native refusal instead of marking the vertex exhausted.
+  Pending searches retain only local numerical data and are invalidated when
+  their closed star changes. Exact ancestry, metric improvement, native
+  zero-set distance and embedding checks remain required for every move.
+- Adaptive implicit volume archives restore a shared query and domain only after
+  comparing their complete stored discovery recipes and replaying discovery.
+  Matching scoped fidelity owners retain their tighter tolerance for subsequent
+  metric consumers; differing scientific inputs remain independently validated.
 - Native PLC suppression can peel a thin wedge along directions toward its
   incident cells when the existing inward-normal direction cannot fill it.
   Directions are tried lazily in deterministic cell order, without additional

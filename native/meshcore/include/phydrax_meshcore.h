@@ -128,6 +128,12 @@ PHX_MC_API int32_t phx_mc_tetrahedron_intersection_moments(
     int64_t count, const double* first, const double* second, double* volumes,
     double* first_moments, int32_t* item_status);
 
+/* The same symbolic intersection, including second_moments (count, 3, 3),
+ * the row-major integral of x x^T. No simplex carriers are constructed. */
+PHX_MC_API int32_t phx_mc_tetrahedron_intersection_quadratic_moments(
+    int64_t count, const double* first, const double* second, double* volumes,
+    double* first_moments, double* second_moments, int32_t* item_status);
+
 /* Simplex partitions of the intersections above, for quadrature on the common
  * refinement.  Each nonempty intersection is fanned from the vertex average o of
  * its rounded vertices: polygon intersections as triangles (o, v_i, v_{i+1})

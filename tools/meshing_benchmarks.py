@@ -32,8 +32,10 @@ from phydrax._bvh import (
     refit_packed_bvh_bounds,
 )
 from phydrax._execution_sampling import process_peak_memory
+from phydrax._interpolation import TMesh2D
 from phydrax._jax_config import configuration_values, set_compilation_cache
 from phydrax._meshcore import PlcRecovery3D, TetMeshArrays
+from phydrax.discretization import iga
 from phydrax.discretization._cell_geometry_validity import (
     CellValidityCertificate,
     ComputedCellValidity,
@@ -2676,6 +2678,201 @@ def benchmark_native_tspline_cad_analysis(
     }
 
 
+def _sine_tspline_source(points: jax.Array, arguments: object, /) -> jax.Array:
+    del arguments
+    return (
+        2.0
+        * jax.numpy.pi**2
+        * jax.numpy.sin(jax.numpy.pi * points[..., 0])
+        * jax.numpy.sin(jax.numpy.pi * points[..., 1])
+    )
+
+
+def _tensor_tspline_comparison_plan(
+    source: iga.TSplineIsogeometricPlan, target: TMesh2D, /
+) -> iga.TSplineIsogeometricPlan:
+    from phydrax._interpolation._tspline import (
+        _exact_basis_transfer_routes,
+        ASTSTransferPlan,
+    )
+    from phydrax.geometry.brep._tspline import TSplineSurfacePatch
+
+    patch = source.geometry.surface_patch
+    routes = _exact_basis_transfer_routes(patch.mesh, target)
+    transfer = ASTSTransferPlan(
+        patch.mesh.mesh_id,
+        target.mesh_id,
+        patch.mesh.coefficient_count,
+        target.coefficient_count,
+        tuple(row[0] for row in routes),
+        tuple(row[1] for row in routes),
+        tuple(row[2] for row in routes),
+    )
+    target_patch = TSplineSurfacePatch(
+        target,
+        patch.control_points,
+        patch.weights,
+        exact_control_points=patch.exact_source_control_points,
+        exact_weights=patch.exact_source_weights,
+        source_mesh=patch.mesh,
+        transfer_plans=(transfer,),
+        transfer_meshes=(patch.mesh, target),
+    )
+    return iga.TSplineIsogeometricPlan(
+        target_patch,
+        iga.TSplineH1FieldSpec("u"),
+        quadrature_policy=iga.IsogeometricQuadraturePolicy(6),
+    )
+
+
+def _tspline_locality_solve(
+    plan: iga.TSplineIsogeometricPlan, repeats: int, /
+) -> dict[str, object]:
+    prepared, preparation_seconds = _timed(plan.prepare)
+    form = phx.equations.FiniteElementForm(
+        "tspline-locality-sine-poisson",
+        "u",
+        (
+            phx.equations.DiffusionAction("u", 1.0),
+            phx.equations.SourceAction(
+                "u",
+                phx.equations.coefficient(
+                    _sine_tspline_source, coefficient_id="tspline-locality-sine-source"
+                ),
+            ),
+        ),
+    )
+    problem, equation_seconds = _timed(
+        lambda: phx.equations.compile_finite_element_problem(
+            form,
+            prepared,
+            constraint=prepared.homogeneous_trace_constraint("u"),
+            execution_policy=phx.equations.FiniteElementExecutionPolicy(
+                realization="matrix_free", local_kernel="dense"
+            ),
+        )
+    )
+    executable, compiler = _lower_compile(_solve_tspline_poisson, problem)
+    solved, first_seconds = _timed(lambda: jax.block_until_ready(executable(problem)))
+    warm_seconds = []
+    for _ in range(repeats):
+        _, elapsed = _timed(lambda: jax.block_until_ready(executable(problem)))
+        warm_seconds.append(elapsed)
+    solution, successful, residual, rhs_norm = solved
+    normalized_residual = float(np.asarray(residual)) / max(
+        float(np.asarray(rhs_norm)), 1.0
+    )
+    if not bool(np.all(np.asarray(successful))) or normalized_residual > 2.0e-8:
+        raise RuntimeError("T-spline locality solve failed its residual oracle.")
+    coefficients = problem.expand(solution)
+    # A shared physical grid, independent of either trial space, estimates L2 error.
+    axis = (np.arange(128, dtype=np.float64) + 0.5) / 128.0
+    x, y = np.meshgrid(axis, axis, indexing="ij")
+    points = np.stack((x.ravel(), y.ravel()), axis=1)
+    route = prepared.prepare_query_route(points)
+    values = np.asarray(prepared.evaluate_field_route("u", route, coefficients))
+    exact = np.sin(np.pi * points[:, 0]) * np.sin(np.pi * points[:, 1])
+    error = float(np.sqrt(np.mean((values - exact) ** 2)))
+    if not np.isfinite(error) or error > 1.0e-3:
+        raise RuntimeError(
+            "T-spline locality solve failed its independent physical-error bound."
+        )
+    return {
+        "cells": plan.geometry.mesh.cell_count,
+        "anchors": plan.geometry.mesh.coefficient_count,
+        "t_junctions": plan.geometry.mesh.t_junction_count,
+        "preparation_seconds": preparation_seconds,
+        "equation_preparation_seconds": equation_seconds,
+        "compiler": compiler,
+        "first_solve_seconds": first_seconds,
+        "warm_solve_seconds": warm_seconds,
+        "normalized_residual": normalized_residual,
+        "physical_l2_error_estimate": error,
+        "physical_error_grid": (128, 128),
+        "logical_retained_array_bytes": _array_bytes((plan, prepared, problem)),
+    }
+
+
+def benchmark_native_tspline_locality(resolution: int, repeats: int) -> dict[str, object]:
+    """Compare local and actual full-tensor refinement of one exact planar source."""
+    from phydrax.geometry.brep._tspline import TSplineSurfacePatch
+
+    if resolution < 4 or repeats < 1:
+        raise ValueError(
+            "T-spline locality requires resolution >= 4 and positive repeats."
+        )
+    breaks = tuple(Fraction(index, resolution) for index in range(resolution + 1))
+    mesh, topology_seconds = _timed(lambda: TMesh2D.tensor_product(breaks, breaks))
+    exact_points = tuple(
+        (*anchor.local_knots.greville_parameter, Fraction(0)) for anchor in mesh.anchors
+    )
+    patch, geometry_seconds = _timed(
+        lambda: TSplineSurfacePatch(
+            mesh,
+            np.asarray(exact_points, dtype=np.float64),
+            np.ones(mesh.coefficient_count, dtype=np.float64),
+            exact_control_points=exact_points,
+            exact_weights=tuple(Fraction(1) for _ in mesh.anchors),
+        )
+    )
+    source, source_plan_seconds = _timed(
+        lambda: iga.TSplineIsogeometricPlan(
+            patch,
+            iga.TSplineH1FieldSpec("u"),
+            quadrature_policy=iga.IsogeometricQuadraturePolicy(6),
+        )
+    )
+    marked = min(
+        mesh.cells,
+        key=lambda cell: (
+            abs(cell.parameter_bounds[0] + cell.parameter_bounds[1] - 1)
+            + abs(cell.parameter_bounds[2] + cell.parameter_bounds[3] - 1),
+            cell.cell_id,
+        ),
+    )
+    local, local_seconds = _timed(lambda: source.refine((marked.cell_id,)))
+    local_plan = local.target_plan
+    tensor_mesh, tensor_topology_seconds = _timed(
+        lambda: TMesh2D.tensor_product(*local_plan.geometry.mesh.axis_breaks)
+    )
+    tensor_plan, tensor_plan_seconds = _timed(
+        lambda: _tensor_tspline_comparison_plan(source, tensor_mesh)
+    )
+    if (
+        not local_plan.exact_geometry_certificate.passed
+        or local_plan.geometry.mesh.t_junction_count == 0
+        or local_plan.geometry.mesh.cell_count >= tensor_mesh.cell_count
+        or tensor_plan.geometry.surface_patch.source_mesh.mesh_id != mesh.mesh_id
+        or not tensor_plan.exact_geometry_certificate.passed
+        or not tensor_plan.geometry_certificate.passed
+    ):
+        raise RuntimeError("Local and full-tensor plans lost their exact common source.")
+    variants = {}
+    for name, plan in (("local", local_plan), ("full_tensor", tensor_plan)):
+        jax.clear_caches()
+        variants[name] = _tspline_locality_solve(plan, repeats)
+    return {
+        "scenario": "native-tspline-locality",
+        "status": "passed",
+        "resolution": resolution,
+        "repeats": repeats,
+        "source_cells": mesh.cell_count,
+        "source_mesh_id": mesh.mesh_id,
+        "source_definition_id": patch.source_definition_id,
+        "marked_cell_ids": (marked.cell_id,),
+        "comparison": "same exact source and union knot coordinates; same sine Poisson problem",
+        "phases_seconds": {
+            "source_topology": topology_seconds,
+            "source_geometry": geometry_seconds,
+            "source_plan": source_plan_seconds,
+            "local_refinement": local_seconds,
+            "full_tensor_topology": tensor_topology_seconds,
+            "full_tensor_transfer_and_plan": tensor_plan_seconds,
+        },
+        "variants": variants,
+    }
+
+
 def benchmark_device_bisection(resolution: int) -> dict[str, object]:
     """Five device adapt cycles inside one bucket of ``1000 * resolution`` slots.
 
@@ -4607,6 +4804,7 @@ _CASES = {
     "native-tspline-cad-analysis": lambda resolution, repeats: (
         benchmark_native_tspline_cad_analysis(resolution, repeats)
     ),
+    "native-tspline-locality": benchmark_native_tspline_locality,
     "gmsh-semantic": _benchmark_gmsh_semantic_case,
     "optional-gmsh-comparison": benchmark_native_gmsh_comparison,
     "cad-partition": lambda resolution, repeats: _repeated_case(

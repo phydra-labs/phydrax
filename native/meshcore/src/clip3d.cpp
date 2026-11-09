@@ -564,7 +564,8 @@ class PolytopeClipper {
   // its determinant and centroid are rational functions of dyadic inputs.
   // Tet-tet construction produces only point and edge-plane vertices;
   // three-plane vertices occur only in the other clipping families.
-  void tetrahedron_moments(double& volume, double* first_moment) {
+  template <bool kQuadratic>
+  void tetrahedron_moments(double& volume, double* first_moment, double* second_moment) {
     if (exact_vertices_.size() < vertices.size()) exact_vertices_.resize(vertices.size());
     auto& exact_vertices = exact_vertices_;
     for (int index : live) {
@@ -591,6 +592,7 @@ class PolytopeClipper {
     const Homogeneous& o = exact_vertices[origin];
     clip::CompensatedSum six;
     clip::CompensatedSum sum[3];
+    clip::CompensatedSum quadratic[3][3];
     for (const Face& face : faces) {
       for (int i = 1; i + 1 < face.size; ++i) {
         const int indices[3] = {loops[face.start], loops[face.start + i],
@@ -620,10 +622,44 @@ class PolytopeClipper {
           sum[k].add(exact::rounded_quotient(determinant * centroid,
                                               determinant_denominator * common));
         }
+        if constexpr (kQuadratic) {
+          const Dyadic factors[4] = {
+              v[1]->denominator * v[2]->denominator * v[3]->denominator,
+              v[0]->denominator * v[2]->denominator * v[3]->denominator,
+              v[0]->denominator * v[1]->denominator * v[3]->denominator,
+              v[0]->denominator * v[1]->denominator * v[2]->denominator};
+          Dyadic coordinates[4][3];
+          Dyadic total[3];
+          for (int row = 0; row < 4; ++row) {
+            for (int axis = 0; axis < 3; ++axis) {
+              coordinates[row][axis] = v[row]->numerator[axis] * factors[row];
+              total[axis] = total[axis] + coordinates[row][axis];
+            }
+          }
+          const Dyadic quadratic_denominator = determinant_denominator * common * common;
+          for (int j = 0; j < 3; ++j) {
+            for (int k = j; k < 3; ++k) {
+              Dyadic polynomial = total[j] * total[k];
+              for (int row = 0; row < 4; ++row) {
+                polynomial = polynomial + coordinates[row][j] * coordinates[row][k];
+              }
+              quadratic[j][k].add(exact::rounded_quotient(
+                  determinant * polynomial, quadratic_denominator));
+            }
+          }
+        }
       }
     }
     volume = six.value() / 6.0;
     for (int k = 0; k < 3; ++k) first_moment[k] = sum[k].value() / 24.0;
+    if constexpr (kQuadratic) {
+      for (int j = 0; j < 3; ++j) {
+        for (int k = j; k < 3; ++k) {
+          second_moment[3 * j + k] = quadratic[j][k].value() / 120.0;
+          second_moment[3 * k + j] = second_moment[3 * j + k];
+        }
+      }
+    }
   }
 
   // Emit the rounded fan and integrate those same carriers with exact dyadic
@@ -1087,7 +1123,7 @@ int32_t run_clips(PolytopeClipper& clipper, bool& empty) {
 // `simplices` (optional) receives the cone partition of a nonempty intersection.
 int32_t intersect_tetrahedra(const double* first, const double* second,
                              PolytopeClipper& clipper, double& volume, double* first_moment,
-                             clip::SimplexOutput* simplices) {
+                             clip::SimplexOutput* simplices, double* second_moment) {
   int32_t status = clip::check_finite(first, 12);
   if (status == PHX_MC_OK) {
     status = clip::check_finite(second, 12);
@@ -1118,7 +1154,11 @@ int32_t intersect_tetrahedra(const double* first, const double* second,
       // the same rounded fan rather than the symbolic intersection vertices.
       status = clipper.cone_simplices(*simplices, volume, first_moment);
     } else {
-      clipper.tetrahedron_moments(volume, first_moment);
+      if (second_moment == nullptr) {
+        clipper.tetrahedron_moments<false>(volume, first_moment, nullptr);
+      } else {
+        clipper.tetrahedron_moments<true>(volume, first_moment, second_moment);
+      }
       // A nonempty exact clip is full-dimensional. A zero or nonfinite
       // numerical volume is an unrepresentable result, not an empty contact.
       if (!(volume > 0.0) || !std::isfinite(volume)) status = PHX_MC_UNRESOLVED;
@@ -1267,7 +1307,7 @@ int32_t clip_box(const double* lower, const double* upper, const double* normals
 int32_t tetrahedron_batch(int64_t count, const double* first, const double* second,
                           int32_t simplex_capacity, double* simplices,
                           int32_t* simplex_counts, double* volumes, double* first_moments,
-                          int32_t* item_status) {
+                          int32_t* item_status, double* second_moments) {
   if (count < 0 || simplex_capacity < 0 ||
       !addressable(count, 12, sizeof(double)) ||
       !addressable(count, 12 * static_cast<int64_t>(simplex_capacity), sizeof(double))) {
@@ -1284,15 +1324,18 @@ int32_t tetrahedron_batch(int64_t count, const double* first, const double* seco
   for (int64_t item = 0; item < count; ++item) {
     double volume = 0.0;
     double moment[3] = {0.0, 0.0, 0.0};
+    double* quadratic = second_moments == nullptr ? nullptr : second_moments + 9 * item;
+    if (quadratic != nullptr) std::fill(quadratic, quadratic + 9, 0.0);
     clip::SimplexOutput out{
         simplex_capacity,
         simplices == nullptr ? nullptr : simplices + 12 * item * simplex_capacity, 0};
-    const int32_t status = intersect_tetrahedra(first + 12 * item, second + 12 * item, clipper,
-                                                volume, moment,
-                                                simplex_counts == nullptr ? nullptr : &out);
+    const int32_t status = intersect_tetrahedra(
+        first + 12 * item, second + 12 * item, clipper, volume, moment,
+        simplex_counts == nullptr ? nullptr : &out, quadratic);
     if (status != PHX_MC_OK) {
       volume = 0.0;
       moment[0] = moment[1] = moment[2] = 0.0;
+      if (quadratic != nullptr) std::fill(quadratic, quadratic + 9, 0.0);
       out.count = 0;
     }
     volumes[item] = volume;
@@ -1477,7 +1520,19 @@ int32_t phx_mc_tetrahedron_intersection_moments(int64_t count, const double* fir
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     return phx::mc::tetrahedron_batch(count, first, second, 0, nullptr, nullptr, volumes,
-                                      first_moments, item_status);
+                                      first_moments, item_status, nullptr);
+  });
+}
+
+int32_t phx_mc_tetrahedron_intersection_quadratic_moments(
+    int64_t count, const double* first, const double* second, double* volumes,
+    double* first_moments, double* second_moments, int32_t* item_status) {
+  return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    if (count > 0 && second_moments == nullptr) return PHX_MC_INVALID_ARGUMENT;
+    return phx::mc::tetrahedron_batch(count, first, second, 0, nullptr, nullptr, volumes,
+                                      first_moments, item_status, second_moments);
   });
 }
 
@@ -1496,7 +1551,7 @@ int32_t phx_mc_tetrahedron_intersection_simplices(int64_t count, const double* f
       return PHX_MC_INVALID_ARGUMENT;
     }
     return phx::mc::tetrahedron_batch(count, first, second, simplex_capacity, simplices,
-                                      simplex_counts, volumes, first_moments, item_status);
+                                      simplex_counts, volumes, first_moments, item_status, nullptr);
   });
 }
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fractions import Fraction
 from itertools import combinations, permutations
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -494,19 +495,19 @@ def test_protected_boundary_edge_and_invalid_metric_are_refused() -> None:
         _adapt(source, invalid)
 
 
-def test_implicit_boundary_survivor_proposals_keep_exact_source_stencils() -> None:
+def _implicit_plane_pyramid(height: float, tolerance: float) -> _NativeState:
     from phydrax._meshcore import IntervalBoxProgram, TetMeshImplicitSource
     from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
-    from phydrax.meshing._tetra_metric import _implicit_only_vertex, _survivor_moves
 
     points = np.asarray(
         (
             (0.0, 0.0, 0.0),
             (1.0, 0.0, 0.0),
             (0.0, 1.0, 0.0),
-            (0.25, 0.25, 1.0),
+            (0.25, 0.25, height),
             (0.25, 0.25, 0.0),
-        )
+        ),
+        dtype=np.float64,
     )
     cells = [[0, 1, 4, 3], [1, 2, 4, 3], [2, 0, 4, 3]]
     source = _mesh_result(points, cells)
@@ -528,9 +529,158 @@ def test_implicit_boundary_survivor_proposals_keep_exact_source_stencils() -> No
         source_mesh=source.mesh,
     )
     source = certify_cell_mesh(source.mesh, source.coordinate_contract, geometry=geometry)
-    state = _state(source, np.eye(3))
+    state = _state(source, np.eye(3, dtype=np.float64))
     records = _boundary_records(state)
     groups = {records.facets[key][1] for key in records.vertex_facets[4]}
+    assert len(groups) == 1
+    group = next(iter(groups))
+    value = IntervalBoxProgram(
+        np.asarray([[2, 4, 1, 2, -1, 3, -1, 0]], dtype=np.int64),
+        np.empty(0, dtype=np.int64),
+        np.empty(0, dtype=np.float64),
+        np.zeros(5, dtype=np.float64),
+        np.zeros(5, dtype=np.float64),
+        np.asarray([4], dtype=np.int64),
+        np.empty(0, dtype=np.int64),
+    )
+    gradient = IntervalBoxProgram(
+        np.empty((0, 8), dtype=np.int64),
+        np.empty(0, dtype=np.int64),
+        np.empty(0, dtype=np.float64),
+        np.asarray([0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype=np.float64),
+        np.asarray([0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype=np.float64),
+        np.asarray([3, 4, 5], dtype=np.int64),
+        np.empty(0, dtype=np.int64),
+    )
+    state.native.bind_implicit_source(
+        TetMeshImplicitSource(
+            value,
+            gradient,
+            np.asarray([group], dtype=np.int32),
+            tolerance,
+            0,
+            "plane",
+            "revision",
+            bank.source_map_id,
+            source.coordinate_contract.reference_frame,
+        )
+    )
+    state.snapshot = state.native.arrays()
+    state.implicit_groups = frozenset((group,))
+    return state
+
+
+def test_implicit_boundary_survivor_proposals_keep_exact_source_stencils() -> None:
+    from phydrax.meshing._tetra_metric import _implicit_only_vertex, _survivor_moves
+
+    state = _implicit_plane_pyramid(1.0, 0.01)
+    points = state.source_points
+    group = next(iter(state.implicit_groups))
+    try:
+        records = _boundary_records(state)
+        assert _implicit_only_vertex(state, records, 4)
+        topology = _topology(state.snapshot)
+        local = points[[4, 0, 1, 2, 3]]
+        moves = list(
+            _survivor_moves(
+                state, records, topology, 4, local, np.broadcast_to(np.eye(3), (5, 3, 3))
+            )
+        )
+        assert moves
+        for move in moves:
+            exact = _stencil_image(state, move["stencil"])
+            np.testing.assert_array_equal(
+                move["point"], [float(value) for value in exact]
+            )
+        state.native.protect_facet_group_rows(np.asarray([group], dtype=np.int32))
+        state.snapshot = state.native.arrays()
+        assert not _implicit_only_vertex(state, _boundary_records(state), 4)
+    finally:
+        state.native.close()
+
+
+def test_implicit_relocation_continues_after_native_distance_refusal() -> None:
+    from phydrax.meshing._tetra_metric import _relocation_phase
+
+    # The tall apex pulls the base vertex out of its accepted zero-set tube.
+    # Smaller existing goals improve the metric while staying inside the tube.
+    tolerance = 0.01
+    state = _implicit_plane_pyramid(2.0, tolerance)
+    try:
+        counters = _counters()
+        _relocation_phase(state, counters, topology_operations=False)
+        vertex_ids = np.asarray(state.snapshot.vertex_ids)
+        moved = np.asarray(state.snapshot.points)[np.flatnonzero(vertex_ids == 4)[0]]
+        assert counters["rejected_uncertain"] > 0
+        refusals = state.native.implicit_refusals
+        assert refusals is not None
+        assert refusals[1] > 0
+        assert 0.0 < moved[2] <= tolerance
+        assert np.linalg.norm(moved - state.source_points[3]) < np.linalg.norm(
+            state.source_points[4] - state.source_points[3]
+        )
+        np.testing.assert_array_equal(
+            moved,
+            [float(value) for value in _stencil_image(state, state.vertex_stencils[4])],
+        )
+    finally:
+        state.native.close()
+
+
+@pytest.mark.parametrize("restored", (False, True))
+def test_implicit_collapse_admits_survivor_off_original_facet(
+    tmp_path: Path, restored: bool
+) -> None:
+    from phydrax._meshcore import IntervalBoxProgram, TetMeshImplicitSource
+    from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
+    from phydrax.meshing._tetra_metric import (
+        _current_edge_controls,
+        _directed_collapse,
+        _source_permits_collapse,
+        _state_topology,
+    )
+
+    grid = _source(4)
+    points = np.asarray(grid.mesh.coordinates).copy()
+    points[points[:, 2] == 1.0 / 3.0, 2] = 0.005
+    if restored:
+        points += np.asarray((1.0, -2.0, 0.0))
+    source = _mesh_result(points, np.asarray(grid.mesh.blocks[0].vertices).tolist())
+    bank = ExactPlcCellGeometrySource(
+        "plane",
+        "revision",
+        np.asarray(source.mesh.vertex_global_ids),
+        tuple(tuple(Fraction(float(value)) for value in point) for point in points),
+        vertex_source_entity_ids=(None,) * len(points),
+        vertex_occurrence_paths=((),) * len(points),
+    )
+    affine = phx.discretization.CellGeometrySpec.affine(source.mesh)
+    geometry = phx.discretization.CellGeometrySpec(
+        dict(zip(affine.block_names, affine.elements, strict=True)),
+        dict(zip(affine.block_names, affine.geometry_dofs, strict=True)),
+        source.mesh.coordinates,
+        source_map=bank,
+        source_mesh=source.mesh,
+    )
+    source = certify_cell_mesh(source.mesh, source.coordinate_contract, geometry=geometry)
+    if restored:
+        from phydrax.meshing._model_codec import (
+            read_model_artifact,
+            restore_model_archive_value,
+            write_model_artifact,
+        )
+
+        path = write_model_artifact(tmp_path / "source.phx", source, limits=None)
+        source = read_model_artifact(
+            path,
+            expected_type=CellMeshingResult,
+            restore=restore_model_archive_value,
+            limits=None,
+        )
+    state = _state(source, np.eye(3))
+    removed, kept = 20, 24
+    records = _boundary_records(state)
+    groups = {records.facets[key][1] for key in records.vertex_facets[removed]}
     assert len(groups) == 1
     group = next(iter(groups))
     value = IntervalBoxProgram(
@@ -567,24 +717,33 @@ def test_implicit_boundary_survivor_proposals_keep_exact_source_stencils() -> No
         )
         state.snapshot = state.native.arrays()
         state.implicit_groups = frozenset((group,))
+        topology = _state_topology(state)
+        cell_ids = np.asarray(state.snapshot.cell_ids, dtype=np.int64)
+        stencil = {kept: Fraction(1, 2), kept + 1: Fraction(1, 2)}
+        move = {
+            "vertex": kept,
+            "point": np.asarray(
+                [float(value) for value in _stencil_image(state, stencil)]
+            ),
+            "metric": np.eye(3),
+            "stencil": stencil,
+            "star_cell_ids": tuple(
+                int(cell_ids[row]) for row in topology.vertex_cells[kept]
+            ),
+        }
+        assert _apply_relocation_batch(state, [move]) is TetMeshEditStatus.APPLIED
         records = _boundary_records(state)
-        assert _implicit_only_vertex(state, records, 4)
-        topology = _topology(state.snapshot)
-        local = points[[4, 0, 1, 2, 3]]
-        moves = list(
-            _survivor_moves(
-                state, records, topology, 4, local, np.broadcast_to(np.eye(3), (5, 3, 3))
-            )
-        )
-        assert moves
-        for move in moves:
-            exact = _stencil_image(state, move["stencil"])
-            np.testing.assert_array_equal(
-                move["point"], [float(value) for value in exact]
-            )
-        state.native.protect_facet_group_rows(np.asarray([group], dtype=np.int32))
-        state.snapshot = state.native.arrays()
-        assert not _implicit_only_vertex(state, _boundary_records(state), 4)
+        topology = _state_topology(state)
+        assert not _source_permits_collapse(state, topology, records, removed, 21)
+        assert not set(stencil) <= state.source_face_vertices[group]
+        state.implicit_groups = frozenset()
+        assert not _source_permits_collapse(state, topology, records, removed, kept)
+        state.implicit_groups = frozenset((group,))
+        assert _source_permits_collapse(state, topology, records, removed, kept)
+        _, protected = _current_edge_controls(state, topology)
+        proposal = _directed_collapse(state, topology, records, protected, removed, kept)
+        assert proposal is not None
+        assert _apply_collapse_batch(state, [proposal]) is TetMeshEditStatus.APPLIED
     finally:
         state.native.close()
 

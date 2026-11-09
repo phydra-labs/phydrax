@@ -45,13 +45,16 @@ _GROWTH_RATE = 1.2
 # (238,387 P2 DOFs) needs 1,111,891,428 under nested dissection, so 2**33
 # leaves ~7.7x.
 _SYMBOLIC_WORK_BUDGET = 1 << 33
-# Four GiB is the measured declaration for the remaining original layer/core
-# profiles. Unit-box declares its larger budget at the profile below, from the
-# actual post-refinement Hodge requirement rounded upward to 256 MiB.
+# One declared execution budget serves every harmonic-history solve and Hodge
+# admission in each profile. The unit-box refined target's untwisted order-2
+# complex refused at 4 GiB: numeric admission required 6,804,653,553 bytes.
+# Round that measured requirement upward to the next 256 MiB; later Hodges
+# remain subject to the same declared limit.
+_UNIT_BOX_SOLVE_BUDGET = 26 << 28
 _LAYER_CORE_SOLVE_BUDGET = 4 << 30
 # MAC-20261107T1759Z: declared byte budget of every layer/core cycle archive,
 # writer and cold reader alike. The cold reader materializes the archive's
-# logical aggregate, so it is bounded by the same 4 GiB execution budget.
+# logical aggregate, so writer and reader share this declared archive budget.
 _LAYER_CORE_ARCHIVE_BUDGET = 4 << 30
 
 
@@ -124,7 +127,7 @@ _LAYER_CORE_LIFECYCLES = {
         1,
         "original-unit-box",
         "fluid-cell-average-density",
-        6_979_321_856,
+        _UNIT_BOX_SOLVE_BUDGET,
         _LAYER_CORE_ARCHIVE_BUDGET,
     ),
 }

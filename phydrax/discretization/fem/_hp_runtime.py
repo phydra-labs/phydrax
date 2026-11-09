@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Literal
+from typing import assert_never, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -21,7 +21,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import determinant_small_linear, SmallLinearSolvePlan
 from ...sparse import RowRelation, SparseLinearMap
-from ...typing import checked
+from ...typing import checked, parse
 from .._cell_mesh import CellBlock, CellMesh
 from ._generic import (
     FiniteElementDiscretization,
@@ -32,6 +32,7 @@ from ._generic import (
 from ._high_order import ReferenceNodalFamily
 from ._hp import (
     finite_element_hp_workset_plan,
+    FiniteElementHPCellKind,
     FiniteElementHPLineage,
     FiniteElementHPTopology,
     FiniteElementHPTransferPlan,
@@ -675,12 +676,18 @@ def initial_finite_element_hp_topology(
     if not isinstance(mesh, CellMesh) or len(mesh.blocks) == 0:
         raise TypeError("Initial hp topology requires a non-empty CellMesh.")
     kinds = {block.cell_kind for block in mesh.blocks}
-    if len(kinds) != 1 or next(iter(kinds)) not in ("quadrilateral", "hexahedron"):
+    if len(kinds) != 1:
         raise ValueError(
             "Initial hp topology requires only quadrilateral or hexahedron blocks."
         )
-    kind = next(iter(kinds))
-    dimension = 2 if kind == "quadrilateral" else 3
+    kind = parse(next(iter(kinds)), FiniteElementHPCellKind, "cell_kind")
+    match kind:
+        case "quadrilateral":
+            dimension = 2
+        case "hexahedron":
+            dimension = 3
+        case _:
+            assert_never(kind)
     degrees = (
         (int(degree),) * dimension
         if isinstance(degree, (int, np.integer))
@@ -705,7 +712,6 @@ def initial_finite_element_hp_topology(
     cell_degrees = np.zeros((capacity_, dimension), dtype=np.int32)
     cell_degrees[:count] = degrees
     topology = FiniteElementHPTopology(
-        # ty: ignore[invalid-argument-type]
         kind,
         mesh.topology_id,
         identifiers,
@@ -1765,6 +1771,179 @@ def _epoch_slot_elements(
             result[slot] = (element, element.local_dof_count)
         offset += block.cell_count
     return result
+
+
+def _hp_concrete_element(
+    cell_kind: FiniteElementHPCellKind,
+    degrees: tuple[int, ...],
+    continuity: str,
+    /,
+) -> FiniteElementSpec:
+    """Rebuild one canonical concrete tensor field without inferring p offsets."""
+    element = ReferenceNodalFamily(cell_kind, degrees).finite_element()
+    if continuity == "conforming":
+        return element
+    if continuity != "discontinuous":
+        raise ValueError("HP adaptation supports only H1 and L2 tensor fields.")
+    entities: list[tuple[tuple[int, ...], ...]] = [
+        tuple(() for _ in level) for level in element.entity_dofs
+    ]
+    entities[-1] = (tuple(range(element.local_dof_count)),)
+    return FiniteElementSpec(
+        "DiscontinuousTensorProductLagrange",
+        element.cell_kind,
+        element.degree,
+        element.reference_nodes,
+        tuple(entities),
+        value_spec=element.value_spec,
+        continuity="discontinuous",
+        representation=element.representation,
+        tabulator=element.tabulate,
+        tabulator_id=f"discontinuous:{element.element_id}",
+    )
+
+
+def _prepare_hp_transition_epoch(
+    source: FiniteElementHPEpoch,
+    topology: FiniteElementHPTopology,
+    geometry: FiniteElementHPGeometry,
+    lineage: FiniteElementHPLineage,
+    mesh: CellMesh,
+    /,
+) -> FiniteElementHPEpoch:
+    """Carry concrete field elements along h routes and rebuild execution owners."""
+    interfaces = finite_element_hp_interface_plan(topology, geometry)
+    if source.discretization is None:
+        return FiniteElementHPEpoch(mesh, topology, geometry, interfaces)
+    source_fields = source.discretization
+    valid = np.asarray(lineage.valid, dtype=np.bool_)
+    source_routes = np.asarray(lineage.source_slots, dtype=np.int32)[valid]
+    target_routes = np.asarray(lineage.target_slots, dtype=np.int32)[valid]
+    target_ids = np.asarray(topology.cell_global_ids, dtype=np.int64)
+    slots_by_id = {
+        int(identifier): slot
+        for slot, identifier in enumerate(target_ids)
+        if bool(np.asarray(topology.active)[slot])
+    }
+    incoming: dict[int, list[int]] = {}
+    for left, right in zip(source_routes, target_routes, strict=True):
+        incoming.setdefault(int(right), []).append(int(left))
+    if set(incoming) != set(slots_by_id.values()):
+        raise ValueError("HP lineage does not cover every active target cell.")
+    element_cache: dict[tuple[tuple[int, ...], str], FiniteElementSpec] = {}
+
+    def concrete(degrees: tuple[int, ...], continuity: str) -> FiniteElementSpec:
+        key = (degrees, continuity)
+        if key not in element_cache:
+            element_cache[key] = _hp_concrete_element(
+                topology.cell_kind, degrees, continuity
+            )
+        return element_cache[key]
+
+    field_degrees = []
+    field_continuity = []
+    for index, elements in enumerate(source_fields.elements):
+        continuities = {element.continuity for element in elements}
+        if len(continuities) != 1:
+            raise ValueError("HP field has inconsistent continuity.")
+        continuity = next(iter(continuities))
+        by_slot = _epoch_slot_elements(source, index)
+        element_degrees: dict[str, tuple[int, ...]] = {}
+        source_degrees = {}
+        for slot, (element, _) in by_slot.items():
+            if element.element_id not in element_degrees:
+                degrees = tuple(
+                    int(np.unique(np.asarray(element.reference_nodes)[:, axis]).size - 1)
+                    for axis in range(topology.dimension)
+                )
+                if concrete(degrees, continuity).element_id != element.element_id:
+                    raise ValueError(
+                        "HP adaptation requires canonical concrete tensor fields."
+                    )
+                element_degrees[element.element_id] = degrees
+            degrees = element_degrees[element.element_id]
+            source_degrees[slot] = degrees
+        degrees_by_target = {}
+        for target, sources in incoming.items():
+            try:
+                values = [source_degrees[slot] for slot in sources]
+            except KeyError as error:
+                raise ValueError("HP lineage names an inactive source cell.") from error
+            degrees_by_target[target] = tuple(
+                min(value[axis] for value in values) for axis in range(topology.dimension)
+            )
+        field_degrees.append(degrees_by_target)
+        field_continuity.append(continuity)
+    blocks = []
+    for block in mesh.blocks:
+        groups: dict[tuple[tuple[int, ...], ...], list[int]] = {}
+        for row, identifier in enumerate(np.asarray(block.global_ids)):
+            slot = slots_by_id[int(identifier)]
+            signature = tuple(degrees[slot] for degrees in field_degrees)
+            groups.setdefault(signature, []).append(row)
+        for group_index, signature in enumerate(sorted(groups)):
+            rows = np.asarray(groups[signature], dtype=np.int32)
+            name = (
+                block.name if len(groups) == 1 else f"{block.name}-fields-{group_index}"
+            )
+            blocks.append(
+                CellBlock(
+                    name,
+                    block.cell_kind,
+                    np.asarray(block.vertices)[rows],
+                    vertex_valid=np.asarray(block.vertex_valid)[rows],
+                    global_ids=np.asarray(block.global_ids)[rows],
+                )
+            )
+    if len(blocks) != len(mesh.blocks):
+        mesh = CellMesh(
+            mesh.coordinates,
+            tuple(blocks),
+            vertex_global_ids=mesh.vertex_global_ids,
+            numeric_version=mesh.numeric_version,
+        )
+    fields = []
+    for index, (field, dofs) in enumerate(
+        zip(source_fields.field_spaces, source_fields.dof_maps, strict=True)
+    ):
+        elements = {}
+        for block in mesh.blocks:
+            slot = slots_by_id[int(np.asarray(block.global_ids)[0])]
+            elements[block.name] = concrete(
+                field_degrees[index][slot], field_continuity[index]
+            )
+        fields.append(
+            FiniteElementFieldSpec(
+                field.name, elements, component_shape=dofs.component_shape
+            )
+        )
+    discretization = FiniteElementPlan(mesh, tuple(fields)).prepare()
+    active_slots = np.asarray(
+        [
+            slots_by_id[int(identifier)]
+            for block in mesh.blocks
+            for identifier in block.global_ids
+        ],
+        dtype=np.int32,
+    )
+    constraints = tuple(
+        (
+            field.name,
+            _hp_trace_constraint_for_field(
+                topology, interfaces, discretization, active_slots, index
+            ),
+        )
+        for index, field in enumerate(source_fields.field_spaces)
+        if field_continuity[index] == "conforming"
+    )
+    return FiniteElementHPEpoch(
+        mesh,
+        topology,
+        geometry,
+        interfaces,
+        discretization=discretization,
+        constraints=constraints,
+    )
 
 
 def _tensor_gauss_rule(

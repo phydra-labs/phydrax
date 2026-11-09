@@ -90,7 +90,6 @@ from ..discretization._surface_chart_records import (
 from ..discretization.fem import (
     balanced_hp_refinement_ids,
     coarsen_tensor_hp_cells,
-    finite_element_hp_interface_plan,
     FiniteElementHPEpoch,
     FiniteElementHPLineage,
     FiniteElementHPRefinementResult,
@@ -1337,6 +1336,7 @@ def _check_route_request(
                 )
             if request.hierarchy.mesh.topology_id != mesh.topology_id:
                 raise ValueError("The hp epoch does not describe the source mesh.")
+            _require_hp_source_binding(source, request.hierarchy)
             if request.refine_cell_ids.size and request.coarsen_cell_ids.size:
                 raise ValueError("One HP adaptation either refines or coarsens.")
             if source.patches or source.zones or source.labels:
@@ -1715,6 +1715,7 @@ class HPAdaptationEvidence(StrictModule, NonTrainableState):
     refine_cell_ids: Array
     coarsen_cell_ids: Array
     periodic_edge_lock: PeriodicRefinementEdgeLock | None
+    protected_scopes: tuple[MeshingScope, ...]
     inherited_cell_markers: tuple[str, ...] = eqx.field(static=True)
     request_id: str = eqx.field(static=True)
     refinement: FiniteElementHPRefinementResult | None
@@ -1724,6 +1725,7 @@ class HPAdaptationEvidence(StrictModule, NonTrainableState):
         self,
         request: MarkedMeshAdaptation,
         refinement: FiniteElementHPRefinementResult | None,
+        protected_scopes: tuple[MeshingScope, ...],
         /,
     ) -> None:
         from ._model_codec import _hp_epoch_archive_recipe
@@ -1736,20 +1738,24 @@ class HPAdaptationEvidence(StrictModule, NonTrainableState):
             refinement, FiniteElementHPRefinementResult
         ):
             raise TypeError("HP adaptation evidence has an invalid refinement result.")
+        if any(type(scope) is not MeshingScope for scope in protected_scopes):
+            raise TypeError("HP adaptation evidence requires canonical protected scopes.")
         self.source_epoch = _hp_epoch_archive_recipe(request.hierarchy)
         self.refine_cell_ids = request.refine_cell_ids
         self.coarsen_cell_ids = request.coarsen_cell_ids
         self.periodic_edge_lock = request.periodic_edge_lock
+        self.protected_scopes = protected_scopes
         self.inherited_cell_markers = request.inherited_cell_markers
         self.request_id = request.request_id
         self.refinement = refinement
-        self.result_id = canonical_fingerprint(
-            {
-                "kind": "hp-adaptation-evidence",
-                "request": request.request_id,
-                "refinement": None if refinement is None else refinement.result_id,
-            }
-        )
+        identity: dict[str, Any] = {
+            "kind": "hp-adaptation-evidence",
+            "request": request.request_id,
+            "refinement": None if refinement is None else refinement.result_id,
+        }
+        if protected_scopes:
+            identity["protected_scopes"] = [scope.scope_id for scope in protected_scopes]
+        self.result_id = canonical_fingerprint(identity)
 
 
 MeshAdaptationEvidence: TypeAlias = (
@@ -7858,6 +7864,88 @@ def project_hp_lineage(
     return MeshLineage(source.mesh.topology_id, target.mesh.topology_id, (entities,))
 
 
+def _require_hp_source_binding(
+    source: CellMeshingResult, epoch: FiniteElementHPEpoch, /
+) -> None:
+    """Bind the forest's current physical charts to the actual source geometry."""
+    mesh, topology = source.mesh, epoch.topology
+    if not np.array_equal(mesh.coordinates, epoch.mesh.coordinates):
+        raise ValueError("The hp epoch coordinates differ from the source mesh.")
+    if (
+        epoch.geometry.topology_id != topology.topology_id
+        or epoch.geometry.cell_kind != topology.cell_kind
+        or epoch.geometry.capacity != topology.capacity
+        or epoch.geometry.dimension != topology.dimension
+        or not np.array_equal(epoch.geometry.allocated, topology.allocated)
+    ):
+        raise ValueError("The hp forest geometry belongs to a different topology.")
+    if not _piecewise_linear_geometry(mesh, source.geometry):
+        raise ValueError(
+            "HP adaptation requires the source's exact multilinear geometry."
+        )
+    active = np.asarray(topology.active, dtype=np.bool_)
+    slots = {
+        int(identifier): slot
+        for slot, identifier in enumerate(np.asarray(topology.cell_global_ids))
+        if active[slot]
+    }
+    points = np.asarray(mesh.coordinates)
+    forest_vertices = np.asarray(epoch.geometry.cell_vertices)
+    seen: set[int] = set()
+    for block in mesh.blocks:
+        if block.cell_kind != topology.cell_kind or not np.all(block.vertex_valid):
+            raise ValueError("The hp source has incompatible cell blocks.")
+        identifiers = [int(value) for value in np.asarray(block.global_ids)]
+        if len(set(identifiers)) != len(identifiers) or any(
+            identifier not in slots or identifier in seen for identifier in identifiers
+        ):
+            raise ValueError("The hp forest and source active cell IDs disagree.")
+        seen.update(identifiers)
+        block_slots = [slots[identifier] for identifier in identifiers]
+        if not np.array_equal(
+            points[np.asarray(block.vertices, dtype=np.int64)],
+            forest_vertices[block_slots],
+        ):
+            raise ValueError("The hp forest geometry differs from the source mesh.")
+    if seen != set(slots):
+        raise ValueError("The hp forest and source active cell IDs disagree.")
+
+
+def _require_hp_protected_scopes(
+    source: CellMesh, target: CellMesh, scopes: tuple[MeshingScope, ...], /
+) -> None:
+    """Refuse an edit if any protected entity or its exact vertices disappear."""
+    for scope in scopes:
+        dimension = scope.entity_dimension
+        source_rows = _selected_rows(source, scope)
+        target_ids = {
+            int(identifier): row
+            for row, identifier in enumerate(
+                np.asarray(target.entity_set(dimension).entity_ids, dtype=np.int64)
+            )
+        }
+        source_ids = np.asarray(source.entity_set(dimension).entity_ids, dtype=np.int64)
+        for row in source_rows:
+            identifier = int(source_ids[row])
+            if identifier not in target_ids:
+                raise ValueError("HP adaptation would remove a protected entity.")
+            target_row = target_ids[identifier]
+            source_vertices = _closure_rows(
+                source, dimension, np.asarray([row], dtype=np.int64), 0
+            )
+            target_vertices = _closure_rows(
+                target, dimension, np.asarray([target_row], dtype=np.int64), 0
+            )
+            source_points = sorted(
+                tuple(point) for point in np.asarray(source.coordinates)[source_vertices]
+            )
+            target_points = sorted(
+                tuple(point) for point in np.asarray(target.coordinates)[target_vertices]
+            )
+            if source_points != target_points:
+                raise ValueError("HP adaptation would alter a protected entity.")
+
+
 def _complete_hp_parents(epoch: FiniteElementHPEpoch, marked: np.ndarray, /) -> Any:
     """Parents whose complete active leaf family is marked for coarsening."""
 
@@ -7876,6 +7964,40 @@ def _complete_hp_parents(epoch: FiniteElementHPEpoch, marked: np.ndarray, /) -> 
     )
     chosen = family & np.all(~child_valid | np.isin(identifiers[safe], marked), axis=1)
     return identifiers[chosen]
+
+
+def _prepare_hp_adaptation_epoch(
+    source_epoch: FiniteElementHPEpoch,
+    refinement: FiniteElementHPRefinementResult,
+    prepared_id: str,
+    source_mesh: CellMesh,
+    protected_scopes: tuple[MeshingScope, ...],
+    /,
+) -> FiniteElementHPEpoch:
+    """Derive the canonical target mesh and fields from replayable HP inputs."""
+    from ..discretization.fem._hp_runtime import _prepare_hp_transition_epoch
+
+    mesh, _, _ = hp_active_cell_mesh(
+        refinement.topology,
+        refinement.geometry,
+        numeric_version=f"adaptation:{prepared_id}",
+    )
+    mesh = canonicalize_cell_mesh(mesh)
+    _require_hp_protected_scopes(source_mesh, mesh, protected_scopes)
+    epoch = _prepare_hp_transition_epoch(
+        source_epoch, refinement.topology, refinement.geometry, refinement.lineage, mesh
+    )
+    canonical = canonicalize_cell_mesh(epoch.mesh)
+    if canonical is not epoch.mesh:
+        epoch = _prepare_hp_transition_epoch(
+            source_epoch,
+            refinement.topology,
+            refinement.geometry,
+            refinement.lineage,
+            canonical,
+        )
+    _require_hp_protected_scopes(source_mesh, epoch.mesh, protected_scopes)
+    return epoch
 
 
 def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
@@ -7900,36 +8022,27 @@ def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
     else:
         parents = _complete_hp_parents(epoch, coarsen)
         if parents.size == 0:
-            return _unchanged(prepared, HPAdaptationEvidence(request, None), epoch)
+            return _unchanged(
+                prepared,
+                HPAdaptationEvidence(request, None, prepared.policy.protected_scopes),
+                epoch,
+            )
         result = coarsen_tensor_hp_cells(epoch.topology, epoch.geometry, parents)
         kind = MeshTransitionKind.COARSEN
         covered = np.asarray(result.lineage.source_slots)[
             np.asarray(result.lineage.relation_mask("coarsening"), dtype=np.bool_)
         ]
         partial = covered.size != coarsen.size
-    mesh, _, _ = hp_active_cell_mesh(
-        result.topology,
-        result.geometry,
-        numeric_version=f"adaptation:{prepared.prepared_id}",
+    target_epoch = _prepare_hp_adaptation_epoch(
+        epoch, result, prepared.prepared_id, source.mesh, prepared.policy.protected_scopes
     )
-    mesh = canonicalize_cell_mesh(mesh)
-    if source.certification is not None and not _piecewise_linear_geometry(
-        source.mesh, source.geometry
-    ):
-        raise ValueError(
-            "The hp route does not retain a certified non-P1 source coordinate map."
-        )
+    mesh = target_epoch.mesh
     if source.attributes:
         raise ValueError(
             "The hp route has no exact attribute transfer for retained mesh scopes."
         )
     target_geometry = CellGeometrySpec.affine(mesh)
-    target_epoch = FiniteElementHPEpoch(
-        mesh,
-        result.topology,
-        result.geometry,
-        finite_element_hp_interface_plan(result.topology, result.geometry),
-    )
+    # The transition epoch carries rebuilt concrete fields and trace constraints.
     lineage = project_hp_lineage(epoch, target_epoch, result.lineage)
     material_requested = prepared.material_reference is not None or (
         prepared.prior_transition is not None
@@ -8065,7 +8178,7 @@ def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
         None,
         None,
         None,
-        HPAdaptationEvidence(request, result),
+        HPAdaptationEvidence(request, result, prepared.policy.protected_scopes),
         target_epoch,
     )
 

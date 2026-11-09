@@ -429,9 +429,12 @@ different mesh separates the target from the source:
   construction is refused so a same-shape factor from another geometry cannot
   be substituted.
 - `prepare_l2_projection_transfer(source, prepared_target, refinement,
-  field_name=...)` assembles only the mixed mass `B`, exactly on the overlap
-  simplices of a successful `prepare_common_refinement(source.mesh,
-  target.mesh, policy=CommonRefinementPolicy(overlap_simplices=True))`. The
+  field_name=...)` assembles only the mixed mass `B` from a successful common
+  refinement. For canonical scalar P1 fields on both affine simplex meshes with
+  Cartesian measure, `CommonRefinementPolicy(second_moments=True)` supplies the
+  exact quadratic moments needed for the basis products without constructing
+  overlap simplices. Higher-order fields and non-Cartesian measures require
+  `overlap_simplices=True` and integration on those simplices. The
   primal is the `FiniteElementL2Projection` `M_T^{-1} B` and the pullback is
   `B^T M_T^{-1}`; trailing payload axes are solved as one multi-right-hand-side
   block.

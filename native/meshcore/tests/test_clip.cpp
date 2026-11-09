@@ -439,6 +439,27 @@ void test_tetrahedron_overlaps() {
   }
 }
 
+void test_tetrahedron_quadratic_moments() {
+  double volume = -1.0, moment[3] = {}, second[9] = {};
+  int32_t status = -1;
+  PHX_CHECK(phx_mc_tetrahedron_intersection_quadratic_moments(
+                1, kUnitTet.data(), kUnitTet.data(), &volume, moment, second, &status) == PHX_MC_OK);
+  PHX_CHECK(status == PHX_MC_OK);
+  const Volume first = tetrahedra(kUnitTet, kUnitTet);
+  PHX_CHECK(volume == first.volume);
+  for (int j = 0; j < 3; ++j) {
+    PHX_CHECK(moment[j] == first.moment[j]);
+    for (int k = 0; k < 3; ++k) {
+      PHX_CHECK_NEAR(second[3 * j + k], j == k ? 1.0 / 60.0 : 1.0 / 120.0, 1e-16);
+    }
+  }
+  PHX_CHECK(phx_mc_tetrahedron_intersection_quadratic_moments(
+                1, kUnitTet.data(), kUnitTet.data(), &volume, moment, nullptr, &status) ==
+            PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_tetrahedron_intersection_quadratic_moments(
+                0, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr) == PHX_MC_OK);
+}
+
 void test_tetrahedron_sliver_measures() {
   // The overlap is a tetrahedron of edge length delta. All coordinates and
   // translations are dyadic, so these are exact rational references.
@@ -544,6 +565,13 @@ void test_tetrahedron_unrepresentable_overlap() {
       small, -large, large, -large, large, 0, 0, small, -small, -large, -large, -large};
   const Volume underflow_moments = tetrahedra(kUnitTet, underflow);
   PHX_CHECK(underflow_moments.status == PHX_MC_UNRESOLVED && underflow_moments.volume == 0.0);
+  double quadratic[9];
+  std::fill(quadratic, quadratic + 9, -1.0);
+  PHX_CHECK(phx_mc_tetrahedron_intersection_quadratic_moments(
+                1, kUnitTet.data(), underflow.data(), &volume, moment, quadratic, &status) ==
+            PHX_MC_OK);
+  PHX_CHECK(status == PHX_MC_UNRESOLVED && volume == 0.0);
+  for (double value : quadratic) PHX_CHECK(value == 0.0);
   PHX_CHECK(phx_mc_tetrahedron_intersection_simplices(
                 1, kUnitTet.data(), underflow.data(), 20, simplices.data(), &count, &volume,
                 moment, &status) == PHX_MC_OK);
@@ -1216,6 +1244,7 @@ int main() {
   test_box_halfplanes();
   test_box_halfplanes_voronoi();
   test_tetrahedron_overlaps();
+  test_tetrahedron_quadratic_moments();
   test_tetrahedron_sliver_measures();
   test_unitbox_overlap_measures();
   test_tetrahedron_batch_scratch_reuse();

@@ -16,6 +16,7 @@ from phydrax._meshcore import meshcore_available
 from phydrax.geometry import (
     CommonRefinementCoverage,
     CommonRefinementPolicy,
+    CommonRefinementStatus,
     prepare_common_refinement,
 )
 
@@ -329,7 +330,17 @@ def test_fem_l2_projection_transfer_scenario_3() -> None:
     source_mesh, target_mesh = _tetrahedra(3), _tetrahedra(2)
     source = _space(source_mesh, "tetrahedron")
     target = _space(target_mesh, "tetrahedron")
-    transfer = _transfer(source, target, _refinement(source_mesh, target_mesh))
+    refinement = prepare_common_refinement(
+        source_mesh, target_mesh, policy=CommonRefinementPolicy(second_moments=True)
+    )
+    # This grid pair contains the captured positive intersection whose rounded
+    # tetrahedral carrier collapses; the moment-only refinement retains it.
+    assert np.any(
+        np.isclose(
+            np.asarray(refinement.volumes), 3.5636862801229285e-51, rtol=1e-12, atol=0
+        )
+    )
+    transfer = _transfer(source, target, refinement)
     assert transfer.preserves_linear and transfer.conservative
     linear = lambda x: 1.0 + x[:, 0] - 2.0 * x[:, 1] + 0.5 * x[:, 2]
     np.testing.assert_allclose(
@@ -341,6 +352,12 @@ def test_fem_l2_projection_transfer_scenario_3() -> None:
     np.testing.assert_allclose(
         _integrals(target) @ np.asarray(transfer.apply(values)),
         _integrals(source) @ np.asarray(values),
+        rtol=1e-12,
+    )
+    dual = jnp.asarray(_smooth(_dofs(target)) + _dofs(target)[:, 2])
+    np.testing.assert_allclose(
+        jnp.vdot(transfer.apply(values), dual),
+        jnp.vdot(values, transfer.pullback(dual)),
         rtol=1e-12,
     )
     first, second, third = (
@@ -389,3 +406,60 @@ def test_fem_l2_projection_transfer_scenario_3() -> None:
         prepare(vector, target, _refinement(first, second), field_name="u")
     with pytest.raises(ValueError, match="scalar Lagrange elements"):
         phx.discretization.prepare_l2_projection_target(vector, field_name="u")
+
+
+@pytest.mark.parametrize(
+    ("source_degree", "target_degree"),
+    ((2, 1), (1, 2)),
+    ids=("quadratic-source", "quadratic-target"),
+)
+def test_l2_moments_refuse_higher_order_fields(
+    source_degree: int, target_degree: int
+) -> None:
+    source_mesh, target_mesh = _triangles(3), _triangles(2)
+    refinement = prepare_common_refinement(
+        source_mesh, target_mesh, policy=CommonRefinementPolicy(second_moments=True)
+    )
+    assert refinement.status is CommonRefinementStatus.SUCCESS
+    with pytest.raises(ValueError):
+        _transfer(
+            _space(source_mesh, "triangle", source_degree),
+            _space(target_mesh, "triangle", target_degree),
+            refinement,
+        )
+
+
+def test_l2_moments_refuse_noncartesian_measure() -> None:
+    source_mesh, target_mesh = _triangles(3), _triangles(2)
+    refinement = prepare_common_refinement(
+        source_mesh, target_mesh, policy=CommonRefinementPolicy(second_moments=True)
+    )
+    assert refinement.status is CommonRefinementStatus.SUCCESS
+    measure = CoordinateMeasurePlan("axisymmetric-rz", radial_axis=0)
+    with pytest.raises(ValueError):
+        _transfer(
+            _space(source_mesh, "triangle", coordinate_measure=measure),
+            _space(target_mesh, "triangle", coordinate_measure=measure),
+            refinement,
+        )
+
+
+def test_l2_moment_projection_discontinuous_fields_matches_carriers() -> None:
+    source_mesh = _triangles(3, perturb=0.2, seed=21)
+    target_mesh = _triangles(2, perturb=0.2, seed=22)
+    source = _space(source_mesh, "triangle", discontinuous=True)
+    target = _space(target_mesh, "triangle", discontinuous=True)
+    moments = prepare_common_refinement(
+        source_mesh, target_mesh, policy=CommonRefinementPolicy(second_moments=True)
+    )
+    transfer = _transfer(source, target, moments)
+    carriers = _transfer(source, target, _refinement(source_mesh, target_mesh))
+    values = jnp.asarray(_smooth(_dofs(source)))
+    projected = transfer.apply(values)
+    np.testing.assert_allclose(projected, carriers.apply(values), rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(
+        _integrals(target) @ np.asarray(projected),
+        _integrals(source) @ np.asarray(values),
+        rtol=1e-12,
+        atol=1e-14,
+    )
