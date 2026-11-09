@@ -21,6 +21,7 @@ from numpy.typing import ArrayLike
 
 from .._geometry_predicates import orient3d, PredicateMode, PredicateSign
 from .._meshcore import (
+    interval_program_execute,
     IntervalBoxProgram,
     PlcBoundaryPolicy,
     TetMesh3D,
@@ -6304,6 +6305,45 @@ def _quantized_relocation(
     )
 
 
+def _implicit_tangent_pulls(
+    state: _NativeState, point: np.ndarray, pulls: np.ndarray, /
+) -> np.ndarray:
+    """Propose current-level tangents; native admission still owns fidelity."""
+    implicit = state.snapshot.implicit_source
+    if implicit is None:
+        raise RuntimeError("Implicit relocation requires its bound source program.")
+    program = implicit.source.gradient
+    lower = program.workspace_lower.copy()
+    upper = program.workspace_upper.copy()
+    lower[:3] = point
+    upper[:3] = point
+    interval_program_execute(
+        program.instructions, program.indices, program.parameters, lower, upper
+    )
+    if not np.all(lower[program.guards] >= 0.0):
+        return pulls[:0]
+    gradient_lower = lower[program.outputs]
+    gradient_upper = upper[program.outputs]
+    if not (
+        np.all(np.isfinite(gradient_lower))
+        and np.all(np.isfinite(gradient_upper))
+        and np.all(gradient_lower <= gradient_upper)
+    ):
+        return pulls[:0]
+    scale = max(
+        float(np.max(np.abs(gradient_lower))),
+        float(np.max(np.abs(gradient_upper))),
+    )
+    if scale == 0.0:
+        return pulls[:0]
+    # Scaling before the midpoint avoids overflow and preserves tiny gradients.
+    normal = 0.5 * (gradient_lower / scale) + 0.5 * (gradient_upper / scale)
+    norm_squared = float(normal @ normal)
+    if norm_squared == 0.0:
+        return pulls[:0]
+    return pulls - ((pulls @ normal) / norm_squared)[:, None] * normal
+
+
 def _relocation_goals(
     point: np.ndarray, pulls: np.ndarray, /, *, seed_only: bool = False
 ) -> Iterator[np.ndarray]:
@@ -6861,6 +6901,13 @@ def _relocation_proposals(
             )
             if tangents.shape[0]:
                 pulls = np.concatenate((pulls, tangents), axis=0)
+        if implicit_only and not periodic:
+            tangent_pulls = _implicit_tangent_pulls(state, local_points[0], pulls)
+            if tangent_pulls.shape[0]:
+                # Retain every existing direction before this additional family.
+                # Quantization may leave the tangent plane; source-hull and
+                # native zero-set checks remain unchanged.
+                pulls = np.concatenate((pulls, tangent_pulls), axis=0)
 
         def evaluate(
             point: np.ndarray, metric: np.ndarray

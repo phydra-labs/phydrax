@@ -525,6 +525,12 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Native tetrahedral metric adaptation includes implicit-source gradient-tangent
+  relocation proposals at the current carrier offset after the existing
+  directions. Exact positive source stencils, source-hull restrictions,
+  orientation, strict metric objective, and native zero-set admission remain
+  unchanged; a conservative distance refusal does not exhaust these additional
+  admissible directions.
 - Finite-volume preparation and nested conservative remapping now use declared
   coordinate geometry rather than rounded carriers. Exact partition/embedding
   evidence, physical moment errors and material-side identity reach the consumer.

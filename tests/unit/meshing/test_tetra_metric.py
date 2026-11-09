@@ -690,6 +690,119 @@ def _relocation_cache_witness_state() -> _NativeState:
     )
 
 
+def test_native_implicit_tangent_relocation_reduces_band() -> None:
+    import phydrax.meshing._tetra_metric as metric
+    from phydrax._meshcore import PlcBoundaryPolicy, TetMesh3D, TetMeshSourceComplex
+
+    # Terminal sphere carrier from the native diagnostic, with its original
+    # numeric source hull, metric and interval programs from the adjacent
+    # fixture. This is a fresh test source and native owner, not a checkpoint.
+    # Only vertex 39 is movable; the unrelated terminal vertex lineages are
+    # not reconstructed or used by this private relocation search.
+    state = _relocation_cache_witness_state()
+    initial = state.snapshot
+    with np.load(Path(__file__).with_name("relocation_tangent_sphere.npz")) as data:
+        points = data["points"].copy()
+        cells = data["tetrahedra"].copy()
+        faces = data["faces"].copy()
+        vertex_ids = data["vertex_ids"].copy()
+        cell_ids = data["cell_ids"].copy()
+    count = len(vertex_ids)
+    source = TetMeshSourceComplex(
+        initial.source_points,
+        initial.source_faces,
+        initial.source_face_group_rows,
+        initial.source_face_tolerances,
+        initial.source_segments,
+        initial.source_segment_group_rows,
+        initial.source_segment_tolerances,
+        np.zeros(count, dtype=np.int8),
+        np.full(count, -1, dtype=np.int32),
+        np.zeros((count, 2), dtype=np.float64),
+        initial.source_face_ids,
+        initial.source_segment_ids,
+        initial.source_face_planes,
+        initial.source_face_plane_tolerances,
+    )
+    implicit = initial.implicit_source
+    assert implicit is not None
+    try:
+        native = TetMesh3D(
+            points,
+            cells,
+            np.zeros(len(cells), dtype=np.int32),
+            faces,
+            np.full(len(faces), initial.source_face_ids[0], dtype=np.int64),
+            np.empty((0, 2), dtype=np.int32),
+            np.empty(0, dtype=np.int64),
+            boundary_policy=PlcBoundaryPolicy.CONFORMING,
+            protection_radii=np.zeros(count, dtype=np.float64),
+            protected_vertices=(vertex_ids != 39).astype(np.int8),
+            vertex_ids=vertex_ids,
+            cell_ids=cell_ids,
+            source=source,
+            implicit_source=implicit.source,
+            source_id=state.source_identity[0],
+            source_revision=state.source_identity[1],
+            source_map_id=state.source_identity[2],
+            frame_id=state.source_identity[3],
+        )
+        state.native.close()
+        state.native = native
+        state.snapshot = native.arrays()
+        state.tables = None
+        state.fixed_vertices = set(map(int, vertex_ids)) - {39}
+        state.vertex_target_ids = {int(vertex): int(vertex) for vertex in vertex_ids}
+        state.cell_blocks = {int(cell): 0 for cell in cell_ids}
+        state.metric_by_vertex = {
+            int(vertex): state.source_metric[0].copy() for vertex in vertex_ids
+        }
+        state.vertex_stencils = {
+            39: {22: Fraction(141, 1024), 23: Fraction(139, 1024), 39: Fraction(93, 128)}
+        }
+        topology = metric._state_topology(state)
+        row = topology.vertex_row[39]
+        before_point = np.asarray(state.snapshot.points)[row].copy()
+        np.testing.assert_array_equal(
+            before_point,
+            [float(value) for value in _stencil_image(state, state.vertex_stencils[39])],
+        )
+        _, _, lengths = metric._metric_edge_table(state, topology)
+        incident = [39 in edge for edge in topology.edge_cells]
+        before_band = metric._band_violations(lengths[incident])
+        cache: dict[int, metric._RelocationSearch | None] = {}
+        while True:
+            groups = metric._relocation_proposals(
+                state, cache, deep=True, active_only=True, band_only=True
+            )
+            assert groups, "No native-admissible band-reducing relocation"
+            proposal = groups[0][0]
+            stencil = proposal["stencil"]
+            assert all(weight > 0 for weight in stencil.values())
+            assert sum(stencil.values()) == 1
+            np.testing.assert_array_equal(
+                proposal["point"],
+                [float(value) for value in _stencil_image(state, stencil)],
+            )
+            status = native.apply_edit(metric._relocation_edit(state, [proposal]))
+            if status is TetMeshEditStatus.APPLIED:
+                break
+            metric._raise_fatal_edit_status(status, "relocation")
+            search = cache[39]
+            assert search is not None
+            search.proposal = None
+        state.snapshot = native.arrays()
+        state.tables = None
+        topology = metric._state_topology(state)
+        after_point = np.asarray(state.snapshot.points)[topology.vertex_row[39]]
+        assert not np.array_equal(after_point, before_point)
+        _, _, lengths = metric._metric_edge_table(state, topology)
+        incident = [39 in edge for edge in topology.edge_cells]
+        assert metric._band_violations(lengths[incident]) < before_band
+    finally:
+        state.native.close()
+
+
 def test_native_refusal_search_survives_collapse_unblock_return(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
