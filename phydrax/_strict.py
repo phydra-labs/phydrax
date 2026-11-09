@@ -22,11 +22,13 @@ import abc
 import dataclasses
 import re
 import types
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from typing import Any, TYPE_CHECKING, TypeVar
 
 import equinox as eqx
+import jax
 from equinox._module._flatten import WRAPPER_FIELD_NAMES
+from equinox._module._module import _warn_jax_transformed_function
 from equinox._module._prebuilt import BoundMethod
 
 from ._typing_plan import validate_constructed
@@ -191,10 +193,47 @@ def register_strict_reconstruction(value_type: type[StrictModule], /) -> None:
     _reconstructible_strict_types.add(value_type)
 
 
+def _warn_reconstructed_callables(
+    value_type: type[StrictModule], values: Mapping[str, Any], /
+) -> None:
+    """Apply Equinox's constructor warnings without materializing numerical leaves."""
+    callbacks: list[Any] = []
+    active: set[int] = set()
+    sentinel = object()
+    stack: list[tuple[Iterator[Any], object]] = [(iter((((), dict(values)),)), sentinel)]
+    while stack:
+        children, owner = stack[-1]
+        try:
+            node = next(children)
+        except StopIteration:
+            stack.pop()
+            if owner is not sentinel:
+                active.remove(id(owner))
+            continue
+        if jax.tree_util.is_tree_node(type(node)):
+            if id(node) in active:
+                raise ValueError("Cannot reconstruct a cyclic PyTree.")
+            active.add(id(node))
+            child_nodes, _ = jax.tree_util.flatten_one_level(node)
+            stack.append((iter(child_nodes), node))
+        elif callable(node):
+            callbacks.append(node)
+    for callback in callbacks:
+        _warn_jax_transformed_function(value_type, callback)
+
+
 def reconstruct_strict(
-    value_type: type[_ReconstructedStrict], values: Mapping[str, Any], /
+    value_type: type[_ReconstructedStrict],
+    values: Mapping[str, Any],
+    /,
+    *,
+    check_transformed_callables: bool = False,
 ) -> _ReconstructedStrict:
-    """Reconstruct registered structure, not mathematical proof authority."""
+    """Reconstruct registered structure, not mathematical proof authority.
+
+    Opt in to Equinox's generated-constructor argument preflight when assembling
+    certified values. The caller still owns field and initialization invariants.
+    """
     if value_type not in _reconstructible_strict_types:
         raise TypeError("Strict reconstruction requires an explicitly registered type.")
     expected = {field.name for field in dataclasses.fields(value_type)}
@@ -202,6 +241,8 @@ def reconstruct_strict(
         raise ValueError(
             "Strict reconstruction requires the complete declared field set."
         )
+    if check_transformed_callables:
+        _warn_reconstructed_callables(value_type, values)
     result = object.__new__(value_type)
     for name, value in values.items():
         object.__setattr__(result, name, value)

@@ -525,6 +525,10 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Committing a certified finite-element topology result no longer materializes
+  every numerical and exact-reference PyTree leaf solely to detect transformed
+  callbacks. Nested callback warnings, dynamic leaves, and promoted identities
+  remain unchanged.
 - Mixed adaptation archives restore a later refinement cycle after complete
   coarsening without requiring an unrelated layer-root owner. Restoration
   proves the returned root's retained cell identities and exact identity charts,
