@@ -835,6 +835,41 @@ def test_native_refusal_search_survives_collapse_unblock_return(
         state.native.close()
 
 
+def test_relocation_progress_survives_later_topology_edits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax._meshcore import TetMesh3D
+
+    native_apply = TetMesh3D.apply_edit
+    relocated = False
+    topology_after_relocation = False
+
+    def observe(owner: TetMesh3D, edit: TetMeshEdit) -> TetMeshEditStatus:
+        nonlocal relocated, topology_after_relocation
+        before = owner.arrays().points if edit.kind is TetMeshEditKind.RELOCATE else None
+        status = native_apply(owner, edit)
+        if status is TetMeshEditStatus.APPLIED:
+            if edit.kind is TetMeshEditKind.RELOCATE:
+                # A consumed proposal cannot be replayed as a no-op and counted
+                # as progress after its vertex's closed star has changed.
+                assert before is not None
+                assert not np.array_equal(before, owner.arrays().points)
+                relocated = True
+            elif relocated:
+                topology_after_relocation = True
+        return status
+
+    monkeypatch.setattr(TetMesh3D, "apply_edit", observe)
+    source = _source(4, nonuniform=True)
+    outcome = _adapt(source, np.eye(3, dtype=np.float64) * 4.0)
+
+    assert relocated and topology_after_relocation
+    assert outcome.evidence.status is TetraMetricStatus.COMPLETE
+    assert outcome.evidence.out_of_range_edges == 0
+    assert outcome.evidence.minimum_metric_quality > 0.0
+    assert outcome.evidence.maximum_region_volume_error <= 1.0e-12
+
+
 @pytest.mark.parametrize("restored", (False, True))
 def test_implicit_collapse_admits_survivor_off_original_facet(
     tmp_path: Path, restored: bool
