@@ -954,6 +954,63 @@ def _integrate_volume_density(
     return value, error, True
 
 
+def _integrate_coordinate_moments(
+    row: int,
+    coordinates: tuple[Expression, ...],
+    density: Expression,
+    cell_kind: str,
+    absolute_tolerance: Fraction,
+    relative_tolerance: Fraction,
+    first: np.ndarray,
+    first_errors: np.ndarray,
+    second: np.ndarray | None,
+    second_errors: np.ndarray | None,
+    /,
+) -> bool:
+    """Integrate signed physical coordinate factors in deterministic order."""
+    exact = True
+    for axis, coordinate in enumerate(coordinates):
+        first_density = multiply(density, coordinate)
+        first[row, axis], first_errors[row, axis], cell_exact = _integrate_volume_density(
+            first_density, cell_kind, absolute_tolerance, relative_tolerance
+        )
+        exact = exact and cell_exact
+        if second is not None and second_errors is not None:
+            for other in range(axis, len(coordinates)):
+                value, error, cell_exact = _integrate_volume_density(
+                    multiply(first_density, coordinates[other]),
+                    cell_kind,
+                    absolute_tolerance,
+                    relative_tolerance,
+                )
+                second[row, axis, other] = second[row, other, axis] = value
+                second_errors[row, axis, other] = second_errors[row, other, axis] = error
+                exact = exact and cell_exact
+    return exact
+
+
+def _seal_moment_arrays(
+    measures: np.ndarray,
+    measure_errors: np.ndarray,
+    first: np.ndarray,
+    first_errors: np.ndarray,
+    second: np.ndarray | None,
+    second_errors: np.ndarray | None,
+    /,
+) -> None:
+    if np.any(measures <= measure_errors):
+        raise ValueError(
+            "Mapped cell moments require positive finite measure enclosures."
+        )
+    for array in (measures, first, second, measure_errors, first_errors, second_errors):
+        if array is not None:
+            if not np.all(np.isfinite(array)):
+                raise ValueError(
+                    "Mapped cell moments require finite integral enclosures."
+                )
+            array.setflags(write=False)
+
+
 @checked
 def certified_cell_moments(
     mesh: CellMesh,
@@ -1020,41 +1077,22 @@ def certified_cell_moments(
             density, element.cell_kind, absolute_per_cell, relative_fraction
         )
         exact = exact and cell_exact
-        for axis, coordinate in enumerate(coordinates):
-            first_density = multiply(density, coordinate)
-            first[row, axis], first_errors[row, axis], cell_exact = (
-                _integrate_volume_density(
-                    first_density,
-                    element.cell_kind,
-                    absolute_per_cell,
-                    relative_fraction,
-                )
-            )
-            exact = exact and cell_exact
-            if second is not None and second_errors is not None:
-                for other in range(axis, dimension):
-                    value, error, cell_exact = _integrate_volume_density(
-                        multiply(first_density, coordinates[other]),
-                        element.cell_kind,
-                        absolute_per_cell,
-                        relative_fraction,
-                    )
-                    second[row, axis, other] = second[row, other, axis] = value
-                    second_errors[row, axis, other] = second_errors[row, other, axis] = (
-                        error
-                    )
-                    exact = exact and cell_exact
-    if np.any(measures <= measure_errors):
-        raise ValueError(
-            "Mapped cell moments require positive finite measure enclosures."
+        coordinate_exact = _integrate_coordinate_moments(
+            row,
+            coordinates,
+            density,
+            element.cell_kind,
+            absolute_per_cell,
+            relative_fraction,
+            first,
+            first_errors,
+            second,
+            second_errors,
         )
-    for array in (measures, first, second, measure_errors, first_errors, second_errors):
-        if array is not None:
-            if not np.all(np.isfinite(array)):
-                raise ValueError(
-                    "Mapped cell moments require finite integral enclosures."
-                )
-            array.setflags(write=False)
+        exact = exact and coordinate_exact
+    _seal_moment_arrays(
+        measures, measure_errors, first, first_errors, second, second_errors
+    )
     return MappedCellMoments(
         measures,
         first,

@@ -9,6 +9,7 @@ from jax import Array
 
 from phydrax import _meshcore
 from phydrax.discretization import CellBlock, CellMesh, lagrange_element
+from phydrax.discretization._cell_complex import polyhedral_connectivity
 from phydrax.discretization._cell_geometry import CellGeometrySpec
 from phydrax.discretization._mapped_geometry_measure import certified_cell_moments
 from phydrax.discretization._reference_cell import reference_cell_topology
@@ -164,14 +165,18 @@ def test_quadrature_exactness_uses_certified_jacobian_degrees() -> None:
 def test_curved_coordinate_map_changes_physical_fv_centroid_and_face_measure() -> None:
     with jax.enable_x64():
         reference = reference_cell_topology("hexahedron")
+        cells = np.arange(8, dtype=np.int32)[None, :]
         mesh = CellMesh(
             np.asarray(reference.vertices, dtype=np.float64),
             (
                 CellBlock(
                     "volume",
                     "hexahedron",
-                    np.arange(8, dtype=np.int32)[None, :],
+                    cells,
                 ),
+            ),
+            polyhedral_connectivity=polyhedral_connectivity(
+                (("hexahedron", cells),), len(reference.vertices)
             ),
         )
         element = lagrange_element("hexahedron", 2)
