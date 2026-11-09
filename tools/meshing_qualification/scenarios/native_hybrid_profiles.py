@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import replace
 from fractions import Fraction
 from pathlib import Path
@@ -8,6 +9,7 @@ from typing import Any, cast, Literal, NamedTuple
 
 import jax.numpy as jnp
 import numpy as np
+from numpy.typing import NDArray
 
 import phydrax as phx
 from phydrax._array_archive import ArrayArchiveLimits
@@ -782,6 +784,19 @@ def _certified_block_regions(result: Any, /) -> np.ndarray:
     return labels
 
 
+def _layer_core_region_inventory(
+    regions: NDArray[np.int64],
+    content: NDArray[np.float64],
+    region_count: int,
+    /,
+) -> NDArray[np.float64]:
+    """Sum physical content without cell-count-dependent ledger roundoff."""
+    return np.asarray(
+        [math.fsum(content[regions == region]) for region in range(region_count)],
+        dtype=np.float64,
+    )
+
+
 def _layer_core_density(
     result: Any, controls: _LayerCoreLifecycle, /
 ) -> tuple[Any, np.ndarray, np.ndarray]:
@@ -815,7 +830,7 @@ def _layer_core_density(
     measures = np.asarray(volume.cell_volumes, dtype=np.float64)
     if measures.shape != density.shape or np.any(measures <= 0.0):
         raise ValueError("Original FV density requires positive accepted cell measures.")
-    inventories = np.bincount(regions, weights=measures * density, minlength=region_count)
+    inventories = _layer_core_region_inventory(regions, measures * density, region_count)
     return volume, density, inventories
 
 
@@ -1127,11 +1142,11 @@ def _layer_core_history_transition(
     source_measures = np.asarray(source_volume.cell_volumes, dtype=np.float64)
     target_measures = np.asarray(target_volume.cell_volumes, dtype=np.float64)
     region_count = len(controls.densities)
-    source_inventory = np.bincount(
-        source_regions, weights=source_measures * old_density, minlength=region_count
+    source_inventory = _layer_core_region_inventory(
+        source_regions, source_measures * old_density, region_count
     )
-    target_inventory = np.bincount(
-        target_regions, weights=target_measures * carried, minlength=region_count
+    target_inventory = _layer_core_region_inventory(
+        target_regions, target_measures * carried, region_count
     )
     inventory_defect = float(np.max(np.abs(target_inventory - source_inventory)))
     arbitrary_content = (

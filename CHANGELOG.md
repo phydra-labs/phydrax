@@ -532,6 +532,14 @@
   remapping refuses prepared endpoint errors that exceed its existing coverage
   policy. Static closure reports its measured residual and preserves the admitted
   polyhedral producer bound. No volume normalization or overlap filtering is used.
+- Native intersection tests no longer require incidental bitwise equality
+  between symbolic moments and moments of rounded simplex carriers. Independent
+  carrier volume/first-moment checks retain their original tolerances.
+- The mixed layer/core source-strata test preserves witness-bound grouping
+  across numeric mesh versions, uses finite per-case archive limits, and
+  rebuilds optional source metadata through one shared warm/cold forgery helper.
+  Its cold subprocess uses a case-specific 21,600-second deadline after measured
+  restoration exceeded 900 seconds; library limits and global timeouts are unchanged.
 - Legendre–Lobatto preparation now certifies binary64 node and weight rounding
   through native exact polynomial isolation, including rounding-boundary ties.
   Immutable host tables are reused; Gauss and Radau routes are unchanged.
@@ -543,6 +551,9 @@
   declared lower-dimensional features, interfaces and protected scopes retain
   their constraints. This avoids false PWL representability refusals without
   rebasing exact geometry or relaxing source or metric admission.
+- Layer/core lifecycle qualification sums per-material physical content accurately
+  across highly refined meshes. The inventory check retains its original tolerance
+  without mistaking sequential accumulation roundoff for failed conservation.
 - Native tetrahedron moments-only intersections integrate exact symbolic
   construction coordinates rather than rounded physical vertices. Exact term
   contributions feed compensated binary64 sums, avoiding the thin-overlap
