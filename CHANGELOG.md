@@ -525,6 +525,11 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Adaptation keeps volume-region associations separate from geometric facet
+  constraints. Interior region faces remain free in later metric epochs;
+  declared lower-dimensional features, interfaces and protected scopes retain
+  their constraints. This avoids false PWL representability refusals without
+  rebasing exact geometry or relaxing source or metric admission.
 - Native tetrahedron moments-only intersections integrate exact symbolic
   construction coordinates rather than rounded physical vertices. Exact term
   contributions feed compensated binary64 sums, avoiding the thin-overlap
