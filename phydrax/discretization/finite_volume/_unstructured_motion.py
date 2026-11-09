@@ -234,6 +234,10 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         motion_policy: FiniteElementMeshMotionPolicy | None = None,
         monitor: TimeMeshMonitor | None = None,
     ) -> None:
+        if base_plan.coordinate_spec is not None:
+            raise ValueError(
+                "Vertex-only FV motion cannot move a declared coordinate geometry."
+            )
         if not callable(motion):
             raise TypeError("motion must be callable.")
         if (

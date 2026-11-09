@@ -45,15 +45,9 @@ _GROWTH_RATE = 1.2
 # (238,387 P2 DOFs) needs 1,111,891,428 under nested dissection, so 2**33
 # leaves ~7.7x.
 _SYMBOLIC_WORK_BUDGET = 1 << 33
-# Run envelope 24 GiB per layer/core profile (25.77 GB). One declared execution
-# budget serves every harmonic-history solve and every de Rham Hodge admission
-# factorization. Measured needs: the unit-box target's degree-1 Hodge factor
-# is 2,934,501,142 bytes, so the budget must exceed 2.73 GiB. Measured peaks:
-# 11.67 GB at the archived-layer-core history-transition solve, and a
-# 20.90 GB process peak for unit-box at its target complex, which holds that
-# Hodge factor. Hence 4 GiB: it admits the Hodge factor, and the history
-# transition plus a factor and workspace at the budget (11.67 + 2 x 4.29 =
-# 20.3 GB) fits the envelope.
+# Four GiB is the measured declaration for the remaining original layer/core
+# profiles. Unit-box declares its larger budget at the profile below, from the
+# actual post-refinement Hodge requirement rounded upward to 256 MiB.
 _LAYER_CORE_SOLVE_BUDGET = 4 << 30
 # MAC-20261107T1759Z: declared byte budget of every layer/core cycle archive,
 # writer and cold reader alike. The cold reader materializes the archive's
@@ -130,7 +124,7 @@ _LAYER_CORE_LIFECYCLES = {
         1,
         "original-unit-box",
         "fluid-cell-average-density",
-        _LAYER_CORE_SOLVE_BUDGET,
+        6_979_321_856,
         _LAYER_CORE_ARCHIVE_BUDGET,
     ),
 }
@@ -799,7 +793,13 @@ def _layer_core_density(
     if labels.shape != cell_ids.shape or np.any((labels < 0) | (labels >= region_count)):
         raise ValueError("Certified material labels must cover the original regions.")
     label_by_id = dict(zip(cell_ids.tolist(), labels.tolist(), strict=True))
-    volume = UnstructuredFiniteVolumePlan.from_cell_mesh(result.mesh).prepare()
+    if result.geometry is None:
+        raise ValueError("Original FV density requires its declared coordinate geometry.")
+    volume = UnstructuredFiniteVolumePlan.from_cell_mesh(
+        result.mesh,
+        coordinate_spec=result.geometry,
+        embedding=result.certification.embedding,
+    ).prepare()
     fv_ids = np.asarray(volume.cell_global_ids, dtype=np.int64)
     try:
         regions = np.asarray(
@@ -1107,6 +1107,9 @@ def _layer_core_history_transition(
         target_volume,
         provenance=f"{controls.semantics}-layer-core-history",
         policy=CommonRefinementPolicy(coverage_tolerance=1.0e-13),
+        geometry_transition=adaptation.transition.geometry_transition,
+        source_embedding=source_certificate.embedding,
+        target_embedding=target_certificate.embedding,
     )
     if not remap.succeeded or remap.plan is None:
         raise ValueError("The original material overlap was not fully certified.")
@@ -5509,11 +5512,12 @@ def _run_layer_core_lifecycle(
         refined_history, refined_history_space, forward_history = (
             _layer_core_history_transition(refined, history, history_space, controls)
         )
-        _, refined_scalars, forward_scalars = _layer_scalar_transition(
+        refined_scalar_space, refined_scalars, forward_scalars = _layer_scalar_transition(
             refined,
             _layer_scalar_space(accepted),
             {name: banks[name] for name in ("H1", "DG")},
         )
+        del refined_scalar_space
         refined_plan = _layer_field_plan(refined.target)
         refined_forms, forward_forms = _layer_form_transition(
             refined,
@@ -5552,6 +5556,8 @@ def _run_layer_core_lifecycle(
                 dtype=np.float64,
             ),
         )
+        # These archive workspaces have no later use, including subsequent cycles.
+        del field_recipe, refined_recipe, refined_space
         completed = subprocess.run(
             (
                 sys.executable,
@@ -5609,7 +5615,6 @@ def _run_layer_core_lifecycle(
             {name: refined_banks[name] for name in ("Hcurl", "Hdiv")},
             hodge_resources=_layer_core_hodge_resources(controls),
         )
-        del refined_space
         banks = {**restored_scalars, **restored_forms}
         if any(
             not np.allclose(banks[name], original_banks[name], rtol=2.0e-11, atol=2.0e-11)

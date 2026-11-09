@@ -56,7 +56,10 @@ from ._rational import rational_vector
 
 if TYPE_CHECKING:
     from ..discretization._cell_complex import PolyhedralConnectivity
+    from ..discretization._cell_geometry_transition_types import CellGeometryTransition
     from ..discretization._cell_mesh import CellMesh
+    from ._common_root_volume_overlap import NestedGeometryOverlapEvidence
+    from ._global_embedding import GlobalEmbeddingCertificate
 
 
 # Narrow-phase working set per native batch (inputs plus outputs).
@@ -252,6 +255,9 @@ class PreparedCommonRefinement(StrictModule, NonTrainableState):
     ascending order.  Cells are indexed by their position in the concatenated
     mesh blocks.  Entries exist whenever the narrow phase ran; consumers must
     check :attr:`status`.
+
+    Geometry-aware nested results retain endpoint proofs and integration errors
+    in ``geometry_evidence``; raw-carrier results leave it ``None``.
     """
 
     status: CommonRefinementStatus = eqx.field(static=True)
@@ -278,6 +284,7 @@ class PreparedCommonRefinement(StrictModule, NonTrainableState):
     target_topology_id: str = eqx.field(static=True)
     policy: CommonRefinementPolicy
     evidence: CommonRefinementEvidence
+    geometry_evidence: NestedGeometryOverlapEvidence | None
     refinement_id: str = eqx.field(static=True)
 
     def __init__(
@@ -289,6 +296,7 @@ class PreparedCommonRefinement(StrictModule, NonTrainableState):
         identities: tuple[str, str, str, str],
         policy: CommonRefinementPolicy,
         evidence: CommonRefinementEvidence,
+        geometry_evidence: NestedGeometryOverlapEvidence | None = None,
     ) -> None:
         if not isinstance(policy, CommonRefinementPolicy) or not isinstance(
             evidence, CommonRefinementEvidence
@@ -346,6 +354,7 @@ class PreparedCommonRefinement(StrictModule, NonTrainableState):
         ) = identities
         self.policy = policy
         self.evidence = evidence
+        self.geometry_evidence = geometry_evidence
         self.refinement_id = canonical_fingerprint(
             {
                 "kind": "prepared-common-refinement",
@@ -353,6 +362,18 @@ class PreparedCommonRefinement(StrictModule, NonTrainableState):
                 "target_mesh": identities[1],
                 "policy": policy.policy_id,
                 "evidence": evidence.evidence_id,
+                "geometry_evidence": None
+                if geometry_evidence is None
+                else geometry_evidence.evidence_id,
+                "second_moments": None
+                if entries.second_moments is None
+                else array_tree_fingerprint(entries.second_moments),
+                "simplex_offsets": None
+                if entries.simplex_offsets is None
+                else array_tree_fingerprint(entries.simplex_offsets),
+                "simplices": None
+                if entries.simplices is None
+                else array_tree_fingerprint(entries.simplices),
                 "target_offsets": array_tree_fingerprint(offsets),
                 "source_cells": array_tree_fingerprint(entries.source_cells),
                 "volumes": array_tree_fingerprint(entries.volumes),
@@ -1411,10 +1432,26 @@ def prepare_common_refinement(
     /,
     *,
     policy: CommonRefinementPolicy = CommonRefinementPolicy(),
+    geometry_transition: CellGeometryTransition | None = None,
+    source_embedding: GlobalEmbeddingCertificate | None = None,
+    target_embedding: GlobalEmbeddingCertificate | None = None,
 ) -> PreparedCommonRefinement:
     """Exhaustively prepare physical cell-overlap CSR and coverage evidence."""
 
     _validate_meshes(source, target, policy)
+    if geometry_transition is not None:
+        from ._common_root_volume_overlap import prepare_nested_geometry_refinement
+
+        return prepare_nested_geometry_refinement(
+            source,
+            target,
+            geometry_transition,
+            policy=policy,
+            source_embedding=source_embedding,
+            target_embedding=target_embedding,
+        )
+    if source_embedding is not None or target_embedding is not None:
+        raise ValueError("Embedding proofs require an explicit geometry transition.")
     _meshcore.load_meshcore()
     identities = (
         source.mesh_id,
@@ -1457,6 +1494,9 @@ def _prepared(
     identities: tuple[str, str, str, str],
     policy: CommonRefinementPolicy,
     /,
+    geometry_evidence: NestedGeometryOverlapEvidence | None = None,
+    source_coverage_tolerances: np.ndarray | None = None,
+    target_coverage_tolerances: np.ndarray | None = None,
 ) -> PreparedCommonRefinement:
     dimension = source.first_moments.shape[1]
     records = _empty_entries(dimension, policy) if entries is None else entries
@@ -1472,8 +1512,16 @@ def _prepared(
         )
         - target.measures
     )
-    source_tolerances = _coverage_tolerances(source, policy)
-    target_tolerances = _coverage_tolerances(target, policy)
+    source_tolerances = (
+        _coverage_tolerances(source, policy)
+        if source_coverage_tolerances is None
+        else source_coverage_tolerances
+    )
+    target_tolerances = (
+        _coverage_tolerances(target, policy)
+        if target_coverage_tolerances is None
+        else target_coverage_tolerances
+    )
     if status is None:
         if counts.uncertain:
             status, reason = (
@@ -1511,6 +1559,7 @@ def _prepared(
         identities=identities,
         policy=policy,
         evidence=evidence,
+        geometry_evidence=geometry_evidence,
     )
 
 

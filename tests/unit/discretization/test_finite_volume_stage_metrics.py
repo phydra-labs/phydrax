@@ -19,6 +19,7 @@ from phydrax.discretization.finite_volume._embedded_dynamics import (
 from phydrax.discretization.finite_volume._geometry_protocol import (
     ALEGeometryConsistencyPolicy,
     ExplicitFaceBlockGeometry,
+    FiniteVolumeFaceBlock,
     FiniteVolumeGeometryStatus,
     FiniteVolumeStageFaceBlock,
     FiniteVolumeStageFaceLayout,
@@ -28,6 +29,9 @@ from phydrax.discretization.finite_volume._geometry_protocol import (
     PreparedFiniteVolumeGeometry,
 )
 from phydrax.discretization.finite_volume._physical_boundaries import SlipWallBoundary
+from phydrax.discretization.finite_volume._unstructured import (
+    UnstructuredFiniteVolumeDiscretization,
+)
 from phydrax.discretization.finite_volume._unstructured_motion import (
     FixedConnectivityMotionPlan,
 )
@@ -162,6 +166,35 @@ def _stage_metrics(**overrides: Any) -> Any:
     values = _stage_metric_values()
     values.update(overrides)
     return FiniteVolumeStageMetrics(**values)
+
+
+def test_static_stage_refuses_nonclosing_oriented_face_geometry() -> None:
+    discretization: UnstructuredFiniteVolumeDiscretization = _unstructured()
+    original = discretization.face_blocks[0]
+    changed = FiniteVolumeFaceBlock(
+        face_ids=original.face_ids,
+        owner_cells=original.owner_cells,
+        neighbor_cells=original.neighbor_cells,
+        boundary_patch_ids=original.boundary_patch_ids,
+        face_centers=original.face_centers,
+        area_vectors=original.area_vectors.at[0, 0].add(0.125),
+        face_measures=original.face_measures,
+        active_mask=original.active_mask,
+        block_id=original.block_id,
+    )
+
+    def face_blocks(
+        value: UnstructuredFiniteVolumeDiscretization,
+    ) -> tuple[FiniteVolumeFaceBlock, ...]:
+        return value.face_blocks
+
+    broken = eqx.tree_at(face_blocks, discretization, (changed,))
+    metrics = lower_static_unstructured_stage_metrics(broken)
+    np.testing.assert_equal(
+        np.max(np.asarray(metrics.evidence.face_closure_defect)), 0.125
+    )
+    assert not bool(metrics.evidence.passed)
+    assert int(metrics.evidence.status) == int(FiniteVolumeGeometryStatus.FAILED)
 
 
 def test_finite_volume_stage_metrics_scenario_1() -> None:

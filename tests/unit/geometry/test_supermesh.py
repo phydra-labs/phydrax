@@ -630,3 +630,338 @@ def test_warped_prism_remaps_with_a_certified_interior_cone() -> None:
         rtol=1e-13,
         atol=0.0,
     )
+
+
+def test_nested_actual_geometry_overlap_and_inverse() -> None:
+    from tests._support.mixed_material_geometry import nested_material_geometry
+
+    fixture = nested_material_geometry()
+    transition = fixture.transition
+    policy = CommonRefinementPolicy(second_moments=True)
+    forward = prepare_common_refinement(
+        transition.source_mesh,
+        transition.target_mesh,
+        policy=policy,
+        geometry_transition=transition,
+    )
+    reverse = prepare_common_refinement(
+        transition.target_mesh,
+        transition.source_mesh,
+        policy=policy,
+        geometry_transition=transition,
+    )
+    assert forward.succeeded and reverse.succeeded
+    sources = np.asarray(forward.source_cells)
+    targets = np.asarray(forward.target_cells)
+    np.testing.assert_array_equal(
+        fixture.source_regions[sources], fixture.target_regions[targets]
+    )
+    np.testing.assert_allclose(
+        np.bincount(sources, weights=np.asarray(forward.volumes), minlength=2),
+        forward.source_measures,
+        rtol=1e-10,
+        atol=0,
+    )
+    forward_pairs = {
+        (int(s), int(t)): float(v)
+        for s, t, v in zip(sources, targets, np.asarray(forward.volumes), strict=True)
+    }
+    reverse_pairs = {
+        (int(t), int(s)): float(v)
+        for s, t, v in zip(
+            reverse.source_cells, reverse.target_cells, reverse.volumes, strict=True
+        )
+    }
+    assert forward_pairs == reverse_pairs
+    assert forward.second_moments is not None
+    assert forward.simplices is None
+    evidence = forward.geometry_evidence
+    assert evidence is not None
+    assert evidence.transition_id == transition.transition_id
+    assert evidence.source_geometry_id == transition.source_geometry_id
+    assert evidence.target_geometry_id == transition.target_geometry_id
+    assert evidence.source_validity is not None and evidence.target_validity is not None
+    assert evidence.source_embedding is not None
+    assert evidence.source_measure_errors is not None
+    assert evidence.target_first_moment_errors is not None
+    assert evidence.target_second_moment_errors is not None
+    assert evidence.fine_complete and evidence.coarse_complete
+    inverse_evidence = reverse.geometry_evidence
+    assert inverse_evidence is not None
+    assert inverse_evidence.source_geometry_id == transition.target_geometry_id
+    assert inverse_evidence.target_geometry_id == transition.source_geometry_id
+
+
+def test_nested_integration_failure_retains_completed_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.discretization import _mapped_geometry_measure
+    from tests._support.mixed_material_geometry import nested_material_geometry
+
+    transition = nested_material_geometry().transition
+    integrate = _mapped_geometry_measure.certified_cell_moments
+
+    def fail_target(mesh: CellMesh, *args: Any, **kwargs: Any) -> Any:
+        if mesh.mesh_id == transition.target_mesh.mesh_id:
+            raise ValueError("target integration enclosure failed")
+        return integrate(mesh, *args, **kwargs)
+
+    monkeypatch.setattr(_mapped_geometry_measure, "certified_cell_moments", fail_target)
+    result = prepare_common_refinement(
+        transition.source_mesh,
+        transition.target_mesh,
+        geometry_transition=transition,
+    )
+    assert result.status is CommonRefinementStatus.INTERSECTION_FAILURE
+    evidence = result.geometry_evidence
+    assert evidence is not None
+    assert evidence.phase == "integration"
+    assert "target integration enclosure failed" in evidence.reason
+    assert evidence.source_validity is not None and evidence.target_validity is not None
+    assert evidence.source_measure_errors is not None
+    assert evidence.target_measure_errors is None
+
+
+def test_nested_geometry_refuses_physical_simplex_claim() -> None:
+    from tests._support.mixed_material_geometry import nested_material_geometry
+
+    transition = nested_material_geometry().transition
+    with pytest.raises(ValueError, match="does not provide physical simplices"):
+        prepare_common_refinement(
+            transition.source_mesh,
+            transition.target_mesh,
+            geometry_transition=transition,
+            policy=CommonRefinementPolicy(overlap_simplices=True),
+        )
+
+
+def test_nested_geometry_fv_remap_preserves_material_and_inverse() -> None:
+    from phydrax.discretization.finite_volume import (
+        prepare_unstructured_conservative_remap,
+        UnstructuredFiniteVolumePlan,
+    )
+    from tests._support.mixed_material_geometry import nested_material_geometry
+
+    fixture = nested_material_geometry()
+    transition = fixture.transition
+    source = UnstructuredFiniteVolumePlan.from_cell_mesh(
+        transition.source_mesh, coordinate_spec=transition.source_geometry
+    ).prepare()
+    target = UnstructuredFiniteVolumePlan.from_cell_mesh(
+        transition.target_mesh, coordinate_spec=transition.target_geometry
+    ).prepare()
+    forward = prepare_unstructured_conservative_remap(
+        source, target, provenance="nested-actual", geometry_transition=transition
+    )
+    reverse = prepare_unstructured_conservative_remap(
+        target, source, provenance="nested-actual-inverse", geometry_transition=transition
+    )
+    assert forward.succeeded and reverse.succeeded
+    assert forward.plan is not None and reverse.plan is not None
+    values = np.asarray([1.25, 4.5])
+    mapped = np.asarray(forward.plan.apply(values))
+    np.testing.assert_allclose(mapped, values[fixture.target_regions], rtol=1e-10, atol=0)
+    np.testing.assert_allclose(reverse.plan.apply(mapped), values, rtol=1e-10, atol=0)
+    for region in (0, 1):
+        np.testing.assert_allclose(
+            np.sum(
+                mapped[fixture.target_regions == region]
+                * np.asarray(target.cell_volumes)[fixture.target_regions == region]
+            ),
+            values[region] * np.asarray(source.cell_volumes)[region],
+            rtol=1e-10,
+            atol=0,
+        )
+
+
+def test_partial_reference_partition_proves_disjointness_without_cover() -> None:
+    from phydrax.discretization._nested_reference_types import (
+        ReferenceCellMapWitnesses,
+        ReferenceCellPartition,
+        validate_reference_cell_partition,
+    )
+
+    corners = (
+        (Fraction(0), Fraction(0)),
+        (Fraction(1, 2), Fraction(0)),
+        (Fraction(0), Fraction(1)),
+    )
+    witness = ReferenceCellMapWitnesses(
+        np.asarray([7]),
+        np.asarray([3]),
+        "triangle",
+        "triangle",
+        np.asarray([[list(map(float, point)) for point in corners]]),
+        (corners,),
+    )
+    partition = ReferenceCellPartition((witness,))
+    assert not validate_reference_cell_partition(partition, require_complete=False)
+    with pytest.raises(ValueError, match="cover"):
+        validate_reference_cell_partition(partition)
+    duplicate = ReferenceCellMapWitnesses(
+        np.asarray([7, 8]),
+        np.asarray([3, 3]),
+        "triangle",
+        "triangle",
+        np.repeat(witness.source_reference_vertices, 2, axis=0),
+        (corners, corners),
+    )
+    with pytest.raises(ValueError, match="overlapping"):
+        validate_reference_cell_partition(
+            ReferenceCellPartition((duplicate,)), require_complete=False
+        )
+
+
+def test_nested_target_coverage_does_not_require_full_source_partition() -> None:
+    from phydrax.discretization import CellGeometrySpec
+    from phydrax.discretization._cell_geometry_transition_types import (
+        CellGeometryTransition,
+        CellGeometryTransitionEvidence,
+    )
+    from phydrax.discretization._nested_reference_types import ReferenceCellMapWitnesses
+
+    base = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    )
+    source = CellMesh(
+        np.concatenate((base, base + (2.0, 0.0, 0.0))),
+        (
+            CellBlock(
+                "tets",
+                "tetrahedron",
+                np.asarray(((0, 1, 2, 3), (4, 5, 6, 7))),
+                global_ids=np.asarray((1, 2)),
+            ),
+        ),
+    )
+    child = base.copy()
+    child[1, 0] = 0.5
+    target = CellMesh(
+        child,
+        (
+            CellBlock(
+                "tets",
+                "tetrahedron",
+                np.asarray(((0, 1, 2, 3),)),
+                global_ids=np.asarray((10,)),
+            ),
+        ),
+    )
+    exact = tuple(tuple(Fraction(float(value)) for value in point) for point in child)
+    group = ReferenceCellMapWitnesses(
+        np.asarray([10]),
+        np.asarray([1]),
+        "tetrahedron",
+        "tetrahedron",
+        child[None, :, :],
+        (exact,),
+    )
+    transition = CellGeometryTransition(
+        source,
+        CellGeometrySpec.affine(source),
+        target,
+        CellGeometrySpec.affine(target),
+        evidence=CellGeometryTransitionEvidence(
+            "nested_restriction", reference_map_count=1
+        ),
+        reference_map=group,
+    )
+    forward = prepare_common_refinement(
+        source,
+        target,
+        geometry_transition=transition,
+        policy=CommonRefinementPolicy(coverage=CommonRefinementCoverage.TARGET),
+    )
+    backward = prepare_common_refinement(
+        target,
+        source,
+        geometry_transition=transition,
+        policy=CommonRefinementPolicy(coverage=CommonRefinementCoverage.SOURCE),
+    )
+    assert forward.succeeded and backward.succeeded
+    np.testing.assert_array_equal(forward.source_cells, [0])
+    np.testing.assert_allclose(forward.volumes, [1 / 12], rtol=1e-12)
+    assert (
+        prepare_common_refinement(source, target, geometry_transition=transition).status
+        is CommonRefinementStatus.COVERAGE_GAP
+    )
+
+
+def test_nested_coarsening_partition_with_unchanged_direct_cell() -> None:
+    from phydrax.discretization import CellGeometrySpec
+    from phydrax.discretization._cell_geometry_transition_types import (
+        CellGeometryTransition,
+        CellGeometryTransitionEvidence,
+    )
+    from phydrax.discretization._nested_reference_types import (
+        ReferenceCellMapWitnesses,
+        ReferenceCellPartition,
+    )
+
+    base = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    )
+    coarse = CellMesh(
+        np.concatenate((base, base + (2.0, 0.0, 0.0))),
+        (
+            CellBlock(
+                "tets",
+                "tetrahedron",
+                np.asarray(((0, 1, 2, 3), (4, 5, 6, 7))),
+                global_ids=np.asarray((1, 2)),
+            ),
+        ),
+    )
+    fine = CellMesh(
+        np.concatenate((base, base + (2.0, 0.0, 0.0), np.asarray(((0.5, 0.0, 0.0),)))),
+        (
+            CellBlock(
+                "tets",
+                "tetrahedron",
+                np.asarray(((0, 8, 2, 3), (8, 1, 2, 3), (4, 5, 6, 7))),
+                global_ids=np.asarray((10, 11, 12)),
+            ),
+        ),
+    )
+    children = np.asarray((base[[0, 1, 2, 3]], base[[0, 1, 2, 3]]))
+    children[0, 1, 0] = 0.5
+    children[1, 0, 0] = 0.5
+    exact = tuple(
+        tuple(tuple(Fraction(float(value)) for value in point) for point in cell)
+        for cell in children
+    )
+    partition = ReferenceCellMapWitnesses(
+        np.asarray([10, 11]),
+        np.asarray([1, 1]),
+        "tetrahedron",
+        "tetrahedron",
+        children,
+        exact,
+    )
+    identity = tuple(tuple(Fraction(float(value)) for value in point) for point in base)
+    direct = ReferenceCellMapWitnesses(
+        np.asarray([2]),
+        np.asarray([12]),
+        "tetrahedron",
+        "tetrahedron",
+        base[None, :, :],
+        (identity,),
+    )
+    transition = CellGeometryTransition(
+        fine,
+        CellGeometrySpec.affine(fine),
+        coarse,
+        CellGeometrySpec.affine(coarse),
+        evidence=CellGeometryTransitionEvidence(
+            "coarsening_interpolation",
+            reference_map_count=1,
+            coarsening_map_count=2,
+        ),
+        reference_map=direct,
+        coarsening_partition=ReferenceCellPartition((partition,)),
+    )
+    result = prepare_common_refinement(fine, coarse, geometry_transition=transition)
+    assert result.succeeded
+    np.testing.assert_array_equal(result.target_offsets, [0, 2, 3])
+    np.testing.assert_array_equal(result.source_cells, [0, 1, 2])
+    np.testing.assert_allclose(result.volumes, [1 / 12, 1 / 12, 1 / 6], rtol=1e-12)

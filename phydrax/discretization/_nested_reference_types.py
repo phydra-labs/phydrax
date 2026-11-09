@@ -1056,13 +1056,16 @@ def _partition_aabb_candidates(
         heappush(ends_with_ids, (upper, index))
 
 
-def validate_reference_cell_partition(partition: ReferenceCellPartition, /) -> None:
-    """Prove exact affine inclusion, disjoint interiors, and complete parent cover.
+def validate_reference_cell_partition(
+    partition: ReferenceCellPartition, /, *, require_complete: bool = True
+) -> bool:
+    """Prove exact affine inclusion and disjoint interiors, optionally complete cover.
 
     Partitions are triangle-by-triangle in 2D or by standard volume cells in
     3D. Exact bounding-box separation excludes pairs with disjoint interiors;
     all remaining pairs receive the full separating-axis proof. Inclusion and
     disjointness make exact equality of the measure sum a complete-cover proof.
+    Return whether every named parent is covered exactly.
     """
     if (
         not isinstance(partition, ReferenceCellPartition)
@@ -1144,14 +1147,18 @@ def validate_reference_cell_partition(partition: ReferenceCellPartition, /) -> N
             children.append((group.target_cell_kind, vertices, determinant))
     if not fine_ids:
         raise ValueError("A reference partition cannot be empty.")
+    complete = True
     for parent_kind, children in parents.values():
         total = sum(
             (volumes[kind] * determinant for kind, _, determinant in children),
             Fraction(0),
         )
-        if total != volumes[parent_kind]:
+        complete = complete and total == volumes[parent_kind]
+        if total > volumes[parent_kind] or (
+            require_complete and total != volumes[parent_kind]
+        ):
             raise ValueError(
-                "Reference partition does not cover its parent volume exactly."
+                "Reference partition exceeds or does not cover its parent volume."
             )
         for index, other_index in _partition_aabb_candidates(children):
             kind, vertices, _ = children[index]
@@ -1160,6 +1167,7 @@ def validate_reference_cell_partition(partition: ReferenceCellPartition, /) -> N
                 kind, vertices, other_kind, other_vertices
             ):
                 raise ValueError("Reference partition cells have overlapping interiors.")
+    return complete
 
 
 __all__ = [

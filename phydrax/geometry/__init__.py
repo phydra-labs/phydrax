@@ -51,6 +51,7 @@ _DEFERRED_EXPORTS = {
     "MaterialReferenceVolumeWitness": "._common_root_volume_overlap",
     "CurvedOverlapIntegrationEvidence": "._common_root_volume_overlap",
     "CurvedOverlapIntegrationPolicy": "._common_root_volume_overlap",
+    "NestedGeometryOverlapEvidence": "._common_root_volume_overlap",
     "SourceBoundaryFaceImageWitness": "._source_boundary_records",
     "SourceBoundaryImagePullback": "._source_boundary_records",
     "SourceBoundaryQuery": "._source_boundary_records",
@@ -561,6 +562,7 @@ if TYPE_CHECKING:
         CurvedOverlapIntegrationEvidence,
         CurvedOverlapIntegrationPolicy,
         MaterialReferenceVolumeWitness,
+        NestedGeometryOverlapEvidence,
     )
     from ._compartments import (
         CompartmentAdjacencyReport,
@@ -994,6 +996,7 @@ __all__ = [
     "CommonRootVolumeWitness",
     "CurvedOverlapIntegrationEvidence",
     "CurvedOverlapIntegrationPolicy",
+    "NestedGeometryOverlapEvidence",
     "EulerianVolumeOverlapChain",
     "EulerianVolumeOverlapMap",
     "MaterialMapActionEvidence",

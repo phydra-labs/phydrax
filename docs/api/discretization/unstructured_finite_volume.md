@@ -206,6 +206,10 @@ with a linearization at a supplied state and no transpose.
 
 ---
 
+::: phydrax.geometry.NestedGeometryOverlapEvidence
+
+---
+
 ::: phydrax.discretization.UnstructuredSecondOrderRemapPlan
 
 ---

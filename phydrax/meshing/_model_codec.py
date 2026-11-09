@@ -518,6 +518,7 @@ def _register_model_archive_types() -> None:
         CurvedOverlapIntegrationPolicy,
         MaterialReferenceVolumeOverlap,
         MaterialReferenceVolumeWitness,
+        NestedGeometryOverlapEvidence,
     )
     from ..geometry._compartments import (
         CompartmentDefinition,
@@ -1310,6 +1311,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.geometry", CommonRootVolumeWitness),
         ("phydrax.geometry", CurvedOverlapIntegrationEvidence),
         ("phydrax.geometry", CurvedOverlapIntegrationPolicy),
+        ("phydrax.geometry", NestedGeometryOverlapEvidence),
         ("phydrax.geometry", EmbeddingCounts),
         ("phydrax.geometry._embedding_state", PeriodicAffineTorusDegreeEvidence),
         ("phydrax.geometry._embedding_state", PeriodicMappedTorusDegreeEvidence),
