@@ -5096,6 +5096,151 @@ def _backtracked_relocations(
     )
 
 
+def _stall_relocation_round(
+    state: _State,
+    topology: _Topology,
+    counts: _Counts,
+    mode: PredicateMode,
+    periodic_context: _PeriodicContext | None,
+    source: _Source,
+    /,
+) -> tuple[_State, _Counts, int]:
+    """Escape a stall only by strictly reducing the number of out-of-band edges.
+
+    Search rays away from neighbors of the short-edge star. Singleton periodic
+    orbits can move without changing the quotient; all ordinary orientation,
+    chart-lift and exact-source admissions still apply. Backtracking ends at
+    binary64 representability, not a geometric tolerance.
+    """
+    short = np.flatnonzero((topology.lengths < _LOWER) & ~topology.edge_protected)
+    before = _stall_potential(topology)[0]
+    identity = tuple(
+        tuple(Fraction(int(row == column)) for column in range(state.points.shape[1] + 1))
+        for row in range(state.points.shape[1] + 1)
+    )
+    visited: set[int] = set()
+    rejected: list[int] = []
+    for edge in short.tolist():
+        endpoints = topology.edges[edge]
+        ball = _ball_cells(topology, endpoints)
+        vertices = np.unique(state.cells[ball])
+        vertices = np.concatenate((endpoints, vertices[~np.isin(vertices, endpoints)]))
+        for vertex in vertices.tolist():
+            if vertex in visited:
+                continue
+            visited.add(vertex)
+            if topology.kind[vertex] != _INTERIOR:
+                continue
+            if periodic_context is not None:
+                orbit = periodic_context.vertex_orbits[vertex]
+                if (
+                    orbit < 0
+                    or np.count_nonzero(periodic_context.vertex_orbits == orbit) != 1
+                    or periodic_context.vertex_stabilizers[vertex]
+                    or periodic_context.vertex_exact_isometries[vertex] != identity
+                ):
+                    continue
+            row = np.asarray((vertex,), dtype=np.int64)
+            points: np.ndarray | None = None
+            tensors: np.ndarray | None = None
+            had_invalid = False
+            had_uncertain = False
+            neighbors = topology.neighbor_values[
+                topology.neighbor_offsets[vertex] : topology.neighbor_offsets[vertex + 1]
+            ]
+            for neighbor in neighbors.tolist():
+                direction = state.points[vertex] - state.points[neighbor]
+                scale = 1.0
+                while True:
+                    target = state.points[vertex] + scale * direction
+                    if np.array_equal(target, state.points[vertex]):
+                        break
+                    candidate = target[None, :]
+                    metric = _field_metric(
+                        source,
+                        candidate,
+                        _proposal_metric(state, topology, row, candidate),
+                        mode,
+                    )
+                    status, quality = _proposal_checks(
+                        state, topology, row, candidate, metric, mode
+                    )
+                    had_uncertain |= bool(status[0] == _UNCERTAIN)
+                    had_invalid |= bool(status[0] >= _INVALID)
+                    quality_valid = bool(np.isfinite(quality[0]) and quality[0] > 0.0)
+                    had_invalid |= bool(status[0] == _OK and not quality_valid)
+                    if status[0] == _OK and quality_valid:
+                        if points is None or tensors is None:
+                            points, tensors = state.points.copy(), state.metric.copy()
+                        points[vertex], tensors[vertex] = target, metric[0]
+                        lengths = _metric_lengths(tensors, points, topology.edges)
+                        if periodic_context is not None:
+                            lengths = lengths[
+                                periodic_context.edge_representative_rows[
+                                    periodic_context.edge_orbits
+                                ]
+                            ]
+                        if (
+                            _stall_potential(topology._replace(lengths=lengths))[0]
+                            < before
+                        ):
+                            stencils = _located_stencil_bank(
+                                source,
+                                candidate,
+                                mode,
+                                allow_invalid_rows=True,
+                                stencil_width=state.source_stencil_weights.shape[1],
+                            )
+                            had_uncertain |= not bool(stencils[3][0])
+                            if stencils[3][0]:
+                                sources, weights, valid = _pad_stencil_columns(
+                                    state.source_stencil_sources,
+                                    state.source_stencil_weights,
+                                    state.source_stencil_valid,
+                                    stencils[0].shape[1],
+                                )
+                                sources, weights, valid = (
+                                    sources.copy(),
+                                    weights.copy(),
+                                    valid.copy(),
+                                )
+                                sources[vertex], weights[vertex], valid[vertex] = (
+                                    stencils[0][0],
+                                    stencils[1][0],
+                                    stencils[2][0],
+                                )
+                                exact = list(state.source_stencil_exact)
+                                exact[vertex] = stencils[4][0]
+                                moved = state.moved.copy()
+                                moved[vertex] = True
+                                updated = _raise_touching(
+                                    state._replace(
+                                        points=points,
+                                        metric=tensors,
+                                        moved=moved,
+                                        source_stencil_sources=sources,
+                                        source_stencil_weights=weights,
+                                        source_stencil_valid=valid,
+                                        source_stencil_exact=tuple(exact),
+                                    ),
+                                    row,
+                                    _RELOCATED,
+                                )
+                                counts = _tally(
+                                    counts, np.asarray(rejected, dtype=np.int64)
+                                )
+                                return (
+                                    updated,
+                                    counts._replace(relocations=counts.relocations + 1),
+                                    1,
+                                )
+                    scale *= 0.5
+            rejected.append(
+                _INVALID if had_invalid else _UNCERTAIN if had_uncertain else _OK
+            )
+    return state, _tally(counts, np.asarray(rejected, dtype=np.int64)), 0
+
+
 def _relocation_round_nonperiodic(
     state: _State,
     topology: _Topology,
@@ -6800,6 +6945,11 @@ def _resume_local_metric_adaptation(
     # the escape attempt that ran from it.
     escaped_from: tuple[_State, _Counts, int, tuple[int, int], int] | None = None
     periodic_topology_pending = mesh.periodic_topology is not None and topology_operations
+    escape_phases = (
+        (*_ESCAPE_PHASES, _stall_relocation_round)
+        if relocation and state.chart_lift is not None
+        else _ESCAPE_PHASES
+    )
     while not _unit(topology) or periodic_topology_pending:
         periodic_topology_pending = False
         passes += 1
@@ -6834,9 +6984,9 @@ def _resume_local_metric_adaptation(
         stall = (state, counts, passes, potential)
         escaped = 0
         attempt = first
-        for attempt in range(first, len(_ESCAPE_PHASES)):
+        for attempt in range(first, len(escape_phases)):
             escaped_state, counts, escaped = _run_phase(
-                state, counts, _ESCAPE_PHASES[attempt], predicate_mode, topologies, source
+                state, counts, escape_phases[attempt], predicate_mode, topologies, source
             )
             if escaped:
                 break

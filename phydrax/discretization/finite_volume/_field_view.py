@@ -40,6 +40,7 @@ from ...sparse import linear_apply, linear_transpose_apply
 from ...typing import checked, parse
 from .._cell_complex import PolyhedralConnectivity
 from .._cell_geometry import CellGeometrySpec
+from .._cell_geometry_validity import cell_geometry_id
 from .._cell_locator import AbstractCellLocator, CellLocationStatus
 from .._cell_mesh import CellMesh
 from .._mapped_locator import (
@@ -1091,6 +1092,24 @@ def prepare_finite_volume_field_reconstruction(
             mapped_requested = isinstance(
                 support_geometry, (MappedFieldSupport, DomainCoverageCertificate)
             )
+            declared = (
+                discretization.coordinate_spec
+                if isinstance(discretization, UnstructuredFiniteVolumeDiscretization)
+                else None
+            )
+            if declared is not None:
+                if isinstance(support_geometry, MappedFieldSupport):
+                    query_geometry = support_geometry.geometry
+                elif isinstance(support_geometry, DomainCoverageCertificate):
+                    query_geometry = support_geometry.binding.geometry
+                else:
+                    raise ValueError(
+                        "Declared mapped FV geometry requires mapped field support or coverage."
+                    )
+                if cell_geometry_id(query_geometry) != cell_geometry_id(declared):
+                    raise ValueError(
+                        "Mapped FV field support must bind the declared coordinate geometry."
+                    )
             mapped_policy: MappedLocationPolicy | None = None
             if mapped_requested:
                 if location_policy is not None and not isinstance(

@@ -20,6 +20,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._jax_config import x64_enabled
 from ..._strict import StrictModule
+from ...geometry._global_embedding import GlobalEmbeddingCertificate
 from ...linalg import ArraySpace, DiagonalPairing
 from ...sparse import EdgeRelation, SparseLinearMap
 from ...typing import checked
@@ -31,6 +32,8 @@ from .._cell_complex import (
     tetrahedral_connectivity,
     TetrahedralConnectivity,
 )
+from .._cell_geometry import CellGeometrySpec
+from .._cell_geometry_validity import cell_geometry_id, CellValidityCertificate
 from .._cell_mesh import CellBlock, CellMesh
 from .._conservation_ledger import (
     ConservationStageFluxRateBlock,
@@ -65,6 +68,8 @@ if TYPE_CHECKING:
 
 Connectivity = PolygonalConnectivity | TetrahedralConnectivity | PolyhedralConnectivity
 
+_DEFAULT_MAPPED_MEASURE_RELATIVE_TOLERANCE = 1.0e-12
+
 _TETRAHEDRAL_FACE_QUADRATURE_BARYCENTRIC = (
     (0.445948490915965, 0.445948490915965, 0.108103018168070),
     (0.445948490915965, 0.108103018168070, 0.445948490915965),
@@ -81,6 +86,27 @@ _TETRAHEDRAL_FACE_QUADRATURE_NORMALIZED_WEIGHTS = (
     0.109951743655322,
     0.109951743655322,
 )
+
+
+def _published_measure_errors(
+    measures: np.ndarray, errors: np.ndarray, published: Array, /
+) -> Array:
+    """Include publication rounding while preserving componentwise error bounds."""
+    encoded = np.asarray(published)
+    exact_values = np.asarray(measures, dtype=np.float64)
+    original_errors = np.asarray(errors, dtype=np.float64)
+    total = np.nextafter(
+        original_errors + np.abs(encoded.astype(np.float64) - exact_values), np.inf
+    )
+    rounded = total.astype(encoded.dtype)
+    rounded = np.where(
+        rounded.astype(np.float64) < total,
+        np.nextafter(rounded, np.asarray(np.inf, dtype=encoded.dtype)),
+        rounded,
+    )
+    tiny = np.finfo(encoded.dtype).tiny
+    rounded = np.where((rounded > 0) & (rounded < tiny), tiny, rounded)
+    return jnp.asarray(rounded)
 
 
 def _stable_global_ids(name: str, value: ArrayLike | None, count: int, /) -> np.ndarray:
@@ -1353,6 +1379,9 @@ class _PreparedUnstructuredFiniteVolumeData:
     owner_local_view: Any | None = None
     periodic_face_joins: Array | None = None
     periodic_face_translations: Array | None = None
+    coordinate_spec: CellGeometrySpec | None = None
+    embedding: GlobalEmbeddingCertificate | None = None
+    measure_relative_tolerance: float = _DEFAULT_MAPPED_MEASURE_RELATIVE_TOLERANCE
 
 
 class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
@@ -1377,6 +1406,9 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
     capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
     owner_local_view: Any | None = None
+    coordinate_spec: CellGeometrySpec | None = None
+    embedding: GlobalEmbeddingCertificate | None = None
+    measure_relative_tolerance: float = _DEFAULT_MAPPED_MEASURE_RELATIVE_TOLERANCE
     # Owner-local periodic seam faces joined across lattice images: topology
     # faces ``(kept, merged)`` and the ambient translation from the kept
     # owner's frame to the neighbor's frame; ``None`` when nothing is joined.
@@ -1419,6 +1451,9 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
             self.owner_local_view = _prepared.owner_local_view
             self.periodic_face_joins = _prepared.periodic_face_joins
             self.periodic_face_translations = _prepared.periodic_face_translations
+            self.coordinate_spec = _prepared.coordinate_spec
+            self.embedding = _prepared.embedding
+            self.measure_relative_tolerance = _prepared.measure_relative_tolerance
             return
         if vertices is None:
             raise TypeError("vertices must be supplied for direct construction.")
@@ -1631,6 +1666,9 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         self.owner_local_view = None
         self.periodic_face_joins = None
         self.periodic_face_translations = None
+        self.coordinate_spec = None
+        self.embedding = None
+        self.measure_relative_tolerance = _DEFAULT_MAPPED_MEASURE_RELATIVE_TOLERANCE
 
     @classmethod
     @checked
@@ -1642,6 +1680,9 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         field_name: str = "state",
         component_names: Sequence[str] = ("value",),
         boundary_face_groups: Mapping[str, ArrayLike] | None = None,
+        coordinate_spec: CellGeometrySpec | None = None,
+        embedding: GlobalEmbeddingCertificate | None = None,
+        measure_relative_tolerance: float = _DEFAULT_MAPPED_MEASURE_RELATIVE_TOLERANCE,
     ) -> "UnstructuredFiniteVolumePlan":
         """Construct directly from canonical polyhedral CellMesh."""
         if not isinstance(mesh.connectivity, PolyhedralConnectivity):
@@ -1649,6 +1690,28 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
                 "CellMesh FV cutover currently targets polyhedral connectivity; "
                 "legacy tetrahedral callers use the direct constructor."
             )
+        relative_tolerance = float(measure_relative_tolerance)
+        if not np.isfinite(relative_tolerance) or relative_tolerance <= 0.0:
+            raise ValueError("measure_relative_tolerance must be positive and finite.")
+        if (
+            coordinate_spec is None
+            and relative_tolerance != _DEFAULT_MAPPED_MEASURE_RELATIVE_TOLERANCE
+        ):
+            raise ValueError("Mapped measure accuracy requires a coordinate_spec.")
+        if coordinate_spec is not None:
+            if not isinstance(coordinate_spec, CellGeometrySpec):
+                raise TypeError("coordinate_spec must be a CellGeometrySpec.")
+            coordinate_spec.resolve(mesh)
+        if embedding is not None:
+            if coordinate_spec is None:
+                raise ValueError(
+                    "An FV embedding proof requires declared coordinate geometry."
+                )
+            if not isinstance(embedding, GlobalEmbeddingCertificate):
+                raise TypeError("embedding must be a GlobalEmbeddingCertificate.")
+            embedding.require_current(mesh, coordinate_spec)
+            if embedding.status != "certified" or not embedding.validity.all_certified:
+                raise ValueError("FV embedding proof must be certified.")
         field = str(field_name)
         if not field:
             raise ValueError("field_name must be non-empty.")
@@ -1711,6 +1774,15 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
                 "mesh_geometry": mesh.geometry_id,
             }
         )
+        if coordinate_spec is not None:
+            geometry_id = canonical_fingerprint(
+                {
+                    "kind": "mapped-unstructured-finite-volume-geometry",
+                    "topology": topology_id,
+                    "mesh_geometry": mesh.geometry_id,
+                    "coordinate_geometry": cell_geometry_id(coordinate_spec),
+                }
+            )
         capabilities = (
             DiscretizationCapability.RECONSTRUCTION,
             DiscretizationCapability.TRACE,
@@ -1719,18 +1791,25 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
             DiscretizationCapability.MATRIX_FREE,
             DiscretizationCapability.DIFFERENTIABLE_GEOMETRY,
         )
+        if coordinate_spec is not None:
+            capabilities = tuple(
+                capability
+                for capability in capabilities
+                if capability is not DiscretizationCapability.DIFFERENTIABLE_GEOMETRY
+            )
         tetrahedra = jnp.empty((0, 4), dtype=jnp.int32)
         key = DiscretizationKey(
             "unstructured_finite_volume",
             DiscretizationRole.PHYSICAL,
         )
-        plan_id = canonical_fingerprint(
-            {
-                "kind": "unstructured-finite-volume-plan",
-                "topology": topology_id,
-                "geometry": geometry_id,
-            }
-        )
+        plan_identity: dict[str, str | float] = {
+            "kind": "unstructured-finite-volume-plan",
+            "topology": topology_id,
+            "geometry": geometry_id,
+        }
+        if coordinate_spec is not None:
+            plan_identity["measure_relative_tolerance"] = relative_tolerance
+        plan_id = canonical_fingerprint(plan_identity)
         prepared = _PreparedUnstructuredFiniteVolumeData(
             mesh=mesh,
             vertices=mesh.coordinates,
@@ -1749,6 +1828,9 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
             key=key,
             capabilities=capabilities,
             plan_id=plan_id,
+            coordinate_spec=coordinate_spec,
+            embedding=embedding,
+            measure_relative_tolerance=relative_tolerance,
         )
         return cls(None, _prepared=prepared)
 
@@ -2093,6 +2175,10 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         are interior faces of the quotient, so the patch is dropped. Without a
         view the plan is one serial owner holding the whole lifted quotient.
         """
+        if plan.coordinate_spec is not None and joins.size:
+            raise ValueError(
+                "Mapped FV periodic seam joins require coordinate-map equivariance evidence."
+            )
         patch_names = plan.patch_names
         patch_faces = plan.patch_faces
         if joins.size:
@@ -2134,6 +2220,9 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
                 key=plan.key,
                 capabilities=plan.capabilities,
                 plan_id=canonical_fingerprint(plan_identity),
+                coordinate_spec=plan.coordinate_spec,
+                embedding=plan.embedding,
+                measure_relative_tolerance=plan.measure_relative_tolerance,
                 owner_local_view=view,
                 periodic_face_joins=jnp.asarray(joins) if joins.size else None,
                 periodic_face_translations=(
@@ -2206,6 +2295,12 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
 
 class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
     mesh: CellMesh | None
+    coordinate_spec: CellGeometrySpec | None
+    coordinate_validity: CellValidityCertificate | None
+    cell_measure_errors: Array | None
+    measure_relative_tolerance: float
+    polyhedral_closure_tolerance: Array | None
+    polyhedral_closure_geometry_id: str | None = eqx.field(static=True)
     vertices: Array
     triangles: Array
     quadrilaterals: Array
@@ -2300,6 +2395,12 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
             empty_quadrature_weights = jnp.empty((0, 0), dtype=dtype)
             empty_cell_quadrature_valid = jnp.empty((0, 0), dtype=jnp.bool_)
             self.mesh = None
+            self.coordinate_spec = plan.coordinate_spec
+            self.coordinate_validity = None
+            self.cell_measure_errors = None
+            self.measure_relative_tolerance = plan.measure_relative_tolerance
+            self.polyhedral_closure_tolerance = None
+            self.polyhedral_closure_geometry_id = None
             self.vertices = plan.vertices
             self.triangles = plan.triangles
             self.quadrilaterals = plan.quadrilaterals
@@ -2377,29 +2478,84 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         points = np.asarray(mesh.coordinates)
         connectivity = mesh.connectivity
         topology = mesh.topology
+        moments = None
+        mapped_quadrature_degree = -1
+        polyhedral_closure_tolerance = None
+        polyhedral_closure_geometry_id = None
+        if plan.coordinate_spec is not None:
+            from .._mapped_geometry_measure import certified_cell_moments
+
+            if plan.embedding is not None:
+                plan.embedding.require_current(mesh, plan.coordinate_spec)
+                if plan.embedding.status != "certified":
+                    raise ValueError("FV embedding proof must be certified.")
+            moments = certified_cell_moments(
+                mesh,
+                plan.coordinate_spec,
+                measure_relative_tolerance=plan.measure_relative_tolerance,
+                validity=None if plan.embedding is None else plan.embedding.validity,
+            )
         cell_count = connectivity.cell_count
         if isinstance(connectivity, PolyhedralConnectivity):
-            from ._polyhedral import prepare_polyhedral_finite_volume_geometry
-
-            polyhedral = prepare_polyhedral_finite_volume_geometry(mesh)
             face_count = connectivity.face_owner.size
             owner, neighbor, owner_sign = _owner_neighbor(connectivity, cell_count)
-            cell_volumes = polyhedral.cell_volumes
-            cell_centers = polyhedral.cell_centers
-            face_centers = polyhedral.face_centers
-            area_vectors = (
-                jnp.asarray(owner_sign, dtype=polyhedral.face_area_vectors.dtype)[:, None]
-                * polyhedral.face_area_vectors
-            )
-            face_measures = polyhedral.face_measures
-            closure = (
-                jnp.zeros_like(cell_centers).at[:, 0].set(polyhedral.closure_residual)
-            )
-            quadrature_points = polyhedral.face_quadrature_points
-            quadrature_weights = polyhedral.face_quadrature_weights
-            cell_quadrature_points = polyhedral.cell_quadrature_points
-            cell_quadrature_weights = polyhedral.cell_quadrature_weights
-            cell_quadrature_valid = polyhedral.cell_quadrature_valid
+            if moments is None:
+                from ._polyhedral import prepare_polyhedral_finite_volume_geometry
+
+                polyhedral = prepare_polyhedral_finite_volume_geometry(mesh)
+                polyhedral_closure_tolerance = polyhedral.closure_tolerance
+                polyhedral_closure_geometry_id = polyhedral.geometry_id
+                cell_volumes = polyhedral.cell_volumes
+                cell_centers = polyhedral.cell_centers
+                face_centers = polyhedral.face_centers
+                area_vectors = (
+                    jnp.asarray(owner_sign, dtype=polyhedral.face_area_vectors.dtype)[
+                        :, None
+                    ]
+                    * polyhedral.face_area_vectors
+                )
+                face_measures = polyhedral.face_measures
+                closure = (
+                    jnp.zeros_like(cell_centers).at[:, 0].set(polyhedral.closure_residual)
+                )
+                quadrature_points = polyhedral.face_quadrature_points
+                quadrature_weights = polyhedral.face_quadrature_weights
+                cell_quadrature_points = polyhedral.cell_quadrature_points
+                cell_quadrature_weights = polyhedral.cell_quadrature_weights
+                cell_quadrature_valid = polyhedral.cell_quadrature_valid
+            else:
+                from ._mapped_geometry import (
+                    mapped_constant_quadrature_exact,
+                    prepare_mapped_fv_geometry,
+                )
+
+                coordinate_spec = plan.coordinate_spec
+                if coordinate_spec is None:
+                    raise RuntimeError(
+                        "Mapped FV moments lost their coordinate specification."
+                    )
+
+                (
+                    cell_quadrature_points,
+                    cell_quadrature_weights,
+                    cell_quadrature_valid,
+                    face_centers,
+                    area_vectors,
+                    face_measures,
+                    quadrature_points,
+                    quadrature_weights,
+                    closure,
+                ) = prepare_mapped_fv_geometry(
+                    mesh,
+                    coordinate_spec,
+                    owner,
+                    neighbor,
+                    embedding_certified=plan.embedding is not None,
+                )
+                if mapped_constant_quadrature_exact(mesh, moments):
+                    mapped_quadrature_degree = 0
+                cell_volumes = jnp.asarray(moments.measures)
+                cell_centers = jnp.asarray(moments.first_moments) / cell_volumes[:, None]
         else:
             if plan.cell_dimension == 2:
                 # ty: ignore[unresolved-attribute]
@@ -2514,6 +2670,10 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
                 "vertices": array_tree_fingerprint(points),
             }
         )
+        if plan.coordinate_spec is not None:
+            embedding_id = canonical_fingerprint(
+                {"kind": "mapped-unstructured-fv-embedding", "geometry": plan.geometry_id}
+            )
         support = DiscreteSupport(topology, plan.cell_dimension, embedding_id)
         components = len(plan.component_names)
         cell_entities = topology.entity_sets[plan.cell_dimension]
@@ -2576,10 +2736,20 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         preparation = PreparationReport(
             capabilities=plan.capabilities,
             diagnostics=(
-                "cell measures are positive",
-                "face area vectors point outward from owners",
-                "cell face-vector closure is satisfied",
-                "boundary patches are complete",
+                (
+                    "cell measures are positive",
+                    "face area vectors point outward from owners",
+                    "cell face-vector closure is satisfied",
+                    "boundary patches are complete",
+                )
+                if moments is None
+                else (
+                    "cell moments use certified mapped integration",
+                    "shared faces have identical exact coordinate traces",
+                    "cell and face quadrature use numerical mapped evaluation",
+                    "face fluxes are scalar face averages",
+                    "boundary patches are complete",
+                )
             ),
             resource_counts={
                 "vertices": points.shape[0],
@@ -2614,6 +2784,18 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         if not version:
             raise ValueError("numeric_version must be non-empty.")
         self.mesh = mesh
+        self.coordinate_spec = plan.coordinate_spec
+        self.coordinate_validity = None if moments is None else moments.validity
+        self.cell_measure_errors = (
+            None
+            if moments is None
+            else _published_measure_errors(
+                moments.measures, moments.measure_errors, cell_volumes
+            )
+        )
+        self.measure_relative_tolerance = plan.measure_relative_tolerance
+        self.polyhedral_closure_tolerance = polyhedral_closure_tolerance
+        self.polyhedral_closure_geometry_id = polyhedral_closure_geometry_id
         self.vertices = plan.vertices
         self.triangles = plan.triangles
         self.quadrilaterals = plan.quadrilaterals
@@ -2634,8 +2816,12 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         self.cell_quadrature_points = cell_quadrature_points
         self.cell_quadrature_weights = cell_quadrature_weights
         self.cell_quadrature_valid = cell_quadrature_valid
+        # Degree zero is advertised only with an exact Jacobian-polynomial
+        # proof against the owning FE reference rule.
         self.cell_quadrature_degree = (
-            1 if isinstance(connectivity, PolyhedralConnectivity) else 5
+            mapped_quadrature_degree
+            if moments is not None
+            else (1 if isinstance(connectivity, PolyhedralConnectivity) else 5)
         )
         self.face_centers = face_centers
         self.area_vectors = area_vectors

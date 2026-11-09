@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "08ca859cada63fa5a7de64067f1c2e8fb2d347998e7cff2687fc44adc23f8c8d",
+  "manifest_id": "a0895b12bd9a7f1e9376d47d21584983091357fe75dab374c89d9d5325e852d6",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -23519,6 +23519,7 @@
       "phydrax.geometry.MeshRegion",
       "phydrax.geometry.MeshingDomain",
       "phydrax.geometry.Midpoint",
+      "phydrax.geometry.NestedGeometryOverlapEvidence",
       "phydrax.geometry.NeuralImplicitCertificate",
       "phydrax.geometry.NeuralImplicitRegion",
       "phydrax.geometry.OffsetCurve",

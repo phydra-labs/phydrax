@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import heapq
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from fractions import Fraction
 from itertools import combinations, permutations
 from math import factorial, gcd, lcm
-from typing import Any, NamedTuple
+from typing import Any, final, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -67,6 +68,664 @@ from ..linalg._exact import determinant_exact, solve_exact
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
 from . import _supermesh as supermesh_owner
 from ._global_embedding import certify_global_embedding, GlobalEmbeddingCertificate
+
+
+if TYPE_CHECKING:
+    from ..discretization._cell_geometry_transition_types import CellGeometryTransition
+    from ..discretization._mapped_geometry_measure import MappedCellMoments
+
+
+@dataclass
+class _NestedGeometryState:
+    source_validity: CellValidityCertificate | None = None
+    target_validity: CellValidityCertificate | None = None
+    source_embedding: GlobalEmbeddingCertificate | None = None
+    target_embedding: GlobalEmbeddingCertificate | None = None
+    source_moments: MappedCellMoments | None = None
+    target_moments: MappedCellMoments | None = None
+    fine_complete: bool | None = None
+    coarse_complete: bool | None = None
+    fine_is_target: bool | None = None
+
+
+def _validate_nested_evidence_inputs(
+    transition: CellGeometryTransition,
+    forward: bool,
+    state: _NestedGeometryState,
+    phase: str,
+    reason: str,
+    /,
+) -> None:
+    from ..discretization._cell_geometry_transition_types import CellGeometryTransition
+    from ..discretization._mapped_geometry_measure import MappedCellMoments
+
+    if not isinstance(transition, CellGeometryTransition):
+        raise TypeError("Nested evidence requires a CellGeometryTransition.")
+    if not isinstance(forward, bool) or not isinstance(state, _NestedGeometryState):
+        raise TypeError("Nested evidence requires an orientation and preparation state.")
+    if not isinstance(phase, str) or not isinstance(reason, str):
+        raise TypeError("Nested evidence phase and reason must be strings.")
+    if not phase or phase.strip() != phase:
+        raise ValueError("Nested evidence requires a canonical nonempty phase.")
+    for proof, owner in (
+        (state.source_validity, CellValidityCertificate),
+        (state.target_validity, CellValidityCertificate),
+        (state.source_embedding, GlobalEmbeddingCertificate),
+        (state.target_embedding, GlobalEmbeddingCertificate),
+    ):
+        if proof is not None and not isinstance(proof, owner):
+            raise TypeError("Nested evidence received a foreign proof type.")
+    for moments in (state.source_moments, state.target_moments):
+        if moments is not None and not isinstance(moments, MappedCellMoments):
+            raise TypeError("Nested evidence requires owning mapped moment results.")
+
+
+@final
+class NestedGeometryOverlapEvidence(StrictModule, NonTrainableState):
+    """Endpoint proofs and certified integration errors for nested physical overlap."""
+
+    transition_id: str = eqx.field(static=True)
+    source_geometry_id: str = eqx.field(static=True)
+    target_geometry_id: str = eqx.field(static=True)
+    phase: str = eqx.field(static=True)
+    reason: str = eqx.field(static=True)
+    fine_complete: bool | None = eqx.field(static=True)
+    coarse_complete: bool | None = eqx.field(static=True)
+    fine_is_target: bool | None = eqx.field(static=True)
+    source_validity: CellValidityCertificate | None
+    target_validity: CellValidityCertificate | None
+    source_embedding: GlobalEmbeddingCertificate | None
+    target_embedding: GlobalEmbeddingCertificate | None
+    source_measure_errors: Array | None
+    target_measure_errors: Array | None
+    source_first_moment_errors: Array | None
+    target_first_moment_errors: Array | None
+    source_second_moment_errors: Array | None
+    target_second_moment_errors: Array | None
+    source_exact: bool | None = eqx.field(static=True)
+    target_exact: bool | None = eqx.field(static=True)
+    source_jacobian_degrees: tuple[int | None, ...] | None = eqx.field(static=True)
+    target_jacobian_degrees: tuple[int | None, ...] | None = eqx.field(static=True)
+    evidence_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        transition: CellGeometryTransition,
+        forward: bool,
+        state: _NestedGeometryState,
+        /,
+        *,
+        phase: str,
+        reason: str,
+    ) -> None:
+        _validate_nested_evidence_inputs(transition, forward, state, phase, reason)
+        self.transition_id = transition.transition_id
+        self.source_geometry_id = (
+            transition.source_geometry_id if forward else transition.target_geometry_id
+        )
+        self.target_geometry_id = (
+            transition.target_geometry_id if forward else transition.source_geometry_id
+        )
+        self.phase, self.reason = phase, reason
+        self.fine_complete, self.coarse_complete = (
+            state.fine_complete,
+            state.coarse_complete,
+        )
+        self.fine_is_target = state.fine_is_target
+        self.source_validity, self.target_validity = (
+            state.source_validity,
+            state.target_validity,
+        )
+        self.source_embedding, self.target_embedding = (
+            state.source_embedding,
+            state.target_embedding,
+        )
+        source, target = state.source_moments, state.target_moments
+        self.source_measure_errors = (
+            None if source is None else jnp.asarray(source.measure_errors)
+        )
+        self.target_measure_errors = (
+            None if target is None else jnp.asarray(target.measure_errors)
+        )
+        self.source_first_moment_errors = (
+            None if source is None else jnp.asarray(source.first_moment_errors)
+        )
+        self.target_first_moment_errors = (
+            None if target is None else jnp.asarray(target.first_moment_errors)
+        )
+        self.source_second_moment_errors = (
+            None
+            if source is None or source.second_moment_errors is None
+            else jnp.asarray(source.second_moment_errors)
+        )
+        self.target_second_moment_errors = (
+            None
+            if target is None or target.second_moment_errors is None
+            else jnp.asarray(target.second_moment_errors)
+        )
+        self.source_exact = None if source is None else source.exact
+        self.target_exact = None if target is None else target.exact
+        self.source_jacobian_degrees = None if source is None else source.jacobian_degrees
+        self.target_jacobian_degrees = None if target is None else target.jacobian_degrees
+        self.evidence_id = canonical_fingerprint(
+            {
+                "kind": "nested-actual-geometry-overlap",
+                "transition": self.transition_id,
+                "source_geometry": self.source_geometry_id,
+                "target_geometry": self.target_geometry_id,
+                "phase": phase,
+                "reason": reason,
+                "partition": (
+                    self.fine_is_target,
+                    self.fine_complete,
+                    self.coarse_complete,
+                ),
+                "source_validity": None
+                if self.source_validity is None
+                else self.source_validity.certificate_id,
+                "target_validity": None
+                if self.target_validity is None
+                else self.target_validity.certificate_id,
+                "source_embedding": None
+                if self.source_embedding is None
+                else self.source_embedding.certificate_id,
+                "target_embedding": None
+                if self.target_embedding is None
+                else self.target_embedding.certificate_id,
+                "errors": array_tree_fingerprint(
+                    (
+                        self.source_measure_errors,
+                        self.target_measure_errors,
+                        self.source_first_moment_errors,
+                        self.target_first_moment_errors,
+                        self.source_second_moment_errors,
+                        self.target_second_moment_errors,
+                    )
+                ),
+                "source_exact": self.source_exact,
+                "target_exact": self.target_exact,
+                "source_jacobian_degrees": self.source_jacobian_degrees,
+                "target_jacobian_degrees": self.target_jacobian_degrees,
+            }
+        )
+
+
+def _nested_partition_groups(
+    transition: CellGeometryTransition, /
+) -> tuple[tuple[ReferenceCellMapWitnesses, ...], bool]:
+    """Return fine-to-coarse groups and whether fine is the original target."""
+    from ..discretization._cell_geometry_transition_types import (
+        _nested_reference_groups,
+        _reference_map_groups,
+    )
+    from ..discretization._nested_reference_types import (
+        ReferenceCellPartition,
+        validate_reference_cell_partition,
+    )
+
+    if transition.coarsening_partition is not None:
+        groups = transition.coarsening_partition.maps
+        direct = _reference_map_groups(transition.reference_map)
+        if direct:
+            validate_reference_cell_partition(ReferenceCellPartition(tuple(direct)))
+            reversed_direct = []
+            for group in direct:
+                corners = tuple(
+                    tuple(Fraction(float(value)) for value in point)
+                    for point in reference_cell_topology(group.target_cell_kind).vertices
+                )
+                exact = exact_reference_cell_vertices(group)
+                if group.target_cell_kind != group.source_cell_kind or any(
+                    row != corners for row in exact
+                ):
+                    raise ValueError(
+                        "Coarsening direct cells require unchanged identity reference charts."
+                    )
+                reversed_direct.append(
+                    ReferenceCellMapWitnesses(
+                        group.source_cell_ids,
+                        group.target_cell_ids,
+                        group.source_cell_kind,
+                        group.target_cell_kind,
+                        group.source_reference_vertices,
+                        exact,
+                        group.source_reference_chart_arguments,
+                    )
+                )
+            groups = (*groups, *reversed_direct)
+        return groups, False
+    if transition.coarsening is not None:
+        return _nested_reference_groups(
+            transition.coarsening,
+            transition.source_mesh,
+            transition.target_mesh,
+            reverse=True,
+        ), False
+    if transition.reference_map is not None:
+        return _reference_map_groups(transition.reference_map), True
+    if transition.refinement is not None:
+        return _nested_reference_groups(
+            transition.refinement, transition.source_mesh, transition.target_mesh
+        ), True
+    raise ValueError("Nested overlap requires exact reference partition maps.")
+
+
+class _NestedProofFailure(Exception):
+    def __init__(
+        self,
+        status: supermesh_owner.CommonRefinementStatus,
+        phase: str,
+        reason: str,
+        /,
+        *,
+        invalid: int = 0,
+        uncertain: int = 0,
+    ) -> None:
+        super().__init__(reason)
+        self.status, self.phase = status, phase
+        self.invalid, self.uncertain = invalid, uncertain
+
+
+class _NestedPartition(NamedTuple):
+    fine_ids: np.ndarray
+    coarse_ids: np.ndarray
+    mapped_fine: list[int]
+    mapped_coarse: list[int]
+    coarse_required: bool
+    fine_required: bool
+
+
+def _prove_nested_partition(
+    source: CellMesh,
+    target: CellMesh,
+    transition: CellGeometryTransition,
+    forward: bool,
+    policy: supermesh_owner.CommonRefinementPolicy,
+    state: _NestedGeometryState,
+    /,
+) -> _NestedPartition:
+    from ..discretization._nested_reference_types import (
+        ReferenceCellPartition,
+        validate_reference_cell_partition,
+    )
+
+    groups, original_fine_is_target = _nested_partition_groups(transition)
+    fine_is_target = original_fine_is_target == forward
+    state.fine_is_target = fine_is_target
+    fine_mesh, coarse_mesh = (target, source) if fine_is_target else (source, target)
+    fine_ids = np.concatenate(
+        [np.asarray(block.global_ids, dtype=np.int64) for block in fine_mesh.blocks]
+    )
+    coarse_ids = np.concatenate(
+        [np.asarray(block.global_ids, dtype=np.int64) for block in coarse_mesh.blocks]
+    )
+    mapped_fine = [int(value) for group in groups for value in group.target_cell_ids]
+    mapped_coarse = [int(value) for group in groups for value in group.source_cell_ids]
+    if not set(mapped_fine) <= set(map(int, fine_ids)) or len(set(mapped_fine)) != len(
+        mapped_fine
+    ):
+        raise ValueError(
+            "Reference partition must bind unique present fine endpoint cells."
+        )
+    if not set(mapped_coarse) <= set(map(int, coarse_ids)):
+        raise ValueError("Reference partition names absent coarse cells.")
+    try:
+        parents_complete = validate_reference_cell_partition(
+            ReferenceCellPartition(tuple(groups)), require_complete=False
+        )
+    except ValueError as error:
+        raise _NestedProofFailure(
+            supermesh_owner.CommonRefinementStatus.INVALID_GEOMETRY,
+            "partition",
+            f"Exact reference partition proof failed: {error}",
+        ) from error
+    state.coarse_complete = parents_complete and set(mapped_coarse) == set(
+        map(int, coarse_ids)
+    )
+    state.fine_complete = set(mapped_fine) == set(map(int, fine_ids))
+    if not state.fine_complete and not state.coarse_complete:
+        raise ValueError(
+            "Unmapped fine cells require complete coarse reference coverage to prove disjointness."
+        )
+    coverage = supermesh_owner.CommonRefinementCoverage
+    coarse_required = policy.coverage in (
+        (coverage.COMPLETE, coverage.SOURCE)
+        if fine_is_target
+        else (coverage.COMPLETE, coverage.TARGET)
+    )
+    fine_required = policy.coverage in (
+        (coverage.COMPLETE, coverage.TARGET)
+        if fine_is_target
+        else (coverage.COMPLETE, coverage.SOURCE)
+    )
+    return _NestedPartition(
+        fine_ids, coarse_ids, mapped_fine, mapped_coarse, coarse_required, fine_required
+    )
+
+
+def _prove_nested_validity(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    embedding: GlobalEmbeddingCertificate | None,
+    state: _NestedGeometryState,
+    role: str,
+    /,
+) -> CellValidityCertificate:
+    if embedding is not None:
+        if not isinstance(embedding, GlobalEmbeddingCertificate):
+            raise TypeError("Embedding proof must be a GlobalEmbeddingCertificate.")
+        embedding.require_current(mesh, geometry)
+        validity = embedding.validity
+        if role == "source":
+            state.source_embedding = embedding
+        else:
+            state.target_embedding = embedding
+    else:
+        try:
+            validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+        except (ValueError, ArithmeticError) as error:
+            raise _NestedProofFailure(
+                supermesh_owner.CommonRefinementStatus.INVALID_GEOMETRY,
+                "validity",
+                f"Actual coordinate validity certification failed: {error}",
+            ) from error
+    if role == "source":
+        state.source_validity = validity
+    else:
+        state.target_validity = validity
+    if not validity.all_certified:
+        raise _NestedProofFailure(
+            supermesh_owner.CommonRefinementStatus.INVALID_GEOMETRY
+            if validity.invalid_count
+            else supermesh_owner.CommonRefinementStatus.PREDICATE_UNCERTAIN,
+            "validity",
+            "Actual coordinate map lacks certified valid cells.",
+            invalid=validity.invalid_count,
+            uncertain=validity.unresolved_count,
+        )
+    return validity
+
+
+def _integrate_nested_endpoint(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    validity: CellValidityCertificate,
+    policy: supermesh_owner.CommonRefinementPolicy,
+    /,
+) -> MappedCellMoments:
+    from ..discretization._mapped_geometry_measure import certified_cell_moments
+
+    try:
+        return certified_cell_moments(
+            mesh,
+            geometry,
+            second_moments=policy.second_moments,
+            measure_relative_tolerance=min(1e-12, policy.coverage_tolerance / 16),
+            validity=validity,
+        )
+    except (ValueError, ArithmeticError) as error:
+        raise _NestedProofFailure(
+            supermesh_owner.CommonRefinementStatus.INTERSECTION_FAILURE,
+            "integration",
+            f"Actual geometry moment integration failed: {error}",
+        ) from error
+
+
+def _prove_nested_embedding(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    validity: CellValidityCertificate,
+    embedding: GlobalEmbeddingCertificate | None,
+    state: _NestedGeometryState,
+    role: str,
+    /,
+) -> None:
+    if embedding is None:
+        try:
+            embedding = certify_global_embedding(mesh, geometry, validity)
+        except (ValueError, ArithmeticError) as error:
+            raise _NestedProofFailure(
+                supermesh_owner.CommonRefinementStatus.INVALID_GEOMETRY,
+                "embedding",
+                f"{role.capitalize()} embedding certification failed: {error}",
+            ) from error
+    if role == "source":
+        state.source_embedding = embedding
+    else:
+        state.target_embedding = embedding
+    if embedding.status != "certified":
+        raise _NestedProofFailure(
+            supermesh_owner.CommonRefinementStatus.INVALID_GEOMETRY
+            if embedding.status == "violated"
+            else supermesh_owner.CommonRefinementStatus.PREDICATE_UNCERTAIN,
+            "embedding",
+            f"{role.capitalize()} actual geometry embedding is {embedding.status}.",
+        )
+
+
+def _nested_decomposition(
+    mesh: CellMesh, moments: MappedCellMoments | None, /
+) -> supermesh_owner._Decomposition:
+    ids = np.concatenate(
+        [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
+    )
+    count, dimension = len(ids), mesh.ambient_dimension
+    # No physical box is claimed; mapped coverage uses the explicit relative
+    # tolerance below instead of the raw-carrier box roundoff floor.
+    return supermesh_owner._Decomposition(
+        count,
+        ids,
+        np.empty((0, dimension + 1, dimension)),
+        None,
+        np.zeros(count + 1, dtype=np.int64),
+        np.zeros(count) if moments is None else moments.measures,
+        np.zeros((count, dimension)) if moments is None else moments.first_moments,
+        np.empty((0, dimension)),
+        np.empty((0, dimension)),
+        0,
+        0,
+    )
+
+
+def _publish_nested_overlap(
+    source: CellMesh,
+    target: CellMesh,
+    transition: CellGeometryTransition,
+    forward: bool,
+    policy: supermesh_owner.CommonRefinementPolicy,
+    state: _NestedGeometryState,
+    partition: _NestedPartition | None,
+    failure: _NestedProofFailure | None,
+    /,
+) -> supermesh_owner.PreparedCommonRefinement:
+    first = _nested_decomposition(source, state.source_moments)
+    second = _nested_decomposition(target, state.target_moments)
+    entries = None
+    count = 0
+    status = None if failure is None else failure.status
+    reason = "" if failure is None else str(failure)
+    if failure is None:
+        assert partition is not None and state.fine_is_target is not None
+        assert state.source_moments is not None and state.target_moments is not None
+        fine_rows = {int(value): row for row, value in enumerate(partition.fine_ids)}
+        coarse_rows = {int(value): row for row, value in enumerate(partition.coarse_ids)}
+        count = len(partition.mapped_fine)
+        fine_indices = np.fromiter(
+            (fine_rows[value] for value in partition.mapped_fine),
+            dtype=np.int64,
+            count=count,
+        )
+        coarse_indices = np.fromiter(
+            (coarse_rows[value] for value in partition.mapped_coarse),
+            dtype=np.int64,
+            count=count,
+        )
+        source_rows, target_rows = (
+            (coarse_indices, fine_indices)
+            if state.fine_is_target
+            else (fine_indices, coarse_indices)
+        )
+        order = np.lexsort((source_rows, target_rows))
+        source_rows, target_rows = source_rows[order], target_rows[order]
+        indices = target_rows if state.fine_is_target else source_rows
+        fine_moments = (
+            state.target_moments if state.fine_is_target else state.source_moments
+        )
+        entries = supermesh_owner._Entries(
+            target_rows,
+            source_rows,
+            fine_moments.measures[indices],
+            fine_moments.first_moments[indices],
+            None
+            if fine_moments.second_moments is None
+            else fine_moments.second_moments[indices],
+            None,
+            None,
+        )
+        gap = (partition.coarse_required and not state.coarse_complete) or (
+            partition.fine_required and not state.fine_complete
+        )
+        if gap:
+            status = supermesh_owner.CommonRefinementStatus.COVERAGE_GAP
+            reason = "Exact reference partition does not meet the requested coverage."
+    evidence = NestedGeometryOverlapEvidence(
+        transition,
+        forward,
+        state,
+        phase="publication" if failure is None else failure.phase,
+        reason=reason,
+    )
+    counts = supermesh_owner._Counts(
+        count,
+        count,
+        0,
+        0 if failure is None else failure.uncertain,
+        0 if failure is None else failure.invalid,
+        int(status == supermesh_owner.CommonRefinementStatus.INTERSECTION_FAILURE),
+    )
+    return supermesh_owner._prepared(
+        first,
+        second,
+        entries,
+        counts,
+        status,
+        reason,
+        (source.mesh_id, target.mesh_id, source.topology_id, target.topology_id),
+        policy,
+        geometry_evidence=evidence,
+        source_coverage_tolerances=policy.coverage_tolerance * first.measures,
+        target_coverage_tolerances=policy.coverage_tolerance * second.measures,
+    )
+
+
+def prepare_nested_geometry_refinement(
+    source: CellMesh,
+    target: CellMesh,
+    transition: CellGeometryTransition,
+    /,
+    *,
+    policy: supermesh_owner.CommonRefinementPolicy,
+    source_embedding: GlobalEmbeddingCertificate | None = None,
+    target_embedding: GlobalEmbeddingCertificate | None = None,
+) -> supermesh_owner.PreparedCommonRefinement:
+    """Prove reference partition, actual embedding and mapped overlap integrals."""
+    from ..discretization._cell_geometry_transition_types import CellGeometryTransition
+
+    if not isinstance(transition, CellGeometryTransition):
+        raise TypeError("geometry_transition must be a CellGeometryTransition.")
+    forward = (
+        source.mesh_id == transition.source_mesh.mesh_id
+        and target.mesh_id == transition.target_mesh.mesh_id
+    )
+    inverse = (
+        source.mesh_id == transition.target_mesh.mesh_id
+        and target.mesh_id == transition.source_mesh.mesh_id
+    )
+    if not forward and not inverse:
+        raise ValueError(
+            "Geometry transition does not bind the requested mesh endpoints."
+        )
+    transition.require_bound(
+        transition.source_mesh,
+        transition.source_geometry,
+        transition.target_mesh,
+        transition.target_geometry,
+    )
+    if (
+        transition.evidence.approximation_bound != 0
+        or transition.evidence.kind == "bounded_reconstruction"
+    ):
+        raise ValueError(
+            "Nested physical overlap requires exact endpoint geometry equality."
+        )
+    if policy.overlap_simplices:
+        raise ValueError("Nested mapped overlap does not provide physical simplices.")
+    source_geometry = (
+        transition.source_geometry if forward else transition.target_geometry
+    )
+    target_geometry = (
+        transition.target_geometry if forward else transition.source_geometry
+    )
+    state = _NestedGeometryState()
+    partition = None
+    failure = None
+    try:
+        partition = _prove_nested_partition(
+            source, target, transition, forward, policy, state
+        )
+        source_validity = _prove_nested_validity(
+            source, source_geometry, source_embedding, state, "source"
+        )
+        target_validity = _prove_nested_validity(
+            target, target_geometry, target_embedding, state, "target"
+        )
+        state.source_moments = _integrate_nested_endpoint(
+            source, source_geometry, source_validity, policy
+        )
+        state.target_moments = _integrate_nested_endpoint(
+            target, target_geometry, target_validity, policy
+        )
+        if state.fine_is_target:
+            _prove_nested_embedding(
+                source,
+                source_geometry,
+                source_validity,
+                source_embedding,
+                state,
+                "source",
+            )
+            if target_embedding is not None or not state.fine_complete:
+                _prove_nested_embedding(
+                    target,
+                    target_geometry,
+                    target_validity,
+                    target_embedding,
+                    state,
+                    "target",
+                )
+        else:
+            _prove_nested_embedding(
+                target,
+                target_geometry,
+                target_validity,
+                target_embedding,
+                state,
+                "target",
+            )
+            if source_embedding is not None or not state.fine_complete:
+                _prove_nested_embedding(
+                    source,
+                    source_geometry,
+                    source_validity,
+                    source_embedding,
+                    state,
+                    "source",
+                )
+    except _NestedProofFailure as error:
+        failure = error
+    return _publish_nested_overlap(
+        source, target, transition, forward, policy, state, partition, failure
+    )
 
 
 Point = tuple[Fraction, Fraction, Fraction]
@@ -5185,6 +5844,7 @@ __all__ = [
     "CurvedOverlapIntegrationEvidence",
     "MaterialReferenceVolumeOverlap",
     "MaterialReferenceVolumeWitness",
+    "NestedGeometryOverlapEvidence",
     "CurvedOverlapIntegrationPolicy",
     "PhysicalOverlapActionEvidence",
     "PhysicalOverlapTransfer",

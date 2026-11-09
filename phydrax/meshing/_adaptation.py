@@ -960,8 +960,14 @@ def _resolve_constraints(
         fixed |= classes[0].dimensions == 0
         protected_edges |= ~classes[1].resolved
         cell_classes = _row_classes(np.column_stack((cell_classes, codes[dimension])))
-        facet_classes = _row_classes(
-            np.column_stack((facet_classes, codes[dimension - 1]))
+        # Region strata classify cells, not artificial interior feature facets.
+        facet_classes = _feature_classes(
+            facet_classes,
+            np.where(
+                classes[dimension - 1].dimensions < dimension,
+                1 + codes[dimension - 1],
+                0,
+            ),
         )
         edge_codes = np.where(classes[1].dimensions < dimension, 1 + codes[1], 0)
     protected_vertex_ids = vertex_ids[fixed]
@@ -1000,7 +1006,7 @@ def _resolve_constraints(
 
 
 def _feature_classes(classes: np.ndarray, cad_codes: np.ndarray, /) -> np.ndarray:
-    """Split feature edge classes by source entity (0 off associated edges)."""
+    """Split feature classes by source entity, preserving 0 off declared features."""
     feature = (classes > 0) | (cad_codes > 0)
     result = np.zeros(classes.shape, dtype=np.int64)
     if np.any(feature):

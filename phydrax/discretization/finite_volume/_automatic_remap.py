@@ -25,12 +25,14 @@ from ._unstructured_remap import _coverage_ledger, UnstructuredConservativeRemap
 
 
 if TYPE_CHECKING:
+    from ...geometry._global_embedding import GlobalEmbeddingCertificate
     from ...geometry._supermesh import (
         CommonRefinementEvidence,
         CommonRefinementPolicy,
         CommonRefinementStatus,
         PreparedCommonRefinement,
     )
+    from .._cell_geometry_transition_types import CellGeometryTransition
 
 
 class PreparedUnstructuredConservativeRemap(StrictModule, NonTrainableState):
@@ -106,6 +108,9 @@ def prepare_unstructured_conservative_remap(
     *,
     provenance: str,
     policy: CommonRefinementPolicy | None = None,
+    geometry_transition: CellGeometryTransition | None = None,
+    source_embedding: GlobalEmbeddingCertificate | None = None,
+    target_embedding: GlobalEmbeddingCertificate | None = None,
 ) -> PreparedUnstructuredConservativeRemap:
     """Prepare the conservative remap of ``source`` cells onto ``target`` cells.
 
@@ -138,7 +143,40 @@ def prepare_unstructured_conservative_remap(
     source_mesh, target_mesh = source.mesh, target.mesh
     if source_mesh is None or target_mesh is None:
         raise TypeError("Common refinement requires source and target CellMesh objects.")
-    refinement = prepare_common_refinement(source_mesh, target_mesh, policy=policy_)
+    source_spec = source.coordinate_spec
+    target_spec = target.coordinate_spec
+    if geometry_transition is None:
+        if source_spec is not None or target_spec is not None:
+            raise ValueError(
+                "Geometry-aware FV remapping requires a geometry transition."
+            )
+    else:
+        from ...discretization._cell_geometry_transition_types import (
+            CellGeometryTransition,
+        )
+
+        if not isinstance(geometry_transition, CellGeometryTransition):
+            raise TypeError("geometry_transition must be a CellGeometryTransition.")
+        if source_spec is None or target_spec is None:
+            raise ValueError(
+                "Geometry-aware remapping requires both FV coordinate specs."
+            )
+        if source_mesh.mesh_id == geometry_transition.source_mesh.mesh_id:
+            geometry_transition.require_bound(
+                source_mesh, source_spec, target_mesh, target_spec
+            )
+        else:
+            geometry_transition.require_bound(
+                target_mesh, target_spec, source_mesh, source_spec
+            )
+    refinement = prepare_common_refinement(
+        source_mesh,
+        target_mesh,
+        policy=policy_,
+        geometry_transition=geometry_transition,
+        source_embedding=source_embedding,
+        target_embedding=target_embedding,
+    )
     if not refinement.succeeded:
         return PreparedUnstructuredConservativeRemap(
             refinement,
@@ -146,6 +184,20 @@ def prepare_unstructured_conservative_remap(
             status=refinement.status,
             reason=f"{refinement.status.name}: {refinement.evidence.reason}",
         )
+    if geometry_transition is not None:
+        relative_budget = min(1.0e-12, policy_.coverage_tolerance / 16.0)
+        for endpoint in (source, target):
+            errors = endpoint.cell_measure_errors
+            if errors is None or np.any(
+                np.asarray(errors, dtype=np.float64)
+                > relative_budget * np.asarray(endpoint.cell_volumes, dtype=np.float64)
+            ):
+                return PreparedUnstructuredConservativeRemap(
+                    refinement,
+                    None,
+                    status=CommonRefinementStatus.PREDICATE_UNCERTAIN,
+                    reason="prepared FV cell measure errors exceed the requested relative budget",
+                )
     require_complete = policy_.coverage is CommonRefinementCoverage.COMPLETE
     if require_complete:
         target_defect, source_defect, target_limit, source_limit = _coverage_ledger(

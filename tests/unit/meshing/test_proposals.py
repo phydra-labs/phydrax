@@ -988,9 +988,10 @@ def test_implicit_size_proposals_use_three_dimensional_metric_adaptation(
     assert cell_association.complete
 
 
-def test_implicit_tetra_metric_coarsening_reproves_actual_target(
+@pytest.fixture(scope="module")
+def _coarsened_implicit_volume(
     _implicit_volume_source: tuple[Any, Any, Any],
-) -> None:
+) -> phx.meshing.MeshAdaptationResult:
     profile, source, _ = _implicit_volume_source
     coordinates = np.asarray(source.mesh.coordinates, dtype=np.float64)
     edges = np.asarray(source.mesh.connectivity.entities[1], dtype=np.int64)
@@ -1020,12 +1021,40 @@ def test_implicit_tetra_metric_coarsening_reproves_actual_target(
             association_transfer=phx.meshing.ImplicitAssociationTransfer(profile),
         ),
     )
-    result = phx.meshing.execute_mesh_adaptation(prepared)
+    return phx.meshing.execute_mesh_adaptation(prepared)
+
+
+def test_implicit_tetra_metric_coarsening_reproves_actual_target(
+    _coarsened_implicit_volume: phx.meshing.MeshAdaptationResult,
+) -> None:
+    result = _coarsened_implicit_volume
     assert isinstance(result.evidence, TetraMetricEvidence)
     assert result.evidence.collapses > 0
-    assert result.target is not source
+    assert result.target is not result.source
     assert result.target.certification is not None
     assert result.target.certification.passed
+
+
+def test_implicit_volume_region_facets_remain_free_for_later_epochs(
+    _implicit_volume_source: tuple[Any, Any, Any],
+    _coarsened_implicit_volume: phx.meshing.MeshAdaptationResult,
+) -> None:
+    profile, _, _ = _implicit_volume_source
+    source = _coarsened_implicit_volume.target
+    metric = _coarsened_implicit_volume.metric
+    assert metric is not None
+    prepared = phx.meshing.prepare_mesh_adaptation(
+        source,
+        phx.meshing.MetricMeshAdaptation(metric),
+        policy=phx.meshing.MeshAdaptationPolicy(
+            phx.meshing.MeshAdaptationRoute.NATIVE_METRIC_3D,
+            association_transfer=phx.meshing.ImplicitAssociationTransfer(profile),
+        ),
+    )
+    boundary = np.asarray(source.mesh.boundary_masks[2], dtype=np.bool_)
+    assert np.any(~boundary)
+    assert np.all(prepared.constraints.facet_classes[~boundary] == 0)
+    assert np.all(prepared.constraints.facet_classes[boundary] > 0)
 
 
 def test_reissued_implicit_chart_refuses_wrong_boundary_support(

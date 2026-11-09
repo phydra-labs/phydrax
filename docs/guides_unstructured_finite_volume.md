@@ -61,6 +61,28 @@ is retained for mapped moments, polynomial reconstruction, and positivity points
 `plan_id` binds both. This distinction allows fixed-connectivity geometry epochs without
 pretending that a new connectivity is the same mesh.
 
+For a three-dimensional polyhedral-connectivity mesh with an authoritative
+`CellGeometrySpec`, pass
+`UnstructuredFiniteVolumePlan.from_cell_mesh(mesh, coordinate_spec=geometry)`.
+An optional current certified `embedding=` reuses the owning geometry proof.
+The prepared cell measures, physical centroids, face metrics and bounded-workset
+quadrature then come from that map, not from its rounded vertex carriers.
+Geometry identities distinguish these meanings even when the carrier coordinates
+coincide. Integration errors and coordinate validity remain available on the
+prepared discretization; quadrature exactness is advertised only when proved.
+`measure_relative_tolerance` defaults to `1e-12` and drives rational cell-volume
+integration without an absolute cutoff. Published `cell_measure_errors` include
+rounding into the prepared array dtype; unrepresentable requested integration
+accuracy is refused.
+
+Face fluxes retain their existing face-averaged scalar convention. An integrated
+face area vector is not a pointwise normal on a curved face. Carrier-only field
+queries and vertex-only motion are refused for this geometry mode rather than
+silently changing its meaning. Static stage evidence measures actual oriented
+face closure; it does not assume a zero defect. Ordinary polyhedral stages retain
+their producer's admitted closure bound in addition to dtype roundoff. This does
+not relax mapped-geometry closure admission.
+
 ## Conservation dynamics
 
 ```python
@@ -623,11 +645,12 @@ remain declared discrete derivative events.
 
 ## Automatic common refinement and second-order remap
 
+By default,
 `prepare_unstructured_conservative_remap(source, target, provenance=..., policy=...)`
-intersects the two discretizations' cell meshes with the canonical
-`phydrax.geometry.prepare_common_refinement` (exact meshcore predicates and clipping;
-`CommonRefinementPolicy` sets coverage mode, relative coverage tolerance, and the
-candidate/accepted/memory limits). The returned `PreparedUnstructuredConservativeRemap`
+intersects the two declared carrier meshes with
+`phydrax.geometry.prepare_common_refinement` and native exact predicates/clipping.
+`CommonRefinementPolicy` sets coverage mode, relative coverage tolerance, and
+candidate/accepted/memory limits. The returned `PreparedUnstructuredConservativeRemap`
 carries the `PreparedCommonRefinement`, its `CommonRefinementStatus` and evidence, a
 `reason`, and `plan` (an `UnstructuredConservativeRemapPlan`) only on `SUCCESS`.
 Geometric failures, coverage gaps, double coverage, and resource refusal are returned
@@ -648,8 +671,56 @@ second = phx.discretization.UnstructuredSecondOrderRemapPlan(
 result = second.apply(averages)  # values, limiter and conservation evidence
 ```
 
+### Accepted nested coordinate geometry
+
+An accepted exact `CellGeometryTransition` supplies a different physical overlap
+route. Both FV endpoints must retain their actual coordinate specs:
+
+```python
+source = phx.discretization.UnstructuredFiniteVolumePlan.from_cell_mesh(
+    transition.source_mesh,
+    coordinate_spec=transition.source_geometry,
+    embedding=source_embedding,
+).prepare()
+target = phx.discretization.UnstructuredFiniteVolumePlan.from_cell_mesh(
+    transition.target_mesh,
+    coordinate_spec=transition.target_geometry,
+    embedding=target_embedding,
+).prepare()
+remap = phx.discretization.prepare_unstructured_conservative_remap(
+    source,
+    target,
+    provenance="accepted-material-transition",
+    geometry_transition=transition,
+    source_embedding=source_embedding,
+    target_embedding=target_embedding,
+)
+```
+
+Here `source_embedding` and `target_embedding` are optional current certificates,
+not identifiers substituted for proofs. The owner checks exact map restrictions,
+reference-cell inclusion and disjoint coverage, endpoint currentness, and physical
+embedding before integrating the declared geometry. An ancestry table alone is
+not a conservation proof. Forward refinement and inverse/coarsening use the same
+physical contract, including the requested partial-coverage semantics.
+
+The resulting `refinement.geometry_evidence` retains the endpoint certificates,
+integration errors, partition findings and geometry/transition identities.
+Material labels are not used to discard overlaps; positive carrier crossings are
+not rounded to zero. FV coverage still has to satisfy the original tolerance.
+The nested route budgets rational measure error at
+`min(1e-12, policy.coverage_tolerance / 16)`. Prepare both FV endpoints with
+`measure_relative_tolerance` at least this accurate when requesting tighter
+coverage. Remap admission checks their actual published error arrays, not merely
+the requested preparation setting; insufficient precision returns
+`PREDICATE_UNCERTAIN` without a plan. Neither volumes nor weights are normalized.
+Requests for physical overlap simplices are refused when this mapped route cannot
+represent them faithfully; no weighted or collapsed carrier is presented as
+geometric output.
+
+
 `UnstructuredSecondOrderRemapPlan` reconstructs `u_s + phi_s g_s . (x - c_s)` about
-each source cell's certified decomposition centroid `c_s`. The weighted least-squares
+each source cell's declared-geometry centroid `c_s`. The weighted least-squares
 gradient uses all cells sharing a vertex with `s`, so boundary and corner cells keep a
 full-rank stencil; its normal equations are prepared once with batched
 `phydrax.linalg` small solves (rank and condition evidence is retained; rank-deficient
@@ -697,6 +768,11 @@ fixed per mesh: n - 2 fan slots for a planar n-gon and n slots for a warped n-go
 `UnstructuredFiniteVolumePlan.from_cell_mesh(mesh)` wires this certified geometry into
 the ordinary owner/neighbor face block, spaces, quality report, reconstruction, and
 dynamics path without a private polyhedral topology.
+
+This default declares the polyhedral carriers themselves as the integration
+geometry. It is distinct from passing an authoritative `coordinate_spec`; an
+accepted source-supported refinement must not substitute the former for the latter.
+
 
 
 Moving fixed-connectivity execution admits stage-refreshed degree-one WLSQ.

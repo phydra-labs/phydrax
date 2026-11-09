@@ -11,7 +11,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -939,6 +939,79 @@ class FiniteVolumeStageMetrics(StrictModule, NonTrainableState):
         return self.effective_cell_volumes.size
 
 
+def _static_face_closure(
+    blocks: tuple[FiniteVolumeStageFaceBlock, ...],
+    cell_count: int,
+    spatial_dimension: int,
+    dtype: DTypeLike,
+    /,
+) -> tuple[Array, Array]:
+    """Measure the actual owner/neighbor face batch, including seam joins."""
+    closure = np.zeros((cell_count, spatial_dimension), dtype=dtype)
+    reference = np.zeros((cell_count,), dtype=dtype)
+    for block in blocks:
+        active = np.asarray(block.layout.active_mask, dtype=np.bool_)
+        owners = np.asarray(block.layout.owner_cells, dtype=np.int64)[active]
+        neighbors = np.asarray(block.layout.neighbor_cells, dtype=np.int64)[active]
+        vectors = np.asarray(block.area_vectors)[active]
+        measures = np.asarray(block.face_measures)[active]
+        if np.any((owners < 0) | (owners >= cell_count)) or np.any(
+            neighbors >= cell_count
+        ):
+            raise ValueError("Static FV face routes must bind the actual cell bank.")
+        np.add.at(closure, owners, vectors)
+        np.add.at(reference, owners, measures)
+        interior = neighbors >= 0
+        np.add.at(closure, neighbors[interior], -vectors[interior])
+        np.add.at(reference, neighbors[interior], measures[interior])
+    return jnp.asarray(np.linalg.norm(closure, axis=1)), jnp.asarray(reference)
+
+
+def _polyhedral_closure_bound(
+    discretization: UnstructuredFiniteVolumeDiscretization
+    | DyadicFiniteVolumeDiscretization,
+    /,
+) -> tuple[float, str | None]:
+    """Recover the current raw polyhedral producer's admitted closure bound."""
+    from ._polyhedral import (
+        POLYHEDRAL_CLOSURE_TOLERANCE,
+        POLYHEDRAL_PLANARITY_TOLERANCE,
+    )
+    from ._unstructured import UnstructuredFiniteVolumeDiscretization
+
+    if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
+        return 0.0, None
+    tolerance = discretization.polyhedral_closure_tolerance
+    identity = discretization.polyhedral_closure_geometry_id
+    if tolerance is None and identity is None:
+        return 0.0, None
+    mesh = discretization.mesh
+    if (
+        tolerance is None
+        or identity is None
+        or mesh is None
+        or discretization.coordinate_spec is not None
+    ):
+        raise ValueError("Raw polyhedral closure evidence is not bound to its producer.")
+    expected = canonical_fingerprint(
+        {
+            "kind": "prepared-polyhedral-finite-volume-geometry",
+            "mesh": mesh.mesh_id,
+            "planarity_tolerance": POLYHEDRAL_PLANARITY_TOLERANCE,
+            "closure_tolerance": POLYHEDRAL_CLOSURE_TOLERANCE,
+        }
+    )
+    admitted = np.asarray(tolerance)
+    represented = np.asarray(POLYHEDRAL_CLOSURE_TOLERANCE, dtype=admitted.dtype)
+    if (
+        admitted.shape != ()
+        or not np.array_equal(admitted, represented)
+        or identity != expected
+    ):
+        raise ValueError("Raw polyhedral closure evidence differs from its producer.")
+    return POLYHEDRAL_CLOSURE_TOLERANCE, identity
+
+
 def lower_static_unstructured_stage_metrics(
     discretization: UnstructuredFiniteVolumeDiscretization
     | DyadicFiniteVolumeDiscretization,
@@ -1042,6 +1115,18 @@ def lower_static_unstructured_stage_metrics(
         * jnp.finfo(discretization.cell_volumes.dtype).eps
         * jnp.maximum(jnp.abs(discretization.cell_volumes), 1.0)
     )
+    closure_defect, closure_reference = _static_face_closure(
+        stage_blocks,
+        discretization.cell_volumes.shape[0],
+        discretization.cell_centers.shape[1],
+        discretization.cell_volumes.dtype,
+    )
+    producer_bound, producer_geometry_id = _polyhedral_closure_bound(discretization)
+    closure_tolerance = (
+        producer_bound
+        + roundoff_multiplier * jnp.finfo(discretization.cell_volumes.dtype).eps
+    ) * jnp.maximum(closure_reference, 1.0)
+    passed = jnp.all(closure_defect <= closure_tolerance)
     evidence_policy_id = canonical_fingerprint(
         {
             "kind": "static-unstructured-stage-geometry-evidence-policy",
@@ -1056,6 +1141,9 @@ def lower_static_unstructured_stage_metrics(
                 "rule": "scaled-dtype-roundoff",
                 "roundoff_multiplier": roundoff_multiplier,
                 "reference_floor": 1.0,
+                "face_closure_reference": "incident-face-measures",
+                "polyhedral_closure_bound": producer_bound,
+                "polyhedral_producer_geometry": producer_geometry_id,
             },
             "numeric_version": discretization.numeric_version,
         }
@@ -1064,14 +1152,18 @@ def lower_static_unstructured_stage_metrics(
     evidence = FiniteVolumeStageGeometryEvidence(
         coordinate_effective_volume_defect=zero_cell_defect,
         coordinate_effective_volume_tolerance=roundoff_tolerance,
-        face_closure_defect=zero_cell_defect,
-        face_closure_tolerance=roundoff_tolerance,
+        face_closure_defect=closure_defect,
+        face_closure_tolerance=closure_tolerance,
         gcl_identity_defect=zero_cell_defect,
         gcl_identity_tolerance=roundoff_tolerance,
         expected_order=0,
         proposed_reduction_factor=1.0,
-        passed=True,
-        status=FiniteVolumeGeometryStatus.SUCCESS,
+        passed=passed,
+        status=jnp.where(
+            passed,
+            jnp.asarray(FiniteVolumeGeometryStatus.SUCCESS, dtype=jnp.int32),
+            jnp.asarray(FiniteVolumeGeometryStatus.FAILED, dtype=jnp.int32),
+        ),
         evidence_version=0,
         policy_id=evidence_policy_id,
     )

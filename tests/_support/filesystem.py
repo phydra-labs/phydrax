@@ -1,4 +1,4 @@
-"""Real directory links for filesystem security tests without elevation."""
+"""Real links for filesystem security tests without elevation."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ import os
 import struct
 from functools import cache
 from pathlib import Path
+
+import pytest
 
 
 @cache
@@ -36,6 +38,16 @@ def _junction_api() -> ctypes.CDLL:
     )
     kernel.DeviceIoControl.restype = ctypes.c_int32
     return kernel
+
+
+def create_file_link(path: Path, target: Path) -> None:
+    """Create a file symlink, skipping only unavailable Windows privilege."""
+    try:
+        path.symlink_to(target)
+    except OSError as exc:
+        if os.name == "nt" and exc.winerror == 1314:
+            pytest.skip("Creating file symlinks requires Windows privilege.")
+        raise
 
 
 def create_directory_link(path: Path, target: Path) -> None:

@@ -432,11 +432,11 @@ def _round_weight(
 @host_table_cache(max_entries=256, max_bytes=16777216)
 def _lobatto_host_table(count: int, /) -> tuple[tuple[float, ...], tuple[float, ...]]:
     """Round exact Lobatto roots and weights to binary64 with interval certificates."""
-    from ..algebraic._exact_univariate import RealRootIsolator
+    from ..algebraic._exact_univariate import _derivative, RealRootIsolator
 
     order = count - 1
     coefficients = _legendre_coefficients(order)
-    derivative = tuple(index * coefficients[index] for index in range(1, count))
+    derivative = _derivative(coefficients)
     isolator = RealRootIsolator(derivative)
     endpoint_weight = float(Fraction(2, count * order))
     # Enclosures contract to each simple root and its nonzero Legendre value.

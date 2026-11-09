@@ -997,3 +997,38 @@ def test_implicit_chart_lift_excludes_collapsed_corners() -> None:
         surface_metric._implicit_cell_charts(
             profile, boundary_coordinates, boundary_parameters, cells
         )
+
+
+def test_chart_lift_stall_relocation_reduces_out_of_band_edges() -> None:
+    from phydrax.meshing import _local_metric as local
+
+    points = np.asarray(
+        ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.47, 0.47)),
+        dtype=np.float64,
+    )
+    cells = np.asarray(((0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4)), dtype=np.int32)
+    mesh = CellMesh.from_triangles(points, cells)
+    edge_count = mesh.entity_set(1).count
+    state, source = local._initial_state(
+        mesh,
+        np.broadcast_to(1.01 * np.eye(2), (5, 2, 2)).copy(),
+        np.zeros(4, dtype=np.int64),
+        np.zeros(edge_count, dtype=np.int64),
+        np.zeros(edge_count, dtype=np.bool_),
+        np.asarray((True, True, True, True, False)),
+        PredicateMode.EXACT,
+    )
+    state = state._replace(chart_lift=((1, Fraction(10)),))
+    topology = local._topology(state, PredicateMode.EXACT)
+    before = local._stall_potential(topology)[0]
+    assert before > 0
+    updated, counts, changed = local._stall_relocation_round(
+        state, topology, local._Counts(), PredicateMode.EXACT, None, source
+    )
+    assert changed == counts.relocations == 1
+    after = local._topology(updated, PredicateMode.EXACT)
+    assert local._stall_potential(after)[0] < before
+    assert np.all(
+        local._chart_lift_status(updated, updated.points, updated.cells) == local._OK
+    )
+    np.testing.assert_array_equal(updated.points[:4], points[:4])

@@ -2363,6 +2363,12 @@ continuation or final certification. This does not replace the independent
 geometry, embedding, fidelity, or transfer checks. Planar and other periodic
 routes do not acquire this implicit-chart constraint.
 
+If ordinary edits stall with short edges and relocation is enabled, the implicit
+route can also backtrack a free singleton-orbit vertex away from a neighbor.
+The move must strictly reduce the number of out-of-band edges and pass the same
+chart, orientation, and exact source-support checks; a quality decrease alone
+does not count as convergence. The final publication and certification checks
+remain unchanged.
 The source must retain either `SurfaceSourceCharts` for a `MeshingDomain` or an
 analytic implicit `SourceBoundaryChartWitness` together with its authoring
 profile and `ImplicitAssociationTransfer`. Target cells retain exact chart

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 import math
+from collections.abc import Iterator
 from fractions import Fraction
 from typing import Literal, NamedTuple, Sequence
 
@@ -56,6 +57,21 @@ class MappedCellMeasures(NamedTuple):
     values: np.ndarray
     absolute_errors: np.ndarray
     exact: bool
+
+
+class MappedCellMoments(NamedTuple):
+    """Physical volume moments and componentwise absolute integration errors."""
+
+    measures: np.ndarray
+    first_moments: np.ndarray
+    second_moments: np.ndarray | None
+    measure_errors: np.ndarray
+    first_moment_errors: np.ndarray
+    second_moment_errors: np.ndarray | None
+    validity: CellValidityCertificate
+    exact: bool
+    # Raw reference-density total degrees; rational densities have no polynomial degree.
+    jacobian_degrees: tuple[int | None, ...]
 
 
 MappedGeometryCell = tuple[CellGeometryElement, tuple[tuple[ExactScalar, ...], ...], int]
@@ -484,6 +500,15 @@ def _integrate_rational_patch(
         * patch.numerator_bound
         / (patch.center * (1 - patch.contraction))
     )
+    if (
+        absolute_tolerance == 0
+        and relative_tolerance == 0
+        and tail_scale
+        and patch.contraction
+    ):
+        raise ValueError(
+            "Zero integration tolerance requires an exact rational integral."
+        )
     total = Fraction(0)
     order = 0
     while True:
@@ -499,6 +524,10 @@ def _integrate_rational_patch(
         if remainder <= permitted:
             return total - remainder, total + remainder, remainder == 0
         weighted = multiply(weighted, ratio)
+        if order >= 2048:
+            raise ValueError(
+                "Rational mapped integral did not reach its requested error budget."
+            )
         order += 1
 
 
@@ -885,6 +914,314 @@ def mapped_geometry_cells(
     )
 
 
+def _coordinate_expression_rows(
+    elements: Sequence[CellGeometryElement],
+    routes: Sequence[np.ndarray],
+    source_bank: CoordinateSourceBank,
+    cells: Sequence[MappedGeometryCell],
+    /,
+) -> Iterator[tuple[ScalarCoordinateElement, tuple[Expression, ...]]]:
+    """Share exact restricted-map preparation across cells of each block."""
+    route_banks: dict[int, np.ndarray | None] = {}
+    for element, route in zip(elements, routes, strict=True):
+        key = id(element)
+        route_banks[key] = None if key in route_banks else route
+    preparations: dict[int, RestrictedCoordinateMapPreparation] = {}
+    for element, local, cell_row in cells:
+        if not isinstance(element, ScalarCoordinateElement):
+            raise TypeError("Mapped cell measures require scalar coordinate elements.")
+        coordinates = None
+        route_bank = route_banks.get(id(element))
+        if (
+            isinstance(element, PerCellRestrictedCellGeometryElement)
+            and route_bank is not None
+            and all(type(value) is Fraction for row in local for value in row)
+        ):
+            preparation = preparations.get(id(element))
+            if preparation is None:
+                preparation = RestrictedCoordinateMapPreparation(
+                    element, source_bank, route_bank, mode="source"
+                )
+                preparations[id(element)] = preparation
+            coordinates = preparation.expressions(cell_row)
+        if coordinates is None:
+            coordinates = mapped_coordinate_expressions(element, local, cell_row=cell_row)
+        yield element, coordinates
+
+
+def _integrate_volume_density(
+    density: Expression,
+    cell_kind: str,
+    absolute_tolerance: Fraction,
+    relative_tolerance: Fraction,
+    /,
+) -> tuple[float, float, bool]:
+    if cell_kind == "pyramid":
+        density = _pyramid_weighted_density(density)
+        cell_kind = "hexahedron"
+    if isinstance(density, RationalPolynomial):
+        return _integrate_rational(
+            density, cell_kind, absolute_tolerance, relative_tolerance
+        )
+    value, error = _publish_integral(_polynomial_integral(density, cell_kind))
+    return value, error, True
+
+
+def _integrate_volume_with_accuracy(
+    density: Expression,
+    cell_kind: str,
+    absolute_tolerance: Fraction,
+    relative_tolerance: Fraction,
+    measure_budget: Fraction | None,
+    series_budget: Fraction | None,
+    /,
+) -> tuple[float, float, bool]:
+    """Enforce rational-volume accuracy after binary64 publication."""
+    rational_density = measure_budget is not None and (
+        isinstance(density, RationalPolynomial)
+        or (
+            cell_kind == "pyramid"
+            and isinstance(_pyramid_weighted_density(density), RationalPolynomial)
+        )
+    )
+    value, error, exact = _integrate_volume_density(
+        density,
+        cell_kind,
+        Fraction(0)
+        if measure_budget is not None and rational_density
+        else absolute_tolerance,
+        series_budget
+        if series_budget is not None and rational_density
+        else relative_tolerance,
+    )
+    if (
+        measure_budget is not None
+        and rational_density
+        and Fraction(error) > measure_budget * Fraction(value)
+    ):
+        raise ValueError(
+            "Mapped cell measure cannot meet its requested relative error budget."
+        )
+    return value, error, exact
+
+
+def _signed_component_budget(
+    density: Expression, cell_kind: str, relative: Fraction, /
+) -> Fraction:
+    """Bound the absolute integrand on the reference box, including its Jacobian."""
+    if cell_kind == "pyramid":
+        density = _pyramid_weighted_density(density)
+        cell_kind = "hexahedron"
+    if not isinstance(density, RationalPolynomial):
+        return Fraction(0)
+    dimension = reference_cell_topology(cell_kind).dimension
+    arguments, jacobian = _reference_box_map(cell_kind)
+    mapped = compose_expression(density, arguments)
+    if not isinstance(mapped, RationalPolynomial):
+        return Fraction(0)
+    patches = _rational_series_patches(
+        multiply(dict(mapped.numerator), jacobian),
+        dict(mapped.denominator),
+        dimension,
+    )
+    return relative * sum(
+        (
+            patch.volume_scale
+            * patch.numerator_bound
+            / (patch.center * (1 - patch.contraction))
+            for patch in patches
+        ),
+        Fraction(0),
+    )
+
+
+def _integrate_coordinate_moments(
+    row: int,
+    coordinates: tuple[Expression, ...],
+    density: Expression,
+    cell_kind: str,
+    absolute_tolerance: Fraction,
+    relative_tolerance: Fraction,
+    component_relative_budget: Fraction | None,
+    first: np.ndarray,
+    first_errors: np.ndarray,
+    second: np.ndarray | None,
+    second_errors: np.ndarray | None,
+    /,
+) -> bool:
+    """Integrate signed physical coordinate factors in deterministic order."""
+    exact = True
+    for axis, coordinate in enumerate(coordinates):
+        first_density = multiply(density, coordinate)
+        first_absolute = (
+            absolute_tolerance
+            if component_relative_budget is None
+            else _signed_component_budget(
+                first_density, cell_kind, component_relative_budget
+            )
+        )
+        first[row, axis], first_errors[row, axis], cell_exact = _integrate_volume_density(
+            first_density, cell_kind, first_absolute, relative_tolerance
+        )
+        exact = exact and cell_exact
+        if second is not None and second_errors is not None:
+            for other in range(axis, len(coordinates)):
+                second_density = multiply(first_density, coordinates[other])
+                second_absolute = (
+                    absolute_tolerance
+                    if component_relative_budget is None
+                    else _signed_component_budget(
+                        second_density, cell_kind, component_relative_budget
+                    )
+                )
+                value, error, cell_exact = _integrate_volume_density(
+                    second_density,
+                    cell_kind,
+                    second_absolute,
+                    relative_tolerance,
+                )
+                second[row, axis, other] = second[row, other, axis] = value
+                second_errors[row, axis, other] = second_errors[row, other, axis] = error
+                exact = exact and cell_exact
+    return exact
+
+
+def _seal_moment_arrays(
+    measures: np.ndarray,
+    measure_errors: np.ndarray,
+    first: np.ndarray,
+    first_errors: np.ndarray,
+    second: np.ndarray | None,
+    second_errors: np.ndarray | None,
+    /,
+) -> None:
+    if np.any(measures <= measure_errors):
+        raise ValueError(
+            "Mapped cell moments require positive finite measure enclosures."
+        )
+    for array in (measures, first, second, measure_errors, first_errors, second_errors):
+        if array is not None:
+            if not np.all(np.isfinite(array)):
+                raise ValueError(
+                    "Mapped cell moments require finite integral enclosures."
+                )
+            array.setflags(write=False)
+
+
+@checked
+def certified_cell_moments(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    /,
+    *,
+    second_moments: bool = False,
+    absolute_tolerance: float = 1e-12,
+    relative_tolerance: float = 1e-12,
+    measure_relative_tolerance: float | None = None,
+    validity: CellValidityCertificate | None = None,
+) -> MappedCellMoments:
+    """Integrate volume, first and optional second moments of the actual map.
+
+    Polynomial densities use exact reference moments; rational densities use
+    the owning Bernstein-enclosed series. Errors bound each physical component
+    separately. This is immutable host preparation, not a device iteration.
+    When ``measure_relative_tolerance`` is supplied, rational cell measures
+    use that per-cell relative error budget with no absolute cutoff. Signed
+    component budgets scale with certified bounds on their absolute integrands.
+    """
+    if not isinstance(second_moments, bool):
+        raise TypeError("second_moments must be bool.")
+    absolute = positive_finite_float(absolute_tolerance, "absolute_tolerance")
+    relative = finite_real_scalar(relative_tolerance, "relative_tolerance")
+    if relative < 0.0:
+        raise ValueError("relative_tolerance must be nonnegative.")
+    measure_relative = (
+        None
+        if measure_relative_tolerance is None
+        else finite_real_scalar(measure_relative_tolerance, "measure_relative_tolerance")
+    )
+    if measure_relative is not None and not 0.0 <= measure_relative < 1.0:
+        raise ValueError("measure_relative_tolerance must be in [0, 1).")
+    if mesh.topological_dimension != mesh.ambient_dimension:
+        raise ValueError("Mapped cell moments require full-dimensional volume maps.")
+    if validity is None:
+        validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    else:
+        validity.require_bound(geometry, mesh=mesh)
+    if not validity.all_certified:
+        raise ValueError("Mapped cell moments require every cell to be certified valid.")
+    elements, raw_routes, _ = geometry.resolve(mesh)
+    routes = tuple(np.asarray(route, dtype=np.int64) for route in raw_routes)
+    source_bank = geometry.source_coordinates()
+    cells = _mapped_geometry_cells(elements, routes, source_bank)
+    count, dimension = len(cells), mesh.ambient_dimension
+    measures = np.empty((count,), dtype=np.float64)
+    measure_errors = np.empty_like(measures)
+    first = np.empty((count, dimension), dtype=np.float64)
+    first_errors = np.empty_like(first)
+    second = (
+        np.empty((count, dimension, dimension), dtype=np.float64)
+        if second_moments
+        else None
+    )
+    second_errors = None if second is None else np.empty_like(second)
+    absolute_per_cell = Fraction(absolute) / max(count, 1)
+    relative_fraction = Fraction(relative)
+    measure_budget = None if measure_relative is None else Fraction(measure_relative)
+    series_budget = None if measure_budget is None else measure_budget / 4
+    exact = True
+    jacobian_degrees: list[int | None] = []
+    for row, (element, coordinates) in enumerate(
+        _coordinate_expression_rows(elements, routes, source_bank, cells)
+    ):
+        jacobian = _coordinate_jacobian(coordinates, dimension)
+        density = _cancel_coordinate_factors(
+            _determinant(jacobian, dimension), coordinates, dimension
+        )
+        jacobian_degrees.append(
+            None
+            if isinstance(density, RationalPolynomial)
+            else max((sum(exponent) for exponent in density), default=0)
+        )
+        measures[row], measure_errors[row], cell_exact = _integrate_volume_with_accuracy(
+            density,
+            element.cell_kind,
+            absolute_per_cell,
+            relative_fraction,
+            measure_budget,
+            series_budget,
+        )
+        exact = exact and cell_exact
+        coordinate_exact = _integrate_coordinate_moments(
+            row,
+            coordinates,
+            density,
+            element.cell_kind,
+            absolute_per_cell,
+            relative_fraction if series_budget is None else series_budget,
+            series_budget,
+            first,
+            first_errors,
+            second,
+            second_errors,
+        )
+        exact = exact and coordinate_exact
+    _seal_moment_arrays(
+        measures, measure_errors, first, first_errors, second, second_errors
+    )
+    return MappedCellMoments(
+        measures,
+        first,
+        second,
+        measure_errors,
+        first_errors,
+        second_errors,
+        validity,
+        exact,
+        tuple(jacobian_degrees),
+    )
+
+
 @checked
 def certified_cell_measures(
     mesh: CellMesh,
@@ -926,11 +1263,6 @@ def certified_cell_measures(
     absolute_per_cell = Fraction(absolute) / max(len(cells), 1)
     relative_fraction = Fraction(relative)
     embedded_integrals: dict[tuple[object, ...], tuple[float, float, bool]] = {}
-    route_banks: dict[int, np.ndarray | None] = {}
-    for element, route in zip(resolved_elements, resolved_routes, strict=True):
-        key = id(element)
-        route_banks[key] = None if key in route_banks else route
-    preparations: dict[int, RestrictedCoordinateMapPreparation] = {}
 
     def polynomial_key(polynomial: Polynomial, /) -> tuple[object, ...]:
         return tuple(
@@ -938,27 +1270,12 @@ def certified_cell_measures(
             for exponent, coefficient in sorted(polynomial.items())
         )
 
-    for flattened_row, (element, local, cell_row) in enumerate(cells):
-        if not isinstance(element, ScalarCoordinateElement):
-            raise TypeError("Mapped cell measures require scalar coordinate elements.")
-        scalar = element
+    for flattened_row, (scalar, coordinates) in enumerate(
+        _coordinate_expression_rows(
+            resolved_elements, resolved_routes, source_bank, cells
+        )
+    ):
         dimension = scalar.topological_dimension
-        coordinates = None
-        route_bank = route_banks.get(id(scalar))
-        if (
-            isinstance(scalar, PerCellRestrictedCellGeometryElement)
-            and route_bank is not None
-            and all(type(value) is Fraction for row in local for value in row)
-        ):
-            preparation = preparations.get(id(scalar))
-            if preparation is None:
-                preparation = RestrictedCoordinateMapPreparation(
-                    scalar, source_bank, route_bank, mode="source"
-                )
-                preparations[id(scalar)] = preparation
-            coordinates = preparation.expressions(cell_row)
-        if coordinates is None:
-            coordinates = mapped_coordinate_expressions(scalar, local, cell_row=cell_row)
         jacobian = _coordinate_jacobian(coordinates, dimension)
         ambient_dimension = len(jacobian)
         if ambient_dimension == dimension:
@@ -1023,8 +1340,10 @@ def certified_cell_measures(
 
 __all__ = [
     "MappedCellMeasures",
+    "MappedCellMoments",
     "MappedGeometryCell",
     "certified_cell_measures",
+    "certified_cell_moments",
     "mapped_coordinate_expressions",
     "mapped_density_expression",
     "mapped_geometry_cells",

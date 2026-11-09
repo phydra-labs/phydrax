@@ -19,6 +19,7 @@ from phydrax.discretization.finite_volume._embedded_dynamics import (
 from phydrax.discretization.finite_volume._geometry_protocol import (
     ALEGeometryConsistencyPolicy,
     ExplicitFaceBlockGeometry,
+    FiniteVolumeFaceBlock,
     FiniteVolumeGeometryStatus,
     FiniteVolumeStageFaceBlock,
     FiniteVolumeStageFaceLayout,
@@ -28,6 +29,9 @@ from phydrax.discretization.finite_volume._geometry_protocol import (
     PreparedFiniteVolumeGeometry,
 )
 from phydrax.discretization.finite_volume._physical_boundaries import SlipWallBoundary
+from phydrax.discretization.finite_volume._unstructured import (
+    UnstructuredFiniteVolumeDiscretization,
+)
 from phydrax.discretization.finite_volume._unstructured_motion import (
     FixedConnectivityMotionPlan,
 )
@@ -162,6 +166,79 @@ def _stage_metrics(**overrides: Any) -> Any:
     values = _stage_metric_values()
     values.update(overrides)
     return FiniteVolumeStageMetrics(**values)
+
+
+def test_published_measure_error_includes_float32_rounding() -> None:
+    from phydrax.discretization.finite_volume._unstructured import (
+        _published_measure_errors,
+    )
+
+    exact = np.asarray((0.1, 1.0 / 3.0), dtype=np.float64)
+    source_errors = np.asarray((1.0e-18, 1.0e-19), dtype=np.float64)
+    with jax.enable_x64(False):
+        values = jnp.asarray(exact, dtype=jnp.float32)
+        published_errors = _published_measure_errors(exact, source_errors, values)
+    expected = source_errors + np.abs(np.asarray(values, dtype=np.float64) - exact)
+    assert published_errors.dtype == jnp.float32
+    assert np.all(np.asarray(published_errors, dtype=np.float64) >= expected)
+
+
+def test_static_polyhedral_stage_uses_its_producer_closure_certificate() -> None:
+    from phydrax.discretization.finite_volume._polyhedral import (
+        prepare_polyhedral_finite_volume_geometry,
+    )
+
+    # A convex, highly skew parallelepiped makes opposite face cross-products
+    # take different floating-point paths without modifying prepared geometry.
+    reference_cell = phx.discretization.reference_cell_topology("hexahedron")
+    corners = np.asarray(reference_cell.vertices)
+    matrix = np.asarray(((1.1, 1.1, 1.1), (1.1, 1.1001, 1.1), (1.1, 1.1, 1.1001)))
+    faces = reference_cell.entities[2]
+    with jax.enable_x64():
+        points = 1000.0 * (corners @ matrix.T)
+        mesh = phx.discretization.CellMesh.from_polyhedra(points, (faces,))
+        producer = prepare_polyhedral_finite_volume_geometry(mesh)
+        discretization = phx.discretization.UnstructuredFiniteVolumePlan.from_cell_mesh(
+            mesh
+        ).prepare()
+        metrics = lower_static_unstructured_stage_metrics(discretization)
+        reference = max(float(np.sum(np.asarray(discretization.face_measures))), 1.0)
+        defect = float(np.asarray(metrics.evidence.face_closure_defect)[0])
+    assert defect > 32.0 * np.finfo(np.float64).eps * reference
+    assert float(np.asarray(producer.closure_residual)[0]) <= float(
+        np.asarray(producer.closure_tolerance)
+    )
+    assert defect <= float(np.asarray(metrics.evidence.face_closure_tolerance)[0])
+    assert bool(metrics.evidence.passed)
+
+
+def test_static_stage_refuses_nonclosing_oriented_face_geometry() -> None:
+    discretization: UnstructuredFiniteVolumeDiscretization = _unstructured()
+    original = discretization.face_blocks[0]
+    changed = FiniteVolumeFaceBlock(
+        face_ids=original.face_ids,
+        owner_cells=original.owner_cells,
+        neighbor_cells=original.neighbor_cells,
+        boundary_patch_ids=original.boundary_patch_ids,
+        face_centers=original.face_centers,
+        area_vectors=original.area_vectors.at[0, 0].add(0.125),
+        face_measures=original.face_measures,
+        active_mask=original.active_mask,
+        block_id=original.block_id,
+    )
+
+    def face_blocks(
+        value: UnstructuredFiniteVolumeDiscretization,
+    ) -> tuple[FiniteVolumeFaceBlock, ...]:
+        return value.face_blocks
+
+    broken = eqx.tree_at(face_blocks, discretization, (changed,))
+    metrics = lower_static_unstructured_stage_metrics(broken)
+    np.testing.assert_equal(
+        np.max(np.asarray(metrics.evidence.face_closure_defect)), 0.125
+    )
+    assert not bool(metrics.evidence.passed)
+    assert int(metrics.evidence.status) == int(FiniteVolumeGeometryStatus.FAILED)
 
 
 def test_finite_volume_stage_metrics_scenario_1() -> None:

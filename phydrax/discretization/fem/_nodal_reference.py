@@ -18,7 +18,8 @@ from typing import Any, cast, Sequence
 
 import numpy as np
 
-from ...algebraic._exact_univariate import isolate_real_roots
+from ..._polynomial._orthogonal import _legendre_coefficients
+from ...algebraic._exact_univariate import _derivative, isolate_real_roots
 from .._exact_algebraic_geometry import ExactScalar, RadicalElement
 
 
@@ -408,7 +409,7 @@ def lobatto_unit(order: int, index: int, /) -> ExactNodalExpression:
 def _lobatto_roots(order: int, /) -> tuple[LegendreLobattoRoot, ...]:
     if order < 2:
         return ()
-    polynomial = _legendre_derivative(order)
+    polynomial = _derivative(_legendre_coefficients(order))
     isolated = isolate_real_roots(polynomial, tolerance=Fraction(1, 1 << 192))
     if len(isolated) != order - 1:
         raise ArithmeticError("Legendre derivative root isolation lost an interior root.")
@@ -421,24 +422,6 @@ def _lobatto_roots(order: int, /) -> tuple[LegendreLobattoRoot, ...]:
 
 def _lobatto_root(order: int, index: int, /) -> LegendreLobattoRoot:
     return _lobatto_roots(order)[index]
-
-
-def _legendre_derivative(order: int, /) -> tuple[Fraction, ...]:
-    if order < 1:
-        return (Fraction(0),)
-    p0, p1 = (Fraction(1),), (Fraction(0), Fraction(1))
-    for degree in range(2, order + 1):
-        shifted = (
-            Fraction(0),
-            *(Fraction(2 * degree - 1, degree) * value for value in p1),
-        )
-        padded = p0 + (Fraction(0),) * (len(shifted) - len(p0))
-        current = tuple(
-            shifted[index] - Fraction(degree - 1, degree) * padded[index]
-            for index in range(len(shifted))
-        )
-        p0, p1 = p1, current
-    return tuple(Fraction(index) * p1[index] for index in range(1, len(p1)))
 
 
 def _deflate_rational_root(

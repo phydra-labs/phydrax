@@ -525,12 +525,24 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Finite-volume preparation and nested conservative remapping now use declared
+  coordinate geometry rather than rounded carriers. Exact partition/embedding
+  evidence, physical moment errors and material-side identity reach the consumer.
+  Rational volume integration meets a relative budget without an absolute cutoff;
+  remapping refuses prepared endpoint errors that exceed its existing coverage
+  policy. Static closure reports its measured residual and preserves the admitted
+  polyhedral producer bound. No volume normalization or overlap filtering is used.
 - Legendre–Lobatto preparation now certifies binary64 node and weight rounding
   through native exact polynomial isolation, including rounding-boundary ties.
   Immutable host tables are reused; Gauss and Radau routes are unchanged.
   Corrected Lobatto rules and derived tensor-field identities are regenerated
   rather than retaining platform-dependent SciPy rounding. HP archive replay
   continues to require exact stored element identities.
+- Adaptation keeps volume-region associations separate from geometric facet
+  constraints. Interior region faces remain free in later metric epochs;
+  declared lower-dimensional features, interfaces and protected scopes retain
+  their constraints. This avoids false PWL representability refusals without
+  rebasing exact geometry or relaxing source or metric admission.
 - Native tetrahedron moments-only intersections integrate exact symbolic
   construction coordinates rather than rounded physical vertices. Exact term
   contributions feed compensated binary64 sums, avoiding the thin-overlap
@@ -549,6 +561,18 @@
   physical-geometry checks, conservation, pullback and native solve evidence are
   retained. Higher-order fields and non-Cartesian measures still require their
   geometric quadrature data.
+- File and resource-set publication preserve other publishers' staging entries
+  on allocation collisions and after a committed staging name is reused.
+- Battery immutable campaign records use durable cross-platform publication,
+  including Windows directory flushing and no-follow namespace admission.
+- ROCm confinement and battery atomic-output tests cover unprivileged Windows
+  directory reparse links while retaining file-symlink coverage where available.
+- Native tetrahedron intersection volumes and first moments integrate exact
+  symbolic construction coordinates rather than rounded physical vertices.
+  Exact term contributions feed compensated binary64 sums, avoiding the
+  thin-overlap error that caused a false finite-volume double-coverage refusal.
+  The ABI and coverage tolerances are unchanged; numerical measures may change,
+  and the exact route has an explicit higher kernel cost.
 - Layer transition archives validate retained coordinate provenance against
   the independently restored preceding endpoint. Standalone retained banks
   remain data rather than source authority: their coefficients, execution
@@ -588,6 +612,10 @@
   comparing their complete stored discovery recipes and replaying discovery.
   Matching scoped fidelity owners retain their tighter tolerance for subsequent
   metric consumers; differing scientific inputs remain independently validated.
+- A stalled implicit surface metric edit can relocate a free singleton-orbit
+  vertex when the move strictly reduces the out-of-band edge count and passes
+  the existing chart, orientation, and exact source-support admissions.
+  Final metric measurement and scientific certification are unchanged.
 - Native PLC suppression can peel a thin wedge along directions toward its
   incident cells when the existing inward-normal direction cannot fill it.
   Directions are tried lazily in deterministic cell order, without additional
