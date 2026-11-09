@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import replace
+from dataclasses import asdict, replace
 from fractions import Fraction
 from pathlib import Path
 from typing import Any, cast, Literal, NamedTuple
@@ -47,17 +47,36 @@ _GROWTH_RATE = 1.2
 # (238,387 P2 DOFs) needs 1,111,891,428 under nested dissection, so 2**33
 # leaves ~7.7x.
 _SYMBOLIC_WORK_BUDGET = 1 << 33
-# One declared execution budget serves every harmonic-history solve and Hodge
-# admission in each profile. The unit-box refined target's untwisted order-2
-# complex refused at 4 GiB: numeric admission required 6,804,653,553 bytes.
-# Round that measured requirement upward to the next 256 MiB; later Hodges
-# remain subject to the same declared limit.
+# History/Riesz solve budgets remain independent of SPD admission. The unit-box
+# admission required 6,804,653,553 bytes; its existing declaration is unchanged.
 _UNIT_BOX_SOLVE_BUDGET = 26 << 28
 _LAYER_CORE_SOLVE_BUDGET = 4 << 30
 # MAC-20261107T1759Z: declared byte budget of every layer/core cycle archive,
 # writer and cold reader alike. The cold reader materializes the archive's
 # logical aggregate, so writer and reader share this declared archive budget.
 _LAYER_CORE_ARCHIVE_BUDGET = 4 << 30
+
+_LAYER_CORE_HODGE_ADMISSION = phx.linalg.SparseFactorizationPolicy(
+    "cholesky",
+    ordering="approximate-minimum-degree",
+    max_factor_nnz=_LAYER_CORE_SOLVE_BUDGET // np.dtype(np.float64).itemsize,
+    max_factor_bytes=_LAYER_CORE_SOLVE_BUDGET,
+)
+_UNIT_BOX_HODGE_ADMISSION = phx.linalg.SparseFactorizationPolicy(
+    "cholesky",
+    ordering="approximate-minimum-degree",
+    max_factor_nnz=_UNIT_BOX_SOLVE_BUDGET // np.dtype(np.float64).itemsize,
+    max_factor_bytes=_UNIT_BOX_SOLVE_BUDGET,
+)
+# Native ND planning measured 15,122,032,241 bytes for the material target's
+# untwisted degree-one Hodge. Other degrees remain subject to this finite cap.
+_MATERIAL_HODGE_ADMISSION = phx.linalg.SparseFactorizationPolicy(
+    "cholesky",
+    ordering="nested-dissection",
+    max_factor_nnz=(16 << 30) // np.dtype(np.float64).itemsize,
+    max_factor_bytes=16 << 30,
+    max_symbolic_work=1 << 36,
+)
 
 
 class _ProfileFailure(RuntimeError):
@@ -72,11 +91,11 @@ class _ProfileFailure(RuntimeError):
 class _LayerCoreLifecycle(NamedTuple):
     """Original per-profile material, manufactured-field and cycle controls.
 
-    ``solve_memory_bytes`` is the profile's declared execution-memory budget of
-    every harmonic-history solve and factorization, writer and cold reader
-    alike (MAC-20261107T1649Z); it enters plan_id and is never host-derived.
-    ``archive_bytes`` is its declared cycle-archive byte budget
-    (MAC-20261107T1759Z), recorded with each cycle and checked by the reader.
+    ``solve_memory_bytes`` budgets harmonic-history and default Riesz solves.
+    ``hodge_admission`` separately declares native SPD proof ordering, work,
+    factor capacity and its complete numeric working set. The cycle archive
+    binds the complete policy for its cold reader. ``archive_bytes`` remains
+    the declared cycle-archive budget.
     """
 
     densities: tuple[float, ...]
@@ -87,6 +106,7 @@ class _LayerCoreLifecycle(NamedTuple):
     density_semantics: str
     solve_memory_bytes: int
     archive_bytes: int
+    hodge_admission: phx.linalg.SparseFactorizationPolicy
 
 
 # Material densities/sites are the original campaign controls; nonperiodic
@@ -101,6 +121,7 @@ _LAYER_CORE_LIFECYCLES = {
         "two-material-cell-average-density",
         _LAYER_CORE_SOLVE_BUDGET,
         _LAYER_CORE_ARCHIVE_BUDGET,
+        _MATERIAL_HODGE_ADMISSION,
     ),
     "concave-box-core-lifecycle": _LayerCoreLifecycle(
         (2.0,),
@@ -111,6 +132,7 @@ _LAYER_CORE_LIFECYCLES = {
         "fluid-cell-average-density",
         _LAYER_CORE_SOLVE_BUDGET,
         _LAYER_CORE_ARCHIVE_BUDGET,
+        _LAYER_CORE_HODGE_ADMISSION,
     ),
     "concave-box-core-lifecycle:larger": _LayerCoreLifecycle(
         (2.0,),
@@ -121,6 +143,7 @@ _LAYER_CORE_LIFECYCLES = {
         "fluid-cell-average-density",
         _LAYER_CORE_SOLVE_BUDGET,
         _LAYER_CORE_ARCHIVE_BUDGET,
+        _LAYER_CORE_HODGE_ADMISSION,
     ),
     "unit-box": _LayerCoreLifecycle(
         (2.0,),
@@ -131,6 +154,7 @@ _LAYER_CORE_LIFECYCLES = {
         "fluid-cell-average-density",
         _UNIT_BOX_SOLVE_BUDGET,
         _LAYER_CORE_ARCHIVE_BUDGET,
+        _UNIT_BOX_HODGE_ADMISSION,
     ),
 }
 
@@ -857,7 +881,7 @@ _LAYER_CORE_HODGE_WORKSET = 512 << 20
 def _layer_core_hodge_resources(
     controls: _LayerCoreLifecycle, /
 ) -> phx.linalg.SolveResourcePolicy:
-    """The profile's declared budget of every de Rham Hodge admission and solve."""
+    """Declared Riesz solve and bounded assembly resources, not SPD admission."""
     budget = controls.solve_memory_bytes
     return phx.linalg.SolveResourcePolicy(
         factorization_bytes=budget,
@@ -1253,6 +1277,27 @@ def _layer_core_history_transition(
     )
 
 
+def _validate_layer_core_hodge_admission(
+    archive: phx.lifecycle.Composition, controls: _LayerCoreLifecycle, /
+) -> None:
+    """Bind the restored resource declaration to its actual initial endpoint."""
+    entry = archive.entry("policy/hodge-admission")
+    initial = archive.entry("result/initial")
+    expected = canonical_fingerprint(asdict(controls.hodge_admission))
+    if (
+        canonical_fingerprint(entry.value) != expected
+        or entry.revision_id != expected
+        or entry.structure_id != initial.structure_id
+        or entry.dependencies != (initial.binding("revision"),)
+        or entry.owner_id != "phydrax.linalg"
+        or entry.role != "model-state"
+        or entry.semantics_id != "complete-native-spd-admission"
+    ):
+        raise ValueError(
+            "Cold reader's Hodge admission policy differs from the writer's."
+        )
+
+
 def _write_layer_core_cycle_archive(
     path: Path,
     controls: _LayerCoreLifecycle,
@@ -1434,6 +1479,17 @@ def _write_layer_core_cycle_archive(
         controls.density_semantics,
         refined_result_entry,
     )
+    admission_payload = asdict(controls.hodge_admission)
+    admission_entry = CompositionEntry(
+        admission_payload,
+        entry_id="policy/hodge-admission",
+        role="model-state",
+        owner_id="phydrax.linalg",
+        structure_id=initial.mesh.topology_id,
+        revision_id=canonical_fingerprint(admission_payload),
+        semantics_id="complete-native-spd-admission",
+        dependencies=(initial_result_entry.binding("revision"),),
+    )
     composition = Composition(
         (
             source_entry,
@@ -1448,6 +1504,7 @@ def _write_layer_core_cycle_archive(
             fields1,
             fv0,
             fv1,
+            admission_entry,
         ),
         boundary_id=f"{controls.semantics}-refined-accepted-state",
     )
@@ -1679,8 +1736,8 @@ def _resume_mapped_refinement(path: Path, content_id: str, /) -> dict[str, objec
             for row, name in enumerate(names)
             if row >= 2
         },
-        # Mapped wall profiles declare no run envelope yet: library defaults.
         hodge_resources=None,
+        hodge_admission=None,
     )
     forward = {**scalar_forward, **form_forward}
     if any(
@@ -1718,6 +1775,7 @@ def _resume_mapped_refinement(path: Path, content_id: str, /) -> dict[str, objec
             {name: np.asarray(refined_values[names.index(name)])},
             fields=(name,),
             hodge_resources=None,
+            hodge_admission=None,
         )
         form_back.update(values)
         backward_forms.update(evidence)
@@ -2293,14 +2351,15 @@ def _layer_form_transition(
     /,
     *,
     hodge_resources: phx.linalg.SolveResourcePolicy | None,
+    hodge_admission: phx.linalg.SparseFactorizationPolicy | None,
     fields: tuple[str, ...] = ("Hcurl", "Hdiv"),
     on_field: Any | None = None,
 ) -> tuple[dict[str, np.ndarray], dict[str, object]]:
     """Move the original lifted H(curl)/H(div) banks and prove periodic descent.
 
-    ``hodge_resources`` is the profile's declared budget of both complexes'
-    Hodge admission factorizations, assembly workset and Riesz solves; ``None``
-    keeps the documented library defaults (unbudgeted callers).
+    ``hodge_resources`` declares assembly and Riesz solve resources.
+    ``hodge_admission`` independently declares the complete native SPD proof
+    policy; ``None`` selects the owning library's bounded default.
     """
     import jax.numpy as jnp
 
@@ -2345,6 +2404,7 @@ def _layer_form_transition(
             twist=twist,
             coordinate_spec=adaptation.source.geometry,
             hodge_resources=hodge_resources,
+            hodge_admission=hodge_admission,
         )
         target_complex = phx.discretization.FiniteElementDeRhamComplex(
             adaptation.target.mesh,
@@ -2353,6 +2413,7 @@ def _layer_form_transition(
             twist=twist,
             coordinate_spec=adaptation.target.geometry,
             hodge_resources=hodge_resources,
+            hodge_admission=hodge_admission,
         )
         for endpoint, spec, complex_ in (
             (adaptation.source, source_spec, source_complex),
@@ -3796,6 +3857,7 @@ def _run_wall_profile(
                 target_form_fields,
                 form_banks,
                 hodge_resources=None,
+                hodge_admission=None,
             )
             form_space = _layer_field_plan(accepted).prepare()
             refined_form_space = _layer_field_plan(refinement.target).prepare()
@@ -3844,6 +3906,7 @@ def _run_wall_profile(
                 inverse_form_fields,
                 refined_forms,
                 hodge_resources=None,
+                hodge_admission=None,
             )
             for field_name in ("H1", "DG"):
                 if not np.allclose(
@@ -5283,6 +5346,7 @@ def _resume_layer_core_cycle(
         limits=limits,
         expected_content_id=content_id,
     )
+    _validate_layer_core_hodge_admission(archive, controls)
     specification = phx.meshing.VolumeMeshingSpec.from_stored_fields(
         archive.value("specification")
     )
@@ -5397,6 +5461,7 @@ def _resume_layer_core_cycle(
             if row >= 2
         },
         hodge_resources=_layer_core_hodge_resources(controls),
+        hodge_admission=controls.hodge_admission,
     )
     replayed = {**replayed_scalars, **replayed_forms}
     if any(
@@ -5430,6 +5495,7 @@ def _resume_layer_core_cycle(
             if row >= 2
         },
         hodge_resources=_layer_core_hodge_resources(controls),
+        hodge_admission=controls.hodge_admission,
     )
     restored = {**restored_scalars, **restored_forms}
     if any(
@@ -5544,6 +5610,7 @@ def _run_layer_core_lifecycle(
             refined_plan.fields,
             {name: banks[name] for name in ("Hcurl", "Hdiv")},
             hodge_resources=_layer_core_hodge_resources(controls),
+            hodge_admission=controls.hodge_admission,
         )
         del source_form_fields
         refined_space = refined_plan.prepare()
@@ -5633,6 +5700,7 @@ def _run_layer_core_lifecycle(
             field_plan.fields,
             {name: refined_banks[name] for name in ("Hcurl", "Hdiv")},
             hodge_resources=_layer_core_hodge_resources(controls),
+            hodge_admission=controls.hodge_admission,
         )
         banks = {**restored_scalars, **restored_forms}
         if any(

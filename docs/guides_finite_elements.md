@@ -85,6 +85,39 @@ complex order is its top polynomial order, so degree k uses P_(order+n−k)Λk;
 trimmed/tensor-trimmed complexes keep the same order in each degree. Material
 weights are separate coordinate forms, not part of an SPD metric Hodge.
 `hodge_solve` accepts a native `LinearSolvePolicy`, never a string selector.
+`hodge_admission` separately accepts a native `SparseFactorizationPolicy` for
+the SPD proof. Use complete `"cholesky"` with a declared ordering, symbolic-work
+limit, and factor limits. Its `max_factor_bytes` also bounds the complete
+numeric admission working set, including multifrontal workspace—not just the
+stored factor. Incomplete factors, dropping, diagonal shifts, and pivot
+replacement cannot certify the original metric and are refused.
+
+`hodge_resources` controls bounded assembly and the default Riesz solves; it no
+longer implicitly sets the SPD admission budget. A custom `hodge_solve` and
+`hodge_resources` remain mutually exclusive, but either can be combined with
+`hodge_admission`. The lower-level `SparseHodge` accepts the same policy as
+`admission_policy`, replacing the former byte-only `admission_bytes` argument.
+The complete admission policy participates in Hodge layout and native planning
+identity and is preserved by restriction and numeric refresh. The geometric FE
+realization identity remains independent of resource declarations. Cycle archives
+bind their exact declaration and reject a cold reader with a different policy.
+
+```python
+admission = phx.linalg.SparseFactorizationPolicy(
+    "cholesky",
+    ordering="nested-dissection",
+    max_factor_nnz=1 << 27,
+    max_factor_bytes=2 << 30,
+    max_symbolic_work=1 << 33,
+)
+complex_ = phx.discretization.FiniteElementDeRhamComplex(
+    mesh, family="trimmed", order=2, hodge_admission=admission
+)
+```
+
+These are finite declarations, not predictions that a problem fits. Native
+symbolic and numeric-working-set refusal evidence remains authoritative.
+
 Hiptmair–Xu uses native vector/potential corrections; high-order preparation
 composes the low-order auxiliary plan instead of another private solver.
 

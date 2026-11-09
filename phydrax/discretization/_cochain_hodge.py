@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import asdict
 from typing import final, Literal, TypeAlias
 
 import equinox as eqx
@@ -116,20 +117,50 @@ class DiagonalHodge(StrictModule):
         return diagonal_gram_space(self.weights, dtype=dtype, space_id=space_id)
 
 
+def _admission_policy(
+    policy: SparseFactorizationPolicy | None, /
+) -> SparseFactorizationPolicy:
+    """Admission must prove the original metric, not a shifted or incomplete one."""
+    if policy is None:
+        default = SparseFactorizationPolicy(
+            "cholesky", ordering="approximate-minimum-degree"
+        )
+        return SparseFactorizationPolicy(
+            "cholesky",
+            ordering=default.ordering,
+            max_factor_nnz=default.max_factor_bytes // np.dtype(np.float64).itemsize,
+            max_factor_bytes=default.max_factor_bytes,
+            max_symbolic_work=default.max_symbolic_work,
+        )
+    if not isinstance(policy, SparseFactorizationPolicy):
+        raise TypeError("admission_policy must be a SparseFactorizationPolicy or None.")
+    if (
+        policy.kind != "cholesky"
+        or policy.fill_level is not None
+        or policy.drop_tolerance != 0.0
+        or policy.maximum_fill_per_row is not None
+        or policy.diagonal_shift != 0.0
+        or policy.allow_pivot_replacement
+    ):
+        raise ValueError(
+            "Hodge admission requires complete Cholesky without dropping, "
+            "diagonal shifts, or pivot replacement."
+        )
+    return policy
+
+
 def _admission_pattern(
     rows: tuple[int, ...],
     columns: tuple[int, ...],
     mirror: tuple[int, ...],
     size: int,
-    factor_bytes: int | None,
+    policy: SparseFactorizationPolicy,
     /,
 ) -> tuple[SparseFactorizationPlan | None, tuple[int, ...], _SparseStoragePlan]:
-    """Prepare native SPD evidence using byte-bounded, AMD-ordered Cholesky.
+    """Prepare native SPD evidence under the complete declared factorization policy.
 
-    ``factor_bytes`` is the Hodge's declared admission budget; ``None`` keeps
-    the documented library default of `SparseFactorizationPolicy`. It bounds
-    the whole numeric admission: the factor and its multifrontal workspace
-    (`numeric_admission_bytes`), refused before any numeric work.
+    ``max_factor_bytes`` also bounds the full numeric admission working set:
+    retained factor storage plus multifrontal workspace, before numeric work.
     """
     row = np.asarray(rows, dtype=np.int32)
     column = np.asarray(columns, dtype=np.int32)
@@ -159,25 +190,13 @@ def _admission_pattern(
             operator_id=f"{identifier}:pattern",
             storage_plan=storage_plan,
         )
-        default_policy = SparseFactorizationPolicy(
-            "cholesky", ordering="approximate-minimum-degree"
-        )
-        budget = default_policy.max_factor_bytes if factor_bytes is None else factor_bytes
-        # Each structural nonzero occupies at least one float64 panel entry.
-        # Keep the native byte and work budgets authoritative for the complete
-        # supernodal factor, including panels, indices, and retained storage.
-        admission_policy = SparseFactorizationPolicy(
-            "cholesky",
-            ordering=default_policy.ordering,
-            max_factor_nnz=budget // np.dtype(np.float64).itemsize,
-            max_factor_bytes=budget,
-        )
+        budget = policy.max_factor_bytes
         plan = (
             None
             if size == 0
             else prepare_sparse_factorization(
                 operator,
-                admission_policy,
+                policy,
             )
         )
         if plan is not None:
@@ -196,9 +215,10 @@ def _admission_succeeds(plan: SparseFactorizationPlan, values: Array, /) -> Arra
 class SparseHodge(StrictModule):
     """A fixed upper pattern and dynamic real SPD metric, symmetric by construction.
 
-    ``admission_bytes`` is the declared byte budget of the SPD admission
-    (supernodal Cholesky) factorization and is part of the layout identity;
-    ``None`` keeps the documented `SparseFactorizationPolicy` default budget.
+    ``admission_policy`` owns native complete-Cholesky ordering, symbolic work,
+    factor capacity and strict pivot checks. Its byte limit also bounds the
+    complete numeric admission working set. The complete policy is part of the
+    layout identity; ``None`` selects the canonical bounded AMD default.
     """
 
     __strict_contract__ = True
@@ -208,7 +228,7 @@ class SparseHodge(StrictModule):
     size: int = eqx.field(static=True)
     policy: LinearSolvePolicy
     layout_id: str = eqx.field(static=True)
-    admission_bytes: int | None = eqx.field(static=True)
+    admission_policy: SparseFactorizationPolicy
     _mirror: tuple[int, ...] = eqx.field(static=True)
     _admission_plan: SparseFactorizationPlan | None
     _admission_order: tuple[int, ...] = eqx.field(static=True)
@@ -223,7 +243,7 @@ class SparseHodge(StrictModule):
         /,
         *,
         policy: LinearSolvePolicy | None = None,
-        admission_bytes: int | None = None,
+        admission_policy: SparseFactorizationPolicy | None = None,
     ) -> None:
         row = np.asarray(rows)
         column = np.asarray(columns)
@@ -248,19 +268,10 @@ class SparseHodge(StrictModule):
         selected = gram_solve_policy(size) if policy is None else policy
         if not isinstance(selected, LinearSolvePolicy):
             raise TypeError("policy must be a LinearSolvePolicy or None.")
-        if admission_bytes is not None:
-            if isinstance(admission_bytes, bool) or not isinstance(admission_bytes, int):
-                raise TypeError("admission_bytes must be an integer or None.")
-            if admission_bytes <= 0:
-                raise ValueError("admission_bytes must be positive.")
+        admission = _admission_policy(admission_policy)
         mirror = tuple(np.flatnonzero(row != column).tolist())
         admission_plan, admission_order, storage_plan = _admission_pattern(
-            rows_, columns_, mirror, size, admission_bytes
-        )
-        # A declared budget is layout identity; the undeclared default layout
-        # keeps its established fingerprint.
-        budget_identity = (
-            {} if admission_bytes is None else {"admission_bytes": admission_bytes}
+            rows_, columns_, mirror, size, admission
         )
         layout = canonical_fingerprint(
             {
@@ -269,7 +280,7 @@ class SparseHodge(StrictModule):
                 "rows": rows_,
                 "columns": columns_,
                 "policy_structure": str(jax.tree.structure(selected)),
-                **budget_identity,
+                "admission_policy": asdict(admission),
             }
         )
         self.rows = rows_
@@ -278,7 +289,7 @@ class SparseHodge(StrictModule):
         self.size = size
         self.policy = selected
         self.layout_id = layout
-        self.admission_bytes = admission_bytes
+        self.admission_policy = admission
         self._mirror = mirror
         self._admission_plan = admission_plan
         self._admission_order = admission_order
@@ -317,7 +328,7 @@ class SparseHodge(StrictModule):
             self.upper_values[keep],
             indices.shape[0],
             policy=self.policy,
-            admission_bytes=self.admission_bytes,
+            admission_policy=self.admission_policy,
         )
 
     def refresh(self, values: ArrayLike, /) -> SparseHodge:

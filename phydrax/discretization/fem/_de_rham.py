@@ -40,6 +40,7 @@ from ...linalg import (
     LinearSolvePolicy,
     OperatorProperties,
     SolveResourcePolicy,
+    SparseFactorizationPolicy,
 )
 from ...linalg._algebra_operators import apply_real_map_componentwise
 from ...linalg._complexes import (
@@ -54,7 +55,7 @@ from .._cell_de_rham import AbstractCellDeRhamComplex
 from .._cell_geometry import CellGeometrySpec
 from .._cell_geometry_transition_types import CellGeometryTransition
 from .._cell_mesh import CellBlock, CellMesh, PolyhedralBlock
-from .._cochain_hodge import SparseHodge
+from .._cochain_hodge import _admission_policy, SparseHodge
 from .._distributed_field import DistributedSparseTransfer
 from .._gram import gram_solve_policy
 from .._nested_reference import (
@@ -2978,6 +2979,7 @@ def _metric_hodge(
     degree: int,
     policy: LinearSolvePolicy | None,
     resources: SolveResourcePolicy | None,
+    admission: SparseFactorizationPolicy,
     /,
 ) -> SparseHodge:
     dofs = discretization.dof_maps[degree]
@@ -3003,16 +3005,18 @@ def _metric_hodge(
         jnp.concatenate(values),
         dofs.global_dof_count,
     )
-    if resources is None:
-        return SparseHodge(row, column, data, dofs.global_dof_count, policy=policy)
-    # Declared budgets bind the metric's Riesz solves and its SPD admission.
+    solve_policy = (
+        policy
+        if resources is None
+        else gram_solve_policy(dofs.global_dof_count, resources=resources)
+    )
     return SparseHodge(
         row,
         column,
         data,
         dofs.global_dof_count,
-        policy=gram_solve_policy(dofs.global_dof_count, resources=resources),
-        admission_bytes=resources.factorization_bytes,
+        policy=solve_policy,
+        admission_policy=admission,
     )
 
 
@@ -3481,12 +3485,12 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
     ``order`` specifies the top-form polynomial order.
     ``coordinate_spec`` binds the exact source/reference map used for Piola
     actions; nonlinear nested transfers require a bound CellGeometryTransition.
-    ``hodge_resources`` declares the complex's byte budgets: its
-    ``factorization_bytes`` bound each Hodge's SPD admission factorization, its
-    ``workspace_bytes`` the per-chunk block-geometry and Hodge-assembly working
-    set, and it budgets the default metric Riesz solves. ``None`` keeps the
-    documented library defaults. A caller-owned ``hodge_solve`` carries its own
-    solve budgets, so the two are exclusive.
+    ``hodge_admission`` declares the native complete-Cholesky policy for SPD
+    admission, independently of the metric Riesz solve. Its byte cap includes
+    factor storage and multifrontal workspace; ordering, work and pivot checks
+    remain native policy. ``hodge_resources`` budgets default Riesz solves and
+    uses ``workspace_bytes`` for bounded geometry/Hodge assembly. A supplied
+    ``hodge_solve`` carries its own solve budgets, so the two remain exclusive.
     Mapped basis tables are deferred (per-point Jacobians retained): the metric
     Hodges and constitutive Grams form them once, in bounded cell blocks.
     """
@@ -3519,6 +3523,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         coordinate_measure: CoordinateMeasurePlan | None = None,
         hodge_solve: LinearSolvePolicy | None = None,
         hodge_resources: SolveResourcePolicy | None = None,
+        hodge_admission: SparseFactorizationPolicy | None = None,
         coefficient_dtype: DTypeLike = jnp.float64,
     ) -> None:
         selected = parse(family, FormElementFamily, "family")
@@ -3539,6 +3544,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                 "hodge_resources budgets the default Hodge solve; a supplied "
                 "hodge_solve declares its own resources."
             )
+        admission = _admission_policy(hodge_admission)
         dimension = mesh.topological_dimension
         fields = _complex_fields(mesh, selected, order, twist_)
         discretization = FiniteElementDiscretization(
@@ -3555,7 +3561,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
             ),
         )
         hodges = tuple(
-            _metric_hodge(discretization, degree, hodge_solve, hodge_resources)
+            _metric_hodge(discretization, degree, hodge_solve, hodge_resources, admission)
             for degree in range(dimension + 1)
         )
         identifier = canonical_fingerprint(

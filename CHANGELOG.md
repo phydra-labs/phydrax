@@ -230,6 +230,15 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- `SparseHodge.admission_policy` replaces the byte-only `admission_bytes`
+  argument with the native complete-Cholesky policy. FE de Rham complexes expose
+  it as `hodge_admission`, independently of assembly and Riesz solve resources.
+  Ordering, symbolic work, factor capacity, and full numeric working-set limits
+  are explicit; policies that shift, replace, or incompletely factor the metric
+  are refused. Complete policy declarations now enter Hodge layout and native
+  planning identities and are bound into layer/core cycle archives. Geometric
+  FE realization identities remain independent of resource declarations.
+  Restriction, refresh, and cold restoration preserve or validate the declaration.
 - Native CAD, meshing and portable archive registration no longer require OCP
   in the base installation. OCCT comparisons use the explicit `cad-occt`
   extra; `meshing-gmsh` includes its CAD-validation dependency. Checked OCCT

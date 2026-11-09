@@ -6,6 +6,8 @@ from jax import Array
 from typing_extensions import assert_type
 
 from phydrax import metrix
+from phydrax.discretization import CellMesh, SparseHodge
+from phydrax.discretization.fem import FiniteElementDeRhamComplex
 from phydrax.exterior import (
     form_to_vector,
     FormProxy,
@@ -19,6 +21,7 @@ from phydrax.exterior import (
     vector_to_form,
     wedge,
 )
+from phydrax.linalg import SparseFactorizationPolicy
 
 
 def exterior_types(
@@ -63,3 +66,25 @@ def chart_types(
     assert_type(metrix.codifferential(form, metric), metrix.DifferentialForm)
     assert_type(metrix.to_untwisted(form, 1), metrix.DifferentialForm)
     metrix.hodge_star(form, metric, orientation=1)  # ty: ignore[unknown-argument]
+
+
+def hodge_admission_types(
+    mesh: CellMesh, rows: Array, columns: Array, values: Array
+) -> None:
+    admission = SparseFactorizationPolicy(
+        "cholesky", ordering="nested-dissection", max_symbolic_work=1 << 30
+    )
+    hodge = SparseHodge(rows, columns, values, 2, admission_policy=admission)
+    assert_type(hodge, SparseHodge)
+    assert_type(hodge.admission_policy, SparseFactorizationPolicy)
+    complex_ = FiniteElementDeRhamComplex(
+        mesh, family="trimmed", order=1, hodge_admission=admission
+    )
+    assert_type(complex_, FiniteElementDeRhamComplex)
+    SparseHodge(
+        rows,
+        columns,
+        values,
+        2,
+        admission_policy=True,  # ty: ignore[invalid-argument-type]
+    )

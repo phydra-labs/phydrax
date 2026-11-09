@@ -119,16 +119,6 @@ def test_sparse_validity_rejects_non_spd_positive_diagonal_after_refresh(
     hodge = SparseHodge(
         rows, columns, jnp.asarray([3.0, 0.5, 2.0], dtype=jnp.float64), 2
     ).admit()
-    assert hodge._admission_plan is not None
-    defaults = SparseFactorizationPolicy("cholesky")
-    admission = hodge._admission_plan.policy
-    assert admission.ordering == "approximate-minimum-degree"
-    assert admission.max_factor_bytes == defaults.max_factor_bytes
-    assert admission.max_symbolic_work == defaults.max_symbolic_work
-    assert (
-        admission.max_factor_nnz
-        == defaults.max_factor_bytes // np.dtype(np.float64).itemsize
-    )
     invalid = hodge.refresh(jnp.asarray(bad_values, dtype=jnp.float64))
     assert not bool(
         jax.jit(lambda values: hodge.refresh(values).valid)(invalid.upper_values)
@@ -138,43 +128,109 @@ def test_sparse_validity_rejects_non_spd_positive_diagonal_after_refresh(
 
 
 @pytest.mark.parametrize(
-    ("limit_name", "metric", "limit"),
+    ("policy", "metric"),
     [
-        ("max_factor_bytes", "factor_bytes", 128),
-        ("max_symbolic_work", "symbolic_work", 1),
+        (SparseFactorizationPolicy("cholesky", max_factor_bytes=128), "factor_bytes"),
+        (SparseFactorizationPolicy("cholesky", max_symbolic_work=1), "symbolic_work"),
+        (SparseFactorizationPolicy("cholesky", max_factor_nnz=1), "factor_nnz"),
     ],
+    ids=["bytes", "symbolic-work", "factor-entries"],
 )
 def test_sparse_hodge_respects_native_factor_resource_limits(
-    monkeypatch: pytest.MonkeyPatch,
-    limit_name: str,
-    metric: str,
-    limit: int,
+    policy: SparseFactorizationPolicy, metric: str
 ) -> None:
-    from functools import partial
-
-    monkeypatch.setattr(
-        cochain_hodge,
-        "SparseFactorizationPolicy",
-        partial(SparseFactorizationPolicy, **{limit_name: limit}),
-    )
     with pytest.raises(ValueError, match=rf"{metric} requires"):
-        SparseHodge(_ROWS, _COLUMNS, _VALUES, 3)
+        SparseHodge(_ROWS, _COLUMNS, _VALUES, 3, admission_policy=policy)
 
 
-def test_sparse_hodge_admission_uses_its_declared_budget() -> None:
-    with pytest.raises(ValueError, match="factor_bytes requires"):
-        SparseHodge(_ROWS, _COLUMNS, _VALUES, 3, admission_bytes=128)
-    budget = 1 << 20
-    declared = SparseHodge(_ROWS, _COLUMNS, _VALUES, 3, admission_bytes=budget).admit()
-    assert declared._admission_plan is not None
-    assert declared._admission_plan.policy.max_factor_bytes == budget
-    assert declared.layout_id != SparseHodge(_ROWS, _COLUMNS, _VALUES, 3).layout_id
+def test_sparse_hodge_admission_policy_survives_restriction_and_refresh() -> None:
+    policy = SparseFactorizationPolicy(
+        "cholesky",
+        ordering="nested-dissection",
+        max_factor_bytes=1 << 20,
+        max_symbolic_work=1 << 20,
+    )
+    declared = SparseHodge(_ROWS, _COLUMNS, _VALUES, 3, admission_policy=policy).admit()
+    different = SparseHodge(
+        _ROWS,
+        _COLUMNS,
+        _VALUES,
+        3,
+        admission_policy=SparseFactorizationPolicy(
+            "cholesky",
+            ordering="nested-dissection",
+            max_factor_bytes=1 << 20,
+            max_symbolic_work=2 << 20,
+        ),
+    )
+    assert declared.layout_id != different.layout_id
     restricted = declared.restrict(np.asarray([True, False, True], dtype=np.bool_))
-    assert restricted.admission_bytes == budget
-    with pytest.raises(TypeError, match="admission_bytes"):
-        SparseHodge(_ROWS, _COLUMNS, _VALUES, 3, admission_bytes=True)
-    with pytest.raises(ValueError, match="positive"):
-        SparseHodge(_ROWS, _COLUMNS, _VALUES, 3, admission_bytes=0)
+    np.testing.assert_allclose(restricted.upper_values, np.asarray(_VALUES)[[0, 2, 5]])
+    assert bool(restricted.valid)
+    assert restricted.admission_policy == policy
+    empty = declared.restrict(np.zeros((3,), dtype=np.bool_))
+    assert empty.admission_policy == policy
+    assert bool(empty.valid)
+    refreshed = declared.refresh(2.0 * declared.upper_values)
+    assert refreshed.layout_id == declared.layout_id
+    assert refreshed.admission_policy == policy
+    assert bool(refreshed.valid)
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        SparseFactorizationPolicy("auto"),
+        SparseFactorizationPolicy("lu"),
+        SparseFactorizationPolicy("cholesky", fill_level=0),
+        SparseFactorizationPolicy("cholesky", drop_tolerance=0.1),
+        SparseFactorizationPolicy("cholesky", maximum_fill_per_row=2),
+        SparseFactorizationPolicy("cholesky", diagonal_shift=1.0),
+        SparseFactorizationPolicy("cholesky", allow_pivot_replacement=True),
+    ],
+    ids=[
+        "automatic-kind",
+        "lu",
+        "incomplete",
+        "dropping",
+        "row-fill",
+        "shift",
+        "replacement",
+    ],
+)
+def test_sparse_hodge_refuses_policies_that_do_not_prove_the_original_spd_metric(
+    policy: SparseFactorizationPolicy,
+) -> None:
+    with pytest.raises(ValueError, match="complete Cholesky"):
+        SparseHodge(_ROWS, _COLUMNS, _VALUES, 3, admission_policy=policy)
+
+
+def test_sparse_hodge_refuses_non_policy_admission() -> None:
+    with pytest.raises(TypeError, match="admission_policy"):
+        SparseHodge(
+            _ROWS,
+            _COLUMNS,
+            _VALUES,
+            3,
+            admission_policy=True,  # ty: ignore[invalid-argument-type]
+        )
+
+
+def test_sparse_hodge_preserves_declared_strict_pivot_threshold() -> None:
+    indices = np.asarray((0, 1), dtype=np.int32)
+    values = np.asarray((1.0e-6, 1.0), dtype=np.float64)
+    admitted = SparseHodge(indices, indices, values, 2).admit()
+    strict = SparseHodge(
+        indices,
+        indices,
+        values,
+        2,
+        admission_policy=SparseFactorizationPolicy("cholesky", pivot_tolerance=1.0e-5),
+    )
+    assert bool(admitted.valid)
+    assert not bool(strict.valid)
+    with pytest.raises(ValueError, match="positive definite"):
+        strict.admit()
 
 
 def test_sparse_hodge_budget_charges_its_numeric_admission_working_set(
@@ -183,8 +239,11 @@ def test_sparse_hodge_budget_charges_its_numeric_admission_working_set(
     from phydrax._execution_resources import MemoryBudgetError
     from phydrax.linalg._sparse_factorizations import numeric_admission_bytes
 
+    policy = SparseFactorizationPolicy(
+        "cholesky", ordering="approximate-minimum-degree", max_factor_bytes=1 << 20
+    )
     plan = SparseHodge(
-        _ROWS, _COLUMNS, _VALUES, 3, admission_bytes=1 << 20
+        _ROWS, _COLUMNS, _VALUES, 3, admission_policy=policy
     )._admission_plan
     assert plan is not None
     required = numeric_admission_bytes(plan)
@@ -196,12 +255,32 @@ def test_sparse_hodge_budget_charges_its_numeric_admission_working_set(
 
     monkeypatch.setattr(cochain_hodge, "admit_sparse_factorization_values", unreachable)
     with pytest.raises(MemoryBudgetError) as refused:
-        SparseHodge(_ROWS, _COLUMNS, _VALUES, 3, admission_bytes=required - 1)
+        SparseHodge(
+            _ROWS,
+            _COLUMNS,
+            _VALUES,
+            3,
+            admission_policy=SparseFactorizationPolicy(
+                "cholesky",
+                ordering=policy.ordering,
+                max_factor_bytes=required - 1,
+            ),
+        )
     assert refused.value.budget == "admission_bytes"
     assert refused.value.required_bytes == required
     assert refused.value.limit_bytes == required - 1
     monkeypatch.undo()
-    admitted = SparseHodge(_ROWS, _COLUMNS, _VALUES, 3, admission_bytes=required)
+    admitted = SparseHodge(
+        _ROWS,
+        _COLUMNS,
+        _VALUES,
+        3,
+        admission_policy=SparseFactorizationPolicy(
+            "cholesky",
+            ordering=policy.ordering,
+            max_factor_bytes=required,
+        ),
+    )
     assert bool(admitted.valid)
 
 

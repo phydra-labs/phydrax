@@ -3,9 +3,14 @@
 from pathlib import Path
 from typing import assert_type
 
+from jax import Array
+
+from phydrax.discretization import CellMesh, SparseHodge
+from phydrax.discretization.fem import FiniteElementDeRhamComplex
 from phydrax.execution import ExecutionGroup
 from phydrax.geometry.brep import BRepModel
 from phydrax.interchange import load_brep_archive, save_brep_archive
+from phydrax.linalg import SparseFactorizationPolicy
 from phydrax.meshing import (
     CellMeshingResult,
     MeshAssembly,
@@ -60,3 +65,19 @@ def exact_archive(model: BRepModel, path: Path) -> None:
     assert_type(written, Path)
     restored = load_brep_archive(written)
     assert_type(restored, BRepModel)
+
+
+def explicit_hodge_admission(
+    mesh: CellMesh, rows: Array, columns: Array, values: Array
+) -> None:
+    policy = SparseFactorizationPolicy(
+        "cholesky", ordering="nested-dissection", max_symbolic_work=1 << 30
+    )
+    hodge = SparseHodge(rows, columns, values, 2, admission_policy=policy)
+    assert_type(hodge.admission_policy, SparseFactorizationPolicy)
+    assert_type(
+        FiniteElementDeRhamComplex(
+            mesh, family="trimmed", order=1, hodge_admission=policy
+        ),
+        FiniteElementDeRhamComplex,
+    )

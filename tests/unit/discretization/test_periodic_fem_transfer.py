@@ -477,6 +477,7 @@ def test_periodic_form_phases_preserve_full_transition_evidence(
         banks,
         on_field=checkpoint,
         hodge_resources=None,
+        hodge_admission=None,
     )
     assert tuple(item[0] for item in checkpoints) == ("Hcurl", "Hdiv")
     for name, values, record in checkpoints:
@@ -489,6 +490,7 @@ def test_periodic_form_phases_preserve_full_transition_evidence(
             banks,
             fields=(name,),
             hodge_resources=None,
+            hodge_admission=None,
         )
         np.testing.assert_array_equal(one[name], full[name])
         assert one_record[name] == full_records[name]
@@ -501,6 +503,7 @@ def test_periodic_form_phases_preserve_full_transition_evidence(
                 banks,
                 fields=invalid,
                 hodge_resources=None,
+                hodge_admission=None,
             )
     with pytest.raises(ValueError, match="Hcurl and Hdiv"):
         _layer_form_transition(
@@ -510,4 +513,5 @@ def test_periodic_form_phases_preserve_full_transition_evidence(
             banks,
             fields=("Hcurl",),
             hodge_resources=None,
+            hodge_admission=None,
         )

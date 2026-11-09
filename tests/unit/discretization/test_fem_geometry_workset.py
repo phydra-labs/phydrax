@@ -14,7 +14,12 @@ import pytest
 import phydrax as phx
 from phydrax.discretization.fem._de_rham import FiniteElementDeRhamComplex
 from phydrax.exterior._form_type import FormProxy
-from phydrax.linalg import LinearSolvePolicy, PCG, SolveResourcePolicy
+from phydrax.linalg import (
+    LinearSolvePolicy,
+    PCG,
+    SolveResourcePolicy,
+    SparseFactorizationPolicy,
+)
 
 
 def _kuhn_cube(count: int) -> phx.discretization.CellMesh:
@@ -142,32 +147,54 @@ def test_fe_de_rham_hodges_admit_with_the_declared_budget() -> None:
     mesh = _kuhn_cube(1)
     default = FiniteElementDeRhamComplex(mesh, family="trimmed", order=2)
     budget = 1 << 30
+    admission = SparseFactorizationPolicy(
+        "cholesky",
+        ordering="nested-dissection",
+        max_factor_bytes=budget,
+        max_symbolic_work=1 << 30,
+    )
     declared = FiniteElementDeRhamComplex(
         mesh,
         family="trimmed",
         order=2,
         hodge_resources=SolveResourcePolicy(factorization_bytes=budget),
+        hodge_admission=admission,
     )
 
     assert declared.realization_id == default.realization_id
     for left, right in zip(declared.hodges, default.hodges, strict=True):
-        assert right.admission_bytes is None
-        assert left.admission_bytes == budget
+        assert left.admission_policy == admission
         assert np.array_equal(
             np.asarray(left.upper_values), np.asarray(right.upper_values)
         )
+    independent = FiniteElementDeRhamComplex(
+        mesh,
+        family="trimmed",
+        order=2,
+        hodge_solve=LinearSolvePolicy(PCG()),
+        hodge_admission=admission,
+    )
+    for left, right in zip(independent.hodges, declared.hodges, strict=True):
+        np.testing.assert_array_equal(left.upper_values, right.upper_values)
+        assert left.admission_policy == admission
+
+
+def test_fe_de_rham_refuses_insufficient_spd_admission_budget() -> None:
     with pytest.raises(ValueError, match="factor_bytes requires"):
         FiniteElementDeRhamComplex(
-            mesh,
+            _kuhn_cube(1),
             family="trimmed",
             order=2,
-            hodge_resources=SolveResourcePolicy(factorization_bytes=64),
+            hodge_admission=SparseFactorizationPolicy("cholesky", max_factor_bytes=64),
         )
+
+
+def test_fe_de_rham_refuses_conflicting_riesz_resource_owners() -> None:
     with pytest.raises(ValueError, match="hodge_resources"):
         FiniteElementDeRhamComplex(
-            mesh,
+            _kuhn_cube(1),
             family="trimmed",
             order=2,
             hodge_solve=LinearSolvePolicy(PCG()),
-            hodge_resources=SolveResourcePolicy(factorization_bytes=budget),
+            hodge_resources=SolveResourcePolicy(factorization_bytes=1 << 30),
         )

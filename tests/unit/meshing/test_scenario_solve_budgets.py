@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import jax.numpy as jnp
@@ -9,7 +9,15 @@ import pytest
 
 import phydrax as phx
 from phydrax._array_archive import ArrayArchiveLimits
+from phydrax._fingerprint import canonical_fingerprint
 from phydrax.discretization import CellGeometrySpec, CellMesh
+from phydrax.lifecycle import Composition, CompositionEntry
+from phydrax.meshing._model_codec import (
+    MODEL_ARCHIVE_LIMITS,
+    read_model_artifact,
+    restore_model_archive_value,
+    write_model_artifact,
+)
 from tools.meshing_qualification.scenarios import (
     native_hybrid_profiles as hybrid,
     reconstruction,
@@ -240,3 +248,102 @@ def test_cold_reader_refuses_resource_identity_before_io(
         reconstruction._resume_accepted_archive(
             str(tmp_path / "missing.phx"), "", expected
         )
+
+
+def _hodge_policy_composition(
+    controls: hybrid._LayerCoreLifecycle,
+    *,
+    extra_work: int = 0,
+    foreign_owner: bool = False,
+    foreign_topology: bool = False,
+) -> Composition:
+    mesh = CellMesh.from_tetrahedra(
+        np.asarray(
+            ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+            dtype=np.float64,
+        ),
+        np.asarray(((0, 1, 2, 3),), dtype=np.int32),
+    )
+    initial = CompositionEntry(
+        mesh,
+        entry_id="result/initial",
+        role="topology",
+        owner_id="phydrax.discretization",
+        structure_id=mesh.topology_id,
+        revision_id=mesh.mesh_id,
+        semantics_id="actual-initial-carrier",
+    )
+    payload = asdict(controls.hodge_admission)
+    payload["max_symbolic_work"] += extra_work
+    admission = CompositionEntry(
+        payload,
+        entry_id="policy/hodge-admission",
+        role="model-state",
+        owner_id="foreign-owner" if foreign_owner else "phydrax.linalg",
+        structure_id="foreign-topology" if foreign_topology else mesh.topology_id,
+        revision_id=canonical_fingerprint(payload),
+        semantics_id="complete-native-spd-admission",
+        dependencies=(initial.binding("revision"),),
+    )
+    return Composition((initial, admission), boundary_id="hodge-policy-control")
+
+
+def test_hodge_admission_archive_preserves_native_resource_refusal(
+    tmp_path: Path,
+) -> None:
+    policy = phx.linalg.SparseFactorizationPolicy("cholesky", max_symbolic_work=1)
+    controls = hybrid._LAYER_CORE_LIFECYCLES["archived-layer-core"]._replace(
+        hodge_admission=policy
+    )
+    path = tmp_path / "admission.phx"
+    write_model_artifact(
+        path, _hodge_policy_composition(controls), limits=MODEL_ARCHIVE_LIMITS
+    )
+    restored = read_model_artifact(
+        path,
+        expected_type=Composition,
+        restore=restore_model_archive_value,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    hybrid._validate_layer_core_hodge_admission(restored, controls)
+    payload = dict(restored.value("policy/hodge-admission"))
+    kind = payload.pop("kind")
+    restored_policy = phx.linalg.SparseFactorizationPolicy(kind, **payload)
+    with pytest.raises(ValueError, match="symbolic_work requires"):
+        phx.discretization.SparseHodge(
+            np.asarray((0, 1), dtype=np.int32),
+            np.asarray((0, 1), dtype=np.int32),
+            np.asarray((1.0, 1.0), dtype=np.float64),
+            2,
+            admission_policy=restored_policy,
+        )
+
+
+@pytest.mark.parametrize(
+    ("extra_work", "foreign_owner", "foreign_topology"),
+    ((1, False, False), (0, True, False), (0, False, True)),
+    ids=("changed-work", "foreign-owner", "foreign-topology"),
+)
+def test_cold_hodge_admission_refuses_coherent_policy_or_owner_changes(
+    tmp_path: Path, extra_work: int, foreign_owner: bool, foreign_topology: bool
+) -> None:
+    controls = hybrid._LAYER_CORE_LIFECYCLES["archived-layer-core"]
+    path = tmp_path / "changed-admission.phx"
+    write_model_artifact(
+        path,
+        _hodge_policy_composition(
+            controls,
+            extra_work=extra_work,
+            foreign_owner=foreign_owner,
+            foreign_topology=foreign_topology,
+        ),
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    restored = read_model_artifact(
+        path,
+        expected_type=Composition,
+        restore=restore_model_archive_value,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    with pytest.raises(ValueError, match="Hodge admission policy"):
+        hybrid._validate_layer_core_hodge_admission(restored, controls)
