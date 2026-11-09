@@ -494,6 +494,10 @@
   and exact publication. Collapsed boundary corners remain explicit; uncertain
   candidate lifts are refused. Planar and other periodic adaptation paths retain
   their existing decisions, and final scientific certificates remain required.
+- A stalled implicit surface metric edit can relocate a free singleton-orbit
+  vertex when the move strictly reduces the out-of-band edge count and passes
+  the existing chart, orientation, and exact source-support admissions.
+  Final metric measurement and scientific certification are unchanged.
 - Native PLC suppression can peel a thin wedge along directions toward its
   incident cells when the existing inward-normal direction cannot fill it.
   Directions are tried lazily in deterministic cell order, without additional
