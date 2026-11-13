@@ -310,6 +310,8 @@ class AdaptiveImplicitRootChartMap:
         self.reused_row_count = 0
         self.tolerance = tolerance
         self.maximum_normal_deviation = maximum_normal_deviation
+        # Root intervals and derivative margins are recomputed diagnostics.
+        # Identity binds the exact operands, requested claim, and proved route.
         self.witness_id = canonical_fingerprint(
             {
                 "kind": "adaptive-implicit-root-chart-map",
@@ -322,14 +324,7 @@ class AdaptiveImplicitRootChartMap:
                         row.status,
                         row.source_cell_key,
                         row.root_edge_keys,
-                        row.field_residual_bound,
-                        row.target_to_root_lower_bound,
-                        row.target_to_root_bound,
-                        row.source_normal_deviation_bounds,
-                        row.chart_jacobian_lower,
-                        row.chart_injectivity_margin,
-                        row.source_gradient_lower,
-                        *(() if row.bound == "root_chart" else (row.bound,)),
+                        row.bound,
                     )
                     for row in self.chart_evidence
                 ),

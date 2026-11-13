@@ -435,6 +435,23 @@ fingerprinted into result identities, BLAS-dependent SVD condition numbers in
 T-spline certificate identities, and a Linux-written archive refused on macOS
 at an identical native build.
 
+Implicit root-map and boundary-degree identities follow this rule explicitly:
+recomputed residual, distance, derivative, and injectivity tightness is diagnostic,
+as is the numerical point chosen to prove one preimage. The identity binds exact
+source/target/frame/request data, chart ancestry, proved route/status, and the
+number of components whose degree was established. The full numerical proof and
+all refusal checks still execute. Persisted fidelity row evidence remains
+hashed as given and independently validated.
+
+Original accepted checkpoints with obsolete proof identities are explicitly
+requalified from admitted stored inputs and written as new canonical archives.
+Physical mesh/geometry and field arrays are preserved; original publication
+metadata and provenance remain recorded, with a new migration provenance linking
+old and new acceptance. Ordinary readers remain fail-closed. A completed native
+outcome may be reused only after verifying every original physical input and
+the unchanged request/policy; its actual edit, metric, evidence, and exact source
+vertices are not rewritten or reconstructed from receipts.
+
 **Approved self-contained audit reports:** `CellMeshAuditReport` stores its
 `CellMeshAuditPolicy`, not only the policy identity, so an uncertified meshing
 result made under any audit policy restores in an independent process by

@@ -2770,12 +2770,8 @@ def _adaptive_implicit_root_chart_degree(
                 chart.target_local_entity_index,
                 chart.source_cell_key,
                 chart.root_edge_keys,
-                chart.chart_jacobian_lower,
-                chart.chart_injectivity_margin,
-                chart.field_residual_bound,
-                chart.target_to_root_lower_bound,
-                chart.target_to_root_bound,
-                chart.source_normal_deviation_bounds,
+                chart.status,
+                chart.bound,
             )
         )
     if any(chart.bound == "root_witness" for chart in evidence):
@@ -2854,7 +2850,9 @@ def _adaptive_implicit_root_chart_degree(
             "target_regions": array_tree_fingerprint(regions),
             "embedding": embedding.certificate_id,
             "charts": tuple(chart_rows),
-            "single_preimages": preimages,
+            # The chosen numerical probe is proof machinery, not the material
+            # degree's identity. Every connected component was checked above.
+            "single_preimage_components": len(preimages),
             "degree": 1,
         }
     )

@@ -3,6 +3,7 @@
 #
 
 from collections.abc import Iterator, Sequence
+from dataclasses import replace
 from fractions import Fraction
 from typing import cast, final, NoReturn
 
@@ -441,6 +442,52 @@ def _affine_root_map(
     )
     assert root_map.status == "certified"
     return root_map
+
+
+def test_root_chart_identity_uses_claims_not_recomputed_diagnostic_tightness() -> None:
+    _, source, _, mesh, geometry, witness = _adaptive_source()
+    original = _affine_root_map(mesh, source, geometry, witness)
+    weaker_faces = tuple(
+        replace(
+            face,
+            evidence=replace(
+                face.evidence,
+                chart_jacobian_lower=face.evidence.chart_jacobian_lower / 2.0,
+                chart_injectivity_margin=face.evidence.chart_injectivity_margin / 2.0,
+                source_gradient_lower=face.evidence.source_gradient_lower / 2.0,
+            ),
+        )
+        for face in original._faces
+    )
+    weaker = AdaptiveImplicitRootChartMap(
+        mesh,
+        geometry,
+        source,
+        witness,
+        original.frame_id,
+        weaker_faces,
+        original._bounds,
+        original.tolerance,
+        original.maximum_normal_deviation,
+        original._surface,
+        original._hessian_program,
+        original._branches,
+    )
+    assert weaker.status == original.status == "certified"
+    assert weaker.witness_id == original.witness_id
+    for before, after in zip(original.chart_evidence, weaker.chart_evidence, strict=True):
+        assert 0.0 < after.chart_jacobian_lower < before.chart_jacobian_lower
+        assert 0.0 < after.chart_injectivity_margin < before.chart_injectivity_margin
+    changed_request = prepare_adaptive_implicit_root_charts(
+        mesh,
+        geometry,
+        source,
+        witness,
+        tolerance=0.75,
+        maximum_normal_deviation=np.pi,
+    )
+    assert changed_request.status == "certified"
+    assert changed_request.witness_id != original.witness_id
 
 
 @pytest.mark.parametrize(

@@ -249,6 +249,12 @@
 - Native dense quadratic programs use the declared primal-infeasibility
   tolerance for normalized-ray early stopping, matching the independent audit
   across ordinary and custom-derivative routes without changing policy defaults.
+- Implicit root-chart and coverage-degree identities exclude recomputed
+  diagnostic tightness and numerical proof-point choices. Exact bindings,
+  requested claims, chart ancestry, route/status, and proved component count
+  remain identity-bearing; all numerical proofs and refusal checks remain.
+  Original checkpoints require explicit requalification and canonical rewrite,
+  preserving physical fields and recording old-to-new provenance.
 - Implicit source-chart certification bounds live face/piece proof worksets
   instead of materializing every pending continuation and interval query at once.
   Completed round replies are released before the next round. Mathematical

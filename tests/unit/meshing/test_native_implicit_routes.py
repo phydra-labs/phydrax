@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from fractions import Fraction
 from itertools import product
 
@@ -828,7 +829,9 @@ def test_implicit_boundary_degree_refuses_a_duplicated_sheet() -> None:
         )
 
 
-def test_remeshed_implicit_carrier_certifies_charts_and_coverage() -> None:
+def test_remeshed_implicit_carrier_certifies_charts_and_coverage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Remeshed vertices are generally not their witnessed scaffold roots, so
     # those chart corners lift from their points and coverage proves degree
     # one from one certified preimage per component.
@@ -875,6 +878,86 @@ def test_remeshed_implicit_carrier_certifies_charts_and_coverage() -> None:
     assert certification.fidelity is not None
     assert certification.fidelity.status == "certified"
     assert certification.coverage is not None
+    from phydrax.geometry._domain_certification import certify_domain_coverage
+    from phydrax.geometry.implicit import _source_charts as charts
+
+    prepare = charts.prepare_adaptive_implicit_root_charts
+
+    def weaker_proof(
+        mesh: CellMesh,
+        coordinates: CellGeometrySpec,
+        query: charts.AdaptiveImplicitSourceQuery,
+        witness: SourceBoundaryChartWitness,
+        /,
+        *,
+        frame_id: str | None = None,
+        tolerance: float | None = None,
+        maximum_normal_deviation: float | None = None,
+    ) -> charts.AdaptiveImplicitRootChartMap:
+        actual = prepare(
+            mesh,
+            coordinates,
+            query,
+            witness,
+            frame_id=frame_id,
+            tolerance=tolerance,
+            maximum_normal_deviation=maximum_normal_deviation,
+        )
+        faces = tuple(
+            replace(
+                face,
+                evidence=replace(
+                    face.evidence,
+                    chart_jacobian_lower=face.evidence.chart_jacobian_lower / 2.0,
+                    chart_injectivity_margin=face.evidence.chart_injectivity_margin / 2.0,
+                ),
+            )
+            for face in actual._faces
+        )
+        weaker = charts.AdaptiveImplicitRootChartMap(
+            mesh,
+            coordinates,
+            query,
+            witness,
+            actual.frame_id,
+            faces,
+            actual._bounds,
+            actual.tolerance,
+            actual.maximum_normal_deviation,
+            actual._surface,
+            actual._hessian_program,
+            actual._branches,
+        )
+        project = weaker.project_target
+
+        def wider_point(
+            row: int, reference: tuple[Fraction, ...]
+        ) -> charts.ImplicitRootChartPoint:
+            point = project(row, reference)
+            return replace(
+                point, root_error=float(np.nextafter(point.root_error, np.inf))
+            )
+
+        # The real single-preimage proof must still exclude every other face
+        # with this wider valid root enclosure; no admission is mocked.
+        monkeypatch.setattr(weaker, "project_target", wider_point)
+        return weaker
+
+    monkeypatch.setattr(charts, "prepare_adaptive_implicit_root_charts", weaker_proof)
+    coverage = certification.coverage
+    recomputed = certify_domain_coverage(
+        result.mesh,
+        result.geometry,
+        coverage.domain,
+        coverage.cell_regions,
+        embedding=coverage.embedding,
+        source=coverage.source,
+        fidelity=coverage.fidelity,
+        source_coverage_witness=coverage.source_coverage_witness,
+    )
+    assert recomputed.status == "certified"
+    assert recomputed.source_region_degree_ids == coverage.source_region_degree_ids
+    assert recomputed.certificate_id == coverage.certificate_id
 
 
 def test_remeshed_implicit_duplicated_sheet_is_refused_by_single_preimage_proof() -> None:
