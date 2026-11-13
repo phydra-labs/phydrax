@@ -2489,6 +2489,20 @@ def _face_piece_steps(
         narrowed_lower = max(
             lower_distance, math.nextafter(nearest * gradient_norm[0], 0.0)
         )
+        if narrowed_lower <= tolerance < narrowed_upper:
+            centered = yield from _centered_root_distance(
+                base_box,
+                gradient_p,
+                narrowed,
+                target_derivatives,
+                hessian_intervals,
+                _interval_vector3(center_low, center_high),
+                center_gradient,
+                offsets,
+            )
+            if centered is not None:
+                narrowed_lower = max(narrowed_lower, centered[0])
+                narrowed_upper = min(narrowed_upper, centered[1])
         if narrowed_upper <= tolerance:
             root_parameters = narrowed
             upper_distance = narrowed_upper
@@ -2568,6 +2582,69 @@ _TOLERANCE_NEWTON_STEPS = 3
 # Ulps within which a tolerance-straddling distance enclosure, or the physical
 # box of its piece, is at binary64 resolution and no split can decide it.
 _TOLERANCE_STRADDLE_ULPS = 4
+
+
+def _centered_root_distance(
+    base_box: IntervalVector3,
+    gradient_p: IntervalVector3,
+    parameters: Interval,
+    target_derivatives: IntervalDerivative3x2,
+    hessian_p: IntervalMatrix3,
+    center_box: IntervalVector3,
+    center_gradient: IntervalVector3,
+    offsets: IntervalVector2,
+    /,
+) -> Generator[_BoxRequests, _BoxResults, Interval | None]:
+    """Enclose squared root displacement with its centered mean-value form.
+
+    For R = P + t grad f(P), d|R-P|² = 2(R-P)·(dR-dP). Keeping that
+    cancellation before applying reference offsets avoids first-order box
+    overestimation near a stationary distance maximum. The center uses the
+    same certified root branch, not a separately selected numerical root.
+    """
+    center_parameters = yield from _narrowed_root_parameters(
+        center_box, center_gradient, parameters, _TOLERANCE_NEWTON_STEPS
+    )
+    center_norm = _interval_vector_norm_bounds(center_gradient)
+    center_squared = _interval_multiply(
+        _interval_square(center_parameters), _interval_square(center_norm)
+    )
+    tube = _lifted_box(base_box, parameters, gradient_p)
+    fields, _ = yield _BoxRequests((_box_arrays(tube),))
+    derivatives = _chart_derivative_intervals(
+        target_derivatives, gradient_p, fields[0][1], hessian_p, parameters
+    )
+    if derivatives is None:
+        return None
+    root_derivatives = derivatives
+    displacement = tuple(
+        _interval_multiply(parameters, component) for component in gradient_p
+    )
+
+    def slope(column: int, /) -> Interval:
+        return _interval_scale(
+            sum_interval(
+                tuple(
+                    _interval_multiply(
+                        displacement[axis],
+                        _interval_subtract(
+                            root_derivatives[axis][column],
+                            target_derivatives[axis][column],
+                        ),
+                    )
+                    for axis in range(3)
+                )
+            ),
+            2.0,
+        )
+
+    squared = _mean_value_interval(center_squared, (slope(0), slope(1)), offsets)
+    if not all(math.isfinite(value) for value in squared) or squared[1] < 0.0:
+        return None
+    return (
+        math.nextafter(math.sqrt(max(0.0, squared[0])), 0.0),
+        math.nextafter(math.sqrt(max(0.0, squared[1])), math.inf),
+    )
 
 
 def _narrowed_root_parameters(

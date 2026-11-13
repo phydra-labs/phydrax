@@ -1297,6 +1297,69 @@ def test_near_band_root_chart_tie_refuses_at_binary64_resolution() -> None:
     assert _proof_reference_area(pieces) < Fraction(1, 512)
 
 
+@pytest.mark.parametrize(
+    "tolerance", (0.010001, 0.009999), ids=("inside-bound", "outside-bound")
+)
+def test_stationary_root_distance_encloses_independent_sphere_extrema(
+    tolerance: float,
+) -> None:
+    geometry = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile()
+    bounds = adaptive_discovery._FieldEnclosures(geometry, "interval")
+    hessian = source_charts._prepare_hessian(geometry)
+    # A small plane patch whose center is the distance minimum. The maximum
+    # is at either far vertex, independently of the interval proof.
+    width = Fraction(1, 10000)
+    normal = (Fraction(1, 3), Fraction(2, 3), Fraction(2, 3))
+    tangent_u = (Fraction(2, 3), Fraction(1, 3), Fraction(-2, 3))
+    tangent_v = (Fraction(-2, 3), Fraction(2, 3), Fraction(-1, 3))
+
+    def coordinate(axis: int, /) -> source_charts.Polynomial:
+        return {
+            (0, 0): Fraction(101, 100) * normal[axis]
+            - width * (tangent_u[axis] + tangent_v[axis]),
+            (1, 0): 3 * width * tangent_u[axis],
+            (0, 1): 3 * width * tangent_v[axis],
+        }
+
+    face = source_charts._enclose_face((coordinate(0), coordinate(1), coordinate(2)))
+    from types import SimpleNamespace
+
+    surface = cast(
+        AdaptiveImplicitSurface,
+        SimpleNamespace(
+            volume=SimpleNamespace(
+                domain=np.asarray(((-2.0,) * 3, (2.0,) * 3), dtype=np.float64)
+            )
+        ),
+    )
+    steps = source_charts._face_piece_proofs(
+        surface,
+        face,
+        (source_charts._STANDARD_TRIANGLE,),
+        source_orientation=1,
+        projected_axes=(0, 1, 2),
+        tolerance=tolerance,
+        maximum_normal_deviation=None,
+    )
+    ((proof, detail, refine),), _ = source_charts._run_piece_steps(bounds, hessian, steps)
+    if tolerance < 0.01:
+        assert proof is None
+        assert not refine
+    else:
+        assert proof is not None, detail
+        # Decimal sqrt is independent of the source field's JAX/interval route.
+        from decimal import Decimal, localcontext
+
+        with localcontext() as context:
+            context.prec = 80
+            maximum = (
+                Decimal(101) ** 2 / Decimal(100) ** 2 + Decimal(5) / Decimal(10000) ** 2
+            ).sqrt() - Decimal(1)
+            assert Decimal.from_float(proof.target_to_source[0]) <= Decimal("0.01")
+            assert Decimal.from_float(proof.target_to_source[1]) >= maximum
+        assert proof.target_to_source[1] <= tolerance
+
+
 def test_local_reverse_cover_proves_complete_meshes_and_refutes_missing_faces(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

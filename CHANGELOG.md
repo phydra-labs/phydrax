@@ -243,6 +243,12 @@
   Local injectivity neighborhoods reuse exact touching-box BVH queries instead
   of quadratic all-piece scans, with bounded query batches and original
   piece ordering for unchanged interval reductions and blocking decisions.
+- Near-tolerance implicit root charts use a certified centered squared-distance
+  enclosure when the ordinary interval remains undecided. The existing root
+  differential preserves cancellation near stationary distance extrema, avoiding
+  pathological subdivision without changing the source or requested tolerance.
+  This stronger bound may change internal proof partitions; invalid, nonfinite,
+  and binary64-unresolved cases retain explicit refusal.
 - The required `archived-layer-core` material qualification declares a 256 MiB
   manifest allowance independently of its unchanged 4 GiB archive budget.
   Writer and cold reader use the same explicit profile policy; other profiles,

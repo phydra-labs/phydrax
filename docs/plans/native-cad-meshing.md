@@ -528,6 +528,18 @@ neighborhood retains its actual output size. This replaces repeated all-piece
 scans without changing determinant enclosures, reference-corner widening, or
 blocking-piece refinement.
 
+When the narrowed root-distance interval still straddles the requested tolerance,
+certification also uses a centered mean-value enclosure of squared displacement.
+Its gradient is `2(R-P)·(DR-DP)`, using the existing implicit root differential
+and a certified center root on the same branch. This retains derivative
+cancellation near a stationary distance, avoiding massive subdivisions caused
+by independent coordinate-box bounds. Both valid enclosures are intersected;
+an undecided differential does not manufacture a bound. Source geometry,
+tolerances, strict refusal, and binary64-resolution handling remain unchanged.
+This stronger mathematical proof can tighten reported bounds and change the
+internal proof subdivision; it is distinct from the identity-preserving
+workset and neighborhood scheduling changes above.
+
 ## 11. Geometry and field transitions, periodicity, distribution and consumers
 
 ### 11.1 Coordinate and field transfer
