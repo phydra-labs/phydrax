@@ -243,6 +243,10 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Compatible finite-element transfer reuses exact nested and partitioned
+  reference moments in one bounded operation-local native host cache. Full
+  mathematical keys and per-call scientific ownership checks preserve matrix,
+  error, and exact/enclosed evidence; eviction only recomputes the result.
 - Reverse implicit source coverage skips already evaluated box/face pairs when
   expanding candidate neighborhoods. It preserves enclosed distance bounds,
   subdivision radii, deterministic decisions, and failure semantics without

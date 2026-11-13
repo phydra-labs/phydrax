@@ -2476,6 +2476,13 @@ action. Configure `material_field_transfer`, `eulerian_field_transfer`,
 missing, the accepted state remains unchanged for the whole transition; other
 fields are not zero-filled or silently switched to another route.
 
+Compatible nested and partitioned-coarsening transfers share one bounded,
+operation-local native host cache for exact reference moments. Reuse requires
+the complete ordered maps, pieces, orientation transforms, element owners, and
+integration policy. Global cell ownership and sparse assembly remain outside
+the cache. Cached numerical evidence is read-only; an evicted or oversized
+entry is recomputed normally, never turned into scientific refusal.
+
 Owner-local nested P0 transfer consumes the many-to-many `MeshLineage`, not one
 representative source cell per target. Refinement assigns the target's physical
 measure to each nested overlap; coarsening sums child content using each child's
