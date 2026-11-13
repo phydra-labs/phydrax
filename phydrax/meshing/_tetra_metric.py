@@ -4347,32 +4347,51 @@ def _directed_collapse(
         ],
         dtype=np.int64,
     ).reshape((-1, 4))
+    before_violations: tuple[tuple[int, ...], tuple[int, ...]] | None = None
+    # Quantization may repeat identical numerical variants. The cache belongs
+    # only to this fixed directed star; source stencils are checked separately.
+    # Three goals at at most 53 resolutions bound it to 160 entries.
+    rejected_variants: set[tuple[bytes, bytes, tuple[tuple[int, int, int, int], ...]]] = (
+        set()
+    )
 
     def variant(
         point: np.ndarray, metric: np.ndarray, cells: list[tuple[int, int, int, int]]
     ) -> dict[str, Any] | None:
+        nonlocal before_violations
+        key = (point.tobytes(), metric.tobytes(), tuple(cells))
+        if key in rejected_variants:
+            return None
         moved_points = local_points.copy()
         moved_points[0] = point
         moved_metrics = local_metrics.copy()
         moved_metrics[0] = metric
         if np.any(np.all(moved_points[after_spokes[:, 1]] == point, axis=1)):
+            rejected_variants.add(key)
             return None
         # Reject a non-decreasing metric objective before exact orientation;
         # the surviving candidates still receive every geometric check.
         after_lengths = _metric_lengths(moved_points, moved_metrics, after_spokes)
-        if not _objective_decreases(before_lengths, after_lengths, False):
+        # Prepare lazily to preserve the original refusal/error ordering.
+        if before_violations is None:
+            before_violations = _band_violations(before_lengths)
+        violations = _band_violations(after_lengths)
+        if not violations < before_violations:
+            rejected_variants.add(key)
             return None
         rows = np.asarray(cells, dtype=np.int64).reshape((-1, 4))
         signs = _tetra_orientation(moved_points, rows, PredicateMode.EXACT)
         if not np.all(signs == 1) or not _clears_determinant_floor(moved_points[rows]):
+            rejected_variants.add(key)
             return None
         quality = _tetra_quality(moved_points, moved_metrics, rows)
         if not np.all(np.isfinite(quality)) or np.any(quality <= 0.0):
+            rejected_variants.add(key)
             return None
         return {
             "rows": rows,
             "quality": float(np.min(quality)),
-            "violations": _band_violations(after_lengths),
+            "violations": violations,
             "lengths": after_lengths,
         }
 
