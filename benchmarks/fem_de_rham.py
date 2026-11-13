@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict
+from fractions import Fraction
 from pathlib import Path
+from time import perf_counter
+from typing import assert_never, get_args, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -30,9 +33,15 @@ from benchmarks._runtime import (
 )
 from phydrax.discretization import CellMesh
 from phydrax.discretization.fem._de_rham import FiniteElementDeRhamComplex
+from phydrax.typing import parse
+
+
+if TYPE_CHECKING:
+    from phydrax.discretization.fem._exact_form_moments import MomentIntegralMatrix
 
 
 OUTPUT = Path(__file__).with_suffix(".json")
+BenchmarkMode: TypeAlias = Literal["hodge", "partition-moments"]
 
 
 def _mesh(subdivisions: int) -> CellMesh:
@@ -143,13 +152,198 @@ def _case(subdivisions: int, order: int, repeats: int) -> dict[str, object]:
     }
 
 
+def _same_moment_bits(first: MomentIntegralMatrix, second: MomentIntegralMatrix) -> bool:
+    return all(
+        left.dtype == right.dtype
+        and left.shape == right.shape
+        and left.tobytes() == right.tobytes()
+        for left, right in (
+            (first.values, second.values),
+            (first.errors, second.errors),
+            (first.exact, second.exact),
+            (first.enclosed, second.enclosed),
+        )
+    )
+
+
+def _partition_moment_case(
+    capacity: int, *, repeated_geometry: bool
+) -> dict[str, object]:
+    """Time host-only local moments for declared exact prism partitions."""
+    from phydrax.discretization._nested_reference_types import (
+        ReferenceCellMapWitnesses,
+        ReferenceCellPartition,
+    )
+    from phydrax.discretization._reference_cell import reference_cell_topology
+    from phydrax.discretization.fem._exact_form_moments import (
+        _ReferenceMomentCache,
+        exact_partitioned_reference_form_moments,
+    )
+    from phydrax.discretization.fem._form_elements import form_element
+    from phydrax.discretization.fem._partition_form_moments import (
+        prepare_partitioned_reference_entities,
+    )
+
+    started = perf_counter()
+    element = form_element(
+        "prism", 1, 1, family="prism-trimmed", twist="untwisted", proxy="components"
+    )
+    if element.form_basis is None:
+        raise RuntimeError("Partition benchmark requires a canonical form basis")
+    vertices = tuple(
+        tuple(Fraction(int(value)) for value in vertex)
+        for vertex in reference_cell_topology("prism").vertices
+    )
+    identity = tuple(
+        tuple(Fraction(int(row == column)) for column in range(element.local_dof_count))
+        for row in range(element.local_dof_count)
+    )
+    records = []
+    for index in range(capacity):
+        cut = Fraction(1, 2) if repeated_geometry else Fraction(index + 1, capacity + 1)
+        children = (
+            tuple((x, y, cut * z) for x, y, z in vertices),
+            tuple((x, y, cut + (1 - cut) * z) for x, y, z in vertices),
+        )
+        coarse_id = 3 * index + 2
+        witnesses = ReferenceCellMapWitnesses(
+            np.asarray((3 * index, 3 * index + 1), dtype=np.int64),
+            np.asarray((coarse_id, coarse_id), dtype=np.int64),
+            "prism",
+            "prism",
+            np.asarray(children, dtype=np.float64),
+            children,
+        )
+        records.extend(
+            prepare_partitioned_reference_entities(
+                ReferenceCellPartition((witnesses,)), coarse_id, element.form_basis
+            )
+        )
+    preparation_seconds = perf_counter() - started
+    started = perf_counter()
+    reference = tuple(
+        exact_partitioned_reference_form_moments(
+            element, element, record, identity, identity, None
+        )
+        for record in records
+    )
+    reference_seconds = perf_counter() - started
+    cache = _ReferenceMomentCache()
+
+    def run() -> tuple[MomentIntegralMatrix, ...]:
+        return tuple(
+            cache.partitioned(element, element, record, identity, identity, None)
+            for record in records
+        )
+
+    started = perf_counter()
+    cold = run()
+    cold_seconds = perf_counter() - started
+    cold_info = cache.table.cache_info()._asdict()
+    started = perf_counter()
+    steady = run()
+    steady_seconds = perf_counter() - started
+    steady_info = cache.table.cache_info()._asdict()
+
+    exact_equality = all(
+        _same_moment_bits(expected, first) and _same_moment_bits(expected, again)
+        for expected, first, again in zip(reference, cold, steady, strict=True)
+    )
+    bounded = (
+        steady_info["currsize"] <= steady_info["max_entries"]
+        and steady_info["current_bytes"] <= steady_info["max_bytes"]
+    )
+    return {
+        "geometry_scenario": "repeated" if repeated_geometry else "distinct",
+        "declared_partitions": capacity,
+        "declared_local_records": len(records),
+        "immutable_preparation_seconds": preparation_seconds,
+        "uncached_reference_seconds": reference_seconds,
+        "uncached_reference_scope": (
+            "measured separately before cached phases; other host preparation caches may be warm"
+        ),
+        "cold_seconds": cold_seconds,
+        "steady_seconds": steady_seconds,
+        "cold_cache": cold_info,
+        "steady_cache": steady_info,
+        "logical_retained_bytes_scope": "cache key and output payload, not process RSS",
+        "process_peak_rss": {
+            "available": False,
+            "reason": "process peak RSS is not measured by this portable host benchmark",
+        },
+        "compilation": {
+            "applicable": False,
+            "reason": "host-only exact moment preparation",
+        },
+        "evidence": [
+            {
+                "fine_cell_id": record.fine_cell_id,
+                "coarse_cell_id": record.coarse_cell_id,
+                "values": result.values.tolist(),
+                "errors": result.errors.tolist(),
+                "exact": result.exact.tolist(),
+                "enclosed": result.enclosed.tolist(),
+            }
+            for record, result in zip(records, cold, strict=True)
+        ],
+        "all_evidence_bitwise_equal_to_uncached_and_steady": exact_equality,
+        "cache_within_bounds": bounded,
+        "successful": exact_equality and bounded,
+    }
+
+
+def _partition_moment_campaign(output: Path, capacities: tuple[int, ...]) -> None:
+    if output.exists():
+        raise SystemExit("Partition-moment mode requires a fresh --output path.")
+    if not capacities or any(capacity < 1 for capacity in capacities):
+        raise SystemExit("Partition capacities must be positive.")
+    records = [
+        _partition_moment_case(capacity, repeated_geometry=repeated_geometry)
+        for capacity in capacities
+        for repeated_geometry in (True, False)
+    ]
+    successful = all(record["successful"] for record in records)
+    driver = Path(__file__).resolve()
+    identity = capture_benchmark_identity(driver.parents[1], driver, records[0])
+    write_json_atomic(
+        output,
+        {
+            "benchmark": "fem-de-rham-partition-moments",
+            "scope": "host-local reference partition moments; not a physical transfer",
+            "identity": identity.to_dict(),
+            "environment": capture_environment().to_dict(),
+            "cases": records,
+            "successful": successful,
+        },
+    )
+    if not successful:
+        raise SystemExit("Partition moment evidence or cache bounds differ.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--output", type=Path, default=OUTPUT)
+    parser.add_argument("--mode", choices=get_args(BenchmarkMode), default="hodge")
+    parser.add_argument("--capacities", type=int, nargs="+")
     arguments = parser.parse_args()
-    capacities = (1, 2) if arguments.smoke else (2, 4, 8, 16)
-    orders = (1,) if arguments.smoke else (1, 2)
+    mode = parse(arguments.mode, BenchmarkMode, "--mode")
+    match mode:
+        case "partition-moments":
+            if arguments.output == OUTPUT:
+                parser.error("partition-moments requires an explicit fresh --output")
+            capacities = tuple(
+                arguments.capacities or ((1, 2) if arguments.smoke else (1, 4, 16))
+            )
+            _partition_moment_campaign(arguments.output, capacities)
+            return
+        case "hodge":
+            if arguments.capacities is not None:
+                parser.error("--capacities is only available in partition-moments mode")
+            capacities = (1, 2) if arguments.smoke else (2, 4, 8, 16)
+            orders = (1,) if arguments.smoke else (1, 2)
+        case _:
+            assert_never(mode)
     records = [
         _case(size, order, 2 if arguments.smoke else 5)
         for order in orders
