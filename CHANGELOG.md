@@ -240,6 +240,9 @@
   Completed round replies are released before the next round. Mathematical
   refinement, output ordering, certificate identities, and refusal criteria are
   unchanged; the working-set bound does not truncate proofs or relax accuracy.
+  Local injectivity neighborhoods reuse exact touching-box BVH queries instead
+  of quadratic all-piece scans, with bounded query batches and original
+  piece ordering for unchanged interval reductions and blocking decisions.
 - The required `archived-layer-core` material qualification declares a 256 MiB
   manifest allowance independently of its unchanged 4 GiB archive budget.
   Writer and cold reader use the same explicit profile policy; other profiles,

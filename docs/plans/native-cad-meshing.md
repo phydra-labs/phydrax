@@ -520,6 +520,13 @@ input topology and completed proof records retain their actual sizes. Per-piece
 mathematics and response sequences, output row order, crease refusals, and
 binary64-resolution decisions remain unchanged. Consumed round replies are
 released before the next refinement round.
+Local injectivity proofs prepare the canonical float64 BVH once per refinement
+generation for root-box collisions and reference-box chord neighborhoods. Queries
+include touching boxes and restore original piece ordering before every reduction.
+Query batches bound the possible pair working set; a single genuinely dense
+neighborhood retains its actual output size. This replaces repeated all-piece
+scans without changing determinant enclosures, reference-corner widening, or
+blocking-piece refinement.
 
 ## 11. Geometry and field transitions, periodicity, distribution and consumers
 

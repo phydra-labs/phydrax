@@ -2808,6 +2808,83 @@ def _interval_square(value: Interval, /) -> Interval:
     return max(0.0, math.nextafter(smallest * smallest, 0.0)), largest
 
 
+def _proof_box_neighborhoods(
+    items: PackedBVH, lower: np.ndarray, upper: np.ndarray, /
+) -> tuple[np.ndarray, ...]:
+    """Exact touching neighborhoods, in original piece order within each query."""
+    queries = prepare_bvh(lower, upper, dtype=np.float64)
+    blocks = list(bvh_overlap_pair_blocks(items, queries, include_touching=True))
+    if not blocks:
+        return tuple(np.empty(0, dtype=np.int64) for _ in range(lower.shape[0]))
+    item_rows = np.concatenate([block[0] for block in blocks])
+    query_rows = np.concatenate([block[1] for block in blocks])
+    # Traversal order is not proof order. Restore the original flatnonzero order
+    # before min/max reductions and interval hulls, including signed-zero ties.
+    order = np.lexsort((item_rows, query_rows))
+    item_rows = item_rows[order]
+    counts = np.bincount(query_rows, minlength=lower.shape[0])
+    offsets = np.concatenate((np.zeros(1, dtype=np.int64), np.cumsum(counts)))
+    return tuple(
+        item_rows[first:last]
+        for first, last in zip(offsets[:-1], offsets[1:], strict=True)
+    )
+
+
+def _transversal_neighborhoods(
+    pieces: Sequence[_PieceProof], /
+) -> Generator[
+    tuple[
+        int,
+        tuple[np.ndarray, ...],
+        tuple[np.ndarray, ...],
+        tuple[tuple[np.ndarray, np.ndarray], ...],
+    ],
+    None,
+    None,
+]:
+    """Prepare local collision/chord neighborhoods without all-piece scans."""
+    root_boxes = np.asarray([piece.root_box for piece in pieces], dtype=np.float64)
+    target_boxes = np.asarray([piece.target_box for piece in pieces], dtype=np.float64)
+    corners = np.asarray(
+        [
+            [[float(value) for value in point] for point in piece.triangle]
+            for piece in pieces
+        ],
+        dtype=np.float64,
+    )
+    reference_low = corners.min(axis=1)
+    reference_high = corners.max(axis=1)
+    roots = prepare_bvh(root_boxes[:, :, 0], root_boxes[:, :, 1], dtype=np.float64)
+    references = prepare_bvh(reference_low, reference_high, dtype=np.float64)
+    # Even a fully overlapping query batch retains at most this Cartesian
+    # working set; one query's true neighborhood remains output-sized.
+    width = max(1, min(_PROOF_WORKSET_SIZE, _PROOF_WORKSET_SIZE**2 // len(pieces)))
+    # Preserve the original widening of rounded reference corners.
+    slack = 4.0 * np.finfo(np.float64).eps
+    for start in range(0, len(pieces), width):
+        selected = root_boxes[start : start + width]
+        neighborhoods = _proof_box_neighborhoods(
+            roots, selected[:, :, 0], selected[:, :, 1]
+        )
+        hessian_boxes = tuple(
+            (
+                target_boxes[rows, :, 0].min(axis=0),
+                target_boxes[rows, :, 1].max(axis=0),
+            )
+            for rows in neighborhoods
+        )
+        region_low = np.asarray(
+            [reference_low[rows].min(axis=0) - slack for rows in neighborhoods],
+            dtype=np.float64,
+        )
+        region_high = np.asarray(
+            [reference_high[rows].max(axis=0) + slack for rows in neighborhoods],
+            dtype=np.float64,
+        )
+        midpoint_pieces = _proof_box_neighborhoods(references, region_low, region_high)
+        yield start, neighborhoods, midpoint_pieces, hessian_boxes
+
+
 def _transversal_injectivity(
     face: _FaceEnclosure,
     orientation: int,
@@ -3019,68 +3096,34 @@ def _transversal_injectivity(
             )
             if best > 0.0:
                 return math.nextafter(best / scale, 0.0), ()
-        root_boxes = np.asarray(
-            [[list(bounds) for bounds in piece.root_box] for piece in pieces],
-            dtype=np.float64,
-        )
-        target_boxes = np.asarray(
-            [[list(bounds) for bounds in piece.target_box] for piece in pieces],
-            dtype=np.float64,
-        )
-        corners = np.asarray(
-            [
-                [[float(value) for value in point] for point in piece.triangle]
-                for piece in pieces
-            ],
-            dtype=np.float64,
-        )
-        reference_low = corners.min(axis=1)
-        reference_high = corners.max(axis=1)
-        neighborhoods: list[np.ndarray] = []
-        hessian_boxes: list[tuple[np.ndarray, np.ndarray]] = []
-        for row in range(len(pieces)):
-            meets = np.all(
-                (root_boxes[:, :, 0] <= root_boxes[row, :, 1])
-                & (root_boxes[row, :, 0] <= root_boxes[:, :, 1]),
-                axis=1,
-            )
-            neighborhood = np.flatnonzero(meets)
-            neighborhoods.append(neighborhood)
-            hessian_boxes.append(
-                (
-                    target_boxes[neighborhood, :, 0].min(axis=0),
-                    target_boxes[neighborhood, :, 1].max(axis=0),
-                )
-            )
-        _, results = yield _FaceRound(queries=(_BoxRequests((), tuple(hessian_boxes)),))
-        hessians = results[0][1]
-        # Reference corners are rounded to binary64; widening the region by a
-        # few ulps of the unit triangle only admits more chord means.
-        slack = 4.0 * np.finfo(np.float64).eps
         lower = math.inf
         blocking: set[int] = set()
-        for row, (piece, neighborhood, hessian) in enumerate(
-            zip(pieces, neighborhoods, hessians, strict=True)
-        ):
-            region_low = reference_low[neighborhood].min(axis=0) - slack
-            region_high = reference_high[neighborhood].max(axis=0) + slack
-            midpoint_pieces = np.flatnonzero(
-                np.all(
-                    (reference_low <= region_high) & (region_low <= reference_high),
-                    axis=1,
-                )
-            )
-            value = determinant(
-                chord_hull([known[index] for index in midpoint_pieces]),
-                piece.source_gradient,
-                hessian,
-                _interval_hull([pieces[index].root_parameters for index in neighborhood]),
-            )[0]
-            if value > 0.0:
-                lower = min(lower, value)
-            else:
-                blocking.update(int(index) for index in neighborhood)
-                blocking.add(row)
+        for (
+            start,
+            neighborhoods,
+            midpoint_rows,
+            hessian_boxes,
+        ) in _transversal_neighborhoods(pieces):
+            _, results = yield _FaceRound(queries=(_BoxRequests((), hessian_boxes),))
+            hessians = results[0][1]
+            for offset, (neighborhood, midpoint_pieces, hessian) in enumerate(
+                zip(neighborhoods, midpoint_rows, hessians, strict=True)
+            ):
+                row = start + offset
+                piece = pieces[row]
+                value = determinant(
+                    chord_hull([known[index] for index in midpoint_pieces]),
+                    piece.source_gradient,
+                    hessian,
+                    _interval_hull(
+                        [pieces[index].root_parameters for index in neighborhood]
+                    ),
+                )[0]
+                if value > 0.0:
+                    lower = min(lower, value)
+                else:
+                    blocking.update(int(index) for index in neighborhood)
+                    blocking.add(row)
         if blocking:
             return 0.0, tuple(sorted(blocking))
         return math.nextafter(lower / scale, 0.0), ()

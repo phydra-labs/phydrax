@@ -1060,6 +1060,120 @@ def _proof_reference_area(pieces: Sequence[source_charts._PieceProof]) -> Fracti
     return total
 
 
+def test_proof_neighborhoods_include_contacts_without_bridging_binary64_gaps() -> None:
+    lower = np.asarray(
+        (
+            (-1.0, -1.0),
+            (0.0, 0.0),
+            (np.nextafter(1.0, np.inf), 0.0),
+            (-0.0, -0.0),
+            (0.0, 0.0),
+        ),
+        dtype=np.float64,
+    )
+    upper = np.asarray(
+        ((0.0, 0.0), (1.0, 1.0), (2.0, 1.0), (0.0, 0.0), (1.0, 1.0)),
+        dtype=np.float64,
+    )
+    queries = np.asarray(((0.0, -0.0), (1.0, 0.5), (3.0, 3.0)), dtype=np.float64)
+    tree = source_charts.prepare_bvh(lower, upper, dtype=np.float64)
+    neighborhoods = source_charts._proof_box_neighborhoods(tree, queries, queries)
+    np.testing.assert_array_equal(neighborhoods[0], (0, 1, 3, 4))
+    np.testing.assert_array_equal(neighborhoods[1], (1, 4))
+    np.testing.assert_array_equal(neighborhoods[2], np.empty(0, dtype=np.int64))
+
+
+def test_transversal_neighborhoods_preserve_collision_and_chord_enclosures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(source_charts, "_PROOF_WORKSET_SIZE", 2)
+    bounds, hessian, surface, face, _ = _near_band_sphere_face()
+
+    def prove(
+        triangles: Sequence[source_charts.TriangleReference],
+    ) -> tuple[source_charts._PieceSteps, ...]:
+        return source_charts._face_piece_proofs(
+            surface,
+            face,
+            triangles,
+            source_orientation=1,
+            projected_axes=(0, 1, 2),
+            tolerance=0.01,
+            maximum_normal_deviation=None,
+        )
+
+    (outcome,) = source_charts._run_faces(
+        bounds,
+        hessian,
+        [
+            source_charts._prove_face_triangles(
+                prove,
+                tuple(_corner_triangle(level) for level in (7, 4, 8, 5, 6)),
+            )
+        ],
+    )
+    assert outcome is not None
+    pieces, detail = outcome
+    assert not detail
+    corners = np.asarray(
+        [
+            [[float(value) for value in point] for point in piece.triangle]
+            for piece in pieces
+        ],
+        dtype=np.float64,
+    )
+    reference_low, reference_high = corners.min(axis=1), corners.max(axis=1)
+    observed: list[int] = []
+    for (
+        start,
+        neighborhoods,
+        midpoint_rows,
+        hessian_boxes,
+    ) in source_charts._transversal_neighborhoods(pieces):
+        for offset, (rows, midpoint, (low, high)) in enumerate(
+            zip(neighborhoods, midpoint_rows, hessian_boxes, strict=True)
+        ):
+            index = start + offset
+            observed.append(index)
+            expected = [
+                other
+                for other, piece in enumerate(pieces)
+                if all(
+                    first[0] <= second[1] and second[0] <= first[1]
+                    for first, second in zip(
+                        pieces[index].root_box, piece.root_box, strict=True
+                    )
+                )
+            ]
+            np.testing.assert_array_equal(rows, expected)
+            target = np.asarray(
+                [pieces[row].target_box for row in expected], dtype=np.float64
+            )
+            np.testing.assert_array_equal(
+                low.view(np.uint64), target[:, :, 0].min(axis=0).view(np.uint64)
+            )
+            np.testing.assert_array_equal(
+                high.view(np.uint64), target[:, :, 1].max(axis=0).view(np.uint64)
+            )
+            region_low = (
+                reference_low[expected].min(axis=0) - 4.0 * np.finfo(np.float64).eps
+            )
+            region_high = (
+                reference_high[expected].max(axis=0) + 4.0 * np.finfo(np.float64).eps
+            )
+            expected_midpoints = [
+                other
+                for other in range(len(pieces))
+                if all(
+                    reference_low[other, axis] <= region_high[axis]
+                    and region_low[axis] <= reference_high[other, axis]
+                    for axis in range(2)
+                )
+            ]
+            np.testing.assert_array_equal(midpoint, expected_midpoints)
+    assert observed == list(range(len(pieces)))
+
+
 def test_chart_worksets_preserve_face_coverage_and_input_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
