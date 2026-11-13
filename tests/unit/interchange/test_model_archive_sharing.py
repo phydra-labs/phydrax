@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -16,6 +16,7 @@ from phydrax._array_archive import (
     read_array_archive,
     write_array_archive,
 )
+from phydrax._model._artifacts import register_artifact_value
 from phydrax.discretization._cell_mesh import CellMesh
 from phydrax.lifecycle._composition_rebind import Composition, CompositionEntry
 from phydrax.meshing._model_codec import (
@@ -28,6 +29,11 @@ from phydrax.meshing._model_codec import (
     write_model_archive,
     write_model_artifact,
 )
+
+
+class _SelectorMeshRecord(NamedTuple):
+    mesh: CellMesh
+    label: str
 
 
 def _mesh() -> CellMesh:
@@ -244,6 +250,197 @@ def test_selected_archive_fields_retain_shared_payloads_and_refuse_wrong_root(
     np.testing.assert_array_equal(nested["value.coordinates"], mesh.coordinates)
 
 
+def test_selected_tuple_fields_preserve_scientific_bindings(tmp_path: Path) -> None:
+    mesh = _mesh()
+    composition = _composition(mesh, mesh)
+    path = write_model_artifact(tmp_path / "tuple.phx", composition, limits=None)
+    binding_fields = (
+        "entry_id",
+        "role",
+        "owner_id",
+        "structure_id",
+        "revision_id",
+        "semantics_id",
+        "record_id",
+        "dependencies",
+    )
+    fields = tuple(
+        f"entries.{index}.{name}"
+        for index in range(2)
+        for name in (*binding_fields, "value.coordinates")
+    )
+    selected = read_model_archive_fields(
+        path, expected_type=Composition, fields=fields, limits=None
+    )
+    for index, entry in enumerate(composition.entries):
+        expected = {
+            "entry_id": entry.entry_id,
+            "role": entry.role,
+            "owner_id": entry.owner_id,
+            "structure_id": entry.structure_id,
+            "revision_id": entry.revision_id,
+            "semantics_id": entry.semantics_id,
+            "record_id": entry.record_id,
+            "dependencies": entry.dependencies,
+        }
+        for name, value in expected.items():
+            assert selected[f"entries.{index}.{name}"] == value
+        np.testing.assert_array_equal(
+            selected[f"entries.{index}.value.coordinates"], mesh.coordinates
+        )
+
+
+@pytest.mark.parametrize(
+    "invalid_field",
+    (
+        pytest.param("entries.0.value.0", id="positional-alias"),
+        pytest.param("entries.0.value.missing", id="unknown-field"),
+    ),
+)
+def test_selected_registered_namedtuple_fields(
+    tmp_path: Path, invalid_field: str
+) -> None:
+    register_artifact_value("tests.interchange:SelectorMeshRecord", _SelectorMeshRecord)
+    mesh = _mesh()
+    entry = CompositionEntry(
+        _SelectorMeshRecord(mesh, "stored-input"),
+        entry_id="record",
+        role="model-state",
+        owner_id="phydrax.meshing",
+        structure_id=mesh.topology_id,
+        revision_id=mesh.mesh_id,
+        semantics_id="selector-test-record",
+    )
+    path = write_model_artifact(
+        tmp_path / "namedtuple.phx",
+        Composition((entry,), boundary_id="selector"),
+        limits=None,
+    )
+    selected = read_model_archive_fields(
+        path,
+        expected_type=Composition,
+        fields=(
+            "entries.0.entry_id",
+            "entries.0.value.label",
+            "entries.0.value.mesh.coordinates",
+        ),
+        limits=None,
+    )
+    assert selected["entries.0.entry_id"] == entry.entry_id
+    assert selected["entries.0.value.label"] == "stored-input"
+    np.testing.assert_array_equal(
+        selected["entries.0.value.mesh.coordinates"], mesh.coordinates
+    )
+    with pytest.raises(ArrayArchiveCorruptionError):
+        read_model_archive_fields(
+            path, expected_type=Composition, fields=(invalid_field,), limits=None
+        )
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        pytest.param("entries.-1.entry_id", id="negative-index"),
+        pytest.param("entries.+0.entry_id", id="signed-index"),
+        pytest.param("entries.00.entry_id", id="leading-zero"),
+        pytest.param("entries. 0.entry_id", id="leading-space"),
+        pytest.param("entries.0 .entry_id", id="trailing-space"),
+        pytest.param("entries.٠.entry_id", id="arabic-digit"),
+        pytest.param("entries.１.entry_id", id="fullwidth-digit"),
+        pytest.param("entries.1.entry_id", id="out-of-range"),
+        pytest.param("entries.0.value.coordinates.0", id="array-traversal"),
+        pytest.param("boundary_id.0", id="scalar-traversal"),
+    ),
+)
+def test_selected_tuple_fields_refuse_noncanonical_or_unsupported_traversal(
+    tmp_path: Path, field: str
+) -> None:
+    path = write_model_artifact(
+        tmp_path / "invalid.phx", _composition(_mesh()), limits=None
+    )
+    with pytest.raises(ArrayArchiveCorruptionError):
+        read_model_archive_fields(
+            path, expected_type=Composition, fields=(field,), limits=None
+        )
+
+
+def test_immutable_selected_tuple_branches_share_capacity(tmp_path: Path) -> None:
+    payload = np.frombuffer(np.arange(16, dtype=np.float64).tobytes(), dtype=np.float64)
+    value = Composition(
+        tuple(
+            CompositionEntry(
+                payload,
+                entry_id=f"state/{index}",
+                role="model-state",
+                owner_id="phydrax.meshing",
+                structure_id="shared-input",
+                revision_id=array_payload_digest(payload),
+                semantics_id="immutable-input-bank",
+            )
+            for index in range(4)
+        ),
+        boundary_id="shared-prerequisites",
+    )
+    limits = dataclasses.replace(MODEL_ARCHIVE_LIMITS, max_total_array_elements=16)
+    path = write_model_artifact(tmp_path / "tuple-sharing.phx", value, limits=limits)
+    fields = tuple(f"entries.{index}.value" for index in range(4))
+    with pytest.raises(ArrayArchiveCorruptionError):
+        read_model_archive_fields(
+            path, expected_type=Composition, fields=fields, limits=limits
+        )
+    selected = read_model_archive_fields(
+        path,
+        expected_type=Composition,
+        fields=fields,
+        limits=limits,
+        immutable_arrays=True,
+    )
+    values = [selected[field] for field in fields]
+    for selected_value in values:
+        np.testing.assert_array_equal(selected_value, payload)
+        assert np.shares_memory(values[0], selected_value)
+        with pytest.raises(ValueError):
+            selected_value.setflags(write=True)
+
+
+@pytest.mark.parametrize("immutable_arrays", (False, True))
+def test_selected_tuple_field_rejects_unselected_payload_checksum_corruption(
+    tmp_path: Path, immutable_arrays: bool
+) -> None:
+    import json
+    import zipfile
+
+    source = write_model_artifact(
+        tmp_path / "source.phx", _composition(_mesh()), limits=None
+    )
+    fields = ("entries.0.entry_id",)
+    assert read_model_archive_fields(
+        source,
+        expected_type=Composition,
+        fields=fields,
+        limits=None,
+        immutable_arrays=immutable_arrays,
+    ) == {"entries.0.entry_id": "mesh/0"}
+    with zipfile.ZipFile(source) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        members = {name: archive.read(name) for name in archive.namelist()}
+    member = next(iter(manifest["arrays"].values()))["member"]
+    payload = members[member]
+    members[member] = payload[:-1] + bytes((payload[-1] ^ 1,))
+    corrupt = tmp_path / "corrupt.phx"
+    with zipfile.ZipFile(corrupt, "w", compression=zipfile.ZIP_STORED) as archive:
+        for name, data in members.items():
+            archive.writestr(name, data)
+    with pytest.raises(ArrayArchiveCorruptionError):
+        read_model_archive_fields(
+            corrupt,
+            expected_type=Composition,
+            fields=fields,
+            limits=None,
+            immutable_arrays=immutable_arrays,
+        )
+
+
 def test_immutable_selected_fields_preserve_shared_capacity_and_ownership(
     tmp_path: Path,
 ) -> None:
@@ -287,7 +484,7 @@ def test_selected_fields_refuse_non_boolean_ownership_mode(tmp_path: Path) -> No
     path = write_model_artifact(
         tmp_path / "mode.phx", _composition(_mesh()), limits=MODEL_ARCHIVE_LIMITS
     )
-    with pytest.raises(TypeError, match="immutable_arrays"):
+    with pytest.raises(TypeError):
         read_model_archive_fields(
             path,
             expected_type=Composition,

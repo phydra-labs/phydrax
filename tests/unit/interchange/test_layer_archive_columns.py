@@ -618,10 +618,17 @@ def test_immutable_prerequisites_charge_shared_column_owners_once(
     )
 
 
+@pytest.mark.parametrize(
+    ("field", "expected"),
+    (
+        pytest.param("boundary_id", "column-archive", id="root-field"),
+        pytest.param("entries.0.entry_id", "columns", id="tuple-field"),
+    ),
+)
 @pytest.mark.parametrize("change", ("index", "identity"))
 @pytest.mark.parametrize("immutable_arrays", (False, True), ids=("mutable", "immutable"))
 def test_selected_fields_reject_unselected_column_corruption(
-    tmp_path: Path, change: str, immutable_arrays: bool
+    tmp_path: Path, change: str, immutable_arrays: bool, field: str, expected: str
 ) -> None:
     source = write_model_artifact(
         tmp_path / "source.phx", _composition(_identity()), limits=MODEL_ARCHIVE_LIMITS
@@ -629,10 +636,10 @@ def test_selected_fields_reject_unselected_column_corruption(
     assert read_model_archive_fields(
         source,
         expected_type=Composition,
-        fields=("boundary_id",),
+        fields=(field,),
         limits=MODEL_ARCHIVE_LIMITS,
         immutable_arrays=immutable_arrays,
-    ) == {"boundary_id": "column-archive"}
+    ) == {field: expected}
     manifest, arrays = read_model_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     inventory = model_recipe_array_inventory(
         manifest["model_recipe"], prefix="model/leaves", limits=MODEL_ARCHIVE_LIMITS
@@ -659,7 +666,7 @@ def test_selected_fields_reject_unselected_column_corruption(
         read_model_archive_fields(
             changed,
             expected_type=Composition,
-            fields=("boundary_id",),
+            fields=(field,),
             limits=MODEL_ARCHIVE_LIMITS,
             immutable_arrays=immutable_arrays,
         )
