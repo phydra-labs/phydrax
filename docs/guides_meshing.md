@@ -298,6 +298,10 @@ content identities. Each raw subtree must reproduce its admitted recipe before
 column decoding; the reader discards unrequested records rather than rebuilding
 their enclosing target geometry. Selecting one field never bypasses malformed
 columns elsewhere, and admission still does not certify stored mathematics.
+Selected paths can traverse declared record fields, registered named-tuple fields,
+and canonical nonnegative decimal tuple indices. An index selects stored data;
+it does not establish scientific identity. Consumers must also check the selected
+owner, revision, and dependency bindings.
 Accepted-state reconstruction can borrow read-only NumPy leaves from immutable
 archive-byte snapshots after the complete archive and checksums are admitted.
 The ordinary array and model inventory readers retain their existing behavior;
@@ -1221,12 +1225,24 @@ boxes is sign-definite. Each possible-zero box is handled in one of three ways:
 - It is accepted once one exact face point `q` satisfies
   `max_{x in box} |x - q| <= tol`. The face parameter of `q` is chosen by
   Gauss–Newton, and `q` is enclosed from outward-rounded coefficients.
+  An exact affine face can instead bound only the zero set in a branch-proved
+  smooth box. On `F(x) = 0`, its plane residual `q(x)` equals `q(x) - λ F(x)`.
+  A centered enclosure with derivative `n - λ ∇F` cancels off-source normal
+  box width before bounding distance. Three outward-rounded edge halfspaces
+  must also prove that orthogonal projection remains inside the triangle.
+  Curved, uncertain, degenerate, or nonsmooth cases retain the ordinary proof.
 - It is dropped once its own enclosure is sign-definite.
 - Otherwise it is halved.
 
-Refinement therefore follows the zero set down to the tolerance scale only.
-Its cost grows with the surface area divided by `tol^2`, not with the domain
-volume. The source is never rediscovered globally. A far box, farther than
+Expanding face searches retain each query's minimum and evaluate only faces
+outside its previously searched, outward-rounded neighborhood. A nearby
+noncertifying face never stops the search for another face. No growing pair
+cache is retained; candidate completeness, enclosed point bounds, and the
+subdivision radius are unchanged.
+
+Refinement stays local to possible-zero boxes. Its depth also depends on the
+remaining distance margin and enclosure tightness; the source is not rediscovered
+globally. A far box, farther than
 `tol` from every face box (found by a BVH box query), whose corners certify a
 sign change contains a zero point beyond the tolerance: the bound is violated.
 A box that halving shrinks below `2^-24 tol` while still undecided leaves the

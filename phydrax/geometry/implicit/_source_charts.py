@@ -49,7 +49,14 @@ from ...geometry._certificate import FieldRegularity
 from ...geometry._contracts import CompiledGeometry
 from ...geometry._embedding_state import MeshCertificateFinding
 from ...geometry._interval_enclosure import (
+    Interval as ArrayInterval,
     interval_acos,
+    interval_add,
+    interval_divide,
+    interval_multiply,
+    interval_sqrt,
+    interval_square,
+    interval_subtract,
     IntervalExtensionError,
     prepare_interval_function,
     PreparedIntervalFunction,
@@ -5016,8 +5023,8 @@ class _FaceMaps:
     bvh: PackedBVH
 
 
-def _face_maps(faces: Sequence[_PreparedFace], /) -> _FaceMaps:
-    count = len(faces)
+def _face_maps(enclosures: Sequence[_FaceEnclosure], /) -> _FaceMaps:
+    count = len(enclosures)
     columns = {monomial: column for column, monomial in enumerate(_MONOMIALS)}
     middle = np.zeros((count, 3, len(_MONOMIALS)), dtype=np.float64)
     lower = np.zeros_like(middle)
@@ -5025,8 +5032,8 @@ def _face_maps(faces: Sequence[_PreparedFace], /) -> _FaceMaps:
     error = np.zeros((count, 3), dtype=np.float64)
     box_lower = np.empty((count, 3), dtype=np.float64)
     box_upper = np.empty((count, 3), dtype=np.float64)
-    for row, face in enumerate(faces):
-        for axis, value in enumerate(face.face_enclosure.values):
+    for row, enclosure in enumerate(enclosures):
+        for axis, value in enumerate(enclosure.values):
             for exponent, coefficient in value.center.items():
                 column = columns[(exponent[0], exponent[1])]
                 middle[row, axis, column] = float(coefficient)
@@ -5034,9 +5041,7 @@ def _face_maps(faces: Sequence[_PreparedFace], /) -> _FaceMaps:
                     coefficient
                 )
             error[row, axis] = value.error
-        box_lower[row], box_upper[row] = _enclosed_box(
-            face.face_enclosure, _STANDARD_TRIANGLE
-        )
+        box_lower[row], box_upper[row] = _enclosed_box(enclosure, _STANDARD_TRIANGLE)
     return _FaceMaps(
         middle,
         lower,
@@ -5046,6 +5051,198 @@ def _face_maps(faces: Sequence[_PreparedFace], /) -> _FaceMaps:
         box_upper,
         prepare_bvh(box_lower, box_upper, dtype=np.float64),
     )
+
+
+def _array_interval_dot(first: ArrayInterval, second: ArrayInterval, /) -> ArrayInterval:
+    """Three-coordinate dot product in fixed order with native endpoint arithmetic."""
+    product = interval_multiply(first, second)
+    lower, upper = np.asarray(product[0]), np.asarray(product[1])
+    total = (lower[..., 0], upper[..., 0])
+    for axis in (1, 2):
+        total = interval_add(total, (lower[..., axis], upper[..., axis]))
+    return total
+
+
+def _array_interval_cross(
+    first: ArrayInterval, second: ArrayInterval, /
+) -> ArrayInterval:
+    first_lower, first_upper = np.asarray(first[0]), np.asarray(first[1])
+    second_lower, second_upper = np.asarray(second[0]), np.asarray(second[1])
+    forward, backward = (1, 2, 0), (2, 0, 1)
+    return interval_subtract(
+        interval_multiply(
+            (first_lower[..., forward], first_upper[..., forward]),
+            (second_lower[..., backward], second_upper[..., backward]),
+        ),
+        interval_multiply(
+            (first_lower[..., backward], first_upper[..., backward]),
+            (second_lower[..., forward], second_upper[..., forward]),
+        ),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _AffineFacePlanes:
+    admitted: np.ndarray
+    origin: ArrayInterval
+    normal: ArrayInterval
+    squared_normal: ArrayInterval
+    edge_normals: tuple[ArrayInterval, ArrayInterval, ArrayInterval]
+    edge_origins: tuple[ArrayInterval, ArrayInterval, ArrayInterval]
+
+
+def _affine_face_planes(maps: _FaceMaps, /) -> _AffineFacePlanes | None:
+    """Prepare exact-affine face halfspaces once for one reverse-cover operation."""
+    admitted = np.all(
+        (maps.lower[:, :, 3:] == 0.0) & (maps.upper[:, :, 3:] == 0.0), axis=(1, 2)
+    ) & np.all(maps.error == 0.0, axis=1)
+    if not np.any(admitted):
+        return None
+    origin = (maps.lower[:, :, 0], maps.upper[:, :, 0])
+    first = (maps.lower[:, :, 1], maps.upper[:, :, 1])
+    second = (maps.lower[:, :, 2], maps.upper[:, :, 2])
+    normal = _array_interval_cross(first, second)
+    squared_normal = _array_interval_dot(normal, normal)
+    admitted &= (
+        (np.asarray(squared_normal[0]) > 0.0)
+        & np.isfinite(squared_normal[0])
+        & np.isfinite(squared_normal[1])
+    )
+    if not np.any(admitted):
+        return None
+    reverse_second = (-second[1], -second[0])
+    return _AffineFacePlanes(
+        admitted,
+        origin,
+        normal,
+        squared_normal,
+        (
+            _array_interval_cross(normal, first),
+            _array_interval_cross(normal, interval_subtract(second, first)),
+            _array_interval_cross(normal, reverse_second),
+        ),
+        (origin, interval_add(origin, first), interval_add(origin, second)),
+    )
+
+
+def _zero_set_candidate_bounds(
+    planes: _AffineFacePlanes,
+    faces: np.ndarray,
+    boxes: ArrayInterval,
+    centers: np.ndarray,
+    field_center: ArrayInterval,
+    gradients: ArrayInterval,
+    /,
+) -> np.ndarray:
+    """Enclose plane distance on F=0, only where projection stays inside the face."""
+    result = np.full(faces.shape, np.inf, dtype=np.float64)
+    contained = planes.admitted[faces].copy()
+    for edge_normal, edge_origin in zip(
+        planes.edge_normals, planes.edge_origins, strict=True
+    ):
+        normal = (np.asarray(edge_normal[0])[faces], np.asarray(edge_normal[1])[faces])
+        origin = (np.asarray(edge_origin[0])[faces], np.asarray(edge_origin[1])[faces])
+        halfspace = _array_interval_dot(normal, interval_subtract(boxes, origin))
+        contained &= np.asarray(halfspace[0]) >= 0.0
+    normal = (np.asarray(planes.normal[0])[faces], np.asarray(planes.normal[1])[faces])
+    gradient_middle = 0.5 * np.asarray(gradients[0]) + 0.5 * np.asarray(gradients[1])
+    normal_middle = 0.5 * normal[0] + 0.5 * normal[1]
+    axis = np.argmax(np.abs(gradient_middle), axis=1)
+    rows = np.arange(len(faces))
+    numerator, denominator = normal_middle[rows, axis], gradient_middle[rows, axis]
+    quotient = interval_divide((numerator, numerator), (denominator, denominator))
+    valid = contained & np.isfinite(quotient[0]) & np.isfinite(quotient[1])
+    selected = np.flatnonzero(valid)
+    if not selected.shape[0]:
+        return result
+    multiplier = (
+        0.5 * np.asarray(quotient[0])[selected] + 0.5 * np.asarray(quotient[1])[selected]
+    )
+    chosen_faces = faces[selected]
+    normal = (normal[0][selected], normal[1][selected])
+    origin = (
+        np.asarray(planes.origin[0])[chosen_faces],
+        np.asarray(planes.origin[1])[chosen_faces],
+    )
+    center = centers[selected]
+    center_plane = _array_interval_dot(
+        normal, interval_subtract((center, center), origin)
+    )
+    center_value = interval_subtract(
+        center_plane,
+        interval_multiply(
+            (multiplier, multiplier),
+            (
+                np.asarray(field_center[0])[selected],
+                np.asarray(field_center[1])[selected],
+            ),
+        ),
+    )
+    slopes = interval_subtract(
+        normal,
+        interval_multiply(
+            (multiplier[:, None], multiplier[:, None]),
+            (np.asarray(gradients[0])[selected], np.asarray(gradients[1])[selected]),
+        ),
+    )
+    offsets = interval_subtract(
+        (np.asarray(boxes[0])[selected], np.asarray(boxes[1])[selected]), (center, center)
+    )
+    # On F=0, q = q-lambda*F. Its centered derivative n-lambda*grad(F)
+    # keeps the cancellation of normal box width before taking the enclosure.
+    plane_value = interval_add(center_value, _array_interval_dot(slopes, offsets))
+    squared_distance = interval_divide(
+        interval_square(plane_value),
+        (
+            np.asarray(planes.squared_normal[0])[chosen_faces],
+            np.asarray(planes.squared_normal[1])[chosen_faces],
+        ),
+    )
+    result[selected] = interval_sqrt(squared_distance)[1]
+    return result
+
+
+def _zero_set_face_bounds(
+    bounds: _FieldEnclosures,
+    maps: _FaceMaps,
+    planes: _AffineFacePlanes,
+    box_lower: np.ndarray,
+    box_upper: np.ndarray,
+    tolerance: float,
+    /,
+) -> np.ndarray:
+    """Certified zero-set bounds on smooth boxes; other rows remain undecided."""
+    result = np.full((box_lower.shape[0],), np.inf, dtype=np.float64)
+    if bounds.selector != "interval" or not bounds.gradient_rigorous:
+        return result
+    _, _, gradient_lower, gradient_upper, smooth = _branch_box_bounds(
+        bounds, box_lower, box_upper
+    )
+    centers = 0.5 * box_lower + 0.5 * box_upper
+    value_lower, value_upper = _box_value_bounds(bounds, centers, centers)
+    selected = np.flatnonzero(
+        smooth
+        & np.all(np.isfinite(gradient_lower) & np.isfinite(gradient_upper), axis=1)
+        & np.isfinite(value_lower)
+        & np.isfinite(value_upper)
+    )
+    for boxes, faces in _box_face_pair_blocks(
+        maps, box_lower[selected], box_upper[selected], tolerance
+    ):
+        admitted = planes.admitted[faces]
+        rows, faces = selected[boxes[admitted]], faces[admitted]
+        if not rows.shape[0]:
+            continue
+        enclosed = _zero_set_candidate_bounds(
+            planes,
+            faces,
+            (box_lower[rows], box_upper[rows]),
+            centers[rows],
+            (value_lower[rows], value_upper[rows]),
+            (gradient_lower[rows], gradient_upper[rows]),
+        )
+        np.minimum.at(result, rows, enclosed)
+    return result
 
 
 def _monomial_values(first: np.ndarray, second: np.ndarray, /) -> np.ndarray:
@@ -5423,25 +5620,74 @@ def _possible_zero_box_blocks(
         yield block[:count]
 
 
+def _source_box_face_bounds(
+    maps: _FaceMaps,
+    box_lower: np.ndarray,
+    box_upper: np.ndarray,
+    tolerance: float,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return source-box radii and distance bounds from expanding face neighborhoods."""
+    centers = 0.5 * box_lower + 0.5 * box_upper
+    radius = _distance_upper(box_lower, box_upper, centers, centers)
+    reach = np.full((box_lower.shape[0],), np.inf, dtype=np.float64)
+    trial = np.flatnonzero(radius <= tolerance)
+    search = tolerance * 2.0**-6
+    previous_search: float | None = None
+    while trial.shape[0] and search <= 2.0 * tolerance:
+        selected = centers[trial]
+        if previous_search is not None:
+            previous_lower = np.nextafter(selected - previous_search, -np.inf)
+            previous_upper = np.nextafter(selected + previous_search, np.inf)
+        for boxes, faces in _box_face_pair_blocks(maps, selected, selected, search):
+            if previous_search is not None:
+                # Every retained query visited all faces intersecting its
+                # previous outward-rounded box. Repeating those identical
+                # point bounds cannot improve its retained minimum.
+                fresh = np.any(
+                    (maps.box_lower[faces] > previous_upper[boxes])
+                    | (maps.box_upper[faces] < previous_lower[boxes]),
+                    axis=1,
+                )
+                boxes, faces = boxes[fresh], faces[fresh]
+                if not boxes.shape[0]:
+                    continue
+            rows = trial[boxes]
+            first, second = _nearest_face_parameters(maps, faces, centers[rows])
+            point_lower, point_upper = _face_point_enclosures(maps, faces, first, second)
+            np.minimum.at(
+                reach,
+                rows,
+                _distance_upper(
+                    box_lower[rows], box_upper[rows], point_lower, point_upper
+                ),
+            )
+        trial = trial[reach[trial] > tolerance]
+        previous_search = search
+        search = math.nextafter(2.0 * search, math.inf)
+    return radius, reach
+
+
 def _source_to_mesh_bounds(
     surface: AdaptiveImplicitSurface, maps: _FaceMaps, tolerance: float, /
 ) -> tuple[float, float]:
     """Certified lower and upper bounds of the zero set's distance to the target mesh.
 
     The retained cover proves every box outside its possible-zero boxes
-    sign-definite. Each possible-zero box is accepted once one exact face point
-    ``q`` has ``max_{x in box} |x - q| <= tolerance``, is dropped once its own
-    enclosure is sign-definite, and is otherwise halved, so only boxes along
-    the zero set refine and only down to the tolerance scale. A box farther
-    than the tolerance from every face box whose corners certify a sign change
-    holds a zero point beyond the tolerance (the violated lower bound). The
-    upper bound is infinite once a box reaches the refinement floor undecided.
+    sign-definite. A possible-zero box is accepted by an enclosed face point
+    or a smooth zero-set-constrained affine-face bound, dropped if its own
+    enclosure is sign-definite, and otherwise halved. Refinement depth also
+    depends on the remaining distance margin and enclosure tightness. A box
+    farther than the tolerance from every face box whose corners certify a
+    sign change holds a zero point beyond the tolerance (the violated lower bound).
+    The upper bound is infinite once a box reaches the refinement floor undecided.
     Retained source roots bound the distance from below.
     """
     cover = surface.cover
     if cover is None:
         return 0.0, math.inf
     bounds = surface.volume.bounds
+    planes = _affine_face_planes(maps)
     lower_bound = _witness_distance_lower(
         maps,
         np.asarray(surface.boundary_witnesses, dtype=np.float64).reshape((-1, 3)),
@@ -5470,37 +5716,20 @@ def _source_to_mesh_bounds(
         if not pending.shape[0]:
             continue
         box_lower, box_upper = pending[:, 0], pending[:, 1]
-        radius = _distance_upper(
-            box_lower,
-            box_upper,
-            0.5 * box_lower + 0.5 * box_upper,
-            0.5 * box_lower + 0.5 * box_upper,
-        )
-        # A nearby face box is only a candidate: its actual enclosed face
-        # point may not prove the requested distance. Keep searching until
-        # a candidate certifies the box or the original reach limit is met.
-        reach = np.full((pending.shape[0],), np.inf, dtype=np.float64)
-        trial = np.flatnonzero(radius <= tolerance)
-        centers = 0.5 * box_lower + 0.5 * box_upper
-        search = tolerance * 2.0**-6
-        while trial.shape[0] and search <= 2.0 * tolerance:
-            for boxes, faces in _box_face_pair_blocks(
-                maps, centers[trial], centers[trial], search
-            ):
-                rows = trial[boxes]
-                first, second = _nearest_face_parameters(maps, faces, centers[rows])
-                point_lower, point_upper = _face_point_enclosures(
-                    maps, faces, first, second
-                )
-                np.minimum.at(
-                    reach,
-                    rows,
-                    _distance_upper(
-                        box_lower[rows], box_upper[rows], point_lower, point_upper
-                    ),
-                )
-            trial = trial[reach[trial] > tolerance]
-            search = math.nextafter(2.0 * search, math.inf)
+        # A nearby face box is only a candidate; keep searching until an
+        # enclosed face point certifies the box or the original reach limit.
+        radius, reach = _source_box_face_bounds(maps, box_lower, box_upper, tolerance)
+        undecided = np.flatnonzero(reach > tolerance)
+        if planes is not None and undecided.shape[0]:
+            constrained = _zero_set_face_bounds(
+                bounds,
+                maps,
+                planes,
+                box_lower[undecided],
+                box_upper[undecided],
+                tolerance,
+            )
+            reach[undecided] = np.minimum(reach[undecided], constrained)
         accepted = reach <= tolerance
         if np.any(accepted):
             upper_bound = max(upper_bound, float(np.max(reach[accepted])))
@@ -6439,7 +6668,9 @@ def certify_adaptive_implicit_charts(
             ),
         )
     source_to_mesh_lower, source_to_mesh_upper = _source_to_mesh_bounds(
-        adaptive.surface, _face_maps(root_map._faces), float(tolerance)
+        adaptive.surface,
+        _face_maps(tuple(face.face_enclosure for face in root_map._faces)),
+        float(tolerance),
     )
     per_face = np.asarray(
         [

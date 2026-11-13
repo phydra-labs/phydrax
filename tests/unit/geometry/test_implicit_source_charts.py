@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from dataclasses import replace
 from fractions import Fraction
 from typing import cast, final, NoReturn
@@ -24,6 +24,7 @@ from phydrax.discretization._cell_geometry import (
 )
 from phydrax.discretization._cell_geometry_validity import cell_geometry_id
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
+from phydrax.discretization._coordinate_enclosure import Polynomial
 from phydrax.discretization._exact_algebraic_geometry import ExactScalar
 from phydrax.discretization.fem._reference import (
     FiniteElementSpec,
@@ -1407,9 +1408,7 @@ def test_stationary_root_distance_encloses_independent_sphere_extrema(
         assert proof.target_to_source[1] <= tolerance
 
 
-def test_local_reverse_cover_proves_complete_meshes_and_refutes_missing_faces(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_local_reverse_cover_proves_complete_meshes_and_refutes_missing_faces() -> None:
     surface, source, _contract, mesh, geometry, witness = _adaptive_source()
     charts = prepare_adaptive_implicit_root_charts(
         mesh, geometry, source, witness, tolerance=0.5, maximum_normal_deviation=np.pi
@@ -1417,72 +1416,9 @@ def test_local_reverse_cover_proves_complete_meshes_and_refutes_missing_faces(
     faces = charts._faces
     tolerance = 0.05
 
-    maps = source_charts._face_maps(faces)
+    maps = source_charts._face_maps(tuple(face.face_enclosure for face in faces))
 
-    def original_blocks(
-        face_maps: source_charts._FaceMaps,
-        low: np.ndarray,
-        high: np.ndarray,
-        reach: float,
-    ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
-        if not len(low):
-            return
-        reached = source_charts.prepare_bvh(
-            np.nextafter(low - reach, -np.inf),
-            np.nextafter(high + reach, np.inf),
-            dtype=np.float64,
-        )
-        for face_rows, box_rows in source_charts.bvh_overlap_pair_blocks(
-            face_maps.bvh, reached, include_touching=True
-        ):
-            yield (
-                np.asarray(box_rows, dtype=np.int64),
-                np.asarray(face_rows, dtype=np.int64),
-            )
-
-    # Compare real native/host BVH streams and enclosed face controls across
-    # a small query and a query requiring full plus final-partial pair blocks.
-    point = np.asarray(surface.boundary_witnesses, dtype=np.float64)[:1]
-    for count in (3, source_charts._REVERSE_COVER_ROUND + 1):
-        points = np.repeat(point, count, axis=0)
-        old = list(original_blocks(maps, points, points, tolerance))
-        new = list(source_charts._box_face_pair_blocks(maps, points, points, tolerance))
-        assert old and new
-        for column in (0, 1):
-            assert np.array_equal(
-                np.concatenate([block[column] for block in old]),
-                np.concatenate([block[column] for block in new]),
-            )
-        if count > 3:
-            assert any(
-                len(boxes) == source_charts._REVERSE_COVER_ROUND for boxes, _ in new
-            )
-            assert 0 < len(new[-1][0]) < source_charts._REVERSE_COVER_ROUND
-
-        def controls(
-            blocks: list[tuple[np.ndarray, np.ndarray]],
-        ) -> tuple[np.ndarray, ...]:
-            rows = []
-            for box_rows, face_rows in blocks:
-                first, second = source_charts._nearest_face_parameters(
-                    maps, face_rows, points[box_rows]
-                )
-                low, high = source_charts._face_point_enclosures(
-                    maps, face_rows, first, second
-                )
-                rows.append((first, second, low, high))
-            return tuple(np.concatenate([row[i] for row in rows]) for i in range(4))
-
-        for previous, current in zip(controls(old), controls(new), strict=True):
-            assert np.array_equal(previous.view(np.uint64), current.view(np.uint64))
-
-    with monkeypatch.context() as patch:
-        patch.setattr(source_charts, "_box_face_pair_blocks", original_blocks)
-        old_lower, old_upper = source_charts._source_to_mesh_bounds(
-            surface, maps, tolerance
-        )
     lower, upper = source_charts._source_to_mesh_bounds(surface, maps, tolerance)
-    assert (lower, upper) == (old_lower, old_upper)
     assert 0.0 <= lower <= upper <= tolerance
 
     # Without the faces on the x > 0 side, the zero set there lies about one
@@ -1497,7 +1433,9 @@ def test_local_reverse_cover_proves_complete_meshes_and_refutes_missing_faces(
     ]
     assert 0 < len(kept) < len(faces)
     lower, upper = source_charts._source_to_mesh_bounds(
-        surface, source_charts._face_maps(kept), tolerance
+        surface,
+        source_charts._face_maps(tuple(face.face_enclosure for face in kept)),
+        tolerance,
     )
     assert lower > tolerance
     assert upper == np.inf
@@ -2723,4 +2661,137 @@ def test_reverse_cover_searches_past_near_noncertifying_face() -> None:
     assert np.array_equal(np.concatenate([faces for _, faces in first]), np.asarray([0]))
     lower_bound, upper_bound = source_charts._source_to_mesh_bounds(surface, maps, 0.02)
     assert lower_bound == 0.0
-    assert upper_bound == 0.013992911797843887
+    assert 0.0 < upper_bound <= 0.02
+
+
+def _reverse_plane_maps(
+    vertices: tuple[tuple[Fraction, ...], ...],
+) -> source_charts._FaceMaps:
+    first, second, third = vertices
+
+    def coordinate(axis: int) -> Polynomial:
+        return {
+            (0, 0): first[axis],
+            (1, 0): second[axis] - first[axis],
+            (0, 1): third[axis] - first[axis],
+        }
+
+    enclosure = source_charts._enclose_face((coordinate(0), coordinate(1), coordinate(2)))
+    return source_charts._face_maps((enclosure,))
+
+
+@pytest.mark.parametrize("reverse", (False, True), ids=("forward", "reversed"))
+def test_reverse_zero_constraint_encloses_rotated_sphere_distance(reverse: bool) -> None:
+    distance = Fraction(1, 100)
+    normal = (Fraction(3, 5), Fraction(0), Fraction(4, 5))
+    tangent = (Fraction(4, 5), Fraction(0), Fraction(-3, 5))
+    transverse = (Fraction(0), Fraction(1), Fraction(0))
+    vertices = tuple(
+        tuple(
+            (1 - distance) * normal[axis]
+            + first * tangent[axis]
+            + second * transverse[axis]
+            for axis in range(3)
+        )
+        for first, second in ((-1, -1), (1, -1), (0, 1))
+    )
+    if reverse:
+        vertices = (vertices[0], vertices[2], vertices[1])
+    maps = _reverse_plane_maps(vertices)
+    planes = source_charts._affine_face_planes(maps)
+    assert planes is not None
+    bounds = adaptive_discovery._FieldEnclosures(
+        phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile(), "interval"
+    )
+    center = np.asarray([[float(value) for value in normal]], dtype=np.float64)
+    lower, upper = center - 2.0**-12, center + 2.0**-12
+    tolerance = 0.010001
+    _, point_bound = source_charts._source_box_face_bounds(maps, lower, upper, tolerance)
+    assert point_bound[0] > tolerance
+    enclosed = source_charts._zero_set_face_bounds(
+        bounds, maps, planes, lower, upper, tolerance
+    )
+    # The rational unit normal is an exact sphere point; its closest face
+    # point is (1-distance)*normal, strictly inside either triangle orientation.
+    assert Fraction(float(enclosed[0])) >= distance
+    assert enclosed[0] <= tolerance
+    refused = source_charts._zero_set_face_bounds(
+        bounds, maps, planes, lower, upper, 0.009999
+    )
+    assert refused[0] > 0.009999
+
+
+def test_reverse_zero_constraint_refuses_projection_outside_triangle() -> None:
+    height = Fraction(99, 100)
+    maps = _reverse_plane_maps(
+        (
+            (Fraction(-1), Fraction(1), height),
+            (Fraction(1), Fraction(1), height),
+            (Fraction(1), Fraction(-1, 4), height),
+        )
+    )
+    planes = source_charts._affine_face_planes(maps)
+    assert planes is not None
+    bounds = adaptive_discovery._FieldEnclosures(
+        phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile(), "interval"
+    )
+    center = np.asarray([[0.0, 0.0, 1.0]], dtype=np.float64)
+    lower, upper = center - 2.0**-12, center + 2.0**-12
+    tolerance = 0.010001
+    # The face box intersects the reached query, but its triangle does not
+    # contain the projection. Distance to the infinite plane is insufficient.
+    assert np.all(maps.box_lower <= upper + tolerance)
+    assert np.all(maps.box_upper >= lower - tolerance)
+    enclosed = source_charts._zero_set_face_bounds(
+        bounds, maps, planes, lower, upper, tolerance
+    )
+    assert np.isinf(enclosed[0])
+
+
+def test_reverse_zero_constraint_requires_smooth_source_box() -> None:
+    height = Fraction(79, 100)
+    maps = _reverse_plane_maps(
+        (
+            (Fraction(-1), Fraction(-1), height),
+            (Fraction(1), Fraction(-1), height),
+            (Fraction(0), Fraction(1), height),
+        )
+    )
+    planes = source_charts._affine_face_planes(maps)
+    assert planes is not None
+    geometry = phx.geometry.Union(
+        (
+            phx.geometry.Sphere((-0.6, 0.0, 0.0), 1.0, feature_id="left"),
+            phx.geometry.Sphere((0.6, 0.0, 0.0), 1.0, feature_id="right"),
+        )
+    ).compile()
+    bounds = adaptive_discovery._FieldEnclosures(geometry, "interval")
+    center = np.asarray([[0.0, 0.0, 0.8]], dtype=np.float64)
+    enclosed = source_charts._zero_set_face_bounds(
+        bounds, maps, planes, center - 2.0**-12, center + 2.0**-12, 0.010001
+    )
+    assert np.isinf(enclosed[0])
+
+
+def test_reverse_affine_plane_admission_refuses_curved_face() -> None:
+    enclosure = source_charts._enclose_face(
+        (
+            {(1, 0): Fraction(1)},
+            {(0, 1): Fraction(1)},
+            {(0, 0): Fraction(99, 100), (2, 0): Fraction(1, 100)},
+        )
+    )
+    assert (
+        source_charts._affine_face_planes(source_charts._face_maps((enclosure,))) is None
+    )
+
+
+def test_reverse_affine_plane_admission_refuses_degenerate_face() -> None:
+    maps = _reverse_plane_maps(
+        (
+            (Fraction(0), Fraction(0), Fraction(1)),
+            (Fraction(1), Fraction(2), Fraction(1)),
+            (Fraction(2), Fraction(4), Fraction(1)),
+        )
+    )
+    assert source_charts._affine_face_planes(maps) is None

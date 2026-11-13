@@ -12,6 +12,10 @@
   unselected column validation, without widening archive limits or weakening
   corruption checks. Mutable reads retain independent buffers and occurrence
   accounting; selected fields remain inputs, not restored scientific authority.
+- Staged model-archive selection traverses declared record fields, registered
+  named-tuple fields, and canonical nonnegative tuple indices. Full archive
+  admission and unselected-column validation remain mandatory; positions do
+  not replace scientific owner and dependency bindings.
 - Reconstruction qualification exposes the actual prepared refinement alongside
   its accepted result and supports an optional host checkpoint after physical
   reanalysis, before topology-result construction. Checkpoints retain the
@@ -239,6 +243,14 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Reverse implicit source coverage skips already evaluated box/face pairs when
+  expanding candidate neighborhoods. It preserves enclosed distance bounds,
+  subdivision radii, deterministic decisions, and failure semantics without
+  retaining an unbounded pair cache.
+- Reverse implicit coverage can certify smooth source boxes against exact
+  affine faces using a centered zero-set constraint and proved triangle
+  containment. Bounds may tighten without changing source geometry or
+  fidelity tolerances; unproved cases retain point bounds and subdivision.
 - Native tetrahedral metric adaptation can propose coupled endpoint and periodic
   orbit relocations after ordinary phases stall, preserving source-positive
   interpolation, actual metric progress, protection, and native admission.
