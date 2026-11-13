@@ -513,6 +513,14 @@ header, nesting, and central-directory checks remain unchanged. Other profiles r
 64 MiB manifests; library defaults, archive representation, and scientific
 identities do not change.
 
+Implicit chart certification schedules independent face and piece continuations
+in 1,024-lane worksets. This bounds active numerical scratch and interval-query
+buffers, not the total number of faces, subdivisions, or proof rounds. Required
+input topology and completed proof records retain their actual sizes. Per-piece
+mathematics and response sequences, output row order, crease refusals, and
+binary64-resolution decisions remain unchanged. Consumed round replies are
+released before the next refinement round.
+
 ## 11. Geometry and field transitions, periodicity, distribution and consumers
 
 ### 11.1 Coordinate and field transfer

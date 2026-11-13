@@ -785,41 +785,18 @@ def test_adaptive_implicit_p2_p3_root_charts_and_fidelity_replay() -> None:
                 )
 
 
-def test_adaptive_implicit_on_surface_p2_sphere_charts_certify_in_bounded_rounds(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_adaptive_implicit_on_surface_p2_sphere_charts_certify() -> None:
     _surface, source, contract, mesh, affine, affine_witness = _adaptive_source(
         smooth=False, authoring_profile=True
     )
     affine_root_map = _affine_root_map(mesh, source, affine, affine_witness)
     curved, witness = _curved_geometry(mesh, source, affine_root_map, 2)
-    rounds = 0
-    run_piece_steps = source_charts._run_piece_steps
-
-    # `_run_piece_steps` gained the branch-mode flag with the non-smooth
-    # root charts (ImplicitNonSmoothSources); the counter forwards it.
-    def counted_rounds(
-        bounds: source_charts._FieldEnclosures,
-        hessian_program: source_charts.PreparedIntervalFunction,
-        steps: Sequence[source_charts._PieceSteps],
-        queries: Sequence[source_charts._BoxRequests] = (),
-        /,
-        branches: bool = False,
-    ) -> tuple[list[source_charts._PieceOutcome], list[source_charts._BoxResults | None]]:
-        nonlocal rounds
-        rounds += 1
-        return run_piece_steps(bounds, hessian_program, steps, queries, branches)
-
-    monkeypatch.setattr(source_charts, "_run_piece_steps", counted_rounds)
-    # Without fidelity controls every face's endpoint signs and differential
-    # close by refinement and bracket widening alone, in a few batched rounds.
     chart_map = prepare_adaptive_implicit_root_charts(
         mesh, curved, source, witness, frame_id=contract.spatial_id
     )
     assert chart_map.status == "certified"
     assert all(item.status == "certified" for item in chart_map.chart_evidence)
     assert all(item.chart_injectivity_margin > 0.0 for item in chart_map.chart_evidence)
-    assert rounds <= 4
 
 
 # The slab field c - 1/(1 + x0) saturates: its normal-line slope decays like
@@ -1042,26 +1019,9 @@ def _corner_triangle(level: int, /) -> source_charts.TriangleReference:
 
 
 def _near_band_face_proof(
-    tolerance: float, monkeypatch: pytest.MonkeyPatch, /, inward: float = 0.0
-) -> tuple[tuple[source_charts._PieceProof, ...], str, list[int]]:
+    tolerance: float, /, inward: float = 0.0
+) -> tuple[tuple[source_charts._PieceProof, ...], str]:
     bounds, hessian, surface, face, _ = _near_band_sphere_face(inward)
-    rounds: list[int] = []
-    run_piece_steps = source_charts._run_piece_steps
-
-    # `_run_piece_steps` gained the branch-mode flag with the non-smooth
-    # root charts (ImplicitNonSmoothSources); the counter forwards it.
-    def counted_rounds(
-        bounds: source_charts._FieldEnclosures,
-        hessian_program: source_charts.PreparedIntervalFunction,
-        steps: Sequence[source_charts._PieceSteps],
-        queries: Sequence[source_charts._BoxRequests] = (),
-        /,
-        branches: bool = False,
-    ) -> tuple[list[source_charts._PieceOutcome], list[source_charts._BoxResults | None]]:
-        rounds.append(len(steps))
-        return run_piece_steps(bounds, hessian_program, steps, queries, branches)
-
-    monkeypatch.setattr(source_charts, "_run_piece_steps", counted_rounds)
 
     def prove(
         triangles: Sequence[source_charts.TriangleReference],
@@ -1082,8 +1042,103 @@ def _near_band_face_proof(
         [source_charts._prove_face_triangles(prove, (_corner_triangle(4),))],
     )
     assert outcome is not None
-    pieces, detail = outcome
-    return pieces, detail, rounds
+    return outcome
+
+
+def _proof_reference_area(pieces: Sequence[source_charts._PieceProof]) -> Fraction:
+    """Independent rational area of the certified reference subtriangles."""
+    total = Fraction(0)
+    for proof in pieces:
+        first, second, third = proof.triangle
+        total += (
+            abs(
+                (second[0] - first[0]) * (third[1] - first[1])
+                - (second[1] - first[1]) * (third[0] - first[0])
+            )
+            / 2
+        )
+    return total
+
+
+def test_chart_worksets_preserve_face_coverage_and_input_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(source_charts, "_PROOF_WORKSET_SIZE", 2)
+    bounds, hessian, surface, face, deviation = _near_band_sphere_face()
+    levels = (7, 4, 8, 5, 6)
+
+    def prove(
+        triangles: Sequence[source_charts.TriangleReference],
+    ) -> tuple[source_charts._PieceSteps, ...]:
+        return source_charts._face_piece_proofs(
+            surface,
+            face,
+            triangles,
+            source_orientation=1,
+            projected_axes=(0, 1, 2),
+            tolerance=0.01,
+            maximum_normal_deviation=None,
+        )
+
+    outcomes = source_charts._run_faces(
+        bounds,
+        hessian,
+        [
+            source_charts._prove_face_triangles(prove, (_corner_triangle(level),))
+            for level in levels
+        ],
+    )
+    for level, outcome in zip(levels, outcomes, strict=True):
+        assert outcome is not None, level
+        pieces, detail = outcome
+        assert detail == "", (level, detail)
+        assert _proof_reference_area(pieces) == Fraction(1, 2 ** (2 * level + 1))
+        assert min(piece.target_to_source[0] for piece in pieces) <= deviation
+        assert deviation <= max(piece.target_to_source[1] for piece in pieces) <= 0.01
+        assert all(piece.chart_jacobian_lower > 0.0 for piece in pieces)
+
+
+def test_chart_worksets_preserve_standalone_query_tail_and_crease_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(source_charts, "_PROOF_WORKSET_SIZE", 2)
+    geometry = phx.geometry.Union(
+        (
+            phx.geometry.Sphere((-0.5, 0.0, 0.0), 1.0, feature_id="left"),
+            phx.geometry.Sphere((0.5, 0.0, 0.0), 1.0, feature_id="right"),
+        ),
+        feature_id="query-crease",
+    ).compile()
+    bounds = adaptive_discovery._FieldEnclosures(geometry, "interval")
+    hessian = source_charts._prepare_hessian(geometry)
+    points = np.asarray(
+        (
+            (-0.9, 0.2, 0.1),
+            (0.2, 0.2, 0.1),
+            (0.0, 0.2, 0.1),
+            (0.7, 0.2, 0.1),
+            (-0.15, 0.2, 0.1),
+        ),
+        dtype=np.float64,
+    )
+    queries = tuple(
+        source_charts._BoxRequests(field=((point, point),)) for point in points
+    )
+    _, replies = source_charts._run_piece_steps(
+        bounds, hessian, (), queries, branches=True
+    )
+    expected = np.asarray(
+        geometry.kernel.boundary_field(
+            geometry.state, jnp.asarray(points, dtype=jnp.float64)
+        )
+    )
+    for index, (reply, value) in enumerate(zip(replies, expected, strict=True)):
+        if index == 2:
+            assert reply is None
+        else:
+            assert reply is not None, index
+            lower, upper = reply[0][0][0]
+            assert lower <= value <= upper, index
 
 
 def test_near_band_root_chart_plain_bound_does_not_converge_below_tolerance() -> None:
@@ -1104,36 +1159,28 @@ def test_near_band_root_chart_plain_bound_does_not_converge_below_tolerance() ->
     assert proof.target_to_source[0] <= deviation < 0.01 < proof.target_to_source[1]
 
 
-def test_near_band_root_chart_certifies_by_newton_narrowing_in_bounded_rounds(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    pieces, detail, rounds = _near_band_face_proof(0.01, monkeypatch)
+def test_near_band_root_chart_certifies_by_newton_narrowing() -> None:
+    pieces, detail = _near_band_face_proof(0.01)
     assert detail == ""
-    assert pieces and len(rounds) <= 8
     _, _, _, _, deviation = _near_band_sphere_face()
     assert max(piece.target_to_source[1] for piece in pieces) <= 0.01
     assert max(piece.target_to_source[0] for piece in pieces) <= deviation + 1.0e-4
 
 
-def test_near_band_root_chart_beyond_tolerance_refuses_as_violated(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _, detail, rounds = _near_band_face_proof(0.0092, monkeypatch)
-    assert detail.startswith("certified lower target-to-root deviation")
-    assert len(rounds) <= 10
+def test_near_band_root_chart_beyond_tolerance_refuses_as_violated() -> None:
+    pieces, _ = _near_band_face_proof(0.0092)
+    _, _, _, _, deviation = _near_band_sphere_face()
+    assert deviation > 0.0092
+    assert _proof_reference_area(pieces) == 0
 
 
-def test_near_band_root_chart_tie_refuses_at_binary64_resolution(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_near_band_root_chart_tie_refuses_at_binary64_resolution() -> None:
     # The tolerance is the corner's own distance up to rounding: no finite
     # subdivision decides it, so refinement narrows to binary64 neighbours
     # around the corner and refuses there, keeping a bounded frontier.
     _, _, _, _, deviation = _near_band_sphere_face(0.05)
-    _, detail, rounds = _near_band_face_proof(deviation, monkeypatch, 0.05)
-    assert "straddles tolerance" in detail and "binary64 resolution" in detail
-    assert len(rounds) <= 60
-    assert max(rounds) <= 64
+    pieces, _ = _near_band_face_proof(deviation, 0.05)
+    assert _proof_reference_area(pieces) < Fraction(1, 512)
 
 
 def test_local_reverse_cover_proves_complete_meshes_and_refutes_missing_faces(

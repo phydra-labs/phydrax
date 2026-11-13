@@ -1687,8 +1687,36 @@ _CREASE_OUTCOME: _PieceOutcome = (
     False,
 )
 
+# Independent proof continuations share pure point-map evaluations. Bound their
+# active numerical scratch, not the number of faces, pieces, or proof rounds.
+_PROOF_WORKSET_SIZE = 1024
+
 
 def _run_piece_steps(
+    bounds: _FieldEnclosures,
+    hessian_program: PreparedIntervalFunction,
+    steps: Sequence[_PieceSteps],
+    queries: Sequence[_BoxRequests] = (),
+    /,
+    branches: bool = False,
+) -> tuple[list[_PieceOutcome], list[_BoxResults | None]]:
+    """Finish every independent piece and query in bounded, ordered worksets."""
+    count = max(len(steps), len(queries))
+    if count <= _PROOF_WORKSET_SIZE:
+        return _run_piece_workset(bounds, hessian_program, steps, queries, branches)
+    outcomes: list[_PieceOutcome] = []
+    answers: list[_BoxResults | None] = []
+    for start in range(0, count, _PROOF_WORKSET_SIZE):
+        stop = start + _PROOF_WORKSET_SIZE
+        finished, answered = _run_piece_workset(
+            bounds, hessian_program, steps[start:stop], queries[start:stop], branches
+        )
+        outcomes.extend(finished)
+        answers.extend(answered)
+    return outcomes, answers
+
+
+def _run_piece_workset(
     bounds: _FieldEnclosures,
     hessian_program: PreparedIntervalFunction,
     steps: Sequence[_PieceSteps],
@@ -1749,6 +1777,29 @@ def _run_faces[T](
     /,
     branches: bool = False,
 ) -> list[T | None]:
+    """Complete all face proofs without retaining every face's live frontier."""
+    if len(faces) <= _PROOF_WORKSET_SIZE:
+        return _run_face_workset(bounds, hessian_program, faces, branches)
+    results: list[T | None] = []
+    for start in range(0, len(faces), _PROOF_WORKSET_SIZE):
+        results.extend(
+            _run_face_workset(
+                bounds,
+                hessian_program,
+                faces[start : start + _PROOF_WORKSET_SIZE],
+                branches,
+            )
+        )
+    return results
+
+
+def _run_face_workset[T](
+    bounds: _FieldEnclosures,
+    hessian_program: PreparedIntervalFunction,
+    faces: Sequence[_FaceSteps[T]],
+    /,
+    branches: bool = False,
+) -> list[T | None]:
     """Advance every face proof together, one batched round of piece proofs at a time.
 
     Each face yields its next round independently of the others; every round
@@ -1797,6 +1848,9 @@ def _run_faces[T](
                 results[index] = stop.value
                 finished_rows[index] = True
         active = following
+        # Replies are now owned only by the face proofs that retained them.
+        # Do not keep the preceding round alive while allocating the next one.
+        del outcomes, query_results, round_, face_outcomes, face_queries, answered
     if not all(finished_rows):
         raise RuntimeError("An implicit root-chart face proof did not finish.")
     return results

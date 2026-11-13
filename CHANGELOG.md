@@ -235,6 +235,11 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Implicit source-chart certification bounds live face/piece proof worksets
+  instead of materializing every pending continuation and interval query at once.
+  Completed round replies are released before the next round. Mathematical
+  refinement, output ordering, certificate identities, and refusal criteria are
+  unchanged; the working-set bound does not truncate proofs or relax accuracy.
 - The required `archived-layer-core` material qualification declares a 256 MiB
   manifest allowance independently of its unchanged 4 GiB archive budget.
   Writer and cold reader use the same explicit profile policy; other profiles,
