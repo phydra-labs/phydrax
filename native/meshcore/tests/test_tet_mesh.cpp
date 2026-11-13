@@ -3687,6 +3687,75 @@ void implicit_source_binding_owns_programs_and_refuses_wrong_orientation() {
   source.orientation = 1;
   PHX_CHECK(phx_mc_tet_mesh_create_with_implicit(&moved, &source) == PHX_MC_OK);
   PHX_CHECK(restored != nullptr);
+  phx_mc_tet_implicit_facet_refusal refusal{};
+  PHX_CHECK(phx_mc_tet_mesh_implicit_facet_refusal(restored, &refusal) == PHX_MC_OK);
+  PHX_CHECK(refusal.refused == 0);
+  const std::array<uint64_t, 3> affected{0, 1, 2};
+  const uint64_t moved_id = 4;
+  std::array<double, 3> proposal{.25, .25, .1};
+  phx_mc_tet_mesh_edit_request edit{};
+  edit.identity_bound = 1;
+  edit.source_id = source_id;
+  edit.source_id_length = sizeof(source_id) - 1;
+  edit.source_revision = revision;
+  edit.source_revision_length = sizeof(revision) - 1;
+  edit.source_map_id = binding;
+  edit.source_map_id_length = sizeof(binding) - 1;
+  edit.frame_id = frame;
+  edit.frame_id_length = sizeof(frame) - 1;
+  edit.kind = PHX_MC_TET_EDIT_RELOCATE;
+  edit.removed_cell_count = affected.size();
+  edit.removed_cell_ids = affected.data();
+  edit.changed_vertex_count = 1;
+  edit.changed_vertex_ids = &moved_id;
+  edit.changed_vertex_points = proposal.data();
+  int32_t decided = 0, edit_status = 0;
+  PHX_CHECK(phx_mc_tet_mesh_probe_edit(restored, &edit, &decided, &edit_status) == PHX_MC_OK);
+  PHX_CHECK(decided == 1 && edit_status == PHX_MC_TET_EDIT_UNCERTAIN_PREDICATE);
+  PHX_CHECK(phx_mc_tet_mesh_implicit_facet_refusal(restored, &refusal) == PHX_MC_OK);
+  PHX_CHECK(refusal.refused == 1 && refusal.generation == edit.expected_generation);
+  PHX_CHECK(refusal.facet_id < 3 && refusal.facet_source == 0 && refusal.orientation == 1);
+  PHX_CHECK(refusal.distance_refusals > 0 && refusal.status == edit_status);
+  bool found_proposal = false;
+  for (int corner = 0; corner < 3; ++corner) {
+    if (refusal.vertex_ids[corner] == moved_id) {
+      found_proposal = std::equal(proposal.begin(), proposal.end(), refusal.points + 3 * corner);
+    }
+  }
+  PHX_CHECK(found_proposal);
+  edit.kind = PHX_MC_TET_EDIT_SPLIT;
+  PHX_CHECK(phx_mc_tet_mesh_probe_edit(restored, &edit, &decided, &edit_status) == PHX_MC_OK);
+  PHX_CHECK(decided == 0);
+  PHX_CHECK(phx_mc_tet_mesh_implicit_facet_refusal(restored, &refusal) == PHX_MC_OK);
+  PHX_CHECK(refusal.refused == 0);
+  edit.kind = PHX_MC_TET_EDIT_RELOCATE;
+  PHX_CHECK(phx_mc_tet_mesh_probe_edit(restored, &edit, &decided, &edit_status) == PHX_MC_OK);
+  PHX_CHECK(decided == 1);
+  edit.expected_generation = 1;
+  PHX_CHECK(phx_mc_tet_mesh_probe_edit(restored, &edit, &decided, &edit_status) == PHX_MC_OK);
+  PHX_CHECK(decided == 0);
+  PHX_CHECK(phx_mc_tet_mesh_implicit_facet_refusal(restored, &refusal) == PHX_MC_OK);
+  PHX_CHECK(refusal.refused == 0);
+  edit.expected_generation = 0;
+  PHX_CHECK(phx_mc_tet_mesh_apply_edit(restored, &edit, &edit_status) == PHX_MC_OK);
+  PHX_CHECK(edit_status == PHX_MC_TET_EDIT_UNCERTAIN_PREDICATE);
+  PHX_CHECK(phx_mc_tet_mesh_implicit_facet_refusal(restored, &refusal) == PHX_MC_OK);
+  PHX_CHECK(refusal.refused == 1 && refusal.distance_refusals > 0);
+  PHX_CHECK(phx_mc_tet_mesh_clear_implicit_facet_refusal(restored) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_tet_mesh_implicit_facet_refusal(restored, &refusal) == PHX_MC_OK);
+  PHX_CHECK(refusal.refused == 0);
+  PHX_CHECK(phx_mc_tet_mesh_apply_edit(restored, &edit, &edit_status) == PHX_MC_OK);
+  PHX_CHECK(edit_status == PHX_MC_TET_EDIT_UNCERTAIN_PREDICATE);
+  PHX_CHECK(phx_mc_tet_mesh_bind_implicit(restored, &source) != PHX_MC_OK);
+  PHX_CHECK(phx_mc_tet_mesh_implicit_facet_refusal(restored, &refusal) == PHX_MC_OK);
+  PHX_CHECK(refusal.refused == 0);
+  PHX_CHECK(phx_mc_tet_mesh_apply_edit(restored, &edit, &edit_status) == PHX_MC_OK);
+  PHX_CHECK(edit_status == PHX_MC_TET_EDIT_UNCERTAIN_PREDICATE);
+  proposal[2] = .001;
+  PHX_CHECK(phx_mc_tet_mesh_apply_edit(restored, &edit, &edit_status) == PHX_MC_OK);
+  PHX_CHECK(edit_status == PHX_MC_TET_EDIT_APPLIED);
+  PHX_CHECK(phx_mc_tet_mesh_implicit_facet_refusal(restored, &refusal) == PHX_MC_OK);
+  PHX_CHECK(refusal.refused == 0);
   phx_mc_tet_mesh_free(restored);
   restored = nullptr;
   moved_points[3] = 1.001;
@@ -3756,6 +3825,50 @@ void implicit_source_binding_owns_programs_and_refuses_wrong_orientation() {
   PHX_CHECK(tracked.relocate(std::span(&candidate, 1), star) == TetEditStatus::kUncertainPredicate);
   PHX_CHECK(tracked.generation() == accepted_generation);
   PHX_CHECK(tracked.implicit_source()->distance_refusals > 0);
+  PHX_CHECK(tracked.implicit_facet_refusal().has_value());
+  if (tracked.implicit_facet_refusal()) {
+    const auto& actual = *tracked.implicit_facet_refusal();
+    PHX_CHECK(actual.generation == accepted_generation && actual.facet_source == 0);
+    PHX_CHECK(actual.distance_refusals > 0 && actual.status == TetEditStatus::kUncertainPredicate);
+    const auto found = std::find(actual.vertex_ids.begin(), actual.vertex_ids.end(), candidate.id);
+    PHX_CHECK(found != actual.vertex_ids.end());
+    if (found != actual.vertex_ids.end()) {
+      PHX_CHECK(actual.points[static_cast<std::size_t>(found - actual.vertex_ids.begin())] ==
+                candidate.carrier);
+    }
+  }
+  PHX_CHECK(tracked.apply_edit_batch(stale, stale_results) == TetEditStatus::kStaleGeneration);
+  PHX_CHECK(!tracked.implicit_facet_refusal());
+  PHX_CHECK(tracked.relocate(std::span(&candidate, 1), star) == TetEditStatus::kUncertainPredicate);
+  PHX_CHECK(!tracked.bind_source_identity("different", revision, binding, frame, true));
+  PHX_CHECK(!tracked.implicit_facet_refusal());
+  TetEditBatch staged_batch{};
+  staged_batch.expected_generation = accepted_generation;
+  staged_batch.identity_bound = tracked.identity_bound();
+  staged_batch.source_id = tracked.source_id();
+  staged_batch.source_revision = tracked.source_revision();
+  staged_batch.source_map_id = tracked.source_map_id();
+  staged_batch.frame_id = tracked.frame_id();
+  staged_batch.periodic_identity = tracked.periodic_identity();
+  TetEdit staged_move{};
+  staged_move.kind = TetEditKind::kRelocate;
+  staged_move.removed_cell_ids.assign(star.begin(), star.end());
+  TetEditVertex staged_vertex = candidate;
+  staged_vertex.carrier[2] = .002;
+  staged_move.changed_vertices = {staged_vertex};
+  staged_batch.operations.push_back(staged_move);
+  staged_move.changed_vertices = {candidate};
+  staged_batch.operations.push_back(staged_move);
+  std::vector<TetEditResult> staged_results;
+  PHX_CHECK(tracked.apply_edit_batch(staged_batch, staged_results) ==
+            TetEditStatus::kUncertainPredicate);
+  PHX_CHECK(staged_results.size() == 2 &&
+            staged_results[1].status == TetEditStatus::kUncertainPredicate);
+  PHX_CHECK(tracked.implicit_facet_refusal().has_value());
+  if (tracked.implicit_facet_refusal()) {
+    PHX_CHECK(tracked.implicit_facet_refusal()->generation == accepted_generation);
+    PHX_CHECK(tracked.implicit_facet_refusal()->distance_refusals > 0);
+  }
   TetMeshSnapshot accepted_snapshot;
   PHX_CHECK(tracked.snapshot(accepted_snapshot) == TetEditStatus::kApplied);
   PHX_CHECK(accepted_snapshot.vertices[4].carrier[2] == .001);

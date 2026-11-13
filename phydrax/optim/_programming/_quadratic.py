@@ -720,21 +720,22 @@ def _farkas_certificate_single(
     inequality_dual: Array,
     tolerance: float,
 ) -> Array:
-    stationarity = (
-        equality_matrix.T @ equality_dual + inequality_matrix.T @ inequality_dual
-    )
+    # Fixed bounds are packed as signed equality multipliers; one-sided
+    # bounds are packed as inequality multipliers. Their maximum magnitudes
+    # match the corresponding split rays used by the independent audit.
     scale = jnp.maximum(
         1.0,
         jnp.maximum(_max_abs(equality_dual), _max_abs(inequality_dual)),
     )
-    certificate_tolerance = jnp.sqrt(
-        jnp.asarray(tolerance, dtype=inequality_matrix.dtype)
-    )
-    value = (equality_rhs @ equality_dual + inequality_rhs @ inequality_dual) / scale
+    equality_ray = equality_dual / scale
+    inequality_ray = inequality_dual / scale
+    stationarity = equality_matrix.T @ equality_ray + inequality_matrix.T @ inequality_ray
+    threshold = jnp.asarray(tolerance, dtype=inequality_matrix.dtype)
+    value = equality_rhs @ equality_ray + inequality_rhs @ inequality_ray
     return (
-        (_max_abs(stationarity) / scale <= certificate_tolerance)
-        & (value < -certificate_tolerance)
-        & (_min_value(inequality_dual) >= -certificate_tolerance)
+        (_max_abs(stationarity) <= threshold)
+        & (value < -threshold)
+        & (_min_value(inequality_ray) >= -threshold)
         & jnp.isfinite(value)
     )
 
@@ -753,6 +754,7 @@ def _dense_constrained_single(
     *,
     use_warm_start: bool,
     tolerance: float,
+    primal_infeasible_tolerance: float,
     max_iterations: int,
     regularization: float,
     step_fraction: float,
@@ -831,7 +833,7 @@ def _dense_constrained_single(
             inequality_rhs,
             equality_dual,
             inequality_dual,
-            tolerance,
+            primal_infeasible_tolerance,
         )
         return (iterations < max_iterations) & (residual_norm > tolerance) & ~infeasible
 
@@ -924,6 +926,7 @@ def _dense_finite_single(
     *,
     use_warm_start: bool,
     tolerance: float,
+    primal_infeasible_tolerance: float,
     max_iterations: int,
     regularization: float,
     step_fraction: float,
@@ -962,6 +965,7 @@ def _dense_finite_single(
         initial_inequality_dual,
         initial_equality_dual,
         tolerance=tolerance,
+        primal_infeasible_tolerance=primal_infeasible_tolerance,
         use_warm_start=use_warm_start,
         max_iterations=max_iterations,
         regularization=regularization,
@@ -999,6 +1003,7 @@ def _dense_single(
     *,
     use_warm_start: bool,
     tolerance: float,
+    primal_infeasible_tolerance: float,
     max_iterations: int,
     regularization: float,
     step_fraction: float,
@@ -1029,6 +1034,7 @@ def _dense_single(
             initial_inequality_dual,
             initial_equality_dual,
             tolerance=tolerance,
+            primal_infeasible_tolerance=primal_infeasible_tolerance,
             use_warm_start=use_warm_start,
             max_iterations=max_iterations,
             regularization=regularization,
@@ -1158,6 +1164,7 @@ def _warm_start_arrays(
     static_argnames=(
         "use_warm_start",
         "tolerance",
+        "primal_infeasible_tolerance",
         "max_iterations",
         "regularization",
         "step_fraction",
@@ -1177,6 +1184,7 @@ def _solve_dense_arrays(
     initial_equality_dual: Array | None = None,
     use_warm_start: bool = False,
     tolerance: float,
+    primal_infeasible_tolerance: float,
     max_iterations: int,
     regularization: float,
     step_fraction: float,
@@ -1207,6 +1215,7 @@ def _solve_dense_arrays(
     solve_one = partial(
         _dense_single,
         tolerance=tolerance,
+        primal_infeasible_tolerance=primal_infeasible_tolerance,
         max_iterations=max_iterations,
         regularization=regularization,
         step_fraction=step_fraction,
@@ -1689,6 +1698,7 @@ def solve_quadratic_program(
             initial_equality_dual=warm_arrays[3],
             use_warm_start=warm_start is not None,
             tolerance=tolerance,
+            primal_infeasible_tolerance=selected.termination.primal_infeasible,
             max_iterations=maximum_steps,
             regularization=regularization,
             step_fraction=step_fraction,
@@ -2042,7 +2052,7 @@ def _barrier_tangent_single(
     return tangent_scale * tangent[: primal.shape[0]]
 
 
-@partial(jax.custom_jvp, nondiff_argnums=(6, 7, 8, 9, 10, 11, 12))
+@partial(jax.custom_jvp, nondiff_argnums=(6, 7, 8, 9, 10, 11, 12, 13))
 def _barrier_primal_implicit(
     quadratic: Array,
     linear: Array,
@@ -2052,6 +2062,7 @@ def _barrier_primal_implicit(
     inequality_rhs: Array,
     max_iterations: int,
     tolerance: float,
+    primal_infeasible_tolerance: float,
     regularization: float,
     step_fraction: float,
     barrier: float,
@@ -2066,6 +2077,7 @@ def _barrier_primal_implicit(
         inequality_matrix,
         inequality_rhs,
         tolerance=tolerance,
+        primal_infeasible_tolerance=primal_infeasible_tolerance,
         max_iterations=max_iterations,
         regularization=regularization,
         step_fraction=step_fraction,
@@ -2097,6 +2109,7 @@ def _barrier_primal_implicit(
 def _barrier_primal_implicit_jvp(
     max_iterations: int,
     tolerance: float,
+    primal_infeasible_tolerance: float,
     regularization: float,
     step_fraction: float,
     barrier: float,
@@ -2124,6 +2137,7 @@ def _barrier_primal_implicit_jvp(
     primal, slack, inequality_dual, equality_dual, _, _ = _solve_dense_arrays(
         *primals,
         tolerance=tolerance,
+        primal_infeasible_tolerance=primal_infeasible_tolerance,
         max_iterations=max_iterations,
         regularization=regularization,
         step_fraction=step_fraction,
@@ -2372,7 +2386,7 @@ def _active_set_primal_valid_single(
     )
 
 
-@partial(jax.custom_jvp, nondiff_argnums=(6, 7, 8, 9, 10, 11))
+@partial(jax.custom_jvp, nondiff_argnums=(6, 7, 8, 9, 10, 11, 12))
 def _dense_primal_implicit(
     quadratic: Array,
     linear: Array,
@@ -2382,6 +2396,7 @@ def _dense_primal_implicit(
     inequality_rhs: Array,
     max_iterations: int,
     tolerance: float,
+    primal_infeasible_tolerance: float,
     regularization: float,
     step_fraction: float,
     active_set_tolerance: float,
@@ -2396,6 +2411,7 @@ def _dense_primal_implicit(
         inequality_matrix,
         inequality_rhs,
         tolerance=tolerance,
+        primal_infeasible_tolerance=primal_infeasible_tolerance,
         max_iterations=max_iterations,
         regularization=regularization,
         step_fraction=step_fraction,
@@ -2407,6 +2423,7 @@ def _dense_primal_implicit(
 def _dense_primal_implicit_jvp(
     max_iterations: int,
     tolerance: float,
+    primal_infeasible_tolerance: float,
     regularization: float,
     step_fraction: float,
     active_set_tolerance: float,
@@ -2433,6 +2450,7 @@ def _dense_primal_implicit_jvp(
     primal, slack, inequality_dual, equality_dual, converged, _ = _solve_dense_arrays(
         *primals,
         tolerance=tolerance,
+        primal_infeasible_tolerance=primal_infeasible_tolerance,
         max_iterations=max_iterations,
         regularization=regularization,
         step_fraction=step_fraction,
@@ -2547,6 +2565,7 @@ def solve_quadratic_program_primal(
             *arrays,
             maximum_steps,
             tolerance,
+            selected.termination.primal_infeasible,
             regularization,
             step_fraction,
             derivative.active_tolerance,
@@ -2559,6 +2578,7 @@ def solve_quadratic_program_primal(
             *arrays,
             maximum_steps,
             tolerance,
+            selected.termination.primal_infeasible,
             regularization,
             step_fraction,
             derivative.barrier,

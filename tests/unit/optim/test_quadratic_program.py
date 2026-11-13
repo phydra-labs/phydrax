@@ -189,6 +189,40 @@ def test_infeasible_and_nonfinite_inputs_have_distinct_explicit_statuses() -> No
     assert jnp.isnan(nonfinite_result.primal[0])
 
 
+def test_infeasibility_stop_requires_ray_at_declared_tolerance() -> None:
+    # Adding the constraints with weights (1, 1.0001, 1) gives 0 <= -1.
+    matrix = jnp.asarray([[1.0, 0.0], [0.0, 1.0], [-1.0, -1.0001]], dtype=jnp.float64)
+    rhs = jnp.asarray([0.0, 0.0, -1.0], dtype=jnp.float64)
+    termination = phx.optim.ConvexTermination(
+        absolute=1e-7, primal_infeasible=1e-8, maximum_steps=100
+    )
+    problem = phx.optim.QuadraticProgram(
+        jnp.eye(2, dtype=jnp.float64),
+        jnp.zeros(2, dtype=jnp.float64),
+        inequality_matrix=matrix,
+        inequality_rhs=rhs,
+    )
+
+    # The native initial dual is all ones: it is a loose but not a valid ray.
+    initial_residual = np.max(np.abs(np.asarray(matrix).T @ np.ones(3)))
+    assert (
+        termination.primal_infeasible < initial_residual < np.sqrt(termination.absolute)
+    )
+
+    result = phx.optim.solve_quadratic_program(
+        problem, policy=phx.optim.ConvexSolvePolicy(termination=termination)
+    )
+    assert result.status == phx.optim.ConvexProgramStatus.PRIMAL_INFEASIBLE
+    assert not result.valid
+    assert result.certificate.dual_ray_valid
+
+    ray = np.asarray(result.certificate.inequality_dual_ray)
+    tolerance = termination.primal_infeasible
+    assert np.min(ray) >= -tolerance
+    assert np.max(np.abs(np.asarray(matrix).T @ ray)) <= tolerance
+    assert np.asarray(rhs) @ ray < -tolerance
+
+
 def test_failure_policy_can_raise_on_audited_nonoptimal_status() -> None:
     problem = phx.optim.QuadraticProgram(
         jnp.eye(1),

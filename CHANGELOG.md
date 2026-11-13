@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- `TetraMetricProposalError` exposes actual coupled-proposal solver failure,
+  finite resource demand, policy, and source binding. Audited local
+  infeasibility prunes only its local model; failed numerical points are never
+  accepted or converted to global mesh infeasibility.
 - Staged model-archive field reads can explicitly retain immutable shared array
   ownership. Admission then charges each authenticated owner once, including
   unselected column validation, without widening archive limits or weakening
@@ -235,6 +239,16 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native tetrahedral metric adaptation can propose coupled endpoint and periodic
+  orbit relocations after ordinary phases stall, preserving source-positive
+  interpolation, actual metric progress, protection, and native admission.
+  Per-attempt implicit-facet refusal evidence is ephemeral and never persisted.
+  Relocation previews preserve checked-star cells, overlapping commits retain
+  deterministic ancestry, and exact inverse preparation is reused within one
+  unchanged search.
+- Native dense quadratic programs use the declared primal-infeasibility
+  tolerance for normalized-ray early stopping, matching the independent audit
+  across ordinary and custom-derivative routes without changing policy defaults.
 - Implicit source-chart certification bounds live face/piece proof worksets
   instead of materializing every pending continuation and interval query at once.
   Completed round replies are released before the next round. Mathematical

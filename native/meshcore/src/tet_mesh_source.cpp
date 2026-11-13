@@ -272,6 +272,7 @@ bool TetMesh::source_carrier_metric(const double* const* corners, SourceStratum 
 }
 
 int32_t TetMesh::prepare_implicit_source(std::shared_ptr<TetImplicitSource> source) {
+  clear_implicit_facet_refusal();
   if (!source || !points_.empty() || metric_active_ || implicit_source_ ||
       pending_implicit_source_) return PHX_MC_INVALID_ARGUMENT;
   pending_implicit_source_ = std::move(source);
@@ -279,6 +280,7 @@ int32_t TetMesh::prepare_implicit_source(std::shared_ptr<TetImplicitSource> sour
 }
 
 int32_t TetMesh::bind_implicit_source(std::shared_ptr<TetImplicitSource> source) {
+  clear_implicit_facet_refusal();
   if (!source || implicit_source_ || metric_active_ || periodic_identity_.bound ||
       !periodic_orbits_.empty() || !quotient_cells_.empty() || !periodic_entity_maps_.empty() ||
       source->groups.empty() || !std::isfinite(source->tolerance) ||
@@ -914,6 +916,17 @@ bool TetMesh::source_face_valid(const TetEditFacet& facet,
     if (!valid) {
       const int sign = admission.transversal_sign(vertices[0], vertices[1], vertices[2]);
       implicit_source_->last_inconclusive = sign == 0 || sign == implicit_source_->orientation;
+      TetImplicitFacetRefusal refusal;
+      refusal.generation = generation_;
+      refusal.facet_id = facet.id;
+      refusal.facet_source = facet.source;
+      refusal.orientation = facet.orientation;
+      refusal.vertex_ids = facet.vertices;
+      refusal.points = vertices;
+      refusal.transversality_refusals = admission.refusals().transversality;
+      refusal.distance_refusals = admission.refusals().distance;
+      refusal.status = source_face_refusal_status();
+      implicit_facet_refusal_ = refusal;
     }
     return valid;
   }

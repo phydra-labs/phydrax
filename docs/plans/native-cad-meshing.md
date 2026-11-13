@@ -320,6 +320,31 @@ All named A files below are donor-only on current dev; E files already exist. Ro
 
 **Required combination work, not merely admission labels:** source-aware tensor-metric finishing after initial tetrahedral fill; periodic-orbit-synchronized 3D tetrahedral edits; curved-source preservation and high-order coordinate transitions through selected edits; mixed-family refine/coarsen with layer/interface closure; labeled material junctions and original source fidelity through regeneration. Route/family/order/operation support is recorded from implemented positive cases, not an unrestricted Cartesian-product claim.
 
+When ordinary native metric phases cannot progress, bounded coupled endpoint or
+periodic-orbit models use native quadratic programming to propose source-positive
+displacements. The selected edge must improve its own violation rung without
+worsening higher-priority rungs. Frozen tensors only define the proposal:
+reinterpolated source metrics, actual global progress, determinant floors,
+protection, region constraints, exact periodic transport, and normal native
+admission remain authoritative. Actual associated implicit-facet refusals may
+add proposal planes; no geometry-specific oracle changes acceptance.
+
+`TetraMetricProposalError` retains the actual unsuccessful solver result when one
+exists, its policy, admitted demand, and source/generation/edge/source-cell
+binding. Only an independently audited local infeasibility certificate prunes
+that local model; numerical, certificate, and resource failures are not converted
+to a zero proposal, `STALLED`, or global mesh infeasibility. Native dense QP
+early stopping uses the same declared primal-infeasibility tolerance and
+normalized rays as the independent audit, including custom-derivative routes.
+
+Relocation previews retain the checked-star cells named by `removed_cell_ids`;
+those cells are validation context, not retired topology. Overlapping moves
+commit one deterministic affected-cell/source-ancestor union. Current-star
+exact preparation is reused only within one unchanged search, never in a
+global array cache. Native implicit-facet refusal diagnostics are ephemeral,
+generation/source-bound, and cleared across attempts, success, source changes,
+and handle lifetime; no persisted evidence or snapshot fields are added.
+
 **Approved thin-channel sizing correction:** the original `planar-thin-channel`
 positive uses a 0.02 m uniform target and corresponding 0.03 m maximum size,
 instead of 0.8 m and 1.2 m. Preserve its authored geometry, 25° minimum angle,

@@ -11,8 +11,11 @@ identity from coordinates.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass
 from fractions import Fraction
 from itertools import combinations, pairwise, product
+from types import MappingProxyType
 from typing import Any, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
@@ -39,6 +42,7 @@ from ..discretization._periodic_exact import (
     exact_periodic_generators,
     identification_id,
     identification_orders,
+    PeriodicMeshIdentification,
     reduce_periodic_exponents,
 )
 from ..discretization._periodic_topology import (
@@ -1115,6 +1119,180 @@ def periodic_entity_orbit_map(mesh: CellMesh, degree: int, /) -> PeriodicEntityO
         shifts,
         tuple(row for row in corner_rows if row is not None),
     )
+
+
+@dataclass(frozen=True)
+class _PeriodicStencilTransport:
+    """Host-only lookup bound to one immutable source mesh revision."""
+
+    source_mesh_id: str
+    cell: PeriodicMeshIdentification
+    orders: tuple[int, ...]
+    vertex_keys: Mapping[int, tuple[int, tuple[int, ...]]]
+    vertices_by_key: Mapping[tuple[int, tuple[int, ...]], int | None]
+    fixed_by_root: Mapping[int, tuple[bool, ...]]
+    points: Mapping[int, tuple[Fraction, ...]]
+
+
+def _prepare_periodic_stencil_transport(
+    mesh: CellMesh,
+    exact_points: tuple[tuple[Fraction, ...], ...] | None = None,
+) -> _PeriodicStencilTransport:
+    topology = mesh.periodic_topology
+    if topology is None:
+        raise ValueError("Periodic stencil transport requires periodic mesh topology.")
+    ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    representatives = np.asarray(topology.vertex_representatives, dtype=np.int64)
+    windings = np.asarray(topology.vertex_shifts, dtype=np.int64)
+    fixed = np.asarray(topology.vertex_fixed_generators, dtype=np.bool_)
+    orders = tuple(int(value) for value in identification_orders(topology.cell))
+    if (
+        ids.ndim != 1
+        or np.unique(ids).size != ids.size
+        or representatives.shape != ids.shape
+        or windings.shape != (ids.size, len(orders))
+        or fixed.shape != windings.shape
+        or np.any((representatives < 0) | (representatives >= ids.size))
+    ):
+        raise ValueError("Periodic vertex identity tables do not match the source mesh.")
+    coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
+    dimension = mesh.ambient_dimension
+    if coordinates.shape != (ids.size, dimension):
+        raise ValueError("Periodic source coordinates do not match the vertex table.")
+    if exact_points is not None and (
+        len(exact_points) != ids.size
+        or any(len(row) != dimension for row in exact_points)
+    ):
+        raise ValueError("Exact points must align with source mesh vertex rows.")
+    points = {
+        int(identifier): tuple(
+            Fraction(float(coordinates[row, axis]))
+            if exact_points is None
+            else exact_points[row][axis]
+            for axis in range(dimension)
+        )
+        for row, identifier in enumerate(ids)
+    }
+    vertex_keys: dict[int, tuple[int, tuple[int, ...]]] = {}
+    vertices_by_key: dict[tuple[int, tuple[int, ...]], int | None] = {}
+    fixed_by_root: dict[int, tuple[bool, ...]] = {}
+    for row, identifier in enumerate(ids):
+        root = int(ids[representatives[row]])
+        stabilizer = tuple(bool(value) for value in fixed[row])
+        if root in fixed_by_root and fixed_by_root[root] != stabilizer:
+            raise ValueError("Periodic vertex orbit has inconsistent stabilizers.")
+        fixed_by_root[root] = stabilizer
+        winding = tuple(
+            0 if is_fixed else int(value) % order if order else int(value)
+            for value, order, is_fixed in zip(
+                windings[row], orders, stabilizer, strict=True
+            )
+        )
+        key = (root, winding)
+        vertex_keys[int(identifier)] = key
+        vertices_by_key[key] = None if key in vertices_by_key else int(identifier)
+    return _PeriodicStencilTransport(
+        mesh.mesh_id,
+        topology.cell,
+        orders,
+        MappingProxyType(vertex_keys),
+        MappingProxyType(vertices_by_key),
+        MappingProxyType(fixed_by_root),
+        MappingProxyType(points),
+    )
+
+
+def _transport_periodic_vertex_ids(
+    prepared: _PeriodicStencilTransport,
+    vertices: tuple[int, ...],
+    shifts: np.ndarray,
+) -> tuple[int, ...] | None:
+    exponent = np.asarray(shifts)
+    if exponent.shape != (len(prepared.orders),) or exponent.dtype.kind not in "iu":
+        raise ValueError("Periodic transport requires one integer exponent row.")
+    result = []
+    for vertex in vertices:
+        key = prepared.vertex_keys.get(int(vertex))
+        if key is None:
+            return None
+        root, winding = key
+        target = tuple(
+            0
+            if is_fixed
+            else (value + int(delta)) % order
+            if order
+            else value + int(delta)
+            for value, delta, order, is_fixed in zip(
+                winding,
+                exponent,
+                prepared.orders,
+                prepared.fixed_by_root[root],
+                strict=True,
+            )
+        )
+        mapped = (
+            int(vertex)
+            if (root, target) == key
+            else prepared.vertices_by_key.get((root, target))
+        )
+        if mapped is None:
+            return None
+        result.append(mapped)
+    return tuple(result)
+
+
+def _transport_periodic_stencil(
+    prepared: _PeriodicStencilTransport,
+    stencil: Mapping[int, Fraction],
+    point: np.ndarray,
+    shifts: np.ndarray,
+) -> tuple[dict[int, Fraction], np.ndarray] | None:
+    vertices = tuple(sorted(stencil))
+    weights = tuple(stencil[vertex] for vertex in vertices)
+    if (
+        not weights
+        or any(
+            not isinstance(weight, Fraction)
+            or weight <= 0
+            or weight.denominator & (weight.denominator - 1)
+            for weight in weights
+        )
+        or sum(weights, Fraction()) != 1
+    ):
+        raise ValueError(
+            "Periodic stencil weights must be positive dyadic fractions summing to one."
+        )
+    mapped = _transport_periodic_vertex_ids(prepared, vertices, shifts)
+    if mapped is None or len(set(mapped)) != len(mapped):
+        return None
+    dimension = prepared.cell.ambient_dimension
+
+    def carrier(ids: tuple[int, ...]) -> np.ndarray:
+        return np.asarray(
+            [
+                float(
+                    sum(
+                        (
+                            weight * prepared.points[vertex][axis]
+                            for vertex, weight in zip(ids, weights, strict=True)
+                        ),
+                        Fraction(),
+                    )
+                )
+                for axis in range(dimension)
+            ],
+            dtype=np.float64,
+        )
+
+    source_point = np.asarray(point, dtype=np.float64)
+    if source_point.shape != (dimension,) or not np.array_equal(
+        carrier(vertices), source_point
+    ):
+        return None
+    image = carrier(mapped)
+    if not np.array_equal(image, apply_periodic(prepared.cell, source_point, shifts)):
+        return None
+    return dict(sorted(zip(mapped, weights, strict=True))), image
 
 
 def periodic_quotient_facet_cell_classes(

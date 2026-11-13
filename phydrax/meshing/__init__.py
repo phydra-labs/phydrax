@@ -14,6 +14,7 @@ from .._mesh_file_profiles import (
 # Re-exports load on first use, so importing one owner never imports the
 # whole package and its import cycles.
 _DEFERRED_EXPORTS = {
+    "TetraMetricProposalError": "._tetra_coupled",
     "OversetConnectivity": "._overset",
     "OversetConnectivityError": "._overset",
     "OversetDonorPacket": "._overset",
@@ -816,6 +817,7 @@ if TYPE_CHECKING:
         LatticeSpecimenSurface,
     )
     from ._surface_envelope import SurfaceEnvelopeSource as SurfaceEnvelopeSource
+    from ._tetra_coupled import TetraMetricProposalError as TetraMetricProposalError
     from ._trace import (
         MeshingDiagnostic,
         MeshingDiagnosticSeverity,
@@ -889,6 +891,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "TetraMetricProposalError",
     "BlockInterfaceControl",
     "NativePolyhedralSchedule",
     "NativeVolumeSchedule",
