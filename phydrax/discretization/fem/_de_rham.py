@@ -4907,11 +4907,8 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         int,
         int,
     ]:
-        from ._exact_form_moments import (
-            _reference_arguments,
-            exact_reference_form_moments,
-            MomentIntegralMatrix,
-        )
+        # Keep row ownership and evidence accumulation together across both routes.
+        from ._exact_form_moments import _ReferenceMomentCache
 
         source_dofs, target_dofs = (
             self.discretization.dof_maps[degree],
@@ -4942,10 +4939,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
             tuple[tuple[Fraction, ...], ...],
         ] = {}
         reference_gradient_cache: dict[str, np.ndarray] = {}
-        moment_cache: dict[
-            tuple[object, ...],
-            tuple[FiniteElementSpec, FiniteElementSpec, object, MomentIntegralMatrix],
-        ] = {}
+        moment_cache = _ReferenceMomentCache()
         for block_index, (block, element) in enumerate(
             zip(target.mesh.blocks, target.discretization.elements[degree], strict=True)
         ):
@@ -4962,9 +4956,6 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                         raise ValueError(
                             "Coarsened FE cells require partitioned form moments."
                         )
-                    from ._exact_form_moments import (
-                        exact_partitioned_reference_form_moments,
-                    )
                     from ._partition_form_moments import (
                         prepare_indexed_partitioned_reference_entities,
                     )
@@ -5021,7 +5012,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                             cell_transform_cache,
                             reference_gradient_cache,
                         )
-                        moments = exact_partitioned_reference_form_moments(
+                        moments = moment_cache.partitioned(
                             source_element,
                             element,
                             record,
@@ -5115,45 +5106,15 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                     cell_transform_cache,
                     reference_gradient_cache,
                 )
-                if prepared_orientation is not None:
-                    prepared_orientation.require(
-                        _reference_arguments(reference_map, target_basis.dimension),
-                        target_basis.family,
-                    )
-                moment_key = (
-                    id(source_element),
-                    id(element),
+                moments = moment_cache.nested(
+                    source_element,
+                    element,
+                    reference_map,
                     source_transform,
                     target_transform,
-                    prepared_orientation,
+                    integration_policy,
+                    prepared_orientation=prepared_orientation,
                 )
-                cached = moment_cache.get(moment_key)
-                if cached is None:
-                    moments = exact_reference_form_moments(
-                        source_element,
-                        element,
-                        reference_map,
-                        source_transform,
-                        target_transform,
-                        integration_policy,
-                        prepared_orientation=prepared_orientation,
-                    )
-                    moment_cache[moment_key] = (
-                        source_element,
-                        element,
-                        integration_policy,
-                        moments,
-                    )
-                else:
-                    cached_source, cached_target, cached_policy, moments = cached
-                    if (
-                        cached_source is not source_element
-                        or cached_target is not element
-                        or cached_policy is not integration_policy
-                    ):
-                        raise RuntimeError(
-                            "Exact form moment owners changed during transfer."
-                        )
                 source_columns = np.asarray(
                     source_dofs.cell_dofs[source_block][source_cell], dtype=np.int64
                 )

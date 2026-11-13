@@ -10,15 +10,16 @@ an absolute error bound for every local matrix entry.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
 from itertools import combinations, permutations, product
 from math import comb, factorial, fsum, prod
-from typing import Literal, Protocol, runtime_checkable, TYPE_CHECKING
+from typing import final, Literal, Protocol, runtime_checkable, TYPE_CHECKING
 
 import numpy as np
 import numpy.typing as npt
 
+from ..._host_table_cache import HostTableCache, logical_table_bytes
 from ...linalg._exact import solve_exact
 from ...typing import ConvertibleToArray
 from .. import _coordinate_enclosure as algebra
@@ -40,6 +41,7 @@ _Expression = _Polynomial | algebra.RationalPolynomial
 type _CellOrientationMatrix = (
     ConvertibleToArray | Sequence[Sequence[Fraction | int | float]]
 )
+type _ExactCellTransform = tuple[tuple[Fraction, ...], ...]
 type _Tetrahedron = tuple[
     tuple[Fraction, Fraction, Fraction],
     tuple[Fraction, Fraction, Fraction],
@@ -1893,6 +1895,21 @@ def exact_reference_form_moments(
     )
 
 
+def _validate_partition_moment_owners(
+    source: FiniteElementSpec,
+    target: FiniteElementSpec,
+    record: PartitionedReferenceEntities,
+    /,
+) -> None:
+    if not isinstance(record, PartitionedReferenceEntities):
+        raise TypeError("Expected prepared partitioned reference entities.")
+    if (
+        source.cell_kind != record.fine_cell_kind
+        or target.cell_kind != record.coarse_cell_kind
+    ):
+        raise ValueError("Partition piece cell kinds differ from the form elements.")
+
+
 def exact_partitioned_reference_form_moments(
     source: FiniteElementSpec,
     target: FiniteElementSpec,
@@ -1903,13 +1920,7 @@ def exact_partitioned_reference_form_moments(
     /,
 ) -> MomentIntegralMatrix:
     """Integrate one fine cell over its owned pieces of coarse target entities."""
-    if not isinstance(record, PartitionedReferenceEntities):
-        raise TypeError("Expected prepared partitioned reference entities.")
-    if (
-        source.cell_kind != record.fine_cell_kind
-        or target.cell_kind != record.coarse_cell_kind
-    ):
-        raise ValueError("Partition piece cell kinds differ from the form elements.")
+    _validate_partition_moment_owners(source, target, record)
     return _transform_moments(
         _local_reference_moments(
             source,
@@ -1922,6 +1933,224 @@ def exact_partitioned_reference_form_moments(
         source_transform,
         target_transform,
     )
+
+
+def _moment_map_key(
+    reference_map: NestedSimplexMap | NestedCellReferenceMap | None,
+    /,
+) -> tuple[object, ...]:
+    if reference_map is None:
+        return ("identity",)
+    if isinstance(reference_map, NestedSimplexMap):
+        return ("simplex", reference_map.vertices)
+    if isinstance(reference_map, NestedCellReferenceMap):
+        return (
+            "cell",
+            reference_map.target_cell_kind,
+            reference_map.source_cell_kind,
+            reference_map.source_reference_vertices,
+            reference_chart_arguments_identity(
+                None if reference_map.arguments is None else (reference_map.arguments,)
+            ),
+        )
+    raise TypeError("Reference moments require an exact nested reference map.")
+
+
+@final
+@dataclass(frozen=True, slots=True)
+class _MomentRequest:
+    key: tuple[object, ...]
+    source: FiniteElementSpec = field(compare=False, hash=False)
+    target: FiniteElementSpec = field(compare=False, hash=False)
+    reference_map: NestedSimplexMap | NestedCellReferenceMap | None = field(
+        compare=False, hash=False
+    )
+    record: PartitionedReferenceEntities | None = field(compare=False, hash=False)
+    source_transform: _ExactCellTransform = field(compare=False, hash=False)
+    target_transform: _ExactCellTransform = field(compare=False, hash=False)
+    policy: CurvedOverlapIntegrationPolicy | None = field(compare=False, hash=False)
+    orientation: _PreparedReferenceChartOrientation | None = field(
+        compare=False, hash=False
+    )
+
+
+def _prepare_cached_moments(
+    request: _MomentRequest, /
+) -> tuple[_MomentRequest, MomentIntegralMatrix]:
+    if request.record is None:
+        matrix = exact_reference_form_moments(
+            request.source,
+            request.target,
+            request.reference_map,
+            request.source_transform,
+            request.target_transform,
+            request.policy,
+            prepared_orientation=request.orientation,
+        )
+    else:
+        matrix = exact_partitioned_reference_form_moments(
+            request.source,
+            request.target,
+            request.record,
+            request.source_transform,
+            request.target_transform,
+            request.policy,
+        )
+    for array in (matrix.values, matrix.errors, matrix.exact, matrix.enclosed):
+        array.setflags(write=False)
+    return request, matrix
+
+
+def _moment_key_bytes(value: object, /) -> int:
+    # Charge tuple structure as well as payload; owner objects remain caller-owned.
+    if isinstance(value, tuple):
+        return 16 + sum(_moment_key_bytes(item) for item in value)
+    if isinstance(value, Fraction):
+        return (
+            16
+            + logical_table_bytes(value.numerator)
+            + logical_table_bytes(value.denominator)
+        )
+    if isinstance(value, _PreparedReferenceChartOrientation):
+        return 24 + _moment_key_bytes((value.family, value.argument_identity, value.sign))
+    return logical_table_bytes(value)
+
+
+def _cached_moment_bytes(entry: tuple[_MomentRequest, MomentIntegralMatrix], /) -> int:
+    request, matrix = entry
+    return (
+        128
+        + _moment_key_bytes(request.key)
+        + logical_table_bytes(
+            (matrix.values, matrix.errors, matrix.exact, matrix.enclosed)
+        )
+    )
+
+
+@final
+class _ReferenceMomentCache:
+    """Bounded operation-local reuse of exact reference moment matrices."""
+
+    # Captured hotset: 1,644,564 logical bytes; 16 MiB reserves >= 8x, not RSS.
+    def __init__(self, *, max_entries: int = 256, max_bytes: int = 16 << 20) -> None:
+        self.table = HostTableCache(
+            _prepare_cached_moments,
+            max_entries=max_entries,
+            max_bytes=max_bytes,
+            weight=_cached_moment_bytes,
+        )
+
+    def _get(self, request: _MomentRequest, /) -> MomentIntegralMatrix:
+        owner, matrix = self.table(request)
+        if (
+            owner.source is not request.source
+            or owner.target is not request.target
+            or owner.policy is not request.policy
+        ):
+            raise RuntimeError("Exact form moment owners changed during transfer.")
+        return matrix
+
+    def nested(
+        self,
+        source: FiniteElementSpec,
+        target: FiniteElementSpec,
+        reference_map: NestedSimplexMap | NestedCellReferenceMap | None,
+        source_transform: _ExactCellTransform,
+        target_transform: _ExactCellTransform,
+        integration_policy: CurvedOverlapIntegrationPolicy | None,
+        /,
+        *,
+        prepared_orientation: _PreparedReferenceChartOrientation | None,
+    ) -> MomentIntegralMatrix:
+        if prepared_orientation is not None and target.form_basis is not None:
+            prepared_orientation.require(
+                _reference_arguments(reference_map, target.form_basis.dimension),
+                target.form_basis.family,
+            )
+        if reference_map is not None and not isinstance(
+            reference_map, (NestedSimplexMap, NestedCellReferenceMap)
+        ):
+            return exact_reference_form_moments(
+                source,
+                target,
+                reference_map,
+                source_transform,
+                target_transform,
+                integration_policy,
+                prepared_orientation=prepared_orientation,
+            )
+        key = (
+            "nested",
+            id(source),
+            id(target),
+            id(integration_policy),
+            source_transform,
+            target_transform,
+            _moment_map_key(reference_map),
+            prepared_orientation,
+        )
+        matrix = self._get(
+            _MomentRequest(
+                key,
+                source,
+                target,
+                reference_map,
+                None,
+                source_transform,
+                target_transform,
+                integration_policy,
+                prepared_orientation,
+            )
+        )
+        return matrix
+
+    def partitioned(
+        self,
+        source: FiniteElementSpec,
+        target: FiniteElementSpec,
+        record: PartitionedReferenceEntities,
+        source_transform: _ExactCellTransform,
+        target_transform: _ExactCellTransform,
+        integration_policy: CurvedOverlapIntegrationPolicy | None,
+        /,
+    ) -> MomentIntegralMatrix:
+        _validate_partition_moment_owners(source, target, record)
+        if record.coarse_to_fine is not None and not isinstance(
+            record.coarse_to_fine, (NestedSimplexMap, NestedCellReferenceMap)
+        ):
+            return exact_partitioned_reference_form_moments(
+                source,
+                target,
+                record,
+                source_transform,
+                target_transform,
+                integration_policy,
+            )
+        key = (
+            "partitioned",
+            id(source),
+            id(target),
+            id(integration_policy),
+            source_transform,
+            target_transform,
+            record.fine_cell_kind,
+            record.coarse_cell_kind,
+            _moment_map_key(record.coarse_to_fine),
+            record.pieces,
+        )
+        return self._get(
+            _MomentRequest(
+                key,
+                source,
+                target,
+                record.coarse_to_fine,
+                record,
+                source_transform,
+                target_transform,
+                integration_policy,
+                None,
+            )
+        )
 
 
 __all__ = [
