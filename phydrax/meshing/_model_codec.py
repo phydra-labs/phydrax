@@ -4376,6 +4376,34 @@ def _validate_archive_columns(
             pending.extend(node)
 
 
+def _selected_model_subtree(recipe: dict[str, Any], name: str, /) -> dict[str, Any]:
+    """Navigate admitted structure without constructing unrelated model owners."""
+    subtree = recipe
+    for part in name.split("."):
+        match subtree.get("kind"):
+            case "dataclass" | "strict_value":
+                subtree = subtree["fields"][part]
+            case "namedtuple":
+                field_names = vars(artifact_value(subtree["type"]))["_fields"]
+                subtree = subtree["items"][field_names.index(part)]
+            case "tuple":
+                if (
+                    not part.isascii()
+                    or not part.isdecimal()
+                    or (len(part) > 1 and part[0] == "0")
+                ):
+                    raise ValueError(
+                        "Selected tuple indices must be canonical nonnegative decimals."
+                    )
+                index = int(part)
+                if index >= len(subtree["items"]):
+                    raise ValueError("Selected tuple index is out of range.")
+                subtree = subtree["items"][index]
+            case _:
+                raise ValueError("Selected model path crosses a non-record value.")
+    return subtree
+
+
 def read_model_archive_fields(
     path: str | Path,
     /,
@@ -4389,6 +4417,11 @@ def read_model_archive_fields(
 
     The complete archive is admitted first. The returned fields are stored
     inputs, not certified authority; the owner must replay their mathematics.
+
+    Dot-separated paths use declared record or registered named-tuple field
+    names and canonical nonnegative decimal indices for ordinary tuples.
+    Sequence position selects data, not its scientific identity; consumers
+    must validate the selected owner and dependency bindings.
 
     ``immutable_arrays`` preserves authenticated shared array ownership and
     charges each immutable owner once, as the full model reader does. Returned
@@ -4417,12 +4450,7 @@ def read_model_archive_fields(
             raise ValueError("Native model archive has a different registered root type.")
         subtrees = {}
         for name in fields:
-            subtree = recipe
-            for part in name.split("."):
-                if subtree.get("kind") not in ("dataclass", "strict_value"):
-                    raise ValueError("Selected model path crosses a non-record value.")
-                subtree = subtree["fields"][part]
-            subtrees[name] = subtree
+            subtrees[name] = _selected_model_subtree(recipe, name)
         nodes = _recipe_array_nodes(recipe)
         if len(nodes) != len(arrays):
             raise ValueError("Model recipe array inventory is inconsistent.")
