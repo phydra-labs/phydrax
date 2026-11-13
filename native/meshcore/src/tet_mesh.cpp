@@ -16,6 +16,7 @@ namespace phx::mc {
 TetMesh::TetMesh(BoundaryPolicy policy) : policy_(policy), edit_(complex_) {}
 
 bool TetMesh::protect_facet_sources(std::span<const std::int32_t> sources) {
+  clear_implicit_facet_refusal();
   if (generation_ == std::numeric_limits<std::uint64_t>::max()) return false;
   std::unordered_set<std::int32_t> requested(sources.begin(), sources.end());
   std::unordered_set<std::int32_t> found;
@@ -55,6 +56,7 @@ bool TetMesh::bind_source_identity(std::string_view source_id,
                                    std::string_view source_map_id,
                                    std::string_view frame_id,
                                    bool identity_bound) {
+  clear_implicit_facet_refusal();
   const auto& implicit = implicit_source_ ? implicit_source_ : pending_implicit_source_;
   if (implicit && (!identity_bound || source_id != implicit->source_id ||
                    source_revision != implicit->source_revision ||
@@ -80,6 +82,7 @@ bool TetMesh::bind_source_identity(std::string_view source_id,
   return true;
 }
 bool TetMesh::bind_periodic_identity(const TetPeriodicIdentity& identity) {
+  clear_implicit_facet_refusal();
   if (implicit_source_ && identity.bound) return false;
   periodic_identity_ = identity;
   return true;
@@ -91,6 +94,7 @@ int32_t TetMesh::assign_initial_ids(
     std::span<const std::uint64_t> facet_ids,
     std::span<const std::uint64_t> segment_ids,
     std::span<const double> initial_vertex_sizes) {
+  clear_implicit_facet_refusal();
   try {
     const std::size_t finite_cells = static_cast<std::size_t>(complex_.finite_count);
     if (generation_ != 0 ||

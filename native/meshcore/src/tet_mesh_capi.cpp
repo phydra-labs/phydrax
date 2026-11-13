@@ -1400,6 +1400,7 @@ int32_t phx_mc_tet_mesh_snapshot(const phx_mc_tet_mesh* mesh,
 int32_t phx_mc_tet_mesh_apply_edit(phx_mc_tet_mesh* mesh,
                                    const phx_mc_tet_mesh_edit_request* request,
                                    int32_t* edit_status) {
+  if (mesh != nullptr) mesh->state.clear_implicit_facet_refusal();
   if (edit_status != nullptr) *edit_status = PHX_MC_TET_EDIT_REJECTED_TOPOLOGY;
   if (mesh == nullptr || request == nullptr || edit_status == nullptr) return PHX_MC_INVALID_ARGUMENT;
   return guarded([&]() -> int32_t {
@@ -1619,10 +1620,39 @@ int32_t phx_mc_tet_mesh_apply_edit(phx_mc_tet_mesh* mesh,
     return PHX_MC_OK;
   });
 }
+int32_t phx_mc_tet_mesh_implicit_facet_refusal(
+    const phx_mc_tet_mesh* mesh, phx_mc_tet_implicit_facet_refusal* output) {
+  if (mesh == nullptr || output == nullptr) return PHX_MC_INVALID_ARGUMENT;
+  *output = {};
+  const auto& refusal = mesh->state.implicit_facet_refusal();
+  if (!refusal || refusal->generation != mesh->state.generation()) return PHX_MC_OK;
+  output->refused = 1;
+  output->generation = refusal->generation;
+  output->facet_id = refusal->facet_id;
+  output->facet_source = refusal->facet_source;
+  output->orientation = refusal->orientation;
+  std::copy(refusal->vertex_ids.begin(), refusal->vertex_ids.end(), output->vertex_ids);
+  for (std::size_t corner = 0; corner < 3; ++corner) {
+    std::copy(refusal->points[corner].begin(), refusal->points[corner].end(),
+              output->points + 3 * corner);
+  }
+  output->transversality_refusals = refusal->transversality_refusals;
+  output->distance_refusals = refusal->distance_refusals;
+  output->status = static_cast<int32_t>(refusal->status);
+  return PHX_MC_OK;
+}
+
+int32_t phx_mc_tet_mesh_clear_implicit_facet_refusal(phx_mc_tet_mesh* mesh) {
+  if (mesh == nullptr) return PHX_MC_INVALID_ARGUMENT;
+  mesh->state.clear_implicit_facet_refusal();
+  return PHX_MC_OK;
+}
+
 
 int32_t phx_mc_tet_mesh_probe_edit(phx_mc_tet_mesh* mesh,
                                    const phx_mc_tet_mesh_edit_request* request,
                                    int32_t* decided, int32_t* edit_status) {
+  if (mesh != nullptr) mesh->state.clear_implicit_facet_refusal();
   if (decided != nullptr) *decided = 0;
   if (edit_status != nullptr) *edit_status = PHX_MC_TET_EDIT_REJECTED_TOPOLOGY;
   if (mesh == nullptr || request == nullptr || decided == nullptr || edit_status == nullptr) {
@@ -2063,6 +2093,7 @@ int32_t phx_mc_tet_mesh_plane_records(const phx_mc_tet_mesh* mesh, int64_t capac
 int32_t phx_mc_tet_mesh_bind_implicit(
     phx_mc_tet_mesh* mesh, const phx_mc_tet_implicit_source* source) {
   if (mesh == nullptr) return PHX_MC_INVALID_ARGUMENT;
+  mesh->state.clear_implicit_facet_refusal();
   return guarded([&]() -> int32_t {
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;

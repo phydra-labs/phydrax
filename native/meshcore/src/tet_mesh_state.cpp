@@ -55,6 +55,7 @@ std::uint64_t edge_key(std::int32_t a, std::int32_t b) {
 }  // namespace
 
 int32_t TetMesh::set_affine_metric(std::span<const double> linear) {
+  clear_implicit_facet_refusal();
   if (linear.size() != 9 ||
       !std::all_of(linear.begin(), linear.end(), [](double x) { return std::isfinite(x); })) {
     return PHX_MC_INVALID_ARGUMENT;
@@ -97,6 +98,7 @@ int32_t TetMesh::build(std::span<const double> points,
                        std::span<const double> protection_radii,
                        const SourceComplexView* source,
                        std::span<const std::int8_t> protected_vertices) {
+  clear_implicit_facet_refusal();
   if (implicit_source_) return PHX_MC_INVALID_ARGUMENT;
   try {
     plane_refusal_.reset();

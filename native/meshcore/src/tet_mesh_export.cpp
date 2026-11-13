@@ -168,6 +168,7 @@ TetEditStatus TetMesh::set_periodic_state(
     std::span<const TetPeriodicQuotientCell> cells,
     std::span<const TetPeriodicEntityOrbitMap> entity_maps,
     bool advance_generation) {
+  clear_implicit_facet_refusal();
   if (implicit_source_ && (!orbits.empty() || !cells.empty() || !entity_maps.empty())) {
     return TetEditStatus::kRejectedTopology;
   }

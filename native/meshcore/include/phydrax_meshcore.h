@@ -727,6 +727,23 @@ PHX_MC_API int32_t phx_mc_tet_mesh_apply_edit(
 PHX_MC_API int32_t phx_mc_tet_mesh_probe_edit(
     phx_mc_tet_mesh* mesh, const phx_mc_tet_mesh_edit_request* request,
     int32_t* decided, int32_t* edit_status);
+/* Ephemeral evidence from the latest actual implicit-facet admission refusal.
+ * The record belongs to the current mesh identity and generation only. */
+typedef struct phx_mc_tet_implicit_facet_refusal {
+  int32_t refused;
+  uint64_t generation;
+  uint64_t facet_id;
+  int32_t facet_source;
+  int32_t orientation;
+  uint64_t vertex_ids[3];
+  double points[9];
+  int64_t transversality_refusals;
+  int64_t distance_refusals;
+  int32_t status;
+} phx_mc_tet_implicit_facet_refusal;
+PHX_MC_API int32_t phx_mc_tet_mesh_implicit_facet_refusal(
+    const phx_mc_tet_mesh* mesh, phx_mc_tet_implicit_facet_refusal* output);
+PHX_MC_API int32_t phx_mc_tet_mesh_clear_implicit_facet_refusal(phx_mc_tet_mesh* mesh);
 /* Refine inserts circumcenters until every cell meets the radius-edge bound
  * and its circumradius size target. `sizes` (one per current vertex in
  * snapshot order, 0 = unconstrained; empty keeps the mesh's retained field)

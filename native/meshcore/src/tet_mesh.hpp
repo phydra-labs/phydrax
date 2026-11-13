@@ -54,6 +54,18 @@ enum class TetEditStatus : std::uint8_t {
   kIndexOverflow,
 };
 
+struct TetImplicitFacetRefusal {
+  std::uint64_t generation = 0;
+  std::uint64_t facet_id = 0;
+  std::int32_t facet_source = 0;
+  std::int8_t orientation = 0;
+  std::array<std::uint64_t, 3> vertex_ids{};
+  std::array<std::array<double, 3>, 3> points{};
+  std::int64_t transversality_refusals = 0;
+  std::int64_t distance_refusals = 0;
+  TetEditStatus status = TetEditStatus::kInvalidGeometry;
+};
+
 // Exact dyadic interpolation from one source lifted vertex to a new target.
 struct TetVertexAncestry {
   std::uint64_t source_vertex_id = 0;
@@ -397,6 +409,10 @@ class TetMesh {
   int32_t prepare_implicit_source(std::shared_ptr<TetImplicitSource> source);
   const std::shared_ptr<TetImplicitSource>& implicit_source() const noexcept {
     return implicit_source_;
+  }
+  void clear_implicit_facet_refusal() const noexcept { implicit_facet_refusal_.reset(); }
+  const std::optional<TetImplicitFacetRefusal>& implicit_facet_refusal() const noexcept {
+    return implicit_facet_refusal_;
   }
   // Linear index-to-physical map; translation does not affect the metric.
   int32_t set_affine_metric(std::span<const double> linear);
@@ -751,6 +767,7 @@ class TetMesh {
   std::shared_ptr<TetImplicitSource> implicit_source_;
   std::shared_ptr<TetImplicitSource> pending_implicit_source_;
   std::optional<TetPlaneRefusal> plane_refusal_;
+  mutable std::optional<TetImplicitFacetRefusal> implicit_facet_refusal_;
   std::vector<TetPeriodicOrbit> periodic_orbits_;
   std::vector<TetPeriodicQuotientCell> quotient_cells_;
   std::vector<TetPeriodicEntityOrbitMap> periodic_entity_maps_;

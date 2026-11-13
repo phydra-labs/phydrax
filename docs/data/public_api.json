@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "a0895b12bd9a7f1e9376d47d21584983091357fe75dab374c89d9d5325e852d6",
+  "manifest_id": "7370c5de071213029551712212f21f895b1588c2173333cdd284fbb92c47261a",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -27234,6 +27234,7 @@
       "phydrax.meshing.SurfaceReconstructionControl",
       "phydrax.meshing.SurfaceRemeshingSpec",
       "phydrax.meshing.TargetMatrixOptimizationPlan",
+      "phydrax.meshing.TetraMetricProposalError",
       "phydrax.meshing.TiogaAssemblyResult",
       "phydrax.meshing.TiogaDonorEvidence",
       "phydrax.meshing.TiogaOptions",

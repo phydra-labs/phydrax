@@ -320,6 +320,7 @@ int TetMesh::metric_insphere(const double* a, const double* b, const double* c,
 
 TetEditStatus TetMesh::apply_edit_batch(const TetEditBatch& batch,
                                         std::vector<TetEditResult>& results) {
+  clear_implicit_facet_refusal();
   try {
     if (batch.expected_generation != generation_ ||
         batch.identity_bound != identity_bound_ ||
@@ -352,10 +353,12 @@ TetEditStatus TetMesh::apply_edit_batch(const TetEditBatch& batch,
     std::vector<TetEditResult> staged_results;
     staged_results.reserve(batch.operations.size());
     for (std::size_t index = 0; index < batch.operations.size(); ++index) {
+      staged.clear_implicit_facet_refusal();
       TetEditResult result;
       const TetEditStatus status = staged.apply_one_edit(batch.operations[index], result);
       result.status = status;
       if (status != TetEditStatus::kApplied) {
+        implicit_facet_refusal_ = staged.implicit_facet_refusal_;
         staged_results.resize(batch.operations.size());
         for (std::size_t prior = 0; prior < index; ++prior) {
           staged_results[prior].status = TetEditStatus::kRejectedTopology;
@@ -459,6 +462,7 @@ TetEditStatus TetMesh::relocate_impl(
     std::span<const TetEditVertex> moved_vertices,
     std::span<const std::uint64_t> affected_cells,
     std::span<const std::int32_t> complete_star, bool star_verified) {
+  clear_implicit_facet_refusal();
   // This pure-relocation path is separate from atomic mixed/topology batches.
   try {
     const RelocationOverlay overlay{moved_vertices};
@@ -723,6 +727,7 @@ TetEditStatus TetMesh::relocate_impl(
 // precedes the first topology write; staged ID records are rolled back if the
 // commit cannot start.
 TetEditStatus TetMesh::replace_local_cavity(const TetEdit& operation) {
+  clear_implicit_facet_refusal();
   try {
     const bool collapse = operation.kind == TetEditKind::kCollapse;
     const bool reconnection = operation.kind == TetEditKind::kFlip23 ||
@@ -970,6 +975,7 @@ TetEditStatus TetMesh::insert_local_cone(const TetEditVertex& vertex,
                                          std::span<const std::int32_t> cavity,
                                          std::span<const std::int32_t> removed_vertices,
                                          std::vector<std::uint64_t>& created_cells) {
+  clear_implicit_facet_refusal();
   created_cells.clear();
   try {
     if (periodic_identity_.bound || !periodic_orbits_.empty() || !quotient_cells_.empty() ||
@@ -1224,6 +1230,7 @@ TetEditStatus TetMesh::insert_local_boundary_point(const TetEditVertex& vertex,
                                                    std::span<const std::size_t> facet_rows,
                                                    std::span<const std::size_t> segment_rows,
                                                    std::vector<std::uint64_t>& created_cells) {
+  clear_implicit_facet_refusal();
   created_cells.clear();
   try {
     if (policy_ == BoundaryPolicy::kFixed) return TetEditStatus::kRejectedProtected;

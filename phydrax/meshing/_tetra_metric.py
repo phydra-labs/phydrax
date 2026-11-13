@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from fractions import Fraction
@@ -2794,11 +2794,16 @@ def _candidate_tetra_snapshot(
     current_cell_ids = np.asarray(current.cell_ids, dtype=np.int64)
     current_cells = np.asarray(current.tetrahedra, dtype=np.int64).reshape((-1, 4))
     current_regions = np.asarray(current.tetrahedron_regions, dtype=np.int32)
+    # Relocation carries its complete checked star in removed_cell_ids, but
+    # retains those cells. Only topology-changing edits retire the listed cells.
     removed_cells = set(
         map(
             int,
             np.asarray(
-                edit.removed_cell_ids if edit.removed_cell_ids is not None else (),
+                edit.removed_cell_ids
+                if edit.kind is not TetMeshEditKind.RELOCATE
+                and edit.removed_cell_ids is not None
+                else (),
                 dtype=np.int64,
             ).tolist(),
         )
@@ -2895,7 +2900,7 @@ def _prepare_periodic_native_edit(
     relocation_by_native_id = {
         int(proposal["vertex"]): proposal
         for proposal in proposals
-        if isinstance(proposal, dict) and "current_stencil" in proposal
+        if isinstance(proposal, Mapping) and "current_stencil" in proposal
     }
     vertex_target_by_native = {
         int(native_id): int(target_id)
@@ -3117,7 +3122,7 @@ def _prepare_periodic_native_edit(
             )
         )
     for proposal in proposals:
-        if not isinstance(proposal, dict):
+        if not isinstance(proposal, Mapping):
             continue
         removed = proposal.get("removed")
         kept = proposal.get("kept")
@@ -3368,11 +3373,15 @@ def _prepare_periodic_native_edit(
             proposal_metric_by_native[int(proposal.native_vertex_id)] = np.asarray(
                 proposal.metric, dtype=np.float64
             )
-        elif isinstance(proposal, dict) and "vertex" in proposal and "metric" in proposal:
+        elif (
+            isinstance(proposal, Mapping)
+            and "vertex" in proposal
+            and "metric" in proposal
+        ):
             proposal_metric_by_native[int(proposal["vertex"])] = np.asarray(
                 proposal["metric"], dtype=np.float64
             )
-        elif isinstance(proposal, dict) and proposal.get("survivor") is not None:
+        elif isinstance(proposal, Mapping) and proposal.get("survivor") is not None:
             # A moved collapse survivor carries the metric of its new carrier.
             proposal_metric_by_native[int(proposal["kept"])] = np.asarray(
                 proposal["survivor"]["metric"], dtype=np.float64
@@ -6076,6 +6085,95 @@ class _SourceSupport(NamedTuple):
     """Largest coordinate extent of the support's binary64 points."""
 
 
+def _source_support(
+    state: _NativeState,
+    vertices: tuple[int, ...],
+    frames: dict[tuple[int, ...], _SourceSupport] | None,
+    /,
+) -> _SourceSupport:
+    cached = frames.get(vertices) if frames is not None else None
+    if cached is None:
+        rows = state.source_vertex_rows
+        support = tuple(sorted({int(vertex) for vertex in vertices}))
+        points = [state.source_exact_points[rows[vertex]] for vertex in support]
+        denominator = lcm(*(value.denominator for point in points for value in point))
+        cached = _SourceSupport(
+            _integer_frame(
+                _entity_frame(tuple(state.source_exact_points[rows[v]] for v in vertices))
+            )
+            if len(vertices) in (2, 3)
+            else None,
+            support,
+            tuple(
+                tuple(
+                    value.numerator * (denominator // value.denominator)
+                    for value in point
+                )
+                for point in points
+            ),
+            denominator,
+            tuple(support.index(int(vertex)) for vertex in vertices),
+            float(
+                np.max(np.ptp(state.source_points[[rows[v] for v in support]], axis=0))
+            ),
+        )
+        if frames is not None:
+            frames[vertices] = cached
+    return cached
+
+
+def _source_carrier_frame(
+    state: _NativeState, vertices: tuple[int, ...], /
+) -> _EntityFrame:
+    """Exact affine frame of an edge or face in the immutable source."""
+    frame = _source_support(state, vertices, state.source_supports).frame
+    if frame is None:
+        return state.source_exact_points[state.source_vertex_rows[vertices[0]]], None
+    origin, gradients = frame
+    return (
+        tuple(Fraction(*value) for value in origin),
+        tuple(tuple(Fraction(*value) for value in gradient) for gradient in gradients),
+    )
+
+
+def _source_cell_carrier(
+    state: _NativeState,
+    record: _SourceTetRecord,
+    simplices: tuple[tuple[int, ...], ...] | None,
+    /,
+) -> tuple[int, ...] | None:
+    """Find the selected source tetrahedron's full-dimensional carrier face."""
+    if simplices is None:
+        return record[1]
+    if not simplices:
+        return None
+    simplex = simplices[0]
+    origin, gradients = _source_carrier_frame(state, simplex)
+    if gradients is None:
+        return None
+    axes = tuple(
+        tuple(
+            state.source_exact_points[state.source_vertex_rows[v]][k] - origin[k]
+            for k in range(3)
+        )
+        for v in simplex[1:]
+    )
+    members = []
+    for vertex in record[1]:
+        point = state.source_exact_points[state.source_vertex_rows[vertex]]
+        offset = tuple(point[k] - origin[k] for k in range(3))
+        weights = tuple(
+            sum((g[k] * offset[k] for k in range(3)), Fraction(0)) for g in gradients
+        )
+        if all(
+            offset[k]
+            == sum((weights[j] * axes[j][k] for j in range(len(axes))), Fraction(0))
+            for k in range(3)
+        ):
+            members.append(vertex)
+    return tuple(sorted(members)) if len(members) == len(simplex) else None
+
+
 def _quantized_relocation_candidates(
     state: _NativeState,
     simplices: tuple[tuple[int, ...], ...] | None,
@@ -6101,45 +6199,6 @@ def _quantized_relocation_candidates(
     the image ``sum_i w_i X_i`` are evaluated in integers over common
     denominators, so stencils, carriers and admissions are exact.
     """
-    coordinates = state.source_points
-    rows = state.source_vertex_rows
-
-    def source_support(vertices: tuple[int, ...], /) -> _SourceSupport:
-        cached = frames.get(vertices) if frames is not None else None
-        if cached is None:
-            support = tuple(sorted({int(vertex) for vertex in vertices}))
-            points = [state.source_exact_points[rows[vertex]] for vertex in support]
-            denominator = lcm(*(value.denominator for point in points for value in point))
-            cached = _SourceSupport(
-                None
-                if simplices is None
-                else _integer_frame(
-                    _entity_frame(
-                        tuple(
-                            state.source_exact_points[rows[vertex]] for vertex in vertices
-                        )
-                    )
-                ),
-                support,
-                tuple(
-                    tuple(
-                        value.numerator * (denominator // value.denominator)
-                        for value in point
-                    )
-                    for point in points
-                ),
-                denominator,
-                tuple(support.index(int(vertex)) for vertex in vertices),
-                float(
-                    np.max(
-                        np.ptp(coordinates[[rows[vertex] for vertex in support]], axis=0)
-                    )
-                ),
-            )
-            if frames is not None:
-                frames[vertices] = cached
-        return cached
-
     query = tuple(float(value).as_integer_ratio() for value in target)
     located: tuple[_SourceSupport, tuple[_Ratio, ...]] | None = None
     if simplices is None:
@@ -6149,12 +6208,12 @@ def _quantized_relocation_candidates(
         )
         if cell is not None:
             located = (
-                source_support(tuple(int(vertex) for vertex in cell[1])),
+                _source_support(state, tuple(int(vertex) for vertex in cell[1]), frames),
                 tuple((weight.numerator, weight.denominator) for weight in cell[2]),
             )
     else:
         for simplex in simplices:
-            entity = source_support(simplex)
+            entity = _source_support(state, simplex, frames)
             if entity.frame is None:
                 continue
             simplex_weights = _entity_weight_ratios(
@@ -7011,6 +7070,10 @@ def _relocation_proposals(
             # Retain star-local arrays only, not an old whole-mesh snapshot.
             # Preparation above keeps the existing numerical operation order;
             # this continuation owns quantization and admission ordering.
+            # The current periodic star is fixed for this search. Build its
+            # exact locator only if a carrier reaches this admission, then
+            # retain it across subsequent carriers and generator resumptions.
+            star_records: tuple[_SourceTetRecord, ...] | None = None
             for goal, remaining in candidate_goals():
                 if refine:
                     choices = _quantized_relocation_candidates(
@@ -7076,11 +7139,19 @@ def _relocation_proposals(
                     after, moved_lengths = evaluated
                     current_stencil = None
                     if periodic_star is not None:
+                        if star_records is None:
+                            star_records = _source_tetra_inverse(
+                                local_points,
+                                local_cells,
+                                periodic_star[0],
+                                periodic_star[1],
+                            )
                         current_stencil = _current_star_stencil(
                             local_points,
                             local_cells,
                             *periodic_star,
                             carrier,
+                            star_records=star_records,
                         )
                         if current_stencil is None:
                             continue
@@ -7175,12 +7246,19 @@ def _current_star_stencil(
     vertex_rows: dict[int, int],
     carrier: np.ndarray,
     /,
+    *,
+    star_records: tuple[_SourceTetRecord, ...] | None = None,
 ) -> dict[int, Fraction] | None:
     """Binary64 barycentric stencil of a carrier in the current star that
-    reproduces it exactly, else ``None``."""
-    located = _locate_source_stencil(
-        carrier, _source_tetra_inverse(points, star_cells, vertex_ids, star_cell_ids)
-    )
+    reproduces it exactly, else ``None``.
+
+    Precomputed records must describe these same points, cells, and identities.
+    """
+    if star_records is None:
+        star_records = _source_tetra_inverse(
+            points, star_cells, vertex_ids, star_cell_ids
+        )
+    located = _locate_source_stencil(carrier, star_records)
     if located is None:
         return None
     _, stencil = located
@@ -7193,7 +7271,7 @@ def _current_star_stencil(
 
 
 def _relocation_edit(
-    state: _NativeState, proposals: list[dict[str, Any]], /
+    state: _NativeState, proposals: Sequence[Mapping[str, Any]], /
 ) -> TetMeshEdit:
     ordered = sorted(proposals, key=lambda row: state.vertex_target_ids[row["vertex"]])
     star_ids = sorted(
@@ -7228,7 +7306,7 @@ def _relocation_edit(
 
 
 def _apply_relocation_batch(
-    state: _NativeState, proposals: list[dict[str, Any]], /
+    state: _NativeState, proposals: Sequence[Mapping[str, Any]], /
 ) -> TetMeshEditStatus:
     edit = _relocation_edit(state, proposals)
     try:
@@ -7259,21 +7337,18 @@ def _apply_relocation_batch(
             state.history_vertex.append(
                 (target_id, target_id, EntityLineageKind.RELOCATED)
             )
-        for cell_id in proposal["star_cell_ids"]:
-            ancestry = state.cell_ancestry[int(cell_id)]
-            for source_id in ancestry:
-                state.history_cells.append(
-                    (
-                        source_id,
-                        state.cell_target_ids[int(cell_id)],
-                        EntityLineageKind.RELOCATED,
-                    )
-                )
-        state.changed_source_cell_ids.update(
-            source_id
-            for cell_id in proposal["star_cell_ids"]
-            for source_id in state.cell_ancestry[int(cell_id)]
+    # A coupled native transaction can move several vertices of the same cell.
+    # Its ancestry is recorded once, after every vertex state has been updated.
+    affected_cells = {
+        int(cell_id) for proposal in proposals for cell_id in proposal["star_cell_ids"]
+    }
+    for cell_id in sorted(affected_cells, key=state.cell_target_ids.__getitem__):
+        ancestry = state.cell_ancestry[cell_id]
+        state.history_cells.extend(
+            (source_id, state.cell_target_ids[cell_id], EntityLineageKind.RELOCATED)
+            for source_id in sorted(ancestry)
         )
+        state.changed_source_cell_ids.update(ancestry)
     _refresh_native_periodic_windings(state)
     return status
 
@@ -7714,6 +7789,13 @@ def _execute_native_state(
                 collapse_cache=collapse_cache,
                 caches=relocation_caches,
             )
+        if relocation and applied == 0:
+            from ._tetra_coupled import _coupled_relocation_phase
+
+            applied = _coupled_relocation_phase(state, counters)
+            if applied:
+                _invalidate_relocation_searches(relocation_caches)
+                collapse_cache.clear()
         if applied == 0:
             status = TetraMetricStatus.STALLED
             break

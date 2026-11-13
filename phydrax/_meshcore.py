@@ -360,6 +360,21 @@ class _PeriodicSupportQueryRequest(ctypes.Structure):
     )
 
 
+class _TetMeshImplicitFacetRefusal(ctypes.Structure):
+    _fields_ = (
+        ("refused", _I32),
+        ("generation", _U64),
+        ("facet_id", _U64),
+        ("facet_source", _I32),
+        ("orientation", _I32),
+        ("vertex_ids", _U64 * 3),
+        ("points", _F64 * 9),
+        ("transversality_refusals", _I64),
+        ("distance_refusals", _I64),
+        ("status", _I32),
+    )
+
+
 class _SurfaceReconnectRequest(ctypes.Structure):
     _fields_ = (
         ("vertex_count", _I64),
@@ -1177,6 +1192,11 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (_P, ctypes.POINTER(_TetMeshEditRequest), _P, _P),
     ),
+    "phx_mc_tet_mesh_implicit_facet_refusal": (
+        _I32,
+        (_P, ctypes.POINTER(_TetMeshImplicitFacetRefusal)),
+    ),
+    "phx_mc_tet_mesh_clear_implicit_facet_refusal": (_I32, (_P,)),
     "phx_mc_tet_mesh_refine": (
         _I32,
         (
@@ -2952,6 +2972,20 @@ class TetMeshIdentity(NamedTuple):
     source_revision: str
     source_map_id: str
     frame_id: str
+
+
+class TetMeshImplicitFacetRefusal(NamedTuple):
+    """Actual implicit-facet predicate refusal for the latest edit attempt."""
+
+    identity: TetMeshIdentity
+    facet_id: int
+    facet_source: int
+    orientation: int
+    vertex_ids: np.ndarray
+    points: np.ndarray
+    transversality_refusals: int
+    distance_refusals: int
+    status: TetMeshEditStatus
 
 
 class TetMeshPeriodicEntityOrbitMap(NamedTuple):
@@ -7799,6 +7833,36 @@ class TetMesh3D:
             return self._identity()
 
     @property
+    def implicit_facet_refusal(self) -> TetMeshImplicitFacetRefusal | None:
+        with self._lock:
+            record = _TetMeshImplicitFacetRefusal()
+            _raise_for_call(
+                self._library["phx_mc_tet_mesh_implicit_facet_refusal"](
+                    self._live(), ctypes.byref(record)
+                ),
+                "tet_mesh_implicit_facet_refusal",
+            )
+            if not record.refused:
+                return None
+            identity = self._identity()
+            if identity.generation != record.generation:
+                raise MeshcoreError(
+                    MeshcoreStatus.INTERNAL_ERROR,
+                    "implicit facet refusal identity changed",
+                )
+            return TetMeshImplicitFacetRefusal(
+                identity,
+                int(record.facet_id),
+                int(record.facet_source),
+                int(record.orientation),
+                np.array(record.vertex_ids, dtype=np.uint64),
+                np.array(record.points, dtype=np.float64).reshape(3, 3),
+                int(record.transversality_refusals),
+                int(record.distance_refusals),
+                TetMeshEditStatus(record.status),
+            )
+
+    @property
     def generation(self) -> int:
         return self.identity.generation
 
@@ -8520,6 +8584,13 @@ class TetMesh3D:
             return TetMeshPlaneRecords(vertex_ids, face_rows, parameters, deviations)
 
     def apply_edit(self, edit: TetMeshEdit) -> TetMeshEditStatus:
+        with self._lock:
+            _raise_for_call(
+                self._library["phx_mc_tet_mesh_clear_implicit_facet_refusal"](
+                    self._live()
+                ),
+                "tet_mesh_clear_implicit_facet_refusal",
+            )
         if not isinstance(edit, TetMeshEdit):
             raise TypeError("edit must be a TetMeshEdit.")
         generation = _tet_mesh_uint64(edit.expected_generation, "expected_generation")
@@ -9273,6 +9344,7 @@ __all__ = [
     "TetMeshEdit",
     "TetMeshEditKind",
     "TetMeshEditStatus",
+    "TetMeshImplicitFacetRefusal",
     "TetMeshImplicitSource",
     "TetMeshImplicitSnapshot",
     "TetMeshPeriodicEdit",

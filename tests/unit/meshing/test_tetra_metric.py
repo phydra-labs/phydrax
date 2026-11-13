@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from fractions import Fraction
 from itertools import combinations, permutations
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import numpy as np
 import pytest
@@ -47,6 +48,10 @@ from phydrax.meshing._tetra_metric import (
     TetraMetricUnmetKind,
 )
 from phydrax.meshing._topology_edit import entity_keys, TopologyEditBlock
+
+
+if TYPE_CHECKING:
+    from phydrax.meshing._tetra_coupled import _CoupledBinding
 
 
 def _source(
@@ -410,6 +415,467 @@ def test_relocation_uses_live_native_vertices_and_exact_source_stencils() -> Non
         )
         np.testing.assert_array_equal(exact_point, outcome.edit.coordinates[row])
     assert relocated > 0
+
+
+def test_overlapping_relocation_commit_preserves_full_source_lineage_and_p1() -> None:
+    from phydrax.meshing._tetra_metric import _assemble_native_edit
+    from phydrax.meshing._topology_edit import assemble_topology_edit
+
+    source = _source(4, nonuniform=True)
+    state = _state(source, np.eye(3, dtype=np.float64))
+    try:
+        snapshot = state.snapshot
+        ids = np.asarray(snapshot.vertex_ids, dtype=np.int64)
+        cells = ids[np.asarray(snapshot.tetrahedra, dtype=np.int64)]
+        cell_ids = np.asarray(snapshot.cell_ids, dtype=np.int64)
+        proposals: list[dict[str, Any]] = []
+        for vertex in (21, 22):
+            current = np.asarray(snapshot.points)[np.flatnonzero(ids == vertex)[0]]
+            goal = current + np.asarray((1.0 / 64.0, 0.0, 0.0), dtype=np.float64)
+            located = _quantized_relocation(state, None, goal, current)
+            assert located is not None
+            stencil, point = located
+            np.testing.assert_array_equal(point, goal)
+            proposals.append(
+                {
+                    "vertex": vertex,
+                    "point": point,
+                    "metric": _source_metric_from_stencil(
+                        state.source_metric, state.source_vertex_rows, stencil
+                    ),
+                    "stencil": stencil,
+                    "star_cell_ids": tuple(
+                        int(c) for c in cell_ids[np.any(cells == vertex, axis=1)]
+                    ),
+                }
+            )
+        first, second = (set(p["star_cell_ids"]) for p in proposals)
+        assert first & second
+        affected = first | second
+        assert _apply_relocation_batch(state, proposals) is TetMeshEditStatus.APPLIED
+        edit, _ = _assemble_native_edit(state)
+        target, lineage, stencil = assemble_topology_edit(
+            source.mesh, edit, numeric_version="overlapping-relocation"
+        )
+        rows = {int(v): i for i, v in enumerate(np.asarray(target.vertex_global_ids))}
+        for proposal in proposals:
+            vertex = proposal["vertex"]
+            np.testing.assert_array_equal(
+                target.coordinates[rows[vertex]], proposal["point"]
+            )
+            assert state.vertex_stencils[vertex] == proposal["stencil"]
+            valid = np.asarray(edit.stencil_valid[rows[vertex]], dtype=np.bool_)
+            assembled = {
+                int(k): Fraction.from_float(float(w))
+                for k, w in zip(
+                    np.asarray(edit.stencil_sources[rows[vertex]])[valid],
+                    np.asarray(edit.stencil_weights[rows[vertex]])[valid],
+                    strict=True,
+                )
+            }
+            assert assembled == proposal["stencil"]
+            assert sum(assembled.values(), Fraction(0)) == 1
+            assert all(weight > 0 for weight in assembled.values())
+        vertex_lineage = lineage.entity_lineage(0)
+        vertex_records = {
+            (int(a), int(b), int(k))
+            for a, b, k in zip(
+                vertex_lineage.source_global_ids,
+                vertex_lineage.target_global_ids,
+                vertex_lineage.relation_kinds,
+                strict=True,
+            )
+        }
+        for vertex in (21, 22):
+            assert (vertex, vertex, int(EntityLineageKind.RELOCATED)) in vertex_records
+        cell_lineage = lineage.entity_lineage(3)
+        cell_records = {
+            (int(a), int(b), int(k))
+            for a, b, k in zip(
+                cell_lineage.source_global_ids,
+                cell_lineage.target_global_ids,
+                cell_lineage.relation_kinds,
+                strict=True,
+            )
+        }
+        for native_id in affected:
+            target_id = state.cell_target_ids[native_id]
+            for source_id in state.cell_ancestry[native_id]:
+                assert (
+                    source_id,
+                    target_id,
+                    int(EntityLineageKind.RELOCATED),
+                ) in cell_records
+        source_ids = np.asarray(source.mesh.vertex_global_ids, dtype=np.int64)
+        source_points = np.asarray(source.mesh.coordinates, dtype=np.float64)
+        constant = np.full(source_ids.size, 3.0, dtype=np.float64)
+        affine = 2.0 + source_points @ np.asarray((1.0, -2.0, 4.0), dtype=np.float64)
+        np.testing.assert_allclose(
+            stencil.apply(source_ids, constant), 3.0, rtol=0, atol=1e-12
+        )
+        np.testing.assert_allclose(
+            stencil.apply(source_ids, affine),
+            2.0
+            + np.asarray(target.coordinates, dtype=np.float64)
+            @ np.asarray((1.0, -2.0, 4.0), dtype=np.float64),
+            rtol=0,
+            atol=1e-12,
+        )
+
+        before_points = np.asarray(state.snapshot.points).copy()
+        before_generation = state.snapshot.generation
+        before_stencils = {
+            key: value.copy() for key, value in state.vertex_stencils.items()
+        }
+        before_vertex_history = list(state.history_vertex)
+        before_cell_history = list(state.history_cells)
+        refused = [
+            dict(proposals[0], point=np.asarray((10.0, 10.0, 10.0), dtype=np.float64)),
+            proposals[1],
+        ]
+        assert _apply_relocation_batch(state, refused) is not TetMeshEditStatus.APPLIED
+        assert state.snapshot.generation == before_generation
+        np.testing.assert_array_equal(state.snapshot.points, before_points)
+        assert state.vertex_stencils == before_stencils
+        assert state.history_vertex == before_vertex_history
+        assert state.history_cells == before_cell_history
+    finally:
+        state.native.close()
+
+
+@pytest.fixture
+def _coupled_local_model() -> Iterator[tuple[_CoupledBinding, np.ndarray]]:
+    from phydrax.meshing._tetra_coupled import _CoupledBinding
+
+    state = _state(_source(4, nonuniform=True), np.eye(3, dtype=np.float64))
+    try:
+        ids = np.asarray(state.snapshot.vertex_ids, dtype=np.int64)
+        cells = ids[np.asarray(state.snapshot.tetrahedra, dtype=np.int64)]
+        cell_ids = np.asarray(state.snapshot.cell_ids, dtype=np.int64)
+        shared = cell_ids[np.any(cells == 21, axis=1) & np.any(cells == 22, axis=1)]
+        assert shared.size
+        source_cell = next(iter(state.cell_ancestry[int(shared[0])]))
+        binding = _CoupledBinding(
+            state.source_identity,
+            int(state.snapshot.generation),
+            (21, 22),
+            (21, 22),
+            (source_cell, source_cell),
+        )
+        row = np.asarray((1, 0, 0, 0, 0, 0), dtype=np.float64)
+        yield binding, row
+    finally:
+        state.native.close()
+
+
+def test_coupled_certified_local_infeasibility_keeps_result_and_binding(
+    _coupled_local_model: tuple[_CoupledBinding, np.ndarray],
+) -> None:
+    from phydrax.meshing._tetra_coupled import _solve
+
+    binding, row = _coupled_local_model
+    policy = phx.optim.ConvexSolvePolicy()
+    infeasible = _solve([row, -row], [0.0, -1.0], [], policy, binding)
+    assert infeasible.primal is None
+    assert int(infeasible.result.status) == int(
+        phx.optim.ConvexProgramStatus.PRIMAL_INFEASIBLE
+    )
+    assert bool(infeasible.result.certificate.dual_ray_valid)
+    assert infeasible.binding == binding
+    assert infeasible.policy is policy
+
+
+def test_coupled_resource_refusal_keeps_demand_and_binding(
+    _coupled_local_model: tuple[_CoupledBinding, np.ndarray],
+) -> None:
+    from phydrax.meshing._tetra_coupled import _solve, TetraMetricProposalError
+
+    binding, row = _coupled_local_model
+    policy = phx.optim.ConvexSolvePolicy(phx.optim.DensePrimalDualQP(max_kkt_dimension=1))
+    with pytest.raises(TetraMetricProposalError) as resource:
+        _solve([row, -row], [0.0, -1.0], [], policy, binding)
+    assert resource.value.result is None
+    assert resource.value.policy is policy
+    assert resource.value.binding == binding
+    assert resource.value.demand.variables == 6
+    assert resource.value.demand.inequalities == 2
+    assert resource.value.demand.dimension == 10
+
+
+def test_coupled_iteration_failure_keeps_actual_result_and_binding(
+    _coupled_local_model: tuple[_CoupledBinding, np.ndarray],
+) -> None:
+    from phydrax.meshing._tetra_coupled import _solve, TetraMetricProposalError
+
+    binding, row = _coupled_local_model
+    policy = phx.optim.ConvexSolvePolicy(
+        termination=phx.optim.ConvexTermination(maximum_steps=1),
+        failure=phx.linalg.FailurePolicy("status"),
+    )
+    with pytest.raises(TetraMetricProposalError) as failure:
+        _solve([row], [-1.0], [], policy, binding)
+    assert failure.value.result is not None
+    assert not bool(failure.value.result.valid)
+    assert failure.value.policy is policy
+    assert failure.value.binding == binding
+    assert int(failure.value.result.status) != int(phx.optim.ConvexProgramStatus.OPTIMAL)
+
+
+def test_coupled_model_requires_progress_on_its_selected_edge() -> None:
+    from phydrax.meshing import _tetra_coupled as coupled
+
+    state = _state(
+        _source(4, nonuniform=True, close_edge=True),
+        np.eye(3, dtype=np.float64) * 4.0,
+    )
+    try:
+        search = coupled._prepare_search(state)
+        edge = (25, 26)
+        details = coupled._vertex_details(search, edge)
+        assert details is not None
+        selected_cells = []
+        for detail, shift in zip(details, (-1.0 / 64.0, 1.0 / 64.0), strict=True):
+            goal = search.prepared.points[detail.row] + np.asarray(
+                (0.0, 0.0, shift), dtype=np.float64
+            )
+            query = (
+                Fraction(float(goal[0])),
+                Fraction(float(goal[1])),
+                Fraction(float(goal[2])),
+            )
+            cell = next(
+                record
+                for record in detail.source_cells
+                if _locate_source_weights(query, (record,)) is not None
+            )
+            selected_cells.append(cell)
+        selected = tuple(selected_cells)
+        binding = coupled._CoupledBinding(
+            state.source_identity,
+            int(state.snapshot.generation),
+            edge,
+            edge,
+            tuple(record[0] for record in selected),
+        )
+        incident = [
+            i
+            for i, key in enumerate(search.edges)
+            if search.measured[i] and any(vertex in key for vertex in edge)
+        ]
+        index = search.edges.index(edge)
+        assert 0 < search.short_quanta[index] < search.before[1][0]
+        model = coupled._model_rows(
+            search, details, selected, incident, binding, phx.optim.ConvexSolvePolicy()
+        )
+        assert model is not None
+        rows, rhs, equalities = model
+        assert min(rhs) < 0.0
+        solved = coupled._solve(
+            rows, rhs, equalities, phx.optim.ConvexSolvePolicy(), binding
+        )
+        assert solved.primal is not None
+        points = np.stack([search.prepared.points[detail.row] for detail in details])
+        moved = points + solved.primal.reshape((2, 3))
+        assert np.linalg.norm(moved[1] - moved[0]) > np.linalg.norm(points[1] - points[0])
+    finally:
+        state.native.close()
+
+
+@pytest.mark.parametrize(
+    "vertices,normal_residual",
+    [((21, 22), 0.0), ((7, 23), 2.0**-80)],
+    ids=("stationary-goal", "stationary-carrier-projection"),
+)
+def test_coupled_quantization_retains_an_unchanged_endpoint(
+    vertices: tuple[int, int], normal_residual: float
+) -> None:
+    from phydrax.meshing import _tetra_coupled as coupled
+
+    state = _state(_source(4, nonuniform=True), np.eye(3, dtype=np.float64))
+    try:
+        search = coupled._prepare_search(state)
+        details = coupled._vertex_details(search, vertices)
+        assert details is not None
+        goal = search.prepared.points[details[1].row] + np.asarray(
+            (1.0 / 64.0, 0.0, 0.0), dtype=np.float64
+        )
+        query = (
+            Fraction(float(goal[0])),
+            Fraction(float(goal[1])),
+            Fraction(float(goal[2])),
+        )
+        moved_cell = next(
+            (
+                record
+                for record in details[1].source_cells
+                if _locate_source_weights(query, (record,)) is not None
+            ),
+            None,
+        )
+        assert moved_cell is not None
+        selected = (details[0].source_cells[0], moved_cell)
+        binding = coupled._CoupledBinding(
+            state.source_identity,
+            int(state.snapshot.generation),
+            vertices,
+            vertices,
+            tuple(record[0] for record in selected),
+        )
+        solved = coupled._solve(
+            [np.asarray((0.0, 0.0, 0.0, -1.0, 0.0, 0.0), dtype=np.float64)],
+            [-1.0 / 64.0],
+            [],
+            phx.optim.ConvexSolvePolicy(),
+            binding,
+        )
+        assert solved.primal is not None
+        np.testing.assert_array_equal(solved.primal[:3], np.zeros(3, dtype=np.float64))
+        original_point = search.prepared.points[details[0].row].copy()
+        original_stencil = state.vertex_stencils[vertices[0]].copy()
+        # Exercise the carrier boundary with an exactly represented normal
+        # residual as well as the actual solver's zero displacement.
+        primal = solved.primal.copy()
+        primal[0] += normal_residual
+        candidate = coupled._quantize(search, details, selected, primal)
+        assert candidate is not None
+        proposals, _, _ = candidate
+        assert [proposal["vertex"] for proposal in proposals] == [vertices[1]]
+        assert _apply_relocation_batch(state, proposals) is TetMeshEditStatus.APPLIED
+        row = _topology(state.snapshot).vertex_row[vertices[0]]
+        np.testing.assert_array_equal(state.snapshot.points[row], original_point)
+        assert state.vertex_stencils[vertices[0]] == original_stencil
+        assert (
+            vertices[0],
+            vertices[0],
+            EntityLineageKind.RELOCATED,
+        ) not in state.history_vertex
+        assert (
+            vertices[1],
+            vertices[1],
+            EntityLineageKind.RELOCATED,
+        ) in state.history_vertex
+    finally:
+        state.native.close()
+
+
+def test_relocation_search_respects_fixed_protected_and_region_interfaces() -> None:
+    source = _source(4, nonuniform=True)
+    mesh = source.mesh
+    edge_keys = np.asarray(entity_keys(mesh, 1), dtype=np.int64)
+    protected = np.zeros(edge_keys.shape[0], dtype=np.bool_)
+    protected[np.flatnonzero(np.all(edge_keys == (22, 23), axis=1))[0]] = True
+    fixed = np.zeros(mesh.vertex_global_ids.size, dtype=np.bool_)
+    fixed[21] = True
+    cells = np.asarray(mesh.blocks[0].vertices, dtype=np.int64)
+    classes = np.zeros(cells.shape[0], dtype=np.int64)
+    classes[np.flatnonzero(np.any(cells == 25, axis=1))[0]] = 1
+    state = _prepare_native_state(
+        mesh,
+        source.geometry,
+        source.coordinate_contract,
+        np.broadcast_to(
+            np.eye(3, dtype=np.float64) * 4.0,
+            (mesh.vertex_global_ids.size, 3, 3),
+        ).copy(),
+        cell_classes=classes,
+        facet_classes=np.zeros(mesh.entity_set(2).entity_ids.size, dtype=np.int64),
+        edge_classes=np.zeros(edge_keys.shape[0], dtype=np.int64),
+        protected_edges=protected,
+        fixed_vertices=fixed,
+    )
+    try:
+        groups = _relocation_proposals(state, {}, deep=True)
+        assert groups
+        proposed = {int(p["vertex"]) for group in groups for p in group}
+        assert not proposed.intersection((21, 25))
+        np.testing.assert_array_equal(state.snapshot.tetrahedron_regions, classes)
+    finally:
+        state.native.close()
+
+
+def _restricted_coupled_state(
+    *, fixed_first: bool = False, protect_edge: bool = False, split_region: bool = False
+) -> _NativeState:
+    source = _source(4, nonuniform=True)
+    mesh = source.mesh
+    edge_keys = np.asarray(entity_keys(mesh, 1), dtype=np.int64)
+    fixed = np.ones(mesh.vertex_global_ids.size, dtype=np.bool_)
+    fixed[[21, 22]] = False
+    fixed[21] = fixed_first
+    protected = np.zeros(edge_keys.shape[0], dtype=np.bool_)
+    edge_row = np.flatnonzero(np.all(edge_keys == (21, 22), axis=1))
+    assert edge_row.size == 1
+    protected[edge_row[0]] = protect_edge
+    cells = np.asarray(mesh.blocks[0].vertices, dtype=np.int64)
+    classes = np.zeros(cells.shape[0], dtype=np.int64)
+    if split_region:
+        only_first = np.any(cells == 21, axis=1) & ~np.any(cells == 22, axis=1)
+        classes[np.flatnonzero(only_first)[0]] = 1
+    return _prepare_native_state(
+        mesh,
+        source.geometry,
+        source.coordinate_contract,
+        np.broadcast_to(
+            np.eye(3, dtype=np.float64) * 4.0,
+            (mesh.vertex_global_ids.size, 3, 3),
+        ).copy(),
+        cell_classes=classes,
+        facet_classes=np.zeros(mesh.entity_set(2).entity_ids.size, dtype=np.int64),
+        edge_classes=np.zeros(edge_keys.shape[0], dtype=np.int64),
+        protected_edges=protected,
+        fixed_vertices=fixed,
+    )
+
+
+def _assert_restricted_coupled_unchanged(state: _NativeState) -> None:
+    from phydrax.meshing._tetra_coupled import _coupled_relocation_phase
+    from phydrax.meshing._tetra_metric import _LOWER, _prepare_relocation_geometry
+
+    prepared = _prepare_relocation_geometry(state)
+    edges = tuple(prepared.topology.edge_cells)
+    assert (21, 22) in edges
+    assert prepared.lengths[edges.index((21, 22))] < _LOWER
+    before = np.asarray(state.snapshot.points, dtype=np.float64).copy()
+    generation = state.snapshot.generation
+    assert _coupled_relocation_phase(state, _counters()) == 0
+    assert state.snapshot.generation == generation
+    np.testing.assert_array_equal(state.snapshot.points, before)
+
+
+def test_coupled_fixed_endpoint_excludes_short_edge() -> None:
+    state = _restricted_coupled_state(fixed_first=True)
+    try:
+        assert 21 in state.fixed_vertices and 22 not in state.fixed_vertices
+        _assert_restricted_coupled_unchanged(state)
+    finally:
+        state.native.close()
+
+
+def test_coupled_protected_edge_is_not_a_candidate() -> None:
+    from phydrax.meshing._tetra_metric import _prepare_relocation_geometry
+
+    state = _restricted_coupled_state(protect_edge=True)
+    try:
+        assert 21 not in state.fixed_vertices and 22 not in state.fixed_vertices
+        assert _prepare_relocation_geometry(state).protected[(21, 22)]
+        _assert_restricted_coupled_unchanged(state)
+    finally:
+        state.native.close()
+
+
+def test_coupled_region_interface_excludes_incident_star() -> None:
+    from phydrax.meshing._tetra_metric import _prepare_relocation_geometry
+
+    state = _restricted_coupled_state(split_region=True)
+    try:
+        assert 21 not in state.fixed_vertices and 22 not in state.fixed_vertices
+        prepared = _prepare_relocation_geometry(state)
+        assert not prepared.protected[(21, 22)]
+        regions = np.asarray(state.snapshot.tetrahedron_regions, dtype=np.int64)
+        assert set(regions[list(prepared.topology.vertex_cells[21])]) == {0, 1}
+        _assert_restricted_coupled_unchanged(state)
+    finally:
+        state.native.close()
 
 
 def test_relocation_is_invariant_under_sparse_vertex_ids() -> None:
@@ -1191,6 +1657,138 @@ def test_relocation_backtracks_to_binary64_resolution() -> None:
     np.testing.assert_array_equal(goals[12], point + np.asarray((2.0**-12, 0.0, 0.0)))
     assert not np.array_equal(goals[-1], point)
     np.testing.assert_array_equal(point + (goals[-1] - point) / 2.0, point)
+
+
+def test_source_cell_carrier_preserves_exact_affine_membership() -> None:
+    from phydrax.meshing._tetra_metric import _source_cell_carrier
+
+    state = _state(_source(3, vertex_id_stride=7), np.eye(3, dtype=np.float64))
+    try:
+        ids = {
+            tuple(state.source_points[row]): vertex
+            for vertex, row in state.source_vertex_rows.items()
+        }
+        origin = ids[(0.0, 0.0, 0.0)]
+        x = ids[(0.5, 0.0, 0.0)]
+        xy = ids[(0.5, 0.5, 0.0)]
+        xyz = ids[(0.5, 0.5, 0.5)]
+        record = next(
+            r for r in state.source_records if set(r[1]) == {origin, x, xy, xyz}
+        )
+        face = (origin, ids[(1.0, 0.0, 0.0)], ids[(0.0, 1.0, 0.0)])
+        edge = (origin, ids[(1.0, 0.0, 0.0)])
+        corner_plane = (origin, ids[(0.0, 1.0, 0.0)], ids[(0.0, 0.0, 1.0)])
+        assert _source_cell_carrier(state, record, None) == record[1]
+        assert _source_cell_carrier(state, record, (face,)) == tuple(
+            sorted((origin, x, xy))
+        )
+        assert _source_cell_carrier(state, record, (edge,)) == tuple(sorted((origin, x)))
+        assert _source_cell_carrier(state, record, (corner_plane,)) is None
+        assert _source_cell_carrier(state, record, ()) is None
+        # Exact source coordinates may distinguish a normal component that
+        # rounds to zero in the physical binary64 mesh.
+        exact = list(state.source_exact_points)
+        row = state.source_vertex_rows[xy]
+        exact[row] = (exact[row][0], exact[row][1], Fraction(1, 2**1100))
+        state.source_exact_points = tuple(exact)
+        state.source_supports.clear()
+        assert _source_cell_carrier(state, record, (face,)) is None
+    finally:
+        state.native.close()
+
+
+def test_public_coupled_relocation_cage_transfers_affine_fields() -> None:
+    from phydrax.meshing import (
+        execute_mesh_adaptation,
+        MeshAdaptationPolicy,
+        MeshAdaptationRoute,
+        MeshAdaptationStatus,
+        MeshingEntityKind,
+        MeshingScope,
+        prepare_mesh_adaptation,
+    )
+    from phydrax.meshing._tetra_metric import _LOWER, _UPPER, TetraMetricEvidence
+    from tests.unit.meshing.test_adaptation_archive import _metric_request
+
+    delta = 2.0**-16
+    half_gap = (_LOWER - delta) / 2.0
+    cap = half_gap + 0.75 * delta
+    radius = float(np.sqrt(_UPPER**2 - cap**2))
+    tip = half_gap + _UPPER - 2.0**-28
+    points = np.asarray(
+        (
+            (-tip, 0, 0),
+            (tip, 0, 0),
+            (0, radius, 0),
+            (0, 0, radius),
+            (0, -radius, 0),
+            (0, 0, -radius),
+            (-half_gap, 0, 0),
+            (half_gap, 0, 0),
+        ),
+        dtype=np.float64,
+    )
+    cells = [
+        [a, b, 2 + i, 2 + (i + 1) % 4]
+        for a, b in ((0, 6), (6, 7), (7, 1))
+        for i in range(4)
+    ]
+    source = _mesh_result(points, cells)
+    mesh = source.mesh
+    edges = mesh.entity_set(1)
+    boundary = np.all(entity_keys(mesh, 1) < 6, axis=1)
+    protected = MeshingScope(
+        mesh.mesh_id,
+        mesh.numeric_version,
+        MeshingEntityKind.MESH,
+        1,
+        edges.entity_set_id,
+        np.asarray(edges.entity_ids)[boundary],
+    )
+    result = execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            source,
+            _metric_request(source, (1.0, 1.0, 1.0)),
+            policy=MeshAdaptationPolicy(
+                MeshAdaptationRoute.NATIVE_METRIC_3D,
+                relocation=True,
+                protected_scopes=(protected,),
+            ),
+        )
+    )
+    assert result.status is MeshAdaptationStatus.COMPLETE
+    assert isinstance(result.evidence, TetraMetricEvidence)
+    assert result.evidence.out_of_range_edges == 0
+    target = result.target.mesh
+    np.testing.assert_array_equal(target.vertex_global_ids, mesh.vertex_global_ids)
+    np.testing.assert_array_equal(target.blocks[0].vertices, mesh.blocks[0].vertices)
+    np.testing.assert_array_equal(np.asarray(target.coordinates)[:6], points[:6])
+    assert all(not np.array_equal(target.coordinates[i], points[i]) for i in (6, 7))
+    assert result.lineage is not None
+    vertices = next(entity for entity in result.lineage.entities if entity.dimension == 0)
+    relations = set(
+        zip(
+            np.asarray(vertices.source_global_ids).tolist(),
+            np.asarray(vertices.target_global_ids).tolist(),
+            np.asarray(vertices.relation_kinds).tolist(),
+            strict=True,
+        )
+    )
+    assert {(v, v, int(EntityLineageKind.RELOCATED)) for v in (6, 7)} <= relations
+    assert result.transition is not None
+    stencil = result.transition.vertex_stencil
+    assert stencil is not None
+    ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    affine = 2.0 + np.asarray(mesh.coordinates) @ np.asarray((1.0, -2.0, 4.0))
+    np.testing.assert_allclose(
+        stencil.apply(ids, np.full(ids.size, 3.0)), 3.0, rtol=0, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        stencil.apply(ids, affine),
+        2.0 + np.asarray(target.coordinates) @ np.asarray((1.0, -2.0, 4.0)),
+        rtol=0,
+        atol=1e-12,
+    )
 
 
 def test_relocation_can_refine_coarse_source_carriers() -> None:

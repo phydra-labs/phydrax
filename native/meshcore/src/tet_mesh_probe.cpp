@@ -314,6 +314,7 @@ bool TetMesh::certify_replacement_probe(TetReplacementProbeCache& cache) const {
 
 bool TetMesh::probe_cavity_edit(const TetEdit& operation, TetReplacementProbeCache& cache,
                                 TetEditStatus& status) const {
+  clear_implicit_facet_refusal();
   const bool collapse = operation.kind == TetEditKind::kCollapse;
   if (!collapse && operation.kind != TetEditKind::kFlip23 &&
       operation.kind != TetEditKind::kFlip32 &&
@@ -344,6 +345,7 @@ bool TetMesh::probe_cavity_edit(const TetEdit& operation, TetReplacementProbeCac
     return true;
   };
   const auto defer = [&]() {
+    clear_implicit_facet_refusal();
     if (implicit != nullptr) {
       implicit->transversality_refusals = transversality;
       implicit->distance_refusals = distance;
@@ -1036,6 +1038,7 @@ bool TetMesh::probe_cavity_edit(const TetEdit& operation, TetReplacementProbeCac
 // and witnesses before the source checks; RelocationOverlay presents exactly
 // those records to the same checks on the unchanged state.
 bool TetMesh::probe_relocation_edit(const TetEdit& operation, TetEditStatus& status) const {
+  clear_implicit_facet_refusal();
   if (operation.kind != TetEditKind::kRelocate || periodic_identity_.bound ||
       !periodic_orbits_.empty() || !quotient_cells_.empty() ||
       !periodic_entity_maps_.empty() || !operation.periodic_members.empty() ||
@@ -1056,6 +1059,7 @@ bool TetMesh::probe_relocation_edit(const TetEdit& operation, TetEditStatus& sta
     return true;
   };
   const auto defer = [&]() {
+    clear_implicit_facet_refusal();
     if (implicit != nullptr) {
       implicit->transversality_refusals = transversality;
       implicit->distance_refusals = distance;
