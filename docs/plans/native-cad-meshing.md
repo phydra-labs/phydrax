@@ -469,7 +469,7 @@ with no compatibility reads.
    manifest (`MeshingScope.unqualified_entity_ids`,
    `CellValidityCertificate.cell_map_digests`) are stored as integer and byte
    array columns through the existing column recipes; identities are
-   unchanged. Raising the manifest limit was rejected.
+   unchanged. A global manifest-limit increase was rejected for this change.
 6. The exact coordinate bank of `CellGeometrySpec.exact_coordinate_bank` and
    `_ExactCoordinateBankMap.exact_coordinates` is an immutable integer-dyadic
    bank (int64 odd significand and int16 exponent per entry, a sparse overflow
@@ -503,6 +503,15 @@ reader alike. SPD operators use the canonical symmetric factorization. Native
 searches that can grow without a structural bound (for example exhaustive
 Steiner-free suppression in PLC recovery) take a declared node and byte budget
 and refuse through their typed failure with search-count evidence.
+
+The required `archived-layer-core` material profile separately declares a
+user-approved 256 MiB manifest allowance: its measured canonical cycle metadata
+occupies 191,299,479 bytes. The normal writer and independent cold reader derive
+admission from the same profile declaration. Its 4 GiB container, aggregate, and
+member byte limits, original element/axis limits, 4,097-member limit, and all dtype,
+header, nesting, and central-directory checks remain unchanged. Other profiles retain
+64 MiB manifests; library defaults, archive representation, and scientific
+identities do not change.
 
 ## 11. Geometry and field transitions, periodicity, distribution and consumers
 

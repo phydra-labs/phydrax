@@ -55,6 +55,10 @@ _LAYER_CORE_SOLVE_BUDGET = 4 << 30
 # writer and cold reader alike. The cold reader materializes the archive's
 # logical aggregate, so writer and reader share this declared archive budget.
 _LAYER_CORE_ARCHIVE_BUDGET = 4 << 30
+_LAYER_CORE_MANIFEST_BUDGET = 64 << 20
+# The required material cycle has 191,299,479 bytes of canonical metadata.
+# Its explicit allowance does not change the payload or any other admission.
+_MATERIAL_MANIFEST_BUDGET = 256 << 20
 
 _LAYER_CORE_HODGE_ADMISSION = phx.linalg.SparseFactorizationPolicy(
     "cholesky",
@@ -94,8 +98,9 @@ class _LayerCoreLifecycle(NamedTuple):
     ``solve_memory_bytes`` budgets harmonic-history and default Riesz solves.
     ``hodge_admission`` separately declares native SPD proof ordering, work,
     factor capacity and its complete numeric working set. The cycle archive
-    binds the complete policy for its cold reader. ``archive_bytes`` remains
-    the declared cycle-archive budget.
+    binds the complete policy for its cold reader. ``archive_bytes`` declares
+    the cycle's byte budget; ``archive_manifest_bytes`` independently admits
+    its canonical metadata without changing other archive bounds.
     """
 
     densities: tuple[float, ...]
@@ -107,6 +112,7 @@ class _LayerCoreLifecycle(NamedTuple):
     solve_memory_bytes: int
     archive_bytes: int
     hodge_admission: phx.linalg.SparseFactorizationPolicy
+    archive_manifest_bytes: int
 
 
 # Material densities/sites are the original campaign controls; nonperiodic
@@ -122,6 +128,7 @@ _LAYER_CORE_LIFECYCLES = {
         _LAYER_CORE_SOLVE_BUDGET,
         _LAYER_CORE_ARCHIVE_BUDGET,
         _MATERIAL_HODGE_ADMISSION,
+        _MATERIAL_MANIFEST_BUDGET,
     ),
     "concave-box-core-lifecycle": _LayerCoreLifecycle(
         (2.0,),
@@ -133,6 +140,7 @@ _LAYER_CORE_LIFECYCLES = {
         _LAYER_CORE_SOLVE_BUDGET,
         _LAYER_CORE_ARCHIVE_BUDGET,
         _LAYER_CORE_HODGE_ADMISSION,
+        _LAYER_CORE_MANIFEST_BUDGET,
     ),
     "concave-box-core-lifecycle:larger": _LayerCoreLifecycle(
         (2.0,),
@@ -144,6 +152,7 @@ _LAYER_CORE_LIFECYCLES = {
         _LAYER_CORE_SOLVE_BUDGET,
         _LAYER_CORE_ARCHIVE_BUDGET,
         _LAYER_CORE_HODGE_ADMISSION,
+        _LAYER_CORE_MANIFEST_BUDGET,
     ),
     "unit-box": _LayerCoreLifecycle(
         (2.0,),
@@ -155,26 +164,29 @@ _LAYER_CORE_LIFECYCLES = {
         _UNIT_BOX_SOLVE_BUDGET,
         _LAYER_CORE_ARCHIVE_BUDGET,
         _UNIT_BOX_HODGE_ADMISSION,
+        _LAYER_CORE_MANIFEST_BUDGET,
     ),
 }
 
 
-def _layer_core_archive_limits(budget: int, /) -> ArrayArchiveLimits:
-    """Cycle-archive admission limits from one declared byte budget.
+def _layer_core_archive_limits(controls: _LayerCoreLifecycle, /) -> ArrayArchiveLimits:
+    """Cycle-archive admission from the profile's byte and metadata budgets.
 
     Container, aggregate and member bytes are the budget. Element and axis
     counts use the same number, since each element takes at least one byte.
-    Manifest bytes are budget / 64, central-directory bytes budget / 1024.
-    Member-count and nesting limits stay the codec's model limits.
+    Manifest bytes use their independent declaration; central-directory bytes
+    remain budget / 1024. Member-count and nesting limits stay the model limits.
     """
     from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS
+
+    budget = controls.archive_bytes
 
     return replace(
         MODEL_ARCHIVE_LIMITS,
         max_container_bytes=budget,
         max_aggregate_bytes=budget,
         max_member_bytes=budget,
-        max_manifest_bytes=budget // 64,
+        max_manifest_bytes=controls.archive_manifest_bytes,
         max_central_directory_bytes=budget // 1024,
         max_axis_length=budget,
         max_array_elements=budget,
@@ -1508,7 +1520,7 @@ def _write_layer_core_cycle_archive(
         ),
         boundary_id=f"{controls.semantics}-refined-accepted-state",
     )
-    limits = _layer_core_archive_limits(controls.archive_bytes)
+    limits = _layer_core_archive_limits(controls)
     write_model_artifact(path, composition, limits=limits)
     return model_archive_content_id(path, limits=limits)
 
@@ -5322,7 +5334,7 @@ def _resume_layer_core_cycle(
         raise ValueError(
             "Cold reader's declared archive budget differs from the writer's."
         )
-    limits = _layer_core_archive_limits(controls.archive_bytes)
+    limits = _layer_core_archive_limits(controls)
     if not content_id:
         raise ValueError("Cold layer/core continuation requires its trusted content ID.")
     changed_id = ("0" if content_id[0] != "0" else "1") + content_id[1:]
@@ -5676,6 +5688,7 @@ def _run_layer_core_lifecycle(
                 "archive_path": str(path),
                 "archive_content_id": content_id,
                 "archive_budget_bytes": controls.archive_bytes,
+                "archive_manifest_bytes": controls.archive_manifest_bytes,
                 "forward_history": forward_history,
                 "forward_scalar_transfer": forward_scalars,
                 "forward_compatible_transfer": forward_forms,

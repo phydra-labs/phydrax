@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax._array_archive import ArrayArchiveLimits
+from phydrax._array_archive import ArrayArchiveError
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax.discretization import CellGeometrySpec, CellMesh
 from phydrax.lifecycle import Composition, CompositionEntry
@@ -157,34 +157,56 @@ def test_history_policy_solves_offset_columns_on_one_cholesky_factor() -> None:
     )
 
 
-def _archive_budgets(limits: ArrayArchiveLimits, /) -> set[int]:
-    return {
-        limits.max_container_bytes,
-        limits.max_aggregate_bytes,
-        limits.max_member_bytes,
-        limits.max_axis_length,
-        limits.max_array_elements,
-        limits.max_total_array_elements,
-    }
-
-
-def test_every_profile_declares_its_archive_budget() -> None:
-    assert set(reconstruction._ARCHIVE_BUDGET_BYTES) == set(
-        reconstruction._SOLVE_MEMORY_BUDGET_BYTES
+@pytest.mark.parametrize("reading", (False, True), ids=("writer", "reader"))
+def test_layer_core_manifest_budget_is_independent(tmp_path: Path, reading: bool) -> None:
+    controls = hybrid._LAYER_CORE_LIFECYCLES["archived-layer-core"]._replace(
+        archive_bytes=1 << 20, archive_manifest_bytes=64 << 10
     )
-    assert set(reconstruction._ARCHIVE_MEMBER_LIMITS) == set(
-        reconstruction._ARCHIVE_BUDGET_BYTES
+    metadata = "x" * (20 << 10)
+    values = np.asarray((1.25, -3.5), dtype=np.float64)
+    composition = Composition(
+        (
+            CompositionEntry(
+                {"metadata": metadata, "values": values},
+                entry_id="scientific-state",
+                role="model-state",
+                owner_id="archive-control",
+                structure_id="declared-state",
+                revision_id="source-state",
+                semantics_id="physical-state",
+            ),
+        ),
+        boundary_id="manifest-admission",
     )
-    for profile, budget in reconstruction._ARCHIVE_BUDGET_BYTES.items():
-        assert _archive_budgets(reconstruction._archive_limits(profile)) == {budget}
-        limits = reconstruction._archive_limits(profile)
-        assert limits.max_members == reconstruction._ARCHIVE_MEMBER_LIMITS[profile]
-        assert limits.max_manifest_bytes == budget // 64
-        assert limits.max_central_directory_bytes == budget // 1024
-    for controls in hybrid._LAYER_CORE_LIFECYCLES.values():
-        assert _archive_budgets(
-            hybrid._layer_core_archive_limits(controls.archive_bytes)
-        ) == {controls.archive_bytes}
+    path = tmp_path / "state.phx"
+    limits = hybrid._layer_core_archive_limits(controls)
+    write_model_artifact(path, composition, limits=limits)
+    restored = read_model_artifact(
+        path,
+        expected_type=Composition,
+        restore=restore_model_archive_value,
+        limits=limits,
+    )
+    state = restored.value("scientific-state")
+    assert state["metadata"] == metadata
+    np.testing.assert_array_equal(state["values"], values)
+
+    restricted = hybrid._layer_core_archive_limits(
+        controls._replace(archive_manifest_bytes=16 << 10)
+    )
+    if reading:
+        with pytest.raises(ArrayArchiveError):
+            read_model_artifact(
+                path,
+                expected_type=Composition,
+                restore=restore_model_archive_value,
+                limits=restricted,
+            )
+    else:
+        refused = tmp_path / "refused.phx"
+        with pytest.raises(ValueError):
+            write_model_artifact(refused, composition, limits=restricted)
+        assert not refused.exists()
 
 
 def test_archive_resource_plan_identity_covers_complete_policy() -> None:

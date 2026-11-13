@@ -235,6 +235,11 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- The required `archived-layer-core` material qualification declares a 256 MiB
+  manifest allowance independently of its unchanged 4 GiB archive budget.
+  Writer and cold reader use the same explicit profile policy; other profiles,
+  all remaining admission checks, archive representation, and library defaults
+  are unchanged.
 - `SparseHodge.admission_policy` replaces the byte-only `admission_bytes`
   argument with the native complete-Cholesky policy. FE de Rham complexes expose
   it as `hodge_admission`, independently of assembly and Riesz solve resources.
