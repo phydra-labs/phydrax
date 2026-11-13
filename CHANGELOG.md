@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged model-archive field reads can explicitly retain immutable shared array
+  ownership. Admission then charges each authenticated owner once, including
+  unselected column validation, without widening archive limits or weakening
+  corruption checks. Mutable reads retain independent buffers and occurrence
+  accounting; selected fields remain inputs, not restored scientific authority.
 - Reconstruction qualification exposes the actual prepared refinement alongside
   its accepted result and supports an optional host checkpoint after physical
   reanalysis, before topology-result construction. Checkpoints retain the

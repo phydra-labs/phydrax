@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
@@ -14,7 +15,7 @@ from phydrax._archive_columns import (
     StaticColumnArchiveRecipe,
     TextRowsArchiveRecipe,
 )
-from phydrax._array_archive import ArrayArchiveCorruptionError
+from phydrax._array_archive import ArrayArchiveCorruptionError, read_array_archive
 from phydrax._model._structure import model_recipe_array_inventory
 from phydrax.discretization._nested_reference_types import NestedReferenceWitnesses
 from phydrax.geometry.implicit._source_charts import ImplicitRootChartEvidence
@@ -589,9 +590,38 @@ def test_malformed_layer_columns_refuse_before_owner_replay(
     assert not replayed
 
 
+def test_immutable_prerequisites_charge_shared_column_owners_once(
+    tmp_path: Path,
+) -> None:
+    identity = _identity()
+    path = write_model_artifact(
+        tmp_path / "shared-columns.phx",
+        _composition(identity),
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    _, physical = read_array_archive(path, limits=MODEL_ARCHIVE_LIMITS)
+    _, occurrences = read_model_archive(path, limits=MODEL_ARCHIVE_LIMITS)
+    count = sum(value.size for value in physical.values())
+    assert count < sum(value.size for value in occurrences.values())
+    limits = replace(MODEL_ARCHIVE_LIMITS, max_total_array_elements=count)
+    selected = read_model_archive_fields(
+        path,
+        expected_type=Composition,
+        fields=("entries",),
+        limits=limits,
+        immutable_arrays=True,
+    )
+    restored = selected["entries"][0].value
+    assert restored.identity_id == identity.identity_id
+    np.testing.assert_array_equal(
+        restored.source_wall_cell_ids, identity.source_wall_cell_ids
+    )
+
+
 @pytest.mark.parametrize("change", ("index", "identity"))
+@pytest.mark.parametrize("immutable_arrays", (False, True), ids=("mutable", "immutable"))
 def test_selected_fields_reject_unselected_column_corruption(
-    tmp_path: Path, change: str
+    tmp_path: Path, change: str, immutable_arrays: bool
 ) -> None:
     source = write_model_artifact(
         tmp_path / "source.phx", _composition(_identity()), limits=MODEL_ARCHIVE_LIMITS
@@ -601,6 +631,7 @@ def test_selected_fields_reject_unselected_column_corruption(
         expected_type=Composition,
         fields=("boundary_id",),
         limits=MODEL_ARCHIVE_LIMITS,
+        immutable_arrays=immutable_arrays,
     ) == {"boundary_id": "column-archive"}
     manifest, arrays = read_model_archive(source, limits=MODEL_ARCHIVE_LIMITS)
     inventory = model_recipe_array_inventory(
@@ -630,6 +661,7 @@ def test_selected_fields_reject_unselected_column_corruption(
             expected_type=Composition,
             fields=("boundary_id",),
             limits=MODEL_ARCHIVE_LIMITS,
+            immutable_arrays=immutable_arrays,
         )
 
 

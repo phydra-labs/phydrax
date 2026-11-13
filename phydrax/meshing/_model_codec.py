@@ -4302,6 +4302,8 @@ def _validate_archive_columns(
     payloads: dict[int, Any],
     limits: ArrayArchiveLimits | None,
     /,
+    *,
+    immutable_arrays: bool,
 ) -> None:
     """Admit every column record without rebuilding its enclosing geometry."""
     from .._archive_columns import (
@@ -4328,6 +4330,11 @@ def _validate_archive_columns(
             ImplicitChartRowsArchiveRecipe,
         )
     )
+    restore_arrays = (
+        _model_from_shared_immutable_array_recipe
+        if immutable_arrays
+        else model_from_array_recipe
+    )
     seen: set[int] = set()
     pending: list[Any] = [recipe]
     while pending:
@@ -4344,7 +4351,7 @@ def _validate_archive_columns(
                     f"{_MODEL_ARRAYS}/{index:06d}": payloads[id(array)]
                     for index, array in enumerate(_recipe_array_nodes(node))
                 }
-                value = model_from_array_recipe(
+                value = restore_arrays(
                     node,
                     arrays,
                     prefix=_MODEL_ARRAYS,
@@ -4376,14 +4383,22 @@ def read_model_archive_fields(
     expected_type: type,
     fields: tuple[str, ...],
     limits: ArrayArchiveLimits | None,
+    immutable_arrays: bool = False,
 ) -> dict[str, Any]:
     """Decode selected registered field paths for prerequisite validation.
 
     The complete archive is admitted first. The returned fields are stored
     inputs, not certified authority; the owner must replay their mathematics.
+
+    ``immutable_arrays`` preserves authenticated shared array ownership and
+    charges each immutable owner once, as the full model reader does. Returned
+    numerical buffers then remain read-only. Mutable reads retain occurrence
+    accounting and independent buffers.
     """
     _register_model_archive_types()
     _require_model_type(expected_type)
+    if not isinstance(immutable_arrays, bool):
+        raise TypeError("immutable_arrays must be a bool.")
     if (
         not fields
         or any(
@@ -4393,7 +4408,9 @@ def read_model_archive_fields(
         or len(set(fields)) != len(fields)
     ):
         raise ValueError("Selected model fields must be distinct nonempty names.")
-    manifest, arrays = read_model_archive(path, limits=limits)
+    manifest, arrays = _read_model_archive(
+        path, limits=limits, immutable_arrays=immutable_arrays
+    )
     recipe = manifest["model_recipe"]
     try:
         if artifact_value(recipe["type"]) is not expected_type:
@@ -4413,7 +4430,14 @@ def read_model_archive_fields(
             id(node): arrays[f"{_MODEL_ARRAYS}/{index:06d}"]
             for index, node in enumerate(nodes)
         }
-        _validate_archive_columns(recipe, payloads, limits)
+        _validate_archive_columns(
+            recipe, payloads, limits, immutable_arrays=immutable_arrays
+        )
+        restore_arrays = (
+            _model_from_shared_immutable_array_recipe
+            if immutable_arrays
+            else model_from_array_recipe
+        )
         selected = {}
         for name in fields:
             subtree = subtrees[name]
@@ -4422,7 +4446,7 @@ def read_model_archive_fields(
                 f"{_MODEL_ARRAYS}/{index:06d}": payloads[id(node)]
                 for index, node in enumerate(subnodes)
             }
-            raw = model_from_array_recipe(
+            raw = restore_arrays(
                 subtree,
                 subarrays,
                 prefix=_MODEL_ARRAYS,

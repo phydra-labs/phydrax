@@ -22,6 +22,7 @@ from phydrax.meshing._model_codec import (
     _same_model_content,
     MODEL_ARCHIVE_LIMITS,
     read_model_archive,
+    read_model_archive_fields,
     read_model_artifact,
     restore_model_archive_value,
     write_model_archive,
@@ -243,19 +244,57 @@ def test_selected_archive_fields_retain_shared_payloads_and_refuse_wrong_root(
     np.testing.assert_array_equal(nested["value.coordinates"], mesh.coordinates)
 
 
-def test_new_model_recipe_is_not_copied_for_sharing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_immutable_selected_fields_preserve_shared_capacity_and_ownership(
+    tmp_path: Path,
 ) -> None:
-    from phydrax.meshing import _model_codec
-
-    def forbidden(value: Any) -> Any:
-        raise AssertionError("Fresh model recipes must not be expanded again.")
-
-    monkeypatch.setattr(_model_codec, "_unaliased_recipe", forbidden)
-    path = write_model_artifact(
-        tmp_path / "fresh.phx", _composition(_mesh()), limits=None
+    payload = np.frombuffer(np.arange(16, dtype=np.float64).tobytes(), dtype=np.float64)
+    value = Composition(
+        tuple(
+            CompositionEntry(
+                payload,
+                entry_id=f"state/{index}",
+                role="model-state",
+                owner_id="phydrax.meshing",
+                structure_id="shared-input",
+                revision_id=array_payload_digest(payload),
+                semantics_id="immutable-input-bank",
+            )
+            for index in range(4)
+        ),
+        boundary_id="shared-prerequisites",
     )
-    assert _read(path).entries[0].value.mesh_id == _mesh().mesh_id
+    limits = dataclasses.replace(MODEL_ARCHIVE_LIMITS, max_total_array_elements=16)
+    path = write_model_artifact(tmp_path / "shared-fields.phx", value, limits=limits)
+    with pytest.raises(ArrayArchiveCorruptionError):
+        read_model_archive_fields(
+            path, expected_type=Composition, fields=("entries",), limits=limits
+        )
+    selected = read_model_archive_fields(
+        path,
+        expected_type=Composition,
+        fields=("entries",),
+        limits=limits,
+        immutable_arrays=True,
+    )
+    values = [entry.value for entry in selected["entries"]]
+    np.testing.assert_array_equal(values[0], payload)
+    assert all(np.shares_memory(values[0], other) for other in values[1:])
+    with pytest.raises(ValueError):
+        values[0].setflags(write=True)
+
+
+def test_selected_fields_refuse_non_boolean_ownership_mode(tmp_path: Path) -> None:
+    path = write_model_artifact(
+        tmp_path / "mode.phx", _composition(_mesh()), limits=MODEL_ARCHIVE_LIMITS
+    )
+    with pytest.raises(TypeError, match="immutable_arrays"):
+        read_model_archive_fields(
+            path,
+            expected_type=Composition,
+            fields=("boundary_id",),
+            limits=MODEL_ARCHIVE_LIMITS,
+            immutable_arrays="immutable",  # ty: ignore[invalid-argument-type]
+        )
 
 
 def test_equal_subtrees_are_archived_once_independent_of_aliasing(
