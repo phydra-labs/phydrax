@@ -209,6 +209,16 @@ class _VertexDetail(NamedTuple):
     source_cells: tuple[tm._SourceTetRecord, ...]
 
 
+class _Neighbor(NamedTuple):
+    detail: _VertexDetail
+    unit_direction: np.ndarray
+
+
+class _ModelAttempt(NamedTuple):
+    applied: int
+    neighbors: tuple[_Neighbor, ...]
+
+
 class _Search(NamedTuple):
     state: tm._NativeState
     prepared: tm._RelocationPreparation
@@ -868,6 +878,93 @@ def _candidate_admissible(
     return bool(np.all(np.isfinite(quality)) and np.all(quality > 0))
 
 
+def _dual_neighbor_scores(
+    search: _Search,
+    incident: list[int],
+    binding: _CoupledBinding,
+    base_rows: list[np.ndarray],
+    solved: _CoupledSolve,
+) -> tuple[dict[int, list[tuple[float, int]]], dict[int, np.ndarray]]:
+    # Source barycentric rows precede lower/upper edge pairs. Native-refusal
+    # cuts follow base_rows and must never masquerade as fixed-neighbor evidence.
+    offset = len(base_rows) - 2 * len(incident)
+    ray = np.asarray(solved.result.certificate.inequality_dual_ray, dtype=np.float64)
+    if ray.shape != (solved.demand.inequalities,) or not np.all(np.isfinite(ray)):
+        raise TetraMetricProposalError(
+            "Coupled QP returned an invalid dual ray.",
+            result=solved.result,
+            policy=solved.policy,
+            demand=solved.demand,
+            binding=binding,
+        )
+    metric_ray = ray[offset : len(base_rows)]
+    scale = float(np.max(np.abs(metric_ray), initial=0.0))
+    scores: dict[int, list[tuple[float, int]]] = {
+        vertex: [] for vertex in binding.vertices
+    }
+    directions: dict[int, np.ndarray] = {}
+    if scale == 0.0:
+        return scores, directions
+    positions = {vertex: k for k, vertex in enumerate(binding.vertices)}
+    for k, index in enumerate(incident):
+        first, second = search.edges[index]
+        if (first in positions) == (second in positions):
+            continue
+        seed, neighbor = (first, second) if first in positions else (second, first)
+        lower, upper = float(metric_ray[2 * k]), float(metric_ray[2 * k + 1])
+        score = max(lower, upper)
+        if score <= 0.0:
+            continue
+        scores[seed].append((score, neighbor))
+        start = 3 * positions[seed]
+        # The omitted endpoint has the opposite edge coefficient. Moving
+        # against its dual-weighted coefficient releases the recorded blocker.
+        direction = (upper / scale - lower / scale) * base_rows[offset + 2 * k + 1][
+            start : start + 3
+        ]
+        if neighbor in directions:
+            directions[neighbor] += direction
+        else:
+            directions[neighbor] = direction
+    return scores, directions
+
+
+def _blocking_neighbors(
+    search: _Search,
+    incident: list[int],
+    binding: _CoupledBinding,
+    base_rows: list[np.ndarray],
+    solved: _CoupledSolve,
+) -> tuple[_Neighbor, ...]:
+    if (
+        len(binding.vertices) != 2
+        or search.state.target_mesh.periodic_topology is not None
+    ):
+        return ()
+    scores, directions = _dual_neighbor_scores(
+        search, incident, binding, base_rows, solved
+    )
+    chosen: dict[int, _Neighbor] = {}
+    target_ids = search.state.vertex_target_ids
+    for seed in binding.vertices:
+        for _, vertex in sorted(
+            scores[seed], key=lambda item: (-item[0], target_ids[item[1]])
+        ):
+            if vertex in chosen:
+                break
+            direction = directions[vertex]
+            scale = float(np.max(np.abs(direction)))
+            if scale == 0.0:
+                continue
+            details = _vertex_details(search, (vertex,))
+            if details is None:
+                continue
+            scaled = direction / scale
+            chosen[vertex] = _Neighbor(details[0], scaled / np.linalg.norm(scaled))
+            break
+    return tuple(chosen[vertex] for vertex in sorted(chosen, key=target_ids.__getitem__))
+
+
 def _search_model(
     search: _Search,
     details: tuple[_VertexDetail, ...],
@@ -876,10 +973,10 @@ def _search_model(
     binding: _CoupledBinding,
     policy: ConvexSolvePolicy,
     counters: dict[str, int],
-) -> int:
+) -> _ModelAttempt:
     model = _model_rows(search, details, selected, incident, binding, policy)
     if model is None:
-        return 0
+        return _ModelAttempt(0, ())
     base_rows, rhs, equality = model
     active: dict[tuple[int, int], np.ndarray] = {}
     n = 3 * len(binding.vertices)
@@ -892,17 +989,19 @@ def _search_model(
             binding,
         )
         if solved.primal is None:
-            return 0
+            return _ModelAttempt(
+                0, _blocking_neighbors(search, incident, binding, base_rows, solved)
+            )
         candidate = _quantize(search, details, selected, solved.primal)
         if candidate is None or not _candidate_admissible(
             search, details, candidate[1], candidate[2]
         ):
-            return 0
+            return _ModelAttempt(0, ())
         proposals = candidate[0]
         status = tm._apply_relocation_batch(search.state, proposals)
         if status is tm.TetMeshEditStatus.APPLIED:
             counters["relocations"] += len(proposals)
-            return len(proposals)
+            return _ModelAttempt(len(proposals), ())
         tm._raise_fatal_edit_status(status, "coupled relocation")
         tm._count_rejection(status, counters, len(proposals))
         refusal = search.state.native.implicit_facet_refusal
@@ -911,12 +1010,12 @@ def _search_model(
             or refusal.status != status
             or refusal.transversality_refusals + refusal.distance_refusals <= 0
         ):
-            return 0
+            return _ModelAttempt(0, ())
         plane = _active_plane(
             search.state, search.prepared, binding.vertices, proposals, refusal
         )
         if plane is None:
-            return 0
+            return _ModelAttempt(0, ())
         facet, normal, affected = plane
         fresh = False
         for vertex in affected:
@@ -936,13 +1035,63 @@ def _search_model(
                 active[key] = vector
                 fresh = True
         if not fresh:
-            return 0
+            return _ModelAttempt(0, ())
+
+
+def _search_neighbor_patch(
+    search: _Search,
+    details: tuple[_VertexDetail, ...],
+    selected: tuple[tm._SourceTetRecord, ...],
+    binding: _CoupledBinding,
+    policy: ConvexSolvePolicy,
+    counters: dict[str, int],
+    neighbors: tuple[_Neighbor, ...],
+    index: int,
+) -> int:
+    by_vertex = {detail.vertex: detail for detail in details}
+    by_source = dict(zip(binding.vertices, selected, strict=True))
+    for neighbor in neighbors:
+        detail = neighbor.detail
+        by_vertex[detail.vertex] = detail
+        # Added variables have one validated preferred carrier, not an
+        # additional Cartesian source-choice search. Seed choices stay exact.
+        by_source[detail.vertex] = _ordered_source_cells(
+            search, detail, binding.edge, index, unit_direction=neighbor.unit_direction
+        )[0]
+    vertices = tuple(sorted(by_vertex, key=search.state.vertex_target_ids.__getitem__))
+    patch_incident = [
+        i
+        for i, edge in enumerate(search.edges)
+        if search.measured[i] and any(vertex in edge for vertex in vertices)
+    ]
+    patch_selected = tuple(by_source[vertex] for vertex in vertices)
+    patch_binding = _CoupledBinding(
+        search.state.source_identity,
+        int(search.state.snapshot.generation),
+        binding.edge,
+        vertices,
+        tuple(record[0] for record in patch_selected),
+    )
+    return _search_model(
+        search,
+        tuple(by_vertex[vertex] for vertex in vertices),
+        patch_selected,
+        patch_incident,
+        patch_binding,
+        policy,
+        counters,
+    ).applied
 
 
 def _ordered_source_cells(
-    search: _Search, detail: _VertexDetail, edge: tuple[int, int], index: int
+    search: _Search,
+    detail: _VertexDetail,
+    edge: tuple[int, int],
+    index: int,
+    *,
+    unit_direction: np.ndarray | None = None,
 ) -> tuple[tm._SourceTetRecord, ...]:
-    """Prefer cells supporting the selected edge's unconstrained midpoint pull."""
+    """Prefer a valid carrier along the seed pull or a dual-witness direction."""
     prepared = search.prepared
     first, second = (prepared.topology.vertex_row[vertex] for vertex in edge)
     lower, upper = _edge_limits(search, index, index)
@@ -953,7 +1102,9 @@ def _ordered_source_cells(
         * (prepared.points[first] - prepared.points[second])
     )
     goal = prepared.points[detail.row]
-    if detail.vertex == edge[0]:
+    if unit_direction is not None:
+        goal = goal + np.linalg.norm(pull) * unit_direction
+    elif detail.vertex == edge[0]:
         goal = goal + pull
     elif detail.vertex == edge[1]:
         goal = goal - pull
@@ -1051,6 +1202,15 @@ def _coupled_relocation_phase(state: tm._NativeState, counters: dict[str, int], 
     if not search.before[0] and not search.before[1]:
         return 0
     policy = ConvexSolvePolicy()
+    pending: list[
+        tuple[
+            int,
+            tuple[_VertexDetail, ...],
+            tuple[tm._SourceTetRecord, ...],
+            _CoupledBinding,
+            tuple[_Neighbor, ...],
+        ]
+    ] = []
     for index, (edge, length) in enumerate(
         zip(search.edges, search.prepared.lengths, strict=True)
     ):
@@ -1073,6 +1233,7 @@ def _coupled_relocation_phase(state: tm._NativeState, counters: dict[str, int], 
         choices = tuple(
             _ordered_source_cells(search, detail, edge, index) for detail in details
         )
+        patch_saved = False
         for selected in _source_choices(search, details, choices):
             binding = _CoupledBinding(
                 state.source_identity,
@@ -1081,9 +1242,20 @@ def _coupled_relocation_phase(state: tm._NativeState, counters: dict[str, int], 
                 vertices,
                 tuple(record[0] for record in selected),
             )
-            count = _search_model(
+            attempt = _search_model(
                 search, details, selected, incident, binding, policy, counters
             )
-            if count:
-                return count
+            if attempt.applied:
+                return attempt.applied
+            if not patch_saved and attempt.neighbors:
+                pending.append((index, details, selected, binding, attempt.neighbors))
+                patch_saved = True
+    # Preserve the complete pair-first phase. Retain at most one bounded
+    # patch per violating edge, never a Cartesian set of enriched carriers.
+    for index, details, selected, binding, neighbors in pending:
+        count = _search_neighbor_patch(
+            search, details, selected, binding, policy, counters, neighbors, index
+        )
+        if count:
+            return count
     return 0
