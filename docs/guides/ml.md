@@ -670,7 +670,8 @@ turns an unsupported algorithm into another algorithm.
 
 `tools/ml_benchmarks.py` measures complete fit-and-inference workflows rather than
 isolated array primitives. Its default small and medium matrices cover ridge,
-PCA, fixed-iteration k-means, kernel ridge, and fixed-capacity histogram trees:
+PCA, fixed-iteration k-means, two-pass EMA mini-batch k-means, kernel ridge, and
+fixed-capacity histogram trees:
 
 ```text
 python tools/ml_benchmarks.py \

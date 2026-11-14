@@ -3,6 +3,26 @@
 ## Unreleased
 
 ### Breaking
+- Replace `MiniBatchKMeans` with EMA mini-batch k-means (Bessa et al., 2026):
+  per-cluster moving masses and sums, scaling-law `batch_size` and
+  `initial_step` (`batch_law`), cosine step decay, `revival="split"` of
+  clusters with low moving removal cost (`revival_threshold`), and exact
+  closing means from the final pass. `epochs`, `tolerance` (0.1),
+  `accumulation` and `workspace_bytes` replace `batch_size=32`,
+  `max_iterations`, `empty_policy` and with-replacement batch draws. A typed
+  `jax.random.key` is required, the method id is `ema-mini-batch-k-means`, and
+  a fit whose closing gain exceeds `tolerance` reports `ML_NONCONVERGED`.
+- `ClusterDiagnostics` gains a `minibatch` evidence leaf, `None` for every
+  recipe except `MiniBatchKMeans`; recreate diagnostic templates and archives.
+- `KMeans` gains static `accumulation` and `workspace_bytes` (64 MiB) fields,
+  changing recipe identity. Hard k-means, spectral clustering and spectral
+  bi/co-clustering assign with the blocked exact nearest-center search and sum
+  clusters on `phydrax.sparse`; with the default `"fast"` accumulation, reruns
+  on parallel backends are bitwise identical only under `"deterministic"` or
+  `"compensated"`.
+- `"random"` cluster initialization draws distinct rows without replacement,
+  randomized initializations derive addressed per-case keys and refuse legacy
+  `jax.random.PRNGKey` keys; seeds drawn from a given key change.
 - Preserve scalar array rank in callable identities: a scalar and a one-element
   vector no longer share an identity. Typed PRNG keys bind their logical shape,
   implementation and word data. Recreate affected prepared artifacts and
@@ -252,6 +272,10 @@
   policy and plan identities.
 
 ### Added
+- Add `MiniBatchClusterEvidence`, `MiniBatchBatchLaw` and `ClusterRevival` to
+  `phydrax.ml.clustering`, plus the `clustering_minibatch_qualification` and
+  `clustering_minibatch_performance` benchmark drivers with an independent
+  NumPy reference of EMA mini-batch k-means.
 - Add `polar_rotation3` with explicit frame and derivative-operator admission
   evidence. Its native Sylvester solve keeps rotation derivatives finite at
   repeated positive singular values without materializing a derivative matrix.
@@ -618,6 +642,20 @@
   for native cuDSS on Linux x86-64.
 
 ### Fixed
+- k-means++ applied its all-zero-score fallback per point, so seeds changed with
+  data units; it now applies per case and keeps a running nearest-seed distance
+  instead of re-measuring every chosen seed.
+- Clustering fits and `HardClusterModel` predictions no longer form complete
+  sample-by-center-by-feature differences; assignment streams bounded exact
+  top-k tiles and `distances_to_centers` streams row chunks within a 64 MiB
+  default workspace.
+- `blocked_top_k` admits rectangular tiles with metric-specific pair budgets
+  (Gram metrics are no longer charged for pair features), merges stable per-tile
+  candidates instead of sorting whole tiles, and translates Euclidean data by a
+  snapped support origin so offset coordinates keep their exact neighbors.
+- `KMedoids` parses its metric with the shared selector, recipes store parsed
+  selectors, and case-bound neighbor and cluster queries name missing case axes.
+- `tools/ml_benchmarks.py` creates typed keys and fits dense PCA without a key.
 - Separate crystal packing law identities from allocation and family-slot
   placement. Checkpoints and recipes bind the actual executable preparation;
   regenerate older resource-contaminated packing identities and continuations.
