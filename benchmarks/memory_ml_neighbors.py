@@ -32,6 +32,7 @@ from phydrax.ml._numerics._pairwise import (
     blocked_top_k,
     pair_block_size,
     pairwise_distances,
+    top_k_tile_shape,
 )
 from phydrax.ml.clustering._common import pairwise_distances as clustering_distances
 from phydrax.ml.clustering._density import _density_one
@@ -52,7 +53,7 @@ class MemoryRecord(TypedDict):
     input_bytes: int
     reference_warmed_seconds: list[float] | None
     workspace_budget_bytes: int
-    pair_tile_extent: int
+    pair_tile_shape: list[int]
 
 
 def _dense_density(x: jax.Array, w: jax.Array) -> tuple[jax.Array, ...]:
@@ -120,13 +121,14 @@ def main() -> None:
         w = jnp.ones(n, dtype=jnp.float64)
         for name in ("knn", "kde", "dbscan"):
             extra_row_bytes = 192 if name == "knn" else 0
-            tile = (
-                n
-                if args.baseline
-                else pair_block_size(
-                    n, n, 3, 8, 4 * 1024 * 1024, extra_row_bytes=extra_row_bytes
+            if args.baseline:
+                rows, columns = n, n
+            elif name == "knn":
+                rows, columns = top_k_tile_shape(
+                    n, n, 3, 8, 4 * 1024 * 1024, count=4, metric="euclidean"
                 )
-            )
+            else:
+                rows = columns = pair_block_size(n, n, 3, 8, 4 * 1024 * 1024)
 
             def kernel(x: jax.Array, w: jax.Array) -> object:
                 if name == "knn":
@@ -198,10 +200,10 @@ def main() -> None:
                     "lowering_seconds": timing.lowering_seconds,
                     "compilation_seconds": timing.compilation_seconds,
                     "generated_code_bytes": evidence.generated_code_bytes,
-                    "logical_workspace_bytes": 8 * 6 * tile * tile
-                    + tile * extra_row_bytes,
+                    "logical_workspace_bytes": 8 * 6 * rows * columns
+                    + rows * extra_row_bytes,
                     "workspace_budget_bytes": 4 * 1024 * 1024,
-                    "pair_tile_extent": tile,
+                    "pair_tile_shape": [rows, columns],
                     "input_bytes": logical_array_bytes((x, w)),
                     "warmed_seconds": warmed,
                     "reference_warmed_seconds": reference_warmed,
@@ -239,7 +241,7 @@ def main() -> None:
                     "generated_code_bytes": evidence.generated_code_bytes,
                     "logical_workspace_bytes": 8 * (n * 14 + 64 * 64 * 3),
                     "workspace_budget_bytes": 512 * 1024 * 1024,
-                    "pair_tile_extent": 64,
+                    "pair_tile_shape": [64, 64],
                     "input_bytes": logical_array_bytes((x, w)),
                     "warmed_seconds": warmed,
                     "compiler_host_peak_bytes": host_peak,
