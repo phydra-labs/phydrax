@@ -1332,6 +1332,155 @@ def _relocation_cache_witness_state() -> _NativeState:
     )
 
 
+@pytest.fixture
+def _collective_facet_state() -> Iterator[_NativeState]:
+    from phydrax._meshcore import PlcBoundaryPolicy, TetMesh3D, TetMeshSourceComplex
+
+    state = _relocation_cache_witness_state()
+    initial = state.snapshot
+    # Numeric carrier and exact source stencils from the independently checked
+    # collective-motion witness; construct a fresh test owner, not a checkpoint.
+    with np.load(Path(__file__).with_name("coupled_facet_witness_sphere.npz")) as data:
+        points = data["points"].copy()
+        cells = data["tetrahedra"].copy()
+        faces = data["faces"].copy()
+        vertex_ids = data["vertex_ids"].copy()
+        cell_ids = data["cell_ids"].copy()
+        facet_ids = data["facet_ids"].copy()
+        orientations = data["facet_orientations"].copy()
+        stencils = data["stencils"].copy()
+        metric = data["metric"].copy()
+        ancestry = data["cell_ancestry"].copy()
+    movable = {55, 59, 145, 150}
+    count = len(vertex_ids)
+    source = TetMeshSourceComplex(
+        initial.source_points,
+        initial.source_faces,
+        initial.source_face_group_rows,
+        initial.source_face_tolerances,
+        initial.source_segments,
+        initial.source_segment_group_rows,
+        initial.source_segment_tolerances,
+        np.zeros(count, dtype=np.int8),
+        np.full(count, -1, dtype=np.int32),
+        np.zeros((count, 2), dtype=np.float64),
+        initial.source_face_ids,
+        initial.source_segment_ids,
+        initial.source_face_planes,
+        initial.source_face_plane_tolerances,
+    )
+    implicit = initial.implicit_source
+    assert implicit is not None
+    try:
+        native = TetMesh3D(
+            points,
+            cells,
+            np.zeros(len(cells), dtype=np.int32),
+            faces,
+            np.full(len(faces), initial.source_face_ids[0], dtype=np.int64),
+            np.empty((0, 2), dtype=np.int32),
+            np.empty(0, dtype=np.int64),
+            boundary_policy=PlcBoundaryPolicy.CONFORMING,
+            protection_radii=np.zeros(count, dtype=np.float64),
+            protected_vertices=np.asarray(
+                [int(vertex) not in movable for vertex in vertex_ids], dtype=np.int8
+            ),
+            vertex_ids=vertex_ids,
+            cell_ids=cell_ids,
+            facet_ids=facet_ids,
+            face_orientations=orientations,
+            source=source,
+            implicit_source=implicit.source,
+            source_id=state.source_identity[0],
+            source_revision=state.source_identity[1],
+            source_map_id=state.source_identity[2],
+            frame_id=state.source_identity[3],
+        )
+        state.native.close()
+        state.native = native
+        state.snapshot = native.arrays()
+        state.tables = None
+        state.fixed_vertices = set(map(int, vertex_ids)) - movable
+        state.vertex_target_ids = {int(vertex): int(vertex) for vertex in vertex_ids}
+        state.cell_blocks = {int(cell): 0 for cell in cell_ids}
+        state.cell_target_ids = {int(cell): int(cell) for cell in cell_ids}
+        state.cell_ancestry = {int(cell): {} for cell in cell_ids}
+        for cell, source_cell, kind in ancestry:
+            state.cell_ancestry[int(cell)][int(source_cell)] = EntityLineageKind(
+                int(kind)
+            )
+        state.metric_by_vertex = {
+            int(vertex): tensor.copy()
+            for vertex, tensor in zip(vertex_ids, metric, strict=True)
+        }
+        state.vertex_stencils = {vertex: {} for vertex in movable}
+        for vertex, source_id, numerator, denominator in stencils:
+            state.vertex_stencils[int(vertex)][int(source_id)] = Fraction(
+                int(numerator), int(denominator)
+            )
+        yield state
+    finally:
+        state.native.close()
+
+
+def test_coupled_distance_witness_admits_compensating_facet_motion(
+    _collective_facet_state: _NativeState,
+) -> None:
+    from phydrax.meshing import _tetra_coupled as coupled
+
+    state = _collective_facet_state
+    search = coupled._prepare_search(state)
+    vertices = (55, 59, 145, 150)
+    details = coupled._vertex_details(search, vertices)
+    assert details is not None
+    selected = tuple(detail.source_cells[0] for detail in details)
+    binding = coupled._CoupledBinding(
+        state.source_identity,
+        state.snapshot.generation,
+        (59, 145),
+        vertices,
+        tuple(record[0] for record in selected),
+    )
+    incident = [
+        index
+        for index, edge in enumerate(search.edges)
+        if search.measured[index] and any(vertex in edge for vertex in vertices)
+    ]
+    before = state.snapshot
+    counters = _counters()
+    attempt = coupled._search_model(
+        search,
+        details,
+        selected,
+        incident,
+        binding,
+        phx.optim.ConvexSolvePolicy(),
+        counters,
+    )
+    assert attempt.applied == counters["relocations"] == 4
+    assert state.snapshot.generation == before.generation + 1
+    assert coupled._prepare_search(state).before < search.before
+    assert counters["rejected_uncertain"] > 0
+    refusals = state.native.implicit_refusals
+    assert refusals is not None and refusals[1] > 0
+    facet_rows = np.flatnonzero(before.facet_ids == 931)
+    assert facet_rows.size == 1
+    face = before.faces[facet_rows[0]]
+    a, b, c = before.points[face]
+    normal = np.cross(b - a, c - a)
+    displacement = (state.snapshot.points[face] - before.points[face]) @ normal
+    assert np.min(displacement) < 0.0 < np.max(displacement)
+    for detail in details:
+        point = state.snapshot.points[detail.row]
+        np.testing.assert_array_equal(
+            point,
+            [
+                float(value)
+                for value in _stencil_image(state, state.vertex_stencils[detail.vertex])
+            ],
+        )
+
+
 def test_native_implicit_tangent_relocation_reduces_band() -> None:
     import phydrax.meshing._tetra_metric as metric
     from phydrax._meshcore import PlcBoundaryPolicy, TetMesh3D, TetMeshSourceComplex

@@ -296,6 +296,35 @@ def _active_plane(
     return (int(refusal.facet_id), normal, moved) if moved else None
 
 
+def _active_rows(
+    binding: _CoupledBinding,
+    plane: tuple[int, np.ndarray, tuple[int, ...]],
+    refusal: TetMeshImplicitFacetRefusal,
+) -> Iterator[tuple[tuple[int, tuple[int, ...]], np.ndarray]]:
+    """Use a bound rejecting-piece sample only to guide the next proposal."""
+    facet, normal, affected = plane
+    n = 3 * len(binding.vertices)
+    barycentric = refusal.distance_barycentric
+    if refusal.distance_refusals > 0 and barycentric is not None:
+        face = tuple(refusal.vertex_ids)
+        vector = np.zeros(n, dtype=np.float64)
+        for vertex in affected:
+            position = face.index(vertex)
+            k = binding.vertices.index(vertex)
+            vector[3 * k : 3 * k + 3] = -barycentric[position] * normal
+        norm = float(np.linalg.norm(vector))
+        if norm > 0.0:
+            # Separate vertex halfspaces forbid compensating facet motion.
+            # Native admission, not this sampled row, certifies the candidate.
+            yield (facet, affected), vector / norm
+        return
+    for vertex in affected:
+        vector = np.zeros(n, dtype=np.float64)
+        k = binding.vertices.index(vertex)
+        vector[3 * k : 3 * k + 3] = -normal
+        yield (facet, (vertex,)), vector
+
+
 def _prepare_search(state: tm._NativeState) -> _Search:
     prepared = tm._prepare_relocation_geometry(state)
     edges = tuple(prepared.topology.edge_cells)
@@ -978,7 +1007,7 @@ def _search_model(
     if model is None:
         return _ModelAttempt(0, ())
     base_rows, rhs, equality = model
-    active: dict[tuple[int, int], np.ndarray] = {}
+    active: dict[tuple[int, tuple[int, ...]], np.ndarray] = {}
     n = 3 * len(binding.vertices)
     while True:
         solved = _solve(
@@ -1016,10 +1045,8 @@ def _search_model(
         )
         if plane is None:
             return _ModelAttempt(0, ())
-        facet, normal, affected = plane
         fresh = False
-        for vertex in affected:
-            key = (facet, vertex)
+        for key, vector in _active_rows(binding, plane, refusal):
             if key not in active:
                 _admit(
                     n,
@@ -1029,9 +1056,6 @@ def _search_model(
                     binding,
                     result=solved.result,
                 )
-                vector = np.zeros(n, dtype=np.float64)
-                k = binding.vertices.index(vertex)
-                vector[3 * k : 3 * k + 3] = -normal
                 active[key] = vector
                 fresh = True
         if not fresh:

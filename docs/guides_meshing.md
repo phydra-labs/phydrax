@@ -2819,6 +2819,18 @@ or another Cartesian source search. Quantization, the severity-multiset objectiv
 resource admission, and native source checks remain unchanged. Periodic meshes
 retain their pair/orbit route; local infeasibility is not global impossibility.
 
+An implicit distance refusal can carry barycentric coordinates of the first
+rejecting or unsplittable subdivision piece's centroid, in the refused facet's
+original vertex order. Coupled relocation binds this sample to the actual source,
+generation, facet, orientation, and proposed coordinates before using one weighted
+normal-displacement row for the moved facet vertices. This permits compensating
+facet motion that separate per-vertex rows would exclude. The sample is neither
+a distance extremizer nor a fidelity certificate; an unsplittable sample can even
+lie inside the source tube. Every new candidate still undergoes full native
+admission. Only the first row for a facet and affected-vertex set is retained,
+and repeated refusal does not establish global infeasibility. Without a distance
+sample, the existing individual proposal rows remain in use.
+
 Each accepted tetrahedral edit strictly decreases a lexicographic potential:
 the descending multiset of long-edge band violations, the descending multiset
 of short-edge violations, then the worst-first cell qualities. Violations are
