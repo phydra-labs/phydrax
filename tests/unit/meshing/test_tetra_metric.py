@@ -781,6 +781,38 @@ def test_coupled_closure_resource_refusal_preserves_later_demand(
     np.testing.assert_array_equal(state.snapshot.points, before.points)
 
 
+@pytest.mark.parametrize("exponent", (-500, 0, 500), ids=("small", "unit", "large"))
+def test_metric_neighbor_action_at_audit_uncertainty_is_unresolved(exponent: int) -> None:
+    from phydrax.meshing._tetra_coupled import _resolved_neighbor_direction
+
+    metric_scale = 2.0**exponent
+    # Its Euclidean norm exceeds four, but the owning audit uses infinity norm.
+    direction = np.asarray((-3.0, 4.0, 0.0), dtype=np.float64)
+    assert (
+        _resolved_neighbor_direction(direction, metric_scale, 4.0 * metric_scale) is None
+    )
+
+
+@pytest.mark.parametrize("exponent", (-500, 0, 500), ids=("small", "unit", "large"))
+def test_resolved_metric_neighbor_direction_preserves_ray_scaling(exponent: int) -> None:
+    from phydrax.meshing._tetra_coupled import _resolved_neighbor_direction
+
+    metric_scale = 2.0**exponent
+    direction = _resolved_neighbor_direction(
+        np.asarray((-3.0, 4.0, 0.0), dtype=np.float64),
+        metric_scale,
+        3.0 * metric_scale,
+    )
+    assert direction is not None
+    np.testing.assert_allclose(direction, (-0.6, 0.8, 0.0), rtol=0.0, atol=1.0e-15)
+
+
+def test_canceled_metric_neighbor_action_does_not_create_a_direction() -> None:
+    from phydrax.meshing._tetra_coupled import _resolved_neighbor_direction
+
+    assert _resolved_neighbor_direction(np.zeros(3, dtype=np.float64), 1.0, 0.0) is None
+
+
 def test_coupled_certified_local_infeasibility_keeps_result_and_binding(
     _coupled_local_model: tuple[_CoupledBinding, np.ndarray],
 ) -> None:

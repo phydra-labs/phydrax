@@ -913,7 +913,7 @@ def _dual_neighbor_scores(
     binding: _CoupledBinding,
     base_rows: list[np.ndarray],
     solved: _CoupledSolve,
-) -> tuple[dict[int, list[tuple[float, int]]], dict[int, np.ndarray]]:
+) -> tuple[dict[int, list[tuple[float, int]]], dict[int, np.ndarray], float]:
     # Source barycentric rows precede lower/upper edge pairs. Native-refusal
     # cuts follow base_rows and must never masquerade as fixed-neighbor evidence.
     offset = len(base_rows) - 2 * len(incident)
@@ -933,7 +933,7 @@ def _dual_neighbor_scores(
     }
     directions: dict[int, np.ndarray] = {}
     if scale == 0.0:
-        return scores, directions
+        return scores, directions, scale
     positions = {vertex: k for k, vertex in enumerate(binding.vertices)}
     for k, index in enumerate(incident):
         first, second = search.edges[index]
@@ -955,7 +955,20 @@ def _dual_neighbor_scores(
             directions[neighbor] += direction
         else:
             directions[neighbor] = direction
-    return scores, directions
+    return scores, directions, scale
+
+
+def _resolved_neighbor_direction(
+    direction: np.ndarray, metric_scale: float, residual: float
+) -> np.ndarray | None:
+    """Normalize only omitted actions resolved at the owning audit's scale."""
+    # The audit and stored ray use the same max-absolute stationarity units;
+    # direction has additionally been divided by metric_scale.
+    scale = float(np.max(np.abs(direction)))
+    if scale <= residual / metric_scale:
+        return None
+    scaled = direction / scale
+    return scaled / np.linalg.norm(scaled)
 
 
 def _blocking_neighbors(
@@ -967,9 +980,12 @@ def _blocking_neighbors(
 ) -> tuple[_Neighbor, ...]:
     if search.state.target_mesh.periodic_topology is not None:
         return ()
-    scores, directions = _dual_neighbor_scores(
+    scores, directions, metric_scale = _dual_neighbor_scores(
         search, incident, binding, base_rows, solved
     )
+    if metric_scale == 0.0:
+        return ()
+    residual = float(solved.result.certificate.dual_ray_residual_norm)
     chosen: dict[int, _Neighbor] = {}
     target_ids = search.state.vertex_target_ids
     for seed in binding.vertices:
@@ -978,15 +994,15 @@ def _blocking_neighbors(
         ):
             if vertex in chosen:
                 break
-            direction = directions[vertex]
-            scale = float(np.max(np.abs(direction)))
-            if scale == 0.0:
+            direction = _resolved_neighbor_direction(
+                directions[vertex], metric_scale, residual
+            )
+            if direction is None:
                 continue
             details = _vertex_details(search, (vertex,))
             if details is None:
                 continue
-            scaled = direction / scale
-            chosen[vertex] = _Neighbor(details[0], scaled / np.linalg.norm(scaled))
+            chosen[vertex] = _Neighbor(details[0], direction)
             break
     return tuple(chosen[vertex] for vertex in sorted(chosen, key=target_ids.__getitem__))
 

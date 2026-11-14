@@ -2811,6 +2811,11 @@ snapshot banks agree, and moved vertices invalidate their incident edge metrics.
 Coupled relocation exhausts the existing pair/source-carrier search before
 considering a neighbor patch. For nonperiodic meshes, an audited local
 infeasibility ray can identify omitted adjacent blockers through its metric rows.
+Eligibility uses the aggregate omitted-coordinate action, not an individual dual
+coefficient. Its infinity norm must exceed the owning audit's reported
+stationarity residual in the same ray units; metric-ray normalization is accounted
+for before comparison. Unresolved numerical-scale actions do not become unit
+movement directions, and no separate cutoff or relaxed audit tolerance is used.
 Stable target-ID tie breaks select an admissible neighbor for each participating
 vertex, and new vertices enter in deterministic target-ID order. If an enlarged
 model is also audited infeasible, the same process can add further omitted
