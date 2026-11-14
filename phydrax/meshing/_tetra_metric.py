@@ -19,6 +19,7 @@ import equinox as eqx
 import numpy as np
 from numpy.typing import ArrayLike
 
+from .._fingerprint import canonical_fingerprint
 from .._geometry_predicates import orient3d, PredicateMode, PredicateSign
 from .._meshcore import (
     interval_program_execute,
@@ -345,6 +346,15 @@ class _EditCounters(NamedTuple):
     rejected_protected: int = 0
     rejected_uncertain: int = 0
     rejected_invalid: int = 0
+
+
+class _NativeWorkSeed(NamedTuple):
+    checkpoint_id: str
+    state_binding: str
+    counters: _EditCounters
+    passes: int
+    implicit_refusals: tuple[int, int] | None
+    native_refusal_baseline: tuple[int, int] | None
 
 
 @final
@@ -7593,6 +7603,8 @@ def _tetra_evidence(
     passes: int,
     status: TetraMetricStatus,
     /,
+    *,
+    work: _NativeWorkSeed | None = None,
 ) -> TetraMetricEvidence:
     edge_keys, lengths, protected, qualities, _, volume_error = (
         _native_metric_measurements(state)
@@ -7630,7 +7642,7 @@ def _tetra_evidence(
         unmet_edges=_unmet_edges(
             state, tuple(edge_keys[row] for row in outside.tolist()), lengths[outside]
         ),
-        implicit_refusals=state.native.implicit_refusals,
+        implicit_refusals=_continued_implicit_refusals(state, work),
     )
 
 
@@ -7686,6 +7698,216 @@ def _one_split_batch(state: _NativeState, counters: dict[str, int], /) -> int:
     return _split_phase(state, counters, one_batch=True)
 
 
+def _native_work_binding(
+    state: _NativeState,
+    checkpoint_id: str,
+    predicate_mode: PredicateMode,
+    topology_operations: bool,
+    relocation: bool,
+) -> str:
+    """Bind physical/source/control state, excluding only derived search caches."""
+    if (
+        state.periodic_state is not None
+        or state.target_mesh.periodic_topology is not None
+    ):
+        raise ValueError("Native work continuation requires a nonperiodic checkpoint.")
+
+    def physical(snapshot: TetMeshArrays) -> str:
+        return canonical_fingerprint(
+            (
+                snapshot[:-1],
+                None
+                if snapshot.implicit_source is None
+                else snapshot.implicit_source.source,
+            )
+        )
+
+    live = physical(state.native.arrays())
+    if live != physical(state.snapshot):
+        raise ValueError(
+            "Native work checkpoint has inconsistent host/native physical state."
+        )
+    return canonical_fingerprint(
+        {
+            "checkpoint": checkpoint_id,
+            "physical": live,
+            "controls": (predicate_mode.value, topology_operations, relocation),
+            "source_identity": state.source_identity,
+            "meshes": (state.source_mesh.mesh_id, state.target_mesh.mesh_id),
+            "source_arrays": (
+                state.source_points,
+                state.source_metric,
+                state.source_metric_log,
+                state.source_vertex_ids,
+                state.source_cell_ids,
+                state.source_cell_vertices,
+                state.source_cell_regions,
+                state.source_cell_blocks,
+            ),
+            "exact_points": tuple(
+                tuple((value.numerator, value.denominator) for value in row)
+                for row in state.source_exact_points
+            ),
+            "id_maps": (
+                sorted(state.source_vertex_rows.items()),
+                sorted(state.vertex_target_ids.items()),
+                sorted(state.cell_target_ids.items()),
+                sorted(state.cell_blocks.items()),
+            ),
+            "stencils": tuple(
+                (
+                    vertex,
+                    tuple(
+                        (source, value.numerator, value.denominator)
+                        for source, value in sorted(stencil.items())
+                    ),
+                )
+                for vertex, stencil in sorted(state.vertex_stencils.items())
+            ),
+            "cell_ancestry": tuple(
+                (
+                    cell,
+                    tuple(
+                        (source, kind.value) for source, kind in sorted(ancestry.items())
+                    ),
+                )
+                for cell, ancestry in sorted(state.cell_ancestry.items())
+            ),
+            "current_metrics": sorted(state.metric_by_vertex.items()),
+            "constraints": (
+                sorted(state.fixed_vertices),
+                sorted(state.protected_edge_ids),
+                sorted(state.edge_classes.items()),
+                sorted(state.face_classes.items()),
+                sorted(state.source_edge_ids.items()),
+                sorted(state.source_face_ids.items()),
+                sorted(state.source_face_group_rows.items()),
+                sorted(state.source_segment_group_rows.items()),
+                tuple(
+                    (group, tuple(sorted(vertices)))
+                    for group, vertices in sorted(state.source_face_vertices.items())
+                ),
+                tuple(
+                    (group, tuple(sorted(vertices)))
+                    for group, vertices in sorted(state.source_segment_vertices.items())
+                ),
+                tuple(
+                    sorted(tuple(sorted(face)) for face in state.declared_source_faces)
+                ),
+                sorted(state.source_group_triangles.items()),
+                sorted(state.implicit_groups),
+            ),
+            "history": (
+                tuple(
+                    (source, target, kind.value)
+                    for source, target, kind in state.history_vertex
+                ),
+                tuple(
+                    (source, target, kind.value)
+                    for source, target, kind in state.history_cells
+                ),
+                sorted(state.changed_source_cell_ids),
+                sorted(state.unrepresentable_edges),
+            ),
+            "allocation": (
+                state.next_native_vertex,
+                state.next_native_cell,
+                state.next_native_facet,
+                state.next_native_segment,
+                state.next_target_vertex,
+                state.next_target_cell,
+            ),
+            "families": state.block_families,
+            "source_volumes": sorted(state.source_region_volumes.items()),
+        }
+    )
+
+
+def _native_work_seed(
+    state: _NativeState,
+    counters: Mapping[str, int],
+    passes: int,
+    implicit_refusals: tuple[int, int] | None,
+    /,
+    *,
+    checkpoint_id: str,
+    predicate_mode: PredicateMode,
+    topology_operations: bool,
+    relocation: bool,
+) -> _NativeWorkSeed:
+    """Prepare immutable actual work after the caller authenticates its checkpoint."""
+    if not isinstance(checkpoint_id, str):
+        raise TypeError("Native work checkpoint identity must be a string.")
+    if len(checkpoint_id) != 64 or any(
+        value not in "0123456789abcdef" for value in checkpoint_id
+    ):
+        raise ValueError(
+            "Native work checkpoint identity must be an authenticated SHA-256."
+        )
+    if set(counters) != set(_EditCounters._fields):
+        raise ValueError(
+            "Native work checkpoint must contain every canonical edit counter."
+        )
+    values = tuple(counters[name] for name in _EditCounters._fields)
+    if any(type(value) is not int for value in (*values, passes)):
+        raise TypeError("Native work counters and passes must be integers.")
+    if any(value < 0 for value in (*values, passes)):
+        raise ValueError("Native work counters and passes must be nonnegative.")
+    if not isinstance(predicate_mode, PredicateMode):
+        raise TypeError("predicate_mode must be PredicateMode.")
+    if not isinstance(topology_operations, bool) or not isinstance(relocation, bool):
+        raise TypeError("topology_operations and relocation must be bool.")
+    baseline = state.native.implicit_refusals
+    if (baseline is None) != (implicit_refusals is None):
+        raise ValueError("Native work refusal observations do not match the source kind.")
+    if implicit_refusals is not None:
+        if not isinstance(implicit_refusals, tuple) or len(implicit_refusals) != 2:
+            raise TypeError("Native work requires both per-reason refusal observations.")
+        if any(type(value) is not int for value in implicit_refusals):
+            raise TypeError("Native work refusal observations must be integers.")
+        if any(value < 0 for value in implicit_refusals):
+            raise ValueError("Native work refusal observations must be nonnegative.")
+    return _NativeWorkSeed(
+        checkpoint_id,
+        canonical_fingerprint(
+            (
+                _native_work_binding(
+                    state, checkpoint_id, predicate_mode, topology_operations, relocation
+                ),
+                values,
+                passes,
+                implicit_refusals,
+                baseline,
+            )
+        ),
+        _EditCounters(*values),
+        passes,
+        implicit_refusals,
+        baseline,
+    )
+
+
+def _continued_implicit_refusals(
+    state: _NativeState, work: _NativeWorkSeed | None, /
+) -> tuple[int, int] | None:
+    current = state.native.implicit_refusals
+    if work is None:
+        return current
+    previous, baseline = work.implicit_refusals, work.native_refusal_baseline
+    if previous is None and baseline is None and current is None:
+        return None
+    if previous is None or baseline is None or current is None:
+        raise ValueError("Native work continuation changed its implicit source kind.")
+    if any(value < before for value, before in zip(current, baseline, strict=True)):
+        raise ValueError(
+            "Native refusal observations moved backward during continuation."
+        )
+    return (
+        previous[0] + current[0] - baseline[0],
+        previous[1] + current[1] - baseline[1],
+    )
+
+
 def _execute_native_state(
     state: _NativeState,
     predicate_mode: PredicateMode,
@@ -7694,6 +7916,7 @@ def _execute_native_state(
     topology_operations: bool,
     relocation: bool,
     split_batch: Callable[[_NativeState, dict[str, int]], int] = _one_split_batch,
+    work: _NativeWorkSeed | None = None,
 ) -> TetraMetricOutcome:
     """Run the canonical phase schedule on one native owner.
 
@@ -7701,20 +7924,40 @@ def _execute_native_state(
     returns the number of edges split; the default is the host evaluation
     ``_split_phase(..., one_batch=True)``. The schedule, the native owner,
     and its stable target-ID numbering stay shared by every route.
+    A private continuation seed carries authenticated prior work, not suspended
+    generators. Every invocation prepares fresh worksets from the real state.
     """
-    counters = {
-        "splits": 0,
-        "collapses": 0,
-        "flips23": 0,
-        "flips32": 0,
-        "ring_reconnections": 0,
-        "relocations": 0,
-        "rejected_topology": 0,
-        "rejected_protected": 0,
-        "rejected_uncertain": 0,
-        "rejected_invalid": 0,
-    }
-    passes = 0
+    if work is None:
+        counters = dict(zip(_EditCounters._fields, _EditCounters(), strict=True))
+        passes = 0
+    else:
+        if not isinstance(work, _NativeWorkSeed):
+            raise TypeError("Native continuation work must be an owning work seed.")
+        if split_batch is not _one_split_batch:
+            raise ValueError(
+                "Native work continuation requires the canonical host split evaluator."
+            )
+        expected_binding = canonical_fingerprint(
+            (
+                _native_work_binding(
+                    state,
+                    work.checkpoint_id,
+                    predicate_mode,
+                    topology_operations,
+                    relocation,
+                ),
+                tuple(work.counters),
+                work.passes,
+                work.implicit_refusals,
+                work.native_refusal_baseline,
+            )
+        )
+        if work.state_binding != expected_binding:
+            raise ValueError(
+                "Native work seed differs from the physical/source/control checkpoint."
+            )
+        counters = dict(zip(_EditCounters._fields, work.counters, strict=True))
+        passes = work.passes
     status = TetraMetricStatus.COMPLETE
     negative_rings: dict[tuple[int, int], tuple[Any, ...]] = {}
     replacement_memos = {
@@ -7785,7 +8028,7 @@ def _execute_native_state(
             status = TetraMetricStatus.STALLED
             break
     edit, target_metric = _assemble_native_edit(state)
-    evidence = _tetra_evidence(state, counters, passes, status)
+    evidence = _tetra_evidence(state, counters, passes, status, work=work)
     return TetraMetricOutcome(edit, target_metric, evidence, state.source_exact_points)
 
 

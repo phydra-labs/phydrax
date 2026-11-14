@@ -2344,3 +2344,168 @@ def test_ring_reconnection_prefers_unit_band_over_higher_cell_quality() -> None:
         for first, second in combinations(range(4), 2)
     )
     assert result[1] < np.min(12.0 * (3.0 * volumes) ** (2.0 / 3.0) / denominator)
+
+
+def test_native_work_continuation_preserves_actual_counts_without_mutating_inputs() -> (
+    None
+):
+    from phydrax._fingerprint import canonical_fingerprint
+    from phydrax.meshing import _tetra_metric as metric
+
+    state = _state(_source(), np.eye(3, dtype=np.float64) * 4.0)
+    try:
+        completed = metric._execute_native_state(
+            state, PredicateMode.EXACT, topology_operations=True, relocation=False
+        )
+        assert completed.evidence.status is TetraMetricStatus.COMPLETE
+        prior = {
+            name: getattr(completed.evidence, name)
+            for name in metric._EditCounters._fields
+        }
+        recorded = prior.copy()
+        checkpoint = canonical_fingerprint(
+            (state.source_identity, state.snapshot, prior, completed.evidence.passes)
+        )
+        work = metric._native_work_seed(
+            state,
+            prior,
+            completed.evidence.passes,
+            completed.evidence.implicit_refusals,
+            checkpoint_id=checkpoint,
+            predicate_mode=PredicateMode.EXACT,
+            topology_operations=True,
+            relocation=False,
+        )
+        prior["splits"] += 1
+        before = state.snapshot.generation
+        resumed = metric._execute_native_state(
+            state,
+            PredicateMode.EXACT,
+            topology_operations=True,
+            relocation=False,
+            work=work,
+        )
+        assert resumed.evidence.evidence_id == completed.evidence.evidence_id
+        assert resumed.evidence.passes == completed.evidence.passes
+        assert {name: getattr(resumed.evidence, name) for name in recorded} == recorded
+        assert prior["splits"] == recorded["splits"] + 1
+        assert state.snapshot.generation == before
+    finally:
+        state.native.close()
+
+
+@pytest.mark.parametrize(
+    "fresh_handle", (False, True), ids=("same-handle", "restored-handle")
+)
+def test_native_work_continuation_composes_actual_refusal_observations(
+    fresh_handle: bool,
+) -> None:
+    from phydrax._fingerprint import canonical_fingerprint
+    from phydrax.meshing import _tetra_metric as metric
+
+    original = _implicit_plane_pyramid(2.0, 0.01)
+    restored = _implicit_plane_pyramid(2.0, 0.01) if fresh_handle else None
+    try:
+        request = metric._relocation_edit(
+            original,
+            [
+                {
+                    "vertex": 4,
+                    "point": np.asarray((0.25, 0.25, 0.5), dtype=np.float64),
+                    "star_cell_ids": frozenset(original.snapshot.cell_ids.tolist()),
+                }
+            ],
+        )
+        prior_counters = dict(
+            zip(metric._EditCounters._fields, metric._EditCounters(), strict=True)
+        )
+        status = original.native.apply_edit(request)
+        assert status is TetMeshEditStatus.UNCERTAIN_PREDICATE
+        metric._count_rejection(status, prior_counters, 1)
+        historical = original.native.implicit_refusals
+        assert historical is not None and historical[1] > 0
+        state = original if restored is None else restored
+        baseline = state.native.implicit_refusals
+        assert baseline is not None
+        checkpoint = canonical_fingerprint(
+            (original.snapshot, prior_counters, historical)
+        )
+        work = metric._native_work_seed(
+            state,
+            prior_counters,
+            0,
+            historical,
+            checkpoint_id=checkpoint,
+            predicate_mode=PredicateMode.EXACT,
+            topology_operations=False,
+            relocation=False,
+        )
+        assert state.native.apply_edit(request) is TetMeshEditStatus.UNCERTAIN_PREDICATE
+        current = state.native.implicit_refusals
+        assert current is not None
+        outcome = metric._execute_native_state(
+            state,
+            PredicateMode.EXACT,
+            topology_operations=False,
+            relocation=False,
+            work=work,
+        )
+        assert outcome.evidence.implicit_refusals == (
+            historical[0] + current[0] - baseline[0],
+            historical[1] + current[1] - baseline[1],
+        )
+        assert outcome.evidence.implicit_refusals[1] > historical[1]
+        assert state.native.implicit_refusals == current
+        assert outcome.evidence.rejected_uncertain == prior_counters["rejected_uncertain"]
+        assert outcome.evidence.status is TetraMetricStatus.STALLED
+    finally:
+        original.native.close()
+        if restored is not None:
+            restored.native.close()
+
+
+@pytest.mark.parametrize("change", ("physical", "source", "metric", "controls", "ledger"))
+def test_native_work_seed_refuses_changed_checkpoint(change: str) -> None:
+    from phydrax._fingerprint import canonical_fingerprint
+    from phydrax.meshing import _tetra_metric as metric
+
+    state = _state(_source(), np.eye(3, dtype=np.float64))
+    try:
+        work = metric._native_work_seed(
+            state,
+            dict(zip(metric._EditCounters._fields, metric._EditCounters(), strict=True)),
+            0,
+            None,
+            checkpoint_id=canonical_fingerprint(state.snapshot),
+            predicate_mode=PredicateMode.EXACT,
+            topology_operations=True,
+            relocation=True,
+        )
+        relocation = True
+        match change:
+            case "physical":
+                state.native.protect_facet_group_rows(np.asarray([0], dtype=np.int32))
+                state.snapshot = state.native.arrays()
+            case "source":
+                state.source_identity = ("different-source", *state.source_identity[1:])
+            case "metric":
+                vertex = min(state.metric_by_vertex)
+                state.metric_by_vertex[vertex] = state.metric_by_vertex[vertex] * 2.0
+            case "controls":
+                relocation = False
+            case "ledger":
+                work = work._replace(passes=work.passes + 1)
+            case _:
+                raise ValueError("Unknown negative continuation case")
+        generation = state.snapshot.generation
+        with pytest.raises(ValueError, match="physical/source/control checkpoint"):
+            metric._execute_native_state(
+                state,
+                PredicateMode.EXACT,
+                topology_operations=True,
+                relocation=relocation,
+                work=work,
+            )
+        assert state.snapshot.generation == generation
+    finally:
+        state.native.close()
