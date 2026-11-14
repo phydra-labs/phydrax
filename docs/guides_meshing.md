@@ -2810,14 +2810,20 @@ snapshot banks agree, and moved vertices invalidate their incident edge metrics.
 
 Coupled relocation exhausts the existing pair/source-carrier search before
 considering a neighbor patch. For nonperiodic meshes, an audited local
-infeasibility ray can identify fixed adjacent blockers through its metric rows.
-Stable target-ID tie breaks select at most one admissible neighbor per endpoint,
-giving at most four vertices and twelve coordinates. Seed carriers stay unchanged;
-each added neighbor uses one validated direction-preferred carrier. Only one
-compact fallback per violating edge is retained, without recursive enrichment
-or another Cartesian source search. Quantization, the severity-multiset objective,
-resource admission, and native source checks remain unchanged. Periodic meshes
-retain their pair/orbit route; local infeasibility is not global impossibility.
+infeasibility ray can identify omitted adjacent blockers through its metric rows.
+Stable target-ID tie breaks select an admissible neighbor for each participating
+vertex, and new vertices enter in deterministic target-ID order. If an enlarged
+model is also audited infeasible, the same process can add further omitted
+neighbors. Every iteration strictly enlarges the unique vertex set; already
+selected carriers remain unchanged and each new vertex uses one validated
+direction-preferred carrier. Source rows and native-refusal rows never select
+metric neighbors. Only one such closure per violating edge is retained, without
+recursion or Cartesian carrier expansion. Existing resource admission checks each
+enlarged model before dense allocation or solving; a resource refusal propagates
+its actual demand rather than becoming STALLED or success. Quantization, the
+severity-multiset objective, and native source checks remain unchanged. Periodic
+meshes retain their pair/orbit route; local infeasibility is not global
+impossibility.
 
 An implicit distance refusal can carry barycentric coordinates of the first
 rejecting or unsplittable subdivision piece's centroid, in the refused facet's

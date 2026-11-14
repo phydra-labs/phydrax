@@ -588,20 +588,18 @@ class _BlockedChainModel(NamedTuple):
     binding: _CoupledBinding
 
 
-@pytest.fixture(params=((),), ids=("free-neighbors",))
+@pytest.fixture(params=((4, ()),), ids=("four-free-vertices",))
 def _blocked_chain_model(request: pytest.FixtureRequest) -> Iterator[_BlockedChainModel]:
     from phydrax._meshcore import delaunay_3d
     from phydrax.meshing import _tetra_coupled as coupled, _tetra_metric as metric
 
-    # Three equally short links block the middle pair unless its two outer
-    # neighbors move too. Cube corners fix the genuine source carrier.
+    # Equal short links require outward motion through the entire chain.
+    # Cube corners fix the genuine source carrier.
+    count, fixed_vertices = request.param
     gap = np.nextafter(metric._LOWER * np.exp(-2000 * metric._VIOLATION_QUANTUM), np.inf)
     points = np.asarray(
         [
-            (0.375, 0.5, 0.5),
-            (0.375 + gap, 0.5, 0.5),
-            (0.375 - gap, 0.5, 0.5),
-            (0.375 + 2 * gap, 0.5, 0.5),
+            *((0.375 + shift * gap, 0.5, 0.5) for shift in (0, 1, -1, 2, -2, 3)[:count]),
             *product((0.0, 1.0), repeat=3),
         ],
         dtype=np.float64,
@@ -609,8 +607,8 @@ def _blocked_chain_model(request: pytest.FixtureRequest) -> Iterator[_BlockedCha
     cells, _ = delaunay_3d(points)
     source = _mesh_result(points, cells.tolist())
     fixed = np.ones(points.shape[0], dtype=np.bool_)
-    fixed[:4] = False
-    fixed[np.asarray(request.param, dtype=np.int64)] = True
+    fixed[:count] = False
+    fixed[np.asarray(fixed_vertices, dtype=np.int64)] = True
     state = _state(source, np.eye(3, dtype=np.float64), fixed_vertices=fixed)
     try:
         search = coupled._prepare_search(state)
@@ -639,8 +637,15 @@ def _blocked_chain_model(request: pytest.FixtureRequest) -> Iterator[_BlockedCha
         state.native.close()
 
 
+@pytest.mark.parametrize(
+    ("_blocked_chain_model", "expected_moves"),
+    (((4, ()), 4), ((6, ()), 6)),
+    indirect=("_blocked_chain_model",),
+    ids=("one-enrichment", "iterative-closure"),
+)
 def test_coupled_fallback_releases_blocking_neighbors(
     _blocked_chain_model: _BlockedChainModel,
+    expected_moves: int,
 ) -> None:
     from phydrax.meshing import _tetra_coupled as coupled
 
@@ -668,7 +673,7 @@ def test_coupled_fallback_releases_blocking_neighbors(
         search.edges.index(binding.edge),
     )
     after = coupled._prepare_search(state)
-    assert applied == counters["relocations"] == 4
+    assert applied == counters["relocations"] == expected_moves
     assert state.snapshot.generation == before.generation + 1
     assert after.before < search.before
     index = search.edges.index(binding.edge)
@@ -681,7 +686,10 @@ def test_coupled_fallback_releases_blocking_neighbors(
 
 
 @pytest.mark.parametrize(
-    "_blocked_chain_model", [(2, 3)], indirect=True, ids=("fixed-blocking-neighbors",)
+    "_blocked_chain_model",
+    ((4, (2, 3)), (6, (4, 5))),
+    indirect=True,
+    ids=("fixed-first-neighbors", "fixed-later-neighbors"),
 )
 def test_coupled_fallback_preserves_fixed_blocking_neighbors(
     _blocked_chain_model: _BlockedChainModel,
@@ -734,6 +742,43 @@ def test_coupled_fallback_resource_refusal_preserves_state_and_demand(
     assert error.value.demand.variables == 12
     assert error.value.demand.dimension > pair_dimension
     assert set(binding.vertices) < set(error.value.binding.vertices)
+    assert state.snapshot.generation == before.generation
+    np.testing.assert_array_equal(state.snapshot.points, before.points)
+
+
+@pytest.mark.parametrize("_blocked_chain_model", ((6, ()),), indirect=True)
+def test_coupled_closure_resource_refusal_preserves_later_demand(
+    _blocked_chain_model: _BlockedChainModel,
+) -> None:
+    from phydrax.meshing import _tetra_coupled as coupled
+
+    state, search, details, selected, incident, binding = _blocked_chain_model
+    policy = phx.optim.ConvexSolvePolicy(
+        phx.optim.DensePrimalDualQP(max_kkt_dimension=160)
+    )
+    before = state.snapshot
+    counters = _counters()
+    attempt = coupled._search_model(
+        search, details, selected, incident, binding, policy, counters
+    )
+    assert attempt.applied == 0
+    with pytest.raises(
+        coupled.TetraMetricProposalError, match="resource policy"
+    ) as error:
+        coupled._search_neighbor_patch(
+            search,
+            details,
+            selected,
+            binding,
+            policy,
+            counters,
+            attempt.neighbors,
+            search.edges.index(binding.edge),
+        )
+    assert error.value.policy is policy
+    assert error.value.demand.variables > 12
+    assert error.value.demand.dimension > 160
+    assert len(error.value.binding.vertices) > 4
     assert state.snapshot.generation == before.generation
     np.testing.assert_array_equal(state.snapshot.points, before.points)
 

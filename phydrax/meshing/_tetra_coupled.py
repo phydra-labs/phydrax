@@ -965,10 +965,7 @@ def _blocking_neighbors(
     base_rows: list[np.ndarray],
     solved: _CoupledSolve,
 ) -> tuple[_Neighbor, ...]:
-    if (
-        len(binding.vertices) != 2
-        or search.state.target_mesh.periodic_topology is not None
-    ):
+    if search.state.target_mesh.periodic_topology is not None:
         return ()
     scores, directions = _dual_neighbor_scores(
         search, incident, binding, base_rows, solved
@@ -1074,37 +1071,52 @@ def _search_neighbor_patch(
 ) -> int:
     by_vertex = {detail.vertex: detail for detail in details}
     by_source = dict(zip(binding.vertices, selected, strict=True))
-    for neighbor in neighbors:
-        detail = neighbor.detail
-        by_vertex[detail.vertex] = detail
-        # Added variables have one validated preferred carrier, not an
-        # additional Cartesian source-choice search. Seed choices stay exact.
-        by_source[detail.vertex] = _ordered_source_cells(
-            search, detail, binding.edge, index, unit_direction=neighbor.unit_direction
-        )[0]
-    vertices = tuple(sorted(by_vertex, key=search.state.vertex_target_ids.__getitem__))
-    patch_incident = [
-        i
-        for i, edge in enumerate(search.edges)
-        if search.measured[i] and any(vertex in edge for vertex in vertices)
-    ]
-    patch_selected = tuple(by_source[vertex] for vertex in vertices)
-    patch_binding = _CoupledBinding(
-        search.state.source_identity,
-        int(search.state.snapshot.generation),
-        binding.edge,
-        vertices,
-        tuple(record[0] for record in patch_selected),
-    )
-    return _search_model(
-        search,
-        tuple(by_vertex[vertex] for vertex in vertices),
-        patch_selected,
-        patch_incident,
-        patch_binding,
-        policy,
-        counters,
-    ).applied
+    while neighbors:
+        for neighbor in neighbors:
+            detail = neighbor.detail
+            if detail.vertex in by_vertex:
+                raise RuntimeError("Coupled closure did not supply an omitted vertex.")
+            by_vertex[detail.vertex] = detail
+            # Keep every chosen carrier while admitting one preferred carrier
+            # for each new variable; no Cartesian source-choice expansion.
+            by_source[detail.vertex] = _ordered_source_cells(
+                search,
+                detail,
+                binding.edge,
+                index,
+                unit_direction=neighbor.unit_direction,
+            )[0]
+        vertices = tuple(
+            sorted(by_vertex, key=search.state.vertex_target_ids.__getitem__)
+        )
+        patch_incident = [
+            i
+            for i, edge in enumerate(search.edges)
+            if search.measured[i] and any(vertex in edge for vertex in vertices)
+        ]
+        patch_selected = tuple(by_source[vertex] for vertex in vertices)
+        patch_binding = _CoupledBinding(
+            search.state.source_identity,
+            int(search.state.snapshot.generation),
+            binding.edge,
+            vertices,
+            tuple(record[0] for record in patch_selected),
+        )
+        # The owning model admits its full dense demand before building rows.
+        # Only an audited infeasibility ray can request another strict growth.
+        attempt = _search_model(
+            search,
+            tuple(by_vertex[vertex] for vertex in vertices),
+            patch_selected,
+            patch_incident,
+            patch_binding,
+            policy,
+            counters,
+        )
+        if attempt.applied:
+            return attempt.applied
+        neighbors = attempt.neighbors
+    return 0
 
 
 def _ordered_source_cells(
