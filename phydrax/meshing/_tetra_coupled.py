@@ -10,12 +10,14 @@ from collections.abc import Iterator
 from dataclasses import replace
 from fractions import Fraction
 from itertools import product
+from math import isqrt
 from typing import NamedTuple, TypedDict
 
 import numpy as np
 
 from .._meshcore import TetMeshImplicitFacetRefusal
 from ..discretization._periodic_exact import exact_periodic_element
+from ..linalg import MaterializationPolicy
 from ..optim import (
     ConvexProgramResult,
     ConvexProgramStatus,
@@ -1260,7 +1262,11 @@ def _coupled_relocation_phase(state: tm._NativeState, counters: dict[str, int], 
     search = _prepare_search(state)
     if not search.before[0] and not search.before[1]:
         return 0
-    policy = ConvexSolvePolicy()
+    materialization = MaterializationPolicy()
+    policy = ConvexSolvePolicy(
+        DensePrimalDualQP(max_kkt_dimension=isqrt(materialization.max_entries)),
+        materialization=materialization,
+    )
     pending: list[
         tuple[
             int,

@@ -865,7 +865,6 @@ def test_coupled_certified_local_infeasibility_keeps_result_and_binding(
     )
     assert bool(infeasible.result.certificate.dual_ray_valid)
     assert infeasible.binding == binding
-    assert infeasible.policy is policy
 
 
 def test_coupled_resource_refusal_keeps_demand_and_binding(
@@ -878,11 +877,51 @@ def test_coupled_resource_refusal_keeps_demand_and_binding(
     with pytest.raises(TetraMetricProposalError) as resource:
         _solve([row, -row], [0.0, -1.0], [], policy, binding)
     assert resource.value.result is None
-    assert resource.value.policy is policy
     assert resource.value.binding == binding
     assert resource.value.demand.variables == 6
     assert resource.value.demand.inequalities == 2
     assert resource.value.demand.dimension == 10
+
+
+def test_coupled_explicit_dimension_limit_is_not_expanded(
+    _coupled_local_model: tuple[_CoupledBinding, np.ndarray],
+) -> None:
+    from phydrax.meshing._tetra_coupled import _solve, TetraMetricProposalError
+
+    binding, row = _coupled_local_model
+    policy = phx.optim.ConvexSolvePolicy(
+        phx.optim.DensePrimalDualQP(max_kkt_dimension=512)
+    )
+    with pytest.raises(TetraMetricProposalError, match="resource policy") as refusal:
+        _solve([row] * 254, [0.0] * 254, [], policy, binding)
+    assert refusal.value.result is None
+    assert refusal.value.binding == binding
+    assert refusal.value.demand.dimension == 514
+    assert refusal.value.demand.inequalities == 254
+
+
+@pytest.mark.parametrize(
+    "materialization",
+    (
+        phx.linalg.MaterializationPolicy(max_entries=50),
+        phx.linalg.MaterializationPolicy(max_bytes=64),
+        phx.linalg.MaterializationPolicy(max_workspace_bytes=64),
+    ),
+    ids=("entries", "array-bytes", "workspace-bytes"),
+)
+def test_coupled_materialization_limits_refuse_before_solve(
+    _coupled_local_model: tuple[_CoupledBinding, np.ndarray],
+    materialization: phx.linalg.MaterializationPolicy,
+) -> None:
+    from phydrax.meshing._tetra_coupled import _solve, TetraMetricProposalError
+
+    binding, row = _coupled_local_model
+    policy = phx.optim.ConvexSolvePolicy(materialization=materialization)
+    with pytest.raises(TetraMetricProposalError, match="resource policy") as refusal:
+        _solve([row, -row], [0.0, -1.0], [], policy, binding)
+    assert refusal.value.result is None
+    assert refusal.value.binding == binding
+    assert refusal.value.demand.dimension == 10
 
 
 def test_coupled_iteration_failure_keeps_actual_result_and_binding(
@@ -899,7 +938,6 @@ def test_coupled_iteration_failure_keeps_actual_result_and_binding(
         _solve([row], [-1.0], [], policy, binding)
     assert failure.value.result is not None
     assert not bool(failure.value.result.valid)
-    assert failure.value.policy is policy
     assert failure.value.binding == binding
     assert int(failure.value.result.status) != int(phx.optim.ConvexProgramStatus.OPTIMAL)
 

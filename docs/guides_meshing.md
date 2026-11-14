@@ -2833,6 +2833,14 @@ severity-multiset objective, and native source checks remain unchanged. Periodic
 meshes retain their pair/orbit route; local infeasibility is not global
 impossibility.
 
+The production coupled route explicitly composes the dense method's KKT dimension
+ceiling as `isqrt(materialization.max_entries)` using the same materialization
+policy instance. Entry, array-byte, workspace, and factorization limits still
+apply independently. Global optimizer defaults and caller-supplied explicit
+dimension limits are not rewritten. This computational admission has its own
+policy identity; termination, regularization, and scientific acceptance criteria
+are unchanged.
+
 An implicit distance refusal can carry barycentric coordinates of the first
 rejecting or unsplittable subdivision piece's centroid, in the refused facet's
 original vertex order. Coupled relocation binds this sample to the actual source,
