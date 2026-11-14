@@ -275,6 +275,10 @@ void near_band_distance_cases() {
               outside_c{0.0, 0.001, outside_z};
   PHX_CHECK(!admission.admits(outside_a, outside_b, outside_c,
                              evidence_of(admission, outside_a, outside_b, outside_c)));
+  PHX_CHECK(admission.distance_barycentric().has_value());
+  PHX_CHECK(!admission.admits(outside_a, outside_c, outside_b,
+                             evidence_of(admission, outside_a, outside_c, outside_b)));
+  PHX_CHECK(!admission.distance_barycentric());
 }
 
 void whole_piece_bracketing_cases() {
@@ -309,6 +313,19 @@ void whole_piece_bracketing_cases() {
   // 1-x-y>0.31, hence f < 0.01-0.32*0.32*0.31 < 0 everywhere.
   PHX_CHECK(admission.transversal_sign(a, b, c) == 1);
   PHX_CHECK(!admission.admits(a, b, c, evidence_of(admission, a, b, c)));
+  PHX_CHECK(admission.distance_barycentric().has_value());
+  if (admission.distance_barycentric()) {
+    const auto& weights = *admission.distance_barycentric();
+    PHX_CHECK(std::all_of(weights.begin(), weights.end(),
+                         [](double weight) { return std::isfinite(weight) && weight >= 0; }));
+    PHX_CHECK(std::fabs(weights[0] + weights[1] + weights[2] - 1) <=
+              4 * std::numeric_limits<double>::epsilon());
+    const double x = weights[1], y = weights[2];
+    PHX_CHECK(-x * y * (1 - x - y) < -tolerance);
+  }
+  const Point small_b{0.001, 0.0, 0.0}, small_c{0.0, 0.001, 0.0};
+  PHX_CHECK(admission.admits(a, small_b, small_c, evidence_of(admission, a, small_b, small_c)));
+  PHX_CHECK(!admission.distance_barycentric());
 }
 
 struct Surface {

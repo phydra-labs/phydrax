@@ -64,6 +64,7 @@ struct TetImplicitFacetRefusal {
   std::int64_t transversality_refusals = 0;
   std::int64_t distance_refusals = 0;
   TetEditStatus status = TetEditStatus::kInvalidGeometry;
+  std::optional<std::array<double, 3>> distance_barycentric;
 };
 
 // Exact dyadic interpolation from one source lifted vertex to a new target.

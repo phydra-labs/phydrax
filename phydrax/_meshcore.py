@@ -372,6 +372,8 @@ class _TetMeshImplicitFacetRefusal(ctypes.Structure):
         ("transversality_refusals", _I64),
         ("distance_refusals", _I64),
         ("status", _I32),
+        ("has_distance_barycentric", _I32),
+        ("distance_barycentric", _F64 * 3),
     )
 
 
@@ -2986,6 +2988,7 @@ class TetMeshImplicitFacetRefusal(NamedTuple):
     transversality_refusals: int
     distance_refusals: int
     status: TetMeshEditStatus
+    distance_barycentric: np.ndarray | None
 
 
 class TetMeshPeriodicEntityOrbitMap(NamedTuple):
@@ -7860,6 +7863,11 @@ class TetMesh3D:
                 int(record.transversality_refusals),
                 int(record.distance_refusals),
                 TetMeshEditStatus(record.status),
+                (
+                    np.array(record.distance_barycentric, dtype=np.float64)
+                    if record.has_distance_barycentric
+                    else None
+                ),
             )
 
     @property

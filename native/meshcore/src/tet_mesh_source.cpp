@@ -926,6 +926,7 @@ bool TetMesh::source_face_valid(const TetEditFacet& facet,
       refusal.transversality_refusals = admission.refusals().transversality;
       refusal.distance_refusals = admission.refusals().distance;
       refusal.status = source_face_refusal_status();
+      refusal.distance_barycentric = admission.distance_barycentric();
       implicit_facet_refusal_ = refusal;
     }
     return valid;

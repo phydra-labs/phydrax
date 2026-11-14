@@ -1639,6 +1639,11 @@ int32_t phx_mc_tet_mesh_implicit_facet_refusal(
   output->transversality_refusals = refusal->transversality_refusals;
   output->distance_refusals = refusal->distance_refusals;
   output->status = static_cast<int32_t>(refusal->status);
+  if (refusal->distance_barycentric) {
+    output->has_distance_barycentric = 1;
+    std::copy(refusal->distance_barycentric->begin(), refusal->distance_barycentric->end(),
+              output->distance_barycentric);
+  }
   return PHX_MC_OK;
 }
 

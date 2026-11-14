@@ -3692,7 +3692,9 @@ void implicit_source_binding_owns_programs_and_refuses_wrong_orientation() {
   PHX_CHECK(refusal.refused == 0);
   const std::array<uint64_t, 3> affected{0, 1, 2};
   const uint64_t moved_id = 4;
-  std::array<double, 3> proposal{.25, .25, .1};
+  // The facet centroid remains in-band. A rejecting or unsplittable piece
+  // localizes toward the moved corner, but is not a certified distance witness.
+  std::array<double, 3> proposal{.25, .25, .02};
   phx_mc_tet_mesh_edit_request edit{};
   edit.identity_bound = 1;
   edit.source_id = source_id;
@@ -3716,6 +3718,17 @@ void implicit_source_binding_owns_programs_and_refuses_wrong_orientation() {
   PHX_CHECK(refusal.refused == 1 && refusal.generation == edit.expected_generation);
   PHX_CHECK(refusal.facet_id < 3 && refusal.facet_source == 0 && refusal.orientation == 1);
   PHX_CHECK(refusal.distance_refusals > 0 && refusal.status == edit_status);
+  PHX_CHECK(refusal.has_distance_barycentric == 1);
+  double sample_height = 0, barycentric_sum = 0;
+  for (int corner = 0; corner < 3; ++corner) {
+    const double weight = refusal.distance_barycentric[corner];
+    PHX_CHECK(std::isfinite(weight) && weight >= 0);
+    barycentric_sum += weight;
+    sample_height += weight * refusal.points[3 * corner + 2];
+  }
+  PHX_CHECK(std::fabs(barycentric_sum - 1) <= 4 * std::numeric_limits<double>::epsilon());
+  const double centroid_height = (refusal.points[2] + refusal.points[5] + refusal.points[8]) / 3;
+  PHX_CHECK(sample_height > centroid_height);
   bool found_proposal = false;
   for (int corner = 0; corner < 3; ++corner) {
     if (refusal.vertex_ids[corner] == moved_id) {
@@ -3728,6 +3741,7 @@ void implicit_source_binding_owns_programs_and_refuses_wrong_orientation() {
   PHX_CHECK(decided == 0);
   PHX_CHECK(phx_mc_tet_mesh_implicit_facet_refusal(restored, &refusal) == PHX_MC_OK);
   PHX_CHECK(refusal.refused == 0);
+  PHX_CHECK(refusal.has_distance_barycentric == 0);
   edit.kind = PHX_MC_TET_EDIT_RELOCATE;
   PHX_CHECK(phx_mc_tet_mesh_probe_edit(restored, &edit, &decided, &edit_status) == PHX_MC_OK);
   PHX_CHECK(decided == 1);
@@ -3756,6 +3770,7 @@ void implicit_source_binding_owns_programs_and_refuses_wrong_orientation() {
   PHX_CHECK(edit_status == PHX_MC_TET_EDIT_APPLIED);
   PHX_CHECK(phx_mc_tet_mesh_implicit_facet_refusal(restored, &refusal) == PHX_MC_OK);
   PHX_CHECK(refusal.refused == 0);
+  PHX_CHECK(refusal.has_distance_barycentric == 0);
   phx_mc_tet_mesh_free(restored);
   restored = nullptr;
   moved_points[3] = 1.001;

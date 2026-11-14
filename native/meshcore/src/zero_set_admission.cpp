@@ -303,6 +303,7 @@ double ZeroSetBandAdmission::extrusion_distance(const Point& a, const Point& b,
 double ZeroSetBandAdmission::distance_bound(
     const Point& a, const Point& b, const Point& c,
     const std::array<VertexEvidence, 3>& evidence) const {
+  distance_barycentric_.reset();
   double scale = 0;
   for (const Point* p : {&a, &b, &c})
     for (double coordinate : *p) scale = std::max(scale, std::fabs(coordinate));
@@ -345,11 +346,20 @@ double ZeroSetBandAdmission::split_distance(const Point& a, const Point& b, cons
     Point a, b, c;
     std::array<VertexEvidence, 3> evidence;
     int depth;
+    std::array<Point, 3> barycentric;
   };
   const auto middle = [](const Point& p, const Point& q) {
     return Point{0.5 * (p[0] + q[0]), 0.5 * (p[1] + q[1]), 0.5 * (p[2] + q[2])};
   };
-  std::vector<Piece> stack{{a, b, c, evidence, 0}};
+  constexpr std::array<Point, 3> reference{{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}};
+  const auto record_sample = [&](const Piece& piece) {
+    Point sample{};
+    for (int d = 0; d < 3; ++d)
+      sample[d] = (piece.barycentric[0][d] + piece.barycentric[1][d] +
+                   piece.barycentric[2][d]) / 3;
+    distance_barycentric_ = sample;
+  };
+  std::vector<Piece> stack{{a, b, c, evidence, 0, reference}};
   double worst = 0;
   while (!stack.empty()) {
     const Piece piece = stack.back();
@@ -361,7 +371,10 @@ double ZeroSetBandAdmission::split_distance(const Point& a, const Point& b, cons
       worst = std::max(worst, bound);
       continue;
     }
-    if (piece_refuted(piece.a, piece.b, piece.c)) return piece.depth == 0 ? bound : kInfinity;
+    if (piece_refuted(piece.a, piece.b, piece.c)) {
+      record_sample(piece);
+      return piece.depth == 0 ? bound : kInfinity;
+    }
     const double charge = next_up(piece.depth * slack);
     // Leave room for the final outward addition, without a heuristic tolerance
     // reduction. Existing subdivision-rounding evidence remains authoritative.
@@ -376,22 +389,30 @@ double ZeroSetBandAdmission::split_distance(const Point& a, const Point& b, cons
     const Point ab = middle(piece.a, piece.b), bc = middle(piece.b, piece.c),
                 ca = middle(piece.c, piece.a);
     if (ab == piece.a || ab == piece.b || bc == piece.b || bc == piece.c || ca == piece.c ||
-        ca == piece.a)
+        ca == piece.a) {
+      record_sample(piece);
       return kInfinity;
+    }
     double extent = 0;
     for (int d = 0; d < 3; ++d) {
       extent = std::max({extent, std::fabs(piece.a[d] - piece.b[d]),
                          std::fabs(piece.b[d] - piece.c[d]), std::fabs(piece.c[d] - piece.a[d])});
     }
-    if (extent <= slack) return kInfinity;
+    if (extent <= slack) {
+      record_sample(piece);
+      return kInfinity;
+    }
     const VertexEvidence eab = evaluate(ab), ebc = evaluate(bc), eca = evaluate(ca);
     const auto& e = piece.evidence;
     const int depth = piece.depth + 1;
+    const auto& weights = piece.barycentric;
+    const Point wab = middle(weights[0], weights[1]), wbc = middle(weights[1], weights[2]),
+                wca = middle(weights[2], weights[0]);
     // Pushed in reverse so the first sub-piece is decided first.
-    stack.push_back({bc, ca, ab, {ebc, eca, eab}, depth});
-    stack.push_back({ca, bc, piece.c, {eca, ebc, e[2]}, depth});
-    stack.push_back({ab, piece.b, bc, {eab, e[1], ebc}, depth});
-    stack.push_back({piece.a, ab, ca, {e[0], eab, eca}, depth});
+    stack.push_back({bc, ca, ab, {ebc, eca, eab}, depth, {wbc, wca, wab}});
+    stack.push_back({ca, bc, piece.c, {eca, ebc, e[2]}, depth, {wca, wbc, weights[2]}});
+    stack.push_back({ab, piece.b, bc, {eab, e[1], ebc}, depth, {wab, weights[1], wbc}});
+    stack.push_back({piece.a, ab, ca, {e[0], eab, eca}, depth, {weights[0], wab, wca}});
   }
   return worst;
 }
@@ -423,6 +444,7 @@ int ZeroSetBandAdmission::transversal_sign(const Point& a, const Point& b,
 bool ZeroSetBandAdmission::admits(const Point& a, const Point& b, const Point& c,
                                   const std::array<VertexEvidence, 3>& evidence) const {
   if (transversal_sign(a, b, c) != orientation_) {
+    distance_barycentric_.reset();
     ++refusals_.transversality;
     return false;
   }

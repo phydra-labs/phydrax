@@ -30,6 +30,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "interval_program.hpp"
@@ -104,6 +105,9 @@ class ZeroSetBandAdmission final : public TriangleAdmission {
     int64_t distance = 0;
   };
   const Refusals& refusals() const { return refusals_; }
+  // Proposal sample from the first rejecting subdivision piece, in the
+  // original triangle's vertex order; not a distance extremum or certificate.
+  const std::optional<Point>& distance_barycentric() const { return distance_barycentric_; }
 
  private:
   // One unsplit piece: the residual/gradient bound over its (widened) box.
@@ -123,6 +127,7 @@ class ZeroSetBandAdmission final : public TriangleAdmission {
   double tolerance_;
   int orientation_;
   mutable Refusals refusals_;  // single-threaded, like the program scratch
+  mutable std::optional<Point> distance_barycentric_;
 };
 
 }  // namespace phx::mc::remesh

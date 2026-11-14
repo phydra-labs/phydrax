@@ -740,6 +740,10 @@ typedef struct phx_mc_tet_implicit_facet_refusal {
   int64_t transversality_refusals;
   int64_t distance_refusals;
   int32_t status;
+  /* A proposal sample from the first rejecting distance subdivision piece,
+   * in vertex_ids order; not a distance extremum or acceptance certificate. */
+  int32_t has_distance_barycentric;
+  double distance_barycentric[3];
 } phx_mc_tet_implicit_facet_refusal;
 PHX_MC_API int32_t phx_mc_tet_mesh_implicit_facet_refusal(
     const phx_mc_tet_mesh* mesh, phx_mc_tet_implicit_facet_refusal* output);
