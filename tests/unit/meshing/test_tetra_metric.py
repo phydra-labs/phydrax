@@ -129,7 +129,13 @@ def _mesh_result(
     return certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
 
 
-def _state(source: CellMeshingResult, metric: np.ndarray, /) -> _NativeState:
+def _state(
+    source: CellMeshingResult,
+    metric: np.ndarray,
+    /,
+    *,
+    fixed_vertices: np.ndarray | None = None,
+) -> _NativeState:
     mesh = source.mesh
     edge_count = mesh.entity_set(1).entity_ids.size
     return _prepare_native_state(
@@ -141,7 +147,11 @@ def _state(source: CellMeshingResult, metric: np.ndarray, /) -> _NativeState:
         facet_classes=np.zeros(mesh.entity_set(2).entity_ids.size, dtype=np.int64),
         edge_classes=np.zeros(edge_count, dtype=np.int64),
         protected_edges=np.zeros(edge_count, dtype=np.bool_),
-        fixed_vertices=np.zeros(mesh.vertex_global_ids.size, dtype=np.bool_),
+        fixed_vertices=(
+            np.zeros(mesh.vertex_global_ids.size, dtype=np.bool_)
+            if fixed_vertices is None
+            else fixed_vertices
+        ),
     )
 
 
@@ -961,7 +971,9 @@ def test_protected_boundary_edge_and_invalid_metric_are_refused() -> None:
         _adapt(source, invalid)
 
 
-def _implicit_plane_pyramid(height: float, tolerance: float) -> _NativeState:
+def _implicit_plane_pyramid(
+    height: float, tolerance: float, *, fixed_corners: bool = False
+) -> _NativeState:
     from phydrax._meshcore import IntervalBoxProgram, TetMeshImplicitSource
     from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
 
@@ -995,7 +1007,11 @@ def _implicit_plane_pyramid(height: float, tolerance: float) -> _NativeState:
         source_mesh=source.mesh,
     )
     source = certify_cell_mesh(source.mesh, source.coordinate_contract, geometry=geometry)
-    state = _state(source, np.eye(3, dtype=np.float64))
+    state = _state(
+        source,
+        np.eye(3, dtype=np.float64),
+        fixed_vertices=np.asarray([fixed_corners] * 4 + [False], dtype=np.bool_),
+    )
     records = _boundary_records(state)
     groups = {records.facets[key][1] for key in records.vertex_facets[4]}
     assert len(groups) == 1
@@ -1269,147 +1285,50 @@ def test_native_implicit_tangent_relocation_reduces_band() -> None:
         state.native.close()
 
 
-def test_native_refusal_search_survives_collapse_unblock_return(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import dataclasses
-    import hashlib
-    import pickle
-
+def test_refused_collapse_does_not_preempt_relocation_workset() -> None:
     import phydrax.meshing._tetra_metric as metric
-    from phydrax._meshcore import TetMesh3D
 
-    state = _relocation_cache_witness_state()
-    native_apply = TetMesh3D.apply_edit
-    relocation_apply = metric._apply_relocation_batch
-    proposals = metric._relocation_proposals
-    unblocks_collapse = metric._relocation_unblocks_collapse
-    stage: tuple[bool, ...] = ()
-    # A topology edit may legitimately invalidate every cache, even on a
-    # geometrically unchanged star; compare only within one topology epoch.
-    seen: dict[tuple[Any, ...], tuple[int, int, tuple[int, ...], bytes]] = {}
-    moved = 0
-    unblocks = 0
-    witness: tuple[tuple[int, ...], bytes] | None = None
-
-    class PrefixComplete(Exception):
-        pass
-
-    def star_points(vertices: tuple[int, ...]) -> bytes:
-        rows = {int(vertex): row for row, vertex in enumerate(state.snapshot.vertex_ids)}
-        return np.asarray(state.snapshot.points)[[rows[v] for v in vertices]].tobytes()
-
-    def observe_native(owner: TetMesh3D, edit: TetMeshEdit) -> TetMeshEditStatus:
-        nonlocal witness
-        result = native_apply(owner, edit)
-        if (
-            result is TetMeshEditStatus.APPLIED
-            and edit.kind is not TetMeshEditKind.RELOCATE
-        ):
-            seen.clear()
-            witness = None
-        return result
-
-    def observe_proposals(
-        owner: _NativeState,
-        cache: dict[int, metric._RelocationSearch | None],
-        /,
-        *,
-        deep: bool = False,
-        refine: bool = False,
-        active_only: bool = False,
-        band_only: bool = False,
-        prepared: metric._RelocationPreparation | None = None,
-    ) -> list[tuple[dict[str, Any], ...]]:
-        nonlocal stage
-        stage = (deep, refine, active_only, band_only)
-        return proposals(
-            owner,
-            cache,
-            deep=deep,
-            refine=refine,
-            active_only=active_only,
-            band_only=band_only,
-            prepared=prepared,
-        )
-
-    def observe_relocation(
-        owner: _NativeState, batch: list[dict[str, Any]]
-    ) -> TetMeshEditStatus:
-        nonlocal moved
-        key = None
-        vertices: tuple[int, ...] = ()
-        coordinates = b""
-        if len(batch) == 1:
-            proposal = batch[0]
-            vertices = tuple(sorted(map(int, proposal["star_vertices"])))
-            coordinates = star_points(vertices)
-            edit = dataclasses.replace(
-                metric._relocation_edit(owner, batch), expected_generation=0
-            )
-            digest = hashlib.sha256(pickle.dumps(edit, protocol=5)).digest()
-            key = (
-                stage,
-                digest,
-                vertices,
-                coordinates,
-                tuple(sorted(proposal["star_cell_ids"])),
-            )
-        before = owner.native.implicit_refusals
-        result = relocation_apply(owner, batch)
-        after = owner.native.implicit_refusals
-        assert before is not None and after is not None
-        if result is TetMeshEditStatus.APPLIED:
-            moved += len(batch)
-        elif key is not None and after[1] > before[1]:
-            # Only singleton native refusals count; partition retries of a
-            # larger failed batch are different native requests.
-            previous = seen.get(key)
-            assert previous is None or previous[0] == unblocks, (
-                "An unchanged star restarted its refused exact relocation after a yield"
-            )
-            seen.setdefault(key, (unblocks, moved, vertices, coordinates))
-            if witness is not None and len(seen) >= 25:
-                raise PrefixComplete
-        return result
-
-    def observe_unblock(
-        owner: _NativeState,
-        moved_proposals: list[dict[str, Any]],
-        cache: dict[tuple[int, int], tuple[dict[str, Any] | None, frozenset[int]]],
-        prepared: metric._RelocationPreparation,
-        /,
-    ) -> bool:
-        nonlocal unblocks, witness
-        result = unblocks_collapse(owner, moved_proposals, cache, prepared)
-        if result:
-            unblocks += 1
-            for _, earlier_moves, vertices, coordinates in seen.values():
-                if earlier_moves < moved and star_points(vertices) == coordinates:
-                    witness = (vertices, coordinates)
-                    break
-        return result
-
-    monkeypatch.setattr(TetMesh3D, "apply_edit", observe_native)
-    monkeypatch.setattr(metric, "_relocation_proposals", observe_proposals)
-    monkeypatch.setattr(metric, "_apply_relocation_batch", observe_relocation)
-    monkeypatch.setattr(metric, "_relocation_unblocks_collapse", observe_unblock)
+    # Accepted moves expose host collapse proposals, but those proposals do
+    # not establish native admission or exhaust the remaining relocation work.
+    state = _implicit_plane_pyramid(2.0, 0.01, fixed_corners=True)
+    caches: metric._RelocationCaches = ({}, {}, {}, {})
+    collapse_cache: dict[
+        tuple[int, int], tuple[dict[str, Any] | None, frozenset[int]]
+    ] = {}
+    counters = _counters()
     try:
-        # Stop at a finite observed prefix, not a claim of mesh convergence.
-        with pytest.raises(PrefixComplete):
-            metric._execute_native_state(
-                state, PredicateMode.EXACT, topology_operations=True, relocation=True
-            )
-        assert witness is not None
-        assert unblocks > 0 and moved > 0
-        refusals = state.native.implicit_refusals
-        assert refusals is not None and refusals[1] > 0
-        native_snapshot = state.native.arrays()
-        np.testing.assert_array_equal(native_snapshot.points, state.snapshot.points)
-        np.testing.assert_array_equal(
-            native_snapshot.tetrahedra, state.snapshot.tetrahedra
+        assert metric._collapse_metric_candidates(state, {})
+        first = metric._relocation_phase(
+            state, counters, collapse_cache=collapse_cache, caches=caches
         )
-        assert metric._unit_metric_status(state)[4] > 0.0
+        assert first == counters["relocations"] > 0
+        assert counters["collapses"] == 0
+        assert counters["rejected_protected"] > 0
+        generation = state.snapshot.generation
+        points = np.asarray(state.snapshot.points).copy()
+        second = metric._relocation_phase(
+            state, counters, collapse_cache=collapse_cache, caches=caches
+        )
+        assert second == 0
+        assert counters["relocations"] == first
+        assert state.snapshot.generation == generation
+        np.testing.assert_array_equal(state.snapshot.points, points)
+    finally:
+        state.native.close()
+
+
+def test_relocation_yields_after_native_admitted_collapse() -> None:
+    import phydrax.meshing._tetra_metric as metric
+
+    state = _implicit_plane_pyramid(2.0, 0.01)
+    counters = _counters()
+    original_vertices = set(state.snapshot.vertex_ids.tolist())
+    try:
+        applied = metric._relocation_phase(state, counters, collapse_cache={})
+        assert applied == counters["relocations"] > 0
+        assert counters["collapses"] > 0
+        assert set(state.snapshot.vertex_ids.tolist()) < original_vertices
+        assert state.native.arrays().generation == state.snapshot.generation
     finally:
         state.native.close()
 
