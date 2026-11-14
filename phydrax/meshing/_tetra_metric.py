@@ -7409,44 +7409,6 @@ def _apply_relocation_partition(
     return []
 
 
-def _relocation_unblocks_collapse(
-    state: _NativeState,
-    moved: list[dict[str, Any]],
-    cache: dict[tuple[int, int], tuple[dict[str, Any] | None, frozenset[int]]],
-    prepared: _RelocationPreparation,
-    /,
-) -> bool:
-    """Return to topology when a moved star admits a short-edge collapse."""
-    if not moved or state.target_mesh.periodic_topology is not None:
-        return False
-    affected = set().union(*(proposal["star_vertices"] for proposal in moved))
-    topology, lengths = prepared.topology, prepared.lengths
-    classes, protected, records = prepared.classes, prepared.protected, prepared.records
-    cell_ids = np.asarray(state.snapshot.cell_ids, dtype=np.int64)
-    live = set(cell_ids.tolist())
-    for edge, length in zip(topology.edge_cells, lengths, strict=True):
-        if (
-            length >= _LOWER
-            or protected[edge]
-            or classes[edge] != 0
-            or not affected.intersection(edge)
-        ):
-            continue
-        cached = cache.get(edge)
-        if cached is None or not cached[1] <= live:
-            stars = set(topology.vertex_cells[edge[0]]) | set(
-                topology.vertex_cells[edge[1]]
-            )
-            cached = (
-                _collapse_proposal(state, topology, records, protected, edge),
-                frozenset(int(cell_ids[row]) for row in stars),
-            )
-            cache[edge] = cached
-        if cached[0] is not None:
-            return True
-    return False
-
-
 def _invalidate_relocation_searches(
     caches: _RelocationCaches,
     moved: list[dict[str, Any]] | None = None,
@@ -7473,16 +7435,20 @@ def _relocation_phase(
     | None = None,
     caches: _RelocationCaches | None = None,
 ) -> int:
-    """Relocate until no vertex has an applicable objective-decreasing move.
+    """Relocate until exhausted or an admitted collapse requires fresh topology.
 
     Every pass applies a strictly improving move or consumes a distinct member
     of a finite candidate search. A native refusal does not prove exhaustion.
     A moved vertex evicts the searches of its closed star.
+    When topology is enabled, the existing collapse phase owns admission;
+    a host proposal or a native refusal alone never preempts this workset.
     """
     applied = 0
-    # The executor retains stage-local searches across speculative returns;
-    # only changed closed stars invalidate a nonperiodic search.
+    # Only actual geometry/topology changes invalidate these worksets. A host
+    # collapse proposal is not native admission and must not preempt a search.
     periodic = state.target_mesh.periodic_topology is not None
+    if topology_operations and collapse_cache is None:
+        collapse_cache = {}
     if caches is None:
         caches = ({}, {}, {}, {})
     elif periodic:
@@ -7543,10 +7509,10 @@ def _relocation_phase(
                 moved_vertices=frozenset(int(proposal["vertex"]) for proposal in moved),
             )
             _invalidate_relocation_searches(caches, None if periodic else moved)
-        if topology_operations and _relocation_unblocks_collapse(
-            state, moved, collapse_cache if collapse_cache is not None else {}, prepared
-        ):
-            return applied
+            if topology_operations and not periodic:
+                if _collapse_phase(state, counters, cache=collapse_cache):
+                    _invalidate_relocation_searches(caches)
+                    return applied
         if moved and stage:
             stage = 0
 
@@ -7762,8 +7728,8 @@ def _execute_native_state(
     collapse_cache: dict[
         tuple[int, int], tuple[dict[str, Any] | None, frozenset[int]]
     ] = {}
-    # Host collapse proposals can yield from relocation without a later native
-    # mutation. Such yields must not restart searches on unchanged stars.
+    # Exhausted searches survive unchanged outer passes; actual topology and
+    # closed-star changes invalidate them at their owning commit boundaries.
     relocation_caches: _RelocationCaches = ({}, {}, {}, {}) if relocation else ()
     while True:
         converged, _, _, _, _ = _unit_metric_status(state)
