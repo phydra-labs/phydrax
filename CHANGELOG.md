@@ -243,6 +243,10 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Nonperiodic coupled relocation can resolve pair-only stalls with bounded
+  neighbor patches selected from audited infeasibility evidence. The complete
+  pair/carrier phase still runs first; source constraints, native admission,
+  resource refusal, and the strict severity-multiset objective remain unchanged.
 - Nonperiodic relocation returns to topology only after native-admitted collapse
   progress; speculative host proposals and native refusals no longer preempt its
   remaining workset. Directed collapse reuses invariant objective data and exact

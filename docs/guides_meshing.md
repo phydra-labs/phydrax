@@ -2808,6 +2808,17 @@ Source-cell location uses precomputed exact affine coefficients. Unchanged
 incidence and boundary controls are reused only after the corresponding native
 snapshot banks agree, and moved vertices invalidate their incident edge metrics.
 
+Coupled relocation exhausts the existing pair/source-carrier search before
+considering a neighbor patch. For nonperiodic meshes, an audited local
+infeasibility ray can identify fixed adjacent blockers through its metric rows.
+Stable target-ID tie breaks select at most one admissible neighbor per endpoint,
+giving at most four vertices and twelve coordinates. Seed carriers stay unchanged;
+each added neighbor uses one validated direction-preferred carrier. Only one
+compact fallback per violating edge is retained, without recursive enrichment
+or another Cartesian source search. Quantization, the severity-multiset objective,
+resource admission, and native source checks remain unchanged. Periodic meshes
+retain their pair/orbit route; local infeasibility is not global impossibility.
+
 Each accepted tetrahedral edit strictly decreases a lexicographic potential:
 the descending multiset of long-edge band violations, the descending multiset
 of short-edge violations, then the worst-first cell qualities. Violations are
