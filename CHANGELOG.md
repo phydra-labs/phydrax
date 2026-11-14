@@ -243,6 +243,12 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Nonperiodic relocation returns to topology only after native-admitted collapse
+  progress; speculative host proposals and native refusals no longer preempt its
+  remaining workset. Directed collapse reuses invariant objective data and exact
+  rejected numerical variants without changing source or native admission checks.
+  Checkpoint-bound internal continuation preserves actual prior work and composes
+  observed native refusal increments without changing fresh-run behavior.
 - Compatible finite-element transfer reuses exact nested and partitioned
   reference moments in one bounded operation-local native host cache. Full
   mathematical keys and per-call scientific ownership checks preserve matrix,

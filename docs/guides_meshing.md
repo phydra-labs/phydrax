@@ -2785,11 +2785,22 @@ The native owner rechecks every affected cell and every retained or replaced
 facet and segment at the new carrier before committing atomically.
 Moved surviving vertex IDs retain relocation lineage and the exact source
 stencil; collapsed source-vertex ancestry remains explicit after the move.
+Within one directed star, collapse reuses its invariant pre-edit objective and
+identical rejected numerical variants. Source-stencil checks and native
+admission remain independent; this does not retain proposals across changed stars.
 For an adaptive implicit volume, a nonnested metric edit proposes root-chart
 ancestry from the actual oriented target boundary. The candidate ancestry is
 not a certificate: source fidelity, coverage, and embedding are checked again.
 Nonperiodic relocation reuses stage-specific local proposals only while their
 closed stars are unchanged; moved stars invalidate the affected entries.
+With topology enabled, nonperiodic relocation yields only after the canonical
+collapse phase actually admits a collapse. A host proposal or native refusal
+does not preempt the remaining relocation workset.
+Internal remaining-work continuation binds authenticated checkpoint state and
+actual prior counters and passes. Refusal evidence adds only the current native
+handle's observed increment to recorded history; it never resets or restamps
+native counters. Worksets are rebuilt, not represented as restored Python
+generators. This does not add a public partial-native-state archive API.
 The relocation search compares admissible coarse and fine dyadic carriers by
 the same band-first objective; if the coarse search exhausts its moves, a
 finite finer-grid search can find a descent that coarse quantization missed.
