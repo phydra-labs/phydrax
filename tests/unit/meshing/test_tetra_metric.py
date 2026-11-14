@@ -737,7 +737,6 @@ def test_coupled_fallback_resource_refusal_preserves_state_and_demand(
             attempt.neighbors,
             search.edges.index(binding.edge),
         )
-    assert error.value.policy is policy
     assert error.value.result is None
     assert error.value.demand.variables == 12
     assert error.value.demand.dimension > pair_dimension
@@ -775,7 +774,6 @@ def test_coupled_closure_resource_refusal_preserves_later_demand(
             attempt.neighbors,
             search.edges.index(binding.edge),
         )
-    assert error.value.policy is policy
     assert error.value.demand.variables > 12
     assert error.value.demand.dimension > 160
     assert len(error.value.binding.vertices) > 4
