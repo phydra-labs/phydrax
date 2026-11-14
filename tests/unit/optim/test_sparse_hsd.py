@@ -1,6 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 from __future__ import annotations
 
+from pathlib import Path
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -26,6 +28,7 @@ from phydrax.optim import (
     NativeConicNewtonRoute,
     NativeHomogeneousConic,
     NonnegativeCone,
+    prepare_convex_program,
     ProductCone,
     solve_conic_program,
     ZeroCone,
@@ -290,3 +293,125 @@ def test_sparse_infeasibility_without_certificate_stays_unresolved() -> None:
     assert not bool(result.certificate.dual_ray_valid)
     assert not bool(result.certificate.primal_ray_valid)
     assert float(result.certificate.dual_ray_objective) < 0.0
+
+
+def test_source_bound_sparse_qp_returns_an_original_coordinate_infeasibility_ray() -> (
+    None
+):
+    # Recorded implicit-sphere distance model, generation 6690, with three
+    # source-bound facet cuts. Original packet SHA256:
+    # 92290058fd39d4fc5412adad2e9cc061bc9880a698c57a9f4b673ef3b903f763.
+    # Its reduced system defeated stationary refinement despite a nonsingular
+    # factor. The oracle below is the independent original-coordinate Farkas test.
+    with np.load(Path(__file__).with_name("sparse_hsd_distance_constraints.npz")) as data:
+        rows = data["rows"]
+        columns = data["columns"]
+        coefficients = data["coefficients"]
+        rhs = data["rhs"]
+        size = 3 * len(data["vertex_ids"])
+    variables = ArraySpace(
+        (size,),
+        dtype=jnp.float64,
+        space_id="distance-constraint-regression:displacements",
+    )
+    constraints = ArraySpace(
+        rhs.shape, dtype=jnp.float64, space_id="distance-constraint-regression:rows"
+    )
+    matrix = SparseCoordinateOperator(
+        EdgeRelation(columns, rows, source_size=size, target_size=rhs.size),
+        coefficients,
+        source=variables,
+        target=constraints,
+    )
+    diagonal = jnp.arange(size, dtype=jnp.int32)
+    quadratic = SparseCoordinateOperator(
+        EdgeRelation(diagonal, diagonal, source_size=size, target_size=size),
+        jnp.ones((size,), dtype=jnp.float64),
+        source=variables,
+        target=variables,
+        properties=OperatorProperties(
+            self_adjoint=True,
+            positive_semidefinite=True,
+            evidence={
+                "self_adjoint": "construction",
+                "positive_semidefinite": "construction",
+            },
+        ),
+    )
+    program = ConicProgram(
+        quadratic,
+        jnp.zeros((size,), dtype=jnp.float64),
+        matrix,
+        rhs,
+        NonnegativeCone(rhs.size),
+        problem_id="source-bound-distance-infeasibility",
+        convexity_evidence="Identity Hessian is positive definite.",
+    )
+    result = solve_conic_program(program, policy=_ray_policy(100))
+    assert int(result.status) == int(ConvexProgramStatus.PRIMAL_INFEASIBLE)
+    assert bool(result.certificate.dual_ray_valid)
+    assert not bool(result.successful)
+    reference = np.zeros((rhs.size, size), dtype=np.float64)
+    reference[rows, columns] = coefficients
+    ray = np.asarray(result.certificate.inequality_dual_ray)
+    assert np.max(np.abs(reference.T @ ray)) <= 1e-8
+    assert np.min(ray) >= -1e-12
+    assert float(rhs @ ray) < -1e-8
+
+
+def test_sparse_dependent_equalities_preserve_the_primal_and_kkt_contract() -> None:
+    variables = ArraySpace(
+        (2,), dtype=jnp.float64, space_id="dependent-equality-regression:variables"
+    )
+    constraints = ArraySpace(
+        (4,), dtype=jnp.float64, space_id="dependent-equality-regression:constraints"
+    )
+    matrix = SparseCoordinateOperator(
+        EdgeRelation(
+            jnp.asarray([0, 1, 0, 1, 0, 1], dtype=jnp.int32),
+            jnp.asarray([0, 0, 1, 1, 2, 3], dtype=jnp.int32),
+            source_size=2,
+            target_size=4,
+        ),
+        jnp.asarray([1.0, 1.0, 1.0, 1.0, -1.0, -1.0], dtype=jnp.float64),
+        source=variables,
+        target=constraints,
+    )
+    program = ConicProgram(
+        jnp.eye(2, dtype=jnp.float64),
+        jnp.asarray([-2.0, 0.0], dtype=jnp.float64),
+        matrix,
+        jnp.asarray([1.0, 1.0, 0.0, 0.0], dtype=jnp.float64),
+        ProductCone((ZeroCone(2), NonnegativeCone(2))),
+        problem_id="dependent-equality-regression",
+        convexity_evidence="Identity Hessian is positive definite.",
+    )
+    result = solve_conic_program(program, policy=_ray_policy(100))
+    assert bool(result.successful)
+    np.testing.assert_allclose(result.primal, [1.0, 0.0], atol=1e-6)
+    assert float(result.kkt_residual_norm) <= 1e-7
+    assert not bool(result.certificate.dual_ray_valid)
+
+
+@pytest.mark.parametrize(
+    "resources",
+    (
+        pytest.param(SolveResourcePolicy(krylov_basis_bytes=0), id="krylov-basis"),
+        pytest.param(SolveResourcePolicy(preconditioner_bytes=0), id="preconditioner"),
+        pytest.param(SolveResourcePolicy(factorization_bytes=0), id="factorization"),
+        pytest.param(SolveResourcePolicy(workspace_bytes=0), id="workspace"),
+    ),
+)
+def test_factorized_correction_refuses_unadmitted_resources_at_preparation(
+    resources: SolveResourcePolicy,
+) -> None:
+    program = _positive_metric_program()
+    with pytest.raises(ValueError):
+        prepare_convex_program(
+            program,
+            ConvexSolvePolicy(
+                NativeHomogeneousConic(),
+                resources=resources,
+                failure=FailurePolicy("status"),
+            ),
+        )

@@ -270,7 +270,16 @@ negative), refines toward the unregularized system, and accepts the direction on
 its residual in the full embedding linearization: the requested Newton accuracy reports
 `SUCCESS`, an inexact-Newton direction within the `1e-4` forcing bound (dependent or
 numerically rank-deficient zero-cone rows) reports `STAGNATION`, and anything else is a
-failed direction. `"matrix-free"` keeps unpreconditioned native GMRES on the full
+failed direction. Already-accepted directions are retained unchanged. An otherwise
+rejected direction with valid factorization and inertia can use native, right-preconditioned
+multi-RHS GMRES with the same regularized factor, at most 32 steps and restart 32.
+Its inner target remains relative `16 * eps`, absolute zero; a missed inner target is
+not relabeled as success, even when the unchanged full-embedding gate accepts an inexact
+direction. Sparse topology, factor analysis, and correction/preconditioner planning are
+host preparation; Newton iterations only bind coefficients and reuse the current factor.
+Preparation admits the potential correction under the existing materialization,
+factorization, preconditioner, Krylov-basis, and workspace budgets.
+`"matrix-free"` keeps unpreconditioned native GMRES on the full
 embedding, with orthant rows equilibrated by `1/(s_i + z_i)`. `primal_step`,
 `dual_step`, and `extrapolation` only parameterize the first-order route used for
 batched programs and sparse programs with native bounds.

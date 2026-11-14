@@ -13,8 +13,10 @@ unknowns ``(dx, dz_Z)`` satisfy the symmetric quasi-definite system
     [ A_Z               0   ] [dz_Z]
 
 solved for both right-hand sides by one refreshed sparse factorization of its
-statically regularized form plus iterative refinement on the exact operator. The
-scalar ``dtau`` follows from the linearized gap row and ``dkappa`` from the
+statically regularized form plus iterative refinement on the exact operator.
+An unresolved full direction can use bounded native GMRES with that same factor;
+accepted directions are retained. Its symbolic correction plan is host-prepared.
+The scalar ``dtau`` follows from the linearized gap row and ``dkappa`` from the
 ``tau kappa`` row. Each assembled direction is accepted only by its residual in
 the full embedding linearization.
 """
@@ -22,6 +24,7 @@ the full embedding linearization.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import NamedTuple
 
 import equinox as eqx
 import jax
@@ -32,17 +35,34 @@ from jax import Array
 from ..._strict import StrictModule
 from ...linalg import (
     AbstractSparseLinearOperator,
+    ArraySpace,
+    DifferentiationPolicy,
+    FailurePolicy,
+    GMRES,
+    LinearSolvePolicy,
+    LinearSolveResult,
     LinearSolveStatus,
-    prepare_sparse_factorization,
+    LinearSolveTemplate,
+    LinearSystem,
+    PreconditioningPolicy,
+    prepare_template,
+    PreparedPreconditioner,
     PreparedSparseFactorization,
     refresh_sparse_factorization_values,
+    RHSLayout,
+    solve_many,
     SparseFactorizationPlan,
     SparseFactorizationPolicy,
+    SparseFactorizationPreconditioner,
+    SparseFactorizationPreconditionerBuilder,
     SparseFactorizationStatus,
+    TolerancePolicy,
 )
+from ...linalg._runtime import _bind_for_template
 from ...sparse import EdgeRelation, SparseCoordinateOperator, SparseLinearMap
 from ._barrier import cone_barrier_oracle
 from ._cones import AbstractConvexCone, NonnegativeCone, ProductCone, ZeroCone
+from ._policy import ConvexSolvePolicy, NativeHomogeneousConic
 from ._problem import (
     _conic_matrix_mv,
     _conic_matrix_transpose_mv,
@@ -84,6 +104,8 @@ class FactorizedNewtonPlan(StrictModule):
     num_zero_rows: int = eqx.field(static=True)
     num_entries: int = eqx.field(static=True)
     multiplier_independent: bool = eqx.field(static=True)
+    operator: SparseCoordinateOperator
+    correction: LinearSolveTemplate
 
 
 class FactorizedNewtonFactor(StrictModule):
@@ -93,6 +115,20 @@ class FactorizedNewtonFactor(StrictModule):
     exact_values: Array
     regularization: Array
     inertia_valid: Array
+
+
+class _ReducedNewtonStructure(NamedTuple):
+    operator: SparseCoordinateOperator
+    correction: LinearSolveTemplate
+    factorization: SparseFactorizationPlan
+
+
+class _ReducedNewtonRhs(NamedTuple):
+    residual: Array
+    rhs: Array
+    offset: Array
+    weighted_rhs: Array
+    weighted_rhs_image: Array
 
 
 def _split(cone: AbstractConvexCone, value: Array) -> tuple[Array, ...]:
@@ -156,18 +192,89 @@ def _row_groups(rows: np.ndarray, count: int, /) -> list[np.ndarray]:
     return [order[bounds[row] : bounds[row + 1]] for row in range(count)]
 
 
+def _prepare_reduced_structure(
+    program: ConicProgram,
+    policy: ConvexSolvePolicy,
+    factorization_policy: SparseFactorizationPolicy,
+    rows: np.ndarray,
+    columns: np.ndarray,
+    size: int,
+) -> _ReducedNewtonStructure:
+    """Own canonical sparse storage, shared factor analysis, and admission."""
+    relation = EdgeRelation(
+        jnp.asarray(columns, dtype=jnp.int32),
+        jnp.asarray(rows, dtype=jnp.int32),
+        source_size=size,
+        target_size=size,
+    )
+    coordinates = ArraySpace(
+        (size,),
+        dtype=program.linear.dtype,
+        space_id=f"native-hsd:{program.structure_id}:reduced-coordinates",
+    )
+    operator = SparseCoordinateOperator(
+        relation,
+        jnp.arange(rows.size, dtype=program.linear.dtype),
+        source=coordinates,
+        target=coordinates,
+        operator_id=f"native-hsd:{program.structure_id}:reduced",
+    )
+    # Preserve the row-major assembly order required by numeric factor refresh.
+    storage = operator.sparse_storage()
+    if not np.array_equal(
+        np.asarray(storage.values), np.arange(rows.size, dtype=np.float64)
+    ):
+        raise RuntimeError("Reduced KKT pattern is not in canonical CSR order.")
+    linear_policy = LinearSolvePolicy(
+        GMRES(restart=_REFINEMENT_STEPS),
+        tolerance=TolerancePolicy(
+            relative=16.0 * np.finfo(operator.coefficients.dtype).eps,
+            absolute=0.0,
+            max_steps=_REFINEMENT_STEPS,
+        ),
+        preconditioning=PreconditioningPolicy(
+            SparseFactorizationPreconditionerBuilder(factorization_policy),
+            side="right",
+            refresh="frozen",
+        ),
+        differentiation=DifferentiationPolicy("none"),
+        failure=FailurePolicy("status"),
+        materialization=policy.materialization,
+        resources=policy.resources,
+    )
+    correction = prepare_template(
+        LinearSystem(operator, problem_id=operator.operator_id),
+        linear_policy,
+        rhs_layout=RHSLayout((2,)),
+    )
+    preconditioner_plan = correction.plan.preconditioner_plan
+    if preconditioner_plan is None or preconditioner_plan.setup is None:
+        raise RuntimeError("Reduced Newton correction lost its sparse factor plan.")
+    factorization = preconditioner_plan.setup.construction_for(operator.operator_id)
+    if not isinstance(factorization, SparseFactorizationPlan):
+        raise RuntimeError("Reduced Newton correction requires sparse factorization.")
+    if factorization.factor_bytes > policy.resources.factorization_bytes:
+        raise ValueError("Reduced Newton factor exceeds the factorization byte budget.")
+    return _ReducedNewtonStructure(operator, correction, factorization)
+
+
 def prepare_factorized_newton(
-    program: ConicProgram, policy: SparseFactorizationPolicy, /
+    program: ConicProgram, policy: ConvexSolvePolicy, /
 ) -> FactorizedNewtonPlan:
     """Analyze the reduced quasi-definite Newton pattern once per structure.
 
     Host-only immutable preparation over concrete sparse topology. The pattern
     and its fill-reducing symbolic factorization are bounded by ``policy``;
     exceeding a declared budget refuses instead of switching routes.
+    Explicit block/row/pair enumeration preserves canonical pattern identities
+    and the order of symbolic-budget refusals.
     """
 
     if program.batch_shape:
         raise ValueError("Factorized homogeneous Newton systems require one case.")
+    method = policy.method
+    if not isinstance(method, NativeHomogeneousConic):
+        raise TypeError("Reduced Newton preparation requires NativeHomogeneousConic.")
     n, m = program.num_variables, program.num_constraints
     a_rows, a_columns, a_edges = _host_entries(program.constraint_matrix, m, n)
     q_rows, q_columns, q_edges = _host_entries(program.quadratic, n, n)
@@ -207,7 +314,7 @@ def prepare_factorized_newton(
                 left = groups[row_left]
                 right = groups[row_right]
                 work += left.size * right.size
-                if work > policy.max_symbolic_work:
+                if work > method.factorization.max_symbolic_work:
                     raise ValueError(
                         "Reduced homogeneous KKT assembly exceeds max_symbolic_work; "
                         "select NativeHomogeneousConic(newton='matrix-free') or raise "
@@ -254,21 +361,9 @@ def prepare_factorized_newton(
     )
     entry_rows = keys // size
     entry_columns = keys % size
-    relation = EdgeRelation(
-        jnp.asarray(entry_columns, dtype=jnp.int32),
-        jnp.asarray(entry_rows, dtype=jnp.int32),
-        source_size=size,
-        target_size=size,
+    structure = _prepare_reduced_structure(
+        program, policy, method.factorization, entry_rows, entry_columns, size
     )
-    pattern = SparseLinearMap(relation, jnp.arange(keys.size, dtype=program.linear.dtype))
-    # Row-major unique keys are already canonical CSR order; verify it so the
-    # assembled values can be passed directly to the numeric refresh.
-    storage = pattern.sparse_storage()
-    if not np.array_equal(
-        np.asarray(storage.values), np.arange(keys.size, dtype=np.float64)
-    ):
-        raise RuntimeError("Reduced KKT pattern is not in canonical CSR order.")
-    factorization = prepare_sparse_factorization(pattern, policy)
 
     def positions(selected: np.ndarray) -> Array:
         return jnp.asarray(np.searchsorted(keys, selected), dtype=jnp.int32)
@@ -277,7 +372,7 @@ def prepare_factorized_newton(
         isinstance(block, (ZeroCone, NonnegativeCone)) for block in blocks
     )
     return FactorizedNewtonPlan(
-        factorization,
+        structure.factorization,
         jnp.asarray(entry_rows, dtype=jnp.int32),
         jnp.asarray(entry_columns, dtype=jnp.int32),
         positions(quadratic_keys),
@@ -296,6 +391,8 @@ def prepare_factorized_newton(
         num_zero_rows=zero_rows.size,
         num_entries=keys.size,
         multiplier_independent=multiplier_independent,
+        operator=structure.operator,
+        correction=structure.correction,
     )
 
 
@@ -472,30 +569,59 @@ def _reduced_solve(
     return value
 
 
-def factorized_direction(
+def _correct_reduced_solve(
     plan: FactorizedNewtonPlan,
     factor: FactorizedNewtonFactor,
+    rhs: Array,
+    initial: Array,
+) -> LinearSolveResult:
+    """Correct with the existing factor without weakening the roundoff target."""
+    operator = eqx.tree_at(
+        lambda value: value.coefficients, plan.operator, factor.exact_values
+    )
+    preconditioner_plan = plan.correction.plan.preconditioner_plan
+    if preconditioner_plan is None:
+        raise RuntimeError("Reduced Newton correction lost its preconditioner plan.")
+    preconditioner = SparseFactorizationPreconditioner(
+        operator,
+        factor.factor,
+        properties=preconditioner_plan.properties,
+        preconditioner_id=f"native-hsd:{plan.structure_id}:regularized-lu",
+    )
+    # The host builder owns symbolic admission. Supply the genuinely refreshed
+    # factor, then reuse that action through the canonical numeric binding.
+    supplied = PreparedPreconditioner(
+        preconditioner,
+        operator,
+        preconditioner_plan,
+        numeric_version=0,
+        built_numeric_version=0,
+        refresh_kind="supplied",
+    )
+    prepared = _bind_for_template(
+        plan.correction,
+        LinearSystem(operator, problem_id=operator.operator_id),
+        previous_preconditioner=supplied,
+    )
+    return solve_many(prepared, rhs, initial_guess=initial)
+
+
+def _reduced_newton_rhs(
+    plan: FactorizedNewtonPlan,
     program: ConicProgram,
     vector: Array,
     mu: Array,
     residual_function: Callable[[Array], Array],
-    row_scale: Array,
-    relative_tolerance: float,
-    absolute_tolerance: float,
-    /,
-) -> tuple[Array, Array, Array]:
-    """Return one embedding Newton direction, acceptance flag, and linear status."""
+) -> _ReducedNewtonRhs:
+    """Prepare the shared affine terms once for both reduced solve routes."""
 
     n, m = program.num_variables, program.num_constraints
-    x = vector[:n]
     dual = vector[n : n + m]
     slack = vector[n + m : n + 2 * m]
-    tau, kappa = vector[-2], vector[-1]
     residual = residual_function(vector)
     stationarity = residual[:n]
     primal = residual[n : n + m]
     centrality = residual[n + m : n + 2 * m]
-    gap, scalar = residual[-2], residual[-1]
     zero = plan.zero_rows
     b = program.constraint_rhs
     offset = _apply_weights(program, slack, dual, mu, primal) - _scale_centrality(
@@ -512,7 +638,44 @@ def factorized_direction(
         )
     )
     second = jnp.concatenate((weighted_rhs_image - program.linear, b[zero]))
-    solution = _reduced_solve(plan, factor, jnp.stack((first, second), axis=1))
+    return _ReducedNewtonRhs(
+        residual,
+        jnp.stack((first, second), axis=1),
+        offset,
+        weighted_rhs,
+        weighted_rhs_image,
+    )
+
+
+def _direction_from_reduced(
+    plan: FactorizedNewtonPlan,
+    factor: FactorizedNewtonFactor,
+    program: ConicProgram,
+    vector: Array,
+    mu: Array,
+    residual_function: Callable[[Array], Array],
+    row_scale: Array,
+    relative_tolerance: float,
+    absolute_tolerance: float,
+    system: _ReducedNewtonRhs,
+    solution: Array,
+) -> tuple[Array, Array, Array]:
+    """Recover and audit the original full embedding direction."""
+    n, m = program.num_variables, program.num_constraints
+    x = vector[:n]
+    dual = vector[n : n + m]
+    slack = vector[n + m : n + 2 * m]
+    tau, kappa = vector[-2], vector[-1]
+    residual = system.residual
+    primal = residual[n : n + m]
+    gap, scalar = residual[-2], residual[-1]
+    zero = plan.zero_rows
+    b = program.constraint_rhs
+    offset, weighted_rhs, weighted_rhs_image = (
+        system.offset,
+        system.weighted_rhs,
+        system.weighted_rhs_image,
+    )
     dx_first, dz_first = solution[:n, 0], solution[n:, 0]
     dx_second, dz_second = solution[:n, 1], solution[n:, 1]
     quadratic_x = _conic_quadratic_mv(program.quadratic, x)
@@ -573,6 +736,60 @@ def factorized_direction(
         ),
     ).astype(jnp.int32)
     return direction, accepted, status
+
+
+def factorized_direction(
+    plan: FactorizedNewtonPlan,
+    factor: FactorizedNewtonFactor,
+    program: ConicProgram,
+    vector: Array,
+    mu: Array,
+    residual_function: Callable[[Array], Array],
+    row_scale: Array,
+    relative_tolerance: float,
+    absolute_tolerance: float,
+    /,
+) -> tuple[Array, Array, Array]:
+    """Retain successful directions; correct only unresolved reduced solves."""
+    system = _reduced_newton_rhs(plan, program, vector, mu, residual_function)
+    solution = _reduced_solve(plan, factor, system.rhs)
+
+    def recover(value: Array) -> tuple[Array, Array, Array]:
+        return _direction_from_reduced(
+            plan,
+            factor,
+            program,
+            vector,
+            mu,
+            residual_function,
+            row_scale,
+            relative_tolerance,
+            absolute_tolerance,
+            system,
+            value,
+        )
+
+    initial = recover(solution)
+
+    def correct() -> tuple[Array, Array, Array]:
+        reduced = _correct_reduced_solve(plan, factor, system.rhs, solution)
+        direction, accepted, status = recover(reduced.value)
+        # An accepted inexact Newton direction is not a strict inner solve.
+        status = jnp.where(
+            (status == int(LinearSolveStatus.SUCCESS)) & ~jnp.all(reduced.successful),
+            int(LinearSolveStatus.STAGNATION),
+            status,
+        ).astype(jnp.int32)
+        return direction, accepted, status
+
+    eligible = (
+        ~initial[1]
+        & factor.inertia_valid
+        & (factor.factor.status == int(SparseFactorizationStatus.SUCCESS))
+        & jnp.all(jnp.isfinite(solution))
+        & jnp.all(jnp.isfinite(system.rhs))
+    )
+    return jax.lax.cond(eligible, correct, lambda: initial)
 
 
 __all__ = [

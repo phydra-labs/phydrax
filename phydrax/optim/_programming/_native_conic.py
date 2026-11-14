@@ -157,7 +157,7 @@ def prepare_native_conic(
         raise TypeError("policy method must be NativeHomogeneousConic.")
     sparse = program.constraint_is_sparse or program.quadratic_is_sparse
     newton = (
-        prepare_factorized_newton(program, method.factorization)
+        prepare_factorized_newton(program, policy)
         if sparse
         and method.newton == "factorized"
         and _uses_homogeneous_embedding(program)
