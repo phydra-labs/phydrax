@@ -1,43 +1,85 @@
 {
   "environment": {
     "default_float_dtype": "float64",
-    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "fingerprint": "ec62f676fc3eb2006da20a8183e6b4ad32b2b79b0655ed990acc2563276c5e75",
+    "frontend_index_patch": {
+      "algorithm": "point-index-bounds-before-shape-width-narrowing",
+      "jax_version": "0.12.0.1",
+      "patch_source_sha256": "7720c322d9352683da63d98d8c42896bf641ff8d32b72703310cc4162accb148",
+      "upstream_dynamic_slice_sha256": "7c04da9f492fc428b55462343482b64bbe2293a8e8fdd64ee973e8a9f6225030",
+      "upstream_function_sha256": "3c3135e9a98d915edace7506c4c8fe536518c1f54f75f1e5cee2f0c45edf51d2",
+      "upstream_source_sha256": "85ed8552ad648cdae8d0e70b280381adad87a7ee5424e0f6287e076091caa6bc"
+    },
     "jax": {
       "backend": "cpu",
       "devices": [
         {
+          "device_id": 0,
           "kind": "cpu",
-          "platform": "cpu"
+          "local_hardware_id": 0,
+          "normalized_platform": "cpu",
+          "platform": "cpu",
+          "process_index": 0,
+          "runtime_version": "cpu",
+          "vendor": null
         }
       ],
-      "version": "0.11.2",
+      "version": "0.12.0.1",
       "x64_enabled": true
     },
-    "jaxlib_version": "0.11.2",
+    "jaxlib_version": "0.12.0.1",
     "logical_cpus": 10,
     "machine": "arm64",
-    "numpy_version": "2.5.3",
-    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "numpy_version": "2.5.4",
+    "package_fingerprint": "ba5904e2ccef522f69571139d609230bdd952b17fcbdbdb4f41dcf1d166c6f56",
     "performance_environment": {
+      "CUDA_CACHE_MAXSIZE": null,
+      "CUDA_CACHE_PATH": null,
+      "CUDA_MODULE_LOADING": null,
+      "CUDA_VISIBLE_DEVICES": null,
+      "GPU_DEVICE_ORDINAL": null,
+      "HIP_DEVICE_LIB_PATH": null,
+      "HIP_PATH": null,
+      "HIP_VISIBLE_DEVICES": null,
+      "HSA_ENABLE_SDMA": null,
+      "HSA_OVERRIDE_GFX_VERSION": null,
       "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_CUDA_VISIBLE_DEVICES": null,
       "JAX_PLATFORMS": null,
       "JAX_PLATFORM_NAME": null,
+      "LD_LIBRARY_PATH": null,
+      "LLVM_PATH": null,
       "MKL_NUM_THREADS": null,
+      "NCCL_DEBUG": null,
+      "NCCL_IB_DISABLE": null,
+      "NCCL_LAUNCH_ORDER_IMPLICIT": null,
+      "NCCL_LAUNCH_RACE_FATAL": null,
+      "NCCL_NVLS_ENABLE": null,
+      "NCCL_P2P_DISABLE": null,
+      "NCCL_SOCKET_IFNAME": null,
       "NPROC": null,
       "OMP_NUM_THREADS": null,
       "OPENBLAS_NUM_THREADS": null,
+      "PHYDRAX_LOCAL_DEVICE_IDS": null,
+      "ROCM_PATH": null,
+      "ROCR_VISIBLE_DEVICES": null,
+      "UCX_MEMTYPE_CACHE": null,
       "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_CLIENT_MEM_FRACTION": null,
       "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_ALLOCATOR": null,
       "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
       "XLA_PYTHON_CLIENT_PREALLOCATE": null
     },
     "phydrax_version": "0.2.2",
-    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "platform": "macOS-15.7.2-arm64-arm-64bit-Mach-O",
     "processor": "arm",
-    "python_version": "3.12.8"
+    "python_version": "3.13.11",
+    "rocm_packages": {},
+    "windows_cuda_runtime": null
   },
   "identity": {
-    "benchmark_driver_fingerprint": "518abafdd1083951075449dff5197d73805e6cfec75878790fa37672594b7342",
+    "benchmark_driver_fingerprint": "9f0ed8af3eb1cf20090ce9a34f3778fe890138d69d134489f40a0ab3ee68ea16",
     "evidence_schema": {
       "fields": [
         "output_bytes",
@@ -45,82 +87,206 @@
       ],
       "signature": "c888c00da11421fe8225b6b8834253956c2c3041b502b059f8c9fc170d28b84f"
     },
-    "fingerprint": "3f2a2e7242189fbb24682d1147cf95f526cef14b6f72b6dac1c64a2d57fec7f6",
-    "source_build_fingerprint": "71c35db7a0fee614b4a64c69a7349854277e87aa862db156f4d119cd2585090b"
+    "fingerprint": "727ad5f86b0306d040f6fb4698a5703362586100b27c88a0b385e9660d96ef4d",
+    "source_build_fingerprint": "c9b0251aec002be9bcd589f88925b4e8a96a466e930e1a9cb722257ba9135511"
   },
   "records": [
     {
       "capacity": 256,
-      "compilation_seconds": 0.048223333,
-      "lowering_seconds": 0.01124575,
+      "compilation_seconds": 0.019346625,
+      "compiler_host_peak_bytes": 186971,
+      "generated_code_bytes": 0,
+      "input_bytes": 8192,
+      "logical_workspace_bytes": 3194880,
+      "lowering_seconds": 0.019496292,
       "name": "knn",
       "output_bytes": 12304,
-      "temporary_bytes": 786448
+      "pair_tile_shape": [
+        256,
+        256
+      ],
+      "reference_warmed_seconds": null,
+      "temporary_bytes": 786448,
+      "warmed_seconds": [
+        0.001026042,
+        0.001004208,
+        0.001242167,
+        0.001075959,
+        0.001067667,
+        0.000996625,
+        0.001027333
+      ],
+      "workspace_budget_bytes": 4194304
     },
     {
       "capacity": 256,
-      "compilation_seconds": 0.037865916,
-      "lowering_seconds": 0.005103375,
+      "compilation_seconds": 0.019292584,
+      "compiler_host_peak_bytes": 136775,
+      "generated_code_bytes": 0,
+      "input_bytes": 8192,
+      "logical_workspace_bytes": 3145728,
+      "lowering_seconds": 0.016854917,
       "name": "kde",
       "output_bytes": 2048,
-      "temporary_bytes": 526336
+      "pair_tile_shape": [
+        256,
+        256
+      ],
+      "reference_warmed_seconds": null,
+      "temporary_bytes": 526336,
+      "warmed_seconds": [
+        0.000195625,
+        0.000276791,
+        0.000160375,
+        0.000160791,
+        0.000180417,
+        0.000155333,
+        0.000171
+      ],
+      "workspace_budget_bytes": 4194304
     },
     {
       "capacity": 256,
-      "compilation_seconds": 0.146319084,
-      "lowering_seconds": 0.044040417,
+      "compilation_seconds": 0.064119708,
+      "compiler_host_peak_bytes": 746171,
+      "generated_code_bytes": 0,
+      "input_bytes": 8192,
+      "logical_workspace_bytes": 3145728,
+      "lowering_seconds": 0.099715375,
       "name": "dbscan",
       "output_bytes": 8672,
-      "temporary_bytes": 1050720
+      "pair_tile_shape": [
+        256,
+        256
+      ],
+      "reference_warmed_seconds": null,
+      "temporary_bytes": 1050720,
+      "warmed_seconds": [
+        0.007671042,
+        0.007483334,
+        0.007633125,
+        0.007558958,
+        0.007567417,
+        0.007462125,
+        0.007476792
+      ],
+      "workspace_budget_bytes": 4194304
     },
     {
       "capacity": 512,
-      "compilation_seconds": 0.052747667,
-      "lowering_seconds": 0.005103625,
+      "compilation_seconds": 0.018914666,
+      "compiler_host_peak_bytes": 175482,
+      "generated_code_bytes": 0,
+      "input_bytes": 16384,
+      "logical_workspace_bytes": 12681216,
+      "lowering_seconds": 0.018552292,
       "name": "knn",
       "output_bytes": 24592,
-      "temporary_bytes": 3145744
+      "pair_tile_shape": [
+        512,
+        512
+      ],
+      "reference_warmed_seconds": null,
+      "temporary_bytes": 3145744,
+      "warmed_seconds": null,
+      "workspace_budget_bytes": 4194304
     },
     {
       "capacity": 512,
-      "compilation_seconds": 0.043774167,
-      "lowering_seconds": 0.005955708,
+      "compilation_seconds": 0.01892525,
+      "compiler_host_peak_bytes": 133056,
+      "generated_code_bytes": 0,
+      "input_bytes": 16384,
+      "logical_workspace_bytes": 12582912,
+      "lowering_seconds": 0.017132958,
       "name": "kde",
       "output_bytes": 4096,
-      "temporary_bytes": 2101248
+      "pair_tile_shape": [
+        512,
+        512
+      ],
+      "reference_warmed_seconds": null,
+      "temporary_bytes": 2101248,
+      "warmed_seconds": null,
+      "workspace_budget_bytes": 4194304
     },
     {
       "capacity": 512,
-      "compilation_seconds": 0.154748666,
-      "lowering_seconds": 0.043342541,
+      "compilation_seconds": 0.097402791,
+      "compiler_host_peak_bytes": 687850,
+      "generated_code_bytes": 0,
+      "input_bytes": 16384,
+      "logical_workspace_bytes": 12582912,
+      "lowering_seconds": 0.094919334,
       "name": "dbscan",
       "output_bytes": 17120,
-      "temporary_bytes": 4198496
+      "pair_tile_shape": [
+        512,
+        512
+      ],
+      "reference_warmed_seconds": null,
+      "temporary_bytes": 4198496,
+      "warmed_seconds": null,
+      "workspace_budget_bytes": 4194304
     },
     {
       "capacity": 1024,
-      "compilation_seconds": 0.046301125,
-      "lowering_seconds": 0.007146083,
+      "compilation_seconds": 0.018865583,
+      "compiler_host_peak_bytes": 170141,
+      "generated_code_bytes": 0,
+      "input_bytes": 32768,
+      "logical_workspace_bytes": 50528256,
+      "lowering_seconds": 0.020583459,
       "name": "knn",
       "output_bytes": 49168,
-      "temporary_bytes": 12582928
+      "pair_tile_shape": [
+        1024,
+        1024
+      ],
+      "reference_warmed_seconds": null,
+      "temporary_bytes": 12582928,
+      "warmed_seconds": null,
+      "workspace_budget_bytes": 4194304
     },
     {
       "capacity": 1024,
-      "compilation_seconds": 0.038368,
-      "lowering_seconds": 0.006218583,
+      "compilation_seconds": 0.0186175,
+      "compiler_host_peak_bytes": 129351,
+      "generated_code_bytes": 0,
+      "input_bytes": 32768,
+      "logical_workspace_bytes": 50331648,
+      "lowering_seconds": 0.015976292,
       "name": "kde",
       "output_bytes": 8192,
-      "temporary_bytes": 8396800
+      "pair_tile_shape": [
+        1024,
+        1024
+      ],
+      "reference_warmed_seconds": null,
+      "temporary_bytes": 8396800,
+      "warmed_seconds": null,
+      "workspace_budget_bytes": 4194304
     },
     {
       "capacity": 1024,
-      "compilation_seconds": 0.156808584,
-      "lowering_seconds": 0.040080166,
+      "compilation_seconds": 0.057181958,
+      "compiler_host_peak_bytes": 659910,
+      "generated_code_bytes": 0,
+      "input_bytes": 32768,
+      "logical_workspace_bytes": 50331648,
+      "lowering_seconds": 0.098501917,
       "name": "dbscan",
       "output_bytes": 34016,
-      "temporary_bytes": 16785504
+      "pair_tile_shape": [
+        1024,
+        1024
+      ],
+      "reference_warmed_seconds": null,
+      "temporary_bytes": 16785504,
+      "warmed_seconds": null,
+      "workspace_budget_bytes": 4194304
     }
   ],
-  "rss_bytes": 1453506560
+  "rss_bytes": 692387840,
+  "timing_acceptance": "deferred to a quiet serialized wave"
 }

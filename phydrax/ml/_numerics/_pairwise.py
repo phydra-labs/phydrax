@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Literal, TypeAlias
+from math import isqrt
+from typing import assert_never, Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
@@ -116,6 +117,111 @@ def pair_block_size(
     return max(1, min(extent, workspace_bytes // (extent * per_pair + extra_row_bytes)))
 
 
+def _pair_bytes(
+    metric: MetricName | Callable[[Array, Array], Array],
+    feature_count: int,
+    itemsize: int,
+    /,
+) -> int:
+    """Live bytes per pair: Gram forms keep pair scalars, difference forms pair features."""
+    if callable(metric):
+        return (feature_count + 3) * itemsize
+    match metric:
+        case "squared-euclidean" | "euclidean" | "cosine":
+            return 3 * itemsize
+        case "manhattan":
+            return (feature_count + 3) * itemsize
+        case _:
+            assert_never(metric)
+
+
+def top_k_tile_shape(
+    query_count: int,
+    support_count: int,
+    feature_count: int,
+    itemsize: int,
+    workspace_bytes: int,
+    /,
+    *,
+    count: int,
+    metric: MetricName | Callable[[Array, Array], Array],
+) -> tuple[int, int]:
+    """Admit a (query, support) tile of a streamed exact top-k within the workspace.
+
+    Every query row also holds its running and incoming candidates. Rows spanning
+    the whole support are preferred because they need no candidate merge;
+    otherwise the tile is square, or spans every query when the queries are few.
+    """
+    if workspace_bytes <= 0:
+        raise ValueError("workspace_bytes must be positive.")
+    pair = _pair_bytes(metric, feature_count, itemsize)
+    row = 4 * count * (itemsize + 4) + feature_count * itemsize
+    queries, supports = max(query_count, 1), max(support_count, 1)
+    full_rows = workspace_bytes // (supports * pair + row)
+    if full_rows >= queries:
+        return queries, supports
+    side = max(1, isqrt(workspace_bytes // pair))
+    if full_rows >= side:
+        return full_rows, supports
+    rows = min(queries, side)
+    columns = (workspace_bytes - rows * row) // (rows * pair)
+    return rows, max(1, min(supports, columns))
+
+
+def _gram_translation_invariant(
+    metric: MetricName | Callable[[Array, Array], Array], /
+) -> bool:
+    """Whether a metric is evaluated in Gram form from a translation-invariant value."""
+    if callable(metric):
+        return False
+    match metric:
+        case "squared-euclidean" | "euclidean":
+            return True
+        case "manhattan" | "cosine":
+            return False
+        case _:
+            assert_never(metric)
+
+
+def _translation_origin(support: Array, mask: Array, /) -> Array:
+    """Masked finite-support mean snapped to a power-of-two grid below its spread.
+
+    Translating query and support leaves exact distances unchanged and removes the
+    Gram-form cancellation of offset coordinates. The grid
+    ``2**(floor(log2(spread)) - 10)`` keeps grid-aligned coordinates such as
+    integers exactly representable, so exactly tied distances stay tied.
+    """
+    active = jnp.broadcast_to(
+        mask, jnp.broadcast_shapes(mask.shape, support.shape[:-1])
+    ) & jnp.all(jnp.isfinite(support), axis=-1)
+    real = jnp.real(support).dtype
+    count = jnp.maximum(jnp.sum(active, axis=-1), 1).astype(real)
+    selected = active[..., None]
+    mean = jnp.sum(jnp.where(selected, support, 0), axis=-2) / count[..., None]
+    deviation = jnp.where(selected, jnp.abs(support - mean[..., None, :]), 0)
+    spread = jnp.max(deviation, axis=(-2, -1))
+    scale = jnp.where(spread > 0, spread, jnp.max(jnp.abs(mean), axis=-1))
+    _, exponent = jnp.frexp(scale)
+    grid = jnp.ldexp(jnp.ones_like(scale), exponent - 11)[..., None]
+    if jnp.iscomplexobj(mean):
+        origin = jax.lax.complex(
+            jnp.round(mean.real / grid) * grid, jnp.round(mean.imag / grid) * grid
+        )
+    else:
+        origin = jnp.round(mean / grid) * grid
+    usable = (scale > 0) & jnp.isfinite(scale)
+    return jnp.where(usable[..., None], origin, jnp.zeros((), origin.dtype))
+
+
+def _smallest(distances: Array, count: int, /) -> tuple[Array, Array]:
+    """Stable smallest entries: equal distances keep the lower index first."""
+    if count == 1:
+        indices = jnp.argmin(distances, axis=-1, keepdims=True).astype(jnp.int32)
+        return jnp.take_along_axis(distances, indices, axis=-1), indices
+    negative, indices = jax.lax.top_k(-distances, count)
+    return -negative, indices
+
+
 def blocked_top_k(
     query: Array,
     support: Array,
@@ -128,7 +234,12 @@ def blocked_top_k(
     workspace_bytes: int = 4 * 1024 * 1024,
     exclude_self: bool = False,
 ) -> tuple[Array, Array]:
-    """Exact two-axis top-k with lexicographic (distance, support index) ties."""
+    """Exact two-axis top-k with lexicographic (distance, support index) ties.
+
+    Euclidean metrics translate both point sets by a snapped support origin
+    before their Gram-form evaluation. Tiles follow `top_k_tile_shape`; each
+    support tile contributes its stable top candidates to a lexicographic merge.
+    """
     if (
         (block_size is not None and block_size <= 0)
         or count <= 0
@@ -142,7 +253,22 @@ def blocked_top_k(
         jax.ShapeDtypeStruct(query.shape[:-2] + (1, query.shape[-1]), query.dtype),
         jax.ShapeDtypeStruct(support.shape[:-2] + (1, support.shape[-1]), support.dtype),
     ).dtype
-    b = pair_block_size(
+    if q == 0:
+        return (
+            jnp.zeros(shape + (0, count), dtype=jnp.int32),
+            jnp.zeros(shape + (0, count), dtype=distance_dtype),
+        )
+    origin = None
+    if (
+        _gram_translation_invariant(metric)
+        and jnp.issubdtype(query.dtype, jnp.inexact)
+        and jnp.issubdtype(support.dtype, jnp.inexact)
+    ):
+        # Query rows are translated tile by tile, so no translated copy of
+        # every query is ever held.
+        origin = _translation_origin(support, mask)[..., None, :]
+        support = support - origin.astype(support.dtype)
+    rows, columns = top_k_tile_shape(
         q,
         n,
         query.shape[-1],
@@ -152,63 +278,82 @@ def blocked_top_k(
             support.dtype.itemsize,
         ),
         workspace_bytes,
-        extra_row_bytes=4
-        * count
-        * (jnp.dtype(distance_dtype).itemsize + jnp.dtype(jnp.int32).itemsize),
+        count=count,
+        metric=metric,
     )
-    if q == 0:
-        return (
-            jnp.zeros(shape + (0, count), dtype=jnp.int32),
-            jnp.zeros(shape + (0, count), dtype=distance_dtype),
-        )
     if block_size is not None:
-        b = min(b, block_size)
-    if b >= max(q, n):
-        distances = jnp.where(
-            mask[..., None, :], pairwise_distances(query, support, metric=metric), jnp.inf
-        )
-        if exclude_self:
-            distances = jnp.where(
-                jnp.arange(q)[:, None] == jnp.arange(n)[None, :], jnp.inf, distances
-            )
-        negative, indices = jax.lax.top_k(-distances, count)
-        return indices, -negative
-    qp, np_ = ((q + b - 1) // b) * b, ((n + b - 1) // b) * b
-    x = jnp.pad(query, ((0, 0),) * (query.ndim - 2) + ((0, qp - q), (0, 0)))
-    y = jnp.pad(support, ((0, 0),) * (support.ndim - 2) + ((0, np_ - n), (0, 0)))
-    m = jnp.pad(mask, ((0, 0),) * (mask.ndim - 1) + ((0, np_ - n),))
-    distances = jnp.full(shape + (qp, count), jnp.inf, dtype=distance_dtype)
-    indices = jnp.full(shape + (qp, count), n, dtype=jnp.int32)
+        rows, columns = min(rows, block_size), min(columns, block_size)
+    row_tiles, column_tiles = -(-q // rows), -(-n // columns)
+    rows, columns = -(-q // row_tiles), -(-n // column_tiles)
+    take = min(count, columns)
+    y = jnp.pad(
+        support,
+        ((0, 0),) * (support.ndim - 2) + ((0, column_tiles * columns - n), (0, 0)),
+    )
+    m = jnp.pad(mask, ((0, 0),) * (mask.ndim - 1) + ((0, column_tiles * columns - n),))
 
-    def query_step(i: Array, output: tuple[Array, Array]) -> tuple[Array, Array]:
-        xb = jax.lax.dynamic_slice_in_dim(x, i * b, b, axis=-2)
-        initial = (
-            jnp.full(shape + (b, count), jnp.inf, dtype=distance_dtype),
-            jnp.full(shape + (b, count), n, dtype=jnp.int32),
-        )
+    def nearest(xb: Array, first_row: Array | int) -> tuple[Array, Array]:
+        if origin is not None:
+            xb = xb - origin.astype(xb.dtype)
+        query_ids = first_row + jnp.arange(xb.shape[-2], dtype=jnp.int32)
+        if column_tiles == 1:
+            d = jnp.where(
+                mask[..., None, :],
+                pairwise_distances(xb, support, metric=metric),
+                jnp.inf,
+            )
+            if exclude_self:
+                ids = jnp.arange(n, dtype=jnp.int32)
+                d = jnp.where(query_ids[:, None] == ids[None, :], jnp.inf, d)
+            return _smallest(d, count)
 
         def support_step(j: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
-            yb = jax.lax.dynamic_slice_in_dim(y, j * b, b, axis=-2)
-            mb = jax.lax.dynamic_slice_in_dim(m, j * b, b, axis=-1)
+            yb = jax.lax.dynamic_slice_in_dim(y, j * columns, columns, axis=-2)
+            mb = jax.lax.dynamic_slice_in_dim(m, j * columns, columns, axis=-1)
             d = jnp.where(
                 mb[..., None, :], pairwise_distances(xb, yb, metric=metric), jnp.inf
             )
-            ids = jnp.broadcast_to(j * b + jnp.arange(b, dtype=jnp.int32), d.shape)
+            first = (j * columns).astype(jnp.int32)
             if exclude_self:
-                d = jnp.where((i * b + jnp.arange(b))[:, None] == ids, jnp.inf, d)
-            ds = jnp.concatenate((state[0], d), axis=-1)
-            ix = jnp.concatenate((state[1], ids), axis=-1)
+                ids = first + jnp.arange(columns, dtype=jnp.int32)
+                d = jnp.where(query_ids[:, None] == ids[None, :], jnp.inf, d)
+            smallest, local = _smallest(d, take)
+            ds = jnp.concatenate((state[0], smallest), axis=-1)
+            ix = jnp.concatenate((state[1], first + local), axis=-1)
             ds, ix = jax.lax.sort((ds, ix), dimension=-1, num_keys=2)
             return ds[..., :count], ix[..., :count]
 
-        ds, ix = jax.lax.fori_loop(0, np_ // b, support_step, initial)
+        initial = (
+            jnp.full(shape + (xb.shape[-2], count), jnp.inf, dtype=distance_dtype),
+            jnp.full(shape + (xb.shape[-2], count), n, dtype=jnp.int32),
+        )
+        return jax.lax.fori_loop(0, column_tiles, support_step, initial)
+
+    if row_tiles == 1:
+        distances, indices = nearest(query, 0)
+        return indices, distances
+
+    def query_step(i: Array, output: tuple[Array, Array]) -> tuple[Array, Array]:
+        # The last tile ends at the final query and recomputes rows it shares
+        # with its predecessor, so no padded copy of the queries is formed.
+        start = jnp.minimum(i * rows, q - rows).astype(jnp.int32)
+        xb = jax.lax.dynamic_slice_in_dim(query, start, rows, axis=-2)
+        ds, ix = nearest(xb, start)
         return (
-            jax.lax.dynamic_update_slice_in_dim(output[0], ds, i * b, axis=-2),
-            jax.lax.dynamic_update_slice_in_dim(output[1], ix, i * b, axis=-2),
+            jax.lax.dynamic_update_slice_in_dim(output[0], ds, start, axis=-2),
+            jax.lax.dynamic_update_slice_in_dim(output[1], ix, start, axis=-2),
         )
 
-    distances, indices = jax.lax.fori_loop(0, qp // b, query_step, (distances, indices))
-    return indices[..., :q, :], distances[..., :q, :]
+    distances, indices = jax.lax.fori_loop(
+        0,
+        row_tiles,
+        query_step,
+        (
+            jnp.full(shape + (q, count), jnp.inf, dtype=distance_dtype),
+            jnp.full(shape + (q, count), n, dtype=jnp.int32),
+        ),
+    )
+    return indices, distances
 
 
 def blocked_logsumexp(

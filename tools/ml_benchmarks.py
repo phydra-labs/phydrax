@@ -27,7 +27,7 @@ from benchmarks._io import write_json_atomic
 from benchmarks._runtime import capture_environment, measure_synchronized, synchronize
 from phydrax.kernels import SquaredExponentialKernel
 from phydrax.ml import fit, ML_SUCCESS
-from phydrax.ml.clustering import KMeans
+from phydrax.ml.clustering import KMeans, MiniBatchKMeans
 from phydrax.ml.decomposition import PCA
 from phydrax.ml.kernel_methods import KernelRidgeRecipe
 from phydrax.ml.linear import RidgeRecipe
@@ -65,6 +65,12 @@ _SCALE_CONFIGURATION: dict[str, dict[str, dict[str, int]]] = {
             "clusters": 6,
             "query_samples": 256,
         },
+        "mini_batch_clustering": {
+            "training_samples": 4096,
+            "features": 8,
+            "clusters": 16,
+            "query_samples": 256,
+        },
         "kernel": {"training_samples": 96, "features": 6, "query_samples": 96},
         "fixed_capacity_tree": {
             "training_samples": 256,
@@ -86,6 +92,12 @@ _SCALE_CONFIGURATION: dict[str, dict[str, dict[str, int]]] = {
             "training_samples": 2048,
             "features": 12,
             "clusters": 10,
+            "query_samples": 512,
+        },
+        "mini_batch_clustering": {
+            "training_samples": 16384,
+            "features": 12,
+            "clusters": 64,
             "query_samples": 512,
         },
         "kernel": {"training_samples": 192, "features": 8, "query_samples": 128},
@@ -137,7 +149,7 @@ def _direct_linear_case(scale: str, factor: float, seed: int) -> BenchmarkCase:
     targets = features @ coefficients + 0.1 * jnp.sin(features[:, 0] * features[:, 1])
     query = _regular_matrix(query_count, feature_count, offset=0.375)
     recipe = RidgeRecipe(0.05, fit_intercept=True)
-    key = jax.random.PRNGKey(_case_seed(seed, f"direct-linear/{scale}"))
+    key = jax.random.key(_case_seed(seed, f"direct-linear/{scale}"))
 
     def operation(x: Any, y: Any, points: Any, fit_key: Any) -> Any:
         result = fit(recipe, x, y, key=fit_key)
@@ -175,11 +187,11 @@ def _spectral_case(scale: str, factor: float, seed: int) -> BenchmarkCase:
     features = features + 0.05 * jnp.sin(features * jnp.arange(1, feature_count + 1))
     query = _regular_matrix(query_count, feature_count, offset=0.625)
     recipe = PCA(component_count, differentiate="projector")
-    key_seed = _case_seed(seed, f"spectral-pca/{scale}")
-    key = jax.random.PRNGKey(key_seed)
+    # Dense PCA consumes no randomness and refuses a key.
+    del seed
 
-    def operation(x: Any, points: Any, fit_key: Any) -> Any:
-        result = fit(recipe, x, key=fit_key)
+    def operation(x: Any, points: Any) -> Any:
+        result = fit(recipe, x)
         scores = result.as_trainable()(points)
         return scores, result.valid, result.status
 
@@ -190,7 +202,6 @@ def _spectral_case(scale: str, factor: float, seed: int) -> BenchmarkCase:
         "components": component_count,
         "query_samples": query_count,
         "differentiate": "projector",
-        "key_seed": key_seed,
     }
     return BenchmarkCase(
         name=f"spectral-pca/{scale}",
@@ -198,7 +209,7 @@ def _spectral_case(scale: str, factor: float, seed: int) -> BenchmarkCase:
         scale=scale,
         configuration=configuration,
         operation=jax.jit(operation),
-        arguments=(features, query, key),
+        arguments=(features, query),
         execution_mode="whole-workflow-jit",
     )
 
@@ -234,7 +245,7 @@ def _iterative_clustering_case(scale: str, factor: float, seed: int) -> Benchmar
         empty_policy="reseed",
     )
     key_seed = _case_seed(seed, f"iterative-kmeans/{scale}")
-    key = jax.random.PRNGKey(key_seed)
+    key = jax.random.key(key_seed)
 
     def operation(x: Any, points: Any, fit_key: Any) -> Any:
         result = fit(recipe, x, key=fit_key)
@@ -263,6 +274,44 @@ def _iterative_clustering_case(scale: str, factor: float, seed: int) -> Benchmar
     )
 
 
+def _mini_batch_clustering_case(scale: str, factor: float, seed: int) -> BenchmarkCase:
+    base = _SCALE_CONFIGURATION[scale]["mini_batch_clustering"]
+    cluster_count = base["clusters"]
+    sample_count = _scaled_count(base["training_samples"], factor, 8 * cluster_count)
+    query_count = _scaled_count(base["query_samples"], factor, 4 * cluster_count)
+    feature_count = base["features"]
+    features = _cluster_data(sample_count, feature_count, cluster_count, offset=0.0)
+    query = _cluster_data(query_count, feature_count, cluster_count, offset=0.5)
+    epochs = 2.0
+    recipe = MiniBatchKMeans(cluster_count, epochs=epochs)
+    key_seed = _case_seed(seed, f"ema-mini-batch-kmeans/{scale}")
+    key = jax.random.key(key_seed)
+
+    def operation(x: Any, points: Any, fit_key: Any) -> Any:
+        result = fit(recipe, x, key=fit_key)
+        labels = result.as_trainable()(points)
+        return labels, result.valid, result.status
+
+    configuration = {
+        "recipe": "MiniBatchKMeans",
+        "training_samples": sample_count,
+        "features": feature_count,
+        "clusters": cluster_count,
+        "query_samples": query_count,
+        "epochs": epochs,
+        "key_seed": key_seed,
+    }
+    return BenchmarkCase(
+        name=f"ema-mini-batch-kmeans/{scale}",
+        family="mini_batch_clustering",
+        scale=scale,
+        configuration=configuration,
+        operation=jax.jit(operation),
+        arguments=(features, query, key),
+        execution_mode="whole-workflow-jit",
+    )
+
+
 def _kernel_case(scale: str, factor: float, seed: int) -> BenchmarkCase:
     base = _SCALE_CONFIGURATION[scale]["kernel"]
     sample_count = _scaled_count(base["training_samples"], factor, 48)
@@ -281,7 +330,7 @@ def _kernel_case(scale: str, factor: float, seed: int) -> BenchmarkCase:
         fit_intercept=True,
     )
     key_seed = _case_seed(seed, f"kernel-ridge/{scale}")
-    key = jax.random.PRNGKey(key_seed)
+    key = jax.random.key(key_seed)
 
     def operation(x: Any, y: Any, points: Any, fit_key: Any) -> Any:
         result = fit(recipe, x, y, key=fit_key)
@@ -329,7 +378,7 @@ def _fixed_capacity_tree_case(scale: str, factor: float, seed: int) -> Benchmark
         max_bins=8,
     )
     key_seed = _case_seed(seed, f"fixed-capacity-tree/{scale}")
-    key = jax.random.PRNGKey(key_seed)
+    key = jax.random.key(key_seed)
     predict = jax.jit(lambda model, points: model(points))
 
     def operation(x: Any, y: Any, points: Any, fit_key: Any) -> Any:
@@ -365,6 +414,7 @@ _CASE_BUILDERS = (
     _direct_linear_case,
     _spectral_case,
     _iterative_clustering_case,
+    _mini_batch_clustering_case,
     _kernel_case,
     _fixed_capacity_tree_case,
 )

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, assert_never
 
 import equinox as eqx
 import jax
@@ -21,6 +21,7 @@ from ..._differentiation import (
     SurfaceDerivative,
 )
 from ..._strict import StrictModule
+from ...sparse import RelationAccumulation
 from ...typing import parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
@@ -35,6 +36,7 @@ from .._contracts import (
 from .._numerics import MetricName
 from ._common import (
     active_data,
+    cluster_sums,
     ClusterDiagnostics,
     ClusterInitialization,
     distances_to_centers,
@@ -42,50 +44,175 @@ from ._common import (
     EmptyClusterPolicy,
     HardClusterModel,
     initialize_centers,
+    nearest_centers,
     nonnegative_scalar,
     pairwise_distances,
     positive_scalar,
     real_dtype,
     SoftClusterModel,
     stable_top_indices,
+    WORKSPACE_BYTES,
 )
 
 
 def _validate_cluster_policies(
     initialization: ClusterInitialization, empty_policy: EmptyClusterPolicy
-) -> None:
-    initialization = parse(initialization, ClusterInitialization, "initialization")
-    empty_policy = parse(empty_policy, EmptyClusterPolicy, "empty_policy")
+) -> tuple[ClusterInitialization, EmptyClusterPolicy]:
+    return (
+        parse(initialization, ClusterInitialization, "initialization"),
+        parse(empty_policy, EmptyClusterPolicy, "empty_policy"),
+    )
 
 
-def _update_centers(
+def _empty_floor(w: Array, /) -> Array:
+    """Mass at or below which a weighted cluster is empty, relative to the total."""
+    return jnp.finfo(w.dtype).eps * jnp.maximum(jnp.sum(w, axis=-1, keepdims=True), 1.0)
+
+
+def _replace_empty(
     x: Array,
     w: Array,
-    assignment: Array,
     centers: Array,
-    cluster_count: int,
+    proposed: Array,
+    nearest: Array,
+    empty: Array,
+    empty_policy: EmptyClusterPolicy,
+) -> Array:
+    """Apply the empty-cluster policy; reseeding uses the farthest weighted rows."""
+    match empty_policy:
+        case "reseed":
+            farthest = jnp.where(w > 0.0, nearest, -jnp.inf)
+            candidates = stable_top_indices(farthest, centers.shape[-2])
+            replacement = jnp.take_along_axis(x, candidates[..., :, None], axis=-2)
+        case "retain" | "error":
+            replacement = centers
+        case _:
+            assert_never(empty_policy)
+    return jnp.where(empty[..., :, None], replacement, proposed)
+
+
+def lloyd_iterations(
+    x: Array,
+    w: Array,
+    centers: Array,
+    /,
+    *,
+    iterations: int,
+    empty_policy: EmptyClusterPolicy,
+    accumulation: RelationAccumulation,
+    workspace_bytes: int = WORKSPACE_BYTES,
+) -> tuple[Array, Array, Array, Array, Array, Array]:
+    """Weighted Lloyd iterations on case + (sample, feature) data.
+
+    Returns the centers, the final labels and nearest squared distances, the
+    final cluster masses, the last maximum center displacement, and whether any
+    iteration produced an empty cluster.
+    """
+    case_shape = x.shape[:-2]
+    cluster_count = centers.shape[-2]
+    every_center = jnp.ones(case_shape + (cluster_count,), dtype=jnp.bool_)
+    weighted = w > 0.0
+    floor = _empty_floor(w)
+
+    def assign(centers: Array) -> tuple[Array, Array]:
+        labels, nearest = nearest_centers(
+            x, centers, every_center, case_shape, workspace_bytes=workspace_bytes
+        )
+        return labels[..., 0], nearest[..., 0]
+
+    def step(_: Array, state: tuple[Array, Array, Array]) -> tuple[Array, Array, Array]:
+        centers, _, empty_seen = state
+        labels, nearest = assign(centers)
+        sums, mass = cluster_sums(
+            (w[..., :, None] * x, w),
+            labels,
+            weighted,
+            cluster_count,
+            accumulation=accumulation,
+        )
+        proposed = sums / jnp.maximum(mass, jnp.finfo(w.dtype).tiny)[..., :, None]
+        empty = mass <= floor
+        proposed = _replace_empty(x, w, centers, proposed, nearest, empty, empty_policy)
+        delta = jnp.max(jnp.linalg.norm(proposed - centers, axis=-1), axis=-1)
+        return proposed, delta, empty_seen | jnp.any(empty, axis=-1)
+
+    centers, delta, empty_seen = jax.lax.fori_loop(
+        0,
+        iterations,
+        step,
+        (
+            centers,
+            jnp.full(case_shape, jnp.inf, dtype=w.dtype),
+            jnp.zeros(case_shape, dtype=jnp.bool_),
+        ),
+    )
+    labels, nearest = assign(centers)
+    (mass,) = cluster_sums(
+        (w,), labels, weighted, cluster_count, accumulation=accumulation
+    )
+    return centers, labels, nearest, mass, delta, empty_seen
+
+
+def embedding_labels(
+    embedding: Array, w: Array, cluster_count: int, iterations: int, /
+) -> tuple[Array, Array]:
+    """Deterministic labels and masses of a spectral embedding.
+
+    Lloyd iterations start from the first weighted rows and retain empty
+    clusters, so spectral partitions need no random key.
+    """
+    centers = initialize_centers(embedding, w, cluster_count, "first", None)
+    _, labels, _, mass, _, _ = lloyd_iterations(
+        embedding,
+        w,
+        centers,
+        iterations=iterations,
+        empty_policy="retain",
+        accumulation="fast",
+    )
+    return labels, mass
+
+
+def _soft_iterations(
+    x: Array,
+    w: Array,
+    centers: Array,
+    temperature: Array,
+    *,
+    iterations: int,
     empty_policy: EmptyClusterPolicy,
 ) -> tuple[Array, Array, Array]:
-    membership = jax.nn.one_hot(assignment, cluster_count, dtype=w.dtype)
-    weighted = w[..., :, None] * membership
-    mass = jnp.sum(weighted, axis=-2)
-    proposed = (
-        ein.contract("...nk,...nf->...kf", weighted, x)
-        / jnp.maximum(mass, jnp.finfo(w.dtype).tiny)[..., :, None]
+    """Temperature-relaxed Lloyd iterations with dense responsibilities."""
+    case_shape = x.shape[:-2]
+    floor = _empty_floor(w)
+
+    def step(_: Array, state: tuple[Array, Array, Array]) -> tuple[Array, Array, Array]:
+        centers, _, empty_seen = state
+        distances = distances_to_centers(x, centers, "squared-euclidean", case_shape)
+        responsibility = jax.nn.softmax(-distances / temperature, axis=-1)
+        weighted = w[..., :, None] * responsibility
+        mass = jnp.sum(weighted, axis=-2)
+        proposed = (
+            ein.contract("...nk,...nf->...kf", weighted, x)
+            / jnp.maximum(mass, jnp.finfo(w.dtype).tiny)[..., :, None]
+        )
+        empty = mass <= floor
+        proposed = _replace_empty(
+            x, w, centers, proposed, jnp.min(distances, axis=-1), empty, empty_policy
+        )
+        delta = jnp.max(jnp.linalg.norm(proposed - centers, axis=-1), axis=-1)
+        return proposed, delta, empty_seen | jnp.any(empty, axis=-1)
+
+    return jax.lax.fori_loop(
+        0,
+        iterations,
+        step,
+        (
+            centers,
+            jnp.full(case_shape, jnp.inf, dtype=w.dtype),
+            jnp.zeros(case_shape, dtype=jnp.bool_),
+        ),
     )
-    empty = mass <= jnp.finfo(w.dtype).eps * jnp.maximum(
-        jnp.sum(w, axis=-1, keepdims=True), 1.0
-    )
-    if empty_policy == "reseed":
-        distances = distances_to_centers(x, centers, "squared-euclidean", x.shape[:-2])
-        farthest = jnp.min(distances, axis=-1)
-        farthest = jnp.where(w > 0.0, farthest, -jnp.inf)
-        candidates = stable_top_indices(farthest, cluster_count)
-        replacements = jnp.take_along_axis(x, candidates[..., :, None], axis=-2)
-        proposed = jnp.where(empty[..., :, None], replacements, proposed)
-    else:
-        proposed = jnp.where(empty[..., :, None], centers, proposed)
-    return proposed, mass, empty
 
 
 def _fit_kmeans(
@@ -99,61 +226,45 @@ def _fit_kmeans(
     weight_policy: WeightPolicy,
     key: Any,
     temperature: Array | None,
+    accumulation: RelationAccumulation = "fast",
+    workspace_bytes: int = WORKSPACE_BYTES,
 ) -> tuple[Array, ...]:
     if cluster_count > batch.sample_count:
         raise ValueError("cluster_count cannot exceed fixed sample capacity.")
     x, w, active, invalid = active_data(batch, weight_policy)
     centers = initialize_centers(x, w, cluster_count, initialization, key)
-    case_shape = batch.case_shape
-    delta = jnp.full(case_shape, jnp.inf, dtype=w.dtype)
-    empty_seen = jnp.zeros(case_shape, dtype=jnp.bool_)
-
-    def step(_: Array, state: tuple[Array, Array, Array]) -> tuple[Array, Array, Array]:
-        centers, delta, empty_seen = state
-        distances = distances_to_centers(x, centers, "squared-euclidean", case_shape)
-        if temperature is None:
-            assignment = jnp.argmin(distances, axis=-1)
-            next_centers, _, empty = _update_centers(
-                x, w, assignment, centers, cluster_count, empty_policy
-            )
-        else:
-            responsibility = jax.nn.softmax(-distances / temperature, axis=-1)
-            weighted = w[..., :, None] * responsibility
-            mass = jnp.sum(weighted, axis=-2)
-            next_centers = (
-                ein.contract("...nk,...nf->...kf", weighted, x)
-                / jnp.maximum(mass, jnp.finfo(w.dtype).tiny)[..., :, None]
-            )
-            empty = mass <= jnp.finfo(w.dtype).eps * jnp.maximum(
-                jnp.sum(w, axis=-1, keepdims=True), 1.0
-            )
-            if empty_policy == "reseed":
-                farthest = jnp.where(w > 0.0, jnp.min(distances, axis=-1), -jnp.inf)
-                candidates = stable_top_indices(farthest, cluster_count)
-                replacements = jnp.take_along_axis(x, candidates[..., :, None], axis=-2)
-                next_centers = jnp.where(empty[..., :, None], replacements, next_centers)
-            else:
-                next_centers = jnp.where(empty[..., :, None], centers, next_centers)
-        next_delta = jnp.max(jnp.linalg.norm(next_centers - centers, axis=-1), axis=-1)
-        return next_centers, next_delta, empty_seen | jnp.any(empty, axis=-1)
-
-    centers, delta, empty_seen = jax.lax.fori_loop(
-        0, max_iterations, step, (centers, delta, empty_seen)
-    )
-    distances = distances_to_centers(x, centers, "squared-euclidean", case_shape)
     if temperature is None:
-        assignment = jnp.argmin(distances, axis=-1)
-        probability = jax.nn.one_hot(assignment, cluster_count, dtype=w.dtype)
+        centers, _, nearest, cluster_mass, delta, empty_seen = lloyd_iterations(
+            x,
+            w,
+            centers,
+            iterations=max_iterations,
+            empty_policy=empty_policy,
+            accumulation=accumulation,
+            workspace_bytes=workspace_bytes,
+        )
+        weighted_objective = jnp.sum(w * nearest, axis=-1)
     else:
+        centers, delta, empty_seen = _soft_iterations(
+            x,
+            w,
+            centers,
+            temperature,
+            iterations=max_iterations,
+            empty_policy=empty_policy,
+        )
+        distances = distances_to_centers(
+            x, centers, "squared-euclidean", batch.case_shape
+        )
         probability = jax.nn.softmax(-distances / temperature, axis=-1)
-        assignment = jnp.argmax(probability, axis=-1)
-    cluster_mass = jnp.sum(w[..., :, None] * probability, axis=-2)
-    active_clusters = cluster_mass > jnp.finfo(w.dtype).eps * jnp.maximum(
-        jnp.sum(w, axis=-1, keepdims=True), 1.0
+        cluster_mass = jnp.sum(w[..., :, None] * probability, axis=-2)
+        weighted_objective = jnp.sum(
+            w * jnp.sum(probability * distances, axis=-1), axis=-1
+        )
+    active_clusters = cluster_mass > _empty_floor(w)
+    objective = weighted_objective / jnp.maximum(
+        jnp.sum(w, axis=-1), jnp.finfo(w.dtype).tiny
     )
-    objective = jnp.sum(
-        w * jnp.sum(probability * distances, axis=-1), axis=-1
-    ) / jnp.maximum(jnp.sum(w, axis=-1), jnp.finfo(w.dtype).tiny)
     enough = jnp.sum(active, axis=-1) >= cluster_count
     finite = jnp.isfinite(objective) & jnp.all(jnp.isfinite(centers), axis=(-2, -1))
     converged = delta <= tolerance
@@ -170,11 +281,9 @@ def _fit_kmeans(
     )
     return (
         centers,
-        probability,
         cluster_mass,
         active_clusters,
         objective,
-        delta,
         empty_seen,
         converged,
         valid,
@@ -184,16 +293,13 @@ def _fit_kmeans(
 
 
 def _fit_result(
-    batch: MLBatch,
     values: tuple[Array, ...],
     *,
     iterations: int,
     method: str,
     soft_temperature: Array | None,
 ) -> FitResult:
-    centers, _, mass, active, objective, _, empty, converged, valid, status, effective = (
-        values
-    )
+    centers, mass, active, objective, empty, converged, valid, status, effective = values
     if soft_temperature is None:
         model = HardClusterModel(centers, active, method=method)
         contract = prediction_fit_contract(
@@ -247,12 +353,22 @@ def _fit_result(
 
 
 class KMeans(AbstractRecipe):
+    """Weighted Lloyd k-means with blocked assignment and sparse cluster sums.
+
+    ``accumulation`` orders the per-cluster sums: ``"fast"`` uses unordered
+    segment sums, while ``"deterministic"`` and ``"compensated"`` fix the
+    summation order so reruns are bitwise identical on every backend.
+    ``workspace_bytes`` bounds the transient sample-by-center assignment tile.
+    """
+
     cluster_count: int = eqx.field(static=True)
     max_iterations: int = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
     initialization: ClusterInitialization = eqx.field(static=True)
     empty_policy: EmptyClusterPolicy = eqx.field(static=True)
     weight_policy: WeightPolicy = eqx.field(static=True)
+    accumulation: RelationAccumulation = eqx.field(static=True)
+    workspace_bytes: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -264,16 +380,27 @@ class KMeans(AbstractRecipe):
         initialization: ClusterInitialization = "k-means++",
         empty_policy: EmptyClusterPolicy = "reseed",
         weight_policy: WeightPolicy = "statistical",
+        accumulation: RelationAccumulation = "fast",
+        workspace_bytes: int = WORKSPACE_BYTES,
     ) -> None:
-        if cluster_count <= 0 or max_iterations <= 0 or tolerance < 0.0:
+        if (
+            cluster_count <= 0
+            or max_iterations <= 0
+            or tolerance < 0.0
+            or workspace_bytes <= 0
+        ):
             raise ValueError("invalid k-means configuration.")
-        _validate_cluster_policies(initialization, empty_policy)
+        initialization, empty_policy = _validate_cluster_policies(
+            initialization, empty_policy
+        )
         self.cluster_count = int(cluster_count)
         self.max_iterations = int(max_iterations)
         self.tolerance = float(tolerance)
         self.initialization = initialization
         self.empty_policy = empty_policy
         self.weight_policy = weight_policy
+        self.accumulation = parse(accumulation, RelationAccumulation, "accumulation")
+        self.workspace_bytes = int(workspace_bytes)
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         values = _fit_kmeans(
@@ -286,9 +413,10 @@ class KMeans(AbstractRecipe):
             weight_policy=self.weight_policy,
             key=key,
             temperature=None,
+            accumulation=self.accumulation,
+            workspace_bytes=self.workspace_bytes,
         )
         return _fit_result(
-            batch,
             values,
             iterations=self.max_iterations,
             method="k-means",
@@ -319,7 +447,9 @@ class SoftKMeans(AbstractRecipe):
     ) -> None:
         if cluster_count <= 0 or max_iterations <= 0:
             raise ValueError("cluster_count and max_iterations must be positive.")
-        _validate_cluster_policies(initialization, empty_policy)
+        initialization, empty_policy = _validate_cluster_policies(
+            initialization, empty_policy
+        )
         self.cluster_count = int(cluster_count)
         self.temperature = positive_scalar(temperature, "temperature")
         self.max_iterations = int(max_iterations)
@@ -341,7 +471,6 @@ class SoftKMeans(AbstractRecipe):
             temperature=self.temperature,
         )
         return _fit_result(
-            batch,
             values,
             iterations=self.max_iterations,
             method="soft-k-means",
@@ -370,11 +499,11 @@ class KMedoids(AbstractRecipe):
     ) -> None:
         if cluster_count <= 0 or max_iterations <= 0:
             raise ValueError("invalid k-medoids configuration.")
-        _validate_cluster_policies(initialization, empty_policy)
-        if metric not in ("euclidean", "squared-euclidean", "manhattan", "cosine"):
-            raise ValueError("unsupported k-medoids metric.")
+        initialization, empty_policy = _validate_cluster_policies(
+            initialization, empty_policy
+        )
         self.cluster_count = int(cluster_count)
-        self.metric = metric
+        self.metric = parse(metric, MetricName, "metric")
         self.max_iterations = int(max_iterations)
         self.initialization = initialization
         self.empty_policy = empty_policy
@@ -472,7 +601,7 @@ class KMedoids(AbstractRecipe):
 
 
 class StreamingKMeans(StrictModule):
-    """Immutable fixed-capacity online k-means state."""
+    """Immutable fixed-capacity online k-means state with cumulative means."""
 
     centers: Array
     cluster_mass: Array
@@ -503,9 +632,16 @@ class StreamingKMeans(StrictModule):
         weights: ArrayLike | None = None,
         mask: ArrayLike | None = None,
         temperature: float | None = None,
+        accumulation: RelationAccumulation = "fast",
     ) -> "StreamingKMeans":
+        """Fold one batch into the cumulative means.
+
+        Hard updates sum each cluster's batch on the sparse route substrate under
+        ``accumulation``; soft updates use dense temperature responsibilities.
+        """
         x = jnp.asarray(values, dtype=self.centers.dtype)
         case_shape = self.centers.shape[:-2]
+        cluster_count = self.centers.shape[-2]
         if x.shape[:-2] != case_shape or x.shape[-1] != self.centers.shape[-1]:
             raise ValueError("values must have shape case + (sample, feature).")
         w = (
@@ -520,20 +656,32 @@ class StreamingKMeans(StrictModule):
             active &= jnp.broadcast_to(jnp.asarray(mask, dtype=jnp.bool_), x.shape[:-1])
         w = jnp.where(active, w, 0.0)
         x = jnp.where(active[..., None], x, 0)
-        distances = distances_to_centers(x, self.centers, "squared-euclidean", case_shape)
         if temperature is None:
-            responsibility = jax.nn.one_hot(
-                jnp.argmin(distances, axis=-1), self.centers.shape[-2], dtype=w.dtype
+            labels, _ = nearest_centers(
+                x,
+                self.centers,
+                jnp.ones(case_shape + (cluster_count,), dtype=jnp.bool_),
+                case_shape,
+            )
+            batch_sums, batch_mass = cluster_sums(
+                (w[..., :, None] * x, w),
+                labels[..., 0],
+                active,
+                cluster_count,
+                accumulation=accumulation,
             )
         else:
             temperature_ = positive_scalar(temperature, "temperature")
-            responsibility = jax.nn.softmax(-distances / temperature_, axis=-1)
-        weighted = w[..., :, None] * responsibility
-        batch_mass = jnp.sum(weighted, axis=-2)
+            distances = distances_to_centers(
+                x, self.centers, "squared-euclidean", case_shape
+            )
+            weighted = w[..., :, None] * jax.nn.softmax(
+                -distances / temperature_, axis=-1
+            )
+            batch_mass = jnp.sum(weighted, axis=-2)
+            batch_sums = ein.contract("...nk,...nf->...kf", weighted, x)
         total_mass = self.cluster_mass + batch_mass
-        numerator = self.cluster_mass[..., :, None] * self.centers + ein.contract(
-            "...nk,...nf->...kf", weighted, x
-        )
+        numerator = self.cluster_mass[..., :, None] * self.centers + batch_sums
         centers = jnp.where(
             total_mass[..., :, None] > 0.0,
             numerator / jnp.maximum(total_mass, jnp.finfo(w.dtype).tiny)[..., :, None],
@@ -552,152 +700,4 @@ class StreamingKMeans(StrictModule):
         )
 
 
-class MiniBatchKMeans(AbstractRecipe):
-    cluster_count: int = eqx.field(static=True)
-    batch_size: int = eqx.field(static=True)
-    max_iterations: int = eqx.field(static=True)
-    initialization: ClusterInitialization = eqx.field(static=True)
-    empty_policy: EmptyClusterPolicy = eqx.field(static=True)
-    weight_policy: WeightPolicy = eqx.field(static=True)
-
-    def __init__(
-        self,
-        cluster_count: int,
-        /,
-        *,
-        batch_size: int = 32,
-        max_iterations: int = 64,
-        initialization: ClusterInitialization = "k-means++",
-        empty_policy: EmptyClusterPolicy = "retain",
-        weight_policy: WeightPolicy = "statistical",
-    ) -> None:
-        if cluster_count <= 0 or batch_size <= 0 or max_iterations <= 0:
-            raise ValueError("invalid mini-batch k-means configuration.")
-        _validate_cluster_policies(initialization, empty_policy)
-        self.cluster_count = int(cluster_count)
-        self.batch_size = int(batch_size)
-        self.max_iterations = int(max_iterations)
-        self.initialization = initialization
-        self.empty_policy = empty_policy
-        self.weight_policy = weight_policy
-
-    def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
-        if key is None:
-            raise ValueError("mini-batch k-means requires an explicit JAX key.")
-        if self.cluster_count > batch.sample_count:
-            raise ValueError("cluster_count cannot exceed sample capacity.")
-        x, w, active_samples, invalid = active_data(batch, self.weight_policy)
-        init_key, draw_key = jax.random.split(key)
-        centers = initialize_centers(
-            x, w, self.cluster_count, self.initialization, init_key
-        )
-        case_count = 1
-        for size in batch.case_shape:
-            case_count *= size
-        split_keys = jax.random.split(draw_key, case_count * self.max_iterations)
-        keys = split_keys.reshape(
-            (case_count, self.max_iterations) + split_keys.shape[1:]
-        )
-        flat_w = w.reshape((case_count, batch.sample_count))
-
-        def draws(case_weights: Array, case_keys: Array) -> Array:
-            logits = jnp.where(case_weights > 0.0, jnp.log(case_weights), -jnp.inf)
-            return jax.vmap(
-                lambda sample_key: jax.random.categorical(
-                    sample_key, logits, shape=(self.batch_size,)
-                )
-            )(case_keys)
-
-        indices = jax.vmap(draws)(flat_w, keys).reshape(
-            batch.case_shape + (self.max_iterations, self.batch_size)
-        )
-        mass = jnp.zeros(batch.case_shape + (self.cluster_count,), dtype=w.dtype)
-
-        def step(i: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
-            centers, mass = state
-            selected = indices[..., i, :]
-            batch_x = jnp.take_along_axis(x, selected[..., :, None], axis=-2)
-            batch_w = jnp.take_along_axis(w, selected, axis=-1)
-            distances = distances_to_centers(
-                batch_x, centers, "squared-euclidean", batch.case_shape
-            )
-            assignment = jnp.argmin(distances, axis=-1)
-            membership = jax.nn.one_hot(assignment, self.cluster_count, dtype=w.dtype)
-            weighted = batch_w[..., :, None] * membership
-            increment = jnp.sum(weighted, axis=-2)
-            total = mass + increment
-            numerator = mass[..., :, None] * centers + ein.contract(
-                "...bk,...bf->...kf", weighted, batch_x
-            )
-            centers = jnp.where(
-                total[..., :, None] > 0.0,
-                numerator / jnp.maximum(total, jnp.finfo(w.dtype).tiny)[..., :, None],
-                centers,
-            )
-            return centers, total
-
-        centers, mass = jax.lax.fori_loop(0, self.max_iterations, step, (centers, mass))
-        distances = distances_to_centers(
-            x, centers, "squared-euclidean", batch.case_shape
-        )
-        labels = jnp.argmin(distances, axis=-1)
-        membership = jax.nn.one_hot(labels, self.cluster_count, dtype=w.dtype)
-        final_mass = jnp.sum(w[..., :, None] * membership, axis=-2)
-        active = final_mass > 0.0
-        empty_seen = ~active
-        if self.empty_policy == "reseed":
-            farthest = jnp.where(w > 0.0, jnp.min(distances, axis=-1), -jnp.inf)
-            replacements = stable_top_indices(farthest, self.cluster_count)
-            replacement_values = jnp.take_along_axis(
-                x, replacements[..., :, None], axis=-2
-            )
-            centers = jnp.where(empty_seen[..., :, None], replacement_values, centers)
-            distances = distances_to_centers(
-                x, centers, "squared-euclidean", batch.case_shape
-            )
-            labels = jnp.argmin(distances, axis=-1)
-            membership = jax.nn.one_hot(labels, self.cluster_count, dtype=w.dtype)
-            final_mass = jnp.sum(w[..., :, None] * membership, axis=-2)
-            active = final_mass > 0.0
-        objective = jnp.sum(w * jnp.min(distances, axis=-1), axis=-1) / jnp.maximum(
-            jnp.sum(w, axis=-1), jnp.finfo(w.dtype).tiny
-        )
-        enough = jnp.sum(active_samples, axis=-1) >= self.cluster_count
-        empty_error = jnp.any(empty_seen, axis=-1) & (self.empty_policy == "error")
-        finite = jnp.isfinite(objective)
-        valid = enough & finite & ~invalid & ~empty_error
-        status = jnp.where(
-            invalid | ~finite,
-            ML_NONFINITE,
-            jnp.where(~enough | empty_error, ML_INSUFFICIENT_DATA, ML_SUCCESS),
-        )
-        model = HardClusterModel(centers, active, method="mini-batch-k-means")
-        diagnostics = ClusterDiagnostics(
-            valid=valid,
-            status=status,
-            objective=objective,
-            iterations=self.max_iterations,
-            effective_samples=effective_sample_count(w),
-            cluster_mass=final_mass,
-            active_clusters=active,
-            empty_clusters_seen=jnp.any(empty_seen, axis=-1),
-            converged=jnp.ones_like(valid),
-            method="mini-batch-k-means",
-        )
-        contract = prediction_fit_contract(
-            model._prediction_contract(),
-            route=DerivativeRoute.STOPPED,
-            nondifferentiable_outputs=("sampled mini-batches",),
-            conditions=("explicit random key", "fixed iteration count"),
-        )
-        return FitResult(
-            model,
-            diagnostics,
-            valid=valid,
-            status=status,
-            method="mini-batch-k-means",
-            derivative_contract=contract,
-        )
-
-
-__all__ = ["KMeans", "KMedoids", "MiniBatchKMeans", "SoftKMeans", "StreamingKMeans"]
+__all__ = ["KMeans", "KMedoids", "SoftKMeans", "StreamingKMeans", "lloyd_iterations"]

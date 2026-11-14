@@ -1,45 +1,87 @@
 {
   "environment": {
     "default_float_dtype": "float64",
-    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "fingerprint": "ec62f676fc3eb2006da20a8183e6b4ad32b2b79b0655ed990acc2563276c5e75",
+    "frontend_index_patch": {
+      "algorithm": "point-index-bounds-before-shape-width-narrowing",
+      "jax_version": "0.12.0.1",
+      "patch_source_sha256": "7720c322d9352683da63d98d8c42896bf641ff8d32b72703310cc4162accb148",
+      "upstream_dynamic_slice_sha256": "7c04da9f492fc428b55462343482b64bbe2293a8e8fdd64ee973e8a9f6225030",
+      "upstream_function_sha256": "3c3135e9a98d915edace7506c4c8fe536518c1f54f75f1e5cee2f0c45edf51d2",
+      "upstream_source_sha256": "85ed8552ad648cdae8d0e70b280381adad87a7ee5424e0f6287e076091caa6bc"
+    },
     "jax": {
       "backend": "cpu",
       "devices": [
         {
+          "device_id": 0,
           "kind": "cpu",
-          "platform": "cpu"
+          "local_hardware_id": 0,
+          "normalized_platform": "cpu",
+          "platform": "cpu",
+          "process_index": 0,
+          "runtime_version": "cpu",
+          "vendor": null
         }
       ],
-      "version": "0.11.2",
+      "version": "0.12.0.1",
       "x64_enabled": true
     },
-    "jaxlib_version": "0.11.2",
+    "jaxlib_version": "0.12.0.1",
     "logical_cpus": 10,
     "machine": "arm64",
-    "numpy_version": "2.5.3",
-    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "numpy_version": "2.5.4",
+    "package_fingerprint": "ba5904e2ccef522f69571139d609230bdd952b17fcbdbdb4f41dcf1d166c6f56",
     "performance_environment": {
+      "CUDA_CACHE_MAXSIZE": null,
+      "CUDA_CACHE_PATH": null,
+      "CUDA_MODULE_LOADING": null,
+      "CUDA_VISIBLE_DEVICES": null,
+      "GPU_DEVICE_ORDINAL": null,
+      "HIP_DEVICE_LIB_PATH": null,
+      "HIP_PATH": null,
+      "HIP_VISIBLE_DEVICES": null,
+      "HSA_ENABLE_SDMA": null,
+      "HSA_OVERRIDE_GFX_VERSION": null,
       "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_CUDA_VISIBLE_DEVICES": null,
       "JAX_PLATFORMS": null,
       "JAX_PLATFORM_NAME": null,
+      "LD_LIBRARY_PATH": null,
+      "LLVM_PATH": null,
       "MKL_NUM_THREADS": null,
+      "NCCL_DEBUG": null,
+      "NCCL_IB_DISABLE": null,
+      "NCCL_LAUNCH_ORDER_IMPLICIT": null,
+      "NCCL_LAUNCH_RACE_FATAL": null,
+      "NCCL_NVLS_ENABLE": null,
+      "NCCL_P2P_DISABLE": null,
+      "NCCL_SOCKET_IFNAME": null,
       "NPROC": null,
       "OMP_NUM_THREADS": null,
       "OPENBLAS_NUM_THREADS": null,
+      "PHYDRAX_LOCAL_DEVICE_IDS": null,
+      "ROCM_PATH": null,
+      "ROCR_VISIBLE_DEVICES": null,
+      "UCX_MEMTYPE_CACHE": null,
       "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_CLIENT_MEM_FRACTION": null,
       "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_ALLOCATOR": null,
       "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
       "XLA_PYTHON_CLIENT_PREALLOCATE": null
     },
     "phydrax_version": "0.2.2",
-    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "platform": "macOS-15.7.2-arm64-arm-64bit-Mach-O",
     "processor": "arm",
-    "python_version": "3.12.8"
+    "python_version": "3.13.11",
+    "rocm_packages": {},
+    "windows_cuda_runtime": null
   },
   "exponents": {
     "dbscan": -1.4796607006002453,
     "kde": -1.1501040751555898,
-    "knn": -0.9764811286622083
+    "knn": 0.4504147983405868
   },
   "gates": {
     "dbscan": {
@@ -58,14 +100,14 @@
     },
     "knn": {
       "baseline_bytes": 12582928,
-      "candidate_bytes": 203128,
+      "candidate_bytes": 1468408,
       "capacity": 1024,
       "decision": "adopt",
       "maximum_candidate_fraction": 0.5
     }
   },
   "identity": {
-    "benchmark_driver_fingerprint": "5313829c5343896d7f003907054fe6f3d02c0342c871fe2b95b34143e64a6d88",
+    "benchmark_driver_fingerprint": "9f0ed8af3eb1cf20090ce9a34f3778fe890138d69d134489f40a0ab3ee68ea16",
     "evidence_schema": {
       "fields": [
         "output_bytes",
@@ -73,133 +115,148 @@
       ],
       "signature": "c888c00da11421fe8225b6b8834253956c2c3041b502b059f8c9fc170d28b84f"
     },
-    "fingerprint": "88f8b430b789a68a2ba7b17da78e40b53a62238755d7f025acfc8cba7963b2c8",
-    "source_build_fingerprint": "49273c2a22ede59b99d56c12d480c9420df76576cb41ac56a834f8d27b35b273"
+    "fingerprint": "727ad5f86b0306d040f6fb4698a5703362586100b27c88a0b385e9660d96ef4d",
+    "source_build_fingerprint": "c9b0251aec002be9bcd589f88925b4e8a96a466e930e1a9cb722257ba9135511"
   },
   "records": [
     {
       "capacity": 256,
-      "compilation_seconds": 0.055133875,
-      "compiler_host_peak_bytes": 344129,
+      "compilation_seconds": 0.04287125,
+      "compiler_host_peak_bytes": 871403,
       "generated_code_bytes": 0,
       "input_bytes": 8192,
       "logical_workspace_bytes": 3194880,
-      "lowering_seconds": 0.1387185,
+      "lowering_seconds": 0.116525334,
       "name": "knn",
       "output_bytes": 12304,
-      "pair_tile_extent": 256,
+      "pair_tile_shape": [
+        256,
+        256
+      ],
       "reference_warmed_seconds": [
-        0.008866709,
-        0.002395958,
-        0.001855167,
-        0.004310166,
-        0.002074625,
-        0.002587208,
-        0.00168225
+        0.001035709,
+        0.000956083,
+        0.001040709,
+        0.000977166,
+        0.001022583,
+        0.000993709,
+        0.000951834
       ],
       "temporary_bytes": 786448,
       "warmed_seconds": [
-        0.003577958,
-        0.004683375,
-        0.002009125,
-        0.001380708,
-        0.00246525,
-        0.002121125,
-        0.002346041
+        0.000987375,
+        0.001014666,
+        0.001044334,
+        0.0010295,
+        0.000996375,
+        0.000980208,
+        0.000985417
       ],
       "workspace_budget_bytes": 4194304
     },
     {
       "capacity": 256,
-      "compilation_seconds": 0.057281333,
-      "compiler_host_peak_bytes": 229264,
+      "compilation_seconds": 0.021136833,
+      "compiler_host_peak_bytes": 225218,
       "generated_code_bytes": 0,
       "input_bytes": 8192,
       "logical_workspace_bytes": 3145728,
-      "lowering_seconds": 0.04696825,
+      "lowering_seconds": 0.028888333,
       "name": "kde",
       "output_bytes": 2048,
-      "pair_tile_extent": 256,
+      "pair_tile_shape": [
+        256,
+        256
+      ],
       "reference_warmed_seconds": [
-        0.00050325,
-        0.000733375,
-        0.002496875,
-        0.000956167,
-        0.002505,
-        0.00023025,
-        0.000686416
+        0.000206166,
+        0.000243667,
+        0.000134625,
+        0.000140459,
+        0.000140708,
+        0.00017925,
+        0.000164333
       ],
       "temporary_bytes": 526336,
       "warmed_seconds": [
-        0.000870041,
-        0.010652667,
-        0.000662584,
-        0.000906417,
-        0.001511542,
-        0.000642625,
-        0.000224791
+        0.000147292,
+        0.000163334,
+        0.000130334,
+        0.000147584,
+        0.000243458,
+        0.000153917,
+        0.000164541
       ],
       "workspace_budget_bytes": 4194304
     },
     {
       "capacity": 256,
-      "compilation_seconds": 0.149760791,
-      "compiler_host_peak_bytes": 747968,
+      "compilation_seconds": 0.066648958,
+      "compiler_host_peak_bytes": 751890,
       "generated_code_bytes": 0,
       "input_bytes": 8192,
       "logical_workspace_bytes": 3145728,
-      "lowering_seconds": 0.13443975,
+      "lowering_seconds": 0.109036875,
       "name": "dbscan",
       "output_bytes": 8672,
-      "pair_tile_extent": 256,
+      "pair_tile_shape": [
+        256,
+        256
+      ],
       "reference_warmed_seconds": [
-        0.011819833,
-        0.019514292,
-        0.013219416,
-        0.01093475,
-        0.00965725,
-        0.015627125,
-        0.016286042
+        0.007768458,
+        0.007676458,
+        0.007811625,
+        0.007600708,
+        0.007512875,
+        0.007611041,
+        0.007731916
       ],
       "temporary_bytes": 1050720,
       "warmed_seconds": [
-        0.009393292,
-        0.016645291,
-        0.008954792,
-        0.012627792,
-        0.011024875,
-        0.0123965,
-        0.016143667
+        0.007512291,
+        0.007662875,
+        0.007651625,
+        0.007526708,
+        0.007497625,
+        0.007629958,
+        0.007710667
       ],
       "workspace_budget_bytes": 4194304
     },
     {
       "capacity": 512,
-      "compilation_seconds": 0.130027292,
-      "compiler_host_peak_bytes": 522747,
+      "compilation_seconds": 0.064986583,
+      "compiler_host_peak_bytes": 601470,
       "generated_code_bytes": 0,
       "input_bytes": 16384,
-      "logical_workspace_bytes": 1403376,
-      "lowering_seconds": 0.116309875,
+      "logical_workspace_bytes": 8286432,
+      "lowering_seconds": 0.10589225,
       "name": "knn",
       "output_bytes": 24592,
-      "pair_tile_extent": 169,
+      "pair_tile_shape": [
+        418,
+        409
+      ],
       "reference_warmed_seconds": null,
-      "temporary_bytes": 618488,
+      "temporary_bytes": 828472,
       "warmed_seconds": null,
       "workspace_budget_bytes": 4194304
     },
     {
       "capacity": 512,
-      "compilation_seconds": 0.097666416,
-      "compiler_host_peak_bytes": 593911,
+      "compilation_seconds": 0.057750875,
+      "compiler_host_peak_bytes": 580744,
       "generated_code_bytes": 0,
       "input_bytes": 16384,
       "logical_workspace_bytes": 1387200,
-      "lowering_seconds": 0.152049083,
+      "lowering_seconds": 0.086963417,
       "name": "kde",
       "output_bytes": 4096,
-      "pair_tile_extent": 170,
+      "pair_tile_shape": [
+        170,
+        170
+      ],
       "reference_warmed_seconds": null,
       "temporary_bytes": 267312,
       "warmed_seconds": null,
@@ -207,15 +264,18 @@
     },
     {
       "capacity": 512,
-      "compilation_seconds": 0.334972791,
-      "compiler_host_peak_bytes": 1163870,
+      "compilation_seconds": 0.094810084,
+      "compiler_host_peak_bytes": 1093590,
       "generated_code_bytes": 0,
       "input_bytes": 16384,
       "logical_workspace_bytes": 1387200,
-      "lowering_seconds": 0.446606292,
+      "lowering_seconds": 0.2033355,
       "name": "dbscan",
       "output_bytes": 17120,
-      "pair_tile_extent": 170,
+      "pair_tile_shape": [
+        170,
+        170
+      ],
       "reference_warmed_seconds": null,
       "temporary_bytes": 378232,
       "warmed_seconds": null,
@@ -223,31 +283,37 @@
     },
     {
       "capacity": 1024,
-      "compilation_seconds": 0.191616792,
-      "compiler_host_peak_bytes": 482872,
+      "compilation_seconds": 0.071988625,
+      "compiler_host_peak_bytes": 702633,
       "generated_code_bytes": 0,
       "input_bytes": 32768,
-      "logical_workspace_bytes": 363120,
-      "lowering_seconds": 0.2176575,
+      "logical_workspace_bytes": 8286432,
+      "lowering_seconds": 0.116938,
       "name": "knn",
       "output_bytes": 49168,
-      "pair_tile_extent": 85,
+      "pair_tile_shape": [
+        418,
+        409
+      ],
       "reference_warmed_seconds": null,
-      "temporary_bytes": 203128,
+      "temporary_bytes": 1468408,
       "warmed_seconds": null,
       "workspace_budget_bytes": 4194304
     },
     {
       "capacity": 1024,
-      "compilation_seconds": 0.135680708,
-      "compiler_host_peak_bytes": 481512,
+      "compilation_seconds": 0.0500105,
+      "compiler_host_peak_bytes": 571163,
       "generated_code_bytes": 0,
       "input_bytes": 32768,
       "logical_workspace_bytes": 346800,
-      "lowering_seconds": 0.180382,
+      "lowering_seconds": 0.087817125,
       "name": "kde",
       "output_bytes": 8192,
-      "pair_tile_extent": 85,
+      "pair_tile_shape": [
+        85,
+        85
+      ],
       "reference_warmed_seconds": null,
       "temporary_bytes": 106864,
       "warmed_seconds": null,
@@ -255,15 +321,18 @@
     },
     {
       "capacity": 1024,
-      "compilation_seconds": 0.303724291,
-      "compiler_host_peak_bytes": 1117172,
+      "compilation_seconds": 0.103299834,
+      "compiler_host_peak_bytes": 1068096,
       "generated_code_bytes": 0,
       "input_bytes": 32768,
       "logical_workspace_bytes": 346800,
-      "lowering_seconds": 0.441258292,
+      "lowering_seconds": 0.214284208,
       "name": "dbscan",
       "output_bytes": 34016,
-      "pair_tile_extent": 85,
+      "pair_tile_shape": [
+        85,
+        85
+      ],
       "reference_warmed_seconds": null,
       "temporary_bytes": 135096,
       "warmed_seconds": null,
@@ -271,34 +340,40 @@
     },
     {
       "capacity": 256,
-      "compilation_seconds": 0.824328167,
-      "compiler_host_peak_bytes": 5268039,
+      "compilation_seconds": 0.355924708,
+      "compiler_host_peak_bytes": 5024194,
       "generated_code_bytes": 0,
       "input_bytes": 8192,
       "logical_workspace_bytes": 126976,
-      "lowering_seconds": 2.8069645,
+      "lowering_seconds": 1.18911575,
       "name": "spectral",
       "output_bytes": 8281,
-      "pair_tile_extent": 64,
+      "pair_tile_shape": [
+        64,
+        64
+      ],
       "reference_warmed_seconds": null,
       "temporary_bytes": 156984,
       "warmed_seconds": [
-        0.020314833,
-        0.021728458
+        0.018363042,
+        0.018959625
       ],
       "workspace_budget_bytes": 536870912
     },
     {
       "capacity": 512,
-      "compilation_seconds": 0.948288584,
-      "compiler_host_peak_bytes": 3202824,
+      "compilation_seconds": 0.323285125,
+      "compiler_host_peak_bytes": 2776456,
       "generated_code_bytes": 0,
       "input_bytes": 16384,
       "logical_workspace_bytes": 155648,
-      "lowering_seconds": 2.153724167,
+      "lowering_seconds": 0.885725333,
       "name": "spectral",
       "output_bytes": 16473,
-      "pair_tile_extent": 64,
+      "pair_tile_shape": [
+        64,
+        64
+      ],
       "reference_warmed_seconds": null,
       "temporary_bytes": 275320,
       "warmed_seconds": null,
@@ -306,21 +381,24 @@
     },
     {
       "capacity": 1024,
-      "compilation_seconds": 0.993870208,
-      "compiler_host_peak_bytes": 3036222,
+      "compilation_seconds": 0.363609875,
+      "compiler_host_peak_bytes": 2778931,
       "generated_code_bytes": 0,
       "input_bytes": 32768,
       "logical_workspace_bytes": 212992,
-      "lowering_seconds": 1.520570333,
+      "lowering_seconds": 0.870167333,
       "name": "spectral",
       "output_bytes": 32857,
-      "pair_tile_extent": 64,
+      "pair_tile_shape": [
+        64,
+        64
+      ],
       "reference_warmed_seconds": null,
       "temporary_bytes": 545656,
       "warmed_seconds": null,
       "workspace_budget_bytes": 536870912
     }
   ],
-  "rss_bytes": 1731297280,
+  "rss_bytes": 830046208,
   "timing_acceptance": "deferred to a quiet serialized wave"
 }

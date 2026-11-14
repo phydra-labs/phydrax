@@ -777,7 +777,7 @@ its `IN` and `MP` levels are admitted through the fitted executable's
 | `EmpiricalCovariance`, `WeightedCovariance`, `DiagonalCovariance`, `FactorCovariance`, `LedoitWolfCovariance`, `OASCovariance` | direct | S | S | C | – | C | – | active mask fixed, positive regularized covariance |
 | `RobustCovariance`, `GraphicalLasso` | unrolled | S | S | C | – | C | – | active mask fixed, positive regularized covariance |
 | `GaussianMixture`, `BayesianGaussianMixture` | unrolled | S | S | C | – | C | C | `predict`; initialization and active mask fixed, nondegenerate covariance or positive prior |
-| `KMeans`, `KMedoids`, `MiniBatchKMeans`, `AgglomerativeClustering` | stopped | – | N | – | – | – | – | labels, assignments, medoids, sampled mini-batches, merge tree |
+| `KMeans`, `KMedoids`, `MiniBatchKMeans`, `AgglomerativeClustering` | stopped | – | N | – | – | – | – | labels, assignments, medoids, epoch permutations, revival draws, merge tree |
 | `SoftKMeans`, `MeanShift`, `AffinityPropagation` | unrolled | S | S | C | – | C | C | hard labels, merged modes, exemplars; positive temperature or bandwidth, fixed initialization and iterations |
 | `SpectralClustering`, `SpectralBiclustering`, `SpectralCoclustering` | spectral | S | S | C | – | C | C | hard labels, eigenvector ordering; separated eigenspace, fixed graph support and partitions |
 | `DBSCAN`, `ConnectivityClustering` | stopped | C | C | – | – | – | – | labels, core mask, connected components |
