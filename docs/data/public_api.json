@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "7654c76f131597c70546f7a8750944e44a9e9fe772840b98404da2548bab2cc1",
+  "manifest_id": "45f9e03e61cce31d6e443b3bd1052899ffc7db54d968f0650830f166c2f6fcdf",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -27301,6 +27301,7 @@
       "phydrax.ml.clustering.BiclusterModel",
       "phydrax.ml.clustering.ClusterDiagnostics",
       "phydrax.ml.clustering.ClusterInitialization",
+      "phydrax.ml.clustering.ClusterRevival",
       "phydrax.ml.clustering.ConnectivityClustering",
       "phydrax.ml.clustering.DBSCAN",
       "phydrax.ml.clustering.DensityClusterModel",
@@ -27309,6 +27310,8 @@
       "phydrax.ml.clustering.KMeans",
       "phydrax.ml.clustering.KMedoids",
       "phydrax.ml.clustering.MeanShift",
+      "phydrax.ml.clustering.MiniBatchBatchLaw",
+      "phydrax.ml.clustering.MiniBatchClusterEvidence",
       "phydrax.ml.clustering.MiniBatchKMeans",
       "phydrax.ml.clustering.SoftClusterModel",
       "phydrax.ml.clustering.SoftKMeans",

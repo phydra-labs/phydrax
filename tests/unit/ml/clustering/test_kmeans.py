@@ -30,6 +30,7 @@ from phydrax.ml.clustering import (
     SoftKMeans,
     StreamingKMeans,
 )
+from phydrax.sparse import RelationAccumulation
 
 
 def test_kmeans_scenario_1() -> None:
@@ -247,13 +248,7 @@ def test_kmeans_scenario_2() -> None:
         GradientLevel.NONE
     )
     features = jnp.array([[-3.0], [3.0], [-2.0], [2.0], [-1.0], [1.0]])
-    recipe = MiniBatchKMeans(
-        2,
-        batch_size=3,
-        max_iterations=6,
-        initialization="random",
-        empty_policy="reseed",
-    )
+    recipe = MiniBatchKMeans(2, batch_size=3, initialization="random", tolerance=1.0)
 
     with pytest.raises(ValueError, match="explicit JAX key"):
         recipe.fit_batch(MLBatch(features))
@@ -299,3 +294,51 @@ def test_kmeans_scenario_3() -> None:
         model(jnp.array([0.0]))
     with pytest.raises(ValueError, match="case"):
         model(jnp.zeros((3, 1)))
+
+
+@pytest.mark.parametrize("accumulation", ["fast", "deterministic", "compensated"])
+def test_kmeans_accumulation_modes(accumulation: RelationAccumulation) -> None:
+    features = jnp.asarray([[-10.0], [10.0], [-9.0], [9.0]], dtype=jnp.float64)
+    batch = MLBatch(features)
+    baseline = KMeans(2, initialization="first").fit_batch(batch)
+    recipe = KMeans(2, initialization="first", accumulation=accumulation)
+    result = recipe.fit_batch(batch)
+    repeat = recipe.fit_batch(batch)
+    assert jnp.allclose(result.as_trainable().centers, baseline.as_trainable().centers)  # ty: ignore[unresolved-attribute]
+    assert jnp.array_equal(result.model(features), baseline.model(features))
+    if accumulation == "deterministic":
+        assert jnp.array_equal(
+            result.as_trainable().centers,  # ty: ignore[unresolved-attribute]
+            repeat.as_trainable().centers,  # ty: ignore[unresolved-attribute]
+        )
+
+
+@pytest.mark.parametrize("accumulation", ["fast", "deterministic", "compensated"])
+def test_streaming_accumulation_modes(accumulation: RelationAccumulation) -> None:
+    state = StreamingKMeans(jnp.asarray([[0.0], [10.0]], dtype=jnp.float64))
+    x = jnp.asarray([[1.0], [2.0], [8.0], [9.0]], dtype=jnp.float64)
+    baseline = state.update(x)
+    actual = state.update(x, accumulation=accumulation)
+    assert jnp.allclose(actual.centers, baseline.centers)
+    assert jnp.allclose(actual.cluster_mass, baseline.cluster_mass)
+
+
+def test_hard_cluster_prediction_stable_and_masked_across_tiles() -> None:
+    import numpy as np
+
+    centers = np.arange(2048, dtype=np.float64)[:, None]
+    centers[1] = centers[0]
+    active = np.ones(2048, dtype=np.bool_)
+    active[2] = False
+    # 2048 queries against 2048 centers exceed one 64 MiB assignment tile.
+    query = np.concatenate(
+        (
+            np.asarray([[0.0], [2.0], [1024.5], [2047.0]], dtype=np.float64),
+            np.linspace(-3.0, 2050.0, 2044, dtype=np.float64)[:, None],
+        )
+    )
+    model = HardClusterModel(jnp.asarray(centers), jnp.asarray(active), method="k-means")
+    distance = np.square(query - centers.T)
+    distance[:, ~active] = np.inf
+    np.testing.assert_array_equal(model(jnp.asarray(query)), np.argmin(distance, axis=-1))
+    np.testing.assert_array_equal(model.distances(jnp.asarray(query)), distance)

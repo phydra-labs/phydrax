@@ -11,12 +11,16 @@ from ._bicluster import (
 from ._common import (
     ClusterDiagnostics,
     ClusterInitialization,
+    ClusterRevival,
     EmptyClusterPolicy,
     HardClusterModel,
+    MiniBatchBatchLaw,
+    MiniBatchClusterEvidence,
     SoftClusterModel,
 )
 from ._density import ConnectivityClustering, DBSCAN, DensityClusterModel
-from ._kmeans import KMeans, KMedoids, MiniBatchKMeans, SoftKMeans, StreamingKMeans
+from ._kmeans import KMeans, KMedoids, SoftKMeans, StreamingKMeans
+from ._minibatch import MiniBatchKMeans
 from ._modes import AffinityPropagation, MeanShift
 from ._spectral import AgglomerativeClustering, AgglomerativeLinkage, SpectralClustering
 
@@ -29,6 +33,7 @@ __all__ = [
     "BiclusterModel",
     "ClusterDiagnostics",
     "ClusterInitialization",
+    "ClusterRevival",
     "ConnectivityClustering",
     "DBSCAN",
     "DensityClusterModel",
@@ -37,6 +42,8 @@ __all__ = [
     "KMeans",
     "KMedoids",
     "MeanShift",
+    "MiniBatchBatchLaw",
+    "MiniBatchClusterEvidence",
     "MiniBatchKMeans",
     "SoftClusterModel",
     "SoftKMeans",

@@ -11,8 +11,6 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 
-import phydrax.ein as ein
-
 from ..._differentiation import (
     DerivativeRoute,
     DerivativeSurface,
@@ -47,6 +45,7 @@ from .._contracts import (
 )
 from ._common import (
     active_data,
+    cluster_sums,
     ClusterDiagnostics,
     distances_to_centers,
     effective_sample_count,
@@ -56,42 +55,10 @@ from ._common import (
     positive_scalar,
     SoftClusterModel,
 )
+from ._kmeans import embedding_labels
 
 
 AgglomerativeLinkage: TypeAlias = Literal["ward", "centroid"]
-
-
-def _deterministic_embedding_kmeans(
-    embedding: Array, w: Array, cluster_count: int, iterations: int
-) -> tuple[Array, Array, Array]:
-    n = embedding.shape[-2]
-    order = jnp.argsort(jnp.where(w > 0.0, jnp.arange(n), n), axis=-1)
-    indices = order[..., :cluster_count]
-    centers = jnp.take_along_axis(embedding, indices[..., :, None], axis=-2)
-
-    def step(_: Array, centers: Array) -> Array:
-        distances = distances_to_centers(
-            embedding, centers, "squared-euclidean", embedding.shape[:-2]
-        )
-        labels = jnp.argmin(distances, axis=-1)
-        membership = (
-            jax.nn.one_hot(labels, cluster_count, dtype=w.dtype) * w[..., :, None]
-        )
-        mass = jnp.sum(membership, axis=-2)
-        proposed = (
-            ein.contract("...nk,...nf->...kf", membership, embedding)
-            / jnp.maximum(mass, jnp.finfo(w.dtype).tiny)[..., :, None]
-        )
-        return jnp.where((mass > 0.0)[..., :, None], proposed, centers)
-
-    centers = jax.lax.fori_loop(0, iterations, step, centers)
-    distances = distances_to_centers(
-        embedding, centers, "squared-euclidean", embedding.shape[:-2]
-    )
-    labels = jnp.argmin(distances, axis=-1)
-    membership = jax.nn.one_hot(labels, cluster_count, dtype=w.dtype) * w[..., :, None]
-    mass = jnp.sum(membership, axis=-2)
-    return centers, labels, mass
 
 
 def _rbf_action(x: Array, w: Array, gamma: Array, vector: Array) -> Array:
@@ -323,16 +290,17 @@ class SpectralClustering(AbstractRecipe):
         embedding = embedding / jnp.maximum(
             jnp.linalg.norm(embedding, axis=-1, keepdims=True), jnp.finfo(w.dtype).tiny
         )
-        _, labels, cluster_mass = _deterministic_embedding_kmeans(
+        labels, cluster_mass = embedding_labels(
             embedding, w, self.cluster_count, self.kmeans_iterations
         )
-        membership = (
-            jax.nn.one_hot(labels, self.cluster_count, dtype=w.dtype) * w[..., :, None]
+        (sums,) = cluster_sums(
+            (w[..., :, None] * x,),
+            labels,
+            w > 0.0,
+            self.cluster_count,
+            accumulation="fast",
         )
-        centers = (
-            ein.contract("...nk,...nf->...kf", membership, x)
-            / jnp.maximum(cluster_mass, jnp.finfo(w.dtype).tiny)[..., :, None]
-        )
+        centers = sums / jnp.maximum(cluster_mass, jnp.finfo(w.dtype).tiny)[..., :, None]
         active_clusters = cluster_mass > 0.0
         sample_distance = distances_to_centers(
             x, centers, "squared-euclidean", batch.case_shape

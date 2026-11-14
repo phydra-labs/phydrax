@@ -122,7 +122,11 @@ def blocked_case_top_k(
 def _case_queries(
     query: Array, support: Array, case_shape: tuple[int, ...]
 ) -> tuple[Array, tuple[int, ...]]:
-    if query.ndim < len(case_shape) + 1 or query.shape[-1] != support.shape[-1]:
+    if query.ndim < len(case_shape) + 1:
+        raise ValueError(
+            f"Query must have fitted case shape {case_shape} before the feature axis."
+        )
+    if query.shape[-1] != support.shape[-1]:
         raise ValueError("Query must end with the fitted feature axis.")
     if query.shape[: len(case_shape)] != case_shape:
         raise ValueError(f"Query must begin with fitted case shape {case_shape}.")

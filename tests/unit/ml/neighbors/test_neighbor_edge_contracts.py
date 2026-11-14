@@ -422,9 +422,15 @@ def test_hard_neighbor_failures_and_case_query_geometry_are_explicit() -> None:
         case_model.predict_chunked(cases[:, :2], chunk_size=1)
 
 
-@pytest.mark.parametrize("workspace_bytes", [4096, 4 * 1024 * 1024])
+@pytest.mark.parametrize(
+    "workspace_bytes", [4096, 4 * 1024 * 1024], ids=["tiled", "whole"]
+)
+@pytest.mark.parametrize("count", [1, 2, 9], ids=["one", "two", "nine"])
+@pytest.mark.parametrize("metric", ["euclidean", "squared-euclidean", "manhattan"])
 def test_blocked_neighbors_preserve_ties_across_support_tiles(
     workspace_bytes: int,
+    count: int,
+    metric: Any,
 ) -> None:
     import numpy as np
 
@@ -434,11 +440,13 @@ def test_blocked_neighbors_preserve_ties_across_support_tiles(
     query = jnp.array([[0.0], [1.0], [-1.0]], dtype=jnp.float64)
     mask = jnp.arange(134) % 7 != 0
     indices, distance = blocked_top_k(
-        query, support, mask, 9, workspace_bytes=workspace_bytes
+        query, support, mask, count, metric=metric, workspace_bytes=workspace_bytes
     )
     dense = np.abs(np.asarray(query) - np.asarray(support).T)
+    if metric == "squared-euclidean":
+        dense = dense**2
     dense[:, ~np.asarray(mask)] = np.inf
-    reference = np.argsort(dense, axis=-1, kind="stable")[:, :9]
+    reference = np.argsort(dense, axis=-1, kind="stable")[:, :count]
     np.testing.assert_array_equal(indices, reference)
     np.testing.assert_allclose(distance, np.take_along_axis(dense, reference, axis=-1))
 
@@ -495,3 +503,42 @@ def test_neighbor_workspace_admission_is_bounded_and_explicit() -> None:
     assert extent * extent * (3 + 3) * 8 <= budget
     with pytest.raises(ValueError, match="workspace_bytes"):
         pair_block_size(10, 10, 3, 8, 0)
+
+
+def test_offset_neighbors_match_difference_form() -> None:
+    import numpy as np
+
+    from phydrax.ml._numerics._pairwise import blocked_top_k
+
+    support = 1e7 + np.arange(100, dtype=np.float64)[:, None] * 1e-3
+    query = 1e7 + np.asarray([[0.0123], [0.0477], [0.0882]], dtype=np.float64)
+    indices, _ = blocked_top_k(
+        jnp.asarray(query),
+        jnp.asarray(support),
+        jnp.ones(100, dtype=jnp.bool_),
+        3,
+        workspace_bytes=4096,
+    )
+    dense = np.abs(query - support.T)
+    np.testing.assert_array_equal(
+        indices, np.argsort(dense, axis=-1, kind="stable")[:, :3]
+    )
+
+
+def test_top_k_tile_workspace_admission() -> None:
+    from phydrax.ml._numerics._pairwise import top_k_tile_shape
+
+    assert top_k_tile_shape(10, 20, 64, 8, 1_000_000, count=3, metric="euclidean") == (
+        10,
+        20,
+    )
+    gram = top_k_tile_shape(1000, 1000, 64, 8, 1_000_000, count=3, metric="euclidean")
+    manhattan = top_k_tile_shape(
+        1000, 1000, 64, 8, 1_000_000, count=3, metric="manhattan"
+    )
+    row = 4 * 3 * (8 + 4) + 64 * 8
+    assert gram[0] * gram[1] * 3 * 8 + gram[0] * row <= 1_000_000
+    assert manhattan[0] * manhattan[1] * (64 + 3) * 8 + manhattan[0] * row <= 1_000_000
+    assert gram[0] * gram[1] > manhattan[0] * manhattan[1]
+    with pytest.raises(ValueError):
+        top_k_tile_shape(10, 20, 64, 8, 0, count=3, metric="euclidean")

@@ -462,3 +462,13 @@ def incremental_flip_projection(
         plan.project(velocity, liquid, 0.01, pressure=pressure, incremental=True),
         solver.MACFreeSurfaceProjectionResult,
     )
+
+
+def minibatch_clustering_consumer(
+    evidence: phx.ml.clustering.MiniBatchClusterEvidence,
+    revival: phx.ml.clustering.ClusterRevival,
+    law: phx.ml.clustering.MiniBatchBatchLaw,
+) -> None:
+    recipe = phx.ml.clustering.MiniBatchKMeans(4, revival=revival, batch_law=law)
+    assert_type(recipe, phx.ml.clustering.MiniBatchKMeans)
+    evidence.updates

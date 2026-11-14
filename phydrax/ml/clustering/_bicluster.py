@@ -34,8 +34,14 @@ from .._contracts import (
     prediction_fit_contract,
 )
 from .._schema import AbstractFittedModel
-from ._common import active_data, distances_to_centers, positive_scalar, real_dtype
-from ._spectral import _deterministic_embedding_kmeans
+from ._common import (
+    active_data,
+    cluster_sums,
+    distances_to_centers,
+    positive_scalar,
+    real_dtype,
+)
+from ._kmeans import embedding_labels
 
 
 # A softmax of negated squared-Euclidean distances to the row centers.
@@ -153,17 +159,21 @@ class BiclusterModel(AbstractFittedModel):
 
 
 def _row_centers(x: Array, w: Array, labels: Array, count: int) -> tuple[Array, Array]:
-    membership = jax.nn.one_hot(labels, count, dtype=w.dtype) * w[..., :, None]
-    mass = jnp.sum(membership, axis=-2)
-    centers = (
-        ein.contract("...nk,...nf->...kf", membership, x)
-        / jnp.maximum(mass, jnp.finfo(w.dtype).tiny)[..., :, None]
+    sums, mass = cluster_sums(
+        (w[..., :, None] * x, w), labels, w > 0.0, count, accumulation="fast"
     )
-    return centers, mass
+    return sums / jnp.maximum(mass, jnp.finfo(w.dtype).tiny)[..., :, None], mass
 
 
 def _column_mass(labels: Array, count: int, dtype: jnp.dtype) -> Array:
-    return jnp.sum(jax.nn.one_hot(labels, count, dtype=dtype), axis=-2)
+    (mass,) = cluster_sums(
+        (jnp.ones(labels.shape, dtype=dtype),),
+        labels,
+        jnp.ones(labels.shape, dtype=jnp.bool_),
+        count,
+        accumulation="fast",
+    )
+    return mass
 
 
 def _finish(
@@ -306,7 +316,7 @@ class SpectralBiclustering(AbstractRecipe):
         left, _, right_h = jnp.linalg.svd(checkerboard_residual, full_matrices=False)
         row_embedding = left[..., :, : self.row_clusters]
         column_embedding = jnp.swapaxes(right_h[..., : self.column_clusters, :], -1, -2)
-        _, row_labels, _ = _deterministic_embedding_kmeans(
+        row_labels, _ = embedding_labels(
             row_embedding, w, self.row_clusters, self.max_iterations
         )
         column_weights = jnp.where(
@@ -314,7 +324,7 @@ class SpectralBiclustering(AbstractRecipe):
             jnp.ones(batch.case_shape + (batch.feature_count,), dtype=w.dtype),
             0.0,
         )
-        _, column_labels, _ = _deterministic_embedding_kmeans(
+        column_labels, _ = embedding_labels(
             column_embedding, column_weights, self.column_clusters, self.max_iterations
         )
         return _finish(
@@ -384,11 +394,11 @@ class SpectralCoclustering(AbstractRecipe):
         left, _, right_h = jnp.linalg.svd(normalized, full_matrices=False)
         row_embedding = left[..., :, : self.row_clusters]
         column_embedding = jnp.swapaxes(right_h[..., : self.column_clusters, :], -1, -2)
-        _, row_labels, _ = _deterministic_embedding_kmeans(
+        row_labels, _ = embedding_labels(
             row_embedding, w, self.row_clusters, self.kmeans_iterations
         )
         column_weights = jnp.where(column_degree > 0.0, 1.0, 0.0).astype(w.dtype)
-        _, column_labels, _ = _deterministic_embedding_kmeans(
+        column_labels, _ = embedding_labels(
             column_embedding, column_weights, self.column_clusters, self.kmeans_iterations
         )
         return _finish(
