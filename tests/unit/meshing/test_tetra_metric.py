@@ -588,14 +588,14 @@ class _BlockedChainModel(NamedTuple):
     binding: _CoupledBinding
 
 
-@pytest.fixture(params=((4, ()),), ids=("four-free-vertices",))
+@pytest.fixture(params=((4, (), 0.0),), ids=("four-free-vertices",))
 def _blocked_chain_model(request: pytest.FixtureRequest) -> Iterator[_BlockedChainModel]:
     from phydrax._meshcore import delaunay_3d
     from phydrax.meshing import _tetra_coupled as coupled, _tetra_metric as metric
 
     # Equal short links require outward motion through the entire chain.
     # Cube corners fix the genuine source carrier.
-    count, fixed_vertices = request.param
+    count, fixed_vertices, right_slack = request.param
     gap = np.nextafter(metric._LOWER * np.exp(-2000 * metric._VIOLATION_QUANTUM), np.inf)
     points = np.asarray(
         [
@@ -604,6 +604,8 @@ def _blocked_chain_model(request: pytest.FixtureRequest) -> Iterator[_BlockedCha
         ],
         dtype=np.float64,
     )
+    if right_slack:
+        points[3, 0] += right_slack * gap * np.expm1(metric._VIOLATION_QUANTUM)
     cells, _ = delaunay_3d(points)
     source = _mesh_result(points, cells.tolist())
     fixed = np.ones(points.shape[0], dtype=np.bool_)
@@ -638,14 +640,13 @@ def _blocked_chain_model(request: pytest.FixtureRequest) -> Iterator[_BlockedCha
 
 
 @pytest.mark.parametrize(
-    ("_blocked_chain_model", "expected_moves"),
-    (((4, ()), 4), ((6, ()), 6)),
-    indirect=("_blocked_chain_model",),
-    ids=("one-enrichment", "iterative-closure"),
+    "_blocked_chain_model",
+    ((4, (), 0.0), (6, (), 0.0)),
+    indirect=True,
+    ids=("four-vertex-chain", "six-vertex-chain"),
 )
 def test_coupled_fallback_releases_blocking_neighbors(
     _blocked_chain_model: _BlockedChainModel,
-    expected_moves: int,
 ) -> None:
     from phydrax.meshing import _tetra_coupled as coupled
 
@@ -673,7 +674,9 @@ def test_coupled_fallback_releases_blocking_neighbors(
         search.edges.index(binding.edge),
     )
     after = coupled._prepare_search(state)
-    assert applied == counters["relocations"] == expected_moves
+    moved = np.count_nonzero(np.any(state.snapshot.points != before.points, axis=1))
+    assert applied > 0
+    assert applied == counters["relocations"] == moved
     assert state.snapshot.generation == before.generation + 1
     assert after.before < search.before
     index = search.edges.index(binding.edge)
@@ -687,7 +690,7 @@ def test_coupled_fallback_releases_blocking_neighbors(
 
 @pytest.mark.parametrize(
     "_blocked_chain_model",
-    ((4, (2, 3)), (6, (4, 5))),
+    ((4, (2, 3), 0.0), (6, (4, 5), 0.0)),
     indirect=True,
     ids=("fixed-first-neighbors", "fixed-later-neighbors"),
 )
@@ -738,14 +741,14 @@ def test_coupled_fallback_resource_refusal_preserves_state_and_demand(
             search.edges.index(binding.edge),
         )
     assert error.value.result is None
-    assert error.value.demand.variables == 12
+    assert len(error.value.binding.vertices) == len(binding.vertices) + 1
     assert error.value.demand.dimension > pair_dimension
     assert set(binding.vertices) < set(error.value.binding.vertices)
     assert state.snapshot.generation == before.generation
     np.testing.assert_array_equal(state.snapshot.points, before.points)
 
 
-@pytest.mark.parametrize("_blocked_chain_model", ((6, ()),), indirect=True)
+@pytest.mark.parametrize("_blocked_chain_model", ((6, (), 0.0),), indirect=True)
 def test_coupled_closure_resource_refusal_preserves_later_demand(
     _blocked_chain_model: _BlockedChainModel,
 ) -> None:
@@ -779,6 +782,41 @@ def test_coupled_closure_resource_refusal_preserves_later_demand(
     assert len(error.value.binding.vertices) > 4
     assert state.snapshot.generation == before.generation
     np.testing.assert_array_equal(state.snapshot.points, before.points)
+
+
+@pytest.mark.parametrize("_blocked_chain_model", ((4, (), 0.75),), indirect=True)
+def test_coupled_closure_stops_at_admitted_single_neighbor(
+    _blocked_chain_model: _BlockedChainModel,
+) -> None:
+    from phydrax.meshing import _tetra_coupled as coupled
+
+    state, search, details, selected, incident, binding = _blocked_chain_model
+    policy = phx.optim.ConvexSolvePolicy(
+        phx.optim.DensePrimalDualQP(max_kkt_dimension=120)
+    )
+    before = state.snapshot
+    counters = _counters()
+    attempt = coupled._search_model(
+        search, details, selected, incident, binding, policy, counters
+    )
+    assert attempt.applied == 0
+    applied = coupled._search_neighbor_patch(
+        search,
+        details,
+        selected,
+        binding,
+        policy,
+        counters,
+        attempt.neighbors,
+        search.edges.index(binding.edge),
+    )
+    moved = np.count_nonzero(np.any(state.snapshot.points != before.points, axis=1))
+    assert applied > 0
+    assert applied == counters["relocations"] == moved
+    assert state.snapshot.generation == before.generation + 1
+    assert coupled._prepare_search(state).before < search.before
+    row = search.prepared.topology.vertex_row[3]
+    np.testing.assert_array_equal(state.snapshot.points[row], before.points[row])
 
 
 @pytest.mark.parametrize("exponent", (-500, 0, 500), ids=("small", "unit", "large"))

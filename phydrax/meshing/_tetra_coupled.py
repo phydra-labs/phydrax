@@ -1087,21 +1087,26 @@ def _search_neighbor_patch(
 ) -> int:
     by_vertex = {detail.vertex: detail for detail in details}
     by_source = dict(zip(binding.vertices, selected, strict=True))
-    while neighbors:
-        for neighbor in neighbors:
-            detail = neighbor.detail
-            if detail.vertex in by_vertex:
-                raise RuntimeError("Coupled closure did not supply an omitted vertex.")
-            by_vertex[detail.vertex] = detail
-            # Keep every chosen carrier while admitting one preferred carrier
-            # for each new variable; no Cartesian source-choice expansion.
-            by_source[detail.vertex] = _ordered_source_cells(
-                search,
-                detail,
-                binding.edge,
-                index,
-                unit_direction=neighbor.unit_direction,
-            )[0]
+    pending = {
+        neighbor.detail.vertex: neighbor
+        for neighbor in neighbors
+        if neighbor.detail.vertex not in by_vertex
+    }
+    target_ids = search.state.vertex_target_ids
+    while pending:
+        vertex = min(pending, key=target_ids.__getitem__)
+        neighbor = pending.pop(vertex)
+        detail = neighbor.detail
+        by_vertex[detail.vertex] = detail
+        # Re-solve after the first eligible vertex in the owning stable order;
+        # a whole neighbor batch can exceed admission before this model is tried.
+        by_source[detail.vertex] = _ordered_source_cells(
+            search,
+            detail,
+            binding.edge,
+            index,
+            unit_direction=neighbor.unit_direction,
+        )[0]
         vertices = tuple(
             sorted(by_vertex, key=search.state.vertex_target_ids.__getitem__)
         )
@@ -1118,8 +1123,8 @@ def _search_neighbor_patch(
             vertices,
             tuple(record[0] for record in patch_selected),
         )
-        # The owning model admits its full dense demand before building rows.
-        # Only an audited infeasibility ray can request another strict growth.
+        # Admit before dense allocation. Unconsumed candidates retain their
+        # prior audited justification while this physical state is unchanged.
         attempt = _search_model(
             search,
             tuple(by_vertex[vertex] for vertex in vertices),
@@ -1131,7 +1136,9 @@ def _search_neighbor_patch(
         )
         if attempt.applied:
             return attempt.applied
-        neighbors = attempt.neighbors
+        for neighbor in attempt.neighbors:
+            if neighbor.detail.vertex not in by_vertex:
+                pending[neighbor.detail.vertex] = neighbor
     return 0
 
 

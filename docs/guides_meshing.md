@@ -2816,12 +2816,15 @@ coefficient. Its infinity norm must exceed the owning audit's reported
 stationarity residual in the same ray units; metric-ray normalization is accounted
 for before comparison. Unresolved numerical-scale actions do not become unit
 movement directions, and no separate cutoff or relaxed audit tolerance is used.
-Stable target-ID tie breaks select an admissible neighbor for each participating
-vertex, and new vertices enter in deterministic target-ID order. If an enlarged
-model is also audited infeasible, the same process can add further omitted
-neighbors. Every iteration strictly enlarges the unique vertex set; already
-selected carriers remain unchanged and each new vertex uses one validated
-direction-preferred carrier. Source rows and native-refusal rows never select
+Eligible neighbors form an operation-local frontier keyed by explicit vertex
+identity. The next vertex enters in deterministic target-ID order, and the model
+is recomputed after that single strict enlargement. Unconsumed candidates retain
+their prior audited justification while the physical/source state is unchanged;
+only another audited infeasible model can add or refresh them. Quantization or
+native refusal cannot invent neighbors or erase the remaining frontier. Search
+stops immediately on native admission. Selected carriers remain unchanged and each
+new vertex uses one validated direction-preferred carrier. Source rows and
+native-refusal rows never select
 metric neighbors. Only one such closure per violating edge is retained, without
 recursion or Cartesian carrier expansion. Existing resource admission checks each
 enlarged model before dense allocation or solving; a resource refusal propagates
