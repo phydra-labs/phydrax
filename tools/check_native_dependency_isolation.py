@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import email.parser
 import faulthandler
-import hashlib
 import json
 import os
 import runpy
@@ -509,21 +508,6 @@ def qualify(arguments: argparse.Namespace, *, evidence: Path) -> dict[str, objec
             meshcore_wheel = Path(arguments.meshcore_wheel).expanduser().resolve()
         phydrax_version = _wheel_version(phydrax_wheel, "phydrax")
         meshcore_version = _wheel_version(meshcore_wheel, "phydrax-meshcore")
-        wheel_hashes: dict[str, str] = {}
-        for name, wheel in (("phydrax", phydrax_wheel), ("meshcore", meshcore_wheel)):
-            with wheel.open("rb") as stream:
-                wheel_hashes[name] = hashlib.file_digest(stream, "sha256").hexdigest()
-        _write_json(
-            evidence / "wheels.json",
-            {
-                "source_root": str(ROOT),
-                "python": str(python),
-                "phydrax_wheel": str(phydrax_wheel),
-                "meshcore_wheel": str(meshcore_wheel),
-                "versions": {"phydrax": phydrax_version, "meshcore": meshcore_version},
-                "sha256": wheel_hashes,
-            },
-        )
         if phydrax_version != meshcore_version:
             raise RuntimeError(
                 f"Wheel versions do not match: phydrax {phydrax_version}, meshcore {meshcore_version}."

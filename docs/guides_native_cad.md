@@ -64,8 +64,8 @@ work. Use `--output-dir PATH` to select a fresh or empty directory; otherwise
 it creates a persistent temporary directory. Numbered command stdout, stderr,
 and JSON receipts retain command arguments, working directory, selected
 environment (including CPU, JAX, thread and temporary-directory controls), and
-exit status; `wheels.json` records wheel provenance. The final stdout result
-includes `evidence_dir` and is also retained as `result.json`.
+exit status. The final stdout result includes `evidence_dir` and is also
+retained as `result.json`.
 `native-events.jsonl` contains fsynced scenario and profile evidence as it
 arrives. An interrupted command can have a null return code, and retained
 partial evidence does not make an interrupted or failed qualification a pass.
