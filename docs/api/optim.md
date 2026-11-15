@@ -270,13 +270,29 @@ negative), refines toward the unregularized system, and accepts the direction on
 its residual in the full embedding linearization: the requested Newton accuracy reports
 `SUCCESS`, an inexact-Newton direction within the `1e-4` forcing bound (dependent or
 numerically rank-deficient zero-cone rows) reports `STAGNATION`, and anything else is a
-failed direction. Already-accepted directions are retained unchanged. An otherwise
-rejected direction with valid factorization and inertia can use native, right-preconditioned
-multi-RHS GMRES with the same regularized factor, at most 32 steps and restart 32.
-Its inner target remains relative `16 * eps`, absolute zero; a missed inner target is
-not relabeled as success, even when the unchanged full-embedding gate accepts an inexact
-direction. Sparse topology, factor analysis, and correction/preconditioner planning are
-host preparation; Newton iterations only bind coefficients and reuse the current factor.
+failed direction. Already-accepted directions are retained unchanged. For an otherwise
+rejected direction `d` with valid factorization and inertia, the owner forms the
+original full-equation defect `J d + r` and solves **one** additive correction using
+the same reduced equations and regularized factor. The correction keeps the original
+Jacobian action; explicit residual data does not replace that action with a constant.
+Only the total direction is accepted against the original residual, requested target,
+and forcing bound. There is no recursive correction or extra nonlinear iteration.
+An unresolved inner correction can use native, right-preconditioned multi-RHS GMRES,
+at most 32 steps and restart 32. Its target remains relative `16 * eps`, absolute zero;
+a missed inner target is not relabeled as success. Sparse topology, factor analysis,
+and correction/preconditioner planning are host preparation; Newton iterations only
+bind coefficients and reuse the current factor.
+Reduced refinement and full-direction audits use the same scale-safe norm owner
+as native Krylov and its independent residual certificate. Coordinate rescaling
+prevents overflow or underflow in convergence norms without changing the
+requested tolerance, forcing bound, or iteration budget; nonfinite evidence
+still refuses the direction.
+The quadratic perspective, its stationarity image, and Newton recovery gradients
+share a stopped common evaluation scale for `(x, tau)`. Ratio-first multiplication
+avoids forming the unscaled quadratic energy or `tau**2` in the gap and its
+derivatives. This is ordinary JAX algebra, including differentiation with respect
+to quadratic coefficients: it does not rescale the iterate, floor `tau`, introduce
+a custom derivative, or alter certificate normalization.
 Preparation admits the potential correction under the existing materialization,
 factorization, preconditioner, Krylov-basis, and workspace budgets.
 `"matrix-free"` keeps unpreconditioned native GMRES on the full
@@ -291,6 +307,18 @@ the step budget. An uncertified stop after a failed Newton direction reports
 returned slack, cone multiplier, and bound multipliers are one consistent audited
 witness, and `NativeHomogeneousConic` declares `implicit_differentiation` through
 `prepare_conic_sensitivity`.
+
+The coupled tetrahedral relocation consumer prepares two distinct native programs
+when needed: its original sparse positive-definite QP and, only for an unresolved
+primary, one bounded Farkas LP. The LP uses signed `[-1, 1]` equality multipliers
+and `[0, 1]` inequality multipliers, with stationarity and box constraints in
+the cone. Its candidate is independently audited in the original QP coordinates.
+Neither an optimal primary nor an already valid primary ray invokes the LP.
+Primary and certificate results and iteration counts retain separate provenance;
+their actual counts can be summed to describe total work. Topological row support,
+including structural zeros and explicit row roles, determines sparse preparation;
+one primary and one certificate template may be retained per search under exact
+structure and policy matching.
 
 The host-only `import_cvxpy_problem` and `export_cvxpy_program` boundary is limited to
 real continuous CVXPY problems that canonicalize to the supported LP/QP/product-cone

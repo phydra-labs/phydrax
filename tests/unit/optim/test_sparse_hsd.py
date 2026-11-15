@@ -298,12 +298,10 @@ def test_sparse_infeasibility_without_certificate_stays_unresolved() -> None:
 def test_source_bound_sparse_qp_returns_an_original_coordinate_infeasibility_ray() -> (
     None
 ):
-    # Recorded implicit-sphere distance model, generation 6690, with three
-    # source-bound facet cuts. Original packet SHA256:
-    # 92290058fd39d4fc5412adad2e9cc061bc9880a698c57a9f4b673ef3b903f763.
-    # Its reduced system defeated stationary refinement despite a nonsingular
-    # factor. The oracle below is the independent original-coordinate Farkas test.
-    with np.load(Path(__file__).with_name("sparse_hsd_distance_constraints.npz")) as data:
+    # Captured implicit-sphere distance model at generation 6690, with three
+    # source-bound cuts; packet SHA256 92290058fd39d4fc5412adad2e9cc061bc9880a698c57a9f4b673ef3b903f763.
+    fixture_name = "sparse_hsd_distance_constraints.npz"
+    with np.load(Path(__file__).with_name(fixture_name)) as data:
         rows = data["rows"]
         columns = data["columns"]
         coefficients = data["coefficients"]

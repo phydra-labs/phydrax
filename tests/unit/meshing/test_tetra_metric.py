@@ -16,6 +16,7 @@ from phydrax.discretization._cell_mesh import CellBlock, CellMesh
 from phydrax.meshing._canonical import certify_cell_mesh
 from phydrax.meshing._lineage import EntityLineageKind
 from phydrax.meshing._result import CellMeshingResult
+from phydrax.meshing._tetra_coupled_program import _CoupledRow, _RowRole
 from phydrax.meshing._tetra_metric import (
     _apply_collapse_batch,
     _apply_relocation_batch,
@@ -555,7 +556,7 @@ def test_overlapping_relocation_commit_preserves_full_source_lineage_and_p1() ->
 
 
 @pytest.fixture
-def _coupled_local_model() -> Iterator[tuple[_CoupledBinding, np.ndarray]]:
+def _coupled_local_model() -> Iterator[tuple[_CoupledBinding, _CoupledRow]]:
     from phydrax.meshing._tetra_coupled import _CoupledBinding
 
     state = _state(_source(4, nonuniform=True), np.eye(3, dtype=np.float64))
@@ -573,7 +574,9 @@ def _coupled_local_model() -> Iterator[tuple[_CoupledBinding, np.ndarray]]:
             (21, 22),
             (source_cell, source_cell),
         )
-        row = np.asarray((1, 0, 0, 0, 0, 0), dtype=np.float64)
+        row = _CoupledRow(
+            (0,), np.asarray((1.0,), dtype=np.float64), _RowRole.NATIVE, identity=(0,)
+        )
         yield binding, row
     finally:
         state.native.close()
@@ -659,7 +662,9 @@ def test_coupled_fallback_releases_blocking_neighbors(
         selected,
         incident,
         binding,
-        phx.optim.ConvexSolvePolicy(),
+        phx.optim.ConvexSolvePolicy(
+            phx.optim.NativeHomogeneousConic(newton="factorized")
+        ),
         counters,
     )
     assert attempt.applied == 0
@@ -668,7 +673,9 @@ def test_coupled_fallback_releases_blocking_neighbors(
         details,
         selected,
         binding,
-        phx.optim.ConvexSolvePolicy(),
+        phx.optim.ConvexSolvePolicy(
+            phx.optim.NativeHomogeneousConic(newton="factorized")
+        ),
         counters,
         attempt.neighbors,
         search.edges.index(binding.edge),
@@ -712,14 +719,14 @@ def test_coupled_fallback_resource_refusal_preserves_state_and_demand(
     from phydrax.meshing import _tetra_coupled as coupled
 
     state, search, details, selected, incident, binding = _blocked_chain_model
-    model = coupled._model_rows(
-        search, details, selected, incident, binding, phx.optim.ConvexSolvePolicy()
-    )
-    assert model is not None
-    rows, _, equalities = model
-    pair_dimension = 3 * len(binding.vertices) + len(equalities) + 2 * len(rows)
     policy = phx.optim.ConvexSolvePolicy(
-        phx.optim.DensePrimalDualQP(max_kkt_dimension=pair_dimension)
+        phx.optim.NativeHomogeneousConic(newton="factorized")
+    )
+    limited = phx.optim.ConvexSolvePolicy(
+        phx.optim.NativeHomogeneousConic(
+            newton="factorized",
+            factorization=phx.linalg.SparseFactorizationPolicy("lu", max_factor_nnz=1),
+        )
     )
     before = state.snapshot
     counters = _counters()
@@ -735,14 +742,14 @@ def test_coupled_fallback_resource_refusal_preserves_state_and_demand(
             details,
             selected,
             binding,
-            policy,
+            limited,
             counters,
             attempt.neighbors,
             search.edges.index(binding.edge),
         )
     assert error.value.result is None
     assert len(error.value.binding.vertices) == len(binding.vertices) + 1
-    assert error.value.demand.dimension > pair_dimension
+    assert error.value.demand.variables == 3 * len(error.value.binding.vertices)
     assert set(binding.vertices) < set(error.value.binding.vertices)
     assert state.snapshot.generation == before.generation
     np.testing.assert_array_equal(state.snapshot.points, before.points)
@@ -751,13 +758,31 @@ def test_coupled_fallback_resource_refusal_preserves_state_and_demand(
 @pytest.mark.parametrize("_blocked_chain_model", ((6, (), 0.0),), indirect=True)
 def test_coupled_closure_resource_refusal_preserves_later_demand(
     _blocked_chain_model: _BlockedChainModel,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from phydrax.meshing import _tetra_coupled as coupled
 
     state, search, details, selected, incident, binding = _blocked_chain_model
     policy = phx.optim.ConvexSolvePolicy(
-        phx.optim.DensePrimalDualQP(max_kkt_dimension=160)
+        phx.optim.NativeHomogeneousConic(newton="factorized")
     )
+    limited = phx.optim.ConvexSolvePolicy(
+        phx.optim.NativeHomogeneousConic(
+            newton="factorized",
+            factorization=phx.linalg.SparseFactorizationPolicy("lu", max_factor_nnz=1),
+        )
+    )
+    search_model = coupled._search_model
+    counters_at_refusal: dict[str, int] = {}
+
+    def limit_later_model(*args: Any, **kwargs: Any) -> Any:
+        arguments = list(args)
+        if len(arguments[4].vertices) > 4:
+            counters_at_refusal.update(arguments[6])
+            arguments[5] = limited
+        return search_model(*arguments, **kwargs)
+
+    monkeypatch.setattr(coupled, "_search_model", limit_later_model)
     before = state.snapshot
     counters = _counters()
     attempt = coupled._search_model(
@@ -778,8 +803,10 @@ def test_coupled_closure_resource_refusal_preserves_later_demand(
             search.edges.index(binding.edge),
         )
     assert error.value.demand.variables > 12
-    assert error.value.demand.dimension > 160
+    assert error.value.demand.dimension >= error.value.demand.variables
     assert len(error.value.binding.vertices) > 4
+    assert counters_at_refusal
+    assert counters == counters_at_refusal
     assert state.snapshot.generation == before.generation
     np.testing.assert_array_equal(state.snapshot.points, before.points)
 
@@ -792,7 +819,7 @@ def test_coupled_closure_stops_at_admitted_single_neighbor(
 
     state, search, details, selected, incident, binding = _blocked_chain_model
     policy = phx.optim.ConvexSolvePolicy(
-        phx.optim.DensePrimalDualQP(max_kkt_dimension=120)
+        phx.optim.NativeHomogeneousConic(newton="factorized")
     )
     before = state.snapshot
     counters = _counters()
@@ -852,85 +879,123 @@ def test_canceled_metric_neighbor_action_does_not_create_a_direction() -> None:
 
 
 def test_coupled_certified_local_infeasibility_keeps_result_and_binding(
-    _coupled_local_model: tuple[_CoupledBinding, np.ndarray],
+    _coupled_local_model: tuple[_CoupledBinding, _CoupledRow],
 ) -> None:
     from phydrax.meshing._tetra_coupled import _solve
 
     binding, row = _coupled_local_model
-    policy = phx.optim.ConvexSolvePolicy()
-    infeasible = _solve([row, -row], [0.0, -1.0], [], policy, binding)
-    assert infeasible.primal is None
-    assert int(infeasible.result.status) == int(
-        phx.optim.ConvexProgramStatus.PRIMAL_INFEASIBLE
+    policy = phx.optim.ConvexSolvePolicy(
+        phx.optim.NativeHomogeneousConic(newton="factorized")
     )
-    assert bool(infeasible.result.certificate.dual_ray_valid)
+    opposite = _CoupledRow(row.columns, -row.values, _RowRole.NATIVE, identity=(1,))
+    infeasible = _solve([row, opposite], [0.0, -1.0], [], policy, binding)
+    assert infeasible.primal is None
+    assert infeasible.ray_audit is not None
+    assert bool(infeasible.ray_audit.valid)
+    if infeasible.certificate_result is not None:
+        assert int(infeasible.result.status) != int(phx.optim.ConvexProgramStatus.OPTIMAL)
+        assert int(infeasible.certificate_result.status) == int(
+            phx.optim.ConvexProgramStatus.OPTIMAL
+        )
+        assert infeasible.certificate_result is not infeasible.result
+    else:
+        assert int(infeasible.result.status) == int(
+            phx.optim.ConvexProgramStatus.PRIMAL_INFEASIBLE
+        )
+    assert infeasible.total_iterations == (
+        infeasible.primary_iterations + infeasible.certificate_iterations
+    )
     assert infeasible.binding == binding
 
 
 def test_coupled_resource_refusal_keeps_demand_and_binding(
-    _coupled_local_model: tuple[_CoupledBinding, np.ndarray],
-) -> None:
-    from phydrax.meshing._tetra_coupled import _solve, TetraMetricProposalError
-
-    binding, row = _coupled_local_model
-    policy = phx.optim.ConvexSolvePolicy(phx.optim.DensePrimalDualQP(max_kkt_dimension=1))
-    with pytest.raises(TetraMetricProposalError) as resource:
-        _solve([row, -row], [0.0, -1.0], [], policy, binding)
-    assert resource.value.result is None
-    assert resource.value.binding == binding
-    assert resource.value.demand.variables == 6
-    assert resource.value.demand.inequalities == 2
-    assert resource.value.demand.dimension == 10
-
-
-def test_coupled_explicit_dimension_limit_is_not_expanded(
-    _coupled_local_model: tuple[_CoupledBinding, np.ndarray],
+    _coupled_local_model: tuple[_CoupledBinding, _CoupledRow],
 ) -> None:
     from phydrax.meshing._tetra_coupled import _solve, TetraMetricProposalError
 
     binding, row = _coupled_local_model
     policy = phx.optim.ConvexSolvePolicy(
-        phx.optim.DensePrimalDualQP(max_kkt_dimension=512)
+        phx.optim.NativeHomogeneousConic(
+            newton="factorized",
+            factorization=phx.linalg.SparseFactorizationPolicy("lu", max_factor_nnz=1),
+        )
+    )
+    with pytest.raises(TetraMetricProposalError) as resource:
+        _solve(
+            [row, _CoupledRow(row.columns, -row.values, _RowRole.NATIVE, identity=(1,))],
+            [0.0, -1.0],
+            [],
+            policy,
+            binding,
+        )
+    assert resource.value.result is None
+    assert resource.value.binding == binding
+    assert resource.value.demand.variables == 6
+    assert resource.value.demand.inequalities == 2
+    assert resource.value.demand.dimension == 6
+
+
+def test_coupled_explicit_sparse_factor_limit_is_not_expanded(
+    _coupled_local_model: tuple[_CoupledBinding, _CoupledRow],
+) -> None:
+    from phydrax.meshing._tetra_coupled import _solve, TetraMetricProposalError
+
+    binding, row = _coupled_local_model
+    policy = phx.optim.ConvexSolvePolicy(
+        phx.optim.NativeHomogeneousConic(
+            newton="factorized",
+            factorization=phx.linalg.SparseFactorizationPolicy("lu", max_factor_nnz=1),
+        )
     )
     with pytest.raises(TetraMetricProposalError, match="resource policy") as refusal:
         _solve([row] * 254, [0.0] * 254, [], policy, binding)
     assert refusal.value.result is None
     assert refusal.value.binding == binding
-    assert refusal.value.demand.dimension == 514
+    assert refusal.value.demand.dimension == 6
     assert refusal.value.demand.inequalities == 254
 
 
 @pytest.mark.parametrize(
     "materialization",
     (
-        phx.linalg.MaterializationPolicy(max_entries=50),
-        phx.linalg.MaterializationPolicy(max_bytes=64),
-        phx.linalg.MaterializationPolicy(max_workspace_bytes=64),
+        phx.linalg.MaterializationPolicy(max_entries=1),
+        phx.linalg.MaterializationPolicy(max_bytes=1),
+        phx.linalg.MaterializationPolicy(max_workspace_bytes=1),
     ),
     ids=("entries", "array-bytes", "workspace-bytes"),
 )
 def test_coupled_materialization_limits_refuse_before_solve(
-    _coupled_local_model: tuple[_CoupledBinding, np.ndarray],
+    _coupled_local_model: tuple[_CoupledBinding, _CoupledRow],
     materialization: phx.linalg.MaterializationPolicy,
 ) -> None:
     from phydrax.meshing._tetra_coupled import _solve, TetraMetricProposalError
 
     binding, row = _coupled_local_model
-    policy = phx.optim.ConvexSolvePolicy(materialization=materialization)
+    policy = phx.optim.ConvexSolvePolicy(
+        phx.optim.NativeHomogeneousConic(newton="factorized"),
+        materialization=materialization,
+    )
     with pytest.raises(TetraMetricProposalError, match="resource policy") as refusal:
-        _solve([row, -row], [0.0, -1.0], [], policy, binding)
+        _solve(
+            [row, _CoupledRow(row.columns, -row.values, _RowRole.NATIVE, identity=(1,))],
+            [0.0, -1.0],
+            [],
+            policy,
+            binding,
+        )
     assert refusal.value.result is None
     assert refusal.value.binding == binding
-    assert refusal.value.demand.dimension == 10
+    assert refusal.value.demand.dimension == 6
 
 
 def test_coupled_iteration_failure_keeps_actual_result_and_binding(
-    _coupled_local_model: tuple[_CoupledBinding, np.ndarray],
+    _coupled_local_model: tuple[_CoupledBinding, _CoupledRow],
 ) -> None:
     from phydrax.meshing._tetra_coupled import _solve, TetraMetricProposalError
 
     binding, row = _coupled_local_model
     policy = phx.optim.ConvexSolvePolicy(
+        phx.optim.NativeHomogeneousConic(newton="factorized"),
         termination=phx.optim.ConvexTermination(maximum_steps=1),
         failure=phx.linalg.FailurePolicy("status"),
     )
@@ -986,13 +1051,26 @@ def test_coupled_model_requires_progress_on_its_selected_edge() -> None:
         index = search.edges.index(edge)
         assert 0 < search.short_quanta[index] < search.before[1][0]
         model = coupled._model_rows(
-            search, details, selected, incident, binding, phx.optim.ConvexSolvePolicy()
+            search,
+            details,
+            selected,
+            incident,
+            binding,
+            phx.optim.ConvexSolvePolicy(
+                phx.optim.NativeHomogeneousConic(newton="factorized")
+            ),
         )
         assert model is not None
         rows, rhs, equalities = model
         assert min(rhs) < 0.0
         solved = coupled._solve(
-            rows, rhs, equalities, phx.optim.ConvexSolvePolicy(), binding
+            rows,
+            rhs,
+            equalities,
+            phx.optim.ConvexSolvePolicy(
+                phx.optim.NativeHomogeneousConic(newton="factorized")
+            ),
+            binding,
         )
         assert solved.primal is not None
         points = np.stack([search.prepared.points[detail.row] for detail in details])
@@ -1043,10 +1121,19 @@ def test_coupled_quantization_retains_an_unchanged_endpoint(
             tuple(record[0] for record in selected),
         )
         solved = coupled._solve(
-            [np.asarray((0.0, 0.0, 0.0, -1.0, 0.0, 0.0), dtype=np.float64)],
+            [
+                _CoupledRow(
+                    (3,),
+                    np.asarray((-1.0,), dtype=np.float64),
+                    _RowRole.NATIVE,
+                    identity=(0, vertices[1]),
+                )
+            ],
             [-1.0 / 64.0],
             [],
-            phx.optim.ConvexSolvePolicy(),
+            phx.optim.ConvexSolvePolicy(
+                phx.optim.NativeHomogeneousConic(newton="factorized")
+            ),
             binding,
         )
         assert solved.primal is not None
@@ -1605,7 +1692,9 @@ def test_coupled_distance_witness_admits_compensating_facet_motion(
         selected,
         incident,
         binding,
-        phx.optim.ConvexSolvePolicy(),
+        phx.optim.ConvexSolvePolicy(
+            phx.optim.NativeHomogeneousConic(newton="factorized")
+        ),
         counters,
     )
     assert attempt.applied == counters["relocations"] == 4

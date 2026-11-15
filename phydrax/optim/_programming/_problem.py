@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -117,6 +118,29 @@ def _conic_quadratic_mv(
     if quadratic is None:
         return jnp.zeros_like(vector)
     return _conic_matrix_mv(quadratic, vector)
+
+
+def _conic_quadratic_perspective(
+    quadratic: Array | AbstractSparseLinearOperator | None,
+    x: Array,
+    tau: Array,
+    /,
+) -> tuple[Array, Array, Array, Array]:
+    # Keep a fixed common scale for AD; multiply by the ratio first so compiled
+    # reverse AD does not recreate the underflow of the unscaled perspective.
+    scale = jax.lax.stop_gradient(
+        jnp.maximum(jnp.max(jnp.abs(x), axis=-1, initial=0.0), jnp.abs(tau))
+    )
+    scale = jnp.where(jnp.isfinite(scale) & (scale != 0), scale, 1)
+    xhat = x / scale[..., None]
+    that = tau / scale
+    qhat = _conic_quadratic_mv(quadratic, xhat)
+    image = scale[..., None] * qhat
+    ratio_image = qhat / that[..., None]
+    value = jnp.sum(x * ratio_image, axis=-1)
+    x_gradient = 2 * ratio_image
+    tau_gradient = -jnp.sum((xhat / that[..., None]) * ratio_image, axis=-1)
+    return image, value, x_gradient, tau_gradient
 
 
 def _conic_operator_arrays(

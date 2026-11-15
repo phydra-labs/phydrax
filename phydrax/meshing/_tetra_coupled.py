@@ -10,22 +10,23 @@ from collections.abc import Iterator
 from dataclasses import replace
 from fractions import Fraction
 from itertools import product
-from math import isqrt
 from typing import NamedTuple, TypedDict
 
+import equinox as eqx
 import numpy as np
 
+from .._fingerprint import canonical_fingerprint
 from .._meshcore import TetMeshImplicitFacetRefusal
 from ..discretization._periodic_exact import exact_periodic_element
-from ..linalg import MaterializationPolicy
+from ..linalg import MaterializationPolicy, SolveResourcePolicy, SparseFactorizationPolicy
 from ..optim import (
     ConvexProgramResult,
     ConvexProgramStatus,
     ConvexSolvePolicy,
-    DensePrimalDualQP,
-    QuadraticProgram,
-    solve_quadratic_program,
+    NativeHomogeneousConic,
+    solve_prepared_convex_program,
 )
+from ..optim._programming._audit import audit_conic_dual_infeasibility_ray, DualRayAudit
 from . import _tetra_metric as tm
 from ._periodic import (
     _PeriodicStencilTransport,
@@ -33,6 +34,21 @@ from ._periodic import (
     _transport_periodic_stencil,
     _transport_periodic_vertex_ids,
 )
+from ._tetra_coupled_program import (
+    _CoupledRow,
+    _PreparedCoupledProgram,
+    _ProgramCache,
+    _ProgramDemand,
+    _RowRole,
+    admit_inputs,
+    certificate_demand,
+    prepare_certificate,
+    prepare_primary,
+    primary_demand,
+)
+
+
+_AUDIT_RAY = eqx.filter_jit(audit_conic_dual_infeasibility_ray)
 
 
 class _CoupledBinding(NamedTuple):
@@ -43,22 +59,31 @@ class _CoupledBinding(NamedTuple):
     source_cells: tuple[int, ...]
 
 
-class _CoupledDemand(NamedTuple):
-    variables: int
-    equalities: int
-    inequalities: int
-    dimension: int
-    input_entries: int
-    kkt_entries: int
-    workspace_bytes: int
-
-
 class _CoupledSolve(NamedTuple):
     result: ConvexProgramResult
     policy: ConvexSolvePolicy
-    demand: _CoupledDemand
+    demand: _ProgramDemand
     binding: _CoupledBinding
     primal: np.ndarray | None
+    certificate_result: ConvexProgramResult | None
+    certificate_demand: _ProgramDemand | None
+    ray_audit: DualRayAudit | None
+
+    @property
+    def primary_iterations(self) -> int:
+        return int(self.result.iterations)
+
+    @property
+    def certificate_iterations(self) -> int:
+        return (
+            0
+            if self.certificate_result is None
+            else int(self.certificate_result.iterations)
+        )
+
+    @property
+    def total_iterations(self) -> int:
+        return self.primary_iterations + self.certificate_iterations
 
 
 class TetraMetricProposalError(RuntimeError):
@@ -70,102 +95,188 @@ class TetraMetricProposalError(RuntimeError):
         *,
         result: ConvexProgramResult | None,
         policy: ConvexSolvePolicy,
-        demand: _CoupledDemand,
+        demand: _ProgramDemand,
         binding: _CoupledBinding,
+        certificate_result: ConvexProgramResult | None = None,
+        certificate_demand: _ProgramDemand | None = None,
+        ray_audit: DualRayAudit | None = None,
+        certificate_error: Exception | None = None,
+        certificate_started: bool = False,
     ) -> None:
         super().__init__(message)
         self.result = result
         self.policy = policy
         self.demand = demand
         self.binding = binding
+        self.certificate_result = certificate_result
+        self.certificate_demand = certificate_demand
+        self.ray_audit = ray_audit
+        self.certificate_error = certificate_error
+        self.certificate_started = certificate_started or certificate_result is not None
+
+    @property
+    def primary_iterations(self) -> int:
+        return 0 if self.result is None else int(self.result.iterations)
+
+    @property
+    def certificate_iterations(self) -> int | None:
+        if self.certificate_result is not None:
+            return int(self.certificate_result.iterations)
+        return None if self.certificate_started else 0
+
+    @property
+    def total_iterations(self) -> int | None:
+        proof = self.certificate_iterations
+        return None if proof is None else self.primary_iterations + proof
 
 
 def _admit(
-    n: int,
-    e: int,
-    m: int,
+    rows: list[_CoupledRow],
+    equalities: list[_CoupledRow],
     policy: ConvexSolvePolicy,
     binding: _CoupledBinding,
     *,
     result: ConvexProgramResult | None = None,
-) -> _CoupledDemand:
-    dimension = n + e + 2 * m
-    # Include all canonical dense arrays, including empty bound/equality banks.
-    entries = n * n + n + e * n + e + m * n + m + 2 * n
-    kkt = dimension * dimension
-    workspace = 8 * (kkt + 4 * dimension)
-    demand = _CoupledDemand(n, e, m, dimension, entries, kkt, workspace)
-    materialization, resources = policy.materialization, policy.resources
-    if not isinstance(policy.method, DensePrimalDualQP):
-        raise TypeError("Coupled QP requires the dense primal-dual method.")
-    if (
-        dimension > policy.method.max_kkt_dimension
-        or max(entries, kkt) > materialization.max_entries
-        or 8 * max(entries, kkt) > materialization.max_bytes
-        or workspace > materialization.max_workspace_bytes
-        or 8 * kkt > resources.factorization_bytes
-        or workspace > resources.workspace_bytes
-    ):
+) -> _ProgramDemand:
+    demand = primary_demand(rows, equalities, 3 * len(binding.vertices))
+    try:
+        admit_inputs(demand, policy)
+    except ValueError as error:
         raise TetraMetricProposalError(
             "Coupled QP exceeds its resource policy.",
             result=result,
             policy=policy,
             demand=demand,
             binding=binding,
-        )
+        ) from error
     return demand
 
 
-def _solve(
-    rows: list[np.ndarray],
-    rhs: list[float],
-    equalities: list[np.ndarray],
+def _construct_certificate(
+    primary: _PreparedCoupledProgram,
+    result: ConvexProgramResult,
     policy: ConvexSolvePolicy,
     binding: _CoupledBinding,
+    cache: _ProgramCache,
 ) -> _CoupledSolve:
-    n, e, m = 3 * len(binding.vertices), len(equalities), len(rows)
-    demand = _admit(n, e, m, policy, binding)
-    program = QuadraticProgram(
-        np.eye(n, dtype=np.float64),
-        np.zeros(n, dtype=np.float64),
-        equality_matrix=np.asarray(equalities, dtype=np.float64).reshape((e, n)),
-        equality_rhs=np.zeros(e, dtype=np.float64),
-        inequality_matrix=np.asarray(rows, dtype=np.float64).reshape((m, n)),
-        inequality_rhs=np.asarray(rhs, dtype=np.float64),
-        convexity_evidence="Identity Hessian is positive definite.",
-    )
-    if program.linear.dtype != np.dtype(np.float64):
+    demand = certificate_demand(primary)
+    phase = "preparation"
+    try:
+        certificate = prepare_certificate(primary, policy, cache)
+        demand = certificate.demand
+        phase = "execution"
+        proof = solve_prepared_convex_program(certificate.prepared).result
+    except (ValueError, RuntimeError) as error:
+        # The primary result survives even when the independent proof cannot
+        # be admitted or cannot return an execution receipt.
         raise TetraMetricProposalError(
-            "Coupled QP requires binary64 solver inputs.",
+            f"Coupled certificate {phase} failed: {error}",
+            result=result,
+            policy=policy,
+            demand=primary.demand,
+            binding=binding,
+            certificate_demand=demand,
+            certificate_error=error,
+            certificate_started=phase == "execution",
+        ) from error
+    audit = _AUDIT_RAY(
+        primary.program,
+        proof.primal,
+        result.lower_bound_dual,
+        result.upper_bound_dual,
+        tolerance=policy.termination.primal_infeasible,
+    )
+    if not bool(audit.valid):
+        raise TetraMetricProposalError(
+            "Coupled QP and bounded certificate program remain uncertified.",
+            result=result,
+            policy=policy,
+            demand=primary.demand,
+            binding=binding,
+            certificate_result=proof,
+            certificate_demand=demand,
+            ray_audit=audit,
+        )
+    return _CoupledSolve(
+        result, policy, primary.demand, binding, None, proof, demand, audit
+    )
+
+
+def _solve(
+    rows: list[_CoupledRow],
+    rhs: list[float],
+    equalities: list[_CoupledRow],
+    policy: ConvexSolvePolicy,
+    binding: _CoupledBinding,
+    *,
+    cache: _ProgramCache | None = None,
+) -> _CoupledSolve:
+    n = 3 * len(binding.vertices)
+    demand = _admit(rows, equalities, policy, binding)
+    programs = _ProgramCache() if cache is None else cache
+    identity = canonical_fingerprint(
+        {
+            "kind": "coupled-source-coordinate-namespace",
+            "source_identity": binding.source_identity,
+            "generation": binding.generation,
+            "vertices": binding.vertices,
+        }
+    )
+    try:
+        primary = prepare_primary(rows, rhs, equalities, n, identity, policy, programs)
+    except ValueError as error:
+        raise TetraMetricProposalError(
+            f"Coupled QP resource policy or preparation refused: {error}",
             result=None,
             policy=policy,
             demand=demand,
             binding=binding,
+        ) from error
+    # The native owner is already compiled; keep fresh binding provenance out
+    # of a second JIT cache key.
+    result = solve_prepared_convex_program(primary.prepared).result
+    if int(result.status) == int(ConvexProgramStatus.OPTIMAL) and bool(result.successful):
+        primal = np.asarray(result.primal, dtype=np.float64)
+        if primal.shape != (n,) or not np.all(np.isfinite(primal)):
+            raise TetraMetricProposalError(
+                "Coupled QP returned an invalid primal.",
+                result=result,
+                policy=policy,
+                demand=primary.demand,
+                binding=binding,
+            )
+        return _CoupledSolve(
+            result, policy, primary.demand, binding, primal, None, None, None
         )
-    result = solve_quadratic_program(program, policy=policy)
-    status = int(result.status)
-    if status == int(ConvexProgramStatus.PRIMAL_INFEASIBLE) and bool(
-        result.certificate.dual_ray_valid
-    ):
-        return _CoupledSolve(result, policy, demand, binding, None)
-    if status != int(ConvexProgramStatus.OPTIMAL) or not bool(result.successful):
+    if bool(result.certificate.dual_ray_valid):
+        audit = _AUDIT_RAY(
+            primary.program,
+            result.cone_dual,
+            result.lower_bound_dual,
+            result.upper_bound_dual,
+            tolerance=policy.termination.primal_infeasible,
+        )
+        if not bool(audit.valid):
+            raise TetraMetricProposalError(
+                "Coupled QP primary ray failed the canonical audit.",
+                result=result,
+                policy=policy,
+                demand=primary.demand,
+                binding=binding,
+                ray_audit=audit,
+            )
+        return _CoupledSolve(
+            result, policy, primary.demand, binding, None, None, None, audit
+        )
+    if bool(result.certificate.primal_ray_valid):
         raise TetraMetricProposalError(
-            "Coupled QP did not produce an audited optimum.",
+            "Coupled positive-definite QP returned a recession certificate.",
             result=result,
             policy=policy,
-            demand=demand,
+            demand=primary.demand,
             binding=binding,
         )
-    primal = np.asarray(result.primal, dtype=np.float64)
-    if primal.shape != (n,) or not np.all(np.isfinite(primal)):
-        raise TetraMetricProposalError(
-            "Coupled QP returned an invalid primal.",
-            result=result,
-            policy=policy,
-            demand=demand,
-            binding=binding,
-        )
-    return _CoupledSolve(result, policy, demand, binding, primal)
+    return _construct_certificate(primary, result, policy, binding, programs)
 
 
 def _rung_limit(quanta: int, *, short: bool) -> float:
@@ -236,6 +347,7 @@ class _Search(NamedTuple):
     source_transport: _PeriodicStencilTransport | None
     current_transport: _PeriodicStencilTransport | None
     native_by_target: dict[int, int]
+    programs: _ProgramCache
 
 
 def _active_plane(
@@ -302,13 +414,15 @@ def _active_rows(
     binding: _CoupledBinding,
     plane: tuple[int, np.ndarray, tuple[int, ...]],
     refusal: TetMeshImplicitFacetRefusal,
-) -> Iterator[tuple[tuple[int, tuple[int, ...]], np.ndarray]]:
+) -> Iterator[tuple[tuple[int, tuple[int, ...]], _CoupledRow]]:
     """Use a bound rejecting-piece sample only to guide the next proposal."""
     facet, normal, affected = plane
     n = 3 * len(binding.vertices)
     barycentric = refusal.distance_barycentric
     if refusal.distance_refusals > 0 and barycentric is not None:
         face = tuple(refusal.vertex_ids)
+        # Preserve the historical witness norm reduction order. This temporary
+        # host vector is discarded; neither sparse program retains a dense row.
         vector = np.zeros(n, dtype=np.float64)
         for vertex in affected:
             position = face.index(vertex)
@@ -318,13 +432,34 @@ def _active_rows(
         if norm > 0.0:
             # Separate vertex halfspaces forbid compensating facet motion.
             # Native admission, not this sampled row, certifies the candidate.
-            yield (facet, affected), vector / norm
+            columns = tuple(
+                sorted(
+                    3 * binding.vertices.index(vertex) + axis
+                    for vertex in affected
+                    for axis in range(3)
+                )
+            )
+            yield (
+                (facet, affected),
+                _CoupledRow(
+                    columns,
+                    vector[np.asarray(columns, dtype=np.int64)] / norm,
+                    _RowRole.NATIVE,
+                    identity=(facet, *affected),
+                ),
+            )
         return
     for vertex in affected:
-        vector = np.zeros(n, dtype=np.float64)
         k = binding.vertices.index(vertex)
-        vector[3 * k : 3 * k + 3] = -normal
-        yield (facet, (vertex,)), vector
+        yield (
+            (facet, (vertex,)),
+            _CoupledRow(
+                tuple(range(3 * k, 3 * k + 3)),
+                -normal,
+                _RowRole.NATIVE,
+                identity=(facet, vertex),
+            ),
+        )
 
 
 def _prepare_search(state: tm._NativeState) -> _Search:
@@ -356,6 +491,7 @@ def _prepare_search(state: tm._NativeState) -> _Search:
         {target: native for native, target in state.vertex_target_ids.items()}
         if periodic
         else {},
+        _ProgramCache(),
     )
 
 
@@ -514,35 +650,45 @@ def _source_affine_rows(
 
 
 def _source_rows(
-    n: int,
     search: _Search,
     details: tuple[_VertexDetail, ...],
     selected: tuple[tm._SourceTetRecord, ...],
     normals: tuple[tuple[np.ndarray, ...], ...],
-) -> tuple[list[np.ndarray], list[float], list[np.ndarray]]:
-    rows: list[np.ndarray] = []
+) -> tuple[list[_CoupledRow], list[float], list[_CoupledRow]]:
+    rows: list[_CoupledRow] = []
     rhs: list[float] = []
-    equality: list[np.ndarray] = []
+    equality: list[_CoupledRow] = []
     for k, (detail, record) in enumerate(zip(details, selected, strict=True)):
         gradients, weights = _source_affine_rows(search, detail, record)
-        for grad, weight in zip(gradients, weights, strict=True):
-            vector = np.zeros(n, dtype=np.float64)
-            vector[3 * k : 3 * k + 3] = -grad
-            rows.append(vector)
+        columns = tuple(range(3 * k, 3 * k + 3))
+        for coordinate, (grad, weight) in enumerate(zip(gradients, weights, strict=True)):
+            rows.append(
+                _CoupledRow(
+                    columns,
+                    -grad,
+                    _RowRole.SOURCE,
+                    identity=(detail.vertex, coordinate),
+                )
+            )
             rhs.append(float(weight))
-        for normal in normals[k]:
-            vector = np.zeros(n, dtype=np.float64)
-            vector[3 * k : 3 * k + 3] = normal
-            equality.append(vector)
+        for coordinate, normal in enumerate(normals[k]):
+            equality.append(
+                _CoupledRow(
+                    columns,
+                    normal,
+                    _RowRole.CARRIER,
+                    identity=(detail.vertex, coordinate),
+                )
+            )
     return rows, rhs, equality
 
 
-def _orbit_rows(search: _Search, vertices: tuple[int, ...], n: int) -> list[np.ndarray]:
+def _orbit_rows(search: _Search, vertices: tuple[int, ...]) -> list[_CoupledRow]:
     state = search.state
     topology = state.target_mesh.periodic_topology
     if topology is None:
         return []
-    rows = []
+    rows: list[_CoupledRow] = []
     for k, vertex in enumerate(vertices):
         first = vertices.index(search.orbits.get(vertex, (vertex,))[0])
         if first == k:
@@ -553,12 +699,20 @@ def _orbit_rows(search: _Search, vertices: tuple[int, ...], n: int) -> list[np.n
         )
         transform = exact_periodic_element(topology.cell, shifts)
         for axis in range(3):
-            vector = np.zeros(n, dtype=np.float64)
-            vector[3 * k + axis] = 1
-            vector[3 * first : 3 * first + 3] = [
-                -float(value) for value in transform[axis][:3]
-            ]
-            rows.append(vector)
+            entries = [(3 * k + axis, 1.0)]
+            entries.extend(
+                (3 * first + component, -float(value))
+                for component, value in enumerate(transform[axis][:3])
+            )
+            entries.sort(key=lambda item: item[0])
+            rows.append(
+                _CoupledRow(
+                    tuple(column for column, _ in entries),
+                    np.asarray([value for _, value in entries], dtype=np.float64),
+                    _RowRole.ORBIT,
+                    identity=(vertex, vertices[first], axis),
+                )
+            )
     return rows
 
 
@@ -589,7 +743,7 @@ def _edge_rows(
     vertices: tuple[int, ...],
     incident: list[int],
     selected_edge: tuple[int, int],
-    rows: list[np.ndarray],
+    rows: list[_CoupledRow],
     rhs: list[float],
 ) -> None:
     prepared = search.prepared
@@ -602,13 +756,31 @@ def _edge_rows(
         delta = points[a] - points[b]
         matrix = 0.5 * (metrics[a] + metrics[b])
         gradient = matrix @ delta / float(np.sqrt(delta @ matrix @ delta))
-        vector = np.zeros(3 * len(vertices), dtype=np.float64)
-        for k, vertex in enumerate(vertices):
-            if vertex == first:
-                vector[3 * k : 3 * k + 3] += gradient
-            if vertex == second:
-                vector[3 * k : 3 * k + 3] -= gradient
-        rows.extend((-vector, vector))
+        moved = tuple(
+            (k, vertex)
+            for k, vertex in enumerate(vertices)
+            if vertex == first or vertex == second
+        )
+        columns = tuple(3 * k + axis for k, _ in moved for axis in range(3))
+        values = np.concatenate(
+            [0.0 + gradient if vertex == first else 0.0 - gradient for _, vertex in moved]
+        )
+        rows.extend(
+            (
+                _CoupledRow(
+                    columns,
+                    -values,
+                    _RowRole.METRIC_LOWER,
+                    identity=(first, second),
+                ),
+                _CoupledRow(
+                    columns,
+                    values,
+                    _RowRole.METRIC_UPPER,
+                    identity=(first, second),
+                ),
+            )
+        )
         rhs.extend(
             (
                 float(prepared.lengths[index] - short_limit),
@@ -624,7 +796,7 @@ def _model_rows(
     incident: list[int],
     binding: _CoupledBinding,
     policy: ConvexSolvePolicy,
-) -> tuple[list[np.ndarray], list[float], list[np.ndarray]] | None:
+) -> tuple[list[_CoupledRow], list[float], list[_CoupledRow]] | None:
     normals = tuple(
         _carrier_normals(search.state, detail)
         if search.orbits.get(detail.vertex, (detail.vertex,))[0] == detail.vertex
@@ -635,26 +807,10 @@ def _model_rows(
         return None
     present = tuple(group for group in normals if group is not None)
     vertices = binding.vertices
-    orbit_count = sum(
-        3
-        for k, vertex in enumerate(vertices)
-        if search.orbits and vertices.index(search.orbits.get(vertex, (vertex,))[0]) != k
-    )
-    n = 3 * len(vertices)
-    _admit(
-        n,
-        sum(len(group) for group in present) + orbit_count,
-        sum(
-            len(search.carriers[detail.vertex, record[0]])
-            for detail, record in zip(details, selected, strict=True)
-        )
-        + 2 * len(incident),
-        policy,
-        binding,
-    )
-    rows, rhs, equality = _source_rows(n, search, details, selected, present)
-    equality.extend(_orbit_rows(search, vertices, n))
+    rows, rhs, equality = _source_rows(search, details, selected, present)
+    equality.extend(_orbit_rows(search, vertices))
     _edge_rows(search, vertices, incident, binding.edge, rows, rhs)
+    _admit(rows, equality, policy, binding)
     return rows, rhs, equality
 
 
@@ -913,21 +1069,28 @@ def _dual_neighbor_scores(
     search: _Search,
     incident: list[int],
     binding: _CoupledBinding,
-    base_rows: list[np.ndarray],
+    base_rows: list[_CoupledRow],
     solved: _CoupledSolve,
 ) -> tuple[dict[int, list[tuple[float, int]]], dict[int, np.ndarray], float]:
     # Source barycentric rows precede lower/upper edge pairs. Native-refusal
     # cuts follow base_rows and must never masquerade as fixed-neighbor evidence.
     offset = len(base_rows) - 2 * len(incident)
-    ray = np.asarray(solved.result.certificate.inequality_dual_ray, dtype=np.float64)
-    if ray.shape != (solved.demand.inequalities,) or not np.all(np.isfinite(ray)):
+    if solved.ray_audit is None:
+        raise RuntimeError("Coupled neighbor selection requires an audited original ray.")
+    ray = np.asarray(solved.ray_audit.inequality_ray, dtype=np.float64)
+    expected = solved.demand.equalities + solved.demand.inequalities
+    if ray.shape != (expected,) or not np.all(np.isfinite(ray)):
         raise TetraMetricProposalError(
             "Coupled QP returned an invalid dual ray.",
             result=solved.result,
             policy=solved.policy,
             demand=solved.demand,
             binding=binding,
+            certificate_result=solved.certificate_result,
+            certificate_demand=solved.certificate_demand,
+            ray_audit=solved.ray_audit,
         )
+    ray = ray[solved.demand.equalities :]
     metric_ray = ray[offset : len(base_rows)]
     scale = float(np.max(np.abs(metric_ray), initial=0.0))
     scores: dict[int, list[tuple[float, int]]] = {
@@ -950,9 +1113,17 @@ def _dual_neighbor_scores(
         start = 3 * positions[seed]
         # The omitted endpoint has the opposite edge coefficient. Moving
         # against its dual-weighted coefficient releases the recorded blocker.
-        direction = (upper / scale - lower / scale) * base_rows[offset + 2 * k + 1][
-            start : start + 3
-        ]
+        lower_row, upper_row = base_rows[offset + 2 * k : offset + 2 * k + 2]
+        if (
+            lower_row.role is not _RowRole.METRIC_LOWER
+            or upper_row.role is not _RowRole.METRIC_UPPER
+            or lower_row.identity != (first, second)
+            or upper_row.identity != (first, second)
+        ):
+            raise RuntimeError(
+                "Coupled metric row identity changed before neighbor selection."
+            )
+        direction = (upper / scale - lower / scale) * upper_row.block(start)
         if neighbor in directions:
             directions[neighbor] += direction
         else:
@@ -977,7 +1148,7 @@ def _blocking_neighbors(
     search: _Search,
     incident: list[int],
     binding: _CoupledBinding,
-    base_rows: list[np.ndarray],
+    base_rows: list[_CoupledRow],
     solved: _CoupledSolve,
 ) -> tuple[_Neighbor, ...]:
     if search.state.target_mesh.periodic_topology is not None:
@@ -987,7 +1158,9 @@ def _blocking_neighbors(
     )
     if metric_scale == 0.0:
         return ()
-    residual = float(solved.result.certificate.dual_ray_residual_norm)
+    if solved.ray_audit is None:
+        raise RuntimeError("Coupled neighbor selection lost its original ray audit.")
+    residual = float(solved.ray_audit.residual_norm)
     chosen: dict[int, _Neighbor] = {}
     target_ids = search.state.vertex_target_ids
     for seed in binding.vertices:
@@ -1022,8 +1195,7 @@ def _search_model(
     if model is None:
         return _ModelAttempt(0, ())
     base_rows, rhs, equality = model
-    active: dict[tuple[int, tuple[int, ...]], np.ndarray] = {}
-    n = 3 * len(binding.vertices)
+    active: dict[tuple[int, tuple[int, ...]], _CoupledRow] = {}
     while True:
         solved = _solve(
             base_rows + list(active.values()),
@@ -1031,6 +1203,7 @@ def _search_model(
             equality,
             policy,
             binding,
+            cache=search.programs,
         )
         if solved.primal is None:
             return _ModelAttempt(
@@ -1064,9 +1237,8 @@ def _search_model(
         for key, vector in _active_rows(binding, plane, refusal):
             if key not in active:
                 _admit(
-                    n,
-                    len(equality),
-                    len(base_rows) + len(active) + 1,
+                    base_rows + list(active.values()) + [vector],
+                    equality,
                     policy,
                     binding,
                     result=solved.result,
@@ -1263,9 +1435,26 @@ def _coupled_relocation_phase(state: tm._NativeState, counters: dict[str, int], 
     if not search.before[0] and not search.before[1]:
         return 0
     materialization = MaterializationPolicy()
+    resources = SolveResourcePolicy()
+    default_factorization = NativeHomogeneousConic().factorization
+    factorization = SparseFactorizationPolicy(
+        "lu",
+        ordering=default_factorization.ordering,
+        max_factor_nnz=min(
+            default_factorization.max_factor_nnz, materialization.max_entries
+        ),
+        max_factor_bytes=min(
+            default_factorization.max_factor_bytes,
+            resources.factorization_bytes,
+            resources.workspace_bytes,
+            materialization.max_workspace_bytes,
+        ),
+        max_symbolic_work=default_factorization.max_symbolic_work,
+    )
     policy = ConvexSolvePolicy(
-        DensePrimalDualQP(max_kkt_dimension=isqrt(materialization.max_entries)),
+        NativeHomogeneousConic(newton="factorized", factorization=factorization),
         materialization=materialization,
+        resources=resources,
     )
     pending: list[
         tuple[

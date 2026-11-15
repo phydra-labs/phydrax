@@ -12,6 +12,7 @@ from jax import Array
 
 import phydrax.ein as ein
 
+from ._problem import _conic_matrix_transpose_mv, ConicProgram
 from ._quadratic import _max_abs, _min_value, QuadraticProgram
 
 
@@ -202,6 +203,54 @@ def audit_dual_infeasibility_ray(
     return DualRayAudit(
         equality,
         inequality,
+        lower,
+        upper,
+        residual,
+        objective,
+        valid,
+    )
+
+
+def audit_conic_dual_infeasibility_ray(
+    program: ConicProgram,
+    candidate: Array,
+    lower_candidate: Array,
+    upper_candidate: Array,
+    /,
+    *,
+    tolerance: float,
+) -> DualRayAudit:
+    """Audit a conic dual ray in the original constraint-row order."""
+    scale = jnp.maximum(
+        1.0,
+        jnp.maximum(
+            _max_abs(candidate),
+            jnp.maximum(_max_abs(lower_candidate), _max_abs(upper_candidate)),
+        ),
+    )
+    ray = candidate / scale[..., None]
+    lower = lower_candidate / scale[..., None]
+    upper = upper_candidate / scale[..., None]
+    stationarity = (
+        _conic_matrix_transpose_mv(program.constraint_matrix, ray) - lower + upper
+    )
+    lower_term = jnp.where(
+        jnp.isfinite(program.lower_bounds), program.lower_bounds * lower, 0.0
+    )
+    upper_term = jnp.where(
+        jnp.isfinite(program.upper_bounds), program.upper_bounds * upper, 0.0
+    )
+    objective = (
+        jnp.sum(program.constraint_rhs * ray, axis=-1)
+        - jnp.sum(lower_term, axis=-1)
+        + jnp.sum(upper_term, axis=-1)
+    )
+    residual = jnp.maximum(_max_abs(stationarity), program.cone.dual_residual(ray))
+    threshold = jnp.asarray(tolerance, dtype=program.linear.dtype)
+    valid = (residual <= threshold) & (objective < -threshold)
+    return DualRayAudit(
+        jnp.empty(program.batch_shape + (0,), dtype=program.linear.dtype),
+        ray,
         lower,
         upper,
         residual,

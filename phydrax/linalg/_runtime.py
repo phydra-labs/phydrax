@@ -41,6 +41,7 @@ from ._distributed_sparse import (
 )
 from ._gcrodr import initialize_recycling, refresh_recycling, solve_recycled
 from ._initial_guess import _select_proposal, AbstractInitialGuessProvider
+from ._norm import scaled_norm
 from ._operators import AbstractLinearOperator, adjoint, transpose
 from ._plans import (
     _derivative_restart,
@@ -943,6 +944,8 @@ def _solve_prepared(
         jnp.all(jnp.isfinite(canonical_value), axis=-2)
         & jnp.isfinite(residual_norm)
         & jnp.isfinite(convergence_measure)
+        & jnp.isfinite(rhs_norm)
+        & jnp.isfinite(convergence_threshold)
     )
     status, rhs_finite, value_finite = _collective_result_evidence(
         prepared, status, rhs_finite, value_finite
@@ -1742,6 +1745,8 @@ def _assess_linear_system_result(
         & jnp.all(jnp.isfinite(canonical_value), axis=-2)
         & jnp.all(jnp.isfinite(residual), axis=-2)
         & jnp.isfinite(residual_norm)
+        & jnp.isfinite(rhs_norm)
+        & jnp.isfinite(threshold)
         & _operator_arrays_finite(operator)
     )
     finite_out = _restore_rhs_axes(finite, layout) & jnp.asarray(
@@ -1976,8 +1981,11 @@ def _solve_prepared_transformed(
         backend.status,
     )
     rhs_finite = jnp.all(jnp.isfinite(canonical_rhs), axis=-2)
-    value_finite = jnp.all(jnp.isfinite(canonical_value), axis=-2) & jnp.isfinite(
-        residual_norm
+    value_finite = (
+        jnp.all(jnp.isfinite(canonical_value), axis=-2)
+        & jnp.isfinite(residual_norm)
+        & jnp.isfinite(rhs_norm)
+        & jnp.isfinite(threshold)
     )
     status, rhs_finite, value_finite = _collective_result_evidence(
         prepared, status, rhs_finite, value_finite
@@ -2422,9 +2430,12 @@ def _coordinate_norm(space: AbstractVectorSpace, coordinates: Array, /) -> Array
     flattened, output_shape = _flatten_coordinate_columns(space, coordinates)
 
     def norm(column: Array) -> Array:
-        vector = space.unflatten(column)
-        squared = jnp.real(space.inner(vector, vector))
-        return jnp.sqrt(jnp.maximum(squared, jnp.zeros((), dtype=squared.dtype)))
+        return scaled_norm(
+            column,
+            lambda left, right: space.inner(
+                space.unflatten(left), space.unflatten(right)
+            ),
+        )
 
     return jax.vmap(norm)(flattened).reshape(output_shape)
 
@@ -3419,11 +3430,14 @@ def _run_callable_pcg(
         absolute_,
     )
     residual_norm = auxiliary[1]
-    threshold = absolute_ + relative_ * jnp.linalg.norm(rhs)
+    rhs_norm = scaled_norm(rhs)
+    threshold = absolute_ + relative_ * rhs_norm
     finite = (
         jnp.all(jnp.isfinite(rhs))
         & jnp.all(jnp.isfinite(value))
         & jnp.isfinite(residual_norm)
+        & jnp.isfinite(rhs_norm)
+        & jnp.isfinite(threshold)
     )
     return _CallableLinearSolve(
         value,
@@ -3507,7 +3521,7 @@ def _run_callable_gmres(
     iterations = auxiliary[0]
     residual_norm = auxiliary[1]
     breakdown = auxiliary[4]
-    rhs_norm = jnp.linalg.norm(rhs)
+    rhs_norm = scaled_norm(rhs)
     threshold = (
         jnp.asarray(absolute, dtype=rhs.real.dtype)
         + jnp.asarray(
@@ -3520,6 +3534,8 @@ def _run_callable_gmres(
         jnp.all(jnp.isfinite(rhs))
         & jnp.all(jnp.isfinite(value))
         & jnp.isfinite(residual_norm)
+        & jnp.isfinite(rhs_norm)
+        & jnp.isfinite(threshold)
     )
     valid = finite & (residual_norm <= threshold)
     return _CallableLinearSolve(

@@ -216,6 +216,104 @@ def test_callable_gmres_iteration_exhaustion_is_not_happy_breakdown() -> None:
     assert float(result.residual_norm) > 1e-12 * np.linalg.norm(rhs)
 
 
+@pytest.mark.strict_jax
+@pytest.mark.parametrize("scale", [1e154, 1e-200], ids=["overflow", "underflow"])
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_callable_gmres_extreme_rhs_is_not_zero_step_success(
+    scale: float, compiled: bool
+) -> None:
+    matrix = jnp.diag(jnp.asarray([1.0, 2.0, 4.0], dtype=jnp.float64))
+    rhs = jnp.ones(3, dtype=jnp.float64) * scale
+
+    def solve(right: jax.Array) -> tuple[jax.Array, ...]:
+        result = _run_callable_gmres(
+            lambda vector: matrix @ vector,
+            right,
+            max_steps=1,
+            restart=1,
+            stagnation_iterations=2,
+            relative=1e-12,
+            absolute=0.0,
+        )
+        return result.value, result.residual_norm, result.iterations, result.valid
+
+    selected = jax.jit(solve) if compiled else solve
+    value, residual_norm, iterations, valid = selected(rhs)
+    # A single GMRES step cannot solve this three-eigenvalue system.
+    residual = np.ones(3) - np.asarray(matrix) @ (np.asarray(value) / scale)
+    assert np.linalg.norm(residual) > 1e-12 * np.sqrt(3.0)
+    assert int(iterations) == 1
+    assert not bool(valid)
+    assert np.isfinite(residual_norm)
+    assert float(residual_norm / scale) > 1e-12 * np.sqrt(3.0)
+
+
+@pytest.mark.strict_jax
+def test_public_gmres_extreme_rhs_uses_weighted_residual_certificate() -> None:
+    weights = np.array([2.0, 5.0, 11.0])
+    space = la.ArraySpace(
+        (3,),
+        dtype=jnp.complex128,
+        pairing=la.DiagonalPairing(jnp.asarray(weights, dtype=jnp.complex128)),
+    )
+    matrix = np.diag([1.0, 2.0, 4.0]).astype(np.complex128)
+    operator = la.DenseLinearOperator(jnp.asarray(matrix), source=space, target=space)
+    prepared = la.prepare(
+        la.LinearSystem(operator),
+        la.LinearSolvePolicy(
+            la.GMRES(restart=1),
+            tolerance=la.TolerancePolicy(relative=1e-12, absolute=0.0, max_steps=1),
+        ),
+    )
+    scales = np.array([1e154, 1e-200])
+    direction = np.array([1.0 + 0.5j, 1.0 - 0.25j, -0.5 + 1.0j])
+    rhs = direction[:, None] * scales
+    initial = np.array([0.1j, 0.1, -0.1j])[:, None] * scales
+    result = la.solve_many(prepared, jnp.asarray(rhs), initial_guess=jnp.asarray(initial))
+
+    # Work in normalized coordinates so the host oracle neither squares huge
+    # values nor underflows the tiny column. The residual is deliberately not
+    # converged after one step, making its certificate independently testable.
+    normalized_residual = direction[:, None] - matrix @ (
+        np.asarray(result.value) / scales
+    )
+    expected_residual = np.sqrt(
+        np.sum(weights[:, None] * np.abs(normalized_residual) ** 2, axis=0)
+    )
+    expected_rhs = np.sqrt(np.sum(weights * np.abs(direction) ** 2))
+    assert np.all(np.asarray(result.status) != int(la.LinearSolveStatus.SUCCESS))
+    np.testing.assert_array_equal(np.asarray(result.diagnostics.iterations), [1, 1])
+    assert np.all(expected_residual > 1e-12 * expected_rhs)
+    assert np.all(np.isfinite(result.diagnostics.residual_norm))
+    assert np.all(np.isfinite(result.diagnostics.relative_residual))
+    np.testing.assert_allclose(
+        np.asarray(result.diagnostics.residual_norm) / scales,
+        expected_residual,
+        rtol=1e-12,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        result.diagnostics.relative_residual,
+        expected_residual / expected_rhs,
+        rtol=1e-12,
+        atol=0.0,
+    )
+
+
+def test_public_gmres_refuses_nonfinite_rhs() -> None:
+    operator = la.DenseLinearOperator(jnp.eye(2, dtype=jnp.float64))
+    prepared = la.prepare(
+        la.LinearSystem(operator),
+        la.LinearSolvePolicy(
+            la.GMRES(),
+            tolerance=la.TolerancePolicy(relative=1e-12, absolute=0.0, max_steps=1),
+        ),
+    )
+    result = la.solve_many(prepared, jnp.asarray([[jnp.inf], [1.0]]))
+    assert int(result.status[0]) != int(la.LinearSolveStatus.SUCCESS)
+    assert not bool(result.diagnostics.finite[0])
+
+
 def test_fixed_trip_happy_breakdown_has_finite_jvp_and_vjp() -> None:
     rhs = jnp.ones(4, dtype=jnp.float64)
 

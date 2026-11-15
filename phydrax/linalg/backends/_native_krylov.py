@@ -26,6 +26,7 @@ from ..._iteration import (
 )
 from ..._strict import StrictModule
 from .._certificates import KernelCertificate
+from .._norm import scaled_norm
 from .._operators import AbstractLinearOperator
 from .._plans import _certified_rank, LinearSolvePlan
 from .._policies import (
@@ -1069,13 +1070,14 @@ def _pcg_batched_raw(
     """Run independent PCG lanes while gating confirmation as one batch."""
     batched_action = jax.vmap(action, in_axes=1, out_axes=1)
     batched_inner = jax.vmap(inner, in_axes=(1, 1), out_axes=0)
+    batched_norm = jax.vmap(lambda column: scaled_norm(column, inner), in_axes=1)
     batched_precondition = jax.vmap(precondition, in_axes=(1, None), out_axes=1)
     residual = rhs - batched_action(initial)
     transformed = batched_precondition(residual, jnp.asarray(0, dtype=jnp.int32))
     rho = jnp.real(batched_inner(residual, transformed))
-    rhs_norm = _norm(rhs, batched_inner)
+    rhs_norm = batched_norm(rhs)
     threshold = absolute + relative * rhs_norm
-    residual_norm = _norm(residual, batched_inner)
+    residual_norm = batched_norm(residual)
     lane_count = rhs.shape[1]
     state: _PCGBatchedCarry = (
         initial,
@@ -1105,7 +1107,7 @@ def _pcg_batched_raw(
                 ~jnp.isfinite(denominator)
                 | (
                     jnp.abs(denominator)
-                    <= epsilon * _norm(p, batched_inner) * _norm(image, batched_inner)
+                    <= epsilon * batched_norm(p) * batched_norm(image)
                 )
                 | (rho_ <= 0.0)
             )
@@ -1114,13 +1116,13 @@ def _pcg_batched_raw(
             alpha = jnp.where(invalid, 0.0, rho_ / safe_denominator)
             candidate_x = x + alpha.astype(p.dtype)[None, :] * p
             recursive_r = r - alpha.astype(image.dtype)[None, :] * image
-            recursive_norm = _norm(recursive_r, batched_inner)
+            recursive_norm = batched_norm(recursive_r)
             nominated = executing & (recursive_norm <= threshold)
             any_nominated = jnp.any(nominated)
 
             def confirm(_: None) -> tuple[Array, Array]:
                 true_residual = rhs - batched_action(candidate_x)
-                return true_residual, _norm(true_residual, batched_inner)
+                return true_residual, batched_norm(true_residual)
 
             confirmed_r, confirmed_norm = jax.lax.cond(
                 any_nominated,
@@ -1200,7 +1202,7 @@ def _pcg_batched_raw(
         )
     x, _, _, _, _, iterations, _, breakdown, action_count = final
     true_residual = rhs - batched_action(x)
-    residual_norm = _norm(true_residual, batched_inner)
+    residual_norm = batched_norm(true_residual)
     action_count = action_count + jnp.asarray(1, dtype=jnp.int32)
     action_counts = jnp.full((lane_count,), action_count, dtype=jnp.int32)
     auxiliary = (
@@ -1248,9 +1250,9 @@ def _pcg_raw(
     transformed = precondition(residual, jnp.asarray(0, dtype=jnp.int32))
     direction = transformed
     rho = jnp.real(inner(residual, transformed))
-    rhs_norm = _norm(rhs, inner)
+    rhs_norm = scaled_norm(rhs, inner)
     threshold = absolute + relative * rhs_norm
-    residual_norm = _norm(residual, inner)
+    residual_norm = scaled_norm(residual, inner)
     state: _PCGCarry = (
         initial,
         residual,
@@ -1287,7 +1289,7 @@ def _pcg_raw(
                 ~jnp.isfinite(denominator)
                 | (
                     jnp.abs(denominator)
-                    <= epsilon * _norm(p_, inner) * _norm(image, inner)
+                    <= epsilon * scaled_norm(p_, inner) * scaled_norm(image, inner)
                 )
                 | (rho_i <= 0.0)
             )
@@ -1296,7 +1298,7 @@ def _pcg_raw(
             alpha = jnp.where(invalid, 0.0, rho_i / safe_denominator)
             candidate_x = x_ + alpha.astype(p_.dtype) * p_
             recursive_r = r_ - alpha.astype(image.dtype) * image
-            recursive_norm = _norm(recursive_r, inner)
+            recursive_norm = scaled_norm(recursive_r, inner)
             nominated = recursive_norm <= threshold
             candidate_r, norm = jax.lax.cond(
                 nominated,
@@ -1379,7 +1381,7 @@ def _pcg_raw(
             driver,
         )
     x, residual, _, _, _, iterations, _, breakdown, confirmations, iteration_state = final
-    residual_norm = _norm(rhs - action(x), inner)
+    residual_norm = scaled_norm(rhs - action(x), inner)
     auxiliary = (
         iterations,
         residual_norm,
@@ -1395,7 +1397,7 @@ def _confirmed_residual(
     action: _Action, inner: _Inner, rhs: Array, value: Array, /
 ) -> tuple[Array, Array]:
     residual = rhs - action(value)
-    return residual, _norm(residual, inner)
+    return residual, scaled_norm(residual, inner)
 
 
 def _bicgstab_candidate(
@@ -1411,7 +1413,7 @@ def _bicgstab_candidate(
     nonfinite: Array,
 ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
     """Confirm a nominated alpha half-step before attempting stabilization."""
-    half_norm = _norm(half_residual, inner)
+    half_norm = scaled_norm(half_residual, inner)
     epsilon = jnp.finfo(rhs.real.dtype).eps
 
     def confirm_half() -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
@@ -1441,14 +1443,14 @@ def _bicgstab_candidate(
         invalid_omega = (
             nonfinite_action
             | (denominator <= 0.0)
-            | (_safe_abs(numerator) <= epsilon * _norm(image, inner) * half_norm)
+            | (_safe_abs(numerator) <= epsilon * scaled_norm(image, inner) * half_norm)
         )
         omega = jnp.where(
             invalid_omega, 0.0, numerator / jnp.where(invalid_omega, 1.0, denominator)
         ).astype(rhs.dtype)
         value = jnp.where(nonfinite_action, half_value, half_value + omega * transformed)
         recursive = half_residual - omega * image
-        recursive_norm = _norm(recursive, inner)
+        recursive_norm = scaled_norm(recursive, inner)
         nominated = (recursive_norm <= threshold) | invalid_omega
         residual, norm = jax.lax.cond(
             nominated,
@@ -1494,7 +1496,7 @@ def _bicgstab_raw(
     if step_limit is None:
         step_limit = jnp.asarray(max_steps, dtype=jnp.int32)
     residual, norm = _confirmed_residual(action, inner, rhs, initial)
-    rhs_norm = _norm(rhs, inner)
+    rhs_norm = scaled_norm(rhs, inner)
     threshold = absolute + relative * rhs_norm
     finite = jnp.all(jnp.isfinite(initial)) & jnp.isfinite(norm)
     one = jnp.asarray(1.0, dtype=rhs.dtype)
@@ -1530,7 +1532,7 @@ def _bicgstab_raw(
             transformed = precondition(direction, index)
             image = action(transformed)
             denominator = inner(previous.shadow, image)
-            shadow_norm = _norm(previous.shadow, inner)
+            shadow_norm = scaled_norm(previous.shadow, inner)
             nonfinite = (
                 ~jnp.isfinite(rho)
                 | ~jnp.isfinite(denominator)
@@ -1541,9 +1543,12 @@ def _bicgstab_raw(
                 nonfinite
                 | (
                     _safe_abs(rho)
-                    <= epsilon * shadow_norm * _norm(previous.residual, inner)
+                    <= epsilon * shadow_norm * scaled_norm(previous.residual, inner)
                 )
-                | (_safe_abs(denominator) <= epsilon * shadow_norm * _norm(image, inner))
+                | (
+                    _safe_abs(denominator)
+                    <= epsilon * shadow_norm * scaled_norm(image, inner)
+                )
             )
             alpha = jnp.where(
                 invalid, 0.0, rho / jnp.where(invalid, 1.0, denominator)
@@ -1687,7 +1692,7 @@ def _minres_raw(
     y = precondition(residual, jnp.asarray(0, dtype=jnp.int32))
     beta_one_squared = jnp.real(inner(residual, y))
     beta_one = jnp.sqrt(jnp.maximum(beta_one_squared, 0.0))
-    rhs_norm = _norm(rhs, inner)
+    rhs_norm = scaled_norm(rhs, inner)
     threshold = absolute + relative * rhs_norm
     real_dtype = rhs.real.dtype
     epsilon = jnp.finfo(real_dtype).eps
@@ -1711,7 +1716,7 @@ def _minres_raw(
         jnp.asarray(0.0, dtype=real_dtype),
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(0, dtype=jnp.int32),
-        (_norm(residual, inner) > threshold) & ~_iteration_stop(iteration_state),
+        (scaled_norm(residual, inner) > threshold) & ~_iteration_stop(iteration_state),
         jnp.where(
             beta_one_squared >= 0.0,
             int(KrylovBreakdownStatus.NONE),
@@ -1828,7 +1833,7 @@ def _minres_raw(
             infinity = jnp.asarray(jnp.inf, dtype=real_dtype)
             true_norm = jax.lax.cond(
                 nominated,
-                lambda: _norm(rhs - action(next_x), inner),
+                lambda: scaled_norm(rhs - action(next_x), inner),
                 lambda: infinity,
             )
             converged = nominated & (true_norm <= threshold)
@@ -1928,7 +1933,7 @@ def _minres_raw(
         driver,
     )
     x, *_, confirmations, iterations, _, breakdown, iteration_state = result
-    residual_norm = _norm(rhs - action(x), inner)
+    residual_norm = scaled_norm(rhs - action(x), inner)
     return (
         x,
         (
@@ -1976,11 +1981,15 @@ def _fgmres_raw(
     if fixed_trip:
         # Lazy: phydrax._numerics imports sampling, which imports linalg.
         from ..._numerics._checkpointed_scan import checkpointed_scan
-    rhs_norm = _norm(rhs, inner)
+    rhs_norm = scaled_norm(rhs, inner)
     threshold = absolute + relative * rhs_norm
     residual = rhs - action(initial)
-    residual_norm = _norm(residual, inner)
-    finite = jnp.isfinite(residual_norm) & jnp.all(jnp.isfinite(initial))
+    residual_norm = scaled_norm(residual, inner)
+    finite = (
+        jnp.isfinite(rhs_norm)
+        & jnp.isfinite(residual_norm)
+        & jnp.all(jnp.isfinite(initial))
+    )
     active = finite & (residual_norm > threshold) & ~_iteration_stop(iteration_state)
     initial_breakdown = jnp.where(
         finite,
@@ -2161,7 +2170,7 @@ def _fgmres_raw(
                         orthogonalize,
                         (orthogonal, projection),
                     )
-                    next_norm = _norm(orthogonal, inner)
+                    next_norm = scaled_norm(orthogonal, inner)
                     # Relative to the Hessenberg column scale ||A v||: an
                     # absolute floor would flag every small-norm operator as a
                     # near-invariant subspace. A near-invariant subspace ends the
@@ -2169,7 +2178,7 @@ def _fgmres_raw(
                     # residual whether it was lucky, progressing, or stagnant.
                     near_breakdown = next_norm <= jnp.sqrt(
                         jnp.finfo(rhs.real.dtype).eps
-                    ) * _norm(image, inner)
+                    ) * scaled_norm(image, inner)
                     basis_i = basis_i.at[local_index + 1].set(
                         (
                             orthogonal
@@ -2402,7 +2411,7 @@ def _fgmres_raw(
                     axis=0,
                 )
                 candidate_residual = rhs - action(candidate)
-                candidate_norm = _norm(candidate_residual, inner)
+                candidate_norm = scaled_norm(candidate_residual, inner)
                 finite_candidate = (
                     jnp.isfinite(candidate_norm)
                     & jnp.all(jnp.isfinite(candidate))
@@ -2705,7 +2714,7 @@ def _lsmr_raw(
         residual, 1.0 / jnp.where(beta > 0.0, beta, 1.0)
     )
     v = adjoint((u_operator, u_regularizer))
-    alpha = _norm(v, source_inner)
+    alpha = scaled_norm(v, source_inner)
     v = v / jnp.where(alpha > 0.0, alpha, 1.0).astype(v.dtype)
     norm_b = _target_norm(rhs, target_inner)
     state = _LSMRState(
@@ -2751,7 +2760,7 @@ def _lsmr_raw(
     normal_target = (
         absolute
         if constraint
-        else absolute + relative * _norm(adjoint(rhs), source_inner)
+        else absolute + relative * scaled_norm(adjoint(rhs), source_inner)
     )
 
     def true_quantities(point: Array) -> tuple[Array, Array]:
@@ -2759,7 +2768,9 @@ def _lsmr_raw(
         gradient = adjoint(true_residual)
         if damping:
             gradient = gradient - damping**2 * point
-        return _target_norm(true_residual, target_inner), _norm(gradient, source_inner)
+        return _target_norm(true_residual, target_inner), scaled_norm(
+            gradient, source_inner
+        )
 
     def stationarity_floor(norm_a: Array, residual_norm: Array) -> Array:
         return roundoff * norm_a * residual_norm
@@ -2784,7 +2795,7 @@ def _lsmr_raw(
                 adjoint((next_u_operator, next_u_regularizer))
                 - next_beta.astype(value.v.dtype) * value.v
             )
-            next_alpha = _norm(next_v, source_inner)
+            next_alpha = scaled_norm(next_v, source_inner)
             next_v = next_v / jnp.where(next_alpha > 0.0, next_alpha, 1.0).astype(
                 next_v.dtype
             )
@@ -3202,15 +3213,7 @@ def _space_inner(space: AbstractVectorSpace, left: Array, right: Array) -> Array
 
 
 def _space_norm(space: AbstractVectorSpace, vector: Array) -> Array:
-    return _norm(vector, lambda left, right: _space_inner(space, left, right))
-
-
-def _norm(vector: Array, inner: _Inner) -> Array:
-    # Value-identical to sqrt(max(<v, v>, 0)), including NaN propagation, with a
-    # finite derivative at an exact zero (exact breakdown under fixed trip).
-    squared = jnp.maximum(jnp.real(inner(vector, vector)), 0.0)
-    zero = squared == 0.0
-    return jnp.where(zero, 0.0, jnp.sqrt(jnp.where(zero, 1.0, squared)))
+    return scaled_norm(vector, lambda left, right: _space_inner(space, left, right))
 
 
 def _safe_abs(value: Array) -> Array:
