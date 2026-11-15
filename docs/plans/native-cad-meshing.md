@@ -329,13 +329,21 @@ protection, region constraints, exact periodic transport, and normal native
 admission remain authoritative. Actual associated implicit-facet refusals may
 add proposal planes; no geometry-specific oracle changes acceptance.
 
-`TetraMetricProposalError` retains the actual unsuccessful solver result when one
-exists, its policy, admitted demand, and source/generation/edge/source-cell
-binding. Only an independently audited local infeasibility certificate prunes
-that local model; numerical, certificate, and resource failures are not converted
-to a zero proposal, `STALLED`, or global mesh infeasibility. Native dense QP
-early stopping uses the same declared primal-infeasibility tolerance and
-normalized rays as the independent audit, including custom-derivative routes.
+Coupled proposals use a prepared sparse primary QP, with structural zeros and
+explicit source, native, metric, carrier, and orbit row identities retained.
+An unresolved primary may invoke one separate bounded native Farkas LP; equality
+multipliers have signed bounds and inequality multipliers are nonnegative.
+The original result is unchanged, and only an independently audited certificate
+for the original model permits pruning. Already optimal or certified primary
+paths do not run this second program.
+
+`TetraMetricProposalError` retains the actual primary result, policy, demand, and
+source/generation/edge/source-cell binding, plus the separate certificate result,
+admission failure, and witness audit when present. Each program retains its own
+declared limits; their actual work is reported separately and in aggregate.
+Numerical, certificate, and resource failures are not converted to a zero
+proposal, `STALLED`, or global mesh infeasibility. Certificate normalization and
+the declared primal-infeasibility tolerance are unchanged.
 
 Relocation previews retain the checked-star cells named by `removed_cell_ids`;
 those cells are validation context, not retired topology. Overlapping moves

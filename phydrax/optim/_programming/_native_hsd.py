@@ -39,7 +39,7 @@ from ._policy import ConvexSolvePolicy, ConvexTermination, NativeHomogeneousConi
 from ._problem import (
     _conic_matrix_mv,
     _conic_matrix_transpose_mv,
-    _conic_quadratic_mv,
+    _conic_quadratic_perspective,
     ConicProgram,
 )
 
@@ -115,7 +115,7 @@ def _embedding_residual(
     s = vector[n + m : n + 2 * m]
     tau = vector[-2]
     kappa = vector[-1]
-    px = _conic_quadratic_mv(program.quadratic, x)
+    px, perspective, _, _ = _conic_quadratic_perspective(program.quadratic, x, tau)
     stationarity = (
         px
         + _conic_matrix_transpose_mv(program.constraint_matrix, z)
@@ -125,7 +125,7 @@ def _embedding_residual(
         _conic_matrix_mv(program.constraint_matrix, x) + s - program.constraint_rhs * tau
     )
     gap = (
-        jnp.sum(x * px) / tau
+        perspective
         + jnp.sum(program.linear * x)
         + jnp.sum(program.constraint_rhs * z)
         + kappa

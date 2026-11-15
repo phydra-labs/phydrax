@@ -195,10 +195,19 @@ def test_periodic_coupled_model_lifts_one_consistent_source_choice_per_orbit() -
             if search.measured[index] and any(vertex in edge for vertex in vertices)
         ]
         model = coupled._model_rows(
-            search, details, selected, incident, binding, phx.optim.ConvexSolvePolicy()
+            search,
+            details,
+            selected,
+            incident,
+            binding,
+            phx.optim.ConvexSolvePolicy(
+                phx.optim.NativeHomogeneousConic(newton="factorized")
+            ),
         )
         assert model is not None
-        equality = np.asarray(model[2], dtype=np.float64)
+        equality = np.zeros((len(model[2]), 3 * len(vertices)), dtype=np.float64)
+        for index, row in enumerate(model[2]):
+            equality[index, list(row.columns)] = row.values
         assert np.linalg.matrix_rank(equality) == equality.shape[0]
         candidate = coupled._quantize(search, details, selected, np.tile(displacement, 3))
         assert candidate is not None

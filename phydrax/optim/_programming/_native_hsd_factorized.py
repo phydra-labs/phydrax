@@ -14,8 +14,9 @@ unknowns ``(dx, dz_Z)`` satisfy the symmetric quasi-definite system
 
 solved for both right-hand sides by one refreshed sparse factorization of its
 statically regularized form plus iterative refinement on the exact operator.
-An unresolved full direction can use bounded native GMRES with that same factor;
-accepted directions are retained. Its symbolic correction plan is host-prepared.
+An unresolved full direction receives one additive correction of its original
+equation defect; bounded native GMRES may resolve that correction's inner solve.
+Accepted directions are retained, and correction structure is host-prepared.
 The scalar ``dtau`` follows from the linearized gap row and ``dkappa`` from the
 ``tau kappa`` row. Each assembled direction is accepted only by its residual in
 the full embedding linearization.
@@ -58,6 +59,7 @@ from ...linalg import (
     SparseFactorizationStatus,
     TolerancePolicy,
 )
+from ...linalg._norm import scaled_norm
 from ...linalg._runtime import _bind_for_template
 from ...sparse import EdgeRelation, SparseCoordinateOperator, SparseLinearMap
 from ._barrier import cone_barrier_oracle
@@ -66,7 +68,7 @@ from ._policy import ConvexSolvePolicy, NativeHomogeneousConic
 from ._problem import (
     _conic_matrix_mv,
     _conic_matrix_transpose_mv,
-    _conic_quadratic_mv,
+    _conic_quadratic_perspective,
     ConicProgram,
 )
 
@@ -129,6 +131,13 @@ class _ReducedNewtonRhs(NamedTuple):
     offset: Array
     weighted_rhs: Array
     weighted_rhs_image: Array
+
+
+class _AuditedDirection(NamedTuple):
+    value: Array
+    accepted: Array
+    status: Array
+    defect: Array
 
 
 def _split(cone: AbstractConvexCone, value: Array) -> tuple[Array, ...]:
@@ -526,11 +535,11 @@ def _reduced_solve(
     regularized factor then selects the proximal multiplier and refinement keeps
     the null component bounded. Acceptance is decided in the full embedding.
     """
-    rhs_norm = jnp.linalg.norm(rhs)
+    rhs_norm = scaled_norm(rhs)
     floor = 16.0 * jnp.finfo(rhs.dtype).eps * rhs_norm
 
     def defect(value: Array) -> Array:
-        return jnp.linalg.norm(rhs - _exact_action(plan, factor.exact_values, value))
+        return scaled_norm(rhs - _exact_action(plan, factor.exact_values, value))
 
     initial = factor.factor.solve(rhs).value
     initial_defect = defect(initial)
@@ -611,14 +620,13 @@ def _reduced_newton_rhs(
     program: ConicProgram,
     vector: Array,
     mu: Array,
-    residual_function: Callable[[Array], Array],
+    residual: Array,
 ) -> _ReducedNewtonRhs:
-    """Prepare the shared affine terms once for both reduced solve routes."""
+    """Eliminate explicit residual data while retaining the original vector."""
 
     n, m = program.num_variables, program.num_constraints
     dual = vector[n : n + m]
     slack = vector[n + m : n + 2 * m]
-    residual = residual_function(vector)
     stationarity = residual[:n]
     primal = residual[n : n + m]
     centrality = residual[n + m : n + 2 * m]
@@ -647,6 +655,52 @@ def _reduced_newton_rhs(
     )
 
 
+def _audit_direction(
+    factor: FactorizedNewtonFactor,
+    vector: Array,
+    residual_function: Callable[[Array], Array],
+    residual: Array,
+    row_scale: Array,
+    relative_tolerance: float,
+    absolute_tolerance: float,
+    direction: Array,
+) -> _AuditedDirection:
+    """Keep the original Jacobian, requested accuracy, and forcing gate."""
+    _, action = jax.jvp(residual_function, (vector,), (direction,))
+    defect = action + residual
+    norm = scaled_norm(row_scale * defect)
+    scaled_residual = scaled_norm(row_scale * residual)
+    target = absolute_tolerance + relative_tolerance * scaled_residual
+    forcing = target + _INEXACT_FORCING * scaled_residual
+    finite = (
+        jnp.all(jnp.isfinite(direction))
+        & jnp.isfinite(norm)
+        & jnp.isfinite(scaled_residual)
+    )
+    factor_ok = (
+        factor.factor.status == int(SparseFactorizationStatus.SUCCESS)
+    ) & factor.inertia_valid
+    accepted = finite & factor_ok & (norm <= forcing)
+    status = jnp.where(
+        ~finite,
+        int(LinearSolveStatus.NONFINITE_OUTPUT),
+        jnp.where(
+            ~factor_ok,
+            int(LinearSolveStatus.SINGULAR),
+            jnp.where(
+                norm <= target,
+                int(LinearSolveStatus.SUCCESS),
+                jnp.where(
+                    norm <= forcing,
+                    int(LinearSolveStatus.STAGNATION),
+                    int(LinearSolveStatus.MAXIMUM_STEPS_REACHED),
+                ),
+            ),
+        ),
+    ).astype(jnp.int32)
+    return _AuditedDirection(direction, accepted, status, defect)
+
+
 def _direction_from_reduced(
     plan: FactorizedNewtonPlan,
     factor: FactorizedNewtonFactor,
@@ -659,7 +713,7 @@ def _direction_from_reduced(
     absolute_tolerance: float,
     system: _ReducedNewtonRhs,
     solution: Array,
-) -> tuple[Array, Array, Array]:
+) -> _AuditedDirection:
     """Recover and audit the original full embedding direction."""
     n, m = program.num_variables, program.num_constraints
     x = vector[:n]
@@ -678,9 +732,10 @@ def _direction_from_reduced(
     )
     dx_first, dz_first = solution[:n, 0], solution[n:, 0]
     dx_second, dz_second = solution[:n, 1], solution[n:, 1]
-    quadratic_x = _conic_quadratic_mv(program.quadratic, x)
-    quadratic_energy = jnp.sum(x * quadratic_x)
-    gap_gradient = 2.0 * quadratic_x / tau + program.linear + weighted_rhs_image
+    _, _, quadratic_gradient, tau_gradient = _conic_quadratic_perspective(
+        program.quadratic, x, tau
+    )
+    gap_gradient = quadratic_gradient + program.linear + weighted_rhs_image
     constant = (
         jnp.sum(gap_gradient * dx_first)
         + jnp.sum(b[zero] * dz_first)
@@ -691,7 +746,7 @@ def _direction_from_reduced(
         jnp.sum(gap_gradient * dx_second)
         + jnp.sum(b[zero] * dz_second)
         - jnp.sum(b * weighted_rhs)
-        - quadratic_energy / tau**2
+        + tau_gradient
         - kappa / tau
     )
     dtau = (-gap - constant) / coefficient
@@ -702,40 +757,16 @@ def _direction_from_reduced(
     ds = -primal - image + b * dtau
     dkappa = (-scalar - kappa * dtau) / tau
     direction = jnp.concatenate((dx, dz, ds, dtau[None], dkappa[None]))
-    # Acceptance in the original embedding linearization, row-equilibrated like
-    # the iterative route. ``SUCCESS`` certifies the requested Newton accuracy;
-    # a direction that only meets the inexact-Newton forcing bound (dependent or
-    # numerically rank-deficient zero-cone rows) is still a descent step and is
-    # reported as ``STAGNATION``. Optimality and certificates stay with the
-    # independent original-coordinate audit, never with the Newton solve.
-    _, action = jax.jvp(residual_function, (vector,), (direction,))
-    defect = jnp.linalg.norm(row_scale * (action + residual))
-    scaled_residual = jnp.linalg.norm(row_scale * residual)
-    target = absolute_tolerance + relative_tolerance * scaled_residual
-    forcing = target + _INEXACT_FORCING * scaled_residual
-    finite = jnp.all(jnp.isfinite(direction))
-    factor_ok = (
-        factor.factor.status == int(SparseFactorizationStatus.SUCCESS)
-    ) & factor.inertia_valid
-    accepted = finite & factor_ok & (defect <= forcing)
-    status = jnp.where(
-        ~finite,
-        int(LinearSolveStatus.NONFINITE_OUTPUT),
-        jnp.where(
-            ~factor_ok,
-            int(LinearSolveStatus.SINGULAR),
-            jnp.where(
-                defect <= target,
-                int(LinearSolveStatus.SUCCESS),
-                jnp.where(
-                    defect <= forcing,
-                    int(LinearSolveStatus.STAGNATION),
-                    int(LinearSolveStatus.MAXIMUM_STEPS_REACHED),
-                ),
-            ),
-        ),
-    ).astype(jnp.int32)
-    return direction, accepted, status
+    return _audit_direction(
+        factor,
+        vector,
+        residual_function,
+        residual,
+        row_scale,
+        relative_tolerance,
+        absolute_tolerance,
+        direction,
+    )
 
 
 def factorized_direction(
@@ -750,11 +781,11 @@ def factorized_direction(
     absolute_tolerance: float,
     /,
 ) -> tuple[Array, Array, Array]:
-    """Retain successful directions; correct only unresolved reduced solves."""
-    system = _reduced_newton_rhs(plan, program, vector, mu, residual_function)
+    """Retain accepted directions; apply at most one full-equation correction."""
+    system = _reduced_newton_rhs(plan, program, vector, mu, residual_function(vector))
     solution = _reduced_solve(plan, factor, system.rhs)
 
-    def recover(value: Array) -> tuple[Array, Array, Array]:
+    def recover(value: Array, rhs: _ReducedNewtonRhs) -> _AuditedDirection:
         return _direction_from_reduced(
             plan,
             factor,
@@ -765,31 +796,72 @@ def factorized_direction(
             row_scale,
             relative_tolerance,
             absolute_tolerance,
-            system,
+            rhs,
             value,
         )
 
-    initial = recover(solution)
+    initial = recover(solution, system)
 
     def correct() -> tuple[Array, Array, Array]:
-        reduced = _correct_reduced_solve(plan, factor, system.rhs, solution)
-        direction, accepted, status = recover(reduced.value)
-        # An accepted inexact Newton direction is not a strict inner solve.
+        # Refine the full original equation, not two large absolute solutions.
+        correction_rhs = _reduced_newton_rhs(plan, program, vector, mu, initial.defect)
+        correction_solution = _reduced_solve(plan, factor, correction_rhs.rhs)
+        delta = recover(correction_solution, correction_rhs)
+
+        def refine_delta() -> _AuditedDirection:
+            reduced = _correct_reduced_solve(
+                plan, factor, correction_rhs.rhs, correction_solution
+            )
+            audited = recover(reduced.value, correction_rhs)
+            status = jnp.where(
+                (audited.status == int(LinearSolveStatus.SUCCESS))
+                & ~jnp.all(reduced.successful),
+                int(LinearSolveStatus.STAGNATION),
+                audited.status,
+            ).astype(jnp.int32)
+            return _AuditedDirection(
+                audited.value, audited.accepted, status, audited.defect
+            )
+
+        delta = jax.lax.cond(
+            ~delta.accepted
+            & jnp.all(jnp.isfinite(correction_solution))
+            & jnp.all(jnp.isfinite(correction_rhs.rhs)),
+            refine_delta,
+            lambda: delta,
+        )
+        total = _audit_direction(
+            factor,
+            vector,
+            residual_function,
+            system.residual,
+            row_scale,
+            relative_tolerance,
+            absolute_tolerance,
+            initial.value + delta.value,
+        )
+        # A strict inner miss is not promoted by a successful total-direction gate.
         status = jnp.where(
-            (status == int(LinearSolveStatus.SUCCESS)) & ~jnp.all(reduced.successful),
+            (total.status == int(LinearSolveStatus.SUCCESS))
+            & (delta.status != int(LinearSolveStatus.SUCCESS)),
             int(LinearSolveStatus.STAGNATION),
-            status,
+            total.status,
         ).astype(jnp.int32)
-        return direction, accepted, status
+        return total.value, total.accepted, status
 
     eligible = (
-        ~initial[1]
+        ~initial.accepted
         & factor.inertia_valid
         & (factor.factor.status == int(SparseFactorizationStatus.SUCCESS))
         & jnp.all(jnp.isfinite(solution))
         & jnp.all(jnp.isfinite(system.rhs))
+        & jnp.all(jnp.isfinite(initial.defect))
     )
-    return jax.lax.cond(eligible, correct, lambda: initial)
+    return jax.lax.cond(
+        eligible,
+        correct,
+        lambda: (initial.value, initial.accepted, initial.status),
+    )
 
 
 __all__ = [

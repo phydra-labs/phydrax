@@ -3,6 +3,40 @@
 See the [meshing guide](../guides_meshing.md) for identity, provider,
 certification, and topology-transition contracts.
 
+## Coupled tetrahedral relocation
+
+The local coupled model uses a sparse native quadratic program with explicitly
+identified source, carrier, orbit, metric, and native rows. Structural support
+comes from topology, not coefficient values; supported zero coefficients remain
+in the prepared pattern. A search retains at most one primary and one certificate
+template, reused only when their structure and policy match. Actual sparse input,
+factorization, symbolic-work, and workspace limits govern admission.
+The structural namespace identifies the source/frame/generation, ordered
+vertices, row roles and entity identities (including affected edges and
+periodic equalities), ordered supports, capacities, and dtype. Selected target
+edges and source-cell choices may change coefficients without changing those
+structural meanings. Their complete immutable binding and each fresh numeric
+provenance remain attached to the actual solve; historical identities are not
+reused.
+
+The primary result is retained unchanged. An optimal result or an already
+valid infeasibility ray needs no second program. Otherwise, an unresolved primary
+may use one bounded native Farkas LP: equality multipliers are free within
+`[-1, 1]`, and inequality multipliers are in `[0, 1]`. Its candidate is audited
+against the original conic program, not the certificate LP. The primary and
+certificate results and demands remain separate; iteration work is their actual
+sum, not a relabeled primary count. A local certificate does not establish global
+infeasibility.
+
+`TetraMetricProposalError` retains the primary `result`, `policy`, `demand`, and
+`binding`, and, when available, `certificate_result`, `certificate_demand`,
+`ray_audit`, and `certificate_error` for certificate preparation or execution
+failure. Existing source admissibility and native geometry guards remain in force.
+Its iteration properties retain separate and aggregate work. If certificate
+execution started but returned no receipt, its iteration count and the aggregate
+are unknown (`None`), not a fabricated zero. Numeric-binding provenance is
+constructed outside the already-compiled native solve.
+
 ::: phydrax.meshing
     options:
       members:

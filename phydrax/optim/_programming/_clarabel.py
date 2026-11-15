@@ -343,6 +343,8 @@ def _audit_result(
     backend: str = "clarabel",
     input_finite: Array | None = None,
 ) -> ConvexProgramResult:
+    from ._audit import audit_conic_dual_infeasibility_ray
+
     dtype = program.linear.dtype
     quadratic_primal = _conic_quadratic_mv(program.quadratic, primal)
     objective = 0.5 * ein.contract("...i,...i->...", primal, quadratic_primal) + jnp.sum(
@@ -444,42 +446,14 @@ def _audit_result(
         primal_ray_objective < -primal_ray_tolerance
     )
 
-    dual_ray_scale = jnp.maximum(
-        1.0,
-        jnp.maximum(
-            _max_abs(dual),
-            jnp.maximum(_max_abs(lower_dual), _max_abs(upper_dual)),
-        ),
+    dual_audit = audit_conic_dual_infeasibility_ray(
+        program,
+        dual,
+        lower_dual,
+        upper_dual,
+        tolerance=policy.termination.primal_infeasible,
     )
-    dual_ray = dual / dual_ray_scale[..., None]
-    lower_ray = lower_dual / dual_ray_scale[..., None]
-    upper_ray = upper_dual / dual_ray_scale[..., None]
-    dual_ray_stationarity = (
-        _conic_matrix_transpose_mv(program.constraint_matrix, dual_ray)
-        - lower_ray
-        + upper_ray
-    )
-    lower_term = jnp.where(
-        jnp.isfinite(program.lower_bounds), program.lower_bounds * lower_ray, 0.0
-    )
-    upper_term = jnp.where(
-        jnp.isfinite(program.upper_bounds), program.upper_bounds * upper_ray, 0.0
-    )
-    dual_ray_objective = (
-        jnp.sum(program.constraint_rhs * dual_ray, axis=-1)
-        - jnp.sum(lower_term, axis=-1)
-        + jnp.sum(upper_term, axis=-1)
-    )
-    dual_ray_residual = jnp.maximum(
-        _max_abs(dual_ray_stationarity), program.cone.dual_residual(dual_ray)
-    )
-    dual_ray_tolerance = jnp.asarray(
-        policy.termination.primal_infeasible,
-        dtype=dtype,
-    )
-    dual_ray_valid = (dual_ray_residual <= dual_ray_tolerance) & (
-        dual_ray_objective < -dual_ray_tolerance
-    )
+    dual_ray_valid = dual_audit.valid
     status = jnp.where(
         converged,
         int(ConvexProgramStatus.OPTIMAL),
@@ -507,14 +481,14 @@ def _audit_result(
         dual_ray_valid = dual_ray_valid & input_finite
     certificate = ConvexProgramCertificate(
         primal_ray=primal_ray,
-        equality_dual_ray=jnp.empty(program.batch_shape + (0,), dtype=dtype),
-        inequality_dual_ray=dual_ray,
-        lower_bound_dual_ray=lower_ray,
-        upper_bound_dual_ray=upper_ray,
+        equality_dual_ray=dual_audit.equality_ray,
+        inequality_dual_ray=dual_audit.inequality_ray,
+        lower_bound_dual_ray=dual_audit.lower_bound_ray,
+        upper_bound_dual_ray=dual_audit.upper_bound_ray,
         primal_ray_residual_norm=primal_ray_residual,
-        dual_ray_residual_norm=dual_ray_residual,
+        dual_ray_residual_norm=dual_audit.residual_norm,
         primal_ray_objective=primal_ray_objective,
-        dual_ray_objective=dual_ray_objective,
+        dual_ray_objective=dual_audit.objective,
         primal_ray_valid=primal_ray_valid,
         dual_ray_valid=dual_ray_valid,
     )

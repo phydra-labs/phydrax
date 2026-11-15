@@ -663,6 +663,14 @@ share spaces, operator identity, property evidence, and method configuration.
 Binding rejects structural drift rather than silently replanning. The ordinary
 `prepare` entry point performs both stages.
 
+Native coordinate-norm convergence checks and the independent solve certificate
+rescale coordinates before evaluating their declared inner product. Large or small
+finite coordinates therefore do not become an infinite tolerance or a false zero
+through unscaled squaring. Weighted and complex pairings retain their semantics;
+rescaling does not repair nonfinite data or unsafe arithmetic inside a custom
+pairing. Exact-zero norms retain the finite zero derivative used by fixed-trip
+Krylov differentiation. Requested tolerances and iteration limits are unchanged.
+
 ### Per-invocation Krylov controls
 
 `LinearSolveControl` changes only dynamic tolerances and the effective step cap for
