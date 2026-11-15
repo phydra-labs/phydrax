@@ -3,6 +3,7 @@ from __future__ import annotations
 from fractions import Fraction
 from hashlib import sha256
 from itertools import combinations, product
+from typing import Callable
 
 import numpy as np
 
@@ -720,7 +721,9 @@ def _run_image_profile(name: str, /, *, oblique: bool) -> dict[str, object]:
     }
 
 
-def native_image_material() -> dict[str, object]:
+def native_image_material(
+    *, checkpoint: Callable[[dict[str, object]], None] | None = None
+) -> dict[str, object]:
     meshcore = require_meshcore()
     cases: list[dict[str, object]] = []
     failures: list[str] = []
@@ -728,10 +731,29 @@ def native_image_material() -> dict[str, object]:
         ("native-image-lifecycle", False),
         ("native-image-lifecycle:oblique-junction-transport", True),
     ):
+        if checkpoint is not None:
+            checkpoint({"profile_id": profile, "event": "profile-start"})
         try:
             cases.append(_run_image_profile(profile, oblique=oblique))
         except Exception as error:
             failures.append(f"{profile}: {type(error).__name__}: {error}")
+            if checkpoint is not None:
+                checkpoint(
+                    {
+                        "profile_id": profile,
+                        "event": "profile-complete",
+                        "record": {"status": "failed", "failure": failures[-1]},
+                    }
+                )
+        else:
+            if checkpoint is not None:
+                checkpoint(
+                    {
+                        "profile_id": profile,
+                        "event": "profile-complete",
+                        "record": cases[-1],
+                    }
+                )
     return {
         "status": "failed" if failures else "passed",
         "workflow": "two-slab and oblique/sheared/reflected multi-material image -> native tetrahedral mesh -> FV transport",

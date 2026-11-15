@@ -3503,6 +3503,8 @@ def native_general_families(
     profile_ids = _profile_ids()
     records: dict[str, dict[str, object]] = {}
     for profile_id in profile_ids:
+        if checkpoint is not None:
+            checkpoint({"profile_id": profile_id, "event": "profile-start"})
         record = _run_profile(
             profile_id, checkpoint=checkpoint, capture_result=capture_result
         )

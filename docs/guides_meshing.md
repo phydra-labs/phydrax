@@ -3920,11 +3920,21 @@ tolerances, and explicit failing gates; a target mapping is not a pass claim.
 Each native record carries an explicit status and canonical scenario identity.
 Missing meshcore, unsupported routes, or missing/extra/failed/skipped records
 fail rather than disappearing into optional-provider comparisons.
-The `native-general-families` scenario emits a flushed JSON Lines checkpoint
-at each profile phase and on profile completion. With `--output PATH` the
-checkpoint is written to `PATH.profiles.jsonl`; otherwise it goes to standard
-error, leaving the final JSON document on standard output. Completed profile
-records remain available if a later profile is interrupted.
+Qualification emits JSON Lines entry and completed-result receipts for each
+scenario and each profile matrix. Existing profile phase diagnostics remain
+available; the CAD matrix also reports its named phase entries. Use
+`--events PATH` for an explicit receipt file, or `--output PATH` to retain
+receipts in `PATH.profiles.jsonl` beside the final result. Receipt files must be
+fresh and distinct from the final output; one stream covers the entire run,
+flushing and syncing each event before execution continues. Without either
+option, events go to standard error and the final JSON stays on standard output.
+A shared distributed FE result is labeled with its producing cold-continuation
+scenario rather than being executed twice.
+
+Completed receipts survive a later profile failure or process interruption.
+An entry without completion establishes only where execution began, not a
+scientific pass or the cause of interruption. Receipts do not resume numerical
+work or replace the canonical aggregate acceptance checks.
 
 Optional comparisons are selected explicitly: `manifold`, `mmg`, `ftetwild`,
 `gmsh`, `vorocrust`, `poisson`, `omega-h`, `gmsh-metric`,

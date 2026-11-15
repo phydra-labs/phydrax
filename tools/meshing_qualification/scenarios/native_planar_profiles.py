@@ -1691,6 +1691,12 @@ def native_planar_feature_matrix(
             }
             for profile in _PROFILE_IDS
         }
+        if checkpoint is not None:
+            for profile, record in records.items():
+                checkpoint({"profile_id": profile, "event": "profile-start"})
+                checkpoint(
+                    {"profile_id": profile, "event": "profile-complete", "record": record}
+                )
         return {
             "status": "failed",
             "workflow": "planar-features",
@@ -1708,6 +1714,8 @@ def native_planar_feature_matrix(
             "runtime": runtime_identity(),
         }
     for profile in _PROFILE_IDS:
+        if checkpoint is not None:
+            checkpoint({"profile_id": profile, "event": "profile-start"})
         try:
             if profile.startswith("native-surface-pde:"):
                 geometry = profile.removeprefix("native-surface-pde:").removesuffix(
@@ -1740,6 +1748,10 @@ def native_planar_feature_matrix(
                     "record": records[profile],
                 }
             )
+    if checkpoint is not None:
+        checkpoint(
+            {"profile_id": "planar-feature-junction-network", "event": "profile-start"}
+        )
     try:
         junction_network = _qualify_junction_network()
     except Exception as error:

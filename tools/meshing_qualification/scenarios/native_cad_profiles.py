@@ -7,7 +7,7 @@ import math
 from dataclasses import asdict
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 import jax.numpy as jnp
 import numpy as np
@@ -1817,7 +1817,13 @@ def _acceptance_failures(
     return failures
 
 
-def _profile_record(profile_id: str, format_name: str, case: str) -> dict[str, object]:
+def _profile_record(
+    profile_id: str,
+    format_name: str,
+    case: str,
+    *,
+    checkpoint: Callable[[dict[str, object]], None] | None = None,
+) -> dict[str, object]:
     fixture_case = (
         "planar-box"
         if case == "planar-box"
@@ -1861,6 +1867,12 @@ def _profile_record(profile_id: str, format_name: str, case: str) -> dict[str, o
         "attempted": True,
     }
     stage = "native_source_construction"
+
+    def report_phase() -> None:
+        if checkpoint is not None:
+            checkpoint({"profile_id": profile_id, "event": "phase-start", "phase": stage})
+
+    report_phase()
     validation_failures: list[dict[str, str]] = []
     try:
         with TemporaryDirectory(prefix="phydrax-native-cad-profile-") as temporary:
@@ -1897,6 +1909,7 @@ def _profile_record(profile_id: str, format_name: str, case: str) -> dict[str, o
             record["boolean"] = boolean_record
             record["source_oracle"] = source_oracle
             stage = "exact_source_volume_oracle"
+            report_phase()
             try:
                 record["source_volume_query"] = _source_volume_oracle(
                     model, expected_volume, case
@@ -1907,6 +1920,7 @@ def _profile_record(profile_id: str, format_name: str, case: str) -> dict[str, o
                 )
             loops = _intersection_loop_oracles(source_oracle)
             stage = "intersection_branch_topology_and_pcurve_oracle"
+            report_phase()
             try:
                 record["intersection_evidence"] = _intersection_evidence(model, loops)
             except Exception as error:
@@ -1915,6 +1929,7 @@ def _profile_record(profile_id: str, format_name: str, case: str) -> dict[str, o
                 )
             if case == "planar-box":
                 stage = "native_surface_mesh_and_fe_solve"
+                report_phase()
                 surface = _surface_case(model, source_size)
                 record["mesh_runs"] = [
                     {
@@ -1944,6 +1959,7 @@ def _profile_record(profile_id: str, format_name: str, case: str) -> dict[str, o
                     if case.startswith("quadric-"):
                         run_deviation = run_size**2 / (4.0 * 0.6)
                     stage = f"native_cad_volume_mesh_and_fe_solve_scale_{scale}"
+                    report_phase()
                     run = _volume_run(
                         model,
                         run_size,
@@ -1989,12 +2005,20 @@ def _profile_record(profile_id: str, format_name: str, case: str) -> dict[str, o
     return record
 
 
-def native_cad_profile_matrix() -> dict[str, object]:
+def native_cad_profile_matrix(
+    *, checkpoint: Callable[[dict[str, object]], None] | None = None
+) -> dict[str, object]:
     """Execute all recovered BRep/STEP/IGES source profiles with native routes."""
-    records = {
-        profile_id: _profile_record(profile_id, format_name, case)
-        for profile_id, format_name, case in _PROFILE_CASES
-    }
+    records: dict[str, dict[str, object]] = {}
+    for profile_id, format_name, case in _PROFILE_CASES:
+        if checkpoint is not None:
+            checkpoint({"profile_id": profile_id, "event": "profile-start"})
+        record = _profile_record(profile_id, format_name, case, checkpoint=checkpoint)
+        records[profile_id] = record
+        if checkpoint is not None:
+            checkpoint(
+                {"profile_id": profile_id, "event": "profile-complete", "record": record}
+            )
     passed = sum(record["status"] == "passed" for record in records.values())
     failed = len(records) - passed
     complete = failed == 0

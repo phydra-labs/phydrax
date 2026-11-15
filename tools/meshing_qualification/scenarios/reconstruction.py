@@ -1774,7 +1774,9 @@ def _qualify_profile(kind: str, scale: int, directory: str, /) -> dict[str, obje
     )
 
 
-def native_reconstruction() -> dict[str, object]:
+def native_reconstruction(
+    *, checkpoint: Callable[[dict[str, object]], None] | None = None
+) -> dict[str, object]:
     meshcore = require_meshcore()
     directory = os.environ.get("PHYDRAX_RECONSTRUCTION_CAPTURE_DIR")
     if not directory:
@@ -1785,14 +1787,33 @@ def native_reconstruction() -> dict[str, object]:
     failures: list[str] = []
     for kind in ("lobed-sphere", "torus", "rotated-ellipsoid"):
         for scale in (1, 2):
+            profile_id = _profile_id(kind, scale)
+            if checkpoint is not None:
+                checkpoint({"profile_id": profile_id, "event": "profile-start"})
             try:
                 case = _qualify_profile(kind, scale, directory)
             except Exception as error:
                 failures.append(
                     f"{_profile_id(kind, scale)}: {type(error).__name__}: {error}"
                 )
+                if checkpoint is not None:
+                    checkpoint(
+                        {
+                            "profile_id": profile_id,
+                            "event": "profile-complete",
+                            "record": {"status": "failed", "failure": failures[-1]},
+                        }
+                    )
                 continue
             cases.append(case)
+            if checkpoint is not None:
+                checkpoint(
+                    {
+                        "profile_id": profile_id,
+                        "event": "profile-complete",
+                        "record": case,
+                    }
+                )
             if case["status"] != "passed":
                 failures.append(f"{_profile_id(kind, scale)}: research gate incomplete")
     return {

@@ -8,7 +8,7 @@ import sys
 from fractions import Fraction
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, assert_never, get_args, Literal, TYPE_CHECKING
+from typing import Any, assert_never, Callable, get_args, Literal, TYPE_CHECKING
 
 import numpy as np
 
@@ -6129,7 +6129,9 @@ def _qualify_profile(
     }
 
 
-def native_cold_owner_local() -> dict[str, Any]:
+def native_cold_owner_local(
+    *, checkpoint: Callable[[dict[str, object]], None] | None = None
+) -> dict[str, Any]:
     import jax
 
     from phydrax import config as phx_config
@@ -6166,10 +6168,21 @@ def native_cold_owner_local() -> dict[str, Any]:
     environment["PYTHONPATH"] = str(_REPOSITORY_ROOT)
     with TemporaryDirectory(prefix="phydrax-native-cold-owner-local-fe-") as temporary:
         root = Path(temporary)
-        profiles = tuple(
-            _qualify_profile(profile_key, root, environment)
-            for profile_key in _PROFILE_PARAMETERS
-        )
+        profiles = []
+        for profile_key in _PROFILE_PARAMETERS:
+            profile_id = _PROFILE_PARAMETERS[profile_key][2]
+            if checkpoint is not None:
+                checkpoint({"profile_id": profile_id, "event": "profile-start"})
+            record = _qualify_profile(profile_key, root, environment)
+            profiles.append(record)
+            if checkpoint is not None:
+                checkpoint(
+                    {
+                        "profile_id": profile_id,
+                        "event": "profile-complete",
+                        "record": record,
+                    }
+                )
     if len(profiles) != len(_PROFILE_PARAMETERS) or any(
         profile["status"] != "passed" for profile in profiles
     ):

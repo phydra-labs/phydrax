@@ -5,7 +5,7 @@ import math
 from dataclasses import asdict, replace
 from fractions import Fraction
 from pathlib import Path
-from typing import Any, cast, Literal, NamedTuple
+from typing import Any, Callable, cast, Literal, NamedTuple
 
 import jax.numpy as jnp
 import numpy as np
@@ -5874,11 +5874,15 @@ def _run_profile(profile_id: str, /) -> dict[str, object]:
     return _run_wall_profile(name)
 
 
-def native_hybrid_layer_profile_matrix() -> dict[str, object]:
+def native_hybrid_layer_profile_matrix(
+    *, checkpoint: Callable[[dict[str, object]], None] | None = None
+) -> dict[str, object]:
     """Attempt every recovered hybrid layer profile using its original physical input."""
     profile_ids = _migration_profiles()
     profiles: dict[str, dict[str, object]] = {}
     for profile_id in profile_ids:
+        if checkpoint is not None:
+            checkpoint({"profile_id": profile_id, "event": "profile-start"})
         try:
             record = _run_profile(profile_id)
             if record.get("status") != "passed":
@@ -5901,6 +5905,14 @@ def native_hybrid_layer_profile_matrix() -> dict[str, object]:
                 "error": str(error),
             }
         profiles[profile_id] = {"profile_id": profile_id, **record}
+        if checkpoint is not None:
+            checkpoint(
+                {
+                    "profile_id": profile_id,
+                    "event": "profile-complete",
+                    "record": profiles[profile_id],
+                }
+            )
     passed = sum(value["status"] == "passed" for value in profiles.values())
     failed = len(profiles) - passed
     return {

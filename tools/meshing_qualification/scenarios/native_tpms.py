@@ -1012,7 +1012,9 @@ def _profile(name: str, run: Callable[[], dict[str, Any]]) -> dict[str, Any]:
     return {"profile": name, **record, "wall_seconds": perf_counter() - started}
 
 
-def native_tpms() -> dict[str, object]:
+def native_tpms(
+    *, checkpoint: Callable[[dict[str, object]], None] | None = None
+) -> dict[str, object]:
     meshcore = require_meshcore()
     held: dict[str, PeriodicImplicitVolume] = {}
 
@@ -1028,16 +1030,25 @@ def native_tpms() -> dict[str, object]:
         return _periodic_cold_restore(volume)
 
     with tempfile.TemporaryDirectory(prefix="phydrax-tpms-") as temporary:
-        profiles = (
-            _profile("gyroid-sheet-cell", _gyroid_sheet_cell),
-            _profile("schwarz-p-network", network),
-            _profile("schwarz-p-singular", _schwarz_p_singular),
-            _profile(
+        profiles = []
+        for name, run in (
+            ("gyroid-sheet-cell", _gyroid_sheet_cell),
+            ("schwarz-p-network", network),
+            ("schwarz-p-singular", _schwarz_p_singular),
+            (
                 "diamond-cylinder-specimen",
                 lambda: _diamond_cylinder_specimen(Path(temporary)),
             ),
-            _profile("periodic-cold-restore", cold),
-        )
+            ("periodic-cold-restore", cold),
+        ):
+            if checkpoint is not None:
+                checkpoint({"profile_id": name, "event": "profile-start"})
+            record = _profile(name, run)
+            profiles.append(record)
+            if checkpoint is not None:
+                checkpoint(
+                    {"profile_id": name, "event": "profile-complete", "record": record}
+                )
     passed = all(profile["status"] == "passed" for profile in profiles)
     return {
         "status": "passed" if passed else "failed",

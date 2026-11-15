@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from fractions import Fraction
-from typing import Any
+from typing import Any, Callable
 
 import jax.numpy as jnp
 import numpy as np
@@ -1341,10 +1341,16 @@ def _profile_entry(profile_id: str, kind: str, scale: int, /) -> dict[str, Any]:
     }
 
 
-def native_polyhedral() -> dict[str, object]:
+# Retain the ordered source/profile orchestration and its existing failure owners;
+# receipt-only changes must not reorder the independent scientific constructions.
+def native_polyhedral(
+    *, checkpoint: Callable[[dict[str, object]], None] | None = None
+) -> dict[str, object]:
     """Exercise the complete original native polyhedral source/profile matrix."""
     profiles: dict[str, dict[str, Any]] = {}
     for profile_id, kind, resolution_scale in _PROFILE_MATRIX:
+        if checkpoint is not None:
+            checkpoint({"profile_id": profile_id, "event": "profile-start"})
         profile = _profile_entry(profile_id, kind, resolution_scale)
         profiles[profile_id] = profile
         if kind == "periodic-cube":
@@ -1359,6 +1365,14 @@ def native_polyhedral() -> dict[str, object]:
                 or base_options is None
                 or base_input is None
             ):
+                if checkpoint is not None:
+                    checkpoint(
+                        {
+                            "profile_id": profile_id,
+                            "event": "profile-complete",
+                            "record": profile,
+                        }
+                    )
                 continue
             profile["source_input"] = base_input
             target_parts = _capture_gate(
@@ -1379,6 +1393,14 @@ def native_polyhedral() -> dict[str, object]:
                 lambda: _l_source(profile_id, kind, 4 * resolution_scale),
             )
             if parts is None:
+                if checkpoint is not None:
+                    checkpoint(
+                        {
+                            "profile_id": profile_id,
+                            "event": "profile-complete",
+                            "record": profile,
+                        }
+                    )
                 continue
             base_source, base_spec, base_options, base_input = parts
             profile["source_input"] = base_input
@@ -1394,6 +1416,14 @@ def native_polyhedral() -> dict[str, object]:
                 target_source, target_spec, target_options, target_input = adapted_parts
                 profile["adapted_source_input"] = target_input
         if base_source is None or base_spec is None or base_options is None:
+            if checkpoint is not None:
+                checkpoint(
+                    {
+                        "profile_id": profile_id,
+                        "event": "profile-complete",
+                        "record": profile,
+                    }
+                )
             continue
 
         if kind == "periodic-cube":
@@ -1538,6 +1568,10 @@ def native_polyhedral() -> dict[str, object]:
             and len(profile["gates"]) == len(profile["attempted_gates"])
             else "failed"
         )
+        if checkpoint is not None:
+            checkpoint(
+                {"profile_id": profile_id, "event": "profile-complete", "record": profile}
+            )
 
     return {
         "status": "passed"

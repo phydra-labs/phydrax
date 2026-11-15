@@ -5,7 +5,7 @@ import traceback
 from fractions import Fraction
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 import jax.numpy as jnp
 import numpy as np
@@ -2079,11 +2079,15 @@ print(json.dumps(result))
     return consumer
 
 
-def native_moving_overset() -> dict[str, object]:
+def native_moving_overset(
+    *, checkpoint: Callable[[dict[str, object]], None] | None = None
+) -> dict[str, object]:
     """Run all authored moving-overset profiles and both motion epochs."""
     meshcore = require_meshcore()
     profiles: dict[str, object] = {}
     for profile in _PROFILES:
+        if checkpoint is not None:
+            checkpoint({"profile_id": profile.name, "event": "profile-start"})
         original: dict[str, object] | None = None
         refined: dict[str, object] | None = None
         try:
@@ -2143,6 +2147,14 @@ def native_moving_overset() -> dict[str, object]:
                 },
                 "partial_matrix_pass": False,
             }
+        if checkpoint is not None:
+            checkpoint(
+                {
+                    "profile_id": profile.name,
+                    "event": "profile-complete",
+                    "record": profiles[profile.name],
+                }
+            )
     passed = all(
         isinstance(value, dict) and value.get("status") == "passed"
         for value in profiles.values()

@@ -68,30 +68,39 @@ def test_family_checkpoint_survives_later_profile_failure(
     from tools.meshing_qualification.scenarios import native_family_matrix
 
     monkeypatch.setattr(native_family_matrix, "_profile_ids", lambda: ("first", "second"))
+    output = tmp_path / "result.json"
+    events_path = tmp_path / "result.json.profiles.jsonl"
 
     def run_profile(
         profile_id: str, *, checkpoint: object, capture_result: object
     ) -> dict[str, object]:
         if profile_id == "second":
+            saved = [json.loads(line) for line in events_path.read_text().splitlines()]
+            completed = [event for event in saved if event["event"] == "profile-complete"]
+            assert completed[0]["record"]["profile_id"] == "first"
+            assert completed[0]["record"]["status"] == "passed"
             raise RuntimeError("later profile interrupted")
         return {"profile_id": profile_id, "status": "passed"}
 
     monkeypatch.setattr(native_family_matrix, "_run_profile", run_profile)
     monkeypatch.setattr(cli, "runtime_identity", lambda: {"engine": "unit-test"})
-    output = tmp_path / "result.json"
-    result = cli._invoke("native-general-families", Namespace(output=output))
-    assert result["status"] == "failed"
-    events = [
-        json.loads(line)
-        for line in (tmp_path / "result.json.profiles.jsonl").read_text().splitlines()
-    ]
-    assert events == [
-        {
-            "profile_id": "first",
-            "event": "profile-complete",
-            "record": {"profile_id": "first", "status": "passed"},
-        }
-    ]
+    status = cli.main(["--scenario", "native-general-families", "--output", str(output)])
+    assert status == 1
+    result = json.loads(output.read_text())
+    assert result["scenarios"]["native-general-families"]["status"] == "failed"
+    events = [json.loads(line) for line in events_path.read_text().splitlines()]
+    assert events[0]["event"] == "scenario-start"
+    assert events[-1]["event"] == "scenario-complete"
+    assert events[-1]["record"]["error_type"] == "RuntimeError"
+    assert {event["scenario"] for event in events} == {"native-general-families"}
+    assert [
+        event["profile_id"] for event in events if event["event"] == "profile-start"
+    ] == ["first", "second"]
+    assert [
+        event["record"]["profile_id"]
+        for event in events
+        if event["event"] == "profile-complete"
+    ] == ["first"]
 
 
 def test_records_and_checkpoints_are_byte_identical_line_feed_text(
@@ -115,6 +124,21 @@ def test_records_and_checkpoints_are_byte_identical_line_feed_text(
         payload = path.read_bytes()
         assert payload.endswith(b"\n")
         assert b"\r" not in payload
+
+
+def test_event_receipts_refuse_existing_file_without_overwrite(tmp_path: Path) -> None:
+    events = tmp_path / "events.jsonl"
+    events.write_text('{"event":"retained"}\n')
+    with pytest.raises(FileExistsError):
+        cli.main(["--scenario", "native-provider-curve", "--events", str(events)])
+    assert events.read_text() == '{"event":"retained"}\n'
+
+
+def test_event_receipts_cannot_be_overwritten_by_final_result(tmp_path: Path) -> None:
+    output = tmp_path / "result.json"
+    with pytest.raises(ValueError, match="distinct paths"):
+        cli.main(["--output", str(output), "--events", str(output)])
+    assert not output.exists()
 
 
 def test_run_rejects_empty_scenario_selection() -> None:

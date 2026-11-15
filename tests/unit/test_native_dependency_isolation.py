@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import json
+import os
 import runpy
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -15,6 +20,10 @@ NATIVE_SCENARIOS = _GATE["NATIVE_SCENARIOS"]
 _check_backend = _GATE["_check_backend"]
 _clean_environment = _GATE["_clean_environment"]
 _validate_native_results = _GATE["_validate_native_results"]
+_command = _GATE["_command"]
+_SCRIPT = (
+    Path(__file__).resolve().parents[2] / "tools/check_native_dependency_isolation.py"
+)
 
 
 def _passed_records() -> dict[str, dict[str, object]]:
@@ -132,3 +141,115 @@ def test_clean_environment_removes_source_and_library_overrides(
     assert "PYTHONSTARTUP" not in environment
     assert environment["PYTHONPATH"] == str(runner)
     assert environment["PYTHONNOUSERSITE"] == "1"
+
+
+def test_real_child_receipts_survive_later_nonzero_exit(tmp_path: Path) -> None:
+    first = [sys.executable, "-c", "print('first receipt')"]
+    environment = dict(
+        os.environ, OMP_NUM_THREADS="2", JAX_PLATFORMS="cpu", PRIVATE_TOKEN="secret"
+    )
+    assert _command(first, evidence=tmp_path, env=environment) == "first receipt"
+    second = [
+        sys.executable,
+        "-c",
+        "import sys; print('second stdout'); print('second stderr', file=sys.stderr); sys.exit(7)",
+    ]
+    with pytest.raises(RuntimeError) as caught:
+        _command(second, evidence=tmp_path)
+    assert "Command failed (7)" in str(caught.value)
+    assert "second stdout" in str(caught.value)
+    assert "second stderr" in str(caught.value)
+    assert (tmp_path / "command-001.stdout").read_text() == "first receipt\n"
+    first_receipt = json.loads((tmp_path / "command-001.json").read_text())
+    second_receipt = json.loads((tmp_path / "command-002.json").read_text())
+    assert first_receipt["arguments"] == first
+    assert first_receipt["returncode"] == 0
+    assert first_receipt["environment"]["OMP_NUM_THREADS"] == "2"
+    assert first_receipt["environment"]["JAX_PLATFORMS"] == "cpu"
+    assert "PRIVATE_TOKEN" not in first_receipt["environment"]
+    assert second_receipt["returncode"] == 7
+    assert (tmp_path / "command-002.stderr").read_text() == "second stderr\n"
+
+
+def test_stream_survives_terminated_parent(tmp_path: Path) -> None:
+    child = "import os,time; print(os.getpid(), flush=True); time.sleep(60)"
+    harness = (
+        "import runpy,sys; from pathlib import Path; "
+        "command=runpy.run_path(sys.argv[1])['_command']; "
+        "command([sys.executable, '-c', sys.argv[3]], evidence=Path(sys.argv[2]))"
+    )
+    parent = subprocess.Popen(
+        [sys.executable, "-c", harness, str(_SCRIPT), str(tmp_path), child]
+    )
+    child_pid = None
+    try:
+        stream = tmp_path / "command-001.stdout"
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if stream.exists() and stream.read_text().strip():
+                child_pid = int(stream.read_text().strip())
+                break
+            if parent.poll() is not None:
+                break
+            time.sleep(0.01)
+        assert child_pid is not None
+        parent.kill()
+        parent.wait(timeout=10)
+        assert stream.read_text().strip() == str(child_pid)
+        assert (
+            json.loads((tmp_path / "command-001.json").read_text())["returncode"] is None
+        )
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+            parent.wait(timeout=10)
+        if child_pid is not None:
+            try:
+                os.kill(child_pid, 9)
+            except ProcessLookupError:
+                pass
+
+
+def test_nonempty_evidence_directory_is_refused(tmp_path: Path) -> None:
+    marker = tmp_path / "existing"
+    marker.write_text("keep")
+    result = subprocess.run(
+        [sys.executable, str(_SCRIPT), "--output-dir", str(tmp_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "must be empty" in json.loads(result.stdout)["detail"]
+    assert marker.read_text() == "keep"
+
+
+def test_existing_child_stream_is_not_overwritten(tmp_path: Path) -> None:
+    stream = tmp_path / "command-001.stdout"
+    stream.write_text("existing")
+    with pytest.raises(FileExistsError):
+        _command([sys.executable, "-c", "print('unexpected')"], evidence=tmp_path)
+    assert stream.read_text() == "existing"
+
+
+def test_failed_run_persists_final_result(tmp_path: Path) -> None:
+    evidence = tmp_path / "evidence"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_SCRIPT),
+            "--output-dir",
+            str(evidence),
+            "--python",
+            "nonexistent-isolation-interpreter",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    record = json.loads(result.stdout)
+    assert record["status"] == "failed"
+    assert record["evidence_dir"] == str(evidence)
+    assert json.loads((evidence / "result.json").read_text()) == record
+    assert str(evidence) in result.stderr

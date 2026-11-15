@@ -1337,9 +1337,13 @@ def _attempt(
         _record_failure(failures, stage, error)
 
 
-def native_constrained_solids() -> dict[str, object]:
+def native_constrained_solids(
+    *, checkpoint: Callable[[dict[str, object]], None] | None = None
+) -> dict[str, object]:
     profile_records: list[dict[str, object]] = []
     for profile in _PROFILES:
+        if checkpoint is not None:
+            checkpoint({"profile_id": profile.profile_id, "event": "profile-start"})
         failures: list[dict[str, str]] = []
         record: dict[str, object] = {
             "profile_id": profile.profile_id,
@@ -1386,6 +1390,14 @@ def native_constrained_solids() -> dict[str, object]:
             _record_failure(failures, "source_and_explicit_request", error)
             record["failures"] = failures
             record["status"] = "failed"
+            if checkpoint is not None:
+                checkpoint(
+                    {
+                        "profile_id": profile.profile_id,
+                        "event": "profile-complete",
+                        "record": record,
+                    }
+                )
             continue
         record["route"] = "phydrax-native:plc_tetrahedral"
         result: phx.meshing.CellMeshingResult | None = None
@@ -1434,6 +1446,14 @@ def native_constrained_solids() -> dict[str, object]:
             )
         record["failures"] = failures
         record["status"] = "passed" if not failures else "failed"
+        if checkpoint is not None:
+            checkpoint(
+                {
+                    "profile_id": profile.profile_id,
+                    "event": "profile-complete",
+                    "record": record,
+                }
+            )
     all_passed = len(profile_records) == len(_PROFILES) and all(
         record["status"] == "passed" for record in profile_records
     )

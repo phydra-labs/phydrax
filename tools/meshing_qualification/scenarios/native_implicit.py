@@ -612,11 +612,17 @@ def _volume_case(
     return record
 
 
-def native_implicit_adaptation() -> dict[str, object]:
+# Keep source setup and exception boundaries inline: receipts observe the original
+# scientific ordering rather than moving preparation or changing failure ownership.
+def native_implicit_adaptation(
+    *, checkpoint: Callable[[dict[str, object]], None] | None = None
+) -> dict[str, object]:
     meshcore = require_meshcore()
     cases: list[dict[str, object]] = []
     failures: list[str] = []
 
+    if checkpoint is not None:
+        checkpoint({"profile_id": "sphere", "event": "profile-start"})
     sphere_radius = 0.371
     sphere_model = phx.geometry.Sphere(
         (0.0, 0.0, 0.0), sphere_radius, feature_id="native-qualification:implicit-sphere"
@@ -640,6 +646,21 @@ def native_implicit_adaptation() -> dict[str, object]:
         )
     except Exception as error:
         failures.append(f"sphere: {type(error).__name__}: {error}")
+        if checkpoint is not None:
+            checkpoint(
+                {
+                    "profile_id": "sphere",
+                    "event": "profile-complete",
+                    "record": {"status": "failed", "failure": failures[-1]},
+                }
+            )
+    else:
+        if checkpoint is not None:
+            checkpoint(
+                {"profile_id": "sphere", "event": "profile-complete", "record": cases[-1]}
+            )
+    if checkpoint is not None:
+        checkpoint({"profile_id": "sphere-adaptive-refinement", "event": "profile-start"})
     try:
         cases.append(
             _volume_case(
@@ -657,7 +678,26 @@ def native_implicit_adaptation() -> dict[str, object]:
         )
     except Exception as error:
         failures.append(f"sphere-adaptive-refinement: {type(error).__name__}: {error}")
+        if checkpoint is not None:
+            checkpoint(
+                {
+                    "profile_id": "sphere-adaptive-refinement",
+                    "event": "profile-complete",
+                    "record": {"status": "failed", "failure": failures[-1]},
+                }
+            )
+    else:
+        if checkpoint is not None:
+            checkpoint(
+                {
+                    "profile_id": "sphere-adaptive-refinement",
+                    "event": "profile-complete",
+                    "record": cases[-1],
+                }
+            )
 
+    if checkpoint is not None:
+        checkpoint({"profile_id": "offset-ring-torus", "event": "profile-start"})
     torus_minor = 0.371
     torus_major = 2.0 * torus_minor
     torus_inner, torus_outer = torus_major - torus_minor, torus_major + torus_minor
@@ -690,7 +730,28 @@ def native_implicit_adaptation() -> dict[str, object]:
         )
     except Exception as error:
         failures.append(f"offset-ring-torus: {type(error).__name__}: {error}")
+        if checkpoint is not None:
+            checkpoint(
+                {
+                    "profile_id": "offset-ring-torus",
+                    "event": "profile-complete",
+                    "record": {"status": "failed", "failure": failures[-1]},
+                }
+            )
+    else:
+        if checkpoint is not None:
+            checkpoint(
+                {
+                    "profile_id": "offset-ring-torus",
+                    "event": "profile-complete",
+                    "record": cases[-1],
+                }
+            )
 
+    if checkpoint is not None:
+        checkpoint(
+            {"profile_id": "hidden-disconnected-components", "event": "profile-start"}
+        )
     hidden_source_id = "native-qualification:implicit-hidden-component"
     hidden_geometry = phx.geometry.Union(
         (
@@ -737,6 +798,23 @@ def native_implicit_adaptation() -> dict[str, object]:
         failures.append(
             f"hidden-disconnected-components: {type(error).__name__}: {error}"
         )
+        if checkpoint is not None:
+            checkpoint(
+                {
+                    "profile_id": "hidden-disconnected-components",
+                    "event": "profile-complete",
+                    "record": {"status": "failed", "failure": failures[-1]},
+                }
+            )
+    else:
+        if checkpoint is not None:
+            checkpoint(
+                {
+                    "profile_id": "hidden-disconnected-components",
+                    "event": "profile-complete",
+                    "record": cases[-1],
+                }
+            )
 
     return {
         "status": "failed" if failures else "passed",

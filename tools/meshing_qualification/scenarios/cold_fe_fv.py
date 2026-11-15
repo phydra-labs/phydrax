@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Callable
 
 import numpy as np
 
@@ -336,7 +337,9 @@ def _owner_local_fv_continuation() -> dict[str, object]:
     }
 
 
-def native_cold_fe_fv_continuation() -> dict[str, object]:
+def native_cold_fe_fv_continuation(
+    *, checkpoint: Callable[[dict[str, object]], None] | None = None
+) -> dict[str, object]:
     from .cold_owner_local import native_cold_owner_local
 
     component_failures: list[str] = []
@@ -349,7 +352,7 @@ def native_cold_fe_fv_continuation() -> dict[str, object]:
         component_failures.append(f"serial FE restore: {fe['error']}")
 
     try:
-        owner_local_fe = native_cold_owner_local()
+        owner_local_fe = native_cold_owner_local(checkpoint=checkpoint)
         profiles = owner_local_fe.get("profiles")
         if (
             owner_local_fe.get("status") != "passed"

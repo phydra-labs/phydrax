@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import sys
 import traceback
+from collections.abc import Callable
+from contextlib import ExitStack
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from ._registry import NATIVE_CASE_REGISTRY, NATIVE_SCENARIOS, OPTIONAL_SCENARIOS
 from ._runtime import runtime_identity
@@ -13,43 +17,43 @@ from ._runtime import runtime_identity
 SCENARIOS = (*NATIVE_SCENARIOS, *OPTIONAL_SCENARIOS, "native-corpus")
 
 
-def _invoke(name: str, arguments: argparse.Namespace, /) -> dict[str, object]:
+def _invoke(
+    name: str,
+    arguments: argparse.Namespace,
+    /,
+    *,
+    checkpoint: Callable[[dict[str, object]], None] | None = None,
+) -> dict[str, object]:
+    def report_profile(event: dict[str, object]) -> None:
+        if checkpoint is not None:
+            checkpoint({**event, "scenario": name})
+
     try:
         if name in NATIVE_CASE_REGISTRY:
             from importlib import import_module
 
             module_name, function_name = NATIVE_CASE_REGISTRY[name]
             function = getattr(import_module(module_name, __package__), function_name)
-            if name in ("native-general-families", "native-planar-feature-matrix"):
-                checkpoint_path = (
-                    arguments.output.with_name(arguments.output.name + ".profiles.jsonl")
-                    if arguments.output is not None
-                    else None
+            if name in (
+                "native-general-families",
+                "native-planar-feature-matrix",
+                "native-cad-profile-matrix",
+                "native-hybrid-layer-matrix",
+                "native-periodic-profile-matrix",
+                "native-constrained-solids",
+                "native-design-loop",
+                "native-tpms",
+                "native-polyhedral",
+                "native-moving-overset",
+                "native-reconstruction",
+                "native-image-material",
+                "native-implicit-adaptation",
+                "native-distributed-lifecycle",
+                "native-cold-fe-fv-continuation",
+            ):
+                record = function(
+                    checkpoint=report_profile if checkpoint is not None else None
                 )
-                if checkpoint_path is None:
-                    import sys
-
-                    def checkpoint(event: dict[str, object]) -> None:
-                        print(
-                            json.dumps(event, default=_json_default, allow_nan=False),
-                            file=sys.stderr,
-                            flush=True,
-                        )
-
-                    record = function(checkpoint=checkpoint)
-                else:
-                    with checkpoint_path.open(
-                        "w", encoding="utf-8", newline="\n"
-                    ) as stream:
-
-                        def checkpoint(event: dict[str, object]) -> None:
-                            stream.write(
-                                json.dumps(event, default=_json_default, allow_nan=False)
-                                + "\n"
-                            )
-                            stream.flush()
-
-                        record = function(checkpoint=checkpoint)
             else:
                 record = function()
         elif name in OPTIONAL_SCENARIOS:
@@ -94,8 +98,19 @@ def _json_default(value: Any, /) -> object:
     raise TypeError(f"Qualification record contains unsupported {type(value).__name__}.")
 
 
+def _write_event(stream: TextIO, event: dict[str, object], /, *, durable: bool) -> None:
+    stream.write(json.dumps(event, default=_json_default, allow_nan=False) + "\n")
+    stream.flush()
+    if durable:
+        os.fsync(stream.fileno())
+
+
 def run(
-    scenarios: tuple[str, ...], arguments: argparse.Namespace, /
+    scenarios: tuple[str, ...],
+    arguments: argparse.Namespace,
+    /,
+    *,
+    checkpoint: Callable[[dict[str, object]], None] | None = None,
 ) -> dict[str, object]:
     if not scenarios:
         raise ValueError("Qualification run requires at least one explicit scenario.")
@@ -108,11 +123,16 @@ def run(
     distributed = "native-distributed-lifecycle"
     combined = "native-cold-fe-fv-continuation"
     shared_continuation = distributed in selected and combined in selected
-    records = {
-        name: _invoke(name, arguments)
-        for name in selected
-        if not (shared_continuation and name == distributed)
-    }
+    records: dict[str, dict[str, object]] = {}
+    for name in selected:
+        if shared_continuation and name == distributed:
+            continue
+        if checkpoint is not None:
+            checkpoint({"event": "scenario-start", "scenario": name})
+        record = _invoke(name, arguments, checkpoint=checkpoint)
+        records[name] = record
+        if checkpoint is not None:
+            checkpoint({"event": "scenario-complete", "scenario": name, "record": record})
     if shared_continuation:
         component = records[combined].get("owner_local_fe_continuation")
         if (
@@ -129,6 +149,15 @@ def run(
                 "detail": "Combined cold continuation omitted its canonical distributed FE result.",
                 "runtime": records[combined]["runtime"],
             }
+        if checkpoint is not None:
+            checkpoint(
+                {
+                    "event": "scenario-complete",
+                    "scenario": distributed,
+                    "derived_from": combined,
+                    "record": records[distributed],
+                }
+            )
         records = {name: records[name] for name in selected}
     status = (
         "passed"
@@ -150,13 +179,37 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--executable", default="vc_mesh")
     parser.add_argument("--worker", default=None)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--events",
+        type=Path,
+        help="Durable scenario/profile JSONL receipts; requires a fresh file.",
+    )
     parser.add_argument("--list", action="store_true")
     arguments = parser.parse_args(argv)
     if arguments.list:
         print("\n".join(SCENARIOS))
         return 0
     selected = tuple(arguments.scenario or ("native-corpus",))
-    record = run(selected, arguments)
+    event_path = arguments.events
+    if event_path is None and arguments.output is not None:
+        event_path = arguments.output.with_name(arguments.output.name + ".profiles.jsonl")
+    if (
+        event_path is not None
+        and arguments.output is not None
+        and event_path.resolve() == arguments.output.resolve()
+    ):
+        raise ValueError("Event receipts and final output require distinct paths.")
+    with ExitStack() as stack:
+        stream = (
+            stack.enter_context(event_path.open("x", encoding="utf-8", newline="\n"))
+            if event_path is not None
+            else sys.stderr
+        )
+
+        def checkpoint(event: dict[str, object]) -> None:
+            _write_event(stream, event, durable=event_path is not None)
+
+        record = run(selected, arguments, checkpoint=checkpoint)
     rendered = json.dumps(
         record, default=_json_default, indent=2, sort_keys=True, allow_nan=False
     )

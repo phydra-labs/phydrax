@@ -1976,15 +1976,31 @@ def _profile_case(
     return profile
 
 
-def native_design_loop() -> dict[str, object]:
+def native_design_loop(
+    *, checkpoint: Callable[[dict[str, object]], None] | None = None
+) -> dict[str, object]:
     meshcore = require_meshcore()
-    profiles = (
-        _profile_case("routine-sphere", 2, combined_target=False, meshcore=meshcore),
-        _profile_case("larger-sphere", 4, combined_target=False, meshcore=meshcore),
-        _profile_case(
-            "combined-design-target", 2, combined_target=True, meshcore=meshcore
+    profiles = []
+    for name, resolution, combined_target, profile_id in (
+        ("routine-sphere", 2, False, "native-design-lifecycle"),
+        ("larger-sphere", 4, False, "native-design-lifecycle:larger-sphere"),
+        (
+            "combined-design-target",
+            2,
+            True,
+            "native-design-lifecycle:combined-design-target",
         ),
-    )
+    ):
+        if checkpoint is not None:
+            checkpoint({"profile_id": profile_id, "event": "profile-start"})
+        record = _profile_case(
+            name, resolution, combined_target=combined_target, meshcore=meshcore
+        )
+        profiles.append(record)
+        if checkpoint is not None:
+            checkpoint(
+                {"profile_id": profile_id, "event": "profile-complete", "record": record}
+            )
     all_passed = all(profile["status"] == "passed" for profile in profiles)
     missing_contracts: set[str] = set()
     for profile in profiles:

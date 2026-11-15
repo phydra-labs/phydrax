@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import email.parser
+import faulthandler
+import hashlib
 import json
 import os
 import runpy
@@ -24,22 +26,111 @@ if not NATIVE_SCENARIOS:
     raise RuntimeError("The canonical native qualification registry is empty.")
 
 
+def _write_json(path: Path, record: dict[str, object]) -> None:
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            json.dump(record, stream, indent=2, sort_keys=True, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def _command(
-    arguments: list[str], /, *, cwd: Path | None = None, env: dict[str, str] | None = None
+    arguments: list[str],
+    /,
+    *,
+    evidence: Path,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
 ) -> str:
-    result = subprocess.run(
-        arguments, cwd=cwd, env=env, capture_output=True, text=True, check=False
-    )
+    number = len(tuple(evidence.glob("command-*.json"))) + 1
+    stem = f"command-{number:03d}"
+    stdout_path = evidence / f"{stem}.stdout"
+    stderr_path = evidence / f"{stem}.stderr"
+    metadata_path = evidence / f"{stem}.json"
+    environment = dict(os.environ if env is None else env)
+    environment["PYTHONFAULTHANDLER"] = "1"
+    environment["PYTHONUNBUFFERED"] = "1"
+    recorded_environment = {
+        name: environment[name]
+        for name in (
+            "PATH",
+            "PYTHONPATH",
+            "PYTHONHOME",
+            "PYTHONNOUSERSITE",
+            "PYTHONFAULTHANDLER",
+            "PYTHONUNBUFFERED",
+            "VIRTUAL_ENV",
+            "TMPDIR",
+            "JAX_PLATFORM_NAME",
+            "JAX_PLATFORMS",
+            "JAX_ENABLE_X64",
+            "JAX_ENABLE_COMPILATION_CACHE",
+            "PHX_MESHCORE_THREADS",
+            "JAX_NUM_CPU_DEVICES",
+            "XLA_FLAGS",
+            "OMP_NUM_THREADS",
+            "OMP_THREAD_LIMIT",
+            "OPENBLAS_NUM_THREADS",
+            "MKL_NUM_THREADS",
+            "NUMEXPR_NUM_THREADS",
+            "VECLIB_MAXIMUM_THREADS",
+            "TF_NUM_INTRAOP_THREADS",
+            "TF_NUM_INTEROP_THREADS",
+        )
+        if name in environment
+    }
+    metadata: dict[str, object] = {
+        "arguments": arguments,
+        "cwd": str(cwd or Path.cwd()),
+        "environment": recorded_environment,
+        "stdout": stdout_path.name,
+        "stderr": stderr_path.name,
+        "returncode": None,
+    }
+    _write_json(metadata_path, metadata)
+    with stdout_path.open("xb") as stdout, stderr_path.open("xb") as stderr:
+        try:
+            result = subprocess.run(
+                arguments,
+                cwd=cwd,
+                env=environment,
+                stdout=stdout,
+                stderr=stderr,
+                check=False,
+            )
+        except OSError as error:
+            metadata["error"] = str(error)
+            _write_json(metadata_path, metadata)
+            raise
+        stdout.flush()
+        stderr.flush()
+        os.fsync(stdout.fileno())
+        os.fsync(stderr.fileno())
+    metadata["returncode"] = result.returncode
+    _write_json(metadata_path, metadata)
+    output = stdout_path.read_text(encoding="utf-8")
+    errors = stderr_path.read_text(encoding="utf-8")
     if result.returncode != 0:
         raise RuntimeError(
-            f"Command failed ({result.returncode}): {arguments!r}\n"
-            + result.stdout
-            + result.stderr
+            f"Command failed ({result.returncode}): {arguments!r}\n" + output + errors
         )
-    return result.stdout.strip()
+    return output.strip()
 
 
-def _resolve_python(selector: str, /) -> Path:
+def _resolve_python(selector: str, /, *, evidence: Path) -> Path:
     candidate = Path(selector).expanduser()
     if not candidate.is_file():
         executable = shutil.which(f"python{selector}")
@@ -55,7 +146,8 @@ def _resolve_python(selector: str, /) -> Path:
                 str(candidate),
                 "-c",
                 "import json,sys; print(json.dumps(list(sys.version_info[:3])))",
-            ]
+            ],
+            evidence=evidence,
         )
     )
     if version[:2] != [3, 13]:
@@ -93,7 +185,9 @@ def _built_wheel(directory: Path, prefix: str, /) -> Path:
     return matches[0]
 
 
-def _build_wheels(python: Path, directory: Path, /) -> tuple[Path, Path]:
+def _build_wheels(
+    python: Path, directory: Path, /, *, evidence: Path
+) -> tuple[Path, Path]:
     directory.mkdir(parents=True)
     phydrax_output = directory / "phydrax"
     meshcore_output = directory / "meshcore"
@@ -109,7 +203,8 @@ def _build_wheels(python: Path, directory: Path, /) -> tuple[Path, Path]:
             "--out-dir",
             str(phydrax_output),
             str(ROOT),
-        ]
+        ],
+        evidence=evidence,
     )
     _command(
         [
@@ -121,7 +216,8 @@ def _build_wheels(python: Path, directory: Path, /) -> tuple[Path, Path]:
             "--out-dir",
             str(meshcore_output),
             str(ROOT / "native/meshcore"),
-        ]
+        ],
+        evidence=evidence,
     )
     return _built_wheel(phydrax_output, "phydrax-"), _built_wheel(
         meshcore_output, "phydrax_meshcore-"
@@ -149,10 +245,12 @@ def _clean_environment(runner: Path | None = None, /) -> dict[str, str]:
 
 
 def _json_command(
-    python: Path, code: str, /, *, cwd: Path, environment: dict[str, str]
+    python: Path, code: str, /, *, cwd: Path, environment: dict[str, str], evidence: Path
 ) -> dict[str, object]:
     wrapped = _guarded_code("    exec(" + repr(code) + ")")
-    output = _command([str(python), "-c", wrapped], cwd=cwd, env=environment)
+    output = _command(
+        [str(python), "-c", wrapped], cwd=cwd, env=environment, evidence=evidence
+    )
     try:
         record = json.loads(output.splitlines()[-1])
     except (IndexError, json.JSONDecodeError) as error:
@@ -165,7 +263,7 @@ def _json_command(
 
 
 def _base_refusal(
-    python: Path, /, *, cwd: Path, environment: dict[str, str]
+    python: Path, /, *, cwd: Path, environment: dict[str, str], evidence: Path
 ) -> dict[str, object]:
     code = r"""
 import json, numpy as np, jax.numpy as jnp
@@ -194,11 +292,13 @@ except MeshcoreUnavailableError as error:
 else:
     raise RuntimeError("Native meshing unexpectedly ran without the meshcore wheel.")
 """
-    return _json_command(python, code, cwd=cwd, environment=environment)
+    return _json_command(
+        python, code, cwd=cwd, environment=environment, evidence=evidence
+    )
 
 
 def _native_probe(
-    python: Path, /, *, cwd: Path, environment: dict[str, str]
+    python: Path, /, *, cwd: Path, environment: dict[str, str], evidence: Path
 ) -> dict[str, object]:
     code = r"""
 import importlib.metadata, json, pathlib, sys
@@ -215,7 +315,9 @@ if phydrax_version != meshcore_version:
     raise RuntimeError(f"Mismatched installed wheels: phydrax {phydrax_version}, meshcore {meshcore_version}.")
 print(json.dumps({"status": "passed", "python": sys.version, "prefix": sys.prefix, "phydrax_path": str(phydrax_path), "phydrax_version": phydrax_version, "meshcore_version": meshcore_version, "meshcore_identity": meshcore_identity(), "meshcore_library_path": str(load_meshcore().path.resolve())}))
 """
-    return _json_command(python, code, cwd=cwd, environment=environment)
+    return _json_command(
+        python, code, cwd=cwd, environment=environment, evidence=evidence
+    )
 
 
 def _guarded_code(body: str, /, *, expected_runner: Path | None = None) -> str:
@@ -282,14 +384,22 @@ if exit_code:
 
 
 def _run_guarded_cli(
-    python: Path, /, *, cwd: Path, environment: dict[str, str]
+    python: Path, /, *, cwd: Path, environment: dict[str, str], evidence: Path
 ) -> dict[str, object]:
-    body = "    sys.argv = ['tools.meshing_qualification', '--scenario', 'native-corpus']\n    runpy.run_module('tools.meshing_qualification', run_name='__main__')"
+    argv = [
+        "tools.meshing_qualification",
+        "--scenario",
+        "native-corpus",
+        "--events",
+        str(evidence / "native-events.jsonl"),
+    ]
+    body = f"    sys.argv = {argv!r}\n    runpy.run_module('tools.meshing_qualification', run_name='__main__')"
     runner = Path(environment["PYTHONPATH"]).expanduser().resolve()
     output = _command(
         [str(python), "-c", _guarded_code(body, expected_runner=runner)],
         cwd=cwd,
         env=environment,
+        evidence=evidence,
     )
     try:
         record = json.loads(output)
@@ -379,8 +489,8 @@ def _validate_native_results(
     return validated
 
 
-def qualify(arguments: argparse.Namespace) -> dict[str, object]:
-    python = _resolve_python(arguments.python)
+def qualify(arguments: argparse.Namespace, *, evidence: Path) -> dict[str, object]:
+    python = _resolve_python(arguments.python, evidence=evidence)
     wheel_arguments = (arguments.wheel, arguments.meshcore_wheel)
     if (wheel_arguments[0] is None) != (wheel_arguments[1] is None):
         raise RuntimeError(
@@ -391,18 +501,38 @@ def qualify(arguments: argparse.Namespace) -> dict[str, object]:
     ) as directory_name:
         directory = Path(directory_name)
         if wheel_arguments[0] is None:
-            phydrax_wheel, meshcore_wheel = _build_wheels(python, directory / "wheels")
+            phydrax_wheel, meshcore_wheel = _build_wheels(
+                python, directory / "wheels", evidence=evidence
+            )
         else:
             phydrax_wheel = Path(arguments.wheel).expanduser().resolve()
             meshcore_wheel = Path(arguments.meshcore_wheel).expanduser().resolve()
         phydrax_version = _wheel_version(phydrax_wheel, "phydrax")
         meshcore_version = _wheel_version(meshcore_wheel, "phydrax-meshcore")
+        wheel_hashes: dict[str, str] = {}
+        for name, wheel in (("phydrax", phydrax_wheel), ("meshcore", meshcore_wheel)):
+            with wheel.open("rb") as stream:
+                wheel_hashes[name] = hashlib.file_digest(stream, "sha256").hexdigest()
+        _write_json(
+            evidence / "wheels.json",
+            {
+                "source_root": str(ROOT),
+                "python": str(python),
+                "phydrax_wheel": str(phydrax_wheel),
+                "meshcore_wheel": str(meshcore_wheel),
+                "versions": {"phydrax": phydrax_version, "meshcore": meshcore_version},
+                "sha256": wheel_hashes,
+            },
+        )
         if phydrax_version != meshcore_version:
             raise RuntimeError(
                 f"Wheel versions do not match: phydrax {phydrax_version}, meshcore {meshcore_version}."
             )
         environment_path = directory / "venv"
-        _command(["uv", "venv", "--python", str(python), str(environment_path)])
+        _command(
+            ["uv", "venv", "--python", str(python), str(environment_path)],
+            evidence=evidence,
+        )
         installed_python = _venv_python(environment_path)
         isolated_env = _clean_environment()
         _command(
@@ -416,9 +546,10 @@ def qualify(arguments: argparse.Namespace) -> dict[str, object]:
             ],
             cwd=directory,
             env=isolated_env,
+            evidence=evidence,
         )
         missing_meshcore = _base_refusal(
-            installed_python, cwd=directory, environment=isolated_env
+            installed_python, cwd=directory, environment=isolated_env, evidence=evidence
         )
         if (
             missing_meshcore.get("status") != "passed"
@@ -445,9 +576,10 @@ def qualify(arguments: argparse.Namespace) -> dict[str, object]:
             ],
             cwd=directory,
             env=isolated_env,
+            evidence=evidence,
         )
         native_identity = _native_probe(
-            installed_python, cwd=directory, environment=isolated_env
+            installed_python, cwd=directory, environment=isolated_env, evidence=evidence
         )
         runner = directory / "runner"
         tools_root = runner / "tools"
@@ -460,7 +592,10 @@ def qualify(arguments: argparse.Namespace) -> dict[str, object]:
         )
         engine_free_env = _clean_environment(runner)
         native = _run_guarded_cli(
-            installed_python, cwd=directory, environment=engine_free_env
+            installed_python,
+            cwd=directory,
+            environment=engine_free_env,
+            evidence=evidence,
         )
         records = _validate_native_results(native)
         for name in NATIVE_SCENARIOS:
@@ -485,18 +620,48 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--wheel", type=Path)
     parser.add_argument("--meshcore-wheel", type=Path)
     parser.add_argument("--all-native", action="store_true")
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Fresh or empty directory for persistent evidence.",
+    )
     arguments = parser.parse_args(argv)
+    evidence: Path | None = None
+    record: dict[str, object]
     try:
-        record = qualify(arguments)
+        if arguments.output_dir is None:
+            evidence = Path(
+                tempfile.mkdtemp(prefix="phydrax-native-isolation-evidence-")
+            ).resolve()
+        else:
+            requested = arguments.output_dir.expanduser().resolve()
+            requested.mkdir(parents=True, exist_ok=True)
+            if any(requested.iterdir()):
+                raise RuntimeError(f"Evidence directory must be empty: {requested}")
+            evidence = requested
+        print(f"Isolation evidence: {evidence}", file=sys.stderr, flush=True)
+        record = qualify(arguments, evidence=evidence)
     except Exception as error:
         record = {
             "status": "failed",
             "error_type": type(error).__name__,
             "detail": str(error),
         }
+    if evidence is not None:
+        record["evidence_dir"] = str(evidence)
+        try:
+            _write_json(evidence / "result.json", record)
+        except Exception as error:
+            record = {
+                "status": "failed",
+                "error_type": type(error).__name__,
+                "detail": f"Could not persist final result: {error}; original result: {record!r}",
+                "evidence_dir": str(evidence),
+            }
     print(json.dumps(record, indent=2, sort_keys=True, allow_nan=False))
     return 0 if record.get("status") == "passed" else 1
 
 
 if __name__ == "__main__":
+    faulthandler.enable()
     raise SystemExit(main())

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 from math import floor, pi, sqrt
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import jax.numpy as jnp
 import numpy as np
@@ -2200,7 +2200,9 @@ def _profile_record(profile: _Profile, /) -> dict[str, object]:
         return record
 
 
-def native_periodic_profile_matrix() -> dict[str, object]:
+def native_periodic_profile_matrix(
+    *, checkpoint: Callable[[dict[str, object]], None] | None = None
+) -> dict[str, object]:
     migration = json.loads(_MIGRATION.read_text(encoding="utf-8"))
     workflow = next(
         item
@@ -2210,6 +2212,8 @@ def native_periodic_profile_matrix() -> dict[str, object]:
     source_profiles = tuple(workflow["profiles"])
     records: dict[str, dict[str, object]] = {}
     for profile_id in source_profiles:
+        if checkpoint is not None:
+            checkpoint({"profile_id": profile_id, "event": "profile-start"})
         profile = _PROFILES.get(profile_id)
         if profile is None:
             records[profile_id] = {
@@ -2223,6 +2227,14 @@ def native_periodic_profile_matrix() -> dict[str, object]:
             }
         else:
             records[profile_id] = _profile_record(profile)
+        if checkpoint is not None:
+            checkpoint(
+                {
+                    "profile_id": profile_id,
+                    "event": "profile-complete",
+                    "record": records[profile_id],
+                }
+            )
     passed = all(record.get("status") == "passed" for record in records.values())
     return {
         "status": "passed" if passed else "failed",
