@@ -112,3 +112,76 @@ def test_complex_components_near_float_limit_keep_representable_norm() -> None:
     np.testing.assert_allclose(
         jax.jit(scaled_norm)(vector) / 1e308, np.sqrt(2.0), rtol=1e-14
     )
+
+
+@pytest.mark.parametrize(
+    "solver",
+    ["pcg", "gmres", "minres"],
+)
+def test_collective_pairing_agrees_on_one_norm_across_unequal_members(
+    solver: str,
+) -> None:
+    from phydrax.linalg import (
+        DistributedKrylovPolicy,
+        DistributedLinearOperator,
+        DistributedPairing,
+        solve_distributed_gmres,
+        solve_distributed_minres,
+        solve_distributed_pcg,
+    )
+
+    # Two collective members whose coordinates differ by twelve orders of
+    # magnitude: a member-local scale would give each a different norm.
+    axis = "members"
+    values = jnp.asarray([[3.0e6, 0.0], [0.0, 4.0e-6]])
+    diagonal = jnp.asarray([[2.0, 3.0], [4.0, 5.0]])
+    expected = np.linalg.norm(np.asarray(values))
+
+    def member_norm(value: jax.Array) -> jax.Array:
+        pairing = DistributedPairing(
+            jnp.ones((2,), dtype=jnp.bool_), axis_name=axis, pairing_id="members"
+        )
+        return scaled_norm(value, pairing.collective_inner())
+
+    norms = jax.vmap(member_norm, axis_name=axis)(values)
+    np.testing.assert_allclose(norms, [expected, expected], rtol=1e-14)
+
+    solve = {
+        "pcg": solve_distributed_pcg,
+        "gmres": solve_distributed_gmres,
+        "minres": solve_distributed_minres,
+    }[solver]
+
+    def member_solve(
+        rhs: jax.Array, weights: jax.Array
+    ) -> tuple[jax.Array, jax.Array, jax.Array]:
+        pairing = DistributedPairing(
+            jnp.ones((2,), dtype=jnp.bool_), axis_name=axis, pairing_id="members"
+        )
+        operator = DistributedLinearOperator(
+            lambda value: weights * value,
+            lambda value: weights * value,
+            (2,),
+            (2,),
+            operator_id="member-diagonal",
+        )
+        result = solve(
+            operator,
+            rhs,
+            pairing,
+            DistributedKrylovPolicy(8, relative_tolerance=1.0e-12, restart=4),
+        )
+        return result.value, result.residual_norm, result.converged
+
+    value, residual_norm, converged = jax.vmap(member_solve, axis_name=axis)(
+        values, diagonal
+    )
+    # The stop test bounds the collective residual, so a coordinate is known
+    # to the threshold over the smallest eigenvalue (2), not to its own size.
+    np.testing.assert_allclose(
+        value, values / diagonal, rtol=1e-10, atol=1.0e-12 * expected
+    )
+    assert bool(jnp.all(converged))
+    # Every member reports the same collective residual norm.
+    assert float(residual_norm[0]) == float(residual_norm[1])
+    assert float(residual_norm[0]) <= 1.0e-12 * expected

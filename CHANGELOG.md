@@ -617,6 +617,10 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Distributed PCG, GMRES, FGMRES, and MINRES rescale convergence norms by one
+  scale agreed across the pairing's collective. A member-local scale made each
+  shard-local member report a different, incorrect norm when their coordinate
+  magnitudes differed. Global-array pairings and local solves are unchanged.
 - Native zero-set triangle admission can certify a whole-triangle translated
   extrusion when the tolerance-wide gradient-flow bound is inconclusive.
   Uniform endpoint signs, a strict directional derivative, outward interval

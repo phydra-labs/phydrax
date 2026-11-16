@@ -670,6 +670,8 @@ through unscaled squaring. Weighted and complex pairings retain their semantics;
 rescaling does not repair nonfinite data or unsafe arithmetic inside a custom
 pairing. Exact-zero norms retain the finite zero derivative used by fixed-trip
 Krylov differentiation. Requested tolerances and iteration limits are unchanged.
+A collective `DistributedPairing` rescales by the largest coordinate magnitude
+over every member (`collective_inner()`), so all members evaluate one norm.
 
 ### Per-invocation Krylov controls
 

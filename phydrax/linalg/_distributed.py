@@ -19,6 +19,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ._norm import CollectiveInner
 from .backends._native_krylov import _fgmres_raw, _minres_raw, _pcg_raw
 
 
@@ -209,6 +210,16 @@ class DistributedPairing(StrictModule, NonTrainableState):
             return local
         return jax.lax.pmin(local.astype(jnp.int32), self.axis_name).astype("bool")
 
+    def global_max(self, value: ArrayLike, /) -> Array:
+        local = jnp.max(jnp.asarray(value))
+        if self.axis_name is None:
+            return local
+        return jax.lax.pmax(local, self.axis_name)
+
+    def collective_inner(self) -> CollectiveInner:
+        """This pairing with the norm scale every collective member agrees on."""
+        return CollectiveInner(self.inner, self.global_max)
+
 
 class DistributedLinearOperator(StrictModule, NonTrainableState):
     """Local or global matrix-free action with explicit transpose identity."""
@@ -348,7 +359,7 @@ def solve_distributed_pcg(
         operator.mv,
         rhs,
         initial_,
-        pairing.inner,
+        pairing.collective_inner(),
         precondition,
         policy.maximum_steps,
         jnp.asarray(policy.relative_tolerance, dtype=rhs.real.dtype),
@@ -480,7 +491,7 @@ def solve_distributed_gmres(
         operator.mv,
         rhs,
         initial_,
-        pairing.inner,
+        pairing.collective_inner(),
         precondition,
         policy.maximum_steps,
         policy.restart,
@@ -534,7 +545,7 @@ def solve_distributed_minres(
         operator.mv,
         rhs,
         initial_,
-        pairing.inner,
+        pairing.collective_inner(),
         precondition,
         policy.maximum_steps,
         jnp.asarray(policy.relative_tolerance, dtype=rhs.real.dtype),
