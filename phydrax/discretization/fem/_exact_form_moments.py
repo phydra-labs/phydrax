@@ -21,7 +21,7 @@ import numpy as np
 import numpy.typing as npt
 
 from ..._host_table_cache import HostTableCache, logical_table_bytes
-from ...linalg._exact import solve_exact
+from ...linalg._exact import matmul_exact, solve_exact
 from ...typing import ConvertibleToArray
 from .. import _coordinate_enclosure as algebra
 from .._exact_algebraic_geometry import coefficient_endpoint
@@ -1780,105 +1780,34 @@ def _transform_moments(
         for row in range(len(target))
     ]
     inverse_target = solve_exact(target, identity)
-    source_width = len(source)
-    target_width = len(target)
     raw_values = [[Fraction(float(value)) for value in row] for row in moments.values]
     raw_errors = [[Fraction(float(value)) for value in row] for row in moments.errors]
-    intermediate = [
-        [
-            sum(
-                (
-                    raw_values[row][inner] * source[inner][column]
-                    for inner in range(source_width)
-                ),
-                Fraction(0),
-            )
-            for column in range(source_width)
-        ]
-        for row in range(target_width)
-    ]
-    intermediate_errors = [
-        [
-            sum(
-                (
-                    raw_errors[row][inner] * abs(source[inner][column])
-                    for inner in range(source_width)
-                ),
-                Fraction(0),
-            )
-            for column in range(source_width)
-        ]
-        for row in range(target_width)
-    ]
-    intermediate_exact = [
-        [
-            sum(
-                int(moments.exact[row, inner])
-                for inner in range(source_width)
-                if source[inner][column]
-            )
-            for column in range(source_width)
-        ]
-        for row in range(target_width)
-    ]
-    intermediate_enclosed = [
-        [
-            sum(
-                int(moments.enclosed[row, inner])
-                for inner in range(source_width)
-                if source[inner][column]
-            )
-            for column in range(source_width)
-        ]
-        for row in range(target_width)
-    ]
-    values = np.empty((target_width, source_width), dtype=np.float64)
+    absolute_source = [[abs(value) for value in row] for row in source]
+    absolute_inverse = [[abs(value) for value in row] for row in inverse_target]
+    # Native exact products skip zero terms (orientation transforms are sparse)
+    # and accumulate in integers; each entry equals the Fraction sum of products.
+    centers = matmul_exact(inverse_target, matmul_exact(raw_values, source))
+    bounds = matmul_exact(absolute_inverse, matmul_exact(raw_errors, absolute_source))
+    source_support = np.asarray(
+        [[value != 0 for value in row] for row in source], dtype=np.int64
+    ).reshape((len(source), len(source)))
+    inverse_support = np.asarray(
+        [[value != 0 for value in row] for row in inverse_target], dtype=np.int64
+    ).reshape((len(target), len(target)))
+    # An entry is enclosed when any supported intermediate term carries an
+    # enclosed local moment; every other entry is exact.
+    intermediate_enclosed = moments.enclosed.astype(np.int64) @ source_support != 0
+    enclosed = inverse_support @ intermediate_enclosed.astype(np.int64) != 0
+    exact = ~enclosed
+    values = np.empty(enclosed.shape, dtype=np.float64)
     errors = np.empty_like(values)
-    exact = np.zeros(values.shape, dtype=np.bool_)
-    enclosed = np.zeros(values.shape, dtype=np.bool_)
-    for row in range(target_width):
-        for column in range(source_width):
-            center = sum(
-                (
-                    inverse_target[row][inner] * intermediate[inner][column]
-                    for inner in range(target_width)
-                ),
-                Fraction(0),
-            )
-            error = sum(
-                (
-                    abs(inverse_target[row][inner]) * intermediate_errors[inner][column]
-                    for inner in range(target_width)
-                ),
-                Fraction(0),
-            )
+    for row, (center_row, bound_row) in enumerate(zip(centers, bounds, strict=True)):
+        for column, (center, bound) in enumerate(zip(center_row, bound_row, strict=True)):
             values[row, column] = float(center)
             rounding = abs(Fraction(float(values[row, column])) - center)
             errors[row, column] = coefficient_endpoint(
-                error + rounding, upper=True, saturate=True
+                bound + rounding, upper=True, saturate=True
             )
-            exact[row, column] = all(
-                intermediate_enclosed[inner][column] == 0
-                for inner in range(target_width)
-                if inverse_target[row][inner]
-            )
-            enclosed[row, column] = any(
-                intermediate_enclosed[inner][column] != 0
-                for inner in range(target_width)
-                if inverse_target[row][inner]
-            )
-            exact_count = sum(
-                intermediate_exact[inner][column]
-                for inner in range(target_width)
-                if inverse_target[row][inner]
-            )
-            enclosed_count = sum(
-                intermediate_enclosed[inner][column]
-                for inner in range(target_width)
-                if inverse_target[row][inner]
-            )
-            if exact_count + enclosed_count == 0:
-                exact[row, column] = True
     if not np.all(np.isfinite(values)) or not np.all(np.isfinite(errors)):
         raise ValueError(
             "Transformed exact FE moments have no finite binary64 enclosure."
