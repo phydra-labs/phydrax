@@ -5704,6 +5704,26 @@ class _VolumePieceFilter:
         return cleared, certificates
 
 
+def _rational_planar_corners(
+    corners: tuple[tuple[ExactScalar, ...], ...], /
+) -> tuple[tuple[Fraction, Fraction], ...] | None:
+    """Exact rational planar corners, or ``None`` for any other coordinate."""
+    result: list[tuple[Fraction, Fraction]] = []
+    for point in corners:
+        if len(point) != 2:
+            return None
+        rational: list[Fraction] = []
+        for value in point:
+            if isinstance(value, Fraction):
+                rational.append(value)
+            elif isinstance(value, int):
+                rational.append(Fraction(value))
+            else:
+                return None
+        result.append((rational[0], rational[1]))
+    return tuple(result)
+
+
 @dataclass(frozen=True, slots=True)
 class _PlanarTriangleFilter:
     """Binary64 contact certificates for straight triangle cells in R2.
@@ -5726,26 +5746,21 @@ class _PlanarTriangleFilter:
         vertex_ids = np.full((len(cells), 3), -1, dtype=np.int64)
         triangles: list[tuple[tuple[Fraction, Fraction], ...]] = []
         for index, cell in enumerate(cells):
-            corners = cell.corner_images
-            if (
-                cell.dimension != 2
+            corners = (
+                None
+                if cell.dimension != 2
                 or (not cell.affine and cell.coordinates)
                 or cell.kind not in ("triangle", "simplex:2")
                 or len(cell.vertex_ids) != 3
-                or len(corners) != 3
-                or any(
-                    len(point) != 2
-                    or not all(isinstance(value, (int, Fraction)) for value in point)
-                    for point in corners
-                )
-            ):
+                or len(cell.corner_images) != 3
+                else _rational_planar_corners(cell.corner_images)
+            )
+            if corners is None:
                 triangles.append(())
                 continue
             filtered[index] = True
             vertex_ids[index] = cell.vertex_ids
-            triangles.append(
-                tuple((Fraction(point[0]), Fraction(point[1])) for point in corners)
-            )
+            triangles.append(corners)
         if not np.any(filtered):
             return None
         return cls(TriangleEnclosures.prepare(triangles), filtered, vertex_ids)
