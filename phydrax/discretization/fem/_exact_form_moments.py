@@ -14,7 +14,8 @@ from dataclasses import dataclass, field
 from fractions import Fraction
 from functools import lru_cache
 from itertools import combinations, permutations, product
-from math import comb, factorial, fsum, prod
+from math import comb, factorial, fsum, lcm, prod
+from types import MappingProxyType
 from typing import final, Literal, Protocol, runtime_checkable, TYPE_CHECKING
 
 import numpy as np
@@ -900,6 +901,228 @@ def _exact_polynomial_simplex_integral(
     return _integral_center_and_error(total * determinant)
 
 
+@lru_cache(maxsize=4096)
+def _simplex_monomial_integrals(
+    vertices: tuple[tuple[Fraction, ...], ...], degree: int, /
+) -> tuple[Mapping[tuple[int, ...], int], int]:
+    """Exact integrals of every monomial of total degree <= degree over a simplex.
+
+    Integrals are integer numerators over one common denominator. Each monomial
+    is pulled back through the same chart and closed-form barycentric moments as
+    `_exact_polynomial_simplex_integral`; integration is linear, so contracting
+    a rational polynomial with this table gives that integral exactly.
+    """
+    dimension = len(vertices) - 1
+    chart = _simplex_chart_arguments(vertices, dimension)
+    determinant = abs(_simplex_determinant(vertices))
+    images: dict[tuple[int, ...], _Polynomial] = {}
+    integrals: dict[tuple[int, ...], Fraction] = {}
+    for total in range(degree + 1):
+        for exponent in _multiindices(dimension, total):
+            if total:
+                axis = next(axis for axis, power in enumerate(exponent) if power)
+                parent = tuple(
+                    power - int(index == axis) for index, power in enumerate(exponent)
+                )
+                image = algebra.multiply(images[parent], chart[axis])
+            else:
+                image = algebra.constant(1, dimension)
+            if isinstance(image, algebra.RationalPolynomial):
+                raise RuntimeError(
+                    "An affine simplex chart produced a rational monomial."
+                )
+            images[exponent] = image
+            integral = Fraction(0)
+            for local, coefficient in image.items():
+                if not isinstance(coefficient, Fraction):
+                    raise RuntimeError(
+                        "An affine simplex chart produced a non-rational monomial."
+                    )
+                integral += coefficient * Fraction(
+                    prod(factorial(power) for power in local),
+                    factorial(dimension + sum(local)),
+                )
+            integrals[exponent] = determinant * integral
+    denominator = lcm(1, *(value.denominator for value in integrals.values()))
+    return MappingProxyType(
+        {
+            exponent: value.numerator * (denominator // value.denominator)
+            for exponent, value in integrals.items()
+        }
+    ), denominator
+
+
+def _integer_components(
+    components: Sequence[_Expression], dimension: int, /
+) -> tuple[tuple[dict[tuple[int, ...], int], ...], int] | None:
+    """Rational polynomial components as integers over one shared denominator.
+
+    Returns None for radical coefficients, nonconstant denominators, or
+    exponents of another dimension; those integrands keep the composed route.
+    """
+    polynomials = []
+    for component in components:
+        polynomial = _polynomial_expression(component)
+        if isinstance(polynomial, algebra.RationalPolynomial):
+            return None
+        rational: dict[tuple[int, ...], Fraction] = {}
+        for exponent, value in polynomial.items():
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (Fraction, int))
+                or len(exponent) != dimension
+            ):
+                return None
+            if value:
+                rational[exponent] = Fraction(value)
+        polynomials.append(rational)
+    denominator = lcm(
+        1,
+        *(
+            value.denominator
+            for polynomial in polynomials
+            for value in polynomial.values()
+        ),
+    )
+    return tuple(
+        {
+            exponent: value.numerator * (denominator // value.denominator)
+            for exponent, value in polynomial.items()
+        }
+        for polynomial in polynomials
+    ), denominator
+
+
+def _polynomial_entity_moments(
+    pulled_components: Sequence[tuple[_Expression, ...]],
+    test_forms: Mapping[int, tuple[_Polynomial, ...]],
+    entity_dofs: tuple[int, ...],
+    target_blades: tuple[tuple[int, ...], ...],
+    form_degree: int,
+    entity_dimension: int,
+    pieces: tuple[tuple[tuple[Fraction, ...], ...], ...],
+    /,
+) -> dict[tuple[int, int], tuple[float, float]] | None:
+    """Exact moments of one entity block from per-piece monomial integral tables.
+
+    Each moment is the wedge pairing of a pulled source form with a target test
+    form. Contracting test forms with the table once per target DOF, then with
+    every source form, gives each piece's exact rational integral without
+    forming or composing integrands. Per-piece binary64 bounds and their sum
+    match `_integrate_entity_expression`. Returns None when an integrand leaves
+    the rational polynomial route.
+    """
+    sources = []
+    for components in pulled_components:
+        integer = _integer_components(components, entity_dimension)
+        if integer is None:
+            return None
+        sources.append(integer)
+    tests = []
+    for target_dof in entity_dofs:
+        test = test_forms.get(target_dof)
+        if test is None:
+            raise ValueError("A target moment row has no canonical test form.")
+        tests.append((target_dof, test))
+    if not sources:
+        return {}
+    test_blades = tuple(
+        combinations(range(entity_dimension), entity_dimension - form_degree)
+    )
+    targets: dict[int, tuple[tuple[dict[tuple[int, ...], int], ...], int]] = {}
+    for target_dof, test in tests:
+        integer = (
+            _integer_components(test, entity_dimension)
+            if len(test) == len(test_blades)
+            else None
+        )
+        if integer is None:
+            return None
+        targets[target_dof] = integer
+    pairs = tuple(
+        (component, test_component, _wedge_sign(target_blade, test_blade))
+        for component, target_blade in enumerate(target_blades)
+        for test_component, test_blade in enumerate(test_blades)
+        if set(target_blade).isdisjoint(test_blade)
+        and len(target_blade) + len(test_blade) == entity_dimension
+    )
+    supports = tuple(
+        tuple(
+            sorted(
+                {
+                    exponent
+                    for components, _ in sources
+                    for exponent in components[component]
+                }
+            )
+        )
+        for component in range(len(target_blades))
+    )
+    degree = max(
+        (sum(exponent) for support in supports for exponent in support), default=0
+    ) + max(
+        (
+            sum(exponent)
+            for components, _ in targets.values()
+            for polynomial in components
+            for exponent in polynomial
+        ),
+        default=0,
+    )
+    bounds: dict[tuple[int, int], list[tuple[float, float]]] = {
+        (target_dof, source_dof): []
+        for target_dof in targets
+        for source_dof in range(len(sources))
+    }
+    for piece in pieces:
+        table, table_denominator = _simplex_monomial_integrals(piece, degree)
+        for target_dof, (test, test_denominator) in targets.items():
+            actions = [dict.fromkeys(support, 0) for support in supports]
+            for component, test_component, sign in pairs:
+                action = actions[component]
+                for test_exponent, coefficient in test[test_component].items():
+                    weight = sign * coefficient
+                    for exponent in action:
+                        action[exponent] += (
+                            weight
+                            * table[
+                                tuple(
+                                    left + right
+                                    for left, right in zip(
+                                        exponent, test_exponent, strict=True
+                                    )
+                                )
+                            ]
+                        )
+            for source_dof, (pulled, pulled_denominator) in enumerate(sources):
+                numerator = sum(
+                    coefficient * actions[component][exponent]
+                    for component, polynomial in enumerate(pulled)
+                    for exponent, coefficient in polynomial.items()
+                )
+                bounds[target_dof, source_dof].append(
+                    _integral_center_and_error(
+                        Fraction(
+                            numerator,
+                            pulled_denominator * test_denominator * table_denominator,
+                        )
+                    )
+                )
+    result = {}
+    for key, piece_bounds in bounds.items():
+        exact_values: list[Fraction] = []
+        exact_errors: list[Fraction] = []
+        for value, error in piece_bounds:
+            if not np.isfinite(value) or not np.isfinite(error) or error < 0.0:
+                raise ValueError(
+                    "Reference form moment integration produced invalid bounds."
+                )
+            exact_values.append(Fraction(float(value)))
+            exact_errors.append(Fraction(float(error)))
+        result[key] = _sum_piece_bounds(exact_values, exact_errors)
+    return result
+
+
 def _multiindices(dimension: int, total: int, /) -> tuple[tuple[int, ...], ...]:
     if dimension == 1:
         return ((total,),)
@@ -1507,6 +1730,12 @@ def _integrate_entity_expression(
         exact_values.append(Fraction(float(value)))
         exact_errors.append(Fraction(float(error)))
         all_exact = all_exact and exact
+    return (*_sum_piece_bounds(exact_values, exact_errors), all_exact)
+
+
+def _sum_piece_bounds(
+    exact_values: Sequence[Fraction], exact_errors: Sequence[Fraction], /
+) -> tuple[float, float]:
     exact_center = sum(exact_values, Fraction(0))
     value = float(exact_center)
     rounding = abs(Fraction(value) - exact_center)
@@ -1516,7 +1745,7 @@ def _integrate_entity_expression(
         error = float(np.nextafter(error, np.inf))
     if not np.isfinite(value) or not np.isfinite(error):
         raise ValueError("Reference form moment has no finite binary64 error enclosure.")
-    return value, error, all_exact
+    return value, error
 
 
 def _sum_exact_expressions(
@@ -1683,6 +1912,34 @@ def _local_reference_moments(
                 if orientation != 1:
                     pulled = [algebra.scale(value, orientation) for value in pulled]
                 pulled_components.append(tuple(pulled))
+            entity_simplices = (
+                _entity_simplices(entity_dimension, entity_family)
+                if pieces is None
+                else pieces
+            )
+            entity_moments = (
+                _polynomial_entity_moments(
+                    pulled_components,
+                    test_forms,
+                    entity_dofs,
+                    target_blades,
+                    degree,
+                    entity_dimension,
+                    entity_simplices,
+                )
+                if entity_dimension > 0 and entity_simplices
+                else None
+            )
+            if entity_moments is not None:
+                for (target_dof, source_dof), (
+                    moment_value,
+                    moment_error,
+                ) in entity_moments.items():
+                    values[target_dof, source_dof] = moment_value
+                    errors[target_dof, source_dof] = moment_error
+                    exact[target_dof, source_dof] = True
+                    enclosed[target_dof, source_dof] = False
+                continue
             rule_points = rule_weights = None
             if entity_dimension > 0:
                 rule_pair = rules_by_dimension.get(entity_dimension)
