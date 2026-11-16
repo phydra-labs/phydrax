@@ -1561,7 +1561,10 @@ A solve plan costs a builder through `plan_setup`, which returns a
 `PlannedPreconditionerSetup` carried by the `PreconditionerPlan`; preparation
 calls `prepare_planned` and reuses that construction when the setup operator
 has the planned exact content. Neither hierarchy builder repeats its
-construction between costing and preparation.
+construction between costing and preparation. The construction is a cache of
+the planned content: setups compare and hash by cost and `content_id` alone, so
+identical plans and templates share one compiled program, while flattening a
+setup across a JIT boundary still carries its construction to preparation.
 
 Hierarchy refresh distinguishes full rebuild, aggregate reuse, transfer reuse,
 and symbolic sparse-product reuse. Every numeric refresh recomputes
