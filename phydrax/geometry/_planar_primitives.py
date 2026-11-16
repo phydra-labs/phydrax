@@ -201,7 +201,7 @@ def segment_overlap(
 
 
 def interiors_separated(first: Polygon, second: Polygon, /) -> bool:
-    """Whether an edge line of either triangle exactly separates their interiors.
+    """Whether an edge line of either convex polygon exactly separates their interiors.
 
     Two convex polygons have disjoint interiors exactly when a supporting line
     of one of their edges leaves the other polygon in its closed outer half
@@ -211,8 +211,8 @@ def interiors_separated(first: Polygon, second: Polygon, /) -> bool:
         orientation = signed_area2(inner)
         if orientation == 0:
             return True
-        for index in range(3):
-            start, end = inner[index], inner[(index + 1) % 3]
+        for index in range(len(inner)):
+            start, end = inner[index], inner[(index + 1) % len(inner)]
             if all(cross(start, end, point) * orientation <= 0 for point in outer):
                 return True
     return False
