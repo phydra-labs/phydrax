@@ -253,6 +253,27 @@ def _screened_intersection_areas(
             yield left, right, _intersection_area(first[left], second[right])
 
 
+# Below this many pieces the fixed binary64 screen setup costs more than the
+# exact pair tests it saves (measured on captured hybrid partition banks).
+_SCREENED_PARTITION_MIN_PIECES = 17
+
+
+def _partition_intersection_areas(
+    first: tuple[Triangle2, ...],
+    second: tuple[Triangle2, ...],
+    /,
+    *,
+    self_pairs: bool,
+) -> Iterator[tuple[int, int, Fraction]]:
+    """Exact intersection areas of candidate pairs in row order; self pairs have left < right."""
+    if len(first) >= _SCREENED_PARTITION_MIN_PIECES:
+        yield from _screened_intersection_areas(first, second, self_pairs=self_pairs)
+        return
+    for left, triangle in enumerate(first):
+        for right in range(left + 1 if self_pairs else 0, len(second)):
+            yield left, right, _intersection_area(triangle, second[right])
+
+
 def _same_triangle_chain_boundary(
     first: tuple[Triangle2, ...], second: tuple[Triangle2, ...], /
 ) -> bool:
@@ -3936,17 +3957,19 @@ def _require_reference_chart_partition(
         set(pieces)
     ) == len(pieces):
         return
-    # Box-disjoint pairs have zero intersection area; the screened route decides
-    # the remaining pairs with the same exact separation and clipping.
+    # Box-disjoint pairs have zero intersection area; large banks screen whole
+    # pair blocks before the same exact separation and clipping.
     covered_areas = [Fraction(0) for _ in triangles]
-    for row, _, area in _screened_intersection_areas(triangles, domain, self_pairs=False):
+    for row, _, area in _partition_intersection_areas(
+        triangles, domain, self_pairs=False
+    ):
         covered_areas[row] += area
     for triangle, covered_area in zip(triangles, covered_areas, strict=True):
         if covered_area != abs(_area2(triangle)):
             raise ValueError("Target reference chart piece leaves its complete facet.")
     if any(
         area > 0
-        for _, _, area in _screened_intersection_areas(
+        for _, _, area in _partition_intersection_areas(
             triangles, triangles, self_pairs=True
         )
     ):
