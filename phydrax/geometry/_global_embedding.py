@@ -132,6 +132,7 @@ from ._planar_chain_embedding import (
     point_in_convex_planar_hull,
     triangulate_planar_polygon,
 )
+from ._planar_primitives import TriangleEnclosures
 from ._reference_chain_embedding import (
     certify_reference_chain_embedding,
     ReferenceChainEmbeddingCertificate,
@@ -5703,6 +5704,77 @@ class _VolumePieceFilter:
         return cleared, certificates
 
 
+@dataclass(frozen=True, slots=True)
+class _PlanarTriangleFilter:
+    """Binary64 contact certificates for straight triangle cells in R2.
+
+    Only straight rational triangles are filtered; their corners are taken in
+    vertex-identifier order from the exact corner images.
+    """
+
+    enclosures: TriangleEnclosures
+    filtered: NDArray[np.bool_]
+    vertex_ids: NDArray[np.int64]
+
+    @classmethod
+    def prepare(
+        cls, mesh: CellMesh, cells: tuple[EmbeddingCell, ...], /
+    ) -> _PlanarTriangleFilter | None:
+        if mesh.ambient_dimension != 2 or mesh.topological_dimension != 2:
+            return None
+        filtered = np.zeros((len(cells),), dtype=np.bool_)
+        vertex_ids = np.full((len(cells), 3), -1, dtype=np.int64)
+        triangles: list[tuple[tuple[Fraction, Fraction], ...]] = []
+        for index, cell in enumerate(cells):
+            corners = cell.corner_images
+            if (
+                cell.dimension != 2
+                or (not cell.affine and cell.coordinates)
+                or cell.kind not in ("triangle", "simplex:2")
+                or len(cell.vertex_ids) != 3
+                or len(corners) != 3
+                or any(
+                    len(point) != 2
+                    or not all(isinstance(value, (int, Fraction)) for value in point)
+                    for point in corners
+                )
+            ):
+                triangles.append(())
+                continue
+            filtered[index] = True
+            vertex_ids[index] = cell.vertex_ids
+            triangles.append(
+                tuple((Fraction(point[0]), Fraction(point[1])) for point in corners)
+            )
+        if not np.any(filtered):
+            return None
+        return cls(TriangleEnclosures.prepare(triangles), filtered, vertex_ids)
+
+    def certify(
+        self, first: NDArray[np.intp], second: NDArray[np.intp], /
+    ) -> NDArray[np.bool_]:
+        """Cell pairs with no exact finding.
+
+        A cleared pair has equal corner images exactly on its shared vertex
+        identifiers, so its exact restriction trace holds, and its intersection
+        lies in the hull of those images: a shared vertex or edge of both
+        triangles, which is their declared shared stratum.
+        """
+        cleared = np.zeros(first.shape, dtype=np.bool_)
+        rows = np.flatnonzero(self.filtered[first] & self.filtered[second])
+        if not rows.size:
+            return cleared
+        left, right = first[rows], second[rows]
+        point_ids = self.enclosures.point_ids
+        consistent = np.all(
+            (point_ids[left][:, :, None] == point_ids[right][:, None, :])
+            == (self.vertex_ids[left][:, :, None] == self.vertex_ids[right][:, None, :]),
+            axis=(1, 2),
+        )
+        cleared[rows] = consistent & self.enclosures.common_hull_contacts(left, right)
+        return cleared
+
+
 def _nonperiodic_contacts(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -5789,6 +5861,7 @@ def _nonperiodic_contacts(
         tuple[EmbeddingCell, tuple[tuple[tuple[ExactScalar, ...], ...], ...]] | None,
     ] = {}
     piece_filter = _VolumePieceFilter.prepare(mesh, cells, simplices)
+    planar_filter = _PlanarTriangleFilter.prepare(mesh, cells)
     vertex_cone_filter = (
         _VertexConeFilter.prepare(original_cells)
         if any(not cell.affine and cell.coordinates for cell in cells)
@@ -5830,6 +5903,9 @@ def _nonperiodic_contacts(
         piece_certificates: dict[tuple[int, int], NDArray[np.bool_]] = {}
         if piece_filter is not None:
             cleared, piece_certificates = piece_filter.certify(first_block, second_block)
+            first_block, second_block = first_block[~cleared], second_block[~cleared]
+        if planar_filter is not None:
+            cleared = planar_filter.certify(first_block, second_block)
             first_block, second_block = first_block[~cleared], second_block[~cleared]
         vertex_cones = (
             vertex_cone_filter.certify(first_block, second_block)

@@ -59,7 +59,11 @@ from phydrax.geometry._boundary_degree_embedding import (
     build_oriented_boundary,
 )
 from phydrax.geometry._embedding_cells import EmbeddingCell, prepare_embedding_cells
-from phydrax.geometry._exact_polyhedral_geometry import Point3
+from phydrax.geometry._exact_polyhedral_geometry import (
+    Point3,
+    point_on_segment2,
+    triangle_contact_points2,
+)
 from phydrax.geometry._global_embedding import (
     _affine_chart_cell,
     _cartesian_chart_contact,
@@ -77,6 +81,7 @@ from phydrax.geometry._mapped_embedding import (
     MappedInjectivityWitness,
     prove_mapped_cell_injective,
 )
+from phydrax.geometry._planar_primitives import TriangleEnclosures
 from phydrax.geometry._restricted_embedding import (
     reference_chart_composition_equal,
     restriction_trace_equal,
@@ -1559,6 +1564,91 @@ def test_positive_local_jacobians_do_not_hide_overlapping_planar_cells() -> None
     assert validity.all_certified
     assert certificate.status == "violated"
     assert any(finding.check == "cell_contact" for finding in certificate.findings)
+
+
+@pytest.mark.parametrize(
+    "points, cells",
+    (
+        (
+            ((0.0, 0.0), (2.0, 0.0), (0.0, 2.0), (1.0, 0.0), (0.0, -1.0), (2.0, -1.0)),
+            ((0, 1, 2), (3, 4, 5)),
+        ),
+        (
+            ((0.0, 0.0), (2.0, 0.0), (0.0, 2.0), (1.0, 0.0), (1.0, -1.0)),
+            ((0, 1, 2), (0, 4, 3)),
+        ),
+        (
+            ((0.0, 0.0), (2.0, 0.0), (0.0, 2.0), (1.0, -1.0), (2.0, -1.0)),
+            ((0, 1, 2), (2, 3, 4)),
+        ),
+        (
+            ((0.0, 0.0), (2.0, 0.0), (0.0, 2.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0)),
+            ((0, 1, 2), (3, 4, 5)),
+        ),
+    ),
+    ids=(
+        "vertex-on-edge-without-shared-id",
+        "collinear-edge-beyond-shared-vertex",
+        "shared-vertex-crossing",
+        "coincident-edge-without-shared-ids",
+    ),
+)
+def test_planar_contacts_outside_the_shared_stratum_stay_violated(
+    points: tuple[tuple[float, float], ...], cells: tuple[tuple[int, int, int], ...]
+) -> None:
+    # Binary64 pair clearing must never hide an undeclared touching contact.
+    mesh, geometry, validity = _embedded_triangles(np.asarray(points), cells)
+
+    certificate = certify_global_embedding(mesh, geometry, validity)
+
+    assert validity.all_certified
+    assert certificate.status == "violated"
+    assert any(finding.check == "cell_contact" for finding in certificate.findings)
+
+
+_PLANAR_BASE = ((0, 0), (2, 0), (0, 2))
+
+
+@pytest.mark.parametrize(
+    "other, certified",
+    (
+        (((2, 0), (0, 2), (2, 2)), True),
+        (((0, 0), (-2, 1), (-1, -2)), True),
+        (((3, 3), (4, 3), (3, 4)), True),
+        (((1, 0), (2, -1), (0, -1)), False),
+        (((0, 0), (1, 0), (1, -1)), False),
+        (((0, 2), (1, -1), (2, -1)), False),
+        (((1, 1), (3, 1), (1, 3)), False),
+    ),
+    ids=(
+        "shared-edge",
+        "shared-vertex",
+        "disjoint",
+        "vertex-on-edge",
+        "collinear-beyond-vertex",
+        "shared-apex-crossing",
+        "overlap",
+    ),
+)
+def test_planar_common_hull_screen_certifies_only_common_hull_contacts(
+    other: tuple[tuple[int, int], ...], certified: bool
+) -> None:
+    triangles = tuple(
+        tuple((Fraction(x), Fraction(y)) for x, y in triangle)
+        for triangle in (_PLANAR_BASE, other)
+    )
+    screen = TriangleEnclosures.prepare(triangles)
+    pair = (np.asarray([0], dtype=np.intp), np.asarray([1], dtype=np.intp))
+    assert screen.common_hull_contacts(*pair).tolist() == [certified]
+    assert screen.common_hull_contacts(pair[1], pair[0]).tolist() == [certified]
+    first, second = triangles
+    common = tuple(point for point in first if point in second)
+    contacts = triangle_contact_points2(first, second)
+    if certified:
+        assert all(point in common for point in contacts) or (
+            len(common) == 2
+            and all(point_on_segment2(point, *common) for point in contacts)
+        )
 
 
 def test_affine_volume_neighbors_share_only_their_exact_face() -> None:
