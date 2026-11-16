@@ -7,6 +7,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any, Callable, cast, Literal, NamedTuple
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 from numpy.typing import NDArray
@@ -5569,12 +5570,44 @@ def _layer_cycle_field_inputs(
     )
 
 
+def _cold_layer_core_continuation(
+    path: Path, content_id: str, profile: str, controls: _LayerCoreLifecycle, /
+) -> dict[str, object]:
+    """Continue one archived cycle in a fresh process and return its record."""
+    import subprocess
+    import sys
+
+    completed = subprocess.run(
+        (
+            sys.executable,
+            "-c",
+            "import json,sys; from pathlib import Path; "
+            "from tools.meshing_qualification.scenarios.native_hybrid_profiles "
+            "import _resume_layer_core_cycle; "
+            "print(json.dumps(_resume_layer_core_cycle("
+            "Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4])))",
+            str(path),
+            content_id,
+            profile,
+            str(controls.archive_bytes),
+        ),
+        cwd=str(Path(__file__).resolve().parents[3]),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode:
+        raise ValueError(
+            f"Authenticated cold layer/core continuation failed: {completed.stderr}"
+        )
+    return json.loads(completed.stdout)
+
+
 def _run_layer_core_lifecycle(
     profile: str, source: Any, specification: Any, options: Any, generated: Any, /
 ) -> dict[str, object]:
     """Refine, archive and cold-continue every original accepted cycle."""
-    import subprocess
-    import sys
+    import gc
     import tempfile
 
     from phydrax.meshing._layer_core_association_transfer import (
@@ -5656,47 +5689,37 @@ def _run_layer_core_lifecycle(
         )
         # These archive workspaces have no later use, including subsequent cycles.
         del field_recipe, refined_recipe, refined_space
-        completed = subprocess.run(
-            (
-                sys.executable,
-                "-c",
-                "import json,sys; from pathlib import Path; "
-                "from tools.meshing_qualification.scenarios.native_hybrid_profiles "
-                "import _resume_layer_core_cycle; "
-                "print(json.dumps(_resume_layer_core_cycle("
-                "Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4])))",
-                str(path),
-                content_id,
-                profile,
-                str(controls.archive_bytes),
-            ),
-            cwd=str(Path(__file__).resolve().parents[3]),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if completed.returncode:
-            raise ValueError(
-                f"Authenticated cold layer/core continuation failed: {completed.stderr}"
-            )
-        cold = json.loads(completed.stdout)
-        cycles.append(
-            {
-                "cycle": cycle,
-                "refinement_request_id": prepared.request.request_id,
-                "refinement_id": refined.result_id,
-                "archive_path": str(path),
-                "archive_content_id": content_id,
-                "archive_budget_bytes": controls.archive_bytes,
-                "archive_manifest_bytes": controls.archive_manifest_bytes,
-                "forward_history": forward_history,
-                "forward_scalar_transfer": forward_scalars,
-                "forward_compatible_transfer": forward_forms,
-                "cold_continuation": cold,
-            }
-        )
+        record: dict[str, object] = {
+            "cycle": cycle,
+            "refinement_request_id": prepared.request.request_id,
+            "refinement_id": refined.result_id,
+            "archive_path": str(path),
+            "archive_content_id": content_id,
+            "archive_budget_bytes": controls.archive_bytes,
+            "archive_manifest_bytes": controls.archive_manifest_bytes,
+            "forward_history": forward_history,
+            "forward_scalar_transfer": forward_scalars,
+            "forward_compatible_transfer": forward_forms,
+        }
         if cycle + 1 == controls.cycles:
+            # Nothing after the final archive reads the warm working set, and
+            # the cold reader's peak coincides with this process waiting on
+            # it. Release the owners and compiled programs before launching.
+            del accepted, hierarchy, prepared, refined, policy
+            del history, history_space, refined_history, refined_history_space
+            del banks, refined_banks, refined_scalars, refined_forms
+            del refined_plan, field_plan, adapter, columns, original_banks
+            jax.clear_caches()
+            gc.collect()
+            record["cold_continuation"] = _cold_layer_core_continuation(
+                path, content_id, profile, controls
+            )
+            cycles.append(record)
             break
+        record["cold_continuation"] = _cold_layer_core_continuation(
+            path, content_id, profile, controls
+        )
+        cycles.append(record)
         _, coarsening = _periodic_mixed_coarsening(accepted, refined, policy)
         history, history_space, _ = _layer_core_history_transition(
             coarsening, refined_history, refined_history_space, controls
