@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -33,6 +34,7 @@ from phydrax.optim import (
     solve_conic_program,
     ZeroCone,
 )
+from phydrax.optim._programming._native_conic import prepare_native_conic
 from phydrax.optim._programming._native_hsd import _direction, _embedding_residual
 from phydrax.sparse import EdgeRelation, SparseCoordinateOperator
 
@@ -147,6 +149,22 @@ def test_factorized_newton_refuses_reduced_pattern_over_budget() -> None:
         )
     with pytest.raises(ValueError, match="symmetric indefinite"):
         NativeHomogeneousConic(factorization=SparseFactorizationPolicy("cholesky"))
+
+
+def test_repeated_factorized_preparation_reuses_one_compiled_solver_key() -> None:
+    # Each preparation re-plans the reduced-Newton correction; identical programs
+    # must still present one JIT static key so the solver is compiled once.
+    program = _positive_metric_program(4)
+    policy = ConvexSolvePolicy(
+        NativeHomogeneousConic(newton="factorized"), failure=FailurePolicy("status")
+    )
+    first = prepare_native_conic(program, policy)
+    second = prepare_native_conic(program, policy)
+    assert first.newton is not None
+    first_static = eqx.partition(first, eqx.is_array)[1]
+    second_static = eqx.partition(second, eqx.is_array)[1]
+    assert first_static == second_static
+    assert hash(first_static) == hash(second_static)
 
 
 def test_sparse_newton_direction_satisfies_consumer_equation_and_work_refusal() -> None:

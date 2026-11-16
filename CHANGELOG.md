@@ -611,6 +611,12 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Identical solve plans and templates no longer recompile and retain a new
+  executable on every preparation. `PlannedPreconditionerSetup` compared its
+  static builder construction by object identity, so each re-planned
+  reduced-Newton correction gave `solve_native_conic_program` a new JIT key.
+  The construction is now a cache of the planned content: equality and hashing
+  use the cost and `content_id`, and flattening still carries it to preparation.
 - Native zero-set triangle admission can certify a whole-triangle translated
   extrusion when the tolerance-wide gradient-flow bound is inconclusive.
   Uniform endpoint signs, a strict directional derivative, outward interval
