@@ -29,6 +29,7 @@ from ._planar_primitives import (
     Polygon,
     polygon_boxes,
     signed_area2,
+    triangle_pair_separation,
 )
 
 
@@ -204,12 +205,17 @@ def partition_overset_triangles(
     )
     triangle_boxes = polygon_boxes(triangles)
     candidates: list[list[Polygon]] = [[] for _ in triangles]
-    for first, second in box_overlap_pairs(
+    pairs = box_overlap_pairs(
         len(triangles), len(triangles), triangle_boxes, triangle_boxes, self_pairs=True
-    ):
-        first, second = int(first), int(second)
+    )
+    # The binary64 screen decides most pairs exactly as `interiors_separated`
+    # would; only its undecided pairs (-1) run the exact rational test.
+    decisions = triangle_pair_separation(triangles, triangles, pairs)
+    for (first, second), decision in zip(pairs.tolist(), decisions.tolist(), strict=True):
         first_triangle, second_triangle = triangles[first], triangles[second]
-        if interiors_separated(first_triangle, second_triangle):
+        if decision == 1 or (
+            decision == -1 and interiors_separated(first_triangle, second_triangle)
+        ):
             continue
         if identities[first][1] == identities[second][1]:
             raise ValueError("triangles within a part must have disjoint interiors")
