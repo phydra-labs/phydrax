@@ -39,14 +39,23 @@ class StaticColumnArchiveRecipe(NamedTuple):
     @classmethod
     def encode(cls, values: tuple[Any, ...], /) -> StaticColumnArchiveRecipe:
         indices: dict[Hashable, int] = {}
+        # Decoded columns repeat their table objects; one object has one
+        # type-exact key. Each memo entry pins its object, so an id is never
+        # reused while the memo lives.
+        object_indices: dict[int, tuple[Any, int]] = {}
         table: list[Any] = []
         rows = np.empty((len(values),), dtype=np.int64)
         for row, value in enumerate(values):
-            key = _column_key(value)
-            index = indices.get(key)
-            if index is None:
-                index = indices[key] = len(table)
-                table.append(value)
+            entry = object_indices.get(id(value))
+            if entry is None:
+                key = _column_key(value)
+                index = indices.get(key)
+                if index is None:
+                    index = indices[key] = len(table)
+                    table.append(value)
+                object_indices[id(value)] = (value, index)
+            else:
+                index = entry[1]
             rows[row] = index
         return cls(tuple(table), rows)
 
@@ -248,6 +257,8 @@ class ExactTensorArchiveRecipe(NamedTuple):
                 break
             node = node[0]
 
+        leaf_depth = len(shape) - 1
+
         def visit(item: Any, depth: int, /) -> Iterator[str]:
             if depth == len(shape):
                 if type(item) is not leaf_type:
@@ -256,6 +267,13 @@ class ExactTensorArchiveRecipe(NamedTuple):
                 return
             if not isinstance(item, tuple) or len(item) != shape[depth]:
                 raise ValueError("Exact tensor rows must have one regular shape.")
+            # Leaf rows are checked and rendered in place, in the same order.
+            if depth == leaf_depth:
+                for leaf in item:
+                    if type(leaf) is not leaf_type:
+                        raise TypeError("Exact tensor leaves must share one exact type.")
+                    yield str(leaf)
+                return
             for child in item:
                 yield from visit(child, depth + 1)
 

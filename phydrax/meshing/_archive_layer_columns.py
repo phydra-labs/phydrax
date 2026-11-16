@@ -423,17 +423,28 @@ def _encode_column(value: Any, kind: str) -> Any:
     if kind == "implicit":
         return ImplicitChartRowsArchiveRecipe.encode(value)
     if kind in ("expressions", "rational_terms"):
-        return ExactExpressionRowsArchiveRecipe.encode(
-            tuple(
-                tuple(
-                    ("rational", *item)
-                    if kind == "rational_terms"
-                    else _expression_tokens(item)
-                    for item in row
-                )
-                for row in value
-            )
-        )
+        # Restored rows share their table's expression objects. Tokenize each
+        # object once so equal rows also share token objects, which the static
+        # column then indexes without rebuilding keys. Each memo entry pins its
+        # object, so an id is never reused while the memo lives.
+        tokens: dict[int, tuple[Any, tuple[Any, ...]]] = {}
+        rows = []
+        for row in value:
+            row_tokens = []
+            for item in row:
+                entry = tokens.get(id(item))
+                if entry is None:
+                    token = (
+                        ("rational", *item)
+                        if kind == "rational_terms"
+                        else _expression_tokens(item)
+                    )
+                    tokens[id(item)] = (item, token)
+                else:
+                    token = entry[1]
+                row_tokens.append(token)
+            rows.append(tuple(row_tokens))
+        return ExactExpressionRowsArchiveRecipe.encode(tuple(rows))
     raise ValueError("Unknown layer column kind.")
 
 
