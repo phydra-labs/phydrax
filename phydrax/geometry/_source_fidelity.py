@@ -3936,16 +3936,19 @@ def _require_reference_chart_partition(
         set(pieces)
     ) == len(pieces):
         return
-    for triangle in triangles:
-        covered_area = sum(
-            (_intersection_area(triangle, source) for source in domain), Fraction(0)
-        )
+    # Box-disjoint pairs have zero intersection area; the screened route decides
+    # the remaining pairs with the same exact separation and clipping.
+    covered_areas = [Fraction(0) for _ in triangles]
+    for row, _, area in _screened_intersection_areas(triangles, domain, self_pairs=False):
+        covered_areas[row] += area
+    for triangle, covered_area in zip(triangles, covered_areas, strict=True):
         if covered_area != abs(_area2(triangle)):
             raise ValueError("Target reference chart piece leaves its complete facet.")
     if any(
-        _intersection_area(first, second) > 0
-        for index, first in enumerate(triangles)
-        for second in triangles[index + 1 :]
+        area > 0
+        for _, _, area in _screened_intersection_areas(
+            triangles, triangles, self_pairs=True
+        )
     ):
         raise ValueError("Target reference chart pieces have positive-measure overlap.")
     if require_complete and sum(
