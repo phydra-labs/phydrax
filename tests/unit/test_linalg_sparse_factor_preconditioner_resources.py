@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+import gc
 import tracemalloc
+import weakref
 
 import equinox as eqx
 import jax
@@ -255,6 +257,59 @@ def test_sparse_factor_planned_setup_reprepares_only_for_new_identity() -> None:
     )
     with pytest.raises(ValueError, match="requires its planned construction"):
         builder.prepare_planned(corrupt, operator, materialization=materialization)
+
+
+def test_planned_setup_identity_is_cost_and_content_not_construction() -> None:
+    # Plans enter JIT static keys; identical plans must compare and hash equal
+    # even though each planning call owns its own construction.
+    operator = _sparse_map(jnp.asarray([[3.0, -0.5], [-0.5, 2.0]], dtype=jnp.float64))
+    builder = la.SparseFactorizationPreconditionerBuilder(
+        la.SparseFactorizationPolicy("lu")
+    )
+    first, second = builder.plan_setup(operator), builder.plan_setup(operator)
+    assert first == second
+    assert hash(first) == hash(second)
+    assert jax.tree.structure(first) == jax.tree.structure(second)
+    first_plan = first.construction_for(operator.operator_id)
+    second_plan = second.construction_for(operator.operator_id)
+    assert first_plan is not None and second_plan is not None
+    assert first_plan is not second_plan
+    materialization = la.MaterializationPolicy()
+    prepared = builder.prepare_planned(second, operator, materialization=materialization)
+    assert prepared.factorization.plan is second_plan
+
+
+def test_reconstructed_planned_setup_reuses_its_construction() -> None:
+    # Plans cross JIT boundaries by flattening; preparation must still find the
+    # planned construction rather than repeat its host-side analysis.
+    operator = _sparse_map(jnp.asarray([[3.0, -0.5], [-0.5, 2.0]], dtype=jnp.float64))
+    builder = la.SparseFactorizationPreconditionerBuilder(
+        la.SparseFactorizationPolicy("lu")
+    )
+    planned = builder.plan_setup(operator)
+    leaves, structure = jax.tree.flatten(planned)
+    rebuilt = jax.tree.unflatten(structure, leaves)
+    original = planned.construction_for(operator.operator_id)
+    assert rebuilt == planned
+    assert rebuilt.construction_for(operator.operator_id) is original
+    materialization = la.MaterializationPolicy()
+    prepared = builder.prepare_planned(rebuilt, operator, materialization=materialization)
+    assert prepared.factorization.plan is original
+    rhs = jnp.asarray([1.0, -1.0], dtype=jnp.float64)
+    np.testing.assert_allclose(operator.mv(prepared.apply(rhs)), rhs, atol=1e-12)
+
+
+def test_planned_setup_referenced_by_its_construction_is_released() -> None:
+    cost = la.PreconditionerCostEstimate(component="lifetime")
+    construction: list[la.PlannedPreconditionerSetup] = []
+    planned = la.PlannedPreconditionerSetup(
+        cost, construction=construction, content_id="lifetime"
+    )
+    construction.append(planned)
+    released = weakref.ref(planned)
+    del planned, construction
+    gc.collect()
+    assert released() is None
 
 
 def test_sparse_lu_zero_upper_width_preserves_pivot_evidence() -> None:

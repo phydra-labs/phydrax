@@ -667,6 +667,12 @@
   scale agreed across the pairing's collective. A member-local scale made each
   shard-local member report a different, incorrect norm when their coordinate
   magnitudes differed. Global-array pairings and local solves are unchanged.
+- Identical solve plans and templates no longer recompile and retain a new
+  executable on every preparation. `PlannedPreconditionerSetup` compared its
+  static builder construction by object identity, so each re-planned
+  reduced-Newton correction gave `solve_native_conic_program` a new JIT key.
+  The construction is now a cache of the planned content: equality and hashing
+  use the cost and `content_id`, and flattening still carries it to preparation.
 - Native zero-set triangle admission can certify a whole-triangle translated
   extrusion when the tolerance-wide gradient-flow bound is inconclusive.
   Uniform endpoint signs, a strict directional derivative, outward interval
