@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
+from functools import lru_cache
 from itertools import combinations, permutations, product
 from math import comb, factorial, fsum, prod
 from typing import final, Literal, Protocol, runtime_checkable, TYPE_CHECKING
@@ -408,6 +409,25 @@ def _simplex_test_forms(
     return result
 
 
+@lru_cache(maxsize=1024)
+def _prism_factor_test_forms(
+    dimension: int,
+    form_degree: int,
+    order: int,
+    family: Literal["trimmed", "tensor-trimmed"],
+    face: tuple[int, ...],
+    dof: int,
+    /,
+) -> tuple[tuple[tuple[tuple[int, ...], _ExactScalar], ...], ...]:
+    # A prism test form is the wedge of untwisted triangle and interval factor
+    # tests fixed by these static labels. Keep only the exact host terms, in
+    # their construction order, so the factor bases are built once per label.
+    basis = FormBasis(dimension, form_degree, order, family, "untwisted")
+    free, _, _ = _form_entity_chart(dimension, family, face)
+    _, tests = _target_test_forms(basis, face, len(face) - 1, (dof,), free)
+    return tuple(tuple(component.items()) for component in tests[dof])
+
+
 def _target_test_forms(
     basis: FormBasis,
     entity: tuple[int, ...],
@@ -431,15 +451,11 @@ def _target_test_forms(
         for dof in entity_dofs:
             i, a, b = basis.dof_labels[dof][1]
             j = basis.form_degree - i
-            triangle = FormBasis(2, i, basis.order, "trimmed", "untwisted")
-            interval = FormBasis(1, j, basis.order, "tensor-trimmed", "untwisted")
-            tri_free, _, _ = _form_entity_chart(2, "trimmed", triangle_face)
-            int_free, _, _ = _form_entity_chart(1, "tensor-trimmed", interval_face)
-            _, tri_tests = _target_test_forms(
-                triangle, triangle_face, triangle_dimension, (a,), tri_free
+            tri_tests = _prism_factor_test_forms(
+                2, i, basis.order, "trimmed", triangle_face, a
             )
-            _, int_tests = _target_test_forms(
-                interval, interval_face, interval_dimension, (b,), int_free
+            int_tests = _prism_factor_test_forms(
+                1, j, basis.order, "tensor-trimmed", interval_face, b
             )
             tri_blades = tuple(
                 combinations(range(triangle_dimension), triangle_dimension - i)
@@ -449,14 +465,14 @@ def _target_test_forms(
             )
             rows: list[dict[tuple[int, ...], _ExactScalar]] = [{} for _ in complementary]
             sign = (-1) ** (j * (triangle_dimension - i))
-            for tri_blade, tri_test in zip(tri_blades, tri_tests[a], strict=True):
-                for int_blade, int_test in zip(int_blades, int_tests[b], strict=True):
+            for tri_blade, tri_test in zip(tri_blades, tri_tests, strict=True):
+                for int_blade, int_test in zip(int_blades, int_tests, strict=True):
                     blade = tri_blade + tuple(
                         triangle_dimension + axis for axis in int_blade
                     )
                     row = rows[complementary.index(blade)]
-                    for alpha, first in tri_test.items():
-                        for beta, second in int_test.items():
+                    for alpha, first in tri_test:
+                        for beta, second in int_test:
                             exponent = alpha + beta
                             row[exponent] = (
                                 row.get(exponent, Fraction(0)) + sign * first * second
