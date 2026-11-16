@@ -249,6 +249,15 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Overset partitioning decides whether a piece and an obstacle overlap by an
+  exact edge-separation test instead of constructing their exact clip, with
+  identical pieces and areas. `interiors_separated` now tests every edge of a
+  convex polygon, not only three.
+- Global embedding certification of straight triangle meshes in the plane
+  clears neighboring cell pairs with an outward-rounded binary64 screen when
+  their intersection provably lies in the hull of their exactly shared corners;
+  only undecided pairs run the exact rational contact route. Findings and proof
+  records are unchanged.
 - Nonperiodic coupled relocation can resolve pair-only stalls with bounded
   neighbor patches selected from audited infeasibility evidence. The complete
   pair/carrier phase still runs first; source constraints, native admission,

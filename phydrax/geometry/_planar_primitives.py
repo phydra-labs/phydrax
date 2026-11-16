@@ -402,8 +402,16 @@ def _directed_separation(
     outer: _TriangleBank,
     outer_rows: np.ndarray,
     /,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Pairs an edge line of ``inner`` provably separates / provably none does."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Edge-line decisions of ``inner`` against ``outer``, all outward-rounded.
+
+    Returns ``(separates, every_edge_meets, hull_support, signed)``: an edge
+    line provably leaves ``outer`` in its closed outer half plane; provably no
+    edge line does; an edge line provably holds every corner of ``outer``
+    strictly outside or exactly at one of its endpoints, so ``outer`` meets the
+    closed apex half plane only in the hull of those endpoints; and the
+    orientation of ``inner`` is certified. The first three imply ``signed``.
+    """
     inner_corners = [_bank_corner(inner, inner_rows, corner) for corner in range(3)]
     outer_corners = [_bank_corner(outer, outer_rows, corner) for corner in range(3)]
     orientation = _interval_cross(*inner_corners)
@@ -411,11 +419,13 @@ def _directed_separation(
     signed = positive | (orientation[1] < 0.0)
     separates = np.zeros(inner_rows.size, dtype=np.bool_)
     every_edge_meets = np.ones(inner_rows.size, dtype=np.bool_)
+    hull_support = np.zeros(inner_rows.size, dtype=np.bool_)
     inner_ids = inner.corners[inner_rows]
     outer_ids = outer.corners[outer_rows]
     for index in range(3):
         following = (index + 1) % 3
         closed_outside = np.ones(inner_rows.size, dtype=np.bool_)
+        strict_or_endpoint = np.ones(inner_rows.size, dtype=np.bool_)
         some_inside = np.zeros(inner_rows.size, dtype=np.bool_)
         for point in range(3):
             value = _interval_cross(
@@ -426,12 +436,20 @@ def _directed_separation(
                 outer_ids[:, point] == inner_ids[:, following]
             )
             nonpositive = np.where(positive, value[1] <= 0.0, value[0] >= 0.0)
+            negative = np.where(positive, value[1] < 0.0, value[0] > 0.0)
             strictly_positive = np.where(positive, value[0] > 0.0, value[1] < 0.0)
             closed_outside &= nonpositive | on_line
+            strict_or_endpoint &= negative | on_line
             some_inside |= strictly_positive & ~on_line
         separates |= closed_outside
+        hull_support |= strict_or_endpoint
         every_edge_meets &= some_inside
-    return signed & separates, signed & every_edge_meets
+    return (
+        signed & separates,
+        signed & every_edge_meets,
+        signed & hull_support,
+        signed,
+    )
 
 
 def triangle_pair_separation(
@@ -461,16 +479,58 @@ def triangle_pair_separation(
     if selected.size == 0:
         return decisions
     first_rows, second_rows = rows[selected, 0], rows[selected, 1]
-    forward, forward_meets = _directed_separation(
+    forward, forward_meets, _, _ = _directed_separation(
         first_bank, first_rows, second_bank, second_rows
     )
-    backward, backward_meets = _directed_separation(
+    backward, backward_meets, _, _ = _directed_separation(
         second_bank, second_rows, first_bank, first_rows
     )
     separated = forward | backward
     decisions[selected[separated]] = 1
     decisions[selected[forward_meets & backward_meets & ~separated]] = 0
     return decisions
+
+
+@dataclass(frozen=True, slots=True)
+class TriangleEnclosures:
+    """Outward binary64 enclosures and exact corner identities of planar triangles.
+
+    ``point_ids[t, k]`` names the exact point of corner ``k`` of triangle ``t``:
+    equal identities are equal exact points and distinct identities distinct
+    points. Non-triangles and nonrepresentable corners are never certified.
+    """
+
+    bank: _TriangleBank
+
+    @classmethod
+    def prepare(cls, triangles: Sequence[Polygon], /) -> TriangleEnclosures:
+        return cls(_triangle_bank(triangles, {}))
+
+    @property
+    def point_ids(self) -> np.ndarray:
+        return self.bank.corners
+
+    def common_hull_contacts(
+        self, first: np.ndarray, second: np.ndarray, /
+    ) -> np.ndarray:
+        """Certify pairs whose closed intersection lies in the hull of common corners.
+
+        Both triangles must have a certified orientation, and an edge line of
+        one must hold the other strictly outside except at that edge's exactly
+        shared endpoints (`_directed_separation`). Disjoint triangles are
+        certified by an edge line with no shared endpoint. ``False`` is
+        undecided, never a contact claim; the exact contact route decides those.
+        """
+        certified = np.zeros(first.shape, dtype=np.bool_)
+        bank = self.bank
+        rows = np.flatnonzero(bank.valid[first] & bank.valid[second])
+        if not rows.size:
+            return certified
+        left, right = first[rows], second[rows]
+        _, _, forward, left_signed = _directed_separation(bank, left, bank, right)
+        _, _, backward, right_signed = _directed_separation(bank, right, bank, left)
+        certified[rows] = left_signed & right_signed & (forward | backward)
+        return certified
 
 
 __all__ = [
@@ -492,4 +552,5 @@ __all__ = [
     "segment_overlap",
     "signed_area2",
     "triangle_pair_separation",
+    "TriangleEnclosures",
 ]
