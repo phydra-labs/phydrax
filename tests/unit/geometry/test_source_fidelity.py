@@ -2263,6 +2263,66 @@ def test_source_boundary_chart_witness_retains_non_dyadic_partition_exactly() ->
         )
 
 
+type _ChartTriangle = tuple[
+    tuple[Fraction, Fraction], tuple[Fraction, Fraction], tuple[Fraction, Fraction]
+]
+
+_UNIT_CHART_TRIANGLE: _ChartTriangle = (
+    (Fraction(0), Fraction(0)),
+    (Fraction(1), Fraction(0)),
+    (Fraction(0), Fraction(1)),
+)
+
+
+def _midpoint_refined_unit_triangle(levels: int) -> tuple[_ChartTriangle, ...]:
+    def midpoint(
+        first: tuple[Fraction, Fraction], second: tuple[Fraction, Fraction]
+    ) -> tuple[Fraction, Fraction]:
+        return ((first[0] + second[0]) / 2, (first[1] + second[1]) / 2)
+
+    triangles: tuple[_ChartTriangle, ...] = (_UNIT_CHART_TRIANGLE,)
+    for _ in range(levels):
+        children: list[_ChartTriangle] = []
+        for a, b, c in triangles:
+            ab, bc, ca = midpoint(a, b), midpoint(b, c), midpoint(c, a)
+            children.extend(((a, ab, ca), (ab, b, bc), (ca, bc, c), (ab, bc, ca)))
+        triangles = tuple(children)
+    return triangles
+
+
+def test_large_reference_chart_partition_bank_is_accepted() -> None:
+    # 64 pieces exceed the direct pair-test size, so the screened route decides.
+    _require_reference_chart_partition(
+        _midpoint_refined_unit_triangle(3), (_UNIT_CHART_TRIANGLE,)
+    )
+
+
+@pytest.mark.parametrize(
+    ("defect", "message"),
+    [
+        pytest.param("dropped", "omit part of their mesh facet", id="dropped-piece"),
+        pytest.param("duplicated", "positive-measure overlap", id="duplicated-piece"),
+        pytest.param("outside", "leaves its complete facet", id="piece-outside"),
+    ],
+)
+def test_large_reference_chart_partition_bank_refuses_defects(
+    defect: str, message: str
+) -> None:
+    bank = _midpoint_refined_unit_triangle(3)
+    match defect:
+        case "dropped":
+            defective = bank[:-1]
+        case "duplicated":
+            defective = (*bank, bank[0])
+        case "outside":
+            moved = tuple((x - 1, y) for x, y in bank[-1])
+            defective = (*bank[:-1], (moved[0], moved[1], moved[2]))
+        case _:
+            raise ValueError(f"Unknown partition defect {defect!r}.")
+    with pytest.raises(ValueError, match=message):
+        _require_reference_chart_partition(defective, (_UNIT_CHART_TRIANGLE,))
+
+
 def test_source_partition_respects_authored_patch_orientation() -> None:
     base = _domain()
     reversed_domain = MeshingDomain(
