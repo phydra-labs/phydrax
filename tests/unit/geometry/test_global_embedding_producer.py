@@ -1609,6 +1609,16 @@ def test_planar_contacts_outside_the_shared_stratum_stay_violated(
 _PLANAR_BASE = ((0, 0), (2, 0), (0, 2))
 
 
+type _ExactPoint2 = tuple[Fraction, Fraction]
+
+
+def _exact_triangle(
+    points: tuple[tuple[int, int], ...],
+) -> tuple[_ExactPoint2, _ExactPoint2, _ExactPoint2]:
+    first, second, third = ((Fraction(x), Fraction(y)) for x, y in points)
+    return first, second, third
+
+
 @pytest.mark.parametrize(
     "other, certified",
     (
@@ -1633,15 +1643,11 @@ _PLANAR_BASE = ((0, 0), (2, 0), (0, 2))
 def test_planar_common_hull_screen_certifies_only_common_hull_contacts(
     other: tuple[tuple[int, int], ...], certified: bool
 ) -> None:
-    triangles = tuple(
-        tuple((Fraction(x), Fraction(y)) for x, y in triangle)
-        for triangle in (_PLANAR_BASE, other)
-    )
-    screen = TriangleEnclosures.prepare(triangles)
+    first, second = _exact_triangle(_PLANAR_BASE), _exact_triangle(other)
+    screen = TriangleEnclosures.prepare((first, second))
     pair = (np.asarray([0], dtype=np.intp), np.asarray([1], dtype=np.intp))
     assert screen.common_hull_contacts(*pair).tolist() == [certified]
     assert screen.common_hull_contacts(pair[1], pair[0]).tolist() == [certified]
-    first, second = triangles
     common = tuple(point for point in first if point in second)
     contacts = triangle_contact_points2(first, second)
     if certified:
