@@ -363,17 +363,20 @@ too few for the requested median. The user explicitly selected a finer positive
 workflow rather than converting this case into an expected rejection.
 
 **Approved sphere sizing relaxation:** the `sphere-adaptive-refinement` profile
-declares `accepted_minimum_length=0.69` for its two `NATIVE_METRIC_3D` epochs.
-Its 0.005 m source-fidelity tube pins boundary edges at metric lengths near
-0.699, about 1.2% below `1/sqrt(2)`, where the ordinary native phases stall;
-only a long coupled-relocation tail reduces that further. The bound 0.69
-accepts the natural stall with margin. The upper bound `sqrt(2)`, geometry
-validity, source fidelity, embedding, transfer, and the three-record/two-order
-PDE oracle are unchanged. The user approved this explicit change of requested
-mesh quality on 2026-11-15/16 (first 0.70, then 0.69 once the fresh-run stall
-length was stated) and deferred the coupled-search performance work (cluster
-objective, source-guided proposals, planned-construction retention) as
-follow-up outside the completion candidate.
+declares `accepted_minimum_length=0.67` for its two `NATIVE_METRIC_3D` epochs.
+Measured on the final code: under the 0.005 m source-fidelity tube the ordinary
+native phases of the first epoch stall with 5 of 1,131 measured edges at metric
+lengths 0.674 to 0.677 (all others at least 0.700, none above `sqrt(2)`); the
+second epoch meets the unit band without a stall. Only the coupled-relocation
+search lifts those five edges, at a cost of hours and unbounded compiled-program
+retention in one process. With 0.67 the unchanged profile passes: errors
+0.00394, 0.00250, 0.00213 and orders 2.05 and 1.07 against the required 1.0.
+The upper bound `sqrt(2)`, geometry validity, source fidelity, embedding,
+transfer, and the three-record/two-order PDE oracle are unchanged. The user
+approved this explicit change of requested mesh quality on 2026-11-15/16
+(0.70, then 0.69, then 0.67 once the stall was measured) and deferred the
+coupled-search performance work (cluster objective, source-guided proposals,
+planned-construction retention) as follow-up outside the completion candidate.
 
 ## 10. Layers, high order, structured and general cell families
 
