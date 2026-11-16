@@ -138,12 +138,25 @@ def _materialization_matvec_count(
 
 @final
 class _PlannedConstruction:
-    """Opaque builder-owned construction; compared and hashed by identity."""
+    """Cache-only carrier of a builder-owned construction.
+
+    It is static so the construction survives flattening into ``prepare_planned``,
+    but it is not identity: carriers compare equal and hash alike, leaving the
+    owning setup's cost and ``content_id`` as its complete identity. Plans and
+    templates enter JIT static keys; an identity-compared carrier made every
+    preparation of the same structure a new compiled program.
+    """
 
     __slots__ = ("value",)
 
     def __init__(self, value: object, /) -> None:
         self.value = value
+
+    def __eq__(self, other: object, /) -> bool:
+        return isinstance(other, _PlannedConstruction)
+
+    def __hash__(self) -> int:
+        return hash(_PlannedConstruction)
 
 
 @final
@@ -154,6 +167,8 @@ class PlannedPreconditionerSetup(StrictModule):
     plan that costs a builder prepares from the same construction instead of
     repeating it. ``content_id`` is the exact setup-operator identity the
     construction is valid for; a builder that cannot match it prepares anew.
+    The construction is a cache of that content: equality and hashing use only
+    the cost and ``content_id``.
     """
 
     cost: PreconditionerCostEstimate
