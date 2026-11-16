@@ -13,7 +13,13 @@ from phydrax.geometry._overset_partition import (
     OversetPartition,
     partition_overset_triangles,
 )
-from phydrax.geometry._planar_primitives import area2, cross, intersection
+from phydrax.geometry._planar_primitives import (
+    area2,
+    cross,
+    interiors_separated,
+    intersection,
+    oriented_polygon,
+)
 
 
 type Part = tuple[str, np.ndarray, np.ndarray]
@@ -86,6 +92,47 @@ def _assert_exact_partition(
             assert area2(intersection(piece.vertices, _exact_wall(wall))) == 0
     for first, second in combinations(result.pieces, 2):
         assert area2(intersection(first.vertices, second.vertices)) == 0
+
+
+_SQUARE: Points = ((0, 0), (2, 0), (2, 2), (0, 2))
+
+
+@pytest.mark.parametrize(
+    "other",
+    (
+        ((1, 1), (3, 1), (3, 3), (1, 3)),
+        ((2, 0), (4, 0), (4, 2), (2, 2)),
+        ((2, 2), (4, 2), (4, 4), (2, 4)),
+        ((2, 1), (4, 0), (4, 3)),
+        ((0.5, 0.5), (1.5, 0.5), (1.5, 1.5), (0.5, 1.5)),
+        ((3, 3), (4, 3), (4, 4), (3, 4)),
+        ((1, 2), (2, 2.5), (1.5, 4), (0.5, 4), (0, 2.5)),
+        ((1.9, 1), (3, -1), (5, 1), (3, 3)),
+        ((-1, -1), (3, -1), (3, 3), (-1, 3)),
+        ((0, 2), (-2, 2), (-2, 0), (0, 0)),
+        ((0.25, 1.25), (0.75, 1.25), (0.75, 1.75), (0.25, 1.75)),
+    ),
+    ids=(
+        "overlap",
+        "shared-edge",
+        "shared-vertex",
+        "vertex-on-edge",
+        "contained",
+        "disjoint",
+        "pentagon-on-edge",
+        "thin-overlap",
+        "containing",
+        "shared-closing-edge",
+        "beyond-diagonal-overlap",
+    ),
+)
+def test_convex_separation_decides_zero_clip_area(other: Points) -> None:
+    # Partition subtraction skips the exact clip exactly when this test holds.
+    square = oriented_polygon(_exact_wall(_wall(_SQUARE)))
+    polygon = oriented_polygon(_exact_wall(_wall(other)))
+    expected = area2(intersection(square, polygon)) == 0
+    assert interiors_separated(square, polygon) is expected
+    assert interiors_separated(polygon, square) is expected
 
 
 def test_three_overlapping_parts_are_owned_once_in_priority_order() -> None:

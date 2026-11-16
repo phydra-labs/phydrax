@@ -24,7 +24,6 @@ from ._planar_primitives import (
     box_overlap_pairs,
     cross,
     interiors_separated,
-    intersection,
     oriented_polygon,
     Point,
     Polygon,
@@ -147,7 +146,9 @@ def _split(polygon: Polygon, start: Point, end: Point) -> tuple[Polygon, Polygon
 
 def _subtract(polygon: Polygon, obstacle: Polygon) -> tuple[Polygon, ...]:
     """Disjoint convex decomposition of polygon minus a convex obstacle."""
-    if not area2(intersection(polygon, obstacle)):
+    # Zero overlap area of two positive-area convex polygons is exactly an edge
+    # separation, decided by signs alone instead of constructing the clip.
+    if interiors_separated(polygon, obstacle):
         return (polygon,)
     remainder = polygon
     result: list[Polygon] = []
