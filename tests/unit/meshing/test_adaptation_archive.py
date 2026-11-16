@@ -74,7 +74,13 @@ def _kuhn_cube() -> CellMesh:
     return CellMesh.from_tetrahedra(points, rows)
 
 
-def _metric_request(source: CellMeshingResult, diagonal: tuple[float, ...], /) -> Any:
+def _metric_request(
+    source: CellMeshingResult,
+    diagonal: tuple[float, ...],
+    /,
+    *,
+    accepted_minimum_length: float | None = None,
+) -> Any:
     mesh = source.mesh
     vertices = mesh.entity_set(0)
     scope = MeshingScope(
@@ -91,7 +97,8 @@ def _metric_request(source: CellMeshingResult, diagonal: tuple[float, ...], /) -
     return MetricMeshAdaptation(
         MeshMetricField(
             scope, values, minimum_size=1.0e-3, maximum_size=10.0, maximum_anisotropy=10.0
-        )
+        ),
+        accepted_minimum_length=accepted_minimum_length,
     )
 
 
@@ -300,6 +307,40 @@ def test_tetra_metric_adaptation_round_trips_and_refuses_tamper(
     _refuses_tamper(
         path, MeshAdaptationResult, ("transition", "transition_id"), _flip_hex
     )
+
+
+def test_accepted_minimum_length_is_a_declared_request_input(tmp_path: Path) -> None:
+    source = _certified(_kuhn_cube())
+    diagonal = (4.0, 3.8, 3.6)
+    default = _metric_request(source, diagonal)
+    declared = _metric_request(source, diagonal, accepted_minimum_length=0.7)
+    assert default.accepted_minimum_length is None
+    assert declared.request_id != default.request_id
+    assert (
+        _metric_request(source, diagonal, accepted_minimum_length=0.7).request_id
+        == declared.request_id
+    )
+    for invalid in (0.0, 1, float(1.0 / np.sqrt(2.0)), float("nan")):
+        with pytest.raises(ValueError, match="accepted_minimum_length"):
+            _metric_request(source, diagonal, accepted_minimum_length=invalid)
+    with pytest.raises(TypeError, match="accepted_minimum_length"):
+        MetricMeshAdaptation(
+            default.metric,
+            accepted_minimum_length="0.7",  # ty: ignore[invalid-argument-type]
+        )
+    with pytest.raises(ValueError, match="applies only to NATIVE_METRIC_3D"):
+        prepare_mesh_adaptation(
+            source,
+            declared,
+            policy=MeshAdaptationPolicy(
+                MeshAdaptationRoute.DEVICE_METRIC_3D, relocation=False
+            ),
+        )
+
+    original = _adapt(source, declared, MeshAdaptationRoute.NATIVE_METRIC_3D)
+    assert original.status is MeshAdaptationStatus.COMPLETE
+    restored = _round_trip(tmp_path / "accepted.phx", original, MeshAdaptationResult)
+    _assert_same_adaptation(restored, original)
 
 
 def test_metric_cube_archives_are_byte_identical_without_wall_time(

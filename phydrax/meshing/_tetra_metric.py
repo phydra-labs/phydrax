@@ -7550,13 +7550,15 @@ def _native_metric_measurements(
     return edge_keys, lengths, protected, qualities, volumes, volume_error
 
 
-def _unit_metric_status(state: _NativeState, /) -> tuple[bool, int, float, float, float]:
+def _unit_metric_status(
+    state: _NativeState, /, *, lower: float = _LOWER
+) -> tuple[bool, int, float, float, float]:
     _, lengths, protected, qualities, _, _ = _native_metric_measurements(state)
     measured = ~protected
     if not np.any(measured):
         measured = np.ones(protected.shape, dtype=np.bool_)
     values = lengths[measured]
-    within = (values >= _LOWER) & (values <= _UPPER)
+    within = (values >= lower) & (values <= _UPPER)
     return (
         bool(np.all(within)),
         int(np.count_nonzero(~within)),
@@ -7605,6 +7607,7 @@ def _tetra_evidence(
     /,
     *,
     work: _NativeWorkSeed | None = None,
+    lower: float = _LOWER,
 ) -> TetraMetricEvidence:
     edge_keys, lengths, protected, qualities, _, volume_error = (
         _native_metric_measurements(state)
@@ -7613,7 +7616,7 @@ def _tetra_evidence(
     if not np.any(measured):
         measured = np.ones(protected.shape, dtype=np.bool_)
     values = lengths[measured]
-    inside = (values >= _LOWER) & (values <= _UPPER)
+    inside = (values >= lower) & (values <= _UPPER)
     if status is TetraMetricStatus.COMPLETE and not np.all(inside):
         status = TetraMetricStatus.STALLED
     if not np.isfinite(volume_error):
@@ -7659,13 +7662,15 @@ def execute_tetra_metric_adaptation(
     predicate_mode: PredicateMode,
     topology_operations: bool,
     relocation: bool,
+    accepted_minimum_length: float | None = None,
 ) -> TetraMetricOutcome:
     """Execute quota-free native SPD split/collapse/flip/ring/relocation phases.
 
     The route accepts an exact P1 source coordinate map, keeps source identities
     in the native handle, and returns one generalized topology edit for the
     canonical transfer/certification owner. It never infers source ancestry from
-    output samples.
+    output samples. ``accepted_minimum_length`` is the request's declared
+    completion bound (``MetricMeshAdaptation``); ``None`` is the unit band.
     """
     if not isinstance(predicate_mode, PredicateMode):
         raise TypeError("predicate_mode must be PredicateMode.")
@@ -7691,6 +7696,7 @@ def execute_tetra_metric_adaptation(
         predicate_mode,
         topology_operations=topology_operations,
         relocation=relocation,
+        accepted_minimum_length=accepted_minimum_length,
     )
 
 
@@ -7917,6 +7923,7 @@ def _execute_native_state(
     relocation: bool,
     split_batch: Callable[[_NativeState, dict[str, int]], int] = _one_split_batch,
     work: _NativeWorkSeed | None = None,
+    accepted_minimum_length: float | None = None,
 ) -> TetraMetricOutcome:
     """Run the canonical phase schedule on one native owner.
 
@@ -7926,7 +7933,11 @@ def _execute_native_state(
     and its stable target-ID numbering stay shared by every route.
     A private continuation seed carries authenticated prior work, not suspended
     generators. Every invocation prepares fresh worksets from the real state.
+    ``accepted_minimum_length`` widens only the completion criterion: every
+    phase still targets the unit band, and the evidence counts unmet edges
+    against the accepted band.
     """
+    lower = _LOWER if accepted_minimum_length is None else accepted_minimum_length
     if work is None:
         counters = dict(zip(_EditCounters._fields, _EditCounters(), strict=True))
         passes = 0
@@ -7975,7 +7986,7 @@ def _execute_native_state(
     # closed-star changes invalidate them at their owning commit boundaries.
     relocation_caches: _RelocationCaches = ({}, {}, {}, {}) if relocation else ()
     while True:
-        converged, _, _, _, _ = _unit_metric_status(state)
+        converged, _, _, _, _ = _unit_metric_status(state, lower=lower)
         if converged:
             status = TetraMetricStatus.COMPLETE
             break
@@ -8028,7 +8039,7 @@ def _execute_native_state(
             status = TetraMetricStatus.STALLED
             break
     edit, target_metric = _assemble_native_edit(state)
-    evidence = _tetra_evidence(state, counters, passes, status, work=work)
+    evidence = _tetra_evidence(state, counters, passes, status, work=work, lower=lower)
     return TetraMetricOutcome(edit, target_metric, evidence, state.source_exact_points)
 
 

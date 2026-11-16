@@ -2775,6 +2775,18 @@ numbering are shared with `NATIVE_METRIC_3D`, so both routes publish the same
 target mesh. `DeviceTetraMetricEvidence` exposes candidate ordering, exact-predicate
 and host-barrier counts, the native metric evidence, and whether edits committed.
 
+`MetricMeshAdaptation(metric, accepted_minimum_length=...)` declares the
+smallest metric edge length a `NATIVE_METRIC_3D` request accepts as complete.
+The default `None` is the unit band `[1/sqrt(2), sqrt(2)]`. A smaller value in
+`(0, 1/sqrt(2))` widens only the completion criterion: every edit phase still
+targets the unit band, the schedule stops at the first pass whose measured
+edges all lie in `[accepted_minimum_length, sqrt(2)]`, and
+`TetraMetricEvidence` counts unmet edges against that accepted band while
+reporting the measured minimum and maximum lengths unchanged. The value enters
+`request_id` only when declared, so default requests keep their identities.
+Geometry validity, source fidelity, and embedding certification are not
+relaxed. Every other route refuses a declared value.
+
 Tetrahedral relocation rounds located source barycentric weights to dyadic
 weights, retaining their exact source image and binary64 carrier. Boundary
 vertices remain on their source facet or segment; source corners stay pinned.

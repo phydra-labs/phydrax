@@ -436,17 +436,48 @@ class MarkedMeshAdaptation(StrictModule, NonTrainableState):
 
 @final
 class MetricMeshAdaptation(StrictModule, NonTrainableState):
-    """Adapt toward a unit mesh of one vertex metric bound to the source vertices."""
+    """Adapt toward a unit mesh of one vertex metric bound to the source vertices.
+
+    ``accepted_minimum_length`` declares the smallest metric edge length the
+    request accepts as complete. ``None`` selects the unit band's lower bound
+    ``1/sqrt(2)``. A smaller value widens only the completion criterion of
+    ``NATIVE_METRIC_3D``: its edits still target the unit band, and the schedule
+    stops at the first pass whose measured edges all lie in
+    ``[accepted_minimum_length, sqrt(2)]``. Every other route refuses it.
+    """
 
     metric: MeshMetricField
     request_id: str = eqx.field(static=True)
+    accepted_minimum_length: float | None = eqx.field(static=True)
 
     @checked
-    def __init__(self, metric: MeshMetricField, /) -> None:
+    def __init__(
+        self,
+        metric: MeshMetricField,
+        /,
+        *,
+        accepted_minimum_length: float | None = None,
+    ) -> None:
+        if accepted_minimum_length is not None:
+            if isinstance(accepted_minimum_length, bool) or not isinstance(
+                accepted_minimum_length, (int, float)
+            ):
+                raise TypeError("accepted_minimum_length must be a real number or None.")
+            if not 0.0 < accepted_minimum_length < 1.0 / np.sqrt(2.0):
+                raise ValueError(
+                    "accepted_minimum_length must lie strictly inside (0, 1/sqrt(2))."
+                )
+            # A NumPy scalar is canonicalized so the identity payload is one form.
+            accepted_minimum_length = float(accepted_minimum_length)
         self.metric = metric
-        self.request_id = canonical_fingerprint(
-            {"kind": "metric-mesh-adaptation", "metric": metric.metric_id}
-        )
+        payload: dict[str, Any] = {
+            "kind": "metric-mesh-adaptation",
+            "metric": metric.metric_id,
+        }
+        if accepted_minimum_length is not None:
+            payload["accepted_minimum_length"] = accepted_minimum_length
+        self.request_id = canonical_fingerprint(payload)
+        self.accepted_minimum_length = accepted_minimum_length
 
 
 @final
@@ -1173,6 +1204,12 @@ def _check_route_request(
         in (MeshAdaptationRoute.DEVICE_BISECTION, MeshAdaptationRoute.DEVICE_METRIC_3D)
         else {"tetrahedron", "simplex:3"}
     )
+    if (
+        isinstance(request, MetricMeshAdaptation)
+        and request.accepted_minimum_length is not None
+        and policy.route is not MeshAdaptationRoute.NATIVE_METRIC_3D
+    ):
+        raise ValueError("accepted_minimum_length applies only to NATIVE_METRIC_3D.")
     match policy.route:
         case MeshAdaptationRoute.NATIVE_BISECTION | MeshAdaptationRoute.DEVICE_BISECTION:
             if not isinstance(request, MarkedMeshAdaptation) or not isinstance(
@@ -7482,6 +7519,7 @@ def _execute_tetra_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOu
         predicate_mode=resolve_host_predicate_mode(policy.predicate_mode),
         topology_operations=True,
         relocation=policy.relocation,
+        accepted_minimum_length=request.accepted_minimum_length,
     )
     evidence = outcome.evidence
     match evidence.status:

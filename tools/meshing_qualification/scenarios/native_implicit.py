@@ -257,6 +257,7 @@ def _volume_case(
     witness: np.ndarray | None = None,
     enclosure: Callable[[float], tuple[float, float]] | None = None,
     policy: AdaptiveImplicitSurfacePolicy | None = None,
+    accepted_minimum_metric_length: float | None = None,
 ) -> dict[str, object]:
     """Generate one implicit profile, its fidelity ladder, and metric epochs.
 
@@ -264,6 +265,8 @@ def _volume_case(
     volumes of the inner and outer parallel bodies at that offset; it is
     required for a ladder and checked at every level. ``policy`` is the
     route's discovery policy (root tolerance 1e-10 when omitted).
+    ``accepted_minimum_metric_length`` is the profile's declared completion
+    bound for its metric epochs; ``None`` requires the unit band.
     """
     if fidelity_levels < 1:
         raise ValueError("The fidelity ladder must contain at least one level.")
@@ -485,7 +488,10 @@ def _volume_case(
             adaptation = phx.meshing.execute_mesh_adaptation(
                 phx.meshing.prepare_mesh_adaptation(
                     current,
-                    phx.meshing.MetricMeshAdaptation(metric),
+                    phx.meshing.MetricMeshAdaptation(
+                        metric,
+                        accepted_minimum_length=accepted_minimum_metric_length,
+                    ),
                     policy=phx.meshing.MeshAdaptationPolicy(
                         phx.meshing.MeshAdaptationRoute.NATIVE_METRIC_3D,
                         association_transfer=phx.meshing.ImplicitAssociationTransfer(
@@ -555,6 +561,7 @@ def _volume_case(
                     "minimum_metric_length": adaptation.evidence.minimum_metric_length,
                     "maximum_metric_length": adaptation.evidence.maximum_metric_length,
                     "out_of_range_edges": adaptation.evidence.out_of_range_edges,
+                    "accepted_minimum_metric_length": accepted_minimum_metric_length,
                     "target_metric_id": adaptation.metric.metric_id,
                     "result": accepted_result_record(current),
                     "measured_volume_m3": volume,
@@ -673,6 +680,10 @@ def native_implicit_adaptation(
                 adaptation_rounds=2,
                 fidelity_levels=3,
                 witness=np.zeros(3),
+                # User-approved sizing relaxation (plan section 9): the 0.005 m
+                # fidelity tube pins boundary edges about 0.6% under the unit
+                # band; geometry, fidelity, and PDE acceptance are unchanged.
+                accepted_minimum_metric_length=0.70,
                 enclosure=_ball_enclosure(sphere_radius),
             )
         )

@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- `MetricMeshAdaptation` accepts `accepted_minimum_length`, the smallest metric
+  edge length a `NATIVE_METRIC_3D` request accepts as complete. Edit phases
+  still target the unit band; only the completion criterion and the unmet-edge
+  evidence use the declared bound. Default requests keep their identities and
+  behavior, and other routes refuse a declared value. Archives of metric
+  adaptation requests carry the new field and must be rewritten.
 - `TetraMetricProposalError` exposes actual coupled-proposal solver failure,
   finite resource demand, policy, and source binding. Audited local
   infeasibility prunes only its local model; failed numerical points are never

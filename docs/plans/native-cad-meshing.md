@@ -362,6 +362,17 @@ edges, while the region area permits at most 12 edges of length at least 0.4 m,
 too few for the requested median. The user explicitly selected a finer positive
 workflow rather than converting this case into an expected rejection.
 
+**Approved sphere sizing relaxation:** the `sphere-adaptive-refinement` profile
+declares `accepted_minimum_length=0.70` for its two `NATIVE_METRIC_3D` epochs.
+Its 0.005 m source-fidelity tube pins boundary edges at metric lengths about
+0.6% below `1/sqrt(2)`, which the native schedule could only reduce through a
+long coupled-relocation tail. The upper bound `sqrt(2)`, geometry validity,
+source fidelity, embedding, transfer, and the three-record/two-order PDE
+oracle are unchanged. The user approved this explicit change of requested
+mesh quality on 2026-11-15 and deferred the coupled-search performance work
+(cluster objective, source-guided proposals, planned-construction retention)
+as follow-up outside the completion candidate.
+
 ## 10. Layers, high order, structured and general cell families
 
 | Files | Action and acceptance |

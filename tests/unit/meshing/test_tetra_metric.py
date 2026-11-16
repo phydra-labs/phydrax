@@ -180,6 +180,7 @@ def _adapt(
     protected_edges: np.ndarray | None = None,
     topology_operations: bool = True,
     relocation: bool = True,
+    accepted_minimum_length: float | None = None,
 ) -> TetraMetricOutcome:
     mesh = source.mesh
     edge_count = mesh.entity_set(1).entity_ids.size
@@ -198,6 +199,7 @@ def _adapt(
         predicate_mode=PredicateMode.EXACT,
         topology_operations=topology_operations,
         relocation=relocation,
+        accepted_minimum_length=accepted_minimum_length,
     )
 
 
@@ -2561,6 +2563,24 @@ def test_declared_plane_admits_a_rounded_relocation_on_a_slanted_facet() -> None
     assert (
         _apply_relocation_batch(state, [off_plane]) is TetMeshEditStatus.INVALID_GEOMETRY
     )
+
+
+def test_accepted_minimum_length_completes_only_at_the_declared_bound() -> None:
+    # The pinned cube edges of the h = 2 coarsening stay short. Declaring their
+    # length as accepted completes the same request; the unit band still stalls.
+    source = _source()
+    tensor = np.eye(3) * 0.25
+    strict = _adapt(source, tensor).evidence
+    assert strict.status is TetraMetricStatus.STALLED
+    bound = strict.minimum_metric_length
+    assert 0.0 < bound < 1.0 / np.sqrt(2.0)
+
+    accepted = _adapt(source, tensor, accepted_minimum_length=bound).evidence
+    assert accepted.status is TetraMetricStatus.COMPLETE
+    assert accepted.out_of_range_edges == 0
+    assert accepted.unmet_edges == ()
+    assert bound <= accepted.minimum_metric_length < 1.0 / np.sqrt(2.0)
+    assert accepted.maximum_metric_length <= np.sqrt(2.0)
 
 
 def test_stalled_adaptation_reports_typed_unmet_edges() -> None:
