@@ -15,7 +15,6 @@ from fractions import Fraction
 from functools import lru_cache
 from itertools import combinations, permutations, product
 from math import comb, factorial, fsum, lcm, prod
-from types import MappingProxyType
 from typing import final, Literal, Protocol, runtime_checkable, TYPE_CHECKING
 
 import numpy as np
@@ -901,10 +900,9 @@ def _exact_polynomial_simplex_integral(
     return _integral_center_and_error(total * determinant)
 
 
-@lru_cache(maxsize=4096)
 def _simplex_monomial_integrals(
     vertices: tuple[tuple[Fraction, ...], ...], degree: int, /
-) -> tuple[Mapping[tuple[int, ...], int], int]:
+) -> tuple[dict[tuple[int, ...], int], int]:
     """Exact integrals of every monomial of total degree <= degree over a simplex.
 
     Integrals are integer numerators over one common denominator. Each monomial
@@ -944,12 +942,10 @@ def _simplex_monomial_integrals(
                 )
             integrals[exponent] = determinant * integral
     denominator = lcm(1, *(value.denominator for value in integrals.values()))
-    return MappingProxyType(
-        {
-            exponent: value.numerator * (denominator // value.denominator)
-            for exponent, value in integrals.items()
-        }
-    ), denominator
+    return {
+        exponent: value.numerator * (denominator // value.denominator)
+        for exponent, value in integrals.items()
+    }, denominator
 
 
 def _integer_components(
@@ -993,6 +989,77 @@ def _integer_components(
     ), denominator
 
 
+type _IntegerComponents = tuple[tuple[dict[tuple[int, ...], int], ...], int]
+
+
+def _integer_entity_operands(
+    pulled_components: Sequence[tuple[_Expression, ...]],
+    test_forms: Mapping[int, tuple[_Polynomial, ...]],
+    entity_dofs: tuple[int, ...],
+    form_degree: int,
+    entity_dimension: int,
+    /,
+) -> (
+    tuple[
+        list[_IntegerComponents],
+        dict[int, _IntegerComponents],
+        tuple[tuple[int, ...], ...],
+    ]
+    | None
+):
+    """Integer source and test operands of one entity block, in DOF order.
+
+    Missing test forms are refused in target-DOF order as on the composed
+    route; None sends the block to that route.
+    """
+    sources = []
+    for components in pulled_components:
+        integer = _integer_components(components, entity_dimension)
+        if integer is None:
+            return None
+        sources.append(integer)
+    tests = []
+    for target_dof in entity_dofs:
+        test = test_forms.get(target_dof)
+        if test is None:
+            raise ValueError("A target moment row has no canonical test form.")
+        tests.append((target_dof, test))
+    if not sources:
+        return sources, {}, ()
+    test_blades = tuple(
+        combinations(range(entity_dimension), entity_dimension - form_degree)
+    )
+    targets: dict[int, _IntegerComponents] = {}
+    for target_dof, test in tests:
+        integer = (
+            _integer_components(test, entity_dimension)
+            if len(test) == len(test_blades)
+            else None
+        )
+        if integer is None:
+            return None
+        targets[target_dof] = integer
+    return sources, targets, test_blades
+
+
+def _piece_bound_sums(
+    bounds: Mapping[tuple[int, int], Sequence[tuple[float, float]]], /
+) -> dict[tuple[int, int], tuple[float, float]]:
+    result = {}
+    for key, piece_bounds in bounds.items():
+        exact_values: list[Fraction] = []
+        exact_errors: list[Fraction] = []
+        for value, error in piece_bounds:
+            if not np.isfinite(value) or not np.isfinite(error) or error < 0.0:
+                raise ValueError(
+                    "Reference form moment integration produced invalid bounds."
+                )
+            exact_values.append(Fraction(float(value)))
+            exact_errors.append(Fraction(float(error)))
+        result[key] = _sum_piece_bounds(exact_values, exact_errors)
+    return result
+
+
 def _polynomial_entity_moments(
     pulled_components: Sequence[tuple[_Expression, ...]],
     test_forms: Mapping[int, tuple[_Polynomial, ...]],
@@ -1012,33 +1079,14 @@ def _polynomial_entity_moments(
     match `_integrate_entity_expression`. Returns None when an integrand leaves
     the rational polynomial route.
     """
-    sources = []
-    for components in pulled_components:
-        integer = _integer_components(components, entity_dimension)
-        if integer is None:
-            return None
-        sources.append(integer)
-    tests = []
-    for target_dof in entity_dofs:
-        test = test_forms.get(target_dof)
-        if test is None:
-            raise ValueError("A target moment row has no canonical test form.")
-        tests.append((target_dof, test))
+    operands = _integer_entity_operands(
+        pulled_components, test_forms, entity_dofs, form_degree, entity_dimension
+    )
+    if operands is None:
+        return None
+    sources, targets, test_blades = operands
     if not sources:
         return {}
-    test_blades = tuple(
-        combinations(range(entity_dimension), entity_dimension - form_degree)
-    )
-    targets: dict[int, tuple[tuple[dict[tuple[int, ...], int], ...], int]] = {}
-    for target_dof, test in tests:
-        integer = (
-            _integer_components(test, entity_dimension)
-            if len(test) == len(test_blades)
-            else None
-        )
-        if integer is None:
-            return None
-        targets[target_dof] = integer
     pairs = tuple(
         (component, test_component, _wedge_sign(target_blade, test_blade))
         for component, target_blade in enumerate(target_blades)
@@ -1108,19 +1156,7 @@ def _polynomial_entity_moments(
                         )
                     )
                 )
-    result = {}
-    for key, piece_bounds in bounds.items():
-        exact_values: list[Fraction] = []
-        exact_errors: list[Fraction] = []
-        for value, error in piece_bounds:
-            if not np.isfinite(value) or not np.isfinite(error) or error < 0.0:
-                raise ValueError(
-                    "Reference form moment integration produced invalid bounds."
-                )
-            exact_values.append(Fraction(float(value)))
-            exact_errors.append(Fraction(float(error)))
-        result[key] = _sum_piece_bounds(exact_values, exact_errors)
-    return result
+    return _piece_bound_sums(bounds)
 
 
 def _multiindices(dimension: int, total: int, /) -> tuple[tuple[int, ...], ...]:
@@ -1788,6 +1824,122 @@ def _sum_exact_expressions(
     return algebra.RationalPolynomial(common_numerator, common_denominator)
 
 
+def _pulled_source_components(
+    source_components: tuple[tuple[_Expression, ...], ...],
+    source_blades: tuple[tuple[int, ...], ...],
+    target_blades: tuple[tuple[int, ...], ...],
+    mapped_arguments: tuple[_Expression, ...],
+    jacobian: tuple[tuple[_Expression, ...], ...],
+    entity_dimension: int,
+    orientation: int,
+    /,
+) -> list[tuple[_Expression, ...]]:
+    """Pull every source basis form back to one target entity chart."""
+    pulled_components = []
+    for components in source_components:
+        composed = tuple(_compose(value, mapped_arguments) for value in components)
+        pulled = []
+        for target_blade in target_blades:
+            terms = []
+            for source_blade, value in zip(source_blades, composed, strict=True):
+                minor = _determinant(
+                    tuple(
+                        tuple(jacobian[row][column] for column in target_blade)
+                        for row in source_blade
+                    ),
+                    entity_dimension,
+                )
+                if value and minor:
+                    terms.append(algebra.multiply(value, minor))
+            pulled.append(_sum_exact_expressions(terms, entity_dimension))
+        if orientation != 1:
+            pulled = [algebra.scale(value, orientation) for value in pulled]
+        pulled_components.append(tuple(pulled))
+    return pulled_components
+
+
+def _composed_entity_moments(
+    pulled_components: Sequence[tuple[_Expression, ...]],
+    test_forms: Mapping[int, tuple[_Polynomial, ...]],
+    entity_dofs: tuple[int, ...],
+    target_blades: tuple[tuple[int, ...], ...],
+    form_degree: int,
+    entity_dimension: int,
+    entity_family: str,
+    integration_policy: CurvedOverlapIntegrationPolicy | None,
+    piece_policy: CurvedOverlapIntegrationPolicy | None,
+    pieces: tuple[tuple[tuple[Fraction, ...], ...], ...] | None,
+    rules_by_dimension: dict[int, tuple[np.ndarray, np.ndarray]],
+    /,
+) -> dict[tuple[int, int], tuple[float, float, bool]]:
+    """Integrate one entity block by forming and composing each integrand.
+
+    This route owns vertex DOFs, radical coefficients, and rational-function
+    integrands, which leave the exact monomial-table route.
+    """
+    rule_points = rule_weights = None
+    if entity_dimension > 0:
+        rule_pair = rules_by_dimension.get(entity_dimension)
+        if rule_pair is None:
+            from ..._polynomial._cubature import (
+                cubature_rule_data,
+                simplex_rule_data,
+                tensor_product_rule_data,
+            )
+
+            rule_data = (
+                tensor_product_rule_data(1, 5, family="gauss")
+                if entity_dimension == 1
+                else cubature_rule_data("triangle", 8)
+                if entity_dimension == 2
+                else cubature_rule_data("tetrahedron", 8)
+                if entity_dimension == 3
+                else simplex_rule_data(entity_dimension, 0)
+            )
+            rule_pair = (
+                np.asarray(rule_data.points, dtype=np.float64),
+                np.asarray(rule_data.weights, dtype=np.float64),
+            )
+            rules_by_dimension[entity_dimension] = rule_pair
+        rule_points, rule_weights = rule_pair
+    result = {}
+    for target_dof in entity_dofs:
+        test = test_forms.get(target_dof)
+        if test is None:
+            raise ValueError("A target moment row has no canonical test form.")
+        for source_dof, pulled in enumerate(pulled_components):
+            terms = []
+            for target_blade, form_component in zip(target_blades, pulled, strict=True):
+                for test_blade, test_component in zip(
+                    tuple(
+                        combinations(
+                            range(entity_dimension), entity_dimension - form_degree
+                        )
+                    ),
+                    test,
+                    strict=True,
+                ):
+                    if (
+                        set(target_blade).isdisjoint(test_blade)
+                        and len(target_blade) + len(test_blade) == entity_dimension
+                    ):
+                        sign = _wedge_sign(target_blade, test_blade)
+                        product = algebra.multiply(form_component, test_component)
+                        if product:
+                            terms.append(algebra.scale(product, sign))
+            result[target_dof, source_dof] = _integrate_entity_expression(
+                _sum_exact_expressions(terms, entity_dimension),
+                entity_dimension,
+                entity_family,
+                integration_policy,
+                rule_points,
+                rule_weights,
+                piece_policy,
+                pieces,
+            )
+    return result
+
+
 def _local_reference_moments(
     source: FiniteElementSpec,
     target: FiniteElementSpec,
@@ -1890,28 +2042,15 @@ def _local_reference_moments(
             target_blades, test_forms = _target_test_forms(
                 target_basis, entity, entity_dimension, entity_dofs, free
             )
-            pulled_components = []
-            for components in source_components:
-                composed = tuple(
-                    _compose(value, mapped_arguments) for value in components
-                )
-                pulled = []
-                for target_blade in target_blades:
-                    terms = []
-                    for source_blade, value in zip(source_blades, composed, strict=True):
-                        minor = _determinant(
-                            tuple(
-                                tuple(jacobian[row][column] for column in target_blade)
-                                for row in source_blade
-                            ),
-                            entity_dimension,
-                        )
-                        if value and minor:
-                            terms.append(algebra.multiply(value, minor))
-                    pulled.append(_sum_exact_expressions(terms, entity_dimension))
-                if orientation != 1:
-                    pulled = [algebra.scale(value, orientation) for value in pulled]
-                pulled_components.append(tuple(pulled))
+            pulled_components = _pulled_source_components(
+                source_components,
+                source_blades,
+                target_blades,
+                mapped_arguments,
+                jacobian,
+                entity_dimension,
+                orientation,
+            )
             entity_simplices = (
                 _entity_simplices(entity_dimension, entity_family)
                 if pieces is None
@@ -1940,78 +2079,29 @@ def _local_reference_moments(
                     exact[target_dof, source_dof] = True
                     enclosed[target_dof, source_dof] = False
                 continue
-            rule_points = rule_weights = None
-            if entity_dimension > 0:
-                rule_pair = rules_by_dimension.get(entity_dimension)
-                if rule_pair is None:
-                    from ..._polynomial._cubature import (
-                        cubature_rule_data,
-                        simplex_rule_data,
-                        tensor_product_rule_data,
-                    )
-
-                    rule_data = (
-                        tensor_product_rule_data(1, 5, family="gauss")
-                        if entity_dimension == 1
-                        else cubature_rule_data("triangle", 8)
-                        if entity_dimension == 2
-                        else cubature_rule_data("tetrahedron", 8)
-                        if entity_dimension == 3
-                        else simplex_rule_data(entity_dimension, 0)
-                    )
-                    rule_pair = (
-                        np.asarray(rule_data.points, dtype=np.float64),
-                        np.asarray(rule_data.weights, dtype=np.float64),
-                    )
-                    rules_by_dimension[entity_dimension] = rule_pair
-                rule_points, rule_weights = rule_pair
-            for target_dof in entity_dofs:
-                test = test_forms.get(target_dof)
-                if test is None:
-                    raise ValueError("A target moment row has no canonical test form.")
-                for source_dof, pulled in enumerate(pulled_components):
-                    terms = []
-                    for target_blade, form_component in zip(
-                        target_blades, pulled, strict=True
-                    ):
-                        for test_blade, test_component in zip(
-                            tuple(
-                                combinations(
-                                    range(entity_dimension),
-                                    entity_dimension - degree,
-                                )
-                            ),
-                            test,
-                            strict=True,
-                        ):
-                            if (
-                                set(target_blade).isdisjoint(test_blade)
-                                and len(target_blade) + len(test_blade)
-                                == entity_dimension
-                            ):
-                                sign = _wedge_sign(target_blade, test_blade)
-                                product = algebra.multiply(form_component, test_component)
-                                if product:
-                                    terms.append(algebra.scale(product, sign))
-                    integrand = _sum_exact_expressions(terms, entity_dimension)
-                    moment_value, moment_error, moment_exact = (
-                        _integrate_entity_expression(
-                            integrand,
-                            entity_dimension,
-                            entity_family,
-                            integration_policy,
-                            rule_points,
-                            rule_weights,
-                            None
-                            if pieces is not None
-                            else piece_policies.get((entity_dimension, entity_family)),
-                            pieces,
-                        )
-                    )
-                    values[target_dof, source_dof] = moment_value
-                    errors[target_dof, source_dof] = moment_error
-                    exact[target_dof, source_dof] = moment_exact
-                    enclosed[target_dof, source_dof] = not moment_exact
+            for (target_dof, source_dof), (
+                moment_value,
+                moment_error,
+                moment_exact,
+            ) in _composed_entity_moments(
+                pulled_components,
+                test_forms,
+                entity_dofs,
+                target_blades,
+                degree,
+                entity_dimension,
+                entity_family,
+                integration_policy,
+                None
+                if pieces is not None
+                else piece_policies.get((entity_dimension, entity_family)),
+                pieces,
+                rules_by_dimension,
+            ).items():
+                values[target_dof, source_dof] = moment_value
+                errors[target_dof, source_dof] = moment_error
+                exact[target_dof, source_dof] = moment_exact
+                enclosed[target_dof, source_dof] = not moment_exact
     if seen_target_dofs != set(range(target_basis.local_dof_count)):
         raise ValueError("Target form moments do not cover every local entity DOF.")
     return MomentIntegralMatrix(values, errors, exact, enclosed)
