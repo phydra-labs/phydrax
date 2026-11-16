@@ -363,15 +363,17 @@ too few for the requested median. The user explicitly selected a finer positive
 workflow rather than converting this case into an expected rejection.
 
 **Approved sphere sizing relaxation:** the `sphere-adaptive-refinement` profile
-declares `accepted_minimum_length=0.70` for its two `NATIVE_METRIC_3D` epochs.
-Its 0.005 m source-fidelity tube pins boundary edges at metric lengths about
-0.6% below `1/sqrt(2)`, which the native schedule could only reduce through a
-long coupled-relocation tail. The upper bound `sqrt(2)`, geometry validity,
-source fidelity, embedding, transfer, and the three-record/two-order PDE
-oracle are unchanged. The user approved this explicit change of requested
-mesh quality on 2026-11-15 and deferred the coupled-search performance work
-(cluster objective, source-guided proposals, planned-construction retention)
-as follow-up outside the completion candidate.
+declares `accepted_minimum_length=0.69` for its two `NATIVE_METRIC_3D` epochs.
+Its 0.005 m source-fidelity tube pins boundary edges at metric lengths near
+0.699, about 1.2% below `1/sqrt(2)`, where the ordinary native phases stall;
+only a long coupled-relocation tail reduces that further. The bound 0.69
+accepts the natural stall with margin. The upper bound `sqrt(2)`, geometry
+validity, source fidelity, embedding, transfer, and the three-record/two-order
+PDE oracle are unchanged. The user approved this explicit change of requested
+mesh quality on 2026-11-15/16 (first 0.70, then 0.69 once the fresh-run stall
+length was stated) and deferred the coupled-search performance work (cluster
+objective, source-guided proposals, planned-construction retention) as
+follow-up outside the completion candidate.
 
 ## 10. Layers, high order, structured and general cell families
 

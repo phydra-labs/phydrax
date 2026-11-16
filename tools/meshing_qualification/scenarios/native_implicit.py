@@ -681,9 +681,10 @@ def native_implicit_adaptation(
                 fidelity_levels=3,
                 witness=np.zeros(3),
                 # User-approved sizing relaxation (plan section 9): the 0.005 m
-                # fidelity tube pins boundary edges about 0.6% under the unit
-                # band; geometry, fidelity, and PDE acceptance are unchanged.
-                accepted_minimum_metric_length=0.70,
+                # fidelity tube pins boundary edges near 0.699, about 1.2% under
+                # the unit band, where the ordinary phases stall. Geometry,
+                # fidelity, and PDE acceptance are unchanged.
+                accepted_minimum_metric_length=0.69,
                 enclosure=_ball_enclosure(sphere_radius),
             )
         )
