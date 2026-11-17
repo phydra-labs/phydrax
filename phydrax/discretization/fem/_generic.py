@@ -240,30 +240,26 @@ def _simplex_entity_routes(
     ``edges`` and ``faces`` hold canonical (ascending) vertex rows; triangles have
     no face routes.
     """
-    edge_by_vertices = {tuple(edge): index for index, edge in enumerate(edges)}
     reference_edges = _TETRAHEDRAL_EDGES if faces is not None else _TRIANGULAR_EDGES
-    edge_routes = np.empty((cells.shape[0], len(reference_edges)), dtype=np.int32)
-    edge_signs = np.empty_like(edge_routes, dtype=np.float64)
+    oriented = cells[:, np.asarray(reference_edges, dtype=np.int32)]
+    edge_signs = np.where(oriented[..., 0] < oriented[..., 1], 1.0, -1.0)
+
+    def routes(entities: np.ndarray, occurrences: np.ndarray) -> np.ndarray:
+        canonical = np.sort(occurrences, axis=-1)
+        width = canonical.shape[-1]
+        dtype = np.dtype([(f"v{index}", np.int32) for index in range(width)])
+        keys = np.ascontiguousarray(entities, dtype=np.int32).view(dtype).reshape(-1)
+        query = np.ascontiguousarray(canonical, dtype=np.int32).view(dtype).reshape(-1)
+        order = np.argsort(keys, kind="stable")
+        positions = np.searchsorted(keys, query, sorter=order)
+        return order[positions].astype(np.int32).reshape(canonical.shape[:-1])
+
+    edge_routes = routes(edges, oriented)
     face_routes = (
         None
         if faces is None
-        else np.empty((cells.shape[0], len(_TETRAHEDRAL_FACES)), dtype=np.int32)
+        else routes(faces, cells[:, np.asarray(_TETRAHEDRAL_FACES, dtype=np.int32)])
     )
-    face_by_vertices = (
-        {} if faces is None else {tuple(face): index for index, face in enumerate(faces)}
-    )
-    for cell, vertices in enumerate(cells):
-        for local_edge, (start, stop) in enumerate(reference_edges):
-            oriented = (int(vertices[start]), int(vertices[stop]))
-            canonical = tuple(sorted(oriented))
-            edge_routes[cell, local_edge] = edge_by_vertices[canonical]
-            edge_signs[cell, local_edge] = 1.0 if oriented == canonical else -1.0
-        if face_routes is not None:
-            for local_face, local_vertices in enumerate(_TETRAHEDRAL_FACES):
-                canonical = tuple(
-                    sorted(int(vertices[index]) for index in local_vertices)
-                )
-                face_routes[cell, local_face] = face_by_vertices[canonical]
     return edge_routes, edge_signs, face_routes
 
 
@@ -1276,11 +1272,11 @@ def _record_shared_entity_widths(
     """Assign each shared entity one DOF width; unequal traces need a mortar."""
     for local_entity, entity_dofs in enumerate(local_entity_dofs):
         width = len(entity_dofs)
-        for entity in np.unique(block_routes[:, local_entity]):
-            existing = widths[int(entity)]
-            if existing >= 0 and existing != width:
-                raise ValueError(conflict_message)
-            widths[int(entity)] = width
+        entities = np.unique(block_routes[:, local_entity])
+        existing = widths[entities]
+        if np.any((existing >= 0) & (existing != width)):
+            raise ValueError(conflict_message)
+        widths[entities] = width
 
 
 def _record_hexahedral_face_widths(
