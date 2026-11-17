@@ -70,6 +70,22 @@ def test_interval_endpoints_match_directed_exact_coefficients() -> None:
     np.testing.assert_array_equal(upper.view(np.uint64), expected_upper.view(np.uint64))
 
 
+def test_interval_endpoints_reject_an_inexact_binary64_proposal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    values = ((Fraction(1), Fraction(-3, 8), Fraction(1, 2**1074)),)
+    bank = ExactCoordinateBank.from_rows(values)
+    monkeypatch.setattr(
+        ExactCoordinateBank,
+        "binary64",
+        lambda self: np.zeros(self.shape, dtype=np.float64),
+    )
+    lower, upper = bank.interval_endpoints()
+    expected = np.asarray(values, dtype=np.float64)
+    np.testing.assert_array_equal(lower.view(np.uint64), expected.view(np.uint64))
+    np.testing.assert_array_equal(upper.view(np.uint64), expected.view(np.uint64))
+
+
 def test_bank_equality_hash_and_immutability_are_canonical() -> None:
     rows = _rows()
     bank = ExactCoordinateBank.from_rows(rows)

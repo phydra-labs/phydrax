@@ -361,14 +361,27 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
 
         lower = self.binary64()
         upper = lower.copy()
-        # Canonical odd dyadics with at most 53 bits and exponent >= -1074 are
-        # exactly representable. Wider, subnormal-underflowing, and sparse
-        # entries require the same directed scalar conversion as the proof path.
-        exceptional = (
-            (self._exponents == _SPARSE)
-            | (self._exponents < -1074)
-            | (np.abs(self._significands) > _BINARY64_EXACT)
+        # The binary64 conversion is only a proposal. Verify its bits against
+        # the exact odd significand and exponent using integer arithmetic; a
+        # rounded, underflowed, or sparse entry takes directed exact conversion.
+        bits = lower.view(np.uint64)
+        fraction = bits & np.uint64((1 << 52) - 1)
+        exponent = (bits >> np.uint64(52)) & np.uint64(0x7FF)
+        mantissa = np.where(exponent == 0, fraction, fraction | np.uint64(1 << 52))
+        binary_exponent = np.where(exponent == 0, -1074, exponent.astype(np.int64) - 1075)
+        shift = self._exponents.astype(np.int64) - binary_exponent
+        magnitude = np.abs(self._significands).astype(np.uint64)
+        represented = np.left_shift(magnitude, np.clip(shift, 0, 63).astype(np.uint64))
+        same_sign = (bits >> np.uint64(63)) == (self._significands < 0)
+        exact_nonzero = (
+            (self._significands != 0)
+            & (shift >= 0)
+            & (shift <= 52)
+            & (represented == mantissa)
+            & same_sign
         )
+        exact_zero = (self._significands == 0) & (bits == 0)
+        exceptional = (self._exponents == _SPARSE) | ~(exact_nonzero | exact_zero)
         width = self._shape[1]
         for flat in np.flatnonzero(exceptional.reshape(-1)).tolist():
             row, axis = divmod(flat, width)
