@@ -547,6 +547,10 @@ with no compatibility reads.
    owner. Measured on the STEP external-combined curved geometry: 132.6 MB in
    3.2M objects becomes 9.77 MB, and its identities and re-packed archive bytes
    are unchanged.
+   Current cell-geometry identities bind the canonical dyadic and sparse bank
+   parts through framed, fixed-endian array fingerprints; their values differ
+   from those measured above. Proof construction materializes shared exact
+   rows once per local consumer rather than decoding each incident cell's rows.
 7. HP adaptation results retain a compact source-replay record rather than a
    complete prepared source epoch. It records the source topology and geometry,
    source epoch/mesh identities, actual current field element specifications,

@@ -7,6 +7,7 @@ import pickle
 from fractions import Fraction
 from pathlib import Path
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -159,3 +160,39 @@ def test_dyadic_helpers_return_canonical_odd_significands() -> None:
     ):
         assert dyadic_entry(Fraction(float(value))) == (int(significand), int(exponent))
     assert dyadic_entry(Fraction(1, 3)) is None
+
+
+def test_binary64_bank_exact_rows_match_random_finite_bits() -> None:
+    rng = np.random.default_rng(702)
+    bits = rng.integers(0, np.iinfo(np.uint64).max, size=384, dtype=np.uint64)
+    bits[:6] = np.asarray(
+        [0, 1 << 63, 1, (1 << 63) | 1, 0x7FEFFFFFFFFFFFFF, 0xFFEFFFFFFFFFFFFF],
+        dtype=np.uint64,
+    )
+    values = bits.view(np.float64)
+    values[~np.isfinite(values)] = 0.0
+    matrix = values.reshape(-1, 3)
+    bank = ExactCoordinateBank.from_binary64(matrix)
+    expected = tuple(tuple(Fraction.from_float(float(value)) for value in row) for row in matrix)
+    assert tuple(bank) == expected
+    assert bank.coefficient_payloads() == tuple(
+        tuple(coefficient_payload(value) for value in row) for row in expected
+    )
+    device_values = jnp.asarray(matrix, dtype=jnp.float64)
+    represented = np.asarray(device_values, dtype=np.float64)
+    assert tuple(ExactCoordinateBank.from_binary64(device_values)) == tuple(
+        tuple(Fraction.from_float(float(value)) for value in row) for row in represented
+    )
+
+
+def test_exact_bank_fingerprint_frames_shape_and_sparse_payload() -> None:
+    a = ExactCoordinateBank.from_rows(((Fraction(1), Fraction(2)), (Fraction(3), Fraction(4))))
+    reshaped = ExactCoordinateBank.from_rows(
+        ((Fraction(1),), (Fraction(2),), (Fraction(3),), (Fraction(4),))
+    )
+    same = ExactCoordinateBank.from_rows(((Fraction(1), Fraction(2)), (Fraction(3), Fraction(4))))
+    changed = ExactCoordinateBank.from_rows(((Fraction(1), Fraction(2)), (Fraction(3), Fraction(5))))
+    sparse = ExactCoordinateBank.from_rows(((Fraction(1, 3), Fraction(2)), (Fraction(3), Fraction(4))))
+    moved_sparse = ExactCoordinateBank.from_rows(((Fraction(1), Fraction(1, 3)), (Fraction(3), Fraction(4))))
+    assert a.content_fingerprint() == same.content_fingerprint()
+    assert len({a.content_fingerprint(), reshaped.content_fingerprint(), changed.content_fingerprint(), sparse.content_fingerprint(), moved_sparse.content_fingerprint()}) == 5

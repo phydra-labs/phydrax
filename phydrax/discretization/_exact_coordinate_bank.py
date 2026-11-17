@@ -10,8 +10,10 @@ from fractions import Fraction
 from typing import Any, final, overload, TYPE_CHECKING
 
 import numpy as np
+from jax.typing import ArrayLike
 from numpy.typing import DTypeLike, NDArray
 
+from .._fingerprint import canonical_fingerprint, numeric_array_fingerprint
 from ..geometry._rational import binary64_dyadic_entries, dyadic_entry
 from ._exact_algebraic_geometry import coefficient_payload, RadicalElement
 
@@ -174,7 +176,7 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
         )
 
     @classmethod
-    def from_binary64(cls, values: NDArray[np.float64], /) -> ExactCoordinateBank:
+    def from_binary64(cls, values: ArrayLike, /) -> ExactCoordinateBank:
         """Exact rows of finite binary64 coordinates (each entry is dyadic)."""
         array = np.asarray(values, dtype=np.float64)
         if array.ndim != 2:
@@ -367,6 +369,20 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
                     payload.append(("rational", significand, 1 << -exponent))
             result.append(tuple(payload))
         return tuple(result)
+
+    def content_fingerprint(self) -> str:
+        """Bind canonical dense dyadics and exact sparse entries with framed arrays."""
+        return canonical_fingerprint(
+            {
+                "kind": "exact-coordinate-bank",
+                "significands": numeric_array_fingerprint(self._significands),
+                "exponents": numeric_array_fingerprint(self._exponents),
+                "sparse_indices": numeric_array_fingerprint(self._sparse_index),
+                "sparse_values": tuple(
+                    coefficient_payload(value) for value in self._sparse_values
+                ),
+            }
+        )
 
     def __array__(
         self, dtype: DTypeLike | None = None, copy: bool | None = None

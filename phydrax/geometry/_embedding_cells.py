@@ -614,7 +614,7 @@ def _iter_embedding_cells(
     owning_mesh_id = mesh.mesh_id
     owning_geometry_id = cell_geometry_id(geometry)
     elements, routes, _ = geometry.resolve(mesh)
-    bank = geometry.source_coordinates()
+    bank = tuple(geometry.source_coordinates())
     vertex_global_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64).tolist()
     ambient = mesh.ambient_dimension
     block_offset = 0
