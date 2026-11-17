@@ -267,6 +267,10 @@
   eager dispatch. Trim realization and projection frame bits, and therefore
   `BRepProjectionResult.result_id`, can change; certification gates and source
   identities remain unchanged.
+- Orthogonal-cylinder intersection projections and trim queries use
+  batch-independent native interval realizations on supported fixed charts.
+  Point and frame bits, and identities containing them, can change; unsupported
+  charts retain their previous scalar route.
 - B-Rep normal and dihedral ranges, blend tangency bounds, and native-curve
   turning controls use outward interval inverse trigonometry and norm bounds.
   Stored angle endpoints and hard-control outcomes can consequently change.
