@@ -4,6 +4,7 @@ import base64
 import gzip
 import hashlib
 import math
+from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -39,6 +40,11 @@ _VOLUME_RELATIVE_TOLERANCE = 1.0e-10
 _SOURCE_DEVIATION_TOLERANCE_M = 0.02
 _FE_RESIDUAL_TOLERANCE = 2.0e-8
 _FE_BOUNDARY_TOLERANCE = 1.0e-10
+# Declared execution budget of the curved-CAD P2 solve (a plan input, never
+# derived from host memory): bytes of the exact Cholesky factor used as the
+# PCG preconditioner, and of each solve workspace.
+_FE_FACTOR_BYTES = 4 * 1024**3
+_FE_SYMBOLIC_WORK = 64_000_000_000
 # The donor CAD volume profiles ran the donor default NativeVolumeSchedule,
 # whose radius-edge and dihedral targets were aims: unmet cells were published
 # as evidence, never hidden (c56614 phydrax/meshing/_volume_generation.py
@@ -1250,6 +1256,32 @@ def _cad_manufactured_value(points: Any, length: float) -> Any:
     return jnp.exp(scaled[..., 0]) * jnp.sin(scaled[..., 1]) * jnp.cos(scaled[..., 2])
 
 
+def _fe_solve_policy() -> phx.linalg.LinearSolvePolicy:
+    """PCG on the exact native Cholesky factor under the declared budget."""
+    return phx.linalg.LinearSolvePolicy(
+        phx.linalg.PCG(),
+        tolerance=phx.linalg.TolerancePolicy(relative=1.0e-14, absolute=0.0),
+        preconditioning=phx.linalg.PreconditioningPolicy(
+            phx.linalg.SparseFactorizationPreconditionerBuilder(
+                phx.linalg.SparseFactorizationPolicy(
+                    "cholesky",
+                    ordering="approximate-minimum-degree",
+                    max_factor_nnz=_FE_FACTOR_BYTES // np.dtype(np.float64).itemsize,
+                    max_factor_bytes=_FE_FACTOR_BYTES,
+                    max_symbolic_work=_FE_SYMBOLIC_WORK,
+                )
+            )
+        ),
+        resources=phx.linalg.SolveResourcePolicy(
+            factorization_bytes=_FE_FACTOR_BYTES,
+            workspace_bytes=_FE_FACTOR_BYTES,
+            krylov_basis_bytes=_FE_FACTOR_BYTES,
+            preconditioner_bytes=_FE_FACTOR_BYTES,
+            recycling_state_bytes=_FE_FACTOR_BYTES,
+        ),
+    )
+
+
 def _solve_curved_cad_p2_fe(
     mesh: phx.discretization.CellMesh,
     geometry: phx.discretization.CellGeometrySpec,
@@ -1292,6 +1324,11 @@ def _solve_curved_cad_p2_fe(
                 ),
             ),
         ),
+        properties=phx.linalg.OperatorProperties(
+            self_adjoint=True,
+            positive_definite=True,
+            evidence={"positive_definite": "asserted"},
+        ),
     )
     problem = phx.equations.compile_finite_element_problem(
         form,
@@ -1299,8 +1336,15 @@ def _solve_curved_cad_p2_fe(
         constraint=constraint,
         dirichlet_values=exact,
     )
-    operator, rhs = problem.linear_system()
-    solved = phx.linalg.solve(operator, rhs)
+    operator, rhs = problem.linear_system(storage="sparse")
+    prepared = phx.linalg.prepare(operator, _fe_solve_policy())
+    state = prepared.preconditioning_state
+    if state is None or not isinstance(
+        state.action, phx.linalg.SparseFactorizationPreconditioner
+    ):
+        raise RuntimeError("The curved CAD P2 solve did not retain its Cholesky factor.")
+    factor = state.action.factorization.plan
+    solved = phx.linalg.solve(prepared, rhs)
     values = np.asarray(problem.expand(solved.value), dtype=np.float64)
     coordinates = np.asarray(space.dof_maps[0].dof_coordinates, dtype=np.float64)
     exact_values = np.asarray(exact(coordinates), dtype=np.float64)
@@ -1333,6 +1377,16 @@ def _solve_curved_cad_p2_fe(
         "normalized_residual": normalized_residual,
         "boundary_tolerance": _FE_BOUNDARY_TOLERANCE,
         "normalized_residual_tolerance": _FE_RESIDUAL_TOLERANCE,
+        "solver": {
+            "backend": str(prepared.plan.backend),
+            "method": str(prepared.plan.method),
+            "iterations": int(np.asarray(solved.diagnostics.iterations)),
+            "factorization": "supernodal-cholesky",
+            "factor_nnz": factor.factor_nnz,
+            "factor_bytes": factor.factor_bytes,
+            "symbolic_work": factor.symbolic_work,
+            "memory_budget_bytes": _FE_FACTOR_BYTES,
+        },
         "passed": True,
     }
 
@@ -2005,31 +2059,26 @@ def _profile_record(
     return record
 
 
-def native_cad_profile_matrix(
-    *, checkpoint: Callable[[dict[str, object]], None] | None = None
-) -> dict[str, object]:
-    """Execute all recovered BRep/STEP/IGES source profiles with native routes."""
-    records: dict[str, dict[str, object]] = {}
-    for profile_id, format_name, case in _PROFILE_CASES:
-        if checkpoint is not None:
-            checkpoint({"profile_id": profile_id, "event": "profile-start"})
-        record = _profile_record(profile_id, format_name, case, checkpoint=checkpoint)
-        records[profile_id] = record
-        if checkpoint is not None:
-            checkpoint(
-                {"profile_id": profile_id, "event": "profile-complete", "record": record}
-            )
+def _matrix_record(records: dict[str, dict[str, object]], /) -> dict[str, object]:
+    """Aggregate of ``records``, which follow the declared profile order.
+
+    A record that does not cover every declared profile lists its
+    ``selected_profiles`` and never claims workflow completion.
+    """
     passed = sum(record["status"] == "passed" for record in records.values())
     failed = len(records) - passed
-    complete = failed == 0
+    covered = len(records) == len(_PROFILE_CASES)
     return {
         "scenario": "native-cad-profile-matrix",
         "workflow": "native-cad",
-        "status": "passed" if complete else "failed",
-        "mandatory_workflow_completion": "complete" if complete else "incomplete",
+        "status": "passed" if failed == 0 else "failed",
+        "mandatory_workflow_completion": (
+            "complete" if covered and failed == 0 else "incomplete"
+        ),
         "profile_count": len(records),
         "passed_profiles": passed,
         "failed_profiles": failed,
+        **({} if covered else {"selected_profiles": list(records)}),
         "profiles": records,
         "provenance": {
             "source_branch": _SOURCE_BRANCH,
@@ -2042,3 +2091,65 @@ def native_cad_profile_matrix(
             "A failed record is a real source/API/acceptance failure, never a skipped or substituted profile.",
         ],
     }
+
+
+def native_cad_profile_matrix(
+    *,
+    checkpoint: Callable[[dict[str, object]], None] | None = None,
+    profiles: frozenset[str] | None = None,
+) -> dict[str, object]:
+    """Execute the recovered BRep/STEP/IGES source profiles with native routes.
+
+    The profiles are independent. ``profiles`` selects a subset by profile ID,
+    executed in declared order.
+    """
+    if profiles is not None:
+        unknown = sorted(profiles - {row[0] for row in _PROFILE_CASES})
+        if unknown or not profiles:
+            raise ValueError(
+                f"Profile selection must name declared native CAD profiles; got unknown {unknown!r}."
+            )
+    records: dict[str, dict[str, object]] = {}
+    for profile_id, format_name, case in _PROFILE_CASES:
+        if profiles is not None and profile_id not in profiles:
+            continue
+        if checkpoint is not None:
+            checkpoint({"profile_id": profile_id, "event": "profile-start"})
+        record = _profile_record(profile_id, format_name, case, checkpoint=checkpoint)
+        records[profile_id] = record
+        if checkpoint is not None:
+            checkpoint(
+                {"profile_id": profile_id, "event": "profile-complete", "record": record}
+            )
+    return _matrix_record(records)
+
+
+def merge_native_cad_profile_selections(
+    selections: Sequence[dict[str, object]], /
+) -> dict[str, object]:
+    """Combine selected-run records into the record of the profiles they cover.
+
+    Every selection must be a record of this scenario, and no profile may
+    repeat. Selections that together cover every declared profile give the
+    record of one complete run.
+    """
+    gathered: dict[str, dict[str, object]] = {}
+    for selection in selections:
+        profiles = selection.get("profiles")
+        if selection.get("scenario") != "native-cad-profile-matrix" or not isinstance(
+            profiles, dict
+        ):
+            raise ValueError("Each selection must be a native CAD profile matrix record.")
+        repeated = sorted(gathered.keys() & profiles.keys())
+        if repeated:
+            raise ValueError(f"Profile selections repeat {repeated!r}.")
+        gathered.update(profiles)
+    declared = tuple(row[0] for row in _PROFILE_CASES)
+    unknown = sorted(gathered.keys() - set(declared))
+    if unknown or not gathered:
+        raise ValueError(
+            f"Profile selections must cover declared native CAD profiles; got unknown {unknown!r}."
+        )
+    return _matrix_record(
+        {profile: gathered[profile] for profile in declared if profile in gathered}
+    )
