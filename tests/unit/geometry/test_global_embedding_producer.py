@@ -347,27 +347,26 @@ def _mapped_tetrahedron(
     )
 
 
-def test_simplex_image_bounds_fall_back_when_interval_is_nonfinite(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_simplex_image_bounds_fall_back_when_interval_is_nonfinite() -> None:
     import phydrax.geometry._global_embedding as embedding
 
-    u, v = axes(2)
-    coordinates = (add(u, v), subtract(u, v))
-
-    def inconclusive(
-        expression: Expression, corners: tuple[tuple[Fraction, ...], ...], /
-    ) -> tuple[float, float]:
-        return -float("inf"), float("inf")
-
-    monkeypatch.setattr(embedding, "restricted_polynomial_bounds", inconclusive)
+    _, v = axes(2)
+    maximum = Fraction.from_float(sys.float_info.max)
+    coordinates: tuple[Expression, ...] = ({(1, 0): maximum}, v)
+    corners = (
+        (Fraction(0), Fraction(0)),
+        (Fraction(1), Fraction(0)),
+        (Fraction(0), Fraction(1)),
+    )
+    assert embedding.restricted_polynomial_bounds(coordinates[0], corners) == (
+        -float("inf"),
+        float("inf"),
+    )
     root = embedding._root_reference_cell("triangle", coordinates, 1)
     assert root is not None
     chart = embedding._affine_chart_cell(root, coordinates)
     assert chart is not None
-    expected = tuple(
-        polynomial_bounds(expression, "simplex", 2) for expression in coordinates
-    )
+    expected = ((0.0, sys.float_info.max), (0.0, 1.0))
     assert tuple(zip(root.image_lower, root.image_upper, strict=True)) == expected
     assert tuple(zip(chart.image_lower, chart.image_upper, strict=True)) == expected
 
@@ -427,18 +426,23 @@ def test_strict_simplex_separation_distinguishes_overlap() -> None:
 
     u, v = axes(2)
     first = embedding._root_reference_cell("triangle", (u, v), 1)
-    separated = embedding._root_reference_cell("triangle", (add(u, constant(2, 2)), v), 2)
+    offset = constant(Fraction(3, 4), 2)
+    separated = embedding._root_reference_cell(
+        "triangle", (add(u, offset), add(v, offset)), 2
+    )
+    overlap_offset = constant(Fraction(1, 4), 2)
     overlapping = embedding._root_reference_cell(
-        "triangle", (add(u, constant(Fraction(1, 2), 2)), v), 3
+        "triangle", (add(u, overlap_offset), add(v, overlap_offset)), 3
     )
     assert first is not None and separated is not None and overlapping is not None
-    first_x = tuple(point[0] for point in first.corner_images)
-    separated_x = tuple(point[0] for point in separated.corner_images)
-    assert max(first_x) == Fraction(1)
-    assert min(separated_x) == Fraction(2)
-    point = (Fraction(3, 4), Fraction(0))
+    for axis in range(2):
+        assert first.image_lower[axis] <= separated.image_upper[axis]
+        assert separated.image_lower[axis] <= first.image_upper[axis]
+    assert max(sum(point) for point in first.corner_images) == Fraction(1)
+    assert min(sum(point) for point in separated.corner_images) == Fraction(3, 2)
+    point = (Fraction(1, 4), Fraction(1, 4))
     assert tuple(evaluate_expression(expr, point) for expr in first.coordinates) == point
-    second_point = (Fraction(1, 4), Fraction(0))
+    second_point = (Fraction(0), Fraction(0))
     assert (
         tuple(evaluate_expression(expr, second_point) for expr in overlapping.coordinates)
         == point
