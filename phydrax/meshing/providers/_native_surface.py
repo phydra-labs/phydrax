@@ -6522,6 +6522,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
         junction_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)[
             np.asarray(sorted(junction_rows), dtype=np.int64)
         ]
+        surface_witness = surface_source.chart_witness
         scoped_fidelity = []
         for feature in self.specification.protected_features:
             if not feature.hard:
@@ -6545,16 +6546,27 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
                     )
                 case FeatureKind.SURFACE:
                     patch_lookup = _scope_rows(self.scope_ids, 2)
-                    feature_query = domain_boundary_owner.MeshingDomainBoundarySource(
-                        domain,
-                        tuple(
-                            sorted(
-                                patch_lookup[int(identifier)]
-                                for identifier in feature_ids
-                            )
-                        ),
+                    feature_patches = tuple(
+                        sorted(
+                            patch_lookup[int(identifier)] for identifier in feature_ids
+                        )
                     )
-                    feature_witness = surface_source.chart_witness
+                    # Resolve scope IDs through source rows, and require the
+                    # witness to cover exactly the primary query's patch rows.
+                    if (
+                        self.boundary_source.domain is domain
+                        and surface_source.boundary_source is self.boundary_source
+                        and feature_patches == self.boundary_source.patches
+                        and set(np.asarray(surface_witness.patches).tolist())
+                        == set(feature_patches)
+                    ):
+                        feature_query = self.boundary_source
+                        feature_witness = surface_witness
+                    else:
+                        feature_query = domain_boundary_owner.MeshingDomainBoundarySource(
+                            domain, feature_patches
+                        )
+                        feature_witness = surface_source.chart_witness
                 case FeatureKind.MATERIAL_INTERFACE:
                     raise _failure(
                         "material-interface feature constraints are not admitted",
@@ -6582,7 +6594,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             junction_vertices=junction_ids if junction_ids.size else None,
             protected_features=self.specification.protected_features,
             maximum_normal_deviation=self.specification.maximum_normal_deviation,
-            fidelity_witness=surface_source.chart_witness,
+            fidelity_witness=surface_witness,
             scoped_fidelity=tuple(scoped_fidelity),
             feature_source=domain,
         )

@@ -5765,12 +5765,13 @@ def _renew_transition_certification_inputs(
     scoped_rows: list[ScopedFidelityInput] = []
     for query, witness, tolerance in original.scoped_fidelity:
         if (
-            renew_scoped_from_override
-            and fidelity_witness_override is not None
-            and witness is original.fidelity_witness
+            witness is original.fidelity_witness
             and query is original.source
+            and fidelity is not None
+            and coverage_renewal is None
+            and (fidelity_witness_override is None or renew_scoped_from_override)
         ):
-            scoped_rows.append((query, fidelity_witness_override, tolerance))
+            scoped_rows.append((query, fidelity, tolerance))
         elif isinstance(witness, SourceBoundaryFaceImageWitness):
             scoped_rows.append((query, renew_image(query), tolerance))
         elif isinstance(query, MappedReferenceBoundarySource) and isinstance(
