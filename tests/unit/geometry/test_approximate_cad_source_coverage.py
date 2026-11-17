@@ -105,7 +105,7 @@ def _reference_intersection(subject: _Triangle2, clip: _Triangle2) -> Fraction:
     return abs(_reference_area(polygon))
 
 
-def test_random_exact_intersections_and_screen_fault_adequacy() -> None:
+def test_random_exact_intersections_match_reference() -> None:
     rng = np.random.default_rng(5821)
     triangles: list[_Triangle2] = []
 
@@ -131,18 +131,11 @@ def test_random_exact_intersections_and_screen_fault_adequacy() -> None:
         )
     )
     rows = tuple(triangles)
-    candidates = set(_possibly_overlapping_pairs(rows, rows, True))
-    positive: set[tuple[int, int]] = set()
     for i, first in enumerate(rows):
         assert _area2(first) == _reference_area(first)
         for j in range(i + 1, len(rows)):
             expected = _reference_intersection(first, rows[j])
             assert _intersection_area(first, rows[j]) == expected
-            if expected > 0:
-                positive.add((i, j))
-    assert positive <= candidates
-    # Removing an actually intersecting pair models an over-eager screen.
-    assert not positive <= (candidates - {next(iter(positive))})
 
 
 def test_exact_chart_intersection_handles_clockwise_root_and_target() -> None:

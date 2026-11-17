@@ -1629,6 +1629,142 @@ def test_conforming_cad_box_splits_declared_patch_planes_with_exact_chart_witnes
     assert face_interior_vertices > 0
 
 
+def test_rooted_plane_partition_rejects_overlap_across_blocks() -> None:
+    from phydrax.geometry._approximate_source_coverage import (
+        _area2,
+        _cad_target_root_partition,
+        _intersection_area,
+        _triangle2,
+        SourceCoverageUnavailable,
+    )
+    from phydrax.geometry._source_boundary_records import rational_chart_tokens
+
+    contract = phx.SpatialCoordinateContract.si()
+    domain, surface = _cad_surface()
+    source = NativeCadVolumeSource(
+        domain, surface, maximum_deviation=0.1, boundary="conforming"
+    )
+    scope = MeshingScope(
+        domain.source_id,
+        domain.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        domain.scope_entity_set_id(2),
+        domain.scope_entity_ids(2),
+    )
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+        scope,
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(UniformSizeControl(scope, 0.1),),
+        region_seeds=(
+            RegionSeed(
+                np.asarray((0.5, 0.5, 0.5), dtype=np.float64),
+                domain.regions[0].name,
+                "solid-material",
+                RegionRole.SOLID,
+            ),
+        ),
+        maximum_deviation=0.05,
+    )
+    construction = prepare_native_cad_volume(
+        source,
+        specification,
+        NativeMeshingOptions(
+            "cad_tetrahedral",
+            volume_schedule=NativeVolumeSchedule(
+                radius_edge_bound=2.0, minimum_dihedral_degrees=0.0
+            ),
+        ),
+        contract,
+    ).execute()
+    witness = construction.certification.fidelity_witness
+    assert isinstance(witness, SourceBoundaryChartWitness)
+    patch_rows = [
+        domain.resolve_entity_id(2, entity, occurrence_path=path)
+        for entity, path in zip(
+            witness.source_entity_ids, witness.occurrence_paths, strict=True
+        )
+    ]
+    ancestry = _cad_target_root_partition(
+        domain, construction.mesh, witness, patch_rows, 0.1
+    )
+    assert ancestry.vertex_keys
+
+    patch = max(set(patch_rows), key=patch_rows.count)
+    indices = [row for row, value in enumerate(patch_rows) if value == patch]
+    assert len(indices) > 64
+    charts = [witness.source_parameter_chart(row) for row in range(len(patch_rows))]
+    boundary_source = source.fidelity_source
+    assert isinstance(boundary_source, MeshingDomainBoundarySource)
+    declared = dict(boundary_source.boundary_parameter_triangles())[patch]
+    replacement = None
+    for first in indices[:64]:
+        for second in indices[64:]:
+            a, b = charts[first], charts[second]
+            delta = tuple(
+                sum((point[axis] for point in b), Fraction(0)) / 3
+                - sum((point[axis] for point in a), Fraction(0)) / 3
+                for axis in range(2)
+            )
+            moved = tuple((point[0] + delta[0], point[1] + delta[1]) for point in a)
+            if (
+                _intersection_area(moved, _triangle2(b)) > 0
+                and all(
+                    _intersection_area(moved, _triangle2(charts[other])) == 0
+                    for other in indices[:64]
+                    if other != first
+                )
+                and sum(
+                    (_intersection_area(moved, triangle) for triangle in declared),
+                    Fraction(0),
+                )
+                == abs(_area2(moved))
+            ):
+                replacement = first, moved
+                break
+        if replacement is not None:
+            break
+    assert replacement is not None
+    first, moved = replacement
+    charts[first] = moved
+    counterfeit = SourceBoundaryChartWitness(
+        mesh_id=witness.mesh_id,
+        geometry_id=witness.geometry_id,
+        topology_id=witness.topology_id,
+        source_id=witness.source_id,
+        source_revision=witness.source_revision,
+        source_query_id=witness.source_query_id,
+        chart_dimension=witness.chart_dimension,
+        reference_dimension=witness.reference_dimension,
+        cell_global_ids=witness.cell_global_ids,
+        entity_global_ids=witness.entity_global_ids,
+        local_entity_indices=witness.local_entity_indices,
+        target_reference_vertices=witness.target_reference_vertices,
+        target_reference_rational_tokens=witness.target_reference_rational_tokens,
+        target_face_vertex_global_ids=witness.target_face_vertex_global_ids,
+        source_chart_ids=witness.source_chart_ids,
+        source_entity_ids=witness.source_entity_ids,
+        occurrence_paths=witness.occurrence_paths,
+        source_parameters=np.asarray(charts, dtype=np.float64),
+        source_parameter_rational_tokens=rational_chart_tokens(charts),
+        orientations=witness.orientations,
+        implicit_cell_keys=witness.implicit_cell_keys,
+        implicit_root_edge_keys=witness.implicit_root_edge_keys,
+        cad_plc=witness.cad_plc,
+        cad_curve_association=witness.cad_curve_association,
+        cad_root_cell_ids=witness.cad_root_cell_ids,
+    )
+    with pytest.raises(
+        SourceCoverageUnavailable,
+        match="CAD plane rows do not partition the exact plane reference",
+    ) as failure:
+        _cad_target_root_partition(
+            domain, construction.mesh, counterfeit, patch_rows, 0.1
+        )
+    assert failure.value.status == "violated"
+
+
 def test_cad_sphere_volume_certifies_collapsed_poles_and_its_periodic_seam() -> None:
     # The sphere's chart has two collapsed pole sides and a seam whose u = 2*pi
     # use is a native-period gauge of the u = 0 line. Pole fans leave chart
