@@ -255,6 +255,9 @@
 - Oriented boundary proofs batch exact integer evaluations of simplex facet
   traces and tetrahedron vertex links, without changing contact decisions,
   finding order, or evidence encodings.
+- Native meshing, mesh certification, and high-order curving temporarily raise
+  the young-generation collection threshold while retaining cyclic collection;
+  prior collector settings and all scientific identities are preserved.
 - Native B-Rep projection reuses the selected intersection curve's fixed-shape
   tangent, while host trim fallback and surface-box validation avoid repeated
   eager dispatch. Trim realization and projection frame bits, and therefore

@@ -9,6 +9,7 @@ from typing import NoReturn, SupportsIndex
 
 import numpy as np
 
+from .._collection_scope import collection_scope
 from .._identity import SemanticProvenance
 from .._physical import SpatialCoordinateContract
 from ..discretization import (
@@ -447,6 +448,7 @@ def _certify_cell_mesh_acceptance(
     )
 
 
+@collection_scope()
 def certify_cell_mesh(
     mesh: CellMesh,
     coordinate_contract: SpatialCoordinateContract,
