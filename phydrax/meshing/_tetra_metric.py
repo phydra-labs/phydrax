@@ -6734,6 +6734,12 @@ class _RelocationPreparation(NamedTuple):
     edge_rows: np.ndarray
     incident_edges: dict[int, tuple[int, ...]]
     stars: dict[int, _RelocationStar]
+    # Filled by ``_relocation_proposals`` and kept while this geometry stands:
+    # a round whose candidates are all refused changes neither. ``orders``
+    # holds the searched vertices by target ID for ``active_only`` false and
+    # true; ``star_cells`` the star cell IDs of a vertex (incidence only).
+    orders: dict[bool, tuple[int, ...]]
+    star_cells: dict[int, frozenset[int]]
 
 
 def _prepare_relocation_geometry(
@@ -6752,11 +6758,13 @@ def _prepare_relocation_geometry(
         for name in ("vertex_ids", "cell_ids", "tetrahedra", "faces", "segments")
     )
     stars: dict[int, _RelocationStar]
+    star_cells: dict[int, frozenset[int]]
     if same_incidence and previous is not None:
         topology = previous[1].topology
         edge_rows = previous[1].edge_rows
         incident_edges = previous[1].incident_edges
         stars = previous[1].stars
+        star_cells = previous[1].star_cells
         # Equal incidence banks give an equal topology: share it with every
         # phase that reads this snapshot.
         tables = _snapshot_tables(state)
@@ -6767,6 +6775,7 @@ def _prepare_relocation_geometry(
         topology = _state_topology(state)
         edge_rows = _state_edge_rows(state)
         stars = {}
+        star_cells = {}
         incident_lists: dict[int, list[int]] = defaultdict(list)
         for index, (first, second) in enumerate(topology.edge_cells):
             incident_lists[first].append(index)
@@ -6871,6 +6880,8 @@ def _prepare_relocation_geometry(
         edge_rows,
         incident_edges,
         stars,
+        {},
+        star_cells,
     )
 
 
@@ -7238,16 +7249,27 @@ def _relocation_proposals(
     topology = prepared.topology
     points, metrics, edge_lengths = prepared.points, prepared.metrics, prepared.lengths
     protected_edges, records = prepared.protected, prepared.records
-    violating_vertices = (
-        {
-            vertex
-            for edge, length in zip(topology.edge_cells, edge_lengths, strict=True)
-            if not protected_edges[edge] and (length < _LOWER or length > _UPPER)
-            for vertex in edge
-        }
-        if active_only
-        else None
-    )
+    order = prepared.orders.get(active_only)
+    if order is None:
+        violating_vertices = (
+            {
+                vertex
+                for edge, length in zip(topology.edge_cells, edge_lengths, strict=True)
+                if not protected_edges[edge] and (length < _LOWER or length > _UPPER)
+                for vertex in edge
+            }
+            if active_only
+            else None
+        )
+        order = tuple(
+            sorted(
+                topology.vertex_cells
+                if violating_vertices is None
+                else violating_vertices,
+                key=lambda value: state.vertex_target_ids[value],
+            )
+        )
+        prepared.orders[active_only] = order
     periodic = state.target_mesh.periodic_topology is not None
     dimensions = snapshot.vertex_dimensions
     protected_vertices = snapshot.protected_vertices
@@ -7732,10 +7754,6 @@ def _relocation_proposals(
 
     candidates: list[dict[str, Any]] = []
     occupied_cells: set[int] = set()
-    order = sorted(
-        topology.vertex_cells if violating_vertices is None else violating_vertices,
-        key=lambda value: state.vertex_target_ids[value],
-    )
     if prefetch_screens:
         # No native edit occurs until every proposal has been collected.
         # Screen only a bounded group before constructing the next group.
@@ -7751,9 +7769,12 @@ def _relocation_proposals(
         # star cannot be batched with one already found. Deferred stars are
         # searched again after the accepted batch, not treated as refusals.
         if deep and not periodic:
-            star_ids = {
-                int(current_cell_ids[row]) for row in topology.vertex_cells[vertex]
-            }
+            star_ids = prepared.star_cells.get(vertex)
+            if star_ids is None:
+                star_ids = frozenset(
+                    int(current_cell_ids[row]) for row in topology.vertex_cells[vertex]
+                )
+                prepared.star_cells[vertex] = star_ids
             if not occupied_cells.isdisjoint(star_ids):
                 continue
         if vertex not in cache:
