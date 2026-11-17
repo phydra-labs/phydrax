@@ -48,6 +48,13 @@ def scaled_norm(
     an arbitrary inner product (for example, from extreme metric weights).
     A ``CollectiveInner`` supplies the scale agreed by its collective.
     """
+    # A compiler may evaluate one traced vector in several fused kernels and
+    # contract them differently: a product with one use becomes a fused
+    # multiply-add, the same product with two uses does not. The scale and the
+    # normalized coordinates must come from one evaluation; a residual that is
+    # exactly zero in one copy and roundoff in the other would otherwise give
+    # a unit norm.
+    vector = jax.lax.optimization_barrier(vector)
     # Component magnitudes avoid overflowing complex abs before scaling.
     real = jnp.real(vector)
     scale = jnp.max(jnp.abs(real), initial=0.0)

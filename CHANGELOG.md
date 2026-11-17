@@ -728,6 +728,14 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- On x86-64 with FMA a `NewtonKrylov` step could be refused with
+  `LINEAR_SOLVE_FAILED` although its linear solve had converged. The compiler
+  evaluated the linear residual in two fused kernels and contracted only one
+  into a fused multiply-add; when the residual was exactly zero in one copy
+  and roundoff in the other, `scaled_norm` took its scale from one and its
+  normalized coordinates from the other and returned a norm of one, which the
+  solve reported as `RESIDUAL_TOO_LARGE`. `scaled_norm` now evaluates its
+  vector once before taking the scale and the normalized coordinates.
 - Distributed PCG, GMRES, FGMRES, and MINRES rescale convergence norms by one
   scale agreed across the pairing's collective. A member-local scale made each
   shard-local member report a different, incorrect norm when their coordinate
