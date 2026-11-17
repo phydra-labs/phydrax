@@ -22,6 +22,7 @@ import phydrax.ein as ein
 
 from ..._coordinate_measure import CoordinateFrame, CoordinateMeasurePlan
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._live_proofs import live_content_fingerprint, LiveProofLedger
 from ..._owned_programs import run_owned_program
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -2249,10 +2250,23 @@ def _validate_mesh_geometry(mesh: CellMesh, /) -> None:
             raise ValueError(failure)
 
 
+# Mixed facet charts proved equal for one exact live mesh and coordinate map.
+_MIXED_GEOMETRY_TRACES: LiveProofLedger[bool] = LiveProofLedger()
+
+
 def _validate_mixed_geometry_traces(
     mesh: CellMesh, geometry: CellGeometrySpec, /
 ) -> None:
-    """Compare exact physical charts on every shared triangle or quadrilateral."""
+    """Compare exact physical charts on every shared triangle or quadrilateral.
+
+    Every finite-element plan on a mixed mesh owes this proof. It is recorded
+    for the exact live mesh and coordinate map, so later plans on those same
+    unchanged objects do not repeat it; any copy or rebuild proves it again.
+    """
+    operands = (mesh, geometry)
+    if _MIXED_GEOMETRY_TRACES.find(operands):
+        return
+    fingerprint = live_content_fingerprint(operands)
     from .._cell_geometry_transition_types import _geometry_map_expressions
     from .._coordinate_enclosure import (
         add,
@@ -2326,6 +2340,7 @@ def _validate_mixed_geometry_traces(
                     raise ValueError(
                         "Mixed coordinate charts disagree on a shared facet."
                     )
+    _MIXED_GEOMETRY_TRACES.record(operands, fingerprint, True)
 
 
 def _validate_mixed_prism_tetrahedron_admission(

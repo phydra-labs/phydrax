@@ -366,6 +366,11 @@ def test_mixed_curved_geometry_requires_matching_facet_charts() -> None:
     )
     with pytest.raises(ValueError, match="charts disagree on a shared facet"):
         phx.discretization.FiniteElementPlan(mesh, field, coordinate_spec=broken)
+    # The proof is kept per live mesh and coordinate map: an earlier success
+    # on this mesh does not admit another map, and a refusal is not kept.
+    phx.discretization.FiniteElementPlan(mesh, field, coordinate_spec=geometry)
+    with pytest.raises(ValueError, match="charts disagree on a shared facet"):
+        phx.discretization.FiniteElementPlan(mesh, field, coordinate_spec=broken)
 
 
 @pytest.mark.parametrize(
