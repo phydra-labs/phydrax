@@ -226,9 +226,11 @@ def _trim_child_parameter(
 def _trim_curve_point(
     domain: MeshingDomain, curve: int, parameter: Fraction, /
 ) -> np.ndarray:
-    from .providers._native_surface import _source_curve_point
+    from .providers._native_surface import _source_curve_points
 
-    return np.asarray(_source_curve_point(domain, curve, parameter), dtype=np.float64)
+    return np.asarray(
+        _source_curve_points(domain, curve, (parameter,))[0], dtype=np.float64
+    )
 
 
 def _use_chart(use: PatchCurveUse, parameter: float, /) -> np.ndarray:

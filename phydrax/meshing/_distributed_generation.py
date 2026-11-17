@@ -497,7 +497,7 @@ def _canonical_curve_point(
         point = np.asarray(domain.corner_points[source_curve.end], dtype=np.float64)
     else:
         point = np.asarray(
-            native_surface_owner._source_curve_point(domain, curve, parameter),
+            native_surface_owner._source_curve_points(domain, curve, (parameter,))[0],
             dtype=np.float64,
         )
     if point.shape != (3,) or not np.all(np.isfinite(point)):
