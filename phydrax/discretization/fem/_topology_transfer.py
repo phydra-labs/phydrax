@@ -4,9 +4,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from fractions import Fraction
-from math import isfinite
+from functools import partial
+from math import isfinite, lcm
 from typing import Any, final, Literal, TYPE_CHECKING
 
 import equinox as eqx
@@ -939,6 +940,69 @@ def nested_nodal_transfer(
     )
 
 
+@final
+class _ReferenceMomentTable:
+    """Exact reference-cell integrals of fixed polynomials against monomial weights.
+
+    ``numerators[n][i] / denominator`` is the integral of polynomial ``i`` times
+    the monomial of exponent ``n``. One common denominator keeps the per-cell
+    combination with a weight polynomial in integer arithmetic.
+    """
+
+    __slots__ = ("_denominator", "_moment", "_numerators", "_polynomials")
+
+    def __init__(
+        self,
+        polynomials: tuple[Mapping[tuple[int, ...], Fraction], ...],
+        moment: Callable[[tuple[int, ...]], Fraction],
+        /,
+    ) -> None:
+        self._polynomials = polynomials
+        self._moment = moment
+        self._denominator = 1
+        self._numerators: dict[tuple[int, ...], list[int]] = {}
+
+    def _add_row(self, exponent: tuple[int, ...], /) -> None:
+        values = [
+            sum(
+                (
+                    coefficient
+                    * self._moment(
+                        tuple(a + b for a, b in zip(index, exponent, strict=True))
+                    )
+                    for index, coefficient in polynomial.items()
+                ),
+                Fraction(0),
+            )
+            for polynomial in self._polynomials
+        ]
+        common = lcm(self._denominator, *(value.denominator for value in values))
+        if common != self._denominator:
+            factor = common // self._denominator
+            for row in self._numerators.values():
+                row[:] = [value * factor for value in row]
+            self._denominator = common
+        self._numerators[exponent] = [
+            value.numerator * (common // value.denominator) for value in values
+        ]
+
+    def integrals(self, weight: Mapping[tuple[int, ...], Fraction], /) -> list[Fraction]:
+        """Exact integral of every polynomial times the rational ``weight``."""
+        for exponent in weight:
+            if exponent not in self._numerators:
+                self._add_row(exponent)
+        scale = lcm(*(coefficient.denominator for coefficient in weight.values()))
+        totals = [0] * len(self._polynomials)
+        for exponent, coefficient in weight.items():
+            factor = coefficient.numerator * (scale // coefficient.denominator)
+            totals = [
+                total + factor * value
+                for total, value in zip(totals, self._numerators[exponent], strict=True)
+            ]
+        denominator = scale * self._denominator
+        return [Fraction(total, denominator) for total in totals]
+
+
 def _nested_nodal_density_transfer(
     source: FiniteElementDiscretization,
     target: FiniteElementDiscretization,
@@ -1067,6 +1131,94 @@ def _nested_nodal_density_transfer(
             )
         return total
 
+    # Integration is linear, so every integral below is the weight's coefficient
+    # combination of reference moments of fixed polynomials: the same rational
+    # number as integrating the expanded product, without expanding it per cell.
+    monomial_moments: dict[tuple[str, tuple[int, ...]], Fraction] = {}
+    tables: dict[tuple[object, ...], _ReferenceMomentTable | None] = {}
+    compositions: dict[tuple[object, ...], tuple[Any, ...]] = {}
+    projections: dict[tuple[object, ...], list[list[Fraction]]] = {}
+
+    def rational(expression: Any, /) -> bool:
+        return not isinstance(
+            expression, algebra.RationalPolynomial
+        ) and algebra._rational_values(expression.values())
+
+    def monomial_moment(kind: str, exponent: tuple[int, ...], /) -> Fraction:
+        key = (kind, exponent)
+        if key not in monomial_moments:
+            monomial_moments[key] = integrate({exponent: Fraction(1)}, kind)
+        return monomial_moments[key]
+
+    def moment_table(
+        key: tuple[object, ...], polynomials: tuple[Any, ...], kind: str, /
+    ) -> _ReferenceMomentTable | None:
+        """The moment table of rational ``polynomials``; ``None`` otherwise."""
+        if key not in tables:
+            tables[key] = (
+                _ReferenceMomentTable(polynomials, partial(monomial_moment, kind))
+                if all(rational(value) for value in polynomials)
+                else None
+            )
+        return tables[key]
+
+    def composed(
+        element: FiniteElementSpec, values: tuple[Any, ...], arguments: tuple[Any, ...], /
+    ) -> tuple[tuple[object, ...] | None, tuple[Any, ...]]:
+        """Basis functions pulled through one reference map, shared by its cells."""
+        if any(
+            isinstance(argument, algebra.RationalPolynomial) for argument in arguments
+        ):
+            return None, tuple(
+                algebra.compose_expression(value, arguments) for value in values
+            )
+        key = (
+            "composed",
+            element.element_id,
+            tuple(tuple(sorted(argument.items())) for argument in arguments),
+        )
+        if key not in compositions:
+            compositions[key] = tuple(
+                algebra.compose_expression(value, arguments) for value in values
+            )
+        return key, compositions[key]
+
+    def weighted_matrix(
+        test_key: tuple[object, ...] | None,
+        trial_key: tuple[object, ...] | None,
+        test_basis: tuple[Any, ...],
+        trial_basis: tuple[Any, ...],
+        weight: Any,
+        kind: str,
+        /,
+    ) -> list[list[Fraction]]:
+        """Exact integrals of every test-trial product times ``weight``."""
+        table = None
+        if test_key is not None and trial_key is not None and rational(weight):
+            key = ("products", test_key, trial_key, kind)
+            table = (
+                tables[key]
+                if key in tables
+                else moment_table(
+                    key,
+                    tuple(
+                        algebra.multiply(a, b) for a in test_basis for b in trial_basis
+                    ),
+                    kind,
+                )
+            )
+        if table is None:
+            return [
+                [
+                    integrate(algebra.multiply(algebra.multiply(a, b), weight), kind)
+                    for b in trial_basis
+                ]
+                for a in test_basis
+            ]
+        flat = table.integrals(weight)
+        width = len(trial_basis)
+        return [flat[row * width : (row + 1) * width] for row in range(len(test_basis))]
+
     def cell_measures(
         discretization: FiniteElementDiscretization,
         field_index: int,
@@ -1084,13 +1236,22 @@ def _nested_nodal_density_transfer(
             )
         ):
             functions = basis(element)
+            table = moment_table(
+                ("basis", element.element_id, block.cell_kind), functions, block.cell_kind
+            )
             for cell, identifier in enumerate(np.asarray(block.global_ids)):
                 weight = determinant(maps, endpoint, int(identifier), block.cell_kind)
                 routes = np.asarray(dofs.cell_dofs[block_index][cell], dtype=np.int64)
-                for row, function in zip(routes, functions, strict=True):
-                    result[int(row)] += integrate(
-                        algebra.multiply(function, weight), block.cell_kind
-                    )
+                values = (
+                    table.integrals(weight)
+                    if table is not None and rational(weight)
+                    else [
+                        integrate(algebra.multiply(function, weight), block.cell_kind)
+                        for function in functions
+                    ]
+                )
+                for row, value in zip(routes, values, strict=True):
+                    result[int(row)] += value
         return result
 
     source_dofs, target_dofs = (
@@ -1108,6 +1269,7 @@ def _nested_nodal_density_transfer(
         zip(target.mesh.blocks, target.elements[target_index], strict=True)
     ):
         target_basis = basis(element)
+        target_key = ("basis", element.element_id)
         for cell, identifier_ in enumerate(np.asarray(block.global_ids)):
             identifier = int(identifier_)
             target_row = target_offset + cell
@@ -1117,16 +1279,14 @@ def _nested_nodal_density_transfer(
             target_weight = determinant(
                 target_maps, "target", identifier, block.cell_kind
             )
-            mass = [
-                [
-                    integrate(
-                        algebra.multiply(algebra.multiply(a, b), target_weight),
-                        block.cell_kind,
-                    )
-                    for b in target_basis
-                ]
-                for a in target_basis
-            ]
+            mass = weighted_matrix(
+                target_key,
+                target_key,
+                target_basis,
+                target_basis,
+                target_weight,
+                block.cell_kind,
+            )
             condition = max(
                 condition, float(np.linalg.cond(np.asarray(mass, dtype=np.float64)))
             )
@@ -1162,35 +1322,49 @@ def _nested_nodal_density_transfer(
                     weight = determinant(
                         source_maps, "source", fine_id, fine_block.cell_kind
                     )
-                    test_basis = tuple(
-                        algebra.compose_expression(value, arguments)
-                        for value in target_basis
+                    test_key, test_basis = composed(element, target_basis, arguments)
+                    trial_key, trial_basis = (
+                        ("basis", source_element.element_id),
+                        source_basis,
                     )
-                    trial_basis = source_basis
                     integration_kind = fine_block.cell_kind
                 else:
                     weight = target_weight
-                    test_basis = target_basis
-                    trial_basis = tuple(
-                        algebra.compose_expression(value, arguments)
-                        for value in source_basis
+                    test_key, test_basis = target_key, target_basis
+                    trial_key, trial_basis = composed(
+                        source_element, source_basis, arguments
                     )
                     integration_kind = block.cell_kind
-                mixed = [
-                    [
-                        integrate(
-                            algebra.multiply(algebra.multiply(a, b), weight),
-                            integration_kind,
-                        )
-                        for b in trial_basis
-                    ]
-                    for a in test_basis
-                ]
-                projection = solve_exact(
-                    mass,
-                    mixed,
-                    singular_message="Nested target physical mass is rank deficient.",
+                # With one constant weight on both sides the constant cancels
+                # exactly, so cells repeating the same reference map share
+                # their exact projection.
+                projection_key = (
+                    (test_key, trial_key, integration_kind)
+                    if not coarsened
+                    and trial_key is not None
+                    and rational(weight)
+                    and tuple(weight) == ((0, 0, 0),)
+                    else None
                 )
+                projection = (
+                    None if projection_key is None else projections.get(projection_key)
+                )
+                if projection is None:
+                    mixed = weighted_matrix(
+                        test_key,
+                        trial_key,
+                        test_basis,
+                        trial_basis,
+                        weight,
+                        integration_kind,
+                    )
+                    projection = solve_exact(
+                        mass,
+                        mixed,
+                        singular_message="Nested target physical mass is rank deficient.",
+                    )
+                    if projection_key is not None:
+                        projections[projection_key] = projection
                 for local_row, global_row in enumerate(target_routes):
                     for local_column, global_column in enumerate(source_routes):
                         value = projection[local_row][local_column]
