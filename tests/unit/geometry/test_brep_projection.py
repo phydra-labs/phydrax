@@ -368,6 +368,29 @@ def test_native_torus_projects_interior_and_both_seam_points() -> None:
         _STATUS.SEAM,
         _STATUS.NON_ISOLATED,
     ]
+    assert (
+        result.result_id
+        == "597b38d0068fb4ba16cf2a17061969e79a66985a0bb8a1787c671db7adc5e0f0"
+    )
+    for index in (2, 3, 4):
+        single = _project(projection, query[index : index + 1], _FACE, 0)
+        isolated = type(result)(
+            result.source_id,
+            result.source_revision,
+            result.dimensions[index : index + 1],
+            result.indices[index : index + 1],
+            result.queries[index : index + 1],
+            result.points[index : index + 1],
+            result.parameters[index : index + 1],
+            result.residuals[index : index + 1],
+            result.status[index : index + 1],
+            result.normals[index : index + 1],
+            result.tangents[index : index + 1],
+            distance_lower_bounds=result.distance_lower_bounds[index : index + 1],
+            occurrence_paths=result.occurrence_paths[index : index + 1],
+            frame_id=result.frame_id,
+        )
+        assert isolated.result_id == single.result_id
     np.testing.assert_allclose(result.parameters[2, 0], 0.0, atol=1e-12)
     np.testing.assert_allclose(result.parameters[3, 1], 0.0, atol=1e-12)
     np.testing.assert_allclose(result.parameters[4], [0.0, 0.0], atol=1e-12)

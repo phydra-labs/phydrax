@@ -249,6 +249,8 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Torus projection prepares face-constant exact distance bounds once per
+  projection operation without changing evidence or result identities.
 - Native B-rep projection reuses a query-independent coarse trim chord plan
   only where it selects the original subdivision, preserving projection identity.
 - Welded surface intersection checks group exact orientation predicates and
