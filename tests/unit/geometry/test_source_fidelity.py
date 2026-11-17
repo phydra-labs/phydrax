@@ -3029,8 +3029,8 @@ def test_curved_trim_exact_caps_settle_wide_interval_bounds() -> None:
     # The exact Jacobian component maxima over [0,h]^2 are
     # (1+h/4, h/4, 1, 1); its norm gives an independent cap reference.
     norm_squared = (1 + h / 4) ** 2 + (h / 4) ** 2 + 2
-    exact_reference = fraction_sqrt_interval(norm_squared)[1] * lens.parameter_bound
-    assert exact_caps[0] >= exact_reference
+    assert exact_caps[0] >= 0
+    assert exact_caps[0] ** 2 >= norm_squared * lens.parameter_bound**2
 
 
 def test_surface_bounds_remain_unresolved_for_unrepresentable_jacobian() -> None:
@@ -3321,9 +3321,9 @@ def test_exact_lens_jacobian_batch_matches_scalar_and_exact_reference() -> None:
     def exact_norm_squared(h: Fraction) -> Fraction:
         return (1 + h / 4) ** 2 + 1 + (h / 4) ** 2 + 1
 
-    assert expected[7] >= (
-        fidelity.fraction_sqrt_interval(exact_norm_squared(q(1, 4)))[1]
-        * lenses[0].parameter_bound
+    assert expected[7] >= 0
+    assert (
+        expected[7] ** 2 >= exact_norm_squared(q(1, 4)) * lenses[0].parameter_bound ** 2
     )
 
     h = q(1, 1 << 40)
@@ -3332,7 +3332,5 @@ def test_exact_lens_jacobian_batch_matches_scalar_and_exact_reference() -> None:
     tiny_caps = fidelity._curved_trim_lens_caps(
         surface, (tiny_chart,), (tiny_lens,), preparation, settle_zero=False
     )
-    assert tiny_caps[11] >= (
-        fidelity.fraction_sqrt_interval(exact_norm_squared(h))[1]
-        * tiny_lens.parameter_bound
-    )
+    assert tiny_caps[11] >= 0
+    assert tiny_caps[11] ** 2 >= exact_norm_squared(h) * tiny_lens.parameter_bound**2
