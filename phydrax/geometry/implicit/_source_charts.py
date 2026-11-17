@@ -63,6 +63,7 @@ from ...geometry._interval_enclosure import (
     PreparedIntervalFunction,
 )
 from ...geometry._mesh_certificates import MeshCertificateBinding
+from ...geometry._rational import binary64_difference_magnitude, binary64_norm_upper
 from ...geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryProjectionQuery,
@@ -5181,6 +5182,14 @@ def _doubling_steps(start: float, maximum_step: float, /) -> list[float]:
     return steps
 
 
+def _root_displacement_upper(
+    roots: np.ndarray, targets: np.ndarray, errors: np.ndarray, /
+) -> np.ndarray:
+    """Enclose root-to-target distances plus root errors for aligned rows."""
+    magnitudes = binary64_difference_magnitude(roots, targets)[1]
+    return np.nextafter(binary64_norm_upper(magnitudes) + errors, np.inf)
+
+
 def _lift_points(
     surface: AdaptiveImplicitSurface,
     frame_id: str,
@@ -5313,6 +5322,15 @@ def _lift_points(
         if brackets
         else ()
     )
+    displacements = (
+        _root_displacement_upper(
+            np.stack([root[0] for root in roots]),
+            np.stack([bracket[0] for bracket in brackets]),
+            np.asarray([root[1] for root in roots], dtype=np.float64),
+        )
+        if roots
+        else np.empty((0,), dtype=np.float64)
+    )
     lifted: list[ImplicitRootChartPoint] = []
     for (point, face, maximum_step), unique in zip(requests, request_rows, strict=True):
         if signs[unique] == 0:
@@ -5343,13 +5361,12 @@ def _lift_points(
             raise ValueError(
                 "Implicit root bracket exceeds its certified face-local normal tube."
             )
-        root_point, error, issue = roots[bracket_rows[unique]][:3]
+        root_row = bracket_rows[unique]
+        root_point, error, issue = roots[root_row][:3]
         if issue:
             label = AdaptiveImplicitBoxIssue(issue).name.lower()
             raise ValueError(f"Implicit normal root isolation is unresolved ({label}).")
-        displacement = np.nextafter(
-            float(np.linalg.norm(root_point - point)) + float(error), np.inf
-        )
+        displacement = displacements[root_row]
         root_copy = np.array(root_point, dtype=np.float64, copy=True)
         root_copy.setflags(write=False)
         lifted.append(
