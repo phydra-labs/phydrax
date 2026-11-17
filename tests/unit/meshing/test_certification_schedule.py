@@ -1,13 +1,17 @@
 import pickle
 from typing import Literal
 
+import equinox as eqx
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization import CellBlock, CellGeometrySpec, CellMesh
 from phydrax.discretization._cell_geometry_validity import (
+    CellValidityPolicy,
     certify_cell_geometry_validity,
+    ComputedCellValidity,
 )
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
 from phydrax.geometry._global_embedding import (
@@ -16,6 +20,7 @@ from phydrax.geometry._global_embedding import (
 )
 from phydrax.geometry._source_fidelity import certify_source_fidelity
 from phydrax.geometry.simplicial import SegmentMesh
+from phydrax.meshing._canonical import certify_cell_mesh
 from phydrax.meshing._certification import MeshCertificationReport
 from phydrax.meshing._certification_inputs import MeshCertificationInputs
 from phydrax.meshing._certification_schedule import MeshCertificationSchedule
@@ -184,6 +189,157 @@ def test_acceptance_reuses_only_an_embedding_bound_to_its_inputs() -> None:
         MeshCertificationReport(inputs, embedding=foreign)
     with pytest.raises(ValueError, match="MeshCertificateBinding"):
         report.revalidate(mesh, geometry, embedding=foreign)
+
+
+def test_certified_planar_curving_preserves_parent_identities() -> None:
+    import phydrax as phx
+    from phydrax.geometry.brep._constructors import (
+        brep_planar_face,
+        PlanarProfile,
+        ProfileLoop,
+        ProfilePlane,
+    )
+
+    mesh, geometry, domain = _planar_inputs()
+    contract = SpatialCoordinateContract.si()
+    model = brep_planar_face(
+        PlanarProfile(
+            ProfilePlane(),
+            ProfileLoop.polygon(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
+        ),
+        coordinate_contract=contract,
+        source_id="curving-token-face",
+    )
+    plane = phx.geometry.PlanarEmbedding((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1))
+    projection = phx.geometry.prepare_brep_projection(model, embedding=plane)
+    association = phx.meshing.associate_mesh_vertices(
+        mesh,
+        projection,
+        policy=phx.meshing.AssociationPropagationPolicy(classification_tolerance=1e-8),
+    )
+    inputs = MeshCertificationInputs(
+        mesh,
+        geometry,
+        MeshCertificationSchedule("planar"),
+        source_id=domain.source_id,
+        source_revision=domain.source_revision,
+        domain=domain,
+        cell_regions=np.asarray((0,), dtype=np.int64),
+        junction_vertices=np.asarray((), dtype=np.int64),
+        protected_features=(),
+    )
+    source = certify_cell_mesh(
+        mesh,
+        contract,
+        geometry=geometry,
+        certification_inputs=inputs,
+        associations=(association,),
+        planar_embedding=plane,
+    )
+    curved = phx.meshing.curve_cell_mesh(
+        mesh,
+        association,
+        projection,
+        policy=phx.meshing.HighOrderCurvingPolicy(degree=2),
+        source_result=source,
+    )
+    assert curved.status == phx.meshing.HighOrderCurvingStatus.CURVED
+    assert curved.cell_result is not None
+    assert (
+        curved.evidence.evidence_id
+        == "2d5e268e86b71a1390bdfabe6a05266cc172607792ba54fea8096fef6e4c705e"
+    )
+    assert (
+        curved.evidence.certificate.certificate_id
+        == "7e56247cf5fd2613365e21c2281075c7292ddc8ef410002cecfebf967e84dc04"
+    )
+    assert (
+        curved.evidence.embedding.certificate_id
+        == "69ad2240bbf2b363066c75cd1bd830aa33ede58199e1766b214d3f257dfc723f"
+    )
+    assert (
+        curved.cell_result.result_id
+        == "2a5f2a231cfb71afa8c2a733aa6a34ad539708106aeaf7cca2f14bd56374deb3"
+    )
+
+
+def test_computed_validity_reuses_only_exact_live_operands() -> None:
+    mesh, geometry, domain = _planar_inputs()
+    inputs = MeshCertificationInputs(
+        mesh,
+        geometry,
+        MeshCertificationSchedule("planar"),
+        source_id=domain.source_id,
+        source_revision=domain.source_revision,
+        domain=domain,
+        cell_regions=np.asarray((0,), dtype=np.int64),
+        junction_vertices=np.asarray((), dtype=np.int64),
+        protected_features=(),
+    )
+    computed = ComputedCellValidity(geometry, mesh, CellValidityPolicy(), None)
+    contract = SpatialCoordinateContract.si()
+    reused = certify_cell_mesh(
+        mesh,
+        contract,
+        geometry=geometry,
+        certification_inputs=inputs,
+        _computed_validity=computed,
+    )
+    replayed = certify_cell_mesh(
+        mesh,
+        contract,
+        geometry=geometry,
+        certification_inputs=inputs,
+        validity=computed.certificate,
+    )
+    assert reused.result_id == replayed.result_id
+    assert reused.certification is not None and replayed.certification is not None
+    assert reused.certification.report_id == replayed.certification.report_id
+    assert reused.audit.validity.certificate_id == replayed.audit.validity.certificate_id
+
+    other_geometry = CellGeometrySpec.affine(mesh)
+    assert other_geometry is not geometry
+    with pytest.raises(ValueError, match="different exact operands"):
+        certify_cell_mesh(
+            mesh,
+            contract,
+            geometry=other_geometry,
+            certification_inputs=inputs,
+            _computed_validity=computed,
+        )
+    other_mesh, _, _ = _planar_inputs()
+    assert other_mesh is not mesh
+    with pytest.raises(ValueError, match="different exact operands"):
+        certify_cell_mesh(
+            other_mesh,
+            contract,
+            geometry=geometry,
+            certification_inputs=inputs,
+            _computed_validity=computed,
+        )
+
+
+def test_equal_content_foreign_validity_replays_and_rejects_tampering() -> None:
+    mesh, geometry, domain = _planar_inputs()
+    other_geometry = CellGeometrySpec.affine(mesh)
+    assert other_geometry is not geometry
+    inputs = MeshCertificationInputs(
+        mesh,
+        other_geometry,
+        MeshCertificationSchedule("planar"),
+        source_id=domain.source_id,
+        source_revision=domain.source_revision,
+        domain=domain,
+        cell_regions=np.asarray((0,), dtype=np.int64),
+        junction_vertices=np.asarray((), dtype=np.int64),
+        protected_features=(),
+    )
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    assert MeshCertificationReport(inputs, validity=validity).passed
+    changed_upper = jnp.asarray(validity.determinant_upper) + 1.0
+    tampered = eqx.tree_at(lambda value: value.determinant_upper, validity, changed_upper)
+    with pytest.raises(ValueError, match="reproduce"):
+        MeshCertificationReport(inputs, validity=tampered)
 
 
 def test_operation_local_embedding_reuse_rejects_foreign_and_serialization() -> None:
