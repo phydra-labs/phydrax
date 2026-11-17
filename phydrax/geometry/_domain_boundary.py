@@ -1334,6 +1334,8 @@ def _curved_trim_lens(
     second_parameter: float,
     preparation: SourcePreparation,
     /,
+    *,
+    endpoint_boxes: dict[float, tuple[_Point2, ...]] | None = None,
 ) -> CurvedTrimLens:
     """Certify the lens between one target chord and the arc between its ends.
 
@@ -1355,19 +1357,18 @@ def _curved_trim_lens(
         )
     pcurve = use.pcurve
     arc = _chart_box_corners(preparation.curve_box(pcurve, low, high))
+
+    def endpoint_box(parameter: float, /) -> tuple[_Point2, ...]:
+        if endpoint_boxes is not None and parameter in endpoint_boxes:
+            return endpoint_boxes[parameter]
+        result = _chart_box_corners(preparation.curve_box(pcurve, parameter, parameter))
+        if endpoint_boxes is not None:
+            endpoint_boxes[parameter] = result
+        return result
+
     ends = (
-        (
-            first,
-            _chart_box_corners(
-                preparation.curve_box(pcurve, first_parameter, first_parameter)
-            ),
-        ),
-        (
-            second,
-            _chart_box_corners(
-                preparation.curve_box(pcurve, second_parameter, second_parameter)
-            ),
-        ),
+        (first, endpoint_box(first_parameter)),
+        (second, endpoint_box(second_parameter)),
     )
     direction = (second[0] - first[0], second[1] - first[1])
     length_squared = direction[0] ** 2 + direction[1] ** 2
@@ -1957,8 +1958,14 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
             use: PatchCurveUse | PatchPoleUse, first: _Point2, last: _Point2, /
         ) -> tuple[_Point2, ...]:
             chain = _target_boundary_chain(successors, first, last)
+            chain_key = (patch, plane, id(use), chain)
+            cached_chain = preparation._trim_chains.get(chain_key)
+            if cached_chain is not None:
+                lenses.extend(cached_chain[1])
+                return chain[1:-1]
             parameters = _chain_parameters(use, chain)
-            lenses.extend(
+            endpoint_boxes: dict[float, tuple[_Point2, ...]] = {}
+            chain_lenses = tuple(
                 _curved_trim_lens(
                     use,
                     chain[row],
@@ -1966,9 +1973,12 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                     parameters[row],
                     parameters[row + 1],
                     preparation,
+                    endpoint_boxes=endpoint_boxes,
                 )
                 for row in range(len(chain) - 1)
             )
+            preparation._trim_chains[chain_key] = (use, chain_lenses)
+            lenses.extend(chain_lenses)
             return chain[1:-1]
 
         trim_loops = None

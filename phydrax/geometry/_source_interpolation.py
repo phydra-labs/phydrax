@@ -1441,6 +1441,7 @@ def certify_domain_surface_charts(
     target_affine: list[bool] = [False for _ in cell_ids]
     findings: list[MeshCertificateFinding] = []
     exact_surface_maps: dict[int, tuple[Polynomial, ...]] = {}
+    exact_source_points: dict[int, tuple[tuple[ExactScalar, ...], ...]] = {}
     patch_bounds: dict[int, np.ndarray] = {}
     source_point_intervals: dict[int, tuple[np.ndarray, np.ndarray]] = {}
     grouped_rows: dict[int, list[int]] = {}
@@ -1506,9 +1507,16 @@ def certify_domain_surface_charts(
                     interpolation[local_row] = _exact_surface_interpolation_bound(
                         exact_surface, chart
                     )
-                    for corner, point in enumerate(chart):
-                        for axis, expression in enumerate(exact_surface):
-                            value = evaluate_expression(expression, point)
+                    values = tuple(
+                        tuple(
+                            evaluate_expression(expression, point)
+                            for expression in exact_surface
+                        )
+                        for point in chart
+                    )
+                    exact_source_points[row] = values
+                    for corner, point_values in enumerate(values):
+                        for axis, value in enumerate(point_values):
                             target = 3 * local_row + corner
                             lower[target, axis] = coefficient_endpoint(value, upper=False)
                             upper[target, axis] = coefficient_endpoint(value, upper=True)
@@ -1618,6 +1626,10 @@ def certify_domain_surface_charts(
     limit = Fraction.from_float(float(tolerance))
     upper_max: Fraction | float = Fraction(0)
     adaptive_rows: dict[int, list[tuple[int, Fraction, Fraction | float]]] = {}
+    physical_maps: dict[tuple[int, int], tuple[Expression, ...]] = {}
+    mapped_charts: dict[
+        tuple[int, int, tuple[tuple[Fraction, ...], ...]], tuple[Expression, ...]
+    ] = {}
 
     def record_deviation(row: int, deviation: Fraction | float, /) -> None:
         nonlocal upper_max
@@ -1685,21 +1697,33 @@ def certify_domain_surface_charts(
                     raise ValueError(
                         "Surface chart target maps require 2-D or 3-D parent references."
                     )
-                local = tuple(
-                    coefficients[int(index)]
-                    for index in host_routes[block_index][cell_row]
-                )
-                element = elements[block_index]
-                if not isinstance(element, ScalarCoordinateElement):
-                    raise TypeError(
-                        "Target surface map requires a scalar coordinate element."
+                cell_key = (block_index, cell_row)
+                physical = physical_maps.get(cell_key)
+                if physical is None:
+                    local = tuple(
+                        coefficients[int(index)]
+                        for index in host_routes[block_index][cell_row]
                     )
-                physical = coordinate_map_expressions(element, local, cell_row=cell_row)
-                if len(physical) != 3:
-                    raise ValueError(
-                        "The physical target map must take values in three-space."
+                    element = elements[block_index]
+                    if not isinstance(element, ScalarCoordinateElement):
+                        raise TypeError(
+                            "Target surface map requires a scalar coordinate element."
+                        )
+                    physical = coordinate_map_expressions(
+                        element, local, cell_row=cell_row
                     )
-                mapped = tuple(compose_expression(value, arguments) for value in physical)
+                    if len(physical) != 3:
+                        raise ValueError(
+                            "The physical target map must take values in three-space."
+                        )
+                    physical_maps[cell_key] = physical
+                mapped_key = (block_index, cell_row, target_reference)
+                mapped = mapped_charts.get(mapped_key)
+                if mapped is None:
+                    mapped = tuple(
+                        compose_expression(value, arguments) for value in physical
+                    )
+                    mapped_charts[mapped_key] = mapped
                 barycentric_corners = (
                     (Fraction(0), Fraction(0)),
                     (Fraction(1), Fraction(0)),
@@ -1769,16 +1793,7 @@ def certify_domain_surface_charts(
         target_corners[row] = corners
         target_affine[row] = is_affine
         exact_surface = exact_surface_maps.get(patch)
-        exact_source = (
-            None
-            if exact_surface is None
-            else tuple(
-                tuple(
-                    evaluate_expression(expression, point) for expression in exact_surface
-                )
-                for point in charts[row]
-            )
-        )
+        exact_source = None if exact_surface is None else exact_source_points[row]
         endpoint_error = Fraction(0)
         local_row = patch_local_row_by_witness_row[row]
         lower, upper = source_point_intervals[patch]

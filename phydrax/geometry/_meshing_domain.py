@@ -58,7 +58,7 @@ from .brep._patches import (
 
 if TYPE_CHECKING:
     from ._curve_boundary import ParametricCurveBoundarySource
-    from ._domain_boundary import _Triangle2, CurvedTrimLens
+    from ._domain_boundary import _Point2, _Triangle2, CurvedTrimLens
     from .multiregion_surface import MultiRegionSurfaceTopology
 
 type MeshingSourceAccuracy = Literal[
@@ -869,6 +869,7 @@ class SourcePreparation:
         "_curve_spans",
         "_mapped_hessians",
         "_programs",
+        "_trim_chains",
         "_trim_partitions",
         "_surface_spans",
         "domain",
@@ -898,6 +899,10 @@ class SourcePreparation:
         self._mapped_hessians: dict[
             tuple[int, int],
             tuple[AbstractSurfacePatch, AbstractCurve, PreparedIntervalFunction | None],
+        ] = {}
+        self._trim_chains: dict[
+            tuple[int, bool, int, tuple[_Point2, ...]],
+            tuple[PatchCurveUse | PatchPoleUse, tuple[CurvedTrimLens, ...]],
         ] = {}
         self._trim_partitions: dict[
             tuple[int, bool, tuple[_Triangle2, ...]],
@@ -1485,7 +1490,7 @@ def _barycentric_midpoint(first: _Barycentric, second: _Barycentric, /) -> _Bary
 
 
 def _fraction_magnitude(lower: float, upper: float, /) -> Fraction:
-    return max(abs(Fraction(lower)), abs(Fraction(upper)))
+    return Fraction(max(abs(lower), abs(upper)))
 
 
 def _adaptive_triangle_interpolation_bounds(
@@ -1514,13 +1519,18 @@ def _adaptive_triangle_interpolation_bounds(
         return ()
     point_program = preparation.derivative_program(surface, 0)
     hessian_program = preparation.derivative_program(surface, 2)
+    chart_points: dict[tuple[int, _Barycentric], tuple[Fraction, Fraction]] = {}
 
     def chart_point(row: int, weights: _Barycentric, /) -> tuple[Fraction, Fraction]:
+        key = (row, weights)
+        cached = chart_points.get(key)
+        if cached is not None:
+            return cached
         chart = charts[row]
         for corner, unit in enumerate(_UNIT_BARYCENTRICS):
             if weights == unit:
                 return chart[corner]
-        return (
+        point = (
             weights[0] * chart[0][0]
             + weights[1] * chart[1][0]
             + weights[2] * chart[2][0],
@@ -1528,6 +1538,8 @@ def _adaptive_triangle_interpolation_bounds(
             + weights[1] * chart[1][1]
             + weights[2] * chart[2][1],
         )
+        chart_points[key] = point
+        return point
 
     def point_enclosures(
         points: Sequence[tuple[Fraction, Fraction]], /
@@ -1658,6 +1670,10 @@ def _adaptive_triangle_interpolation_bounds(
                 - Fraction(float(boxes_[index, 0, axis]))
                 for axis in range(2)
             )
+            width_products = tuple(
+                tuple(widths[first] * widths[second] for second in range(2))
+                for first in range(2)
+            )
             squared = Fraction(0)
             for physical in range(low.shape[0]):
                 component = (
@@ -1667,8 +1683,7 @@ def _adaptive_triangle_interpolation_bounds(
                                 float(low[physical, first, second]),
                                 float(high[physical, first, second]),
                             )
-                            * widths[first]
-                            * widths[second]
+                            * width_products[first][second]
                             for first in range(2)
                             for second in range(2)
                         ),
