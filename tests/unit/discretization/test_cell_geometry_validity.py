@@ -1566,6 +1566,23 @@ def test_embedded_polygon_norm_enclosure_handles_downward_rounding() -> None:
         dtype=np.float64,
     )
     assert _polygon_status(points) == Status.CERTIFIED_VALID
+    for vector, squared in (((1, 1, 1), 3), ((1, 1, 2), 6), ((1, 2, 3), 14)):
+        bound = validity_module._underflow_free_norm(
+            np.asarray(vector, dtype=np.float64), axis=-1
+        )
+        assert Fraction(float(bound)) ** 2 >= squared
+    mesh = D.CellMesh(
+        points,
+        (D.CellBlock("cells", "polygon", np.arange(5, dtype=np.int32)[None]),),
+    )
+    policy = D.CellValidityPolicy(
+        relative_determinant_floor=float.fromhex("0x1.9764fe4659f18p-1")
+    )
+    certificate = D.certify_cell_geometry_validity(mesh, policy=policy)
+    assert int(certificate.status[0]) == Status.UNRESOLVED
+    exact_determinant = Fraction(75, 2)
+    assert Fraction(float(certificate.determinant_lower[0])) <= exact_determinant
+    assert Fraction(float(certificate.determinant_upper[0])) >= exact_determinant
 
 
 def test_cell_geometry_validity_scenario_1() -> None:
