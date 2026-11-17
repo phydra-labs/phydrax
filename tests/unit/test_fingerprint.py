@@ -425,3 +425,13 @@ def test_numeric_array_fingerprint_frames_endianness_dtype_shape_and_content() -
     )
     with pytest.raises(TypeError):
         numeric_array_fingerprint(np.asarray(["x"]))
+
+
+@pytest.mark.parametrize(("dtype", "maximum"), [(np.longdouble, 8), (np.clongdouble, 16)])
+def test_numeric_array_fingerprint_rejects_extended_float_formats(
+    dtype: type[np.generic], maximum: int
+) -> None:
+    if np.dtype(dtype).itemsize <= maximum:
+        pytest.skip("Platform aliases the extended type to a supported format.")
+    with pytest.raises(TypeError, match="fixed-format"):
+        numeric_array_fingerprint(np.asarray([0], dtype=dtype))

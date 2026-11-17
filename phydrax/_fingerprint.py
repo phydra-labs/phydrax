@@ -101,11 +101,27 @@ def array_bytes_digest(value: np.ndarray, /) -> str:
         digest.update(chunk)
     return digest.hexdigest()
 
+
+_FIXED_NUMERIC_FORMATS = frozenset(
+    (kind, width)
+    for kind, widths in (
+        ("b", (1,)),
+        ("i", (1, 2, 4, 8)),
+        ("u", (1, 2, 4, 8)),
+        ("f", (2, 4, 8)),
+        ("c", (8, 16)),
+    )
+    for width in widths
+)
+
+
 def numeric_array_fingerprint(value: np.ndarray, /) -> str:
     """Hash a numeric array with explicit little-endian dtype and shape framing."""
     array = np.asarray(value)
-    if array.dtype.kind not in "biufc":
-        raise TypeError("Numeric array fingerprints require a numeric dtype.")
+    if (array.dtype.kind, array.dtype.itemsize) not in _FIXED_NUMERIC_FORMATS:
+        raise TypeError(
+            "Numeric array fingerprints require a fixed-format numeric dtype."
+        )
     dtype = array.dtype.newbyteorder("<")
     normalized = np.asarray(array, dtype=dtype)
     metadata = canonical_json({"dtype": dtype.str, "shape": list(array.shape)}).encode(
@@ -117,6 +133,7 @@ def numeric_array_fingerprint(value: np.ndarray, /) -> str:
     for chunk in iter_array_bytes(normalized):
         digest.update(chunk)
     return digest.hexdigest()
+
 
 def rational_chart_bank_fingerprint(
     bank: tuple[tuple[tuple[tuple[int, int], ...], ...], ...], /
