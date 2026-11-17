@@ -762,6 +762,12 @@ def test_period_bounds_match_elementwise_kernels_and_batch_partitions(
             strict=True,
         )
     )
+    values += (
+        PeriodOffset(Fraction(0), Fraction(0)),
+        PeriodOffset(Fraction(1, 2**1075), Fraction(-1, 2**1075)),
+        PeriodOffset(Fraction(10**400), Fraction(-10**400)),
+        PeriodOffset(Fraction(-10**400), Fraction(10**400)),
+    )
     period = (
         np.asarray(np.nextafter(math.tau, -np.inf)),
         np.asarray(np.nextafter(math.tau, np.inf)),
