@@ -3,12 +3,14 @@
 #
 from __future__ import annotations
 
-from typing import cast
+from collections.abc import Hashable
+from typing import cast, Final, final
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
+from jax.core import Tracer
 
 from phydrax._strict import StrictModule
 
@@ -166,8 +168,7 @@ def prepare_native_conic(
     return PreparedNativeConic(cone_barrier_oracle(program.cone), newton)
 
 
-@eqx.filter_jit
-def solve_native_conic_program(
+def _solve_native_conic_body(
     program: ConicProgram,
     policy: ConvexSolvePolicy,
     /,
@@ -175,13 +176,7 @@ def solve_native_conic_program(
     prepared: PreparedNativeConic | None = None,
     warm_start: ConvexWarmStart | None = None,
 ) -> ConvexProgramResult:
-    """Execute a fixed-capacity JAX-native primal-dual conic iteration.
-
-    The independent original-coordinate audit remains authoritative for every
-    optimality or ray status; iteration residuals are never trusted as certificates.
-    Sparse factorized execution requires ``prepared`` from `prepare_native_conic`,
-    because its symbolic analysis reads concrete topology outside tracing.
-    """
+    """Traced native conic iteration; see `solve_native_conic_program`."""
     if not isinstance(program, ConicProgram):
         raise TypeError("program must be a ConicProgram.")
     method = policy.method
@@ -389,6 +384,95 @@ def solve_native_conic_program(
         "native-jax",
         backend="phydrax",
     )
+
+
+# One stable compiled entry for every native conic solve.
+_SOLVE_ENTRY = eqx.filter_jit(_solve_native_conic_body)
+
+# Measured resident host bytes of one compiled coupled solve on CPU: about
+# 170 MB after compile and first call (AOT probe) and 215 MB per distinct
+# coupled model over a replay. XLA's memory analysis reports no generated-code
+# size on CPU, so each retained executable is charged this calibrated amount.
+_EXECUTABLE_CHARGE_BYTES: Final = 210 * 2**20
+_EXECUTABLE_CAPACITY_BYTES: Final = 4 * 2**30
+
+
+@final
+class _CompiledSolveBudget:
+    """Byte budget for the compiled native conic solves the entry keeps alive.
+
+    JAX's trace, lowering and compilation caches keep every executable the
+    entry produced alive for the life of the process (measured: 180 of 215 MB
+    per distinct coupled program). The budget counts distinct jit signatures,
+    the static partition of the arguments and the abstract value of every
+    dynamic leaf, and releases the entry's caches when a new signature would
+    exceed the capacity. Release only forces later recompiles of the same
+    programs; calls still run through the entry, so results, error translation
+    and dispatch are unchanged. Traced calls compile into their outer program.
+    """
+
+    def __init__(self, capacity_bytes: int, charge_bytes: int, /) -> None:
+        if capacity_bytes < charge_bytes or charge_bytes <= 0:
+            raise ValueError("Compiled solve capacity must hold at least one executable.")
+        self._limit = capacity_bytes // charge_bytes
+        self._signatures: set[Hashable] = set()
+
+    def __len__(self) -> int:
+        return len(self._signatures)
+
+    def admit(
+        self,
+        program: ConicProgram,
+        policy: ConvexSolvePolicy,
+        prepared: PreparedNativeConic | None,
+        warm_start: ConvexWarmStart | None,
+        /,
+    ) -> None:
+        dynamic, static = eqx.partition(
+            (program, policy, prepared, warm_start), eqx.is_array
+        )
+        leaves = jax.tree.leaves(dynamic)
+        if any(isinstance(leaf, Tracer) for leaf in leaves):
+            return
+        signature = (
+            static,
+            jax.tree.structure(dynamic),
+            tuple(jax.typeof(leaf) for leaf in leaves),
+        )
+        if signature in self._signatures:
+            return
+        if len(self._signatures) == self._limit:
+            # Equinox types `filter_jit` as the wrapped signature; the runtime
+            # wrapper owns the underlying `jax.jit` and its caches.
+            _SOLVE_ENTRY._cached.clear_cache()  # ty: ignore[unresolved-attribute]
+            self._signatures.clear()
+        self._signatures.add(signature)
+
+
+_COMPILED_SOLVES = _CompiledSolveBudget(
+    _EXECUTABLE_CAPACITY_BYTES, _EXECUTABLE_CHARGE_BYTES
+)
+
+
+def solve_native_conic_program(
+    program: ConicProgram,
+    policy: ConvexSolvePolicy,
+    /,
+    *,
+    prepared: PreparedNativeConic | None = None,
+    warm_start: ConvexWarmStart | None = None,
+) -> ConvexProgramResult:
+    """Execute a fixed-capacity JAX-native primal-dual conic iteration.
+
+    The independent original-coordinate audit remains authoritative for every
+    optimality or ray status; iteration residuals are never trusted as certificates.
+    Sparse factorized execution requires ``prepared`` from `prepare_native_conic`,
+    because its symbolic analysis reads concrete topology outside tracing.
+    Compiled executables are held within a byte budget, so long searches over
+    many program structures hold bounded code.
+    """
+    _COMPILED_SOLVES.admit(program, policy, prepared, warm_start)
+    return _SOLVE_ENTRY(program, policy, prepared=prepared, warm_start=warm_start)
 
 
 __all__ = [
