@@ -29,7 +29,7 @@ from ...linalg._exact import (
 )
 from ...linalg._hermitian_spectral import fraction_sqrt_interval
 from ...typing import checked
-from .._atlas import _curve_loops_point_state, TrimEnclosures
+from .._atlas import _CoarseChordPlan, _curve_loops_point_state, TrimEnclosures
 from .._interval_enclosure import PreparedIntervalFunction
 from .._planar_embedding import PlanarEmbedding
 from .._rational import fraction_endpoint, rational_cross, rational_dot, rational_vector
@@ -126,6 +126,10 @@ class _ProjectionPreparation:
     model: BRepModel
     boxes: dict[int, np.ndarray]
     enclosures: dict[int, TrimEnclosures] = field(default_factory=dict)
+    coarse_chords: dict[int, _CoarseChordPlan | None] = field(default_factory=dict)
+    torus_distances: dict[int, _TorusDistancePreparation | None] = field(
+        default_factory=dict
+    )
     lifts: dict[tuple[int, int], bool] = field(default_factory=dict)
     angle_bounds: dict[int, tuple[float, float] | None] = field(default_factory=dict)
     faces: dict[int, _PreparedFace] = field(default_factory=dict)
@@ -619,6 +623,7 @@ def _trim_classification(
     /,
     *,
     enclosures: dict[int, TrimEnclosures] | None = None,
+    coarse_chords: dict[int, _CoarseChordPlan | None] | None = None,
 ) -> int | None:
     """Classify a chart point only when every authored trim is a line p-curve."""
     from ._boolean_core import line_chart_coefficients
@@ -638,7 +643,7 @@ def _trim_classification(
                 "TrimDomain.classify points must be finite with trailing dimension two."
             )
         inside, boundary, resolved = _curve_loops_point_state(
-            domain._enclosure_loops(prepared), point
+            domain._enclosure_loops(prepared), point, coarse=coarse_chords
         )
         if not resolved:
             return None
@@ -1758,21 +1763,17 @@ def _sphere_distance(
     return None if radial is None else _directed_distance(*_absolute(*radial))
 
 
-def _torus_distance(
-    patch: TorusPatch, point: np.ndarray, /
-) -> tuple[float, float] | None:
-    """Enclose the distance from ``point`` to the torus.
+@dataclass(frozen=True, slots=True)
+class _TorusDistancePreparation:
+    center: tuple[Fraction, ...]
+    axis: tuple[Fraction, ...]
+    major: Fraction
+    minor: Fraction
+    axis_squared: Fraction
+    deviation: Fraction
 
-    The exact chart ``c + (M + m cos t)(cos u f + sin u s) + m sin t a`` is
-    compared with the ring torus of rational stand-ins ``c~, M~, m~`` and the
-    orthonormal frame ``f*, s*, a* = a~/|a~|`` (``_frame_deviation``). Over every
-    parameter pair the charts differ by at most ``|c - c~| +
-    |(M f - M~ f~, M s - M~ s~)| + |(m f - m~ f~, m s - m~ s~)| + |m a - m~ a~| +
-    (M~ + m~) |(f~ - f*, s~ - s*)| + m~ | |a~|^2 - 1 |``, which bounds the change
-    of the distance to the image. The ring torus distance is
-    ``| hypot(rho - M~, z) - m~ |`` with ``z^2 = w^2 / |a~|^2``,
-    ``w = (p - c~) . a~`` and ``rho^2 = |p - c~|^2 - z^2``.
-    """
+
+def _prepare_torus_distance(patch: TorusPatch, /) -> _TorusDistancePreparation | None:
     center = _shadow(patch.center_exact)
     first = _shadow(patch.first_axis_exact)
     second = _shadow(patch.second_axis_exact)
@@ -1801,6 +1802,35 @@ def _torus_distance(
         + (major + minor) * frame
         + minor * abs(axis_squared - 1)
     )
+    return _TorusDistancePreparation(center, axis, major, minor, axis_squared, deviation)
+
+
+def _torus_distance(
+    patch: TorusPatch,
+    point: np.ndarray,
+    /,
+    *,
+    prepared: _TorusDistancePreparation | None = None,
+) -> tuple[float, float] | None:
+    """Enclose the distance from ``point`` to the torus.
+
+    The exact chart ``c + (M + m cos t)(cos u f + sin u s) + m sin t a`` is
+    compared with the ring torus of rational stand-ins ``c~, M~, m~`` and the
+    orthonormal frame ``f*, s*, a* = a~/|a~|`` (``_frame_deviation``). Over every
+    parameter pair the charts differ by at most ``|c - c~| +
+    |(M f - M~ f~, M s - M~ s~)| + |(m f - m~ f~, m s - m~ s~)| + |m a - m~ a~| +
+    (M~ + m~) |(f~ - f*, s~ - s*)| + m~ | |a~|^2 - 1 |``, which bounds the change
+    of the distance to the image. The ring torus distance is
+    ``| hypot(rho - M~, z) - m~ |`` with ``z^2 = w^2 / |a~|^2``,
+    ``w = (p - c~) . a~`` and ``rho^2 = |p - c~|^2 - z^2``.
+    """
+    if prepared is None:
+        prepared = _prepare_torus_distance(patch)
+    if prepared is None:
+        return None
+    center, axis = prepared.center, prepared.axis
+    major, minor = prepared.major, prepared.minor
+    axis_squared, deviation = prepared.axis_squared, prepared.deviation
     relative = tuple(
         value - base for value, base in zip(rational_vector(point), center, strict=True)
     )
@@ -3244,7 +3274,14 @@ def _project_face(
         major, minor = prepared.radii
         if not major > minor > 0.0:
             return _unresolved(2, face, path)
-        carrier_distance = _torus_distance(patch, point)
+        torus_prepared = None
+        if preparation is not None:
+            if face not in preparation.torus_distances:
+                preparation.torus_distances[face] = _prepare_torus_distance(patch)
+            torus_prepared = preparation.torus_distances[face]
+            if torus_prepared is None:
+                return _unresolved(2, face, path)
+        carrier_distance = _torus_distance(patch, point, prepared=torus_prepared)
         if carrier_distance is None:
             return _unresolved(2, face, path)
         tube_x, tube_y = radial - major, z
@@ -3542,7 +3579,13 @@ def _project_face(
         trim = (
             0
             if outside_bounds
-            else _trim_classification(model, face, uv, enclosures=enclosures)
+            else _trim_classification(
+                model,
+                face,
+                uv,
+                enclosures=enclosures,
+                coarse_chords=None if preparation is None else preparation.coarse_chords,
+            )
         )
     if trim is None or trim == 0:
         # A carrier minimum whose periodic representative lies on a chart seam

@@ -368,6 +368,29 @@ def test_native_torus_projects_interior_and_both_seam_points() -> None:
         _STATUS.SEAM,
         _STATUS.NON_ISOLATED,
     ]
+    assert (
+        result.result_id
+        == "597b38d0068fb4ba16cf2a17061969e79a66985a0bb8a1787c671db7adc5e0f0"
+    )
+    for index in (2, 3, 4):
+        single = _project(projection, query[index : index + 1], _FACE, 0)
+        isolated = type(result)(
+            result.source_id,
+            result.source_revision,
+            result.dimensions[index : index + 1],
+            result.indices[index : index + 1],
+            result.queries[index : index + 1],
+            result.points[index : index + 1],
+            result.parameters[index : index + 1],
+            result.residuals[index : index + 1],
+            result.status[index : index + 1],
+            result.normals[index : index + 1],
+            result.tangents[index : index + 1],
+            distance_lower_bounds=result.distance_lower_bounds[index : index + 1],
+            occurrence_paths=result.occurrence_paths[index : index + 1],
+            frame_id=result.frame_id,
+        )
+        assert isolated.result_id == single.result_id
     np.testing.assert_allclose(result.parameters[2, 0], 0.0, atol=1e-12)
     np.testing.assert_allclose(result.parameters[3, 1], 0.0, atol=1e-12)
     np.testing.assert_allclose(result.parameters[4], [0.0, 0.0], atol=1e-12)
@@ -1596,6 +1619,61 @@ def test_definition_projection_returns_explicit_empty_occurrence_paths() -> None
     )
     assert np.asarray(result.status).tolist() == [_STATUS.UNIQUE]
     assert result.occurrence_paths == ((),)
+
+
+def test_planar_trim_projection_is_identical_alone_and_in_a_batch() -> None:
+    source = brep_planar_face(
+        PlanarProfile(
+            ProfilePlane(),
+            ProfileLoop.polygon(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
+        ),
+        coordinate_contract=_CONTRACT,
+        source_id="projection-definition-only",
+    )
+    projection = phx.geometry.prepare_brep_projection(source)
+    points = np.asarray(
+        (
+            (0.25, 0.25, 0.125),
+            (0.75, 0.75, 0.125),
+            (0.5, 0.0, 0.125),
+            (0.0, 0.0, 0.125),
+            (np.nextafter(0.0, 1.0), 0.5, 0.125),
+            (0.5, -1.0e-15, 0.125),
+        ),
+        dtype=np.float64,
+    )
+    batch = _project(projection, points, _FACE, 0)
+    assert np.asarray(batch.status).tolist() == [
+        _STATUS.UNIQUE,
+        _STATUS.UNIQUE,
+        _STATUS.SEAM,
+        _STATUS.SEAM,
+        _STATUS.SEAM,
+        _STATUS.UNIQUE,
+    ]
+    assert (
+        batch.result_id
+        == "4ab198b006a7e6d9de2c82f4e2e75ca2a323e2054ceda19671689369a090f9e1"
+    )
+    for index, point in enumerate(points):
+        single = _project(projection, [point], _FACE, 0)
+        isolated = type(batch)(
+            batch.source_id,
+            batch.source_revision,
+            batch.dimensions[index : index + 1],
+            batch.indices[index : index + 1],
+            batch.queries[index : index + 1],
+            batch.points[index : index + 1],
+            batch.parameters[index : index + 1],
+            batch.residuals[index : index + 1],
+            batch.status[index : index + 1],
+            batch.normals[index : index + 1],
+            batch.tangents[index : index + 1],
+            distance_lower_bounds=batch.distance_lower_bounds[index : index + 1],
+            occurrence_paths=batch.occurrence_paths[index : index + 1],
+            frame_id=batch.frame_id,
+        )
+        assert isolated.result_id == single.result_id
 
 
 def test_optional_occt_projection_binds_physical_source_revision() -> None:
