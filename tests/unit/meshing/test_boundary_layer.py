@@ -804,6 +804,30 @@ def test_original_ridge_retained_source_reproof() -> None:
     )
 
 
+def test_locally_terminated_channel_layers_are_recorded_as_strict_json() -> None:
+    import json
+
+    from tools.meshing_qualification.cli import _json_default
+    from tools.meshing_qualification.scenarios.native_hybrid_profiles import (
+        _run_channel_policies,
+    )
+
+    # Qualification receipts refuse NaN. A terminated layer has no measured
+    # thickness, so the profile must record it as null, not as a number.
+    record = json.loads(
+        json.dumps(_run_channel_policies(), default=_json_default, allow_nan=False)
+    )
+    attempts = {row["policy_case"]: row for row in record["policy_attempts"]}
+    terminated = attempts["terminate_locally"]
+    assert terminated["status"] == "passed"
+    assert terminated["layer_active"] == [True, False, False]
+    assert terminated["measured_thicknesses"][0] == pytest.approx(0.01, rel=1.0e-9)
+    assert terminated["measured_thicknesses"][1:] == [None, None]
+    assert terminated["minimum_thicknesses"][1:] == [None, None]
+    assert terminated["maximum_thicknesses"][1:] == [None, None]
+    assert all(value is not None for value in attempts["merge"]["measured_thicknesses"])
+
+
 def test_cell_certification_rejects_contained_obstacle() -> None:
     from phydrax.meshing._boundary_layer import (
         _CELL_ARITY,
