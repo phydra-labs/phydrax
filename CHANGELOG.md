@@ -265,10 +265,28 @@
 - CAD source coverage and curving repeat less work, with unchanged decisions:
   chart coverage converts block connectivity once per block and prepares the
   overlap boxes and corner enclosures once per triangle bank instead of once
-  per 64-row block; the source shell proof is kept for a live chart bank and
-  tolerance; exact straight-map evaluation shares one image per geometry node
-  instead of one per cell; and a mapped cell's contact chart reuses its
-  prepared image bounds.
+  per 64-row block; exact straight-map evaluation shares one image per geometry
+  node instead of one per cell; a mapped cell's contact chart reuses its
+  prepared image bounds; curved contact proofs keep each cell's exact Bernstein
+  controls across pair worksets and prepare vertex-cone controls only for the
+  cells whose pairs are stated; and the monotone-map preconditioner search
+  returns a seed that already clears the exact check's rounding instead of
+  solving cutting-plane programs for it.
+- Proofs completed in this process are not repeated on the same live,
+  unchanged operands: the CAD source shell proof (per chart bank and
+  tolerance), source-fidelity witness validation (per mesh, coordinate map,
+  source query and witness, including its partition findings), and the full
+  replay of a restored CAD complex in
+  `PiecewiseLinearComplex.from_stored_fields`. A copy, a rebuild or a changed
+  array is still proved in full.
+- Native surface meshing, source-fidelity and chart proofs, and B-Rep
+  projection evaluate in batches and prepare per-entity data once, with
+  unchanged decisions: p-curve and source-curve points, trim-lens Jacobian
+  bounds, chord and lens bounds, chart parameter boxes and interpolation
+  bounds are evaluated per batch with one enclosure per row; identical trim
+  partitions are computed once per source preparation; generic curve boxes
+  reuse one prepared interval program; and per-face, per-edge and
+  per-intersection-curve projection data is prepared once per projection call.
 - Exact geometric decisions are screened in binary64 before exact arithmetic,
   with unchanged results. The native zero-set band admission refuses a triangle
   as soon as its largest-residual point cannot be certified and reuses identical

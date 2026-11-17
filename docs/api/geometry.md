@@ -116,17 +116,23 @@ still enumerates every candidate; filtering now expands piece pairs in bounded
 cell-pair windows rather than retaining a full BVH block's expanded work.
 Nonplanar or undecided cells retain the curved-map route.
 
-For a nonperiodic three-dimensional complex, the exact global-degree route may
-close unresolved pairwise contacts only when every exterior facet trace is
-proved affine and nondegenerate, exact triangle contacts establish an embedded
-complete boundary, interior facet loops cancel with exact matching mapped
-traces, and exact cell, edge, and vertex links certify one connected oriented
-volume manifold with one spherical boundary. With positive local Jacobians,
-the boundary has degree one inside; every regular preimage contributes
-positively, so the global map is injective. Curved exterior facets and any
-failed boundary, trace, or topology premise remain unresolved or violated.
-Optional manifold and shell-degree premises decline only this theorem; complete
-exact pairwise contact proofs remain available for a valid embedded complex.
+For a nonperiodic three-dimensional complex, the exact global-degree route
+replaces cell-pair proofs. Its premises are that exact cell, edge, and vertex
+links certify one connected oriented volume manifold whose exterior facets
+form one closed manifold shell (of any genus), and that interior facet loops
+cancel with exact matching mapped traces. With certified positive local
+Jacobians, an embedded shell has degree one inside and zero outside, and every
+regular preimage contributes positively, so the global map is injective and
+no interior cell pair is proved. The shell is embedded in one of two ways. If
+every exterior facet trace is proved affine and nondegenerate, exact triangle
+contacts establish the embedded boundary; no cell owes a mapped-cell
+injectivity proof and no cell pair is stated. If some exterior facet is
+curved, each cell that owns an exterior facet is proved injective and every
+pair of those cells is proved to meet only in its declared stratum; all other
+cells enter through their positive Jacobian alone. A complex with a cavity,
+several shells or several components, and any failed boundary, trace, or
+topology premise, declines this theorem; complete exact pairwise contact
+proofs then decide the embedding.
 
 Mapped targets may also use a forward nonaffine reference-chain proof when
 retained `ReferenceCellMapWitnesses` provide exact target-to-parent chart
