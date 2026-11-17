@@ -2148,3 +2148,32 @@ int32_t phx_mc_tet_mesh_implicit_source(
 void phx_mc_tet_mesh_free(phx_mc_tet_mesh* mesh) { delete mesh; }
 
 }  // extern "C"
+
+// Handle access for the other translation units of this C boundary
+// (tet_mesh_handle.hpp).
+#include "tet_mesh_handle.hpp"
+
+namespace phx::mc {
+
+TetMesh& tet_mesh_state(phx_mc_tet_mesh& mesh) noexcept { return mesh.state; }
+
+int32_t tet_mesh_current(const phx_mc_tet_mesh& mesh, uint64_t expected_generation,
+                         int32_t identity_bound, const char* source_id,
+                         int64_t source_id_length, const char* source_revision,
+                         int64_t source_revision_length, const char* source_map_id,
+                         int64_t source_map_id_length, const char* frame_id,
+                         int64_t frame_id_length) noexcept {
+  if (!valid_identity_fields(identity_bound, source_id, source_id_length, source_revision,
+                             source_revision_length, source_map_id, source_map_id_length,
+                             frame_id, frame_id_length)) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  return expected_generation == mesh.state.generation() &&
+                 identity_matches(mesh.state, identity_bound, source_id, source_id_length,
+                                  source_revision, source_revision_length, source_map_id,
+                                  source_map_id_length, frame_id, frame_id_length)
+             ? PHX_MC_OK
+             : PHX_MC_STALE_GENERATION;
+}
+
+}  // namespace phx::mc
