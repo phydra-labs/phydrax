@@ -636,6 +636,48 @@ def test_curve_route_places_by_density_and_preserves_source_junction() -> None:
     }
 
 
+def test_whole_curve_feature_preserves_primary_fidelity_certificate() -> None:
+    source, original, options = _curve_request()
+    feature = ProtectedFeature(
+        original.scope, FeatureKind.CURVE, maximum_deviation=0.05, hard=True
+    )
+    specification = CurveMeshingSpec(
+        original.target,
+        original.scope,
+        size_controls=original.size_controls,
+        protected_features=(feature, *original.protected_features),
+        junctions=original.junctions,
+        size_compliance=original.size_compliance,
+        maximum_deviation=0.05,
+    )
+    construction = prepare_native_curve(
+        source, specification, options, SpatialCoordinateContract.si()
+    ).execute()
+    request = construction.certification
+    query = request.fidelity_source
+    witness = request.fidelity_witness
+    assert isinstance(query, ParametricCurveBoundarySource)
+    assert isinstance(witness, SourceBoundaryChartWitness)
+    feature_query, feature_witness, tolerance = request.scoped_fidelity[0]
+    primary = certify_source_fidelity(
+        construction.mesh, construction.geometry, query, tolerance=tolerance, witness=witness
+    )
+    scoped = certify_source_fidelity(
+        construction.mesh,
+        construction.geometry,
+        feature_query,
+        tolerance=tolerance,
+        witness=feature_witness,
+    )
+    assert primary.status == scoped.status == "certified"
+    assert primary.certificate_id == scoped.certificate_id
+    assert primary.findings == scoped.findings
+    subset_query, subset_witness, _ = request.scoped_fidelity[2]
+    assert isinstance(subset_query, ParametricCurveBoundarySource)
+    assert subset_query.query_id != query.query_id
+    assert subset_witness.witness_id != witness.witness_id
+
+
 def test_segment_curve_query_is_an_exact_affine_chart_on_its_declared_range() -> None:
     segments = SegmentMesh(
         np.asarray(((0.1, 0.0), (1.1, 0.3)), dtype=np.float64),
