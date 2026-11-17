@@ -68,6 +68,60 @@ def test_simplex_subdivision_certifies_positive_threshold() -> None:
     assert depth >= 1
 
 
+@pytest.mark.parametrize("degree", (1, 2))
+def test_affine_and_quadratic_validity_is_block_independent(degree: int) -> None:
+    element = D.fem.lagrange_element("triangle", degree)
+    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
+    epsilon = 2.0**-40
+    heights = (3.0 + epsilon, 3.0 - epsilon, -3.0, 0.0, 3.0)
+    local = np.stack(
+        [
+            np.column_stack((nodes[:, 0] + 4.0 * nodes[:, 1], height * nodes[:, 1]))
+            for height in heights
+        ]
+    )
+    policy = D.CellValidityPolicy(relative_determinant_floor=0.6)
+
+    def certify(selected: np.ndarray) -> Any:
+        points = selected.reshape((-1, 2))
+        routes = np.arange(len(points), dtype=np.int64).reshape((len(selected), -1))
+        geometry = CellGeometrySpec({"cells": element}, {"cells": routes}, points)
+        return D.certify_cell_geometry_validity(geometry, policy=policy)
+
+    combined = certify(local)
+    singles = tuple(certify(local[index : index + 1]) for index in range(len(local)))
+    for combined_values, single_values in (
+        (combined.status, tuple(item.status for item in singles)),
+        (combined.execution_status, tuple(item.execution_status for item in singles)),
+        (combined.source_status, tuple(item.source_status for item in singles)),
+        (combined.determinant_lower, tuple(item.determinant_lower for item in singles)),
+        (combined.determinant_upper, tuple(item.determinant_upper for item in singles)),
+        (
+            combined.source_determinant_lower,
+            tuple(item.source_determinant_lower for item in singles),
+        ),
+        (
+            combined.source_determinant_upper,
+            tuple(item.source_determinant_upper for item in singles),
+        ),
+        (combined.depth, tuple(item.depth for item in singles)),
+        (combined.source_depth, tuple(item.source_depth for item in singles)),
+    ):
+        actual = np.asarray(combined_values)
+        expected = np.concatenate([np.asarray(value) for value in single_values])
+        if actual.dtype == np.float64:
+            actual = actual.view(np.uint64)
+            expected = expected.view(np.uint64)
+        np.testing.assert_array_equal(actual, expected)
+    assert combined.cell_map_digests == b"".join(
+        item.cell_map_digests for item in singles
+    )
+    assert int(combined.status[0]) == Status.CERTIFIED_VALID
+    assert int(combined.status[1]) == Status.INVALID
+    assert int(combined.status[2]) == Status.INVALID
+    assert int(combined.status[3]) == Status.INVALID
+
+
 def _polygon_status(points: Any, policy: Any = None) -> Any:
     points = np.asarray(points, dtype=np.float64)
     loop = np.arange(points.shape[0], dtype=np.int32)[None]
@@ -188,7 +242,6 @@ def test_cell_geometry_identity_binds_exact_bank_and_array_framing() -> None:
     assert validity_module.cell_geometry_id(changed_dtype) != identity
     assert validity_module.cell_geometry_id(changed_shape) != identity
 
-
     restored = CellGeometrySpec.from_stored_fields(
         first,
         source_mesh=mesh,
@@ -233,9 +286,10 @@ def test_cell_geometry_identity_uses_canonical_exact_scalars() -> None:
     )
     irrational = make(radical)
     rounded_rational = make(Fraction.from_float(float(radical)))
-    assert validity_module.cell_geometry_id(irrational) != validity_module.cell_geometry_id(
-        rounded_rational
-    )
+    assert validity_module.cell_geometry_id(
+        irrational
+    ) != validity_module.cell_geometry_id(rounded_rational)
+
 
 def test_exact_coordinate_bank_rejects_inconsistent_execution_coefficients() -> None:
     mesh = D.CellMesh(

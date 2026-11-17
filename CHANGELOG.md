@@ -257,6 +257,10 @@
 - Domain coverage prepares exact coordinate maps on demand. Coverage and cell
   validity combine shared rational coordinate bases with integer arithmetic;
   exact maps and evidence retain their previous values.
+- Cell validity batches exact-coordinate rounding checks, retaining exact
+  scalar fallback and the same recorded maximum error.
+- Affine cell validity combines exact dyadic Jacobians and determinant bounds
+  in blocks, with interval threshold screening and exact fallback.
 - CAD source bounds, analytic surface derivatives, periodic offsets, and the
   quadratic tetrahedron screen execute supported interval programs in batches.
   Their directed endpoints and exact-arithmetic fallback remain unchanged.

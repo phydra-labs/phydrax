@@ -80,6 +80,7 @@ from ..linalg import (
 )
 from ..linalg._exact import determinant_exact, determinant_small_algebra
 from ..typing import ConvertibleToArray
+from ._affine_dyadic_validity import affine_dyadic_quality
 from ._cell_complex import PolyhedralConnectivity
 from ._cell_geometry import (
     _execution_reference_arguments,
@@ -2713,11 +2714,33 @@ def _certify_source_block(
         lower[mask] = screened_lower[mask]
         upper[mask] = screened_upper[mask]
         # Direct interval proofs do not claim a reusable exact-map digest.
+    remaining = (
+        np.flatnonzero(~mask) if screened is not None else np.arange(count, dtype=np.intp)
+    )
+    coordinate_rows: dict[int, tuple[ExactScalar, ...]] | None = None
+    if isinstance(coordinates, ExactCoordinateBank) and remaining.size:
+        indices = np.unique(routes[remaining])
+        if np.all(indices >= 0) and np.all(indices < len(coordinates)):
+            coordinate_rows = dict(
+                zip(indices.tolist(), coordinates.rows(indices), strict=True)
+            )
+    affine_quality_rows: list[tuple[bool, Fraction] | None] = [None] * count
+    if plain_basis is not None and isinstance(coordinates, ExactCoordinateBank):
+        batch = affine_dyadic_quality(
+            plain_basis,
+            coordinates,
+            routes[remaining],
+            dimension,
+            Fraction(policy.determinant_floor()),
+        )
+        for row, result in zip(remaining, batch, strict=True):
+            affine_quality_rows[int(row)] = result
     for row in range(routes.shape[0]):
         if screened is not None and mask[row]:
             continue
         local = tuple(
-            coordinates[int(routes[row, column])] for column in range(routes.shape[1])
+            coordinates[index] if coordinate_rows is None else coordinate_rows[index]
+            for index in routes[row].tolist()
         )
         basis = plain_basis
         expressions = (
@@ -2823,7 +2846,16 @@ def _certify_source_block(
                 apex_unique[row] = _pyramid_apex_unique(expressions, dimension)
         else:
             _, jacobian = affine
-            status[row], determinant = _affine_quality(jacobian, dimension, policy)
+            batch_quality = affine_quality_rows[row]
+            if batch_quality is None:
+                status[row], determinant = _affine_quality(jacobian, dimension, policy)
+            else:
+                valid, determinant = batch_quality
+                status[row] = (
+                    CellValidityStatus.CERTIFIED_VALID
+                    if valid
+                    else CellValidityStatus.INVALID
+                )
             lower[row] = coefficient_endpoint(determinant, upper=False, saturate=True)
             upper[row] = coefficient_endpoint(determinant, upper=True, saturate=True)
         if digest is not None:
