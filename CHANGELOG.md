@@ -249,6 +249,8 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Declared-plane facet validation indexes outward-rounded exact projected
+  source bounds, preserving the centroid proof and source-row order.
 - Source-facet coverage indexes closed facet boxes once per construction group,
   preserving bank order and retaining every degenerate facet in its proof.
 - Exact facet coverage reuses already sorted source-row spans, preserving the

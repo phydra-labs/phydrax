@@ -198,6 +198,22 @@ void affine_projection_normal(const double* plane, const std::array<double, 9>& 
     }
   }
 }
+// These two linear coordinates are constant along the projection normal.
+// Their 2D orientation equals n[axis] * n dot ((b-a) x (c-a)).
+FacetCoverageBounds projected_bounds(const Dyadic* normal, const Dyadic* point,
+                                     int axis, const Dyadic& denominator) {
+  FacetCoverageBounds result{};
+  for (int coordinate = 0; coordinate < 2; ++coordinate) {
+    const int other = (axis + 1 + coordinate) % 3;
+    const Dyadic value = normal[axis] * point[other] - normal[other] * point[axis];
+    const auto bound = exact::directed_quotient_bounds(value, denominator);
+    result.lower[coordinate] = bound.lower;
+    result.upper[coordinate] = bound.upper;
+  }
+  result.nondegenerate = true;
+  return result;
+}
+
 
 void affine_plane_vectors(const double* plane, const double* carrier,
                           const std::array<double, 9>& matrix,
@@ -797,9 +813,64 @@ int32_t TetMesh::install_declared_planes(std::span<const double> planes,
   return PHX_MC_OK;
 }
 
+bool TetMesh::prepare_declared_group(const DeclaredGroup& declared,
+                                    PreparedFacetGroup& group) const {
+  if (declared.rows.empty() || declared.rows.size() != group.rows.size()) return false;
+  for (std::size_t row = 0; row < group.rows.size(); ++row) {
+    if (declared.rows[row] < 0 ||
+        static_cast<std::size_t>(declared.rows[row]) != group.rows[row]) return false;
+  }
+  const double* plane = face_plane(declared.rows.front());
+  if (plane == nullptr) return false;
+  Dyadic normal[3];
+  if (metric_active_) {
+    affine_projection_normal(plane, metric_, normal);
+  } else {
+    Expansion expansion[3];
+    plane_normal(plane, expansion);
+    for (int axis = 0; axis < 3; ++axis) normal[axis] = exact::to_dyadic(expansion[axis]);
+  }
+  int projection_axis = 0;
+  while (projection_axis < 3 && normal[projection_axis].sign() == 0) ++projection_axis;
+  if (projection_axis == 3) return false;
+
+  // Every declared row has a nonzero projected orientation, established by
+  // install_declared_planes. Bound its three exact projected vertices once.
+  std::unordered_map<std::int32_t, FacetCoverageBounds> vertices;
+  vertices.reserve(group.rows.size());
+  group.bounds.clear();
+  group.bounds.reserve(group.rows.size());
+  const Dyadic unit(1.0);
+  for (const auto& face : group.primitives) {
+    FacetCoverageBounds box{};
+    for (int corner = 0; corner < 3; ++corner) {
+      const std::int32_t vertex = face[corner];
+      auto [found, inserted] = vertices.try_emplace(vertex);
+      if (inserted) {
+        const double* point = source_points_.data() + 3 * static_cast<std::size_t>(vertex);
+        const Dyadic exact_point[3]{Dyadic(point[0]), Dyadic(point[1]), Dyadic(point[2])};
+        found->second = projected_bounds(normal, exact_point, projection_axis, unit);
+      }
+      if (corner == 0) {
+        box = found->second;
+      } else {
+        for (int coordinate = 0; coordinate < 2; ++coordinate) {
+          box.lower[coordinate] = std::min(box.lower[coordinate], found->second.lower[coordinate]);
+          box.upper[coordinate] = std::max(box.upper[coordinate], found->second.upper[coordinate]);
+        }
+      }
+    }
+    group.bounds.push_back(box);
+  }
+  if (!group.coverage_index.build(group.primitives, group.indices, group.bounds)) return false;
+  group.declared_projection_axis = projection_axis;
+  return true;
+}
+
 bool TetMesh::declared_face_valid(const DeclaredGroup& group, const double* const* carriers,
                                   const SourceWitness* const* witness_records,
-                                  std::int8_t orientation) const {
+                                  std::int8_t orientation,
+                                  const PreparedFacetGroup* prepared) const {
   // Every corner has an admitted record on the plane; the exact positions,
   // projected onto the plane, form a triangle of the facet's orientation that
   // the union of the group's rows covers: no edge of the union's boundary
@@ -839,7 +910,7 @@ bool TetMesh::declared_face_valid(const DeclaredGroup& group, const double* cons
   for (int axis = 0; axis < 3; ++axis) {
     sum[axis] = corners[0][axis] + corners[1][axis] + corners[2][axis];
   }
-  for (std::int32_t row : group.rows) {
+  const auto contains_centroid = [&](std::int32_t row) {
     const double* points[3];
     for (int corner = 0; corner < 3; ++corner) {
       points[corner] = source_points_.data() +
@@ -860,7 +931,27 @@ bool TetMesh::declared_face_valid(const DeclaredGroup& group, const double* cons
       inside = (metric_active_ ? triple_sign(physical_normal, along, toward)
                                : triple_sign(normal, along, toward)) >= 0;
     }
-    if (inside) return true;
+    return inside;
+  };
+  if (prepared != nullptr && prepared->declared_projection_axis >= 0 &&
+      prepared->coverage_index.valid()) {
+    Dyadic exact_normal[3];
+    Dyadic exact_sum[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      exact_normal[axis] = metric_active_ ? physical_normal[axis] : exact::to_dyadic(normal[axis]);
+      exact_sum[axis] = exact::to_dyadic(sum[axis]);
+    }
+    const auto centroid = projected_bounds(exact_normal, exact_sum,
+                                            prepared->declared_projection_axis, Dyadic(3.0));
+    prepared->coverage_index.candidates(centroid.lower, centroid.upper,
+                                        prepared->coverage_scratch);
+    for (std::size_t candidate : prepared->coverage_scratch) {
+      if (contains_centroid(group.rows[candidate])) return true;
+    }
+    return false;
+  }
+  for (std::int32_t row : group.rows) {
+    if (contains_centroid(row)) return true;
   }
   return false;
 }
@@ -945,7 +1036,7 @@ bool TetMesh::source_face_valid(const TetEditFacet& facet,
         return false;
       }
     }
-    return declared_face_valid(declared->second, carriers, witness_records, facet.orientation);
+    return declared_face_valid(declared->second, carriers, witness_records, facet.orientation, group);
   }
 
   PreparedFacetGroup local;

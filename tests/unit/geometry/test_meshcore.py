@@ -603,7 +603,11 @@ def test_triangle_dual_quads_validates_and_preserves_shared_node_ids() -> None:
 
 
 def _declared_unit_tet(
-    plane: np.ndarray, tolerance: float, initial_vertex_sizes: object | None = None
+    plane: np.ndarray,
+    tolerance: float,
+    initial_vertex_sizes: object | None = None,
+    *,
+    affine_metric: np.ndarray | None = None,
 ) -> TetMesh3D:
     # Face row 3 (z = 0) declares `plane`; the other rows declare none.
     faces = np.asarray(((1, 3, 2), (0, 2, 3), (0, 3, 1), (0, 1, 2)), dtype=np.int32)
@@ -636,8 +640,33 @@ def _declared_unit_tet(
         np.empty((0,), dtype=np.int64),
         boundary_policy=PlcBoundaryPolicy.CONFORMING,
         initial_vertex_sizes=initial_vertex_sizes,
+        affine_metric=affine_metric,
         source=source,
     )
+
+
+@pytest.mark.parametrize(
+    "metric",
+    (
+        None,
+        np.asarray(((1.0, 0.3, 0.2), (0.0, 1.0, 0.4), (0.0, 0.0, 1.0)), dtype=np.float64),
+        np.asarray(((-1.0, 0.25, 0.0), (0.0, 2.0, 0.1), (0.0, 0.0, 1.0)), dtype=np.float64),
+    ),
+)
+def test_declared_facet_coverage_retains_plane_records_with_affine_metrics(
+    metric: np.ndarray | None,
+) -> None:
+    plane = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)), dtype=np.float64
+    )
+    with _declared_unit_tet(plane, 0.0, affine_metric=metric) as state:
+        np.testing.assert_array_equal(state.arrays().points, UNIT_TET)
+        records = state.plane_records()
+        np.testing.assert_array_equal(
+            np.sort(records.vertex_ids), np.asarray((0, 1, 2), dtype=np.uint64)
+        )
+        np.testing.assert_array_equal(records.face_rows, np.full((3,), 3, dtype=np.int32))
+        np.testing.assert_array_equal(records.deviations, np.zeros((3,), dtype=np.float64))
 
 
 def test_tet_mesh_preserves_interleaved_source_facet_groups() -> None:

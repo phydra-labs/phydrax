@@ -537,7 +537,8 @@ int32_t TetMesh::build_state(std::span<const double> points,
       const bool implicit = implicit_source_ &&
           std::binary_search(implicit_source_->groups.begin(), implicit_source_->groups.end(),
                              source);
-      group.prepare_bounds = !implicit && !declared_groups_.contains(source);
+      group.prepare_declared = !implicit && declared_groups_.contains(source);
+      group.prepare_bounds = !implicit && !group.prepare_declared;
     }
     group.rows.push_back(row);
     group.primitives.push_back({source_faces_[3 * row], source_faces_[3 * row + 1],
@@ -552,8 +553,10 @@ int32_t TetMesh::build_state(std::span<const double> points,
     }
   }
   for (auto& [source, group] : source_groups) {
-    (void)source;
-    if (group.prepare_bounds) {
+    if (group.prepare_declared) {
+      const auto declared = declared_groups_.find(source);
+      if (declared != declared_groups_.end()) prepare_declared_group(declared->second, group);
+    } else if (group.prepare_bounds) {
       group.coverage_index.build(group.primitives, group.indices, group.bounds);
     }
   }
