@@ -251,6 +251,8 @@
 ### Changed
 - Cell validity prepares dyadic source-coordinate endpoints and point-rounding
   bounds in blocks while retaining exact fallback and unchanged certificate bits.
+- Source-chart interpolation prepares dyadic target combinations and coordinate
+  endpoint enclosures in blocks, preserving exact cancellation and chart evidence.
 - Boundary proofs reuse already evaluated exact facet lattice points within
   the bounded live proof, preserving findings and evidence identities.
 - Embedding preparation reuses each simplex block's exact reference frame,
