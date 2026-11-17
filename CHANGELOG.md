@@ -249,6 +249,7 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- B-Rep edge projection prepares exact line and circle distance data and arc endpoint enclosures once per edge, preserving results and certified bounds.
 - Torus projection prepares face-constant exact distance bounds once per
   projection operation without changing evidence or result identities.
 - Native B-rep projection reuses a query-independent coarse trim chord plan

@@ -510,6 +510,48 @@ def test_circle_edge_frames_preserve_identity_across_batch_sizes() -> None:
     assert isolated.result_id == single.result_id
 
 
+def test_edge_distance_bounds_are_independent_of_batch_order() -> None:
+    from phydrax.geometry.brep._patches import CircleCurve, LineCurve
+
+    model = brep_cylinder(1.7, 2.0, axis=(1.0, 0.0, 0.0), coordinate_contract=_CONTRACT)
+    geometry = model.geometry
+    edges = [
+        next(
+            index
+            for index, carrier in enumerate(geometry.edge_curves)
+            if carrier >= 0 and isinstance(geometry.curves[carrier], kind)
+        )
+        for kind in (CircleCurve, LineCurve)
+    ]
+    projection = phx.geometry.prepare_brep_projection(model)
+    points = np.asarray(
+        ((0.1, 2.1, 0.4), (0.9, 1.9, -0.3), (1.2, -2.0, 0.7), (0.3, 1.8, 0.0))
+    )
+    indices = np.asarray((edges[0], edges[1], edges[0], edges[1]))
+    dimensions = np.full(len(points), int(_EDGE))
+    reference = [
+        projection.project(points[i : i + 1], dimensions[i : i + 1], indices[i : i + 1])
+        for i in range(len(points))
+    ]
+    for order in ((0, 1, 2, 3), (3, 2, 1, 0), (2, 0, 3, 1, 2)):
+        rows = np.asarray(order)
+        result = projection.project(points[rows], dimensions[rows], indices[rows])
+        for row, original in enumerate(order):
+            for name in (
+                "points",
+                "parameters",
+                "status",
+                "distance_lower_bounds",
+                "residuals",
+                "normals",
+                "tangents",
+            ):
+                np.testing.assert_array_equal(
+                    np.asarray(getattr(result, name))[row],
+                    np.asarray(getattr(reference[original], name))[0],
+                )
+
+
 def test_trimmed_circle_endpoint_projection_is_batch_independent() -> None:
     from phydrax.geometry.brep._constructors import (
         brep_extrusion,
