@@ -9,7 +9,7 @@ from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
-from functools import partial
+from functools import lru_cache, partial
 from math import atan2, gcd, lcm, tau, ulp
 from typing import cast, final, Literal, overload
 
@@ -43,6 +43,145 @@ from ...discretization._exact_algebraic_geometry import (
 )
 from ...typing import ConvertibleToArray, Dim, Float64, Scalar
 from .._interval_enclosure import Interval, PreparedIntervalFunction
+
+
+@lru_cache(maxsize=1)
+def _cylinder_rail_program() -> PreparedIntervalFunction | None:
+    from .._interval_enclosure import IntervalExtensionError, prepare_interval_function
+
+    def evaluate(values: Array, /) -> Array:
+        angle, height = values[0], values[1]
+        origin, cosine, sine, axis = (
+            values[2:5],
+            values[5:8],
+            values[8:11],
+            values[11:14],
+        )
+        radial = cosine * jnp.cos(angle) + sine * jnp.sin(angle)
+        return (origin + radial) + axis * height
+
+    try:
+        return prepare_interval_function(
+            evaluate, 14, batch_capacity=1, execution="batched"
+        )
+    except IntervalExtensionError:
+        return None
+
+
+@lru_cache(maxsize=2)
+def _revolution_line_program(derivative: bool, /) -> PreparedIntervalFunction | None:
+    from .._interval_enclosure import IntervalExtensionError, prepare_interval_function
+
+    def evaluate(values: Array, /) -> Array:
+        angle, axis = values[0], values[1:4]
+        radial, tangent = values[4:7], values[7:10]
+        axial, origin = values[10], values[11:14]
+
+        def cross(vector: Array, /) -> Array:
+            return jnp.stack(
+                (
+                    axis[1] * vector[2] - axis[2] * vector[1],
+                    axis[2] * vector[0] - axis[0] * vector[2],
+                    axis[0] * vector[1] - axis[1] * vector[0],
+                )
+            )
+
+        cosine, sine = jnp.cos(angle), jnp.sin(angle)
+        # Negating interval endpoints is exact in the reference, whereas a
+        # traced neg primitive widens them; receive that interval separately.
+        if not derivative:
+            return origin + ((axis * axial + radial * cosine) + cross(radial) * sine)
+        along = radial * values[14] + cross(radial) * cosine
+        profile = (axis * axial + tangent * cosine) + cross(tangent) * sine
+        return jnp.stack((along, profile), axis=-1)
+
+    try:
+        return prepare_interval_function(
+            evaluate, 14 + int(derivative), batch_capacity=1, execution="batched"
+        )
+    except IntervalExtensionError:
+        return None
+
+
+@lru_cache(maxsize=2)
+def _revolution_circle_program(derivative: bool, /) -> PreparedIntervalFunction | None:
+    from .._interval_enclosure import IntervalExtensionError, prepare_interval_function
+
+    def evaluate(values: Array, /) -> Array:
+        angle, profile_angle = values[0], values[1]
+        origin, axis = values[2:5], values[5:8]
+        center, cosine_coeff, sine_coeff = values[8:11], values[11:14], values[14:17]
+        negative_cosine_coeff = values[17:20]
+        pc, ps = jnp.cos(profile_angle), jnp.sin(profile_angle)
+        relative = center + cosine_coeff * pc + sine_coeff * ps
+        tangent = negative_cosine_coeff * ps + sine_coeff * pc
+
+        def cross(vector: Array, /) -> Array:
+            return jnp.stack(
+                (
+                    axis[1] * vector[2] - axis[2] * vector[1],
+                    axis[2] * vector[0] - axis[0] * vector[2],
+                    axis[0] * vector[1] - axis[1] * vector[0],
+                )
+            )
+
+        axial = ((0.0 + axis[0] * relative[0]) + axis[1] * relative[1]) + axis[
+            2
+        ] * relative[2]
+        c, s = jnp.cos(angle), jnp.sin(angle)
+        if not derivative:
+            rotated = (relative * c + cross(relative) * s) + (axis * axial) * (1.0 - c)
+            return origin + rotated
+        axial_tangent = ((0.0 + axis[0] * tangent[0]) + axis[1] * tangent[1]) + axis[
+            2
+        ] * tangent[2]
+        along = (relative * values[20] + cross(relative) * c) + (axis * axial) * s
+        profile = (tangent * c + cross(tangent) * s) + (axis * axial_tangent) * (1.0 - c)
+        return jnp.stack((along, profile), axis=-1)
+
+    try:
+        return prepare_interval_function(
+            evaluate, 20 + int(derivative), batch_capacity=1, execution="batched"
+        )
+    except IntervalExtensionError:
+        return None
+
+
+def _revolution_circle_inputs(
+    box: np.ndarray,
+    origin: tuple[ExactScalar, ...],
+    axis: tuple[ExactScalar, ...],
+    center: tuple[ExactScalar, ...],
+    cosine: tuple[ExactScalar, ...],
+    sine: tuple[ExactScalar, ...],
+    negative_sine: Interval | None = None,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    from .._rational import fraction_down, fraction_up
+
+    coefficients = (
+        origin + axis + center + cosine + sine + tuple(-value for value in cosine)
+    )
+    bounds = tuple(coefficient_interval(value, bits=128) for value in coefficients)
+    lower = [*box[0], *(fraction_down(value[0]) for value in bounds)]
+    upper = [*box[1], *(fraction_up(value[1]) for value in bounds)]
+    if negative_sine is not None:
+        lower.append(float(negative_sine[0]))
+        upper.append(float(negative_sine[1]))
+    return np.asarray([lower]), np.asarray([upper])
+
+
+def _prepare_bounds_program(
+    function: Callable[[Array], Array], dimension: int, /
+) -> PreparedIntervalFunction:
+    from .._interval_enclosure import IntervalExtensionError, prepare_interval_function
+
+    try:
+        return prepare_interval_function(
+            function, dimension, batch_capacity=1, execution="batched"
+        )
+    except IntervalExtensionError:
+        return prepare_interval_function(function, dimension, batch_capacity=1)
 
 
 type _ExactSphereRevolutionWitness = tuple[
@@ -577,7 +716,6 @@ class AbstractCurve(StrictModule):
 
     def bounding_box(self, first: float, last: float, /) -> np.ndarray:
         """Enclose the represented source map, without substituting samples."""
-        from .._interval_enclosure import prepare_interval_function
         from ._root_bindings import _source_coefficients_are_binary
 
         if not _source_coefficients_are_binary(self):
@@ -590,7 +728,7 @@ class AbstractCurve(StrictModule):
         def value(parameter: Array, /) -> Array:
             return self.evaluate(parameter[0])
 
-        prepared = prepare_interval_function(value, 1)
+        prepared = _prepare_bounds_program(value, 1)
         lower, upper = prepared.evaluate(
             np.asarray(((first,),), dtype=np.float64),
             np.asarray(((last,),), dtype=np.float64),
@@ -916,6 +1054,8 @@ def _conic_curve_bounds(
 
     lower: list[float] = []
     upper: list[float] = []
+    # These sums and products are rational/algebraic proof operations; compiling
+    # their rounded shadows as floating-point intervals would change endpoints.
     for center_value, cosine_value, sine_value in zip(center, cosine, sine, strict=True):
         center_range = coefficient_interval(center_value)
         cosine_coefficient = coefficient_interval(cosine_value)
@@ -927,6 +1067,23 @@ def _conic_curve_bounds(
         lower.append(fraction_down(low))
         upper.append(fraction_up(high))
     return np.stack((np.asarray(lower), np.asarray(upper)))
+
+
+@lru_cache(maxsize=2)
+def _circle_derivative_program(dimension: int, /) -> PreparedIntervalFunction | None:
+    from .._interval_enclosure import IntervalExtensionError, prepare_interval_function
+
+    def derivative(values: Array, /) -> Array:
+        return values[1 : 1 + dimension] * jnp.sin(values[0]) + values[
+            1 + dimension :
+        ] * jnp.cos(values[0])
+
+    try:
+        return prepare_interval_function(
+            derivative, 1 + 2 * dimension, batch_capacity=1, execution="batched"
+        )
+    except IntervalExtensionError:
+        return None
 
 
 class CircleCurve(AbstractCurve):
@@ -1050,6 +1207,26 @@ class CircleCurve(AbstractCurve):
             interval_sin,
         )
         from .._rational import fraction_down, fraction_up
+
+        program = _circle_derivative_program(self.ambient_dimension)
+        if program is not None:
+            coefficients = tuple(
+                coefficient_interval(value)
+                for value in (
+                    *(-self.radius_exact * value for value in self.first_axis_exact),
+                    *(self.radius_exact * value for value in self.second_axis_exact),
+                )
+            )
+            lower_input = np.asarray(
+                [[first, *(fraction_down(value[0]) for value in coefficients)]],
+                dtype=np.float64,
+            )
+            upper_input = np.asarray(
+                [[last, *(fraction_up(value[1]) for value in coefficients)]],
+                dtype=np.float64,
+            )
+            lower, upper = program.evaluate(lower_input, upper_input)
+            return lower[0], upper[0]
 
         cosine = interval_cos((np.asarray(first), np.asarray(last)))
         sine = interval_sin((np.asarray(first), np.asarray(last)))
@@ -1704,6 +1881,35 @@ class OffsetCurve(AbstractCurve):
         }
 
 
+@lru_cache(maxsize=1)
+def _ruled_blend_program() -> PreparedIntervalFunction | None:
+    """Compile only the interval arithmetic, leaving exact rail bounds authoritative."""
+    from .._interval_enclosure import IntervalExtensionError, prepare_interval_function
+
+    def blend(values: Array, /) -> Array:
+        return (1.0 - values[0]) * values[1:4] + values[0] * values[4:7]
+
+    try:
+        return prepare_interval_function(blend, 7, batch_capacity=1, execution="batched")
+    except IntervalExtensionError:
+        return None
+
+
+def _ruled_blend(v: Interval, first: Interval, second: Interval, /) -> Interval:
+    from .._interval_enclosure import interval_add, interval_multiply, interval_subtract
+
+    program = _ruled_blend_program()
+    if program is not None:
+        lower = np.concatenate((np.reshape(v[0], (1,)), first[0], second[0]))[None, :]
+        upper = np.concatenate((np.reshape(v[1], (1,)), first[1], second[1]))[None, :]
+        result = program.evaluate(lower, upper)
+        return result[0][0], result[1][0]
+    complement = interval_subtract((np.asarray(1.0), np.asarray(1.0)), v)
+    return interval_add(
+        interval_multiply(complement, first), interval_multiply(v, second)
+    )
+
+
 @final
 class RuledSurface(AbstractSurfacePatch):
     """Linear interpolation between two space curves with one shared u parameter."""
@@ -1804,17 +2010,10 @@ class RuledSurface(AbstractSurfacePatch):
                 raise ValueError(
                     "Ruled source interval may cross only one exact v-domain boundary."
                 )
-        from .._interval_enclosure import (
-            interval_add,
-            interval_multiply,
-            interval_subtract,
-        )
-
         v_interval = (np.asarray(v_lower), np.asarray(v_upper))
-        complement = interval_subtract((np.asarray(1.0), np.asarray(1.0)), v_interval)
-        first_part = interval_multiply(complement, (first[0], first[1]))
-        second_part = interval_multiply(v_interval, (second[0], second[1]))
-        lower, upper = interval_add(first_part, second_part)
+        lower, upper = _ruled_blend(
+            v_interval, (first[0], first[1]), (second[0], second[1])
+        )
         if convex:
             lower = np.maximum(lower, np.minimum(first[0], second[0]))
             upper = np.minimum(upper, np.maximum(first[1], second[1]))
@@ -1916,6 +2115,40 @@ class RuledSurface(AbstractSurfacePatch):
                 )
                 angle = (chart[0, 0], chart[1, 0])
                 height = (chart[0, 1], chart[1, 1])
+                program = _cylinder_rail_program()
+                if program is not None:
+                    coefficients = (
+                        *patch.origin_exact,
+                        *(patch.radius_exact * value for value in patch.first_axis_exact),
+                        *(
+                            patch.radius_exact * value
+                            for value in patch.second_axis_exact
+                        ),
+                        *patch.axis_exact,
+                    )
+                    intervals = tuple(exact_interval(value) for value in coefficients)
+                    lower_input = np.asarray(
+                        [
+                            [
+                                angle[0],
+                                height[0],
+                                *(float(value[0]) for value in intervals),
+                            ]
+                        ],
+                        dtype=np.float64,
+                    )
+                    upper_input = np.asarray(
+                        [
+                            [
+                                angle[1],
+                                height[1],
+                                *(float(value[1]) for value in intervals),
+                            ]
+                        ],
+                        dtype=np.float64,
+                    )
+                    lower, upper = program.evaluate(lower_input, upper_input)
+                    return np.stack((lower[0], upper[0]))
                 cosine = interval_cos((np.asarray(angle[0]), np.asarray(angle[1])))
                 sine = interval_sin((np.asarray(angle[0]), np.asarray(angle[1])))
                 lower: list[float] = []
@@ -1994,17 +2227,11 @@ class RuledSurface(AbstractSurfacePatch):
 
             if not _source_coefficients_are_binary(self):
                 raise
-            from .._interval_enclosure import prepare_interval_function
-
-            prepared = prepare_interval_function(jax.jacfwd(self.evaluate), 2)
+            prepared = _prepare_bounds_program(jax.jacfwd(self.evaluate), 2)
             lower, upper = prepared.evaluate(box[0:1], box[1:2])
             return lower[0], upper[0]
         v = (np.asarray(box[0, 1]), np.asarray(box[1, 1]))
-        complement = interval_subtract((np.asarray(1.0), np.asarray(1.0)), v)
-        along = interval_add(
-            interval_multiply(complement, first_derivative),
-            interval_multiply(v, second_derivative),
-        )
+        along = _ruled_blend(v, first_derivative, second_derivative)
         across = interval_subtract(
             (second_box[0], second_box[1]), (first_box[0], first_box[1])
         )
@@ -2222,6 +2449,18 @@ class RevolutionSurface(AbstractSurfacePatch):
                 profile.radius_exact * profile.second_axis_exact[index]
                 for index in range(3)
             )
+            program = _revolution_circle_program(False)
+            if program is not None:
+                inputs = _revolution_circle_inputs(
+                    box,
+                    axis_origin,
+                    axis,
+                    profile_relative_center,
+                    profile_cosine_exact,
+                    profile_sine_exact,
+                )
+                lower, upper = program.evaluate(*inputs)
+                return np.stack((lower[0], upper[0]))
             profile_angle = (
                 np.asarray(box[0, 1], dtype=np.float64),
                 np.asarray(box[1, 1], dtype=np.float64),
@@ -2354,6 +2593,21 @@ class RevolutionSurface(AbstractSurfacePatch):
                 )
             )
         axis_intervals = tuple(exact_interval(value) for value in axis)
+        program = _revolution_line_program(False)
+        if program is not None:
+            inputs = (
+                (np.asarray(box[0, 0]), np.asarray(box[1, 0])),
+                *axis_intervals,
+                *radial,
+                *((np.asarray(0.0), np.asarray(0.0)),) * 3,
+                axial,
+                *(exact_interval(value) for value in axis_origin),
+            )
+            lower, upper = program.evaluate(
+                np.asarray([[float(value[0]) for value in inputs]]),
+                np.asarray([[float(value[1]) for value in inputs]]),
+            )
+            return np.stack((lower[0], upper[0]))
         cross_axis = (
             interval_subtract(
                 interval_multiply(axis_intervals[1], radial[2]),
@@ -2461,6 +2715,20 @@ class RevolutionSurface(AbstractSurfacePatch):
                 profile.radius_exact * profile.second_axis_exact[index]
                 for index in range(3)
             )
+            program = _revolution_circle_program(True)
+            if program is not None:
+                angle_sine = interval_sin((np.asarray(box[0, 0]), np.asarray(box[1, 0])))
+                inputs = _revolution_circle_inputs(
+                    box,
+                    origin_exact,
+                    axis_exact,
+                    relative_center,
+                    cosine_coefficients,
+                    sine_coefficients,
+                    (-np.asarray(angle_sine[1]), -np.asarray(angle_sine[0])),
+                )
+                lower, upper = program.evaluate(*inputs)
+                return lower[0], upper[0]
             profile_angle = (np.asarray(box[0, 1]), np.asarray(box[1, 1]))
             profile_cosine = array_interval(interval_cos(profile_angle))
             profile_sine = array_interval(interval_sin(profile_angle))
@@ -2626,6 +2894,23 @@ class RevolutionSurface(AbstractSurfacePatch):
                     radial_direction[component]
                 )
             axial_tangent = exact_interval(axial_direction)
+            program = _revolution_line_program(True)
+            if program is not None:
+                angle_sine = interval_sin((np.asarray(box[0, 0]), np.asarray(box[1, 0])))
+                inputs = (
+                    (box[0, 0], box[1, 0]),
+                    *((value, value) for value in axis),
+                    *zip(radial_lower, radial_upper, strict=True),
+                    *zip(tangent_lower, tangent_upper, strict=True),
+                    axial_tangent,
+                    *((0.0, 0.0),) * 3,
+                    (-np.asarray(angle_sine[1]), -np.asarray(angle_sine[0])),
+                )
+                lower, upper = program.evaluate(
+                    np.asarray([[value[0] for value in inputs]]),
+                    np.asarray([[value[1] for value in inputs]]),
+                )
+                return lower[0], upper[0]
 
         def cross_axis(
             vector_lower: np.ndarray, vector_upper: np.ndarray, /
