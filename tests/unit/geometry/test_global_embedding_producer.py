@@ -451,6 +451,28 @@ def test_strict_simplex_separation_distinguishes_overlap() -> None:
     assert not embedding._strict_image_separation(first, overlapping, {})
 
 
+@pytest.mark.parametrize("ulps", (1, 2, 4))
+def test_strict_diagonal_separation_near_touching(ulps: int) -> None:
+    import phydrax.geometry._global_embedding as embedding
+
+    u, v = axes(2)
+    first = embedding._root_reference_cell("triangle", (u, v), 1)
+    half = constant(Fraction(1, 2), 2)
+    gap = constant(Fraction(1, 2) + Fraction(ulps, 2**52), 2)
+    separated = embedding._root_reference_cell("triangle", (add(u, half), add(v, gap)), 2)
+    touching = embedding._root_reference_cell("triangle", (add(u, half), add(v, half)), 3)
+    assert first is not None and separated is not None and touching is not None
+    for axis in range(2):
+        assert first.image_lower[axis] <= separated.image_upper[axis]
+        assert separated.image_lower[axis] <= first.image_upper[axis]
+    assert max(sum(point) for point in first.corner_images) == 1
+    assert min(sum(point) for point in separated.corner_images) == 1 + Fraction(
+        ulps, 2**52
+    )
+    assert embedding._strict_image_separation(first, separated, {})
+    assert not embedding._strict_image_separation(first, touching, {})
+
+
 def _radical_linear_tetra_geometry(
     exact_coordinates: tuple[tuple[ExactScalar, ...], ...],
     cells: tuple[tuple[int, int, int, int], ...],
