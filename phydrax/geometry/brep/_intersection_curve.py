@@ -764,6 +764,7 @@ class _CylinderGraphPreparation:
 
     family: _OrthogonalCylinderFamily
     constants: tuple[Any, ...]
+    angles: tuple[Any, ...]
     bounds: dict[tuple[str, str, int, str], tuple[np.ndarray, np.ndarray] | None]
     derivatives: dict[tuple[str, str, int], tuple[np.ndarray, np.ndarray] | None]
 
@@ -781,7 +782,19 @@ class _CylinderGraphPreparation:
             context.mpf(value.numerator) / context.mpf(value.denominator)
             for value in values
         )
-        return cls(family, constants, {}, {})
+        large_first = cast(tuple[Fraction, ...], family.large.first_axis_exact)
+        large_second = cast(tuple[Fraction, ...], family.large.second_axis_exact)
+        small_axis = cast(tuple[Fraction, ...], family.small.axis_exact)
+        angle_values = tuple(
+            sum((a * b for a, b in zip(axis, frame, strict=True)), Fraction(0))
+            for frame in (large_first, large_second)
+            for axis in (small_axis, family.normal)
+        )
+        angles = tuple(
+            context.mpf(value.numerator) / context.mpf(value.denominator)
+            for value in angle_values
+        )
+        return cls(family, constants, angles, {}, {})
 
 
 def orthogonal_cylinder_graph_bounds(
@@ -807,29 +820,30 @@ def orthogonal_cylinder_graph_bounds(
     large, small = family.large, family.small
     if not isinstance(large, CylinderPatch) or not isinstance(small, CylinderPatch):
         return None
-    large_first = cast(tuple[Fraction, ...], large.first_axis_exact)
-    large_second = cast(tuple[Fraction, ...], large.second_axis_exact)
-    small_axis = cast(tuple[Fraction, ...], small.axis_exact)
-    cosine_angle = (
-        sum(
-            (a * b for a, b in zip(small_axis, large_first, strict=True)),
-            Fraction(0),
-        ),
-        sum(
-            (a * b for a, b in zip(family.normal, large_first, strict=True)),
-            Fraction(0),
-        ),
-    )
-    sine_angle = (
-        sum(
-            (a * b for a, b in zip(small_axis, large_second, strict=True)),
-            Fraction(0),
-        ),
-        sum(
-            (a * b for a, b in zip(family.normal, large_second, strict=True)),
-            Fraction(0),
-        ),
-    )
+    if prepared is None:
+        large_first = cast(tuple[Fraction, ...], large.first_axis_exact)
+        large_second = cast(tuple[Fraction, ...], large.second_axis_exact)
+        small_axis = cast(tuple[Fraction, ...], small.axis_exact)
+        cosine_angle = (
+            sum(
+                (a * b for a, b in zip(small_axis, large_first, strict=True)),
+                Fraction(0),
+            ),
+            sum(
+                (a * b for a, b in zip(family.normal, large_first, strict=True)),
+                Fraction(0),
+            ),
+        )
+        sine_angle = (
+            sum(
+                (a * b for a, b in zip(small_axis, large_second, strict=True)),
+                Fraction(0),
+            ),
+            sum(
+                (a * b for a, b in zip(family.normal, large_second, strict=True)),
+                Fraction(0),
+            ),
+        )
     context = interval_context(80)
 
     def scalar(value: Fraction) -> Any:
@@ -842,16 +856,23 @@ def orthogonal_cylinder_graph_bounds(
     last_parameter = Fraction.from_float(float(theta_upper))
     theta = interval(first_parameter, last_parameter)
     cosine, sine = context.cos(theta), context.sin(theta)
-    constants = (
-        _CylinderGraphPreparation.create(family).constants
-        if prepared is None
-        else prepared.constants
-    )
-    (
-        radius_large, radius_small, delta_n, delta_a, delta_b,
-        normal_cosine, normal_sine, axial_cosine, axial_sine,
-        large_slope, small_slope,
-    ) = constants
+    if prepared is None:
+        radius_large = scalar(family.large_radius)
+        radius_small = scalar(family.small_radius)
+        delta_n = scalar(family.delta_n)
+        delta_a = scalar(family.delta_large_axis)
+        delta_b = scalar(family.delta_small_axis)
+        normal_cosine, normal_sine = (
+            scalar(value) for value in family.small_normal_coefficients
+        )
+        axial_cosine, axial_sine = (
+            scalar(value) for value in family.small_large_axis_coefficients
+        )
+    else:
+        (
+            radius_large, radius_small, delta_n, delta_a, delta_b,
+            normal_cosine, normal_sine, axial_cosine, axial_sine, _, _,
+        ) = prepared.constants
     radial_n = delta_n + radius_small * (normal_cosine * cosine + normal_sine * sine)
     axial = delta_a + radius_small * (axial_cosine * cosine + axial_sine * sine)
     radicand = radius_large**2 - radial_n**2
@@ -875,12 +896,13 @@ def orthogonal_cylinder_graph_bounds(
     midpoint_x = context.sqrt(midpoint_radicand)
     if branch_sign < 0:
         midpoint_x = -midpoint_x
-    cosine_phi = (
-        scalar(cosine_angle[0]) * midpoint_x + scalar(cosine_angle[1]) * midpoint_n
-    ) / radius_large
-    sine_phi = (
-        scalar(sine_angle[0]) * midpoint_x + scalar(sine_angle[1]) * midpoint_n
-    ) / radius_large
+    if prepared is None:
+        c0, c1 = scalar(cosine_angle[0]), scalar(cosine_angle[1])
+        s0, s1 = scalar(sine_angle[0]), scalar(sine_angle[1])
+    else:
+        c0, c1, s0, s1 = prepared.angles
+    cosine_phi = (c0 * midpoint_x + c1 * midpoint_n) / radius_large
+    sine_phi = (s0 * midpoint_x + s1 * midpoint_n) / radius_large
     phi_midpoint = context.atan2(sine_phi, cosine_phi)
     phi_numeric = 0.5 * (float(phi_midpoint.a) + float(phi_midpoint.b))
     turns = round((first_angle_reference - phi_numeric) / math.tau)
@@ -889,6 +911,11 @@ def orthogonal_cylinder_graph_bounds(
     radial_n_derivative = radius_small * (-normal_cosine * sine + normal_sine * cosine)
     phi_derivative = radial_n_derivative / radial_large
     phi = phi_midpoint + phi_derivative * (theta - theta_midpoint)
+    if prepared is None:
+        large_slope = scalar(family.source_slopes[family.large_index])
+        small_slope = scalar(family.source_slopes[family.small_index])
+    else:
+        large_slope, small_slope = prepared.constants[-2:]
     large_profile = axial / large_slope
     small_profile = small_height / small_slope
     source_intervals = (
@@ -1169,16 +1196,21 @@ def orthogonal_cylinder_graph_derivative_bounds(
     last_parameter = Fraction.from_float(float(theta_upper))
     theta = interval(first_parameter, last_parameter)
     cosine, sine = context.cos(theta), context.sin(theta)
-    constants = (
-        _CylinderGraphPreparation.create(family).constants
-        if prepared is None
-        else prepared.constants
-    )
-    (
-        radius_large, radius_small, delta_n, _, _,
-        normal_cosine, normal_sine, axial_cosine, axial_sine,
-        large_slope, small_slope,
-    ) = constants
+    if prepared is None:
+        radius_large = scalar(family.large_radius)
+        radius_small = scalar(family.small_radius)
+        delta_n = scalar(family.delta_n)
+        normal_cosine, normal_sine = (
+            scalar(value) for value in family.small_normal_coefficients
+        )
+        axial_cosine, axial_sine = (
+            scalar(value) for value in family.small_large_axis_coefficients
+        )
+    else:
+        (
+            radius_large, radius_small, delta_n, _, _,
+            normal_cosine, normal_sine, axial_cosine, axial_sine, _, _,
+        ) = prepared.constants
     radial_n = delta_n + radius_small * (normal_cosine * cosine + normal_sine * sine)
     radial_n_derivative = radius_small * (-normal_cosine * sine + normal_sine * cosine)
     radicand = radius_large**2 - radial_n**2
@@ -1188,6 +1220,11 @@ def orthogonal_cylinder_graph_derivative_bounds(
     if branch_sign < 0:
         radial_large = -radial_large
     axial_derivative = radius_small * (-axial_cosine * sine + axial_sine * cosine)
+    if prepared is None:
+        large_slope = scalar(family.source_slopes[family.large_index])
+        small_slope = scalar(family.source_slopes[family.small_index])
+    else:
+        large_slope, small_slope = prepared.constants[-2:]
     derivatives = (
         radial_n_derivative / radial_large,
         axial_derivative / large_slope,

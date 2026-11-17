@@ -120,10 +120,10 @@ def _interval(ctx: Any, lo: Fraction, hi: Fraction) -> Any:
     return ctx.mpf((_scalar(ctx, lo), _scalar(ctx, hi)))
 
 
-def _poly_interval(ctx: Any, p: P, x: Any) -> Any:
-    out = _scalar(ctx, p[-1])
+def _poly_interval(p: tuple[Any, ...], x: Any) -> Any:
+    out = p[-1]
     for coefficient in reversed(p[:-1]):
-        out = out * x + _scalar(ctx, coefficient)
+        out = out * x + coefficient
     return out
 
 
@@ -805,6 +805,7 @@ class _PreparedProjection:
                 )
 
     def collect_finite_candidates(self) -> None:
+        coefficients: dict[int, tuple[tuple[Any, ...], tuple[Any, ...]]] = {}
         for index, (lo, hi, multiplicity) in enumerate(self.roots):
             width = self.tolerance
             digits = 80
@@ -818,10 +819,15 @@ class _PreparedProjection:
                 if any(lo <= cl <= ch <= hi for cl, ch, _ in shared):
                     break
                 local = interval_context(digits)
+                if digits not in coefficients:
+                    coefficients[digits] = (
+                        tuple(_scalar(local, value) for value in self.aa),
+                        tuple(_scalar(local, value) for value in self.bb),
+                    )
                 argument = _interval(local, lo, hi)
                 av, bv = (
-                    _poly_interval(local, self.aa, argument),
-                    _poly_interval(local, self.bb, argument),
+                    _poly_interval(coefficients[digits][0], argument),
+                    _poly_interval(coefficients[digits][1], argument),
                 )
                 if (av.a > 0 and bv.a > 0) or (av.b < 0 and bv.b < 0):
                     reject = True

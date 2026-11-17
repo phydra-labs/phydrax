@@ -641,6 +641,7 @@ def test_intersection_trim_projection_is_independent_of_batch_order() -> None:
         if isinstance(segment, CurveTrimSegment)
         and isinstance(segment.curve, IntersectionPCurve)
     )
+    assert isinstance(segment.curve, IntersectionPCurve)
     curve = segment.curve.curve
     point = np.asarray(curve.evaluate_coupled(0.37).point, dtype=np.float64)
     points = np.stack((point + (0.08, 0.02, 0.03), point + (-0.03, 0.05, 0.01)))
