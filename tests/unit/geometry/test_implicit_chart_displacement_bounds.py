@@ -59,7 +59,9 @@ def test_curving_trace_displacements_bound_exact_target_distances() -> None:
         )
         exact_squared = sum(
             (Fraction.from_float(float(a)) - Fraction.from_float(float(b))) ** 2
-            for a, b in zip(root, target, strict=True)
+            for a, b in zip(
+                np.asarray(root).reshape(-1), np.asarray(target).reshape(-1), strict=True
+            )
         )
         assert remaining >= 0
         assert remaining * remaining >= exact_squared
