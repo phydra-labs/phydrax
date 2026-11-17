@@ -3,6 +3,7 @@
 from fractions import Fraction
 
 import numpy as np
+import pytest
 
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry import _meshing_domain
@@ -192,6 +193,123 @@ def test_adaptive_interpolation_decides_naturally_ambiguous_bound() -> None:
         0, (smaller,), (large_budget,), preparation=preparation
     )
     assert batch == (natural_result, singleton[0])
+
+
+def test_source_point_enclosures_match_host_and_detect_inward_bounds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+
+    from phydrax.geometry._interval_native import NativeIntervalProgram
+    from phydrax.geometry.brep._patches import SpherePatch
+
+    model = brep_sphere(
+        1.0,
+        coordinate_contract=SpatialCoordinateContract.si(),
+        source_id="batched-point-enclosures",
+    )
+    preparation = SourcePreparation(MeshingDomain.from_brep(model))
+    surface = SpherePatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1)
+    program = preparation.derivative_program(surface, 0)
+    host = replace(program, execution="host", function=None)
+    rng = np.random.default_rng(8501)
+    points = rng.uniform((-2.0, -1.0), (2.0, 1.0), size=(40, 2))
+    points[0] = 0.0
+    low = points - rng.uniform(0.0, 0.1, size=points.shape)
+    high = points + rng.uniform(0.0, 0.1, size=points.shape)
+    low[0] = high[0] = 0.0
+    reference = host.evaluate(low, high)
+    batch = program.evaluate(low, high)
+    for expected, actual in zip(reference, batch, strict=True):
+        np.testing.assert_array_equal(expected.view(np.uint64), actual.view(np.uint64))
+    for start in range(0, len(points), 7):
+        part = program.evaluate(low[start : start + 7], high[start : start + 7])
+        for endpoint in range(2):
+            np.testing.assert_array_equal(
+                part[endpoint].view(np.uint64),
+                batch[endpoint][start : start + 7].view(np.uint64),
+            )
+    hessian = preparation.derivative_program(surface, 2)
+    host_hessian = replace(hessian, execution="host", function=None)
+    for expected, actual in zip(
+        host_hessian.evaluate(low, high), hessian.evaluate(low, high), strict=True
+    ):
+        np.testing.assert_array_equal(expected.view(np.uint64), actual.view(np.uint64))
+    assert batch[0][0, 0] <= 1.0 <= batch[1][0, 0]
+    original = NativeIntervalProgram.evaluate_batch
+
+    def inward(
+        self: NativeIntervalProgram,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        /,
+        *,
+        workers: int = 1,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        result_low, result_high = original(self, lower, upper, workers=workers)
+        result_high[0, 0] = np.nextafter(1.0, -np.inf)
+        return result_low, result_high
+
+    with monkeypatch.context() as patch:
+        patch.setattr(NativeIntervalProgram, "evaluate_batch", inward)
+        faulty_low, faulty_high = preparation.derivative_program(surface, 0).evaluate(
+            low[:1], high[:1]
+        )
+    assert not faulty_low[0, 0] <= 1.0 <= faulty_high[0, 0]
+
+
+def test_mapped_curve_hessian_chord_bounds_are_batch_independent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+
+    from phydrax.geometry._interval_enclosure import PreparedIntervalFunction
+    from phydrax.geometry.brep._patches import LineCurve, SpherePatch
+    from phydrax.meshing.providers._native_surface import _second_order_chord_bound
+
+    model = brep_sphere(
+        1.0, coordinate_contract=SpatialCoordinateContract.si(), source_id="chord-batch"
+    )
+    preparation = SourcePreparation(MeshingDomain.from_brep(model))
+    surface = SpherePatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1)
+    curve = LineCurve((0, 0), (1, 0))
+    program = preparation.mapped_curve_hessian(surface, curve)
+    assert program is not None
+    host = replace(program, execution="host", function=None)
+    rng = np.random.default_rng(616)
+    low = rng.uniform(0.0, 0.8, size=(20, 1))
+    high = low + rng.uniform(0.0, 0.2, size=low.shape)
+    reference = host.evaluate(low, high)
+    actual = program.evaluate(low, high)
+    for expected, result in zip(reference, actual, strict=True):
+        np.testing.assert_array_equal(expected.view(np.uint64), result.view(np.uint64))
+    for row in range(len(low)):
+        part = program.evaluate(low[row : row + 1], high[row : row + 1])
+        for endpoint in range(2):
+            np.testing.assert_array_equal(
+                part[endpoint].view(np.uint64),
+                actual[endpoint][row : row + 1].view(np.uint64),
+            )
+    points = (
+        np.zeros((2, 3), dtype=np.float64),
+        np.zeros((2, 3), dtype=np.float64),
+    )
+    chord = (np.zeros(3, dtype=np.float64), np.zeros(3, dtype=np.float64))
+    good = _second_order_chord_bound(program, points, (Fraction(0), Fraction(1)), chord)
+    assert good >= 0.125
+
+    def inward(
+        self: PreparedIntervalFunction, lower: object, upper: object, /
+    ) -> tuple[np.ndarray, np.ndarray]:
+        zeros = np.zeros((1, 3, 1, 1), dtype=np.float64)
+        return zeros, zeros
+
+    with monkeypatch.context() as patch:
+        patch.setattr(PreparedIntervalFunction, "evaluate", inward)
+        faulty = _second_order_chord_bound(
+            program, points, (Fraction(0), Fraction(1)), chord
+        )
+    assert faulty < 0.125
 
 
 def test_adaptive_vertex_enclosures_cover_exact_midpoint_intervals() -> None:

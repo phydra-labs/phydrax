@@ -191,7 +191,7 @@ def _prepare_analytic_source_program(
     import jax
     import jax.numpy as jnp
 
-    from ._interval_enclosure import prepare_interval_function
+    from ._interval_enclosure import IntervalExtensionError, prepare_interval_function
     from ._meshing_domain import _PlacedSurfacePatch
     from .brep._patches import (
         _require_exact_numeric_shadow,
@@ -350,9 +350,13 @@ def _prepare_analytic_source_program(
     derivative: Callable[[Array], Array] = evaluate
     for _ in range(order):
         derivative = jax.jacfwd(derivative)
-    return prepare_interval_function(
-        derivative, 2, constant_bounds=((nominal, lower, upper),)
-    )
+    bounds = ((nominal, lower, upper),)
+    try:
+        return prepare_interval_function(
+            derivative, 2, batch_capacity=1, constant_bounds=bounds, execution="batched"
+        )
+    except IntervalExtensionError:
+        return prepare_interval_function(derivative, 2, constant_bounds=bounds)
 
 
 def _exact_rational_span_interpolation_bounds(
