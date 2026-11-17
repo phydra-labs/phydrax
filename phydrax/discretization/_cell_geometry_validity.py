@@ -101,7 +101,7 @@ from ._coordinate_enclosure import (
     coordinate_execution_basis,
     coordinate_execution_map_expressions,
     coordinate_map_expressions,
-    coordinate_point_rounding_error,
+    coordinate_point_rounding_bound,
     coordinate_source_basis,
     CoordinateSourceBank,
     derivative,
@@ -3517,14 +3517,8 @@ def certify_cell_geometry_validity(
     )
     source_coordinate_distinct = distinct_source
     coefficient_rounding_error = (
-        max(
-            (
-                coordinate_point_rounding_error(point, values[row])
-                for row, point in enumerate(source_coordinates)
-            ),
-            default=Fraction(0),
-        )
-        if source_coordinates is not None
+        coordinate_point_rounding_bound(source_coordinates, values)
+        if source_coordinates is not None and distinct_source
         else Fraction(0)
     )
     element_rounding_error: ExactScalar = Fraction(0)
