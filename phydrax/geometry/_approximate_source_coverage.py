@@ -44,6 +44,7 @@ from .implicit._adaptive_discovery import (
 
 if TYPE_CHECKING:
     from ._domain_boundary import _RootedJunction
+    from ._domain_certification import CoverageDomain
     from ._meshing_domain import PatchCurveUse, SourcePreparation
     from ._planar_coverage import OrientedFacet
     from ._surface_source_support import _CadCurveUseBinding, SurfaceSourceCharts
@@ -69,6 +70,50 @@ class SourceCoverageUnavailable(ValueError):
     ) -> None:
         super().__init__(message)
         self.status = status
+
+
+def _require_coverage_handoff(
+    root_charts: AdaptiveImplicitRootChartMap,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    domain: CoverageDomain,
+    source: SourceBoundaryQuery | None,
+    fidelity: SourceFidelityCertificate | None,
+    /,
+) -> None:
+    """Validate the operation-local coverage capability before any fallback."""
+    from .implicit._source_charts import (
+        _AdaptiveImplicitBoundaryCarrier,
+        _require_live_coverage_charts,
+        AdaptiveImplicitRootChartMap,
+    )
+
+    if not isinstance(root_charts, AdaptiveImplicitRootChartMap):
+        raise TypeError("root_charts must be AdaptiveImplicitRootChartMap or None.")
+    if (
+        not isinstance(domain, AdaptiveImplicitSurface)
+        or not isinstance(
+            source, (AdaptiveImplicitBoundarySource, _AdaptiveImplicitBoundaryCarrier)
+        )
+        or not isinstance(fidelity, SourceFidelityCertificate)
+        or not isinstance(fidelity.witness, SourceBoundaryChartWitness)
+    ):
+        raise ValueError(
+            "Implicit coverage root charts require their live source and fidelity witness."
+        )
+    _require_live_coverage_charts(
+        root_charts,
+        mesh,
+        geometry,
+        source,
+        fidelity.witness,
+        tolerance=fidelity.tolerance,
+        maximum_normal_deviation=fidelity.maximum_normal_deviation,
+    )
+    if root_charts._surface is not domain:
+        raise ValueError(
+            "Implicit coverage root charts require the identical live source domain."
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -2640,8 +2685,10 @@ def _adaptive_implicit_root_chart_degree(
     embedding: GlobalEmbeddingCertificate,
     witness: SourceBoundaryChartWitness,
     /,
+    *,
+    root_charts: AdaptiveImplicitRootChartMap | None = None,
 ) -> tuple[str, int, int, float | None]:
-    """Recompute complete whole-face charts and their degree one.
+    """Prove degree one from complete whole-face charts.
 
     A witness naming every scaffold triangle exactly once keeps the one-to-one
     scaffold argument. Any other target (a remeshed carrier) proves degree one
@@ -2658,10 +2705,14 @@ def _adaptive_implicit_root_chart_degree(
     returned last (``None`` for the chart arguments).
     """
     from ..discretization._cell_geometry_validity import cell_geometry_id
-    from .implicit._source_charts import prepare_adaptive_implicit_root_charts
+    from .implicit._source_charts import (
+        _require_live_coverage_charts,
+        prepare_adaptive_implicit_root_charts,
+    )
 
-    try:
-        root_map = prepare_adaptive_implicit_root_charts(
+    if root_charts is not None:
+        _require_live_coverage_charts(
+            root_charts,
             mesh,
             geometry,
             source,
@@ -2669,17 +2720,32 @@ def _adaptive_implicit_root_chart_degree(
             tolerance=fidelity.tolerance,
             maximum_normal_deviation=fidelity.maximum_normal_deviation,
         )
-    except (
-        TypeError,
-        ValueError,
-        IndexError,
-        ArithmeticError,
-        FloatingPointError,
-    ) as error:
-        raise SourceCoverageUnavailable(
-            f"Adaptive implicit whole-face root chart is unresolved: {error}",
-            status="unresolved",
-        ) from error
+        if root_charts._surface is not domain:
+            raise ValueError(
+                "Implicit coverage root charts require the identical live source domain."
+            )
+        root_map = root_charts
+    else:
+        try:
+            root_map = prepare_adaptive_implicit_root_charts(
+                mesh,
+                geometry,
+                source,
+                witness,
+                tolerance=fidelity.tolerance,
+                maximum_normal_deviation=fidelity.maximum_normal_deviation,
+            )
+        except (
+            TypeError,
+            ValueError,
+            IndexError,
+            ArithmeticError,
+            FloatingPointError,
+        ) as error:
+            raise SourceCoverageUnavailable(
+                f"Adaptive implicit whole-face root chart is unresolved: {error}",
+                status="unresolved",
+            ) from error
     evidence = root_map.chart_evidence
     scaffold_mesh = domain.mesh
     if scaffold_mesh is None:
@@ -3318,6 +3384,7 @@ def approximate_source_coverage(
     source: SourceBoundaryQuery | None,
     fidelity: SourceFidelityCertificate | None,
     embedding: GlobalEmbeddingCertificate,
+    root_charts: AdaptiveImplicitRootChartMap | None = None,
 ) -> SourceCoverageAttempt:
     """Prove bounded oriented material coverage from source-chart homotopy data.
 
@@ -3335,6 +3402,9 @@ def approximate_source_coverage(
         return SourceCoverageAttempt(
             None, (SourceCoverageFailure(check, status, detail, entity_ids),)
         )
+
+    if root_charts is not None:
+        _require_coverage_handoff(root_charts, mesh, geometry, domain, source, fidelity)
 
     if not isinstance(domain, (MeshingDomain, AdaptiveImplicitSurface)):
         return fail(
@@ -3577,6 +3647,7 @@ def approximate_source_coverage(
                         fidelity,
                         embedding,
                         witness,
+                        root_charts=root_charts,
                     )
                 )
             except SourceCoverageUnavailable as chart_error:

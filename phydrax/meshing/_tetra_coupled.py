@@ -507,7 +507,7 @@ def _source_cells(
         if (
             state.source_cell_blocks[row] != block
             or state.source_cell_regions[row] != region
-            or tm._locate_source_weights(image, (record,)) is None
+            or tm._source_cell_weights(image, record) is None
         ):
             continue
         support = tm._source_cell_carrier(state, record, simplices)
@@ -894,7 +894,7 @@ def _proposal(
     state, prepared = search.state, search.prepared
     if (
         np.array_equal(carrier, prepared.points[detail.row])
-        or tm._locate_source_weights(tm._stencil_image(state, stencil), (record,)) is None
+        or tm._source_cell_weights(tm._stencil_image(state, stencil), record) is None
     ):
         return None
     return _Proposal(
@@ -989,7 +989,7 @@ def _quantize_orbit(
 ) -> list[_Proposal] | None:
     state = search.state
     detail, record = details[representative], selected[representative]
-    local_state = replace(state, source_records=(record,))
+    local_state = replace(state, source_records=tm._source_records((record,)))
     simplices = (
         None
         if detail.simplices is None
@@ -1342,7 +1342,7 @@ def _ordered_source_cells(
         sorted(
             detail.source_cells,
             key=lambda record: (
-                tm._locate_source_weights(query, (record,)) is None,
+                tm._source_cell_weights(query, record) is None,
                 record[0],
             ),
         )

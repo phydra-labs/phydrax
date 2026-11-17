@@ -207,12 +207,13 @@ class _Piece:
 class StratumSubdivisionCache:
     """Reusable exact pieces and Jacobian controls for a bounded pair workset.
 
-    Roots are keyed by cell and stratum, children additionally by reference
-    vertices, and Jacobian controls by cell and uniform subdivision level.
+    Roots are keyed by cell object identity and stratum, children additionally
+    by reference vertices, and Jacobian controls by cell and subdivision level.
     The child LRU bounds retained subdivision trees without limiting proof work.
     """
 
     roots: dict[tuple[int, tuple[int, ...]], _Piece | None] = field(default_factory=dict)
+    root_cells: dict[int, EmbeddingCell] = field(default_factory=dict)
     geometry: dict[int, tuple[EmbeddingCell, tuple[int, ...], _Controls]] = field(
         default_factory=dict
     )
@@ -890,6 +891,79 @@ def _cone_test(first: _Piece, second: _Piece, /) -> tuple[bool, int | None]:
     return False, None
 
 
+def _integer_cone_signs(
+    group: list[tuple[int, tuple[int, ...], list[tuple[_Vector, int]]]], /
+) -> tuple[bool | None, ...]:
+    """Check equal-shaped integer nets without narrowing their exact arithmetic."""
+    # Object arrays retain arbitrary-precision Python integers, including
+    # products and sums wider than every native machine word.
+    nets = np.asarray(
+        [[vector for vector, _ in vectors] for _, _, vectors in group],
+        dtype=np.object_,
+    )
+    normals = np.asarray([normal for _, normal, _ in group], dtype=np.object_)
+    signs = np.all(np.sum(nets * normals[:, None, :], axis=2) > 0, axis=1)
+    return tuple(bool(positive) for positive in signs)
+
+
+def _cone_tests(pairs: list[tuple[_Piece, _Piece]], /) -> list[tuple[bool, int | None]]:
+    """Evaluate a round of cones, retaining each item's float proposal and exact sign."""
+    vectors_by_item: list[
+        tuple[list[tuple[_Vector, int]], list[tuple[_Vector, int]]] | None
+    ] = []
+    positives = [False] * len(pairs)
+    integer_groups: dict[
+        tuple[int, int], list[tuple[int, tuple[int, ...], list[tuple[_Vector, int]]]]
+    ] = {}
+    for item, (first, second) in enumerate(pairs):
+        left = _cone_vectors(first, 1)
+        right = _cone_vectors(second, -1)
+        if left is None or right is None:
+            vectors_by_item.append(None)
+            continue
+        vectors_by_item.append((left, right))
+        vectors = left + right
+        if not vectors:
+            continue
+        direction = _strict_direction(_float_rows(vectors))
+        if direction is None:
+            continue
+        normal = _integer_direction(direction)
+        if normal is None:
+            continue
+        if not all(isinstance(value, int) for vector, _ in vectors for value in vector):
+            positives[item] = all(
+                _sign(_dot(normal, vector)) > 0 for vector, _ in vectors
+            )
+            continue
+        integer_groups.setdefault((len(vectors), len(normal)), []).append(
+            (item, normal, vectors)
+        )
+    for group in integer_groups.values():
+        for (item, normal, vectors), positive in zip(
+            group, _integer_cone_signs(group), strict=True
+        ):
+            positives[item] = (
+                all(_sign(_dot(normal, vector)) > 0 for vector, _ in vectors)
+                if positive is None
+                else positive
+            )
+    results: list[tuple[bool, int | None]] = []
+    for positive, vectors in zip(positives, vectors_by_item, strict=True):
+        if positive:
+            results.append((True, None))
+        elif vectors is None:
+            results.append((False, None))
+        else:
+            culprit = None
+            for side, own in enumerate(vectors):
+                if own and _strict_direction(_float_rows(own)) is None:
+                    culprit = side
+                    break
+            results.append((False, culprit))
+    return results
+
+
 def _prepare_root_nets(
     cells: tuple[EmbeddingCell, ...],
     stratum: tuple[int, ...],
@@ -903,7 +977,7 @@ def _prepare_root_nets(
     ] = []
     owners: list[tuple[EmbeddingCell, bool, tuple[int, ...]]] = []
     for cell in cells:
-        if (cell.global_id, stratum) in cache.roots:
+        if (id(cell), stratum) in cache.roots:
             continue
         try:
             layout = _reference_slots(cell)
@@ -987,11 +1061,14 @@ def subdivided_stratum_separation(
     a stratum cone and by hull separation, or ``None`` when a piece reaches
     binary64 resolution first.
     """
+    # Residual-dependent nets belong only to this proof; geometry remains reusable.
+    cache = cache.renewed()
     stratum = tuple(sorted(shared_ids))
     prepared_residuals = _prepare_root_nets((first, second), stratum, residuals, cache)
     pieces: list[_Piece] = []
     for cell in (first, second):
-        key = (cell.global_id, stratum)
+        key = (id(cell), stratum)
+        cache.root_cells[id(cell)] = cell
         if key not in cache.roots:
             cache.roots[key] = _root_piece(
                 cell,
@@ -1009,7 +1086,7 @@ def subdivided_stratum_separation(
         float(np.max(np.abs(pieces[0].points))),
         float(np.max(np.abs(pieces[1].points))),
     )
-    keys = ((first.global_id, stratum), (second.global_id, stratum))
+    keys = ((id(first), stratum), (id(second), stratum))
     cones = hulls = 0
     pending = [(pieces[0], pieces[1])]
     while pending:
@@ -1029,6 +1106,112 @@ def subdivided_stratum_separation(
         for child in _children(cache, keys[target], pair[target]):
             pending.append((child, pair[1]) if target == 0 else (pair[0], child))
     return cones, hulls
+
+
+@dataclass
+class _StratumWork:
+    index: int
+    keys: tuple[tuple[int, tuple[int, ...]], tuple[int, tuple[int, ...]]]
+    cache: StratumSubdivisionCache
+    scale: float
+    has_residuals: bool
+    pending: list[tuple[_Piece, _Piece]]
+    cones: int = 0
+    hulls: int = 0
+
+
+def _stratum_work(
+    index: int,
+    request: tuple[EmbeddingCell, EmbeddingCell, tuple[int, ...], tuple[Expression, ...]],
+    cache: StratumSubdivisionCache,
+    /,
+) -> _StratumWork | None:
+    first, second, shared_ids, residuals = request
+    # Root and child nets depend on this proof's residuals, not just cell IDs.
+    cache = cache.renewed()
+    stratum = tuple(sorted(shared_ids))
+    prepared = _prepare_root_nets((first, second), stratum, residuals, cache)
+    pieces: list[_Piece] = []
+    for cell in (first, second):
+        key = (id(cell), stratum)
+        cache.root_cells[id(cell)] = cell
+        if key not in cache.roots:
+            cache.roots[key] = _root_piece(
+                cell,
+                stratum,
+                residuals,
+                cache=cache,
+                prepared_residual=prepared.get(id(cell)),
+            )
+        piece = cache.roots[key]
+        if piece is None:
+            return None
+        pieces.append(piece)
+    scale = max(
+        1.0,
+        float(np.max(np.abs(pieces[0].points))),
+        float(np.max(np.abs(pieces[1].points))),
+    )
+    keys = ((id(first), stratum), (id(second), stratum))
+    return _StratumWork(
+        index, keys, cache, scale, bool(residuals), [(pieces[0], pieces[1])]
+    )
+
+
+def subdivided_stratum_separations(
+    requests: tuple[
+        tuple[EmbeddingCell, EmbeddingCell, tuple[int, ...], tuple[Expression, ...]],
+        ...,
+    ],
+    cache: StratumSubdivisionCache,
+    /,
+) -> tuple[tuple[int, int] | None, ...]:
+    """Run independent depth-first contact proofs in deterministic batched rounds.
+
+    Each result has the same meaning as ``subdivided_stratum_separation``.
+    Float directions guide each individual traversal; only exact signs prove a
+    separation. An unresolved or ineligible request does not affect its peers.
+    """
+    results: list[tuple[int, int] | None] = [None] * len(requests)
+    active = [
+        work
+        for index, request in enumerate(requests)
+        if (work := _stratum_work(index, request, cache)) is not None
+    ]
+    while active:
+        pairs = [work.pending.pop() for work in active]
+        cone_indices = [index for index, work in enumerate(active) if work.has_residuals]
+        cones: list[tuple[bool, int | None]] = [(False, None)] * len(active)
+        for index, result in zip(
+            cone_indices,
+            _cone_tests([pairs[index] for index in cone_indices]),
+            strict=True,
+        ):
+            cones[index] = result
+        remaining: list[_StratumWork] = []
+        for work, pair, (separated, culprit) in zip(active, pairs, cones, strict=True):
+            if separated:
+                work.cones += 1
+            elif _hull_separated(*pair):
+                work.hulls += 1
+            else:
+                target = (
+                    culprit
+                    if culprit is not None
+                    else int(pair[1].diameter > pair[0].diameter)
+                )
+                if pair[target].diameter <= _RESOLUTION * work.scale:
+                    continue
+                for child in _children(work.cache, work.keys[target], pair[target]):
+                    work.pending.append(
+                        (child, pair[1]) if target == 0 else (pair[0], child)
+                    )
+            if work.pending:
+                remaining.append(work)
+            else:
+                results[work.index] = (work.cones, work.hulls)
+        active = remaining
+    return tuple(results)
 
 
 _Matrix = tuple[tuple[ExactScalar, ...], ...]
@@ -1773,4 +1956,5 @@ __all__ = [
     "glued_facet_monotone",
     "StratumSubdivisionCache",
     "subdivided_stratum_separation",
+    "subdivided_stratum_separations",
 ]

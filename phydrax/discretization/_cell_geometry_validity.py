@@ -47,6 +47,7 @@ from numpy.typing import NDArray
 
 import phydrax.ein as ein
 
+from .._execution_resources import MemoryBudgetError
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._geometry_predicates import (
     polygon_simplicity_2d,
@@ -69,7 +70,12 @@ from ..geometry._interval_enclosure import (
     prepare_interval_function,
     PreparedIntervalFunction,
 )
-from ..geometry._rational import fraction_up
+from ..geometry._rational import (
+    binary64_difference_magnitude,
+    binary64_norm_lower,
+    binary64_norm_upper,
+    fraction_up,
+)
 from ..linalg import (
     ArraySpace,
     DenseLinearOperator,
@@ -78,8 +84,9 @@ from ..linalg import (
     inverse_small_linear,
     SmallLinearSolvePlan,
 )
-from ..linalg._exact import determinant_exact, determinant_small_algebra
+from ..linalg._exact import determinant_exact, determinant_small_algebra, solve_exact
 from ..typing import ConvertibleToArray
+from ._affine_dyadic_validity import affine_dyadic_quality
 from ._cell_complex import PolyhedralConnectivity
 from ._cell_geometry import (
     _execution_reference_arguments,
@@ -101,7 +108,7 @@ from ._coordinate_enclosure import (
     coordinate_execution_basis,
     coordinate_execution_map_expressions,
     coordinate_map_expressions,
-    coordinate_point_rounding_error,
+    coordinate_point_rounding_bound,
     coordinate_source_basis,
     CoordinateSourceBank,
     derivative,
@@ -114,8 +121,10 @@ from ._coordinate_enclosure import (
     normalize_pyramid_reference_expression,
     Polynomial,
     polynomial_bounds,
+    PreparedLinearCombinationBasis,
     PreparedSimplexPolynomial,
     RationalPolynomial,
+    restricted_polynomial_batch_bounds,
     restricted_polynomial_bounds,
     RestrictedCoordinateMapPreparation,
     scale,
@@ -779,26 +788,15 @@ _SMALLEST_SUBNORMAL = float(np.ldexp(1.0, -1074))
 
 
 def _underflow_free_norm(values: np.ndarray, /, *, axis: int) -> np.ndarray:
-    """Euclidean norm along ``axis`` whose squares cannot underflow.
-
-    Vectors below one half are scaled up by an exact power of two first, so the
-    result equals ``np.linalg.norm`` whenever none of its squares underflows.
-    """
-
+    """Directed upper Euclidean norm, scaled to avoid avoidable square underflow."""
     largest = np.max(np.abs(values), axis=axis, keepdims=True)
     shift = np.maximum(-np.frexp(largest)[1], 0)
-    scaled = np.linalg.norm(np.ldexp(values, shift), axis=axis)
-    return np.ldexp(scaled, -np.squeeze(shift, axis=axis))
+    scaled = np.moveaxis(np.ldexp(values, shift), axis, -1)
+    upper = np.ldexp(binary64_norm_upper(scaled), -np.squeeze(shift, axis=axis))
+    return np.where(largest.squeeze(axis=axis) == 0, 0.0, np.nextafter(upper, np.inf))
 
 
 # Bernstein parameter domains ------------------------------------------------
-
-
-def _bernstein_1d(degree: int, points: np.ndarray, /) -> np.ndarray:
-    powers = np.arange(degree + 1)
-    binomial = np.asarray([math.comb(degree, value) for value in powers], np.float64)
-    t = points[..., None]
-    return binomial * t**powers * (1.0 - t) ** (degree - powers)
 
 
 def _simplex_indices(degree: int, dimension: int, /) -> np.ndarray:
@@ -812,43 +810,24 @@ def _simplex_indices(degree: int, dimension: int, /) -> np.ndarray:
     ).reshape(-1, dimension + 1)
 
 
-def _bernstein_simplex(degree: int, dimension: int, points: np.ndarray, /) -> np.ndarray:
-    indices = _simplex_indices(degree, dimension)
-    barycentric = np.concatenate(
-        (1.0 - np.sum(points, axis=-1, keepdims=True), points), axis=-1
-    )
-    multinomial = np.asarray(
-        [
-            math.factorial(degree) / math.prod(math.factorial(value) for value in row)
-            for row in indices
-        ],
+def _rational_nodes(degree: int, /) -> np.ndarray:
+    if degree == 0:
+        return np.asarray((0.5,), dtype=np.float64)
+    denominator = 1 << (degree - 1).bit_length()
+    return np.asarray(
+        [((index * denominator + degree // 2) // degree) / denominator for index in range(degree + 1)],
         dtype=np.float64,
     )
-    return multinomial * np.prod(
-        barycentric[..., None, :] ** indices[None, :, :], axis=-1
-    )
-
-
-def _chebyshev_nodes(degree: int, /) -> np.ndarray:
-    index = np.arange(degree + 1, dtype=np.float64)
-    return 0.5 * (1.0 - np.cos((2.0 * index + 1.0) * np.pi / (2.0 * degree + 2.0)))
 
 
 def _simplex_nodes(degree: int, dimension: int, /) -> np.ndarray:
     if degree == 0:
-        return np.full((1, dimension), 1.0 / (dimension + 1.0))
-    return _simplex_indices(degree, dimension)[:, 1:].astype(np.float64) / degree
-
-
-def _tensor(values: tuple[np.ndarray, ...], /) -> np.ndarray:
-    """Tensor product of per-axis basis tables sharing the leading point axis."""
-
-    result = values[0]
-    for value in values[1:]:
-        result = (result[..., :, None] * value[..., None, :]).reshape(
-            value.shape[:-1] + (-1,)
-        )
-    return result
+        return np.zeros((1, dimension), dtype=np.float64)
+    denominator = 1 << (degree - 1).bit_length()
+    indices = _simplex_indices(degree, dimension)[:, 1:]
+    # Flooring each coordinate leaves the exact remainder in barycentric axis 0.
+    numerators = (indices * denominator) // degree
+    return numerators.astype(np.float64) / denominator
 
 
 def _grid(axes: tuple[np.ndarray, ...], /) -> np.ndarray:
@@ -944,14 +923,12 @@ class _ReferenceSubdivision:
 
 @dataclass(frozen=True)
 class _BernsteinPlan:
-    """Host-only interpolation and subdivision tables of one parameter domain."""
+    """Immutable host interpolation and conversion tables."""
 
-    domain: BernsteinDomain
     nodes: np.ndarray
     coefficients_from_values: np.ndarray
     conversion_norm: float
-    vertex_indices: np.ndarray
-    subdivision: _ReferenceSubdivision
+    conversion_rounding_norm: float
 
 
 def _exact_domain_vertices(
@@ -1010,51 +987,159 @@ def _reference_subdivision(
     )
 
 
+def _exact_bernstein_inverse(
+    degree: int, dimension: int, simplex: bool, /
+) -> tuple[tuple[Fraction, ...], ...]:
+    """Exact inverse of a Bernstein basis evaluated at representable nodes."""
+    if simplex:
+        nodes = _simplex_nodes(degree, dimension)
+        indices = tuple(tuple(int(value) for value in row) for row in _simplex_indices(degree, dimension))
+        barycentric = tuple(
+            (Fraction(1) - sum(point, Fraction(0)), *point)
+            for point in (
+                tuple(Fraction(float(value)) for value in row) for row in nodes
+            )
+        )
+        matrix = [
+            [
+                math.factorial(degree)
+                // math.prod(math.factorial(power) for power in exponent)
+                * math.prod(
+                    (value**power for value, power in zip(row, exponent, strict=True)),
+                    start=Fraction(1),
+                )
+                for exponent in indices
+            ]
+            for row in barycentric
+        ]
+    else:
+        nodes = _rational_nodes(degree)
+        matrix = [
+            [
+                math.comb(degree, power) * Fraction(float(node))**power
+                * (1 - Fraction(float(node)))**(degree - power)
+                for power in range(degree + 1)
+            ]
+            for node in nodes
+        ]
+    identity = [
+        [Fraction(int(row == column)) for column in range(len(matrix))]
+        for row in range(len(matrix))
+    ]
+    return tuple(tuple(row) for row in solve_exact(matrix, identity))
+
+
+def _exact_tensor_conversion(
+    factors: tuple[tuple[tuple[Fraction, ...], ...], ...], /
+) -> tuple[np.ndarray, float, float]:
+    """Round the exact Kronecker inverse once and bound its row-wise error."""
+    indices = tuple(product(*(range(len(factor)) for factor in factors)))
+    conversion = np.empty((len(indices), len(indices)), dtype=np.float64)
+    norm = Fraction(0)
+    error_norm = Fraction(0)
+    for row, row_index in enumerate(indices):
+        row_norm = Fraction(0)
+        row_error = Fraction(0)
+        for column, column_index in enumerate(indices):
+            exact = math.prod(
+                factor[i][j]
+                for factor, i, j in zip(factors, row_index, column_index, strict=True)
+            )
+            value = float(exact)
+            conversion[row, column] = value
+            rounded = Fraction(value)
+            row_norm += abs(rounded)
+            row_error += abs(rounded - exact)
+        norm = max(norm, row_norm)
+        error_norm = max(error_norm, row_error)
+    conversion.setflags(write=False)
+    return conversion, fraction_up(norm), fraction_up(error_norm)
+
+
+_BERNSTEIN_PLAN_BYTES = 16 * 1024 * 1024
+_BERNSTEIN_EXACT_ROWS = 128
+_BERNSTEIN_MAX_DEGREE = 16
+_BERNSTEIN_MAX_DIMENSION = 8
+
+
+def _admit_bernstein_plan(domain: BernsteinDomain, degrees: tuple[int, ...], /) -> None:
+    """Bound retained table bytes and exact rational solve dimensions."""
+    if domain == "simplex":
+        degree, dimension = degrees
+        axis_degrees = (degree,)
+    elif domain == "prism":
+        dimension = 3
+        axis_degrees = degrees
+        if len(degrees) != 2:
+            raise ValueError("Prism Bernstein plans require two degrees.")
+    elif domain == "box":
+        dimension = len(degrees)
+        axis_degrees = degrees
+    else:
+        raise ValueError(f"Unknown Bernstein parameter domain {domain!r}.")
+    if dimension < 1 or any(degree < 0 for degree in axis_degrees):
+        raise ValueError("Bernstein degrees must be nonnegative with positive dimension.")
+    if dimension > _BERNSTEIN_MAX_DIMENSION:
+        raise MemoryBudgetError(
+            "bernstein_node_dimensions", 8 * dimension, 8 * _BERNSTEIN_MAX_DIMENSION
+        )
+    if any(degree > _BERNSTEIN_MAX_DEGREE for degree in axis_degrees):
+        raise MemoryBudgetError(
+            "bernstein_axis_matrix",
+            8 * (max(axis_degrees) + 1) ** 2,
+            8 * (_BERNSTEIN_MAX_DEGREE + 1) ** 2,
+        )
+    if domain == "simplex":
+        rows = math.comb(degrees[0] + dimension, dimension)
+        solve_rows = rows
+    elif domain == "prism":
+        solve_rows = math.comb(degrees[0] + 2, 2)
+        rows = solve_rows * (degrees[1] + 1)
+    else:
+        rows = math.prod(degree + 1 for degree in degrees)
+        solve_rows = max(degrees) + 1
+    if solve_rows > _BERNSTEIN_EXACT_ROWS:
+        raise MemoryBudgetError(
+            "bernstein_exact_inverse", 8 * solve_rows**2, 8 * _BERNSTEIN_EXACT_ROWS**2
+        )
+    required = 8 * (rows * rows + rows * dimension + 2)
+    if required > _BERNSTEIN_PLAN_BYTES:
+        raise MemoryBudgetError("bernstein_plan", required, _BERNSTEIN_PLAN_BYTES)
+
+
 @host_table_cache(
     max_entries=256,
-    max_bytes=1048576,
-    # The degree-independent subdivision is retained by `_reference_subdivision`,
-    # so each entry charges only its degree-owned tables.
+    max_bytes=_BERNSTEIN_PLAN_BYTES,
     weight=lambda value: logical_table_bytes(
         (
-            value.domain,
             value.nodes,
             value.coefficients_from_values,
             value.conversion_norm,
-            value.vertex_indices,
+            value.conversion_rounding_norm,
         )
     ),
 )
 def _bernstein_plan(
     domain: BernsteinDomain, degrees: tuple[int, ...], /
 ) -> _BernsteinPlan:
+    _admit_bernstein_plan(domain, degrees)
     match domain:
         case "box":
-            axes = tuple(_chebyshev_nodes(degree) for degree in degrees)
+            axes = tuple(_rational_nodes(degree) for degree in degrees)
             nodes = _grid(axes)
-            basis = _tensor(
-                tuple(
-                    _bernstein_1d(degree, nodes[:, axis])
-                    for axis, degree in enumerate(degrees)
-                )
-            )
-            vertex_indices = np.ravel_multi_index(
-                tuple(
-                    np.asarray(values)
-                    for values in zip(*product(*((0, degree) for degree in degrees)))
-                ),
-                tuple(degree + 1 for degree in degrees),
-            )
+            by_degree = {
+                degree: _exact_bernstein_inverse(degree, 1, False)
+                for degree in set(degrees)
+            }
+            factors = tuple(by_degree[degree] for degree in degrees)
         case "simplex":
             degree, dimension = degrees
             nodes = _simplex_nodes(degree, dimension)
-            basis = _bernstein_simplex(degree, dimension, nodes)
-            indices = _simplex_indices(degree, dimension)
-            vertex_indices = np.flatnonzero(np.max(indices, axis=1) == degree)
+            factors = (_exact_bernstein_inverse(degree, dimension, True),)
         case "prism":
             triangle_degree, axial_degree = degrees
             triangle_nodes = _simplex_nodes(triangle_degree, 2)
-            axial_nodes = _chebyshev_nodes(axial_degree)
+            axial_nodes = _rational_nodes(axial_degree)
             nodes = np.concatenate(
                 (
                     np.repeat(triangle_nodes, axial_nodes.size, axis=0),
@@ -1062,71 +1147,22 @@ def _bernstein_plan(
                 ),
                 axis=1,
             )
-            basis = _tensor(
-                (
-                    _bernstein_simplex(triangle_degree, 2, nodes[:, :2]),
-                    _bernstein_1d(axial_degree, nodes[:, 2]),
-                )
+            factors = (
+                _exact_bernstein_inverse(triangle_degree, 2, True),
+                _exact_bernstein_inverse(axial_degree, 1, False),
             )
-            triangle_vertices = np.flatnonzero(
-                np.max(_simplex_indices(triangle_degree, 2), axis=1) == triangle_degree
-            )
-            axial_vertices = np.unique(np.asarray((0, axial_degree)))
-            vertex_indices = (
-                triangle_vertices[:, None] * (axial_degree + 1) + axial_vertices[None, :]
-            ).reshape(-1)
         case _:
             raise ValueError(f"Unknown Bernstein parameter domain {domain!r}.")
-    # The conversion operator is applied to every piece of every level; it is
-    # prepared once per (domain, degree) like other reference-element tables.
-    conversion = np.linalg.solve(basis, np.eye(basis.shape[0]))
-    vertex_indices = np.unique(vertex_indices)
+    # Nodes are exact binary rationals. Their exact basis inverse is rounded
+    # once per entry; rounding_norm bounds each row's absolute error sum.
+    # Consumers must separately bound node evaluation and multiplication.
+    conversion, conversion_norm, rounding_norm = _exact_tensor_conversion(factors)
+    nodes.setflags(write=False)
     return _BernsteinPlan(
-        domain,
         nodes,
         conversion,
-        float(np.max(np.sum(np.abs(conversion), axis=1))),
-        vertex_indices,
-        _reference_subdivision(domain, nodes.shape[1]),
-    )
-
-
-def _determinant_route(
-    cell_kind: str, degree: int, embedded: bool, /
-) -> tuple[BernsteinDomain, tuple[int, ...]]:
-    """Return the Bernstein domain and exact degree bound of the determinant."""
-
-    scale = 2 if embedded else 1
-    match cell_kind:
-        case "interval":
-            return "box", (scale * (degree - 1),)
-        case "triangle":
-            return "simplex", (scale * 2 * (degree - 1), 2)
-        case "tetrahedron":
-            return "simplex", (3 * (degree - 1), 3)
-        case "quadrilateral":
-            return "box", (scale * (2 * degree - 1),) * 2
-        case "hexahedron":
-            return "box", (3 * degree - 1,) * 3
-        case "prism":
-            return "prism", (3 * degree - 2, 3 * degree - 1)
-        case "pyramid":
-            return "box", (3 * degree - 1, 3 * degree - 1, 3 * degree - 3)
-        case _:
-            raise ValueError(f"No polynomial determinant route for {cell_kind!r}.")
-
-
-def _reference_points(cell_kind: str, parameters: np.ndarray, /) -> np.ndarray:
-    if cell_kind != "pyramid":
-        return parameters
-    height = parameters[..., 2:3]
-    scale = 1.0 - height
-    return np.concatenate(
-        (
-            parameters[..., :2] * scale + 0.5 * height,
-            height,
-        ),
-        axis=-1,
+        conversion_norm,
+        rounding_norm,
     )
 
 
@@ -1149,18 +1185,6 @@ def _square_determinant(matrix: np.ndarray, /) -> np.ndarray:
         + matrix[..., 0, 2]
         * (matrix[..., 1, 0] * matrix[..., 2, 1] - matrix[..., 1, 1] * matrix[..., 2, 0])
     )
-
-
-def _jacobian_determinant(
-    jacobian: np.ndarray, magnitude: np.ndarray, /
-) -> tuple[np.ndarray, np.ndarray]:
-    """Return the determinant and its Hadamard scale for (..., ambient, reference)."""
-
-    column_scale = np.prod(_underflow_free_norm(magnitude, axis=-2), axis=-1)
-    if jacobian.shape[-2] == jacobian.shape[-1]:
-        return _square_determinant(jacobian), column_scale
-    gram = np.swapaxes(jacobian, -1, -2) @ jacobian
-    return _square_determinant(gram), column_scale * column_scale
 
 
 # Adaptive certification ----------------------------------------------------------
@@ -1201,112 +1225,6 @@ def _normalize_proof_arrays(
     if not np.all(np.isin(statuses, tuple(int(value) for value in CellValidityStatus))):
         raise ValueError("Validity status values must be CellValidityStatus codes.")
     return _BlockCertificate(statuses, lowers, uppers, depths)
-
-
-def _evaluate_pieces(
-    element: Any,
-    cell_kind: str,
-    plan: _BernsteinPlan,
-    local: np.ndarray,
-    cells: np.ndarray,
-    origins: np.ndarray,
-    matrices: np.ndarray,
-    /,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Return Bernstein coefficients and rounding margins for every piece."""
-
-    node_count = plan.nodes.shape[0]
-    dof_count = local.shape[1]
-    if cells.size == 0:
-        return (
-            np.empty((0, plan.coefficients_from_values.shape[0]), dtype=np.float64),
-            np.empty((0,), dtype=np.float64),
-        )
-    parameters = origins[:, None, :] + ein.contract("pij,mj->pmi", matrices, plan.nodes)
-    reference = _reference_points(cell_kind, parameters)
-    _, gradients = element.tabulate(reference.reshape(-1, reference.shape[-1]))
-    gradients = np.asarray(gradients, dtype=np.float64).reshape(
-        (cells.size, node_count, dof_count, reference.shape[-1])
-    )
-    points = local[cells]
-    jacobian = ein.contract("pmnk,pna->pmak", gradients, points)
-    magnitude = ein.contract("pmnk,pna->pmak", np.abs(gradients), np.abs(points))
-    values, scale = _jacobian_determinant(jacobian, magnitude)
-    coefficient = ein.contract("rm,pm->pr", plan.coefficients_from_values, values)
-    evaluation_error = 8.0 * (dof_count + reference.shape[-1] + 1) * _EPSILON
-    margin = (
-        2.0
-        * plan.conversion_norm
-        * (
-            evaluation_error * np.max(scale, axis=1)
-            + node_count * _EPSILON * np.max(np.abs(values), axis=1)
-        )
-    )
-    absolute = _underflow_margin(
-        np.max(magnitude, axis=(1, 2, 3)),
-        plan.conversion_norm,
-        dof_count,
-        node_count,
-        points.shape[-1],
-        reference.shape[-1],
-    )
-    return coefficient, margin + absolute
-
-
-def _underflow_margin(
-    largest_entries: np.ndarray,
-    conversion_norm: float,
-    dof_count: int,
-    node_count: int,
-    ambient: int,
-    dimension: int,
-    /,
-) -> np.ndarray:
-    """Upward absolute bound on gradual-underflow error of Bernstein coefficients.
-
-    Every rounded product may lose up to 2^-1075 that relative gamma terms do not
-    see. A Jacobian entry forms ``dof_count`` products; the determinant (or Gram
-    determinant) has degree ``power`` in those entries, so each loss propagates
-    through at most ``power - 1`` factors bounded by ``1 + 2 * largest`` and its
-    own products. The Bernstein conversion amplifies by ``conversion_norm`` and
-    adds ``node_count`` products; the factor two covers the rounded margin.
-    """
-
-    power = dimension if ambient == dimension else 2 * dimension
-    terms = 16 * ambient * dimension * (dof_count + ambient + dimension)
-    conversion = Fraction(conversion_norm)
-    unit = Fraction(2, 2**1074)
-    bounds = np.empty(largest_entries.shape, dtype=np.float64)
-    for index, largest in enumerate(largest_entries.tolist()):
-        if not math.isfinite(largest):
-            bounds[index] = math.inf
-            continue
-        factor = (1 + 2 * Fraction(largest)) ** (power - 1)
-        bounds[index] = fraction_up(
-            unit * (conversion * (2 * terms * factor + 2) + node_count + 1)
-        )
-    return bounds
-
-
-def _root_scale(
-    element: Any, cell_kind: str, plan: _BernsteinPlan, local: np.ndarray, /
-) -> np.ndarray:
-    reference = _reference_points(cell_kind, plan.nodes)
-    _, gradients = element.tabulate(reference)
-    gradients = np.asarray(gradients, dtype=np.float64)
-    magnitude = ein.contract("mnk,cna->cmak", np.abs(gradients), np.abs(local))
-    column_scale = np.prod(np.linalg.norm(magnitude, axis=-2), axis=-1)
-    embedded = local.shape[-1] != reference.shape[-1]
-    return np.max(column_scale * column_scale if embedded else column_scale, axis=1)
-
-
-def _child_vertices(
-    origins: np.ndarray,
-    matrices: np.ndarray,
-    vertices: np.ndarray,
-    /,
-) -> np.ndarray:
-    return origins[:, None, :] + ein.contract("cij,vj->cvi", matrices, vertices)
 
 
 def _affine_determinant(
@@ -1366,27 +1284,6 @@ def _affine_quality(
         else CellValidityStatus.CERTIFIED_VALID
     )
     return status, determinant
-
-
-def _exact_affine_root(
-    element: FiniteElementSpec,
-    original: NDArray[np.float64],
-    policy: CellValidityPolicy,
-    /,
-) -> tuple[CellValidityStatus, float, float] | None:
-    affine = affine_map(
-        coordinate_map_expressions(element, original), element.topological_dimension
-    )
-    if affine is None:
-        return None
-    status, determinant = _affine_quality(
-        affine[1], element.topological_dimension, policy
-    )
-    return (
-        status,
-        coefficient_endpoint(determinant, upper=False, saturate=True),
-        coefficient_endpoint(determinant, upper=True, saturate=True),
-    )
 
 
 def _exact_map_jacobian(
@@ -1462,32 +1359,6 @@ def _hadamard_margin_from_bounds(
             floor * floor * norm_product_upper
         )
     return determinant_bound > floor * norm_product_upper
-
-
-def _exact_polynomial_data(
-    basis: tuple[Expression, ...],
-    local: NDArray[np.float64],
-    dimension: int,
-    /,
-) -> tuple[tuple[Expression, ...], Polynomial] | None:
-    coefficients = tuple(
-        tuple(Fraction(float(value)) for value in local[:, axis])
-        for axis in range(local.shape[1])
-    )
-    expressions = linear_combinations(basis, coefficients)
-    coordinates = tuple(
-        expression for expression in expressions if isinstance(expression, dict)
-    )
-    if len(coordinates) != len(expressions):
-        return None
-    determinant = _exact_map_determinant(
-        _exact_map_jacobian(expressions, dimension), dimension
-    )
-    if not isinstance(determinant, dict) or any(
-        not isinstance(value, Fraction) for value in determinant.values()
-    ):
-        return None
-    return expressions, determinant
 
 
 def _exact_affine_arguments(
@@ -1675,23 +1546,42 @@ def _certify_exact_polynomial_cell(
         parent_representations = {
             tuple(float(value) for value in point) for point in parent_points
         }
-        for child_origin, child_matrix in zip(child_origins, child_matrices, strict=True):
-            child_global_origin, child_global_matrix = _exact_child_affine(
-                origin, matrix, child_origin, child_matrix
-            )
-            child_points = tuple(
-                _exact_affine_image(child_global_origin, child_global_matrix, point)
-                for point in vertices
-            )
-            if prepared is not None:
-                child_lower, child_upper = restricted_polynomial_bounds(
-                    prepared, child_points
+        if prepared is not None:
+            child_maps = tuple(
+                _exact_child_affine(origin, matrix, child_origin, child_matrix)
+                for child_origin, child_matrix in zip(
+                    child_origins, child_matrices, strict=True
                 )
+            )
+            child_corners = tuple(
+                tuple(_exact_affine_image(start, transform, point) for point in vertices)
+                for start, transform in child_maps
+            )
+            interval_bounds = restricted_polynomial_batch_bounds(prepared, child_corners)
+        else:
+            child_maps = ()
+            child_corners = ()
+            interval_bounds = ()
+        for index, (child_origin, child_matrix) in enumerate(
+            zip(child_origins, child_matrices, strict=True)
+        ):
+            if prepared is not None:
+                child_global_origin, child_global_matrix = child_maps[index]
+                child_points = child_corners[index]
+                child_lower, child_upper = interval_bounds[index]
                 if child_lower > threshold:
                     maximum_depth = max(maximum_depth, level + 1)
                     lower = min(lower, child_lower)
                     upper = max(upper, child_upper)
                     continue
+            else:
+                child_global_origin, child_global_matrix = _exact_child_affine(
+                    origin, matrix, child_origin, child_matrix
+                )
+                child_points = tuple(
+                    _exact_affine_image(child_global_origin, child_global_matrix, point)
+                    for point in vertices
+                )
             child_polynomial = compose(
                 piece,
                 _exact_affine_arguments(child_origin, child_matrix),
@@ -1740,187 +1630,6 @@ def _certify_exact_polynomial_cell(
         else CellValidityStatus.CERTIFIED_VALID
     )
     return status, float(lower), float(upper), maximum_depth
-
-
-def _certify_numerical_polynomial_cell(
-    element: FiniteElementSpec,
-    cell_kind: str,
-    local: NDArray[np.float64],
-    original_local: NDArray[np.float64],
-    policy: CellValidityPolicy,
-    plan: _BernsteinPlan,
-    threshold: float,
-    /,
-    *,
-    exact_affine_available: bool,
-) -> tuple[CellValidityStatus, float, float, int]:
-    dimension = plan.nodes.shape[1]
-    vertices = np.asarray(plan.subdivision.vertices, dtype=np.float64)
-    child_count = plan.subdivision.origins.shape[0]
-    lower = np.inf
-    upper = -np.inf
-    maximum_depth = 0
-    invalid = False
-    unresolved = False
-    stack = [(np.zeros((dimension,)), np.eye(dimension), 0)]
-
-    while stack:
-        origin, matrix, level = stack.pop()
-        coefficients, margins = _evaluate_pieces(
-            element,
-            cell_kind,
-            plan,
-            local[None, :, :],
-            np.zeros((1,), dtype=np.int64),
-            origin[None, :],
-            matrix[None, :, :],
-        )
-        values = coefficients[0]
-        margin = margins[0]
-        piece_lower = float(np.min(values) - margin)
-        piece_upper = float(np.max(values) + margin)
-        corner = float(np.min(values[plan.vertex_indices]))
-        maximum_depth = max(maximum_depth, level)
-
-        if invalid:
-            lower = min(lower, piece_lower)
-            upper = max(upper, piece_upper)
-            continue
-        if piece_lower > threshold:
-            lower = min(lower, piece_lower)
-            upper = max(upper, piece_upper)
-            continue
-        if corner + margin < threshold:
-            invalid = True
-            lower = min(lower, piece_lower)
-            upper = max(upper, piece_upper)
-            continue
-        if level == 0 and exact_affine_available:
-            exact = _exact_affine_root(element, original_local, policy)
-            if exact is not None:
-                decision, lower, upper = exact
-                invalid = decision == CellValidityStatus.INVALID
-                unresolved = decision == CellValidityStatus.UNRESOLVED
-                continue
-
-        child_origins = origin[None, :] + ein.contract(
-            "ij,cj->ci", matrix, plan.subdivision.origins
-        )
-        child_matrices = ein.contract("ij,cjk->cik", matrix, plan.subdivision.matrices)
-        child_points = _child_vertices(child_origins, child_matrices, vertices)
-        parent_points = origin[None, :] + ein.contract("ij,vj->vi", matrix, vertices)
-        child_has_new_vertex = ~np.all(
-            np.any(
-                np.all(
-                    child_points[:, :, None, :] == parent_points[None, None, :, :],
-                    axis=-1,
-                ),
-                axis=-1,
-            ),
-            axis=-1,
-        )
-        if not np.all(child_has_new_vertex):
-            unresolved = True
-            lower = min(lower, piece_lower)
-            upper = max(upper, piece_upper)
-        for child in reversed(range(child_count)):
-            if child_has_new_vertex[child]:
-                stack.append((child_origins[child], child_matrices[child], level + 1))
-
-    status = (
-        CellValidityStatus.INVALID
-        if invalid
-        else CellValidityStatus.UNRESOLVED
-        if unresolved
-        else CellValidityStatus.CERTIFIED_VALID
-    )
-    return status, float(lower), float(upper), maximum_depth
-
-
-def _certify_polynomial_cell(
-    element: FiniteElementSpec,
-    cell_kind: str,
-    local: NDArray[np.float64],
-    original_local: NDArray[np.float64],
-    policy: CellValidityPolicy,
-    plan: _BernsteinPlan,
-    threshold: float,
-    exact_basis: tuple[Expression, ...] | None,
-    /,
-) -> tuple[CellValidityStatus, float, float, int]:
-    dimension = element.topological_dimension
-    if exact_basis is not None and math.isfinite(threshold):
-        exact_data = _exact_polynomial_data(exact_basis, original_local, dimension)
-        if exact_data is not None:
-            expressions, determinant = exact_data
-            affine = affine_map(expressions, dimension)
-            if affine is not None:
-                status, exact_determinant = _affine_quality(affine[1], dimension, policy)
-                return (
-                    status,
-                    coefficient_endpoint(exact_determinant, upper=False, saturate=True),
-                    coefficient_endpoint(exact_determinant, upper=True, saturate=True),
-                    0,
-                )
-            return _certify_exact_polynomial_cell(
-                determinant, plan.domain, dimension, threshold
-            )
-    return _certify_numerical_polynomial_cell(
-        element,
-        cell_kind,
-        local,
-        original_local,
-        policy,
-        plan,
-        threshold,
-        exact_affine_available=exact_basis is not None,
-    )
-
-
-def _certify_polynomial_block(
-    element: FiniteElementSpec,
-    cell_kind: str,
-    local: NDArray[np.float64],
-    policy: CellValidityPolicy,
-    /,
-    *,
-    original_local: NDArray[np.float64],
-) -> _BlockCertificate:
-    cell_kind = reference_cell_topology(cell_kind).family
-    embedded = local.shape[-1] != element.topological_dimension
-    if embedded and cell_kind not in ("interval", "triangle", "quadrilateral"):
-        raise ValueError(f"Embedded {cell_kind} cells have no validity contract.")
-    domain, degrees = _determinant_route(cell_kind, element.degree, embedded)
-    plan = _bernstein_plan(domain, degrees)
-    threshold = policy.determinant_floor() * _root_scale(element, cell_kind, plan, local)
-    exact_basis: tuple[Expression, ...] | None = None
-    if cell_kind != "pyramid":
-        try:
-            exact_basis = coordinate_source_basis(element)
-        except ValueError:
-            # Opaque and rational source bases use the outward numerical route.
-            exact_basis = None
-    status = np.empty((local.shape[0],), dtype=np.int32)
-    lower = np.empty((local.shape[0],), dtype=np.float64)
-    upper = np.empty((local.shape[0],), dtype=np.float64)
-    depth = np.empty((local.shape[0],), dtype=np.int64)
-    for cell in range(local.shape[0]):
-        (
-            status[cell],
-            lower[cell],
-            upper[cell],
-            depth[cell],
-        ) = _certify_polynomial_cell(
-            element,
-            cell_kind,
-            local[cell],
-            original_local[cell],
-            policy,
-            plan,
-            float(threshold[cell]),
-            exact_basis,
-        )
-    return _BlockCertificate(status, lower, upper, depth)
 
 
 type _ExactCellValidity = tuple[CellValidityStatus, float, float, int]
@@ -2677,6 +2386,9 @@ def _certify_source_block(
         and not isinstance(element, PerCellRestrictedCellGeometryElement)
         else None
     )
+    prepared_plain_basis = (
+        None if plain_basis is None else PreparedLinearCombinationBasis(plain_basis)
+    )
     try:
         screened = _quadratic_tetra_block_screen(
             element, cell_kind, plain_basis, routes, point_bounds, policy
@@ -2689,11 +2401,33 @@ def _certify_source_block(
         lower[mask] = screened_lower[mask]
         upper[mask] = screened_upper[mask]
         # Direct interval proofs do not claim a reusable exact-map digest.
+    remaining = (
+        np.flatnonzero(~mask) if screened is not None else np.arange(count, dtype=np.intp)
+    )
+    coordinate_rows: dict[int, tuple[ExactScalar, ...]] | None = None
+    if isinstance(coordinates, ExactCoordinateBank) and remaining.size:
+        indices = np.unique(routes[remaining])
+        if np.all(indices >= 0) and np.all(indices < len(coordinates)):
+            coordinate_rows = dict(
+                zip(indices.tolist(), coordinates.rows(indices), strict=True)
+            )
+    affine_quality_rows: list[tuple[bool, Fraction] | None] = [None] * count
+    if plain_basis is not None and isinstance(coordinates, ExactCoordinateBank):
+        batch = affine_dyadic_quality(
+            plain_basis,
+            coordinates,
+            routes[remaining],
+            dimension,
+            Fraction(policy.determinant_floor()),
+        )
+        for row, result in zip(remaining, batch, strict=True):
+            affine_quality_rows[int(row)] = result
     for row in range(routes.shape[0]):
         if screened is not None and mask[row]:
             continue
         local = tuple(
-            coordinates[int(routes[row, column])] for column in range(routes.shape[1])
+            coordinates[index] if coordinate_rows is None else coordinate_rows[index]
+            for index in routes[row].tolist()
         )
         basis = plain_basis
         expressions = (
@@ -2743,7 +2477,11 @@ def _certify_source_block(
                     tuple(local[dof][axis] for dof in range(len(local)))
                     for axis in range(len(local[0]))
                 )
-                expressions = linear_combinations(basis, components)
+                expressions = (
+                    prepared_plain_basis.combine(components)
+                    if basis is plain_basis and prepared_plain_basis is not None
+                    else linear_combinations(basis, components)
+                )
         # Without a proof domain an unsupported nonaffine map is reported, so
         # only maps with a domain carry reusable records.
         digest = None if domain is None else _map_digest(cell_kind, expressions)
@@ -2795,7 +2533,16 @@ def _certify_source_block(
                 apex_unique[row] = _pyramid_apex_unique(expressions, dimension)
         else:
             _, jacobian = affine
-            status[row], determinant = _affine_quality(jacobian, dimension, policy)
+            batch_quality = affine_quality_rows[row]
+            if batch_quality is None:
+                status[row], determinant = _affine_quality(jacobian, dimension, policy)
+            else:
+                valid, determinant = batch_quality
+                status[row] = (
+                    CellValidityStatus.CERTIFIED_VALID
+                    if valid
+                    else CellValidityStatus.INVALID
+                )
             lower[row] = coefficient_endpoint(determinant, upper=False, saturate=True)
             upper[row] = coefficient_endpoint(determinant, upper=True, saturate=True)
         if digest is not None:
@@ -3261,11 +3008,19 @@ def _polygon_measure(points: np.ndarray, policy: CellValidityPolicy, /) -> tuple
     offset = np.max(
         np.abs(np.sum(first * (area / guarded[:, None])[:, None], axis=-1)), axis=1
     )
-    slack = np.max(np.linalg.norm(first, axis=-1), axis=1) * (
+    slack = np.max(_underflow_free_norm(first, axis=-1), axis=1) * (
         16.0 * _EPSILON + rounding / guarded
     )
-    diameter = np.linalg.norm(np.max(points, axis=1) - np.min(points, axis=1), axis=-1)
-    allowed = policy.relative_planarity_tolerance * diameter
+    extent_lower, extent_upper = binary64_difference_magnitude(
+        np.max(points, axis=1), np.min(points, axis=1)
+    )
+    allowed_lower = np.maximum(
+        np.nextafter(policy.relative_planarity_tolerance * binary64_norm_lower(extent_lower), -np.inf),
+        0.0,
+    )
+    allowed_upper = np.nextafter(
+        policy.relative_planarity_tolerance * binary64_norm_upper(extent_upper), np.inf
+    )
     axes = np.asarray(((1, 2), (0, 2), (0, 1)))[np.argmax(np.abs(area), axis=-1)]
     # The area vector's Euclidean error is at most sqrt(3) times its componentwise
     # underflow loss; four more units cover the rounded squares and products below.
@@ -3276,8 +3031,8 @@ def _polygon_measure(points: np.ndarray, policy: CellValidityPolicy, /) -> tuple
         + area_rounding * area_rounding
         + 4.0 * _SMALLEST_SUBNORMAL,
         floor * scale * scale,
-        offset - slack > allowed,
-        offset + slack > allowed,
+        offset - slack > allowed_upper,
+        offset + slack > allowed_lower,
         np.take_along_axis(points, axes[:, None, :], axis=2),
     )
 
@@ -3302,14 +3057,32 @@ def _certify_polygon_block(points: np.ndarray, policy: CellValidityPolicy, /) ->
     centered = safe - np.mean(safe, axis=1, keepdims=True)
     following = np.roll(centered, -1, axis=1)
     edge_vectors = following - centered
-    edge_lengths = np.linalg.norm(edge_vectors, axis=-1)
-    edge_roundoff = (
-        4.0 * _EPSILON * np.linalg.norm(np.abs(centered) + np.abs(following), axis=-1)
+    edge_lengths_lower = binary64_norm_lower(edge_vectors)
+    edge_lengths_upper = binary64_norm_upper(edge_vectors)
+    edge_roundoff = np.nextafter(
+        4.0 * _EPSILON * binary64_norm_upper(
+            np.nextafter(np.abs(centered) + np.abs(following), np.inf)
+        ),
+        np.inf,
     )
-    diameter = np.linalg.norm(np.max(safe, axis=1) - np.min(safe, axis=1), axis=-1)
-    edge_floor = POLYGON_EDGE_RESOLUTION * diameter[:, None]
-    short_edge = np.any(edge_lengths + edge_roundoff < edge_floor, axis=1)
-    uncertain_edge = np.any(edge_lengths - edge_roundoff <= edge_floor, axis=1)
+    extent_lower, extent_upper = binary64_difference_magnitude(
+        np.max(safe, axis=1), np.min(safe, axis=1)
+    )
+    edge_floor_lower = np.maximum(
+        np.nextafter(POLYGON_EDGE_RESOLUTION * binary64_norm_lower(extent_lower), -np.inf),
+        0.0,
+    )[:, None]
+    edge_floor_upper = np.nextafter(
+        POLYGON_EDGE_RESOLUTION * binary64_norm_upper(extent_upper), np.inf
+    )[:, None]
+    short_edge = np.any(
+        np.nextafter(edge_lengths_upper + edge_roundoff, np.inf) < edge_floor_lower,
+        axis=1,
+    )
+    uncertain_edge = np.any(
+        np.nextafter(edge_lengths_lower - edge_roundoff, -np.inf) <= edge_floor_upper,
+        axis=1,
+    )
     determinant, margin, threshold, nonplanar, ambiguous, planar = _polygon_measure(
         safe, policy
     )
@@ -3489,14 +3262,8 @@ def certify_cell_geometry_validity(
     )
     source_coordinate_distinct = distinct_source
     coefficient_rounding_error = (
-        max(
-            (
-                coordinate_point_rounding_error(point, values[row])
-                for row, point in enumerate(source_coordinates)
-            ),
-            default=Fraction(0),
-        )
-        if source_coordinates is not None
+        coordinate_point_rounding_bound(source_coordinates, values)
+        if source_coordinates is not None and distinct_source
         else Fraction(0)
     )
     element_rounding_error: ExactScalar = Fraction(0)

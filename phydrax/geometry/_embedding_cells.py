@@ -33,6 +33,7 @@ from ..discretization._coordinate_enclosure import (
     evaluate_polynomial,
     Expression,
     expression_equal,
+    IntervalBasisBounds,
     linear_combinations,
     normalize_pyramid_reference_expression,
     polynomial_bounds,
@@ -496,7 +497,7 @@ def _mapped_cell_chart(
     references: tuple[tuple[Fraction, ...], ...],
     ambient: int,
     basis: tuple[Expression, ...] | None = None,
-    prepared_basis: list[PreparedIntervalBasis] | None = None,
+    interval_bounds: IntervalBasisBounds | None = None,
     /,
 ) -> _CellChart:
     """Chart of a cell from its exact composed per-cell coordinate expressions."""
@@ -542,15 +543,6 @@ def _mapped_cell_chart(
             for point in proof_references
         )
         offset, matrix = _solve_affine(references, corners)
-        interval_bounds = None
-        if prepared_basis is not None and basis is not None:
-            if not prepared_basis:
-                prepared_basis.append(
-                    PreparedIntervalBasis(
-                        basis, cast(BernsteinDomain, proof_domain), dimension
-                    )
-                )
-            interval_bounds = prepared_basis[0].bounds(local)
         if interval_bounds is not None:
             inner_bounds = interval_bounds.inner
         bounds = (
@@ -614,7 +606,9 @@ def _iter_embedding_cells(
     owning_mesh_id = mesh.mesh_id
     owning_geometry_id = cell_geometry_id(geometry)
     elements, routes, _ = geometry.resolve(mesh)
-    bank = tuple(geometry.source_coordinates())
+    source_bank = geometry.source_coordinates()
+    bank = tuple(source_bank)
+    bank_endpoints: tuple[np.ndarray, np.ndarray] | None = None
     vertex_global_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64).tolist()
     ambient = mesh.ambient_dimension
     block_offset = 0
@@ -652,13 +646,30 @@ def _iter_embedding_cells(
                 )
         chart_bases: dict[bytes, tuple[Expression, ...]] = {}
         fixed_basis: tuple[Expression, ...] | None = None
-        prepared_basis: list[PreparedIntervalBasis] | None = (
-            []
-            if not vertex_element
+        interval_rows: tuple[IntervalBasisBounds | None, ...] | None = None
+        if (
+            not vertex_element
             and kind != "pyramid"
             and not isinstance(element, PerCellRestrictedCellGeometryElement)
-            else None
-        )
+            and rows.shape[0] > 0
+            and route_rows.shape[1] > 0
+            and np.all(active)
+            and len(references) == rows.shape[1]
+            and source_bank.shape[1] == ambient
+            and np.all(route_rows >= 0)
+            and np.all(route_rows < len(source_bank))
+            and (frame is None or not source_bank.rational)
+        ):
+            fixed_basis = coordinate_effective_basis(element, cell_row=0)
+            prepared = PreparedIntervalBasis(
+                fixed_basis, cast(BernsteinDomain, domain), dimension
+            )
+            if prepared.lower is not None:
+                if bank_endpoints is None:
+                    bank_endpoints = source_bank.interval_endpoints()
+                interval_rows = prepared.batch_bounds(
+                    bank_endpoints[0][route_rows], bank_endpoints[1][route_rows]
+                )
         for local_index in range(rows.shape[0]):
             row = rows[local_index : local_index + 1].reshape(-1)
             route = route_rows[local_index : local_index + 1].reshape(-1)
@@ -741,11 +752,7 @@ def _iter_embedding_cells(
                     )
                 else:
                     basis = None
-                    if prepared_basis is not None:
-                        if fixed_basis is None:
-                            fixed_basis = coordinate_effective_basis(
-                                element, cell_row=local_index
-                            )
+                    if fixed_basis is not None:
                         basis = fixed_basis
                     if isinstance(element, PerCellRestrictedCellGeometryElement):
                         from ..discretization._cell_geometry_validity import _map_digest
@@ -770,7 +777,7 @@ def _iter_embedding_cells(
                         references,
                         ambient,
                         basis,
-                        prepared_basis,
+                        None if interval_rows is None else interval_rows[local_index],
                     )
                 cell_references = references
                 cell_domain = domain

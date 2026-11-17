@@ -1329,7 +1329,10 @@ def test_random_rational_simplex_trace_matches_fraction_reference(order: int) ->
     for weights, values in rows:
         point = tuple(
             sum(
-                (weight * reference[axis] for weight, reference in zip(weights, references, strict=True)),
+                (
+                    weight * reference[axis]
+                    for weight, reference in zip(weights, references, strict=True)
+                ),
                 Fraction(0),
             )
             / order
@@ -1355,6 +1358,79 @@ def test_random_rational_simplex_trace_matches_fraction_reference(order: int) ->
 
     assert caught_dropped_term
     assert caught_wrong_scale
+
+
+@pytest.mark.parametrize(
+    ("second_bump", "face_bubble", "off_face_cubic", "mismatch"),
+    (
+        (Fraction(1, 8), Fraction(0), Fraction(0), False),
+        (Fraction(1, 8) + Fraction(1, 4096), Fraction(0), Fraction(0), True),
+        (Fraction(1, 8), Fraction(1, 4096), Fraction(0), True),
+        (Fraction(1, 8), Fraction(0), Fraction(1, 8), False),
+    ),
+    ids=("equal", "changed-face-coefficient", "one-lattice-point", "mixed-degree"),
+)
+def test_boundary_batches_exact_shared_face_traces(
+    second_bump: Fraction,
+    face_bubble: Fraction,
+    off_face_cubic: Fraction,
+    mismatch: bool,
+) -> None:
+    first, second = _tetrahedra_sharing_a_curved_face(
+        Fraction(1, 8), second_bump, face_bubble
+    )
+    x, y, z = axes(3)
+    second = _mapped_tetrahedron(
+        2,
+        (10, 12, 11, 14),
+        (
+            second.coordinates[1],
+            second.coordinates[0],
+            add(second.coordinates[2], scale(multiply(multiply(z, z), z), off_face_cubic)),
+        ),
+    )
+    bump = scale(multiply(x, y), Fraction(1, 8))
+    shifted_x = add(x, constant(3, 3))
+    other_first = _mapped_tetrahedron(
+        3, (20, 21, 22, 23), (shifted_x, y, add(z, bump))
+    )
+    other_second = _mapped_tetrahedron(
+        4,
+        (20, 22, 21, 24),
+        (add(y, constant(3, 3)), x, add(add(scale(z, -1), bump), scale(multiply(multiply(z, z), z), Fraction(1, 8)))),
+    )
+    points = np.asarray(
+        (
+            (0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (0, 0, -1),
+            (3, 0, 0), (4, 0, 0), (3, 1, 0), (3, 0, 1), (3, 0, -1),
+        ),
+        dtype=np.float64,
+    )
+    mesh = CellMesh(
+        points,
+        (CellBlock("cells", "tetrahedron", np.asarray(
+            ((0, 1, 2, 3), (0, 2, 1, 4), (5, 6, 7, 8), (5, 7, 6, 9)),
+            dtype=np.int32,
+        )),),
+        vertex_global_ids=np.asarray((10, 11, 12, 13, 14, 20, 21, 22, 23, 24), dtype=np.int64),
+    )
+    boundary = build_oriented_boundary(mesh, (first, second, other_first, other_second))
+    findings = tuple(
+        finding for finding in boundary.findings if finding.check == "mismatched_interior_trace"
+    )
+    assert len(findings) == int(mismatch)
+    isolated_mesh = CellMesh(
+        points[:5],
+        (CellBlock("cells", "tetrahedron", np.asarray(
+            ((0, 1, 2, 3), (0, 2, 1, 4)), dtype=np.int32
+        )),),
+        vertex_global_ids=np.asarray((10, 11, 12, 13, 14), dtype=np.int64),
+    )
+    isolated = build_oriented_boundary(isolated_mesh, (first, second))
+    isolated_findings = tuple(
+        finding for finding in isolated.findings if finding.check == "mismatched_interior_trace"
+    )
+    assert findings == isolated_findings
 
 
 def test_simplex_traces_agree_exactly_on_their_shared_curved_face() -> None:
@@ -1698,7 +1774,9 @@ def test_curved_cell_image_boxes_retain_interior_contact(
     )
     if fallback:
         monkeypatch.setattr(
-            _embedding_cells.PreparedIntervalBasis, "bounds", lambda self, local: None
+            _embedding_cells.PreparedIntervalBasis,
+            "batch_bounds",
+            lambda self, lower, upper: (None,) * len(lower),
         )
     cells = prepare_embedding_cells(mesh, geometry)
     first_point = (Fraction(1, 2), Fraction(3, 32))
@@ -2778,6 +2856,101 @@ def _curved_separated_image_boxes(
         source_mesh=mesh,
     )
     return mesh, geometry, prepare_embedding_cells(mesh, geometry)
+
+
+def test_mixed_image_boxes_are_independent_of_block_partition_and_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_mesh, base_geometry, _ = _curved_separated_image_boxes(Fraction(7, 6))
+    triangle_element = base_geometry.elements[0]
+    triangle_routes = np.asarray(base_geometry.geometry_dofs[0], dtype=np.int32)
+    quad_element = lagrange_element("quadrilateral", 1)
+    quad_vertices = np.asarray(
+        reference_cell_topology("quadrilateral").vertices, dtype=np.float64
+    ) + np.asarray((10.0, 0.0), dtype=np.float64)
+    quad_nodes = np.asarray(
+        [
+            tuple(float(value) for value in node.exact_point)
+            for node in lagrange_reference_node_data(quad_element)
+            if node.exact_point is not None
+        ],
+        dtype=np.float64,
+    ) + np.asarray((10.0, 0.0), dtype=np.float64)
+    coordinates = np.concatenate((np.asarray(base_geometry.coordinates), quad_nodes))
+    bank = tuple(
+        tuple(rational_coefficient(value, role="image coordinate") for value in row)
+        for row in base_geometry.source_coordinates()
+    ) + tuple(tuple(Fraction(float(value)) for value in row) for row in quad_nodes)
+
+    def prepare(
+        groups: tuple[tuple[int, ...], ...], reverse: bool
+    ) -> dict[int, np.ndarray]:
+        blocks = []
+        elements = {}
+        routes = {}
+        for index, group in enumerate(groups):
+            name = f"triangles-{index}"
+            selected = np.asarray(group, dtype=np.int32)
+            blocks.append(
+                CellBlock(
+                    name,
+                    "triangle",
+                    np.asarray(base_mesh.blocks[0].vertices)[selected],
+                    global_ids=np.asarray([100 + row for row in group], dtype=np.int64),
+                )
+            )
+            elements[name] = triangle_element
+            routes[name] = triangle_routes[selected]
+        if reverse:
+            blocks.reverse()
+        blocks.append(
+            CellBlock(
+                "quad",
+                "quadrilateral",
+                np.asarray(((6, 7, 8, 9),), dtype=np.int32),
+                global_ids=np.asarray((102,), dtype=np.int64),
+            )
+        )
+        elements["quad"] = quad_element
+        routes["quad"] = np.arange(
+            len(bank) - len(quad_nodes), len(bank), dtype=np.int32
+        )[None, :]
+        mesh = CellMesh(
+            np.concatenate((np.asarray(base_mesh.coordinates), quad_vertices)),
+            tuple(blocks),
+        )
+        geometry = CellGeometrySpec(
+            elements,
+            routes,
+            coordinates,
+            source_map=_ExactImageSource(bank),
+            source_mesh=mesh,
+        )
+        return {
+            cell.global_id: np.asarray(
+                (
+                    *cell.image_lower,
+                    *cell.image_upper,
+                    *(
+                        value
+                        for pair in (cell.image_inner_bounds or ())
+                        for value in pair
+                    ),
+                ),
+                dtype=np.float64,
+            ).view(np.uint64)
+            for cell in prepare_embedding_cells(mesh, geometry)
+        }
+
+    monkeypatch.setenv("PHX_MESHCORE_THREADS", "1")
+    block = prepare(((0, 1),), False)
+    split = prepare(((0,), (1,)), True)
+    monkeypatch.setenv("PHX_MESHCORE_THREADS", "4")
+    reordered = prepare(((1, 0),), True)
+    assert block.keys() == split.keys() == reordered.keys()
+    for cell_id in block:
+        np.testing.assert_array_equal(block[cell_id], split[cell_id])
+        np.testing.assert_array_equal(block[cell_id], reordered[cell_id])
 
 
 @pytest.mark.parametrize("periodic", (False, True))

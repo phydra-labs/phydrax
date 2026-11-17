@@ -727,6 +727,47 @@ PHX_MC_API int32_t phx_mc_tet_mesh_apply_edit(
 PHX_MC_API int32_t phx_mc_tet_mesh_probe_edit(
     phx_mc_tet_mesh* mesh, const phx_mc_tet_mesh_edit_request* request,
     int32_t* decided, int32_t* edit_status);
+/* Exact refusal probes of independent relocations, mutating no mesh state.
+ * Group g moves vertices vertex_ids[vertex_offsets[g]..vertex_offsets[g+1])
+ * to the matching rows of `points` and declares the star cells
+ * cell_ids[cell_offsets[g]..cell_offsets[g+1]). Each group is probed alone
+ * against the current state, as the relocation request that states no source
+ * witness and no protection for the moved vertices, clears their edge
+ * parameters and supplies no ancestry. decided[g] is 1 when
+ * phx_mc_tet_mesh_apply_edit would refuse that
+ * request with edit_statuses[g], and 0 when it may apply or the probe does not
+ * decide it. Every decided refusal advances the implicit-source refusal
+ * counters exactly as that refused apply_edit would; the implicit facet
+ * refusal record afterwards is that of the last group. Offsets start at zero
+ * and do not decrease. A generation or source identity mismatch returns
+ * PHX_MC_STALE_GENERATION. The caller must synchronize against edits. */
+PHX_MC_API int32_t phx_mc_tet_mesh_probe_relocations(
+    phx_mc_tet_mesh* mesh, uint64_t expected_generation, int32_t identity_bound,
+    const char* source_id, int64_t source_id_length, const char* source_revision,
+    int64_t source_revision_length, const char* source_map_id, int64_t source_map_id_length,
+    const char* frame_id, int64_t frame_id_length, int64_t group_count,
+    const int64_t* vertex_offsets, const uint64_t* vertex_ids, const double* points,
+    const int64_t* cell_offsets, const uint64_t* cell_ids, int32_t* decided,
+    int32_t* edit_statuses);
+/* Applies one relocation in place: the request of
+ * phx_mc_tet_mesh_probe_relocations for a single group, moving `vertex_count`
+ * vertices together. `decided` is 1 with the `edit_status`
+ * phx_mc_tet_mesh_apply_edit would return for that request: APPLIED after the
+ * moved vertices' points, witnesses, edge parameters and ancestry are written
+ * and the generation advanced, or a refusal that changes no mesh state and
+ * advances the implicit-source refusal counters exactly as the refused
+ * apply_edit would. `decided` is 0, with nothing changed, when the mesh
+ * carries periodic records or a bound periodic identity or has exhausted its
+ * generations; phx_mc_tet_mesh_apply_edit decides those. A generation or
+ * source identity mismatch returns PHX_MC_STALE_GENERATION. The caller must
+ * synchronize against edits. */
+PHX_MC_API int32_t phx_mc_tet_mesh_apply_relocation(
+    phx_mc_tet_mesh* mesh, uint64_t expected_generation, int32_t identity_bound,
+    const char* source_id, int64_t source_id_length, const char* source_revision,
+    int64_t source_revision_length, const char* source_map_id, int64_t source_map_id_length,
+    const char* frame_id, int64_t frame_id_length, int64_t vertex_count,
+    const uint64_t* vertex_ids, const double* points, int64_t cell_count,
+    const uint64_t* cell_ids, int32_t* decided, int32_t* edit_status);
 /* Ephemeral evidence from the latest actual implicit-facet admission refusal.
  * The record belongs to the current mesh identity and generation only. */
 typedef struct phx_mc_tet_implicit_facet_refusal {
@@ -1025,6 +1066,19 @@ PHX_MC_API int32_t phx_mc_polynomial_jacobian_integrals(
     const int32_t* exponents, const uint8_t* coefficients, uint8_t* sums,
     int64_t* denominators, int64_t* counts, int32_t* item_status,
     int32_t word_limbs, int32_t parallelism);
+/* Shared nodal basis and routed exact coordinates. Sparse coordinates use
+ * numerator/denominator words; a zero denominator refuses the owning item.
+ * Successful sums are divided by (basis scale * returned coordinate scale)^d,
+ * then by the returned control denominator and count and by the reference
+ * volume denominator, as in phx_mc_polynomial_jacobian_integrals. */
+PHX_MC_API int32_t phx_mc_basis_jacobian_integrals(
+    int64_t count, int32_t dimension, int32_t domain, int64_t nodes, int64_t bank_rows,
+    const int64_t* routes, const int64_t* significands, const int16_t* exponents,
+    const int64_t* sparse_index, const int64_t* sparse_rows,
+    const uint8_t* sparse_numerators, const uint8_t* sparse_denominators,
+    const int64_t* basis_offsets, const int32_t* basis_exponents, const uint8_t* basis,
+    uint8_t* sums, uint8_t* scales, int64_t* denominators, int64_t* counts,
+    int32_t* item_status, int32_t word_limbs, int32_t parallelism);
 /* Leading principal minors of J + J^T. Each matrix entry owns a term range
  * in offsets, with integer coefficients and dimension-wide nonnegative
  * exponents. Output slots are item-major then minor order; each has capacity

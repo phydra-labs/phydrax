@@ -30,6 +30,7 @@ from ..discretization._coordinate_enclosure import (
     polynomial_bounds,
     PreparedSimplexPolynomial,
     RationalPolynomial,
+    restricted_polynomial_batch_bounds,
     restricted_polynomial_bounds,
 )
 from ..discretization._exact_algebraic_geometry import coefficient_endpoint
@@ -114,7 +115,10 @@ if TYPE_CHECKING:
         ImplicitChartPremise,
         ValidatedImplicitChartParent,
     )
-    from .implicit._source_charts import AdaptiveImplicitRootChartMap
+    from .implicit._source_charts import (
+        _ImplicitChartHandoff,
+        AdaptiveImplicitRootChartMap,
+    )
     from .reconstruction._boundary import ReconstructedTriangleBoundarySource
 
 
@@ -316,7 +320,8 @@ def _same_triangle_chain_boundary(
     almost everywhere. The caller independently checks both partitions for
     positive-area overlap.
     """
-    edges: dict[tuple[Point2, Point2], int] = {}
+    rows: list[Triangle2] = []
+    orientations: list[int] = []
     for triangles, areas, chain_sign in (
         (first, first_areas, 1),
         (second, second_areas, -1),
@@ -324,31 +329,47 @@ def _same_triangle_chain_boundary(
         if areas is None:
             areas = tuple(_area2(triangle) for triangle in triangles)
         for triangle, area in zip(triangles, areas, strict=True):
-            if not area:
-                continue
-            orientation = chain_sign if area > 0 else -chain_sign
-            for start, stop in zip(triangle, triangle[1:] + triangle[:1], strict=True):
-                if start == stop:
-                    continue
-                if start < stop:
-                    edge, direction = (start, stop), orientation
-                else:
-                    edge, direction = (stop, start), -orientation
-                edges[edge] = edges.get(edge, 0) + direction
+            if area:
+                rows.append(triangle)
+                orientations.append(chain_sign if area > 0 else -chain_sign)
+    if not rows:
+        return True
+    points = tuple(sorted({point for triangle in rows for point in triangle}))
+    point_ids = {point: index for index, point in enumerate(points)}
+    vertices = np.fromiter(
+        (point_ids[point] for triangle in rows for point in triangle),
+        dtype=np.int64,
+        count=3 * len(rows),
+    ).reshape((-1, 3))
+    starts = vertices.reshape(-1)
+    ends = vertices[:, (1, 2, 0)].reshape(-1)
+    weights = np.repeat(np.asarray(orientations, dtype=np.int64), 3)
+    weights = np.where(starts < ends, weights, -weights)
+    lower = np.minimum(starts, ends)
+    upper = np.maximum(starts, ends)
+    order = np.lexsort((upper, lower))
+    lower, upper, weights = lower[order], upper[order], weights[order]
+    first_rows = np.flatnonzero(
+        np.r_[True, (lower[1:] != lower[:-1]) | (upper[1:] != upper[:-1])]
+    )
+    totals = np.add.reduceat(weights, first_rows)
+    edges = (
+        (points[int(lower[row])], points[int(upper[row])], int(total))
+        for row, total in zip(first_rows, totals, strict=True)
+        if total and lower[row] != upper[row]
+    )
     events: dict[tuple[bool, Fraction, Fraction, Fraction], int] = {}
-    for (start, stop), direction in edges.items():
-        if not direction:
-            continue
+    for start, stop, direction in edges:
         dx = stop[0] - start[0]
         dy = stop[1] - start[1]
         if dx:
             slope = dy / dx
             line = (False, slope, start[1] - slope * start[0])
-            lower, upper = start[0], stop[0]
+            lower_position, upper_position = start[0], stop[0]
         else:
             line = (True, start[0], Fraction(0))
-            lower, upper = start[1], stop[1]
-        for position, delta in ((lower, direction), (upper, -direction)):
+            lower_position, upper_position = start[1], stop[1]
+        for position, delta in ((lower_position, direction), (upper_position, -direction)):
             key = (*line, position)
             events[key] = events.get(key, 0) + delta
     return not any(events.values())
@@ -2187,6 +2208,29 @@ def _cell_global_rows(
     }
 
 
+def _cell_rows_for_ids(
+    mesh: CellMesh, identifiers: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Resolve cell IDs in bulk, leaving missing rows marked with ``-1``."""
+    banks = tuple(np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks)
+    all_ids = np.concatenate(banks) if banks else np.empty(0, dtype=np.int64)
+    if not all_ids.size:
+        missing = np.full(identifiers.shape, -1, dtype=np.int64)
+        return all_ids, missing, missing.copy()
+    blocks = np.concatenate(
+        tuple(np.full(bank.size, index, dtype=np.int64) for index, bank in enumerate(banks))
+    )
+    rows = np.concatenate(tuple(np.arange(bank.size, dtype=np.int64) for bank in banks))
+    order = np.argsort(all_ids, kind="stable")
+    sorted_ids = all_ids[order]
+    positions = np.searchsorted(sorted_ids, identifiers)
+    valid = positions < sorted_ids.size
+    safe = np.minimum(positions, sorted_ids.size - 1)
+    valid &= sorted_ids[safe] == identifiers
+    selected = order[safe]
+    return all_ids, np.where(valid, blocks[selected], -1), np.where(valid, rows[selected], -1)
+
+
 @runtime_checkable
 class _AdaptiveImplicitBoundaryCarrier(SourceBoundaryProjectionQuery, Protocol):
     @property
@@ -3058,14 +3102,18 @@ def _volume_boundary_facet_lookup(
             raise ValueError(
                 "Canonical volume cell faces do not bind the target face identity bank."
             )
-        return {
-            (int(cell_ids[cell_row]), local_face): (
-                int(face_ids[int(local_face_rows[cell_row, local_face])]),
-                bool(boundary[int(local_face_rows[cell_row, local_face])]),
-            )
-            for cell_row in range(cell_ids.size)
-            for local_face in range(local_face_rows.shape[1])
-        }
+        width = local_face_rows.shape[1]
+        keys = zip(
+            np.repeat(cell_ids, width).tolist(),
+            np.tile(np.arange(width, dtype=np.int64), cell_ids.size).tolist(),
+            strict=True,
+        )
+        values = zip(
+            face_ids[local_face_rows].reshape(-1).tolist(),
+            boundary[local_face_rows].reshape(-1).tolist(),
+            strict=True,
+        )
+        return dict(zip(keys, values, strict=True))
     if isinstance(connectivity, PolyhedralConnectivity):
         if not np.array_equal(np.asarray(connectivity.cell_global_ids), cell_ids):
             raise ValueError("Polyhedral connectivity changes canonical volume cell IDs.")
@@ -3163,6 +3211,16 @@ def polyhedral_face_triangle_vertex_ids(
     mesh: CellMesh, geometry: CellGeometrySpec, /
 ) -> tuple[tuple[int, tuple[int, int, int]], ...]:
     """Return exact-source-validated triangle rows for actual polyhedral faces."""
+    return _polyhedral_face_triangle_vertex_ids(mesh, geometry, None)
+
+
+def _polyhedral_face_triangle_vertex_ids(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    facets: dict[tuple[int, int], tuple[int, bool]] | None,
+    /,
+) -> tuple[tuple[int, tuple[int, int, int]], ...]:
+    """Triangulate after reusing any facet lookup already validated for this call."""
     from ..discretization._cell_complex import PolyhedralConnectivity
     from ..discretization._polyhedral_locator import _triangulate_face
 
@@ -3176,7 +3234,8 @@ def polyhedral_face_triangle_vertex_ids(
             "Polyhedral face triangulations require a three-dimensional PolyhedralConnectivity mesh."
         )
     exact_vertex_coordinates = _polyhedral_vertex_source_coordinates(mesh, geometry)
-    _volume_boundary_facet_lookup(mesh)
+    if facets is None:
+        _volume_boundary_facet_lookup(mesh)
     connectivity = mesh.connectivity
     face_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
     face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
@@ -4115,7 +4174,7 @@ def _polyhedral_surface_target_chart_rows(
     expected_lists: dict[int, list[tuple[int, int, int]]] = {
         int(value): [] for value in face_ids
     }
-    for face_id, triangle in polyhedral_face_triangle_vertex_ids(mesh, geometry):
+    for face_id, triangle in _polyhedral_face_triangle_vertex_ids(mesh, geometry, facets):
         expected_lists[face_id].append(triangle)
     expected_triangles = {
         face_id: tuple(triangles) for face_id, triangles in expected_lists.items()
@@ -4223,7 +4282,6 @@ def _surface_target_chart_rows(
         raise ValueError(
             "Surface chart fidelity requires two-dimensional charts in three-space."
         )
-    cells = _cell_global_rows(mesh)
     cell_ids = _integer_vector(witness.cell_global_ids)
     entities = np.asarray(witness.entity_global_ids, dtype=np.int64)
     local_entities = np.asarray(witness.local_entity_indices, dtype=np.int64)
@@ -4236,6 +4294,9 @@ def _surface_target_chart_rows(
         raise ValueError(
             "Surface chart target identity rows must align with source chart rows."
         )
+    all_cell_ids, block_rows, local_rows = _cell_rows_for_ids(
+        mesh, np.asarray(cell_ids, dtype=np.int64)
+    )
     if full_source is None:
         full_source = source is None or set(source.patches) == set(
             range(len(source.domain.patches))
@@ -4249,7 +4310,7 @@ def _surface_target_chart_rows(
             raise ValueError(
                 "Surface target chart entities must equal their global cell IDs."
             )
-        if full_source and set(cell_ids) != set(cells):
+        if full_source and set(cell_ids) != set(all_cell_ids.tolist()):
             raise ValueError(
                 "Full-source surface chart witness must bind every target cell."
             )
@@ -4270,11 +4331,10 @@ def _surface_target_chart_rows(
         unique_cells = len(set(cell_ids)) == count
         for row in range(count):
             cell_id = cell_ids[row]
-            found = cells.get(cell_id)
-            if found is None:
+            block_index = int(block_rows[row])
+            if block_index < 0:
                 raise ValueError("Surface chart witness names an absent target cell.")
-            block_index, cell_row, block = found
-            if block.cell_kind != "triangle":
+            if mesh.blocks[block_index].cell_kind != "triangle":
                 raise ValueError(
                     "Surface source charts currently require triangle target cells."
                 )
@@ -4292,7 +4352,7 @@ def _surface_target_chart_rows(
             for triangles in by_cell.values():
                 _require_reference_chart_partition(tuple(triangles), (standard,))
         return (
-            tuple((cells[cell_id][0], cells[cell_id][1]) for cell_id in cell_ids),
+            tuple(zip(block_rows.tolist(), local_rows.tolist(), strict=True)),
             reference_triangles,
             tuple(1 if _area2(triangle) > 0 else -1 for triangle in reference_triangles),
         )
@@ -4309,16 +4369,15 @@ def _surface_target_chart_rows(
                 "Polyhedral face charts use their explicit two-dimensional face coordinates."
             )
         return _polyhedral_surface_target_chart_rows(
-            mesh, geometry, witness, cells, facets, full_source=full_source
+            mesh, geometry, witness, _cell_global_rows(mesh), facets, full_source=full_source
         )
     if witness.reference_dimension != 3:
         raise ValueError(
             "Standard volume-boundary charts retain three-dimensional parent-reference corners."
         )
     if any(
-        cells[cell_id][2].cell_kind == "polyhedron"
-        for cell_id in cell_ids
-        if cell_id in cells
+        block.cell_kind == "polyhedron" and np.any(block_rows == index)
+        for index, block in enumerate(mesh.blocks)
     ):
         raise ValueError(
             "A polyhedral volume chart witness requires explicit target face triangle ancestry."
@@ -4351,7 +4410,17 @@ def _surface_target_chart_rows(
     reference_rows: list[Triangle2] = []
     cell_rows: list[tuple[int, int]] = []
     orientation_signs: list[int] = []
-    facet_owners: dict[int, tuple[int, int]] = {}
+    facet_conflicts = np.zeros(count, dtype=np.bool_)
+    if count:
+        order = np.argsort(entities, kind="stable")
+        sorted_entities = entities[order]
+        starts = np.r_[True, sorted_entities[1:] != sorted_entities[:-1]]
+        first = np.maximum.accumulate(np.where(starts, np.arange(count), 0))
+        first_rows = order[first]
+        row_cells = np.asarray(cell_ids, dtype=np.int64)
+        facet_conflicts[order] = (row_cells[order] != row_cells[first_rows]) | (
+            local_entities[order] != local_entities[first_rows]
+        )
     face_charts: dict[
         tuple[str, int, Triangle3], tuple[tuple[Triangle2, ...], tuple[Triangle2, ...]]
     ] = {}
@@ -4360,19 +4429,18 @@ def _surface_target_chart_rows(
         cell_id = cell_ids[row]
         local_entity = int(local_entities[row])
         entity_id = int(entities[row])
-        found = cells.get(cell_id)
+        block_index = int(block_rows[row])
+        cell_row = int(local_rows[row])
         actual = facets.get((cell_id, local_entity))
-        if found is None or actual is None or actual[0] != entity_id:
+        if block_index < 0 or actual is None or actual[0] != entity_id:
             raise ValueError(
                 "Volume chart witness changes an actual target facet ancestry."
             )
-        side = (cell_id, local_entity)
-        previous_side = facet_owners.setdefault(actual[0], side)
-        if previous_side != side:
+        if facet_conflicts[row]:
             raise ValueError(
                 "Each volume target facet must use one consistent incident-cell side."
             )
-        block_index, cell_row, block = found
+        block = mesh.blocks[block_index]
         if not isinstance(block, CellBlock):
             raise TypeError(
                 "Standard volume-boundary charts require reference-cell blocks."
@@ -5480,10 +5548,62 @@ def _curved_trim_lens_caps(
         exact_surface_coordinate_expressions,
     )
 
+    exact_surface = (
+        exact_surface_coordinate_expressions(surface)
+        if any(lens.parameter_bound != 0 for lens in lenses)
+        else None
+    )
     batched: dict[int, tuple[tuple[np.ndarray, np.ndarray] | None, ...]] = {}
-    if (
+    if not composed and exact_surface is not None:
+        rows: list[tuple[int, Triangle2]] = []
+        for index, lens in enumerate(lenses):
+            if lens.parameter_bound == 0:
+                continue
+            box = _curved_trim_lens_box(surface, lens)
+            if box is None:
+                break
+            lower, upper = box
+            rows.extend(
+                (
+                    (index, (lower, (upper[0], lower[1]), upper)),
+                    (index, (lower, upper, (lower[0], upper[1]))),
+                )
+            )
+        if rows:
+            corners = tuple(triangle for _, triangle in rows)
+            lower_bounds = np.empty((len(rows), 3, 2), dtype=np.float64)
+            upper_bounds = np.empty_like(lower_bounds)
+            valid = np.ones(len(rows), dtype=np.bool_)
+            for physical_axis, expression in enumerate(exact_surface):
+                for parameter in range(2):
+                    tangent = PreparedSimplexPolynomial(
+                        derivative(expression, parameter), 2
+                    )
+                    for row, (low, high) in enumerate(
+                        restricted_polynomial_batch_bounds(tangent, corners)
+                    ):
+                        if (
+                            not math.isfinite(low)
+                            or not math.isfinite(high)
+                            or low > high
+                        ):
+                            valid[row] = False
+                        lower_bounds[row, physical_axis, parameter] = low
+                        upper_bounds[row, physical_axis, parameter] = high
+            results: dict[int, list[tuple[np.ndarray, np.ndarray] | None]] = {}
+            for row, (index, triangle) in enumerate(rows):
+                bounds = (
+                    (lower_bounds[row], upper_bounds[row])
+                    if valid[row]
+                    else _exact_surface_jacobian_bounds(
+                        exact_surface, triangle, composed=True
+                    )
+                )
+                results.setdefault(index, []).append(bounds)
+            batched = {index: tuple(values) for index, values in results.items()}
+    elif (
         any(lens.parameter_bound != 0 for lens in lenses)
-        and exact_surface_coordinate_expressions(surface) is None
+        and exact_surface is None
         and preparation.surface_spans(surface) is None
         and (
             not _has_unexpanded_exact_surface_carrier(surface)
@@ -6615,6 +6735,7 @@ def certify_source_fidelity(
     maximum_normal_deviation: float | None = None,
     witness: SourceFidelityWitness | ValidatedSourceFidelityWitness | None = None,
     root_charts: AdaptiveImplicitRootChartMap | None = None,
+    _root_chart_handoff: _ImplicitChartHandoff | None = None,
     preparation: SourcePreparation | None = None,
     chart_parent: ImplicitChartPremise | None = None,
     validated_chart_parent: ValidatedImplicitChartParent | None = None,
@@ -6799,6 +6920,7 @@ def certify_source_fidelity(
                     tolerance=tolerance_,
                     maximum_normal_deviation=normal_limit,
                     root_charts=root_charts,
+                    _handoff=_root_chart_handoff,
                     chart_parent=chart_parent,
                     validated_chart_parent=validated_chart_parent,
                 )

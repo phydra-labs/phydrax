@@ -51,7 +51,11 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..ein import contract
 from ._exact_polyhedral_geometry import determinant3
-from ._rational import rational_vector
+from ._rational import (
+    binary64_difference_magnitude,
+    binary64_norm_lower,
+    rational_vector,
+)
 
 
 if TYPE_CHECKING:
@@ -1369,10 +1373,18 @@ def _empty_entries(dimension: int, policy: CommonRefinementPolicy, /) -> _Entrie
 def _coverage_tolerances(
     part: _Decomposition, policy: CommonRefinementPolicy, /
 ) -> np.ndarray:
-    diameter = np.sqrt(np.sum((part.bbox_max - part.bbox_min) ** 2, axis=1))
+    extent_lower, _ = binary64_difference_magnitude(part.bbox_max, part.bbox_min)
+    # Coverage slack is an acceptance threshold, so its scale must not exceed
+    # the exact box diameter.
+    diameter = binary64_norm_lower(extent_lower)
     dimension = part.bbox_min.shape[1]
-    floor = _COVERAGE_ROUNDOFF_ULPS * np.finfo(np.float64).eps * diameter**dimension
-    return policy.coverage_tolerance * part.measures + floor
+    floor = np.full_like(diameter, _COVERAGE_ROUNDOFF_ULPS * np.finfo(np.float64).eps)
+    for _ in range(dimension):
+        floor = np.maximum(np.nextafter(floor * diameter, -np.inf), 0.0)
+    relative = np.maximum(
+        np.nextafter(policy.coverage_tolerance * part.measures, -np.inf), 0.0
+    )
+    return np.maximum(np.nextafter(relative + floor, -np.inf), 0.0)
 
 
 def _coverage_status(

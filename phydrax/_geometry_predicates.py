@@ -303,16 +303,35 @@ _INCIRCLE = _Filter("incircle", _incircle_kernel, 2, 4, (10.0, 96.0), 4, 384.0)
 _INSPHERE = _Filter("insphere", _insphere_kernel, 3, 5, (16.0, 224.0), 5, 2880.0)
 
 
+def _filter_bound(
+    xp: ModuleType, spec: _Filter, permanent: Any, largest: Any, dtype: Any, safety: float, /
+) -> Any:
+    info = np.finfo(dtype)
+    unit = float(info.eps) / 2.0
+    first, second = spec.coefficient
+    # The static error estimate is itself an upper bound, not an ordinary
+    # floating-point approximation. Direct every operation upward.
+    def upper(value: Any, /) -> Any:
+        if xp is np:
+            return np.nextafter(value, np.inf)
+        return flush_safe_outward(value, "up")
+
+    unit_value = xp.asarray(unit, dtype=dtype)
+    relative = upper(upper(first + upper(second * unit_value)) * unit_value)
+    largest_upper = upper(largest)
+    base = upper(1.0 + largest_upper)
+    power = base
+    for _ in range(spec.degree - 2):
+        power = upper(power * base)
+    absolute = upper(xp.asarray(spec.multiplier * float(info.tiny), dtype=dtype) * power)
+    return upper(safety * upper(upper(relative * permanent) + absolute))
+
+
 def _filter(
     xp: ModuleType, spec: _Filter, points: tuple, dtype: Any, safety: float, /
 ) -> tuple:
     det, permanent, zero, largest = spec.kernel(xp, *points)
-    info = np.finfo(dtype)
-    unit = float(info.eps) / 2.0
-    first, second = spec.coefficient
-    relative = (first + second * unit) * unit
-    absolute = spec.multiplier * float(info.tiny) * (1.0 + largest) ** (spec.degree - 1)
-    bound = safety * (relative * permanent + absolute)
+    bound = _filter_bound(xp, spec, permanent, largest, dtype, safety)
     finite = xp.isfinite(det) & xp.isfinite(bound)
     decided = finite & (xp.abs(det) > bound)
     for point in points:

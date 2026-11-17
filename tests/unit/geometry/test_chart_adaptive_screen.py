@@ -3,6 +3,7 @@
 from fractions import Fraction
 
 import numpy as np
+import pytest
 
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization import lagrange_element
@@ -14,11 +15,13 @@ from phydrax.discretization._cell_geometry_validity import cell_geometry_id
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
 from phydrax.discretization._coordinate_enclosure import (
     compose_expression,
-    coordinate_map_expressions,
+    coordinate_source_basis,
     evaluate_expression,
     Polynomial,
     polynomial_bounds,
+    scale,
     subtract,
+    sum_polynomials,
 )
 from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
 from phydrax.geometry._meshing_domain import MeshingDomain, SourcePreparation
@@ -27,6 +30,7 @@ from phydrax.geometry._source_fidelity import _affine_triangle_arguments, _box_g
 from phydrax.geometry._source_interpolation import (
     _exact_component_norm,
     _target_endpoint_upper,
+    _TargetChartBasis,
     certify_domain_surface_charts,
     SourceChartFidelity,
 )
@@ -51,6 +55,8 @@ def _case(
     domain: MeshingDomain,
     charts: np.ndarray,
     order: np.ndarray,
+    *,
+    degree: int = 2,
 ) -> tuple[
     CellMesh, CellGeometrySpec, MeshingDomainBoundarySource, SourceBoundaryChartWitness
 ]:
@@ -74,7 +80,7 @@ def _case(
             ),
         ),
     )
-    element = lagrange_element("triangle", 2)
+    element = lagrange_element("triangle", degree)
     nodes = np.asarray(element.reference_nodes, dtype=np.float64)
     coordinates = []
     for row in range(count):
@@ -137,7 +143,17 @@ def _oracle(
         arguments = _affine_triangle_arguments(reference)
         local = tuple(coefficients[int(i)] for i in np.asarray(routes[0])[cell_row])
         assert isinstance(elements[0], ScalarCoordinateElement)
-        physical = coordinate_map_expressions(elements[0], local, cell_row=int(cell_row))
+        basis = coordinate_source_basis(elements[0], cell_row=int(cell_row))
+        physical = tuple(
+            sum_polynomials(
+                tuple(
+                    scale(function, values[axis])
+                    for function, values in zip(basis, local, strict=True)
+                ),
+                2,
+            )
+            for axis in range(3)
+        )
         mapped = tuple(compose_expression(component, arguments) for component in physical)
         corners = tuple(
             tuple(evaluate_expression(component, p) for component in mapped)
@@ -187,9 +203,14 @@ def _oracle(
 
 
 def _decisions(
-    domain: MeshingDomain, charts: np.ndarray, order: np.ndarray, tolerance: float
+    domain: MeshingDomain,
+    charts: np.ndarray,
+    order: np.ndarray,
+    tolerance: float,
+    *,
+    degree: int = 2,
 ) -> tuple[tuple[bool, ...], tuple[bool, ...]]:
-    mesh, geometry, source, witness = _case(domain, charts, order)
+    mesh, geometry, source, witness = _case(domain, charts, order, degree=degree)
     rows = np.asarray(witness.cell_global_ids, dtype=np.int64) - 101
     result = certify_domain_surface_charts(
         mesh,
@@ -222,6 +243,23 @@ def test_random_sphere_charts_match_exact_budget_oracle() -> None:
     for tolerance in (0.001, 0.01, 0.1):
         actual, expected = _decisions(domain, charts, order, tolerance)
         assert actual == expected
+
+
+def test_chart_certification_matches_generic_affine_quadratic_and_cubic_maps() -> None:
+    domain = _domain()
+    charts = np.asarray(
+        (
+            ((0.2, 0.1), (0.45, 0.1), (0.2, 0.35)),
+            ((0.5, 0.3), (0.625, 0.3), (0.5, 0.425)),
+        ),
+        dtype=np.float64,
+    )
+    for degree in (1, 2, 3):
+        for tolerance in (0.001, 0.02, 0.2):
+            actual, expected = _decisions(
+                domain, charts, np.arange(len(charts)), tolerance, degree=degree
+            )
+            assert actual == expected
 
 
 def test_adaptive_chart_decisions_are_batch_independent() -> None:
@@ -264,6 +302,45 @@ def test_adaptive_chart_decisions_are_batch_independent() -> None:
             batch_evidence.deviation_bounds[position].view(np.uint64),
             one.deviation_bounds[0].view(np.uint64),
         )
+
+
+def test_target_basis_batch_preserves_rows_and_certification() -> None:
+    domain = _domain()
+    charts = np.asarray(
+        (
+            ((0.0, 0.0), (0.25, 0.0), (0.0, 0.25)),
+            ((0.5, 0.25), (0.625, 0.25), (0.5, 0.375)),
+            ((0.75, 0.5), (1.0, 0.5), (0.75, 0.75)),
+        )
+    )
+    order = np.asarray((2, 0, 1))
+    mesh, geometry, source, witness = _case(domain, charts, order)
+    elements, routes, _ = geometry.resolve(mesh)
+    assert isinstance(elements[0], ScalarCoordinateElement)
+    basis = _TargetChartBasis(
+        elements[0],
+        0,
+        _affine_triangle_arguments(
+            (
+                (Fraction(0), Fraction(0)),
+                (Fraction(1), Fraction(0)),
+                (Fraction(0), Fraction(1)),
+            )
+        ),
+    )
+    if basis.prepared.lower is None:
+        pytest.skip("Native interval basis bounds are unavailable")
+    coordinates = geometry.source_coordinates()
+    locals_ = tuple(
+        tuple(coordinates[int(index)] for index in np.asarray(routes[0])[row])
+        for row in order
+    )
+    affine = tuple((Fraction(0), Fraction(0), Fraction(0)) for _ in locals_[0])
+    mixed = (locals_[0], (), affine, locals_[1], locals_[2])
+    singles = tuple(basis.screen_batch((local,))[0] for local in mixed)
+    assert singles[1] is None
+    assert singles[2] is not None and singles[2][1]
+    assert basis.screen_batch(mixed) == singles
 
 
 def test_natural_near_threshold_sphere_chart_matches_exact_route() -> None:

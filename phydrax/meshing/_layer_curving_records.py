@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import fields
 from fractions import Fraction
 from functools import lru_cache
@@ -53,7 +54,7 @@ from ..discretization.fem._reference import (
 from ..geometry._domain_boundary import MeshingDomainBoundarySource
 from ..geometry._mapped_reference_boundary import MappedReferenceBoundarySource
 from ..geometry._mesh_certificates import _same_tree_content
-from ..geometry._rational import fraction_endpoint
+from ..geometry._rational import binary64_norm_upper, fraction_endpoint
 from ..geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryProjectionQuery,
@@ -633,7 +634,9 @@ def _evaluate_mapped_chart_point(
         dtype=np.float64,
     )
     normal_raw = np.cross(tangents[0], tangents[1])
-    normal_norm = float(np.linalg.norm(normal_raw))
+    normal_norm = math.sqrt(
+        math.fsum(float(value) * float(value) for value in normal_raw)
+    )
     if (
         len(source_exact) != 3
         or tangents.shape != (2, 3)
@@ -668,16 +671,25 @@ def _mapped_physical_distance_bounds(
     target_exact = tuple(
         Fraction(float(value)) for value in np.asarray(target_point, dtype=np.float64)
     )
-    if len(source_exact) != 3:
+    return _physical_distance_bounds(source_exact, target_exact)
+
+
+def _physical_distance_bounds(
+    source_exact: tuple[ExactScalar, ...], target_exact: tuple[ExactScalar, ...], /
+) -> tuple[float, float]:
+    if len(source_exact) != 3 or len(target_exact) != 3:
         raise ValueError(
             "Mapped source physical distance requires three root-chart coordinates."
         )
     squared_lower = Fraction(0)
     squared_upper = Fraction(0)
     for axis, value in enumerate(source_exact):
+        if value == target_exact[axis]:
+            continue
         lower, upper = coefficient_interval(value)
-        delta_lower = lower - target_exact[axis]
-        delta_upper = upper - target_exact[axis]
+        target_lower, target_upper = coefficient_interval(target_exact[axis])
+        delta_lower = lower - target_upper
+        delta_upper = upper - target_lower
         minimum = (
             Fraction(0)
             if delta_lower <= 0 <= delta_upper
@@ -750,6 +762,36 @@ def _evaluate_cell_geometry_point(
     A map retaining an exact coefficient bank is evaluated on those exact
     coefficients; its binary64 execution shadows are not the source operand.
     """
+    exact_point = _evaluate_cell_geometry_exact_point(
+        elements,
+        routes,
+        coordinates,
+        exact_coordinate_bank,
+        block_row,
+        cell_row,
+        reference,
+    )
+    point = np.asarray(
+        [float(value) for value in exact_point],
+        dtype=np.float64,
+    )
+    if point.ndim != 1 or not np.all(np.isfinite(point)):
+        raise ValueError(
+            "Exact target coordinate map produced an invalid source-bound point."
+        )
+    return point
+
+
+def _evaluate_cell_geometry_exact_point(
+    elements: Sequence[CellGeometryElement],
+    routes: Sequence[ArrayLike],
+    coordinates: ArrayLike,
+    exact_coordinate_bank: CoordinateSourceBank | None,
+    block_row: int,
+    cell_row: int,
+    reference: _ExactReferencePoint3,
+    /,
+) -> tuple[ExactScalar, ...]:
     route = np.asarray(routes[block_row], dtype=np.int64)
     local: CoordinateCoefficients = (
         np.asarray(coordinates, dtype=np.float64)[route[cell_row]]
@@ -760,15 +802,7 @@ def _evaluate_cell_geometry_point(
     if not isinstance(element, ScalarCoordinateElement):
         raise TypeError("Target geometry element has no exact scalar coordinate map.")
     expressions = coordinate_map_expressions(element, local, cell_row=cell_row)
-    point = np.asarray(
-        [float(evaluate_expression(value, reference)) for value in expressions],
-        dtype=np.float64,
-    )
-    if point.ndim != 1 or not np.all(np.isfinite(point)):
-        raise ValueError(
-            "Exact target coordinate map produced an invalid source-bound point."
-        )
-    return point
+    return tuple(evaluate_expression(value, reference) for value in expressions)
 
 
 def _require_reoriented_wall_side(
@@ -902,6 +936,7 @@ def _validate_parametric_chart_geometry(
     parameters: list[tuple[float, float]] = []
     exact_parameters: list[_ExactReferencePoint2] = []
     target_points: list[NDArray[np.float64]] = []
+    exact_target_points: list[tuple[ExactScalar, ...]] = []
     for chart_row, source_cell_id in enumerate(column_identity.source_wall_cell_ids):
         source_chart_row = source_chart_rows.get(int(source_cell_id))
         if source_chart_row is None:
@@ -1021,7 +1056,7 @@ def _validate_parametric_chart_geometry(
             if not isinstance(actual_element, _NodalReferenceElement):
                 # The synthesized target reference nodes do not index the
                 # coefficient bank of a composed/restricted coordinate map.
-                target_point = _evaluate_cell_geometry_point(
+                exact_target = _evaluate_cell_geometry_exact_point(
                     elements,
                     routes,
                     coordinates,
@@ -1030,13 +1065,21 @@ def _validate_parametric_chart_geometry(
                     cell_row,
                     reference,
                 )
+                target_point = np.asarray(
+                    [float(value) for value in exact_target], dtype=np.float64
+                )
             else:
                 route = np.asarray(routes[block_row], dtype=np.int64)
                 geometry_row = int(route[cell_row, local_dof])
                 if geometry_row >= 0:
                     target_point = np.asarray(coordinates[geometry_row], dtype=np.float64)
+                    exact_target = (
+                        tuple(Fraction(float(value)) for value in target_point)
+                        if geometry.exact_coordinate_bank is None
+                        else tuple(geometry.exact_coordinate_bank[geometry_row])
+                    )
                 elif geometry_row == -1:
-                    target_point = _evaluate_cell_geometry_point(
+                    exact_target = _evaluate_cell_geometry_exact_point(
                         elements,
                         routes,
                         coordinates,
@@ -1044,6 +1087,9 @@ def _validate_parametric_chart_geometry(
                         block_row,
                         cell_row,
                         reference,
+                    )
+                    target_point = np.asarray(
+                        [float(value) for value in exact_target], dtype=np.float64
                     )
                 else:
                     raise ValueError(
@@ -1053,6 +1099,7 @@ def _validate_parametric_chart_geometry(
             parameters.append((float(source_uv[0]), float(source_uv[1])))
             exact_parameters.append(source_uv)
             target_points.append(target_point)
+            exact_target_points.append(exact_target)
             covered_dofs.setdefault(face_key, set()).add(local_dof)
     if not patches or any(
         covered_dofs.get(key, set()) != value for key, value in expected_dofs.items()
@@ -1062,6 +1109,7 @@ def _validate_parametric_chart_geometry(
         )
     targets = np.asarray(target_points, dtype=np.float64)
     source_points = np.empty_like(targets)
+    residual_upper = np.empty((len(patches),), dtype=np.float64)
     exact_surface_maps: dict[int, tuple[Expression, ...]] = {}
     for row, (patch, parameter) in enumerate(zip(patches, exact_parameters, strict=True)):
         expressions = exact_surface_maps.get(patch)
@@ -1077,9 +1125,12 @@ def _validate_parametric_chart_geometry(
             exact_surface_maps[patch] = expressions
         if len(expressions) != targets.shape[1]:
             raise ValueError("Exact source-surface map has the wrong ambient dimension.")
-        source_points[row] = tuple(
-            float(evaluate_expression(expression, parameter))
-            for expression in expressions
+        exact_point = tuple(
+            evaluate_expression(expression, parameter) for expression in expressions
+        )
+        source_points[row] = tuple(float(value) for value in exact_point)
+        _, residual_upper[row] = _physical_distance_bounds(
+            exact_point, exact_target_points[row]
         )
     patch_rows = np.asarray(patches, dtype=np.int64)
     uv = np.asarray(parameters, dtype=np.float64)
@@ -1095,8 +1146,7 @@ def _validate_parametric_chart_geometry(
         or np.any(~regular)
     ):
         raise ValueError("Exact source-chart evaluation or physical frame is singular.")
-    residuals = np.linalg.norm(targets - source_points, axis=1)
-    if np.any(~np.isfinite(residuals)) or np.any(residuals > tolerance):
+    if np.any(~np.isfinite(residual_upper)) or np.any(residual_upper > tolerance):
         raise ValueError(
             "Target coordinate map is outside its exact source-chart tolerance."
         )
@@ -1116,7 +1166,7 @@ def _validate_parametric_chart_geometry(
                 "Exact source-chart derivative returned an invalid physical frame."
             )
         cross = np.cross(differential[:, :, 0], differential[:, :, 1])
-        lengths = np.linalg.norm(cross, axis=1)
+        lengths = binary64_norm_upper(cross)
         if np.any(~np.isfinite(lengths) | (lengths <= 0.0)):
             raise ValueError("Exact source-chart derivative is physically singular.")
         oriented = (
@@ -1471,10 +1521,10 @@ class LayerCurvingProjectionTrace(StrictModule, NonTrainableState):
                 & (self.distance_lower_bounds <= self.residuals)
             )
             and np.all(
-                np.linalg.norm(
-                    np.cross(self.tangents[:, 0, :], self.tangents[:, 1, :]), axis=1
+                np.any(
+                    np.cross(self.tangents[:, 0, :], self.tangents[:, 1, :]) != 0.0,
+                    axis=1,
                 )
-                > 0.0
             )
         )
 
@@ -1765,8 +1815,8 @@ class LayerCurvingMappedChartTrace(StrictModule, NonTrainableState):
                 "Mapped layer source-chart trace rows are malformed or incomplete."
             )
         if np.any(
-            np.linalg.norm(np.cross(tangent[:, 0, :], tangent[:, 1, :]), axis=1) <= 0.0
-        ) or np.any(np.linalg.norm(normal, axis=1) <= 0.0):
+            ~np.any(np.cross(tangent[:, 0, :], tangent[:, 1, :]) != 0.0, axis=1)
+        ) or np.any(~np.any(normal != 0.0, axis=1)):
             raise ValueError("Mapped layer source chart has a singular physical frame.")
         self.source_id = str(source_id)
         self.source_revision = str(source_revision)

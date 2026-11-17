@@ -25,6 +25,7 @@ from .._meshcore import (
     interval_program_execute,
     IntervalBoxProgram,
     PlcBoundaryPolicy,
+    relocated_tet_mesh_arrays,
     TetMesh3D,
     TetMeshArrays,
     TetMeshEdit,
@@ -343,6 +344,26 @@ type _SourceTetRecord = tuple[
 ]
 
 
+@final
+@dataclass(frozen=True, slots=True, eq=False)
+class _SourceRecords:
+    """Source cell records in ascending cell ID with their binary64 boxes.
+
+    ``lower`` and ``upper`` repeat each record's box corners as arrays, one row
+    per record, so a point is compared against every box in one operation.
+    """
+
+    records: tuple[_SourceTetRecord, ...]
+    lower: np.ndarray
+    upper: np.ndarray
+
+    def __iter__(self) -> Iterator[_SourceTetRecord]:
+        return iter(self.records)
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+
 class _EditCounters(NamedTuple):
     splits: int = 0
     collapses: int = 0
@@ -399,7 +420,7 @@ class _NativeState:
     source_cell_vertices: np.ndarray
     source_cell_regions: np.ndarray
     source_cell_blocks: np.ndarray
-    source_records: tuple[_SourceTetRecord, ...]
+    source_records: _SourceRecords
     source_region_volumes: dict[int, float]
     source_identity: tuple[str, str, str, str]
     vertex_target_ids: dict[int, int]
@@ -1178,7 +1199,7 @@ def _source_tetra_inverse(
     /,
     *,
     exact_points: tuple[tuple[Fraction, Fraction, Fraction], ...] | None = None,
-) -> tuple[_SourceTetRecord, ...]:
+) -> _SourceRecords:
     records: list[_SourceTetRecord] = []
     for row, vertices in enumerate(cells):
         coordinates = [
@@ -1233,74 +1254,110 @@ def _source_tetra_inverse(
                 denominator,
             )
         )
-    return tuple(sorted(records, key=lambda row: row[0]))
+    return _source_records(tuple(sorted(records, key=lambda row: row[0])))
+
+
+def _source_records(records: tuple[_SourceTetRecord, ...], /) -> _SourceRecords:
+    """Bind records already in ascending cell ID to their box arrays."""
+    lower = np.asarray([record[4] for record in records], dtype=np.float64)
+    upper = np.asarray([record[5] for record in records], dtype=np.float64)
+    lower = lower.reshape((len(records), 3))
+    upper = upper.reshape((len(records), 3))
+    lower.setflags(write=False)
+    upper.setflags(write=False)
+    return _SourceRecords(records, lower, upper)
+
+
+def _integer_point(
+    point: tuple[Fraction, Fraction, Fraction], /
+) -> tuple[tuple[int, int, int], int]:
+    """An exact point as integer coordinates over one common denominator."""
+    denominator = lcm(*(value.denominator for value in point))
+    return (
+        (
+            point[0].numerator * (denominator // point[0].denominator),
+            point[1].numerator * (denominator // point[1].denominator),
+            point[2].numerator * (denominator // point[2].denominator),
+        ),
+        denominator,
+    )
+
+
+def _record_weights(
+    scaled_point: tuple[int, int, int],
+    point_denominator: int,
+    record: _SourceTetRecord,
+    /,
+) -> tuple[int, tuple[int, ...], tuple[Fraction, ...]] | None:
+    """Exact barycentric weights of an integer point in one source cell."""
+    common = record[7] * point_denominator
+    remaining = common
+    tail = []
+    for row in record[6]:
+        weight = (
+            row[0] * scaled_point[0]
+            + row[1] * scaled_point[1]
+            + row[2] * scaled_point[2]
+            + row[3] * point_denominator
+        )
+        if weight < 0 or weight > remaining:
+            return None
+        tail.append(weight)
+        remaining -= weight
+    return (
+        record[0],
+        record[1],
+        tuple(Fraction(value, common) for value in (remaining, *tail)),
+    )
+
+
+def _source_cell_weights(
+    point: tuple[Fraction, Fraction, Fraction],
+    record: _SourceTetRecord,
+    /,
+) -> tuple[int, tuple[int, ...], tuple[Fraction, ...]] | None:
+    """Exact barycentric weights of a point in one source cell, or ``None``."""
+    scaled_point, point_denominator = _integer_point(point)
+    return _record_weights(scaled_point, point_denominator, record)
 
 
 def _locate_source_weights(
     point: tuple[Fraction, Fraction, Fraction],
-    source_records: tuple[_SourceTetRecord, ...],
+    source_records: _SourceRecords,
     /,
 ) -> tuple[int, tuple[int, ...], tuple[Fraction, ...]] | None:
     """First source cell (by ID) containing an exact point, with its exact
     barycentric weights in the cell's vertex order."""
     try:
-        rounded = tuple(float(value) for value in point)
+        rounded = (float(point[0]), float(point[1]), float(point[2]))
     except OverflowError:
         # Source vertices are finite binary64, so an overflowed coordinate
         # lies outside every source box.
         return None
-    scaled_point: tuple[int, int, int] | None = None
-    point_denominator = 1
-    for (
-        cell_id,
-        vertices,
-        _inverse,
-        _origin,
-        lower,
-        upper,
-        affine,
-        denominator,
-    ) in source_records:
-        # Correct rounding is monotone and the bounds are binary64 source
-        # vertices: rounding a point within a closed box cannot leave it.
-        if any(
-            rounded[axis] < lower[axis] or rounded[axis] > upper[axis]
-            for axis in range(3)
-        ):
-            continue
-        if scaled_point is None:
-            point_denominator = lcm(*(value.denominator for value in point))
-            scaled_point = (
-                point[0].numerator * (point_denominator // point[0].denominator),
-                point[1].numerator * (point_denominator // point[1].denominator),
-                point[2].numerator * (point_denominator // point[2].denominator),
-            )
-        common = denominator * point_denominator
-        remaining = common
-        tail = []
-        for row in affine:
-            weight = (
-                row[0] * scaled_point[0]
-                + row[1] * scaled_point[1]
-                + row[2] * scaled_point[2]
-                + row[3] * point_denominator
-            )
-            if weight < 0 or weight > remaining:
-                break
-            tail.append(weight)
-            remaining -= weight
-        else:
-            return (
-                cell_id,
-                vertices,
-                tuple(Fraction(value, common) for value in (remaining, *tail)),
-            )
+    # Correct rounding is monotone and the bounds are binary64 source
+    # vertices: rounding a point within a closed box cannot leave it. The
+    # float comparison therefore never drops a containing cell; the exact
+    # integer test below decides among the boxes that pass.
+    inside = np.flatnonzero(
+        np.all(
+            (source_records.lower <= rounded) & (rounded <= source_records.upper),
+            axis=1,
+        )
+    )
+    if inside.size == 0:
+        return None
+    scaled_point, point_denominator = _integer_point(point)
+    records = source_records.records
+    for row in inside.tolist():
+        located = _record_weights(scaled_point, point_denominator, records[row])
+        if located is not None:
+            return located
     return None
 
 
 def _locate_source_stencil(
     point: np.ndarray,
-    source_records: tuple[_SourceTetRecord, ...],
+    source_records: _SourceRecords,
     /,
 ) -> tuple[int, dict[int, Fraction]] | None:
     query = tuple(Fraction(float(value)) for value in point)
@@ -7412,7 +7469,7 @@ def _relocation_proposals(
             # The current periodic star is fixed for this search. Build its
             # exact locator only if a carrier reaches this admission, then
             # retain it across subsequent carriers and generator resumptions.
-            star_records: tuple[_SourceTetRecord, ...] | None = None
+            star_records: _SourceRecords | None = None
             for goal, remaining in candidate_goals():
                 if refine:
                     choices = _quantized_relocation_candidates(
@@ -7592,7 +7649,7 @@ def _current_star_stencil(
     carrier: np.ndarray,
     /,
     *,
-    star_records: tuple[_SourceTetRecord, ...] | None = None,
+    star_records: _SourceRecords | None = None,
 ) -> dict[int, Fraction] | None:
     """Binary64 barycentric stencil of a carrier in the current star that
     reproduces it exactly, else ``None``.
@@ -7650,21 +7707,68 @@ def _relocation_edit(
     )
 
 
+def _apply_relocation_in_place(
+    state: _NativeState, proposals: Sequence[Mapping[str, Any]], /
+) -> TetMeshEditStatus | None:
+    """Apply the edit of ``_relocation_edit`` in place and update the snapshot.
+
+    ``None`` means the native mesh does not decide the relocation in place;
+    nothing changed and the staged edit decides it.
+    """
+    ordered = sorted(proposals, key=lambda row: state.vertex_target_ids[row["vertex"]])
+    vertex_ids = np.asarray([proposal["vertex"] for proposal in ordered], dtype=np.uint64)
+    points = np.asarray([proposal["point"] for proposal in ordered], dtype=np.float64)
+    star_ids = sorted(
+        {int(cell_id) for proposal in ordered for cell_id in proposal["star_cell_ids"]}
+    )
+    status = state.native.apply_relocation(
+        int(state.snapshot.generation),
+        vertex_ids,
+        points,
+        np.asarray(star_ids, dtype=np.uint64),
+        source_id=state.source_identity[0],
+        source_revision=state.source_identity[1],
+        source_map_id=state.source_identity[2],
+        frame_id=state.source_identity[3],
+    )
+    if status is TetMeshEditStatus.APPLIED:
+        vertex_row = _state_topology(state).vertex_row
+        state.snapshot = relocated_tet_mesh_arrays(
+            state.snapshot,
+            vertex_ids,
+            np.asarray(
+                [vertex_row[int(proposal["vertex"])] for proposal in ordered],
+                dtype=np.int64,
+            ),
+            points,
+            state.native.implicit_refusals,
+        )
+    return status
+
+
 def _apply_relocation_batch(
     state: _NativeState, proposals: Sequence[Mapping[str, Any]], /
 ) -> TetMeshEditStatus:
-    edit = _relocation_edit(state, proposals)
-    try:
-        edit, staged = _prepare_periodic_native_edit(
-            state, edit, {"proposals": proposals}
-        )
-    except _PeriodicCandidateRejected:
-        return TetMeshEditStatus.REJECTED_TOPOLOGY
-    status = state.native.apply_edit(edit)
-    if status is not TetMeshEditStatus.APPLIED:
+    status = (
+        _apply_relocation_in_place(state, proposals)
+        if state.target_mesh.periodic_topology is None
+        else None
+    )
+    if status is None:
+        edit = _relocation_edit(state, proposals)
+        try:
+            edit, staged = _prepare_periodic_native_edit(
+                state, edit, {"proposals": proposals}
+            )
+        except _PeriodicCandidateRejected:
+            return TetMeshEditStatus.REJECTED_TOPOLOGY
+        status = state.native.apply_edit(edit)
+        if status is not TetMeshEditStatus.APPLIED:
+            return status
+        _commit_periodic_target(state, staged)
+        state.snapshot = state.native.arrays()
+    elif status is not TetMeshEditStatus.APPLIED:
         return status
-    _commit_periodic_target(state, staged)
-    state.snapshot = state.native.arrays()
     source_vertex_ids = {
         int(identifier) for identifier in state.source_vertex_ids.tolist()
     }
@@ -7698,30 +7802,60 @@ def _apply_relocation_batch(
     return status
 
 
-def _apply_relocation_partition(
+def _probe_relocation_groups(
     state: _NativeState,
     candidate_groups: list[tuple[dict[str, Any], ...]],
+    /,
+) -> tuple[TetMeshEditStatus | None, ...]:
+    """Native refusal of each orbit alone, or ``None`` where it is not refused.
+
+    Every orbit is probed against the unchanged mesh as the relocation edit
+    ``_relocation_edit`` would build for it alone.
+    """
+    vertex_offsets = [0]
+    cell_offsets = [0]
+    vertex_ids: list[int] = []
+    points: list[Any] = []
+    cell_ids: list[int] = []
+    for group in candidate_groups:
+        ordered = sorted(group, key=lambda row: state.vertex_target_ids[row["vertex"]])
+        vertex_ids.extend(int(proposal["vertex"]) for proposal in ordered)
+        points.extend(proposal["point"] for proposal in ordered)
+        cell_ids.extend(
+            sorted(
+                {
+                    int(cell_id)
+                    for proposal in ordered
+                    for cell_id in proposal["star_cell_ids"]
+                }
+            )
+        )
+        vertex_offsets.append(len(vertex_ids))
+        cell_offsets.append(len(cell_ids))
+    return state.native.probe_relocations(
+        int(state.snapshot.generation),
+        np.asarray(vertex_offsets, dtype=np.int64),
+        np.asarray(vertex_ids, dtype=np.uint64),
+        np.asarray(points, dtype=np.float64).reshape((-1, 3)),
+        np.asarray(cell_offsets, dtype=np.int64),
+        np.asarray(cell_ids, dtype=np.uint64),
+        source_id=state.source_identity[0],
+        source_revision=state.source_identity[1],
+        source_map_id=state.source_identity[2],
+        frame_id=state.source_identity[3],
+    )
+
+
+def _refuse_relocation_group(
+    state: _NativeState,
+    group: tuple[dict[str, Any], ...],
+    status: TetMeshEditStatus | None,
     counters: dict[str, int],
     cache: dict[int, _RelocationSearch | None],
     /,
-) -> list[dict[str, Any]]:
-    """Apply disjoint orbits, retaining nonperiodic searches after refusal."""
-    proposals = [proposal for group in candidate_groups for proposal in group]
-    try:
-        status: TetMeshEditStatus | None = _apply_relocation_batch(state, proposals)
-    except FloatingPointError:
-        status = None
-    if status is TetMeshEditStatus.APPLIED:
-        counters["relocations"] += len(proposals)
-        return proposals
-    if status is not None:
-        _raise_fatal_edit_status(status, "relocation")
-    if len(candidate_groups) > 1:
-        middle = len(candidate_groups) // 2
-        return _apply_relocation_partition(
-            state, candidate_groups[:middle], counters, cache
-        ) + _apply_relocation_partition(state, candidate_groups[middle:], counters, cache)
-    for proposal in candidate_groups[0]:
+) -> None:
+    """Consume a refused orbit's proposals and count the refusal."""
+    for proposal in group:
         vertex = int(proposal["vertex"])
         search = cache[vertex]
         if search is None:
@@ -7731,8 +7865,73 @@ def _apply_relocation_partition(
             cache[vertex] = None
         else:
             search.proposal = None
-    _count_rejection(status, counters, len(proposals))
-    return []
+    _count_rejection(status, counters, len(group))
+
+
+def _apply_relocation_groups(
+    state: _NativeState,
+    candidate_groups: list[tuple[dict[str, Any], ...]],
+    counters: dict[str, int],
+    /,
+) -> tuple[list[dict[str, Any]], TetMeshEditStatus | None]:
+    """One native relocation edit of the given orbits: the moves, or its refusal."""
+    proposals = [proposal for group in candidate_groups for proposal in group]
+    try:
+        status: TetMeshEditStatus | None = _apply_relocation_batch(state, proposals)
+    except FloatingPointError:
+        status = None
+    if status is TetMeshEditStatus.APPLIED:
+        counters["relocations"] += len(proposals)
+        return proposals, status
+    if status is not None:
+        _raise_fatal_edit_status(status, "relocation")
+    return [], status
+
+
+def _apply_relocation_partition(
+    state: _NativeState,
+    candidate_groups: list[tuple[dict[str, Any], ...]],
+    counters: dict[str, int],
+    cache: dict[int, _RelocationSearch | None],
+    /,
+) -> list[dict[str, Any]]:
+    """Apply disjoint orbits, retaining nonperiodic searches after refusal.
+
+    Off the periodic lift one native call first probes every orbit alone
+    against the unchanged mesh; an orbit it refuses is consumed without an
+    edit. The remaining orbits are applied in one edit. If that edit is
+    refused, they are retried one orbit at a time in the given order: their
+    cavities are disjoint, so halving the batch would only spend more native
+    attempts to isolate the same orbits.
+    """
+    if state.target_mesh.periodic_topology is None:
+        remaining = []
+        for group, refusal in zip(
+            candidate_groups,
+            _probe_relocation_groups(state, candidate_groups),
+            strict=True,
+        ):
+            if refusal is None:
+                remaining.append(group)
+            else:
+                _raise_fatal_edit_status(refusal, "relocation")
+                _refuse_relocation_group(state, group, refusal, counters, cache)
+        candidate_groups = remaining
+        if not candidate_groups:
+            return []
+    moved, status = _apply_relocation_groups(state, candidate_groups, counters)
+    if status is TetMeshEditStatus.APPLIED:
+        return moved
+    if len(candidate_groups) == 1:
+        _refuse_relocation_group(state, candidate_groups[0], status, counters, cache)
+        return []
+    for group in candidate_groups:
+        applied, status = _apply_relocation_groups(state, [group], counters)
+        if status is TetMeshEditStatus.APPLIED:
+            moved.extend(applied)
+        else:
+            _refuse_relocation_group(state, group, status, counters, cache)
+    return moved
 
 
 def _invalidate_relocation_searches(

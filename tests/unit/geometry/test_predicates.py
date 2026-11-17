@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import phydrax._geometry_predicates as predicates
 from phydrax._geometry_precision import GeometryPrecisionPolicy
 from phydrax._geometry_predicates import flush_safe_outward
 from phydrax._meshcore import meshcore_available
@@ -187,6 +188,51 @@ def test_predicates_scenario_1() -> None:
     assert int(orient3d(a, y, x, z, mode=mode).signs) == -1
     assert int(insphere(a, x, y, z, inside, mode=mode).signs) == 1
     assert int(incircle(a[:2], x[:2], y[:2], inside[:2], mode=mode).signs) == 1
+
+
+def test_filter_bound_encloses_exact_underflow_term() -> None:
+    tiny = Fraction(float(np.finfo(np.float64).tiny))
+    for spec in (
+        predicates._ORIENT2D,
+        predicates._ORIENT3D,
+        predicates._INCIRCLE,
+        predicates._INSPHERE,
+    ):
+        for exponent in (1, 2, 3, 4):
+            largest = float.fromhex(f"0x1.0000000000001p-{exponent}")
+            exact = Fraction(spec.multiplier) * tiny * (
+                1 + Fraction(largest)
+            ) ** (spec.degree - 1)
+            for xp, safety in ((np, 1.0), (jnp, 2.0)):
+                result = predicates._filter_bound(
+                    xp, spec, xp.asarray(0.0), xp.asarray(largest), np.float64, safety
+                )
+                assert Fraction(float(result)) >= Fraction(safety) * exact
+
+
+def test_near_cocircular_predicate_requires_exact_resolution() -> None:
+    scale = 1.0 + 2.0**-26
+    exact_scale = Fraction(1) + Fraction(1, 2**26)
+    # This representable value is the downward-rounded cube; the missing
+    # positive term is 2**-78, regardless of a platform's pow implementation.
+    rounded_down = Fraction(1) + Fraction(3, 2**26) + Fraction(3, 2**52)
+    assert rounded_down < exact_scale**3
+    device_base = jnp.asarray(scale, dtype=jnp.float64)
+    square = flush_safe_outward(device_base * device_base, "up")
+    cube = flush_safe_outward(square * device_base, "up")
+    assert Fraction(float(cube)) >= exact_scale**3
+
+    a, b, c, d = (0.0, 0.0), (scale, 0.0), (0.0, scale), (
+        scale,
+        scale + 2.0**-52,
+    )
+    for mode in (PredicateMode.FILTERED, PredicateMode.FILTERED_DEVICE):
+        result = incircle(a, b, c, d, mode=mode)
+        assert not bool(result.certain)
+        assert int(result.signs) == PredicateSign.UNCERTAIN
+    exact = incircle(a, b, c, d, mode=PredicateMode.EXACT)
+    assert bool(exact.certain)
+    assert int(exact.signs) == reference_incircle(a, b, c, d) == PredicateSign.NEGATIVE
 
 
 @pytest.mark.parametrize(

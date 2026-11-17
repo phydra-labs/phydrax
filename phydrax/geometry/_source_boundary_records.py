@@ -20,9 +20,11 @@ from jax.typing import ArrayLike
 from .._fingerprint import (
     array_tree_fingerprint,
     canonical_fingerprint,
+    compact_array_tree_fingerprint,
     numeric_array_fingerprint,
     rational_chart_bank_fingerprint,
 )
+from .._live_proofs import live_content_fingerprint, LiveProofLedger
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
@@ -35,6 +37,7 @@ if TYPE_CHECKING:
     from ..discretization._cell_mesh import CellMesh
     from ..meshing._association import GeometryAssociation
     from ..meshing._plc_source import PiecewiseLinearComplex
+    from ._meshing_domain import MeshingDomain
     from ._piecewise_linear_boundary import PiecewiseLinearBoundarySource
     from .reconstruction._envelope import (
         SurfaceEnvelopeMode,
@@ -394,7 +397,7 @@ class SourceBoundaryImagePullback:
                     or type(token[0]) is not int
                     or type(token[1]) is not int
                     or token[1] <= 0
-                    or Fraction(token[0], token[1]).as_integer_ratio() != token
+                    or gcd(token[0], token[1]) != 1
                 ):
                     raise ValueError("Image pullbacks require canonical rational tokens.")
         if (
@@ -643,11 +646,25 @@ class SourceBoundaryFaceImageWitness(StrictModule, NonTrainableState):
             SourceBoundaryImagePullback(
                 int(raw_banks[0][row]), int(raw_banks[2][row]), tokens[row], charts[row]
             )
-            points = _fractions_from_chart_tokens((tokens[row],), 0)
-            first = tuple(points[1][axis] - points[0][axis] for axis in range(3))
-            second = tuple(points[2][axis] - points[0][axis] for axis in range(3))
+            first = tuple(
+                (
+                    tokens[row][1][axis][0] * tokens[row][0][axis][1]
+                    - tokens[row][0][axis][0] * tokens[row][1][axis][1],
+                    tokens[row][1][axis][1] * tokens[row][0][axis][1],
+                )
+                for axis in range(3)
+            )
+            second = tuple(
+                (
+                    tokens[row][2][axis][0] * tokens[row][0][axis][1]
+                    - tokens[row][0][axis][0] * tokens[row][2][axis][1],
+                    tokens[row][2][axis][1] * tokens[row][0][axis][1],
+                )
+                for axis in range(3)
+            )
             if not any(
-                first[i] * second[j] - first[j] * second[i]
+                first[i][0] * second[j][0] * first[j][1] * second[i][1]
+                != first[j][0] * second[i][0] * first[i][1] * second[j][1]
                 for i, j in ((0, 1), (0, 2), (1, 2))
             ):
                 raise ValueError(
@@ -716,7 +733,9 @@ class SourceBoundaryFaceImageWitness(StrictModule, NonTrainableState):
                 "entities": self.source_entity_ids,
                 "occurrences": self.occurrence_paths,
                 "region_sides": self.source_region_sides,
-                "image_triangles": self.image_triangle_rational_tokens,
+                "image_triangles": rational_chart_bank_fingerprint(
+                    self.image_triangle_rational_tokens
+                ),
             }
         )
 
@@ -734,6 +753,33 @@ class SourceBoundaryFaceImageWitness(StrictModule, NonTrainableState):
         from ._source_fidelity import validate_source_fidelity_witness
 
         validate_source_fidelity_witness(mesh, geometry, source, self)
+
+
+_PATCH_CHART_CAPABILITIES: LiveProofLedger[tuple[str | None, bool]] = LiveProofLedger()
+
+
+def _source_patch_chart_capability(
+    domain: MeshingDomain, patch: int, /
+) -> tuple[str | None, bool]:
+    """Prove one patch's plane and affine chart capability for this live source."""
+    from ..meshing.providers._native_cad_volume import _exact_patch_chart
+    from ._domain_boundary import exact_plane_chart
+    from .brep._patches import _exact_cross3
+
+    operands, parameters = (domain,), (patch,)
+    capability = _PATCH_CHART_CAPABILITIES.find(operands, parameters=parameters)
+    if capability is None:
+        fingerprint = live_content_fingerprint(operands)
+        plane = exact_plane_chart(domain, patch)
+        affine = _exact_patch_chart(domain, patch)
+        capability = (
+            None if plane is None else plane.chart_id,
+            affine is not None and any(_exact_cross3(affine[1], affine[2])),
+        )
+        _PATCH_CHART_CAPABILITIES.record(
+            operands, fingerprint, capability, parameters=parameters
+        )
+    return capability
 
 
 class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
@@ -1078,10 +1124,6 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                 "SourceBoundaryChartWitness rows and source identities must align."
             )
         if cad_plc is not None:
-            from ..meshing.providers._native_cad_volume import _exact_patch_chart
-            from ._domain_boundary import exact_plane_chart
-            from .brep._patches import _exact_cross3
-
             domain = cad_source_charts.domain
             patch_keys = domain.stratum_entity_ids(2)
             patch_by_key = {
@@ -1098,6 +1140,7 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                     strict=True,
                 )
             }
+            patch_charts: dict[int, tuple[str | None, bool]] = {}
             for row, (entity, path) in enumerate(zip(entities, paths, strict=True)):
                 patch = patch_by_key.get((entity, path))
                 if patch is None:
@@ -1106,16 +1149,14 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                     )
                 root = int(cad_roots[row])
                 if root < 0:
-                    plane = exact_plane_chart(domain, patch)
-                    affine = _exact_patch_chart(domain, patch)
-                    affine_valid = (
-                        affine is not None
-                        and charts[row] == entity
-                        and any(_exact_cross3(affine[1], affine[2]))
-                    )
-                    if (
-                        plane is None or charts[row] != plane.chart_id
-                    ) and not affine_valid:
+                    capability = patch_charts.get(patch)
+                    if capability is None:
+                        capability = _source_patch_chart_capability(domain, patch)
+                        patch_charts[patch] = capability
+                    plane_id, affine_nondegenerate = capability
+                    if charts[row] != plane_id and not (
+                        charts[row] == entity and affine_nondegenerate
+                    ):
                         raise ValueError(
                             "CAD rows without a root require an exact plane chart."
                         )
@@ -1300,7 +1341,7 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                         # are stored evidence and are not hashed here. The
                         # source charts enter through ``source_chart_id``,
                         # which excludes their association residual evidence.
-                        array_tree_fingerprint(
+                        compact_array_tree_fingerprint(
                             tuple(
                                 getattr(cad_plc, item.name)
                                 for item in fields(cad_plc)
@@ -1310,33 +1351,7 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                     ),
                     None
                     if cad_curve_association is None
-                    else (
-                        cad_curve_association.association_id,
-                        cad_curve_association.association_kind.value,
-                        cad_curve_association.source_id,
-                        cad_curve_association.source_revision,
-                        cad_curve_association.target_entity_set_id,
-                        cad_curve_association.source_entity_ids,
-                        tuple(
-                            None if role is None else role.value
-                            for role in cad_curve_association.source_roles
-                        ),
-                        cad_curve_association.source_occurrence_paths,
-                        cad_curve_association.source_region_sides,
-                        tuple(
-                            None
-                            if interval is None
-                            else tuple(str(value) for value in interval)
-                            for interval in cad_curve_association.source_parameter_intervals
-                        ),
-                        tuple(
-                            None if value is None else str(value)
-                            for value in cad_curve_association.source_parameter_points
-                        ),
-                        cad_curve_association.exact,
-                        cad_curve_association.provenance.value,
-                        cad_curve_association.parent_association_id,
-                    ),
+                    else cad_curve_association.association_id,
                 ),
             }
         )

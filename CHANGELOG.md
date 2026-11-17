@@ -255,14 +255,126 @@
 - B-Rep normal and dihedral ranges, blend tangency bounds, and native-curve
   turning controls use outward interval inverse trigonometry and norm bounds.
   Stored angle endpoints and hard-control outcomes can consequently change.
+- Source preparation reuses exact patch and spline-span proofs only for the
+  same unchanged live source. Rebuilt sources reprove their own content;
+  per-target trim partitions and per-box interval bounds remain independent.
+- Oriented boundary proofs batch exact integer evaluations of simplex facet
+  traces and tetrahedron vertex links, without changing contact decisions,
+  finding order, or evidence encodings.
+- Native meshing, mesh certification, and high-order curving temporarily raise
+  the young-generation collection threshold while retaining cyclic collection;
+  prior collector settings and all scientific identities are preserved.
+- Global embedding contact proofs batch exact integer cone-sign checks and
+  reuse cell-local preparation within a proof. Per-pair direction proposals
+  and traversal are retained; distinct cell objects no longer share
+  residual-dependent subdivision state merely because their IDs agree.
 - Native B-Rep projection reuses the selected intersection curve's fixed-shape
   tangent, while host trim fallback and surface-box validation avoid repeated
   eager dispatch. Trim realization and projection frame bits, and therefore
   `BRepProjectionResult.result_id`, can change; certification gates and source
   identities remain unchanged.
+- B-Rep normal and dihedral ranges, blend tangency bounds, and native-curve
+  turning controls use outward interval inverse trigonometry and norm bounds.
+  Stored angle endpoints and hard-control outcomes can consequently change.
+- CAD source-chart, face-image, and geometry-association identities frame exact
+  rational tables as bytes. These identities and dependent records change;
+  restored records still revalidate their complete exact content.
+- Domain coverage prepares exact coordinate maps on demand and combines shared
+  rational coordinate bases with integer arithmetic. Supported nodal boundary
+  carriers are read from the exact bank, with face maps built only when their
+  proofs need them. Exact maps and coverage evidence retain their previous values.
+- Cell validity batches exact-coordinate rounding checks, retaining exact
+  scalar fallback and the same recorded maximum error.
+- Affine cell validity combines exact dyadic Jacobians and determinant bounds
+  in blocks, with interval threshold screening and exact fallback.
 - CAD source bounds, analytic surface derivatives, periodic offsets, and the
   quadratic tetrahedron screen execute supported interval programs in batches.
   Their directed endpoints and exact-arithmetic fallback remain unchanged.
+- Mapped-cell image boxes, compatible chart screens, exact lens Jacobians, and
+  determinant child restrictions now batch independent interval requests.
+  Previously successful bounds and pair-screen fallbacks are unchanged.
+  Zero-valued high-degree terms now canonicalize before simplex control
+  preparation, so formerly refused or exact-fallback cases may certify by
+  the interval route.
+- Exact-coordinate interval endpoints verify binary64 proposals without
+  unsigned shift overflow; inexact or out-of-range proposals use directed,
+  saturating exact conversion.
+- `NATIVE_METRIC_3D` vertex relocation off the periodic lift asks meshcore
+  once per round which independent moves it refuses, instead of isolating
+  them by repeated trial edits, and applies an admitted move in place: the
+  native relocation check already runs on the unchanged mesh, so the commit
+  writes only the moved vertices and no longer copies and audits the whole
+  mesh or reads it back. Accepted meshes, edits and statuses are unchanged.
+  `TetraMetricEvidence.implicit_refusals` now counts one refusal per refused
+  move per round rather than one per trial edit, so the evidence identity of
+  implicit-source adaptations changes. Periodic lifts keep the staged edit.
+  Requires a meshcore build with `phx_mc_tet_mesh_probe_relocations` and
+  `phx_mc_tet_mesh_apply_relocation`.
+- Prepared interval functions can run a whole staged program for all boxes in
+  one meshcore call (`execution="batched"`): per-box endpoints are those of the
+  per-operation kernels and do not depend on how boxes are batched or on the
+  worker count. The CAD mass-measure oracle and host point and Jacobian
+  evaluation of analytic patches use it; a program with a primitive the native
+  executor does not lower, or with a declared interval extension, keeps the
+  host route. The host interval sum and power no longer let a box's signed
+  zero or integer-exponent treatment depend on the other boxes of its batch.
+- B-Rep projection, trim classification and patch frame evaluation run
+  supported analytic patches through prepared interval programs on the host
+  instead of one compiled call per point. The residual bound of a replaced
+  projection point is an outward-rounded exact binary64 distance, and frame
+  values that enter `BRepProjectionResult.result_id` and its status do not
+  depend on how queries are batched.
+- Surface interpolation error bounds are computed for all pending leaves at
+  once in outward binary64 intervals, and surface chart certification bounds
+  the target residual and endpoint norms of polynomial target charts by outward
+  Bernstein enclosures. A row is accepted against the resulting lower bound of
+  the exact budget; a row the interval cannot accept, and rational or
+  unsupported target maps, take the exact composition as before. The stored
+  `deviation_bounds`, `mesh_to_source_upper` and `source_to_mesh_upper` of a
+  source fidelity certificate may be wider in their last digits.
+- Embedding image boxes, source normal and Jacobian bounds and cell validity
+  determinant thresholds are bounded by certified interval Bernstein
+  restriction in meshcore instead of exact rational composition. A pair screen
+  recomputes the exact image boxes of two cells whenever the interval excess
+  could hide their separation, for periodic images too. Stored determinant
+  bounds, subdivision depths and fidelity bounds may change in their last
+  digits.
+- Mapped-cell injectivity and stratum separation proofs run on exact integer
+  kernels in meshcore, batched over the cells and nets of a proof step: the
+  symmetric part, its leading principal minors and their Bernstein controls
+  are formed in integers over a common denominator, and stratum control nets
+  stay integer through bisection, sign checks and the fixed-glue positivity
+  check. `MappedInjectivityWitness.principal_minor_controls` and
+  `denominator_controls` record one SHA-256 digest per control set, taken over
+  the primitive integer net of the exact controls, instead of one string per
+  control. Radical coefficients and kernel range refusals keep the Python
+  exact route, which produces the same digests. Mapped witness values,
+  boundary-face evidence and the identities that include them change.
+- Exact cell measures and coverage Jacobian integrals are computed by an
+  integer kernel in meshcore from the determinant's Bernstein controls, and
+  coverage takes the measures of a block directly from its shared basis and
+  exact coordinate bank. Values, signs and exact flags are unchanged; a cell
+  the kernel cannot take keeps the symbolic route.
+- Exact trace equality on shared simplex faces, exact contact classification
+  of boundary triangle pairs, the CAD chart partition and the partition check
+  of fidelity witness validation evaluate their cross products, areas and
+  lattice values in integers over common denominators. Interval screens,
+  decisions, findings and their order are unchanged.
+- Chart witness records validate rational chart tokens in integers and hash
+  numeric tables as framed array bytes with fixed byte order, and
+  `cell_geometry_id` hashes the exact coordinate bank as framed arrays of its
+  canonical dyadic and sparse parts. Rational-valued radical entries are
+  stored as the equal rational, so equal exact geometry has one identity
+  however it was built, and non-canonical parts are refused at construction
+  and restore. `SurfaceChartWitness.witness_id`,
+  `SourceBoundaryChartWitness.witness_id`, `cell_geometry_id` and every
+  identity composed from them change; `SourceBoundaryChartCover.cover_id` does
+  not. Certificates and witnesses written before these changes do not restore.
+- Source fidelity and domain coverage share one adaptive implicit root-chart
+  map within a certification operation: fidelity deposits the live map it
+  prepared and coverage accepts it only for the identical live mesh, geometry,
+  source and witness with equal frame and controls and every needed piece
+  proof; otherwise coverage prepares its own as before.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep
@@ -742,6 +854,39 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- The error bound that lets a filtered geometric predicate report a certain
+  sign formed an integer power through the platform `pow` with no margin. It
+  is built by repeated multiplication rounded upward on the host and the
+  device route, so an input at the edge of the filter falls to the exact
+  route.
+- Certified bounds no longer rest on platform routines that are not correctly
+  rounded. Cell validity thresholds scaled by vector norms use directed norm
+  bounds; layer-curving source admission compares an upper bound of the exact
+  residual with its tolerance; coverage roundoff allowances are rounded so
+  that they cannot admit more than the exact allowance; planar profile loops
+  are accepted only when an interval enclosure of the total turn isolates one
+  full turn; the analytic cylinder chart takes its turn from an interval
+  enclosure and refuses an ambiguous sheet. Stored determinant bounds,
+  coverage tolerances, mapped normals and the identities that include them
+  can change in their last digits, and inputs at a threshold can change from
+  certified to unresolved.
+- Simplicial locator Bernstein conversions use exact rational table
+  preparation on nodes of one dyadic barycentric lattice and include the
+  table-rounding error in their boxes; the previous table came from a
+  floating-point solve whose error was not bounded. A conversion plan is
+  admitted before it is built and refused with `MemoryBudgetError` beyond
+  dimension 8, degree 16 on an axis, 128 rows of an exact simplex or prism
+  system (triangles above degree 14, tetrahedra above degree 7) or 16 MiB.
+  Locator tabulation error and custom degree metadata remain separate
+  limitations. The unused numerical polynomial route of cell validity, which
+  shared that table, is removed.
+- The stratum subdivision cache of the embedding proof keyed its root and child
+  pieces by cell id although each piece holds one cell object's geometry and
+  residual controls, so a later distinct cell object with the same id could be
+  proved from the earlier object's exact nets. Pieces are keyed by the live
+  cell object and residual-dependent pieces are renewed for every subdivision
+  proof. Canonical cell ids are unique within one mesh; rebuilt, restored and
+  directly constructed proof objects were exposed.
 - On x86-64 with FMA a `NewtonKrylov` step could be refused with
   `LINEAR_SOLVE_FAILED` although its linear solve had converged. The compiler
   evaluated the linear residual in two fused kernels and contracted only one

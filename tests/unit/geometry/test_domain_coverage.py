@@ -1,5 +1,9 @@
+import gc
+import weakref
+from copy import copy
 from fractions import Fraction
 from itertools import product
+from typing import ClassVar
 
 import equinox as eqx
 import jax
@@ -36,6 +40,7 @@ from phydrax.discretization.fem import (
     prepare_finite_element_field_reconstruction,
 )
 from phydrax.discretization.fem._reference import FiniteElementSpec
+from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
 from phydrax.geometry._domain_coverage import (
     certify_domain_coverage,
     DomainCoverageCertificate,
@@ -46,8 +51,15 @@ from phydrax.geometry._global_embedding import (
     GlobalEmbeddingCertificate,
 )
 from phydrax.geometry._mapped_reference_domain import MappedReferenceDomain
-from phydrax.geometry._meshing_domain import MeshingDomain, MeshingDomainRegion
+from phydrax.geometry._meshing_domain import (
+    MeshingDomain,
+    MeshingDomainCurve,
+    MeshingDomainRegion,
+    MeshingSurfacePatch,
+    PatchCurveUse,
+)
 from phydrax.geometry.brep import brep_box
+from phydrax.geometry.brep._patches import AbstractCurve, LineCurve, PlanePatch
 from phydrax.meshing._assembly import MeshAssembly, MeshPart
 from phydrax.meshing._canonical import certify_cell_mesh
 from phydrax.meshing._overset import (
@@ -599,6 +611,101 @@ def test_exact_planar_cad_domain_uses_authored_source_faces() -> None:
     assert certificate.covered_source_facet_count == certificate.source_facet_count
     restored = DomainCoverageCertificate.from_stored_fields(certificate, domain)
     assert restored.certificate_id == certificate.certificate_id
+
+    another_mesh, another_geometry = copy(mesh), copy(geometry)
+    repeated = certify_domain_coverage(
+        another_mesh,
+        another_geometry,
+        domain,
+        np.asarray((0,), dtype=np.int64),
+        embedding=_embedding(another_mesh, another_geometry),
+    )
+    independent = certify_domain_coverage(
+        mesh,
+        geometry,
+        copy(domain),
+        np.asarray((0,), dtype=np.int64),
+        embedding=_embedding(mesh, geometry),
+    )
+    assert repeated.certificate_id == independent.certificate_id == certificate.certificate_id
+    assert repeated.findings == independent.findings == certificate.findings
+
+
+def test_source_trim_preparation_respects_live_domain_identity_and_lifetime() -> None:
+    domain, _, _ = _cad_box_domain()
+    source = MeshingDomainBoundarySource(domain, (0,))
+    triangles = source.boundary_parameter_triangles()[0][1]
+    expected = source.trim_partition_reference(0, triangles)
+    assert source.trim_partition_reference(0, triangles) == expected
+
+    rebuilt = copy(domain)
+    assert rebuilt is not domain
+    rebuilt_source = MeshingDomainBoundarySource(rebuilt, (0,))
+    assert rebuilt_source.trim_partition_reference(0, triangles) == expected
+
+    authority = rebuilt.brep_authority
+    assert authority is not None
+    stale_authority = eqx.tree_at(
+        lambda model: model.geometry.vertex_points,
+        authority,
+        jnp.asarray(authority.geometry.vertex_points).at[0, 0].add(0.125),
+    )
+    stale = eqx.tree_at(lambda value: value.brep_authority, rebuilt, stale_authority)
+    with pytest.raises(ValueError, match="content has changed"):
+        MeshingDomainBoundarySource(stale, (0,))
+
+    reference = weakref.ref(domain)
+    del source, domain
+    gc.collect()
+    assert reference() is None
+
+
+def test_equal_rebuilt_domain_replays_rooted_chart_proof() -> None:
+    class RefusingCurve(AbstractCurve):
+        refuse: ClassVar[bool] = False
+
+        @property
+        def ambient_dimension(self) -> int:
+            return 2
+
+        def evaluate(self, parameters: Array, /) -> Array:
+            if self.refuse:
+                raise ValueError("source endpoint proof refused")
+            return jnp.stack((parameters, jnp.zeros_like(parameters)), axis=-1)
+
+    uses = (
+        PatchCurveUse(0, RefusingCurve(), 0.0, 1.0),
+        PatchCurveUse(1, LineCurve((1.0, 0.0), (0.0, 1.0)), 0.0, 1.0),
+        PatchCurveUse(2, LineCurve((1.0, 1.0), (-1.0, 0.0)), 0.0, 1.0),
+        PatchCurveUse(3, LineCurve((0.0, 0.0), (0.0, 1.0)), 0.0, 1.0, sense=-1),
+    )
+    domain = MeshingDomain(
+        (MeshingSurfacePatch(PlanePatch((0, 0, 0), (1, 0, 0), (0, 1, 0)), (uses,)),),
+        (
+            MeshingDomainCurve(0, 1),
+            MeshingDomainCurve(1, 2),
+            MeshingDomainCurve(2, 3),
+            MeshingDomainCurve(0, 3),
+        ),
+        4,
+        source_id="rooted-replay-square",
+        source_revision="rooted-replay-square:1",
+        corner_points=np.asarray(
+            ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0), (0.0, 1.0, 0.0))
+        ),
+    )
+    rebuilt = copy(domain)
+    assert rebuilt is not domain
+    source = MeshingDomainBoundarySource(domain, (0,))
+    rebuilt_source = MeshingDomainBoundarySource(rebuilt, (0,))
+    assert source.collapsed_pole_slivers(0, ()) == ()
+    RefusingCurve.refuse = True
+    try:
+        assert source.collapsed_pole_slivers(0, ()) == ()
+        with pytest.raises(ValueError, match="source endpoint proof refused"):
+            rebuilt_source.collapsed_pole_slivers(0, ())
+    finally:
+        RefusingCurve.refuse = False
 
 
 def test_cad_domain_coverage_revalidates_retained_brep_authority() -> None:
