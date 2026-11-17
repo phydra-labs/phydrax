@@ -1250,6 +1250,35 @@ def test_simplex_trace_mismatch_invisible_to_quadratic_nodes_is_refused() -> Non
     assert restriction_trace_equal(first, second, (11, 12)) is True
 
 
+def test_simplex_face_image_evidence_separates_affine_curved_and_planar_faces() -> None:
+    x, y, z = axes(3)
+
+    def evidence(
+        cell: EmbeddingCell, face_ids: tuple[int, int, int], /
+    ) -> tuple[str, ...] | None:
+        points = tuple(
+            _point3(cell.corner_images[cell.vertex_ids.index(identifier)])
+            for identifier in face_ids
+        )
+        return _face_trace_image_evidence(cell, face_ids, points)
+
+    # The face z = 0 bends out of its corner plane; the face x = 0 stays affine.
+    bent = _mapped_tetrahedron(
+        1, (10, 11, 12, 13), (x, y, add(z, scale(multiply(x, y), Fraction(1, 8))))
+    )
+    assert evidence(bent, (10, 11, 12)) is None
+    assert evidence(bent, (10, 12, 13)) == ("exact-affine-face-image",)
+    # An in-plane cubic bubble keeps the face z = 0 in its plane but not affine:
+    # only the complete planar image proof may accept it, never the affine one.
+    bubble = multiply(multiply(x, y), subtract(subtract(constant(1, 3), x), y))
+    sheared = _mapped_tetrahedron(
+        2, (10, 11, 12, 13), (add(x, scale(bubble, Fraction(1, 8))), y, z)
+    )
+    planar = evidence(sheared, (10, 11, 12))
+    assert planar is not None
+    assert planar != ("exact-affine-face-image",)
+
+
 def _embedded_triangles(
     coordinates: np.ndarray, cells: tuple[tuple[int, int, int], ...]
 ) -> tuple[CellMesh, CellGeometrySpec, CellValidityCertificate]:

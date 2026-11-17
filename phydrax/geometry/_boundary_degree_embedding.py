@@ -48,6 +48,7 @@ from ._mapped_embedding import prove_mapped_cell_injective
 from ._planar_chain_embedding import triangulate_planar_polygon
 from ._restricted_embedding import (
     _trace_arguments,
+    rational_simplex_trace_values,
     restriction_trace_equal,
     TracePointValues,
 )
@@ -385,13 +386,74 @@ def _vertex_defined_face_evidence(
     )
 
 
+def _simplex_face_trace_class(
+    cell: EmbeddingCell,
+    vertex_ids: tuple[int, ...],
+    points: tuple[Point3, ...],
+    point_values: TracePointValues | None,
+    /,
+) -> Literal["affine", "nonplanar", "undecided"]:
+    """Classify a rational simplex cell's triangular face trace by exact values.
+
+    The trace is a polynomial of bounded total degree, determined by its values
+    on the principal lattice of that degree. It is affine exactly when every
+    lattice value is the matching barycentric combination of the corner
+    images, and it leaves the corner plane as soon as one lattice value does.
+    A planar trace that is not affine, and any other cell, stays undecided.
+    """
+    if cell.affine or len(vertex_ids) != 3 or len(points) != 3:
+        return "undecided"
+    lattice = rational_simplex_trace_values(cell, vertex_ids, point_values=point_values)
+    if lattice is None:
+        return "undecided"
+    order, rows = lattice
+    if any(len(value) != 3 for _, value in rows):
+        return "undecided"
+    if all(
+        all(
+            order * value[axis]
+            == sum(
+                (
+                    weight * point[axis]
+                    for weight, point in zip(weights, points, strict=True)
+                ),
+                Fraction(0),
+            )
+            for axis in range(3)
+        )
+        for weights, value in rows
+    ):
+        return "affine"
+    plane = _cross3(_sub3(points[1], points[0]), _sub3(points[2], points[0]))
+    if not any(plane):
+        return "undecided"
+    offset = _dot3(plane, points[0])
+    if any(_dot3(plane, (value[0], value[1], value[2])) != offset for _, value in rows):
+        return "nonplanar"
+    return "undecided"
+
+
 def _face_trace_image_evidence(
     cell: EmbeddingCell,
     vertex_ids: tuple[int, ...],
     points: tuple[Point3, ...],
     /,
+    *,
+    point_values: TracePointValues | None = None,
 ) -> tuple[str, ...] | None:
-    """Prove a face image is its exact planar corner polygon."""
+    """Prove a face image is its exact planar corner polygon.
+
+    ``point_values`` shares exact lattice values of live cells between calls.
+    """
+    match _simplex_face_trace_class(cell, vertex_ids, points, point_values):
+        case "affine":
+            # An affine trace is its corner triangle when that is nondegenerate.
+            normal = _cross3(_sub3(points[1], points[0]), _sub3(points[2], points[0]))
+            return ("exact-affine-face-image",) if any(normal) else None
+        case "nonplanar":
+            return None
+        case "undecided":
+            pass
     if _face_trace_is_affine(cell, vertex_ids):
         return ("exact-affine-face-image",)
     if cell.kind == "polyhedron" and not cell.coordinates:
@@ -1323,7 +1385,11 @@ def build_oriented_boundary(
             continue
         cell_index, vertex_ids, points = incident[0]
         exterior_cells.add(cell_index)
-        map_evidence = _face_trace_image_evidence(cells[cell_index], vertex_ids, points)
+        if len(trace_values) > _TRACE_VALUE_POINTS:
+            trace_values.clear()
+        map_evidence = _face_trace_image_evidence(
+            cells[cell_index], vertex_ids, points, point_values=trace_values
+        )
         if map_evidence is None:
             findings.append(
                 BoundaryFinding(

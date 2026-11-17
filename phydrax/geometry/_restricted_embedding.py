@@ -355,43 +355,75 @@ def _lattice_trace_equal(
         return None
     order = max(first_map[0], second_map[0], 1)
     values: TracePointValues = {} if point_values is None else point_values
-
-    def lattice_values(
-        cell: EmbeddingCell, polynomials: tuple[Polynomial, ...], /
-    ) -> Iterator[tuple[ExactScalar, ...]]:
-        corners = tuple(cell.vertex_ids.index(identifier) for identifier in ordered_ids)
-        references = tuple(cell.reference_vertices[corner] for corner in corners)
-        for weights in _principal_lattice(len(ordered_ids), order):
-            if order in weights:
-                yield cell.corner_images[corners[weights.index(order)]]
-                continue
-            point = tuple(
-                sum(
-                    (
-                        weight * reference[axis]
-                        for weight, reference in zip(weights, references, strict=True)
-                    ),
-                    Fraction(0),
-                )
-                / order
-                for axis in range(cell.dimension)
-            )
-            key = (id(cell), point)
-            found = values.get(key)
-            if found is None:
-                found = tuple(
-                    _polynomial_value(polynomial, point) for polynomial in polynomials
-                )
-                values[key] = found
-            yield found
-
     return all(
-        left == right
+        left[1] == right[1]
         for left, right in zip(
-            lattice_values(first, first_map[1]),
-            lattice_values(second, second_map[1]),
+            _simplex_trace_lattice(first, ordered_ids, order, first_map[1], values),
+            _simplex_trace_lattice(second, ordered_ids, order, second_map[1], values),
             strict=True,
         )
+    )
+
+
+def _simplex_trace_lattice(
+    cell: EmbeddingCell,
+    ordered_ids: tuple[int, ...],
+    order: int,
+    polynomials: tuple[Polynomial, ...],
+    values: TracePointValues,
+    /,
+) -> Iterator[tuple[tuple[int, ...], tuple[ExactScalar, ...]]]:
+    """Principal-lattice weights and exact values of a simplex map on a stratum."""
+    corners = tuple(cell.vertex_ids.index(identifier) for identifier in ordered_ids)
+    references = tuple(cell.reference_vertices[corner] for corner in corners)
+    for weights in _principal_lattice(len(ordered_ids), order):
+        if order in weights:
+            yield weights, cell.corner_images[corners[weights.index(order)]]
+            continue
+        point = tuple(
+            sum(
+                (
+                    weight * reference[axis]
+                    for weight, reference in zip(weights, references, strict=True)
+                ),
+                Fraction(0),
+            )
+            / order
+            for axis in range(cell.dimension)
+        )
+        key = (id(cell), point)
+        found = values.get(key)
+        if found is None:
+            found = tuple(
+                _polynomial_value(polynomial, point) for polynomial in polynomials
+            )
+            values[key] = found
+        yield weights, found
+
+
+def rational_simplex_trace_values(
+    cell: EmbeddingCell,
+    ordered_ids: tuple[int, ...],
+    /,
+    *,
+    point_values: TracePointValues | None = None,
+) -> tuple[int, tuple[tuple[tuple[int, ...], tuple[ExactScalar, ...]], ...]] | None:
+    """Lattice order and exact trace values of a rational polynomial simplex cell.
+
+    The trace on the stratum spanned by ``ordered_ids`` is a polynomial of total
+    degree at most the returned order in the stratum's affine parameters, and
+    is determined by its values at the returned principal-lattice weights (each
+    weight tuple divided by the order gives barycentric coordinates over
+    ``ordered_ids``). ``None`` declines another cell domain, a rational map or
+    a non-rational coefficient.
+    """
+    cell_map = _rational_simplex_map(cell)
+    if cell_map is None:
+        return None
+    order = max(cell_map[0], 1)
+    values: TracePointValues = {} if point_values is None else point_values
+    return order, tuple(
+        _simplex_trace_lattice(cell, ordered_ids, order, cell_map[1], values)
     )
 
 
