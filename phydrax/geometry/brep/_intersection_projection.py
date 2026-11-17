@@ -48,6 +48,7 @@ from ._intersection_curve import (
     interval_context,
     orthogonal_cylinder_family,
 )
+from ._interval_roots import IntervalRootIsolator
 from ._projection_contracts import BRepProjectionPolicy, BRepProjectionStatus
 from ._spline_projection import CurveProjection
 
@@ -302,7 +303,7 @@ class _PreparedProjection:
     aa: P
     bb: P
     h: P
-    root_isolator: RealRootIsolator
+    root_isolator: IntervalRootIsolator
     common: P
     common_isolator: RealRootIsolator | None
     axis: int
@@ -1099,7 +1100,9 @@ def project_intersection_curve(
     )
     # This first pass only needs ordered isolating intervals. Node and common
     # root comparisons below use the default rational-recognizing isolation.
-    root_isolator = RealRootIsolator(polynomial)
+    # Boxes share crossings within one polynomial level. Projection batches
+    # still cross once per polynomial level because each query resolves here.
+    root_isolator = IntervalRootIsolator(polynomial)
     roots = root_isolator.isolate(tolerance=tolerance, recognize_rational_roots=False)
     common = _gcd(aa, bb)
     seam_polynomial, seam_isolator, seam_roots = _prepare_seam_roots(
