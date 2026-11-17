@@ -25,7 +25,7 @@ Unsupported source atlases and undecidable source authorities are refused.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import Any
 
@@ -166,6 +166,57 @@ def _distance(
 
 
 @dataclass(slots=True)
+class _IntersectionPreparation:
+    family: _OrthogonalCylinderFamily
+    sign: int
+    origin: tuple[Fraction, ...]
+    vectors: tuple[tuple[Fraction, ...], ...]
+    starts: np.ndarray
+    ends: np.ndarray
+    node_axes: np.ndarray
+    node_values: np.ndarray
+    node_lower: np.ndarray
+    node_upper: np.ndarray
+    seams: dict[
+        Fraction,
+        tuple[
+            P | None, RealRootIsolator | None, tuple[tuple[Fraction, Fraction, int], ...]
+        ],
+    ] = field(default_factory=dict)
+
+
+def _prepare_intersection(curve: IntersectionCurve, /) -> _IntersectionPreparation | None:
+    family = orthogonal_cylinder_family(curve.first, curve.second)
+    if family is None:
+        return None
+    sign = _orthogonal_cylinder_curve_branch_sign(curve, family)
+    if sign is None:
+        return None
+    origin = family.large.origin_exact
+    vectors = (family.small.axis_exact, family.normal, family.large.axis_exact)
+    if not all(isinstance(value, Fraction) for value in origin):
+        return None
+    if not all(isinstance(value, Fraction) for vector in vectors for value in vector):
+        return None
+    axis = 2 * family.small_index
+    return _IntersectionPreparation(
+        family,
+        sign,
+        tuple(value for value in origin if isinstance(value, Fraction)),
+        tuple(
+            tuple(value for value in vector if isinstance(value, Fraction))
+            for vector in vectors
+        ),
+        np.asarray(curve.chart_start, dtype=np.float64)[:, axis],
+        np.asarray(curve.chart_end, dtype=np.float64)[:, axis],
+        np.asarray(curve.node_axes),
+        np.asarray(curve.node_values),
+        np.asarray(curve.node_lower),
+        np.asarray(curve.node_upper),
+    )
+
+
+@dataclass(slots=True)
 class _PreparedProjection:
     """Per-query exact source, chart and root state for candidate isolation.
 
@@ -184,6 +235,7 @@ class _PreparedProjection:
     ctx: Any
     curve: IntersectionCurve
     edge_range: tuple[float, float]
+    source: _IntersectionPreparation
     ends: np.ndarray
     family: _OrthogonalCylinderFamily
     first: float
@@ -259,8 +311,8 @@ class _PreparedProjection:
         | None
     ):
         """Compare one stationary root to the exact source-node authority."""
-        if int(self.curve.node_axes[node]) == self.axis:
-            target = F.from_float(float(self.curve.node_values[node]))
+        if int(self.source.node_axes[node]) == self.axis:
+            target = F.from_float(float(self.source.node_values[node]))
             order, lo, hi = self.angle_order(index, turn, target)
             return order, lo, hi, None, target
         possible = []
@@ -362,8 +414,8 @@ class _PreparedProjection:
     ) -> bool:
         handled = False
         # Host banks: this loop runs for every root and turn of every query.
-        node_lower = np.asarray(self.curve.node_lower)
-        node_upper = np.asarray(self.curve.node_upper)
+        node_lower = self.source.node_lower
+        node_upper = self.source.node_upper
         for node in range(1, self.curve.num_charts):
             if self.last < node - 1 or self.first > node + 1:
                 continue
@@ -517,8 +569,8 @@ class _PreparedProjection:
 
     def infinity_node_order(self, node: int, turn: int, angle: Any) -> int | None:
         """Order the omitted half-angle point against one exact source node."""
-        if int(self.curve.node_axes[node]) == self.axis:
-            target = _scalar(self.ctx, F.from_float(float(self.curve.node_values[node])))
+        if int(self.source.node_axes[node]) == self.axis:
+            target = _scalar(self.ctx, F.from_float(float(self.source.node_values[node])))
             if angle.b < target.a:
                 return -1
             if angle.a > target.b:
@@ -537,8 +589,8 @@ class _PreparedProjection:
                 )
                 lower, upper = _bounds(seam_theta)
                 if upper >= float(
-                    self.curve.node_lower[node, self.axis]
-                ) and lower <= float(self.curve.node_upper[node, self.axis]):
+                    self.source.node_lower[node, self.axis]
+                ) and lower <= float(self.source.node_upper[node, self.axis]):
                     possible.append((seam_index, seam_turn))
         if len(possible) != 1:
             return None
@@ -566,8 +618,8 @@ class _PreparedProjection:
         for node in range(1, self.curve.num_charts):
             if self.last < node - 1 or self.first > node + 1:
                 continue
-            if th < float(self.curve.node_lower[node, self.axis]) or tl > float(
-                self.curve.node_upper[node, self.axis]
+            if th < float(self.source.node_lower[node, self.axis]) or tl > float(
+                self.source.node_upper[node, self.axis]
             ):
                 continue
             order = self.infinity_node_order(node, turn, angle)
@@ -741,6 +793,7 @@ def _append_endpoint_candidate(
     query_frame: tuple[Fraction, Fraction, Fraction],
     starts: np.ndarray,
     ends: np.ndarray,
+    source: _IntersectionPreparation,
     ctx: Any,
     candidates: list[_Candidate],
 ) -> bool:
@@ -754,11 +807,11 @@ def _append_endpoint_candidate(
     elif (
         parameter.is_integer()
         and 0 < parameter < curve.num_charts
-        and int(curve.node_axes[int(parameter)]) != axis
+        and int(source.node_axes[int(parameter)]) != axis
     ):
         node = int(parameter)
-        lo = F.from_float(float(curve.node_lower[node, axis]))
-        hi = F.from_float(float(curve.node_upper[node, axis]))
+        lo = F.from_float(float(source.node_lower[node, axis]))
+        hi = F.from_float(float(source.node_upper[node, axis]))
         bounds = _distance(ctx, family, sign, _interval(ctx, lo, hi), *query_frame)
         if bounds is None:
             return False
@@ -840,17 +893,19 @@ def _select_candidate_projection(
 
 
 def _prepare_seam_roots(
-    family: _OrthogonalCylinderFamily,
-    sign: int,
-    polynomial: P,
+    source: _IntersectionPreparation,
     tolerance: Fraction,
-) -> tuple[
-    P | None, RealRootIsolator | None, tuple[tuple[Fraction, Fraction, int], ...], P
-]:
-    """Isolate the rational large-seam authority and its stationary gcd."""
+) -> tuple[P | None, RealRootIsolator | None, tuple[tuple[Fraction, Fraction, int], ...]]:
+    """Isolate the rational large-seam authority once per tolerance."""
+    cached = source.seams.get(tolerance)
+    if cached is not None:
+        return cached
+    family, sign = source.family, source.sign
     _, sine_frame, seam_angle = _large_seam_frame(family)
     if seam_angle != 0 or not sine_frame[1]:
-        return None, None, (), (F(1),)
+        result = (None, None, ())
+        source.seams[tolerance] = result
+        return result
     seam_n = (
         -sign * (1 if sine_frame[1] > 0 else -1) * sine_frame[0] * family.large_radius
     )
@@ -863,12 +918,9 @@ def _prepare_seam_roots(
         )
     )
     isolator = RealRootIsolator(seam_polynomial)
-    return (
-        seam_polynomial,
-        isolator,
-        isolator.isolate(tolerance=tolerance),
-        _gcd(polynomial, seam_polynomial),
-    )
+    result = (seam_polynomial, isolator, isolator.isolate(tolerance=tolerance))
+    source.seams[tolerance] = result
+    return result
 
 
 def project_intersection_curve(
@@ -879,6 +931,7 @@ def project_intersection_curve(
     /,
     *,
     edge_range: tuple[float, float],
+    preparation: _IntersectionPreparation | None = None,
 ) -> CurveProjection:
     """Project onto a certified cylinder branch or return an honest refusal."""
     unresolved = lambda: CurveProjection(
@@ -887,25 +940,12 @@ def project_intersection_curve(
     first, last = map(float, parameter_range)
     if not (0 <= first <= last <= curve.num_charts) or not np.all(np.isfinite(query)):
         return unresolved()
-    family = orthogonal_cylinder_family(curve.first, curve.second)
-    if family is None:
+    if preparation is None:
+        preparation = _prepare_intersection(curve)
+    if preparation is None:
         return unresolved()
-    sign = _orthogonal_cylinder_curve_branch_sign(curve, family)
-    if sign is None:
-        return unresolved()
-    origin = family.large.origin_exact
-    vectors = (family.small.axis_exact, family.normal, family.large.axis_exact)
-    # The family recognizer admits only rational source frames. Recheck that
-    # invariant here before entering the rational polynomial solver.
-    if not all(isinstance(value, Fraction) for value in origin):
-        return unresolved()
-    if not all(isinstance(value, Fraction) for vector in vectors for value in vector):
-        return unresolved()
-    rational_origin = tuple(value for value in origin if isinstance(value, Fraction))
-    rational_vectors = tuple(
-        tuple(value for value in vector if isinstance(value, Fraction))
-        for vector in vectors
-    )
+    family, sign = preparation.family, preparation.sign
+    rational_origin, rational_vectors = preparation.origin, preparation.vectors
     delta = tuple(
         F.from_float(float(q)) - o for q, o in zip(query, rational_origin, strict=True)
     )
@@ -916,13 +956,20 @@ def project_intersection_curve(
     aa, bb, h, polynomial = _stationary_polynomials(family, sign, qx, qn, qz)
     ctx = interval_context(80)
     axis = 2 * family.small_index
-    starts = np.asarray(curve.chart_start, dtype=np.float64)[:, axis]
-    ends = np.asarray(curve.chart_end, dtype=np.float64)[:, axis]
+    starts, ends = preparation.starts, preparation.ends
     candidates: list[_Candidate] = []
     uncertain = False
 
     endpoint_args = (curve, family, sign)
-    endpoint_context = (edge_range, (qx, qn, qz), starts, ends, ctx, candidates)
+    endpoint_context = (
+        edge_range,
+        (qx, qn, qz),
+        starts,
+        ends,
+        preparation,
+        ctx,
+        candidates,
+    )
     if not _append_endpoint_candidate(*endpoint_args, first, *endpoint_context) or (
         last != first
         and not _append_endpoint_candidate(*endpoint_args, last, *endpoint_context)
@@ -954,9 +1001,10 @@ def project_intersection_curve(
     root_isolator = RealRootIsolator(polynomial)
     roots = root_isolator.isolate(tolerance=tolerance, recognize_rational_roots=False)
     common = _gcd(aa, bb)
-    seam_polynomial, seam_isolator, seam_roots, seam_gcd = _prepare_seam_roots(
-        family, sign, polynomial, tolerance
+    seam_polynomial, seam_isolator, seam_roots = _prepare_seam_roots(
+        preparation, tolerance
     )
+    seam_gcd = (F(1),) if seam_polynomial is None else _gcd(polynomial, seam_polynomial)
 
     prepared = _PreparedProjection(
         aa=aa,
@@ -970,6 +1018,7 @@ def project_intersection_curve(
         ctx=ctx,
         curve=curve,
         edge_range=edge_range,
+        source=preparation,
         ends=ends,
         family=family,
         first=first,

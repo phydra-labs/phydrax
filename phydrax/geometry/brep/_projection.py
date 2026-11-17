@@ -29,10 +29,11 @@ from ...linalg._exact import (
 )
 from ...linalg._hermitian_spectral import fraction_sqrt_interval
 from ...typing import checked
-from .._atlas import TrimEnclosures
+from .._atlas import _curve_loops_point_state, TrimEnclosures
 from .._planar_embedding import PlanarEmbedding
 from .._rational import fraction_endpoint, rational_cross, rational_dot, rational_vector
 from .._source_boundary_records import SourceBoundaryDistance
+from ._intersection_projection import _IntersectionPreparation, _prepare_intersection
 from ._model import BRepModel
 from ._patches import (
     AbstractSurfacePatch,
@@ -112,6 +113,35 @@ class _ProjectionPreparation:
     enclosures: dict[int, TrimEnclosures] = field(default_factory=dict)
     lifts: dict[tuple[int, int], bool] = field(default_factory=dict)
     angle_bounds: dict[int, tuple[float, float] | None] = field(default_factory=dict)
+    faces: dict[int, _PreparedFace] = field(default_factory=dict)
+    orientations: dict[tuple[int, int], float] = field(default_factory=dict)
+    edges: dict[int, _PreparedEdge] = field(default_factory=dict)
+    intersections: dict[int, _IntersectionPreparation | None] = field(
+        default_factory=dict
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedEdge:
+    ranges: tuple[float, float]
+    origin: np.ndarray | None
+    direction: np.ndarray | None
+    squared: float
+    axes: tuple[np.ndarray, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedFace:
+    bounds: np.ndarray
+    origin: np.ndarray | None
+    axes: tuple[np.ndarray, ...]
+    valid_frame: bool
+    axis_squared: float
+    radii: tuple[float, ...]
+    full_rectangle: bool
+    natural_rectangle: bool
+    full_periods: tuple[bool, bool]
+    circle_frame: _CircleRevolutionFrame | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,7 +342,11 @@ def _circle_revolution_frame(
 
 
 def _circle_revolution_closest(
-    patch: RevolutionSurface, bounds: np.ndarray, point: np.ndarray, /
+    patch: RevolutionSurface,
+    bounds: np.ndarray,
+    point: np.ndarray,
+    frame: _CircleRevolutionFrame | None,
+    /,
 ) -> tuple[np.ndarray, np.ndarray, bool] | None:
     """Closest point of a circle-profile revolution chart rectangle to ``point``.
 
@@ -328,7 +362,6 @@ def _circle_revolution_closest(
     is a circle about the axis or a whole profile returns a representative with
     the non-isolated flag.
     """
-    frame = _circle_revolution_frame(patch)
     if frame is None:
         return None
     relative = point - frame.origin
@@ -533,14 +566,19 @@ def _trim_classification(
             if prepared is None:
                 prepared = domain.prepare_enclosures()
                 enclosures[face] = prepared
-        result = domain.classify(
-            np.asarray(uv, dtype=np.float64)[None, :], enclosures=prepared
+        point = np.asarray(uv, dtype=np.float64)
+        if point.shape != (2,) or not np.all(np.isfinite(point)):
+            raise ValueError(
+                "TrimDomain.classify points must be finite with trailing dimension two."
+            )
+        inside, boundary, resolved = _curve_loops_point_state(
+            domain._enclosure_loops(prepared), point
         )
-        if not bool(np.asarray(result.resolved[0])):
+        if not resolved:
             return None
-        if bool(np.asarray(result.boundary[0])):
+        if boundary:
             return -1
-        return int(bool(np.asarray(result.inside[0])))
+        return int(inside)
     loops = geometry.face_loops[face]
     polygons: list[np.ndarray] = []
     for loop in loops:
@@ -732,6 +770,113 @@ def _full_period(model: BRepModel, face: int, axis: int, /) -> bool:
     return False
 
 
+def _prepare_face(model: BRepModel, face: int, /) -> _PreparedFace:
+    patch = model.patches[face]
+    bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
+    origin = None
+    axes: tuple[np.ndarray, ...] = ()
+    valid_frame = True
+    axis_squared = 0.0
+    radii: tuple[float, ...] = ()
+    if isinstance(patch, (CylinderPatch, ConePatch, SpherePatch, TorusPatch)):
+        origin = np.asarray(
+            patch.origin
+            if isinstance(patch, (CylinderPatch, ConePatch))
+            else patch.center,
+            dtype=np.float64,
+        )
+        axes = tuple(
+            np.asarray(axis, dtype=np.float64)
+            for axis in (patch.first_axis, patch.second_axis, patch.axis)
+        )
+        if isinstance(patch, CylinderPatch):
+            axis_squared = float(axes[2] @ axes[2])
+            if axis_squared > 0.0:
+                frame = np.stack((axes[0], axes[1], axes[2] / np.sqrt(axis_squared)))
+                valid_frame = bool(
+                    np.allclose(
+                        frame @ frame.T,
+                        np.eye(3),
+                        rtol=0.0,
+                        atol=256.0 * np.finfo(np.float64).eps,
+                    )
+                )
+            else:
+                valid_frame = False
+        else:
+            frame = np.column_stack(axes)
+            valid_frame = bool(
+                np.allclose(
+                    frame.T @ frame,
+                    np.eye(3),
+                    rtol=0.0,
+                    atol=256.0 * np.finfo(np.float64).eps,
+                )
+                and np.linalg.det(frame) > 0.0
+            )
+        if isinstance(patch, (CylinderPatch, SpherePatch)):
+            radii = (float(patch.radius),)
+        elif isinstance(patch, ConePatch):
+            radii = (
+                float(np.tan(float(patch.semi_angle))),
+                float(patch.reference_radius),
+            )
+        else:
+            radii = (float(patch.major_radius), float(patch.minor_radius))
+    elif isinstance(patch, RevolutionSurface) and isinstance(
+        patch.curve, (LineCurve, ExactLineCurve)
+    ):
+        origin = np.asarray(patch.axis_origin, dtype=np.float64)
+        axis = np.asarray(patch.axis_direction, dtype=np.float64)
+        if isinstance(patch.curve, LineCurve):
+            line_origin = np.asarray(patch.curve.origin, dtype=np.float64)
+            line_direction = np.asarray(patch.curve.direction, dtype=np.float64)
+        else:
+            line_origin = np.asarray(patch.curve.first, dtype=np.float64)
+            line_direction = np.asarray(
+                patch.curve.last - patch.curve.first, dtype=np.float64
+            )
+        axes = (axis, line_origin, line_direction)
+    return _PreparedFace(
+        bounds,
+        origin,
+        axes,
+        valid_frame,
+        axis_squared,
+        radii,
+        _full_chart_rectangle(model, face),
+        _natural_rectangle_trim(model, face),
+        (_full_period(model, face, 0), _full_period(model, face, 1)),
+        _circle_revolution_frame(patch)
+        if isinstance(patch, RevolutionSurface) and isinstance(patch.curve, CircleCurve)
+        else None,
+    )
+
+
+def _prepare_edge(model: BRepModel, edge: int, /) -> _PreparedEdge:
+    geometry = model.geometry
+    curve = geometry.curves[geometry.edge_curves[edge]]
+    ranges = np.asarray(geometry.edge_ranges[edge], dtype=np.float64)
+    origin = None
+    direction = None
+    squared = 0.0
+    axes: tuple[np.ndarray, ...] = ()
+    if isinstance(curve, LineCurve):
+        origin = np.asarray(curve.origin, dtype=np.float64)
+        direction = np.asarray(curve.direction, dtype=np.float64)
+    elif isinstance(curve, ExactLineCurve):
+        origin = np.asarray(curve.first, dtype=np.float64)
+        direction = np.asarray(curve.last - curve.first, dtype=np.float64)
+    elif isinstance(curve, CircleCurve):
+        origin = np.asarray(curve.center, dtype=np.float64)
+        axes = (np.asarray(curve.first_axis), np.asarray(curve.second_axis))
+    if direction is not None:
+        squared = float(direction @ direction)
+    return _PreparedEdge(
+        (float(ranges[0]), float(ranges[1])), origin, direction, squared, axes
+    )
+
+
 def _line_curve_hit(
     model: BRepModel,
     edge: int,
@@ -742,6 +887,7 @@ def _line_curve_hit(
     *,
     frame: bool = True,
     distance_threshold: float | None = None,
+    preparation: _ProjectionPreparation | None = None,
 ) -> _Hit:
     geometry = model.geometry
     carrier = geometry.edge_curves[edge]
@@ -772,15 +918,31 @@ def _line_curve_hit(
         or curve.ambient_dimension != 3
     ):
         return _unresolved(1, edge, path)
-    ranges = np.asarray(geometry.edge_ranges[edge], dtype=np.float64)
-    first, last = float(ranges[0]), float(ranges[1])
+    edge_data = None if preparation is None else preparation.edges.get(edge)
+    if edge_data is None:
+        edge_data = _prepare_edge(model, edge)
+        if preparation is not None:
+            preparation.edges[edge] = edge_data
+    first, last = edge_data.ranges
     spline_projection = None
     if isinstance(curve, (BSplineCurve, IntersectionCurve)):
         if isinstance(curve, IntersectionCurve):
             from ._intersection_projection import project_intersection_curve
 
+            source = None
+            if preparation is not None:
+                if edge not in preparation.intersections:
+                    preparation.intersections[edge] = _prepare_intersection(curve)
+                source = preparation.intersections[edge]
+                if source is None:
+                    return _unresolved(1, edge, path)
             spline_projection = project_intersection_curve(
-                curve, (first, last), point, policy, edge_range=(first, last)
+                curve,
+                (first, last),
+                point,
+                policy,
+                edge_range=(first, last),
+                preparation=source,
             )
         else:
             from ._spline_projection import project_bspline_curve
@@ -819,13 +981,13 @@ def _line_curve_hit(
         lower, upper = spline_projection.lower, spline_projection.upper
         status = spline_projection.status
     elif isinstance(curve, (LineCurve, ExactLineCurve)):
-        if isinstance(curve, LineCurve):
-            origin = np.asarray(curve.origin, dtype=np.float64)
-            direction = np.asarray(curve.direction, dtype=np.float64)
-        else:
-            origin = np.asarray(curve.first, dtype=np.float64)
-            direction = np.asarray(curve.last - curve.first, dtype=np.float64)
-        squared = float(direction @ direction)
+        origin, direction, squared = (
+            edge_data.origin,
+            edge_data.direction,
+            edge_data.squared,
+        )
+        if origin is None or direction is None:
+            return _unresolved(1, edge, path)
         if squared <= np.finfo(np.float64).tiny:
             return _unresolved(1, edge, path)
         parameter = float(np.clip((point - origin) @ direction / squared, first, last))
@@ -836,9 +998,11 @@ def _line_curve_hit(
         lower, upper = segment
         status = _SEAM if parameter == first or parameter == last else _UNIQUE
     else:
-        relative = point - np.asarray(curve.center, dtype=np.float64)
-        x = float(relative @ np.asarray(curve.first_axis))
-        y = float(relative @ np.asarray(curve.second_axis))
+        if edge_data.origin is None:
+            return _unresolved(1, edge, path)
+        relative = point - edge_data.origin
+        x = float(relative @ edge_data.axes[0])
+        y = float(relative @ edge_data.axes[1])
         if x == 0.0 and y == 0.0:
             around = _arc_distance(curve, point, (first, last, first))
             if around is None:
@@ -2353,7 +2517,6 @@ def _exact_line_boundary_parameter(
 
     geometry = model.geometry
     query = tuple(Fraction.from_float(float(value)) for value in point)
-    region = SurfaceRegion(model.patches[face], np.asarray(model.parameter_bounds[face]))
     for loop in geometry.face_loops[face]:
         for coedge in loop:
             edge = geometry.coedge_edges[coedge]
@@ -2399,6 +2562,9 @@ def _exact_line_boundary_parameter(
                 continue
             admitted = None if lifts is None else lifts.get((face, coedge))
             if admitted is None:
+                region = SurfaceRegion(
+                    model.patches[face], np.asarray(model.parameter_bounds[face])
+                )
                 admitted = exact_source_lift(
                     curve, geometry.pcurves[coedge], region, first, last
                 )
@@ -2429,7 +2595,6 @@ def _source_boundary_bounds(
     chart_bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
 
     geometry = model.geometry
-    region = SurfaceRegion(patch, chart_bounds)
     lowers: list[float] = []
     uppers: list[float] = []
     for loop in geometry.face_loops[face]:
@@ -2442,6 +2607,7 @@ def _source_boundary_bounds(
             first_parameter, last_parameter = map(float, geometry.edge_ranges[edge])
             admitted = None if lifts is None else lifts.get((face, coedge))
             if admitted is None:
+                region = SurfaceRegion(patch, chart_bounds)
                 admitted = exact_source_lift(
                     geometry.curves[carrier],
                     geometry.pcurves[coedge],
@@ -2484,6 +2650,9 @@ def _source_boundary_hit_near_minimum(
     *,
     embedding: PlanarEmbedding | None,
     lifts: dict[tuple[int, int], bool] | None,
+    preparation: _ProjectionPreparation | None = None,
+    bounds: np.ndarray | None = None,
+    defer_frame: bool = False,
 ) -> _Hit | None:
     """Prove a boundary candidate lies within the declared minimum tie band."""
     from ._correspondence import exact_source_lift
@@ -2491,8 +2660,8 @@ def _source_boundary_hit_near_minimum(
 
     geometry = model.geometry
     patch = model.patches[face]
-    bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
-    region = SurfaceRegion(patch, bounds)
+    if bounds is None:
+        bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
     best: tuple[_Hit, np.ndarray] | None = None
     for loop in geometry.face_loops[face]:
         for coedge in loop:
@@ -2502,6 +2671,7 @@ def _source_boundary_hit_near_minimum(
                 continue
             admitted = None if lifts is None else lifts.get((face, coedge))
             if admitted is None:
+                region = SurfaceRegion(patch, bounds)
                 first, last = map(float, geometry.edge_ranges[edge])
                 admitted = exact_source_lift(
                     geometry.curves[carrier],
@@ -2514,7 +2684,9 @@ def _source_boundary_hit_near_minimum(
                     lifts[face, coedge] = admitted
             if not admitted:
                 continue
-            hit = _line_curve_hit(model, edge, point, path, policy, frame=False)
+            hit = _line_curve_hit(
+                model, edge, point, path, policy, frame=False, preparation=preparation
+            )
             if (
                 hit.status not in (_UNIQUE, _SEAM)
                 or hit.upper - minimum_lower_bound > policy.ambiguity_tolerance
@@ -2532,13 +2704,16 @@ def _source_boundary_hit_near_minimum(
     if best is None:
         return None
     hit, uv = best
-    normal, tangents, regular = _face_normal_and_frame(
-        patch,
-        uv,
-        orientation,
-        embedding=embedding,
-        profile_interval=(float(bounds[0, 1]), float(bounds[1, 1])),
-    )
+    if defer_frame:
+        normal, tangents, regular = _NAN3.copy(), _NAN_FRAME3.copy(), True
+    else:
+        normal, tangents, regular = _face_normal_and_frame(
+            patch,
+            uv,
+            orientation,
+            embedding=embedding,
+            profile_interval=(float(bounds[0, 1]), float(bounds[1, 1])),
+        )
     closest = hit.point if embedding is None else embedding.to_planar(hit.point)
     return _Hit(
         2,
@@ -2551,6 +2726,7 @@ def _source_boundary_hit_near_minimum(
         normal,
         tangents,
         path,
+        pending_frame=defer_frame,
     )
 
 
@@ -2640,8 +2816,13 @@ def _project_face(
     distance_threshold: float | None = None,
     angle_bounds: dict[int, tuple[float, float] | None] | None = None,
     defer_frame: bool = False,
+    prepared: _PreparedFace | None = None,
+    preparation: _ProjectionPreparation | None = None,
 ) -> _Hit:
     patch = model.patches[face]
+    if prepared is None:
+        prepared = _prepare_face(model, face)
+    bounds = prepared.bounds
     candidate: np.ndarray | None = None
     uv: np.ndarray | None = None
     exact_uv: tuple[ExactScalar, ExactScalar] | None = None
@@ -2728,7 +2909,7 @@ def _project_face(
                 projected.piece_id,
                 projected.root_id,
             )
-        parameter_bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
+        parameter_bounds = bounds
         for axis, period in enumerate(patch.periods):
             if period is None:
                 continue
@@ -2779,31 +2960,18 @@ def _project_face(
             projected.root_id,
         )
     elif isinstance(patch, CylinderPatch):
-        origin = np.asarray(patch.origin, dtype=np.float64)
-        first = np.asarray(patch.first_axis, dtype=np.float64)
-        second = np.asarray(patch.second_axis, dtype=np.float64)
-        axis = np.asarray(patch.axis, dtype=np.float64)
-        # The radial frame is orthonormal and normal to the axis; the axis
-        # length is the height scale of the second parameter.
-        axis_squared = float(axis @ axis)
-        if not axis_squared > 0.0:
+        origin = prepared.origin
+        first, second, axis = prepared.axes
+        axis_squared = prepared.axis_squared
+        if origin is None or not prepared.valid_frame:
             return _unresolved(2, face, path)
-        frame = np.stack((first, second, axis / np.sqrt(axis_squared)))
-        if not np.allclose(
-            frame @ frame.T,
-            np.eye(3),
-            rtol=0.0,
-            atol=256.0 * np.finfo(np.float64).eps,
-        ):
-            return _unresolved(2, face, path)
-        radius = float(patch.radius)
+        radius = prepared.radii[0]
         if not radius > 0.0:
             return _unresolved(2, face, path)
         relative = point - origin
         axial = float(relative @ axis) / axis_squared
         x, y = float(relative @ first), float(relative @ second)
         radial = float(np.hypot(x, y))
-        bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
         carrier_distance = _cylinder_distance(
             patch, point, (float(bounds[0, 1]), float(bounds[1, 1]))
         )
@@ -2811,8 +2979,8 @@ def _project_face(
             return _unresolved(2, face, path)
         if radial == 0.0:
             if (
-                not _full_chart_rectangle(model, face)
-                or not _full_period(model, face, 0)
+                not prepared.full_rectangle
+                or not prepared.full_periods[0]
                 or axial < bounds[0, 1]
                 or axial > bounds[1, 1]
             ):
@@ -2854,23 +3022,11 @@ def _project_face(
             + clamped * axis
         )
     elif isinstance(patch, SpherePatch):
-        center = np.asarray(patch.center, dtype=np.float64)
-        axes = tuple(
-            np.asarray(axis, dtype=np.float64)
-            for axis in (patch.first_axis, patch.second_axis, patch.axis)
-        )
-        frame = np.column_stack(axes)
-        if (
-            not np.allclose(
-                frame.T @ frame,
-                np.eye(3),
-                rtol=0.0,
-                atol=256.0 * np.finfo(np.float64).eps,
-            )
-            or np.linalg.det(frame) <= 0.0
-        ):
+        center = prepared.origin
+        axes = prepared.axes
+        if center is None or not prepared.valid_frame:
             return _unresolved(2, face, path)
-        radius = float(patch.radius)
+        radius = prepared.radii[0]
         if not radius > 0.0:
             return _unresolved(2, face, path)
         carrier_distance = _sphere_distance(patch, point)
@@ -2880,11 +3036,10 @@ def _project_face(
         coordinates = np.asarray([relative @ axis for axis in axes], dtype=np.float64)
         length = float(np.linalg.norm(coordinates))
         if length == 0.0:
-            bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
             latitude_tolerance = 256.0 * np.finfo(np.float64).eps
             if (
-                not _full_chart_rectangle(model, face)
-                or not _full_period(model, face, 0)
+                not prepared.full_rectangle
+                or not prepared.full_periods[0]
                 or bounds[0, 1] > -pi / 2.0 + latitude_tolerance
                 or bounds[1, 1] < pi / 2.0 - latitude_tolerance
             ):
@@ -2907,7 +3062,7 @@ def _project_face(
             np.arctan2(coordinates[2], np.hypot(coordinates[0], coordinates[1]))
         )
         if np.hypot(coordinates[0], coordinates[1]) == 0.0:
-            longitude = float(np.asarray(model.parameter_bounds)[face, 0, 0])
+            longitude = float(bounds[0, 0])
         uv = np.asarray((longitude, latitude), dtype=np.float64)
         candidate = center + radius * relative / length
         # The radial point is the closest point of the whole sphere, so inside
@@ -2915,32 +3070,19 @@ def _project_face(
         # including on the seam and at a pole.
         rectangle_closest = True
     elif isinstance(patch, ConePatch):
-        origin = np.asarray(patch.origin, dtype=np.float64)
-        first = np.asarray(patch.first_axis, dtype=np.float64)
-        second = np.asarray(patch.second_axis, dtype=np.float64)
-        axis = np.asarray(patch.axis, dtype=np.float64)
-        frame = np.column_stack((first, second, axis))
-        if (
-            not np.allclose(
-                frame.T @ frame,
-                np.eye(3),
-                rtol=0.0,
-                atol=256.0 * np.finfo(np.float64).eps,
-            )
-            or np.linalg.det(frame) <= 0.0
-        ):
+        origin = prepared.origin
+        first, second, axis = prepared.axes
+        if origin is None or not prepared.valid_frame:
             return _unresolved(2, face, path)
         relative = point - origin
         axial_point = float(relative @ axis)
         x, y = float(relative @ first), float(relative @ second)
         radial_point = float(np.hypot(x, y))
-        tangent = float(np.tan(float(patch.semi_angle)))
-        reference = float(patch.reference_radius)
+        tangent, reference = prepared.radii
         axial = (axial_point + tangent * (radial_point - reference)) / (
             1.0 + tangent * tangent
         )
         radius = reference + axial * tangent
-        bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
         carrier_distance = _cone_distance(
             patch, point, (float(bounds[0, 1]), float(bounds[1, 1]))
         )
@@ -2948,8 +3090,8 @@ def _project_face(
             return _unresolved(2, face, path)
         if radial_point == 0.0 and radius != 0.0:
             if (
-                not _full_chart_rectangle(model, face)
-                or not _full_period(model, face, 0)
+                not prepared.full_rectangle
+                or not prepared.full_periods[0]
                 or axial < bounds[0, 1]
                 or axial > bounds[1, 1]
             ):
@@ -2975,20 +3117,9 @@ def _project_face(
             + radius * (np.cos(angle) * first + np.sin(angle) * second)
         )
     elif isinstance(patch, TorusPatch):
-        center = np.asarray(patch.center, dtype=np.float64)
-        first = np.asarray(patch.first_axis, dtype=np.float64)
-        second = np.asarray(patch.second_axis, dtype=np.float64)
-        axis = np.asarray(patch.axis, dtype=np.float64)
-        frame = np.column_stack((first, second, axis))
-        if (
-            not np.allclose(
-                frame.T @ frame,
-                np.eye(3),
-                rtol=0.0,
-                atol=256.0 * np.finfo(np.float64).eps,
-            )
-            or np.linalg.det(frame) <= 0.0
-        ):
+        center = prepared.origin
+        first, second, axis = prepared.axes
+        if center is None or not prepared.valid_frame:
             return _unresolved(2, face, path)
         relative = point - center
         x, y, z = (
@@ -2997,7 +3128,7 @@ def _project_face(
             float(relative @ axis),
         )
         radial = float(np.hypot(x, y))
-        major, minor = float(patch.major_radius), float(patch.minor_radius)
+        major, minor = prepared.radii
         if not major > minor > 0.0:
             return _unresolved(2, face, path)
         carrier_distance = _torus_distance(patch, point)
@@ -3006,11 +3137,10 @@ def _project_face(
         tube_x, tube_y = radial - major, z
         tube_length = float(np.hypot(tube_x, tube_y))
         if tube_length == 0.0:
-            bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
             if (
-                not _full_chart_rectangle(model, face)
-                or not _full_period(model, face, 0)
-                or not _full_period(model, face, 1)
+                not prepared.full_rectangle
+                or not prepared.full_periods[0]
+                or not prepared.full_periods[1]
             ):
                 return _unresolved(2, face, path)
             lower, upper = carrier_distance
@@ -3030,11 +3160,10 @@ def _project_face(
         ring_radius = major + minor * tube_x / tube_length
         height = minor * tube_y / tube_length
         if radial == 0.0:
-            bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
             if (
-                not _full_chart_rectangle(model, face)
-                or not _full_period(model, face, 0)
-                or not _full_period(model, face, 1)
+                not prepared.full_rectangle
+                or not prepared.full_periods[0]
+                or not prepared.full_periods[1]
             ):
                 return _unresolved(2, face, path)
             lower, upper = carrier_distance
@@ -3073,18 +3202,14 @@ def _project_face(
     elif isinstance(patch, RevolutionSurface) and isinstance(
         patch.curve, (LineCurve, ExactLineCurve)
     ):
-        axis_origin = np.asarray(patch.axis_origin, dtype=np.float64)
-        axis = np.asarray(patch.axis_direction, dtype=np.float64)
+        axis_origin = prepared.origin
+        axis, line_origin, line_direction = prepared.axes
+        if axis_origin is None:
+            return _unresolved(2, face, path)
         if isinstance(patch.curve, LineCurve):
-            line_origin = np.asarray(patch.curve.origin, dtype=np.float64)
-            line_direction = np.asarray(patch.curve.direction, dtype=np.float64)
             exact_direction = patch.curve.direction_exact
             exact_line_origin = patch.curve.origin_exact
         else:
-            line_origin = np.asarray(patch.curve.first, dtype=np.float64)
-            line_direction = np.asarray(
-                patch.curve.last - patch.curve.first, dtype=np.float64
-            )
             exact_line_origin = patch.curve.first_exact
             exact_direction = tuple(
                 last - first
@@ -3220,7 +3345,6 @@ def _project_face(
             last_parameter - first_parameter
         )
         if rho_point == 0.0:
-            bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
             angle = float(bounds[0, 0])
         else:
             angle = float(
@@ -3244,8 +3368,9 @@ def _project_face(
     elif isinstance(patch, RevolutionSurface) and isinstance(patch.curve, CircleCurve):
         projected = _circle_revolution_closest(
             patch,
-            np.asarray(model.parameter_bounds[face], dtype=np.float64),
+            bounds,
             point,
+            prepared.circle_frame,
         )
         if projected is None:
             return _unresolved(2, face, path)
@@ -3273,7 +3398,6 @@ def _project_face(
             _NAN_FRAME3.copy(),
             path,
         )
-    bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
     periods = patch.periods
     for axis, period in enumerate(periods):
         if period is not None:
@@ -3298,7 +3422,7 @@ def _project_face(
     if (
         rectangle_closest
         and not outside_bounds
-        and (_natural_rectangle_trim(model, face) or _full_chart_rectangle(model, face))
+        and (prepared.natural_rectangle or prepared.full_rectangle)
     ):
         # The face is its full rectangle; the rectangle-closest point is the
         # face-closest point even where it lies on a seam or rim edge.
@@ -3333,6 +3457,9 @@ def _project_face(
                 carrier_distance[0],
                 embedding=embedding,
                 lifts=lifts,
+                preparation=preparation,
+                bounds=bounds,
+                defer_frame=defer_frame,
             )
             if boundary is not None:
                 return boundary
@@ -3422,13 +3549,13 @@ def _project_face(
                 )
                 domain = model.trim_domains[face]
                 if not outside and domain is not None and not domain.numeric_only:
-                    prepared = None
+                    trim_cache = None
                     if enclosures is not None and domain.curve_loops:
-                        prepared = enclosures.get(face)
-                        if prepared is None:
-                            prepared = domain.prepare_enclosures()
-                            enclosures[face] = prepared
-                    decision = domain.classify_boxes(uv_box[None], enclosures=prepared)
+                        trim_cache = enclosures.get(face)
+                        if trim_cache is None:
+                            trim_cache = domain.prepare_enclosures()
+                            enclosures[face] = trim_cache
+                    decision = domain.classify_boxes(uv_box[None], enclosures=trim_cache)
                     outside = bool(
                         np.asarray(decision.resolved[0])
                         and not np.asarray(decision.inside[0])
@@ -5174,14 +5301,25 @@ class NativeBRepProjection(AbstractBRepProjection):
         encoded = containers * total + children
         return np.isin(encoded, np.asarray(self.closure_codes, dtype=np.int64))
 
-    def _face_orientation(self, face: int, solid: int, /) -> float:
-        # A host read: this runs for every projected point.
+    def _face_orientation(
+        self,
+        face: int,
+        solid: int,
+        /,
+        *,
+        preparation: _ProjectionPreparation | None = None,
+    ) -> float:
+        key = (face, solid)
+        if preparation is not None and key in preparation.orientations:
+            return preparation.orientations[key]
         orientation = float(np.asarray(self.model.orientation)[face])
-        if solid < 0:
-            return orientation
-        faces = self.model.topology.solid_faces[solid]
-        signs = self.model.topology.solid_face_orientations[solid]
-        return orientation * signs[faces.index(face)]
+        if solid >= 0:
+            faces = self.model.topology.solid_faces[solid]
+            signs = self.model.topology.solid_face_orientations[solid]
+            orientation *= signs[faces.index(face)]
+        if preparation is not None:
+            preparation.orientations[key] = orientation
+        return orientation
 
     def _project_one(
         self,
@@ -5197,6 +5335,7 @@ class NativeBRepProjection(AbstractBRepProjection):
         distance_threshold: float | None = None,
         angle_bounds: dict[int, tuple[float, float] | None] | None = None,
         defer_frame: bool = False,
+        preparation: _ProjectionPreparation | None = None,
         _occurrence: _Occurrence | None = None,
     ) -> _Hit:
         count = self.entity_counts[dimension]
@@ -5242,14 +5381,23 @@ class NativeBRepProjection(AbstractBRepProjection):
                     occurrence.path,
                     self.policy,
                     distance_threshold=distance_threshold,
+                    preparation=preparation,
                 )
             elif dimension == BRepEntityDimension.FACE:
+                prepared = None
+                if preparation is not None:
+                    prepared = preparation.faces.get(index)
+                    if prepared is None:
+                        prepared = _prepare_face(self.model, index)
+                        preparation.faces[index] = prepared
                 hit = _project_face(
                     self.model,
                     index,
                     local,
                     occurrence.path,
-                    self._face_orientation(index, occurrence.solid),
+                    self._face_orientation(
+                        index, occurrence.solid, preparation=preparation
+                    ),
                     self.policy,
                     embedding=None,
                     affine_frame=self.affine_projection_frames[index],
@@ -5259,6 +5407,8 @@ class NativeBRepProjection(AbstractBRepProjection):
                     distance_threshold=distance_threshold,
                     angle_bounds=angle_bounds,
                     defer_frame=defer_frame and len(targets) == 1,
+                    prepared=prepared,
+                    preparation=preparation,
                 )
                 if hit.status == _UNRESOLVED and not (
                     distance_threshold is not None and hit.lower > distance_threshold
@@ -5486,6 +5636,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                     lifts=lifts,
                     boxes=boxes,
                     angle_bounds=angle_bounds,
+                    preparation=preparation,
                     defer_frame=(
                         isinstance(
                             patch, (ConePatch, CylinderPatch, SpherePatch, TorusPatch)
@@ -5509,7 +5660,7 @@ class NativeBRepProjection(AbstractBRepProjection):
         for face, selected in pending.items():
             patch = self.model.patches[face]
             derivative = jax.vmap(jax.jacfwd(patch.evaluate))
-            bounds = np.asarray(self.model.parameter_bounds[face], dtype=np.float64)
+            bounds = preparation.faces[face].bounds
             for start in range(0, len(selected), _QUERY_BUCKETS[-1]):
                 batch = selected[start : start + _QUERY_BUCKETS[-1]]
                 parameters = np.asarray([hits[row].parameters for row in batch])
@@ -5520,7 +5671,9 @@ class NativeBRepProjection(AbstractBRepProjection):
                     normal, tangents, regular = _face_normal_and_frame(
                         patch,
                         hit.parameters,
-                        self._face_orientation(face, occurrence.solid),
+                        self._face_orientation(
+                            face, occurrence.solid, preparation=preparation
+                        ),
                         embedding=None,
                         profile_interval=(float(bounds[0, 1]), float(bounds[1, 1])),
                         jacobian=jacobian,
