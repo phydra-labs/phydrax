@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import random
+import subprocess
+import sys
 from fractions import Fraction
+from pathlib import Path
 
 import pytest
 
-from phydrax import _exact_polynomial_kernels as kernels
 from phydrax._exact_polynomial_kernels import control_digest, symmetric_jacobian_verdicts
 from phydrax._meshcore import meshcore_available
 from phydrax.discretization import _coordinate_enclosure as e
@@ -231,7 +234,13 @@ def test_oracle_rejects_omitted_minor_term_and_control_reordering() -> None:
     ) != expected
 
 
-def test_missing_native_library_is_typed_refusal(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(kernels, "meshcore_available", lambda: False)
-    matrix: tuple[tuple[e.Polynomial, ...], ...] = (({(0,): Fraction(1)},),)
-    assert symmetric_jacobian_verdicts([matrix], "box", 1) == [None]
+def test_missing_native_library_is_typed_refusal(tmp_path: Path) -> None:
+    script = """
+from fractions import Fraction
+from phydrax._exact_polynomial_kernels import symmetric_jacobian_verdicts
+matrix = (({(0,): Fraction(1)},),)
+assert symmetric_jacobian_verdicts([matrix], "box", 1) == [None]
+"""
+    environment = os.environ.copy()
+    environment["PHYDRAX_MESHCORE_LIBRARY"] = str(tmp_path / "missing-library")
+    subprocess.run([sys.executable, "-c", script], env=environment, check=True)
