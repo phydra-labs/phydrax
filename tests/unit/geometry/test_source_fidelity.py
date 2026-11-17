@@ -1,3 +1,4 @@
+import sys
 from fractions import Fraction
 from typing import Any, Literal
 
@@ -2882,67 +2883,114 @@ def test_zero_tangent_terms_certify_source_fidelity() -> None:
     assert np.all(certificate.normal_deviation_bounds == 0.0)
 
 
-@pytest.mark.parametrize("bad_bounds", [(-np.inf, np.inf), (1.0, -1.0)])
-def test_surface_jacobian_falls_back_from_invalid_interval_bounds(
-    monkeypatch: pytest.MonkeyPatch, bad_bounds: tuple[float, float]
-) -> None:
-    import phydrax.geometry._source_fidelity as fidelity
+def test_surface_jacobian_falls_back_from_unbounded_parent_controls() -> None:
+    from phydrax.geometry import _source_fidelity as fidelity
     from phydrax.geometry.brep._patches import RuledSurface
 
+    maximum = sys.float_info.max
     surface = RuledSurface(
-        LineCurve((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
-        LineCurve((0.0, 1.0, 0.0), (1.0, 0.0, 0.0)),
+        LineCurve((0.0, 0.0, 0.0), (maximum, 0.0, 0.0)),
+        LineCurve((0.0, 1.0, 0.0), (-maximum, 0.0, 0.0)),
     )
     _, _, source, _ = _triangular_surface_fidelity_inputs(surface, "jacobian-fallback")
     triangle = (
-        (Fraction(-1, 3), Fraction(0)),
-        (Fraction(1), Fraction(0)),
-        (Fraction(0), Fraction(1)),
+        (Fraction(0), Fraction(0)),
+        (Fraction(1, 4), Fraction(0)),
+        (Fraction(0), Fraction(1, 4)),
     )
-    preparation = SourcePreparation(source.domain)
-    monkeypatch.setattr(
-        fidelity, "restricted_polynomial_bounds", lambda expression, corners: bad_bounds
+    bounds = fidelity._surface_jacobian_bounds(
+        surface, triangle, SourcePreparation(source.domain)
     )
-    bounds = fidelity._surface_jacobian_bounds(surface, triangle, preparation)
     assert bounds is not None
-    expected = np.asarray(((1.0, 0.0), (0.0, 1.0), (0.0, 0.0)))
-    assert np.all(bounds[0] <= expected)
-    assert np.all(bounds[1] >= expected)
+    half = float(Fraction.from_float(maximum) / 2)
+    # Exact tangents are (maximum*(1-2v), -2*maximum*u) in x,
+    # with y tangents (0, 1); z is identically zero.
+    expected_lower = np.asarray(((half, -half), (0.0, 1.0), (0.0, 0.0)), dtype=np.float64)
+    expected_upper = np.asarray(
+        ((maximum, 0.0), (0.0, 1.0), (0.0, 0.0)), dtype=np.float64
+    )
+    np.testing.assert_array_equal(bounds[0], expected_lower)
+    np.testing.assert_array_equal(bounds[1], expected_upper)
+
+
+def test_simplex_restriction_refuses_reversed_control_bounds() -> None:
+    from phydrax._exact_kernels import interval_simplex_bounds
+
+    lower = np.asarray((2.0,), dtype=np.float64)
+    upper = np.asarray((1.0,), dtype=np.float64)
+    corners = np.asarray((((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)),), dtype=np.float64)
+    result = interval_simplex_bounds(lower, upper, corners, corners, 0)
+    np.testing.assert_array_equal(result[0], np.asarray((-np.inf,), dtype=np.float64))
+    np.testing.assert_array_equal(result[1], np.asarray((np.inf,), dtype=np.float64))
 
 
 @pytest.mark.parametrize("target_sign", [1, -1])
 @pytest.mark.parametrize("interval_kind", ["nonfinite", "indecisive", "singular"])
 def test_surface_normal_falls_back_when_interval_cannot_decide(
-    monkeypatch: pytest.MonkeyPatch, target_sign: int, interval_kind: str
+    target_sign: int, interval_kind: str
 ) -> None:
     import phydrax.geometry._source_fidelity as fidelity
+    from phydrax.geometry._source_interpolation import (
+        exact_surface_coordinate_expressions,
+    )
     from phydrax.geometry.brep._patches import RuledSurface
 
+    scale = sys.float_info.max if interval_kind == "nonfinite" else sys.float_info.max / 4
     surface = RuledSurface(
-        LineCurve((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
-        LineCurve((0.0, 1.0, 0.0), (1.0, 0.0, 0.0)),
+        LineCurve((0.0, 0.0, 0.0), (scale, 0.0, 0.0)),
+        LineCurve((0.0, 1.0, 0.0), (-scale, 0.0, 0.0)),
     )
     _, _, source, _ = _triangular_surface_fidelity_inputs(surface, "normal-fallback")
-    triangle = (
-        (Fraction(0), Fraction(0)),
-        (Fraction(1), Fraction(0)),
-        (Fraction(0), Fraction(1)),
-    )
-    cache = _DerivativeCache(SourcePreparation(source.domain))
-    target = (Fraction(0), Fraction(0), Fraction(target_sign))
-    limit = Fraction(1, 10)
-    tangent_values = iter((1.0, 0.0, 0.0, 1.0, 0.0, 0.0))
-
-    def uncertain_bounds(expression: Any, corners: Any) -> tuple[float, float]:
-        if interval_kind == "nonfinite":
-            return -np.inf, np.inf
+    if interval_kind == "nonfinite":
+        triangle = (
+            (Fraction(0), Fraction(0)),
+            (Fraction(1, 4), Fraction(0)),
+            (Fraction(0), Fraction(1, 4)),
+        )
+    else:
+        exponent = 50 if interval_kind == "indecisive" else 53
+        offset = Fraction(1, 2) - Fraction(1, 2**exponent)
+        width = Fraction(
+            1, 2 ** (exponent + (20 if interval_kind == "indecisive" else 3))
+        )
+        triangle = (
+            (Fraction(0), offset),
+            (Fraction(1, 4), offset),
+            (Fraction(0), offset + width),
+        )
+    expressions = exact_surface_coordinate_expressions(surface)
+    assert expressions is not None
+    preliminary = fidelity._exact_surface_jacobian_bounds(expressions, triangle)
+    if interval_kind == "nonfinite":
+        assert preliminary is None
+    else:
+        assert preliminary is not None
         if interval_kind == "singular":
-            return -2.0, 2.0
-        value = next(tangent_values)
-        return value - 0.2, value + 0.2
-
-    monkeypatch.setattr(fidelity, "restricted_polynomial_bounds", uncertain_bounds)
-    result = _normal_deviation_for_cell(source.domain, 0, triangle, target, cache, limit)
+            assert preliminary[0][0, 0] <= 0.0 <= preliminary[1][0, 0]
+    # The exact source normal is +z throughout the triangle: x_u is
+    # scale*(1-2v), y_v is 1, and all other normal components vanish.
+    assert Fraction.from_float(scale) * (1 - 2 * max(point[1] for point in triangle)) > 0
+    target = (
+        Fraction(0),
+        Fraction(target_sign if interval_kind == "indecisive" else 0),
+        Fraction(target_sign * (10 if interval_kind == "indecisive" else 1)),
+    )
+    limit = Fraction(1, 10)
+    if interval_kind == "indecisive" and target_sign > 0:
+        assert preliminary is not None
+        cross = fidelity._normal_cross_interval(*preliminary, 1)
+        cosine = fidelity._normal_cosine_bounds(cross, target)
+        assert cosine is not None
+        assert fidelity._acos_lower(cosine[1]) <= limit
+        assert fidelity._normal_angle_upper(cross, target, cosine[0]) > limit
+    result = _normal_deviation_for_cell(
+        source.domain,
+        0,
+        triangle,
+        target,
+        _DerivativeCache(SourcePreparation(source.domain)),
+        limit,
+    )
     assert result is not None
     if target_sign > 0:
         assert result[1] <= limit
@@ -2950,32 +2998,27 @@ def test_surface_normal_falls_back_when_interval_cannot_decide(
         assert result[0] > limit
 
 
-def test_curved_trim_exact_caps_settle_wide_interval_bounds(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_curved_trim_exact_caps_settle_wide_interval_bounds() -> None:
     import phydrax.geometry._source_fidelity as fidelity
     from phydrax.geometry._domain_boundary import CurvedTrimLens
     from phydrax.geometry.brep._patches import RuledSurface
 
     surface = RuledSurface(
-        LineCurve((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
-        LineCurve((0.0, 1.0, 0.0), (1.0, 0.0, 0.0)),
+        LineCurve((0.0, 0.0, 0.0), (1.0, 1.0, 0.0)),
+        LineCurve((0.0, 1.0, 0.0), (1.25, 0.0, 0.0)),
     )
     _, _, source, _ = _triangular_surface_fidelity_inputs(surface, "lens-fallback")
     zero, one = Fraction(0), Fraction(1)
     triangle = ((zero, zero), (one, zero), (zero, one))
+    h = Fraction(1, 3)
+    # This exact lens width places the threshold between the two enclosures.
     lens = CurvedTrimLens(
-        ((zero, zero), (Fraction(1, 2), zero)),
+        ((zero, zero), (h, h)),
         (zero, zero),
-        (Fraction(1, 2), Fraction(1, 2)),
-        Fraction(1, 100),
+        (h, h),
+        Fraction(4503599627370496, 80317700754533375),
     )
     preparation = SourcePreparation(source.domain)
-    monkeypatch.setattr(
-        fidelity,
-        "restricted_polynomial_batch_bounds",
-        lambda expression, corners: ((-10.0, 10.0),) * len(corners),
-    )
     interval_caps = fidelity._curved_trim_lens_caps(
         surface, ((0, triangle),), (lens,), preparation, settle_zero=False
     )
@@ -2983,17 +3026,21 @@ def test_curved_trim_exact_caps_settle_wide_interval_bounds(
         surface, ((0, triangle),), (lens,), preparation, composed=True
     )
     assert exact_caps[0] < Fraction(1, 10) < interval_caps[0]
+    # The exact Jacobian component maxima over [0,h]^2 are
+    # (1+h/4, h/4, 1, 1); its norm gives an independent cap reference.
+    norm_squared = (1 + h / 4) ** 2 + (h / 4) ** 2 + 2
+    exact_reference = fraction_sqrt_interval(norm_squared)[1] * lens.parameter_bound
+    assert exact_caps[0] >= exact_reference
 
 
-def test_surface_bounds_remain_unresolved_if_exact_fallback_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_surface_bounds_remain_unresolved_for_unrepresentable_jacobian() -> None:
     import phydrax.geometry._source_fidelity as fidelity
     from phydrax.geometry.brep._patches import RuledSurface
 
+    maximum = sys.float_info.max
     surface = RuledSurface(
-        LineCurve((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
-        LineCurve((0.0, 1.0, 0.0), (1.0, 0.0, 0.0)),
+        LineCurve((0.0, 0.0, 0.0), (maximum, 0.0, 0.0)),
+        LineCurve((0.0, 1.0, 0.0), (-maximum, 0.0, 0.0)),
     )
     _, _, source, _ = _triangular_surface_fidelity_inputs(surface, "bounds-unresolved")
     triangle = (
@@ -3002,16 +3049,10 @@ def test_surface_bounds_remain_unresolved_if_exact_fallback_fails(
         (Fraction(0), Fraction(1)),
     )
     preparation = SourcePreparation(source.domain)
-    monkeypatch.setattr(
-        fidelity,
-        "restricted_polynomial_bounds",
-        lambda expression, corners: (-np.inf, np.inf),
-    )
-    monkeypatch.setattr(
-        fidelity,
-        "polynomial_bounds",
-        lambda expression, domain, dimension: (-np.inf, np.inf),
-    )
+    # The exact x tangent with respect to v at u=1 is -2*maximum,
+    # so neither finite binary64 endpoint can enclose the true value.
+    exact_tangent = Fraction.from_float(-maximum) - Fraction.from_float(maximum)
+    assert exact_tangent < -Fraction.from_float(maximum)
     assert fidelity._surface_jacobian_bounds(surface, triangle, preparation) is None
     assert (
         _normal_deviation_for_cell(
@@ -3233,9 +3274,7 @@ def test_rational_chart_rows_share_storage_without_skipping_realization_validati
         _validated_rational_chart_tokens(tokens, realization, 3, 3, 2, "chart")
 
 
-def test_exact_lens_jacobian_batch_matches_scalar_and_falls_back(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_exact_lens_jacobian_batch_matches_scalar_and_exact_reference() -> None:
     from phydrax.geometry import _source_fidelity as fidelity
     from phydrax.geometry._domain_boundary import CurvedTrimLens
     from phydrax.geometry.brep._patches import RuledSurface
@@ -3270,7 +3309,6 @@ def test_exact_lens_jacobian_batch_matches_scalar_and_falls_back(
             surface, (chart,), (lens,), preparation, settle_zero=False
         )
         assert singleton[chart[0]] == expected[chart[0]]
-    batch = fidelity.restricted_polynomial_batch_bounds
     assert (
         fidelity._curved_trim_lens_caps(
             surface, charts[::-1], lenses[::-1], preparation, settle_zero=False
@@ -3278,34 +3316,23 @@ def test_exact_lens_jacobian_batch_matches_scalar_and_falls_back(
         == expected
     )
 
-    original = fidelity._exact_surface_jacobian_bounds
+    # The bilinear surface is (u * (1 + v/4), u + v - 2*u*v, 0).
+    # Its nonzero Jacobian entries reach these absolute maxima on [0, h]^2.
+    def exact_norm_squared(h: Fraction) -> Fraction:
+        return (1 + h / 4) ** 2 + 1 + (h / 4) ** 2 + 1
 
-    def invalid(prepared: Any, corners: Any) -> tuple[tuple[float, float], ...]:
-        bounds = list(batch(prepared, corners))
-        bounds[0] = (float("nan"), float("nan"))
-        return tuple(bounds)
-
-    monkeypatch.setattr(fidelity, "restricted_polynomial_batch_bounds", invalid)
-    actual = fidelity._curved_trim_lens_caps(
-        surface, charts, lenses, preparation, settle_zero=False
-    )
-    from phydrax.geometry._source_interpolation import (
-        exact_surface_coordinate_expressions,
-    )
-
-    expressions = exact_surface_coordinate_expressions(surface)
-    assert expressions is not None
-    box = fidelity._curved_trim_lens_box(surface, lenses[0])
-    assert box is not None
-    lower, upper = box
-    triangle = (lower, (upper[0], lower[1]), upper)
-    composed_bounds = original(expressions, triangle, composed=True)
-    assert composed_bounds is not None
-    magnitude = np.maximum(np.abs(composed_bounds[0]), np.abs(composed_bounds[1]))
-    assert (
-        actual[7]
-        >= fidelity.fraction_sqrt_interval(
-            sum((q.from_float(float(value)) ** 2 for value in magnitude.flat), q(0))
-        )[1]
+    assert expected[7] >= (
+        fidelity.fraction_sqrt_interval(exact_norm_squared(q(1, 4)))[1]
         * lenses[0].parameter_bound
+    )
+
+    h = q(1, 1 << 40)
+    tiny_lens = CurvedTrimLens(((q(0), q(0)), (h, h)), (q(0), q(0)), (h, h), h / 4)
+    tiny_chart = (11, ((q(0), q(0)), (h, q(0)), (q(0), h)))
+    tiny_caps = fidelity._curved_trim_lens_caps(
+        surface, (tiny_chart,), (tiny_lens,), preparation, settle_zero=False
+    )
+    assert tiny_caps[11] >= (
+        fidelity.fraction_sqrt_interval(exact_norm_squared(h))[1]
+        * tiny_lens.parameter_bound
     )
