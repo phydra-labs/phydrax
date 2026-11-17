@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from enum import IntEnum
 from fractions import Fraction
 from itertools import groupby
@@ -20,7 +20,6 @@ from jax.typing import ArrayLike
 from .._fingerprint import (
     array_tree_fingerprint,
     canonical_fingerprint,
-    compact_array_tree_fingerprint,
     numeric_array_fingerprint,
     rational_chart_bank_fingerprint,
 )
@@ -982,7 +981,10 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
             GeometryAssociationKind,
             GeometrySourceEntityRole,
         )
-        from ..meshing._plc_source import PiecewiseLinearComplex
+        from ..meshing._plc_source import (
+            _validated_cad_ancestry_digest,
+            PiecewiseLinearComplex,
+        )
 
         if cad_plc is None:
             if cad_curve_association is not None or (
@@ -990,13 +992,14 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
             ):
                 raise ValueError("CAD ancestry requires its source charts.")
             cad_roots = np.empty((0,), dtype=np.int64)
+            cad_ancestry_digest = None
         else:
             if not isinstance(cad_plc, PiecewiseLinearComplex):
                 raise TypeError("cad_plc must be PiecewiseLinearComplex.")
             cad_source_charts = cad_plc.cad_source_charts
             if cad_source_charts is None:
                 raise ValueError("CAD PLC must retain its source charts.")
-            PiecewiseLinearComplex.from_stored_fields(cad_plc)
+            cad_ancestry_digest = _validated_cad_ancestry_digest(cad_plc)
             cad_source_charts.require_current()
             if (
                 chart_dimension != 2
@@ -1341,13 +1344,7 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                         # are stored evidence and are not hashed here. The
                         # source charts enter through ``source_chart_id``,
                         # which excludes their association residual evidence.
-                        compact_array_tree_fingerprint(
-                            tuple(
-                                getattr(cad_plc, item.name)
-                                for item in fields(cad_plc)
-                                if item.name not in ("cad_fidelity", "cad_source_charts")
-                            )
-                        ),
+                        cad_ancestry_digest,
                     ),
                     None
                     if cad_curve_association is None
