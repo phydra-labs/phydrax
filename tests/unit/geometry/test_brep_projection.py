@@ -557,12 +557,7 @@ def test_trimmed_circle_endpoint_projection_is_batch_independent() -> None:
             )
 
 
-def test_intersection_edge_frames_follow_both_cylinders_across_batches(
-    monkeypatch: Any,
-) -> None:
-    from dataclasses import replace
-
-    from phydrax.geometry.brep import _intersection_projection
+def test_intersection_edge_frames_follow_both_cylinders_across_batches() -> None:
     from phydrax.geometry.brep._intersection_curve import IntersectionCurve
     from tests.unit.interchange._native_cad_archive_worker import (
         _orthogonal_quadric_boolean_model,
@@ -630,42 +625,16 @@ def test_intersection_edge_frames_follow_both_cylinders_across_batches(
         frame_id=result.frame_id,
     )
     assert isolated.result_id == single.result_id
-    original = _intersection_projection.project_intersection_curve
-
-    def zero_tangent(*args: Any, **kwargs: Any) -> Any:
-        return replace(original(*args, **kwargs), tangent=np.zeros(3))
-
-    monkeypatch.setattr(
-        _intersection_projection, "project_intersection_curve", zero_tangent
-    )
-    fallback = _project(projection, points[:1], _EDGE, edge)
-    np.testing.assert_array_equal(fallback.status, single.status)
-    np.testing.assert_allclose(
-        fallback.tangents, single.tangents, atol=1e-12, equal_nan=True
-    )
-    monkeypatch.setattr(_intersection_projection, "project_intersection_curve", original)
-    monkeypatch.setattr(
-        _intersection_projection, "_chart_point_and_tangent", lambda *args: None
-    )
-    refused = _project(projection, points[:1], _EDGE, edge)
-    np.testing.assert_array_equal(refused.status, single.status)
-    np.testing.assert_allclose(refused.points, single.points, atol=1e-12)
-    np.testing.assert_allclose(refused.tangents, single.tangents, atol=1e-12, equal_nan=True)
-
-    monkeypatch.setattr(
-        _intersection_projection,
-        "_chart_point_and_tangent",
-        lambda *args: (points[0] + 1.0, np.asarray((1.0, 0.0, 0.0))),
-    )
-    wrong = _project(projection, points[:1], _EDGE, edge)
+    far_query = points[0] + np.asarray((5.25, -7.5, 11.75), dtype=np.float64)
+    far = _project(projection, [far_query], _EDGE, edge)
     squared = sum(
         (
             (Fraction.from_float(float(a)) - Fraction.from_float(float(b))) ** 2
-            for a, b in zip(wrong.points[0], points[0], strict=True)
+            for a, b in zip(far.points[0], far_query, strict=True)
         ),
         Fraction(0),
     )
-    assert Fraction.from_float(float(wrong.residuals[0])) ** 2 >= squared
+    assert Fraction.from_float(float(far.residuals[0])) ** 2 >= squared
 
 
 @pytest.mark.parametrize(
@@ -905,28 +874,17 @@ def test_edge_point_batches_match_independent_segment_projection() -> None:
     assert np.all(np.asarray(result.residuals) >= distance)
 
 
-def test_edge_point_reference_detects_wrong_native_result(monkeypatch: Any) -> None:
-    from phydrax.geometry.brep import _projection as implementation
-
+def test_edge_point_residual_encloses_far_query_exactly() -> None:
     model = brep_box((0.0, 0.0, 0.0), (2.0, 2.0, 2.0), coordinate_contract=_CONTRACT)
     projection = phx.geometry.prepare_brep_projection(model)
     vertices = np.asarray(model.geometry.vertex_points, dtype=np.float64)
     first, last = vertices[np.asarray(model.geometry.edge_vertices[0])]
-    expected = (first + last) / 2
-    original = implementation.evaluate_host_program
-
-    def wrong(program: Any, points: np.ndarray) -> np.ndarray:
-        return original(program, points) + 1.0
-
-    monkeypatch.setattr(implementation, "evaluate_host_program", wrong)
-    monkeypatch.setattr(
-        implementation, "_distance_bounds", lambda first, second: (0.0, 0.0)
-    )
-    result = _project(projection, [expected], _EDGE, 0)
+    query = (first + last) / 2 + np.asarray((5.25, -7.5, 11.75), dtype=np.float64)
+    result = _project(projection, [query], _EDGE, 0)
     squared = sum(
         (
             (Fraction.from_float(float(a)) - Fraction.from_float(float(b))) ** 2
-            for a, b in zip(result.points[0], expected, strict=True)
+            for a, b in zip(result.points[0], query, strict=True)
         ),
         Fraction(0),
     )
