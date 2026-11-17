@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from fractions import Fraction
-from itertools import combinations, islice
+from itertools import combinations, compress, islice
 from math import gcd, lcm
 from typing import Any, cast, final, NamedTuple
 
@@ -82,6 +82,20 @@ _SCREEN_WORK_BYTES = 32 * 1024**2
 _SCREEN_GOAL_BYTES = 2048
 _SCREEN_NEIGHBOR_BYTES = 512
 _SCREEN_CELL_BYTES = 2048
+# The survivor pre-screen of a collapse evaluates one goal's carriers together
+# and refuses only those the per-carrier screen certainly refuses. Its metric
+# and quadratic forms are the same formulas in a different operation order:
+# they agree with the per-carrier values to a few rounding errors of the
+# largest metric eigenvalue times the squared edge, and the lengths to a few
+# rounding errors more. The slacks below exceed those differences by orders of
+# magnitude and stay orders of magnitude below a violation quantum; a carrier
+# whose violation counts could differ within them takes the per-carrier screen.
+_SURVIVOR_SCREEN_MINIMUM = 4
+# Carriers are quantized lazily; a block bounds the ones a collapse that
+# stops early has quantized in vain.
+_SURVIVOR_SCREEN_BLOCK = 16
+_SURVIVOR_FORM_SLACK = 2.0**-40
+_SURVIVOR_LENGTH_SLACK = 2.0**-30
 _SEED_STEPS = np.arange(_SPLIT_PARAMETER_BITS + 1, dtype=np.int64)
 _GOAL_STEPS = np.arange(_GOAL_BLOCK, dtype=np.int64)
 _SEED_STEPS.setflags(write=False)
@@ -520,6 +534,11 @@ def _metric_lengths(
     delta = points[edges[:, 1]] - points[edges[:, 0]]
     first = np.sqrt(np.einsum("ei,eij,ej->e", delta, metrics[edges[:, 0]], delta))
     second = np.sqrt(np.einsum("ei,eij,ej->e", delta, metrics[edges[:, 1]], delta))
+    return _logarithmic_mean(first, second)
+
+
+def _logarithmic_mean(first: np.ndarray, second: np.ndarray, /) -> np.ndarray:
+    """Log-mean of the two endpoint lengths of each edge (``_metric_lengths``)."""
     ratio = second / np.where(first > 0.0, first, 1.0)
     nearly_equal = np.abs(ratio - 1.0) <= 1.0e-6
     safe_ratio = np.where(nearly_equal, 2.0, ratio)
@@ -4482,8 +4501,20 @@ def _directed_collapse(
         # its longest spoke, replacing both stars. A move must keep every long
         # spoke of the moved survivor exactly splittable; otherwise the
         # collapse stays in place.
+        def refused(
+            candidates: Sequence[tuple[dict[int, Fraction], np.ndarray]],
+        ) -> np.ndarray:
+            return _refused_survivor_carriers(
+                state,
+                candidates,
+                local_points,
+                local_metrics,
+                after_spokes,
+                before_lengths,
+            )
+
         for move in _survivor_moves(
-            state, records, topology, kept, local_points, local_metrics
+            state, records, topology, kept, local_points, local_metrics, refused=refused
         ):
             moved = variant(move["point"], move["metric"], removed_cells + kept_cells)
             if (
@@ -4612,6 +4643,121 @@ def _metric_enclosing_center(points: np.ndarray, metric: np.ndarray, /) -> np.nd
     return np.linalg.solve(factor, center)
 
 
+def _refused_survivor_carriers(
+    state: _NativeState,
+    candidates: Sequence[tuple[dict[int, Fraction], np.ndarray]],
+    local_points: np.ndarray,
+    local_metrics: np.ndarray,
+    after_spokes: np.ndarray,
+    before_lengths: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Survivor carriers the length screen of ``_directed_collapse`` refuses.
+
+    One evaluation over all carriers of a goal: coincidence with a link
+    vertex (exact), then the survivor's spoke lengths at each carrier's
+    interpolated source metric against the star's violations before the
+    collapse. A carrier is refused only if its violation counts are the same
+    at both ends of the slack interval around every length and do not
+    decrease; every other carrier is left to the per-carrier screen, which
+    alone admits. The result therefore selects among refusals only.
+    """
+    refused = np.zeros((len(candidates),), dtype=np.bool_)
+    if not np.all(np.isfinite(before_lengths)) or np.any(before_lengths <= 0.0):
+        return refused
+    carriers = np.asarray([carrier for _, carrier in candidates], dtype=np.float64)
+    others = local_points[after_spokes[:, 1]]
+    delta = others[None, :, :] - carriers[:, None, :]
+    coincident = np.any(np.all(delta == 0.0, axis=2), axis=1)
+    support = sorted({identifier for stencil, _ in candidates for identifier in stencil})
+    column = {identifier: index for index, identifier in enumerate(support)}
+    weights = np.zeros((len(candidates), len(support)), dtype=np.float64)
+    for row, (stencil, _) in enumerate(candidates):
+        for identifier, weight in stencil.items():
+            weights[row, column[identifier]] = float(weight)
+    rows = np.asarray(
+        [state.source_vertex_rows[int(identifier)] for identifier in support],
+        dtype=np.int64,
+    )
+    samples = state.source_metric[rows]
+    with np.errstate(all="ignore"):
+        if np.all(samples == samples[0]):
+            metrics = np.broadcast_to(samples[0], (len(candidates), 3, 3))
+            largest = np.full(
+                (len(candidates),), np.linalg.eigvalsh(samples[0])[-1], dtype=np.float64
+            )
+        else:
+            if state.source_metric_log is None:
+                sample_values, sample_vectors = np.linalg.eigh(samples)
+                if not np.all(sample_values > 0.0):
+                    return refused
+                logarithms = (sample_vectors * np.log(sample_values)[:, None, :]) @ (
+                    np.swapaxes(sample_vectors, -1, -2)
+                )
+            else:
+                logarithms = state.source_metric_log[rows]
+            mean = np.tensordot(weights, logarithms, axes=1)
+            values, vectors = np.linalg.eigh(0.5 * (mean + np.swapaxes(mean, -1, -2)))
+            metrics = (vectors * np.exp(values)[:, None, :]) @ np.swapaxes(
+                vectors, -1, -2
+            )
+            largest = np.exp(values[:, -1])
+        other_metrics = local_metrics[after_spokes[:, 1]]
+        squared = np.sum(delta * delta, axis=2)
+        first_form = np.sum((delta @ metrics) * delta, axis=2)
+        second_form = np.sum(
+            np.matmul(delta[:, :, None, :], other_metrics[None])[:, :, 0, :] * delta,
+            axis=2,
+        )
+        first_slack = _SURVIVOR_FORM_SLACK * largest[:, None] * squared
+        second_slack = (
+            _SURVIVOR_FORM_SLACK
+            * np.linalg.eigvalsh(other_metrics)[None, :, -1]
+            * squared
+        )
+        lower = _logarithmic_mean(
+            np.sqrt(first_form - first_slack), np.sqrt(second_form - second_slack)
+        ) * (1.0 - _SURVIVOR_LENGTH_SLACK)
+        upper = _logarithmic_mean(
+            np.sqrt(first_form + first_slack), np.sqrt(second_form + second_slack)
+        ) * (1.0 + _SURVIVOR_LENGTH_SLACK)
+        # Counts are monotone in each length, so equal sorted rows at the two
+        # ends are the violations of every length in between.
+        long, short = _band_violation_rows(lower)
+        long_upper, short_upper = _band_violation_rows(upper)
+        certain = (
+            np.all(np.isfinite(lower) & np.isfinite(upper) & (lower > 0.0), axis=1)
+            & np.all(long == long_upper, axis=1)
+            & np.all(short == short_upper, axis=1)
+        )
+
+    def order(rows: np.ndarray, reference: tuple[int, ...]) -> np.ndarray:
+        width = max(rows.shape[1], len(reference))
+        padded = np.zeros((rows.shape[0], width), dtype=np.float64)
+        padded[:, : rows.shape[1]] = rows
+        target = np.zeros((width,), dtype=np.float64)
+        target[: len(reference)] = reference
+        return _lexicographic_signs(padded, target)
+
+    before_long, before_short = _band_violations(before_lengths)
+    long_order = order(long, before_long)
+    decreases = (long_order < 0) | ((long_order == 0) & (order(short, before_short) < 0))
+    return coincident | (certain & ~decreases)
+
+
+def _unrefused_carriers(
+    carriers: Iterator[tuple[dict[int, Fraction], np.ndarray]],
+    refused: Callable[[Sequence[tuple[dict[int, Fraction], np.ndarray]]], np.ndarray],
+    /,
+) -> Iterator[tuple[dict[int, Fraction], np.ndarray]]:
+    """Carriers a batched screen does not refuse, in order, read block by block."""
+    while block := tuple(islice(carriers, _SURVIVOR_SCREEN_BLOCK)):
+        if len(block) < _SURVIVOR_SCREEN_MINIMUM:
+            yield from block
+        else:
+            yield from compress(block, ~refused(block))
+
+
 def _survivor_moves(
     state: _NativeState,
     records: _BoundaryRecords,
@@ -4620,6 +4766,9 @@ def _survivor_moves(
     local_points: np.ndarray,
     local_metrics: np.ndarray,
     /,
+    *,
+    refused: Callable[[Sequence[tuple[dict[int, Fraction], np.ndarray]]], np.ndarray]
+    | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Quantized source points a collapse survivor may move to.
 
@@ -4680,11 +4829,19 @@ def _survivor_moves(
         else:
             quantized = _quantized_relocation(state, simplices, goal, endpoints[0])
             candidates = () if quantized is None else (quantized,)
-        for stencil, carrier in candidates:
-            if np.array_equal(carrier, endpoints[0]) or np.array_equal(
-                carrier, endpoints[1]
-            ):
-                continue
+        admissible: Iterator[tuple[dict[int, Fraction], np.ndarray]] = (
+            (stencil, carrier)
+            for stencil, carrier in candidates
+            if not (
+                np.array_equal(carrier, endpoints[0])
+                or np.array_equal(carrier, endpoints[1])
+            )
+        )
+        if refused is not None:
+            # Carriers of one goal share their source cell: screen them together
+            # and interpolate a metric only for those the screen leaves.
+            admissible = _unrefused_carriers(admissible, refused)
+        for stencil, carrier in admissible:
             try:
                 metric = _source_metric_from_stencil(
                     state.source_metric,
