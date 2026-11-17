@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from fractions import Fraction
-from itertools import combinations, islice
+from itertools import combinations
 from math import gcd, lcm
 from typing import Any, cast, final, NamedTuple
 
@@ -72,9 +72,9 @@ _VIOLATION_QUANTUM = 2.0**-10
 # this relative determinant |det E| / max_v prod |e| a cell's binary64 metric
 # determinant det(E^T E) is not certainly positive. No edit creates such a cell.
 _DETERMINANT_FLOOR = 2.0**-22
-# Relocation goals are generated in blocks of ``_GOAL_BLOCK`` rows and screened
-# in batches of at least ``_SCREEN_BATCH`` new goals. Both only batch
-# row-independent evaluations; neither bounds the search.
+# Deep goals use blocks of ``_GOAL_BLOCK`` steps; seeds batch eight pulls.
+# Screening batches at least ``_SCREEN_BATCH`` new goals. These are bounded
+# row-independent working sets, not limits on the search.
 _GOAL_BLOCK = 64
 _SCREEN_BATCH = 256
 # The 24 bytes of one binary64 goal: goals are equal exactly when these are.
@@ -6435,23 +6435,31 @@ def _implicit_tangent_pulls(
 def _relocation_goals(
     point: np.ndarray, pulls: np.ndarray, /, *, seed_only: bool = False
 ) -> Iterator[np.ndarray]:
-    """Try inexpensive seeds first; the fallback reaches binary64 resolution.
+    """Try inexpensive seeds first in bounded blocks, then backtrack fully.
 
-    Each pull yields ``point + ldexp(pull, -step)`` for ``step = 0, 1, ...``
-    until the goal rounds to ``point`` (seeds stop after step
-    ``_SPLIT_PARAMETER_BITS``). Steps are evaluated in blocks; ``ldexp`` and
-    the sum are exact or correctly rounded per element, so each goal is the
-    one of the stepwise recurrence.
+    Each pull yields blocks of ``point + ldexp(pull, -step)`` for
+    ``step = 0, 1, ...`` until the goal rounds to ``point`` (seeds stop
+    after step ``_SPLIT_PARAMETER_BITS``). ``ldexp`` and the sum are exact
+    or correctly rounded per element, so every row is the stepwise goal.
     """
+    if seed_only:
+        steps = np.arange(_SPLIT_PARAMETER_BITS + 1, dtype=np.int64)
+        for start in range(0, pulls.shape[0], 8):
+            goals = point + np.ldexp(
+                pulls[start : start + 8, None, :], -steps[None, :, None]
+            )
+            reached = np.all(goals == point, axis=2)
+            yield goals[np.cumsum(reached, axis=1) == 0]
+        return
     for pull in pulls:
         start = 0
         while True:
-            count = _SPLIT_PARAMETER_BITS + 1 if seed_only else _GOAL_BLOCK
+            count = _GOAL_BLOCK
             steps = np.arange(start, start + count, dtype=np.int64)
             goals = point + np.ldexp(pull, -steps[:, None])
             reached = np.flatnonzero(np.all(goals == point, axis=1))
-            yield from goals[: reached[0] if reached.size else count]
-            if reached.size or seed_only:
+            yield goals[: reached[0] if reached.size else count]
+            if reached.size:
                 break
             start += count
 
@@ -6668,12 +6676,26 @@ def _screen_relocation_goals(
             (-1, 3, 3)
         )
 
-    offsets = size * np.arange(rows.size, dtype=np.int64)
-    lengths = _metric_lengths(
-        stacked[rows].reshape((-1, 3)),
-        star_metrics(rows.size),
-        (spokes[None] + offsets[:, None, None]).reshape((-1, 2)),
-    ).reshape((rows.size, -1))[:, measured]
+    if np.all(local_metrics == local_metrics[0]):
+        # Equal endpoint tensors give identical endpoint lengths. Reuse the
+        # first contraction rather than evaluating a second contraction and
+        # its logarithmic mean for every candidate spoke. Zero and nonfinite
+        # lengths must still take evaluate's ordinary exceptional path.
+        delta = (
+            stacked[rows][:, spokes[:, 1]] - stacked[rows][:, spokes[:, 0]]
+        ).reshape((-1, 3))
+        tensors = np.broadcast_to(local_metrics[0], (delta.shape[0], 3, 3))
+        first = np.sqrt(np.einsum("ei,eij,ej->e", delta, tensors, delta))
+        lengths = np.where(
+            np.isfinite(first) & (first > 0.0), 0.5 * (first + first), np.nan
+        ).reshape((rows.size, -1))[:, measured]
+    else:
+        offsets = size * np.arange(rows.size, dtype=np.int64)
+        lengths = _metric_lengths(
+            stacked[rows].reshape((-1, 3)),
+            star_metrics(rows.size),
+            (spokes[None] + offsets[:, None, None]).reshape((-1, 2)),
+        ).reshape((rows.size, -1))[:, measured]
     regular = np.all(np.isfinite(lengths) & (lengths > 0.0), axis=1)
     for row in rows[~regular].tolist():
         admitted[row] = evaluate(goals[row], local_metrics[0]) is not None
@@ -7037,8 +7059,7 @@ def _relocation_proposals(
             raw_goals = _relocation_goals(local_points[0], pulls, seed_only=not deep)
             batch: list[np.ndarray] = []
             size = 0
-            while block := list(islice(raw_goals, _GOAL_BLOCK)):
-                goals = np.asarray(block, dtype=np.float64)
+            for goals in raw_goals:
                 if corners is not None and projection is not None:
                     # A stacked matrix-vector product per row: the binary64
                     # result of ``projection @ (goal - corners[0])``.
