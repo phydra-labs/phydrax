@@ -12,6 +12,7 @@ from phydrax.geometry.brep._patches import (
     ConicParameterRoot,
     ConicRootLinePCurve,
     CylinderPatch,
+    EllipseCurve,
     ExactLineCurve,
     ExtrusionSurface,
     LineCurve,
@@ -402,4 +403,92 @@ def test_rooted_cylinder_ruled_derivative_detects_inward_fault(
             return result_lower, result_upper
 
     monkeypatch.setattr(_patches, "_cylinder_rail_program", lambda: InwardProgram())
+    assert not contains_witness()
+
+
+@pytest.mark.parametrize("ellipse", (False, True))
+def test_conic_bounds_randomized_native_host_and_batch_parity(
+    ellipse: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    curve = (
+        EllipseCurve(
+            (0, 0, 0),
+            (1, 0, 0),
+            (0, 1, 0),
+            1.0 / 3.0,
+            2.0 / 3.0,
+            first_radius_exact=Fraction(1, 3),
+            second_radius_exact=Fraction(2, 3),
+        )
+        if ellipse
+        else CircleCurve(
+            (0, 0, 0),
+            (1, 0, 0),
+            (0, 1, 0),
+            1.0 / 3.0,
+            radius_exact=Fraction(1, 3),
+        )
+    )
+    program = _patches._conic_trig_program()
+    assert program is not None
+    rng = np.random.default_rng(98413)
+    starts = rng.uniform(-8.0, 8.0, size=48)
+    ends = starts + rng.uniform(0.0, 5.0, size=48)
+    boxes = [
+        (float(first), float(last)) for first, last in zip(starts, ends, strict=True)
+    ]
+    single = [curve.bounding_box(first, last) for first, last in boxes]
+    with monkeypatch.context() as context:
+        context.setattr(_patches, "_conic_trig_program", lambda: None)
+        reference = [curve.bounding_box(first, last) for first, last in boxes]
+    for value, expected in zip(single, reference, strict=True):
+        np.testing.assert_array_equal(value.view(np.uint64), expected.view(np.uint64))
+
+    lower, upper = program.evaluate(starts[:, None], ends[:, None])
+    rows = {box: index for index, box in enumerate(boxes)}
+
+    class BatchedProgram:
+        def evaluate(
+            self, first: NDArray[np.float64], last: NDArray[np.float64], /
+        ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+            index = rows[(float(first[0, 0]), float(last[0, 0]))]
+            return lower[index : index + 1], upper[index : index + 1]
+
+    with monkeypatch.context() as context:
+        context.setattr(_patches, "_conic_trig_program", lambda: BatchedProgram())
+        batched = [curve.bounding_box(first, last) for first, last in boxes]
+    for value, expected in zip(batched, single, strict=True):
+        np.testing.assert_array_equal(value.view(np.uint64), expected.view(np.uint64))
+
+
+@pytest.mark.parametrize("ellipse", (False, True))
+def test_conic_bounds_trig_inward_fault_breaks_exact_witness(
+    ellipse: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    curve = (
+        EllipseCurve((0, 0, 0), (1, 0, 0), (0, 1, 0), 1, 2)
+        if ellipse
+        else CircleCurve((0, 0, 0), (1, 0, 0), (0, 1, 0), 1)
+    )
+    program = _patches._conic_trig_program()
+    assert program is not None
+
+    def contains_witness() -> bool:
+        box = curve.bounding_box(0.0, 0.0)
+        return Fraction.from_float(box[0, 0]) <= 1 <= Fraction.from_float(box[1, 0])
+
+    assert contains_witness()
+
+    class InwardProgram:
+        def evaluate(
+            self, lower: NDArray[np.float64], upper: NDArray[np.float64], /
+        ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+            result_lower, result_upper = program.evaluate(lower, upper)
+            result_lower[0, 0] = 0.0
+            result_upper[0, 0] = 0.0
+            return result_lower, result_upper
+
+    monkeypatch.setattr(_patches, "_conic_trig_program", lambda: InwardProgram())
     assert not contains_witness()

@@ -1021,6 +1021,21 @@ class ExactLineCurve(AbstractCurve):
         }
 
 
+@lru_cache(maxsize=1)
+def _conic_trig_program() -> PreparedIntervalFunction | None:
+    from .._interval_enclosure import IntervalExtensionError, prepare_interval_function
+
+    def evaluate(values: Array, /) -> Array:
+        return jnp.stack((jnp.cos(values[0]), jnp.sin(values[0])))
+
+    try:
+        return prepare_interval_function(
+            evaluate, 1, batch_capacity=1, execution="batched"
+        )
+    except IntervalExtensionError:
+        return None
+
+
 def _conic_curve_bounds(
     center: tuple[ExactScalar, ...],
     cosine: tuple[ExactScalar, ...],
@@ -1034,9 +1049,18 @@ def _conic_curve_bounds(
 
     if not np.isfinite(first) or not np.isfinite(last) or first > last:
         raise ValueError("Conic curve bounds must be finite and ordered.")
-    angle = (np.asarray(first, dtype=np.float64), np.asarray(last, dtype=np.float64))
-    cosine_lower, cosine_upper = interval_cos(angle)
-    sine_lower, sine_upper = interval_sin(angle)
+    program = _conic_trig_program()
+    if program is None:
+        angle = (np.asarray(first, dtype=np.float64), np.asarray(last, dtype=np.float64))
+        cosine_lower, cosine_upper = interval_cos(angle)
+        sine_lower, sine_upper = interval_sin(angle)
+    else:
+        lower, upper = program.evaluate(
+            np.asarray([[first]], dtype=np.float64),
+            np.asarray([[last]], dtype=np.float64),
+        )
+        cosine_lower, sine_lower = lower[0]
+        cosine_upper, sine_upper = upper[0]
     cosine_range = (
         Fraction.from_float(float(cosine_lower)),
         Fraction.from_float(float(cosine_upper)),
