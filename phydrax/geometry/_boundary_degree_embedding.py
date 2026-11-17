@@ -819,16 +819,6 @@ def _boundary_vertex_links_are_manifold(
     )
 
 
-def _shell_euler_characteristic(faces: tuple[BoundaryFace, ...], /) -> int:
-    vertices = {identifier for face in faces for identifier in face.vertex_ids}
-    edges = {
-        _edge(face.vertex_ids[index], face.vertex_ids[(index + 1) % len(face.vertex_ids)])
-        for face in faces
-        for index in range(len(face.vertex_ids))
-    }
-    return len(vertices) - len(edges) + len(faces)
-
-
 type _Interval = tuple[np.ndarray, np.ndarray]
 
 
