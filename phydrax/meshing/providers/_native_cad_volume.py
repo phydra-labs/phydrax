@@ -8,6 +8,7 @@ import equinox as eqx
 import numpy as np
 
 from ..._fingerprint import canonical_fingerprint
+from ..._live_proofs import live_content_fingerprint, LiveProofLedger
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -1531,7 +1532,25 @@ type _ExactPlaneChart = tuple[
 ]
 
 
+_LIVE_AFFINE_PATCH_CHARTS: LiveProofLedger[tuple[_ExactPlaneChart | None]] = (
+    LiveProofLedger()
+)
+
+
 def _exact_patch_chart(domain: MeshingDomain, patch: int, /) -> _ExactPlaneChart | None:
+    """Prove the exact affine patch chart for this live source, if one exists."""
+    operands, parameters = (domain,), (patch,)
+    cached = _LIVE_AFFINE_PATCH_CHARTS.find(operands, parameters=parameters)
+    if cached is None:
+        fingerprint = live_content_fingerprint(operands)
+        cached = (_compute_exact_patch_chart(domain, patch),)
+        _LIVE_AFFINE_PATCH_CHARTS.record(
+            operands, fingerprint, cached, parameters=parameters
+        )
+    return cached[0]
+
+
+def _compute_exact_patch_chart(domain: MeshingDomain, patch: int, /) -> _ExactPlaneChart | None:
     """Exact placed ``(origin, first_axis, second_axis)`` of a planar patch chart.
 
     Only a (placed) ``PlanePatch`` has one; the exact affine placement maps
