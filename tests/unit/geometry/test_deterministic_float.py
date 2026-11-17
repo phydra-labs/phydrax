@@ -12,8 +12,10 @@ from __future__ import annotations
 import math
 import re
 import struct
+import sys
 from decimal import Decimal, localcontext
 from fractions import Fraction
+from itertools import product
 from pathlib import Path
 
 import pytest
@@ -126,9 +128,13 @@ def test_recorded_two_thirds_powers_are_within_the_stated_relative_error() -> No
 
 def test_recorded_eigen_decompositions_diagonalize_their_matrices() -> None:
     # Exact rationals. The kernels state no proved bound for the Jacobi
-    # iteration; these are the bounds its recorded results are held to.
+    # iteration; these are the bounds its recorded results are held to. The
+    # absolute term covers results rounded in the subnormal range.
+    largest = Fraction(sys.float_info.max)
+    smallest = Fraction(1, 2**1074)
     converged_rows = 0
-    refused_rows = 0
+    nonfinite_rows = 0
+    unrepresentable_rows = 0
     for fields in _rows("PHX_DF_EIGEN"):
         entries = [_binary64(bits) for bits in fields[:6]]
         converged = fields[6]
@@ -137,31 +143,41 @@ def test_recorded_eigen_decompositions_diagonalize_their_matrices() -> None:
         if not all(math.isfinite(entry) for entry in entries):
             assert converged == 0
             assert values == [0.0] * 3 and vectors == [0.0] * 9
-            refused_rows += 1
+            nonfinite_rows += 1
             continue
-        assert converged == 1
-        assert values[0] <= values[1] <= values[2]
         a00, a01, a02, a11, a12, a22 = (Fraction(entry) for entry in entries)
         matrix = ((a00, a01, a02), (a01, a11, a12), (a02, a12, a22))
+        if converged == 0:
+            # A finite matrix is refused only for an eigenvalue beyond the
+            # binary64 range: some Rayleigh quotient exceeds the largest number.
+            assert values == [0.0] * 3 and vectors == [0.0] * 9
+            assert any(
+                abs(sum(x[i] * matrix[i][j] * x[j] for i in range(3) for j in range(3)))
+                > largest * sum(component * component for component in x)
+                for x in product(range(-2, 3), repeat=3)
+                if any(x)
+            )
+            unrepresentable_rows += 1
+            continue
+        assert values[0] <= values[1] <= values[2]
         columns = [
             [Fraction(vectors[3 * row + column]) for row in range(3)]
             for column in range(3)
         ]
         scale = max(abs(entry) for row in matrix for entry in row)
+        tolerance = 32 * _UNIT_ROUNDOFF * scale + 4 * smallest
         for column, value in zip(columns, values, strict=True):
             for row in range(3):
                 image = sum(matrix[row][k] * column[k] for k in range(3))
-                assert (
-                    abs(image - Fraction(value) * column[row])
-                    <= 32 * _UNIT_ROUNDOFF * scale
-                )
+                assert abs(image - Fraction(value) * column[row]) <= tolerance
         for first in range(3):
             for second in range(first, 3):
-                product = sum(columns[first][k] * columns[second][k] for k in range(3))
-                assert abs(product - (first == second)) <= 16 * _UNIT_ROUNDOFF
+                dot = sum(columns[first][k] * columns[second][k] for k in range(3))
+                assert abs(dot - (first == second)) <= 16 * _UNIT_ROUNDOFF
         converged_rows += 1
     assert converged_rows > 40
-    assert refused_rows == 2
+    assert nonfinite_rows == 2
+    assert unrepresentable_rows == 2
 
 
 @pytest.mark.parametrize("kernel", ["exp", "log", "pow_two_thirds"])

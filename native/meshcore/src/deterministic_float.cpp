@@ -65,6 +65,10 @@ double power_of_two(int exponent) noexcept {
   return std::bit_cast<double>(static_cast<std::uint64_t>(exponent + 1023) << 52);
 }
 
+double canonical(double value) noexcept {
+  return value == value ? value : std::bit_cast<double>(kNaNBits);
+}
+
 // y * 2^k for y in [1/2, 2) and k in [-1076, 1025]: exact when the product is
 // normal, one rounding when it is subnormal, +infinity when it overflows.
 double scaled(double y, int k) noexcept {
@@ -74,6 +78,29 @@ double scaled(double y, int k) noexcept {
 }
 
 double magnitude(double value) noexcept { return value < 0.0 ? -value : value; }
+
+// floor(log2 |value|) of a finite nonzero value, subnormals included.
+int binary_exponent(double value) noexcept {
+  const std::uint64_t bits = bits_of(magnitude(value));
+  if ((bits >> 52) != 0) return static_cast<int>(bits >> 52) - 1023;
+  // A subnormal times 2^54 is normal and exact.
+  return static_cast<int>(bits_of(magnitude(value) * 0x1p+54) >> 52) - 1023 - 54;
+}
+
+// value * 2^k for a finite value and |k| <= 1100, in steps of at most 2^1000.
+// Every step is one correctly rounded product: exact while its result is
+// normal, rounded when it is subnormal, infinite when it overflows.
+double shifted(double value, int k) noexcept {
+  while (k > 1000) {
+    value = value * 0x1p+1000;
+    k -= 1000;
+  }
+  while (k < -1000) {
+    value = value * 0x1p-1000;
+    k += 1000;
+  }
+  return value * power_of_two(k);
+}
 
 }  // namespace
 
@@ -186,18 +213,21 @@ double pow_two_thirds(double x) noexcept {
   return exp(log(x) * kTwoThirds);
 }
 
+// Products of finite entries can overflow, and two overflowed terms of
+// opposite sign give a NaN whose sign and payload depend on the instruction
+// set; so can a NaN entry. Every NaN result is replaced by the canonical one.
 double determinant3(const double* m) noexcept {
   const double first = m[0] * (m[4] * m[8] - m[5] * m[7]);
   const double second = m[1] * (m[3] * m[8] - m[5] * m[6]);
   const double third = m[2] * (m[3] * m[7] - m[4] * m[6]);
-  return (first - second) + third;
+  return canonical((first - second) + third);
 }
 
 double quadratic_form3(const double* v, const double* m) noexcept {
   const double row0 = (m[0] * v[0] + m[1] * v[1]) + m[2] * v[2];
   const double row1 = (m[3] * v[0] + m[4] * v[1]) + m[5] * v[2];
   const double row2 = (m[6] * v[0] + m[7] * v[1]) + m[8] * v[2];
-  return (v[0] * row0 + v[1] * row1) + v[2] * row2;
+  return canonical((v[0] * row0 + v[1] * row1) + v[2] * row2);
 }
 
 bool symmetric_eigen3(const double* matrix, SymmetricEigen3& out) noexcept {
@@ -208,9 +238,23 @@ bool symmetric_eigen3(const double* matrix, SymmetricEigen3& out) noexcept {
   double a02 = matrix[2];
   double a12 = matrix[5];
   double d[3] = {matrix[0], matrix[4], matrix[8]};
+  double largest = 0.0;
   for (const double value : {a01, a02, a12, d[0], d[1], d[2]}) {
     if (!(magnitude(value) <= std::numeric_limits<double>::max())) return false;
+    if (magnitude(value) > largest) largest = magnitude(value);
   }
+  // The sweeps run on the matrix times the power of two that brings its
+  // largest entry into [1, 2): every entry is then at most 2 in magnitude,
+  // the diagonal stays below 6 and no rotation can overflow. Scaling by a
+  // power of two commutes with every operation below, so the result is the
+  // one of the unscaled iteration wherever that neither overflows nor
+  // underflows. An entry below 2^-1022 times the largest rounds to a
+  // subnormal, a change below 2^-1074 of the largest entry.
+  const int shift = largest == 0.0 ? 0 : -binary_exponent(largest);
+  a01 = shifted(a01, shift);
+  a02 = shifted(a02, shift);
+  a12 = shifted(a12, shift);
+  for (double& value : d) value = shifted(value, shift);
   double b[3] = {d[0], d[1], d[2]};
   double z[3] = {0.0, 0.0, 0.0};
   double v[3][3] = {{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}};
@@ -273,7 +317,10 @@ bool symmetric_eigen3(const double* matrix, SymmetricEigen3& out) noexcept {
       arrange(1, 2);
       arrange(0, 1);
       for (int column = 0; column < 3; ++column) {
-        out.values[static_cast<std::size_t>(column)] = d[order[column]];
+        // An eigenvalue beyond the binary64 range has no result.
+        const double value = shifted(d[order[column]], -shift);
+        if (!(magnitude(value) <= std::numeric_limits<double>::max())) return false;
+        out.values[static_cast<std::size_t>(column)] = value;
         for (int row = 0; row < 3; ++row) {
           out.vectors[static_cast<std::size_t>(3 * row + column)] = v[row][order[column]];
         }
@@ -302,9 +349,9 @@ std::array<double, 9> symmetric_function3(const SymmetricEigen3& eigen,
   const std::array<double, 9>& v = eigen.vectors;
   for (std::size_t row = 0; row < 3; ++row) {
     for (std::size_t column = row; column < 3; ++column) {
-      const double value = ((v[3 * row] * mapped[0]) * v[3 * column] +
-                            (v[3 * row + 1] * mapped[1]) * v[3 * column + 1]) +
-                           (v[3 * row + 2] * mapped[2]) * v[3 * column + 2];
+      const double value = canonical(((v[3 * row] * mapped[0]) * v[3 * column] +
+                                      (v[3 * row + 1] * mapped[1]) * v[3 * column + 1]) +
+                                     (v[3 * row + 2] * mapped[2]) * v[3 * column + 2]);
       result[3 * row + column] = value;
       result[3 * column + row] = value;
     }
