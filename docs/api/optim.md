@@ -299,6 +299,20 @@ factorization, preconditioner, Krylov-basis, and workspace budgets.
 embedding, with orthant rows equilibrated by `1/(s_i + z_i)`. `primal_step`,
 `dual_step`, and `extrapolation` only parameterize the first-order route used for
 batched programs and sparse programs with native bounds.
+Dense programs solve the full embedding by dense LU unless
+`NativeHomogeneousConic(newton="reduced")` is selected. That route forms the same
+reduced quasi-definite system as dense blocks, for programs whose cone blocks are
+zero and nonnegative, and applies the same static regularization, refinement,
+single full-equation correction, and acceptance gates as the factorized route. The
+regularized matrix is factored as a block LDLᵀ by two native Cholesky
+factorizations (`Q + A_Cᵀ W A_C` and the zero-row Schur complement); both
+succeeding is its inertia evidence. Nothing in the compiled solve depends on a
+sparsity pattern, so every dense program of one shape and identity shares one
+executable. The route leaves vacuous orthant rows (zero coefficients and zero
+right-hand side) out of the barrier and its degree: they constrain nothing and
+have no interior slack, so a fixed-capacity program may pad its blocks with them
+and follows the iterates of the unpadded program. Sparse programs and other cone
+blocks refuse `"reduced"`.
 The embedding stops as soon as the original-coordinate audit certifies optimality or a
 primal/dual ray, so infeasible and unbounded sparse programs return
 `PRIMAL_INFEASIBLE`/`DUAL_INFEASIBLE` with a valid certificate instead of exhausting

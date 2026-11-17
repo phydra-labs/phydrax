@@ -12,7 +12,6 @@ from fractions import Fraction
 from itertools import product
 from typing import NamedTuple, TypedDict
 
-import equinox as eqx
 import numpy as np
 
 from .._fingerprint import canonical_fingerprint
@@ -24,9 +23,8 @@ from ..optim import (
     ConvexProgramStatus,
     ConvexSolvePolicy,
     NativeHomogeneousConic,
-    solve_prepared_convex_program,
 )
-from ..optim._programming._audit import audit_conic_dual_infeasibility_ray, DualRayAudit
+from ..optim._programming._audit import DualRayAudit
 from . import _tetra_metric as tm
 from ._periodic import (
     _PeriodicStencilTransport,
@@ -41,14 +39,13 @@ from ._tetra_coupled_program import (
     _ProgramDemand,
     _RowRole,
     admit_inputs,
+    audit_dual_ray,
     certificate_demand,
     prepare_certificate,
     prepare_primary,
     primary_demand,
+    solve_coupled,
 )
-
-
-_AUDIT_RAY = eqx.filter_jit(audit_conic_dual_infeasibility_ray)
 
 
 class _CoupledBinding(NamedTuple):
@@ -165,7 +162,7 @@ def _construct_certificate(
         certificate = prepare_certificate(primary, policy, cache)
         demand = certificate.demand
         phase = "execution"
-        proof = solve_prepared_convex_program(certificate.prepared).result
+        proof = solve_coupled(certificate)
     except (ValueError, RuntimeError) as error:
         # The primary result survives even when the independent proof cannot
         # be admitted or cannot return an execution receipt.
@@ -179,8 +176,8 @@ def _construct_certificate(
             certificate_error=error,
             certificate_started=phase == "execution",
         ) from error
-    audit = _AUDIT_RAY(
-        primary.program,
+    audit = audit_dual_ray(
+        primary,
         proof.primal,
         result.lower_bound_dual,
         result.upper_bound_dual,
@@ -234,7 +231,7 @@ def _solve(
         ) from error
     # The native owner is already compiled; keep fresh binding provenance out
     # of a second JIT cache key.
-    result = solve_prepared_convex_program(primary.prepared).result
+    result = solve_coupled(primary)
     if int(result.status) == int(ConvexProgramStatus.OPTIMAL) and bool(result.successful):
         primal = np.asarray(result.primal, dtype=np.float64)
         if primal.shape != (n,) or not np.all(np.isfinite(primal)):
@@ -249,8 +246,8 @@ def _solve(
             result, policy, primary.demand, binding, primal, None, None, None
         )
     if bool(result.certificate.dual_ray_valid):
-        audit = _AUDIT_RAY(
-            primary.program,
+        audit = audit_dual_ray(
+            primary,
             result.cone_dual,
             result.lower_bound_dual,
             result.upper_bound_dual,

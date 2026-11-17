@@ -37,21 +37,31 @@ from ..._strict import StrictModule
 from ...linalg import (
     AbstractSparseLinearOperator,
     ArraySpace,
+    DenseLinearOperator,
     DifferentiationPolicy,
+    FactorizationPolicy,
+    factorize,
     FailurePolicy,
+    FunctionLinearOperator,
     GMRES,
     LinearSolvePolicy,
     LinearSolveResult,
     LinearSolveStatus,
     LinearSolveTemplate,
     LinearSystem,
+    MaterializationPolicy,
+    OperatorPreconditioner,
+    OperatorProperties,
     PreconditioningPolicy,
     prepare_template,
+    PreparedFactorization,
     PreparedPreconditioner,
     PreparedSparseFactorization,
     refresh_sparse_factorization_values,
     RHSLayout,
+    solve,
     solve_many,
+    SolveResourcePolicy,
     SparseFactorizationPlan,
     SparseFactorizationPolicy,
     SparseFactorizationPreconditioner,
@@ -117,6 +127,41 @@ class FactorizedNewtonFactor(StrictModule):
     exact_values: Array
     regularization: Array
     inertia_valid: Array
+
+
+class DenseReducedNewtonPlan(StrictModule):
+    """Cone-row partition of one dense program's reduced quasi-definite system.
+
+    Only zero and nonnegative blocks are admitted, so the block weights never
+    depend on the centering parameter.
+    """
+
+    zero_rows: Array
+    orthant_rows: Array
+    materialization: MaterializationPolicy
+    resources: SolveResourcePolicy
+    num_variables: int = eqx.field(static=True)
+    num_zero_rows: int = eqx.field(static=True)
+
+    @property
+    def multiplier_independent(self) -> bool:
+        return True
+
+
+class DenseReducedNewtonFactor(StrictModule):
+    """Dense reduced-KKT values with the block Cholesky factors of their
+    regularized form; both factors succeeding is the inertia evidence."""
+
+    exact_values: Array
+    hessian_factor: PreparedFactorization
+    schur_factor: PreparedFactorization | None
+    coupling: Array
+    regularization: Array
+    inertia_valid: Array
+
+
+type ReducedNewtonPlan = FactorizedNewtonPlan | DenseReducedNewtonPlan
+type ReducedNewtonFactor = FactorizedNewtonFactor | DenseReducedNewtonFactor
 
 
 class _ReducedNewtonStructure(NamedTuple):
@@ -405,6 +450,59 @@ def prepare_factorized_newton(
     )
 
 
+def prepare_dense_reduced_newton(
+    program: ConicProgram, policy: ConvexSolvePolicy, /
+) -> DenseReducedNewtonPlan:
+    """Partition a dense program's cone rows for the dense reduced KKT route.
+
+    Static structure only: the plan is identical for every dense program with
+    these cone blocks, so it adds nothing pattern-specific to a compiled solve.
+    """
+    if program.batch_shape:
+        raise ValueError("Reduced homogeneous Newton systems require one case.")
+    if program.constraint_is_sparse or program.quadratic_is_sparse:
+        raise ValueError(
+            "NativeHomogeneousConic(newton='reduced') requires dense program data; "
+            "sparse programs select 'factorized' or 'matrix-free'."
+        )
+    blocks = _blocks(program.cone)
+    if not all(isinstance(block, (ZeroCone, NonnegativeCone)) for block in blocks):
+        raise ValueError(
+            "NativeHomogeneousConic(newton='reduced') requires zero and "
+            "nonnegative cone blocks."
+        )
+    slices = (
+        program.cone.slices
+        if isinstance(program.cone, ProductCone)
+        else (slice(0, program.cone.dimension),)
+    )
+    empty = np.empty((0,), dtype=np.int32)
+    zero_rows = np.concatenate(
+        [
+            np.arange(block_slice.start, block_slice.stop, dtype=np.int32)
+            for block, block_slice in zip(blocks, slices, strict=True)
+            if isinstance(block, ZeroCone)
+        ]
+        or [empty]
+    )
+    orthant_rows = np.concatenate(
+        [
+            np.arange(block_slice.start, block_slice.stop, dtype=np.int32)
+            for block, block_slice in zip(blocks, slices, strict=True)
+            if isinstance(block, NonnegativeCone)
+        ]
+        or [empty]
+    )
+    return DenseReducedNewtonPlan(
+        jnp.asarray(zero_rows, dtype=jnp.int32),
+        jnp.asarray(orthant_rows, dtype=jnp.int32),
+        policy.materialization,
+        policy.resources,
+        num_variables=program.num_variables,
+        num_zero_rows=zero_rows.size,
+    )
+
+
 def _block_weights(
     program: ConicProgram, slack: Array, dual: Array, mu: Array, /
 ) -> Array:
@@ -470,10 +568,12 @@ def _scale_centrality(program: ConicProgram, slack: Array, value: Array, /) -> A
 
 
 def factor_reduced_newton(
-    plan: FactorizedNewtonPlan, program: ConicProgram, vector: Array, mu: Array, /
-) -> FactorizedNewtonFactor:
+    plan: ReducedNewtonPlan, program: ConicProgram, vector: Array, mu: Array, /
+) -> ReducedNewtonFactor:
     """Assemble and refresh the regularized reduced KKT factor at one iterate."""
 
+    if isinstance(plan, DenseReducedNewtonPlan):
+        return _factor_dense_reduced(plan, program, vector)
     if plan.structure_id != program.structure_id:
         raise ValueError("Factorized Newton plan does not match the program structure.")
     n, m = program.num_variables, program.num_constraints
@@ -515,9 +615,140 @@ def factor_reduced_newton(
     return FactorizedNewtonFactor(factor, exact, regularization, inertia_valid)
 
 
-def _exact_action(plan: FactorizedNewtonPlan, values: Array, vectors: Array, /) -> Array:
+def _positive_definite_factor(
+    plan: DenseReducedNewtonPlan, matrix: Array, /
+) -> PreparedFactorization:
+    space = ArraySpace((matrix.shape[0],), dtype=matrix.dtype)
+    operator = DenseLinearOperator(
+        matrix,
+        source=space,
+        target=space,
+        properties=OperatorProperties(
+            self_adjoint=True,
+            positive_definite=True,
+            evidence={
+                "self_adjoint": "construction",
+                "positive_definite": "construction",
+            },
+        ),
+    )
+    return factorize(
+        operator,
+        FactorizationPolicy(
+            "cholesky",
+            differentiation=DifferentiationPolicy("none"),
+            failure=FailurePolicy("status"),
+            materialization=plan.materialization,
+            resources=plan.resources,
+        ),
+    )
+
+
+def _factor_solve(factor: PreparedFactorization, rhs: Array, /) -> Array:
+    if rhs.ndim == 1:
+        return jnp.asarray(factor.solve(rhs).value)
+    return jnp.asarray(factor.solve(rhs, rhs_layout=RHSLayout((rhs.shape[1],))).value)
+
+
+def _factor_dense_reduced(
+    plan: DenseReducedNewtonPlan, program: ConicProgram, vector: Array, /
+) -> DenseReducedNewtonFactor:
+    """Assemble the dense reduced KKT matrix and factor it block by block.
+
+    The regularized matrix ``[[H, A_Zᵀ], [A_Z, -δI]]`` is quasi-definite: ``H``
+    and the Schur complement ``δI + A_Z H⁻¹ A_Zᵀ`` are positive definite by
+    construction. Two Cholesky factorizations therefore are its block LDLᵀ,
+    and both succeeding is exactly the inertia ``(n, e)``.
+    """
+    n, m = program.num_variables, program.num_constraints
+    dual = vector[n : n + m]
+    slack = vector[n + m : n + 2 * m]
+    matrix = program.constraint_matrix
+    if isinstance(matrix, AbstractSparseLinearOperator):
+        raise TypeError("Dense reduced Newton systems require a dense constraint matrix.")
+    quadratic = program.quadratic
+    if isinstance(quadratic, AbstractSparseLinearOperator):
+        raise TypeError("Dense reduced Newton systems require a dense quadratic.")
+    orthant = matrix[plan.orthant_rows]
+    weights = dual[plan.orthant_rows] / slack[plan.orthant_rows]
+    hessian = orthant.T @ (weights[:, None] * orthant)
+    if quadratic is not None:
+        hessian = hessian + quadratic
+    coupling = matrix[plan.zero_rows]
+    dtype = vector.dtype
+    root_eps = jnp.sqrt(jnp.finfo(dtype).eps)
+    # The same static primal-dual regularization as the sparse route.
+    primal_shift = root_eps * jnp.maximum(1.0, jnp.abs(jnp.diagonal(hessian)))
+    regularization = jnp.asarray(root_eps, dtype=dtype)
+    hessian_factor = _positive_definite_factor(plan, hessian + jnp.diag(primal_shift))
+    inertia_valid = ~hessian_factor.prepared_solve.state.invalid
+    schur_factor = None
+    if plan.num_zero_rows:
+        image = _factor_solve(hessian_factor, coupling.T)
+        schur = coupling @ image
+        schur_factor = _positive_definite_factor(
+            plan,
+            0.5 * (schur + schur.T)
+            + regularization * jnp.eye(plan.num_zero_rows, dtype=dtype),
+        )
+        inertia_valid = inertia_valid & ~schur_factor.prepared_solve.state.invalid
+    exact = jnp.block(
+        [
+            [hessian, coupling.T],
+            [coupling, jnp.zeros((plan.num_zero_rows, plan.num_zero_rows), dtype=dtype)],
+        ]
+    )
+    return DenseReducedNewtonFactor(
+        exact, hessian_factor, schur_factor, coupling, regularization, inertia_valid
+    )
+
+
+def _dense_regularized_solve(
+    plan: DenseReducedNewtonPlan, factor: DenseReducedNewtonFactor, rhs: Array, /
+) -> Array:
+    n = plan.num_variables
+    first, second = rhs[:n], rhs[n:]
+    if factor.schur_factor is None:
+        return _factor_solve(factor.hessian_factor, first)
+    dual = _factor_solve(
+        factor.schur_factor,
+        factor.coupling @ _factor_solve(factor.hessian_factor, first) - second,
+    )
+    primal = _factor_solve(factor.hessian_factor, first - factor.coupling.T @ dual)
+    return jnp.concatenate((primal, dual))
+
+
+def _factor_valid(factor: ReducedNewtonFactor, /) -> Array:
+    if isinstance(factor, DenseReducedNewtonFactor):
+        return factor.inertia_valid
+    return (
+        factor.factor.status == int(SparseFactorizationStatus.SUCCESS)
+    ) & factor.inertia_valid
+
+
+def _regularized_solve(
+    plan: ReducedNewtonPlan, factor: ReducedNewtonFactor, rhs: Array, /
+) -> Array:
+    if isinstance(plan, DenseReducedNewtonPlan) or isinstance(
+        factor, DenseReducedNewtonFactor
+    ):
+        if not isinstance(plan, DenseReducedNewtonPlan) or not isinstance(
+            factor, DenseReducedNewtonFactor
+        ):
+            raise TypeError("Reduced Newton plan and factor use different routes.")
+        return _dense_regularized_solve(plan, factor, rhs)
+    return factor.factor.solve(rhs).value
+
+
+def _exact_action(
+    plan: ReducedNewtonPlan, factor: ReducedNewtonFactor, vectors: Array, /
+) -> Array:
+    if isinstance(plan, DenseReducedNewtonPlan) or isinstance(
+        factor, DenseReducedNewtonFactor
+    ):
+        return factor.exact_values @ vectors
     return jax.ops.segment_sum(
-        values[:, None] * vectors[plan.entry_columns],
+        factor.exact_values[:, None] * vectors[plan.entry_columns],
         plan.entry_rows,
         num_segments=vectors.shape[0],
         indices_are_sorted=True,
@@ -525,7 +756,7 @@ def _exact_action(plan: FactorizedNewtonPlan, values: Array, vectors: Array, /) 
 
 
 def _reduced_solve(
-    plan: FactorizedNewtonPlan, factor: FactorizedNewtonFactor, rhs: Array, /
+    plan: ReducedNewtonPlan, factor: ReducedNewtonFactor, rhs: Array, /
 ) -> Array:
     """Regularized solve refined toward the exact reduced system.
 
@@ -539,9 +770,9 @@ def _reduced_solve(
     floor = 16.0 * jnp.finfo(rhs.dtype).eps * rhs_norm
 
     def defect(value: Array) -> Array:
-        return scaled_norm(rhs - _exact_action(plan, factor.exact_values, value))
+        return scaled_norm(rhs - _exact_action(plan, factor, value))
 
-    initial = factor.factor.solve(rhs).value
+    initial = _regularized_solve(plan, factor, rhs)
     initial_defect = defect(initial)
 
     def keep_refining(state: tuple[Array, Array, Array, Array]) -> Array:
@@ -552,9 +783,9 @@ def _reduced_solve(
         state: tuple[Array, Array, Array, Array],
     ) -> tuple[Array, Array, Array, Array]:
         value, residual, _, step = state
-        correction = factor.factor.solve(
-            rhs - _exact_action(plan, factor.exact_values, value)
-        ).value
+        correction = _regularized_solve(
+            plan, factor, rhs - _exact_action(plan, factor, value)
+        )
         candidate = value + correction
         candidate_defect = defect(candidate)
         improved = jnp.isfinite(candidate_defect) & (candidate_defect < residual)
@@ -578,13 +809,59 @@ def _reduced_solve(
     return value
 
 
+def _correct_dense_reduced_solve(
+    plan: DenseReducedNewtonPlan,
+    factor: DenseReducedNewtonFactor,
+    rhs: Array,
+    initial: Array,
+) -> LinearSolveResult:
+    """Right-precondition native GMRES on the exact matrix by the block factor."""
+    space = ArraySpace((rhs.shape[0],), dtype=rhs.dtype)
+    preconditioner = OperatorPreconditioner(
+        FunctionLinearOperator(
+            lambda value: _dense_regularized_solve(plan, factor, value),
+            source=space,
+            target=space,
+        )
+    )
+    policy = LinearSolvePolicy(
+        GMRES(restart=_REFINEMENT_STEPS),
+        tolerance=TolerancePolicy(
+            relative=16.0 * np.finfo(rhs.dtype).eps,
+            absolute=0.0,
+            max_steps=_REFINEMENT_STEPS,
+        ),
+        preconditioning=PreconditioningPolicy(preconditioner, side="right"),
+        differentiation=DifferentiationPolicy("none"),
+        failure=FailurePolicy("status"),
+        materialization=plan.materialization,
+        resources=plan.resources,
+    )
+    operator = DenseLinearOperator(factor.exact_values, source=space, target=space)
+    return solve(
+        LinearSystem(operator),
+        rhs,
+        policy=policy,
+        rhs_layout=RHSLayout((rhs.shape[1],)),
+        initial_guess=initial,
+    )
+
+
 def _correct_reduced_solve(
-    plan: FactorizedNewtonPlan,
-    factor: FactorizedNewtonFactor,
+    plan: ReducedNewtonPlan,
+    factor: ReducedNewtonFactor,
     rhs: Array,
     initial: Array,
 ) -> LinearSolveResult:
     """Correct with the existing factor without weakening the roundoff target."""
+    if isinstance(plan, DenseReducedNewtonPlan) or isinstance(
+        factor, DenseReducedNewtonFactor
+    ):
+        if not isinstance(plan, DenseReducedNewtonPlan) or not isinstance(
+            factor, DenseReducedNewtonFactor
+        ):
+            raise TypeError("Reduced Newton plan and factor use different routes.")
+        return _correct_dense_reduced_solve(plan, factor, rhs, initial)
     operator = eqx.tree_at(
         lambda value: value.coefficients, plan.operator, factor.exact_values
     )
@@ -616,7 +893,7 @@ def _correct_reduced_solve(
 
 
 def _reduced_newton_rhs(
-    plan: FactorizedNewtonPlan,
+    plan: ReducedNewtonPlan,
     program: ConicProgram,
     vector: Array,
     mu: Array,
@@ -656,7 +933,7 @@ def _reduced_newton_rhs(
 
 
 def _audit_direction(
-    factor: FactorizedNewtonFactor,
+    factor: ReducedNewtonFactor,
     vector: Array,
     residual_function: Callable[[Array], Array],
     residual: Array,
@@ -677,9 +954,7 @@ def _audit_direction(
         & jnp.isfinite(norm)
         & jnp.isfinite(scaled_residual)
     )
-    factor_ok = (
-        factor.factor.status == int(SparseFactorizationStatus.SUCCESS)
-    ) & factor.inertia_valid
+    factor_ok = _factor_valid(factor)
     accepted = finite & factor_ok & (norm <= forcing)
     status = jnp.where(
         ~finite,
@@ -702,8 +977,8 @@ def _audit_direction(
 
 
 def _direction_from_reduced(
-    plan: FactorizedNewtonPlan,
-    factor: FactorizedNewtonFactor,
+    plan: ReducedNewtonPlan,
+    factor: ReducedNewtonFactor,
     program: ConicProgram,
     vector: Array,
     mu: Array,
@@ -770,8 +1045,8 @@ def _direction_from_reduced(
 
 
 def factorized_direction(
-    plan: FactorizedNewtonPlan,
-    factor: FactorizedNewtonFactor,
+    plan: ReducedNewtonPlan,
+    factor: ReducedNewtonFactor,
     program: ConicProgram,
     vector: Array,
     mu: Array,
@@ -851,8 +1126,7 @@ def factorized_direction(
 
     eligible = (
         ~initial.accepted
-        & factor.inertia_valid
-        & (factor.factor.status == int(SparseFactorizationStatus.SUCCESS))
+        & _factor_valid(factor)
         & jnp.all(jnp.isfinite(solution))
         & jnp.all(jnp.isfinite(system.rhs))
         & jnp.all(jnp.isfinite(initial.defect))
@@ -865,9 +1139,14 @@ def factorized_direction(
 
 
 __all__ = [
+    "DenseReducedNewtonFactor",
+    "DenseReducedNewtonPlan",
     "FactorizedNewtonFactor",
     "FactorizedNewtonPlan",
+    "ReducedNewtonFactor",
+    "ReducedNewtonPlan",
     "factor_reduced_newton",
     "factorized_direction",
+    "prepare_dense_reduced_newton",
     "prepare_factorized_newton",
 ]
