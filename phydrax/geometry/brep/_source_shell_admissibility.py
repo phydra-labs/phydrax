@@ -11,6 +11,7 @@ proved independently.
 
 from __future__ import annotations
 
+import weakref
 from dataclasses import dataclass
 from fractions import Fraction
 from typing import TYPE_CHECKING, TypeGuard
@@ -1567,6 +1568,11 @@ def _reference_patch_partition(
     }
 
 
+# One proof per live source chart bank and tolerance: the proof is pure in the
+# immutable charts, and every call still verifies their current identity.
+_SHELL_RECORDS: dict[tuple[int, str], SourceShellAdmissibility | None] = {}
+
+
 def certify_single_source_shell(
     charts: object, tolerance: float, /
 ) -> SourceShellAdmissibility | None:
@@ -1576,19 +1582,7 @@ def certify_single_source_shell(
     exact trim homotopies and sheet proof; no target mesh embedding or mesh
     distance is used as a source-shell premise.
     """
-    from ..._bvh import bvh_overlap_pair_blocks, prepare_bvh
-    from .._approximate_source_coverage import _cad_trim_reference_loops_prepared
-    from .._meshing_domain import _PlacedSurfacePatch, SourcePreparation
-    from .._rational import fraction_down, fraction_up
-    from .._surface_source_support import (
-        _cad_root_edges,
-        SurfaceSourceCharts,
-        validate_cad_curve_ancestry,
-    )
-    from ._assembly import BRepAffinePlacement
-    from ._curve_approximation_topology import certify_trim_reference_homotopy
-    from ._measure import brep_shell_volume_sign
-    from ._source_embedding import _certify_cad_trim_sheet_validated
+    from .._surface_source_support import SurfaceSourceCharts
 
     if (
         not isinstance(charts, SurfaceSourceCharts)
@@ -1596,6 +1590,32 @@ def certify_single_source_shell(
         or tolerance < 0
     ):
         return None
+    key = id(charts), float(tolerance).hex()
+    if key not in _SHELL_RECORDS:
+        record = _prove_single_source_shell(charts, tolerance)
+        _SHELL_RECORDS[key] = record
+        weakref.finalize(charts, _SHELL_RECORDS.pop, key, None)
+        return record
+    try:
+        charts.require_current()
+    except (TypeError, ValueError):
+        return None
+    return _SHELL_RECORDS[key]
+
+
+def _prove_single_source_shell(
+    charts: SurfaceSourceCharts, tolerance: float, /
+) -> SourceShellAdmissibility | None:
+    from ..._bvh import bvh_overlap_pair_blocks, prepare_bvh
+    from .._approximate_source_coverage import _cad_trim_reference_loops_prepared
+    from .._meshing_domain import _PlacedSurfacePatch, SourcePreparation
+    from .._rational import fraction_down, fraction_up
+    from .._surface_source_support import _cad_root_edges, validate_cad_curve_ancestry
+    from ._assembly import BRepAffinePlacement
+    from ._curve_approximation_topology import certify_trim_reference_homotopy
+    from ._measure import brep_shell_volume_sign
+    from ._source_embedding import _certify_cad_trim_sheet_validated
+
     try:
         charts.require_current()
         domain = charts.domain
