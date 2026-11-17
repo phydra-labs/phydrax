@@ -712,6 +712,9 @@ def _exact_prism_canonical_form_cell(
     )
 
 
+_CANONICAL_FORM_LAYOUTS: LiveProofLedger[_FiniteElementDofLayout] = LiveProofLedger()
+
+
 def _canonical_form_dof_layout(
     mesh: CellMesh, elements: tuple[FiniteElementSpec, ...], /
 ) -> _FiniteElementDofLayout:
@@ -753,6 +756,13 @@ def _canonical_form_dof_layout(
                 raise ValueError(
                     "Mixed form routing requires canonical reference factories."
                 )
+    operands = (mesh,)
+    element_structure, element_digest = live_content_fingerprint(elements)
+    parameters = (element_structure, element_digest)
+    recorded = _CANONICAL_FORM_LAYOUTS.find(operands, parameters=parameters)
+    if recorded is not None:
+        return recorded
+    fingerprint = live_content_fingerprint(operands)
     entities = _topology_vertex_sets(mesh)
     lookups = tuple(
         {vertices: index for index, vertices in enumerate(level)} for level in entities
@@ -775,7 +785,9 @@ def _canonical_form_dof_layout(
             start = starts[degree][entity]
             boundary[start : start + level[entity]] = True
     routes, transforms = _canonical_form_block_routes(mesh, elements, lookups, starts)
-    return _FiniteElementDofLayout(
+    for array in (*routes, *transforms, boundary):
+        array.setflags(write=False)
+    layout = _FiniteElementDofLayout(
         conformity=elements[0].conformity,
         association="form_entity",
         global_count=int(offsets[-1]),
@@ -785,6 +797,8 @@ def _canonical_form_dof_layout(
         canonical_transforms=transforms,
         canonical_boundary=boundary,
     )
+    _CANONICAL_FORM_LAYOUTS.record(operands, fingerprint, layout, parameters=parameters)
+    return layout
 
 
 def _canonical_form_block_routes(
