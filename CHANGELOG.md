@@ -277,6 +277,9 @@
   rational coordinate bases with integer arithmetic. Supported nodal boundary
   carriers are read from the exact bank, with face maps built only when their
   proofs need them. Exact maps and coverage evidence retain their previous values.
+- Mapped quality audits reuse exact block integrals when available, and
+  embedding cell preparation reuses exact integer coordinate-basis plans.
+  Stored measures, coordinate expressions and proof evidence are unchanged.
 - Cell validity batches exact-coordinate rounding checks, retaining exact
   scalar fallback and the same recorded maximum error.
 - Affine cell validity combines exact dyadic Jacobians and determinant bounds
