@@ -74,6 +74,23 @@ def test_integer_affine_controls_preserve_distinct_denominators() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("off_diagonal", "expected"),
+    [(Fraction(1, 3), True), (Fraction(1), False)],
+    ids=("positive", "corrupted-minor"),
+)
+def test_scaled_jacobian_controls_decide_exact_positivity(
+    off_diagonal: Fraction, expected: bool
+) -> None:
+    net = subdivision._make_controls(
+        {(1, 0, 0): (Fraction(2, 3), off_diagonal, off_diagonal, Fraction(2, 3))}
+    )
+    controls = subdivision._JacobianControls(2, net)
+    metric = ((Fraction(1), Fraction(0)), (Fraction(0), Fraction(1)))
+    assert subdivision._jacobian_controls_positive(controls, metric) is expected
+    assert expected == (Fraction(4, 9) - off_diagonal * off_diagonal > 0)
+
+
 def test_native_bisection_matches_unbounded_exact_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
