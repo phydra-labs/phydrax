@@ -1580,6 +1580,88 @@ def _point_triangle_squared(
     )
 
 
+class _DistanceScreen:
+    """Binary64 screen for the exact point-to-cover distance minima.
+
+    A triangle's box bounds its distance to a query from below, and any point of
+    the triangle bounds it from above. Both are padded far above their rounding,
+    so a triangle whose padded lower bound exceeds the smallest padded upper
+    bound attains neither minimum of the deviation-shifted exact bounds. The
+    exact minima over ``candidates`` therefore equal those over every triangle.
+    A triangle certainly within its own deviation of the query makes the lower
+    minimum exactly zero; then only the upper minimum needs candidates.
+    """
+
+    __slots__ = ("boxes", "deviations", "edges", "gram", "origins", "pad", "segments")
+
+    def __init__(self, triangles: np.ndarray, deviations: np.ndarray, /) -> None:
+        self.origins = triangles[:, 0]
+        self.edges = triangles[:, 1:] - triangles[:, :1]
+        first, second = self.edges[:, 0], self.edges[:, 1]
+        self.gram = np.stack(
+            (
+                np.sum(first * first, axis=1),
+                np.sum(first * second, axis=1),
+                np.sum(second * second, axis=1),
+            ),
+            axis=1,
+        )
+        self.segments = tuple(
+            (triangles[:, start], triangles[:, stop] - triangles[:, start])
+            for start, stop in ((0, 1), (1, 2), (2, 0))
+        )
+        self.boxes = np.stack((np.min(triangles, axis=1), np.max(triangles, axis=1)))
+        self.deviations = deviations
+        self.pad = (
+            1024.0
+            * np.finfo(np.float64).eps
+            * max(1.0, float(np.max(np.abs(triangles), initial=0.0)))
+        )
+
+    def candidates(self, query: np.ndarray, /) -> tuple[np.ndarray, bool]:
+        pad = max(
+            self.pad, 1024.0 * np.finfo(np.float64).eps * float(np.max(np.abs(query)))
+        )
+        relative = query - self.origins
+        first, second = self.edges[:, 0], self.edges[:, 1]
+        right_first = np.sum(relative * first, axis=1)
+        right_second = np.sum(relative * second, axis=1)
+        determinant = (
+            self.gram[:, 0] * self.gram[:, 2] - self.gram[:, 1] * self.gram[:, 1]
+        )
+        regular = determinant > 0.0
+        scale = np.where(regular, determinant, 1.0)
+        u = (self.gram[:, 2] * right_first - self.gram[:, 1] * right_second) / scale
+        v = (self.gram[:, 0] * right_second - self.gram[:, 1] * right_first) / scale
+        # Feasible barycentric coordinates name a triangle point, however
+        # inaccurate they are as the closest one.
+        inside = regular & (u >= 0.0) & (v >= 0.0) & (u + v <= 1.0)
+        above = np.where(
+            inside,
+            np.linalg.norm(relative - u[:, None] * first - v[:, None] * second, axis=1),
+            np.inf,
+        )
+        for origin, direction in self.segments:
+            squared = np.sum(direction * direction, axis=1)
+            along = np.sum((query - origin) * direction, axis=1)
+            parameter = np.clip(along / np.where(squared > 0.0, squared, 1.0), 0.0, 1.0)
+            above = np.minimum(
+                above,
+                np.linalg.norm(origin + parameter[:, None] * direction - query, axis=1),
+            )
+        above = above + pad
+        below = (
+            np.linalg.norm(np.clip(query, self.boxes[0], self.boxes[1]) - query, axis=1)
+            - pad
+        )
+        keep = below + self.deviations <= float(np.min(above + self.deviations)) + pad
+        covered = bool(np.any(above <= self.deviations))
+        if not covered:
+            low_cap = float(np.min(np.maximum(0.0, above - self.deviations))) + pad
+            keep |= below - self.deviations <= low_cap
+        return np.flatnonzero(keep), covered
+
+
 def _cover_chord_triangles(
     patch: int,
     uv_points: tuple[_Point2, ...],
@@ -2622,15 +2704,20 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
             for triangle in cover.simplices
         )
         deviations = tuple(Fraction(float(value)) for value in cover.deviation_bounds)
+        screen = _DistanceScreen(
+            np.asarray(cover.simplices, dtype=np.float64),
+            np.asarray(cover.deviation_bounds, dtype=np.float64),
+        )
         for row, query in enumerate(queries):
             exact_query = _point3(rational_vector(query))
-            low_bounds: list[Fraction] = []
+            rows, covered = screen.candidates(query)
+            low_bounds: list[Fraction] = [Fraction(0)] if covered else []
             high_bounds = []
-            for triangle, deviation in zip(exact_triangles, deviations, strict=True):
-                squared = _point_triangle_squared(exact_query, triangle)
+            for index in rows.tolist():
+                squared = _point_triangle_squared(exact_query, exact_triangles[index])
                 root = fraction_sqrt_interval(squared)
-                low_bounds.append(max(Fraction(0), root[0] - deviation))
-                high_bounds.append(root[1] + deviation)
+                low_bounds.append(max(Fraction(0), root[0] - deviations[index]))
+                high_bounds.append(root[1] + deviations[index])
             lower[row] = fraction_endpoint(min(low_bounds), upper=False, saturate=True)
             upper[row] = fraction_endpoint(min(high_bounds), upper=True, saturate=True)
         return SourceBoundaryDistance(lower, upper, cover.semantics)
