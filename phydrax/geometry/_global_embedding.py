@@ -1238,12 +1238,18 @@ def _planar_faced_chart_cell(
         # injectivity and face-trace image proofs below.
         for face in cell.facet_routes:
             _face_plane(tuple(_point3(corners[index]) for index in face))
-        bounds = tuple(
-            polynomial_bounds(
-                expression, cast(BernsteinDomain, cell.domain), cell.dimension
+        if arguments is cell.coordinates:
+            # The physical chart's Bernstein image bounds are already prepared.
+            image_lower, image_upper = cell.image_lower, cell.image_upper
+        else:
+            bounds = tuple(
+                polynomial_bounds(
+                    expression, cast(BernsteinDomain, cell.domain), cell.dimension
+                )
+                for expression in arguments
             )
-            for expression in arguments
-        )
+            image_lower = tuple(value[0] for value in bounds)
+            image_upper = tuple(value[1] for value in bounds)
         chart = EmbeddingCell(
             cell.global_id,
             cell.block_name,
@@ -1258,8 +1264,8 @@ def _planar_faced_chart_cell(
             corners,
             None,
             None,
-            tuple(value[0] for value in bounds),
-            tuple(value[1] for value in bounds),
+            image_lower,
+            image_upper,
             cell.facet_routes,
         )
         if not (physical_map_injective and arguments is cell.coordinates) and (
