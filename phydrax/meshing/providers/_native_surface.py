@@ -3266,10 +3266,16 @@ def _trim_lens_bounds(
     preparation: domain_owner.SourcePreparation,
     /,
 ) -> list[Fraction]:
-    """Bound each lens, conservatively including overlapping neighboring lenses."""
+    """Bound each lens independently, batching eligible Jacobian enclosures."""
     from phydrax.geometry._source_fidelity import (
         _curved_trim_lens_box,
-        _curved_trim_lens_caps,
+        _curved_trim_lens_cap,
+        _surface_jacobian_box,
+    )
+    from phydrax.geometry._source_interpolation import (
+        _has_analytic_source_program,
+        _has_unexpanded_exact_surface_carrier,
+        exact_surface_coordinate_expressions,
     )
 
     if isinstance(use.pcurve, (ExactLineCurve, LineCurve)):
@@ -3292,7 +3298,16 @@ def _trim_lens_bounds(
         for first, last in intervals
     )
     surface = domain.patches[patch].surface
-    rows = []
+    if (
+        exact_surface_coordinate_expressions(surface) is not None
+        or preparation.surface_spans(surface) is not None
+        or (
+            _has_unexpanded_exact_surface_carrier(surface)
+            and not _has_analytic_source_program(surface)
+        )
+    ):
+        return [_curved_trim_lens_cap(surface, lens, preparation)[0] for lens in lenses]
+    rows: list[tuple[int, np.ndarray, np.ndarray]] = []
     for index, lens in enumerate(lenses):
         if lens.parameter_bound == 0:
             continue
@@ -3300,9 +3315,33 @@ def _trim_lens_bounds(
         if box is None:
             raise ValueError("A curved trim lens leaves the source parameter domain.")
         lower, upper = box
-        rows.append((index, (lower, (upper[0], lower[1]), upper)))
-    caps = _curved_trim_lens_caps(surface, rows, lenses, preparation)
-    return [caps.get(index, Fraction(0)) for index in range(len(intervals))]
+        box_lower, box_upper = _surface_jacobian_box((lower, (upper[0], lower[1]), upper))
+        if np.all(np.isfinite(box_lower)) and np.all(np.isfinite(box_upper)):
+            rows.append((index, box_lower, box_upper))
+    jacobians: dict[int, tuple[np.ndarray, np.ndarray] | None] = {}
+    if rows:
+        low, high = preparation.derivative_program(surface, 1).evaluate(
+            np.stack([lower for _, lower, _ in rows]),
+            np.stack([upper for _, _, upper in rows]),
+        )
+        for (index, _, _), row_low, row_high in zip(rows, low, high, strict=True):
+            jacobians[index] = (
+                (
+                    np.asarray(row_low, dtype=np.float64),
+                    np.asarray(row_high, dtype=np.float64),
+                )
+                if np.all(np.isfinite(row_low)) and np.all(np.isfinite(row_high))
+                else None
+            )
+    return [
+        _curved_trim_lens_cap(
+            surface,
+            lens,
+            preparation,
+            jacobians=(jacobians.get(index), jacobians.get(index)),
+        )[0]
+        for index, lens in enumerate(lenses)
+    ]
 
 
 def _curve_parameters(
