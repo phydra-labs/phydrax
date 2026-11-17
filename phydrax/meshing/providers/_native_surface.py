@@ -3137,7 +3137,7 @@ class _CurveChordBounds:
         return bounds
 
     def _curve_point(self, curve: int, parameter: Fraction, /) -> np.ndarray:
-        """`_source_curve_point` through the per-use point memo."""
+        """The canonical source-curve point through the per-use point memo."""
         patch, use = _curve_owner_use(self.domain, curve)
         return self._point(patch, use, parameter)
 

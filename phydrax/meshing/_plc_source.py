@@ -14,7 +14,7 @@ import equinox as eqx
 import numpy as np
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._live_proofs import live_content_fingerprint, LiveProofLedger
+from .._live_proofs import _same_fingerprint, live_content_fingerprint, LiveProofLedger
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import normalized_identifier
@@ -1203,7 +1203,8 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
     ) -> PiecewiseLinearComplex:
         """Rebuild packed loops and verify their retained scientific identity.
 
-        A CAD complex that this process's constructor verified is returned as
+        A CAD complex that this process verified (through its constructor, or
+        by an earlier full replay that reproduced it exactly) is returned as
         is when no different restoration operand is supplied and its whole
         content still reproduces the fingerprint recorded at verification; its
         surface proofs are not recomputed. Any other value (a copy, a pytree
@@ -1310,6 +1311,14 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
         )
         if fresh.complex_id != value.complex_id:
             raise ValueError("Stored PLC fields do not match their complex identity.")
+        if cad_source_charts is not None:
+            # The constructor just verified `fresh`. A value with exactly the
+            # same structure and content is that verified complex, so later
+            # replays of this live value need not prove its surface again.
+            operands = (value,)
+            fingerprint = live_content_fingerprint(operands)
+            if _same_fingerprint(fingerprint, live_content_fingerprint((fresh,))):
+                _VERIFIED_CAD_COMPLEXES.record(operands, fingerprint, True)
         return fresh
 
     @property

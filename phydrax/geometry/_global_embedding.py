@@ -5132,7 +5132,13 @@ class _VertexConeFilter:
     valid: NDArray[np.bool_]
 
     @classmethod
-    def prepare(cls, cells: tuple[EmbeddingCell, ...], /) -> _VertexConeFilter | None:
+    def prepare(
+        cls,
+        cells: tuple[EmbeddingCell, ...],
+        /,
+        *,
+        stated: NDArray[np.bool_] | None = None,
+    ) -> _VertexConeFilter | None:
         if not meshcore_available():
             return None
         count = len(cells)
@@ -5148,6 +5154,9 @@ class _VertexConeFilter:
         valid = np.zeros(count, dtype=np.bool_)
         indices = _control_indices((4,), (2,))
         for row, cell in enumerate(cells):
+            if stated is not None and not stated[row]:
+                # No pair of this cell is stated.
+                continue
             if (
                 cell.kind not in ("tetrahedron", "simplex:3")
                 or cell.dimension != 3
@@ -5913,7 +5922,7 @@ def _nonperiodic_contacts(
     piece_filter = _VolumePieceFilter.prepare(mesh, cells, simplices)
     planar_filter = _PlanarTriangleFilter.prepare(mesh, cells)
     vertex_cone_filter = (
-        _VertexConeFilter.prepare(original_cells)
+        _VertexConeFilter.prepare(original_cells, stated=participants)
         if any(not cell.affine and cell.coordinates for cell in cells)
         else None
     )

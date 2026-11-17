@@ -445,6 +445,9 @@ def test_cad_plc_handoffs_fresh_surface_proof(
         assert restored.complex_id == rebuilt.complex_id
         assert restored.cad_embedding is not rebuilt.cad_embedding
         assert _same_model_content(restored.cad_embedding, rebuilt.cad_embedding)
+        # That full replay reproduced this live value exactly, so it is now
+        # verified and is not proved a second time.
+        assert PiecewiseLinearComplex.from_stored_fields(untrusted) is untrusted
     # An in-place content change voids the reuse: the full replay refuses it.
     vertices = rebuilt.vertices
     chain = [vertices]
