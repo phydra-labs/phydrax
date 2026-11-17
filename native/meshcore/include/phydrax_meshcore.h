@@ -987,6 +987,32 @@ PHX_MC_API int32_t phx_mc_bernstein_controls(
     const int64_t* term_offsets, const int32_t* exponents, const uint8_t* numerators,
     const int64_t* control_offsets, uint8_t* controls, int64_t* denominators,
     int64_t* extremes, int32_t* item_status, int32_t word_limbs, int32_t parallelism);
+/* Leading principal minors of J + J^T. Each matrix entry owns a term range
+ * in offsets, with integer coefficients and dimension-wide nonnegative
+ * exponents. Output slots are item-major then minor order; each has capacity
+ * output_offsets[s+1]-output_offsets[s]. counts gives the written term count.
+ * Checked overflow or insufficient per-slot capacity reports RANGE_ERROR for
+ * that item. Caller supplies the common positive input coefficient scale Q;
+ * minor m represents its integer output divided by (2 Q)^(m+1). */
+PHX_MC_API int32_t phx_mc_symmetric_polynomial_minors(
+    int64_t count, int32_t dimension, const int64_t* offsets,
+    const int32_t* exponents, const uint8_t* coefficients,
+    const int64_t* output_offsets, int32_t* out_exponents,
+    uint8_t* out_coefficients, int64_t* counts, int32_t* item_status,
+    int32_t word_limbs, int32_t parallelism);
+/* Fused leading-minor Bernstein sign proofs. scales contains one positive
+ * integer word Q per Jacobian. verdicts[i * dimension + m] is 1 when every
+ * control of leading minor m is strictly positive, 0 otherwise. On either
+ * verdict, digests stores 32 SHA-256 bytes per minor in item-major order.
+ * RANGE_ERROR is a per-item typed refusal.
+ * SHA input is UTF-8 "phydrax-exact-controls\\n", followed for every control
+ * by "0\\n" for zero or "1\\n1:numerator/denominator\\n" for a reduced rational
+ * with positive denominator. */
+PHX_MC_API int32_t phx_mc_symmetric_polynomial_verdicts(
+    int64_t count, int32_t dimension, int32_t domain, const int64_t* offsets,
+    const int32_t* exponents, const uint8_t* coefficients, const uint8_t* scales,
+    uint8_t* digests, int32_t* verdicts, int32_t* item_status,
+    int32_t word_limbs, int32_t parallelism);
 /* Restricted controls of simplex Bernstein nets: item i has degree degrees[i],
  * `parts` = simplex dimension + 1, controls [control_offsets[i], ...) in
  * composition order and corners (count, parts, parts) words, row j holding the

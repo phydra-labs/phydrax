@@ -650,7 +650,7 @@ def _face_trace_image_evidence(
         f"offset:{_exact_scalar_identity(offset)}",
         f"projection_rows:{injectivity.projection_rows}:"
         f"matrix:{tuple(tuple(_exact_scalar_identity(value) for value in row) for row in injectivity.projection_matrix)}:"
-        f"controls:{injectivity.principal_minor_controls}",
+        f"control_digests:{injectivity.principal_minor_controls}",
         *edge_evidence,
     )
 

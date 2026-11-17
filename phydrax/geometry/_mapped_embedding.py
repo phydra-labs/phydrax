@@ -14,7 +14,7 @@ from typing import cast
 
 import numpy as np
 
-from ..discretization._cell_geometry import _coordinate_coefficient_identity
+from .._exact_polynomial_kernels import control_digest, symmetric_jacobian_verdicts
 from ..discretization._coordinate_enclosure import (
     add,
     axes,
@@ -49,14 +49,14 @@ class MappedInjectivityWitness:
     """Exact monotonicity proof for one source-bound coordinate projection.
 
     ``projection_rows`` selects ambient output coordinates. The exact square
-    ``projection_matrix`` left-preconditions those coordinates; Bernstein
-    principal-minor controls prove strict monotonicity over the reference cell.
+    ``projection_matrix`` left-preconditions those coordinates; each digest
+    identifies the ordered exact controls proving one principal minor positive.
     """
 
     projection_rows: tuple[int, ...]
     projection_matrix: tuple[tuple[ExactScalar, ...], ...]
-    principal_minor_controls: tuple[tuple[str, ...], ...]
-    denominator_controls: tuple[tuple[str, ...], ...] = ()
+    principal_minor_controls: tuple[str, ...]
+    denominator_controls: tuple[str, ...] = ()
 
 
 def _sign(value: ExactScalar, /) -> int:
@@ -91,13 +91,13 @@ def _determinant(matrix: tuple[tuple[Expression, ...], ...]) -> Expression:
 
 def _strict_positive_controls(
     polynomial: Expression, domain: BernsteinDomain, dimension: int
-) -> tuple[str, ...] | None:
+) -> str | None:
     if not isinstance(polynomial, dict):
         return None
     controls = bernstein_coefficients(polynomial, domain, dimension)
     if not controls or any(_sign(value) <= 0 for value in controls):
         return None
-    return tuple(repr(_coordinate_coefficient_identity(value)) for value in controls)
+    return control_digest(controls)
 
 
 def _positive_definite_controls(
@@ -105,7 +105,16 @@ def _positive_definite_controls(
     domain: BernsteinDomain,
     dimension: int,
     /,
-) -> tuple[tuple[str, ...], ...] | None:
+) -> tuple[str, ...] | None:
+    if all(isinstance(entry, dict) for row in jacobian for entry in row):
+        polynomial_jacobian = cast(tuple[tuple[Polynomial, ...], ...], jacobian)
+        native = symmetric_jacobian_verdicts((polynomial_jacobian,), domain, dimension)[0]
+        if native is not None:
+            return (
+                tuple(digest for positive, digest in native)
+                if all(positive for positive, _ in native)
+                else None
+            )
     symmetric = tuple(
         tuple(
             scale(
@@ -116,7 +125,7 @@ def _positive_definite_controls(
         )
         for first in range(dimension)
     )
-    controls: list[tuple[str, ...]] = []
+    controls: list[str] = []
     for size in range(1, dimension + 1):
         principal = tuple(
             tuple(symmetric[row][column] for column in range(size)) for row in range(size)
@@ -133,7 +142,7 @@ def _positive_denominator(
     domain: BernsteinDomain,
     dimension: int,
     /,
-) -> tuple[Polynomial, tuple[str, ...]] | None:
+) -> tuple[Polynomial, str] | None:
     """Prove one rational denominator has one strict sign on the whole cell."""
     polynomial = dict(denominator)
     controls = _strict_positive_controls(polynomial, domain, dimension)
@@ -151,10 +160,10 @@ def _polynomial_scaled_jacobian(
     domain: BernsteinDomain,
     dimension: int,
     /,
-) -> tuple[tuple[tuple[Expression, ...], ...], tuple[tuple[str, ...], ...]] | None:
+) -> tuple[tuple[tuple[Expression, ...], ...], tuple[str, ...]] | None:
     """Clear denominators with one proved-positive common factor for all entries."""
     denominators: list[Polynomial] = []
-    evidence: list[tuple[str, ...]] = []
+    evidence: list[str] = []
     normalized: list[list[tuple[Polynomial, Polynomial | None]]] = []
     for row in jacobian:
         normalized_row: list[tuple[Polynomial, Polynomial | None]] = []
@@ -205,7 +214,7 @@ def prove_mapped_cell_injective(
     if dimension < 1 or dimension > 3 or ambient < dimension:
         return None
     domain = cell.proof_domain
-    denominator_evidence: list[tuple[str, ...]] = []
+    denominator_evidence: list[str] = []
     for expression in coordinates:
         if isinstance(expression, RationalPolynomial):
             proof = _positive_denominator(expression.denominator, domain, dimension)
@@ -778,12 +787,12 @@ def _float_search_preconditioner(controls: np.ndarray, /) -> np.ndarray | None:
 
 def monotone_preconditioner(
     controls: tuple[_ExactMatrix, ...], /
-) -> tuple[_ExactMatrix, tuple[tuple[str, ...], ...]] | None:
+) -> tuple[_ExactMatrix, tuple[str, ...]] | None:
     """An exact ``M`` with ``sym(M C)`` positive definite at every control ``C``.
 
     The positive definite cone is convex, so ``sym(M J(x))`` is then positive
     definite for every convex combination ``J(x)`` of the controls. Returns
-    ``M`` with the leading principal minors of every ``sym(M C)`` (per size).
+    ``M`` with digests of the leading principal minors of every ``sym(M C)``.
     """
     if not controls:
         return None
@@ -805,7 +814,7 @@ def monotone_preconditioner(
         for row in proposal
     )
     integer_matrix = tuple(tuple(int(value) for value in row) for row in matrix)
-    minors: list[list[str]] = [[] for _ in range(size)]
+    minors: list[list[ExactScalar]] = [[] for _ in range(size)]
     for control in controls:
         if all(isinstance(value, Fraction | int) for row in control for value in row):
             values = symmetric_product_minors_exact(
@@ -817,8 +826,8 @@ def monotone_preconditioner(
         for order, minor in enumerate(values):
             if _sign(minor) <= 0:
                 return None
-            minors[order].append(repr(_coordinate_coefficient_identity(minor)))
-    return matrix, tuple(tuple(values) for values in minors)
+            minors[order].append(minor)
+    return matrix, tuple(control_digest(tuple(values)) for values in minors)
 
 
 def _leading_minors(

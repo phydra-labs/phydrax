@@ -703,6 +703,13 @@ def _radical_global_embedding_identity() -> tuple[
         raise AssertionError(
             "The radical fixture did not retain its injectivity witness."
         )
+    if not all(
+        "control_digests:" in expression and "sha256:" in expression
+        for theorem, _, values in witnesses
+        if theorem == "mapped_cell_injective"
+        for expression in values
+    ):
+        raise AssertionError("Mapped injectivity evidence must retain control digests.")
     return (
         str(certificate.status),
         certificate.certificate_id,
