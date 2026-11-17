@@ -254,6 +254,11 @@
   projection operation without changing evidence or result identities.
 - Native B-rep projection reuses a query-independent coarse trim chord plan
   only where it selects the original subdivision, preserving projection identity.
+- Batched exact Bernstein conversion validates polynomial columns once, packs
+  checked integer words directly, and reuses request-local control counts while
+  preserving shared rational scales and item-local refusals.
+- Native Bernstein conversion reuses simplex control-index rows within a worker
+  when consecutive items have the same degree and dimension.
 - Welded surface intersection checks group exact orientation predicates and
   skip redundant shared-vertex edge tests without changing contact decisions.
 - Welded topology audits group vertex and edge star lookups without changing
