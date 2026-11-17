@@ -697,6 +697,21 @@ def _association(
     )
 
 
+def test_association_audit_is_independent_of_row_partition() -> None:
+    mesh = phx.meshing.canonicalize_cell_mesh(_two_cells())
+    contract = phx.SpatialCoordinateContract.si()
+    combined = phx.meshing.certify_cell_mesh(
+        mesh, contract, associations=(_association(mesh, [10, 20]),)
+    )
+    separate = phx.meshing.certify_cell_mesh(
+        mesh,
+        contract,
+        associations=(_association(mesh, [10]), _association(mesh, [20])),
+    )
+    assert combined.audit.passed and separate.audit.passed
+    assert combined.audit.issues == separate.audit.issues
+
+
 def test_adjacent_zone_patch_is_audited_against_exact_face_incidence() -> None:
     mesh = phx.meshing.canonicalize_cell_mesh(
         phx.discretization.CellMesh(
