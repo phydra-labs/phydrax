@@ -249,6 +249,9 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- CAD source bounds, analytic surface derivatives, periodic offsets, and the
+  quadratic tetrahedron screen execute supported interval programs in batches.
+  Their directed endpoints and exact-arithmetic fallback remain unchanged.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep
