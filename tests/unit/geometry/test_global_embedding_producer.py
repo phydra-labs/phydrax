@@ -1256,9 +1256,12 @@ def test_simplex_face_image_evidence_separates_affine_curved_and_planar_faces() 
     def evidence(
         cell: EmbeddingCell, face_ids: tuple[int, int, int], /
     ) -> tuple[str, ...] | None:
-        points = tuple(
-            _point3(cell.corner_images[cell.vertex_ids.index(identifier)])
+        images = tuple(
+            cell.corner_images[cell.vertex_ids.index(identifier)]
             for identifier in face_ids
+        )
+        points: tuple[Point3, ...] = tuple(
+            (image[0], image[1], image[2]) for image in images
         )
         return _face_trace_image_evidence(cell, face_ids, points)
 
