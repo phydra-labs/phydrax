@@ -706,7 +706,8 @@ def _source_region_measures(
     exact_cad: ExactCadSourceBoundary | None,
 ) -> tuple[ExactScalar | None, ...]:
     """Integrate exact source measures; bounded source proofs retain no fake volume."""
-    from ._domain_numerics import affine_cell_measure, cell_coordinate_expressions
+    from ._domain_chart_chain import _cell_measures
+    from ._domain_numerics import cell_coordinate_expressions
 
     if isinstance(domain, AdaptiveImplicitSurface):
         return tuple(None for _ in domain.region_ids)
@@ -743,7 +744,14 @@ def _source_region_measures(
             )
             source_totals: list[ExactScalar] = [Fraction(0) for _ in domain.region_ids]
             unresolved_source_regions: set[int] = set()
-            for source_row, (expressions, block) in enumerate(
+            measured = iter(
+                _cell_measures(
+                    (expressions, block.cell_kind)
+                    for expressions, block in zip(source_maps, source_blocks, strict=True)
+                    if expressions is not None
+                )
+            )
+            for source_row, (expressions, _block) in enumerate(
                 zip(source_maps, source_blocks, strict=True)
             ):
                 region = int(source_regions[source_row])
@@ -752,7 +760,9 @@ def _source_region_measures(
                         raise ValueError(
                             "Mapped source root cell has no reference coordinate map."
                         )
-                    measure = affine_cell_measure(expressions, block.cell_kind)
+                    measure = next(measured)
+                    if isinstance(measure, Exception):
+                        raise measure
                 except (TypeError, ValueError, ZeroDivisionError) as error:
                     unresolved_source_regions.add(region)
                     findings.append(
@@ -812,7 +822,8 @@ def _target_region_measures(
     ``cell_measures`` replaces the measures of cells whose corners were
     substituted by exact source points, keyed by cell order.
     """
-    from ._domain_numerics import affine_cell_measure, polyhedral_cell_measures
+    from ._domain_chart_chain import _cell_measures
+    from ._domain_numerics import polyhedral_cell_measures
 
     polyhedral_measures: tuple[Fraction | None, ...] | None = None
     polyhedral_measure_error: Exception | None = None
@@ -828,7 +839,17 @@ def _target_region_measures(
         for mesh_block in mesh.blocks
         for _ in range(mesh_block.cell_count)
     )
-    for cell, (assignment, expressions, cell_kind) in enumerate(
+    measured = iter(
+        _cell_measures(
+            (expressions, cell_kind)
+            for cell, (expressions, cell_kind) in enumerate(
+                zip(preparation.coordinate_maps, cell_kinds, strict=True)
+            )
+            if expressions is not None
+            and (cell_measures is None or cell not in cell_measures)
+        )
+    )
+    for cell, (assignment, expressions, _cell_kind) in enumerate(
         zip(
             preparation.assignments,
             preparation.coordinate_maps,
@@ -852,7 +873,9 @@ def _target_region_measures(
                     )
                 measure = polyhedral_measure
             else:
-                measure = affine_cell_measure(expressions, cell_kind)
+                measure = next(measured)
+                if isinstance(measure, Exception):
+                    raise measure
         except (TypeError, ValueError, IndexError, ArithmeticError) as error:
             unresolved_regions.add(assignment.region)
             if required:
