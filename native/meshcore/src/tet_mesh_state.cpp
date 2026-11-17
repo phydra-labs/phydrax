@@ -551,6 +551,12 @@ int32_t TetMesh::build_state(std::span<const double> points,
           source_points_.data() + 3 * static_cast<std::size_t>(face[2])));
     }
   }
+  for (auto& [source, group] : source_groups) {
+    (void)source;
+    if (group.prepare_bounds) {
+      group.coverage_index.build(group.primitives, group.indices, group.bounds);
+    }
+  }
   const PreparedFacetGroup no_source_rows;
   for (std::size_t row = 0; row < face_count; ++row) {
     const TetSnapshotFacet& face = facets_[row];

@@ -249,6 +249,8 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Source-facet coverage indexes closed facet boxes once per construction group,
+  preserving bank order and retaining every degenerate facet in its proof.
 - Exact facet coverage reuses already sorted source-row spans, preserving the
   duplicate and chronology checks without sorting and copying them.
 - Source-facet coverage skips provably disjoint nondegenerate triangles in its

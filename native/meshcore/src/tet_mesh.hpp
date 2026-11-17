@@ -710,6 +710,8 @@ class TetMesh {
     std::vector<std::array<std::int32_t, 4>> primitives;
     std::vector<std::int32_t> indices;
     std::vector<FacetCoverageBounds> bounds;
+    FacetCoverageIndex coverage_index;
+    mutable std::vector<std::size_t> coverage_scratch;
     bool prepare_bounds = false;
   };
   bool source_carrier_valid(const TetEditVertex& vertex) const;
