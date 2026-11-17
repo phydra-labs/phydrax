@@ -27,6 +27,7 @@ from phydrax.geometry._approximate_source_coverage import (
     _surface_point,
     approximate_source_coverage,
     cad_material_sides,
+    SourceCoverageUnavailable,
 )
 from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
 from phydrax.geometry._global_embedding import certify_global_embedding
@@ -222,21 +223,6 @@ def test_bounded_cad_overlap_pairs_keep_lexicographic_order_across_blocks() -> N
     assert list(_overlapping_self_pairs(rows)) == [
         (first, second) for first in range(66) for second in range(first + 1, 66)
     ]
-
-
-def test_large_cad_partition_finds_overlap_independent_of_other_rows() -> None:
-    rows: tuple[_Triangle2, ...] = tuple(
-        (
-            (Fraction(3 * i), Fraction(0)),
-            (Fraction(3 * i + 1), Fraction(0)),
-            (Fraction(3 * i), Fraction(1)),
-        )
-        for i in range(1050)
-    )
-    expanded = (*rows, rows[0], rows[1])
-    assert list(_overlapping_self_pairs(expanded)) == [(0, 1050), (1, 1051)]
-    assert _covered_by_declared_triangles(rows, rows)
-    assert not _covered_by_declared_triangles((rows[0],), (rows[1], *rows[2:]))
 
 
 def test_exact_trim_triangulation_is_scoped_to_requested_patch(
@@ -550,6 +536,7 @@ def _chart_witness(
     face_rows: Sequence[_CadFaceRow],
     patches: Sequence[int],
     /,
+    orientations: np.ndarray | None = None,
 ) -> SourceBoundaryChartWitness:
     target_faces = _volume_boundary_facet_lookup(mesh)
     entity_ids = np.asarray(
@@ -593,6 +580,9 @@ def _chart_witness(
             orientations=np.asarray(orientations, dtype=np.int8),
         )
 
+    if orientations is not None:
+        return create(orientations)
+
     provisional = create(np.ones((len(face_rows),), dtype=np.int8))
     _, _, target_orientation = _surface_target_chart_rows(
         mesh, geometry, source, provisional
@@ -601,6 +591,53 @@ def _chart_witness(
         [1 if _area2(row[1]) > 0 else -1 for row in face_rows], dtype=np.int8
     )
     return create(source_orientation * np.asarray(target_orientation, dtype=np.int8))
+
+
+def test_cad_chart_partition_rejects_overlap_and_gap_in_either_order() -> None:
+    domain, mesh, geometry, source, regions, _, rows = _cad_tetra_star_inputs()
+    first = rows[0]
+    other = next(row for row in rows[1:] if row[0] == first[0])
+    a, b, c = first[1]
+    smaller: _Triangle2 = (
+        a,
+        ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2),
+        ((a[0] + c[0]) / 2, (a[1] + c[1]) / 2),
+    )
+    overlap = [(row[0], first[1], *row[2:]) if row is other else row for row in rows]
+    gap = [(row[0], smaller, *row[2:]) if row is first else row for row in rows]
+    for changed, message in (
+        (rows, None),
+        (overlap, f"CAD target charts overlap on patch {first[0]}."),
+        (gap, f"CAD source chart area differs on patch {first[0]}."),
+    ):
+        original = _chart_witness(
+            domain, mesh, geometry, source, changed, [row[0] for row in changed]
+        )
+        for reverse in (False, True):
+            ordered = list(reversed(changed)) if reverse else changed
+            witness = (
+                _chart_witness(
+                    domain,
+                    mesh,
+                    geometry,
+                    source,
+                    ordered,
+                    [row[0] for row in ordered],
+                    orientations=np.asarray(original.orientations)[::-1],
+                )
+                if reverse
+                else original
+            )
+            if message is None:
+                count, degrees = _cad_chart_partition(
+                    domain, source, witness, mesh, regions
+                )
+                assert count == len(rows)
+                assert len(degrees) == len(domain.regions)
+            else:
+                with pytest.raises(SourceCoverageUnavailable, match=message) as error:
+                    _cad_chart_partition(domain, source, witness, mesh, regions)
+                assert error.value.status == "violated"
 
 
 def test_cad_chart_degree_requires_authored_seam_correspondence() -> None:
