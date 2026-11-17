@@ -522,7 +522,7 @@ def test_quadratic_tetra_screen_randomized_native_parity_and_chunks(
     element = D.fem.lagrange_element("tetrahedron", 2)
     basis = cell_geometry_module.coordinate_source_basis(element)
     nodes = np.asarray(element.reference_nodes, dtype=np.float64)
-    cells = nodes[None, :, :] + rng.normal(0.0, 0.025, size=(37, 10, 3))
+    cells = nodes[None, :, :] + rng.normal(0.0, 0.025, size=(80, 10, 3))
     cells[::5, :, 0] *= -1.0
     points = cells.reshape((-1, 3))
     bounds = (np.nextafter(points, -np.inf), np.nextafter(points, np.inf))
@@ -542,6 +542,27 @@ def test_quadratic_tetra_screen_randomized_native_parity_and_chunks(
         np.testing.assert_array_equal(
             native[index], np.concatenate([x[index] for x in chunks])
         )
+    compiled = program.native_program
+    assert compiled is not None
+    original_evaluate = validity_module.PreparedIntervalFunction.evaluate
+
+    def evaluate_parallel(
+        self: validity_module.PreparedIntervalFunction,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        /,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if self is program:
+            return compiled.evaluate_batch(lower, upper, workers=4)
+        return original_evaluate(self, lower, upper)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            validity_module.PreparedIntervalFunction, "evaluate", evaluate_parallel
+        )
+        parallel = screen(routes)
+    for actual, expected in zip(parallel, native, strict=True):
+        np.testing.assert_array_equal(actual, expected)
     with monkeypatch.context() as patch:
         patch.setattr(validity_module, "_tetra_screen_interval_program", lambda: None)
         host = screen(routes)

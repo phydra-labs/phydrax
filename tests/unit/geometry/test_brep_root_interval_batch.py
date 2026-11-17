@@ -69,13 +69,18 @@ def test_patch_box_randomized_host_parity_and_partition_independence(
 
 def test_torus_trigonometric_batch_partition_invariance() -> None:
     rng = np.random.default_rng(492)
-    lower = rng.uniform(-6.0, 6.0, size=(31, 2))
-    upper = lower + rng.uniform(0.0, 1.0, size=(31, 2))
+    lower = rng.uniform(-6.0, 6.0, size=(80, 2))
+    upper = lower + rng.uniform(0.0, 1.0, size=(80, 2))
     program = roots._torus_trigonometric_program()
     whole = program.evaluate(lower, upper)
     parts = [
-        program.evaluate(lower[a:b], upper[a:b]) for a, b in ((0, 3), (3, 19), (19, 31))
+        program.evaluate(lower[a:b], upper[a:b]) for a, b in ((0, 3), (3, 19), (19, 80))
     ]
+    native = program.native_program
+    assert native is not None
+    parallel = native.evaluate_batch(lower, upper, workers=4)
+    for expected, actual in zip(whole, parallel, strict=True):
+        np.testing.assert_array_equal(expected.view(np.uint64), actual.view(np.uint64))
     for endpoint in range(2):
         split = np.concatenate([part[endpoint] for part in parts])
         np.testing.assert_array_equal(
@@ -152,17 +157,22 @@ def test_exact_cylinder_randomized_individual_operation_parity(
         radius_exact=Fraction(1, 3),
     )
     rng = np.random.default_rng(5428)
-    lower = rng.uniform(-4.0, 4.0, size=(32, 2))
-    upper = lower + rng.uniform(0.0, 0.75, size=(32, 2))
+    lower = rng.uniform(-4.0, 4.0, size=(80, 2))
+    upper = lower + rng.uniform(0.0, 0.75, size=(80, 2))
     original = _IndividualTrigonometricIntervals()
     program = roots._cylinder_trigonometric_program()
     expected_trig = original.evaluate(lower[:, :1], upper[:, :1])
     actual_trig = program.evaluate(lower[:, :1], upper[:, :1])
     for expected, actual in zip(expected_trig, actual_trig, strict=True):
         np.testing.assert_array_equal(expected.view(np.uint64), actual.view(np.uint64))
+    native = program.native_program
+    assert native is not None
+    parallel = native.evaluate_batch(lower[:, :1], upper[:, :1], workers=4)
+    for expected, actual in zip(actual_trig, parallel, strict=True):
+        np.testing.assert_array_equal(expected.view(np.uint64), actual.view(np.uint64))
     partitions = [
         program.evaluate(lower[a:b, :1], upper[a:b, :1])
-        for a, b in ((0, 5), (5, 21), (21, 32))
+        for a, b in ((0, 5), (5, 21), (21, 80))
     ]
     for endpoint in range(2):
         split = np.concatenate([part[endpoint] for part in partitions])
