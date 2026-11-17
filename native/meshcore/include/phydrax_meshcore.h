@@ -874,6 +874,60 @@ PHX_MC_API int32_t phx_mc_deterministic_pow_two_thirds(int64_t count, const doub
 PHX_MC_API int32_t phx_mc_deterministic_symmetric_eigen3(int64_t count, const double* matrices,
                                                          double* values, double* vectors,
                                                          int8_t* converged);
+/* Riemannian metric measurements on the deterministic kernels: the same bits
+ * for the same input on every platform. A metric is a symmetric
+ * positive-definite 3x3 tensor of nine row-major values. The results order
+ * and screen floating-point proposals; no exact decision rests on them. Rows
+ * are independent and evaluated in order; a NaN result is 0x7ff8000000000000.
+ * An index outside its bank is PHX_MC_INVALID_INPUT, with no output written.
+ *
+ * phx_mc_metric_logarithms: log M = V diag(log lambda) V^T of each tensor;
+ * valid[r] is 0, with a zero row, when the eigen iteration does not end or an
+ * eigenvalue is not positive. */
+PHX_MC_API int32_t phx_mc_metric_logarithms(int64_t count, const double* metrics,
+                                            double* logarithms, int8_t* valid);
+/* Log-Euclidean mean exp(sum_k w_k log M_k) of each row's support
+ * support[offsets[r] .. offsets[r + 1]) (rows of the source bank, at least
+ * one per row, with weights at the same positions), summed in support order.
+ * A support whose tensors all compare equal returns its first tensor
+ * unchanged. source_logarithms holds the bank's logarithms, or is null to
+ * evaluate them per row. valid[r] is 0, with a zero row, when a logarithm
+ * fails or the mean is not finite. */
+PHX_MC_API int32_t phx_mc_metric_interpolate(
+    int64_t row_count, const int64_t* offsets, const int64_t* support, const double* weights,
+    int64_t source_count, const double* source_metrics, const double* source_logarithms,
+    double* metrics, int8_t* valid);
+/* Length of each edge (first, second) of point rows: the logarithmic mean
+ * (a - b) / log(a / b) of a = sqrt(d^T M_first d) and b = sqrt(d^T M_second d),
+ * d = p_second - p_first, and (a + b) / 2 when |b / a - 1| <= 1e-6. NaN when
+ * a quadratic form is negative or not a number. */
+PHX_MC_API int32_t phx_mc_metric_lengths(int64_t edge_count, const int64_t* edges,
+                                         int64_t point_count, const double* points,
+                                         const double* metrics, double* lengths);
+/* Violation of the length band [1 / fl(sqrt 2), fl(sqrt 2)] in quanta of
+ * 2^-10: above[r] is max(ceil(log(length / fl(sqrt 2)) * 2^10), 1) for a
+ * length above the band and 0 otherwise; below[r] likewise for
+ * log((1 / fl(sqrt 2)) / length). A NaN length violates nothing; an infinite
+ * or zero length gives an infinite count. */
+PHX_MC_API int32_t phx_mc_metric_band_quanta(int64_t count, const double* lengths,
+                                             double* above, double* below);
+/* For each cell of four corners (twelve values): determinants[c] is
+ * det(p1 - p0, p2 - p0, p3 - p0) and relative[c] its magnitude over the
+ * largest product of the three edge lengths at a corner, 0 when either is not
+ * finite or that product is 0. The evaluated determinant differs from the
+ * exact one by at most 50 * 2^-53 times that product. */
+PHX_MC_API int32_t phx_mc_metric_relative_determinants(int64_t cell_count,
+                                                       const double* corners,
+                                                       double* determinants,
+                                                       double* relative);
+/* Mean-ratio quality 12 (3 V)^(2/3) / sum l^2 of each cell of four point
+ * rows: V is the Euclidean volume times exp(mean_k log det M_k / 2) and l the
+ * six metric edge lengths in the order (0,1), (0,2), (0,3), (1,2), (1,3),
+ * (2,3). 0 unless V and the sum are both positive; NaN when both are
+ * infinite. */
+PHX_MC_API int32_t phx_mc_metric_tetra_quality(int64_t cell_count, const int64_t* cells,
+                                               int64_t point_count, const double* points,
+                                               const double* metrics, double* quality);
 /* Execute an interval program as phx_mc_interval_program_execute, then record
  * per-box branch evidence: smooth[b] and continuous[b] start at 1 for every
  * box b < box_count, and each event row (kind, test, size, a, a_index, boxes;
