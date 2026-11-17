@@ -267,7 +267,7 @@ def test_mapped_curve_chord_bound_matches_elementwise_reference() -> None:
         prepare_interval_function,
     )
     from phydrax.geometry._rational import fraction_endpoint
-    from phydrax.meshing.providers._native_surface import _second_order_chord_bound
+    from phydrax.meshing.providers._native_surface import _second_order_chord_bounds
 
     def hessian(x: Array, /) -> Array:
         return jnp.stack((x[0] * x[0], x[0] + 1.0, x[0] * 2.0))
@@ -292,7 +292,7 @@ def test_mapped_curve_chord_bound_matches_elementwise_reference() -> None:
         native = (Fraction(float(first)), Fraction(float(last)))
         expected = fraction_sqrt_interval(squared)[1] * (native[1] - native[0]) ** 2 / 8
         expected_float = float(fraction_endpoint(expected, upper=True, saturate=True))
-        actual = _second_order_chord_bound(program, points, native, chord)
+        actual = _second_order_chord_bounds([(program, points, native, chord)])[0]
         assert actual == expected_float
         assert np.nextafter(actual, -np.inf) != expected_float
 

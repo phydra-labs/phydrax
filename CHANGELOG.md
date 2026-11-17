@@ -249,6 +249,9 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native interval execution avoids duplicate validation and batches torus
+  source boxes and curve chord evaluations within each pass. Enclosure
+  endpoints and per-item proof decisions remain unchanged.
 - Source preparation reuses exact patch and spline-span proofs only for the
   same unchanged live source. Rebuilt sources reprove their own content;
   per-target trim partitions and per-box interval bounds remain independent.
