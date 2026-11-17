@@ -612,6 +612,24 @@ def test_exact_planar_cad_domain_uses_authored_source_faces() -> None:
     restored = DomainCoverageCertificate.from_stored_fields(certificate, domain)
     assert restored.certificate_id == certificate.certificate_id
 
+    another_mesh, another_geometry = copy(mesh), copy(geometry)
+    repeated = certify_domain_coverage(
+        another_mesh,
+        another_geometry,
+        domain,
+        np.asarray((0,), dtype=np.int64),
+        embedding=_embedding(another_mesh, another_geometry),
+    )
+    independent = certify_domain_coverage(
+        mesh,
+        geometry,
+        copy(domain),
+        np.asarray((0,), dtype=np.int64),
+        embedding=_embedding(mesh, geometry),
+    )
+    assert repeated.certificate_id == independent.certificate_id == certificate.certificate_id
+    assert repeated.findings == independent.findings == certificate.findings
+
 
 def test_source_trim_preparation_respects_live_domain_identity_and_lifetime() -> None:
     domain, _, _ = _cad_box_domain()
