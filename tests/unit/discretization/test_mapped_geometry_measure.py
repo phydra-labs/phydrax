@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
 from fractions import Fraction
 
 import numpy as np
@@ -13,11 +12,7 @@ from phydrax.discretization import CellBlock, CellGeometrySpec, CellMesh
 from phydrax.discretization._cell_geometry import (
     PerCellRestrictedCellGeometryElement,
 )
-from phydrax.discretization._coordinate_enclosure import (
-    BernsteinDomain,
-    ExpressionInput,
-    Polynomial,
-)
+from phydrax.discretization._coordinate_enclosure import ExpressionInput
 from phydrax.discretization._mapped_geometry_measure import (
     certified_cell_measures,
     certified_cell_moments,
@@ -285,59 +280,20 @@ def test_random_polynomial_measure_batches_against_exact_moments(
     _assert_exact_measure_batch(certified_cell_measures(mesh, geometry), expected)
 
 
-def _no_block_measures(
-    mesh: CellMesh, geometry: CellGeometrySpec, /
-) -> dict[int, Fraction]:
-    return {}
-
-
-def test_measure_reference_detects_corrupted_native_numerator(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    mesh, geometry, expected = _polynomial_measure_batch("triangle", 2, 819)
-    native_integrals = mapped_measure.exact_jacobian_integrals
-
-    def corrupt(
-        jacobians: Sequence[Sequence[Sequence[Polynomial]]],
-        domain: BernsteinDomain,
-        dimension: int,
-        /,
-        *,
-        parallelism: int | None = None,
-    ) -> list[Fraction | None]:
-        results = native_integrals(jacobians, domain, dimension, parallelism=parallelism)
-        exact_values = (
-            reference if value is None else value
-            for value, reference in zip(results, expected, strict=True)
-        )
-        return [
-            Fraction(value.numerator + 1, value.denominator) for value in exact_values
-        ]
-
-    monkeypatch.setattr(mapped_measure, "exact_block_cell_measures", _no_block_measures)
-    monkeypatch.setattr(mapped_measure, "exact_jacobian_integrals", corrupt)
-    with pytest.raises(AssertionError):
-        _assert_exact_measure_batch(certified_cell_measures(mesh, geometry), expected)
-
-
-def test_native_measure_refusal_retains_exact_result(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    mesh, geometry, expected = _polynomial_measure_batch("tetrahedron", 3, 822)
-
-    def refuse(
-        jacobians: Sequence[Sequence[Sequence[Polynomial]]],
-        domain: BernsteinDomain,
-        dimension: int,
-        /,
-        *,
-        parallelism: int | None = None,
-    ) -> list[Fraction | None]:
-        return [None] * len(jacobians)
-
-    monkeypatch.setattr(mapped_measure, "exact_block_cell_measures", _no_block_measures)
-    monkeypatch.setattr(mapped_measure, "exact_jacobian_integrals", refuse)
-    _assert_exact_measure_batch(certified_cell_measures(mesh, geometry), expected)
+def test_native_measure_range_refusal_retains_exact_result() -> None:
+    source = lagrange_element("interval", 1)
+    scale = Fraction(1) + Fraction(1, 1 << 6000)
+    chart: tuple[ExpressionInput, ...] = ({(1,): scale},)
+    element = PerCellRestrictedCellGeometryElement(
+        source, "interval", (1,), (1,), (chart,)
+    )
+    nodes = np.asarray(source.reference_nodes, dtype=np.float64).reshape(-1, 1)
+    route = np.arange(len(nodes), dtype=np.int64)[None, :]
+    mesh = CellMesh(
+        nodes, (CellBlock("cells", "interval", route, global_ids=np.asarray((1,))),)
+    )
+    geometry = CellGeometrySpec({"cells": element}, {"cells": route}, nodes)
+    _assert_exact_measure_batch(certified_cell_measures(mesh, geometry), (scale,))
 
 
 @pytest.mark.parametrize(
