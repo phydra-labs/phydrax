@@ -668,7 +668,7 @@ def _full_chart_rectangle(model: BRepModel, face: int, /) -> bool:
     loops = geometry.face_loops[face]
     if len(loops) != 1:
         return False
-    bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
+    bounds = np.asarray(model.parameter_bounds, dtype=np.float64)[face]
     scale = max(1.0, float(np.max(np.abs(bounds))))
     tolerance = 256.0 * np.finfo(np.float64).eps * scale
     vertical: tuple[list[tuple[float, float]], list[tuple[float, float]]] = ([], [])
@@ -774,7 +774,7 @@ def _full_period(model: BRepModel, face: int, axis: int, /) -> bool:
 
 def _prepare_face(model: BRepModel, face: int, /) -> _PreparedFace:
     patch = model.patches[face]
-    bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
+    bounds = np.asarray(model.parameter_bounds, dtype=np.float64)[face]
     origin = None
     axes: tuple[np.ndarray, ...] = ()
     valid_frame = True
@@ -1087,7 +1087,7 @@ def _natural_rectangle_trim(model: BRepModel, face: int, /) -> bool:
     geometry = model.geometry
     if geometry is None or len(geometry.face_loops[face]) != 1:
         return False
-    bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
+    bounds = np.asarray(model.parameter_bounds, dtype=np.float64)[face]
     corners = {(float(bounds[i, 0]), float(bounds[j, 1])) for i in (0, 1) for j in (0, 1)}
     loop = geometry.face_loops[face][0]
     path: list[tuple[float, float]] = []
@@ -3270,9 +3270,7 @@ def _project_face(
         else:
             return _unresolved(2, face, path)
         second_axis = np.cross(axis, radial_axis)
-        first_parameter, last_parameter = (
-            float(value) for value in np.asarray(model.parameter_bounds[face])[:, 1]
-        )
+        first_parameter, last_parameter = (float(value) for value in bounds[:, 1])
         segment_ends = tuple(
             tuple(
                 start + Fraction(parameter) * rate

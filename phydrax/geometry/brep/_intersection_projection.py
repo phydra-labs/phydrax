@@ -33,6 +33,8 @@ import numpy as np
 
 from ...algebraic._exact_univariate import _gcd, RealRootIsolator
 from ._intersection_curve import (
+    _batched_cylinder_points_large_first,
+    _batched_cylinder_points_large_second,
     _large_seam_frame,
     _orthogonal_cylinder_curve_branch_sign,
     _OrthogonalCylinderFamily,
@@ -830,6 +832,7 @@ def _append_endpoint_candidate(
 
 def _select_candidate_projection(
     curve: IntersectionCurve,
+    family: _OrthogonalCylinderFamily,
     parameter_range: tuple[float, float],
     query: np.ndarray,
     policy: BRepProjectionPolicy,
@@ -872,7 +875,17 @@ def _select_candidate_projection(
         if best.endpoint
         else BRepProjectionStatus.UNIQUE
     )
-    point = np.asarray(curve.evaluate_coupled(best.parameter).point, dtype=np.float64)
+    # Use the same batched kernel as evaluate_coupled, without dispatching
+    # reshapes for its unused parameter and tangent outputs.
+    evaluate = (
+        _batched_cylinder_points_large_first
+        if family.large_index == 0
+        else _batched_cylinder_points_large_second
+    )
+    point = np.asarray(
+        evaluate(curve, np.asarray([best.parameter], dtype=np.float64))[0],
+        dtype=np.float64,
+    )[0]
     squared = sum(
         (
             (F.from_float(float(x)) - F.from_float(float(y))) ** 2
@@ -977,7 +990,7 @@ def project_intersection_curve(
         return unresolved()
     if first == last:
         return _select_candidate_projection(
-            curve, (first, last), query, policy, candidates, ctx
+            curve, family, (first, last), query, policy, candidates, ctx
         )
     if polynomial == (F(0),):
         if aa != (F(0),) or bb != (F(0),):
@@ -1042,5 +1055,5 @@ def project_intersection_curve(
     if prepared.uncertain:
         return unresolved()
     return _select_candidate_projection(
-        curve, (first, last), query, policy, candidates, ctx
+        curve, family, (first, last), query, policy, candidates, ctx
     )

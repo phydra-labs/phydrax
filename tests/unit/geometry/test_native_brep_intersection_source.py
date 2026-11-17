@@ -932,6 +932,42 @@ def _orthogonal_branch_root() -> tuple[
     return curve, sibling, root
 
 
+@pytest.mark.parametrize("location", ("start", "interior", "end"))
+def test_fixed_intersection_projection_preserves_coupled_point(
+    _orthogonal_branch_root: tuple[
+        IntersectionCurve, IntersectionCurve, TripleSurfaceIntersectionRoot
+    ],
+    location: str,
+) -> None:
+    from phydrax.geometry.brep._intersection_projection import project_intersection_curve
+    from phydrax.geometry.brep._projection_contracts import (
+        BRepProjectionPolicy,
+        BRepProjectionStatus,
+    )
+
+    curve, _, _ = _orthogonal_branch_root
+    parameter = {"start": 0.0, "interior": 0.5, "end": float(curve.num_charts)}[location]
+    point = np.asarray(curve.evaluate_coupled(parameter).point, dtype=np.float64)
+    query = point + np.asarray((0.1, -0.2, 0.3), dtype=np.float64)
+    projection = project_intersection_curve(
+        curve,
+        (parameter, parameter),
+        query,
+        BRepProjectionPolicy(),
+        edge_range=(0.0, float(curve.num_charts)),
+    )
+    expected_status = (
+        BRepProjectionStatus.UNIQUE
+        if location == "interior"
+        else BRepProjectionStatus.SEAM
+    )
+    assert projection.status == int(expected_status)
+    assert projection.parameter == parameter
+    np.testing.assert_array_equal(projection.point, point)
+    distance = np.linalg.norm(point - query)
+    assert distance <= projection.upper
+
+
 def test_branch_bounding_box_unions_chart_enclosures(
     _orthogonal_branch_root: tuple[
         IntersectionCurve, IntersectionCurve, TripleSurfaceIntersectionRoot

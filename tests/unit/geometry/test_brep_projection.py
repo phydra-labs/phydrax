@@ -483,6 +483,37 @@ def test_exact_line_boundary_proof_rejects_nearby_and_endpoint_queries() -> None
     assert _exact_line_boundary_parameter(model, face, nearby, lifts={}) is None
 
 
+def test_straight_revolution_projection_preserves_distance_and_axis_evidence() -> None:
+    from phydrax.geometry.brep._patches import LineCurve, RevolutionSurface
+    from phydrax.geometry.brep._projection import _exact_cylinder
+
+    model = brep_cylinder(1.0, 2.0, coordinate_contract=_CONTRACT)
+    projection = phx.geometry.prepare_brep_projection(model)
+    face = next(
+        index
+        for index, patch in enumerate(model.patches)
+        if isinstance(patch, RevolutionSurface)
+        and isinstance(patch.curve, LineCurve)
+        and _exact_cylinder(model, index) is not None
+    )
+    points = np.asarray(((0.0, 2.0, 1.0), (0.0, 0.0, 1.0)))
+    result = _project(projection, points, _FACE, face)
+
+    assert int(result.status[0]) in (_STATUS.UNIQUE, _STATUS.SEAM)
+    np.testing.assert_allclose(result.points[0], (0.0, 1.0, 1.0), atol=1e-14)
+    assert float(result.distance_lower_bounds[0]) <= 1.0 <= float(result.residuals[0])
+    assert result.entity_ids()[0] == source_entity_id(
+        projection.source_id,
+        projection.source_revision,
+        "face",
+        face,
+        occurrence_path=result.occurrence_paths[0],
+    )
+    assert int(result.status[1]) == _STATUS.NON_ISOLATED
+    assert np.isnan(np.asarray(result.points)[1]).all()
+    assert float(result.distance_lower_bounds[1]) <= 1.0 <= float(result.residuals[1])
+
+
 def test_straight_revolution_batched_frames_match_scalar_projection() -> None:
     from phydrax.geometry.brep._patches import LineCurve, RevolutionSurface
     from phydrax.geometry.brep._projection import _exact_cylinder
