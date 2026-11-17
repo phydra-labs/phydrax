@@ -53,6 +53,7 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
         "_exponents",
         "_sparse_index",
         "_sparse_values",
+        "_sparse_row_starts",
         "_shape",
         "_hash",
     )
@@ -61,6 +62,7 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
     _exponents: NDArray[np.int16]
     _sparse_index: NDArray[np.int64]
     _sparse_values: tuple[ExactScalar, ...]
+    _sparse_row_starts: NDArray[np.int64]
     _shape: tuple[int, int]
     _hash: int
 
@@ -106,14 +108,20 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
                     )
             elif not isinstance(value, RadicalElement):
                 raise TypeError("Exact coordinate bank entries must be ExactScalar.")
-        for array in (sig, exp, index):
-            array.setflags(write=False)
         shape = (int(sig.shape[0]), int(sig.shape[1]))
+        # Sparse entries are stored in flat order, so one offset per row lets a
+        # row read its sparse values in sequence without a search per entry.
+        row_starts = np.searchsorted(
+            index, np.arange(shape[0] + 1, dtype=np.int64) * shape[1]
+        ).astype(np.int64)
+        for array in (sig, exp, index, row_starts):
+            array.setflags(write=False)
         for name, part in (
             ("_significands", sig),
             ("_exponents", exp),
             ("_sparse_index", index),
             ("_sparse_values", values),
+            ("_sparse_row_starts", row_starts),
             ("_shape", shape),
             (
                 "_hash",
@@ -201,18 +209,19 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
         return _dyadic_value(significand, exponent)
 
     def _row(self, row: int, /) -> tuple[ExactScalar, ...]:
-        width = self._shape[1]
-        base = row * width
-        return tuple(
-            self._entry(base + axis, significand, exponent)
-            for axis, (significand, exponent) in enumerate(
-                zip(
-                    self._significands[row].tolist(),
-                    self._exponents[row].tolist(),
-                    strict=True,
-                )
-            )
-        )
+        position = self._sparse_row_starts[row].item()
+        values: list[ExactScalar] = []
+        for significand, exponent in zip(
+            self._significands[row].tolist(),
+            self._exponents[row].tolist(),
+            strict=True,
+        ):
+            if exponent == _SPARSE:
+                values.append(self._sparse_values[position])
+                position += 1
+            else:
+                values.append(_dyadic_value(significand, exponent))
+        return tuple(values)
 
     @overload
     def __getitem__(self, index: int, /) -> tuple[ExactScalar, ...]: ...
