@@ -262,6 +262,17 @@
   mapped-cell injectivity proof. The shell may have any genus. Meshes with
   cavities or several components keep the complete cell-pair proof.
   Certificate checks, witnesses and identities change accordingly.
+- The same theorem now certifies a periodic volume mesh on a partial quotient
+  (an exact translation group of rank below three) whose quotient is one
+  connected complex with one connected boundary shell: exact contact proofs
+  are owed only among the cells that own a shell facet, over every lattice
+  image, and the certificate records `periodic_exterior_cell_contacts` and
+  `periodic_global_degree_one_injectivity`. Quotients with several shells,
+  such as a slab or a hollow column, keep the complete cell-pair proof. The
+  periodic facet trace certificate is proved once per embedding proof on the
+  certificate's own charts, two affine cells compare a shared facet at its
+  frame corners, and quotient boundary classification counts incidences in
+  grouped arrays.
 - Straight triangle cells of a surface mesh in space are cleared by an
   outward-rounded binary64 screen before exact contact work: a pair is
   certified when its boxes are strictly separated, when one triangle's plane
