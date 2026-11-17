@@ -249,6 +249,8 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Boundary proofs reuse already evaluated exact facet lattice points within
+  the bounded live proof, preserving findings and evidence identities.
 - Embedding preparation reuses each simplex block's exact reference frame,
   avoiding repeated affine solves without changing cell charts or identities.
 - Global embedding contact passes reuse exact stratum root nets only for the

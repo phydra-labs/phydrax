@@ -9,8 +9,6 @@ from __future__ import annotations
 from fractions import Fraction
 from math import lcm
 
-import numpy as np
-
 from ..discretization._coordinate_enclosure import Polynomial
 from ._embedding_cells import EmbeddingCell
 from ._restricted_embedding import (
@@ -22,15 +20,6 @@ from ._restricted_embedding import (
 
 
 type FaceRequest = tuple[EmbeddingCell, EmbeddingCell, tuple[int, ...]]
-type _Job = tuple[
-    int,
-    int,
-    EmbeddingCell,
-    int,
-    tuple[tuple[int, ...], ...],
-    int,
-    tuple[dict[tuple[int, ...], int], ...],
-]
 
 
 def batch_simplex_face_equal(
@@ -43,10 +32,15 @@ def batch_simplex_face_equal(
     to one cell; no arithmetic or identity depends on the other batch members.
     """
     results: list[bool | None] = [None] * len(requests)
-    groups: dict[tuple[int, int, int], list[_Job]] = {}
+    lattices: dict[int, tuple[tuple[int, ...], ...]] = {}
     maps: dict[int, tuple[int, tuple[Polynomial, ...]] | None] = {}
     programs: dict[
-        tuple[int, int], tuple[int, tuple[dict[tuple[int, ...], int], ...]]
+        tuple[int, int],
+        tuple[
+            int,
+            tuple[tuple[tuple[tuple[int, ...], int], ...], ...],
+            tuple[int, ...],
+        ],
     ] = {}
 
     def cell_map(cell: EmbeddingCell, /) -> tuple[int, tuple[Polynomial, ...]] | None:
@@ -85,12 +79,15 @@ def batch_simplex_face_equal(
         # Bound object-array workspace; larger lattices retain the scalar route.
         if order > 20:
             continue
-        sides = (
-            ((2, first, left, corners[0]),)
-            if first is second
-            else ((0, first, left, corners[0]), (1, second, right, corners[1]))
+        sides = ((first, left, corners[0]),) if first is second else (
+            (first, left, corners[0]), (second, right, corners[1])
         )
-        for side, cell, mapping, indices in sides:
+        if order not in lattices:
+            lattices[order] = tuple(
+                row for row in _principal_lattice(3, order) if order not in row
+            )
+        side_values = []
+        for cell, mapping, indices in sides:
             references = tuple(cell.reference_vertices[position] for position in indices)
             reference_scale = lcm(
                 *(coordinate.denominator for point in references for coordinate in point)
@@ -106,58 +103,45 @@ def batch_simplex_face_equal(
             program_key = (id(cell), point_scale)
             if program_key not in programs:
                 denominator, terms = _integer_polynomials(mapping[1], point_scale)
-                programs[program_key] = denominator, tuple(dict(row) for row in terms)
-            denominator, integer_terms = programs[program_key]
-            jobs = groups.setdefault((order, cell.dimension, len(mapping[1])), [])
-            jobs.append(
-                (
-                    index,
-                    side,
-                    cell,
-                    point_scale,
-                    integer_references,
-                    denominator,
-                    integer_terms,
-                )
-            )
-    for (order, dimension, components), jobs in groups.items():
-        weights = tuple(row for row in _principal_lattice(3, order) if order not in row)
-        references = np.asarray([job[4] for job in jobs], dtype=np.object_)
-        numerators = np.matmul(
-            np.asarray(weights, dtype=np.object_)[None, :, :], references
-        )
-        totals = np.zeros((len(jobs), len(weights), components), dtype=np.object_)
-        exponents = sorted(
-            {exponent for job in jobs for polynomial in job[6] for exponent in polynomial}
-        )
-        for exponent in exponents:
-            coefficients = np.asarray(
-                [[polynomial.get(exponent, 0) for polynomial in job[6]] for job in jobs],
-                dtype=np.object_,
-            )
-            monomial = np.ones((len(jobs), len(weights)), dtype=np.object_)
-            for axis in range(dimension):
-                if exponent[axis]:
-                    monomial *= numerators[:, :, axis] ** exponent[axis]
-            totals += monomial[:, :, None] * coefficients[:, None, :]
-        pending: dict[int, tuple[np.ndarray, int]] = {}
-        for row, (index, side, cell, point_scale, _, denominator, _) in enumerate(jobs):
-            for point_index in range(len(weights)):
-                point = tuple(
-                    Fraction(value, point_scale) for value in numerators[row, point_index]
-                )
-                key = (id(cell), point)
-                if key not in values:
-                    values[key] = tuple(
-                        Fraction(value, denominator) for value in totals[row, point_index]
+                max_powers = tuple(
+                    max(
+                        (exponent[axis] for polynomial in terms for exponent, _ in polynomial),
+                        default=0,
                     )
-            if side == 2:
-                results[index] = True
-            elif side == 0:
-                pending[index] = (totals[row], denominator)
-            else:
-                left_values, left_denominator = pending.pop(index)
-                results[index] = bool(
-                    np.all(left_values * denominator == totals[row] * left_denominator)
+                    for axis in range(cell.dimension)
                 )
+                programs[program_key] = denominator, terms, max_powers
+            denominator, integer_terms, max_powers = programs[program_key]
+            evaluated = []
+            for weights in lattices[order]:
+                numerators = tuple(
+                    sum(
+                        weights[corner] * integer_references[corner][axis]
+                        for corner in range(3)
+                    )
+                    for axis in range(cell.dimension)
+                )
+                point = tuple(Fraction(value, point_scale) for value in numerators)
+                key = (id(cell), point)
+                found = values.get(key)
+                if found is None:
+                    powers = tuple(
+                        tuple(numerator**power for power in range(max_power + 1))
+                        for numerator, max_power in zip(numerators, max_powers, strict=True)
+                    )
+                    result = []
+                    for polynomial in integer_terms:
+                        total = 0
+                        for exponent, coefficient in polynomial:
+                            term = coefficient
+                            for axis, power in enumerate(exponent):
+                                if power:
+                                    term *= powers[axis][power]
+                            total += term
+                        result.append(Fraction(total, denominator))
+                    found = tuple(result)
+                    values[key] = found
+                evaluated.append(found)
+            side_values.append(evaluated)
+        results[index] = first is second or side_values[0] == side_values[1]
     return tuple(results)
