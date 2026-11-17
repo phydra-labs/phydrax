@@ -590,6 +590,28 @@ def _periodic_parameter(
     return value + low * period
 
 
+def _periodic_landmark(
+    parameters: np.ndarray,
+    bounds: np.ndarray,
+    periods: tuple[float | None, float | None],
+    /,
+) -> bool:
+    """Retain the original carrier point at periodic boundaries and neighbors."""
+    for axis, period in enumerate(periods):
+        if period is None:
+            continue
+        first, last = float(bounds[0, axis]), float(bounds[1, axis])
+        anchors = (0.0, 0.5 * period, period, first, last, first + 0.5 * (last - first))
+        for anchor in anchors:
+            if parameters[axis] in (
+                anchor,
+                np.nextafter(anchor, -np.inf),
+                np.nextafter(anchor, np.inf),
+            ):
+                return True
+    return False
+
+
 def _trim_classification(
     model: BRepModel,
     face: int,
@@ -3756,6 +3778,11 @@ def _project_face(
         tangents,
         path,
         pending_frame=defer_frame,
+        pending_point=(
+            defer_frame
+            and status != _SEAM
+            and not _periodic_landmark(uv, bounds, periods)
+        ),
     )
 
 
@@ -5772,10 +5799,10 @@ class NativeBRepProjection(AbstractBRepProjection):
             )
         pending_points: dict[tuple[int, int], list[int]] = {}
         for row, hit in enumerate(hits):
-            if hit.pending_point:
+            if hit.pending_point and hit.dimension == 1:
                 carrier = self.model.geometry.edge_curves[hit.index]
                 pending_points.setdefault((1, carrier), []).append(row)
-            elif hit.pending_frame:
+            elif hit.pending_point and hit.dimension == 2:
                 face = hit.index
                 if face not in preparation.patch_programs:
                     preparation.patch_programs[face] = prepare_host_program(

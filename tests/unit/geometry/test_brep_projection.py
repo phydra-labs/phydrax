@@ -625,6 +625,22 @@ def test_intersection_edge_frames_follow_both_cylinders_across_batches() -> None
         frame_id=result.frame_id,
     )
     assert isolated.result_id == single.result_id
+    endpoints = np.stack(
+        [
+            np.asarray(curve.evaluate_coupled(value).point, dtype=np.float64)
+            for value in (first, last)
+        ]
+    )
+    endpoint_result = _project(projection, endpoints, _EDGE, edge)
+    np.testing.assert_allclose(endpoint_result.points, endpoints, rtol=0, atol=1e-14)
+    assert np.all(np.asarray(endpoint_result.residuals) <= 1e-12)
+    for row, point in enumerate(endpoints):
+        one = _project(projection, [point], _EDGE, edge)
+        np.testing.assert_array_equal(
+            np.asarray(one.points[0]).view(np.uint64),
+            np.asarray(endpoint_result.points[row]).view(np.uint64),
+        )
+        np.testing.assert_array_equal(one.status, endpoint_result.status[row : row + 1])
     far_query = points[0] + np.asarray((5.25, -7.5, 11.75), dtype=np.float64)
     far = _project(projection, [far_query], _EDGE, edge)
     squared = sum(
@@ -1915,6 +1931,104 @@ def _rectangle_face_model(patch: Any, bounds: tuple[tuple[float, float], ...]) -
         coordinate_contract=_CONTRACT,
         report=report,
     )
+
+
+@pytest.mark.parametrize(
+    ("surface", "periodic_axis"),
+    (("cylinder", 0), ("cone", 0), ("sphere", 0), ("torus", 0), ("torus", 1)),
+)
+def test_periodic_landmark_projection_matches_scalar_source_route(
+    surface: str, periodic_axis: int
+) -> None:
+    from phydrax.geometry.brep._patches import (
+        ConePatch,
+        CylinderPatch,
+        SpherePatch,
+        TorusPatch,
+    )
+
+    origin, first, second, axis = (
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+    )
+    period = 2.0 * np.pi
+    if surface == "cylinder":
+        patch = CylinderPatch(origin, first, second, axis, 1.0)
+        bounds = ((0.0, -1.0), (period, 1.0))
+    elif surface == "cone":
+        patch = ConePatch(origin, first, second, axis, 1.0, 0.25)
+        bounds = ((0.0, -1.0), (period, 1.0))
+    elif surface == "sphere":
+        patch = SpherePatch(origin, first, second, axis, 1.0)
+        bounds = ((0.0, -1.0), (period, 1.0))
+    else:
+        patch = TorusPatch(origin, first, second, axis, 2.0, 0.5)
+        bounds = ((0.0, 0.0), (period, period))
+    angles = np.asarray(
+        [
+            value
+            for anchor in (0.0, np.pi, period)
+            for value in (
+                np.nextafter(anchor, -np.inf),
+                anchor,
+                np.nextafter(anchor, np.inf),
+            )
+        ],
+        dtype=np.float64,
+    )
+    charts = np.asarray(
+        [(angle, 0.3) if periodic_axis == 0 else (0.7, angle) for angle in angles],
+        dtype=np.float64,
+    )
+    u, v = charts[:, 0], charts[:, 1]
+    if surface == "cylinder":
+        points = np.stack((2 * np.cos(u), 2 * np.sin(u), v), axis=1)
+    elif surface == "cone":
+        radius = 1 + v * np.tan(0.25) + 0.2
+        points = np.stack((radius * np.cos(u), radius * np.sin(u), v), axis=1)
+    elif surface == "sphere":
+        points = np.stack(
+            (2 * np.cos(v) * np.cos(u), 2 * np.cos(v) * np.sin(u), 2 * np.sin(v)),
+            axis=1,
+        )
+    else:
+        points = np.stack(
+            (
+                (2 + 0.8 * np.cos(v)) * np.cos(u),
+                (2 + 0.8 * np.cos(v)) * np.sin(u),
+                0.8 * np.sin(v),
+            ),
+            axis=1,
+        )
+    projection = phx.geometry.prepare_brep_projection(
+        _rectangle_face_model(patch, bounds)
+    )
+    count = points.shape[0]
+    dimensions = np.full(count, int(_FACE), dtype=np.int32)
+    indices = np.zeros(count, dtype=np.int32)
+    batched = projection.project(points, dimensions, indices)
+    face_id = next(
+        entity.entity_id
+        for entity in projection.boundary_entities
+        if entity.dimension == 2 and entity.index == 0
+    )
+    scalar_route = projection.project_boundary(points, entity_ids=(face_id,))
+    np.testing.assert_array_equal(
+        np.asarray(batched.points).view(np.uint64),
+        np.asarray(scalar_route.points).view(np.uint64),
+    )
+    np.testing.assert_array_equal(batched.status, scalar_route.status)
+    for row in range(count):
+        single = projection.project(
+            points[row : row + 1], dimensions[row : row + 1], indices[row : row + 1]
+        )
+        np.testing.assert_array_equal(
+            np.asarray(single.points[0]).view(np.uint64),
+            np.asarray(batched.points[row]).view(np.uint64),
+        )
+        np.testing.assert_array_equal(single.status, batched.status[row : row + 1])
 
 
 @pytest.mark.parametrize("frame", ("radical", "rounded"))
