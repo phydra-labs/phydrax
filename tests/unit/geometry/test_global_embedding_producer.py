@@ -1357,6 +1357,79 @@ def test_random_rational_simplex_trace_matches_fraction_reference(order: int) ->
     assert caught_wrong_scale
 
 
+@pytest.mark.parametrize(
+    ("second_bump", "face_bubble", "off_face_cubic", "mismatch"),
+    (
+        (Fraction(1, 8), Fraction(0), Fraction(0), False),
+        (Fraction(1, 8) + Fraction(1, 4096), Fraction(0), Fraction(0), True),
+        (Fraction(1, 8), Fraction(1, 4096), Fraction(0), True),
+        (Fraction(1, 8), Fraction(0), Fraction(1, 8), False),
+    ),
+    ids=("equal", "changed-face-coefficient", "one-lattice-point", "mixed-degree"),
+)
+def test_boundary_batches_exact_shared_face_traces(
+    second_bump: Fraction,
+    face_bubble: Fraction,
+    off_face_cubic: Fraction,
+    mismatch: bool,
+) -> None:
+    first, second = _tetrahedra_sharing_a_curved_face(
+        Fraction(1, 8), second_bump, face_bubble
+    )
+    x, y, z = axes(3)
+    second = _mapped_tetrahedron(
+        2,
+        (10, 12, 11, 14),
+        (
+            second.coordinates[1],
+            second.coordinates[0],
+            add(second.coordinates[2], scale(multiply(multiply(z, z), z), off_face_cubic)),
+        ),
+    )
+    bump = scale(multiply(x, y), Fraction(1, 8))
+    shifted_x = add(x, constant(3, 3))
+    other_first = _mapped_tetrahedron(
+        3, (20, 21, 22, 23), (shifted_x, y, add(z, bump))
+    )
+    other_second = _mapped_tetrahedron(
+        4,
+        (20, 22, 21, 24),
+        (add(y, constant(3, 3)), x, add(add(scale(z, -1), bump), scale(multiply(multiply(z, z), z), Fraction(1, 8)))),
+    )
+    points = np.asarray(
+        (
+            (0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (0, 0, -1),
+            (3, 0, 0), (4, 0, 0), (3, 1, 0), (3, 0, 1), (3, 0, -1),
+        ),
+        dtype=np.float64,
+    )
+    mesh = CellMesh(
+        points,
+        (CellBlock("cells", "tetrahedron", np.asarray(
+            ((0, 1, 2, 3), (0, 2, 1, 4), (5, 6, 7, 8), (5, 7, 6, 9)),
+            dtype=np.int32,
+        )),),
+        vertex_global_ids=np.asarray((10, 11, 12, 13, 14, 20, 21, 22, 23, 24), dtype=np.int64),
+    )
+    boundary = build_oriented_boundary(mesh, (first, second, other_first, other_second))
+    findings = tuple(
+        finding for finding in boundary.findings if finding.check == "mismatched_interior_trace"
+    )
+    assert len(findings) == int(mismatch)
+    isolated_mesh = CellMesh(
+        points[:5],
+        (CellBlock("cells", "tetrahedron", np.asarray(
+            ((0, 1, 2, 3), (0, 2, 1, 4)), dtype=np.int32
+        )),),
+        vertex_global_ids=np.asarray((10, 11, 12, 13, 14), dtype=np.int64),
+    )
+    isolated = build_oriented_boundary(isolated_mesh, (first, second))
+    isolated_findings = tuple(
+        finding for finding in isolated.findings if finding.check == "mismatched_interior_trace"
+    )
+    assert findings == isolated_findings
+
+
 def test_simplex_traces_agree_exactly_on_their_shared_curved_face() -> None:
     first, second = _tetrahedra_sharing_a_curved_face(
         Fraction(1, 8), Fraction(1, 8), Fraction(0)
