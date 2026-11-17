@@ -355,11 +355,21 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
             raise OverflowError("Exact coordinate is too large for binary64.")
         return result
 
+    def _interval_proposals(self) -> NDArray[np.float64]:
+        """Propose dense dyadics without refusing nonfinite or sparse entries."""
+        dense = self._exponents != _SPARSE
+        with np.errstate(over="ignore", under="ignore", invalid="ignore"):
+            proposals = np.ldexp(
+                self._significands.astype(np.float64),
+                np.where(dense, self._exponents.astype(np.int64), 0),
+            )
+        return np.where(dense, proposals, np.nan)
+
     def interval_endpoints(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         """Outward binary64 endpoints, lifting exceptional exact entries only."""
         from ._exact_algebraic_geometry import coefficient_endpoint
 
-        lower = self.binary64()
+        lower = self._interval_proposals()
         upper = lower.copy()
         # The binary64 conversion is only a proposal. Verify its bits against
         # the exact odd significand and exponent using integer arithmetic; a

@@ -259,7 +259,8 @@
   preparation, so formerly refused or exact-fallback cases may certify by
   the interval route.
 - Exact-coordinate interval endpoints verify binary64 proposals without
-  unsigned shift overflow; inexact proposals use directed exact conversion.
+  unsigned shift overflow; inexact or out-of-range proposals use directed,
+  saturating exact conversion.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep
