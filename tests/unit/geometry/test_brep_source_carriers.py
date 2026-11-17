@@ -57,6 +57,7 @@ from phydrax.geometry.brep._patches import (
     TorusPatch,
 )
 from phydrax.geometry.brep._root_bindings import BRepConicVertex, BRepRootSupport
+from phydrax.typing import ConvertibleToArray
 from phydrax.units import MILLIMETER
 
 
@@ -1193,6 +1194,51 @@ def test_ruled_surface_retains_rail_parameterization_and_directional_derivative(
     assert surface.is_c1_along(0, 0.2, 0.0, 1.0)
     with pytest.raises(ValueError):
         surface.validate_parameter_box(((0.0, -0.1), (1.0, 1.0)))
+    with pytest.raises(ValueError):
+        surface.is_c1_on(((0.0, -0.1), (1.0, 1.0)))
+
+
+def test_surface_box_host_consumers_preserve_validation_and_public_array() -> None:
+    plane = PlanePatch((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
+    box = np.asarray(((-1.0, -2.0), (3.0, 4.0)), dtype=np.float64)
+    validated = plane.validate_parameter_box(box)
+    assert isinstance(validated, Array)
+    np.testing.assert_array_equal(validated, box)
+    lower, upper = plane.derivative_bounds(box)
+    np.testing.assert_array_equal(lower, ((1.0, 0.0), (0.0, 1.0), (0.0, 0.0)))
+    np.testing.assert_array_equal(upper, lower)
+    assert plane.is_c1_on(box)
+    with pytest.raises(ValueError, match="increasing"):
+        plane.derivative_bounds(((0.0, 0.0), (0.0, 1.0)))
+
+    cylinder = CylinderPatch(
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+        1.0,
+    )
+    with pytest.raises(ValueError, match="at most one period"):
+        cylinder.derivative_bounds(((0.0, 0.0), (7.0, 1.0)))
+
+
+def test_surface_host_consumers_honor_custom_box_validation() -> None:
+    class RestrictedPatch(AbstractSurfacePatch):
+        def evaluate(self, parameters: Array, /) -> Array:
+            return jnp.stack((parameters[0], parameters[1], parameters[0] * 0))
+
+        def validate_parameter_box(self, parameter_box: ConvertibleToArray, /) -> Array:
+            box = super().validate_parameter_box(parameter_box)
+            if np.asarray(box)[1, 0] > 1.0:
+                raise ValueError("custom surface restriction")
+            return box
+
+    surface = RestrictedPatch()
+    assert not surface.is_c1_on(((0.0, 0.0), (1.0, 1.0)))
+    with pytest.raises(ValueError, match="custom surface restriction"):
+        surface.is_c1_on(((0.0, 0.0), (2.0, 1.0)))
+    with pytest.raises(ValueError, match="custom surface restriction"):
+        surface.derivative_bounds(((0.0, 0.0), (2.0, 1.0)))
 
 
 def test_ruled_surface_does_not_infer_continuity_of_custom_rails() -> None:
