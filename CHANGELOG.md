@@ -260,6 +260,9 @@
 - CAD source-chart, face-image, and geometry-association identities frame exact
   rational tables as bytes. These identities and dependent records change;
   restored records still revalidate their complete exact content.
+- Domain coverage prepares exact coordinate maps on demand and combines shared
+  rational coordinate bases with integer arithmetic. Exact maps and coverage
+  evidence retain their previous values.
 - CAD source bounds, analytic surface derivatives, periodic offsets, and the
   quadratic tetrahedron screen execute supported interval programs in batches.
   Their directed endpoints and exact-arithmetic fallback remain unchanged.

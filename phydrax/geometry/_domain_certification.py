@@ -834,11 +834,23 @@ def _target_region_measures(
     from ._domain_chart_chain import _cell_measures
     from ._domain_numerics import polyhedral_cell_measures
 
+    maps = tuple(
+        None
+        if cell_measures is not None and cell in cell_measures
+        else preparation.coordinate_maps[cell]
+        for cell in range(len(preparation.assignments))
+    )
     polyhedral_measures: tuple[Fraction | None, ...] | None = None
     polyhedral_measure_error: Exception | None = None
-    if any(expressions is None for expressions in preparation.coordinate_maps):
+    if any(
+        expressions is None
+        for cell, expressions in enumerate(maps)
+        if cell_measures is None or cell not in cell_measures
+    ):
         try:
-            polyhedral_measures = polyhedral_cell_measures(mesh, geometry)
+            polyhedral_measures = polyhedral_cell_measures(
+                mesh, geometry, coordinate_maps=preparation.coordinate_maps
+            )
         except (TypeError, ValueError, IndexError, ArithmeticError) as error:
             polyhedral_measure_error = error
     totals: list[ExactScalar] = [Fraction(0) for _ in domain.region_ids]
@@ -852,24 +864,21 @@ def _target_region_measures(
         _cell_measures(
             (expressions, cell_kind)
             for cell, (expressions, cell_kind) in enumerate(
-                zip(preparation.coordinate_maps, cell_kinds, strict=True)
+                zip(maps, cell_kinds, strict=True)
             )
             if expressions is not None
             and (cell_measures is None or cell not in cell_measures)
         )
     )
-    for cell, (assignment, expressions, _cell_kind) in enumerate(
-        zip(
-            preparation.assignments,
-            preparation.coordinate_maps,
-            cell_kinds,
-            strict=True,
-        )
+    if len(preparation.coordinate_maps) != len(cell_kinds):
+        raise ValueError("Exact coordinate maps must align with target cell order.")
+    for cell, (assignment, _cell_kind) in enumerate(
+        zip(preparation.assignments, cell_kinds, strict=True)
     ):
         try:
             if cell_measures is not None and cell in cell_measures:
                 measure = cell_measures[cell]
-            elif expressions is None:
+            elif maps[cell] is None:
                 if polyhedral_measures is None:
                     raise ValueError(
                         "Exact polyhedral cell integration is unavailable: "
@@ -1281,7 +1290,7 @@ def _coverage_boundary_partition(
             target_facets, issues = oriented_target_facets(
                 mesh,
                 preparation.cell_regions,
-                preparation.coordinate_maps,
+                tuple(preparation.coordinate_maps),
                 source_domain=source_domain,
                 geometry=geometry,
                 exact_face_images=True,
@@ -1497,7 +1506,7 @@ def _plc_source_points(
     from ._planar_coverage import resolve_plc_source_points, SourcePointRefusal
 
     try:
-        cells = affine_cell_corners(mesh, preparation.coordinate_maps)
+        cells = affine_cell_corners(mesh, tuple(preparation.coordinate_maps))
     except (TypeError, ValueError, KeyError, ArithmeticError) as error:
         findings.append(
             _coverage_finding(

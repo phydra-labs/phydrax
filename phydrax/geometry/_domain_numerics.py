@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from fractions import Fraction
 from itertools import combinations
 
@@ -26,8 +27,8 @@ from ..discretization._coordinate_enclosure import (
     evaluate_expression,
     ExactScalar,
     Expression,
-    linear_combinations,
     Polynomial,
+    PreparedLinearCombinationBasis,
     RestrictedCoordinateMapPreparation,
 )
 from ..discretization._reference_cell import reference_cell_topology
@@ -66,6 +67,7 @@ def cell_coordinate_expressions(
             and isinstance(element, PerCellRestrictedCellGeometryElement)
             else None
         )
+        shared_basis: PreparedLinearCombinationBasis | None = None
         for row_index in range(routes_host.shape[0]):
             route = routes_host[row_index]
             local = tuple(coefficients[int(index)] for index in route)
@@ -73,22 +75,41 @@ def cell_coordinate_expressions(
                 None if preparation is None else preparation.expressions(row_index)
             )
             if expressions is None:
-                basis = coordinate_effective_basis(element, cell_row=row_index)
-                if len(basis) != len(local):
+                basis = (
+                    coordinate_effective_basis(element, cell_row=row_index)
+                    if (
+                        shared_basis is None
+                        or isinstance(element, PerCellRestrictedCellGeometryElement)
+                    )
+                    else None
+                )
+                if basis is not None and len(basis) != len(local):
                     raise ValueError(
                         "Exact coordinate basis and local source bank widths differ."
                     )
+                if basis is not None:
+                    prepared_basis = PreparedLinearCombinationBasis(basis)
+                    if not isinstance(element, PerCellRestrictedCellGeometryElement):
+                        shared_basis = prepared_basis
+                else:
+                    if shared_basis is None:
+                        raise RuntimeError("Prepared coordinate basis is unavailable.")
+                    prepared_basis = shared_basis
                 components = tuple(
                     tuple(local[dof][axis] for dof in range(len(local)))
                     for axis in range(len(local[0]))
                 )
-                expressions = linear_combinations(basis, components)
+                expressions = prepared_basis.combine(components)
             maps.append(expressions)
     return tuple(maps)
 
 
 def polyhedral_vertex_coordinates(
-    mesh: CellMesh, geometry: CellGeometrySpec, /
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    /,
+    *,
+    coordinate_maps: Sequence[tuple[Expression, ...] | None] | None = None,
 ) -> tuple[tuple[Fraction, Fraction, Fraction] | None, ...]:
     """Recover exact physical coordinates of every topological polyhedral vertex."""
     connectivity = mesh.connectivity
@@ -102,7 +123,8 @@ def polyhedral_vertex_coordinates(
         )
     elements, routes, _ = geometry.resolve(mesh)
     coefficients = geometry.source_coordinates()
-    coordinate_maps = cell_coordinate_expressions(mesh, geometry)
+    if coordinate_maps is None:
+        coordinate_maps = cell_coordinate_expressions(mesh, geometry)
     vertex_count = np.asarray(mesh.coordinates).shape[0]
     points: list[tuple[Fraction, Fraction, Fraction] | None] = [None] * vertex_count
     cursor = 0
@@ -190,7 +212,11 @@ def polyhedral_vertex_coordinates(
 
 
 def polyhedral_cell_measures(
-    mesh: CellMesh, geometry: CellGeometrySpec, /
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    /,
+    *,
+    coordinate_maps: Sequence[tuple[Expression, ...] | None] | None = None,
 ) -> tuple[Fraction | None, ...]:
     """Integrate oriented planar face loops as exact signed polyhedron volumes.
 
@@ -199,7 +225,9 @@ def polyhedral_cell_measures(
     connectivity = mesh.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
         raise ValueError("Exact polyhedral cell measures require PolyhedralConnectivity.")
-    points = polyhedral_vertex_coordinates(mesh, geometry)
+    points = polyhedral_vertex_coordinates(
+        mesh, geometry, coordinate_maps=coordinate_maps
+    )
     face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
     face_vertices = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
     cell_face_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)

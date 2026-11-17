@@ -14,11 +14,13 @@ from phydrax.discretization._cell_geometry_validity import cell_geometry_id
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
 from phydrax.discretization._coordinate_enclosure import (
     compose_expression,
-    coordinate_map_expressions,
+    coordinate_source_basis,
     evaluate_expression,
     Polynomial,
     polynomial_bounds,
+    scale,
     subtract,
+    sum_polynomials,
 )
 from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
 from phydrax.geometry._meshing_domain import MeshingDomain, SourcePreparation
@@ -51,6 +53,8 @@ def _case(
     domain: MeshingDomain,
     charts: np.ndarray,
     order: np.ndarray,
+    *,
+    degree: int = 2,
 ) -> tuple[
     CellMesh, CellGeometrySpec, MeshingDomainBoundarySource, SourceBoundaryChartWitness
 ]:
@@ -74,7 +78,7 @@ def _case(
             ),
         ),
     )
-    element = lagrange_element("triangle", 2)
+    element = lagrange_element("triangle", degree)
     nodes = np.asarray(element.reference_nodes, dtype=np.float64)
     coordinates = []
     for row in range(count):
@@ -137,7 +141,17 @@ def _oracle(
         arguments = _affine_triangle_arguments(reference)
         local = tuple(coefficients[int(i)] for i in np.asarray(routes[0])[cell_row])
         assert isinstance(elements[0], ScalarCoordinateElement)
-        physical = coordinate_map_expressions(elements[0], local, cell_row=int(cell_row))
+        basis = coordinate_source_basis(elements[0], cell_row=int(cell_row))
+        physical = tuple(
+            sum_polynomials(
+                tuple(
+                    scale(function, values[axis])
+                    for function, values in zip(basis, local, strict=True)
+                ),
+                2,
+            )
+            for axis in range(3)
+        )
         mapped = tuple(compose_expression(component, arguments) for component in physical)
         corners = tuple(
             tuple(evaluate_expression(component, p) for component in mapped)
@@ -187,9 +201,14 @@ def _oracle(
 
 
 def _decisions(
-    domain: MeshingDomain, charts: np.ndarray, order: np.ndarray, tolerance: float
+    domain: MeshingDomain,
+    charts: np.ndarray,
+    order: np.ndarray,
+    tolerance: float,
+    *,
+    degree: int = 2,
 ) -> tuple[tuple[bool, ...], tuple[bool, ...]]:
-    mesh, geometry, source, witness = _case(domain, charts, order)
+    mesh, geometry, source, witness = _case(domain, charts, order, degree=degree)
     rows = np.asarray(witness.cell_global_ids, dtype=np.int64) - 101
     result = certify_domain_surface_charts(
         mesh,
@@ -222,6 +241,23 @@ def test_random_sphere_charts_match_exact_budget_oracle() -> None:
     for tolerance in (0.001, 0.01, 0.1):
         actual, expected = _decisions(domain, charts, order, tolerance)
         assert actual == expected
+
+
+def test_chart_certification_matches_generic_affine_quadratic_and_cubic_maps() -> None:
+    domain = _domain()
+    charts = np.asarray(
+        (
+            ((0.2, 0.1), (0.45, 0.1), (0.2, 0.35)),
+            ((0.5, 0.3), (0.625, 0.3), (0.5, 0.425)),
+        ),
+        dtype=np.float64,
+    )
+    for degree in (1, 2, 3):
+        for tolerance in (0.001, 0.02, 0.2):
+            actual, expected = _decisions(
+                domain, charts, np.arange(len(charts)), tolerance, degree=degree
+            )
+            assert actual == expected
 
 
 def test_adaptive_chart_decisions_are_batch_independent() -> None:
