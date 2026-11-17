@@ -790,6 +790,29 @@ def test_tet_mesh_preserves_interleaved_source_segment_groups() -> None:
         np.testing.assert_array_equal(arrays.source_segment_group_rows, groups[order])
 
 
+@pytest.mark.parametrize(
+    "segments",
+    (
+        ((0, 1), (1, 0)),
+        ((0, 1), (0, 2), (0, 1)),
+    ),
+)
+def test_tet_mesh_refuses_repeated_constrained_edges(
+    segments: tuple[tuple[int, int], ...],
+) -> None:
+    faces = np.asarray(((1, 3, 2), (0, 2, 3), (0, 3, 1), (0, 1, 2)), dtype=np.int32)
+    with pytest.raises(ValueError, match="invalid input"):
+        TetMesh3D(
+            UNIT_TET,
+            np.asarray(((0, 1, 2, 3),), dtype=np.int32),
+            None,
+            faces,
+            np.arange(4, dtype=np.int32),
+            np.asarray(segments, dtype=np.int32),
+            np.zeros((len(segments),), dtype=np.int32),
+        )
+
+
 def test_tet_candidate_quality_rechecks_geometry_and_retained_sizes() -> None:
     plane = np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
     with _declared_unit_tet(plane, 0.0) as state:

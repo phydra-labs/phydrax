@@ -249,6 +249,8 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Tetrahedral construction consumes represented edges when admitting segments,
+  rejecting duplicates without a quadratic scan of prior segments.
 - Tetrahedral construction indexes source-segment rows by group while
   retaining their exact witness-check order.
 - Declared-plane validation uses outward-rounded projected boundary-edge boxes

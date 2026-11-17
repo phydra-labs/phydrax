@@ -432,12 +432,9 @@ int32_t TetMesh::build_state(std::span<const double> points,
   for (std::size_t row = 0; row < segment_count; ++row) {
     const std::int32_t a = segments[2 * row];
     const std::int32_t b = segments[2 * row + 1];
-    if (!represented_edges.contains(edge_key(a, b))) return PHX_MC_INVALID_INPUT;
-    for (std::size_t previous = 0; previous < row; ++previous) {
-      if (edge_key(a, b) == edge_key(segments[2 * previous], segments[2 * previous + 1])) {
-        return PHX_MC_INVALID_INPUT;
-      }
-    }
+    // A represented edge is consumed once, so the same lookup also rejects
+    // a duplicate segment without rescanning all earlier rows.
+    if (represented_edges.erase(edge_key(a, b)) == 0) return PHX_MC_INVALID_INPUT;
     TetSnapshotSegment segment;
     segment.id = next_segment_id_++;
     segment.vertices = {static_cast<std::uint64_t>(a), static_cast<std::uint64_t>(b)};
