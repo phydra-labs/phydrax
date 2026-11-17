@@ -13,6 +13,7 @@ from typing import NamedTuple, TYPE_CHECKING
 import jax.numpy as jnp
 import numpy as np
 
+from ...geometry._mesh_certificates import _same_tree_content
 from ...geometry._meshing_domain import MeshingDomain, SourcePreparation
 from ...meshing._contracts import CellFamilyPolicy, CellMeshingTarget, SurfaceMeshingSpec
 from ...meshing._scope import MeshingScope
@@ -523,6 +524,42 @@ def _build_request(
     )
 
 
+def _same_tessellation_domain(first: MeshingDomain, second: MeshingDomain, /) -> bool:
+    """Compare the source fields used to construct the canonical B-Rep domain."""
+    return (
+        first.brep_authority is second.brep_authority
+        and first.source_id == second.source_id
+        and first.source_revision == second.source_revision
+        and first.accuracy == second.accuracy
+        and float(first.tolerance).hex() == float(second.tolerance).hex()
+        and first.corner_points_authored == second.corner_points_authored
+        and first.source_indices == second.source_indices
+        and first.source_occurrences == second.source_occurrences
+        and first.region_source_indices == second.region_source_indices
+        and first.region_source_occurrences == second.region_source_occurrences
+        and first.source_kinds == second.source_kinds
+        and first.authority_id == second.authority_id
+        and first.scope_entity_key_banks == second.scope_entity_key_banks
+        and first.scope_entity_set_ids == second.scope_entity_set_ids
+        and len(first.scope_entity_id_banks) == len(second.scope_entity_id_banks)
+        and all(
+            left.dtype == right.dtype and np.array_equal(left, right)
+            for left, right in zip(
+                first.scope_entity_id_banks, second.scope_entity_id_banks, strict=True
+            )
+        )
+        and first.corner_points.dtype == second.corner_points.dtype
+        and first.corner_points.shape == second.corner_points.shape
+        and np.array_equal(
+            first.corner_points.view(np.uint64), second.corner_points.view(np.uint64)
+        )
+        and _same_tree_content(first.patches, second.patches)
+        and _same_tree_content(first.curves, second.curves)
+        and _same_tree_content(first.regions, second.regions)
+        and first.domain_id == second.domain_id
+    )
+
+
 @checked
 def tessellate_brep_model(
     model: BRepModel,
@@ -536,15 +573,23 @@ def tessellate_brep_model(
     Returns the tessellation with the source-fidelity certificate that proved
     it; pass both to ``BRepModel`` so the model binds that proof instead of
     recomputing it.
-    An in-hand preparation must be bound to the current model's meshing domain;
-    use ``for_placement_domain`` to carry eligible local spans from a prior pose.
+    An in-hand preparation is reused only when its domain retains this exact
+    live model and its fields match the canonical domain built for this call.
+    Use ``for_placement_domain`` to carry eligible local spans from a prior pose.
     """
     if not model.patches:
         raise ValueError("A faceless B-Rep has no surface tessellation.")
 
     domain = MeshingDomain.from_brep(model)
-    # Every attempt and its certification query the same sources; their exact
-    # spans, interval programs and mapped p-curve Hessians are prepared once.
+    if preparation is not None and preparation.domain.brep_authority is model:
+        preparation.domain.require_current()
+        if _same_tessellation_domain(preparation.domain, domain):
+            domain = preparation.domain
+        else:
+            preparation = None
+    else:
+        preparation = None
+    # Every attempt and its certification query the same live source domain.
     preparation = SourcePreparation.of(domain, preparation)
     linear_target = policy.linear_deflection
     history: list[tuple[float, float, float]] = []

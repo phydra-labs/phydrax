@@ -498,6 +498,29 @@ def test_batched_stratum_randomized_parity_and_subdivision() -> None:
     assert subdivided_stratum_separations((), StratumSubdivisionCache()) == ()
 
 
+def test_shared_cell_stratum_matches_independent_pair_proofs() -> None:
+    upper = (_p(1, 0, 1), _p(2, 0, 1), _p(1.5, 0.5, 1), _p(1.5, 0.125, 1.75))
+    lower = (_p(1, 0, 1), _p(2, 0, 1), _p(1.5, -0.5, 1), _p(1.5, -0.125, 1.75))
+    first = _cell(5, "simplex:3", (4, 9, 10, 11), upper, _bend())
+    second = _cell(6, "simplex:3", (4, 9, 12, 13), lower, _bend())
+    residuals = _stratum_residuals(_FIRST, (4,))
+    assert residuals is not None
+    requests = (
+        (_FIRST, first, (4,), residuals),
+        (_FIRST, second, (4,), residuals),
+        (_FIRST, first, (4,), ()),
+    )
+    expected = tuple(
+        subdivided_stratum_separation(*request, StratumSubdivisionCache())
+        for request in requests
+    )
+    assert expected[:2] == ((1, 0), (1, 0))
+    assert (
+        subdivided_stratum_separations(requests, StratumSubdivisionCache(proof_roots={}))
+        == expected
+    )
+
+
 def test_curved_vertex_contact_needs_multiple_subdivision_pieces() -> None:
     physical = _bend(Fraction(7, 4), Fraction(7, 4))
     first = _cell(1, "tetrahedron", (0, 1, 2, 3), _TETRAHEDRON, physical)
@@ -594,6 +617,9 @@ def test_batched_stratum_keeps_objects_and_proofs_independent() -> None:
     )
     assert expected == ((1, 0), (1, 0), None, None, None, (1, 0))
     assert subdivided_stratum_separations(requests, StratumSubdivisionCache()) == expected
+    assert subdivided_stratum_separations(
+        requests, StratumSubdivisionCache(proof_roots={})
+    ) == expected
     cache = StratumSubdivisionCache()
     assert (
         tuple(subdivided_stratum_separation(*request, cache) for request in requests)

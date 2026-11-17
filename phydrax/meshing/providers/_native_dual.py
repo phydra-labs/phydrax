@@ -4905,10 +4905,31 @@ class _PreparedNativeMappedGridHex(StrictModule, NonTrainableState):
                         feature.scope.entity_ids, dtype=np.int64
                     ).tolist()
                 )
-                feature_query = self.source.boundary_query(face_scope_keys=scope_keys)
-                feature_witness = _mapped_face_chart_witness(
-                    self.source, mapped, mapped.geometry, feature_query
+                face_keys = tuple(
+                    zip(
+                        fidelity_source.polygon_source_entity_keys,
+                        fidelity_source.polygon_source_occurrence_paths,
+                        strict=True,
+                    )
                 )
+                selected_rows = tuple(
+                    row for row, key in enumerate(face_keys) if key in scope_keys
+                )
+                if (
+                    np.array_equal(
+                        np.asarray(feature.scope.entity_ids, dtype=np.int64),
+                        np.asarray(self.source.scope_entity_ids(2), dtype=np.int64),
+                    )
+                    and set(scope_keys) == set(fidelity_source.face_scope_keys)
+                    and selected_rows == tuple(range(len(face_keys)))
+                ):
+                    feature_query = fidelity_source
+                    feature_witness = fidelity_witness
+                else:
+                    feature_query = self.source.boundary_query(face_scope_keys=scope_keys)
+                    feature_witness = _mapped_face_chart_witness(
+                        self.source, mapped, mapped.geometry, feature_query
+                    )
             elif feature.feature_kind is FeatureKind.CURVE:
                 scope_keys = tuple(
                     self.source.source_entity_key_for_scope(1, int(identifier))

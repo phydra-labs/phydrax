@@ -37,7 +37,13 @@ from phydrax.meshing._contracts import (
     VolumeFillStrategy,
     VolumeMeshingSpec,
 )
-from phydrax.meshing._controls import PatchControl, RegionControl, RegionSeed
+from phydrax.meshing._controls import (
+    FeatureKind,
+    PatchControl,
+    ProtectedFeature,
+    RegionControl,
+    RegionSeed,
+)
 from phydrax.meshing._native_construction import NativeMeshConstruction
 from phydrax.meshing._organization import RegionRole
 from phydrax.meshing._plc_source import PiecewiseLinearComplex
@@ -447,6 +453,56 @@ def _request(
             ),
         ),
     )
+
+
+@pytest.mark.parametrize(
+    ("route", "prepare"),
+    (
+        ("mapped_balanced_grid_hex", prepare_native_mapped_balanced_grid_hex),
+        ("mapped_frame_grid_hex", prepare_native_mapped_frame_grid_hex),
+    ),
+)
+def test_mapped_whole_surface_feature_preserves_fidelity_certificate(
+    route: Literal["mapped_balanced_grid_hex", "mapped_frame_grid_hex"],
+    prepare: Callable[..., Any],
+) -> None:
+    source, _ = _mapped_cube_source()
+    original = _request(source)
+    feature = ProtectedFeature(
+        original.boundary_scope,
+        FeatureKind.SURFACE,
+        maximum_deviation=0.01,
+        hard=True,
+    )
+    specification = VolumeMeshingSpec(
+        original.target,
+        original.boundary_scope,
+        original.fill_strategy,
+        size_controls=original.size_controls,
+        region_seeds=original.region_seeds,
+        protected_features=(feature,),
+    )
+    construction = prepare(
+        source, specification, NativeMeshingOptions(route), SpatialCoordinateContract.si()
+    ).execute()
+    request = construction.certification
+    query, witness = request.fidelity_source, request.fidelity_witness
+    assert isinstance(query, MappedReferenceBoundarySource)
+    assert isinstance(witness, SourceBoundaryChartWitness)
+    scoped_query, scoped_witness, tolerance = request.scoped_fidelity[0]
+    primary = certify_source_fidelity(
+        construction.mesh, construction.geometry, query, tolerance=tolerance, witness=witness
+    )
+    scoped = certify_source_fidelity(
+        construction.mesh,
+        construction.geometry,
+        scoped_query,
+        tolerance=tolerance,
+        witness=scoped_witness,
+    )
+    assert primary.status == scoped.status == "certified"
+    assert primary.certificate_id == scoped.certificate_id
+    assert primary.findings == scoped.findings
 
 
 def test_mapped_plc_auto_binding_requires_matching_source_entity_keys() -> None:

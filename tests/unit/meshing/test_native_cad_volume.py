@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from copy import copy
 from dataclasses import replace
 from fractions import Fraction
 from itertools import combinations
@@ -1416,6 +1417,167 @@ def test_native_cad_volume_keeps_original_brep_query_and_explicit_tolerance(
             assert role is GeometrySourceEntityRole.EDGE
         elif dimension == 2:
             assert role is GeometrySourceEntityRole.FACET
+
+
+@pytest.mark.parametrize("full_scope", (True, False), ids=("full", "subset"))
+def test_cad_scoped_fidelity_preserves_parent_identities_and_curving(
+    full_scope: bool, tmp_path: Path
+) -> None:
+    from phydrax._meshcore import meshcore_identity
+    from phydrax.meshing._canonical import _accept_native_construction, _NATIVE_PROVIDER
+    from phydrax.meshing._certification_inputs import validate_fidelity_witnesses
+    from phydrax.meshing._model_codec import (
+        read_model_artifact,
+        restore_model_archive_value,
+    )
+
+    domain, surface = _cad_surface()
+    source = NativeCadVolumeSource(domain, surface, maximum_deviation=0.1, boundary="fixed")
+    all_ids = np.asarray(domain.scope_entity_ids(2), dtype=np.int64)
+    selected = all_ids if full_scope else all_ids[:1]
+
+    def scope(ids: np.ndarray) -> MeshingScope:
+        return MeshingScope(
+            domain.source_id, domain.source_revision, MeshingEntityKind.GEOMETRY,
+            2, domain.scope_entity_set_id(2), ids,
+        )
+    feature = ProtectedFeature(scope(selected), FeatureKind.SURFACE, maximum_deviation=0.05)
+
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+        scope(all_ids),
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(),
+        protected_features=(feature,),
+        region_seeds=(
+            RegionSeed(
+                np.asarray((0.5, 0.5, 0.5), dtype=np.float64),
+                domain.regions[0].name, "solid-material", RegionRole.SOLID,
+            ),
+        ),
+        maximum_deviation=0.05,
+    )
+    options = NativeMeshingOptions(
+        "cad_tetrahedral",
+        volume_schedule=NativeVolumeSchedule(radius_edge_bound=8.0, minimum_dihedral_degrees=0.0),
+    )
+    construction = prepare_native_cad_volume(
+        source, specification, options, phx.SpatialCoordinateContract.si()
+    ).execute()
+    result = _accept_native_construction(
+        construction, specification, _NATIVE_PROVIDER, meshcore_identity(),
+        "scope-golden-plan", "cad_tetrahedral",
+    )
+    report = result.certification
+    assert report is not None and report.fidelity is not None and report.passed
+    primary_candidate = construction.certification.fidelity_witness
+    assert isinstance(primary_candidate, SourceBoundaryChartWitness)
+    distinct_primary = MeshingDomainBoundarySource(
+        copy(domain), tuple(range(len(domain.patches)))
+    )
+    old_query, old_witness = cad_volume._cad_surface_feature_witness(
+        domain, feature, primary_candidate, distinct_primary
+    )
+    old_request = replace(
+        construction.certification, scoped_fidelity=((old_query, old_witness, 0.05),)
+    )
+    old_result = _accept_native_construction(
+        replace(construction, certification=old_request),
+        specification,
+        _NATIVE_PROVIDER,
+        meshcore_identity(),
+        "scope-golden-plan",
+        "cad_tetrahedral",
+    )
+    assert old_result.certification is not None
+    assert result.result_id == old_result.result_id
+    assert report.report_id == old_result.certification.report_id
+    primary = report.inputs.fidelity_witness
+    query, scoped_witness, _ = report.inputs.scoped_fidelity[0]
+    assert isinstance(primary, SourceBoundaryChartWitness)
+    assert isinstance(scoped_witness, SourceBoundaryChartWitness)
+    assert isinstance(query, MeshingDomainBoundarySource)
+    expected_entities = {
+        domain.source_entity_key_for_scope(2, int(identifier))
+        for identifier in selected
+    }
+    assert set(zip(scoped_witness.source_entity_ids, scoped_witness.occurrence_paths, strict=True)) == expected_entities
+    assert scoped_witness.source_query_id == query.source_scope_id
+    if full_scope:
+        assert scoped_witness.witness_id == primary.witness_id
+        assert report.scoped_fidelity[0].certificate_id == report.fidelity.certificate_id
+        nondefault = (
+            MeshingDomainBoundarySource(
+                domain, tuple(range(len(domain.patches))), resolution=12
+            ),
+            MeshingDomainBoundarySource(
+                domain, tuple(range(len(domain.patches))),
+                boundary_occurrences=np.zeros((1, 3, 3), dtype=np.int32),
+                boundary_cell_ids=np.asarray([0], dtype=np.int64),
+                boundary_patch_ids=np.asarray([0], dtype=np.int32),
+            ),
+        )
+        for candidate in nondefault:
+            assert candidate.source_scope_id == query.source_scope_id
+            restricted_query, restricted_witness = cad_volume._cad_surface_feature_witness(
+                domain, feature, primary_candidate, candidate
+            )
+            assert restricted_query.resolution == 48
+            assert restricted_query.boundary_occurrences is None
+            assert restricted_query.boundary_cell_ids is None
+            assert restricted_query.boundary_patch_ids is None
+            assert restricted_witness.witness_id == primary.witness_id
+        forged = eqx.tree_at(lambda value: value.orientations, primary, -primary.orientations)
+        with pytest.raises(ValueError):
+            validate_fidelity_witnesses(
+                result.mesh, result.geometry, report.inputs.source, primary,
+                ((query, forged, 0.05),),
+            )
+    else:
+        assert scoped_witness.witness_id != primary.witness_id
+        assert report.scoped_fidelity[0].certificate_id != report.fidelity.certificate_id
+
+    path = tmp_path / "cad-scoped.phx"
+    write_model_artifact(path, result, limits=None)
+    restored = read_model_artifact(
+        path, expected_type=CellMeshingResult,
+        restore=restore_model_archive_value, limits=None,
+    )
+    assert restored.result_id == result.result_id
+
+    model = domain.brep_authority
+    assert isinstance(model, BRepModel)
+    projection = phx.geometry.prepare_brep_projection(model)
+    vertex_set = result.mesh.entity_set(0).entity_set_id
+    association = next(value for value in result.associations if value.target_entity_set_id == vertex_set)
+    curved = phx.meshing.curve_cell_mesh(
+        result.mesh, association, projection,
+        policy=phx.meshing.HighOrderCurvingPolicy(degree=2),
+        source_result=result,
+    )
+    assert curved.cell_result is not None
+    old_association = next(
+        value for value in old_result.associations if value.target_entity_set_id == vertex_set
+    )
+    old_curved = phx.meshing.curve_cell_mesh(
+        old_result.mesh, old_association, projection,
+        policy=phx.meshing.HighOrderCurvingPolicy(degree=2),
+        source_result=old_result,
+    )
+    assert old_curved.cell_result is not None
+    assert curved.result_id == old_curved.result_id
+    assert curved.cell_result.result_id == old_curved.cell_result.result_id
+    curved_report = curved.cell_result.certification
+    assert curved_report is not None and curved_report.fidelity is not None
+    curved_query, curved_witness, _ = curved_report.inputs.scoped_fidelity[0]
+    assert isinstance(curved_witness, SourceBoundaryChartWitness)
+    assert isinstance(curved_query, MeshingDomainBoundarySource)
+    assert set(zip(curved_witness.source_entity_ids, curved_witness.occurrence_paths, strict=True)) == expected_entities
+    assert curved_witness.source_query_id == curved_query.source_scope_id
+    if full_scope:
+        assert curved_report.scoped_fidelity[0].certificate_id == curved_report.fidelity.certificate_id
+    else:
+        assert curved_report.scoped_fidelity[0].certificate_id != curved_report.fidelity.certificate_id
 
 
 def test_native_cad_region_control_identity_is_preserved_in_boundary_evidence() -> None:
