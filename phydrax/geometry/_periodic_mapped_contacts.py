@@ -242,6 +242,9 @@ def certify_periodic_mapped_contacts(
     piece_filter = _VolumePieceFilter.prepare(mesh, base, base_simplices)
     base_key_ids = key_ids.copy()
     findings: list[tuple[str, tuple[int, ...], str]] = []
+    # A cell meets its neighbors across several pair worksets and lattice
+    # images; a renewed workset keeps only its per-cell exact controls.
+    cache = StratumSubdivisionCache()
     for image in actions:
         if not isinstance(image, tuple):
             raise TypeError("Lattice image must have integer exponents.")
@@ -357,7 +360,7 @@ def certify_periodic_mapped_contacts(
                     cleared, piece_certificates = piece_filter.certify(left, right)
                     left, right = left[~cleared], right[~cleared]
             shadows = {}
-            cache = StratumSubdivisionCache()
+            cache = cache.renewed()
             residual_cache = {}
             trace_cache: dict[
                 tuple[int, tuple[int, ...]], tuple[Expression, ...] | None
@@ -367,7 +370,7 @@ def certify_periodic_mapped_contacts(
             ):
                 if pair_offset and pair_offset % 64 == 0:
                     shadows = {}
-                    cache = StratumSubdivisionCache()
+                    cache = cache.renewed()
                     residual_cache = {}
                     trace_cache.clear()
                 i, j = int(left_row), int(right_row)
