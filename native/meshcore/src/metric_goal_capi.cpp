@@ -62,4 +62,57 @@ int32_t phx_mc_metric_survivor_goals(int64_t point_count, const double* points,
   });
 }
 
+int32_t phx_mc_metric_hull_frame(int32_t corner_count, const double* corners, double* basis,
+                                 double* projector, int32_t* rank) {
+  if (!(corner_count == 2 || corner_count == 3) || corners == nullptr || basis == nullptr ||
+      projector == nullptr || rank == nullptr) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  const phx::mc::GradualNearestScope mode;
+  if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+  double vectors[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+  double result[9];
+  *rank = phx::mc::metric::hull_frame(corner_count, corners, vectors, result);
+  for (std::size_t index = 0; index < 6; ++index) basis[index] = vectors[index];
+  for (std::size_t index = 0; index < 9; ++index) projector[index] = result[index];
+  return PHX_MC_OK;
+}
+
+int32_t phx_mc_metric_project_goals(int64_t count, const double* goals, const double* origin,
+                                    const double* projector, double* projected) {
+  if (!addressable(count, 3, sizeof(double)) || origin == nullptr || projector == nullptr ||
+      (count > 0 && (goals == nullptr || projected == nullptr))) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  const phx::mc::GradualNearestScope mode;
+  if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+  phx::mc::metric::project_goals(count, goals, origin, projector, projected);
+  return PHX_MC_OK;
+}
+
+int32_t phx_mc_metric_relocation_pulls(int64_t neighbor_count, const double* points,
+                                       const double* metric, const double* lengths,
+                                       const int8_t* measured, int32_t deep, int32_t interior,
+                                       int32_t basis_count, const double* basis,
+                                       const double* projector, const double* jacobian,
+                                       int64_t capacity, double* pulls, int64_t* count) {
+  if (!addressable(neighbor_count, 3, sizeof(double)) || neighbor_count < 1 ||
+      !addressable(capacity, 3, sizeof(double)) || points == nullptr || metric == nullptr ||
+      lengths == nullptr || measured == nullptr || count == nullptr ||
+      (capacity > 0 && pulls == nullptr) || basis_count < 0 || basis_count > 3 ||
+      (jacobian != nullptr && (basis_count == 0 || basis == nullptr))) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  const phx::mc::GradualNearestScope mode;
+  if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+  return phx::mc::guarded([&]() -> int32_t {
+    const std::int64_t written = phx::mc::metric::relocation_pulls(
+        neighbor_count, points, metric, lengths, measured, deep != 0, interior != 0, basis_count,
+        basis, projector, jacobian, capacity, pulls);
+    if (written < 0) return PHX_MC_CAPACITY_EXCEEDED;
+    *count = written;
+    return PHX_MC_OK;
+  });
+}
+
 }  // extern "C"

@@ -26,11 +26,14 @@ from .._meshcore import (
     IntervalBoxProgram,
     metric_band_quanta,
     metric_congruence_defects,
+    metric_hull_frame,
     metric_interpolations,
     metric_lengths,
     metric_logarithms,
     metric_midpoints,
+    metric_project_goals,
     metric_relative_determinants,
+    metric_relocation_pulls,
     metric_survivor_goals,
     metric_tensor_properties,
     metric_tetra_quality,
@@ -108,6 +111,9 @@ _SEED_STEPS = np.arange(_SPLIT_PARAMETER_BITS + 1, dtype=np.int64)
 _GOAL_STEPS = np.arange(_GOAL_BLOCK, dtype=np.int64)
 _SEED_STEPS.setflags(write=False)
 _GOAL_STEPS.setflags(write=False)
+# An interior vertex moves along the coordinate axes.
+_AXES = np.eye(3, dtype=np.float64)
+_AXES.setflags(write=False)
 # The 24 bytes of one binary64 goal: goals are equal exactly when these are.
 _GOAL_KEY = np.dtype((np.void, 24))
 _TETRA_EDGE_CORNERS = tuple(combinations(range(4), 2))
@@ -494,10 +500,11 @@ class _NativeState:
     # by their ordered source vertex IDs (``_quantized_relocation_candidates``):
     # a pure function of the immutable source, built once per adaptation.
     source_supports: dict[tuple[int, ...], _SourceSupport] = field(default_factory=dict)
-    # Floating projection frames depend only on the same immutable source.
-    source_projections: dict[tuple[int, ...], tuple[np.ndarray, np.ndarray]] = field(
-        default_factory=dict
-    )
+    # Corners, projector and orthonormal basis of a carrier's affine hull:
+    # kernel values that depend only on the same immutable source.
+    source_projections: dict[
+        tuple[int, ...], tuple[np.ndarray, np.ndarray, np.ndarray]
+    ] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -6501,10 +6508,14 @@ def _implicit_tangent_pulls(
         return pulls[:0]
     # Scaling before the midpoint avoids overflow and preserves tiny gradients.
     normal = 0.5 * (gradient_lower / scale) + 0.5 * (gradient_upper / scale)
-    norm_squared = float(normal @ normal)
+    # Three-term sums in coordinate order: each a binary64 value of its own.
+    norm_squared = float(
+        normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]
+    )
     if norm_squared == 0.0:
         return pulls[:0]
-    return pulls - ((pulls @ normal) / norm_squared)[:, None] * normal
+    along = pulls[:, 0] * normal[0] + pulls[:, 1] * normal[1] + pulls[:, 2] * normal[2]
+    return pulls - (along / norm_squared)[:, None] * normal
 
 
 def _relocation_goals(
@@ -6989,52 +7000,6 @@ def _screen_relocation_batch_group(
         offset = end
 
 
-def _band_tangents(
-    directions: np.ndarray, normals: np.ndarray, lengths: np.ndarray, pairs: bool, /
-) -> np.ndarray:
-    """Deep relocation tangents, per pull in ``directions`` order.
-
-    For each pull: ``pull - (pull.n / n.n) n`` for every band constraint
-    normal ``n`` (in order) the pull pushes across the band, then, with
-    ``pairs`` (interior vertices), ``(pull.t / t.t) t`` for every nonzero
-    cross product ``t`` of two normals (in ``combinations`` order). Each dot
-    product is a stacked binary64 matrix product, the per-pair kernel of the
-    one-vector ``@``.
-    """
-
-    def dots(first: np.ndarray, second: np.ndarray) -> np.ndarray:
-        return np.matmul(first[:, None, None, :], second[None, :, :, None])[:, :, 0, 0]
-
-    def squares(vectors: np.ndarray) -> np.ndarray:
-        return np.matmul(vectors[:, None, :], vectors[:, :, None])[:, 0, 0]
-
-    squared = squares(normals)
-    components = dots(directions, normals)
-    # The normal points toward the neighbor: positive motion shortens its
-    # spoke, negative motion lengthens it.
-    crosses_band = ((lengths < 1.0) & (components > 0.0)) | (
-        (lengths > 1.0) & (components < 0.0)
-    )
-    candidates = [
-        directions[:, None, :]
-        - (components / np.where(squared > 0.0, squared, 1.0))[:, :, None] * normals[None]
-    ]
-    admitted = [crosses_band & (squared > 0.0)]
-    if pairs:
-        left, right = np.triu_indices(normals.shape[0], k=1)
-        crossed = np.cross(normals[left], normals[right])
-        crossed_squared = squares(crossed)
-        positive = crossed_squared > 0.0
-        candidates.append(
-            (dots(directions, crossed) / np.where(positive, crossed_squared, 1.0))[
-                :, :, None
-            ]
-            * crossed[None]
-        )
-        admitted.append(np.broadcast_to(positive, (directions.shape[0], positive.size)))
-    return np.concatenate(candidates, axis=1)[np.concatenate(admitted, axis=1)]
-
-
 def _relocation_proposals(
     state: _NativeState,
     cache: dict[int, _RelocationSearch | None],
@@ -7199,19 +7164,12 @@ def _relocation_proposals(
             else metric_lengths(local_points, local_metrics, spokes)
         )
         before_band = _band_violations(lengths[measured])
-        forces = (1.0 - 1.0 / lengths)[:, None] * (local_points[1:] - local_points[0])
         outside = measured & ((lengths < _LOWER) | (lengths > _UPPER))
-        # A mean spring can cancel at a non-unit equilibrium. Individual
-        # offending spokes provide descent directions even there; acceptance
-        # still checks the entire star and the same global potential.
-        mean_pull = np.mean(forces, axis=0)[None, :]
-        pulls = np.concatenate(
-            (forces[outside], mean_pull) if deep else (mean_pull, forces[outside])
-        )
         before = prepared.qualities[star_rows]
         # The carrier simplices are coplanar (one facet) or collinear (one
         # curve or segment): the first spans their affine hull.
         corners = projection = None
+        basis = _AXES
         if simplices is not None:
             simplex = simplices[0]
             frame = state.source_projections.get(simplex)
@@ -7219,32 +7177,24 @@ def _relocation_proposals(
                 corners = source_coordinates[
                     [state.source_vertex_rows[v] for v in simplex]
                 ]
-                span = (corners[1:] - corners[0]).T
-                projection = (
-                    span
-                    @ np.linalg.lstsq(span, np.eye(3, dtype=np.float64), rcond=None)[0]
-                )
-                corners.setflags(write=False)
-                projection.setflags(write=False)
-                frame = corners, projection
+                basis, projection = metric_hull_frame(corners)
+                for array in (corners, projection, basis):
+                    array.setflags(write=False)
+                frame = corners, projection, basis
                 state.source_projections[simplex] = frame
-            corners, projection = frame
+            corners, projection, basis = frame
         frames = state.source_supports
         images: _CarrierCache = {}
+        jacobian = None
         if deep and np.any(outside) and not constant_metric:
             # A varying tensor changes with the vertex. Finite differences
-            # propose directions only; exact ancestry and the full objective
-            # below still decide whether a move is admissible.
-            basis = (
-                np.eye(3)
-                if corners is None
-                else np.linalg.qr((corners[1:] - corners[0]).T, mode="reduced")[0]
-            )
+            # along the carrier's basis propose directions only; exact ancestry
+            # and the full objective below still decide whether a move is
+            # admissible.
             scale = max(float(np.max(np.abs(local_points))), 1.0)
-            step = np.sqrt(np.finfo(np.float64).eps) * scale
+            step = sqrt(np.finfo(np.float64).eps) * scale
             derivatives = []
-            for axis in range(basis.shape[1]):
-                direction = basis[:, axis]
+            for direction in basis:
                 derivative = None
                 for sign in (1.0, -1.0):
                     trial = points[row] + sign * step * direction
@@ -7254,7 +7204,12 @@ def _relocation_proposals(
                     if located is None:
                         continue
                     trial_stencil, carrier = located
-                    displacement = float((carrier - points[row]) @ direction)
+                    moved = carrier - points[row]
+                    displacement = float(
+                        moved[0] * direction[0]
+                        + moved[1] * direction[1]
+                        + moved[2] * direction[2]
+                    )
                     if displacement == 0.0:
                         continue
                     trial_metric = _source_metric_from_stencil(
@@ -7272,60 +7227,27 @@ def _relocation_proposals(
                     ) / displacement
                     break
                 derivatives.append(derivative)
-            if all(derivative is not None for derivative in derivatives):
+            if derivatives and all(derivative is not None for derivative in derivatives):
                 jacobian = np.stack(
                     [value for value in derivatives if value is not None], axis=0
                 )
-                # Move the entire star coherently toward the band, rather
-                # than following only one violating spoke. In-band spokes
-                # target their present lengths; the exact carrier and full
-                # star objective still decide whether this proposal is valid.
-                residual = np.clip(lengths[measured], _LOWER, _UPPER) - lengths[measured]
-                displacement = np.linalg.lstsq(
-                    jacobian[:, measured].T, residual, rcond=None
-                )[0]
-                joint_pull = basis @ displacement
-                gradient_pulls = (
-                    [joint_pull]
-                    if np.all(np.isfinite(joint_pull)) and np.any(joint_pull)
-                    else []
-                )
-                for index in np.flatnonzero(outside):
-                    direction = basis @ jacobian[:, index]
-                    norm = float(np.linalg.norm(direction))
-                    if norm > 0.0 and np.isfinite(norm):
-                        direction *= float(np.linalg.norm(forces[index])) / norm
-                        gradient_pulls.append(
-                            direction if lengths[index] < _LOWER else -direction
-                        )
-                if gradient_pulls:
-                    pulls = np.concatenate((np.asarray(gradient_pulls), pulls), axis=0)
-        if deep and np.any(outside):
-            # Work in the carrier's affine hull: a normal projected only
-            # after generating a tangent can point back into a long spoke.
-            normals = (local_points[1:] - local_points[0]) @ local_metrics[0]
-            directions = forces[outside]
-            if projection is not None:
-                projector = projection
-                normals = normals @ projector
-                directions = directions @ projector
-            active_rows = np.flatnonzero(measured)
-            # The closest band constraint is most likely to block the pull.
-            # This orders the complete set of tangent candidates; it does not
-            # discard more distant spokes.
-            margins = np.minimum(
-                np.abs(lengths[active_rows] - _LOWER),
-                np.abs(lengths[active_rows] - _UPPER),
-            )
-            active_rows = active_rows[np.argsort(margins, kind="stable")]
-            tangents = _band_tangents(
-                directions,
-                normals[active_rows],
-                lengths[active_rows],
-                corners is None,
-            )
-            if tangents.shape[0]:
-                pulls = np.concatenate((pulls, tangents), axis=0)
+        # Spring forces of the offending spokes and their mean (a mean spring
+        # can cancel at a non-unit equilibrium; the individual spokes still
+        # give descent directions), the coherent step and gradients of the
+        # measured lengths when the tensor varies, and for a deep search the
+        # tangents along the band constraints in the carrier's hull. They
+        # propose only: acceptance checks the entire star.
+        pulls = metric_relocation_pulls(
+            local_points,
+            local_metrics[0],
+            lengths,
+            measured,
+            deep=deep,
+            interior=corners is None,
+            basis=basis,
+            projector=projection,
+            jacobian=jacobian,
+        )
         if implicit_only and not periodic:
             tangent_pulls = _implicit_tangent_pulls(state, local_points[0], pulls)
             if tangent_pulls.shape[0]:
@@ -7376,12 +7298,7 @@ def _relocation_proposals(
             size = 0
             for goals in raw_goals:
                 if corners is not None and projection is not None:
-                    # A stacked matrix-vector product per row: the binary64
-                    # result of ``projection @ (goal - corners[0])``.
-                    goals = (
-                        corners[0]
-                        + np.matmul(projection, (goals - corners[0])[:, :, None])[:, :, 0]
-                    )
+                    goals = metric_project_goals(goals, corners[0], projection)
                 goals = np.ascontiguousarray(goals)
                 # Byte keys in first-occurrence order; a key is the exact
                 # binary64 goal, so new goals are rebuilt from their keys.

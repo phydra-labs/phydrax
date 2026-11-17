@@ -57,4 +57,47 @@ bool hull_projection(int corner_count, const double* corners, const double* goal
 void survivor_goals(std::int64_t count, const double* points, const double* metrics,
                     int corner_count, const double* corners, double* goals, bool* valid);
 
+// Frame of the affine hull of two or three corners (three values each): an
+// orthonormal basis of the edges from corner 0 (Gram-Schmidt in corner order,
+// the leading rows of `basis`) and the orthogonal projector onto their span,
+// the sum over the basis vectors in order of their outer products (row-major
+// 3x3, exactly symmetric; zero for a hull of one point). Returns the number
+// of basis vectors, the dimension of the hull.
+int hull_frame(int corner_count, const double* corners, double* basis,
+               double* projector) noexcept;
+
+// origin + P (goal - origin) for `count` goals: each coordinate is the sum,
+// in column order, of three products added to the origin.
+void project_goals(std::int64_t count, const double* goals, const double* origin,
+                   const double* projector, double* projected) noexcept;
+
+// Pulls of a relocation: displacements of vertex 0 of a star that would
+// bring its spokes toward the band. `points` holds the vertex and then its
+// `count` neighbors, `metric` the tensor at the vertex, `lengths` the metric
+// lengths of the spokes and `measured` which of them count. A spoke is
+// outside when it is measured and its length is outside the band. In order:
+//   gradient pulls (with `jacobian`, the derivatives of the spoke lengths
+//     along the `basis_count` basis vectors, row-major basis_count x count,
+//     for a deep search with an outside spoke): the minimum-norm
+//     least-squares step that moves every measured spoke to the band (or
+//     keeps it), if it is not zero; then for every outside spoke the
+//     gradient direction of its length, scaled to the size of its force and
+//     pointing to shorten a long spoke and lengthen a short one;
+//   the spring forces (1 - 1/l) (p_j - p_0) of the outside spokes and their
+//     mean over all spokes: forces first for a deep search, mean first else;
+//   tangents (deep search with an outside spoke): for every outside force,
+//     projected by `projector` when given, its part orthogonal to each band
+//     normal (p_j - p_0)^T M (projected likewise) it pushes across the band,
+//     the measured spokes ordered by their distance to the band edges; then,
+//     for an `interior` vertex, its part along each nonzero cross product of
+//     two such normals.
+// A pull with a component that is not finite proposes nothing and is left
+// out. Returns the number of pulls written to `pulls` (three values each),
+// or -1 when `capacity` pulls do not hold them. May throw std::bad_alloc.
+std::int64_t relocation_pulls(std::int64_t count, const double* points, const double* metric,
+                              const double* lengths, const std::int8_t* measured, bool deep,
+                              bool interior, int basis_count, const double* basis,
+                              const double* projector, const double* jacobian,
+                              std::int64_t capacity, double* pulls);
+
 }  // namespace phx::mc::metric

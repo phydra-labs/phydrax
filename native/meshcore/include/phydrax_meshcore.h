@@ -961,6 +961,45 @@ PHX_MC_API int32_t phx_mc_metric_midpoints(
 PHX_MC_API int32_t phx_mc_metric_survivor_goals(
     int64_t point_count, const double* points, const double* metrics, int32_t corner_count,
     const double* corners, double* goals, int8_t* valid);
+/* Frame of the affine hull of two or three corners (three values each):
+ * basis holds *rank orthonormal vectors (two rows of three values; unused
+ * rows are zero) spanning the edges from corner 0, by Gram-Schmidt in corner
+ * order, and projector (row-major 3x3, exactly symmetric) the orthogonal
+ * projector onto them. */
+PHX_MC_API int32_t phx_mc_metric_hull_frame(int32_t corner_count, const double* corners,
+                                            double* basis, double* projector, int32_t* rank);
+/* projected[r] = origin + projector (goals[r] - origin) for count goals. */
+PHX_MC_API int32_t phx_mc_metric_project_goals(int64_t count, const double* goals,
+                                               const double* origin, const double* projector,
+                                               double* projected);
+/* Pulls of a relocation of vertex 0 of a star: displacements that would bring
+ * its spokes toward the length band. points holds the vertex and then its
+ * neighbor_count neighbors, metric the tensor at the vertex, lengths the
+ * metric lengths of the spokes and measured which of them count; a spoke is
+ * outside when it is measured and its length is outside the band. Written in
+ * this order, three values each:
+ *   - with jacobian (derivatives of the spoke lengths along the basis_count
+ *     vectors of basis, row-major basis_count x neighbor_count), for a deep
+ *     search with an outside spoke: the minimum-norm least-squares step that
+ *     moves every measured spoke to the band, if it is not zero; then for each
+ *     outside spoke the gradient direction of its length, scaled to the size
+ *     of its force and pointing to shorten a long spoke, lengthen a short one;
+ *   - the spring forces (1 - 1/l) (p_j - p_0) of the outside spokes and their
+ *     mean over all spokes: the forces first for a deep search, else the mean;
+ *   - for a deep search with an outside spoke, for each outside force
+ *     (projected by projector when it is not null): its part orthogonal to
+ *     each band normal (p_j - p_0)^T M (projected likewise) it pushes across
+ *     the band, measured spokes ordered by their distance to the band edges;
+ *     then, for an interior vertex, its part along each nonzero cross product
+ *     of two such normals.
+ * A pull with a component that is not finite is left out. *count is the
+ * number written; PHX_MC_CAPACITY_EXCEEDED when capacity pulls do not hold
+ * them (pulls is then unspecified). */
+PHX_MC_API int32_t phx_mc_metric_relocation_pulls(
+    int64_t neighbor_count, const double* points, const double* metric, const double* lengths,
+    const int8_t* measured, int32_t deep, int32_t interior, int32_t basis_count,
+    const double* basis, const double* projector, const double* jacobian, int64_t capacity,
+    double* pulls, int64_t* count);
 /* Gates of a metric field on the deterministic kernels: the same verdict for
  * the same input on every platform.
  *
