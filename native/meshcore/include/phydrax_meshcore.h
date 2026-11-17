@@ -890,9 +890,11 @@ PHX_MC_API int32_t phx_mc_metric_logarithms(int64_t count, const double* metrics
  * support[offsets[r] .. offsets[r + 1]) (rows of the source bank, at least
  * one per row, with weights at the same positions), summed in support order.
  * A support whose tensors all compare equal returns its first tensor
- * unchanged. source_logarithms holds the bank's logarithms, or is null to
- * evaluate them per row. valid[r] is 0, with a zero row, when a logarithm
- * fails or the mean is not finite. */
+ * unchanged, once that tensor has a logarithm. source_logarithms holds the
+ * bank's logarithms, or is null to evaluate them per row; supplied
+ * logarithms are taken as those of the bank and its tensors are then not
+ * examined again. valid[r] is 0, with a zero row, when a logarithm fails or
+ * the mean is not finite. */
 PHX_MC_API int32_t phx_mc_metric_interpolate(
     int64_t row_count, const int64_t* offsets, const int64_t* support, const double* weights,
     int64_t source_count, const double* source_metrics, const double* source_logarithms,

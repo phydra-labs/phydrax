@@ -115,7 +115,8 @@ def test_recorded_interpolations_are_log_euclidean_means() -> None:
         accepted = row[9]
         result = _values(row[10:]).reshape((3, 3))
         samples = metrics[support]
-        if np.all(samples == samples[0]):
+        if np.all(samples == samples[0]) and valid[support[0]]:
+            # A constant field of a metric is returned unchanged.
             assert accepted == 1
             assert result.tobytes() == samples[0].tobytes()
             constants += 1
@@ -135,7 +136,7 @@ def test_recorded_interpolations_are_log_euclidean_means() -> None:
             means += 1
     assert means > 25
     assert constants == 3
-    assert refused == 3
+    assert refused == 7
 
 
 def test_recorded_lengths_are_logarithmic_means_of_the_end_lengths() -> None:

@@ -9683,10 +9683,13 @@ def metric_interpolations(
 
     Row ``r`` averages the source rows ``support[offsets[r]:offsets[r + 1]]``
     with the weights at the same positions, summed in that order. A support
-    whose tensors are all equal returns its first tensor unchanged.
-    ``source_logarithms`` are the logarithms of ``source_metrics``, or ``None``
-    to evaluate them per row. The flag of a row is false, and the row zero,
-    when a support tensor is not a metric or the mean is not finite.
+    whose tensors are all equal returns its first tensor unchanged, once that
+    tensor is a metric. ``source_logarithms`` are the logarithms of
+    ``source_metrics``, or ``None`` to evaluate them per row; supplied
+    logarithms are taken as those of the bank, whose tensors are then not
+    examined again. The flag of a row is false, and the row zero, when a
+    support tensor has no logarithm (it is not a metric) or the mean is not
+    finite.
     """
     sources = _metric_tensors(source_metrics, "source_metrics")
     row_offsets = np.ascontiguousarray(offsets, dtype=np.int64)

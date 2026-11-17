@@ -99,6 +99,10 @@ bool interpolate(std::int64_t count, const double* weights, const double* metric
     }
   }
   if (constant) {
+    // A constant field is a fixed point of the mean: its tensor is returned
+    // unchanged, once the kernel finds it a metric as it would for the mean.
+    double unused[9];
+    if (!logarithm(metrics, unused)) return false;
     for (std::size_t index = 0; index < 9; ++index) metric[index] = metrics[index];
     return true;
   }
