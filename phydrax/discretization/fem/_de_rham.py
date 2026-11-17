@@ -1518,8 +1518,8 @@ def _periodic_entity_coordinate_maps(
                 raise ValueError("Form entity charts and moment groups disagree.")
             orbit = orbit_maps[entity_degree]
             ordered_level = ordered_vertices[entity_degree]
-            corner_offsets = np.asarray(orbit.corner_permutation_offsets, dtype=np.int64)
-            if corner_offsets.shape != (len(ordered_level) + 1,):
+            corner_rows = orbit.corner_permutation_rows()
+            if len(corner_rows) != len(ordered_level):
                 raise ValueError("Periodic corner permutations do not match entity rows.")
             for cell_row in range(cells.shape[0]):
                 cell = tuple(
@@ -1543,9 +1543,7 @@ def _periodic_entity_coordinate_maps(
                     entity_vertices = tuple(
                         int(value) for value in ordered_level[entity_row]
                     )
-                    entity_permutation = np.asarray(
-                        orbit.corner_permutation_row(entity_row), dtype=np.int64
-                    )
+                    entity_permutation = corner_rows[entity_row]
                     if (
                         entity_permutation.shape != (len(entity_vertices),)
                         or set(entity_vertices) != set(local_vertex_rows)
@@ -1566,10 +1564,7 @@ def _periodic_entity_coordinate_maps(
                     representative_vertices = tuple(
                         int(value) for value in ordered_level[representative_row]
                     )
-                    representative_permutation = np.asarray(
-                        orbit.corner_permutation_row(representative_row),
-                        dtype=np.int64,
-                    )
+                    representative_permutation = corner_rows[representative_row]
                     if representative_permutation.shape != (
                         len(representative_vertices),
                     ):

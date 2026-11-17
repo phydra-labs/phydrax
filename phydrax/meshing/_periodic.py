@@ -967,16 +967,18 @@ class PeriodicEntityOrbitMap(StrictModule, NonTrainableState):
             }
         )
 
-    def corner_permutation_row(self, row: int, /) -> np.ndarray:
-        """Return the unpadded lifted-local corner order for one entity row."""
-        if isinstance(row, bool) or not isinstance(row, (int, np.integer)):
-            raise TypeError("row must be one integer lifted-entity row.")
-        index = int(row)
-        offsets = np.asarray(self.corner_permutation_offsets, dtype=np.int64)
-        if not 0 <= index < offsets.size - 1:
-            raise ValueError("row is outside the lifted entity map.")
+    def corner_permutation_rows(self) -> tuple[np.ndarray, ...]:
+        """Return the unpadded lifted-local corner order of every entity row.
+
+        The stored tables are converted once; a caller indexes the returned
+        host rows instead of converting both tables for each entity.
+        """
+        offsets = np.asarray(self.corner_permutation_offsets, dtype=np.int64).tolist()
         values = np.asarray(self.corner_permutations, dtype=np.int32)
-        return values[int(offsets[index]) : int(offsets[index + 1])]
+        return tuple(
+            values[start:stop]
+            for start, stop in zip(offsets[:-1], offsets[1:], strict=True)
+        )
 
     def require_source(self, mesh: CellMesh, /) -> None:
         topology = mesh.periodic_topology if isinstance(mesh, CellMesh) else None
@@ -2904,13 +2906,16 @@ def require_periodic_geometry_face_maps(
         offset += block.cell_count
     orbits = np.asarray(orbit_map.lifted_to_quotient, dtype=np.int64)
     shifts = np.asarray(orbit_map.winding_shifts, dtype=np.int64)
+    corner_rows = orbit_map.corner_permutation_rows()
+    if len(corner_rows) != len(faces):
+        raise ValueError("Periodic corner permutations do not match face rows.")
     canonical: dict[int, tuple[Any, ...]] = {}
     for row, face in enumerate(faces):
         if len(face) not in (3, 4) or not incidences[row]:
             raise ValueError(
                 "Periodic face geometry requires incident triangle or quad faces."
             )
-        permutation = orbit_map.corner_permutation_row(row)
+        permutation = corner_rows[row]
         ordered = [int(face[int(index)]) for index in permutation]
         inverse = exact_periodic_element(topology.cell, -shifts[row])
         for cell_row, references in incidences[row]:
