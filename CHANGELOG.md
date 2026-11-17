@@ -251,6 +251,10 @@
 ### Changed
 - Cell validity prepares dyadic source-coordinate endpoints and point-rounding
   bounds in blocks while retaining exact fallback and unchanged certificate bits.
+- Boundary proofs reuse already evaluated exact facet lattice points within
+  the bounded live proof, preserving findings and evidence identities.
+- Embedding preparation reuses each simplex block's exact reference frame,
+  avoiding repeated affine solves without changing cell charts or identities.
 - Global embedding contact passes reuse exact stratum root nets only for the
   same live cell and exact stratum and residual; the table is discarded when
   the proof returns. Contact decisions and witness identities are unchanged.
@@ -899,6 +903,9 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Source preparations bind their cached artifacts to one live domain; rebuilt
+  domains use a fresh preparation. Domain-owned host arrays now have immutable
+  storage, so validated-domain reuse cannot be bypassed by enabling writes.
 - The error bound that lets a filtered geometric predicate report a certain
   sign formed an integer power through the platform `pow` with no margin. It
   is built by repeated multiplication rounded upward on the host and the
