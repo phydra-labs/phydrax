@@ -210,7 +210,7 @@ def _live_solver_executables() -> int:
     gc.collect()
     client = jax.devices()[0].client
     return sum(
-        executable.hlo_modules()[0].name == "jit_solve_native_conic_program"
+        "solve_native_conic" in executable.hlo_modules()[0].name
         for executable in client.live_executables()
     )
 
