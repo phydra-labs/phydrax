@@ -252,6 +252,12 @@
 - CAD source bounds, analytic surface derivatives, periodic offsets, and the
   quadratic tetrahedron screen execute supported interval programs in batches.
   Their directed endpoints and exact-arithmetic fallback remain unchanged.
+- Mapped-cell image boxes, compatible chart screens, exact lens Jacobians, and
+  determinant child restrictions now batch independent interval requests.
+  Previously successful bounds and pair-screen fallbacks are unchanged.
+  Zero-valued high-degree terms now canonicalize before simplex control
+  preparation, so formerly refused or exact-fallback cases may certify by
+  the interval route.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep

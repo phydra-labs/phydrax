@@ -30,6 +30,7 @@ from ..discretization._coordinate_enclosure import (
     polynomial_bounds,
     PreparedSimplexPolynomial,
     RationalPolynomial,
+    restricted_polynomial_batch_bounds,
     restricted_polynomial_bounds,
 )
 from ..discretization._exact_algebraic_geometry import coefficient_endpoint
@@ -5460,10 +5461,62 @@ def _curved_trim_lens_caps(
         exact_surface_coordinate_expressions,
     )
 
+    exact_surface = (
+        exact_surface_coordinate_expressions(surface)
+        if any(lens.parameter_bound != 0 for lens in lenses)
+        else None
+    )
     batched: dict[int, tuple[tuple[np.ndarray, np.ndarray] | None, ...]] = {}
-    if (
+    if not composed and exact_surface is not None:
+        rows: list[tuple[int, Triangle2]] = []
+        for index, lens in enumerate(lenses):
+            if lens.parameter_bound == 0:
+                continue
+            box = _curved_trim_lens_box(surface, lens)
+            if box is None:
+                break
+            lower, upper = box
+            rows.extend(
+                (
+                    (index, (lower, (upper[0], lower[1]), upper)),
+                    (index, (lower, upper, (lower[0], upper[1]))),
+                )
+            )
+        if rows:
+            corners = tuple(triangle for _, triangle in rows)
+            lower_bounds = np.empty((len(rows), 3, 2), dtype=np.float64)
+            upper_bounds = np.empty_like(lower_bounds)
+            valid = np.ones(len(rows), dtype=np.bool_)
+            for physical_axis, expression in enumerate(exact_surface):
+                for parameter in range(2):
+                    tangent = PreparedSimplexPolynomial(
+                        derivative(expression, parameter), 2
+                    )
+                    for row, (low, high) in enumerate(
+                        restricted_polynomial_batch_bounds(tangent, corners)
+                    ):
+                        if (
+                            not math.isfinite(low)
+                            or not math.isfinite(high)
+                            or low > high
+                        ):
+                            valid[row] = False
+                        lower_bounds[row, physical_axis, parameter] = low
+                        upper_bounds[row, physical_axis, parameter] = high
+            results: dict[int, list[tuple[np.ndarray, np.ndarray] | None]] = {}
+            for row, (index, triangle) in enumerate(rows):
+                bounds = (
+                    (lower_bounds[row], upper_bounds[row])
+                    if valid[row]
+                    else _exact_surface_jacobian_bounds(
+                        exact_surface, triangle, composed=True
+                    )
+                )
+                results.setdefault(index, []).append(bounds)
+            batched = {index: tuple(values) for index, values in results.items()}
+    elif (
         any(lens.parameter_bound != 0 for lens in lenses)
-        and exact_surface_coordinate_expressions(surface) is None
+        and exact_surface is None
         and preparation.surface_spans(surface) is None
         and (
             not _has_unexpanded_exact_surface_carrier(surface)

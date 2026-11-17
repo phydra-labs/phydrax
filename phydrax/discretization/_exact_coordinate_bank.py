@@ -113,7 +113,9 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
                         "A dense dyadic entry cannot be held in the sparse table."
                     )
             elif isinstance(value, RadicalElement):
-                canonical = canonical_exact_scalar(value, role="Exact coordinate bank entry")
+                canonical = canonical_exact_scalar(
+                    value, role="Exact coordinate bank entry"
+                )
                 if isinstance(canonical, Fraction):
                     raise ValueError(
                         "A rational radical cannot be held in the sparse table."
@@ -352,6 +354,30 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
         if not np.all(np.isfinite(result)):
             raise OverflowError("Exact coordinate is too large for binary64.")
         return result
+
+    def interval_endpoints(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """Outward binary64 endpoints, lifting exceptional exact entries only."""
+        from ._exact_algebraic_geometry import coefficient_endpoint
+
+        lower = self.binary64()
+        upper = lower.copy()
+        # Canonical odd dyadics with at most 53 bits and exponent >= -1074 are
+        # exactly representable. Wider, subnormal-underflowing, and sparse
+        # entries require the same directed scalar conversion as the proof path.
+        exceptional = (
+            (self._exponents == _SPARSE)
+            | (self._exponents < -1074)
+            | (np.abs(self._significands) > _BINARY64_EXACT)
+        )
+        width = self._shape[1]
+        for flat in np.flatnonzero(exceptional.reshape(-1)).tolist():
+            row, axis = divmod(flat, width)
+            value = self._entry(
+                flat, int(self._significands[row, axis]), int(self._exponents[row, axis])
+            )
+            lower[row, axis] = coefficient_endpoint(value, upper=False, saturate=True)
+            upper[row, axis] = coefficient_endpoint(value, upper=True, saturate=True)
+        return lower, upper
 
     def coefficient_payloads(
         self,

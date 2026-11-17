@@ -30,6 +30,7 @@ from phydrax._interpolation import _bspline_extraction as extraction
 from phydrax._meshcore import meshcore_available
 from phydrax.discretization import _coordinate_enclosure as enclosure
 from phydrax.discretization._exact_algebraic_geometry import coefficient_endpoint
+from phydrax.discretization._exact_coordinate_bank import ExactCoordinateBank
 from phydrax.geometry import _interval_enclosure as interval_enclosure
 
 
@@ -117,6 +118,39 @@ def test_interval_simplex_bounds_enclose_exact_restricted_controls(
         assert (exact[0] - lower) + (upper - exact[1]) <= 1e-10 * max(1.0, magnitude)
 
 
+@pytest.mark.parametrize("rational", (False, True))
+def test_simplex_restriction_batch_matches_singletons(
+    rational: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    generator = random.Random(301)
+    polynomial = _random_polynomial(generator, "simplex", 2, 3)
+    expression: enclosure.Expression = (
+        enclosure.RationalPolynomial(
+            polynomial, {(0, 0): Fraction(1), (1, 0): Fraction(1, 3)}
+        )
+        if rational
+        else polynomial
+    )
+    prepared = enclosure.PreparedSimplexPolynomial(expression, 2)
+    corners = tuple(
+        tuple(
+            tuple(Fraction(generator.randint(-8, 12), 15) for _ in range(2))
+            for _ in range(3)
+        )
+        for _ in range(25)
+    )
+    monkeypatch.setenv("PHX_MESHCORE_THREADS", "1")
+    singleton = np.asarray(
+        [enclosure.restricted_polynomial_bounds(prepared, row) for row in corners],
+        dtype=np.float64,
+    ).view(np.uint64)
+    monkeypatch.setenv("PHX_MESHCORE_THREADS", "4")
+    batch = np.asarray(
+        enclosure.restricted_polynomial_batch_bounds(prepared, corners), dtype=np.float64
+    ).view(np.uint64)
+    np.testing.assert_array_equal(batch, singleton)
+
+
 def test_interval_simplex_rational_bounds_contain_exact_controls() -> None:
     generator = random.Random(907)
     for _ in range(20):
@@ -200,7 +234,8 @@ def test_prepared_basis_bounds_enclose_exact_coordinate_combinations(
             basis,
             tuple(tuple(row[axis] for row in local) for axis in range(3)),
         )
-        bounds = prepared.bounds(local)
+        lower, upper = ExactCoordinateBank.from_rows(local).interval_endpoints()
+        bounds = prepared.batch_bounds(lower[None, ...], upper[None, ...])[0]
         assert bounds is not None
         for axis, (expression, (lower, upper), (inner_lower, inner_upper)) in enumerate(
             zip(combinations, bounds.outer, bounds.inner, strict=True)
@@ -276,7 +311,10 @@ def test_prepared_basis_oracle_detects_a_dropped_component(
         return result, result, result, result
 
     monkeypatch.setattr(enclosure, "interval_basis_bounds", dropped_term)
-    bounds = prepared.bounds(((Fraction(0),), (Fraction(2),)))
+    lower, upper = ExactCoordinateBank.from_rows(
+        ((Fraction(0),), (Fraction(2),))
+    ).interval_endpoints()
+    bounds = prepared.batch_bounds(lower[None, ...], upper[None, ...])[0]
     assert bounds is not None
     assert not (bounds.outer[0][0] <= 0.0 and 2.0 <= bounds.outer[0][1])
 

@@ -1329,7 +1329,10 @@ def test_random_rational_simplex_trace_matches_fraction_reference(order: int) ->
     for weights, values in rows:
         point = tuple(
             sum(
-                (weight * reference[axis] for weight, reference in zip(weights, references, strict=True)),
+                (
+                    weight * reference[axis]
+                    for weight, reference in zip(weights, references, strict=True)
+                ),
                 Fraction(0),
             )
             / order
@@ -1698,7 +1701,9 @@ def test_curved_cell_image_boxes_retain_interior_contact(
     )
     if fallback:
         monkeypatch.setattr(
-            _embedding_cells.PreparedIntervalBasis, "bounds", lambda self, local: None
+            _embedding_cells.PreparedIntervalBasis,
+            "batch_bounds",
+            lambda self, lower, upper: (None,) * len(lower),
         )
     cells = prepare_embedding_cells(mesh, geometry)
     first_point = (Fraction(1, 2), Fraction(3, 32))
@@ -2778,6 +2783,101 @@ def _curved_separated_image_boxes(
         source_mesh=mesh,
     )
     return mesh, geometry, prepare_embedding_cells(mesh, geometry)
+
+
+def test_mixed_image_boxes_are_independent_of_block_partition_and_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_mesh, base_geometry, _ = _curved_separated_image_boxes(Fraction(7, 6))
+    triangle_element = base_geometry.elements[0]
+    triangle_routes = np.asarray(base_geometry.geometry_dofs[0], dtype=np.int32)
+    quad_element = lagrange_element("quadrilateral", 1)
+    quad_vertices = np.asarray(
+        reference_cell_topology("quadrilateral").vertices, dtype=np.float64
+    ) + np.asarray((10.0, 0.0), dtype=np.float64)
+    quad_nodes = np.asarray(
+        [
+            tuple(float(value) for value in node.exact_point)
+            for node in lagrange_reference_node_data(quad_element)
+            if node.exact_point is not None
+        ],
+        dtype=np.float64,
+    ) + np.asarray((10.0, 0.0), dtype=np.float64)
+    coordinates = np.concatenate((np.asarray(base_geometry.coordinates), quad_nodes))
+    bank = tuple(
+        tuple(rational_coefficient(value, role="image coordinate") for value in row)
+        for row in base_geometry.source_coordinates()
+    ) + tuple(tuple(Fraction(float(value)) for value in row) for row in quad_nodes)
+
+    def prepare(
+        groups: tuple[tuple[int, ...], ...], reverse: bool
+    ) -> dict[int, np.ndarray]:
+        blocks = []
+        elements = {}
+        routes = {}
+        for index, group in enumerate(groups):
+            name = f"triangles-{index}"
+            selected = np.asarray(group, dtype=np.int32)
+            blocks.append(
+                CellBlock(
+                    name,
+                    "triangle",
+                    np.asarray(base_mesh.blocks[0].vertices)[selected],
+                    global_ids=np.asarray([100 + row for row in group], dtype=np.int64),
+                )
+            )
+            elements[name] = triangle_element
+            routes[name] = triangle_routes[selected]
+        if reverse:
+            blocks.reverse()
+        blocks.append(
+            CellBlock(
+                "quad",
+                "quadrilateral",
+                np.asarray(((6, 7, 8, 9),), dtype=np.int32),
+                global_ids=np.asarray((102,), dtype=np.int64),
+            )
+        )
+        elements["quad"] = quad_element
+        routes["quad"] = np.arange(
+            len(bank) - len(quad_nodes), len(bank), dtype=np.int32
+        )[None, :]
+        mesh = CellMesh(
+            np.concatenate((np.asarray(base_mesh.coordinates), quad_vertices)),
+            tuple(blocks),
+        )
+        geometry = CellGeometrySpec(
+            elements,
+            routes,
+            coordinates,
+            source_map=_ExactImageSource(bank),
+            source_mesh=mesh,
+        )
+        return {
+            cell.global_id: np.asarray(
+                (
+                    *cell.image_lower,
+                    *cell.image_upper,
+                    *(
+                        value
+                        for pair in (cell.image_inner_bounds or ())
+                        for value in pair
+                    ),
+                ),
+                dtype=np.float64,
+            ).view(np.uint64)
+            for cell in prepare_embedding_cells(mesh, geometry)
+        }
+
+    monkeypatch.setenv("PHX_MESHCORE_THREADS", "1")
+    block = prepare(((0, 1),), False)
+    split = prepare(((0,), (1,)), True)
+    monkeypatch.setenv("PHX_MESHCORE_THREADS", "4")
+    reordered = prepare(((1, 0),), True)
+    assert block.keys() == split.keys() == reordered.keys()
+    for cell_id in block:
+        np.testing.assert_array_equal(block[cell_id], split[cell_id])
+        np.testing.assert_array_equal(block[cell_id], reordered[cell_id])
 
 
 @pytest.mark.parametrize("periodic", (False, True))

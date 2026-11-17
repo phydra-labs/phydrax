@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from phydrax.discretization._exact_algebraic_geometry import (
+    coefficient_endpoint,
     coefficient_payload,
     RadicalElement,
 )
@@ -42,6 +43,31 @@ def test_bank_packs_dyadics_densely_and_keeps_other_scalars_sparse() -> None:
     assert bank.coefficient_payloads() == tuple(
         tuple(coefficient_payload(value) for value in row) for row in rows
     )
+
+
+def test_interval_endpoints_match_directed_exact_coefficients() -> None:
+    values = (
+        (Fraction(0), Fraction(3, 8), Fraction(1, 3)),
+        (Fraction(2**53 + 1, 2**53), Fraction(1, 2**1075), Fraction(-1, 2**1075)),
+        (RadicalElement.sqrt(Fraction(2)), Fraction(-7, 8), Fraction(2**60 + 1)),
+    )
+    lower, upper = ExactCoordinateBank.from_rows(values).interval_endpoints()
+    expected_lower = np.asarray(
+        [
+            [coefficient_endpoint(value, upper=False, saturate=True) for value in row]
+            for row in values
+        ],
+        dtype=np.float64,
+    )
+    expected_upper = np.asarray(
+        [
+            [coefficient_endpoint(value, upper=True, saturate=True) for value in row]
+            for row in values
+        ],
+        dtype=np.float64,
+    )
+    np.testing.assert_array_equal(lower.view(np.uint64), expected_lower.view(np.uint64))
+    np.testing.assert_array_equal(upper.view(np.uint64), expected_upper.view(np.uint64))
 
 
 def test_bank_equality_hash_and_immutability_are_canonical() -> None:
@@ -221,7 +247,9 @@ def test_binary64_bank_exact_rows_match_random_finite_bits() -> None:
     values[~np.isfinite(values)] = 0.0
     matrix = values.reshape(-1, 3)
     bank = ExactCoordinateBank.from_binary64(matrix)
-    expected = tuple(tuple(Fraction.from_float(float(value)) for value in row) for row in matrix)
+    expected = tuple(
+        tuple(Fraction.from_float(float(value)) for value in row) for row in matrix
+    )
     assert tuple(bank) == expected
     assert bank.coefficient_payloads() == tuple(
         tuple(coefficient_payload(value) for value in row) for row in expected
@@ -234,13 +262,34 @@ def test_binary64_bank_exact_rows_match_random_finite_bits() -> None:
 
 
 def test_exact_bank_fingerprint_frames_shape_and_sparse_payload() -> None:
-    a = ExactCoordinateBank.from_rows(((Fraction(1), Fraction(2)), (Fraction(3), Fraction(4))))
+    a = ExactCoordinateBank.from_rows(
+        ((Fraction(1), Fraction(2)), (Fraction(3), Fraction(4)))
+    )
     reshaped = ExactCoordinateBank.from_rows(
         ((Fraction(1),), (Fraction(2),), (Fraction(3),), (Fraction(4),))
     )
-    same = ExactCoordinateBank.from_rows(((Fraction(1), Fraction(2)), (Fraction(3), Fraction(4))))
-    changed = ExactCoordinateBank.from_rows(((Fraction(1), Fraction(2)), (Fraction(3), Fraction(5))))
-    sparse = ExactCoordinateBank.from_rows(((Fraction(1, 3), Fraction(2)), (Fraction(3), Fraction(4))))
-    moved_sparse = ExactCoordinateBank.from_rows(((Fraction(1), Fraction(1, 3)), (Fraction(3), Fraction(4))))
+    same = ExactCoordinateBank.from_rows(
+        ((Fraction(1), Fraction(2)), (Fraction(3), Fraction(4)))
+    )
+    changed = ExactCoordinateBank.from_rows(
+        ((Fraction(1), Fraction(2)), (Fraction(3), Fraction(5)))
+    )
+    sparse = ExactCoordinateBank.from_rows(
+        ((Fraction(1, 3), Fraction(2)), (Fraction(3), Fraction(4)))
+    )
+    moved_sparse = ExactCoordinateBank.from_rows(
+        ((Fraction(1), Fraction(1, 3)), (Fraction(3), Fraction(4)))
+    )
     assert a.content_fingerprint() == same.content_fingerprint()
-    assert len({a.content_fingerprint(), reshaped.content_fingerprint(), changed.content_fingerprint(), sparse.content_fingerprint(), moved_sparse.content_fingerprint()}) == 5
+    assert (
+        len(
+            {
+                a.content_fingerprint(),
+                reshaped.content_fingerprint(),
+                changed.content_fingerprint(),
+                sparse.content_fingerprint(),
+                moved_sparse.content_fingerprint(),
+            }
+        )
+        == 5
+    )
