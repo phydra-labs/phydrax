@@ -1,0 +1,331 @@
+from dataclasses import replace
+from fractions import Fraction
+
+import numpy as np
+import pytest
+
+from phydrax.discretization import lagrange_element
+from phydrax.discretization._cell_complex import PolyhedralConnectivity
+from phydrax.discretization._cell_geometry import CellGeometrySpec
+from phydrax.discretization._cell_geometry_validity import certify_cell_geometry_validity
+from phydrax.discretization._cell_mesh import CellBlock, CellMesh, PolyhedralBlock
+from phydrax.discretization._exact_algebraic_geometry import ExactScalar
+from phydrax.geometry import _domain_certification as certification, _domain_preparation
+from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
+from phydrax.geometry._domain_numerics import (
+    cell_coordinate_expressions,
+    polyhedral_cell_measures,
+    polyhedral_vertex_coordinates,
+)
+from phydrax.geometry._domain_planar_boundary import (
+    affine_cell_corners,
+    oriented_target_facets,
+)
+from phydrax.geometry._domain_preparation import (
+    DomainCoveragePreparation,
+    prepare_domain_coverage,
+)
+from phydrax.geometry._embedding_state import MeshCertificateFinding
+from phydrax.geometry._global_embedding import certify_global_embedding
+
+
+def _split_square() -> tuple[
+    PiecewiseLinearDomain, CellMesh, CellGeometrySpec, np.ndarray
+]:
+    vertices = np.asarray(
+        ((0, 0), (0.5, 0), (1, 0), (1, 1), (0.5, 1), (0, 1)), dtype=np.float64
+    )
+    domain = PiecewiseLinearDomain(
+        vertices,
+        np.asarray(((0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 0), (1, 4))),
+        np.asarray(((0, -1), (1, -1), (1, -1), (1, -1), (0, -1), (0, -1), (0, 1))),
+        ("left", "right"),
+        source_id="lazy-coverage-parity",
+    )
+    mesh = CellMesh(
+        vertices,
+        (
+            CellBlock(
+                "left",
+                "triangle",
+                np.asarray(((0, 1, 4), (0, 4, 5))),
+                global_ids=(101, 202),
+            ),
+            CellBlock(
+                "right",
+                "triangle",
+                np.asarray(((1, 2, 3), (1, 3, 4))),
+                global_ids=(303, 404),
+            ),
+        ),
+    )
+    return domain, mesh, CellGeometrySpec.affine(mesh), np.asarray((0, 0, 1, 1))
+
+
+def _eager(
+    preparation: DomainCoveragePreparation, mesh: CellMesh, geometry: CellGeometrySpec
+) -> DomainCoveragePreparation:
+    return replace(
+        preparation, coordinate_maps=cell_coordinate_expressions(mesh, geometry)
+    )
+
+
+def _finding_fields(
+    findings: tuple[MeshCertificateFinding, ...] | list[MeshCertificateFinding],
+) -> list[tuple[object, ...]]:
+    return [(f.check, f.status, f.entity_ids, f.detail) for f in findings]
+
+
+def test_multiblock_supplied_subset_matches_eager_and_preserves_order() -> None:
+    domain, mesh, geometry, regions = _split_square()
+    lazy = prepare_domain_coverage(mesh, geometry, regions, 2)
+    eager = _eager(prepare_domain_coverage(mesh, geometry, regions, 2), mesh, geometry)
+    supplied = {1: Fraction(1, 4), 2: Fraction(1, 4)}
+    lazy_findings: list[MeshCertificateFinding] = []
+    eager_findings: list[MeshCertificateFinding] = []
+    lazy_measures = certification._target_region_measures(
+        mesh, geometry, domain, lazy, lazy_findings, cell_measures=supplied
+    )
+    eager_measures = certification._target_region_measures(
+        mesh, geometry, domain, eager, eager_findings, cell_measures=supplied
+    )
+    assert lazy_measures == eager_measures == (Fraction(1, 2), Fraction(1, 2))
+    assert _finding_fields(lazy_findings) == _finding_fields(eager_findings) == []
+
+    # Negative supplied values on opposite sides of the block boundary must
+    # generate findings in cell order, while unsupplied maps still contribute.
+    supplied = {1: Fraction(-1, 4), 2: Fraction(-1, 8)}
+    lazy_findings = []
+    eager_findings = []
+    lazy_measures = certification._target_region_measures(
+        mesh, geometry, domain, lazy, lazy_findings, cell_measures=supplied
+    )
+    eager_measures = certification._target_region_measures(
+        mesh, geometry, domain, eager, eager_findings, cell_measures=supplied
+    )
+    assert lazy_measures == eager_measures == (Fraction(0), Fraction(1, 8))
+    assert _finding_fields(lazy_findings) == _finding_fields(eager_findings)
+    assert [(f.check, f.entity_ids) for f in lazy_findings] == [
+        ("target_cell_orientation", (202,)),
+        ("target_cell_orientation", (303,)),
+    ]
+
+
+def test_full_coverage_matches_eager_and_detects_one_numerator_fault(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    domain, mesh, geometry, regions = _split_square()
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    embedding = certify_global_embedding(mesh, geometry, validity)
+    assert embedding.status == "certified"
+    lazy = certification.certify_domain_coverage(
+        mesh, geometry, domain, regions, embedding=embedding
+    )
+    original_prepare = _domain_preparation.prepare_domain_coverage
+
+    def prepare_eager(
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        cell_regions: np.ndarray,
+        region_count: int,
+    ) -> DomainCoveragePreparation:
+        return _eager(
+            original_prepare(mesh, geometry, cell_regions, region_count), mesh, geometry
+        )
+
+    monkeypatch.setattr(_domain_preparation, "prepare_domain_coverage", prepare_eager)
+    eager = certification.certify_domain_coverage(
+        mesh, geometry, domain, regions, embedding=embedding
+    )
+    assert lazy.status == eager.status == "certified"
+    assert (
+        lazy.requested_region_measures
+        == eager.requested_region_measures
+        == (Fraction(1, 2), Fraction(1, 2))
+    )
+    assert (
+        lazy.achieved_region_measures
+        == eager.achieved_region_measures
+        == (Fraction(1, 2), Fraction(1, 2))
+    )
+    assert _finding_fields(lazy.findings) == _finding_fields(eager.findings) == []
+    assert lazy.facet_source_overlaps == eager.facet_source_overlaps
+
+    monkeypatch.setattr(_domain_preparation, "prepare_domain_coverage", original_prepare)
+    original_target = certification._target_region_measures
+
+    def corrupt_measure(
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        domain: certification.CoverageDomain,
+        preparation: DomainCoveragePreparation,
+        findings: list[MeshCertificateFinding],
+        /,
+        *,
+        required: bool = True,
+        cell_measures: object = None,
+    ) -> tuple[ExactScalar | None, ...]:
+        # Cell 1 has exact area 1/4; change its supplied numerator from 1 to 2.
+        return original_target(
+            mesh,
+            geometry,
+            domain,
+            preparation,
+            findings,
+            required=required,
+            cell_measures={1: Fraction(2, 4)},
+        )
+
+    monkeypatch.setattr(certification, "_target_region_measures", corrupt_measure)
+    faulty = certification.certify_domain_coverage(
+        mesh, geometry, domain, regions, embedding=embedding
+    )
+    assert faulty.status == "violated"
+    assert faulty.requested_region_measures == (Fraction(1, 2), Fraction(1, 2))
+    assert faulty.achieved_region_measures == (Fraction(3, 4), Fraction(1, 2))
+    assert [(f.check, f.entity_ids) for f in faulty.findings] == [
+        ("region_measure", (0,))
+    ]
+
+
+def test_polyhedral_measure_reuses_fixed_cell_maps_with_exact_parity() -> None:
+    vertices = np.asarray(
+        (
+            (0, 0, 0),
+            (1, 0, 0),
+            (0, 1, 0),
+            (0, 0, 1),
+            (2, 0, 0),
+            (3, 0, 0),
+            (2, 1, 0),
+            (2, 0, 1),
+        ),
+        dtype=np.float64,
+    )
+    faces = ((0, 2, 1), (0, 1, 3), (1, 2, 3), (2, 0, 3))
+    cells = [
+        [np.asarray(tuple(v + offset for v in face)) for face in faces]
+        for offset in (0, 4)
+    ]
+    carrier = CellMesh.from_polyhedra(
+        vertices, cells, cell_global_ids=np.asarray((101, 202), dtype=np.int64)
+    )
+    connectivity = carrier.connectivity
+    assert isinstance(connectivity, PolyhedralConnectivity)
+    poly_vertices = np.asarray(carrier.blocks[0].vertices)[1:2]
+    mesh = CellMesh(
+        vertices,
+        (
+            CellBlock(
+                "tetra", "tetrahedron", np.asarray(((0, 1, 2, 3),)), global_ids=(101,)
+            ),
+            PolyhedralBlock(
+                "polyhedron", poly_vertices, global_ids=np.asarray((202,), dtype=np.int64)
+            ),
+        ),
+        vertex_global_ids=carrier.vertex_global_ids,
+        polyhedral_connectivity=connectivity,
+    )
+    geometry = CellGeometrySpec.affine(mesh)
+    domain = PiecewiseLinearDomain(
+        vertices[:4],
+        np.asarray(faces),
+        np.asarray(((0, -1),) * 4),
+        ("solid",),
+        source_id="polyhedral-map-parity",
+    )
+    lazy = prepare_domain_coverage(mesh, geometry, np.asarray((0, 0)), 1)
+    eager = _eager(
+        prepare_domain_coverage(mesh, geometry, np.asarray((0, 0)), 1), mesh, geometry
+    )
+    assert polyhedral_vertex_coordinates(
+        mesh, geometry, coordinate_maps=lazy.coordinate_maps
+    ) == polyhedral_vertex_coordinates(
+        mesh, geometry, coordinate_maps=eager.coordinate_maps
+    )
+    assert (
+        polyhedral_cell_measures(mesh, geometry, coordinate_maps=lazy.coordinate_maps)
+        == polyhedral_cell_measures(mesh, geometry, coordinate_maps=eager.coordinate_maps)
+        == (None, Fraction(1, 6))
+    )
+    lazy_findings: list[MeshCertificateFinding] = []
+    eager_findings: list[MeshCertificateFinding] = []
+    assert (
+        certification._target_region_measures(
+            mesh, geometry, domain, lazy, lazy_findings, cell_measures={0: Fraction(1, 6)}
+        )
+        == certification._target_region_measures(
+            mesh,
+            geometry,
+            domain,
+            eager,
+            eager_findings,
+            cell_measures={0: Fraction(1, 6)},
+        )
+        == (Fraction(1, 3),)
+    )
+    assert _finding_fields(lazy_findings) == _finding_fields(eager_findings) == []
+
+
+@pytest.mark.parametrize("degree", (1, 2, 3))
+@pytest.mark.parametrize("curvature", (0.0, 0.125))
+def test_nodal_boundary_and_carrier_parity_with_eager_maps(
+    degree: int, curvature: float
+) -> None:
+    domain, mesh, _, regions = _split_square()
+    element = lagrange_element("triangle", degree)
+    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
+    vertices = np.asarray(mesh.coordinates, dtype=np.float64)
+    coordinates: list[np.ndarray] = []
+    routes: dict[str, np.ndarray] = {}
+    cursor = 0
+    for block in mesh.blocks:
+        block_routes = []
+        for cell in np.asarray(block.vertices):
+            points = vertices[cell]
+            values = (
+                points[0]
+                + nodes[:, :1] * (points[1] - points[0])
+                + nodes[:, 1:] * (points[2] - points[0])
+            )
+            values[:, 1] += curvature * nodes[:, 0] * nodes[:, 1]
+            coordinates.extend(values)
+            block_routes.append(np.arange(cursor, cursor + len(nodes)))
+            cursor += len(nodes)
+        routes[block.name] = np.asarray(block_routes, dtype=np.int64)
+    geometry = CellGeometrySpec(
+        {block.name: element for block in mesh.blocks}, routes, np.asarray(coordinates)
+    )
+    lazy = prepare_domain_coverage(mesh, geometry, regions, 2)
+    eager = _eager(prepare_domain_coverage(mesh, geometry, regions, 2), mesh, geometry)
+    assert lazy.has_vertex_defined_cells() == eager.has_vertex_defined_cells()
+    assert lazy.has_nonaffine_cells(2) == eager.has_nonaffine_cells(2)
+    actual = oriented_target_facets(
+        mesh,
+        regions,
+        lazy.coordinate_maps,
+        geometry=geometry,
+        source_domain=domain,
+        exact_face_images=True,
+    )
+    expected = oriented_target_facets(
+        mesh,
+        regions,
+        eager.coordinate_maps,
+        geometry=geometry,
+        source_domain=domain,
+        exact_face_images=True,
+    )
+    assert actual == expected
+    try:
+        eager_corners = affine_cell_corners(
+            mesh, eager.coordinate_maps, geometry=geometry
+        )
+    except ValueError:
+        with pytest.raises(ValueError):
+            affine_cell_corners(mesh, lazy.coordinate_maps, geometry=geometry)
+    else:
+        assert (
+            affine_cell_corners(mesh, lazy.coordinate_maps, geometry=geometry)
+            == eager_corners
+        )

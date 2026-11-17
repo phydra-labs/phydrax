@@ -34,10 +34,10 @@ from ..discretization._coordinate_enclosure import (
     Expression,
     expression_equal,
     IntervalBasisBounds,
-    linear_combinations,
     normalize_pyramid_reference_expression,
     polynomial_bounds,
     PreparedIntervalBasis,
+    PreparedLinearCombinationBasis,
     pyramid_reference_to_box_arguments,
     PyramidApexNormalization,
     RationalPolynomial,
@@ -414,24 +414,35 @@ def _polyhedral_face_routes(
     return tuple(routes)
 
 
-def _cell_expressions(
-    element: ScalarCoordinateElement,
-    local: tuple[tuple[ExactScalar, ...], ...],
-    row: int,
-    basis: tuple[Expression, ...] | None = None,
-) -> tuple[Expression, ...]:
-    if basis is None:
-        basis = coordinate_effective_basis(element, cell_row=row)
+def _prepare_cell_basis(
+    basis: tuple[Expression, ...],
+) -> PreparedLinearCombinationBasis:
     if not basis:
         raise UnsupportedEmbeddingMap(
             "Coordinate element has no exact effective source basis."
         )
+    try:
+        return PreparedLinearCombinationBasis(basis)
+    except (ValueError, ZeroDivisionError) as error:
+        raise UnsupportedEmbeddingMap(
+            "Exact coordinate basis composition is unavailable."
+        ) from error
+
+
+def _cell_expressions(
+    element: ScalarCoordinateElement,
+    local: tuple[tuple[ExactScalar, ...], ...],
+    row: int,
+    basis: PreparedLinearCombinationBasis | None = None,
+) -> tuple[Expression, ...]:
+    if basis is None:
+        basis = _prepare_cell_basis(coordinate_effective_basis(element, cell_row=row))
     coefficients = tuple(
         tuple(local[dof][axis] for dof in range(len(local)))
         for axis in range(len(local[0]))
     )
     try:
-        return linear_combinations(basis, coefficients)
+        return basis.combine(coefficients)
     except (ValueError, ZeroDivisionError) as error:
         raise UnsupportedEmbeddingMap(
             "Exact coordinate basis composition is unavailable."
@@ -496,7 +507,7 @@ def _mapped_cell_chart(
     domain: str,
     references: tuple[tuple[Fraction, ...], ...],
     ambient: int,
-    basis: tuple[Expression, ...] | None = None,
+    basis: PreparedLinearCombinationBasis | None = None,
     interval_bounds: IntervalBasisBounds | None = None,
     /,
 ) -> _CellChart:
@@ -644,8 +655,9 @@ def _iter_embedding_cells(
                 frame = _straight_simplex_frame(
                     element, references, dimension, route_rows.shape[1]
                 )
-        chart_bases: dict[bytes, tuple[Expression, ...]] = {}
+        chart_bases: dict[bytes, PreparedLinearCombinationBasis] = {}
         fixed_basis: tuple[Expression, ...] | None = None
+        prepared_fixed_basis: PreparedLinearCombinationBasis | None = None
         interval_rows: tuple[IntervalBasisBounds | None, ...] | None = None
         if (
             not vertex_element
@@ -752,9 +764,15 @@ def _iter_embedding_cells(
                     )
                 else:
                     basis = None
-                    if fixed_basis is not None:
-                        basis = fixed_basis
-                    if isinstance(element, PerCellRestrictedCellGeometryElement):
+                    if not isinstance(element, PerCellRestrictedCellGeometryElement):
+                        if prepared_fixed_basis is None:
+                            if fixed_basis is None:
+                                fixed_basis = coordinate_effective_basis(
+                                    element, cell_row=local_index
+                                )
+                            prepared_fixed_basis = _prepare_cell_basis(fixed_basis)
+                        basis = prepared_fixed_basis
+                    else:
                         from ..discretization._cell_geometry_validity import _map_digest
 
                         chart_key = _map_digest(
@@ -763,8 +781,10 @@ def _iter_embedding_cells(
                         if chart_key is not None:
                             basis = chart_bases.get(chart_key)
                             if basis is None:
-                                basis = coordinate_effective_basis(
-                                    element, cell_row=local_index
+                                basis = _prepare_cell_basis(
+                                    coordinate_effective_basis(
+                                        element, cell_row=local_index
+                                    )
                                 )
                                 chart_bases[chart_key] = basis
                     chart = _mapped_cell_chart(

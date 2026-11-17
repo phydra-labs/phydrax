@@ -3,8 +3,10 @@
 #
 from __future__ import annotations
 
+import gc
 import pickle
 import random
+import weakref
 from fractions import Fraction
 from pathlib import Path
 
@@ -12,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax._fingerprint import canonical_fingerprint, numeric_array_fingerprint
 from phydrax.discretization._exact_algebraic_geometry import (
     coefficient_endpoint,
     coefficient_payload,
@@ -46,9 +49,37 @@ def test_bank_packs_dyadics_densely_and_keeps_other_scalars_sparse() -> None:
     )
 
 
-def test_canonical_parts_are_read_only_and_preserve_identity() -> None:
-    bank = ExactCoordinateBank.from_rows(_rows())
+@pytest.mark.parametrize(
+    "rows",
+    (_rows(), (), ((), ()), ((Fraction(1, 3),),)),
+)
+def test_canonical_parts_are_immutable_after_construction_and_restore(
+    rows: tuple[tuple[Fraction | RadicalElement, ...], ...],
+) -> None:
+    bank = ExactCoordinateBank.from_rows(rows)
+    restored = pickle.loads(pickle.dumps(bank))
     identity = bank.content_fingerprint()
+    assert restored.content_fingerprint() == identity
+    for current in (bank, restored):
+        internal = (
+            current._significands,
+            current._exponents,
+            current._sparse_index,
+            current._sparse_row_starts,
+        )
+        significands, exponents, indices, offsets, _ = current.canonical_parts()
+        for array in (*internal, significands, exponents, indices, offsets):
+            assert not array.flags.writeable
+            with pytest.raises(ValueError):
+                array.setflags(write=True)
+            with pytest.raises(ValueError):
+                array.view().setflags(write=True)
+            np.testing.assert_array_equal(np.asarray(jnp.asarray(array)), array)
+        assert current.content_fingerprint() == identity
+
+
+def test_canonical_parts_preserve_packed_values_and_fingerprint() -> None:
+    bank = ExactCoordinateBank.from_rows(_rows())
     significands, exponents, indices, offsets, sparse = bank.canonical_parts()
     assert significands.dtype == np.dtype(np.int64)
     assert exponents.dtype == np.dtype(np.int16)
@@ -56,11 +87,49 @@ def test_canonical_parts_are_read_only_and_preserve_identity() -> None:
     assert tuple(indices) == (3, 4, 6)
     assert tuple(offsets) == (0, 0, 2, 3)
     assert sparse == (_rows()[1][0], _rows()[1][1], _rows()[2][0])
-    for array in (significands, exponents, indices, offsets):
-        assert not array.flags.writeable
-        with pytest.raises(ValueError):
-            array.flat[0] = 0
-    assert bank.content_fingerprint() == identity
+    expected = canonical_fingerprint(
+        {
+            "kind": "exact-coordinate-bank",
+            "significands": numeric_array_fingerprint(significands),
+            "exponents": numeric_array_fingerprint(exponents),
+            "sparse_indices": numeric_array_fingerprint(indices),
+            "sparse_values": tuple(coefficient_payload(value) for value in sparse),
+        }
+    )
+    assert bank.content_fingerprint() == expected
+    assert bank.content_fingerprint() == expected
+
+
+def test_fingerprint_tracks_shape_and_sparse_coefficients() -> None:
+    rows = _rows()
+    bank = ExactCoordinateBank.from_rows(rows)
+    identity = bank.content_fingerprint()
+    assert ExactCoordinateBank.from_rows(rows).content_fingerprint() == identity
+    changed = list(map(list, rows))
+    changed[1][0] = Fraction(1, 7)
+    assert ExactCoordinateBank.from_rows(changed).content_fingerprint() != identity
+
+
+@pytest.mark.parametrize("part", ("shape", "hash"))
+def test_fingerprint_rejects_tampered_derived_bank_metadata(part: str) -> None:
+    bank = ExactCoordinateBank.from_rows(((Fraction(1),), (Fraction(2),)))
+    bank.content_fingerprint()
+    if part == "shape":
+        object.__setattr__(bank, "_shape", (1, 2))
+    else:
+        object.__setattr__(bank, "_hash", hash(bank) + 1)
+    with pytest.raises(ValueError, match="derived"):
+        bank.content_fingerprint()
+
+
+def test_fingerprinting_does_not_retain_source_bank() -> None:
+    bank = ExactCoordinateBank.from_rows(_rows())
+    bank.content_fingerprint()
+    bank.content_fingerprint()
+    reference = weakref.ref(bank)
+    del bank
+    gc.collect()
+    assert reference() is None
 
 
 def test_interval_endpoints_match_directed_exact_coefficients() -> None:

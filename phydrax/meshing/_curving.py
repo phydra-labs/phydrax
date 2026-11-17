@@ -41,6 +41,7 @@ import numpy as np
 from jax import Array, lax
 from jax.typing import ArrayLike
 
+from .._collection_scope import collection_scope
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -2005,6 +2006,7 @@ def _project_constrained(
     return _apply_periodic(result, periodic), rows, projectors
 
 
+@collection_scope()
 def curve_cell_mesh(
     mesh: CellMesh,
     association: GeometryAssociation,

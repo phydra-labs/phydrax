@@ -163,20 +163,44 @@ def volume_cell_entity_rows(
         face_vertices = np.asarray(connectivity.faces, dtype=np.int64)
     if edge_vertices.ndim != 2 or face_vertices.ndim != 2:
         raise ValueError("Canonical volume edge/face incidence must be two-dimensional.")
-    edge_rows = {
-        tuple(sorted(int(value) for value in vertices)): row
-        for row, vertices in enumerate(edge_vertices.tolist())
-    }
-    face_rows = {
-        tuple(sorted(int(value) for value in vertices)): row
-        for row, vertices in enumerate(face_vertices.tolist())
-    }
-    if (
-        len(edge_rows) != edge_vertices.shape[0]
-        or len(face_rows) != face_vertices.shape[0]
+    edge_keys = np.sort(edge_vertices, axis=1)
+    face_keys = np.sort(face_vertices, axis=1)
+    if any(
+        np.unique(keys, axis=0).shape[0] != keys.shape[0]
+        for keys in (edge_keys, face_keys)
     ):
         raise ValueError("Canonical volume edge/face incidence is not unique.")
-    rows_by_cell_id: dict[int, tuple[tuple[int, ...], tuple[int, ...]]] = {}
+
+    def lookup(
+        cells: np.ndarray,
+        entities: tuple[tuple[int, ...], ...],
+        keys: np.ndarray,
+    ) -> np.ndarray:
+        result = np.full((cells.shape[0], len(entities)), -1, dtype=np.int64)
+        for width in {len(entity) for entity in entities}:
+            columns = [
+                index for index, entity in enumerate(entities) if len(entity) == width
+            ]
+            if width != keys.shape[1] or not keys.shape[0]:
+                continue
+            local = np.asarray([entities[index] for index in columns], dtype=np.int64)
+            query = np.sort(cells[:, local], axis=2).reshape(
+                cells.shape[0] * len(columns), width
+            )
+            _, inverse = np.unique(
+                np.concatenate((keys, query)), axis=0, return_inverse=True
+            )
+            inverse = inverse.reshape(-1)
+            rows = np.full(inverse.size, -1, dtype=np.int64)
+            rows[inverse[: keys.shape[0]]] = np.arange(keys.shape[0])
+            result[:, columns] = rows[inverse[keys.shape[0] :]].reshape(
+                cells.shape[0], len(columns)
+            )
+        return result
+
+    block_ids: list[np.ndarray] = []
+    block_edges: list[np.ndarray] = []
+    block_faces: list[np.ndarray] = []
     for block in mesh.blocks:
         topology = reference_cell_topology(block.cell_kind)
         if topology.dimension != 3:
@@ -189,27 +213,29 @@ def volume_cell_entity_rows(
         local_faces = tuple(
             tuple(int(value) for value in row) for row in topology.entities[2]
         )
-        for identifier_raw, cell_values in zip(
-            identifiers.tolist(), cells.tolist(), strict=True
-        ):
-            cell = tuple(int(value) for value in cell_values)
-            identifier = int(identifier_raw)
-            if identifier in rows_by_cell_id:
+        edges = lookup(cells, local_edges, edge_keys)
+        faces = lookup(cells, local_faces, face_keys)
+        _, first, inverse = np.unique(identifiers, return_index=True, return_inverse=True)
+        duplicate = first[inverse] != np.arange(identifiers.size)
+        if block_ids:
+            duplicate |= np.isin(identifiers, np.concatenate(block_ids))
+        missing = np.any(edges < 0, axis=1) | np.any(faces < 0, axis=1)
+        invalid = np.flatnonzero(duplicate | missing)
+        if invalid.size:
+            index = invalid[0]
+            if duplicate[index]:
                 raise ValueError("Volume cell global IDs must be unique across blocks.")
-            try:
-                cell_edges = tuple(
-                    edge_rows[tuple(sorted(int(cell[local]) for local in edge))]
-                    for edge in local_edges
-                )
-                cell_faces = tuple(
-                    face_rows[tuple(sorted(int(cell[local]) for local in face))]
-                    for face in local_faces
-                )
-            except KeyError as error:
-                raise ValueError(
-                    "A volume cell entity is absent from canonical incidence."
-                ) from error
-            rows_by_cell_id[identifier] = (cell_edges, cell_faces)
+            if np.any(edges[index] < 0):
+                local = local_edges[np.flatnonzero(edges[index] < 0)[0]]
+            else:
+                local = local_faces[np.flatnonzero(faces[index] < 0)[0]]
+            key = tuple(sorted(int(cells[index, vertex]) for vertex in local))
+            raise ValueError(
+                "A volume cell entity is absent from canonical incidence."
+            ) from KeyError(key)
+        block_ids.append(identifiers)
+        block_edges.append(edges)
+        block_faces.append(faces)
     raw_ids = (
         np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64)
         if cell_global_ids is None
@@ -224,32 +250,31 @@ def volume_cell_entity_rows(
     ):
         raise ValueError("cell_global_ids must fit int64.")
     identifiers = np.asarray(raw_ids, dtype=np.int64)
-    if (
-        identifiers.size != len(rows_by_cell_id)
-        or np.unique(identifiers).size != identifiers.size
-    ):
+    all_ids = np.concatenate(block_ids) if block_ids else np.empty(0, dtype=np.int64)
+    if identifiers.size != all_ids.size or np.unique(identifiers).size != identifiers.size:
         raise ValueError(
             "Volume cell identity bank does not cover every cell exactly once."
         )
-    try:
-        ordered = tuple(
-            rows_by_cell_id[int(identifier)] for identifier in identifiers.tolist()
-        )
-    except KeyError as error:
+    order = np.argsort(all_ids)
+    positions = np.searchsorted(all_ids[order], identifiers)
+    valid = positions < all_ids.size
+    valid[valid] &= all_ids[order[positions[valid]]] == identifiers[valid]
+    if not np.all(valid):
+        missing_id = int(identifiers[np.flatnonzero(~valid)[0]])
         raise ValueError(
             "A requested volume cell ID is absent from connectivity."
-        ) from error
-    if not ordered:
+        ) from KeyError(missing_id)
+    if not identifiers.size:
         return np.empty((0, 0), dtype=np.int64), np.empty((0, 0), dtype=np.int64)
-    edge_counts = {len(edges) for edges, _ in ordered}
-    face_counts = {len(faces) for _, faces in ordered}
+    edge_counts = {rows.shape[1] for rows in block_edges if rows.shape[0]}
+    face_counts = {rows.shape[1] for rows in block_faces if rows.shape[0]}
     if len(edge_counts) != 1 or len(face_counts) != 1:
         raise ValueError(
             "Volume local entity arity must be uniform for this incidence query."
         )
-    return np.asarray([edges for edges, _ in ordered], dtype=np.int64), np.asarray(
-        [faces for _, faces in ordered], dtype=np.int64
-    )
+    edge_rows = np.concatenate([rows for rows in block_edges if rows.shape[0]])
+    face_rows = np.concatenate([rows for rows in block_faces if rows.shape[0]])
+    return edge_rows[order[positions]], face_rows[order[positions]]
 
 
 def _mapped_plc_geometry(

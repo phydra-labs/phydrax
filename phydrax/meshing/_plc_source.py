@@ -7,13 +7,18 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import fields
 from fractions import Fraction
 from typing import final, Literal, NoReturn, SupportsIndex, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import (
+    array_tree_fingerprint,
+    canonical_fingerprint,
+    compact_array_tree_fingerprint,
+)
 from .._live_proofs import _same_fingerprint, live_content_fingerprint, LiveProofLedger
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -42,7 +47,32 @@ if TYPE_CHECKING:
 # verified, bound to that exact live object and the content fingerprint recorded
 # then. An entry dies with its object, is never serialized, and binds only that
 # exact, unchanged object (see from_stored_fields).
-_VERIFIED_CAD_COMPLEXES: LiveProofLedger[bool] = LiveProofLedger()
+_VERIFIED_CAD_COMPLEXES: LiveProofLedger[str] = LiveProofLedger()
+
+
+def _cad_ancestry_digest(value: PiecewiseLinearComplex, /) -> str:
+    return compact_array_tree_fingerprint(
+        tuple(
+            getattr(value, item.name)
+            for item in fields(value)
+            if item.name not in ("cad_fidelity", "cad_source_charts")
+        )
+    )
+
+
+def _validated_cad_ancestry_digest(value: PiecewiseLinearComplex, /) -> str:
+    """Validate this live CAD PLC and return its original ancestry digest."""
+    if type(value) is not PiecewiseLinearComplex:
+        raise TypeError(
+            "Stored PLC fields must have the registered PiecewiseLinearComplex type."
+        )
+    digest = _VERIFIED_CAD_COMPLEXES.find((value,))
+    if digest is not None:
+        return digest
+    _, digest = PiecewiseLinearComplex._reconstruct_stored_fields(value)
+    if digest is None:
+        raise ValueError("CAD PLC must retain its source charts.")
+    return digest
 
 
 def _occurrence_path_bank(
@@ -1186,9 +1216,11 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
         )
         if cad_source_charts is not None:
             operands = (self,)
-            _VERIFIED_CAD_COMPLEXES.record(
-                operands, live_content_fingerprint(operands), True
-            )
+            fingerprint = live_content_fingerprint(operands)
+            ancestry_digest = _cad_ancestry_digest(self)
+            if not _same_fingerprint(fingerprint, live_content_fingerprint(operands)):
+                raise ValueError("CAD PLC content changed while recording its proof.")
+            _VERIFIED_CAD_COMPLEXES.record(operands, fingerprint, ancestry_digest)
 
     @classmethod
     @checked
@@ -1222,6 +1254,24 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
             and _VERIFIED_CAD_COMPLEXES.find((value,)) is not None
         ):
             return value
+        fresh, _ = cls._reconstruct_stored_fields(
+            value,
+            cad_source_charts=cad_source_charts,
+            cad_embedding=cad_embedding,
+            cad_fidelity=cad_fidelity,
+        )
+        return fresh
+
+    @classmethod
+    def _reconstruct_stored_fields(
+        cls: type[PiecewiseLinearComplex],
+        value: PiecewiseLinearComplex,
+        /,
+        *,
+        cad_source_charts: SurfaceSourceCharts | None = None,
+        cad_embedding: GlobalEmbeddingCertificate | None = None,
+        cad_fidelity: SourceFidelityCertificate | None = None,
+    ) -> tuple[PiecewiseLinearComplex, str | None]:
         from .._model._structure import SurfaceSourceChartsArchiveRecipe
 
         stored_charts = value.cad_source_charts
@@ -1311,15 +1361,19 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
         )
         if fresh.complex_id != value.complex_id:
             raise ValueError("Stored PLC fields do not match their complex identity.")
+        ancestry_digest = None
         if cad_source_charts is not None:
             # The constructor just verified `fresh`. A value with exactly the
             # same structure and content is that verified complex, so later
             # replays of this live value need not prove its surface again.
             operands = (value,)
             fingerprint = live_content_fingerprint(operands)
+            ancestry_digest = _cad_ancestry_digest(value)
+            if not _same_fingerprint(fingerprint, live_content_fingerprint(operands)):
+                raise ValueError("Stored PLC content changed during reconstruction.")
             if _same_fingerprint(fingerprint, live_content_fingerprint((fresh,))):
-                _VERIFIED_CAD_COMPLEXES.record(operands, fingerprint, True)
-        return fresh
+                _VERIFIED_CAD_COMPLEXES.record(operands, fingerprint, ancestry_digest)
+        return fresh, ancestry_digest
 
     @property
     def facet_count(self) -> int:

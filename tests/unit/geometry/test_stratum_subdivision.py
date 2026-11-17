@@ -36,6 +36,7 @@ from phydrax.geometry._stratum_subdivision import (
     glued_facet_monotone,
     StratumSubdivisionCache,
     subdivided_stratum_separation,
+    subdivided_stratum_separations,
 )
 
 
@@ -450,6 +451,203 @@ def test_prism_and_tetrahedron_sharing_a_vertex_are_separated_by_subdivision() -
         _FIRST, neighbour, (4,), residuals, StratumSubdivisionCache()
     )
     assert counts is not None and sum(counts) > 0
+
+
+def test_batched_stratum_randomized_parity_and_subdivision() -> None:
+    rng = np.random.default_rng(72319)
+    requests: list[
+        tuple[EmbeddingCell, EmbeddingCell, tuple[int, ...], tuple[Expression, ...]]
+    ] = []
+    for index in range(12):
+        first = _cell(
+            100 + 2 * index,
+            "tetrahedron",
+            (0, 1, 2, 3),
+            _TETRAHEDRON,
+            _bend(Fraction(int(rng.integers(1, 5)), 20), Fraction(1, 10)),
+        )
+        stretch = tuple(Fraction(int(value), 2) for value in rng.integers(1, 5, 3))
+        opposite_corners = tuple(
+            tuple(-coordinate * stretch[axis] for axis, coordinate in enumerate(point))
+            for point in _TETRAHEDRON
+        )
+        opposite = _cell(
+            101 + 2 * index,
+            "tetrahedron",
+            (0, 7, 8, 9),
+            opposite_corners,
+            _bend(Fraction(int(rng.integers(1, 5)), 20), Fraction(1, 10)),
+        )
+        residuals = _stratum_residuals(first, (0,))
+        assert residuals is not None
+        requests.append((first, opposite, (0,), residuals))
+    corners = (_p(1, 0, 1), _p(2, 0, 1), _p(1.5, 0.5, 1), _p(1.5, 0.125, 1.75))
+    neighbour = _cell(5, "simplex:3", (4, 9, 10, 11), corners, _bend())
+    residuals = _stratum_residuals(_FIRST, (4,))
+    assert residuals is not None
+    requests.append((_FIRST, neighbour, (4,), residuals))
+    expected = tuple(
+        subdivided_stratum_separation(*request, StratumSubdivisionCache())
+        for request in requests
+    )
+    assert expected[-1] is not None
+    assert (
+        subdivided_stratum_separations(tuple(requests), StratumSubdivisionCache())
+        == expected
+    )
+    assert subdivided_stratum_separations((), StratumSubdivisionCache()) == ()
+
+
+def test_batched_stratum_subdivision_counts_match_standalone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    corners = (_p(1, 0, 1), _p(2, 0, 1), _p(1.5, 0.5, 1), _p(1.5, 0.125, 1.75))
+    neighbour = _cell(5, "simplex:3", (4, 9, 10, 11), corners, _bend())
+    residuals = _stratum_residuals(_FIRST, (4,))
+    assert residuals is not None
+    request = (_FIRST, neighbour, (4,), residuals)
+    original = subdivision._strict_direction
+    calls = 0
+
+    def miss_root(vectors: np.ndarray, /) -> np.ndarray | None:
+        nonlocal calls
+        calls += 1
+        return None if calls <= 3 else original(vectors)
+
+    monkeypatch.setattr(subdivision, "_strict_direction", miss_root)
+    expected = subdivided_stratum_separation(*request, StratumSubdivisionCache())
+    assert expected is not None and sum(expected) > 1
+    calls = 0
+    assert subdivided_stratum_separations((request,), StratumSubdivisionCache()) == (
+        expected,
+    )
+
+
+def test_batched_stratum_item_refusal_and_radical_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.discretization._exact_algebraic_geometry import RadicalElement
+
+    first = _cell(201, "tetrahedron", (0, 1, 2, 3), _TETRAHEDRON, _bend())
+    opposite = _cell(
+        202,
+        "tetrahedron",
+        (0, 7, 8, 9),
+        tuple(tuple(-value for value in point) for point in _TETRAHEDRON),
+        _bend(),
+    )
+    radical_first = _cell(203, "tetrahedron", (0, 1, 2, 3), _TETRAHEDRON, _bend())
+    radical_opposite = _cell(
+        204,
+        "tetrahedron",
+        (0, 7, 8, 9),
+        tuple(tuple(-value for value in point) for point in _TETRAHEDRON),
+        _bend(),
+    )
+    residuals = _stratum_residuals(first, (0,))
+    assert residuals is not None
+    radical_residuals = (scale(residuals[0], RadicalElement.sqrt(2)), *residuals[1:])
+    requests = (
+        (first, opposite, (0,), residuals),
+        (opposite, first, (0,), residuals),
+        (radical_first, radical_opposite, (0,), radical_residuals),
+    )
+    expected = tuple(
+        subdivided_stratum_separation(*request, StratumSubdivisionCache())
+        for request in requests
+    )
+    assert all(result == (1, 0) for result in expected)
+    original = subdivision._integer_cone_signs
+    refused: list[int] = []
+
+    def refuse_one(
+        group: list[tuple[int, tuple[int, ...], list[tuple[subdivision._Vector, int]]]],
+        /,
+    ) -> tuple[bool | None, ...]:
+        verdicts = original(group)
+        refused.append(len(group))
+        return (None, *verdicts[1:])
+
+    monkeypatch.setattr(subdivision, "_integer_cone_signs", refuse_one)
+    assert subdivided_stratum_separations(requests, StratumSubdivisionCache()) == expected
+    assert refused and max(refused) >= 2
+
+
+def test_batched_stratum_keeps_objects_and_proofs_independent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subdivision, "_RESOLUTION", 2.0)
+    first = _cell(401, "tetrahedron", (0, 1, 2, 3), _TETRAHEDRON, _bend())
+    opposite = _cell(
+        402,
+        "tetrahedron",
+        (0, 7, 8, 9),
+        tuple(tuple(-value for value in point) for point in _TETRAHEDRON),
+        _bend(),
+    )
+    same_id_opposite = _cell(
+        401,
+        "tetrahedron",
+        (0, 7, 8, 9),
+        tuple(tuple(-value for value in point) for point in _TETRAHEDRON),
+        _bend(),
+    )
+    rebuilt_first = _cell(401, "tetrahedron", (0, 1, 2, 3), _TETRAHEDRON, _bend())
+    overlap = _cell(402, "tetrahedron", (0, 7, 8, 9), _TETRAHEDRON, _bend())
+    unsupported = _cell(401, "hexahedron", tuple(range(8)), _HEXAHEDRON, _bend())
+    residuals = _stratum_residuals(first, (0,))
+    assert residuals is not None
+    requests = (
+        (first, opposite, (0,), residuals),
+        (rebuilt_first, overlap, (0,), residuals),
+        (first, opposite, (0,), (constant(0, 3),)),
+        (unsupported, opposite, (0,), residuals),
+        (first, same_id_opposite, (0,), residuals),
+    )
+    expected = tuple(
+        subdivided_stratum_separation(*request, StratumSubdivisionCache())
+        for request in requests
+    )
+    assert expected == ((1, 0), None, None, None, (1, 0))
+    assert subdivided_stratum_separations(requests, StratumSubdivisionCache()) == expected
+    cache = StratumSubdivisionCache()
+    assert (
+        tuple(subdivided_stratum_separation(*request, cache) for request in requests)
+        == expected
+    )
+
+
+def test_batched_stratum_rejects_incorrect_float_proposal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _cell(301, "tetrahedron", (0, 1, 2, 3), _TETRAHEDRON, _bend())
+    opposite = _cell(
+        302,
+        "tetrahedron",
+        (0, 7, 8, 9),
+        tuple(tuple(-value for value in point) for point in _TETRAHEDRON),
+        _bend(),
+    )
+    residuals = _stratum_residuals(first, (0,))
+    assert residuals is not None
+    request = (first, opposite, (0,), residuals)
+    assert subdivided_stratum_separations((request,), StratumSubdivisionCache()) == (
+        (1, 0),
+    )
+    monkeypatch.setattr(
+        subdivision, "_strict_direction", lambda vectors: np.array([1.0, 0.0, 0.0])
+    )
+    monkeypatch.setattr(subdivision, "_RESOLUTION", 2.0)
+    assert subdivided_stratum_separations((request,), StratumSubdivisionCache()) == (
+        None,
+    )
+    assert subdivided_stratum_separation(*request, StratumSubdivisionCache()) is None
+    monkeypatch.setattr(
+        subdivision, "_integer_cone_signs", lambda group: tuple(True for _ in group)
+    )
+    assert subdivided_stratum_separations((request,), StratumSubdivisionCache()) != (
+        None,
+    )
 
 
 def test_subdivision_proof_matches_python_exact_roots(

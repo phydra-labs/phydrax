@@ -7,10 +7,13 @@ from __future__ import annotations
 import math
 from fractions import Fraction
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import phydrax.meshing.providers._native_surface as native_surface
 from phydrax._physical import SpatialCoordinateContract
+from phydrax.geometry._interval_enclosure import prepare_interval_function
 from phydrax.geometry.simplicial import SegmentMesh
 from phydrax.meshing._contracts import (
     CellFamilyPolicy,
@@ -149,3 +152,135 @@ def test_hard_turn_limit_and_independent_curve_batch() -> None:
     assert single == batched
     _, accepted_issues, accepted_id = _turn_report((1.0, 1.0), limit=2.0)
     assert f"normal_angle:{accepted_id}" not in accepted_issues
+
+
+@pytest.mark.parametrize("chunk_size", (1, 2, 4, 10))
+def test_chord_bounds_preserve_exact_width_and_outward_endpoints(
+    chunk_size: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    program = prepare_interval_function(
+        lambda x: jnp.stack((x[0], x[0] * 0, x[0] * 0)), 1
+    )
+    zero = np.zeros(3, dtype=np.float64)
+    endpoint = np.zeros((2, 3), dtype=np.float64)
+    intervals = (
+        (Fraction(1, 3), Fraction(2, 3)),
+        (Fraction(1, 7), Fraction(4, 7)),
+        (Fraction(1, 5), Fraction(3, 5)),
+        (Fraction(2, 9), Fraction(7, 9)),
+    )
+    jobs = [(program, (endpoint, endpoint), native, (zero, zero)) for native in intervals]
+    reference = [
+        native_surface._second_order_chord_bounds([job])[0] for job in jobs
+    ]
+    actual = [
+        value
+        for start in range(0, len(jobs), chunk_size)
+        for value in native_surface._second_order_chord_bounds(
+            jobs[start : start + chunk_size]
+        )
+    ]
+    assert actual == reference
+    for bound, (lower, upper) in zip(actual, intervals, strict=True):
+        assert Fraction(bound) >= upper * (upper - lower) ** 2 / 8
+
+    # Fault the box's upper endpoint inward; the same exact witness rejects it.
+    endpoint_round = native_surface.fraction_endpoint
+    upper = intervals[0][1]
+
+    def inward(value: Fraction, /, *, upper: bool, saturate: bool = False) -> float:
+        result = endpoint_round(value, upper=upper, saturate=saturate)
+        if upper and value == intervals[0][1]:
+            for _ in range(4):
+                result = math.nextafter(float(result), -math.inf)
+            return result
+        return float(result)
+
+    monkeypatch.setattr(native_surface, "fraction_endpoint", inward)
+    faulty = native_surface._second_order_chord_bounds(jobs[:1])[0]
+    witness = upper * (upper - intervals[0][0]) ** 2 / 8
+    assert Fraction(faulty) < witness
+
+
+@pytest.mark.parametrize("chunk_size", (1, 2, 5))
+def test_surface_mesh_is_identical_across_chord_pass_chunk_sizes(
+    chunk_size: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.unit.meshing.test_native_surface_routes import (
+        _curved_trim_domain,
+        _surface_specification,
+    )
+
+    domain = _curved_trim_domain()
+    specification = _surface_specification(domain, maximum_deviation=0.05)
+
+    def mesh() -> native_surface.NativeMeshConstruction:
+        return native_surface.prepare_native_surface(
+            domain,
+            specification,
+            NativeMeshingOptions("parametric_surface"),
+            SpatialCoordinateContract.si(),
+        ).execute()
+
+    expected = mesh()
+    prepare = native_surface._CurveChordBounds.prepare_intervals
+
+    def chunked(
+        self: native_surface._CurveChordBounds,
+        intervals: tuple[tuple[int, Fraction, Fraction], ...],
+        /,
+    ) -> None:
+        for start in range(0, len(intervals), chunk_size):
+            prepare(self, intervals[start : start + chunk_size])
+
+    monkeypatch.setattr(native_surface._CurveChordBounds, "prepare_intervals", chunked)
+    actual = mesh()
+    np.testing.assert_array_equal(actual.mesh.coordinates, expected.mesh.coordinates)
+    assert len(actual.mesh.blocks) == len(expected.mesh.blocks)
+    for actual_block, expected_block in zip(
+        actual.mesh.blocks, expected.mesh.blocks, strict=True
+    ):
+        np.testing.assert_array_equal(actual_block.vertices, expected_block.vertices)
+        np.testing.assert_array_equal(actual_block.global_ids, expected_block.global_ids)
+    assert actual.compliance.passed == expected.compliance.passed
+    assert actual.compliance.achieved == expected.compliance.achieved
+    assert actual.compliance.issues == expected.compliance.issues
+
+
+def test_chord_pass_reports_first_sequential_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry._meshing_domain import SourcePreparation
+    from phydrax.meshing._contracts import MeshingFailureCategory
+    from tests.unit.meshing.test_native_surface_routes import _curved_trim_domain
+
+    domain = _curved_trim_domain()
+    chords = native_surface._CurveChordBounds(SourcePreparation(domain))
+    point_bounds = native_surface._CurveChordBounds._point_bounds
+
+    def faulty_endpoint(
+        self: native_surface._CurveChordBounds,
+        patch: int,
+        use: native_surface.domain_owner.PatchCurveUse,
+        parameter: Fraction,
+        /,
+    ) -> np.ndarray:
+        if parameter == Fraction(3, 4):
+            raise native_surface._failure(
+                "later endpoint",
+                category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                entity_ids=(0,),
+            )
+        return point_bounds(self, patch, use, parameter)
+
+    def faulty_derivative(jobs: list[native_surface._ChordJob], /) -> list[float]:
+        raise RuntimeError("earlier derivative")
+
+    monkeypatch.setattr(native_surface._CurveChordBounds, "_point_bounds", faulty_endpoint)
+    monkeypatch.setattr(native_surface, "_second_order_chord_bounds", faulty_derivative)
+    intervals = (
+        (0, Fraction(0), Fraction(1, 4)),
+        (0, Fraction(1, 2), Fraction(3, 4)),
+    )
+    with pytest.raises(RuntimeError, match="earlier derivative"):
+        chords.prepare_intervals(intervals)

@@ -11,7 +11,6 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
-from phydrax._fingerprint import canonical_fingerprint
 from phydrax.discretization import PolyhedralConnectivity
 from phydrax.discretization.finite_volume import (
     HybridDiffusionBoundary,
@@ -245,15 +244,17 @@ def main() -> None:
         raise RuntimeError(f"Mimetic FV affine solve failed: {error=} {residual=}")
     target_sites = np.asarray(((0.5, 0.25, 0.5), (0.5, 1.75, 0.5)), dtype=np.float64)
     target_ids = tuple(f"{source_id}:regenerated-site:{i}" for i in range(2))
-    target_revision = canonical_fingerprint(
-        {
-            "complex": complex_.complex_id,
-            "sites": target_sites.tolist(),
-            "coordinate_unit": "meter",
-            "parent_source": revision,
-            "operation": "regenerate-authored-sites",
-        }
-    )
+    target_revision = phx.NumericRevision(
+        phx.SemanticProvenance(
+            {
+                "complex": complex_.complex_id,
+                "coordinate_unit": "meter",
+                "parent_source": revision,
+                "operation": "regenerate-authored-sites",
+            }
+        ),
+        {"sites": target_sites},
+    ).revision_id
     successor = NativePolyhedralSource(
         complex_,
         source_id,

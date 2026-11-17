@@ -285,6 +285,12 @@ def test_random_polynomial_measure_batches_against_exact_moments(
     _assert_exact_measure_batch(certified_cell_measures(mesh, geometry), expected)
 
 
+def _no_block_measures(
+    mesh: CellMesh, geometry: CellGeometrySpec, /
+) -> dict[int, Fraction]:
+    return {}
+
+
 def test_measure_reference_detects_corrupted_native_numerator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -308,6 +314,7 @@ def test_measure_reference_detects_corrupted_native_numerator(
             Fraction(value.numerator + 1, value.denominator) for value in exact_values
         ]
 
+    monkeypatch.setattr(mapped_measure, "exact_block_cell_measures", _no_block_measures)
     monkeypatch.setattr(mapped_measure, "exact_jacobian_integrals", corrupt)
     with pytest.raises(AssertionError):
         _assert_exact_measure_batch(certified_cell_measures(mesh, geometry), expected)
@@ -328,6 +335,7 @@ def test_native_measure_refusal_retains_exact_result(
     ) -> list[Fraction | None]:
         return [None] * len(jacobians)
 
+    monkeypatch.setattr(mapped_measure, "exact_block_cell_measures", _no_block_measures)
     monkeypatch.setattr(mapped_measure, "exact_jacobian_integrals", refuse)
     _assert_exact_measure_batch(certified_cell_measures(mesh, geometry), expected)
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import threading
 import weakref
+from abc import ABC, abstractmethod
 from typing import Any, Generic, TypeVar
 
 import jax
@@ -28,6 +29,17 @@ from ._fingerprint import iter_array_bytes
 
 _T = TypeVar("_T")
 _ARRAY_LEAVES = (np.ndarray, np.generic, jax.Array)
+
+
+class _ImmutableFingerprintLeaf(ABC):
+    """An immutable opaque leaf with a content-sensitive canonical digest."""
+
+    __slots__ = ()
+
+    @abstractmethod
+    def _live_leaf_fingerprint(self, /) -> str:
+        """Return the exact current content fingerprint."""
+        ...
 
 
 def live_content_fingerprint(value: object, /) -> tuple[object, str]:
@@ -52,6 +64,10 @@ def live_content_fingerprint(value: object, /) -> tuple[object, str]:
         if not isinstance(leaf, _ARRAY_LEAVES):
             text = f"{type(leaf).__qualname__}:{leaf!r}"
             scalars.append(f"{len(text)}:{text}")
+            if isinstance(leaf, _ImmutableFingerprintLeaf):
+                flush()
+                content = leaf._live_leaf_fingerprint().encode("ascii")
+                digest.update(b"i" + len(content).to_bytes(8, "big") + content)
             continue
         flush()
         array = np.asarray(leaf)
@@ -98,7 +114,7 @@ class LiveProofLedger(Generic[_T]):
     def __init__(self) -> None:
         self._entries: dict[
             tuple[tuple[int, ...], tuple[tuple[str, str], ...]],
-            tuple[tuple[weakref.ref[Any] | None, ...], tuple[object, str], _T],
+            tuple[tuple[weakref.ref[Any] | None, ...], tuple[object, str] | None, _T],
         ] = {}
         self._lock = threading.Lock()
 
@@ -121,9 +137,34 @@ class LiveProofLedger(Generic[_T]):
             for reference, operand in zip(references, operands, strict=True)
         ):
             return None
-        if not _same_fingerprint(live_content_fingerprint(operands), fingerprint):
+        if fingerprint is None or not _same_fingerprint(
+            live_content_fingerprint(operands), fingerprint
+        ):
             return None
         return outcome
+
+    def _find_identity_bound(self, operand: object, /) -> _T | None:
+        """Find a private identity-bound outcome whose caller checks immutability."""
+        key = ((id(operand),), ())
+        with self._lock:
+            entry = self._entries.get(key)
+        if entry is None:
+            return None
+        references, fingerprint, outcome = entry
+        if fingerprint is not None or references[0] is None or references[0]() is not operand:
+            return None
+        return outcome
+
+    def _record_identity_bound(self, operand: object, outcome: _T, /) -> None:
+        """Record an identity-bound outcome for a caller-validated immutable leaf."""
+        try:
+            reference = weakref.ref(operand)
+        except TypeError:
+            return
+        key = ((id(operand),), ())
+        with self._lock:
+            self._entries[key] = ((reference,), None, outcome)
+        weakref.finalize(operand, self._forget, key)
 
     def record(
         self,

@@ -1,3 +1,5 @@
+import gc
+import weakref
 from fractions import Fraction
 from pathlib import Path
 
@@ -30,6 +32,7 @@ from phydrax.geometry._meshing_domain import (
     MeshingSurfacePatch,
     PatchCurveUse,
     PatchPoleUse,
+    SourcePreparation,
     use_endpoints,
 )
 from phydrax.geometry._source_identity import source_entity_id
@@ -53,6 +56,7 @@ from phydrax.geometry.brep._intersection_curve import exact_curve_parameter_poin
 from phydrax.geometry.brep._model import BRepGeometry, BRepModel
 from phydrax.geometry.brep._patches import (
     AbstractCurve,
+    BSplineCurve,
     BSplineSurfacePatch,
     CircleCurve,
     CylinderPatch,
@@ -653,6 +657,55 @@ def _rational_spline_domain(
         source_id=source_id,
         source_revision="r1",
     )
+
+
+def test_source_preparation_live_and_rebuilt_spline_carriers() -> None:
+    def surface() -> BSplineSurfacePatch:
+        return BSplineSurfacePatch(
+            np.asarray(
+                [
+                    [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                    [[1.0, 0.0, 0.0], [1.0, 1.0, 0.0]],
+                ],
+                dtype=np.float64,
+            ),
+            np.ones((2, 2), dtype=np.float64),
+            (0.0, 0.0, 1.0, 1.0),
+            (0.0, 0.0, 1.0, 1.0),
+            1,
+            1,
+        )
+
+    def curve() -> BSplineCurve:
+        return BSplineCurve(
+            ((0.0, 0.0), (1.0, 1.0)), (1.0, 1.0), (0.0, 0.0, 1.0, 1.0), 1
+        )
+
+    domain = _rational_spline_domain(_rational_spline_surfaces()[0], "span-reuse")
+    domain_ref = weakref.ref(domain)
+    live_surface, live_curve = surface(), curve()
+    surface_ref, curve_ref = weakref.ref(live_surface), weakref.ref(live_curve)
+    box = np.asarray(((0.0, 0.0), (1.0, 1.0)), dtype=np.float64)
+    first = SourcePreparation(domain)
+    surface_box = first.surface_box(live_surface, box)
+    curve_box = first.curve_box(live_curve, 0., 1.)
+
+    second = SourcePreparation(domain)
+    np.testing.assert_array_equal(second.surface_box(live_surface, box), surface_box)
+    np.testing.assert_array_equal(second.curve_box(live_curve, 0., 1.), curve_box)
+    rebuilt_surface, rebuilt_curve = surface(), curve()
+    np.testing.assert_array_equal(
+        SourcePreparation(domain).surface_box(rebuilt_surface, box), surface_box
+    )
+    np.testing.assert_array_equal(
+        SourcePreparation(domain).curve_box(rebuilt_curve, 0., 1.), curve_box
+    )
+
+    del first, second, live_surface, live_curve, domain
+    gc.collect()
+    assert surface_ref() is None
+    assert curve_ref() is None
+    assert domain_ref() is None
 
 
 def _expected_interpolation_error_squared(
@@ -1549,9 +1602,52 @@ def test_planar_revolution_caps_partition_in_their_exact_plane_chart() -> None:
     domain = MeshingDomain.from_brep(
         brep_cylinder(0.5, 1.0, coordinate_contract=SpatialCoordinateContract.si())
     )
+    domain_ref = weakref.ref(domain)
+    rebuilt = MeshingDomain.from_brep(
+        brep_cylinder(0.5, 1.0, coordinate_contract=SpatialCoordinateContract.si())
+    )
     charts = {
         patch: exact_plane_chart(domain, patch) for patch in range(len(domain.patches))
     }
+    for patch, original in charts.items():
+        repeated = exact_plane_chart(domain, patch)
+        reconstructed = exact_plane_chart(rebuilt, patch)
+        if original is None:
+            assert repeated is None and reconstructed is None
+            continue
+        assert repeated is not None and reconstructed is not None
+        for other in (repeated, reconstructed):
+            assert (
+                other.chart_id,
+                other.origin,
+                other.first_axis,
+                other.second_axis,
+                other.radius_offset,
+                other.radius_sign,
+                other.coordinate_expressions(),
+            ) == (
+                original.chart_id,
+                original.origin,
+                original.first_axis,
+                original.second_axis,
+                original.radius_offset,
+                original.radius_sign,
+                original.coordinate_expressions(),
+            )
+            assert other.chart_point((Fraction(0), Fraction(1, 2))) == (
+                original.chart_point((Fraction(0), Fraction(1, 2)))
+            )
+            assert tuple(len(loop) for loop in other.loops) == tuple(
+                len(loop) for loop in original.loops
+            )
+            for other_loop, original_loop in zip(other.loops, original.loops, strict=True):
+                for other_use, original_use in zip(other_loop, original_loop, strict=True):
+                    assert isinstance(other_use.pcurve, CircleCurve)
+                    assert isinstance(original_use.pcurve, CircleCurve)
+                    assert other_use.pcurve.radius_exact == original_use.pcurve.radius_exact
+                    np.testing.assert_array_equal(
+                        other_use.traversal_endpoints(), original_use.traversal_endpoints()
+                    )
     caps = tuple(patch for patch, chart in charts.items() if chart is not None)
     assert len(caps) == 2
     source = MeshingDomainBoundarySource(domain, caps)
@@ -1636,6 +1732,9 @@ def test_planar_revolution_caps_partition_in_their_exact_plane_chart() -> None:
             abs(_area2(triangle)) for triangle in target
         )
     assert exact_plane_chart(domain, next(iter(set(range(3)) - set(caps)))) is None
+    del source, charts, chart, original, repeated, reconstructed, other, domain
+    gc.collect()
+    assert domain_ref() is None
 
 
 def _area2(triangle: tuple[tuple[Fraction, Fraction], ...], /) -> Fraction:

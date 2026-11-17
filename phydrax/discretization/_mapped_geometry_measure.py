@@ -44,10 +44,10 @@ from ._coordinate_enclosure import (
     derivative,
     ExactScalar,
     Expression,
-    linear_combinations,
     multiply,
     normalize_pyramid_reference_expression,
     Polynomial,
+    PreparedLinearCombinationBasis,
     pyramid_reference_to_box_arguments,
     RationalPolynomial,
     RestrictedCoordinateMapPreparation,
@@ -281,7 +281,11 @@ def mapped_coordinate_expressions(
 
 
 def _mapped_basis_expressions(
-    basis: tuple[Expression, ...], local: tuple[tuple[ExactScalar, ...], ...], /
+    basis: tuple[Expression, ...],
+    local: tuple[tuple[ExactScalar, ...], ...],
+    /,
+    *,
+    prepared: PreparedLinearCombinationBasis | None = None,
 ) -> tuple[Expression, ...]:
     if not basis or len(basis) != len(local):
         raise ValueError("Mapped coordinate basis and local coefficient rows differ.")
@@ -291,7 +295,9 @@ def _mapped_basis_expressions(
     coefficients = tuple(
         tuple(local[dof][axis] for dof in range(len(local))) for axis in range(ambient)
     )
-    return linear_combinations(basis, coefficients)
+    if prepared is None:
+        prepared = PreparedLinearCombinationBasis(basis)
+    return prepared.combine(coefficients)
 
 
 def _exact_quotient(dividend: Polynomial, divisor: Polynomial, /) -> Polynomial | None:
@@ -926,7 +932,13 @@ def mapped_geometry_cells(
 def exact_block_cell_measures(
     mesh: CellMesh, geometry: CellGeometrySpec, /
 ) -> dict[int, Fraction]:
-    """Integrate compatible block maps exactly, omitting undecided mesh rows."""
+    """Integrate supported full-dimensional polynomial maps as exact signed volumes.
+
+    Keys are flattened mesh rows. Embedded and one-dimensional cells, pyramids,
+    rational-expression or radical-coefficient bases, nested per-cell restrictions,
+    and rows refused by
+    the exact kernel are omitted for the caller's ordinary integration path.
+    """
     elements, routes, _ = geometry.resolve(mesh)
     bank = geometry.source_coordinates()
     decided: dict[int, Fraction] = {}
@@ -994,12 +1006,15 @@ def _coordinate_expression_rows(
     cells: Sequence[MappedGeometryCell],
     /,
 ) -> Iterator[tuple[ScalarCoordinateElement, tuple[Expression, ...]]]:
-    """Share exact restricted-map preparation across cells of each block."""
+    """Share exact restricted-map and basis preparation across block cells."""
     route_banks: dict[int, np.ndarray | None] = {}
     for element, route in zip(elements, routes, strict=True):
         key = id(element)
         route_banks[key] = None if key in route_banks else route
     preparations: dict[int, RestrictedCoordinateMapPreparation] = {}
+    prepared_bases: dict[
+        int, tuple[tuple[Expression, ...], PreparedLinearCombinationBasis]
+    ] = {}
     for element, local, cell_row in cells:
         if not isinstance(element, ScalarCoordinateElement):
             raise TypeError("Mapped cell measures require scalar coordinate elements.")
@@ -1018,7 +1033,18 @@ def _coordinate_expression_rows(
                 preparations[id(element)] = preparation
             coordinates = preparation.expressions(cell_row)
         if coordinates is None:
-            coordinates = mapped_coordinate_expressions(element, local, cell_row=cell_row)
+            key = id(element)
+            prepared_basis = prepared_bases.get(key)
+            if prepared_basis is None or isinstance(
+                element, PerCellRestrictedCellGeometryElement
+            ):
+                basis = coordinate_effective_basis(element, cell_row=cell_row)
+                prepared_basis = (basis, PreparedLinearCombinationBasis(basis))
+                if not isinstance(element, PerCellRestrictedCellGeometryElement):
+                    prepared_bases[key] = prepared_basis
+            coordinates = _mapped_basis_expressions(
+                prepared_basis[0], local, prepared=prepared_basis[1]
+            )
         yield element, coordinates
 
 
@@ -1345,6 +1371,8 @@ def certified_cell_measures(
     determinants use a Bernstein-positive geometric series. Embedded measures
     integrate the square root of an exactly formed Gram determinant with
     positive Bernstein enclosures and a binomial-series remainder.
+    Exact block integrals are used where available; unsupported rows retain the
+    ordinary integration path.
     """
     if not isinstance(mesh, CellMesh) or not isinstance(geometry, CellGeometrySpec):
         raise TypeError("Mapped cell measures require a CellMesh and CellGeometrySpec.")
@@ -1367,6 +1395,10 @@ def certified_cell_measures(
     values = np.empty((len(cells),), dtype=np.float64)
     errors = np.empty_like(values)
     exact = True
+    block_integrals = exact_block_cell_measures(mesh, geometry)
+    for row, integral in block_integrals.items():
+        values[row], errors[row] = _publish_integral(integral)
+    fallback_rows = [row for row in range(len(cells)) if row not in block_integrals]
     absolute_per_cell = Fraction(absolute) / max(len(cells), 1)
     relative_fraction = Fraction(relative)
     embedded_integrals: dict[tuple[object, ...], tuple[float, float, bool]] = {}
@@ -1400,10 +1432,15 @@ def certified_cell_measures(
             values[row], errors[row] = _publish_integral(integral)
         pending.clear()
 
-    for flattened_row, (scalar, coordinates) in enumerate(
+    for flattened_row, (scalar, coordinates) in zip(
+        fallback_rows,
         _coordinate_expression_rows(
-            resolved_elements, resolved_routes, source_bank, cells
-        )
+            resolved_elements,
+            resolved_routes,
+            source_bank,
+            [cells[row] for row in fallback_rows],
+        ),
+        strict=True,
     ):
         dimension = scalar.topological_dimension
         ambient_dimension = len(coordinates)
