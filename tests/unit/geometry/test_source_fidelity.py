@@ -58,6 +58,7 @@ from phydrax.geometry._source_fidelity import (
     _volume_boundary_facet_lookup,
     certify_source_fidelity,
     polyhedral_face_triangle_vertex_ids,
+    validate_source_fidelity_witness,
 )
 from phydrax.geometry.brep import brep_cylinder, brep_sphere, BRepAffinePlacement
 from phydrax.geometry.brep._patches import (
@@ -96,6 +97,62 @@ def test_triangle_chain_boundary_handles_subdivision_and_forgeries() -> None:
         ((a[0] + 1, a[1]), (b[0] + 1, b[1]), (c[0] + 1, c[1])) for a, b, c in original
     )
     assert not _same_triangle_chain_boundary(original, shifted)
+
+
+def test_exact_planar_integer_predicates_match_fraction_reference() -> None:
+    from phydrax.geometry._planar_primitives import (
+        cross,
+        interiors_separated,
+        signed_area2,
+    )
+
+    rng = np.random.default_rng(143)
+
+    def triangle() -> _ChartTriangle:
+        def coordinate() -> Fraction:
+            return Fraction(int(rng.integers(-10, 11)), int(rng.integers(1, 12)))
+
+        return (
+            (coordinate(), coordinate()),
+            (coordinate(), coordinate()),
+            (coordinate(), coordinate()),
+        )
+
+    def reference_cross(
+        a: tuple[Fraction, Fraction],
+        b: tuple[Fraction, Fraction],
+        c: tuple[Fraction, Fraction],
+    ) -> Fraction:
+        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+
+    def reference_area(row: _ChartTriangle) -> Fraction:
+        return sum(
+            (
+                a[0] * b[1] - a[1] * b[0]
+                for a, b in zip(row, row[1:] + row[:1], strict=True)
+            ),
+            Fraction(0),
+        )
+
+    def reference_separated(a: _ChartTriangle, b: _ChartTriangle) -> bool:
+        for inner, outer in ((a, b), (b, a)):
+            orientation = reference_area(inner)
+            if not orientation:
+                return True
+            for index, start in enumerate(inner):
+                end = inner[(index + 1) % 3]
+                if all(
+                    reference_cross(start, end, point) * orientation <= 0
+                    for point in outer
+                ):
+                    return True
+        return False
+
+    for _ in range(400):
+        first, second = triangle(), triangle()
+        assert cross(*first) == reference_cross(*first)
+        assert signed_area2(first) == reference_area(first)
+        assert interiors_separated(first, second) == reference_separated(first, second)
 
 
 def _pwl_boundary_owner() -> PiecewiseLinearDomainBoundaryOwner:
@@ -503,6 +560,62 @@ def _mesh(points: np.ndarray, triangles: np.ndarray) -> CellMesh:
         (CellBlock("triangles", "triangle", triangles),),
         vertex_global_ids=np.arange(points.shape[0], dtype=np.int64),
     )
+
+
+def test_validated_random_chart_partitions_report_exact_defects() -> None:
+    from phydrax.geometry._embedding_state import MeshCertificateFinding
+
+    rng = np.random.default_rng(239)
+    domain = _domain()
+    source = MeshingDomainBoundarySource(domain, (0,))
+    expected_failure = (
+        MeshCertificateFinding(
+            "source_chart_coverage",
+            "violated",
+            "source_facet",
+            (0,),
+            detail="Exact chart containment, disjointness, or full trim measure fails.",
+        ),
+    )
+    for trial in range(6):
+        cut = 2.0**-30 if trial == 0 else float(rng.integers(1, 15)) / 16.0
+        axis = (0.0, cut, 1.0)
+        points = np.asarray([(x, y, 0.0) for y in axis for x in axis], dtype=np.float64)
+        triangles: list[tuple[int, int, int]] = []
+        for y in range(2):
+            for x in range(2):
+                a = 3 * y + x
+                b, c, d = a + 1, a + 4, a + 3
+                if rng.integers(2):
+                    triangles.extend(((a, b, c), (a, c, d)))
+                else:
+                    triangles.extend(((a, b, d), (b, c, d)))
+        connectivity = np.asarray(triangles, dtype=np.int64)
+        mesh = _mesh(points, connectivity)
+        geometry = CellGeometrySpec.affine(mesh)
+        charts = points[connectivity, :2].copy()
+        for defect in ("none", "gap", "overlap"):
+            candidate = charts.copy()
+            if defect == "gap":
+                candidate[0, 1:] = (candidate[0, 1:] + candidate[0, 0]) / 2
+            elif defect == "overlap":
+                candidate[0] = candidate[1]
+            witness = _witness(mesh, geometry, domain, candidate)
+            assert _partition_findings(source, witness, SourcePreparation(domain)) == (
+                () if defect == "none" else expected_failure
+            )
+            if defect == "none":
+                assert (
+                    validate_source_fidelity_witness(
+                        mesh, geometry, source, witness
+                    ).partition_findings
+                    == ()
+                )
+            else:
+                with pytest.raises(
+                    ValueError, match="not a complete reference partition"
+                ):
+                    validate_source_fidelity_witness(mesh, geometry, source, witness)
 
 
 def test_polyhedral_surface_chart_uses_actual_triangulated_face_vertices() -> None:
@@ -2892,7 +3005,7 @@ def test_source_fidelity_uses_exact_normal_offset_surface_coefficients() -> None
 def test_chart_overlap_candidates_agree_on_host_and_bvh_broad_phases(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from phydrax.geometry import _planar_primitives, _source_fidelity
+    from phydrax.geometry import _planar_primitives
 
     rng = np.random.default_rng(7)
 
@@ -2941,7 +3054,12 @@ def test_chart_overlap_candidates_agree_on_host_and_bvh_broad_phases(
         assert decision == -1 or (decision == 1) == separated
     for left in range(len(first)):
         for right in range(len(second)):
-            if _source_fidelity._intersection_area(first[left], second[right]) > 0:
+            if (
+                _planar_primitives.area2(
+                    _planar_primitives.intersection(first[left], second[right])
+                )
+                > 0
+            ):
                 assert (left, right) in candidates
 
 
