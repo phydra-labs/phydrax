@@ -9,6 +9,7 @@ from itertools import product
 from typing import TYPE_CHECKING
 
 import numpy as np
+from numpy.typing import NDArray
 
 from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
 from ..discretization._cell_mesh import CellMesh
@@ -40,12 +41,18 @@ def certify_periodic_mapped_contacts(
     cells: tuple[EmbeddingCell, ...],
     topology: PeriodicMeshTopology,
     /,
+    *,
+    participants: NDArray[np.bool_] | None = None,
 ) -> PeriodicContactResult:
     """Prove mapped translation-image contact by exact stratum separators.
 
     Outward map bounds enumerate every potentially intersecting image. Each
     image is processed separately and each candidate pair must be separated or
     proven to meet only at its declared lifted stratum.
+
+    With ``participants``, only pairs of two participating cells, over every
+    lattice image, are proved; the caller owns the theorem that makes every
+    other pair unnecessary.
     """
     from ._global_embedding import (
         _cell_simplices,
@@ -75,6 +82,14 @@ def certify_periodic_mapped_contacts(
         subdivided_stratum_separation,
     )
 
+    if participants is not None:
+        if participants.shape != (len(cells),):
+            raise ValueError("Contact participants must align with the cells.")
+        cells = tuple(
+            cell
+            for cell, stated in zip(cells, participants.tolist(), strict=True)
+            if stated
+        )
     period = topology.cell
     if not isinstance(period, (PeriodicCell, PeriodicIsometryGroup)) or not cells:
         return PeriodicContactResult(

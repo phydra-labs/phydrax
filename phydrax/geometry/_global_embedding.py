@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from functools import cache
@@ -6616,25 +6616,56 @@ def _nonperiodic_contacts(
 
 def _periodic_contacts(
     mesh: CellMesh,
-    geometry: CellGeometrySpec,
     cells: tuple[EmbeddingCell, ...],
     topology: PeriodicMeshTopology,
+    facet_trace_id: Callable[[], str | None],
+    local_premises: bool,
     /,
-) -> tuple[list[MeshCertificateFinding], Literal["closed", "with_boundary"] | None]:
+) -> tuple[list[MeshCertificateFinding], Literal["closed", "with_boundary"] | None, bool]:
+    """Exact periodic cell contacts; ``facet_trace_id`` is the proof's trace certificate.
+
+    The last value states that only the cells owning a quotient boundary facet
+    were paired. That is the complete obligation when ``local_premises`` (no
+    validity, cell-map or vertex-trace finding) holds on a single-shell partial
+    quotient: positive cell maps with exactly cancelling quotient facet traces
+    cover each side of the embedded connected shell a constant number of
+    times, differing by one across it and zero off the compact image in the
+    noncompact covering space, so no point is covered twice.
+    """
     from ._periodic_embedding import (
         _contact_disposition,
         certify_periodic_affine_embedding,
+        periodic_single_shell_exterior_cells,
     )
 
     result = certify_periodic_affine_embedding(mesh, cells, topology)
-    if (
-        result.status == "unresolved"
-        and _periodic_facet_trace_certificate_id(mesh, geometry, cells, topology)
-        is not None
-    ):
+    exterior_only = False
+    if result.status == "unresolved" and facet_trace_id() is not None:
         from ._periodic_mapped_contacts import certify_periodic_mapped_contacts
 
-        result = certify_periodic_mapped_contacts(mesh, cells, topology)
+        participants: NDArray[np.bool_] | None = None
+        exterior_rows = (
+            periodic_single_shell_exterior_cells(mesh, topology)
+            if local_premises
+            else None
+        )
+        if exterior_rows is not None:
+            exterior_ids = set(
+                np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64)[
+                    exterior_rows
+                ].tolist()
+            )
+            participants = np.fromiter(
+                (cell.global_id in exterior_ids for cell in cells),
+                dtype=np.bool_,
+                count=len(cells),
+            )
+            if np.count_nonzero(participants) != len(exterior_ids):
+                participants = None
+        result = certify_periodic_mapped_contacts(
+            mesh, cells, topology, participants=participants
+        )
+        exterior_only = participants is not None
     findings = [
         MeshCertificateFinding(
             check,
@@ -6645,7 +6676,7 @@ def _periodic_contacts(
         )
         for check, ids, detail in result.findings
     ]
-    return findings, result.quotient_boundary
+    return findings, result.quotient_boundary, exterior_only
 
 
 def _boundary_findings(
@@ -6972,6 +7003,61 @@ def _periodic_transform_face_trace(
     )
 
 
+def _periodic_affine_face_traces_equal(
+    first: EmbeddingCell,
+    first_vertices: tuple[int, ...],
+    second: EmbeddingCell,
+    second_vertices: tuple[int, ...],
+    matrix: tuple[tuple[Fraction, ...], ...],
+    /,
+) -> bool:
+    """Whether two affine facet traces agree after the lattice action.
+
+    Both facets list their vertices in one canonical order, so their traces are
+    affine over the same frame: the first vertex and the two axis corners that
+    `_periodic_face_arguments` uses. Affine maps that agree at those three
+    corners agree on the facet, and conversely.
+    """
+    if (
+        first.affine_offset is None
+        or first.affine_matrix is None
+        or second.affine_offset is None
+        or second.affine_matrix is None
+        or len(first_vertices) != len(second_vertices)
+    ):
+        raise ValueError("Affine facet traces require two exact affine frames.")
+    for corner in (0, 1, 2) if len(first_vertices) == 3 else (0, 1, 3):
+        first_reference = first.reference_vertices[first_vertices[corner]]
+        second_reference = second.reference_vertices[second_vertices[corner]]
+        first_point = tuple(
+            sum(
+                (
+                    coefficient * coordinate
+                    for coefficient, coordinate in zip(row, first_reference, strict=True)
+                ),
+                offset,
+            )
+            for offset, row in zip(first.affine_offset, first.affine_matrix, strict=True)
+        )
+        for axis, (offset, row) in enumerate(
+            zip(second.affine_offset, second.affine_matrix, strict=True)
+        ):
+            expected = sum(
+                (
+                    coefficient * coordinate
+                    for coefficient, coordinate in zip(row, second_reference, strict=True)
+                ),
+                offset,
+            )
+            image = sum(
+                (matrix[axis][column] * first_point[column] for column in range(3)),
+                matrix[axis][3],
+            )
+            if image != expected:
+                return False
+    return True
+
+
 def _periodic_facet_trace_certificate_id(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -7164,7 +7250,11 @@ def _periodic_facet_trace_certificate_id(
         face_key = _periodic_quotient_face_key(topology, quotient_face, orders)
         if face_key is None:
             return None
-        occurrences: list[tuple[int, np.ndarray, tuple[Expression, ...]]] = []
+        occurrences: list[
+            tuple[
+                EmbeddingCell, np.ndarray, tuple[int, ...], tuple[Expression, ...] | None
+            ]
+        ] = []
         for face_row in lifted_face_rows:
             face_vertices = tuple(int(value) for value in face_rows[face_row])
             if len(face_vertices) not in (3, 4):
@@ -7252,34 +7342,56 @@ def _periodic_facet_trace_certificate_id(
                         dtype=np.int64,
                     )
                 local_vertices = tuple(local_by_key[key] for key in face_key)
-                trace = _periodic_face_trace(cell, local_vertices)
-                if trace is None:
-                    return None
-                occurrences.append((cell_id, face_action, trace))
+                trace: tuple[Expression, ...] | None = None
+                if cell.affine:
+                    # An affine facet trace is fixed by its frame corner
+                    # images; only the facet frame itself is owed here.
+                    if _periodic_face_arguments(cell, local_vertices) is None:
+                        return None
+                else:
+                    trace = _periodic_face_trace(cell, local_vertices)
+                    if trace is None:
+                        return None
+                occurrences.append((cell, face_action, local_vertices, trace))
         if len(occurrences) == 1:
             face_trace_records.append((quotient_face, face_key, "physical-boundary"))
             continue
         if len(occurrences) != 2:
             return None
-        first_id, first_action, first_trace = occurrences[0]
-        second_id, second_action, second_trace = occurrences[1]
+        first_cell, first_action, first_local, first_trace = occurrences[0]
+        second_cell, second_action, second_local, second_trace = occurrences[1]
         action_delta = reduce_periodic_exponents(second_action - first_action, orders)
         try:
             action = exact_periodic_element(topology.cell, action_delta)
-            transformed = _periodic_transform_face_trace(first_trace, action)
+            if first_trace is None and second_trace is None:
+                traces_equal = _periodic_affine_face_traces_equal(
+                    first_cell, first_local, second_cell, second_local, action
+                )
+            else:
+                if first_trace is None:
+                    first_trace = _periodic_face_trace(first_cell, first_local)
+                if second_trace is None:
+                    second_trace = _periodic_face_trace(second_cell, second_local)
+                if first_trace is None or second_trace is None:
+                    return None
+                traces_equal = all(
+                    expression_equal(first, second)
+                    for first, second in zip(
+                        _periodic_transform_face_trace(first_trace, action),
+                        second_trace,
+                        strict=True,
+                    )
+                )
         except (ArithmeticError, IndexError, TypeError, ValueError, ZeroDivisionError):
             return None
-        if not all(
-            expression_equal(first, second)
-            for first, second in zip(transformed, second_trace, strict=True)
-        ):
+        if not traces_equal:
             return None
         face_trace_records.append(
             (
                 quotient_face,
                 face_key,
-                first_id,
-                second_id,
+                first_cell.global_id,
+                second_cell.global_id,
                 tuple(int(value) for value in action_delta),
             )
         )
@@ -7370,6 +7482,7 @@ def _proof(
     boundary_values: list[str] = []
     degree_one_boundary = False
     global_degree_route: str | None = None
+    periodic_shell_degree_topology: str | None = None
     reference_chain_attempt = (
         _reference_chain_replay(mesh, geometry) if periodic is None else None
     )
@@ -7441,10 +7554,22 @@ def _proof(
                 )
         else:
             mapped_result = None
+            periodic_cells, periodic_topology = cells, periodic
+            facet_trace: list[str | None] = []
+
+            def facet_trace_id() -> str | None:
+                # The mesh, geometry, cells and topology are fixed for this
+                # proof, so one current-chart trace proof serves every route.
+                if not facet_trace:
+                    facet_trace.append(
+                        _periodic_facet_trace_certificate_id(
+                            mesh, geometry, periodic_cells, periodic_topology
+                        )
+                    )
+                return facet_trace[0]
+
             if any(not cell.affine for cell in cells) and not state_findings:
-                trace_id = _periodic_facet_trace_certificate_id(
-                    mesh, geometry, cells, periodic
-                )
+                trace_id = facet_trace_id()
                 if trace_id is not None:
                     from ._periodic_embedding import (
                         certify_periodic_mapped_torus_degree,
@@ -7506,17 +7631,15 @@ def _proof(
                 restriction_state = EmbeddingState(tuple(state_findings), tuple(checks))
                 restriction_evidence = None
                 if periodic_restriction is not None and not state_findings:
-                    facet_trace_id = _periodic_facet_trace_certificate_id(
-                        mesh, geometry, cells, periodic
-                    )
-                    if facet_trace_id is not None:
+                    restriction_trace_id = facet_trace_id()
+                    if restriction_trace_id is not None:
                         restriction_evidence = certify_periodic_restriction_partition(
                             restriction_state,
                             mesh,
                             geometry,
                             validity,
                             periodic_restriction,
-                            facet_trace_id,
+                            restriction_trace_id,
                         )
                 if restriction_evidence is not None:
                     periodic_restriction_evidence = restriction_evidence
@@ -7536,8 +7659,10 @@ def _proof(
                         f"{restriction_evidence.evidence_id}"
                     )
                 else:
-                    contact_findings, quotient_boundary = _periodic_contacts(
-                        mesh, geometry, cells, periodic
+                    contact_findings, quotient_boundary, exterior_only = (
+                        _periodic_contacts(
+                            mesh, cells, periodic, facet_trace_id, not state_findings
+                        )
                     )
                     state_findings.extend(contact_findings)
                     checks.append("periodic_exact_cell_contacts")
@@ -7545,6 +7670,18 @@ def _proof(
                         checks.append("periodic_closed_quotient")
                     elif quotient_boundary == "with_boundary":
                         checks.append("periodic_subdomain_boundary")
+                    if exterior_only:
+                        checks.append("periodic_exterior_cell_contacts")
+                        if not contact_findings:
+                            periodic_shell_degree_topology = periodic.periodic_topology_id
+                            checks.append("periodic_global_degree_one_injectivity")
+                            boundary_values.extend(
+                                (
+                                    "periodic_global_degree_one:positive-local-jacobians-and-cancelled-quotient-traces",
+                                    "periodic_global_degree_argument:embedded-connected-shell-in-noncompact-cover-has-degree-one-inside",
+                                    "injectivity_argument:positive-local-degree-makes-each-regular-preimage-contribute-one",
+                                )
+                            )
     elif reference_chain_used:
         assert reference_chain_certificate is not None
         assert parent_embedding is not None
@@ -7663,6 +7800,22 @@ def _proof(
                     global_degree_route,
                     "exact_internal_trace_cancellation",
                     "single_shell_oriented_degree_one",
+                ),
+                tuple(int(value) for value in cell_ids),
+                tuple(boundary_values),
+            )
+        )
+    if periodic_shell_degree_topology is not None:
+        witnesses.append(
+            MeshEmbeddingWitness(
+                "periodic_global_degree_one_injectivity",
+                (
+                    binding.binding_id,
+                    validity.certificate_id,
+                    periodic_shell_degree_topology,
+                    "embedded_quotient_boundary_by_exterior_cell_contacts",
+                    "exact_quotient_trace_cancellation",
+                    "single_shell_noncompact_cover_degree_one",
                 ),
                 tuple(int(value) for value in cell_ids),
                 tuple(boundary_values),
