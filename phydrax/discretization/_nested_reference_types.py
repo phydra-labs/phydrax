@@ -653,6 +653,15 @@ def reference_cell_strictly_contains(
     return False
 
 
+# Exact chart rows already proved to include their target cell and to reproduce
+# their retained corners. That proof depends only on the two cell kinds, the
+# chart's exact content and the corners, so every witness repeating them (nested
+# children do) shares it. Only successes are kept; the set is content-keyed and
+# holds no arrays.
+_VALIDATED_CHART_ROWS: set[tuple[object, ...]] = set()
+_VALIDATED_CHART_ROW_LIMIT = 1 << 16
+
+
 def _validate_reference_chart_argument_rows(
     arguments: ExactReferenceChartArgumentBank,
     target_kind: str,
@@ -674,7 +683,6 @@ def _validate_reference_chart_argument_rows(
         tuple(Fraction(float(value)) for value in point)
         for point in target_topology.vertices
     )
-    validated_rows: set[tuple[object, ...]] = set()
     for cell_index, (row, corners) in enumerate(
         zip(arguments, exact_vertices, strict=True)
     ):
@@ -691,8 +699,8 @@ def _validate_reference_chart_argument_rows(
                     "Exact chart rows must use immutable polynomial or rational expressions."
                 )
         identity = reference_chart_arguments_identity((row,))
-        key = (identity, corners)
-        if key in validated_rows:
+        key = (target_kind, source_kind, identity, corners)
+        if key in _VALIDATED_CHART_ROWS:
             continue
         if not reference_chart_arguments_contain_source_cell(
             target_kind, source_kind, row
@@ -711,7 +719,9 @@ def _validate_reference_chart_argument_rows(
             raise ValueError(
                 f"Exact chart row {cell_index} does not reproduce its retained rational reference corners."
             )
-        validated_rows.add(key)
+        if len(_VALIDATED_CHART_ROWS) >= _VALIDATED_CHART_ROW_LIMIT:
+            _VALIDATED_CHART_ROWS.clear()
+        _VALIDATED_CHART_ROWS.add(key)
 
 
 def exact_reference_cell_vertices(
