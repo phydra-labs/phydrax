@@ -32,6 +32,7 @@ from ..discretization._coordinate_enclosure import (
 )
 from ..discretization._exact_algebraic_geometry import ExactScalar, RadicalElement
 from ..discretization._reference_cell import reference_cell_topology
+from ._batch_boundary_traces import batch_simplex_face_equal
 from ._embedding_cells import EmbeddingCell
 from ._exact_polyhedral_geometry import (
     _cross3,
@@ -211,10 +212,7 @@ def _cell_facets(cell: EmbeddingCell) -> tuple[tuple[int, ...], ...]:
         raise ValueError("Boundary-degree cells must have topological dimension three.")
     if cell.kind == "polyhedron":
         return cell.facet_routes
-    return tuple(
-        tuple(int(value) for value in row)
-        for row in reference_cell_topology(cell.kind).entities[2]
-    )
+    return reference_cell_topology(cell.kind).entities[2]
 
 
 def _shell_components(
@@ -753,6 +751,58 @@ def _surface_link_is_manifold(polygons: tuple[tuple[int, ...], ...], /) -> bool:
     return _cycle_from_edges(boundary_edges) is not None and euler_characteristic == 1
 
 
+def _batched_tetrahedron_links(
+    cells: tuple[EmbeddingCell, ...],
+    cell_faces: tuple[tuple[tuple[int, ...], ...], ...],
+    /,
+) -> Iterator[tuple[tuple[int, ...], ...] | None]:
+    """Compute valid tetrahedron corner-link cycles in bounded integer batches."""
+    for start in range(0, len(cells), 256):
+        group = cells[start : start + 256]
+        faces_group = cell_faces[start : start + 256]
+        eligible = tuple(
+            position
+            for position, (cell, faces) in enumerate(zip(group, faces_group, strict=True))
+            if len(cell.vertex_ids) == 4
+            and len(set(cell.vertex_ids)) == 4
+            and all(-(1 << 63) <= identifier < (1 << 63) for identifier in cell.vertex_ids)
+            and len(faces) == 4
+            and all(len(face) == 3 and len(set(face)) == 3 for face in faces)
+            and len({frozenset(face) for face in faces}) == 4
+            and all(set(face) <= set(cell.vertex_ids) for face in faces)
+        )
+        prepared: dict[int, tuple[tuple[int, ...], ...]] = {}
+        if eligible:
+            vertices = np.asarray([group[index].vertex_ids for index in eligible], dtype=np.int64)
+            rows = np.asarray([faces_group[index] for index in eligible], dtype=np.int64)
+            previous = np.roll(rows, 1, axis=2).reshape(len(eligible), -1)
+            following = np.roll(rows, -1, axis=2).reshape(len(eligible), -1)
+            flat = rows.reshape(len(eligible), -1)
+            positions = np.arange(len(eligible))
+            cycles = np.empty((len(eligible), 4, 3), dtype=np.int64)
+            maximum = np.iinfo(np.int64).max
+            for corner in range(4):
+                vertex = vertices[:, corner]
+                other_vertices = vertices != vertex[:, None]
+                first = np.min(np.where(other_vertices, vertices, maximum), axis=1)
+                incident = (flat == vertex[:, None]) & (
+                    (previous == first[:, None]) | (following == first[:, None])
+                )
+                first_edge = np.argmax(incident, axis=1)
+                before = previous[positions, first_edge]
+                after = following[positions, first_edge]
+                second = np.where(before == first, after, before)
+                remaining = other_vertices & (vertices != first[:, None]) & (
+                    vertices != second[:, None]
+                )
+                third = np.min(np.where(remaining, vertices, maximum), axis=1)
+                cycles[:, corner] = np.stack((first, second, third), axis=1)
+            for position, row in zip(eligible, cycles.tolist(), strict=True):
+                prepared[position] = tuple(tuple(cycle) for cycle in row)
+        for position in range(len(group)):
+            yield prepared.get(position)
+
+
 def _volume_topology_findings(
     cells: tuple[EmbeddingCell, ...],
     cell_faces: tuple[tuple[tuple[int, ...], ...], ...],
@@ -776,21 +826,26 @@ def _volume_topology_findings(
     edge_link_cells: dict[
         tuple[int, int], list[tuple[frozenset[int], frozenset[int]]]
     ] = defaultdict(list)
-    for cell, faces in zip(cells, cell_faces, strict=True):
+    for cell, faces, batched_cycles in zip(
+        cells, cell_faces, _batched_tetrahedron_links(cells, cell_faces), strict=True
+    ):
         face_keys = tuple(canonical_facets[frozenset(face)] for face in faces)
         for identifier in set(cell.vertex_ids):
-            vertex_link_edges: list[tuple[int, int]] = []
-            for face in faces:
-                if identifier not in face:
-                    continue
-                position = face.index(identifier)
-                vertex_link_edges.append(
-                    (
-                        face[(position - 1) % len(face)],
-                        face[(position + 1) % len(face)],
+            if batched_cycles is None:
+                vertex_link_edges: list[tuple[int, int]] = []
+                for face in faces:
+                    if identifier not in face:
+                        continue
+                    position = face.index(identifier)
+                    vertex_link_edges.append(
+                        (
+                            face[(position - 1) % len(face)],
+                            face[(position + 1) % len(face)],
+                        )
                     )
-                )
-            cycle = _cycle_from_edges(tuple(vertex_link_edges))
+                cycle = _cycle_from_edges(tuple(vertex_link_edges))
+            else:
+                cycle = batched_cycles[cell.vertex_ids.index(identifier)]
             if cycle is None:
                 findings.append(
                     BoundaryFinding(
@@ -1398,6 +1453,30 @@ def build_oriented_boundary(
     exterior_cells: set[int] = set()
     # Exact lattice values of the cells' traces, shared by a cell's facets.
     trace_values: TracePointValues = {}
+    facet_items = tuple(
+        (key, incident)
+        for key, incident in occurrences.items()
+        if len(incident) in (1, 2) and key in facet_ids
+    )
+    batched_traces: dict[frozenset[int], bool | None] = {}
+    for start in range(0, len(facet_items), 256):
+        group = facet_items[start : start + 256]
+        requests = tuple(
+            (
+                cells[incident[0][0]],
+                cells[incident[-1][0]],
+                tuple(sorted(key)),
+            )
+            for key, incident in group
+        )
+        decisions = batch_simplex_face_equal(requests, trace_values)
+        batched_traces.update(
+            (key, decision)
+            for (key, incident), decision in zip(group, decisions, strict=True)
+            if len(incident) == 2
+        )
+        if len(trace_values) > _TRACE_VALUE_POINTS:
+            trace_values.clear()
     for key, incident in occurrences.items():
         facet_id = facet_ids.get(key)
         if facet_id is None:
@@ -1431,12 +1510,14 @@ def build_oriented_boundary(
             first_index, second_index = incident[0][0], incident[1][0]
             if len(trace_values) > _TRACE_VALUE_POINTS:
                 trace_values.clear()
-            trace = restriction_trace_equal(
-                cells[first_index],
-                cells[second_index],
-                tuple(sorted(key)),
-                point_values=trace_values,
-            )
+            trace = batched_traces[key]
+            if trace is None:
+                trace = restriction_trace_equal(
+                    cells[first_index],
+                    cells[second_index],
+                    tuple(sorted(key)),
+                    point_values=trace_values,
+                )
             if trace is False:
                 findings.append(
                     BoundaryFinding(

@@ -5,15 +5,17 @@
 
 from __future__ import annotations
 
+import weakref
 from collections.abc import Iterator, Sequence
 from fractions import Fraction
-from typing import Any, final, overload, TYPE_CHECKING
+from typing import Any, final, overload, TYPE_CHECKING, TypeVar
 
 import numpy as np
 from jax.typing import ArrayLike
 from numpy.typing import DTypeLike, NDArray
 
 from .._fingerprint import canonical_fingerprint, numeric_array_fingerprint
+from .._live_proofs import _ImmutableFingerprintLeaf, LiveProofLedger
 from ..geometry._rational import binary64_dyadic_entries, dyadic_entry
 from ._exact_algebraic_geometry import (
     canonical_exact_scalar,
@@ -35,6 +37,68 @@ _INT64_UPPER = (1 << 63) - 1
 _BINARY64_EXACT = 1 << 53
 _SMALLEST_NORMAL = np.finfo(np.float64).tiny
 
+_Integer = TypeVar("_Integer", bound=np.integer[Any])
+type _CoefficientPayload = (
+    tuple[str, int, int] | tuple[str, tuple[tuple[int, int, int], ...]]
+)
+type _BankFingerprint = tuple[
+    str, tuple[weakref.ReferenceType[NDArray[Any]], ...], tuple[_CoefficientPayload, ...], int
+]
+_BANK_FINGERPRINTS: LiveProofLedger[_BankFingerprint] = LiveProofLedger()
+
+
+def _sealed_array(array: NDArray[_Integer], /) -> NDArray[_Integer]:
+    """Own immutable bytes directly, without a mutable array in the base chain."""
+    sealed = np.ndarray(array.shape, dtype=array.dtype, buffer=array.tobytes(order="C"))
+    if not isinstance(sealed.base, bytes) or sealed.flags.writeable:
+        raise ValueError("Exact coordinate bank arrays must be backed by immutable bytes.")
+    return sealed
+
+
+def _sealed_parts(
+    arrays: tuple[NDArray[Any], ...], shape: tuple[int, int], sparse_count: int, /
+) -> bool:
+    if (
+        type(shape) is not tuple
+        or len(shape) != 2
+        or any(type(size) is not int or size < 0 for size in shape)
+    ):
+        return False
+    expected = (
+        (np.dtype(np.int64), shape),
+        (np.dtype(np.int16), shape),
+        (np.dtype(np.int64), (sparse_count,)),
+        (np.dtype(np.int64), (shape[0] + 1,)),
+    )
+    return all(
+        type(array) is np.ndarray
+        and isinstance(array.base, bytes)
+        and not array.flags.writeable
+        and array.flags.c_contiguous
+        and array.dtype == dtype
+        and array.shape == expected_shape
+        for array, (dtype, expected_shape) in zip(arrays, expected, strict=True)
+    )
+
+
+def _immutable_sparse_values(values: tuple[ExactScalar, ...], /) -> bool:
+    if type(values) is not tuple:
+        return False
+    for value in values:
+        if type(value) is Fraction:
+            continue
+        if type(value) is not RadicalElement or type(value.terms) is not tuple:
+            return False
+        if any(
+            type(term) is not tuple
+            or len(term) != 2
+            or type(term[0]) is not int
+            or type(term[1]) is not Fraction
+            for term in value.terms
+        ):
+            return False
+    return True
+
 
 def _dyadic_value(significand: int, exponent: int, /) -> Fraction:
     if exponent >= 0:
@@ -43,7 +107,7 @@ def _dyadic_value(significand: int, exponent: int, /) -> Fraction:
 
 
 @final
-class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
+class ExactCoordinateBank(_ImmutableFingerprintLeaf, Sequence[tuple["ExactScalar", ...]]):
     """Immutable exact coordinate rows on the canonical integer-dyadic substrate.
 
     Each dyadic rational entry ``s * 2**e`` keeps its odd int64 significand
@@ -62,6 +126,7 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
         "_sparse_row_starts",
         "_shape",
         "_hash",
+        "__weakref__",
     )
 
     _significands: NDArray[np.int64]
@@ -128,8 +193,14 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
         row_starts = np.searchsorted(
             index, np.arange(shape[0] + 1, dtype=np.int64) * shape[1]
         ).astype(np.int64)
-        for array in (sig, exp, index, row_starts):
-            array.setflags(write=False)
+        sig = _sealed_array(sig)
+        exp = _sealed_array(exp)
+        index = _sealed_array(index)
+        row_starts = _sealed_array(row_starts)
+        if not _sealed_parts((sig, exp, index, row_starts), shape, len(values)):
+            raise ValueError(
+                "Exact coordinate bank arrays must be backed by immutable bytes."
+            )
         for name, part in (
             ("_significands", sig),
             ("_exponents", exp),
@@ -292,6 +363,19 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
             raise IndexError("Exact coordinate bank row is out of range.")
         return tuple(self._row(int(row)) for row in selected.tolist())
 
+    def dyadic_rows(
+        self, indices: NDArray[np.integer[Any]], /
+    ) -> tuple[NDArray[np.int64], NDArray[np.int16], NDArray[np.bool_]]:
+        """Gather packed dyadics and identify entries requiring sparse handling."""
+        selected = np.asarray(indices)
+        if selected.ndim != 2 or selected.dtype.kind not in "iu":
+            raise TypeError("Exact coordinate bank row routes must be an integer matrix.")
+        if np.any(selected < 0) or np.any(selected >= len(self)):
+            raise IndexError("Exact coordinate bank row is out of range.")
+        significands = self._significands[selected]
+        exponents = self._exponents[selected]
+        return significands, exponents, exponents != _SPARSE
+
     def take(self, indices: NDArray[np.integer[Any]], /) -> ExactCoordinateBank:
         """The bank of the selected rows, without materializing them."""
         selected = np.asarray(indices)
@@ -453,19 +537,99 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
             result.append(tuple(payload))
         return tuple(result)
 
+    def _validate_derived_parts(self) -> None:
+        """Refuse inconsistent un-hashed indexing metadata and cached hash."""
+        sig, exp, index, offsets = (
+            self._significands,
+            self._exponents,
+            self._sparse_index,
+            self._sparse_row_starts,
+        )
+        shape = self._shape
+        if (
+            type(shape) is not tuple
+            or len(shape) != 2
+            or any(type(size) is not int or size < 0 for size in shape)
+            or type(sig) is not np.ndarray
+            or type(exp) is not np.ndarray
+            or type(index) is not np.ndarray
+            or type(offsets) is not np.ndarray
+            or sig.dtype != np.dtype(np.int64)
+            or exp.dtype != np.dtype(np.int16)
+            or index.dtype != np.dtype(np.int64)
+            or offsets.dtype != np.dtype(np.int64)
+            or sig.shape != shape
+            or exp.shape != shape
+            or index.shape != (len(self._sparse_values),)
+            or offsets.shape != (shape[0] + 1,)
+        ):
+            raise ValueError("Exact coordinate bank derived shapes or dtypes are invalid.")
+        expected_offsets = np.searchsorted(
+            index, np.arange(shape[0] + 1, dtype=np.int64) * shape[1]
+        )
+        if not np.array_equal(offsets, expected_offsets):
+            raise ValueError("Exact coordinate bank row offsets differ from sparse indices.")
+
+        def contents(array: np.ndarray, /) -> bytes:
+            if (
+                isinstance(array.base, bytes)
+                and array.flags.c_contiguous
+                and len(array.base) == array.nbytes
+            ):
+                return array.base
+            return array.tobytes(order="C")
+
+        expected_hash = hash(
+            (shape, contents(sig), contents(exp), contents(index), self._sparse_values)
+        )
+        if type(self._hash) is not int or self._hash != expected_hash:
+            raise ValueError("Exact coordinate bank derived hash differs from its parts.")
+
     def content_fingerprint(self) -> str:
         """Bind canonical dense dyadics and exact sparse entries with framed arrays."""
-        return canonical_fingerprint(
+        arrays = (
+            self._significands,
+            self._exponents,
+            self._sparse_index,
+            self._sparse_row_starts,
+        )
+        sparse = tuple(coefficient_payload(value) for value in self._sparse_values)
+        sealed = _immutable_sparse_values(self._sparse_values) and _sealed_parts(
+            arrays, self._shape, len(sparse)
+        )
+        # The bytes-backed arrays cannot change; their identities and the sparse
+        # payload are checked below before accepting this identity-only hit.
+        recorded = _BANK_FINGERPRINTS._find_identity_bound(self) if sealed else None
+        if recorded is not None:
+            digest, references, previous_sparse, previous_hash = recorded
+            if (
+                type(self._hash) is int
+                and previous_hash == self._hash
+                and previous_sparse == sparse
+                and all(
+                    reference() is array
+                    for reference, array in zip(references, arrays, strict=True)
+                )
+            ):
+                return digest
+        self._validate_derived_parts()
+        digest = canonical_fingerprint(
             {
                 "kind": "exact-coordinate-bank",
                 "significands": numeric_array_fingerprint(self._significands),
                 "exponents": numeric_array_fingerprint(self._exponents),
                 "sparse_indices": numeric_array_fingerprint(self._sparse_index),
-                "sparse_values": tuple(
-                    coefficient_payload(value) for value in self._sparse_values
-                ),
+                "sparse_values": sparse,
             }
         )
+        if sealed:
+            _BANK_FINGERPRINTS._record_identity_bound(
+                self, (digest, tuple(weakref.ref(array) for array in arrays), sparse, self._hash)
+            )
+        return digest
+
+    def _live_leaf_fingerprint(self, /) -> str:
+        return self.content_fingerprint()
 
     def __array__(
         self, dtype: DTypeLike | None = None, copy: bool | None = None

@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import phydrax._geometry_predicates as predicates
 from phydrax._geometry_precision import GeometryPrecisionPolicy
 from phydrax._geometry_predicates import flush_safe_outward
 from phydrax._meshcore import meshcore_available
@@ -187,6 +188,26 @@ def test_predicates_scenario_1() -> None:
     assert int(orient3d(a, y, x, z, mode=mode).signs) == -1
     assert int(insphere(a, x, y, z, inside, mode=mode).signs) == 1
     assert int(incircle(a[:2], x[:2], y[:2], inside[:2], mode=mode).signs) == 1
+
+
+def test_filter_bound_encloses_exact_underflow_term() -> None:
+    tiny = Fraction(float(np.finfo(np.float64).tiny))
+    for spec in (
+        predicates._ORIENT2D,
+        predicates._ORIENT3D,
+        predicates._INCIRCLE,
+        predicates._INSPHERE,
+    ):
+        for exponent in (1, 2, 3, 4):
+            largest = float.fromhex(f"0x1.0000000000001p-{exponent}")
+            exact = Fraction(spec.multiplier) * tiny * (
+                1 + Fraction(largest)
+            ) ** (spec.degree - 1)
+            for xp, safety in ((np, 1.0), (jnp, 2.0)):
+                result = predicates._filter_bound(
+                    xp, spec, xp.asarray(0.0), xp.asarray(largest), np.float64, safety
+                )
+                assert Fraction(float(result)) >= Fraction(safety) * exact
 
 
 def test_near_cocircular_predicate_requires_exact_resolution() -> None:

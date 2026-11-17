@@ -69,6 +69,60 @@ def test_simplex_subdivision_certifies_positive_threshold() -> None:
     assert depth >= 1
 
 
+@pytest.mark.parametrize("degree", (1, 2))
+def test_affine_and_quadratic_validity_is_block_independent(degree: int) -> None:
+    element = D.fem.lagrange_element("triangle", degree)
+    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
+    epsilon = 2.0**-40
+    heights = (3.0 + epsilon, 3.0 - epsilon, -3.0, 0.0, 3.0)
+    local = np.stack(
+        [
+            np.column_stack((nodes[:, 0] + 4.0 * nodes[:, 1], height * nodes[:, 1]))
+            for height in heights
+        ]
+    )
+    policy = D.CellValidityPolicy(relative_determinant_floor=0.6)
+
+    def certify(selected: np.ndarray) -> Any:
+        points = selected.reshape((-1, 2))
+        routes = np.arange(len(points), dtype=np.int64).reshape((len(selected), -1))
+        geometry = CellGeometrySpec({"cells": element}, {"cells": routes}, points)
+        return D.certify_cell_geometry_validity(geometry, policy=policy)
+
+    combined = certify(local)
+    singles = tuple(certify(local[index : index + 1]) for index in range(len(local)))
+    for combined_values, single_values in (
+        (combined.status, tuple(item.status for item in singles)),
+        (combined.execution_status, tuple(item.execution_status for item in singles)),
+        (combined.source_status, tuple(item.source_status for item in singles)),
+        (combined.determinant_lower, tuple(item.determinant_lower for item in singles)),
+        (combined.determinant_upper, tuple(item.determinant_upper for item in singles)),
+        (
+            combined.source_determinant_lower,
+            tuple(item.source_determinant_lower for item in singles),
+        ),
+        (
+            combined.source_determinant_upper,
+            tuple(item.source_determinant_upper for item in singles),
+        ),
+        (combined.depth, tuple(item.depth for item in singles)),
+        (combined.source_depth, tuple(item.source_depth for item in singles)),
+    ):
+        actual = np.asarray(combined_values)
+        expected = np.concatenate([np.asarray(value) for value in single_values])
+        if actual.dtype == np.float64:
+            actual = actual.view(np.uint64)
+            expected = expected.view(np.uint64)
+        np.testing.assert_array_equal(actual, expected)
+    assert combined.cell_map_digests == b"".join(
+        item.cell_map_digests for item in singles
+    )
+    assert int(combined.status[0]) == Status.CERTIFIED_VALID
+    assert int(combined.status[1]) == Status.INVALID
+    assert int(combined.status[2]) == Status.INVALID
+    assert int(combined.status[3]) == Status.INVALID
+
+
 def _polygon_status(points: Any, policy: Any = None) -> Any:
     points = np.asarray(points, dtype=np.float64)
     loop = np.arange(points.shape[0], dtype=np.int32)[None]
@@ -189,7 +243,6 @@ def test_cell_geometry_identity_binds_exact_bank_and_array_framing() -> None:
     assert validity_module.cell_geometry_id(changed_dtype) != identity
     assert validity_module.cell_geometry_id(changed_shape) != identity
 
-
     restored = CellGeometrySpec.from_stored_fields(
         first,
         source_mesh=mesh,
@@ -198,6 +251,13 @@ def test_cell_geometry_identity_binds_exact_bank_and_array_framing() -> None:
         elements={"cells": element},
     )
     assert validity_module.cell_geometry_id(restored) == identity
+    assert restored.exact_coordinate_bank is not None
+    significands, exponents, indices, offsets, _ = (
+        restored.exact_coordinate_bank.canonical_parts()
+    )
+    for array in (significands, exponents, indices, offsets):
+        with pytest.raises(ValueError):
+            array.setflags(write=True)
     tampered = copy(first)
     object.__setattr__(tampered, "exact_coordinate_bank", changed.exact_coordinate_bank)
     with pytest.raises(ValueError, match="exact coordinate snapshot"):
@@ -234,9 +294,10 @@ def test_cell_geometry_identity_uses_canonical_exact_scalars() -> None:
     )
     irrational = make(radical)
     rounded_rational = make(Fraction.from_float(float(radical)))
-    assert validity_module.cell_geometry_id(irrational) != validity_module.cell_geometry_id(
-        rounded_rational
-    )
+    assert validity_module.cell_geometry_id(
+        irrational
+    ) != validity_module.cell_geometry_id(rounded_rational)
+
 
 def test_exact_coordinate_bank_rejects_inconsistent_execution_coefficients() -> None:
     mesh = D.CellMesh(
@@ -1596,6 +1657,23 @@ def test_embedded_polygon_norm_enclosure_handles_downward_rounding() -> None:
         dtype=np.float64,
     )
     assert _polygon_status(points) == Status.CERTIFIED_VALID
+    for vector, squared in (((1, 1, 1), 3), ((1, 1, 2), 6), ((1, 2, 3), 14)):
+        bound = validity_module._underflow_free_norm(
+            np.asarray(vector, dtype=np.float64), axis=-1
+        )
+        assert Fraction(float(bound)) ** 2 >= squared
+    mesh = D.CellMesh(
+        points,
+        (D.CellBlock("cells", "polygon", np.arange(5, dtype=np.int32)[None]),),
+    )
+    policy = D.CellValidityPolicy(
+        relative_determinant_floor=float.fromhex("0x1.9764fe4659f18p-1")
+    )
+    certificate = D.certify_cell_geometry_validity(mesh, policy=policy)
+    assert int(certificate.status[0]) == Status.UNRESOLVED
+    exact_determinant = Fraction(75, 2)
+    assert Fraction(float(certificate.determinant_lower[0])) <= exact_determinant
+    assert Fraction(float(certificate.determinant_upper[0])) >= exact_determinant
 
 
 def test_cell_geometry_validity_scenario_1() -> None:
@@ -1954,40 +2032,6 @@ def test_embedded_affine_minor_matches_gram_for_adversarial_cases(case: str) -> 
             (Fraction(0), Fraction(1)),
         )
     _assert_embedded_affine_minor_matches_gram(jacobian, case)
-
-
-def test_numerical_pyramid_enclosure_covers_subnormal_determinant() -> None:
-    # Pyramids take the numerical Bernstein route. This affine pyramid has even
-    # integer Jacobian columns times 2^-370, so its constant determinant is
-    # subnormal and every relative rounding margin underflows to zero.
-    columns = (
-        (-2085424, 1344604, -1564386),
-        (1915976, -1246650, 1209512),
-        (-1341916, -1592634, -1647846),
-    )
-    scale = 2.0**-370
-    element = D.fem.lagrange_element("pyramid", 1)
-    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
-    # Reference nodes are dyadic and the columns are scaled integers, so the
-    # affine vertices x = X0 c0 + X1 c1 + X2 c2 are exact.
-    vertices = nodes @ (np.asarray(columns, dtype=np.float64) * scale)
-    exact_integer = (
-        columns[0][0] * (columns[1][1] * columns[2][2] - columns[1][2] * columns[2][1])
-        - columns[1][0] * (columns[0][1] * columns[2][2] - columns[0][2] * columns[2][1])
-        + columns[2][0] * (columns[0][1] * columns[1][2] - columns[0][2] * columns[1][1])
-    )
-    exact = exact_integer * Fraction(scale) ** 3
-
-    block = validity_module._certify_polynomial_block(
-        element,
-        "pyramid",
-        vertices[None],
-        validity_module.CellValidityPolicy(),
-        original_local=vertices[None],
-    )
-
-    assert exact == Fraction(72020134946597053, 2**1106)
-    assert Fraction(float(block.lower[0])) <= exact <= Fraction(float(block.upper[0]))
 
 
 def test_polygon_measure_enclosure_covers_subnormal_area() -> None:

@@ -21,6 +21,7 @@ from .._interpolation._bspline_extraction import (
     PreparedSourceSpans,
     RationalBSplineSurfaceSpan,
 )
+from .._live_proofs import live_content_fingerprint, LiveProofLedger
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar, positive_integer
@@ -251,6 +252,12 @@ class _RootedJunction(NamedTuple):
     representative: _Point2
     lower: _Point2
     upper: _Point2
+
+# Only unprepared junctions are source-only; a caller's mutable preparation may
+# contribute additional endpoint boxes and must always be evaluated separately.
+_ROOTED_JUNCTIONS: LiveProofLedger[tuple[tuple[_RootedJunction, ...], ...]] = (
+    LiveProofLedger()
+)
 
 
 def _rooted_representative(
@@ -509,6 +516,22 @@ def _rooted_patch_chart_junctions(
     domain: MeshingDomain, patch: int, /, preparation: SourcePreparation | None = None
 ) -> tuple[tuple[_RootedJunction, ...], ...]:
     """Bind chart representatives to the current source's endpoint root proof."""
+    if preparation is not None:
+        return _compute_rooted_patch_chart_junctions(domain, patch, preparation)
+    operands = (domain,)
+    cached = _ROOTED_JUNCTIONS.find(operands, parameters=(patch,))
+    if cached is not None:
+        return cached
+    fingerprint = live_content_fingerprint(operands)
+    result = _compute_rooted_patch_chart_junctions(domain, patch, None)
+    _ROOTED_JUNCTIONS.record(operands, fingerprint, result, parameters=(patch,))
+    return result
+
+
+def _compute_rooted_patch_chart_junctions(
+    domain: MeshingDomain, patch: int, preparation: SourcePreparation | None, /
+) -> tuple[tuple[_RootedJunction, ...], ...]:
+    """Compute the junctions, including any caller-prepared endpoint boxes."""
     from ._meshing_domain import _same_brep_trim_endpoint
 
     authority = domain.brep_authority
@@ -1078,7 +1101,21 @@ def _constant_line_coordinate(
     return first[axis]
 
 
+_EXACT_PLANE_CHARTS: LiveProofLedger[tuple[ExactPlaneChart | None]] = LiveProofLedger()
+
+
 def exact_plane_chart(domain: MeshingDomain, patch: int, /) -> ExactPlaneChart | None:
+    """Prove the exact plane chart for this live source patch, if one exists."""
+    operands, parameters = (domain,), (patch,)
+    cached = _EXACT_PLANE_CHARTS.find(operands, parameters=parameters)
+    if cached is None:
+        fingerprint = live_content_fingerprint(operands)
+        cached = (_compute_exact_plane_chart(domain, patch),)
+        _EXACT_PLANE_CHARTS.record(operands, fingerprint, cached, parameters=parameters)
+    return cached[0]
+
+
+def _compute_exact_plane_chart(domain: MeshingDomain, patch: int, /) -> ExactPlaneChart | None:
     """Exact plane chart of a patch proved planar by its carrier, if any.
 
     A surface of revolution of an exact profile line ``P(v) = P0 + v d`` about
@@ -1221,21 +1258,42 @@ def _target_boundary_successors(
     triangles: tuple[_Triangle2, ...], /
 ) -> dict[_Point2, list[_Point2]]:
     """Directed target boundary edges with the target interior on their left."""
-    counts: Counter[frozenset[_Point2]] = Counter()
+    vertices: dict[_Point2, int] = {}
     oriented: list[_Triangle2] = []
+    vertex_ids: list[int] = []
     for triangle in triangles:
         area = _cross2(*triangle)
         if area == 0:
             raise ValueError("Target chart triangles must have nonzero chart area.")
-        oriented.append(triangle if area > 0 else (triangle[0], triangle[2], triangle[1]))
-        for index in range(3):
-            counts[frozenset((triangle[index], triangle[(index + 1) % 3]))] += 1
+        ordered = triangle if area > 0 else (triangle[0], triangle[2], triangle[1])
+        oriented.append(ordered)
+        for point in ordered:
+            vertex_ids.append(vertices.setdefault(point, len(vertices)))
+    if not oriented:
+        return {}
+
+    ids = np.asarray(vertex_ids, dtype=np.int64).reshape(-1, 3)
+    starts = ids.reshape(-1)
+    stops = ids[:, (1, 2, 0)].reshape(-1)
+    lower = np.minimum(starts, stops)
+    upper = np.maximum(starts, stops)
+    order = np.lexsort((upper, lower))
+    sorted_lower = lower[order]
+    sorted_upper = upper[order]
+    adjacent = (sorted_lower[1:] == sorted_lower[:-1]) & (
+        sorted_upper[1:] == sorted_upper[:-1]
+    )
+    singleton = np.ones(order.size, dtype=np.bool_)
+    singleton[1:] &= ~adjacent
+    singleton[:-1] &= ~adjacent
+    boundary = np.zeros(order.size, dtype=np.bool_)
+    boundary[order[singleton]] = True
     successors: dict[_Point2, list[_Point2]] = {}
-    for triangle in oriented:
-        for index in range(3):
-            start, stop = triangle[index], triangle[(index + 1) % 3]
-            if counts[frozenset((start, stop))] == 1:
-                successors.setdefault(start, []).append(stop)
+    for edge in np.flatnonzero(boundary):
+        triangle = oriented[edge // 3]
+        index = edge % 3
+        start, stop = triangle[index], triangle[(index + 1) % 3]
+        successors.setdefault(start, []).append(stop)
     return successors
 
 

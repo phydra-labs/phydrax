@@ -13,6 +13,7 @@ from typing import final, NoReturn, overload, Protocol, runtime_checkable, TYPE_
 import equinox as eqx
 import numpy as np
 
+from ..._collection_scope import collection_scope
 from ..._execution_runtime import ExecutionGroup
 from ..._fingerprint import canonical_fingerprint
 from ..._meshcore import meshcore_identity
@@ -1275,6 +1276,7 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
         graph_partition_plan: GraphPartitionPlan | None = None,
     ) -> MeshAssembly: ...
 
+    @collection_scope()
     def execute(
         self,
         /,

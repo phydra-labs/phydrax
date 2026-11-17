@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from itertools import combinations
@@ -85,6 +86,118 @@ def _reference_corner_image(
             for expression in expressions
         )
     return evaluate_map(expressions, point)
+
+
+def _nodal_bank_corners(
+    mesh: CellMesh,
+    coordinate_maps: Sequence[tuple[Expression, ...] | None],
+    geometry: CellGeometrySpec | None,
+    *,
+    require_affine_basis: bool = True,
+) -> tuple[tuple[tuple[tuple[Fraction, ...], ...], ...], tuple[bool, ...]] | None:
+    """Extract nodal corners and identify cells whose basis may be non-affine.
+
+    The preparation binds this sequence to its mesh and geometry. An arbitrary
+    caller-provided sequence must instead be evaluated directly. The affine-only
+    mode proves every map affine without constructing it.
+    """
+    from ..discretization._cell_geometry import (
+        coordinate_effective_basis,
+        PerCellRestrictedCellGeometryElement,
+        ScalarCoordinateElement,
+    )
+    from ._domain_preparation import _LazyCoordinateMaps
+
+    if (
+        geometry is None
+        or not isinstance(coordinate_maps, _LazyCoordinateMaps)
+        or coordinate_maps._mesh is not mesh
+        or coordinate_maps._geometry is not geometry
+    ):
+        return None
+    try:
+        elements, routes, _ = geometry.resolve(mesh)
+        coefficients = geometry.source_coordinates()
+        cells = []
+        nonaffine_basis = []
+        for block, element, route_bank in zip(mesh.blocks, elements, routes, strict=True):
+            if not isinstance(element, ScalarCoordinateElement) or isinstance(
+                element, PerCellRestrictedCellGeometryElement
+            ):
+                return None
+            reference = reference_cell_topology(block.cell_kind)
+            basis = coordinate_effective_basis(element)
+            if any(not isinstance(expression, dict) for expression in basis):
+                return None
+            # Radical basis coefficients can retain radical-valued zeros even at
+            # nodal corners; the map route owns that distinct representation.
+            if any(
+                _fraction_point(tuple(expression.values())) is None
+                for expression in basis
+                if isinstance(expression, dict)
+            ):
+                return None
+            may_be_nonaffine = any(
+                affine_map((expression,), reference.dimension) is None
+                for expression in basis
+            )
+            nonaffine_powers = tuple(
+                {
+                    power
+                    for expression in basis
+                    if isinstance(expression, dict)
+                    for power in expression
+                    if len(power) != reference.dimension or sum(power) > 1
+                }
+            )
+            reference_vertices = tuple(
+                tuple(Fraction(value) for value in point) for point in reference.vertices
+            )
+            slots = []
+            for point in reference_vertices:
+                values = _reference_corner_image(basis, reference.family, point)
+                indices = tuple(index for index, value in enumerate(values) if value == 1)
+                if len(indices) != 1 or any(
+                    value != (1 if index == indices[0] else 0)
+                    for index, value in enumerate(values)
+                ):
+                    return None
+                slots.append(indices[0])
+            if len(set(slots)) != len(slots):
+                return None
+            routes_host = np.asarray(route_bank, dtype=np.int64)
+            if routes_host.shape != (block.cell_count, len(basis)):
+                return None
+            for route in routes_host:
+                # Nonrational interior coefficients can affect the exact scalar
+                # representation produced by map evaluation even at a corner.
+                local = tuple(
+                    _fraction_point(coefficients[int(index)]) for index in route
+                )
+                if any(point is None for point in local):
+                    return None
+                if require_affine_basis and may_be_nonaffine:
+                    if any(
+                        sum(
+                            (
+                                expression.get(power, Fraction(0)) * point[axis]
+                                for expression, point in zip(basis, local, strict=True)
+                                if isinstance(expression, dict) and point is not None
+                            ),
+                            Fraction(0),
+                        )
+                        for axis in range(len(local[0]) if local[0] is not None else 0)
+                        for power in nonaffine_powers
+                    ):
+                        return None
+                corners = tuple(local[slot] for slot in slots)
+                cells.append(tuple(point for point in corners if point is not None))
+                nonaffine_basis.append(may_be_nonaffine)
+        if len(cells) != len(coordinate_maps):
+            return None
+        return tuple(cells), tuple(nonaffine_basis)
+    except (TypeError, ValueError, KeyError, IndexError, ArithmeticError):
+        return None
 
 
 def _face_weights(count: int, /) -> tuple[Polynomial, ...]:
@@ -493,7 +606,7 @@ def _polyhedral_target_facets(
 def oriented_target_facets(
     mesh: CellMesh,
     cell_regions: np.ndarray,
-    coordinate_maps: tuple[tuple[Expression, ...] | None, ...],
+    coordinate_maps: Sequence[tuple[Expression, ...] | None],
     /,
     *,
     coordinate_space: Literal["physical", "reference"] = "physical",
@@ -525,20 +638,28 @@ def oriented_target_facets(
         from ._planar_coverage import source_facets
 
         source_index = SourceFacetIndex(source_facets(source_domain))
-    if any(expressions is None for expressions in coordinate_maps):
+    bank = _nodal_bank_corners(
+        mesh, coordinate_maps, geometry, require_affine_basis=False
+    )
+    bank_corners = None if bank is None else bank[0]
+    if bank_corners is None and any(
+        expressions is None for expressions in coordinate_maps
+    ):
         if source_points is not None:
             raise ValueError("Exact source points substitute only affine cell corners.")
         return _polyhedral_target_facets(
             mesh, cell_regions, source_index, geometry=geometry
         )
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-    cells: list[tuple[int, int, tuple[Expression, ...], str, np.ndarray]] = []
+    cells: list[tuple[int, int, tuple[Expression, ...] | None, str, np.ndarray]] = []
     global_cell = 0
     for block in mesh.blocks:
         vertices = np.asarray(block.vertices, dtype=np.int64)
         for row in range(block.cell_count):
-            expressions = coordinate_maps[global_cell]
-            if expressions is None:
+            expressions = (
+                None if bank_corners is not None else coordinate_maps[global_cell]
+            )
+            if expressions is None and bank_corners is None:
                 raise ValueError(
                     "Affine target maps must be present after polyhedral dispatch."
                 )
@@ -557,9 +678,11 @@ def oriented_target_facets(
         tuple[int, ...],
         list[tuple[int, int, tuple[int, ...], tuple[tuple[Fraction, ...], ...]]],
     ] = {}
-    # Non-affine cells keep their face traces until a facet is emitted; only
-    # boundary/interface facets need the exact corner-polygon image proof.
-    face_traces: dict[tuple[int, tuple[int, ...]], _FaceTrace] = {}
+    # Defer non-affine traces until a boundary/interface facet is emitted.
+    face_traces: dict[
+        tuple[int, tuple[int, ...]],
+        tuple[tuple[Expression, ...] | None, tuple[tuple[Fraction, ...], ...]],
+    ] = {}
     issues: list[BoundaryIssue] = []
     facet_sequence = 0
     for cell_index, region, expressions, cell_kind, cell_vertices in cells:
@@ -587,19 +710,28 @@ def oriented_target_facets(
         reference_vertices = tuple(
             tuple(Fraction(value) for value in point) for point in reference.vertices
         )
-        prove_faces = (
-            exact_face_images and affine_map(expressions, reference.dimension) is None
+        prove_faces = exact_face_images and (
+            (bank is not None and bank[1][cell_index])
+            or (
+                expressions is not None
+                and affine_map(expressions, reference.dimension) is None
+            )
         )
         for face in reference.entities[reference.dimension - 1]:
             face_slots = tuple(int(value) for value in face)
-            mapped = tuple(
-                _fraction_point(
-                    _reference_corner_image(
-                        expressions, reference.family, reference_vertices[slot]
+            if bank_corners is not None:
+                mapped = tuple(bank_corners[cell_index][slot] for slot in face_slots)
+            else:
+                if expressions is None:
+                    raise ValueError("Target coordinate map is missing.")
+                mapped = tuple(
+                    _fraction_point(
+                        _reference_corner_image(
+                            expressions, reference.family, reference_vertices[slot]
+                        )
                     )
+                    for slot in face_slots
                 )
-                for slot in face_slots
-            )
             if any(point is None for point in mapped):
                 issues.append(
                     BoundaryIssue(
@@ -640,12 +772,21 @@ def oriented_target_facets(
         first = owners[0]
         if len(owners) == 2 and owners[0][1] == owners[1][1]:
             continue
-        unproven = tuple(
-            owner[0]
-            for owner in owners
-            if (owner[0], key) in face_traces
-            and not _face_image_is_corner_polygon(face_traces[(owner[0], key)], owner[3])
-        )
+        unproven_cells = []
+        for owner in owners:
+            trace = face_traces.get((owner[0], key))
+            if trace is None:
+                continue
+            expressions, face_vertices = trace
+            if expressions is None:
+                expressions = coordinate_maps[owner[0]]
+                if expressions is None:
+                    raise ValueError("Target coordinate map is missing.")
+                if affine_map(expressions, mesh.topological_dimension) is not None:
+                    continue
+            if not _face_image_is_corner_polygon((expressions, face_vertices), owner[3]):
+                unproven_cells.append(owner[0])
+        unproven = tuple(unproven_cells)
         if unproven:
             issues.append(
                 BoundaryIssue(
@@ -763,10 +904,14 @@ def oriented_target_facets(
 
 def affine_cell_corners(
     mesh: CellMesh,
-    coordinate_maps: tuple[tuple[Expression, ...] | None, ...],
+    coordinate_maps: Sequence[tuple[Expression, ...] | None],
     /,
+    *,
+    geometry: CellGeometrySpec | None = None,
 ) -> tuple[CellCorners, ...]:
     """Exact carrier corners of every affine target cell, in cell order."""
+    bank = _nodal_bank_corners(mesh, coordinate_maps, geometry)
+    bank_corners = None if bank is None else bank[0]
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     result: list[CellCorners] = []
     global_cell = 0
@@ -777,21 +922,24 @@ def affine_cell_corners(
         )
         vertices = np.asarray(block.vertices, dtype=np.int64)
         for row in range(block.cell_count):
-            expressions = coordinate_maps[global_cell]
-            if (
-                expressions is None
-                or affine_map(expressions, reference.dimension) is None
-            ):
-                raise ValueError("Exact cell corners require affine cell maps.")
-            corners = tuple(
-                _fraction_point(
-                    _reference_corner_image(expressions, reference.family, point)
+            if bank_corners is not None:
+                exact = bank_corners[global_cell]
+            else:
+                expressions = coordinate_maps[global_cell]
+                if (
+                    expressions is None
+                    or affine_map(expressions, reference.dimension) is None
+                ):
+                    raise ValueError("Exact cell corners require affine cell maps.")
+                corners = tuple(
+                    _fraction_point(
+                        _reference_corner_image(expressions, reference.family, point)
+                    )
+                    for point in reference_vertices
                 )
-                for point in reference_vertices
-            )
-            exact = tuple(corner for corner in corners if corner is not None)
-            if len(exact) != len(corners):
-                raise ValueError("Cell corner coordinates are not exact rationals.")
+                exact = tuple(corner for corner in corners if corner is not None)
+                if len(exact) != len(corners):
+                    raise ValueError("Cell corner coordinates are not exact rationals.")
             result.append(
                 (
                     reference.family,

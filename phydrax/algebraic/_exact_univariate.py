@@ -115,7 +115,7 @@ def _integer_coefficients(values: Polynomial, /) -> tuple[int, ...]:
     denominator = 1
     for value in values:
         denominator = lcm(denominator, value.denominator)
-    integers = [int(value * denominator) for value in values]
+    integers = [value.numerator * (denominator // value.denominator) for value in values]
     common = 0
     for value in integers:
         common = gcd(common, abs(value))
@@ -146,7 +146,11 @@ def _sturm_sequence(values: Polynomial, /) -> tuple[tuple[int, ...], ...]:
     # Positive rescaling preserves every Sturm sign and avoids carrying the
     # potentially enormous common rational denominators through evaluation.
     first = _integer_coefficients(values)
-    second = _integer_coefficients(_derivative(tuple(Fraction(value) for value in first)))
+    derivative = tuple(index * value for index, value in enumerate(first) if index)
+    common = 0
+    for value in derivative:
+        common = gcd(common, abs(value))
+    second = tuple(value // max(common, 1) for value in derivative) or (0,)
     sequence = [first, second]
     while sequence[-1] != (0,):
         remainder = _primitive_remainder(sequence[-2], sequence[-1])
@@ -296,15 +300,25 @@ def _sturm_root_intervals(
             left, right, count = pending.pop()
             if count == 0:
                 continue
-            midpoint = (left + right) / 2
+            denominator = lcm(left.denominator, right.denominator)
+            left_numerator = left.numerator * (denominator // left.denominator)
+            right_numerator = right.numerator * (denominator // right.denominator)
+            midpoint = Fraction(left_numerator + right_numerator, 2 * denominator)
             if not state.sign(midpoint):
                 exact_root = midpoint
                 break
-            if count == 1 and right - left <= tolerance:
+            width_numerator = right_numerator - left_numerator
+            if count == 1 and (
+                width_numerator * tolerance.denominator
+                <= tolerance.numerator * denominator
+            ):
                 if can_accept_interval:
                     intervals.append((left, right))
                     continue
-                if right - left < state.rational_separation:
+                if (
+                    width_numerator * state.rational_separation.denominator
+                    < state.rational_separation.numerator * denominator
+                ):
                     reconstructed = midpoint.limit_denominator(
                         state.maximum_root_denominator
                     )

@@ -145,9 +145,21 @@ def _certified_cell_bounds(
         * np.finfo(np.float64).eps
         * np.max(np.abs(cell_coordinates), axis=(1, 2))
     )
+    # The plan owns the table-rounding error model; enclose the node-value
+    # magnitudes used by its additional row-norm term.
+    basis_sum = np.zeros((basis.shape[0],), dtype=np.float64)
+    for column in range(basis.shape[1]):
+        basis_sum = np.nextafter(basis_sum + np.abs(basis[:, column]), np.inf)
+    node_magnitude = np.nextafter(
+        np.max(basis_sum) * np.max(np.abs(cell_coordinates), axis=(1, 2)), np.inf
+    )
+    table_rounding = np.nextafter(
+        plan.conversion_rounding_norm * node_magnitude, np.inf
+    )
+    rounding = np.nextafter(rounding + table_rounding, np.inf)
     return (
-        np.min(control, axis=1) - rounding[:, None],
-        np.max(control, axis=1) + rounding[:, None],
+        np.nextafter(np.min(control, axis=1) - rounding[:, None], -np.inf),
+        np.nextafter(np.max(control, axis=1) + rounding[:, None], np.inf),
     )
 
 

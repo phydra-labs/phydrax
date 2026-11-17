@@ -164,6 +164,7 @@ from ._stratum_subdivision import (
     glued_facet_monotone,
     StratumSubdivisionCache,
     subdivided_stratum_separation,
+    subdivided_stratum_separations,
 )
 
 
@@ -4815,7 +4816,7 @@ def _shared_vertex_separation(
         return None
 
     def frame(cell: EmbeddingCell, /) -> _VertexResidualFrame | None:
-        key = (cell.global_id, vertex_id)
+        key = (id(cell), vertex_id)
         if key not in frames:
             frames[key] = _vertex_residual_frame(cell, vertex_id)
         return frames[key]
@@ -6170,6 +6171,9 @@ def _nonperiodic_contacts(
         [bool(not cell.affine and cell.coordinates) for cell in cells], dtype=np.bool_
     )
     no_root = np.asarray([root is None for root in root_charts], dtype=np.bool_)
+    # The operands stay alive for this proof, so identity keys cannot be reused.
+    vertex_sets = {id(cell): frozenset(cell.vertex_ids) for cell in original_cells}
+    vertex_frames: dict[tuple[int, int], _VertexResidualFrame | None] = {}
 
     def straight_polygon(
         index: int, /
@@ -6197,7 +6201,6 @@ def _nonperiodic_contacts(
         # work; a renewed subdivision workset keeps only per-cell controls.
         # Screened pairs allocate none of these caches and must not evict them.
         # stratum_sources preserves the original first-source authority.
-        vertex_frames: dict[tuple[int, int], _VertexResidualFrame | None] = {}
         shadows: dict[int, CellShadow | None] = {}
         stratum_residuals: dict[tuple[int, ...], tuple[Expression, ...] | None] = {}
         trace_cache: dict[tuple[int, tuple[int, ...]], tuple[Expression, ...] | None] = {}
@@ -6244,6 +6247,112 @@ def _nonperiodic_contacts(
             fast_disjoint = np.zeros(first_block.shape, dtype=np.bool_)
             fast_edges = np.zeros(first_block.shape, dtype=np.bool_)
             fast_curved_edges = np.zeros(first_block.shape, dtype=np.bool_)
+        # Batch only pairs whose earlier proof stages are known to fall through.
+        # A unique key within this block also preserves the first-source rule:
+        # no earlier pair in this block can establish that stratum's source.
+        shared_keys = tuple(
+            tuple(
+                sorted(
+                    vertex_sets[id(original_cells[int(left)])]
+                    & vertex_sets[id(original_cells[int(right)])]
+                )
+            )
+            for left, right in zip(first_block, second_block, strict=True)
+        )
+        key_counts: dict[tuple[int, ...], int] = {}
+        for key in shared_keys:
+            key_counts[key] = key_counts.get(key, 0) + 1
+        batch_requests: list[
+            tuple[EmbeddingCell, EmbeddingCell, tuple[int, ...], tuple[Expression, ...]]
+        ] = []
+        batch_offsets: list[int] = []
+        prepared_pairs: set[int] = set()
+        prepared_residuals: dict[int, tuple[Expression, ...] | None] = {}
+        batch_trace_cache: dict[
+            tuple[int, tuple[int, ...]], tuple[Expression, ...] | None
+        ] = {}
+        batch_trace_values: TracePointValues = {}
+        if mesh.topological_dimension == 3:
+            for offset, (left, right) in enumerate(
+                zip(first_block, second_block, strict=True)
+            ):
+                first_index, second_index = int(left), int(right)
+                shared_key = shared_keys[offset]
+                if (
+                    key_counts[shared_key] != 1
+                    or len(shared_key) > 2
+                    or fast_vertices[offset]
+                    or fast_disjoint[offset]
+                    or fast_edges[offset]
+                    or fast_curved_edges[offset]
+                    or not (curved_cells[first_index] or curved_cells[second_index])
+                    or not no_root[first_index]
+                    or not no_root[second_index]
+                ):
+                    continue
+                first_cell, second_cell = (
+                    original_cells[first_index],
+                    original_cells[second_index],
+                )
+                try:
+                    if (
+                        first_cell.dimension != 3
+                        or second_cell.dimension != 3
+                        or _exact_image_box_separation(first_cell, second_cell)
+                        or restriction_trace_equal(
+                            first_cell,
+                            second_cell,
+                            shared_key,
+                            cache=batch_trace_cache,
+                            point_values=batch_trace_values,
+                        )
+                        is not True
+                        or any(
+                            left_point == right_point and left_id != right_id
+                            for left_id, left_point in zip(
+                                first_cell.vertex_ids,
+                                first_cell.corner_images,
+                                strict=True,
+                            )
+                            for right_id, right_point in zip(
+                                second_cell.vertex_ids,
+                                second_cell.corner_images,
+                                strict=True,
+                            )
+                        )
+                        or (len(shared_key) == 1 and vertex_cones[offset])
+                    ):
+                        continue
+                    source_index = stratum_sources.get(shared_key, first_index)
+                    residuals = _stratum_residuals(
+                        original_cells[source_index], shared_key
+                    )
+                except (ValueError, ZeroDivisionError, OverflowError):
+                    # Retry at the original pair's place in the proof ladder.
+                    continue
+                prepared_pairs.add(offset)
+                prepared_residuals[offset] = residuals
+                if residuals is not None:
+                    batch_offsets.append(offset)
+                    batch_requests.append(
+                        (first_cell, second_cell, shared_key, residuals)
+                    )
+        batched: dict[int, tuple[int, int] | None] = {}
+        if len(batch_requests) > 1:
+            try:
+                batched = dict(
+                    zip(
+                        batch_offsets,
+                        subdivided_stratum_separations(
+                            tuple(batch_requests), StratumSubdivisionCache()
+                        ),
+                        strict=True,
+                    )
+                )
+            except (ValueError, ZeroDivisionError, OverflowError):
+                # An exceptional batch must not move a pair's error ahead of
+                # earlier findings or prevent its ordinary standalone proof.
+                pass
         proof_pair_count = 0
         for pair_offset, (first_item, second_item) in enumerate(
             zip(first_block, second_block, strict=True)
@@ -6282,7 +6391,7 @@ def _nonperiodic_contacts(
                     )
                 continue
             if proof_pair_count and proof_pair_count % 64 == 0:
-                vertex_frames.clear()
+                # Pair-derived caches are bounded; cell frames remain proof-local.
                 shadows.clear()
                 stratum_residuals.clear()
                 trace_cache.clear()
@@ -6298,7 +6407,7 @@ def _nonperiodic_contacts(
                 # residual and glued-map proofs.
                 first_cell = original_cells[first_index]
                 second_cell = original_cells[second_index]
-            if _exact_image_box_separation(
+            if pair_offset not in prepared_pairs and _exact_image_box_separation(
                 original_cells[first_index], original_cells[second_index]
             ):
                 if proof_values is not None:
@@ -6321,15 +6430,17 @@ def _nonperiodic_contacts(
                     )
                 )
                 continue
-            shared = tuple(
-                sorted(set(first_cell.vertex_ids).intersection(second_cell.vertex_ids))
-            )
-            trace = restriction_trace_equal(
-                original_cells[first_index],
-                original_cells[second_index],
-                shared,
-                cache=trace_cache,
-                point_values=trace_values,
+            shared = shared_keys[pair_offset]
+            trace = (
+                True
+                if pair_offset in prepared_pairs
+                else restriction_trace_equal(
+                    original_cells[first_index],
+                    original_cells[second_index],
+                    shared,
+                    cache=trace_cache,
+                    point_values=trace_values,
+                )
             )
             if trace is False:
                 findings.append(
@@ -6474,13 +6585,19 @@ def _nonperiodic_contacts(
                         source_index = stratum_sources.setdefault(
                             stratum_key, first_index
                         )
-                        stratum_residuals[stratum_key] = _stratum_residuals(
-                            original_cells[source_index], stratum_key
+                        stratum_residuals[stratum_key] = (
+                            prepared_residuals[pair_offset]
+                            if pair_offset in prepared_residuals
+                            else _stratum_residuals(
+                                original_cells[source_index], stratum_key
+                            )
                         )
                     residuals = stratum_residuals[stratum_key]
                     subdivided = (
                         None
                         if residuals is None
+                        else batched[pair_offset]
+                        if pair_offset in batched
                         else subdivided_stratum_separation(
                             first_cell,
                             second_cell,

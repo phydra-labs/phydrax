@@ -325,7 +325,12 @@ def _torus_trigonometric_program() -> PreparedIntervalFunction:
 
 
 def _exact_torus_patch_box(
-    patch: object, lower: np.ndarray, upper: np.ndarray, /
+    patch: object,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    /,
+    *,
+    trigonometric_bounds: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> np.ndarray:
     from .._rational import fraction_down, fraction_up
     from ._patches import TorusPatch
@@ -360,14 +365,18 @@ def _exact_torus_patch_box(
             float(upper_value)
         )
 
-    trig_lower, trig_upper = _torus_trigonometric_program().evaluate(
-        np.asarray(lower, dtype=np.float64)[None],
-        np.asarray(upper, dtype=np.float64)[None],
-    )
-    cosine_u = float_interval((trig_lower[0, 0, 0], trig_upper[0, 0, 0]))
-    sine_u = float_interval((trig_lower[0, 1, 0], trig_upper[0, 1, 0]))
-    cosine_v = float_interval((trig_lower[0, 0, 1], trig_upper[0, 0, 1]))
-    sine_v = float_interval((trig_lower[0, 1, 1], trig_upper[0, 1, 1]))
+    if trigonometric_bounds is None:
+        trig_lower, trig_upper = _torus_trigonometric_program().evaluate(
+            np.asarray(lower, dtype=np.float64)[None],
+            np.asarray(upper, dtype=np.float64)[None],
+        )
+        trig_lower, trig_upper = trig_lower[0], trig_upper[0]
+    else:
+        trig_lower, trig_upper = trigonometric_bounds
+    cosine_u = float_interval((trig_lower[0, 0], trig_upper[0, 0]))
+    sine_u = float_interval((trig_lower[1, 0], trig_upper[1, 0]))
+    cosine_v = float_interval((trig_lower[0, 1], trig_upper[0, 1]))
+    sine_v = float_interval((trig_lower[1, 1], trig_upper[1, 1]))
     center = tuple(exact_interval(value) for value in patch.center_exact)
     first_axis = tuple(exact_interval(value) for value in patch.first_axis_exact)
     second_axis = tuple(exact_interval(value) for value in patch.second_axis_exact)
@@ -500,6 +509,7 @@ def _patch_box(
     *,
     interval_program: Callable[[AbstractSurfacePatch], PreparedIntervalFunction]
     | None = None,
+    trigonometric_bounds: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> np.ndarray:
     """Enclose ``patch`` on a UV box.
 
@@ -523,7 +533,11 @@ def _patch_box(
         from ._placed import _affine_interval_transform
 
         box = _patch_box(
-            patch.definition, lower, upper, interval_program=interval_program
+            patch.definition,
+            lower,
+            upper,
+            interval_program=interval_program,
+            trigonometric_bounds=trigonometric_bounds,
         )
         lo, hi = _affine_interval_transform(
             patch.affine,
@@ -533,7 +547,9 @@ def _patch_box(
         )
         return np.stack((lo[:, 0], hi[:, 0]))
     if isinstance(patch, TorusPatch):
-        return _exact_torus_patch_box(patch, lower, upper)
+        return _exact_torus_patch_box(
+            patch, lower, upper, trigonometric_bounds=trigonometric_bounds
+        )
     if isinstance(patch, RuledSurface) or (
         isinstance(patch, RevolutionSurface) and isinstance(patch.curve, CircleCurve)
     ):
@@ -573,6 +589,48 @@ def _patch_box(
         np.asarray(upper, dtype=np.float64)[None],
     )
     return np.stack((lo[0], hi[0]))
+
+
+def _patch_boxes(
+    requests: tuple[tuple[AbstractSurfacePatch, np.ndarray, np.ndarray], ...], /
+) -> tuple[np.ndarray, ...]:
+    """Enclose a pass of source boxes, sharing the torus trigonometric evaluation."""
+    from ._patches import TorusPatch
+
+    indices = []
+    for index, (patch, _, _) in enumerate(requests):
+        while isinstance(patch, PlacedSurface):
+            patch = patch.definition
+        if isinstance(patch, TorusPatch):
+            indices.append(index)
+    trig_bounds: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+    if len(indices) > 1 and all(
+        requests[index][1].shape == (2,) and requests[index][2].shape == (2,)
+        for index in indices
+    ):
+        lower = np.stack([requests[index][1] for index in indices])
+        upper = np.stack([requests[index][2] for index in indices])
+        # Invalid inputs must retain the per-item failure ordering.
+        if (
+            np.all(np.isfinite(lower))
+            and np.all(np.isfinite(upper))
+            and np.all(lower <= upper)
+        ):
+            try:
+                trig_lower, trig_upper = _torus_trigonometric_program().evaluate(
+                    lower, upper
+                )
+            except IntervalExtensionError:
+                # Replay typed interval refusals in request order.
+                return tuple(_patch_box(patch, lo, hi) for patch, lo, hi in requests)
+            trig_bounds = {
+                index: (trig_lower[position], trig_upper[position])
+                for position, index in enumerate(indices)
+            }
+    return tuple(
+        _patch_box(patch, lower, upper, trigonometric_bounds=trig_bounds.get(index))
+        for index, (patch, lower, upper) in enumerate(requests)
+    )
 
 
 def _curve_box(curve: AbstractCurve, lower: float, upper: float, /) -> np.ndarray:
@@ -3243,8 +3301,12 @@ def _primary_point_enclosure(root: BRepPrimaryVertexRoot, /) -> np.ndarray:
                 np.asarray(root.curve.chart_upper[chart]),
             )
         )
-        first = _patch_box(root.curve.first.patch, box[0, :2], box[1, :2])
-        second = _patch_box(root.curve.second.patch, box[0, 2:], box[1, 2:])
+        first, second = _patch_boxes(
+            (
+                (root.curve.first.patch, box[0, :2], box[1, :2]),
+                (root.curve.second.patch, box[0, 2:], box[1, 2:]),
+            )
+        )
         return np.stack(
             (np.maximum(first[0], second[0]), np.minimum(first[1], second[1]))
         )
@@ -3260,8 +3322,12 @@ def _primary_point_enclosure(root: BRepPrimaryVertexRoot, /) -> np.ndarray:
                     np.asarray(root.curve.chart_upper[chart]),
                 )
             )
-            first = _patch_box(root.curve.first.patch, box[0, :2], box[1, :2])
-            second = _patch_box(root.curve.second.patch, box[0, 2:], box[1, 2:])
+            first, second = _patch_boxes(
+                (
+                    (root.curve.first.patch, box[0, :2], box[1, :2]),
+                    (root.curve.second.patch, box[0, 2:], box[1, 2:]),
+                )
+            )
             return np.stack(
                 (np.maximum(first[0], second[0]), np.minimum(first[1], second[1]))
             )
@@ -3275,9 +3341,11 @@ def _primary_point_enclosure(root: BRepPrimaryVertexRoot, /) -> np.ndarray:
         )
     if isinstance(root, TripleSurfaceIntersectionRoot):
         lower, upper = np.asarray(root.parameter_lower), np.asarray(root.parameter_upper)
-        boxes = tuple(
-            _patch_box(region.patch, lower[start : start + 2], upper[start : start + 2])
-            for region, start in ((root.first, 0), (root.second, 2), (root.third, 4))
+        boxes = _patch_boxes(
+            tuple(
+                (region.patch, lower[start : start + 2], upper[start : start + 2])
+                for region, start in ((root.first, 0), (root.second, 2), (root.third, 4))
+            )
         )
         low = np.maximum(np.maximum(boxes[0][0], boxes[1][0]), boxes[2][0])
         high = np.minimum(np.minimum(boxes[0][1], boxes[1][1]), boxes[2][1])

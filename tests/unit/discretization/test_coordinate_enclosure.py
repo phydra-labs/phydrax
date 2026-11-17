@@ -1,6 +1,7 @@
 from fractions import Fraction
 
 import numpy as np
+import pytest
 
 from phydrax.discretization._cell_geometry import (
     CellGeometrySpec,
@@ -13,6 +14,7 @@ from phydrax.discretization._coordinate_enclosure import (
     axes,
     compose,
     constant,
+    coordinate_point_rounding_bound,
     coordinate_source_basis,
     evaluate_expression,
     expression_equal,
@@ -22,7 +24,60 @@ from phydrax.discretization._coordinate_enclosure import (
     subtract,
 )
 from phydrax.discretization._exact_algebraic_geometry import RadicalElement
+from phydrax.discretization._exact_coordinate_bank import ExactCoordinateBank
 from phydrax.discretization.fem._reference import FiniteElementSpec
+
+
+@pytest.mark.parametrize("packed", [False, True])
+def test_coordinate_point_rounding_bound_matches_individual_rows(packed: bool) -> None:
+    root_two = RadicalElement.sqrt(Fraction(2))
+    rows = (
+        (Fraction(1, 2), Fraction(-3, 8), Fraction(0)),
+        (Fraction(1, 3), Fraction(-7, 11), root_two),
+        (Fraction(2**53 + 1), Fraction(1, 2**1075), Fraction(-1, 2**1074)),
+        (Fraction(1, 2**2000), Fraction(-1, 2**2000), Fraction(17)),
+    )
+    representatives = np.asarray(
+        (
+            (0.5, -0.375, -0.0),
+            (0.4, -0.5, 1.5),
+            (float(2**53), 0.0, 0.0),
+            (0.0, -0.0, 18.0),
+        ),
+        dtype=np.float64,
+    )
+    coordinates = ExactCoordinateBank.from_rows(rows) if packed else rows
+    expected = max(
+        coordinate_point_rounding_bound((point,), row[None, :])
+        for point, row in zip(rows, representatives, strict=True)
+    )
+    assert coordinate_point_rounding_bound(coordinates, representatives) == expected
+
+
+def test_coordinate_point_rounding_bound_empty_and_invalid() -> None:
+    assert coordinate_point_rounding_bound((), np.empty((0, 3), dtype=np.float64)) == 0
+    rows = ((Fraction(1),),)
+    assert coordinate_point_rounding_bound(rows, np.asarray(((1.0,),))) == 0
+    assert (
+        coordinate_point_rounding_bound(
+            ExactCoordinateBank.from_rows(((), ())), np.empty((2, 0), dtype=np.float64)
+        )
+        == 0
+    )
+    for representatives in (
+        np.asarray((1.0,)),
+        np.empty((0, 1), dtype=np.float64),
+        np.asarray(((1.0, 2.0),)),
+        np.asarray(((np.inf,),)),
+        np.asarray(((np.nan,),)),
+    ):
+        with pytest.raises(ValueError):
+            coordinate_point_rounding_bound(rows, representatives)
+    huge = ((Fraction(1 << 2000),),)
+    with pytest.raises(OverflowError):
+        coordinate_point_rounding_bound(
+            ExactCoordinateBank.from_rows(huge), np.zeros((1, 1), dtype=np.float64)
+        )
 
 
 def test_exact_bernstein_bounds_tighten_under_source_chart_restriction() -> None:
