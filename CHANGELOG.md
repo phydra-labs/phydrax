@@ -249,6 +249,13 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Global embedding contact passes reuse exact stratum root nets only for the
+  same live cell and exact stratum and residual; the table is discarded when
+  the proof returns. Contact decisions and witness identities are unchanged.
+- Whole-scope native fidelity features reuse their operation's live primary
+  query and witness, including across supported transitions. Strict subsets and
+  restored or distinct witnesses retain independent validation; scientific
+  identities and archive representations are unchanged.
 - Curved profile turning and analytic cylinder chart-sheet selection use
   outward angle enclosures. Mixed conic and rational-spline profiles sum
   directed turn endpoints exactly. Ambiguous turning proofs are refused, so
@@ -256,6 +263,9 @@
 - Native interval execution avoids duplicate validation and batches torus
   source boxes and curve chord evaluations within each pass. Enclosure
   endpoints and per-item proof decisions remain unchanged.
+- Curving passes its operation-local computed validity proof to certified
+  acceptance without replaying it. Externally supplied certificates remain
+  subject to revalidation; result and certificate identities are unchanged.
 - Exact coordinate banks own immutable byte-backed integer arrays and reuse
   their framed content fingerprint per live bank; rebuilt banks revalidate and
   fingerprint independently. Scientific identities are unchanged.
@@ -402,6 +412,12 @@
   prepared and coverage accepts it only for the identical live mesh, geometry,
   source and witness with equal frame and controls and every needed piece
   proof; otherwise coverage prepares its own as before.
+- A `NATIVE_METRIC_3D` collapse that may move its survivor screens the
+  candidate survivor positions of one goal together before interpolating a
+  source metric for each: a position whose spoke lengths certainly fail the
+  objective is dropped at once, and every other position takes the unchanged
+  per-position evaluation, which alone admits. Proposals, accepted meshes and
+  evidence are unchanged.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep

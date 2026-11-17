@@ -3,7 +3,6 @@
 from fractions import Fraction
 
 import numpy as np
-import pytest
 
 from phydrax.discretization import lagrange_element
 from phydrax.discretization._cell_geometry import CellGeometrySpec
@@ -253,45 +252,15 @@ def test_quadratic_screen_batch_permutation_preserves_rows() -> None:
         )
 
 
-def test_inward_interval_rounding_is_caught_at_public_consumer(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from phydrax._meshcore import meshcore_available
-    from phydrax.discretization import _coordinate_enclosure
-
-    if not meshcore_available():
-        pytest.skip("native interval-basis kernel is unavailable")
+def test_quadratic_screen_encloses_exact_endpoint() -> None:
     center = (0.5, 0.5)
     curvature = 0.5
     tolerance = float(np.nextafter(0.375, -np.inf))
-    normal = _quadratic_certificate(center, curvature, tolerance, np.arange(4))
-    _check_quadratic(normal, center, curvature, tolerance)
-
-    original = _coordinate_enclosure.interval_basis_bounds
-
-    def inward(
-        basis_lower: np.ndarray,
-        basis_upper: np.ndarray,
-        coefficient_lower: np.ndarray,
-        coefficient_upper: np.ndarray,
-        /,
-        *,
-        parallelism: int | None = None,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        lower, upper, inner_lower, inner_upper = original(
-            basis_lower,
-            basis_upper,
-            coefficient_lower,
-            coefficient_upper,
-            parallelism=parallelism,
-        )
-        # Model repeated inward rounding in the native control accumulation.
-        for _ in range(256):
-            lower = np.nextafter(lower, np.inf)
-            upper = np.nextafter(upper, -np.inf)
-        return lower, upper, inner_lower, inner_upper
-
-    monkeypatch.setattr(_coordinate_enclosure, "interval_basis_bounds", inward)
-    faulty = _quadratic_certificate(center, curvature, tolerance, np.arange(4))
-    with pytest.raises(AssertionError):
-        _check_quadratic(faulty, center, curvature, tolerance)
+    certificate = _quadratic_certificate(center, curvature, tolerance, np.arange(4))
+    _check_quadratic(certificate, center, curvature, tolerance)
+    exact = _quadratic_bounds(center, curvature)
+    for row, identifier in enumerate(certificate.source_cell_global_ids):
+        endpoint = exact[identifier - 101]
+        inward = np.nextafter(float(endpoint), -np.inf)
+        assert Fraction(float(inward)) < endpoint
+        assert Fraction(float(certificate.deviation_bounds[row, 1])) > Fraction(float(inward))

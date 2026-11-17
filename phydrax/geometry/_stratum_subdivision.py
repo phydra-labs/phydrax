@@ -31,6 +31,7 @@ Floats only propose planes and directions; every sign is decided exactly.
 from __future__ import annotations
 
 from collections import OrderedDict
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from fractions import Fraction
 from itertools import combinations, product
@@ -50,8 +51,9 @@ from ..discretization._coordinate_enclosure import (
     evaluate_expression,
     ExactScalar,
     Expression,
+    RationalPolynomial,
 )
-from ..discretization._exact_algebraic_geometry import RadicalElement
+from ..discretization._exact_algebraic_geometry import coefficient_payload, RadicalElement
 from ..linalg._exact import matmul_exact, symmetric_product_minors_exact
 from ._embedding_cells import EmbeddingCell
 from ._integer_net_batch import _BatchIntegerNet, integer_net_batch
@@ -205,6 +207,70 @@ class _Piece:
         return float(np.sqrt(np.max(np.sum(differences * differences, axis=-1))))
 
 
+type _ScalarPayload = tuple[str, int, int] | tuple[str, tuple[tuple[int, int, int], ...]]
+type _CoefficientIdentity = tuple[str, _ScalarPayload]
+type _PolynomialIdentity = tuple[tuple[_Index, _CoefficientIdentity], ...]
+type _ResidualIdentity = tuple[
+    tuple[_PolynomialIdentity, _PolynomialIdentity | None], ...
+]
+
+
+@dataclass(frozen=True, eq=False)
+class _ProofRootKey:
+    """Bind a root net to its live cell and exact stratum inputs."""
+
+    cell: EmbeddingCell
+    stratum: tuple[int, ...]
+    residuals: _ResidualIdentity
+
+    def __hash__(self) -> int:
+        return hash((id(self.cell), self.stratum, self.residuals))
+
+    def __eq__(self, other: object, /) -> bool:
+        return (
+            isinstance(other, _ProofRootKey)
+            and self.cell is other.cell
+            and self.stratum == other.stratum
+            and self.residuals == other.residuals
+        )
+
+
+def _root_identity(
+    cell: EmbeddingCell, stratum: tuple[int, ...], residuals: tuple[Expression, ...], /
+) -> _ProofRootKey:
+    def polynomial_identity(
+        value: Mapping[_Index, ExactScalar], /
+    ) -> _PolynomialIdentity:
+        return tuple(
+            (
+                index,
+                (
+                    "radical" if isinstance(coefficient, RadicalElement) else "rational",
+                    coefficient_payload(
+                        Fraction(coefficient)
+                        if isinstance(coefficient, int)
+                        else coefficient
+                    ),
+                ),
+            )
+            for index, coefficient in sorted(value.items())
+        )
+
+    return _ProofRootKey(
+        cell,
+        stratum,
+        tuple(
+            (
+                polynomial_identity(expression.numerator),
+                polynomial_identity(expression.denominator),
+            )
+            if isinstance(expression, RationalPolynomial)
+            else (polynomial_identity(expression), None)
+            for expression in residuals
+        ),
+    )
+
+
 @dataclass
 class StratumSubdivisionCache:
     """Reusable exact pieces and Jacobian controls for a bounded pair workset.
@@ -214,6 +280,7 @@ class StratumSubdivisionCache:
     The child LRU bounds retained subdivision trees without limiting proof work.
     """
 
+    proof_roots: dict[_ProofRootKey, _Piece] | None = None
     roots: dict[tuple[int, tuple[int, ...]], _Piece | None] = field(default_factory=dict)
     root_cells: dict[int, EmbeddingCell] = field(default_factory=dict)
     geometry: dict[int, tuple[EmbeddingCell, tuple[int, ...], _Controls]] = field(
@@ -248,11 +315,14 @@ class StratumSubdivisionCache:
         most `_RETAINED_CELLS` cells; reference edge maps are cell-independent.
         """
         if max(len(self.geometry), len(self.simplex_jacobians)) > _RETAINED_CELLS:
-            return StratumSubdivisionCache(reference_edge_maps=self.reference_edge_maps)
+            return StratumSubdivisionCache(
+                reference_edge_maps=self.reference_edge_maps, proof_roots=self.proof_roots
+            )
         return StratumSubdivisionCache(
             geometry=self.geometry,
             simplex_jacobians=self.simplex_jacobians,
             reference_edge_maps=self.reference_edge_maps,
+            proof_roots=self.proof_roots,
             corner_affine_inverses=self.corner_affine_inverses,
         )
 
@@ -1150,6 +1220,35 @@ def _prepare_root_nets(
     return prepared
 
 
+def _restore_proof_roots(
+    cells: tuple[EmbeddingCell, ...],
+    stratum: tuple[int, ...],
+    residuals: tuple[Expression, ...],
+    cache: StratumSubdivisionCache,
+    /,
+) -> dict[int, _ProofRootKey]:
+    if cache.proof_roots is None:
+        return {}
+    keys = {id(cell): _root_identity(cell, stratum, residuals) for cell in cells}
+    for key in keys.values():
+        piece = cache.proof_roots.get(key)
+        if piece is not None:
+            cache.roots[(id(key.cell), stratum)] = piece
+    return keys
+
+
+def _remember_proof_root(
+    cell: EmbeddingCell,
+    piece: _Piece,
+    keys: dict[int, _ProofRootKey],
+    cache: StratumSubdivisionCache,
+    /,
+) -> None:
+    key = keys.get(id(cell))
+    if key is not None and cache.proof_roots is not None:
+        cache.proof_roots[key] = piece
+
+
 def subdivided_stratum_separation(
     first: EmbeddingCell,
     second: EmbeddingCell,
@@ -1169,6 +1268,7 @@ def subdivided_stratum_separation(
     # Residual-dependent nets belong only to this proof; geometry remains reusable.
     cache = cache.renewed()
     stratum = tuple(sorted(shared_ids))
+    proof_keys = _restore_proof_roots((first, second), stratum, residuals, cache)
     prepared_residuals = _prepare_root_nets((first, second), stratum, residuals, cache)
     pieces: list[_Piece] = []
     for cell in (first, second):
@@ -1185,6 +1285,7 @@ def subdivided_stratum_separation(
         piece = cache.roots[key]
         if piece is None:
             return None
+        _remember_proof_root(cell, piece, proof_keys, cache)
         pieces.append(piece)
     scale = max(
         1.0,
@@ -1235,6 +1336,7 @@ def _stratum_work(
     # Root and child nets depend on this proof's residuals, not just cell IDs.
     cache = cache.renewed()
     stratum = tuple(sorted(shared_ids))
+    proof_keys = _restore_proof_roots((first, second), stratum, residuals, cache)
     prepared = _prepare_root_nets((first, second), stratum, residuals, cache)
     pieces: list[_Piece] = []
     for cell in (first, second):
@@ -1251,6 +1353,7 @@ def _stratum_work(
         piece = cache.roots[key]
         if piece is None:
             return None
+        _remember_proof_root(cell, piece, proof_keys, cache)
         pieces.append(piece)
     scale = max(
         1.0,

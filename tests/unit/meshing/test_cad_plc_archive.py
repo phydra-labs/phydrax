@@ -216,6 +216,80 @@ def test_cad_plc_composition_replays_in_cold_process(
     _run_cold(path, cad_plc.complex_id, rejected=False)
 
 
+def test_cad_plc_rebuilt_chart_owner_is_reproved_and_tampering_is_refused(
+    multiregion_surface: tuple[object, object, object],
+    cad_plc: PiecewiseLinearComplex,
+) -> None:
+    from dataclasses import replace
+
+    from phydrax.geometry._meshing_domain import MeshingDomain
+    from phydrax.geometry._surface_source_support import SurfaceSourceCharts
+    from phydrax.meshing._certification import (
+        _ComputedSurfaceAcceptance,
+        MeshCertificationReport,
+    )
+    from phydrax.meshing._certification_inputs import validate_fidelity_witnesses
+    from phydrax.meshing._native_construction import NativeMeshOrganization
+    from phydrax.meshing._plc_source import _certify_cad_surface
+    from phydrax.meshing._result import CellMeshingResult
+
+    report, organization, result = multiregion_surface
+    assert isinstance(report, MeshCertificationReport)
+    assert isinstance(organization, NativeMeshOrganization)
+    assert isinstance(result, CellMeshingResult)
+    charts = result.surface_source
+    domain = report.inputs.feature_source
+    assert isinstance(charts, SurfaceSourceCharts)
+    assert isinstance(domain, MeshingDomain)
+    inputs = report.inputs
+    validated = validate_fidelity_witnesses(
+        inputs.mesh,
+        inputs.geometry,
+        inputs.source,
+        inputs.fidelity_witness,
+        inputs.scoped_fidelity,
+    )
+    computed = _ComputedSurfaceAcceptance(
+        inputs,
+        replace(organization, surface_source=charts),
+        validity_parent=None,
+        validated=validated,
+    )
+    assert cad_plc.cad_fidelity_tolerance is not None
+    _, live_fidelity = _certify_cad_surface(
+        charts,
+        cad_plc.cad_fidelity_tolerance,
+        cad_plc.cad_maximum_normal_deviation,
+        np.asarray(report.embedding.binding.junction_vertices, dtype=np.int64),
+        computed_surface=computed,
+    )
+    rebuilt_charts = copy.copy(charts)
+    _, rebuilt_fidelity = _certify_cad_surface(
+        rebuilt_charts,
+        cad_plc.cad_fidelity_tolerance,
+        cad_plc.cad_maximum_normal_deviation,
+        np.asarray(report.embedding.binding.junction_vertices, dtype=np.int64),
+        computed_surface=computed,
+    )
+    assert cad_plc.cad_fidelity is not None
+    assert live_fidelity.certificate_id == cad_plc.cad_fidelity.certificate_id
+    assert rebuilt_fidelity.certificate_id == cad_plc.cad_fidelity.certificate_id
+    assert rebuilt_fidelity.status == "certified"
+
+    forged = copy.copy(charts)
+    parameters = np.array(forged.root_parameters, copy=True)
+    parameters[0, 0, 0] += 0.125
+    object.__setattr__(forged, "root_parameters", parameters)
+    with pytest.raises(ValueError):
+        _certify_cad_surface(
+            forged,
+            cad_plc.cad_fidelity_tolerance,
+            cad_plc.cad_maximum_normal_deviation,
+            np.asarray(report.embedding.binding.junction_vertices, dtype=np.int64),
+            computed_surface=computed,
+        )
+
+
 @pytest.mark.parametrize(
     "defect", ("coedge", "interval", "certificate", "status", "claim", "region")
 )
