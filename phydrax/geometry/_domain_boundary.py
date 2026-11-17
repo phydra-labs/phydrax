@@ -21,6 +21,7 @@ from .._interpolation._bspline_extraction import (
     PreparedSourceSpans,
     RationalBSplineSurfaceSpan,
 )
+from .._live_proofs import live_content_fingerprint, LiveProofLedger
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar, positive_integer
@@ -251,6 +252,12 @@ class _RootedJunction(NamedTuple):
     representative: _Point2
     lower: _Point2
     upper: _Point2
+
+# Only unprepared junctions are source-only; a caller's mutable preparation may
+# contribute additional endpoint boxes and must always be evaluated separately.
+_ROOTED_JUNCTIONS: LiveProofLedger[tuple[tuple[_RootedJunction, ...], ...]] = (
+    LiveProofLedger()
+)
 
 
 def _rooted_representative(
@@ -509,6 +516,22 @@ def _rooted_patch_chart_junctions(
     domain: MeshingDomain, patch: int, /, preparation: SourcePreparation | None = None
 ) -> tuple[tuple[_RootedJunction, ...], ...]:
     """Bind chart representatives to the current source's endpoint root proof."""
+    if preparation is not None:
+        return _compute_rooted_patch_chart_junctions(domain, patch, preparation)
+    operands = (domain,)
+    cached = _ROOTED_JUNCTIONS.find(operands, parameters=(patch,))
+    if cached is not None:
+        return cached
+    fingerprint = live_content_fingerprint(operands)
+    result = _compute_rooted_patch_chart_junctions(domain, patch, None)
+    _ROOTED_JUNCTIONS.record(operands, fingerprint, result, parameters=(patch,))
+    return result
+
+
+def _compute_rooted_patch_chart_junctions(
+    domain: MeshingDomain, patch: int, preparation: SourcePreparation | None, /
+) -> tuple[tuple[_RootedJunction, ...], ...]:
+    """Compute the junctions, including any caller-prepared endpoint boxes."""
     from ._meshing_domain import _same_brep_trim_endpoint
 
     authority = domain.brep_authority
@@ -1078,7 +1101,21 @@ def _constant_line_coordinate(
     return first[axis]
 
 
+_EXACT_PLANE_CHARTS: LiveProofLedger[tuple[ExactPlaneChart | None]] = LiveProofLedger()
+
+
 def exact_plane_chart(domain: MeshingDomain, patch: int, /) -> ExactPlaneChart | None:
+    """Prove the exact plane chart for this live source patch, if one exists."""
+    operands, parameters = (domain,), (patch,)
+    cached = _EXACT_PLANE_CHARTS.find(operands, parameters=parameters)
+    if cached is None:
+        fingerprint = live_content_fingerprint(operands)
+        cached = (_compute_exact_plane_chart(domain, patch),)
+        _EXACT_PLANE_CHARTS.record(operands, fingerprint, cached, parameters=parameters)
+    return cached[0]
+
+
+def _compute_exact_plane_chart(domain: MeshingDomain, patch: int, /) -> ExactPlaneChart | None:
     """Exact plane chart of a patch proved planar by its carrier, if any.
 
     A surface of revolution of an exact profile line ``P(v) = P0 + v d`` about
