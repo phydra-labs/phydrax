@@ -968,12 +968,13 @@ def _facet_edge_proof_tables(
     for association in associations:
         if association.target_entity_set_id != edge_set:
             continue
-        for row, identifier in enumerate(association.target_global_ids):
+        identifiers = np.asarray(association.target_global_ids, dtype=np.int64).tolist()
+        for row, identifier in enumerate(identifiers):
             key = (
                 association.association_kind,
                 association.source_id,
                 association.source_revision,
-                int(identifier),
+                identifier,
             )
             rows.setdefault(key, []).append((association, row))
     result: set[str] = set()

@@ -133,6 +133,12 @@ class _ProjectionPreparation:
     edges: dict[int, _PreparedEdge] = field(default_factory=dict)
     plane_jacobians: dict[int, np.ndarray] = field(default_factory=dict)
     line_derivatives: dict[int, np.ndarray] = field(default_factory=dict)
+    circle_endpoints: dict[int, tuple[np.ndarray, np.ndarray]] = field(
+        default_factory=dict
+    )
+    circle_endpoint_derivatives: dict[tuple[int, bool], np.ndarray] = field(
+        default_factory=dict
+    )
     curve_programs: dict[int, PreparedIntervalFunction | None] = field(
         default_factory=dict
     )
@@ -582,6 +588,28 @@ def _periodic_parameter(
     if low > high:
         return None
     return value + low * period
+
+
+def _periodic_landmark(
+    parameters: np.ndarray,
+    bounds: np.ndarray,
+    periods: tuple[float | None, float | None],
+    /,
+) -> bool:
+    """Retain the original carrier point at periodic boundaries and neighbors."""
+    for axis, period in enumerate(periods):
+        if period is None:
+            continue
+        first, last = float(bounds[0, axis]), float(bounds[1, axis])
+        anchors = (0.0, 0.5 * period, period, first, last, first + 0.5 * (last - first))
+        for anchor in anchors:
+            if parameters[axis] in (
+                anchor,
+                np.nextafter(anchor, -np.inf),
+                np.nextafter(anchor, np.inf),
+            ):
+                return True
+    return False
 
 
 def _trim_classification(
@@ -1068,10 +1096,18 @@ def _line_curve_hit(
         parameter = _periodic_parameter(candidate, first, last, tau)
         if parameter is None:
             endpoints = (first, last)
-            values = [
-                np.asarray(curve.evaluate(jnp.asarray(value)), dtype=np.float64)
-                for value in endpoints
-            ]
+            values = (
+                None if preparation is None else preparation.circle_endpoints.get(edge)
+            )
+            if values is None:
+                # Endpoint comparisons choose the active trim; retain the fixed
+                # scalar realization rather than substitute interval endpoints.
+                values = tuple(
+                    np.asarray(curve.evaluate(jnp.asarray(value)), dtype=np.float64)
+                    for value in endpoints
+                )
+                if preparation is not None:
+                    preparation.circle_endpoints[edge] = (values[0], values[1])
             nearest = int(np.argmin([np.sum((value - point) ** 2) for value in values]))
             parameter = endpoints[nearest]
             closest = values[nearest]
@@ -1096,6 +1132,13 @@ def _line_curve_hit(
             if preparation is not None and isinstance(curve, (LineCurve, ExactLineCurve))
             else None
         )
+        endpoint_key = (
+            (edge, parameter == last)
+            if isinstance(curve, CircleCurve) and parameter in (first, last)
+            else None
+        )
+        if derivative is None and preparation is not None and endpoint_key is not None:
+            derivative = preparation.circle_endpoint_derivatives.get(endpoint_key)
         if (
             derivative is None
             and spline_projection is not None
@@ -1111,6 +1154,8 @@ def _line_curve_hit(
             )
             if preparation is not None and isinstance(curve, (LineCurve, ExactLineCurve)):
                 preparation.line_derivatives[edge] = derivative
+            if preparation is not None and endpoint_key is not None:
+                preparation.circle_endpoint_derivatives[endpoint_key] = derivative
         derivative_length = float(np.linalg.norm(derivative))
         tangent = derivative / derivative_length if derivative_length else _NAN3.copy()
         tangents = np.stack((tangent, _NAN3))
@@ -3733,6 +3778,11 @@ def _project_face(
         tangents,
         path,
         pending_frame=defer_frame,
+        pending_point=(
+            defer_frame
+            and status != _SEAM
+            and not _periodic_landmark(uv, bounds, periods)
+        ),
     )
 
 
@@ -5749,10 +5799,10 @@ class NativeBRepProjection(AbstractBRepProjection):
             )
         pending_points: dict[tuple[int, int], list[int]] = {}
         for row, hit in enumerate(hits):
-            if hit.pending_point:
+            if hit.pending_point and hit.dimension == 1:
                 carrier = self.model.geometry.edge_curves[hit.index]
                 pending_points.setdefault((1, carrier), []).append(row)
-            elif hit.pending_frame:
+            elif hit.pending_point and hit.dimension == 2:
                 face = hit.index
                 if face not in preparation.patch_programs:
                     preparation.patch_programs[face] = prepare_host_program(
