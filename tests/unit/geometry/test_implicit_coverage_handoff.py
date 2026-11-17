@@ -225,7 +225,7 @@ def test_fidelity_does_not_offer_an_incomplete_map(
     )
     assert independent.status == empty.status == "certified"
     assert independent.certificate_id == empty.certificate_id
-    with pytest.raises(ValueError, match="root charts"):
+    with pytest.raises(ValueError, match="complete retained piece proofs"):
         _coverage(case, case.mesh, case.geometry, case.source, case.fidelity, incomplete)
 
 
@@ -303,22 +303,55 @@ def test_live_handoff_refuses_changed_premise(
         _coverage(case, mesh, geometry, source, fidelity, charts)
 
 
-def test_preparing_charts_refuses_another_source_frame(
+def test_wrong_frame_chart_is_refused_by_coverage(
     coverage_case: _CoverageCase,
 ) -> None:
     case = coverage_case
-    witness = case.fidelity.witness
-    if not isinstance(witness, SourceBoundaryChartWitness):
-        raise AssertionError("The chart witness was lost.")
-    with pytest.raises(ValueError, match="frame_id differs"):
-        prepare_adaptive_implicit_root_charts(
-            case.mesh,
-            case.geometry,
-            case.source,
-            witness,
-            frame_id="different-live-coordinate-frame",
-            tolerance=case.fidelity.tolerance,
-            maximum_normal_deviation=case.fidelity.maximum_normal_deviation,
+    charts = case.charts
+    wrong_frame = AdaptiveImplicitRootChartMap(
+        case.mesh,
+        case.geometry,
+        case.source,
+        charts.witness,
+        "different-live-coordinate-frame",
+        charts._faces,
+        charts._bounds,
+        charts.tolerance,
+        charts.maximum_normal_deviation,
+        charts._surface,
+        charts._hessian_program,
+        charts._branches,
+    )
+    with pytest.raises(ValueError, match="prepared for a different mesh"):
+        _coverage(
+            case, case.mesh, case.geometry, case.source, case.fidelity, wrong_frame
+        )
+
+
+def test_wrong_live_surface_is_refused_by_coverage(
+    coverage_case: _CoverageCase,
+) -> None:
+    case = coverage_case
+    charts = case.charts
+    different_surface = copy.copy(charts._surface)
+    assert different_surface is not charts._surface
+    wrong_surface = AdaptiveImplicitRootChartMap(
+        case.mesh,
+        case.geometry,
+        case.source,
+        charts.witness,
+        charts.frame_id,
+        charts._faces,
+        charts._bounds,
+        charts.tolerance,
+        charts.maximum_normal_deviation,
+        different_surface,
+        charts._hessian_program,
+        charts._branches,
+    )
+    with pytest.raises(ValueError, match="identical live source frame"):
+        _coverage(
+            case, case.mesh, case.geometry, case.source, case.fidelity, wrong_surface
         )
 
 
