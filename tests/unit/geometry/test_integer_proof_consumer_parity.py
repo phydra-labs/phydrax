@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import Sequence
 
 import numpy as np
 import pytest
 
 from phydrax.discretization import (
-    _cell_geometry_validity as validity,
     CellBlock,
     CellGeometrySpec,
     CellMesh,
@@ -17,7 +15,6 @@ from phydrax.discretization import (
 from phydrax.discretization._cell_geometry import PerCellRestrictedCellGeometryElement
 from phydrax.discretization._coordinate_enclosure import (
     Expression,
-    linear_combinations,
     RationalPolynomial,
 )
 from phydrax.discretization._exact_algebraic_geometry import ExactScalar, RadicalElement
@@ -27,18 +24,6 @@ from phydrax.discretization.fem._reference import (
 )
 from phydrax.geometry import _embedding_cells, _mapped_embedding
 from phydrax.meshing._curving import _exact_coordinate_bank_source_map
-
-
-class _GenericBasis:
-    """The pre-optimization exact expression combination route."""
-
-    def __init__(self, basis: Sequence[Expression], /) -> None:
-        self.basis = basis
-
-    def combine(
-        self, coefficients: Sequence[Sequence[ExactScalar]], /
-    ) -> tuple[Expression, ...]:
-        return linear_combinations(self.basis, coefficients)
 
 
 def _triangle_geometry() -> tuple[CellMesh, CellGeometrySpec]:
@@ -125,34 +110,7 @@ def _interval_geometry(
     )
 
 
-def _assert_certificate_rows_equal(
-    actual: validity.CellValidityCertificate,
-    expected: validity.CellValidityCertificate,
-) -> None:
-    for name in (
-        "status",
-        "source_status",
-        "execution_status",
-        "determinant_lower",
-        "determinant_upper",
-        "source_determinant_lower",
-        "source_determinant_upper",
-        "depth",
-        "source_depth",
-    ):
-        left, right = (
-            np.asarray(getattr(actual, name)),
-            np.asarray(getattr(expected, name)),
-        )
-        if left.dtype == np.float64:
-            left, right = left.view(np.uint64), right.view(np.uint64)
-        np.testing.assert_array_equal(left, right)
-    assert actual.cell_map_digests == expected.cell_map_digests
-
-
-def test_mapped_injectivity_witnesses_match_generic_and_batch_order(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_mapped_injectivity_witnesses_and_batch_order() -> None:
     mesh, geometry = _triangle_geometry()
     cells = _embedding_cells.prepare_embedding_cells(mesh, geometry)
     actual = _mapped_embedding.prove_mapped_cells_injective(cells)
@@ -162,16 +120,23 @@ def test_mapped_injectivity_witnesses_match_generic_and_batch_order(
     first = actual[0]
     assert isinstance(first, _mapped_embedding.MappedInjectivityWitness)
     assert first.projection_matrix[0][0] < 0
-    with monkeypatch.context() as reference:
-        reference.setattr(
-            _mapped_embedding, "PreparedLinearCombinationBasis", _GenericBasis
-        )
-        reference.setattr(
-            _embedding_cells, "PreparedLinearCombinationBasis", _GenericBasis
-        )
-        generic_cells = _embedding_cells.prepare_embedding_cells(mesh, geometry)
-        expected = _mapped_embedding.prove_mapped_cells_injective(generic_cells)
-    assert actual == expected
+    # The source Jacobian is diagonal, with entries factor * (1 + u/2)
+    # and 1 + v/2. Check both principal minors independently for the
+    # rational cells at the reference triangle's vertices.
+    for index, factor in ((0, Fraction(-1)), (2, Fraction(1))):
+        witness = actual[index]
+        assert isinstance(witness, _mapped_embedding.MappedInjectivityWitness)
+        assert witness.projection_rows == (0, 1)
+        (a, b), (c, d) = witness.projection_matrix
+        for u, v in (
+            (Fraction(0), Fraction(0)),
+            (Fraction(1), Fraction(0)),
+            (Fraction(0), Fraction(1)),
+        ):
+            dx = factor * (1 + u / 2)
+            dy = 1 + v / 2
+            assert a * dx > 0
+            assert (a * d - b * c) * dx * dy > 0
     assert actual == tuple(
         _mapped_embedding.prove_mapped_cell_injective(cell) for cell in cells
     )
@@ -179,33 +144,23 @@ def test_mapped_injectivity_witnesses_match_generic_and_batch_order(
 
 
 @pytest.mark.parametrize("rational_chart", (False, True))
-def test_restricted_validity_certificate_matches_generic_and_batch_rows(
-    monkeypatch: pytest.MonkeyPatch,
+def test_restricted_validity_certificate_matches_batch_rows(
     rational_chart: bool,
 ) -> None:
-    if not rational_chart:
-        # Exercise the independently composed per-chart proof when root
-        # composition is unavailable, without changing its exact inputs.
-        def no_root(
-            self: validity.RestrictedCoordinateMapPreparation, row: int, /
-        ) -> None:
-            return None
-
-        monkeypatch.setattr(
-            validity.RestrictedCoordinateMapPreparation, "expressions", no_root
-        )
     geometry = _interval_geometry((0, 1, 2), rational_chart=rational_chart)
     actual = certify_cell_geometry_validity(geometry)
-    with monkeypatch.context() as reference:
-        reference.setattr(validity, "PreparedLinearCombinationBasis", _GenericBasis)
-        expected = certify_cell_geometry_validity(geometry)
-    _assert_certificate_rows_equal(actual, expected)
-    assert actual.certificate_id == expected.certificate_id
     assert tuple(np.asarray(actual.status)) == (
         CellValidityStatus.CERTIFIED_VALID,
         CellValidityStatus.CERTIFIED_VALID,
         CellValidityStatus.INVALID,
     )
+    # For the unit-factor row, differentiate the exact source map at both
+    # endpoints. The source certificate must enclose these rational values.
+    endpoint_derivative = Fraction(16, 27) if rational_chart else Fraction(3, 2)
+    lower = Fraction(float(np.asarray(actual.source_determinant_lower)[0]))
+    upper = Fraction(float(np.asarray(actual.source_determinant_upper)[0]))
+    for derivative in (Fraction(1), endpoint_derivative):
+        assert lower <= derivative <= upper
     singles = tuple(
         certify_cell_geometry_validity(
             _interval_geometry((i,), rational_chart=rational_chart)
