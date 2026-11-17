@@ -33,9 +33,11 @@ bool exponential(const double* logarithm, double* metric) noexcept;
 
 // Log-Euclidean mean exp(sum_k w_k log M_k) of `count` >= 1 support tensors,
 // summed in support order. A support whose tensors all compare equal returns
-// its first tensor unchanged: a constant field is a fixed point of the mean.
-// `logarithms` holds log M_k, or is null to have them evaluated here. False
-// when a logarithm or the exponential fails.
+// its first tensor unchanged, once that tensor has a logarithm: a constant
+// field is a fixed point of the mean. `logarithms` holds log M_k, or is null
+// to have them evaluated here; supplied logarithms are taken as those of the
+// tensors, which are then not examined again. False, with `metric`
+// untouched, when a logarithm or the exponential fails.
 bool interpolate(std::int64_t count, const double* weights, const double* metrics,
                  const double* logarithms, double* metric) noexcept;
 

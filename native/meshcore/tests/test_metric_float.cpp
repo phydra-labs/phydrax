@@ -214,7 +214,13 @@ std::vector<Support> supports() {
       // A support with a tensor that is not a metric has no mean.
       {{0, 5}, {0.5, 0.5}},
       {{6, 0}, {0.5, 0.5}},
-      {{7, 1, 2}, {0.5, 0.25, 0.25}}};
+      {{7, 1, 2}, {0.5, 0.25, 0.25}},
+      // Nor does a constant support of such a tensor return it: an indefinite,
+      // a zero and a non-finite tensor alone, and an indefinite one repeated.
+      {{5}, {1.0}},
+      {{7}, {1.0}},
+      {{6}, {1.0}},
+      {{5, 5}, {0.5, 0.5}}};
   Generator generator{0xc0ac29b7c97c50ddULL};
   for (int row = 0; row < 24; ++row) {
     Support support;

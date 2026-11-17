@@ -5,8 +5,9 @@
 //
 // Every value below is produced by IEEE 754 binary64 addition, subtraction,
 // multiplication, division and square root (each correctly rounded), exact
-// integer conversion and exact scaling by a power of two, in the written
-// order. Nothing calls libm or LAPACK, and no sum depends on a vector width
+// integer conversion and scaling by a power of two (one correctly rounded
+// product: exact unless the result is subnormal), in the written order.
+// Nothing calls libm or LAPACK, and no sum depends on a vector width
 // or a thread count. The kernels assume round-to-nearest-even, gradual
 // underflow, no contraction of a product and a sum into one operation and no
 // extended intermediate precision; `self_test` refuses a build or a thread
@@ -71,7 +72,8 @@ struct SymmetricEigen3 {
 // Cyclic Jacobi diagonalization of the symmetric matrix given by the upper
 // triangle of a row-major 3x3 array, run on the matrix scaled by the power of
 // two that brings its largest entry into [1, 2), so no finite input can
-// overflow a rotation. Rotations run over (0,1), (0,2), (1,2) in every
+// overflow a rotation; the eigenvalues are scaled back, exactly unless one
+// becomes subnormal. Rotations run over (0,1), (0,2), (1,2) in every
 // sweep; an off-diagonal entry that cannot change either diagonal entry
 // (adding 100 times its magnitude leaves both unchanged) is set to zero; the
 // iteration ends when all three are exactly zero. False for a non-finite
