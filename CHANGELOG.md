@@ -249,6 +249,8 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Live proof guards dispatch common concrete leaf types directly while retaining
+  the same content framing and mutation checks.
 - Intersection-curve projection can isolate simple stationary roots with
   outward interval bounds and exact endpoint signs, falling back to exact
   isolation. Its root identities may change; projection result identities
