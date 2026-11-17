@@ -26,10 +26,10 @@ from ..discretization._coordinate_enclosure import (
     derivative,
     evaluate_expression,
     Expression,
-    linear_combinations,
     multiply,
     normalize_pyramid_reference_derivative,
     Polynomial,
+    PreparedLinearCombinationBasis,
     pyramid_reference_to_box_arguments,
     RationalPolynomial,
     scale,
@@ -306,6 +306,21 @@ def _mapped_cell_ladder(prepared: _PreparedMappedCell, /) -> _ProofLadder:
     center_jacobian_expressions = prepared.center_jacobian_expressions
     denominator_proof = prepared.denominator_proof
     identity = prepared.identity
+    # The Jacobian belongs to this cell; retain preparations only for this
+    # ladder and share them only when every operand is the same object.
+    bases: dict[tuple[int, ...], PreparedLinearCombinationBasis] = {}
+
+    def projected_basis(
+        rows: tuple[int, ...], axis: int, /
+    ) -> PreparedLinearCombinationBasis:
+        operands = tuple(jacobian[row][axis] for row in rows)
+        key = tuple(id(operand) for operand in operands)
+        basis = bases.get(key)
+        if basis is None:
+            basis = PreparedLinearCombinationBasis(operands)
+            bases[key] = basis
+        return basis
+
     for position, rows in enumerate(combinations(range(ambient), dimension)):
         direct = tuple(
             tuple(jacobian[row][axis] for axis in range(dimension)) for row in rows
@@ -342,10 +357,7 @@ def _mapped_cell_ladder(prepared: _PreparedMappedCell, /) -> _ProofLadder:
             tuple(value for value in row) for row in solved_projection
         )
         projected_columns = tuple(
-            linear_combinations(
-                tuple(jacobian[row][axis] for row in rows),
-                projection_matrix,
-            )
+            projected_basis(rows, axis).combine(projection_matrix)
             for axis in range(dimension)
         )
         projected_jacobian = tuple(
@@ -388,11 +400,9 @@ def _mapped_cell_ladder(prepared: _PreparedMappedCell, /) -> _ProofLadder:
             projection = None
         if projection is not None:
             projection_matrix = tuple(tuple(row) for row in projection)
+            ambient_rows = tuple(range(ambient))
             projected_columns = tuple(
-                linear_combinations(
-                    tuple(jacobian[row][axis] for row in range(ambient)),
-                    projection_matrix,
-                )
+                projected_basis(ambient_rows, axis).combine(projection_matrix)
                 for axis in range(dimension)
             )
             projected_jacobian = tuple(

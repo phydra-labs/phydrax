@@ -302,6 +302,8 @@
 - Mapped quality audits reuse exact block integrals when available, and
   embedding cell preparation reuses exact integer coordinate-basis plans.
   Stored measures, coordinate expressions and proof evidence are unchanged.
+- Mapped injectivity projections and restricted-cell validity reuse prepared
+  exact integer basis combinations; their witnesses and bounds are unchanged.
 - Cell validity batches exact-coordinate rounding checks, retaining exact
   scalar fallback and the same recorded maximum error.
 - Affine cell validity combines exact dyadic Jacobians and determinant bounds

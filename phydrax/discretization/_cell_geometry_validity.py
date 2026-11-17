@@ -815,7 +815,10 @@ def _rational_nodes(degree: int, /) -> np.ndarray:
         return np.asarray((0.5,), dtype=np.float64)
     denominator = 1 << (degree - 1).bit_length()
     return np.asarray(
-        [((index * denominator + degree // 2) // degree) / denominator for index in range(degree + 1)],
+        [
+            ((index * denominator + degree // 2) // degree) / denominator
+            for index in range(degree + 1)
+        ],
         dtype=np.float64,
     )
 
@@ -993,12 +996,13 @@ def _exact_bernstein_inverse(
     """Exact inverse of a Bernstein basis evaluated at representable nodes."""
     if simplex:
         nodes = _simplex_nodes(degree, dimension)
-        indices = tuple(tuple(int(value) for value in row) for row in _simplex_indices(degree, dimension))
+        indices = tuple(
+            tuple(int(value) for value in row)
+            for row in _simplex_indices(degree, dimension)
+        )
         barycentric = tuple(
             (Fraction(1) - sum(point, Fraction(0)), *point)
-            for point in (
-                tuple(Fraction(float(value)) for value in row) for row in nodes
-            )
+            for point in (tuple(Fraction(float(value)) for value in row) for row in nodes)
         )
         matrix = [
             [
@@ -1016,8 +1020,9 @@ def _exact_bernstein_inverse(
         nodes = _rational_nodes(degree)
         matrix = [
             [
-                math.comb(degree, power) * Fraction(float(node))**power
-                * (1 - Fraction(float(node)))**(degree - power)
+                math.comb(degree, power)
+                * Fraction(float(node)) ** power
+                * (1 - Fraction(float(node))) ** (degree - power)
                 for power in range(degree + 1)
             ]
             for node in nodes
@@ -2477,11 +2482,12 @@ def _certify_source_block(
                     tuple(local[dof][axis] for dof in range(len(local)))
                     for axis in range(len(local[0]))
                 )
-                expressions = (
-                    prepared_plain_basis.combine(components)
+                prepared_basis = (
+                    prepared_plain_basis
                     if basis is plain_basis and prepared_plain_basis is not None
-                    else linear_combinations(basis, components)
+                    else PreparedLinearCombinationBasis(basis)
                 )
+                expressions = prepared_basis.combine(components)
         # Without a proof domain an unsupported nonaffine map is reported, so
         # only maps with a domain carry reusable records.
         digest = None if domain is None else _map_digest(cell_kind, expressions)
@@ -3015,7 +3021,10 @@ def _polygon_measure(points: np.ndarray, policy: CellValidityPolicy, /) -> tuple
         np.max(points, axis=1), np.min(points, axis=1)
     )
     allowed_lower = np.maximum(
-        np.nextafter(policy.relative_planarity_tolerance * binary64_norm_lower(extent_lower), -np.inf),
+        np.nextafter(
+            policy.relative_planarity_tolerance * binary64_norm_lower(extent_lower),
+            -np.inf,
+        ),
         0.0,
     )
     allowed_upper = np.nextafter(
@@ -3060,16 +3069,18 @@ def _certify_polygon_block(points: np.ndarray, policy: CellValidityPolicy, /) ->
     edge_lengths_lower = binary64_norm_lower(edge_vectors)
     edge_lengths_upper = binary64_norm_upper(edge_vectors)
     edge_roundoff = np.nextafter(
-        4.0 * _EPSILON * binary64_norm_upper(
-            np.nextafter(np.abs(centered) + np.abs(following), np.inf)
-        ),
+        4.0
+        * _EPSILON
+        * binary64_norm_upper(np.nextafter(np.abs(centered) + np.abs(following), np.inf)),
         np.inf,
     )
     extent_lower, extent_upper = binary64_difference_magnitude(
         np.max(safe, axis=1), np.min(safe, axis=1)
     )
     edge_floor_lower = np.maximum(
-        np.nextafter(POLYGON_EDGE_RESOLUTION * binary64_norm_lower(extent_lower), -np.inf),
+        np.nextafter(
+            POLYGON_EDGE_RESOLUTION * binary64_norm_lower(extent_lower), -np.inf
+        ),
         0.0,
     )[:, None]
     edge_floor_upper = np.nextafter(
