@@ -584,6 +584,10 @@ def _exact_determinant(matrix: _ExactMatrix, /) -> ExactScalar:
 # normalized to unit magnitude and ``M`` to the unit box, so it is absolute).
 _KELLEY_FEASIBILITY_TOLERANCE = 1.0e-7
 
+# Least-eigenvalue margin (unit-magnitude controls, unit-box ``M``) at which a
+# seed is already the proposal.
+_START_MARGIN = 2.0**-10
+
 
 def _least_eigenpairs(
     matrix: np.ndarray, controls: np.ndarray, /
@@ -701,8 +705,9 @@ def _float_search_preconditioner(controls: np.ndarray, /) -> np.ndarray | None:
     bound and the attained margin agree to binary64 resolution, or the new cuts
     are violated by no more than the program's primal feasibility tolerance (the
     program point cannot move). Inverses of the mean and of each control seed
-    the cuts. Floats only propose ``M``; the caller decides positivity exactly,
-    and ``None`` only means that no proposal was found.
+    the cuts, and a seed whose margin is at least `_START_MARGIN` is returned
+    without a program. Floats only propose ``M``; the caller decides positivity
+    exactly, and ``None`` only means that no proposal was found.
     """
     from scipy.optimize import linprog
 
@@ -733,6 +738,11 @@ def _float_search_preconditioner(controls: np.ndarray, /) -> np.ndarray | None:
     best = max(starts, key=lambda matrix: float(np.min(margins(matrix)[0])))
     values, vectors = margins(best)
     best_margin = float(np.min(values))
+    if best_margin >= _START_MARGIN:
+        # The exact check rounds the proposal to 2**-30 of its unit scale; a
+        # start with this margin survives that by orders of magnitude, so no
+        # cutting-plane program is owed.
+        return best
     rows = cuts(vectors, np.arange(values.size))
     objective = np.concatenate((np.zeros(size * size), (-1.0,)))
     bounds = [(-1.0, 1.0)] * (size * size) + [(None, None)]
