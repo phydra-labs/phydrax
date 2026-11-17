@@ -1449,7 +1449,7 @@ def _periodic_entity_coordinate_maps(
     entity_factors: dict[_ExactMatrix, ExactLinearFactorization[Fraction]] = {}
     entity_solutions: dict[
         tuple[_ExactMatrix, _ExactMatrix, _ExactMatrix],
-        tuple[tuple[Fraction, ...], ...],
+        tuple[tuple[tuple[Fraction, ...], ...], np.ndarray],
     ] = {}
     entity_permutations: dict[
         tuple[tuple[int, int, int, str, str], tuple[int, ...], int],
@@ -1781,8 +1781,8 @@ def _periodic_entity_coordinate_maps(
                         local_action_exact,
                         representative_transform,
                     )
-                    global_action_exact = entity_solutions.get(solution_key)
-                    if global_action_exact is None:
+                    solution = entity_solutions.get(solution_key)
+                    if solution is None:
                         factor = entity_factors.get(transform)
                         if factor is None:
                             factor = factor_exact(transform.rows)
@@ -1795,10 +1795,13 @@ def _periodic_entity_coordinate_maps(
                                 )
                             )
                         )
-                        entity_solutions[solution_key] = global_action_exact
-                    global_action = np.asarray(global_action_exact, dtype=np.float64)
-                    if not np.all(np.isfinite(global_action)):
-                        raise ValueError("Periodic entity action is not finite.")
+                        global_action = np.asarray(global_action_exact, dtype=np.float64)
+                        if not np.all(np.isfinite(global_action)):
+                            raise ValueError("Periodic entity action is not finite.")
+                        global_action.setflags(write=False)
+                        solution = (global_action_exact, global_action)
+                        entity_solutions[solution_key] = solution
+                    global_action_exact, global_action = solution
                     orientation_sign = int(orbit_signs[entity_degree][entity_row])
                     representative_sign = int(
                         orbit_signs[entity_degree][representative_row]
