@@ -3620,6 +3620,8 @@ class _SourceCellRows:
 
     def __init__(self, surface: AdaptiveImplicitSurface) -> None:
         self.cells = np.asarray(surface.scaffold.cell_indices, dtype=np.int64)
+        self.surface = surface
+        self.projection_axes: dict[int, tuple[bool, int]] = {}
         if self.cells.ndim != 2 or self.cells.shape[1] != 4:
             raise ValueError(
                 "An adaptive source cell key requires level and three grid indices."
@@ -3633,6 +3635,49 @@ class _SourceCellRows:
         self.rows.update(dict.fromkeys(missing))
         for row, key in _matching_integer_rows(self.cells, missing):
             self.rows[(key[0], key[1], key[2], key[3])] = row
+
+    def prepare_projection_axes(self, keys: Sequence[SourceCellKey], /) -> None:
+        """Evaluate the crease decisions for the current frontier of source cells."""
+        from ._adaptive_discovery import _branch_bounds, _ledger_crease_cells
+
+        self.prepare(keys)
+        scaffold = self.surface.scaffold
+        pending: list[int] = []
+        seen: set[int] = set()
+        for key in keys:
+            row = self.rows[key]
+            if row is None or row in seen or row in self.projection_axes:
+                continue
+            seen.add(row)
+            lower = np.asarray(scaffold.cell_gradient_lower[row], dtype=np.float64)
+            upper = np.asarray(scaffold.cell_gradient_upper[row], dtype=np.float64)
+            if not np.any((lower > 0.0) | (upper < 0.0)):
+                pending.append(row)
+        bounds = self.surface.volume.bounds
+        for start in range(0, len(pending), _PROOF_WORKSET_SIZE):
+            rows = pending[start : start + _PROOF_WORKSET_SIZE]
+            boxes = np.asarray(scaffold.cell_boxes[rows], dtype=np.float64)
+            crease = _ledger_crease_cells(bounds, boxes[:, 0], boxes[:, 1])
+            crease_rows = np.flatnonzero(crease)
+            tree = bounds.branch_tree() if crease_rows.size else None
+            slopes = (
+                _branch_bounds(tree, boxes[crease_rows, 0], boxes[crease_rows, 1])[2]
+                if tree is not None
+                else np.zeros((crease_rows.size, 3), dtype=np.int8)
+            )
+            for row in rows:
+                self.projection_axes[row] = (False, 0)
+            for offset, position in enumerate(crease_rows):
+                row = rows[int(position)]
+                monotone = np.flatnonzero(slopes[offset])
+                lower = scaffold.cell_gradient_lower[row]
+                upper = scaffold.cell_gradient_upper[row]
+                axis = (
+                    int(monotone[0])
+                    if monotone.size
+                    else int(np.argmax(np.abs(lower + upper)))
+                )
+                self.projection_axes[row] = (True, axis)
 
     def get(self, key: SourceCellKey) -> int | None:
         self.prepare((key,))
@@ -3816,25 +3861,11 @@ def _face_setup(
         # face meeting the crease by root witnesses; the projection follows an
         # axis along which the branches prove the field strictly monotone, or
         # else the gradient enclosure's largest midpoint magnitude.
-        from ._adaptive_discovery import _branch_bounds, _ledger_crease_cells
-
-        box = np.asarray(scaffold.cell_boxes[cell_row_source], dtype=np.float64)
-        bounds = surface.volume.bounds
-        if not _ledger_crease_cells(bounds, box[None, 0], box[None, 1])[0]:
+        crease, selected_axis = cell_rows.projection_axes[cell_row_source]
+        if not crease:
             raise ValueError(
                 "Implicit root cell has no strictly regular gradient component."
             )
-        tree = bounds.branch_tree()
-        monotone = (
-            np.flatnonzero(_branch_bounds(tree, box[None, 0], box[None, 1])[2][0])
-            if tree is not None
-            else np.empty(0, dtype=np.int64)
-        )
-        selected_axis = (
-            int(monotone[0])
-            if monotone.size
-            else int(np.argmax(np.abs(cell_gradient_lower + cell_gradient_upper)))
-        )
     if selected_axis == 0:
         projected_axes = (0, 1, 2)
     elif selected_axis == 1:
@@ -4555,12 +4586,11 @@ def _prepare_root_charts(
     root_rows = _source_root_rows(surface)
     root_by_point = _root_rows_by_point(root_rows)
     cell_rows = _source_cell_rows(surface)
-    cell_rows.prepare(
-        tuple(
-            _source_cell_key(np.asarray(key, dtype=np.int64))
-            for key in witness.implicit_cell_keys
-        )
+    cell_keys = tuple(
+        _source_cell_key(np.asarray(key, dtype=np.int64))
+        for key in witness.implicit_cell_keys
     )
+    cell_rows.prepare_projection_axes(cell_keys)
     root_rows.prepare(
         tuple(
             _grid_edge(np.asarray(edge, dtype=np.int64))
@@ -4605,11 +4635,23 @@ def _prepare_root_charts(
                 full_source=False,
             )
             parent_target = _target_map_source(capability.mesh, capability.geometry)
-            for index in np.flatnonzero(rows.reusable):
-                index = int(index)
+            parent_indices = [
+                int(index)
+                for index in np.flatnonzero(rows.reusable)
+                if rows.keys[index].tobytes() in candidates
+            ]
+            cell_rows.prepare_projection_axes(
+                tuple(
+                    _source_cell_key(
+                        np.asarray(
+                            parent_witness.implicit_cell_keys[index], dtype=np.int64
+                        )
+                    )
+                    for index in parent_indices
+                )
+            )
+            for index in parent_indices:
                 key = rows.keys[index].tobytes()
-                if key not in candidates:
-                    continue
                 parent_setup = _face_setup(
                     index,
                     parent_rows[index],

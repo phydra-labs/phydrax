@@ -1797,6 +1797,54 @@ def test_adaptive_implicit_root_chart_requires_smooth_or_profile_regular_source(
         prepare_adaptive_implicit_root_charts(mesh, geometry, cube_source, witness)
 
 
+def test_crease_chart_refuses_a_missing_branch_decision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    geometry = (
+        phx.geometry.Sphere((-0.2, 0.0, 0.0), 0.3)
+        | phx.geometry.Sphere((0.2, 0.0, 0.0), 0.3)
+    ).compile()
+    surface = discover_adaptive_implicit_surface(
+        geometry,
+        domain=np.asarray(((-0.8, -0.6, -0.6), (0.8, 0.6, 0.6))),
+        policy=AdaptiveImplicitSurfacePolicy(
+            relative_cell_diameter=0.06,
+            root_tolerance=1.0e-8,
+            allow_nonsmooth_field=True,
+        ),
+        source_id="crease-chart-fault",
+    )
+    if surface.mesh is None:
+        raise AssertionError("The overlapping spheres must retain a source mesh.")
+    contract = SpatialCoordinateContract(METER)
+    query = AdaptiveImplicitBoundarySource(surface, frame_id=contract.spatial_id)
+    source = _BoundAdaptiveSourceQuery(query, contract.spatial_id)
+    mesh = CellMesh.from_triangles(
+        surface.mesh.vertices, surface.mesh.faces.astype(np.int32)
+    )
+    target = CellGeometrySpec.affine(mesh)
+    witness = _chart_witness(mesh, target, source)
+    root_map = prepare_adaptive_implicit_root_charts(
+        mesh, target, source, witness, tolerance=0.5, maximum_normal_deviation=np.pi
+    )
+    assert root_map.status == "certified"
+    assert any(evidence.bound == "root_witness" for evidence in root_map.chart_evidence)
+
+    def missing_decision(
+        bounds: adaptive_discovery._FieldEnclosures,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        /,
+    ) -> np.ndarray:
+        return np.zeros(lower.shape[0], dtype=np.bool_)
+
+    monkeypatch.setattr(adaptive_discovery, "_ledger_crease_cells", missing_decision)
+    with pytest.raises(ValueError, match="no strictly regular gradient component"):
+        prepare_adaptive_implicit_root_charts(
+            mesh, target, source, witness, tolerance=0.5, maximum_normal_deviation=np.pi
+        )
+
+
 def test_adaptive_implicit_incomplete_root_ancestry_is_rejected() -> None:
     _surface, source, _contract, mesh, geometry, witness = _adaptive_source()
     bad_edges = np.array(witness.implicit_root_edge_keys, copy=True)
