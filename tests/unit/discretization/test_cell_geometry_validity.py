@@ -1943,40 +1943,6 @@ def test_embedded_affine_minor_matches_gram_for_adversarial_cases(case: str) -> 
     _assert_embedded_affine_minor_matches_gram(jacobian, case)
 
 
-def test_numerical_pyramid_enclosure_covers_subnormal_determinant() -> None:
-    # Pyramids take the numerical Bernstein route. This affine pyramid has even
-    # integer Jacobian columns times 2^-370, so its constant determinant is
-    # subnormal and every relative rounding margin underflows to zero.
-    columns = (
-        (-2085424, 1344604, -1564386),
-        (1915976, -1246650, 1209512),
-        (-1341916, -1592634, -1647846),
-    )
-    scale = 2.0**-370
-    element = D.fem.lagrange_element("pyramid", 1)
-    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
-    # Reference nodes are dyadic and the columns are scaled integers, so the
-    # affine vertices x = X0 c0 + X1 c1 + X2 c2 are exact.
-    vertices = nodes @ (np.asarray(columns, dtype=np.float64) * scale)
-    exact_integer = (
-        columns[0][0] * (columns[1][1] * columns[2][2] - columns[1][2] * columns[2][1])
-        - columns[1][0] * (columns[0][1] * columns[2][2] - columns[0][2] * columns[2][1])
-        + columns[2][0] * (columns[0][1] * columns[1][2] - columns[0][2] * columns[1][1])
-    )
-    exact = exact_integer * Fraction(scale) ** 3
-
-    block = validity_module._certify_polynomial_block(
-        element,
-        "pyramid",
-        vertices[None],
-        validity_module.CellValidityPolicy(),
-        original_local=vertices[None],
-    )
-
-    assert exact == Fraction(72020134946597053, 2**1106)
-    assert Fraction(float(block.lower[0])) <= exact <= Fraction(float(block.upper[0]))
-
-
 def test_polygon_measure_enclosure_covers_subnormal_area() -> None:
     # Pentagon near 2^-530: centered shoelace products are subnormal, so the
     # relative rounding margin underflows. The exact twice-area is ~1874 * 2^-1074.
