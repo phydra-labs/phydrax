@@ -255,6 +255,24 @@ def test_bulk_net_mixed_exact_columns(
     assert result[3:] == (None, None)
 
 
+@pytest.mark.parametrize("workers", [1, 4])
+def test_bulk_simplex_conversion_with_alternating_degrees(workers: int) -> None:
+    if not subdivision.meshcore_available():
+        pytest.skip("Meshcore is unavailable")
+    from phydrax.discretization._coordinate_enclosure import _fraction_controls
+
+    polynomial = {(0, 0): Fraction(-1, 3), (1, 0): Fraction(5, 7)}
+    degrees = ((1,), (3,), (3,), (2,), (1,))
+    requests: list[
+        tuple[tuple[Expression, ...], BernsteinDomain, int, tuple[int, ...]]
+    ] = [((polynomial,), "simplex", 2, degree) for degree in degrees]
+    results = subdivision.integer_net_batch(requests, parallelism=workers)
+    for degree, (net,) in zip(degrees, results, strict=True):
+        assert net is not None
+        assert net.controls() == _fraction_controls(polynomial, "simplex", 2, degree)
+
+
+
 def test_bulk_net_conversion_is_independent_of_batch_split_and_workers() -> None:
     if not subdivision.meshcore_available():
         pytest.skip("Meshcore is unavailable")
