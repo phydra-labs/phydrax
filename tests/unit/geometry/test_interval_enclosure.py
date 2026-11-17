@@ -190,7 +190,9 @@ def test_native_batch_matches_elementwise_kernels_and_detects_tampering() -> Non
 @pytest.mark.parametrize("seed", range(8))
 def test_batched_random_programs_match_per_operation_reference(seed: int) -> None:
     rng = np.random.default_rng(seed + 721)
-    operations = tuple(rng.choice(("add", "sub", "mul", "div", "sin", "cos"), 8))
+    operations = tuple(
+        rng.choice(("add", "sub", "mul", "div", "sin", "cos", "sqrt", "atan"), 8)
+    )
 
     def function(x: jax.Array) -> jax.Array:
         value = x[0]
@@ -205,8 +207,12 @@ def test_batched_random_programs_match_per_operation_reference(seed: int) -> Non
                 value = value / x[1]
             elif operation == "sin":
                 value = jnp.sin(value)
-            else:
+            elif operation == "cos":
                 value = jnp.cos(value)
+            elif operation == "sqrt":
+                value = jnp.sqrt(value)
+            else:
+                value = jnp.arctan(value)
         return value
 
     lower = rng.uniform(-2.0, 2.0, size=(128, 2))
@@ -217,7 +223,7 @@ def test_batched_random_programs_match_per_operation_reference(seed: int) -> Non
     for operation in operations:
         operands = (
             (expected,)
-            if operation in ("sin", "cos")
+            if operation in ("sin", "cos", "sqrt", "atan")
             else (
                 expected,
                 (lower[:, 1], upper[:, 1]),
