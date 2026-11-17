@@ -1051,7 +1051,7 @@ def _exact_tensor_conversion(
 
 @host_table_cache(
     max_entries=256,
-    max_bytes=1048576,
+    max_bytes=16777216,
     weight=lambda value: logical_table_bytes(
         (
             value.nodes,
