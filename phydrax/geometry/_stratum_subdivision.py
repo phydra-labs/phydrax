@@ -221,8 +221,8 @@ class StratumSubdivisionCache:
     jacobian_controls: dict[tuple[int, int], tuple[_Matrix, ...] | None] = field(
         default_factory=dict
     )
-    simplex_jacobians: dict[int, tuple[EmbeddingCell, tuple[_Matrix, ...] | None]] = (
-        field(default_factory=dict)
+    simplex_jacobians: dict[int, tuple[EmbeddingCell, _JacobianControls | None]] = field(
+        default_factory=dict
     )
     reference_edge_maps: dict[
         tuple[tuple[tuple[Fraction, ...], ...], int],
@@ -897,6 +897,26 @@ def subdivided_stratum_separation(
 _Matrix = tuple[tuple[ExactScalar, ...], ...]
 
 
+@dataclass(frozen=True)
+class _JacobianControls:
+    """A whole Jacobian control net over one positive exact scale."""
+
+    dimension: int
+    controls: _Controls
+
+    def decoded(self) -> tuple[_Matrix, ...]:
+        return tuple(
+            tuple(
+                tuple(
+                    Fraction(value) if isinstance(value, int) else value
+                    for value in vector[row * self.dimension : (row + 1) * self.dimension]
+                )
+                for row in range(self.dimension)
+            )
+            for vector in _decoded_controls(self.controls).values()
+        )
+
+
 def _determinant(matrix: _Matrix, /) -> ExactScalar:
     if len(matrix) == 2:
         (a, b), (c, d) = matrix
@@ -984,7 +1004,7 @@ def _edge_matrix(points: tuple[tuple[ExactScalar, ...], ...], origin: int, /) ->
     )
 
 
-def _jacobian_controls(cell: EmbeddingCell, /) -> tuple[_Matrix, ...] | None:
+def _jacobian_controls(cell: EmbeddingCell, /) -> _JacobianControls | None:
     """Bernstein controls of the reference Jacobian on the unit reference simplex."""
     dimension = cell.dimension
     entries: list[list[dict[_Index, ExactScalar]]] = []
@@ -999,8 +1019,10 @@ def _jacobian_controls(cell: EmbeddingCell, /) -> tuple[_Matrix, ...] | None:
                     lowered = tuple(
                         value - int(index == axis) for index, value in enumerate(exponent)
                     )
-                    derivative[lowered] = derivative.get(lowered, Fraction(0)) + (
-                        coefficient * exponent[axis]
+                    derivative[lowered] = (
+                        coefficient
+                        if exponent[axis] == 1
+                        else coefficient * exponent[axis]
                     )
             row.append(derivative or {(0,) * dimension: Fraction(0)})
         entries.append(row)
@@ -1012,21 +1034,13 @@ def _jacobian_controls(cell: EmbeddingCell, /) -> tuple[_Matrix, ...] | None:
             for entry in row
         ),
     )
-    columns = [
-        [
-            bernstein_coefficients(entry, "simplex", dimension, degree=(degree,))
-            for entry in row
-        ]
-        for row in entries
-    ]
-    count = len(columns[0][0])
-    return tuple(
-        tuple(
-            tuple(columns[row][column][index] for column in range(dimension))
-            for row in range(dimension)
-        )
-        for index in range(count)
+    controls = _controls(
+        tuple(entry for row in entries for entry in row),
+        (dimension + 1,),
+        (degree,),
+        dimension,
     )
+    return None if controls is None else _JacobianControls(dimension, controls)
 
 
 def _cached_reference_edges(
@@ -1063,7 +1077,7 @@ def _cached_corner_metric(
 
 def _cached_simplex_jacobians(
     cell: EmbeddingCell, cache: StratumSubdivisionCache | None, /
-) -> tuple[_Matrix, ...] | None:
+) -> _JacobianControls | None:
     if cache is None:
         return _jacobian_controls(cell)
     entry = cache.simplex_jacobians.get(id(cell))
@@ -1071,6 +1085,47 @@ def _cached_simplex_jacobians(
         entry = (cell, _jacobian_controls(cell))
         cache.simplex_jacobians[id(cell)] = entry
     return entry[1]
+
+
+def _jacobian_controls_positive(
+    controls: _JacobianControls, metric: _Matrix, glue: _Matrix | None = None, /
+) -> bool:
+    """Check the common-scaled net without normalizing individual controls."""
+    factors = (metric,) if glue is None else (metric, glue)
+    if all(
+        isinstance(value, Fraction | int)
+        for factor in factors
+        for row in factor
+        for value in row
+    ) and all(
+        isinstance(value, int)
+        for vector in controls.controls.values.values()
+        for value in vector
+    ):
+        rational_factors = cast(
+            tuple[tuple[tuple[Fraction | int, ...], ...], ...], factors
+        )
+        dimension = controls.dimension
+        for vector in controls.controls.values.values():
+            integer_vector = cast(tuple[int, ...], vector)
+            matrix = tuple(
+                integer_vector[row * dimension : (row + 1) * dimension]
+                for row in range(dimension)
+            )
+            product = (
+                (rational_factors[0], matrix)
+                if glue is None
+                else (rational_factors[0], matrix, rational_factors[1])
+            )
+            if any(value <= 0 for value in symmetric_product_minors_exact(*product)):
+                return False
+        return True
+    return all(
+        _positive_definite_symmetric_part(metric, control)
+        if glue is None
+        else _positive_definite_symmetric_part(metric, control, glue)
+        for control in controls.decoded()
+    )
 
 
 def _fixed_glued_monotone(
@@ -1142,11 +1197,8 @@ def _fixed_glued_monotone(
     second_controls = _cached_simplex_jacobians(second, cache)
     if first_controls is None or second_controls is None:
         return False
-    return all(
-        _positive_definite_symmetric_part(metric, control) for control in first_controls
-    ) and all(
-        _positive_definite_symmetric_part(metric, control, glue)
-        for control in second_controls
+    return _jacobian_controls_positive(first_controls, metric) and (
+        _jacobian_controls_positive(second_controls, metric, glue)
     )
 
 
@@ -1226,8 +1278,8 @@ def _glued_monotone(
     if first_controls is None or second_controls is None:
         return False
     glued_controls = (
-        *first_controls,
-        *(_product(control, glue) for control in second_controls),
+        *first_controls.decoded(),
+        *(_product(control, glue) for control in second_controls.decoded()),
     )
     if all(
         _positive_definite_symmetric_part(metric, control) for control in glued_controls
