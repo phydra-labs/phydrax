@@ -1,6 +1,7 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 // Straight-line outward interval execution. A whole program is validated before
 // the first workspace write; validated rows execute in source order.
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -77,6 +78,7 @@ constexpr std::int64_t kDecide = 23;
 constexpr std::int64_t kAttain = 24;
 constexpr std::int64_t kDivideElementwise = 25;
 constexpr std::int64_t kAtan = 26;
+constexpr std::int64_t kPowerElementwise = 27;
 
 constexpr std::uint64_t kIntervalOpcodeCapabilities =
     (std::uint64_t{1} << kGather) | (std::uint64_t{1} << kAdd) |
@@ -91,7 +93,8 @@ constexpr std::uint64_t kIntervalOpcodeCapabilities =
     (std::uint64_t{1} << kEqual) | (std::uint64_t{1} << kAbsolute) |
     (std::uint64_t{1} << kExtremumPair) | (std::uint64_t{1} << kExtremumReduce) |
     (std::uint64_t{1} << kDecide) | (std::uint64_t{1} << kAttain) |
-    (std::uint64_t{1} << kDivideElementwise) | (std::uint64_t{1} << kAtan);
+    (std::uint64_t{1} << kDivideElementwise) | (std::uint64_t{1} << kAtan) |
+    (std::uint64_t{1} << kPowerElementwise);
 
 // Branch-evidence event rows: kind, test, size, a, a_index, boxes. Element k
 // is the workspace entry a + (a_index < 0 ? k : indices[a_index + k]); where
@@ -171,7 +174,7 @@ bool operand_valid(const std::int64_t* indices, std::int64_t index_count, std::i
 // Output entries of a row: 2 size flag pairs for kExtremumPair, size * b for
 // kExtremumReduce, else size. Only called on rows with a valid extent.
 std::int64_t row_extent(const Row& row) noexcept {
-  if (row.opcode == kExtremumPair) return 2 * row.size;
+  if (row.opcode == kExtremumPair || row.opcode == kPowerElementwise) return 2 * row.size;
   if (row.opcode == kExtremumReduce) return row.size * row.b;
   return row.size;
 }
@@ -192,11 +195,12 @@ bool representatives_valid(const std::int64_t* indices, std::int64_t index_count
 bool row_valid(const Row& row, std::int64_t previous_end, const std::int64_t* indices,
                std::int64_t index_count, const double* parameters, std::int64_t parameter_count,
                std::int64_t workspace_size) noexcept {
-  if (row.opcode < kGather || row.opcode > kAtan) return false;
+  if (row.opcode < kGather || row.opcode > kPowerElementwise) return false;
   if (row.size < 0 || row.out < previous_end || row.out > workspace_size) return false;
   const std::int64_t room = workspace_size - row.out;
   switch (row.opcode) {
     case kExtremumPair:
+    case kPowerElementwise:
       if (row.size > room / 2) return false;
       break;
     case kExtremumReduce:
@@ -223,6 +227,7 @@ bool row_valid(const Row& row, std::int64_t previous_end, const std::int64_t* in
     case kSubtractSame:
     case kMultiply:
     case kDivideElementwise:
+    case kPowerElementwise:
     case kMaximum:
     case kMinimum:
       return row.aux == 0 && operand(row.a, row.a_index) && operand(row.b, row.b_index);
@@ -335,6 +340,64 @@ inline void store_reduction(const Reduction& sum, double gamma, double* lower, d
     lower[target] = sum.nonnegative ? maximum(down(low), 0.0) : down(low);
     upper[target] = sum.nonpositive ? minimum(up(high), 0.0) : up(high);
   }
+}
+
+struct PowerInterval {
+  double lower;
+  double upper;
+};
+
+// Exact binary64 integrality, without a platform math-library decision.
+bool integral_binary64(double value) noexcept {
+  const auto bits = std::bit_cast<std::uint64_t>(value);
+  const auto magnitude = bits & UINT64_C(0x7fffffffffffffff);
+  const int exponent = static_cast<int>((magnitude >> 52) & UINT64_C(0x7ff));
+  if (exponent == 0x7ff) return false;
+  if (magnitude == 0) return true;
+  const int shift = exponent - 1023;
+  if (shift < 0) return false;
+  if (shift >= 52) return true;
+  return (magnitude & ((UINT64_C(1) << (52 - shift)) - 1)) == 0;
+}
+
+PowerInterval integer_power(PowerInterval base, double exponent) noexcept {
+  if (exponent == 0.0) return {1.0, 1.0};
+  if (exponent >= 0x1p53 || (static_cast<std::uint64_t>(exponent) & 1U) == 0) {
+    const auto half = integer_power(base, exponent * 0.5);
+    const bool crosses = half.lower <= 0.0 && half.upper >= 0.0;
+    const double first = half.lower * half.lower, second = half.upper * half.upper;
+    const double low = crosses ? 0.0 : minimum(first, second);
+    const double high = maximum(first, second);
+    if (std::isnan(low) || std::isnan(high)) return {0.0, std::numeric_limits<double>::infinity()};
+    return {maximum(down(low), 0.0), up(high)};
+  }
+  const auto previous = integer_power(base, exponent - 1.0);
+  PowerInterval result;
+  phx::mc::interval::interval_product(previous.lower, previous.upper, base.lower, base.upper,
+                                       result.lower, result.upper);
+  return result;
+}
+
+PowerInterval divide_interval(double a_low, double a_high, double b_low, double b_high) noexcept {
+  if (b_low <= 0.0 && b_high >= 0.0)
+    return {-std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity()};
+  const double rlow = 1.0 / b_high, rhigh = 1.0 / b_low;
+  const auto exact = [](double numerator, double denominator, double quotient) {
+    const double product = quotient * denominator;
+    return std::isfinite(quotient) && denominator != 0.0 && product == numerator &&
+           phx::mc::interval::product_is_exact(quotient, denominator, product);
+  };
+  double reciprocal_low, reciprocal_high;
+  phx::mc::interval::round_out_inexact(
+      rlow, rhigh, exact(1.0, b_high, rlow), exact(1.0, b_low, rhigh),
+      reciprocal_low, reciprocal_high);
+  PowerInterval result;
+  phx::mc::interval::interval_product(a_low, a_high, reciprocal_low, reciprocal_high,
+                                       result.lower, result.upper);
+  const double quotient = a_low / b_low;
+  if (a_low == a_high && b_low == b_high && exact(a_low, b_low, quotient))
+    result.lower = result.upper = quotient;
+  return result;
 }
 
 // Execute elements [begin, end) of a validated row.
@@ -569,29 +632,31 @@ void execute_row(const Row& row, std::int64_t begin, std::int64_t end,
     const double b_high = upper[b];
     double low = 0.0;
     double high = 0.0;
-    if (row.opcode == kDivideElementwise) {
-      if (b_low <= 0.0 && b_high >= 0.0) {
-        low = -std::numeric_limits<double>::infinity();
-        high = std::numeric_limits<double>::infinity();
+    if (row.opcode == kDivideElementwise || row.opcode == kPowerElementwise) {
+      PowerInterval result;
+      if (row.opcode == kDivideElementwise) {
+        result = divide_interval(a_low, a_high, b_low, b_high);
       } else {
-        const double rlow = 1.0 / b_high, rhigh = 1.0 / b_low;
-        const auto exact = [](double numerator, double denominator, double quotient) {
-          const double product = quotient * denominator;
-          return std::isfinite(quotient) && denominator != 0.0 && product == numerator &&
-                 phx::mc::interval::product_is_exact(quotient, denominator, product);
-        };
-        double reciprocal_low, reciprocal_high;
-        phx::mc::interval::round_out_inexact(
-            rlow, rhigh, exact(1.0, b_high, rlow), exact(1.0, b_low, rhigh),
-            reciprocal_low, reciprocal_high);
-        phx::mc::interval::interval_product(a_low, a_high, reciprocal_low, reciprocal_high,
-                                            low, high);
-        const double quotient = a_low / b_low;
-        if (a_low == a_high && b_low == b_high && exact(a_low, b_low, quotient))
-          low = high = quotient;
+        const bool integer = b_low == b_high && integral_binary64(b_low);
+        const bool invalid = !integer && a_low < 0.0;
+        lower[out + row.size + k] = upper[out + row.size + k] = invalid ? -1.0 : 0.0;
+        if (integer) {
+          result = integer_power({a_low, a_high}, std::fabs(b_low));
+          if (b_low < 0.0)
+            result = divide_interval(1.0, 1.0, result.lower, result.upper);
+        } else if (invalid) {
+          result = {0.0, 0.0};
+        } else {
+          const auto logarithm = phx::mc::elementary::log(a_low, a_high);
+          double product_low, product_high;
+          phx::mc::interval::interval_product(b_low, b_high, logarithm.lower, logarithm.upper,
+                                               product_low, product_high);
+          const auto power = phx::mc::elementary::exp(product_low, product_high);
+          result = {maximum(power.lower, 0.0), power.upper};
+        }
       }
-      lower[out + k] = low;
-      upper[out + k] = high;
+      lower[out + k] = result.lower;
+      upper[out + k] = result.upper;
       continue;
     }
     if (elementwise_arithmetic &&
@@ -840,7 +905,8 @@ int32_t phx_mc_interval_program_batch(const int64_t* instructions, int64_t instr
       return PHX_MC_INVALID_INPUT;
     constexpr std::uint64_t supported =
         (std::uint64_t{1} << kGather) | (std::uint64_t{1} << kAdd) |
-        (std::uint64_t{1} << kSubtract) | (std::uint64_t{1} << kMultiply) |
+        (std::uint64_t{1} << kSubtract) | (std::uint64_t{1} << kSubtractSame) |
+        (std::uint64_t{1} << kMultiply) |
         (std::uint64_t{1} << kNegate) | (std::uint64_t{1} << kReduceSum) |
         (std::uint64_t{1} << kSine) | (std::uint64_t{1} << kCosine) |
         (std::uint64_t{1} << kSqrt) | (std::uint64_t{1} << kSquare) |
@@ -850,7 +916,8 @@ int32_t phx_mc_interval_program_batch(const int64_t* instructions, int64_t instr
         (std::uint64_t{1} << kExtremumPair) | (std::uint64_t{1} << kExtremumReduce) |
         (std::uint64_t{1} << kDecide) | (std::uint64_t{1} << kAttain) |
         (std::uint64_t{1} << kExp) | (std::uint64_t{1} << kLog) |
-        (std::uint64_t{1} << kDivideElementwise) | (std::uint64_t{1} << kAtan);
+        (std::uint64_t{1} << kDivideElementwise) | (std::uint64_t{1} << kAtan) |
+        (std::uint64_t{1} << kPowerElementwise);
     for (int64_t row = 0; row < instruction_count; ++row)
       if (!(supported & (std::uint64_t{1} << row_at(instructions, row).opcode)))
         return PHX_MC_INVALID_INPUT;

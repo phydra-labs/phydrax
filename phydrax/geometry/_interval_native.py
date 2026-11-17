@@ -64,6 +64,7 @@ _DECIDE = 23
 _ATTAIN = 24
 _DIVIDE_ELEMENTWISE = 25
 _ATAN = 26
+_POWER_ELEMENTWISE = 27
 
 # Branch-evidence event kinds and tests (phx_mc_interval_program_branches).
 _KINK = 0
@@ -868,9 +869,24 @@ class _Builder:
                 return (self._emit_unary(_SQUARE, values[0], output_shape),)
             return (self._emit_binary(_MULTIPLY, values[0], values[1], output_shape),)
         if self.elementwise and name == "pow":
-            raise IntervalExtensionError(
-                f"batched interval lowering cannot preserve {name!r} endpoint bits."
+            output = self._allocate(output_shape)
+            guard = self._reserve(output_shape)
+            a, a_index = self._operand(values[0], output_shape)
+            b, b_index = self._operand(values[1], output_shape)
+            self.rows.append(
+                (
+                    _POWER_ELEMENTWISE,
+                    output.offset,
+                    _size(output_shape),
+                    a,
+                    a_index,
+                    b,
+                    b_index,
+                    0,
+                )
             )
+            self.domain_guards.extend(range(guard, guard + _size(output_shape)))
+            return (output,)
         if name == "div":
             if self.elementwise:
                 return (
@@ -1532,6 +1548,8 @@ class _Builder:
         /,
     ) -> None:
         """Ledger events of one equation, as ``_BranchLedger.inspect``."""
+        if self.elementwise and self.branch_axes is None:
+            return
         name = equation.primitive.name
         result = equation.outvars[0] if equation.outvars else None
         match name:
@@ -1798,6 +1816,7 @@ def lower_interval_jaxpr(
                 _DECIDE,
                 _ATTAIN,
                 _ATAN,
+                _POWER_ELEMENTWISE,
                 _SQUARE,
                 _ABSOLUTE,
                 _EXP,
