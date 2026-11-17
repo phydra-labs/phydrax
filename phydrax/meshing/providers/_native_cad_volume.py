@@ -3185,12 +3185,10 @@ def _brep_associations(
     source: NativeCadVolumeSource,
     construction: VolumeConstruction,
     physical_points: np.ndarray,
+    native: tuple[GeometryAssociation, ...],
     /,
 ) -> tuple[GeometryAssociation, ...]:
-    from ._native_volume import _source_associations
-
     mesh = construction.mesh
-    native = _source_associations(source.plc_source, construction)
     source_maps = _cad_entity_maps(source)
     vertex_rows = {
         int(identifier): row
@@ -3525,7 +3523,9 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
             source_scope_owner=self.source.domain,
             region_controls=self.specification.region_controls,
         )
-        associations = _brep_associations(self.source, construction, physical.points)
+        associations = _brep_associations(
+            self.source, construction, physical.points, organization.associations
+        )
         curve_association = _cad_curve_association(self.source, construction)
         if curve_association is not None:
             associations += (curve_association,)

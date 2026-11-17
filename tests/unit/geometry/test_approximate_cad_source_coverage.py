@@ -25,8 +25,10 @@ from phydrax.geometry._approximate_source_coverage import (
     _overlapping_self_pairs,
     _possibly_overlapping_pairs,
     _surface_point,
+    _sweep_box_overlap_pairs,
     approximate_source_coverage,
     cad_material_sides,
+    SourceCoverageUnavailable,
 )
 from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
 from phydrax.geometry._global_embedding import certify_global_embedding
@@ -138,6 +140,37 @@ def test_random_exact_intersections_match_reference() -> None:
             assert _intersection_area(first, rows[j]) == expected
 
 
+def test_exact_intersection_contacts_and_extreme_scales() -> None:
+    zero, one = Fraction(0), Fraction(1)
+    base = ((zero, zero), (one, zero), (zero, one))
+    examples = (
+        ((Fraction(-1, 2), Fraction(1, 2)), (one, Fraction(1, 2)), (one, one)),
+        ((zero, zero), (Fraction(1, 3), zero), (zero, Fraction(1, 3))),
+        ((one, zero), (one, one), (zero, one)),
+        ((one, zero), (2 * one, zero), (one, one)),
+        ((2 * one, zero), (3 * one, zero), (2 * one, one)),
+    )
+    for scale_x, scale_y, offset in (
+        (one, one, zero),
+        (Fraction(2**150), Fraction(1, 2**180), Fraction(2**220)),
+        (Fraction(1, 3 * 2**130), Fraction(2**170, 7), Fraction(-(2**200), 11)),
+    ):
+
+        def transform(triangle: _Triangle2) -> _Triangle2:
+            points = tuple((offset + x * scale_x, y * scale_y) for x, y in triangle)
+            return points[0], points[1], points[2]
+
+        first = transform(base)
+        for example in examples:
+            second = transform(example)
+            assert _intersection_area(first, second) == _reference_intersection(
+                first, second
+            )
+            assert _intersection_area(second, first) == _reference_intersection(
+                second, first
+            )
+
+
 def test_exact_chart_intersection_handles_clockwise_root_and_target() -> None:
     zero, one, half = Fraction(0), Fraction(1), Fraction(1, 2)
     root = ((zero, zero), (one, zero), (zero, one))
@@ -191,6 +224,53 @@ def test_bounded_cad_overlap_pairs_keep_lexicographic_order_across_blocks() -> N
     assert list(_overlapping_self_pairs(rows)) == [
         (first, second) for first in range(66) for second in range(first + 1, 66)
     ]
+
+
+def test_large_closed_box_sweep_matches_brute_force() -> None:
+    bank = [((float(3 * i), 0.0), (float(3 * i + 1), 1.0)) for i in range(1030)]
+    bank.extend(
+        (
+            ((1.0, 0.0), (2.0, 1.0)),
+            ((0.0, 0.0), (1.0, 1.0)),
+            ((1.0, 0.5), (1.0, 0.5)),
+            ((1e200, -1e200), (1e200, -1e200)),
+            ((-1e-200, -1e-200), (1e-200, 1e-200)),
+        )
+    )
+    queries = [
+        ((0.0, 0.0), (1.0, 1.0)),
+        ((1.0, 0.5), (1.0, 2.0)),
+        ((3.0, 1.0), (4.0, 1.0)),
+        ((1e200, -1e200), (1e200, -1e200)),
+        ((-1e-200, -1e-200), (1e-200, 1e-200)),
+        ((-10.0, -10.0), (-9.0, -9.0)),
+    ]
+    first_lower = np.asarray([box[0] for box in queries], dtype=np.float64)
+    first_upper = np.asarray([box[1] for box in queries], dtype=np.float64)
+
+    def overlaps(ordering: np.ndarray) -> list[tuple[int, int]]:
+        ordered_bank = [bank[int(index)] for index in ordering]
+        lower = np.asarray([box[0] for box in ordered_bank], dtype=np.float64)
+        upper = np.asarray([box[1] for box in ordered_bank], dtype=np.float64)
+        order = np.argsort(lower[:, 0], kind="stable")
+        actual = _sweep_box_overlap_pairs(
+            (first_lower, first_upper), (lower, upper), order, lower[order, 0]
+        )
+        expected = [
+            (i, j)
+            for i, (first_lo, first_hi) in enumerate(queries)
+            for j, (second_lo, second_hi) in enumerate(ordered_bank)
+            if all(
+                first_lo[axis] <= second_hi[axis] and second_lo[axis] <= first_hi[axis]
+                for axis in range(2)
+            )
+        ]
+        assert [tuple(pair) for pair in actual.tolist()] == expected
+        return [(i, int(ordering[j])) for i, j in expected]
+
+    identity = np.arange(len(bank), dtype=np.int64)
+    permutation = np.random.default_rng(816).permutation(identity)
+    assert sorted(overlaps(identity)) == sorted(overlaps(permutation))
 
 
 def test_exact_trim_triangulation_is_scoped_to_requested_patch(
@@ -504,6 +584,7 @@ def _chart_witness(
     face_rows: Sequence[_CadFaceRow],
     patches: Sequence[int],
     /,
+    orientations: np.ndarray | None = None,
 ) -> SourceBoundaryChartWitness:
     target_faces = _volume_boundary_facet_lookup(mesh)
     entity_ids = np.asarray(
@@ -547,6 +628,9 @@ def _chart_witness(
             orientations=np.asarray(orientations, dtype=np.int8),
         )
 
+    if orientations is not None:
+        return create(orientations)
+
     provisional = create(np.ones((len(face_rows),), dtype=np.int8))
     _, _, target_orientation = _surface_target_chart_rows(
         mesh, geometry, source, provisional
@@ -555,6 +639,53 @@ def _chart_witness(
         [1 if _area2(row[1]) > 0 else -1 for row in face_rows], dtype=np.int8
     )
     return create(source_orientation * np.asarray(target_orientation, dtype=np.int8))
+
+
+def test_cad_chart_partition_rejects_overlap_and_gap_in_either_order() -> None:
+    domain, mesh, geometry, source, regions, _, rows = _cad_tetra_star_inputs()
+    first = rows[0]
+    other = next(row for row in rows[1:] if row[0] == first[0])
+    a, b, c = first[1]
+    smaller: _Triangle2 = (
+        a,
+        ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2),
+        ((a[0] + c[0]) / 2, (a[1] + c[1]) / 2),
+    )
+    overlap = [(row[0], first[1], *row[2:]) if row is other else row for row in rows]
+    gap = [(row[0], smaller, *row[2:]) if row is first else row for row in rows]
+    for changed, message in (
+        (rows, None),
+        (overlap, f"CAD target charts overlap on patch {first[0]}."),
+        (gap, f"CAD source chart area differs on patch {first[0]}."),
+    ):
+        original = _chart_witness(
+            domain, mesh, geometry, source, changed, [row[0] for row in changed]
+        )
+        for reverse in (False, True):
+            ordered = list(reversed(changed)) if reverse else changed
+            witness = (
+                _chart_witness(
+                    domain,
+                    mesh,
+                    geometry,
+                    source,
+                    ordered,
+                    [row[0] for row in ordered],
+                    orientations=np.asarray(original.orientations)[::-1],
+                )
+                if reverse
+                else original
+            )
+            if message is None:
+                count, degrees = _cad_chart_partition(
+                    domain, source, witness, mesh, regions
+                )
+                assert count == len(rows)
+                assert len(degrees) == len(domain.regions)
+            else:
+                with pytest.raises(SourceCoverageUnavailable, match=message) as error:
+                    _cad_chart_partition(domain, source, witness, mesh, regions)
+                assert error.value.status == "violated"
 
 
 def test_cad_chart_degree_requires_authored_seam_correspondence() -> None:

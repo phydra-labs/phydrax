@@ -54,6 +54,48 @@ def test_coordinate_point_rounding_bound_matches_individual_rows(packed: bool) -
     assert coordinate_point_rounding_bound(coordinates, representatives) == expected
 
 
+def test_point_rounding_bound_matches_exact_rows_for_mixed_coordinate_bank() -> None:
+    rng = np.random.default_rng(90210)
+    rows = tuple(
+        tuple(
+            Fraction(
+                int(rng.integers(-(1 << 62), 1 << 62, dtype=np.int64)),
+                1 << int(rng.integers(53, 65, dtype=np.int64)),
+            )
+            for _ in range(3)
+        )
+        for _ in range(300)
+    ) + (
+        (Fraction(1, 3), Fraction(1, 5), Fraction(1, 7)),
+        (Fraction(1, 2**1000), Fraction(0), Fraction(-1, 2**1000)),
+    )
+    representatives = np.asarray(
+        [[float(value) for value in row] for row in rows], dtype=np.float64
+    )
+    representatives[10, 0] = np.nextafter(representatives[10, 0], np.inf)
+    bank = ExactCoordinateBank.from_rows(rows)
+    result = coordinate_point_rounding_bound(bank, representatives)
+    reference = coordinate_point_rounding_bound(rows, representatives)
+    lower, upper = bank.interval_endpoints()
+    for row, point in enumerate(rows):
+        for axis, value in enumerate(point):
+            assert (
+                Fraction.from_float(float(lower[row, axis]))
+                <= value
+                <= Fraction.from_float(float(upper[row, axis]))
+            )
+    assert result == reference
+    for point, actual in zip(rows, representatives, strict=True):
+        squared_error = sum(
+            (
+                (value - Fraction.from_float(float(rounded))) ** 2
+                for value, rounded in zip(point, actual, strict=True)
+            ),
+            Fraction(0),
+        )
+        assert result * result >= squared_error
+
+
 def test_coordinate_point_rounding_bound_empty_and_invalid() -> None:
     assert coordinate_point_rounding_bound((), np.empty((0, 3), dtype=np.float64)) == 0
     rows = ((Fraction(1),),)

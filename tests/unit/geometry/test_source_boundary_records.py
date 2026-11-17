@@ -258,6 +258,54 @@ def test_source_chart_witness_identity_binds_content(field: str) -> None:
     assert make("").witness_id == identity
     assert make(field).witness_id != identity
 
+@pytest.mark.parametrize(
+    ("bank", "message"),
+    (
+        (
+            ((((0, 0), (0, 1)), ((1, 1), (0, 1)), ((0, 1), (1, 1))),),
+            "denominators must be positive",
+        ),
+        (
+            ((((0, -1), (0, 1)), ((1, 1), (0, 1)), ((0, 1), (1, 1))),),
+            "denominators must be positive",
+        ),
+        (
+            ((((0, 2), (0, 1)), ((1, 1), (0, 1)), ((0, 1), (1, 1))),),
+            "exact coordinate differs",
+        ),
+        (((((0, 1), (0, 1)),),), "wrong corner count"),
+        (
+            ((((0, 1),), ((1, 1), (0, 1)), ((0, 1), (1, 1))),),
+            "wrong coordinate dimension",
+        ),
+    ),
+)
+def test_chart_witness_refuses_noncanonical_token_banks(
+    bank: tuple[tuple[tuple[tuple[int, int], ...], ...], ...], message: str
+) -> None:
+    chart = np.asarray([[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]], dtype=np.float64)
+    with pytest.raises(ValueError, match=message):
+        SourceBoundaryChartWitness(
+            mesh_id="mesh",
+            geometry_id="geometry",
+            topology_id="topology",
+            source_id="source",
+            source_revision="revision",
+            source_query_id="query",
+            chart_dimension=2,
+            reference_dimension=2,
+            cell_global_ids=np.asarray([1], dtype=np.int64),
+            entity_global_ids=np.asarray([1], dtype=np.int64),
+            local_entity_indices=np.asarray([-1], dtype=np.int32),
+            target_reference_vertices=chart,
+            target_reference_rational_tokens=bank,
+            source_chart_ids=("chart",),
+            source_entity_ids=("face",),
+            occurrence_paths=((),),
+            source_parameters=chart,
+            orientations=np.asarray([1], dtype=np.int8),
+        )
+
 
 @pytest.mark.parametrize(
     "field",

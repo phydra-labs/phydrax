@@ -1744,6 +1744,33 @@ def test_analytic_profile_distance_witness_is_continuous_without_claiming_covera
     assert certificate.source_to_mesh_upper <= 2.0
 
 
+@pytest.mark.parametrize(
+    ("point", "expected"),
+    (
+        ((Fraction(1, 3), Fraction(1, 4), Fraction(2)), Fraction(4)),
+        ((Fraction(1), Fraction(1), Fraction(1)), Fraction(3, 2)),
+        ((Fraction(-1), Fraction(-2), Fraction(1, 3)), Fraction(46, 9)),
+        ((Fraction(1, 2), Fraction(0), Fraction(0)), Fraction(0)),
+        ((Fraction(0), Fraction(0), Fraction(0)), Fraction(0)),
+    ),
+)
+def test_exact_triangle_distance_regions(
+    point: tuple[Fraction, Fraction, Fraction], expected: Fraction
+) -> None:
+    zero, one = Fraction(0), Fraction(1)
+    triangle = ((zero, zero, zero), (one, zero, zero), (zero, one, zero))
+    assert _point_triangle_squared(point, triangle) == expected
+
+
+def test_exact_triangle_distance_degenerate_and_tied() -> None:
+    zero, one, two = Fraction(0), Fraction(1), Fraction(2)
+    point = (one, one, zero)
+    first = ((zero, zero, zero), (two, zero, zero), (two, zero, zero))
+    second = ((zero, two, zero), (two, two, zero), (zero, two, zero))
+    assert _point_triangle_squared(point, first) == Fraction(1)
+    assert _point_triangle_squared(point, second) == Fraction(1)
+
+
 @pytest.mark.parametrize("origin", (0.0, 1.0e6))
 def test_pruned_reverse_distance_equals_the_exact_minimum_over_every_triangle(
     origin: float,

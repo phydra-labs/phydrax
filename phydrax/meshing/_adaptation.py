@@ -20,6 +20,7 @@ from collections.abc import Sequence
 from enum import StrEnum
 from fractions import Fraction
 from functools import partial
+from math import lcm
 from typing import Any, assert_never, final, NamedTuple, TypeAlias
 
 import equinox as eqx
@@ -4111,31 +4112,51 @@ def _simplex_chart_weights(
         len(value) != len(point) for value in vertices
     ):
         return None
-    origin = vertices[0]
+    if dimension not in (1, 2, 3) or (dimension == 3 and len(point) != 3):
+        return None
+    scale = lcm(
+        *(value.denominator for vertex in (point, *vertices) for value in vertex)
+    )
+    integer_points = tuple(
+        tuple(value.numerator * (scale // value.denominator) for value in vertex)
+        for vertex in (point, *vertices)
+    )
+    target, origin, *rest = integer_points
+    directions = tuple(
+        tuple(vertex[axis] - origin[axis] for axis in range(len(point)))
+        for vertex in rest
+    )
+    delta = tuple(target[axis] - origin[axis] for axis in range(len(point)))
     if dimension == 1:
-        direction = tuple(vertices[1][axis] - origin[axis] for axis in range(len(point)))
-        axis = next((index for index, value in enumerate(direction) if value), None)
+        first = directions[0]
+        axis = next((index for index, value in enumerate(first) if value), None)
         if axis is None:
             return None
-        weight = (point[axis] - origin[axis]) / direction[axis]
-        if any(
-            origin[index] + weight * direction[index] != point[index]
-            for index in range(len(point))
-        ):
+        denominator = first[axis]
+        numerators = (delta[axis],)
+    elif dimension == 2:
+        first, second = directions
+        pair = next(
+            (
+                (left, right)
+                for left in range(len(point))
+                for right in range(left + 1, len(point))
+                if first[left] * second[right] != first[right] * second[left]
+            ),
+            None,
+        )
+        if pair is None:
             return None
-        weights = (Fraction(1) - weight, weight)
-        return weights if min(weights) >= 0 else None
-    if dimension == 3:
-        if len(point) != 3:
-            return None
-        first = tuple(vertices[1][axis] - origin[axis] for axis in range(3))
-        second = tuple(vertices[2][axis] - origin[axis] for axis in range(3))
-        third = tuple(vertices[3][axis] - origin[axis] for axis in range(3))
-        delta = tuple(point[axis] - origin[axis] for axis in range(3))
+        left, right = pair
+        denominator = first[left] * second[right] - first[right] * second[left]
+        numerators = (
+            delta[left] * second[right] - delta[right] * second[left],
+            first[left] * delta[right] - first[right] * delta[left],
+        )
+    else:
+        first, second, third = directions
 
-        def determinant(
-            a: tuple[Fraction, ...], b: tuple[Fraction, ...], c: tuple[Fraction, ...]
-        ) -> Fraction:
+        def determinant(a: tuple[int, ...], b: tuple[int, ...], c: tuple[int, ...]) -> int:
             return (
                 a[0] * (b[1] * c[2] - b[2] * c[1])
                 - b[0] * (a[1] * c[2] - a[2] * c[1])
@@ -4145,59 +4166,22 @@ def _simplex_chart_weights(
         denominator = determinant(first, second, third)
         if not denominator:
             return None
-        first_weight = determinant(delta, second, third) / denominator
-        second_weight = determinant(first, delta, third) / denominator
-        third_weight = determinant(first, second, delta) / denominator
-        if any(
-            origin[axis]
-            + first_weight * first[axis]
-            + second_weight * second[axis]
-            + third_weight * third[axis]
-            != point[axis]
-            for axis in range(3)
-        ):
-            return None
-        weights = (
-            Fraction(1) - first_weight - second_weight - third_weight,
-            first_weight,
-            second_weight,
-            third_weight,
+        numerators = (
+            determinant(delta, second, third),
+            determinant(first, delta, third),
+            determinant(first, second, delta),
         )
-        return weights if min(weights) >= 0 else None
-    if dimension != 2:
+    if any(
+        sum(numerator * direction[axis] for numerator, direction in zip(
+            numerators, directions, strict=True
+        )) != delta[axis] * denominator
+        for axis in range(len(point))
+    ):
         return None
-    first = tuple(vertices[1][axis] - origin[axis] for axis in range(len(point)))
-    second = tuple(vertices[2][axis] - origin[axis] for axis in range(len(point)))
-    delta = tuple(point[axis] - origin[axis] for axis in range(len(point)))
-    for first_axis in range(len(point)):
-        for second_axis in range(first_axis + 1, len(point)):
-            determinant = (
-                first[first_axis] * second[second_axis]
-                - first[second_axis] * second[first_axis]
-            )
-            if not determinant:
-                continue
-            first_weight = (
-                delta[first_axis] * second[second_axis]
-                - delta[second_axis] * second[first_axis]
-            ) / determinant
-            second_weight = (
-                first[first_axis] * delta[second_axis]
-                - first[second_axis] * delta[first_axis]
-            ) / determinant
-            if any(
-                origin[axis] + first_weight * first[axis] + second_weight * second[axis]
-                != point[axis]
-                for axis in range(len(point))
-            ):
-                continue
-            weights = (
-                Fraction(1) - first_weight - second_weight,
-                first_weight,
-                second_weight,
-            )
-            return weights if min(weights) >= 0 else None
-    return None
+    all_numerators = (denominator - sum(numerators), *numerators)
+    if any(numerator * denominator < 0 for numerator in all_numerators):
+        return None
+    return tuple(Fraction(numerator, denominator) for numerator in all_numerators)
 
 
 def _chart_orientation(parameters: Any, dimension: int, /) -> int:
@@ -4208,12 +4192,19 @@ def _chart_orientation(parameters: Any, dimension: int, /) -> int:
         )
         for row in parameters
     )
+    scale = lcm(*(value.denominator for row in values for value in row))
+    integer_values = tuple(
+        tuple(value.numerator * (scale // value.denominator) for value in row)
+        for row in values
+    )
     if dimension == 1:
-        delta = values[1][0] - values[0][0]
+        delta = integer_values[1][0] - integer_values[0][0]
     else:
-        delta = (values[1][0] - values[0][0]) * (values[2][1] - values[0][1]) - (
-            values[1][1] - values[0][1]
-        ) * (values[2][0] - values[0][0])
+        delta = (integer_values[1][0] - integer_values[0][0]) * (
+            integer_values[2][1] - integer_values[0][1]
+        ) - (integer_values[1][1] - integer_values[0][1]) * (
+            integer_values[2][0] - integer_values[0][0]
+        )
     return 1 if delta > 0 else -1 if delta < 0 else 0
 
 

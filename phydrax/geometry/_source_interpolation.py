@@ -49,6 +49,7 @@ from ..discretization._exact_algebraic_geometry import (
     coefficient_endpoint,
     coefficient_interval,
 )
+from ..discretization._exact_coordinate_bank import ExactCoordinateBank
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
 from ._curve_boundary import ParametricCurveBoundarySource, SegmentChartCurve
 from ._domain_boundary import MeshingDomainBoundarySource
@@ -1448,6 +1449,17 @@ class _TargetChartBasis:
             tuple(evaluate_expression(value, point) for value in basis)
             for point in points
         )
+        corner_dofs = []
+        for weights in self.corners:
+            selected = [index for index, weight in enumerate(weights) if weight == 1]
+            if len(selected) != 1 or any(
+                weight != (1 if index == selected[0] else 0)
+                for index, weight in enumerate(weights)
+            ):
+                corner_dofs = []
+                break
+            corner_dofs.append(selected[0])
+        self.corner_dofs = tuple(corner_dofs) if len(corner_dofs) == 3 else None
         residual = tuple(
             subtract(
                 value,
@@ -1471,6 +1483,86 @@ class _TargetChartBasis:
         )
         self.degree = max((sum(power) for power in self.powers), default=0)
         self.prepared = PreparedIntervalBasis(residual, "simplex", 2)
+        integer_weights = []
+        for weights in (*self.corners, *self.coefficients):
+            if not all(isinstance(weight, Fraction) for weight in weights):
+                integer_weights = []
+                break
+            denominator = math.lcm(
+                *(
+                    weight.denominator
+                    for weight in weights
+                    if isinstance(weight, Fraction)
+                )
+            )
+            integer_weights.append(
+                (
+                    denominator,
+                    tuple(
+                        weight.numerator * (denominator // weight.denominator)
+                        for weight in weights
+                        if isinstance(weight, Fraction)
+                    ),
+                )
+            )
+        self.integer_weights = (
+            tuple(integer_weights)
+            if len(integer_weights) == 3 + len(self.coefficients)
+            else None
+        )
+
+    def _screen_prepare_dyadic(
+        self, significands: list[list[int]], exponents: list[list[int]], /
+    ) -> tuple[tuple[tuple[ExactScalar, ...], ...], tuple[int, ...]] | None:
+        """Form exact corners and cancellation signs from packed dyadic rows."""
+        if (
+            self.integer_weights is None
+            or len(significands) != len(self.corners[0])
+            or not significands
+            or any(len(row) != 3 for row in significands)
+            or any(e < -1022 or e > 1023 for row in exponents for e in row)
+        ):
+            return None
+        scaled_axes = []
+        minima = []
+        for axis in range(3):
+            active = [
+                exponents[index][axis]
+                for index, row in enumerate(significands)
+                if row[axis]
+            ]
+            minimum = min(active, default=0)
+            if active and max(active) - minimum > 128:
+                return None
+            minima.append(minimum)
+            scaled_axes.append(
+                tuple(
+                    row[axis] << (exponents[index][axis] - minimum) if row[axis] else 0
+                    for index, row in enumerate(significands)
+                )
+            )
+        corners: list[tuple[ExactScalar, ...]] = []
+        degrees = [0, 0, 0]
+        for index, (denominator, weights) in enumerate(self.integer_weights):
+            totals = tuple(
+                sum(weight * value for weight, value in zip(weights, values, strict=True))
+                for values in scaled_axes
+            )
+            if index < 3:
+                corners.append(
+                    tuple(
+                        Fraction(total << exponent, denominator)
+                        if exponent >= 0
+                        else Fraction(total, denominator << -exponent)
+                        for total, exponent in zip(totals, minima, strict=True)
+                    )
+                )
+            else:
+                degree = sum(self.powers[index - 3])
+                for axis, total in enumerate(totals):
+                    if total:
+                        degrees[axis] = max(degrees[axis], degree)
+        return tuple(corners), tuple(degrees)
 
     def _screen_prepare(
         self, local: tuple[tuple[ExactScalar, ...], ...], /
@@ -1510,22 +1602,48 @@ class _TargetChartBasis:
 
     def screen_batch(
         self,
-        locals_: tuple[tuple[tuple[ExactScalar, ...], ...], ...],
+        locals_: tuple[tuple[tuple[ExactScalar, ...], ...], ...] | None,
         /,
         *,
         endpoints: tuple[np.ndarray, np.ndarray] | None = None,
+        bank: ExactCoordinateBank | None = None,
+        routes: np.ndarray | None = None,
     ) -> tuple[tuple[tuple[tuple[ExactScalar, ...], ...], bool, Fraction] | None, ...]:
+        if locals_ is None:
+            if bank is None or routes is None or endpoints is None:
+                raise ValueError(
+                    "Packed target charts require a bank, routes and endpoints."
+                )
+            significands, exponents, _, _, _ = bank.canonical_parts()
+            packed_significands = significands[routes].tolist()
+            packed_exponents = exponents[routes].tolist()
+            count = len(routes)
+        else:
+            packed_significands = []
+            packed_exponents = []
+            count = len(locals_)
         results: list[
             tuple[tuple[tuple[ExactScalar, ...], ...], bool, Fraction] | None
-        ] = [None] * len(locals_)
+        ] = [None] * count
         pending: list[
             tuple[int, tuple[tuple[ExactScalar, ...], ...], tuple[int, ...]]
         ] = []
         lowers: list[np.ndarray] = []
         uppers: list[np.ndarray] = []
-        for index, local in enumerate(locals_):
+        for index in range(count):
             try:
-                candidate = self._screen_prepare(local)
+                local = None if locals_ is None else locals_[index]
+                if local is None:
+                    candidate = self._screen_prepare_dyadic(
+                        packed_significands[index], packed_exponents[index]
+                    )
+                    if candidate is None:
+                        if bank is None or routes is None:
+                            raise ValueError("Packed target chart inputs are missing.")
+                        local = tuple(bank[int(row)] for row in routes[index])
+                        candidate = self._screen_prepare(local)
+                else:
+                    candidate = self._screen_prepare(local)
                 if candidate is None:
                     continue
                 corners, degrees = candidate
@@ -1538,10 +1656,19 @@ class _TargetChartBasis:
                 if (
                     self.prepared.lower is None
                     or self.prepared.upper is None
-                    or len(local) != self.prepared.lower.shape[0]
+                    or (
+                        len(local)
+                        if local is not None
+                        else len(packed_significands[index])
+                    )
+                    != self.prepared.lower.shape[0]
                 ):
                     continue
                 if endpoints is None:
+                    if local is None:
+                        raise ValueError(
+                            "Target chart endpoints require local coordinates."
+                        )
                     lower = np.asarray(
                         [
                             [
@@ -1608,16 +1735,27 @@ def _target_endpoint_upper(
     source_lower: np.ndarray,
     source_upper: np.ndarray,
     /,
+    *,
+    endpoints: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> Fraction | None:
     """Enclose the old exact endpoint norm using individually rounded steps."""
-    target_lower = np.asarray(
-        [[coefficient_endpoint(value, upper=False) for value in row] for row in corners],
-        dtype=np.float64,
-    )
-    target_upper = np.asarray(
-        [[coefficient_endpoint(value, upper=True) for value in row] for row in corners],
-        dtype=np.float64,
-    )
+    if endpoints is None:
+        target_lower = np.asarray(
+            [
+                [coefficient_endpoint(value, upper=False) for value in row]
+                for row in corners
+            ],
+            dtype=np.float64,
+        )
+        target_upper = np.asarray(
+            [
+                [coefficient_endpoint(value, upper=True) for value in row]
+                for row in corners
+            ],
+            dtype=np.float64,
+        )
+    else:
+        target_lower, target_upper = endpoints
     with np.errstate(over="ignore", invalid="ignore", under="ignore"):
         lower = np.nextafter(target_lower - source_upper, -np.inf)
         upper = np.nextafter(target_upper - source_lower, np.inf)
@@ -1766,6 +1904,7 @@ def certify_domain_surface_charts(
             interpolation = np.empty((len(rows),), dtype=np.float64)
             lower = np.empty((3 * len(rows), 3), dtype=np.float64)
             upper = np.empty_like(lower)
+            source_values: list[tuple[ExactScalar, ...]] = []
             try:
                 for local_row, row in enumerate(rows):
                     chart = charts[row]
@@ -1780,11 +1919,10 @@ def certify_domain_surface_charts(
                         for point in chart
                     )
                     exact_source_points[row] = values
-                    for corner, point_values in enumerate(values):
-                        for axis, value in enumerate(point_values):
-                            target = 3 * local_row + corner
-                            lower[target, axis] = coefficient_endpoint(value, upper=False)
-                            upper[target, axis] = coefficient_endpoint(value, upper=True)
+                    source_values.extend(values)
+                lower, upper = ExactCoordinateBank.from_rows(
+                    source_values
+                ).interval_endpoints()
             except (ArithmeticError, FloatingPointError, TypeError, ValueError):
                 interpolation.fill(math.inf)
                 lower.fill(-math.inf)
@@ -1899,7 +2037,7 @@ def certify_domain_surface_charts(
 
     def prepare_target(
         row: int, block_index: int, cell_row: int, /
-    ) -> tuple[_TargetChartBasis, tuple[tuple[ExactScalar, ...], ...]] | None:
+    ) -> _TargetChartBasis | None:
         if polyhedral:
             return None
         element = elements[block_index]
@@ -1939,17 +2077,9 @@ def certify_domain_surface_charts(
                 IndexError,
             ):
                 target_basis[key] = None
-        prepared = target_basis[key]
-        if prepared is None:
-            return None
-        local = tuple(
-            coefficients[int(index)] for index in host_routes[block_index][cell_row]
-        )
-        return prepared, local
+        return target_basis[key]
 
-    target_groups: dict[
-        _TargetChartBasis, list[tuple[int, tuple[tuple[ExactScalar, ...], ...]]]
-    ] = {}
+    target_groups: dict[_TargetChartBasis, list[int]] = {}
     for row, (patch, (block_index, cell_row)) in enumerate(
         zip(patch_rows, target_rows, strict=True)
     ):
@@ -1960,24 +2090,37 @@ def certify_domain_surface_charts(
         except (ArithmeticError, FloatingPointError, TypeError, ValueError, IndexError):
             continue
         if candidate is not None:
-            prepared, local = candidate
-            target_groups.setdefault(prepared, []).append((row, local))
+            target_groups.setdefault(candidate, []).append(row)
     target_screens = {}
+    target_corner_bounds: dict[int, tuple[np.ndarray, np.ndarray]] = {}
     coefficient_endpoints = coefficients.interval_endpoints() if target_groups else None
     for prepared, rows in target_groups.items():
         indices = np.asarray(
-            [host_routes[target_rows[row][0]][target_rows[row][1]] for row, _ in rows],
+            [host_routes[target_rows[row][0]][target_rows[row][1]] for row in rows],
             dtype=np.intp,
         )
         if coefficient_endpoints is None:
             raise RuntimeError("Target chart groups require coordinate endpoints.")
         endpoints = (coefficient_endpoints[0][indices], coefficient_endpoints[1][indices])
-        for (row, _), screened in zip(
-            rows,
-            prepared.screen_batch(tuple(local for _, local in rows), endpoints=endpoints),
-            strict=True,
+        corner_endpoints = None
+        if prepared.corner_dofs is not None:
+            selected = np.asarray(prepared.corner_dofs, dtype=np.intp)
+            corner_endpoints = (endpoints[0][:, selected], endpoints[1][:, selected])
+        for index, (row, screened) in enumerate(
+            zip(
+                rows,
+                prepared.screen_batch(
+                    None, endpoints=endpoints, bank=coefficients, routes=indices
+                ),
+                strict=True,
+            )
         ):
             target_screens[row] = screened
+            if corner_endpoints is not None:
+                target_corner_bounds[row] = (
+                    corner_endpoints[0][index],
+                    corner_endpoints[1][index],
+                )
 
     def screen_target(
         row: int, patch: int, block_index: int, cell_row: int, /
@@ -1987,28 +2130,13 @@ def certify_domain_surface_charts(
             return None
         corners, is_affine, target_bound = screened
         exact_surface = exact_surface_maps.get(patch)
-        source_points = None if exact_surface is None else exact_source_points[row]
         local_row = patch_local_row_by_witness_row[row]
         lower, upper = source_point_intervals[patch]
-        if source_points is None:
-            source_lower = lower[3 * local_row : 3 * local_row + 3]
-            source_upper = upper[3 * local_row : 3 * local_row + 3]
-        else:
-            source_lower = np.asarray(
-                [
-                    [coefficient_endpoint(value, upper=False) for value in point]
-                    for point in source_points
-                ],
-                dtype=np.float64,
-            )
-            source_upper = np.asarray(
-                [
-                    [coefficient_endpoint(value, upper=True) for value in point]
-                    for point in source_points
-                ],
-                dtype=np.float64,
-            )
-        endpoint_error = _target_endpoint_upper(corners, source_lower, source_upper)
+        source_lower = lower[3 * local_row : 3 * local_row + 3]
+        source_upper = upper[3 * local_row : 3 * local_row + 3]
+        endpoint_error = _target_endpoint_upper(
+            corners, source_lower, source_upper, endpoints=target_corner_bounds.get(row)
+        )
         if endpoint_error is None:
             return None
         target_deviation = endpoint_error + target_bound
