@@ -19,7 +19,6 @@ from phydrax.geometry._global_embedding import GlobalEmbeddingCertificate
 from phydrax.geometry._source_boundary_records import SourceBoundaryChartWitness
 from phydrax.geometry._source_fidelity import certify_source_fidelity
 from phydrax.geometry._source_fidelity_certificate import SourceFidelityCertificate
-from phydrax.geometry.implicit import _source_charts as chart_owner
 from phydrax.geometry.implicit._adaptive_discovery import (
     AdaptiveImplicitBoundarySource,
     AdaptiveImplicitSurface,
@@ -174,18 +173,29 @@ def test_fidelity_does_not_offer_an_explicit_map(coverage_case: _CoverageCase) -
 
 
 def test_fidelity_does_not_offer_an_incomplete_map(
-    coverage_case: _CoverageCase, monkeypatch: pytest.MonkeyPatch
+    coverage_case: _CoverageCase,
 ) -> None:
     case = coverage_case
-    incomplete = case.charts
+    charts = case.charts
     row = next(
-        i
-        for i, face in enumerate(incomplete._faces)
-        if face.evidence.bound == "root_chart"
+        i for i, face in enumerate(charts._faces) if face.evidence.bound == "root_chart"
     )
-    faces = list(incomplete._faces)
+    faces = list(charts._faces)
     faces[row] = replace(faces[row], pieces=())
-    monkeypatch.setattr(incomplete, "_faces", tuple(faces))
+    incomplete = AdaptiveImplicitRootChartMap(
+        case.mesh,
+        case.geometry,
+        case.source,
+        charts.witness,
+        charts.frame_id,
+        tuple(faces),
+        charts._bounds,
+        charts.tolerance,
+        charts.maximum_normal_deviation,
+        charts._surface,
+        charts._hessian_program,
+        charts._branches,
+    )
     handoff = _ImplicitChartHandoff()
     fidelity = certify_source_fidelity(
         case.mesh,
@@ -199,39 +209,24 @@ def test_fidelity_does_not_offer_an_incomplete_map(
     )
     assert fidelity.status == "certified"
     assert handoff.root_charts is None
-    calls: list[int] = []
-    original = chart_owner.prepare_adaptive_implicit_root_charts
-
-    def counted(
-        mesh: CellMesh,
-        geometry: CellGeometrySpec,
-        source: AdaptiveImplicitSourceQuery,
-        witness: SourceBoundaryChartWitness,
-        /,
-        *,
-        frame_id: str | None = None,
-        tolerance: float | None = None,
-        maximum_normal_deviation: float | None = None,
-    ) -> AdaptiveImplicitRootChartMap:
-        calls.append(1)
-        return original(
-            mesh,
-            geometry,
-            source,
-            witness,
-            frame_id=frame_id,
-            tolerance=tolerance,
-            maximum_normal_deviation=maximum_normal_deviation,
-        )
-
-    monkeypatch.setattr(chart_owner, "prepare_adaptive_implicit_root_charts", counted)
+    handoff.offer(
+        incomplete,
+        case.mesh,
+        case.geometry,
+        case.source,
+        charts.witness,
+        tolerance=case.fidelity.tolerance,
+        maximum_normal_deviation=case.fidelity.maximum_normal_deviation,
+    )
+    assert handoff.root_charts is None
     independent = _coverage(case, case.mesh, case.geometry, case.source, fidelity, None)
     empty = _coverage(
         case, case.mesh, case.geometry, case.source, fidelity, handoff.root_charts
     )
-    assert len(calls) == 2
     assert independent.status == empty.status == "certified"
     assert independent.certificate_id == empty.certificate_id
+    with pytest.raises(ValueError, match="root charts"):
+        _coverage(case, case.mesh, case.geometry, case.source, case.fidelity, incomplete)
 
 
 @pytest.mark.parametrize(
@@ -241,15 +236,13 @@ def test_fidelity_does_not_offer_an_incomplete_map(
         "geometry",
         "source",
         "witness",
-        "frame",
         "control",
         "signed_zero",
-        "pieces",
         "map",
     ),
 )
 def test_live_handoff_refuses_changed_premise(
-    coverage_case: _CoverageCase, changed: str, monkeypatch: pytest.MonkeyPatch
+    coverage_case: _CoverageCase, changed: str
 ) -> None:
     case = coverage_case
     mesh, geometry, source, fidelity = (
@@ -275,29 +268,58 @@ def test_live_handoff_refuses_changed_premise(
         rebuilt = copy.copy(witness)
         assert rebuilt is not witness and rebuilt.witness_id == witness.witness_id
         fidelity = eqx.tree_at(lambda value: value.witness, fidelity, rebuilt)
-    elif changed == "frame":
-        monkeypatch.setattr(charts, "frame_id", "different-live-coordinate-frame")
     elif changed == "control":
-        monkeypatch.setattr(
-            charts, "tolerance", float(np.nextafter(fidelity.tolerance, np.inf))
+        fidelity = eqx.tree_at(
+            lambda value: value.tolerance,
+            fidelity,
+            float(np.nextafter(fidelity.tolerance, np.inf)),
         )
     elif changed == "signed_zero":
+        witness = fidelity.witness
+        if not isinstance(witness, SourceBoundaryChartWitness):
+            raise AssertionError("The chart witness was lost.")
+        charts = AdaptiveImplicitRootChartMap(
+            mesh,
+            geometry,
+            source,
+            witness,
+            charts.frame_id,
+            charts._faces,
+            charts._bounds,
+            -0.0,
+            charts.maximum_normal_deviation,
+            charts._surface,
+            charts._hessian_program,
+            charts._branches,
+        )
         fidelity = eqx.tree_at(lambda value: value.tolerance, fidelity, 0.0)
-        monkeypatch.setattr(charts, "tolerance", -0.0)
-    elif changed == "map":
+        with pytest.raises(ValueError, match="identical live operands and controls"):
+            _coverage(case, mesh, geometry, source, fidelity, charts)
+        return
+    else:
         charts = copy.copy(charts)
         assert charts is not case.charts and charts.witness_id == case.charts.witness_id
-    else:
-        row = next(
-            i
-            for i, face in enumerate(charts._faces)
-            if face.evidence.bound == "root_chart"
-        )
-        faces = list(charts._faces)
-        faces[row] = replace(faces[row], pieces=())
-        monkeypatch.setattr(charts, "_faces", tuple(faces))
     with pytest.raises(ValueError, match="root charts"):
         _coverage(case, mesh, geometry, source, fidelity, charts)
+
+
+def test_preparing_charts_refuses_another_source_frame(
+    coverage_case: _CoverageCase,
+) -> None:
+    case = coverage_case
+    witness = case.fidelity.witness
+    if not isinstance(witness, SourceBoundaryChartWitness):
+        raise AssertionError("The chart witness was lost.")
+    with pytest.raises(ValueError, match="frame_id differs"):
+        prepare_adaptive_implicit_root_charts(
+            case.mesh,
+            case.geometry,
+            case.source,
+            witness,
+            frame_id="different-live-coordinate-frame",
+            tolerance=case.fidelity.tolerance,
+            maximum_normal_deviation=case.fidelity.maximum_normal_deviation,
+        )
 
 
 def test_failed_fidelity_leaves_handoff_empty() -> None:
