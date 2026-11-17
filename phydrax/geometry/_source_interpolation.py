@@ -1413,10 +1413,11 @@ def certify_domain_surface_charts(
         raise ValueError(
             "Surface chart witness must bind every target row by its global cell ID."
         )
+    block_global_ids = tuple(np.asarray(block.global_ids) for block in mesh.blocks)
     for cell_id, (block_index, cell_row) in zip(
         cell_ids.tolist(), target_rows, strict=True
     ):
-        if int(mesh.blocks[block_index].global_ids[cell_row]) != int(cell_id):
+        if int(block_global_ids[block_index][cell_row]) != int(cell_id):
             raise ValueError(
                 "Surface chart target row changes its actual global mesh-cell identity."
             )
@@ -1424,7 +1425,9 @@ def certify_domain_surface_charts(
     preparation = SourcePreparation.of(domain, preparation)
     elements, routes, _ = geometry.resolve(mesh)
     coefficients = geometry.source_coordinates()
-    polyhedral = np.asarray(witness.target_face_vertex_global_ids).shape[0] != 0
+    target_face_vertices = np.asarray(witness.target_face_vertex_global_ids)
+    polyhedral = target_face_vertices.shape[0] != 0
+    host_routes = () if polyhedral else tuple(np.asarray(route) for route in routes)
     target_vertex_coordinates = (
         _polyhedral_vertex_source_coordinates(mesh, geometry) if polyhedral else {}
     )
@@ -1646,9 +1649,7 @@ def certify_domain_surface_charts(
             if polyhedral:
                 if mesh.blocks[block_index].cell_kind != "polyhedron":
                     raise ValueError("Polygonal target charts require polyhedron blocks.")
-                parent_vertex_ids = np.asarray(
-                    witness.target_face_vertex_global_ids[row], dtype=np.int64
-                )
+                parent_vertex_ids = target_face_vertices[row]
                 parent_corners = (
                     target_vertex_coordinates[int(parent_vertex_ids[0])],
                     target_vertex_coordinates[int(parent_vertex_ids[1])],
@@ -1686,7 +1687,7 @@ def certify_domain_surface_charts(
                     )
                 local = tuple(
                     coefficients[int(index)]
-                    for index in np.asarray(routes[block_index][cell_row])
+                    for index in host_routes[block_index][cell_row]
                 )
                 element = elements[block_index]
                 if not isinstance(element, ScalarCoordinateElement):

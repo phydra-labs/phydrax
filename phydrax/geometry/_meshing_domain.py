@@ -58,6 +58,7 @@ from .brep._patches import (
 
 if TYPE_CHECKING:
     from ._curve_boundary import ParametricCurveBoundarySource
+    from ._domain_boundary import _Triangle2, CurvedTrimLens
     from .multiregion_surface import MultiRegionSurfaceTopology
 
 type MeshingSourceAccuracy = Literal[
@@ -266,8 +267,9 @@ def _outward_surface_parameter_box(
     lower_ = np.asarray(lower, dtype=np.float64)
     upper_ = np.asarray(upper, dtype=np.float64)
     if (
-        lower_.shape != (2,)
-        or upper_.shape != (2,)
+        lower_.ndim < 1
+        or lower_.shape[-1] != 2
+        or upper_.shape != lower_.shape
         or not np.all(np.isfinite(lower_))
         or not np.all(np.isfinite(upper_))
         or np.any(lower_ > upper_)
@@ -292,7 +294,7 @@ def _outward_surface_parameter_box(
         or np.any(lower_ >= upper_)
     ):
         raise ValueError("Surface parameter point has no strict in-domain enclosure box.")
-    return np.stack((lower_, upper_))
+    return np.stack((lower_, upper_), axis=-2)
 
 
 type PatchBoundaryUse = PatchCurveUse | PatchPoleUse
@@ -867,6 +869,7 @@ class SourcePreparation:
         "_curve_spans",
         "_mapped_hessians",
         "_programs",
+        "_trim_partitions",
         "_surface_spans",
         "domain",
     )
@@ -895,6 +898,10 @@ class SourcePreparation:
         self._mapped_hessians: dict[
             tuple[int, int],
             tuple[AbstractSurfacePatch, AbstractCurve, PreparedIntervalFunction | None],
+        ] = {}
+        self._trim_partitions: dict[
+            tuple[int, bool, tuple[_Triangle2, ...]],
+            tuple[tuple[_Triangle2, ...], tuple[CurvedTrimLens, ...]],
         ] = {}
 
     @classmethod
@@ -1510,6 +1517,9 @@ def _adaptive_triangle_interpolation_bounds(
 
     def chart_point(row: int, weights: _Barycentric, /) -> tuple[Fraction, Fraction]:
         chart = charts[row]
+        for corner, unit in enumerate(_UNIT_BARYCENTRICS):
+            if weights == unit:
+                return chart[corner]
         return (
             weights[0] * chart[0][0]
             + weights[1] * chart[1][0]
@@ -1522,17 +1532,10 @@ def _adaptive_triangle_interpolation_bounds(
     def point_enclosures(
         points: Sequence[tuple[Fraction, Fraction]], /
     ) -> tuple[np.ndarray, np.ndarray]:
-        boxes = np.asarray(
-            [
-                _outward_surface_parameter_box(
-                    surface,
-                    (float(point[0]), float(point[1])),
-                    (float(point[0]), float(point[1])),
-                )
-                for point in points
-            ],
-            dtype=np.float64,
+        values = np.asarray(
+            [(float(point[0]), float(point[1])) for point in points], dtype=np.float64
         )
+        boxes = _outward_surface_parameter_box(surface, values, values)
         lower, upper = point_program.evaluate(boxes[:, 0], boxes[:, 1])
         lower_ = np.asarray(lower, dtype=np.float64).reshape(len(points), -1)
         upper_ = np.asarray(upper, dtype=np.float64).reshape(len(points), -1)
@@ -1621,21 +1624,25 @@ def _adaptive_triangle_interpolation_bounds(
     def hessian_terms(
         leaves: Sequence[tuple[int, _BarycentricTriangle]], /
     ) -> list[Fraction | None]:
-        boxes = []
-        for row, triangle in leaves:
-            points = [chart_point(row, weights) for weights in triangle]
-            boxes.append(
-                _outward_surface_parameter_box(
-                    surface,
-                    tuple(
-                        float(min(point[axis] for point in points)) for axis in range(2)
-                    ),
-                    tuple(
-                        float(max(point[axis] for point in points)) for axis in range(2)
-                    ),
-                )
-            )
-        boxes_ = np.asarray(boxes, dtype=np.float64)
+        points_by_leaf = [
+            [chart_point(row, weights) for weights in triangle]
+            for row, triangle in leaves
+        ]
+        lower_boxes = np.asarray(
+            [
+                tuple(float(min(point[axis] for point in points)) for axis in range(2))
+                for points in points_by_leaf
+            ],
+            dtype=np.float64,
+        )
+        upper_boxes = np.asarray(
+            [
+                tuple(float(max(point[axis] for point in points)) for axis in range(2))
+                for points in points_by_leaf
+            ],
+            dtype=np.float64,
+        )
+        boxes_ = _outward_surface_parameter_box(surface, lower_boxes, upper_boxes)
         lower, upper = hessian_program.evaluate(boxes_[:, 0], boxes_[:, 1])
         lower_ = np.asarray(lower, dtype=np.float64)
         upper_ = np.asarray(upper, dtype=np.float64)

@@ -1946,6 +1946,10 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
         # Per-patch callers validate currentness once before their loop: the
         # check fingerprints the whole domain, so it must not run per patch.
         preparation.require(self.domain)
+        cache_key = (patch, plane, triangles)
+        cached = preparation._trim_partitions.get(cache_key)
+        if cached is not None:
+            return cached
         successors = _target_boundary_successors(triangles)
         lenses: list[CurvedTrimLens] = []
 
@@ -2011,7 +2015,9 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                                 radius * 2,
                             )
                         )
-        return _exact_trim_triangles(*chart), tuple(lenses)
+        result = _exact_trim_triangles(*chart), tuple(lenses)
+        preparation._trim_partitions[cache_key] = result
+        return result
 
     def collapsed_pole_slivers(
         self, patch: int, triangles: tuple[_Triangle2, ...], /
