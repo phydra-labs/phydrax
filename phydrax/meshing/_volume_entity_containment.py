@@ -151,6 +151,33 @@ def reference_entity_containment(
         matrix, offset = _exact_child_to_parent_affine_map(kind, corners)
         return _affine_chart(matrix, offset)
 
+    @lru_cache(maxsize=8192)
+    def local_containment(
+        fine_kind: str,
+        coarse_kind: str,
+        corners: tuple[tuple[Fraction, ...], ...],
+        /,
+    ) -> tuple[tuple[int, int, int, int], ...]:
+        """Local fine-in-coarse entity pairs of one reference placement.
+
+        They depend only on the two cell kinds and the fine cell's exact
+        corners in the coarse reference cell, which nested children repeat.
+        """
+        fine_topology = reference_cell_topology(fine_kind)
+        coarse_topology = reference_cell_topology(coarse_kind)
+        pairs: list[tuple[int, int, int, int]] = []
+        for fine_dim in range(4):
+            for fine_index, fine_corners in enumerate(fine_topology.entities[fine_dim]):
+                points = tuple(corners[corner] for corner in fine_corners)
+                for coarse_dim in range(fine_dim, 4):
+                    for coarse_index in range(len(coarse_topology.entities[coarse_dim])):
+                        if all(
+                            contains(coarse_kind, coarse_dim, coarse_index, point)
+                            for point in points
+                        ):
+                            pairs.append((fine_dim, fine_index, coarse_dim, coarse_index))
+        return tuple(pairs)
+
     result: set[ContainedEntity] = set()
     for witness in groups:
         exact = exact_reference_cell_vertices(witness)
@@ -180,31 +207,19 @@ def reference_entity_containment(
                 raise ValueError(
                     "Entity containment requires an exact affine reference map."
                 )
-            fine_topology = reference_cell_topology(fine_kind)
-            coarse_topology = reference_cell_topology(coarse_kind)
-            for fine_dim in range(4):
-                for fine_index, fine_corners in enumerate(
-                    fine_topology.entities[fine_dim]
-                ):
-                    points = tuple(exact[row][corner] for corner in fine_corners)
-                    for coarse_dim in range(fine_dim, 4):
-                        for coarse_index, _ in enumerate(
-                            coarse_topology.entities[coarse_dim]
-                        ):
-                            if all(
-                                contains(coarse_kind, coarse_dim, coarse_index, point)
-                                for point in points
-                            ):
-                                result.add(
-                                    ContainedEntity(
-                                        fine_dim,
-                                        fine_entities[fine_dim][fine_index],
-                                        coarse_dim,
-                                        coarse_entities[coarse_dim][coarse_index],
-                                        fine_id,
-                                        coarse_id,
-                                    )
-                                )
+            for fine_dim, fine_index, coarse_dim, coarse_index in local_containment(
+                fine_kind, coarse_kind, exact[row]
+            ):
+                result.add(
+                    ContainedEntity(
+                        fine_dim,
+                        fine_entities[fine_dim][fine_index],
+                        coarse_dim,
+                        coarse_entities[coarse_dim][coarse_index],
+                        fine_id,
+                        coarse_id,
+                    )
+                )
     return tuple(sorted(result))
 
 
