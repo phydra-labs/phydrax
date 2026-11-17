@@ -249,6 +249,13 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Curved profile turning and analytic cylinder chart-sheet selection use
+  outward angle enclosures. Mixed conic and rational-spline profiles sum
+  directed turn endpoints exactly. Ambiguous turning proofs are refused, so
+  profile admission and chart coordinates can change near a turning boundary.
+- B-Rep normal and dihedral ranges, blend tangency bounds, and native-curve
+  turning controls use outward interval inverse trigonometry and norm bounds.
+  Stored angle endpoints and hard-control outcomes can consequently change.
 - Source preparation reuses exact patch and spline-span proofs only for the
   same unchanged live source. Rebuilt sources reprove their own content;
   per-target trim partitions and per-box interval bounds remain independent.

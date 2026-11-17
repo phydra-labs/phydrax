@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from math import atan2, isfinite, pi
 from numbers import Integral, Real
-from typing import overload, TYPE_CHECKING
+from typing import Any, overload, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -920,21 +920,6 @@ def _oriented_loop(loop: ProfileLoop, *, positive: bool) -> ProfileLoop:
     return _reverse_loop(loop)
 
 
-def _unit_tangent(curve: AbstractCurve, parameter: float, /) -> np.ndarray:
-    derivative = np.asarray(
-        jax.jacfwd(curve.evaluate)(jnp.asarray(parameter, dtype=jnp.float64)),
-        dtype=np.float64,
-    )
-    scale = float(np.max(np.abs(derivative)))
-    if not np.isfinite(scale) or scale == 0.0:
-        raise ValueError("Profile segment tangents must be finite and nonzero.")
-    scaled = derivative / scale
-    length = float(np.linalg.norm(scaled))
-    if not np.isfinite(length) or length == 0.0:
-        raise ValueError("Profile segment tangents must be finite and nonzero.")
-    return scaled / length
-
-
 class UnsupportedProfileLoop(NotImplementedError):
     """A curved profile loop needs a proof route this owner does not provide.
 
@@ -947,45 +932,180 @@ class UnsupportedProfileLoop(NotImplementedError):
         self.feature = feature
 
 
+def _isolated_profile_turn(total: Any, /) -> int | None:
+    """Return the unique signed unit turn enclosed, or refuse ambiguity."""
+    if total.a <= 1 <= total.b and total.a > 0 and total.b < 2:
+        return 1
+    if total.a <= -1 <= total.b and total.a > -2 and total.b < 0:
+        return -1
+    return None
+
+
 def _conic_turning_number(loop: ProfileLoop, /) -> int:
-    tangent_pairs = []
-    intrinsic_turns = []
-    for index in range(len(loop.segments)):
-        curve, first, last = _segment_curve(loop, index)
-        tangent_pairs.append((_unit_tangent(curve, first), _unit_tangent(curve, last)))
-        if isinstance(curve, LineCurve):
-            intrinsic_turns.append(0.0)
-            continue
-        if isinstance(curve, BSplineCurve):
-            # Exact hodograph turns; a straight spline contributes zero.
-            intrinsic_turns.extend(bspline_turn_terms(curve))
-            continue
-        first_axis = np.asarray(curve.first_axis, dtype=np.float64)
-        second_axis = np.asarray(curve.second_axis, dtype=np.float64)
-        determinant = float(
-            first_axis[0] * second_axis[1] - first_axis[1] * second_axis[0]
+    from mpmath.libmp import to_rational
+
+    from ._intersection_curve import interval_context
+
+    ctx = interval_context(100)
+
+    def scalar(value: Fraction, /) -> Any:
+        return ctx.mpf(value.numerator) / ctx.mpf(value.denominator)
+
+    def coefficient(value: ExactScalar, /) -> Any:
+        lower, upper = coefficient_interval(value, bits=512)
+        return ctx.mpf((scalar(lower), scalar(upper)))
+
+    def angle(cross: Any, dot: Any, /) -> Any:
+        # atan2 is discontinuous on the negative x axis; neither a cusp nor
+        # an interval crossing that cut has a well-defined principal turn.
+        if cross.a <= 0 <= cross.b and dot.a <= 0:
+            raise UnsupportedProfileLoop(
+                "curved-loop-turning-number",
+                "Profile tangent turn is reversing or cannot be isolated.",
+            )
+        return ctx.atan2(cross, dot)
+
+    def vector_angle(first: tuple[Any, Any], second: tuple[Any, Any], /) -> Any:
+        if all(isinstance(value, Fraction) for value in (*first, *second)):
+            return exact_angle(first, second)
+        left = tuple(scalar(x) if isinstance(x, Fraction) else x for x in first)
+        right = tuple(scalar(x) if isinstance(x, Fraction) else x for x in second)
+        return angle(
+            left[0] * right[1] - left[1] * right[0],
+            left[0] * right[0] + left[1] * right[1],
         )
-        if determinant == 0.0:
-            raise ValueError("Conic profile axes must be independent.")
-        intrinsic_turns.append((last - first) * (1.0 if determinant > 0.0 else -1.0))
-    corner_turns = []
+
+    def exact_angle(
+        first: tuple[Fraction, Fraction], second: tuple[Fraction, Fraction], /
+    ) -> Any:
+        return angle(
+            scalar(first[0] * second[1] - first[1] * second[0]),
+            scalar(first[0] * second[0] + first[1] * second[1]),
+        )
+
+    tangent_pairs: list[tuple[tuple[Any, Any], tuple[Any, Any]]] = []
+    terms: list[tuple[Fraction, Fraction]] = []
+
+    def add_term(value: Any, /) -> None:
+        # Freeze each outward mpmath endpoint as its exact dyadic value.
+        lower, upper = value._mpi_
+        terms.append((Fraction(*to_rational(lower)), Fraction(*to_rational(upper))))
+
+    signs: list[int | None] = []
+    for index, segment in enumerate(loop.segments):
+        start = loop.vertices[index]
+        end = loop.vertices[(index + 1) % len(loop.vertices)]
+        if isinstance(segment, ProfileLine):
+            direction = tuple(
+                _fraction(b) - _fraction(a) for a, b in zip(start, end, strict=True)
+            )
+            tangent = (direction[0], direction[1])
+            tangent_pairs.append((tangent, tangent))
+        elif isinstance(segment, BSplineCurve):
+            endpoints, spline_terms = bspline_turn_terms(segment)
+            tangent_pairs.append(endpoints)
+            for first, last in spline_terms:
+                add_term(exact_angle(first, last))
+                cross = first[0] * last[1] - first[1] * last[0]
+                signs.append((cross > 0) - (cross < 0))
+        elif isinstance(segment, ProfileArc):
+            turn = 1 if segment.counterclockwise else -1
+            rays = (
+                (
+                    _fraction(start[0]) - _fraction(segment.center[0]),
+                    _fraction(start[1]) - _fraction(segment.center[1]),
+                ),
+                (
+                    _fraction(end[0]) - _fraction(segment.center[0]),
+                    _fraction(end[1]) - _fraction(segment.center[1]),
+                ),
+            )
+            tangents = tuple((-turn * ray[1], turn * ray[0]) for ray in rays)
+            tangent_pairs.append((tangents[0], tangents[1]))
+            cross = rays[0][0] * rays[1][1] - rays[0][1] * rays[1][0]
+            dot = rays[0][0] * rays[1][0] + rays[0][1] * rays[1][1]
+            if start == end:
+                add_term(turn * 2 * ctx.pi)
+            elif cross == 0 and dot < 0:
+                add_term(turn * ctx.pi)
+            elif cross != 0:
+                principal = exact_angle(rays[0], rays[1])
+                add_term(principal if turn * cross > 0 else principal + turn * 2 * ctx.pi)
+            else:
+                raise UnsupportedProfileLoop(
+                    "curved-loop-turning-number", "Profile arc sweep cannot be certified."
+                )
+            signs.append(turn)
+        else:
+            curve = segment.curve
+            first_radius = (
+                curve.radius_exact
+                if isinstance(curve, CircleCurve)
+                else curve.first_radius_exact
+            )
+            second_radius = (
+                curve.radius_exact
+                if isinstance(curve, CircleCurve)
+                else curve.second_radius_exact
+            )
+            first_axis = tuple(
+                coefficient(first_radius * x) for x in curve.first_axis_exact
+            )
+            second_axis = tuple(
+                coefficient(second_radius * x) for x in curve.second_axis_exact
+            )
+            determinant = first_axis[0] * second_axis[1] - first_axis[1] * second_axis[0]
+            if determinant.a > 0:
+                turn = 1
+            elif determinant.b < 0:
+                turn = -1
+            else:
+                raise UnsupportedProfileLoop(
+                    "curved-loop-turning-number",
+                    "Conic tangent orientation cannot be certified.",
+                )
+            first = _fraction(segment.first)
+            span = _fraction(segment.last) - first
+            tangents = []
+            for step in range(9):
+                parameter = scalar(first + span * Fraction(step, 8))
+                sine, cosine = ctx.sin(parameter), ctx.cos(parameter)
+                tangents.append(
+                    tuple(
+                        -first_axis[i] * sine + second_axis[i] * cosine for i in range(2)
+                    )
+                )
+            tangent_pairs.append((tangents[0], tangents[-1]))
+            for left, right in zip(tangents, tangents[1:]):
+                intrinsic = vector_angle(left, right)
+                if (turn > 0 and intrinsic.a <= 0) or (turn < 0 and intrinsic.b >= 0):
+                    raise UnsupportedProfileLoop(
+                        "curved-loop-turning-number",
+                        "Conic tangent turn cannot be isolated.",
+                    )
+                add_term(intrinsic)
+                signs.append(turn)
+
     for index, (_, end_tangent) in enumerate(tangent_pairs):
         start_tangent = tangent_pairs[(index + 1) % len(tangent_pairs)][0]
-        cross = float(
-            end_tangent[0] * start_tangent[1] - end_tangent[1] * start_tangent[0]
-        )
-        corner_turns.append(atan2(cross, float(end_tangent @ start_tangent)))
-    terms = (*intrinsic_turns, *corner_turns)
-    total = float(sum(terms))
-    tolerance = 2048.0 * np.finfo(np.float64).eps * max(1, len(loop.segments))
-    if abs(abs(total) - _TWO_PI) > tolerance:
+        corner = vector_angle(end_tangent, start_tangent)
+        add_term(corner)
+        if all(isinstance(value, Fraction) for value in (*end_tangent, *start_tangent)):
+            cross = end_tangent[0] * start_tangent[1] - end_tangent[1] * start_tangent[0]
+            signs.append((cross > 0) - (cross < 0))
+        else:
+            signs.append(1 if corner.a > 0 else -1 if corner.b < 0 else None)
+    lower = sum((term[0] for term in terms), Fraction(0))
+    upper = sum((term[1] for term in terms), Fraction(0))
+    total = ctx.mpf((scalar(lower), scalar(upper))) / (2 * ctx.pi)
+    direction = _isolated_profile_turn(total)
+    if direction is None:
         raise UnsupportedProfileLoop(
             "curved-loop-turning-number",
             "Curved profile loops must have one non-self-intersecting turn.",
         )
-    direction = 1 if total > 0.0 else -1
     if any(
-        direction * value < -tolerance for value in terms
+        sign is None or direction * sign < 0 for sign in signs
     ) and not _curved_loop_is_simple(loop):
         raise UnsupportedProfileLoop(
             "nonconvex-curved-loop-simplicity",
