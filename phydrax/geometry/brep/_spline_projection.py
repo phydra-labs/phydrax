@@ -505,6 +505,7 @@ class CurveProjection:
     status: int
     piece_id: tuple[object, ...] | None = None
     root_id: tuple[object, ...] | None = None
+    tangent: np.ndarray | None = None
 
 
 type _IdentityOrder = tuple[int, Fraction, str, tuple[_IdentityOrder, ...]]

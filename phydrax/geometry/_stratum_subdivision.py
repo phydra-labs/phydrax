@@ -39,7 +39,7 @@ from typing import cast
 
 import numpy as np
 
-from .._exact_kernels import bisect_integer_nets, rational_bernstein_nets
+from .._exact_kernels import bisect_integer_nets, IntegerBernsteinNet
 from .._meshcore import meshcore_available
 from ..discretization._coordinate_enclosure import (
     bernstein_coefficients,
@@ -54,6 +54,7 @@ from ..discretization._coordinate_enclosure import (
 from ..discretization._exact_algebraic_geometry import RadicalElement
 from ..linalg._exact import matmul_exact, symmetric_product_minors_exact
 from ._embedding_cells import EmbeddingCell
+from ._integer_net_batch import integer_net_batch
 from ._mapped_embedding import (
     monotone_preconditioner,
     subdivided_jacobian_controls,
@@ -298,11 +299,63 @@ def _domain(groups: tuple[int, ...], /) -> BernsteinDomain:
     return "simplex" if len(groups) == 1 else "prism"
 
 
+def _controls_many(
+    requests: list[tuple[tuple[Expression, ...], tuple[int, ...], tuple[int, ...], int]],
+    /,
+    *,
+    tolerate_errors: bool = False,
+) -> list[_Controls | None]:
+    try:
+        native = (
+            integer_net_batch(
+                [
+                    (polynomials, _domain(groups), dimension, degree)
+                    for polynomials, groups, degree, dimension in requests
+                ]
+            )
+            if meshcore_available()
+            else [tuple(None for _ in request[0]) for request in requests]
+        )
+    except (ValueError, ZeroDivisionError, OverflowError):
+        if not tolerate_errors:
+            raise
+        return [
+            _controls_many([request], tolerate_errors=True)[0]
+            if len(requests) > 1
+            else None
+            for request in requests
+        ]
+    result: list[_Controls | None] = []
+    for (polynomials, groups, degree, dimension), nets in zip(
+        requests, native, strict=True
+    ):
+        try:
+            result.append(
+                _controls_from_nets(polynomials, groups, degree, dimension, nets)
+            )
+        except (ValueError, ZeroDivisionError, OverflowError):
+            if not tolerate_errors:
+                raise
+            result.append(None)
+    return result
+
+
 def _controls(
     polynomials: tuple[Expression, ...],
     groups: tuple[int, ...],
     degree: tuple[int, ...],
     dimension: int,
+    /,
+) -> _Controls | None:
+    return _controls_many([(polynomials, groups, degree, dimension)])[0]
+
+
+def _controls_from_nets(
+    polynomials: tuple[Expression, ...],
+    groups: tuple[int, ...],
+    degree: tuple[int, ...],
+    dimension: int,
+    native: tuple[IntegerBernsteinNet | None, ...],
     /,
 ) -> _Controls | None:
     if any(not isinstance(polynomial, dict) for polynomial in polynomials):
@@ -311,13 +364,6 @@ def _controls(
     polynomial_maps = [
         polynomial for polynomial in polynomials if isinstance(polynomial, dict)
     ]
-    native = (
-        rational_bernstein_nets(
-            polynomial_maps, _domain(groups), dimension, [degree] * len(polynomial_maps)
-        )
-        if polynomial_maps and meshcore_available()
-        else [None] * len(polynomial_maps)
-    )
     if native and all(net is not None for net in native):
         nets = [net for net in native if net is not None]
         scale = lcm(*(net.scale for net in nets))
@@ -440,6 +486,7 @@ def _root_piece(
     /,
     *,
     cache: StratumSubdivisionCache | None = None,
+    prepared_residual: tuple[tuple[int, ...], _Controls] | None = None,
 ) -> _Piece | None:
     dimension = cell.dimension
     if (
@@ -502,6 +549,8 @@ def _root_piece(
     if residuals and len(affine_rows) == len(residuals):
         residual_degree = geometry_degree
         residual = _affine_controls(geometry, affine_rows)
+    elif prepared_residual is not None:
+        residual_degree, residual = prepared_residual
     else:
         composed = tuple(
             compose_expression(residual, cell.coordinates) for residual in residuals
@@ -841,6 +890,87 @@ def _cone_test(first: _Piece, second: _Piece, /) -> tuple[bool, int | None]:
     return False, None
 
 
+def _prepare_root_nets(
+    cells: tuple[EmbeddingCell, ...],
+    stratum: tuple[int, ...],
+    residuals: tuple[Expression, ...],
+    cache: StratumSubdivisionCache,
+    /,
+) -> dict[int, tuple[tuple[int, ...], _Controls]]:
+    """Prepare independent geometry and non-affine residual nets together."""
+    requests: list[
+        tuple[tuple[Expression, ...], tuple[int, ...], tuple[int, ...], int]
+    ] = []
+    owners: list[tuple[EmbeddingCell, bool, tuple[int, ...]]] = []
+    for cell in cells:
+        if (cell.global_id, stratum) in cache.roots:
+            continue
+        try:
+            layout = _reference_slots(cell)
+            if (
+                layout is None
+                or cell.dimension not in (2, 3)
+                or len(cell.coordinates) not in (2, 3)
+                or len(cell.coordinates) < cell.dimension
+                or len(cell.vertex_ids) != len(cell.reference_vertices)
+            ):
+                continue
+            on_slots = {
+                slot
+                for index, slots in enumerate(layout[1])
+                if cell.vertex_ids[index] in stratum
+                for slot in slots
+            }
+            if any(
+                (cell.vertex_ids[index] in stratum)
+                != all(slot in on_slots for slot in slots)
+                for index, slots in enumerate(layout[1])
+            ):
+                continue
+            groups = layout[0]
+            degree = _degree(cell.coordinates, groups, cell.dimension)
+            if degree is None:
+                continue
+            existing = cache.geometry.get(id(cell))
+            if existing is None or existing[0] is not cell:
+                requests.append((cell.coordinates, groups, degree, cell.dimension))
+                owners.append((cell, False, degree))
+            ambient = len(cell.coordinates)
+            zero = (0,) * ambient
+            axes = tuple(
+                tuple(int(index == axis) for index in range(ambient))
+                for axis in range(ambient)
+            )
+            affine = residuals and all(
+                isinstance(expression, dict)
+                and all(exponent == zero or exponent in axes for exponent in expression)
+                for expression in residuals
+            )
+            if residuals and not affine:
+                composed = tuple(
+                    compose_expression(residual, cell.coordinates)
+                    for residual in residuals
+                )
+                residual_degree = _degree(composed, groups, cell.dimension)
+                if residual_degree is not None:
+                    requests.append((composed, groups, residual_degree, cell.dimension))
+                    owners.append((cell, True, residual_degree))
+        except (ArithmeticError, IndexError, KeyError, TypeError, ValueError):
+            # Preserve the original root path's handling for ineligible cells.
+            continue
+    prepared: dict[int, tuple[tuple[int, ...], _Controls]] = {}
+    for (cell, residual, degree), controls in zip(
+        owners, _controls_many(requests, tolerate_errors=True), strict=True
+    ):
+        if controls is None:
+            continue
+        if residual:
+            prepared[id(cell)] = (degree, controls)
+        else:
+            cache.geometry[id(cell)] = (cell, degree, controls)
+    return prepared
+
+
 def subdivided_stratum_separation(
     first: EmbeddingCell,
     second: EmbeddingCell,
@@ -858,11 +988,18 @@ def subdivided_stratum_separation(
     binary64 resolution first.
     """
     stratum = tuple(sorted(shared_ids))
+    prepared_residuals = _prepare_root_nets((first, second), stratum, residuals, cache)
     pieces: list[_Piece] = []
     for cell in (first, second):
         key = (cell.global_id, stratum)
         if key not in cache.roots:
-            cache.roots[key] = _root_piece(cell, stratum, residuals, cache=cache)
+            cache.roots[key] = _root_piece(
+                cell,
+                stratum,
+                residuals,
+                cache=cache,
+                prepared_residual=prepared_residuals.get(id(cell)),
+            )
         piece = cache.roots[key]
         if piece is None:
             return None

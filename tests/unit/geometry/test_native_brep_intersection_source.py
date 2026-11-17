@@ -1596,6 +1596,33 @@ def test_curve_trim_refuses_nonfinite_point_realization(
     assert not bool(result.resolved[0])
 
 
+def test_curve_trim_fallback_classification_is_batch_independent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry._atlas import TrimDomain
+    from phydrax.geometry.brep import _host_program
+
+    monkeypatch.setattr(_host_program, "prepare_host_program", lambda *args: None)
+    corners = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+    segments = tuple(
+        CurveTrimSegment(
+            LineCurve(first, (last[0] - first[0], last[1] - first[1])), 0.0, 1.0
+        )
+        for first, last in zip(corners, (*corners[1:], corners[0]), strict=True)
+    )
+    domain = TrimDomain(curve_loops=(segments,))
+    queries = np.asarray(((0.5, 0.5), (2.0, 0.5), (0.5, 0.0)), dtype=np.float64)
+    together = domain.classify(queries)
+    separate = tuple(domain.classify(query[None, :]) for query in queries)
+    np.testing.assert_array_equal(together.inside, (True, False, False))
+    np.testing.assert_array_equal(together.resolved, (True, True, False))
+    for name in ("inside", "boundary", "resolved"):
+        np.testing.assert_array_equal(
+            getattr(together, name),
+            [bool(getattr(result, name)[0]) for result in separate],
+        )
+
+
 @pytest.mark.parametrize("operation", ("prepare_host_program", "evaluate_host_program"))
 def test_curve_trim_propagates_unexpected_program_failures(
     monkeypatch: pytest.MonkeyPatch, operation: str
