@@ -249,6 +249,9 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Curved profile turning and analytic cylinder chart-sheet selection use
+  outward angle enclosures. Ambiguous turning proofs are refused, so profile
+  admission and chart coordinates can change near a turning boundary.
 - B-Rep normal and dihedral ranges, blend tangency bounds, and native-curve
   turning controls use outward interval inverse trigonometry and norm bounds.
   Stored angle endpoints and hard-control outcomes can consequently change.
