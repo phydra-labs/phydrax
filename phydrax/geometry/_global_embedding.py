@@ -2581,6 +2581,59 @@ def _bilinear_quad_triangle_contact_is_declared(
     return False
 
 
+def _exact_image_box_separation(
+    first: EmbeddingCell,
+    second: EmbeddingCell,
+    /,
+    *,
+    second_translation: tuple[ExactScalar, ...] | None = None,
+) -> bool:
+    """Retry only when interval excess can hide an exact box separation.
+
+    Each inner endpoint brackets the corresponding exact control extremum
+    from inside. Degree elevation only tightens the exact Bernstein hull, so
+    if those inner hulls overlap, the original exact boxes also overlap.
+    """
+    if first.image_inner_bounds is None and second.image_inner_bounds is None:
+        return False
+
+    def inner(
+        cell: EmbeddingCell, axis: int, translation: tuple[ExactScalar, ...] | None, /
+    ) -> tuple[float, float]:
+        if cell.image_inner_bounds is None:
+            return cell.image_lower[axis], cell.image_upper[axis]
+        lower, upper = cell.image_inner_bounds[axis]
+        if translation is None:
+            return lower, upper
+        return (
+            coefficient_endpoint(Fraction(lower) + translation[axis], upper=True),
+            coefficient_endpoint(Fraction(upper) + translation[axis], upper=False),
+        )
+
+    for axis in range(len(first.image_lower)):
+        first_inner = inner(first, axis, None)
+        second_inner = inner(second, axis, second_translation)
+        if first_inner[1] >= second_inner[0] and second_inner[1] >= first_inner[0]:
+            continue
+        first_exact = (
+            (first.image_lower[axis], first.image_upper[axis])
+            if first.image_inner_bounds is None
+            else polynomial_bounds(
+                first.proof_coordinates[axis], first.proof_domain, first.dimension
+            )
+        )
+        second_exact = (
+            (second.image_lower[axis], second.image_upper[axis])
+            if second.image_inner_bounds is None
+            else polynomial_bounds(
+                second.proof_coordinates[axis], second.proof_domain, second.dimension
+            )
+        )
+        if first_exact[1] < second_exact[0] or second_exact[1] < first_exact[0]:
+            return True
+    return False
+
+
 def _strict_image_separation(
     first: EmbeddingCell,
     second: EmbeddingCell,
@@ -6204,6 +6257,15 @@ def _nonperiodic_contacts(
                 # residual and glued-map proofs.
                 first_cell = original_cells[first_index]
                 second_cell = original_cells[second_index]
+            if _exact_image_box_separation(
+                original_cells[first_index], original_cells[second_index]
+            ):
+                if proof_values is not None:
+                    proof_values.append(
+                        f"cell-pair:{first_cell.global_id}:{second_cell.global_id}:"
+                        "exact-bernstein-image-separation"
+                    )
+                continue
             if (
                 first_cell.dimension != second_cell.dimension
                 or first_cell.dimension != mesh.topological_dimension

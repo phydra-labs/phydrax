@@ -977,6 +977,59 @@ def interval_simplex_bounds(
     return result_lower, result_upper
 
 
+def interval_basis_bounds(
+    basis_lower: np.ndarray,
+    basis_upper: np.ndarray,
+    coefficient_lower: np.ndarray,
+    coefficient_upper: np.ndarray,
+    /,
+    *,
+    parallelism: int | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Enclose batches of linear combinations of common Bernstein controls."""
+    low = np.ascontiguousarray(basis_lower, dtype=np.float64)
+    high = np.ascontiguousarray(basis_upper, dtype=np.float64)
+    coefficients_low = np.ascontiguousarray(coefficient_lower, dtype=np.float64)
+    coefficients_high = np.ascontiguousarray(coefficient_upper, dtype=np.float64)
+    if (
+        low.ndim != 2
+        or low.shape != high.shape
+        or coefficients_low.ndim != 3
+        or coefficients_low.shape != coefficients_high.shape
+    ):
+        raise ValueError("basis and coefficient intervals must have matching shapes.")
+    basis_count, controls = low.shape
+    count, coefficient_count, components = coefficients_low.shape
+    if (
+        basis_count < 1
+        or controls < 1
+        or components < 1
+        or coefficient_count != basis_count
+    ):
+        raise ValueError("coefficient rows must match the nonempty Bernstein basis.")
+    result_lower = np.empty((count, components), dtype=np.float64)
+    result_upper = np.empty_like(result_lower)
+    inner_lower = np.empty_like(result_lower)
+    inner_upper = np.empty_like(result_lower)
+    status = load_meshcore()["phx_mc_interval_basis_bounds"](
+        count,
+        basis_count,
+        controls,
+        components,
+        _pointer(low),
+        _pointer(high),
+        _pointer(coefficients_low),
+        _pointer(coefficients_high),
+        _pointer(result_lower),
+        _pointer(result_upper),
+        _pointer(inner_lower),
+        _pointer(inner_upper),
+        _workers(parallelism),
+    )
+    _raise_for_call(status, "interval_basis_bounds")
+    return result_lower, result_upper, inner_lower, inner_upper
+
+
 __all__ = [
     "BisectedNets",
     "ElementaryFunction",

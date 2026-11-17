@@ -49,6 +49,7 @@ set(PHX_MC_SOURCES
   src/quad_topology.cpp
   src/interval_program.cpp
   src/interval_simplex_restrict.cpp
+  src/interval_basis_bounds.cpp
   src/intersections.cpp
   src/level_set.cpp
   src/mixed_refinement.cpp

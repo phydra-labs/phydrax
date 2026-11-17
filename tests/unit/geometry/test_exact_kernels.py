@@ -178,6 +178,111 @@ def test_interval_simplex_bounds_detect_dropped_term(
 
 @pytest.mark.parametrize(
     ("domain", "dimension"),
+    [("simplex", 2), ("simplex", 3), ("box", 2), ("box", 3), ("prism", 3)],
+)
+def test_prepared_basis_bounds_enclose_exact_coordinate_combinations(
+    domain: enclosure.BernsteinDomain, dimension: int
+) -> None:
+    generator = random.Random(932 + dimension)
+    basis: tuple[enclosure.Polynomial, ...] = tuple(
+        _random_polynomial(generator, domain, dimension, 3) for _ in range(4)
+    )
+    degrees = tuple(
+        enclosure.bernstein_degree(value, domain, dimension) for value in basis
+    )
+    degree = tuple(max(axis) for axis in zip(*degrees, strict=True))
+    prepared = enclosure.PreparedIntervalBasis(basis, domain, dimension)
+    for _ in range(12):
+        local = tuple(
+            tuple(Fraction(generator.randint(-8, 8), 7) for _ in range(3)) for _ in basis
+        )
+        combinations = enclosure.linear_combinations(
+            basis,
+            tuple(tuple(row[axis] for row in local) for axis in range(3)),
+        )
+        bounds = prepared.bounds(local)
+        assert bounds is not None
+        for axis, (expression, (lower, upper), (inner_lower, inner_upper)) in enumerate(
+            zip(combinations, bounds.outer, bounds.inner, strict=True)
+        ):
+            exact_lower, exact_upper = enclosure.polynomial_bounds(
+                expression, domain, dimension
+            )
+            controls = enclosure.bernstein_coefficients(
+                expression, domain, dimension, degree=degree
+            )
+            control_lower = coefficient_endpoint(
+                min(controls), upper=False, saturate=True
+            )
+            control_upper = coefficient_endpoint(max(controls), upper=True, saturate=True)
+            assert lower <= control_lower <= inner_lower
+            assert inner_upper <= control_upper <= upper
+            assert exact_lower <= inner_lower and inner_upper <= exact_upper
+            magnitude = max(
+                1.0,
+                sum(
+                    abs(float(coefficient)) * abs(float(local[row][axis]))
+                    for row, polynomial in enumerate(basis)
+                    for coefficient in polynomial.values()
+                ),
+            )
+            assert (control_lower - lower) + (upper - control_upper) <= 1e-10 * magnitude
+
+
+def test_interval_basis_bounds_are_independent_of_batch_and_workers() -> None:
+    generator = np.random.default_rng(849)
+    basis = generator.uniform(-3.0, 3.0, (4, 10))
+    coefficients = generator.uniform(-2.0, 2.0, (37, 4, 3))
+    serial = _exact_kernels.interval_basis_bounds(
+        basis, basis, coefficients, coefficients, parallelism=1
+    )
+    parallel = _exact_kernels.interval_basis_bounds(
+        basis, basis, coefficients, coefficients, parallelism=4
+    )
+    batches = tuple(
+        _exact_kernels.interval_basis_bounds(
+            basis,
+            basis,
+            coefficients[start : start + 7],
+            coefficients[start : start + 7],
+            parallelism=4,
+        )
+        for start in range(0, len(coefficients), 7)
+    )
+    for index, expected in enumerate(serial):
+        assert np.array_equal(expected, parallel[index])
+        assert np.array_equal(
+            expected, np.concatenate([batch[index] for batch in batches])
+        )
+
+
+def test_prepared_basis_oracle_detects_a_dropped_component(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    basis: tuple[enclosure.Expression, ...] = (
+        {(0,): Fraction(1)},
+        {(1,): Fraction(1)},
+    )
+    prepared = enclosure.PreparedIntervalBasis(basis, "simplex", 1)
+
+    def dropped_term(
+        lower: np.ndarray,
+        upper: np.ndarray,
+        coefficient_lower: np.ndarray,
+        coefficient_upper: np.ndarray,
+        /,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        result = np.zeros((1, 1), dtype=np.float64)
+        return result, result, result, result
+
+    monkeypatch.setattr(enclosure, "interval_basis_bounds", dropped_term)
+    bounds = prepared.bounds(((Fraction(0),), (Fraction(2),)))
+    assert bounds is not None
+    assert not (bounds.outer[0][0] <= 0.0 and 2.0 <= bounds.outer[0][1])
+
+
+@pytest.mark.parametrize(
+    ("domain", "dimension"),
     [
         ("simplex", 1),
         ("simplex", 2),

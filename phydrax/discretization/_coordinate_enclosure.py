@@ -19,6 +19,7 @@ import numpy as np
 
 from .._exact_kernels import (
     IntegerBernsteinNet,
+    interval_basis_bounds,
     interval_simplex_bounds,
     rational_bernstein_nets,
 )
@@ -1087,6 +1088,115 @@ def polynomial_bounds(
         coefficient_endpoint(min(controls), upper=False, saturate=True),
         coefficient_endpoint(max(controls), upper=True, saturate=True),
     )
+
+
+class IntervalBasisBounds(NamedTuple):
+    outer: tuple[tuple[float, float], ...]
+    inner: tuple[tuple[float, float], ...]
+
+
+class PreparedIntervalBasis:
+    """Operation-local common-degree basis controls for outward image boxes.
+
+    Every basis control is converted outward from its exact value. The native
+    interval sum encloses each control of the exact coordinate combination,
+    whose Bernstein convex hull contains the entire simplex, box, or prism.
+    The minimum upper control and maximum lower control bound the extrema from
+    the opposite side. Degree elevation is convex, so these inner endpoints
+    also bound the possible excess relative to the least-degree exact hull.
+    """
+
+    def __init__(
+        self, basis: tuple[Expression, ...], domain: BernsteinDomain, dimension: int, /
+    ) -> None:
+        self.lower: np.ndarray | None = None
+        self.upper: np.ndarray | None = None
+        if (
+            not basis
+            or not meshcore_available()
+            or any(isinstance(expression, RationalPolynomial) for expression in basis)
+        ):
+            return
+        polynomials = tuple(
+            expression
+            for expression in basis
+            if not isinstance(expression, RationalPolynomial)
+        )
+        degrees = tuple(
+            bernstein_degree(value, domain, dimension) for value in polynomials
+        )
+        degree = tuple(max(axis) for axis in zip(*degrees, strict=True))
+        controls = tuple(
+            bernstein_coefficients(value, domain, dimension, degree=degree)
+            for value in polynomials
+        )
+        self.lower = np.asarray(
+            [
+                [coefficient_endpoint(value, upper=False, saturate=True) for value in row]
+                for row in controls
+            ],
+            dtype=np.float64,
+        )
+        self.upper = np.asarray(
+            [
+                [coefficient_endpoint(value, upper=True, saturate=True) for value in row]
+                for row in controls
+            ],
+            dtype=np.float64,
+        )
+
+    def bounds(
+        self, local: tuple[tuple[ExactScalar, ...], ...], /
+    ) -> IntervalBasisBounds | None:
+        """Return outward component bounds, or decline an unsupported source."""
+        if (
+            self.lower is None
+            or self.upper is None
+            or not local
+            or len(local) != self.lower.shape[0]
+            or not local[0]
+            or any(len(row) != len(local[0]) for row in local)
+        ):
+            return None
+        low = np.asarray(
+            [
+                [
+                    [
+                        coefficient_endpoint(value, upper=False, saturate=True)
+                        for value in row
+                    ]
+                    for row in local
+                ]
+            ],
+            dtype=np.float64,
+        )
+        high = np.asarray(
+            [
+                [
+                    [
+                        coefficient_endpoint(value, upper=True, saturate=True)
+                        for value in row
+                    ]
+                    for row in local
+                ]
+            ],
+            dtype=np.float64,
+        )
+        lower, upper, inner_lower, inner_upper = interval_basis_bounds(
+            self.lower, self.upper, low, high
+        )
+        if not np.all(np.isfinite(lower)) or not np.all(np.isfinite(upper)):
+            return None
+        return IntervalBasisBounds(
+            tuple(
+                (float(first), float(second))
+                for first, second in zip(lower[0], upper[0], strict=True)
+            ),
+            tuple(
+                (float(first), float(second))
+                for first, second in zip(inner_lower[0], inner_upper[0], strict=True)
+            ),
+        )
 
 
 class PreparedSimplexPolynomial:

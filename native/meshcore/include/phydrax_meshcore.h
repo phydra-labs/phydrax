@@ -924,6 +924,17 @@ PHX_MC_API int32_t phx_mc_interval_simplex_restrict(
     int32_t dimension, int32_t degree, int64_t count, const double* control_lower,
     const double* control_upper, const double* corners_lower, const double* corners_upper,
     double* result_lower, double* result_upper, int32_t workers);
+/* Bounds of linear combinations of common-degree Bernstein control banks.
+ * Basis endpoints are (basis_count, controls), coefficient endpoints are
+ * (count, basis_count, components), outputs are (count, components).
+ * The inner endpoints bracket each exact extremal control from the opposite
+ * side; they bound the possible excess of the outer endpoints. */
+PHX_MC_API int32_t phx_mc_interval_basis_bounds(
+    int64_t count, int64_t basis_count, int64_t controls, int64_t components,
+    const double* basis_lower, const double* basis_upper,
+    const double* coefficient_lower, const double* coefficient_upper,
+    double* result_lower, double* result_upper, double* inner_lower, double* inner_upper,
+    int32_t workers);
 #define PHX_MC_ELEMENTARY_EXP 0
 #define PHX_MC_ELEMENTARY_LOG 1
 #define PHX_MC_ELEMENTARY_SIN 2
