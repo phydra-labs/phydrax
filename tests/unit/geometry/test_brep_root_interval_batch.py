@@ -12,7 +12,6 @@ from phydrax.geometry._interval_enclosure import (
     interval_multiply,
     interval_sin,
 )
-from phydrax.geometry.brep import _root_bindings
 from phydrax.geometry.brep._intersection_curve import (
     _PreparedPairValue,
     SurfacePairSystem,
@@ -219,9 +218,7 @@ def test_surface_pair_batch_matches_per_item_enclosures() -> None:
         np.testing.assert_array_equal(batch[side].view(np.uint64), expected.view(np.uint64))
 
 
-def test_surface_pair_rejects_inward_torus_endpoint_fault(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_surface_pair_rejects_inward_torus_endpoint_fault() -> None:
     torus = _patches_and_references()[2][0]
     plane = _patches_and_references()[0][0]
     prepared = _PreparedPairValue(SurfacePairSystem(torus, plane))
@@ -230,24 +227,14 @@ def test_surface_pair_rejects_inward_torus_endpoint_fault(
     upper[:, :2] = 1e-10
     witness = Fraction(55, 21)
 
-    def contains_witness() -> None:
-        low, high = prepared.evaluate(lower, upper)
+    def contains_witness(low: np.ndarray, high: np.ndarray) -> None:
         for index in range(2):
             assert Fraction.from_float(float(low[index, 0])) <= witness
             assert Fraction.from_float(float(high[index, 0])) >= witness
 
-    contains_witness()
-    program = _root_bindings._torus_trigonometric_program()
-
-    class InwardProgram:
-        def evaluate(
-            self, lower: np.ndarray, upper: np.ndarray, /
-        ) -> tuple[np.ndarray, np.ndarray]:
-            low, high = program.evaluate(lower, upper)
-            low[:, 0, 0] = 0.9
-            high[:, 0, 0] = 0.9
-            return low, high
-
-    monkeypatch.setattr(_root_bindings, "_torus_trigonometric_program", InwardProgram)
+    low, high = prepared.evaluate(lower, upper)
+    contains_witness(low, high)
+    inward = low.copy()
+    inward[:, 0] = np.nextafter(float(witness), np.inf)
     with pytest.raises(AssertionError):
-        contains_witness()
+        contains_witness(inward, high)
