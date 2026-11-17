@@ -15,6 +15,7 @@ from phydrax.discretization._exact_algebraic_geometry import (
 )
 from phydrax.discretization._nested_reference import nested_cell_reference_maps
 from phydrax.discretization._nested_reference_types import (
+    ExactReferenceChartExpression,
     freeze_reference_chart_arguments,
     ReferenceCellMapWitnesses,
 )
@@ -873,6 +874,14 @@ def test_mapped_root_layer_builds_and_revalidates_exact_source_evidence() -> Non
 def test_mapped_layer_trace_normal_uses_reproducible_rounded_length() -> None:
     from decimal import Decimal, localcontext
 
+    from phydrax.discretization._coordinate_enclosure import Expression
+    from phydrax.discretization._nested_reference import NestedCellReferenceMap
+    from phydrax.meshing._layer_curving_records import (
+        _evaluate_mapped_chart_point,
+        _prepare_barycentric_solver_2d,
+        LayerCurvingMappedChartTrace,
+    )
+
     if not meshcore_available():
         pytest.skip("native boundary-layer generation requires meshcore")
     result, _, _, _ = make_mapped_layer_curving_archive_case()
@@ -891,6 +900,74 @@ def test_mapped_layer_trace_normal_uses_reproducible_rounded_length() -> None:
             length = float(root)
         expected = np.asarray([float(value) / length for value in cross], dtype=np.float64)
         np.testing.assert_array_equal(normal, expected)
+
+    tangents = np.asarray(
+        (
+            (4.342348958654586, -3.82361418165969, -4.67868514962745),
+            (2.8728454967436123, 0.24905564599526975, 4.54864413916467),
+        ),
+        dtype=np.float64,
+    )
+    expressions: tuple[Expression, ...] = tuple(
+        {(1, 0): Fraction(float(tangents[0, axis])),
+         (0, 1): Fraction(float(tangents[1, axis]))}
+        for axis in range(3)
+    )
+    query: Any = SimpleNamespace(chart_coordinate_expressions=lambda _dim, _id: expressions)
+    witness: Any = SimpleNamespace(source_chart_ids=("constructed-chart",))
+    vertices = tuple(
+        tuple(Fraction(float(value)) for value in vertex)
+        for vertex in reference_cell_topology("tetrahedron").vertices
+    )
+    arguments: tuple[ExactReferenceChartExpression, ...] = (
+        {(1, 0, 0): Fraction(1)},
+        {(0, 1, 0): Fraction(1)},
+        {(0, 0, 1): Fraction(1)},
+    )
+    mapping = NestedCellReferenceMap(0, 0, "tetrahedron", "tetrahedron", vertices, arguments)
+    zero3 = (Fraction(0), Fraction(0), Fraction(0))
+    zero2 = (Fraction(0), Fraction(0))
+    chart = (zero2, (Fraction(1), Fraction(0)), (Fraction(0), Fraction(1)))
+    _, _, _, actual_tangents, actual_normal = _evaluate_mapped_chart_point(
+        query, witness, 0, zero3, mapping, zero3, zero2, chart,
+        _prepare_barycentric_solver_2d(chart),
+    )
+    np.testing.assert_array_equal(actual_tangents, tangents)
+    cross = np.cross(tangents[0], tangents[1])
+    rounded_sum = float(sum(
+        (Fraction(float(value) * float(value)) for value in cross), Fraction(0)
+    ))
+    with localcontext() as context:
+        context.prec = 200
+        exact_sum = Fraction(rounded_sum)
+        length = float(
+            (Decimal(exact_sum.numerator) / Decimal(exact_sum.denominator)).sqrt()
+        )
+    expected_normal = np.asarray([float(value) / length for value in cross], dtype=np.float64)
+    np.testing.assert_array_equal(actual_normal, expected_normal)
+
+    def rebuilt(normal: np.ndarray) -> LayerCurvingMappedChartTrace:
+        normals = trace.normals.copy()
+        frames = trace.tangents.copy()
+        normals[0] = normal
+        frames[0] = tangents
+        return LayerCurvingMappedChartTrace(
+            trace.source_id, trace.source_revision, trace.frame_id, trace.query_id,
+            trace.geometry_node_rows, trace.target_cell_global_ids, trace.target_local_dofs,
+            trace.chart_witness_rows, trace.target_reference_points, trace.root_reference_points,
+            trace.source_parameters, trace.source_chart_ids, trace.source_entity_ids,
+            trace.occurrence_paths, trace.root_face_global_ids, trace.root_cell_global_ids,
+            trace.root_local_face_indices, trace.target_points, trace.source_points,
+            trace.distance_lower_bounds, trace.distance_upper_bounds,
+            normals, frames, trace.column_identity,
+        )
+
+    actual_trace = rebuilt(actual_normal)
+    expected_trace = rebuilt(expected_normal)
+    legacy_normal = cross / float.fromhex("0x1.36f08a079d878p+5")
+    np.testing.assert_array_equal(actual_trace.normals[0], expected_normal)
+    assert actual_trace.trace_id == expected_trace.trace_id
+    assert actual_trace.trace_id != rebuilt(legacy_normal).trace_id
 
 
 def test_layer_trace_accepts_nonzero_underflow_scale_frames() -> None:

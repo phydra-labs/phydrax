@@ -143,7 +143,12 @@ def test_chart_box_scale_accepts_unrepresentable_exact_edge_lengths() -> None:
 
 
 @pytest.mark.parametrize(
-    ("scale", "outside"), [(Fraction(1, 8), True), (Fraction(2), False)]
+    ("scale", "outside"),
+    [
+        (Fraction(1, 8), True),
+        (Fraction(2**55 - 1, 2**55), True),
+        (Fraction(2), False),
+    ],
 )
 def test_chart_box_subdivision_uses_exact_squared_edge_threshold(
     scale: Fraction, outside: bool
