@@ -736,6 +736,12 @@
   normalized coordinates from the other and returned a norm of one, which the
   solve reported as `RESIDUAL_TOO_LARGE`. `scaled_norm` now evaluates its
   vector once before taking the scale and the normalized coordinates.
+- Reverse-mode differentiation of `solve_causal_recurrence` now refuses an
+  unconverged trajectory. The convergence guard sat on the tangent
+  right-hand side only, which a transposed solve does not execute, so
+  `jax.grad` through a result with `MAXIMUM_STEPS_REACHED` returned a gradient
+  instead of raising. The guard is now inside both the forward and the
+  transposed implicit solve.
 - Distributed PCG, GMRES, FGMRES, and MINRES rescale convergence norms by one
   scale agreed across the pairing's collective. A member-local scale made each
   shard-local member report a different, incorrect norm when their coordinate

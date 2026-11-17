@@ -122,14 +122,19 @@ def attach_causal_implicit_derivative(
     def primal_solve(_: Callable[[Array], Array], __: Array) -> Array:
         return forward_states
 
-    def tangent_solve(
-        linearized: Callable[[Array], Array], right_hand_side: Array
-    ) -> Array:
-        checked = eqx.error_if(
+    def converged(right_hand_side: Array) -> Array:
+        # Forward mode solves with the tangent right-hand side and reverse mode
+        # with the cotangent. The guard sits inside both solves: a guard on the
+        # tangent alone is not executed when the solve is transposed.
+        return eqx.error_if(
             right_hand_side,
             result.status != int(NonlinearStatus.SUCCESS),
             "Implicit causal derivative requires a successfully converged trajectory.",
         )
+
+    def tangent_solve(
+        linearized: Callable[[Array], Array], right_hand_side: Array
+    ) -> Array:
         match policy.route:
             case "dense-associative":
                 policy.admit(
@@ -138,21 +143,23 @@ def attach_causal_implicit_derivative(
                 matrices = _exact_transition_matrices(problem, forward_states)
                 return jax.lax.custom_linear_solve(
                     linearized,
-                    checked,
-                    solve=lambda _, rhs: associative_affine_solve(matrices, rhs),
+                    right_hand_side,
+                    solve=lambda _, rhs: associative_affine_solve(
+                        matrices, converged(rhs)
+                    ),
                     transpose_solve=lambda _, rhs: associative_transpose_solve(
-                        matrices, rhs
+                        matrices, converged(rhs)
                     ),
                 )
             case "action-scan" | "checkpointed-action-scan":
                 return jax.lax.custom_linear_solve(
                     linearized,
-                    checked,
+                    right_hand_side,
                     solve=lambda _, rhs: _action_solve(
-                        problem, forward_states, rhs, policy, transpose=False
+                        problem, forward_states, converged(rhs), policy, transpose=False
                     ),
                     transpose_solve=lambda _, rhs: _action_solve(
-                        problem, forward_states, rhs, policy, transpose=True
+                        problem, forward_states, converged(rhs), policy, transpose=True
                     ),
                 )
             case _:
