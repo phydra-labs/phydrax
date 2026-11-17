@@ -20,6 +20,7 @@ from .._trainable import NonTrainableState
 from ..discretization._cell_geometry import CellGeometrySpec
 from ..discretization._cell_mesh import CellMesh
 from ..discretization._exact_algebraic_geometry import ExactScalar
+from ..discretization._mapped_geometry_measure import exact_block_cell_measures
 from ..typing import Dim, HostInt64
 from ._affine_plc_domain import AffinePlcDomain
 from ._approximate_source_coverage import (
@@ -1688,6 +1689,11 @@ def _prove_coverage(
         chart_parent=chart_parent,
         validated_parent_embedding=_validated_parent_embedding,
     )
+    # Block measures come straight from the shared basis and the coordinate
+    # bank; cells with substituted exact source corners keep their own measure.
+    cell_measures = exact_block_cell_measures(mesh, geometry)
+    if boundary.cell_measures is not None:
+        cell_measures.update(boundary.cell_measures)
     achieved = _target_region_measures(
         mesh,
         geometry,
@@ -1695,7 +1701,7 @@ def _prove_coverage(
         preparation,
         findings,
         required=boundary.coverage_method != "source_boundary_homotopy",
-        cell_measures=boundary.cell_measures,
+        cell_measures=cell_measures,
     )
     if boundary.coverage_method != "source_boundary_homotopy":
         for region, (source_measure, target_measure) in enumerate(
