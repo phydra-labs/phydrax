@@ -3334,3 +3334,4 @@ def test_exact_lens_jacobian_batch_matches_scalar_and_exact_reference() -> None:
     )
     assert tiny_caps[11] >= 0
     assert tiny_caps[11] ** 2 >= exact_norm_squared(h) * tiny_lens.parameter_bound**2
+    assert tiny_caps[11] < expected[7]
