@@ -2225,7 +2225,11 @@ def _lane_mean(
 
 def _offset_square(value: Interval, /) -> Interval:
     magnitude = max(abs(value[0]), abs(value[1]))
-    lower = 0.0 if value[0] <= 0.0 <= value[1] else min(value[0] ** 2, value[1] ** 2)
+    lower = (
+        0.0
+        if value[0] <= 0.0 <= value[1]
+        else min(value[0] * value[0], value[1] * value[1])
+    )
     return (
         math.nextafter(lower, -math.inf) if lower > 0.0 else 0.0,
         math.nextafter(magnitude * magnitude, math.inf),
@@ -2478,8 +2482,9 @@ def _face_piece_steps(
     else:
         center_slope = float(
             sum(
-                (0.5 * (component[0] + component[1])) ** 2
+                midpoint * midpoint
                 for component in center_gradient
+                for midpoint in (0.5 * (component[0] + component[1]),)
             )
         )
         center_parameter = (
@@ -2508,8 +2513,8 @@ def _face_piece_steps(
     if exact_on_source:
         gradient_q = gradient_p
         directional_derivative = (
-            math.nextafter(gradient_norm[0] ** 2, 0.0),
-            math.nextafter(gradient_norm[1] ** 2, math.inf),
+            math.nextafter(gradient_norm[0] * gradient_norm[0], 0.0),
+            math.nextafter(gradient_norm[1] * gradient_norm[1], math.inf),
         )
     else:
         # A bracket that misses a strict endpoint sign widens on the failing
