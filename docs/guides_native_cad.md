@@ -561,6 +561,14 @@ silently running through the host interpreter. Native polynomial, sine/cosine,
 square-root, and derivative programs use outward rounding and are checked
 against the host enclosure contract.
 
+`execution="batched"` prepares the point map for one box (`batch_capacity=1`)
+and `PreparedIntervalFunction.evaluate(lower, upper)` then runs the staged
+program for every box of the call in one meshcore call. Each box is evaluated
+with the per-operation interval kernels, so its endpoints are the same alone,
+in any batch and for any worker count. It has the same complete-lowering
+requirement as `execution="native"`; a map with a primitive the native executor
+does not lower raises `IntervalExtensionError` at preparation.
+
 Direct and affine-placed native torus charts bind outward intervals for their
 authored exact coefficients when preparing point, Jacobian, and Hessian
 programs. Source covers and interpolation fidelity also include the gap

@@ -1013,6 +1013,18 @@ PHX_MC_API int32_t phx_mc_bernstein_controls(
     const int64_t* term_offsets, const int32_t* exponents, const uint8_t* numerators,
     const int64_t* control_offsets, uint8_t* controls, int64_t* denominators,
     int64_t* extremes, int32_t* item_status, int32_t word_limbs, int32_t parallelism);
+/* Ordinary Jacobian determinant integrated via its Bernstein control mean.
+ * Matrix entries use the offsets/exponents/coefficients layout above. Each
+ * successful item returns the signed control sum, its positive common control
+ * denominator and control count. For input coefficient denominator Q, divide
+ * the sum by Q^dimension, denominator and count, then multiply by the exact
+ * reference volume (1/dimension! for simplex, 1 for box, 1/2 for prism).
+ * Overflow or excessive control counts return per-item RANGE_ERROR. */
+PHX_MC_API int32_t phx_mc_polynomial_jacobian_integrals(
+    int64_t count, int32_t dimension, int32_t domain, const int64_t* offsets,
+    const int32_t* exponents, const uint8_t* coefficients, uint8_t* sums,
+    int64_t* denominators, int64_t* counts, int32_t* item_status,
+    int32_t word_limbs, int32_t parallelism);
 /* Leading principal minors of J + J^T. Each matrix entry owns a term range
  * in offsets, with integer coefficients and dimension-wide nonnegative
  * exponents. Output slots are item-major then minor order; each has capacity

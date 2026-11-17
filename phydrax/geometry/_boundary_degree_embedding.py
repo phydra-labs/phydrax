@@ -44,6 +44,13 @@ from ._exact_polyhedral_geometry import (
     point_on_segment3,
     triangle_contact_points3,
 )
+from ._integer_triangle_contact import (
+    contact_at_point,
+    contact_on_segment,
+    integer_triangle,
+    integer_triangle_contacts,
+    IntegerTriangle,
+)
 from ._mapped_embedding import prove_mapped_cell_injective
 from ._planar_chain_embedding import triangulate_planar_polygon
 from ._restricted_embedding import (
@@ -1240,6 +1247,64 @@ def _exact_triangle_contact_finding(
     )
 
 
+def _integer_triangle_contact_finding(
+    faces: tuple[BoundaryFace, ...],
+    first: BoundaryTriangle,
+    second: BoundaryTriangle,
+    vertex_images: dict[int, Point3],
+    first_integer: IntegerTriangle | None,
+    second_integer: IntegerTriangle | None,
+    /,
+) -> BoundaryFinding | None:
+    shared = set(first.vertex_ids).intersection(second.vertex_ids)
+    if first_integer is None or second_integer is None or any(
+        not isinstance(value, Fraction)
+        for identifier in shared
+        if identifier in vertex_images
+        for value in vertex_images[identifier]
+    ):
+        return _exact_triangle_contact_finding(faces, first, second, vertex_images)
+    degenerate, contacts, scale = integer_triangle_contacts(first_integer, second_integer)
+    if degenerate:
+        return BoundaryFinding(
+            "degenerate_boundary_triangle",
+            tuple(sorted((first.facet_id, second.facet_id))),
+            "Triangle contact requires nondegenerate exact triangle images.",
+        )
+    if not contacts:
+        return None
+    allowed = False
+    if first.parent_face == second.parent_face and len(shared) == 2:
+        allowed = True
+    elif len(shared) == 1:
+        allowed = True
+    elif len(shared) == 2:
+        left, right = sorted(shared)
+        allowed = _loop_has_edge(faces[first.parent_face].vertex_ids, left, right) and (
+            _loop_has_edge(faces[second.parent_face].vertex_ids, left, right)
+        )
+    if allowed and len(shared) == 1:
+        identifier = next(iter(shared))
+        allowed = identifier in vertex_images and all(
+            contact_at_point(point, scale, vertex_images[identifier]) for point in contacts
+        )
+    elif allowed and len(shared) == 2:
+        left, right = sorted(shared)
+        allowed = left in vertex_images and right in vertex_images and all(
+            contact_on_segment(point, scale, vertex_images[left], vertex_images[right])
+            for point in contacts
+        )
+    else:
+        allowed = False
+    if allowed:
+        return None
+    return BoundaryFinding(
+        "exterior_boundary_self_contact",
+        tuple(sorted((first.facet_id, second.facet_id))),
+        "Exact exterior triangles intersect beyond their declared common vertex or edge.",
+    )
+
+
 def _boundary_triangle_contacts(
     faces: tuple[BoundaryFace, ...],
     triangles: tuple[BoundaryTriangle, ...],
@@ -1252,11 +1317,17 @@ def _boundary_triangle_contacts(
     every remaining pair runs the exact rational predicate.
     """
     findings: list[BoundaryFinding] = []
+    integer_triangles = tuple(integer_triangle(triangle.points) for triangle in triangles)
     for first_index, second_index in _undecided_contact_pairs(
         faces, triangles, vertex_images
     ):
-        finding = _exact_triangle_contact_finding(
-            faces, triangles[first_index], triangles[second_index], vertex_images
+        finding = _integer_triangle_contact_finding(
+            faces,
+            triangles[first_index],
+            triangles[second_index],
+            vertex_images,
+            integer_triangles[first_index],
+            integer_triangles[second_index],
         )
         if finding is not None:
             findings.append(finding)

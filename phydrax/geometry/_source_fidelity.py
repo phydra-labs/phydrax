@@ -912,7 +912,7 @@ def reprove_actual_planar_chart_rows(charts: object, /) -> tuple[Triangle2, ...]
     )
     target_corners: dict[int, tuple[tuple[ExactScalar, ...], ...]] = {}
     elements, routes, _ = charts.geometry.resolve(charts.mesh)
-    coefficients = charts.geometry.source_coordinates()
+    coefficients = tuple(charts.geometry.source_coordinates())
     reference = (
         (Fraction(0), Fraction(0)),
         (Fraction(1), Fraction(0)),
@@ -2687,7 +2687,7 @@ def _target_vertex_exact_coordinates(
     vertex_ids = _integer_vector(mesh.vertex_global_ids)
     vertex_rows = {identifier: row for row, identifier in enumerate(vertex_ids)}
     elements, routes, _ = geometry.resolve(mesh)
-    coefficients = geometry.source_coordinates()
+    coefficients = tuple(geometry.source_coordinates())
     mesh_coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
     from ..discretization._cell_geometry import CellVertexGeometryElement
 
@@ -3088,7 +3088,7 @@ def _polyhedral_vertex_source_coordinates(
         raise TypeError(
             "Polyhedral source coordinates require vertex-defined CellGeometrySpec maps."
         )
-    coefficients = geometry.source_coordinates()
+    coefficients = tuple(geometry.source_coordinates())
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     mesh_coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
     result: dict[int, ExactPoint3] = {}
@@ -3554,7 +3554,7 @@ def _target_boundary_triangles(
     cells = _cell_global_rows(mesh)
     facet_routes = _volume_boundary_facet_lookup(mesh)
     elements, routes, _ = geometry.resolve(mesh)
-    coefficients = geometry.source_coordinates()
+    coefficients = tuple(geometry.source_coordinates())
     points_by_facet: dict[int, Triangle3] = {}
     for (cell_id, local_facet), (facet_id, boundary) in facet_routes.items():
         if not boundary:
@@ -6994,7 +6994,7 @@ def certify_source_fidelity(
             (),
         )
     elements, routes, _ = geometry.resolve(mesh)
-    coefficients = geometry.source_coordinates()
+    coefficients = tuple(geometry.source_coordinates())
     target_corners: dict[int, tuple[tuple[ExactScalar, ...], ...]] = {}
     selected_cells = set(cell_ids)
     for block, element, route in zip(mesh.blocks, elements, routes, strict=True):

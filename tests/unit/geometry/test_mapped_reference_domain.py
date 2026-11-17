@@ -1,11 +1,14 @@
+from collections.abc import Mapping, Sequence
 from fractions import Fraction
 
 import numpy as np
 import pytest
 
+from phydrax._meshcore import meshcore_available
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization._cell_geometry import CellGeometrySpec
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
+from phydrax.discretization._coordinate_enclosure import BernsteinDomain, ExactScalar
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
 from phydrax.geometry._mapped_reference_domain import MappedReferenceDomain
 
@@ -89,3 +92,43 @@ def test_mapped_reference_domain_resolves_source_vertex_occurrences_and_exact_me
         domain.resolve_root_vertex("mapped-tetra", "revision-2", 17)
     with pytest.raises(KeyError, match="absent"):
         domain.resolve_root_vertex("mapped-tetra", "revision-1", 17)
+
+
+@pytest.mark.meshcore
+@pytest.mark.skipif(not meshcore_available(), reason="meshcore unavailable")
+def test_exact_region_measure_detects_corrupt_native_numerator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry import _mapped_coverage
+
+    reference_domain, mesh, geometry = _tetrahedral_reference()
+    mapped = MappedReferenceDomain(
+        reference_domain,
+        mesh,
+        geometry,
+        np.asarray((0,), dtype=np.int64),
+        source_id="fault-tetra",
+        source_revision="revision-1",
+        coordinate_contract=SpatialCoordinateContract.si(),
+    )
+    reference = reference_domain.exact_region_measures()
+    assert mapped.exact_region_measures() == reference
+
+    native_integrals = _mapped_coverage.exact_jacobian_integrals
+
+    def corrupt(
+        jacobians: Sequence[Sequence[Sequence[Mapping[tuple[int, ...], ExactScalar]]]],
+        domain: BernsteinDomain,
+        dimension: int,
+    ) -> list[Fraction | None]:
+        values = native_integrals(jacobians, domain, dimension)
+        assert all(value is not None for value in values)
+        return [
+            Fraction(value.numerator + 1, value.denominator)
+            if value is not None
+            else None
+            for value in values
+        ]
+
+    monkeypatch.setattr(_mapped_coverage, "exact_jacobian_integrals", corrupt)
+    assert mapped.exact_region_measures() != reference

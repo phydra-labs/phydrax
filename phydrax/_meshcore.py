@@ -872,6 +872,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (_I64, _I32, _P, _P, _P, _P, _P, _P, _P, _P, _I32, _I32),
     ),
+    "phx_mc_polynomial_jacobian_integrals": (
+        _I32,
+        (_I64, _I32, _I32, _P, _P, _P, _P, _P, _P, _P, _I32, _I32),
+    ),
     "phx_mc_symmetric_polynomial_verdicts": (
         _I32,
         (_I64, _I32, _I32, _P, _P, _P, _P, _P, _P, _P, _I32, _I32),

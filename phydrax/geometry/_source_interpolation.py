@@ -19,18 +19,28 @@ from .._interpolation._bspline_extraction import (
     PreparedSourceSpans,
     RationalBSplineSurfaceSpan,
 )
-from ..discretization._cell_geometry import CellGeometrySpec, ScalarCoordinateElement
+from ..discretization._cell_geometry import (
+    BarycentricCellGeometryElement,
+    CellGeometrySpec,
+    PerCellRestrictedCellGeometryElement,
+    PolynomialComposedCellGeometryElement,
+    RationalComposedCellGeometryElement,
+    RestrictedCellGeometryElement,
+    ScalarCoordinateElement,
+)
 from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._cell_mesh import CellBlock, CellMesh
 from ..discretization._coordinate_enclosure import (
     add,
     compose_expression,
     coordinate_map_expressions,
+    coordinate_source_basis,
     evaluate_expression,
     ExactScalar,
     Expression,
     Polynomial,
     polynomial_bounds,
+    PreparedIntervalBasis,
     RationalPolynomial,
     scale,
     subtract,
@@ -1413,6 +1423,141 @@ def certify_piecewise_linear_curve_charts(
     )
 
 
+class _TargetChartBasis:
+    """Exact restricted basis data and an outward residual-control screen."""
+
+    def __init__(
+        self,
+        element: ScalarCoordinateElement,
+        cell_row: int,
+        arguments: tuple[Polynomial, ...],
+        /,
+    ) -> None:
+        basis = tuple(
+            compose_expression(value, arguments)
+            for value in coordinate_source_basis(element, cell_row=cell_row)
+        )
+        if not basis or any(not isinstance(value, dict) for value in basis):
+            raise ValueError("Target chart basis is not polynomial.")
+        points = (
+            (Fraction(0), Fraction(0)),
+            (Fraction(1), Fraction(0)),
+            (Fraction(0), Fraction(1)),
+        )
+        self.corners = tuple(
+            tuple(evaluate_expression(value, point) for value in basis)
+            for point in points
+        )
+        residual = tuple(
+            subtract(
+                value,
+                {
+                    (0, 0): self.corners[0][index],
+                    (1, 0): self.corners[1][index] - self.corners[0][index],
+                    (0, 1): self.corners[2][index] - self.corners[0][index],
+                },
+            )
+            for index, value in enumerate(basis)
+        )
+        if any(not isinstance(value, dict) for value in residual):
+            raise ValueError("Target chart residual is not polynomial.")
+        polynomials = tuple(value for value in residual if isinstance(value, dict))
+        self.powers = tuple(
+            sorted({power for value in polynomials for power in value if sum(power) > 1})
+        )
+        self.coefficients = tuple(
+            tuple(value.get(power, Fraction(0)) for value in polynomials)
+            for power in self.powers
+        )
+        self.degree = max((sum(power) for power in self.powers), default=0)
+        self.prepared = PreparedIntervalBasis(residual, "simplex", 2)
+
+    def screen(
+        self, local: tuple[tuple[ExactScalar, ...], ...], /
+    ) -> tuple[tuple[tuple[ExactScalar, ...], ...], bool, Fraction] | None:
+        if (
+            len(local) != len(self.corners[0])
+            or not local
+            or any(len(value) != 3 for value in local)
+        ):
+            return None
+        corners = tuple(
+            tuple(
+                sum(
+                    (
+                        weight * value[axis]
+                        for weight, value in zip(weights, local, strict=True)
+                    ),
+                    Fraction(0),
+                )
+                for axis in range(3)
+            )
+            for weights in self.corners
+        )
+        degrees = [0, 0, 0]
+        for power, weights in zip(self.powers, self.coefficients, strict=True):
+            for axis in range(3):
+                coefficient = sum(
+                    (
+                        weight * value[axis]
+                        for weight, value in zip(weights, local, strict=True)
+                    ),
+                    Fraction(0),
+                )
+                if coefficient:
+                    degrees[axis] = max(degrees[axis], sum(power))
+        is_affine = not any(degrees)
+        if is_affine:
+            return corners, True, Fraction(0)
+        # A lower-degree polynomial's original Bernstein hull can be wider
+        # than its elevated hull. Only use the common-degree controls where
+        # no nonzero component lost degree through exact cancellation.
+        if any(degree not in (0, self.degree) for degree in degrees):
+            return None
+        bounds = self.prepared.bounds(local)
+        if bounds is None:
+            return None
+        components = np.asarray(
+            [
+                max(abs(lower), abs(upper)) if degrees[axis] else 0.0
+                for axis, (lower, upper) in enumerate(bounds.outer)
+            ],
+            dtype=np.float64,
+        )
+        enclosure = _float_component_norm_interval(components, components)
+        if enclosure is None:
+            return None
+        return corners, False, Fraction.from_float(enclosure[1])
+
+
+def _target_endpoint_upper(
+    corners: tuple[tuple[ExactScalar, ...], ...],
+    source_lower: np.ndarray,
+    source_upper: np.ndarray,
+    /,
+) -> Fraction | None:
+    """Enclose the old exact endpoint norm using individually rounded steps."""
+    target_lower = np.asarray(
+        [[coefficient_endpoint(value, upper=False) for value in row] for row in corners],
+        dtype=np.float64,
+    )
+    target_upper = np.asarray(
+        [[coefficient_endpoint(value, upper=True) for value in row] for row in corners],
+        dtype=np.float64,
+    )
+    with np.errstate(over="ignore", invalid="ignore", under="ignore"):
+        lower = np.nextafter(target_lower - source_upper, -np.inf)
+        upper = np.nextafter(target_upper - source_lower, np.inf)
+        magnitude = np.maximum(np.abs(lower), np.abs(upper))
+        squared = np.zeros(3, dtype=np.float64)
+        for axis in range(3):
+            term = np.nextafter(magnitude[:, axis] * magnitude[:, axis], np.inf)
+            squared = np.nextafter(squared + term, np.inf)
+        norms = np.nextafter(np.nextafter(np.sqrt(squared), np.inf), np.inf)
+    maximum = float(np.max(norms))
+    return Fraction.from_float(maximum) if math.isfinite(maximum) else None
+
+
 def certify_domain_surface_charts(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -1430,6 +1575,10 @@ def certify_domain_surface_charts(
 
     Rows of ``plane_patches`` are charted in their patch's `exact_plane_chart`.
     ``preparation`` is the caller's `SourcePreparation` of the source domain.
+    Polynomial target charts may use an outward Bernstein residual bound when
+    it proves the same tolerance decision as the exact route, including with
+    adaptive source budgets. Exact target corners and affine flags are retained;
+    reported upper bounds may be wider.
     """
     from ..discretization._cell_geometry import CellGeometrySpec as _CellGeometrySpec
     from ..discretization._cell_mesh import CellMesh as _CellMesh
@@ -1673,6 +1822,101 @@ def certify_domain_surface_charts(
     mapped_charts: dict[
         tuple[int, int, tuple[tuple[Fraction, ...], ...]], tuple[Expression, ...]
     ] = {}
+    target_basis: dict[tuple[object, ...], _TargetChartBasis | None] = {}
+
+    def screen_target(
+        row: int, patch: int, block_index: int, cell_row: int, /
+    ) -> tuple[tuple[tuple[ExactScalar, ...], ...], bool, Fraction] | None:
+        if polyhedral:
+            return None
+        element = elements[block_index]
+        if not isinstance(element, ScalarCoordinateElement):
+            return None
+        if mesh.topological_dimension == 2:
+            reference = _exact_triangle2(witness.target_reference_chart(row))
+            arguments = _affine_triangle_arguments(reference)
+        elif mesh.topological_dimension == 3:
+            reference = _exact_triangle3(witness.target_reference_chart(row))
+            arguments = _affine_volume_triangle_arguments(reference)
+        else:
+            return None
+        ancestor = element
+        per_cell = False
+        while isinstance(
+            ancestor,
+            BarycentricCellGeometryElement
+            | PerCellRestrictedCellGeometryElement
+            | PolynomialComposedCellGeometryElement
+            | RationalComposedCellGeometryElement
+            | RestrictedCellGeometryElement,
+        ):
+            if isinstance(ancestor, PerCellRestrictedCellGeometryElement):
+                per_cell = True
+                break
+            ancestor = ancestor.source_element
+        key = (block_index, reference, cell_row if per_cell else None)
+        if key not in target_basis:
+            try:
+                target_basis[key] = _TargetChartBasis(element, cell_row, arguments)
+            except (
+                ArithmeticError,
+                FloatingPointError,
+                TypeError,
+                ValueError,
+                IndexError,
+            ):
+                target_basis[key] = None
+        prepared = target_basis[key]
+        if prepared is None:
+            return None
+        local = tuple(
+            coefficients[int(index)] for index in host_routes[block_index][cell_row]
+        )
+        screened = prepared.screen(local)
+        if screened is None:
+            return None
+        corners, is_affine, target_bound = screened
+        exact_surface = exact_surface_maps.get(patch)
+        source_points = None if exact_surface is None else exact_source_points[row]
+        local_row = patch_local_row_by_witness_row[row]
+        lower, upper = source_point_intervals[patch]
+        if source_points is None:
+            source_lower = lower[3 * local_row : 3 * local_row + 3]
+            source_upper = upper[3 * local_row : 3 * local_row + 3]
+        else:
+            source_lower = np.asarray(
+                [
+                    [coefficient_endpoint(value, upper=False) for value in point]
+                    for point in source_points
+                ],
+                dtype=np.float64,
+            )
+            source_upper = np.asarray(
+                [
+                    [coefficient_endpoint(value, upper=True) for value in point]
+                    for point in source_points
+                ],
+                dtype=np.float64,
+            )
+        endpoint_error = _target_endpoint_upper(corners, source_lower, source_upper)
+        if endpoint_error is None:
+            return None
+        target_deviation = endpoint_error + target_bound
+        if patch in adaptive_patches:
+            return (
+                (corners, is_affine, target_deviation)
+                if target_deviation <= limit
+                else None
+            )
+        source_bound = (
+            Fraction(0)
+            if exact_surface is not None and _exact_surface_map_is_affine(exact_surface)
+            else Fraction.from_float(
+                float(patch_bounds[patch][patch_local_row_by_witness_row[row]])
+            )
+        )
+        deviation = source_bound + target_deviation
+        return (corners, is_affine, deviation) if deviation <= limit else None
 
     def record_deviation(row: int, deviation: Fraction | float, /) -> None:
         nonlocal upper_max
@@ -1694,11 +1938,82 @@ def certify_domain_surface_charts(
                 )
             )
 
+    # Batch adaptive screens by patch. A failed or inconclusive screen is not
+    # a finding: that row must use the original exact target and budget route.
+    screened_adaptive: dict[
+        int, tuple[tuple[tuple[ExactScalar, ...], ...], bool, Fraction]
+    ] = {}
+    for patch, rows in grouped_rows.items():
+        if patch not in adaptive_patches or patch not in patch_bounds:
+            continue
+        candidates = []
+        for row in rows:
+            block_index, cell_row = target_rows[row]
+            try:
+                screened = screen_target(row, patch, block_index, cell_row)
+            except (
+                ArithmeticError,
+                FloatingPointError,
+                TypeError,
+                ValueError,
+                IndexError,
+            ):
+                screened = None
+            if screened is not None:
+                candidates.append((row, screened))
+        if not candidates:
+            continue
+        try:
+            bounds = domain.adaptive_interpolation_bounds(
+                patch,
+                tuple(charts[row] for row, _ in candidates),
+                tuple(limit - screened[2] for _, screened in candidates),
+                preparation=preparation,
+            )
+            if len(bounds) != len(candidates):
+                continue
+            accepted = {}
+            for (row, (corners, is_affine, target_deviation)), bound in zip(
+                candidates, bounds, strict=True
+            ):
+                if isinstance(bound, Fraction) and 0 <= bound <= limit - target_deviation:
+                    accepted[row] = (corners, is_affine, bound + target_deviation)
+            screened_adaptive.update(accepted)
+        except (
+            ArithmeticError,
+            FloatingPointError,
+            IntervalExtensionError,
+            NotImplementedError,
+            TypeError,
+            ValueError,
+        ):
+            # The exact route retains its own per-patch error handling.
+            continue
+
     for row, (patch_raw, (block_index, cell_row)) in enumerate(
         zip(patch_rows, target_rows, strict=True)
     ):
         patch = int(patch_raw)
         if patch not in patch_bounds:
+            continue
+        if patch in adaptive_patches:
+            screened = screened_adaptive.get(row)
+        else:
+            try:
+                screened = screen_target(row, patch, block_index, cell_row)
+            except (
+                ArithmeticError,
+                FloatingPointError,
+                TypeError,
+                ValueError,
+                IndexError,
+            ):
+                screened = None
+        if screened is not None:
+            corners, is_affine, deviation = screened
+            target_corners[row] = corners
+            target_affine[row] = is_affine
+            record_deviation(row, deviation)
             continue
         try:
             if polyhedral:

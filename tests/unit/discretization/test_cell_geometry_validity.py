@@ -4,11 +4,13 @@
 
 
 import pickle
+from copy import copy
 from dataclasses import dataclass, fields
 from fractions import Fraction
 from typing import Any
 
 import equinox as eqx
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -32,6 +34,7 @@ from phydrax.discretization._coordinate_enclosure import (
     Polynomial,
     RationalPolynomial,
 )
+from phydrax.discretization._exact_algebraic_geometry import RadicalElement
 from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
 from tests._support.validity_reuse import assert_incremental_matches_full
 
@@ -147,6 +150,92 @@ def test_exact_coordinate_bank_is_an_immutable_snapshot() -> None:
     assert tuple(geometry.source_coordinates()) == original
     assert geometry.source_coordinates(np.asarray((1,), dtype=np.int64)) == (original[1],)
 
+
+def test_cell_geometry_identity_binds_exact_bank_and_array_framing() -> None:
+    mesh = D.CellMesh(
+        np.asarray(((0.0,), (1.0,)), dtype=np.float64),
+        (D.CellBlock("cells", "interval", np.asarray(((0, 1),), dtype=np.int32)),),
+    )
+    element = D.fem.lagrange_element("interval", 1)
+
+    def make(exact: Fraction) -> CellGeometrySpec:
+        return CellGeometrySpec(
+            {"cells": element},
+            {"cells": np.asarray(((0, 1),), dtype=np.int32)},
+            mesh.coordinates,
+            source_mesh=mesh,
+            source_map=_MutableCoordinateProvider(((Fraction(0),), (exact,))),
+        )
+
+    first = make(Fraction(1))
+    same = make(Fraction(1))
+    changed = make(Fraction(1) + Fraction(1, 1 << 54))
+    identity = validity_module.cell_geometry_id(first)
+    assert validity_module.cell_geometry_id(same) == identity
+    assert validity_module.cell_geometry_id(changed) != identity
+
+    # Stored route and coordinate array dtype and shape are part of the framed content.
+    changed_dtype = eqx.tree_at(
+        lambda value: value.geometry_dofs,
+        first,
+        (jnp.asarray([[0, 1]], dtype=jnp.int64),),
+    )
+    changed_shape = eqx.tree_at(
+        lambda value: value.coordinates,
+        first,
+        jnp.asarray([[0.0, 1.0]], dtype=jnp.float64),
+    )
+    assert validity_module.cell_geometry_id(changed_dtype) != identity
+    assert validity_module.cell_geometry_id(changed_shape) != identity
+
+
+    restored = CellGeometrySpec.from_stored_fields(
+        first,
+        source_mesh=mesh,
+        source_map=first.source_map,
+        restriction_source=None,
+        elements={"cells": element},
+    )
+    assert validity_module.cell_geometry_id(restored) == identity
+    tampered = copy(first)
+    object.__setattr__(tampered, "exact_coordinate_bank", changed.exact_coordinate_bank)
+    with pytest.raises(ValueError, match="exact coordinate snapshot"):
+        CellGeometrySpec.from_stored_fields(
+            tampered,
+            source_mesh=mesh,
+            source_map=first.source_map,
+            restriction_source=None,
+            elements={"cells": element},
+        )
+
+
+def test_cell_geometry_identity_uses_canonical_exact_scalars() -> None:
+    radical = RadicalElement.sqrt(Fraction(2))
+
+    def make(value: Fraction | RadicalElement) -> CellGeometrySpec:
+        points = np.asarray(((0.0,), (float(value),)), dtype=np.float64)
+        mesh = D.CellMesh(
+            points,
+            (D.CellBlock("cells", "interval", np.asarray(((0, 1),), dtype=np.int32)),),
+        )
+        return CellGeometrySpec(
+            {"cells": D.fem.lagrange_element("interval", 1)},
+            {"cells": np.asarray(((0, 1),), dtype=np.int32)},
+            points,
+            source_mesh=mesh,
+            source_map=_MutableCoordinateProvider(((Fraction(0),), (value,))),
+        )
+
+    rational = make(Fraction(1))
+    rational_radical = make(RadicalElement(Fraction(1)))
+    assert validity_module.cell_geometry_id(rational) == validity_module.cell_geometry_id(
+        rational_radical
+    )
+    irrational = make(radical)
+    rounded_rational = make(Fraction.from_float(float(radical)))
+    assert validity_module.cell_geometry_id(irrational) != validity_module.cell_geometry_id(
+        rounded_rational
+    )
 
 def test_exact_coordinate_bank_rejects_inconsistent_execution_coefficients() -> None:
     mesh = D.CellMesh(

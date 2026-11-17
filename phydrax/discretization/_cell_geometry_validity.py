@@ -153,7 +153,7 @@ def cell_geometry_id(geometry: CellGeometrySpec, /) -> str:
             "exact_coordinate_bank": (
                 None
                 if geometry.exact_coordinate_bank is None
-                else geometry.exact_coordinate_bank.coefficient_payloads()
+                else geometry.exact_coordinate_bank.content_fingerprint()
             ),
             "content": array_tree_fingerprint(geometry),
         }

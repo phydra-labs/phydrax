@@ -1562,7 +1562,7 @@ def _retained_root_charts(
                     and same_element_chart
                 ):
                     if coefficient_bank is None:
-                        coefficient_bank = geometry.source_coordinates()
+                        coefficient_bank = tuple(geometry.source_coordinates())
                     root_coordinates = _cell_expressions(
                         element.source_element,
                         tuple(

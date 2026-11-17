@@ -12,8 +12,11 @@ import phydrax.geometry._stratum_subdivision as subdivision
 from phydrax.discretization._coordinate_enclosure import (
     add,
     axes,
+    bernstein_coefficients,
+    bernstein_degree,
     compose_expression,
     constant,
+    derivative,
     evaluate_expression,
     Expression,
     multiply,
@@ -510,6 +513,39 @@ def test_affine_edge_residual_controls_match_exact_composition() -> None:
     )
 
 
+def test_simplex_jacobian_nets_match_exact_derivative_controls() -> None:
+    cell = _cell(49, "tetrahedron", (0, 1, 2, 3), _TETRAHEDRON, _bend())
+    entries = tuple(
+        tuple(derivative(expression, axis) for axis in range(cell.dimension))
+        for expression in cell.coordinates
+    )
+    assert all(isinstance(entry, dict) for row in entries for entry in row)
+    polynomials = tuple(
+        entry for row in entries for entry in row if isinstance(entry, dict)
+    )
+    degree = max(
+        1,
+        *(bernstein_degree(entry, "simplex", cell.dimension)[0] for entry in polynomials),
+    )
+    columns = tuple(
+        bernstein_coefficients(entry, "simplex", cell.dimension, degree=(degree,))
+        for entry in polynomials
+    )
+    expected = tuple(
+        tuple(
+            tuple(
+                columns[row * cell.dimension + col][index]
+                for col in range(cell.dimension)
+            )
+            for row in range(cell.dimension)
+        )
+        for index in range(len(columns[0]))
+    )
+    controls = subdivision._jacobian_controls(cell)
+    assert controls is not None
+    assert controls.decoded() == expected
+
+
 def test_simplex_glued_controls_cache_binds_cell_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -521,7 +557,7 @@ def test_simplex_glued_controls_cache_binds_cell_identity(
     original = subdivision._jacobian_controls
     seen: list[EmbeddingCell] = []
 
-    def counted(cell: EmbeddingCell) -> tuple | None:
+    def counted(cell: EmbeddingCell) -> subdivision._JacobianControls | None:
         seen.append(cell)
         return original(cell)
 
