@@ -618,6 +618,35 @@ def _possibly_overlapping_pairs(
     return [(left, right) for left, right in pairs[decisions != 1].tolist()]
 
 
+def _sweep_box_overlap_pairs(
+    first_boxes: tuple[np.ndarray, np.ndarray],
+    second_boxes: tuple[np.ndarray, np.ndarray],
+    order: np.ndarray,
+    sorted_lower: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Closed-box overlaps in lexicographic first-row, second-row order.
+
+    ``order`` sorts the second bank by its first-axis lower bound and
+    ``sorted_lower`` contains those bounds in the same order.
+    """
+    matches: list[np.ndarray] = []
+    for row in range(len(first_boxes[0])):
+        end = np.searchsorted(sorted_lower, first_boxes[1][row, 0], side="right")
+        candidates = order[:end]
+        keep = np.all(
+            (first_boxes[0][row] <= second_boxes[1][candidates])
+            & (second_boxes[0][candidates] <= first_boxes[1][row]),
+            axis=1,
+        )
+        columns = np.sort(candidates[keep])
+        if columns.size:
+            matches.append(
+                np.column_stack((np.full(columns.size, row, dtype=np.int64), columns))
+            )
+    return np.concatenate(matches) if matches else np.empty((0, 2), dtype=np.int64)
+
+
 def _blocked_overlapping_pairs(
     rows: tuple[_Triangle2, ...], others: tuple[_Triangle2, ...] | None, /
 ) -> Iterator[tuple[int, int, list[tuple[int, int]]]]:
@@ -652,24 +681,11 @@ def _blocked_overlapping_pairs(
                 self_pairs=False,
             )
         else:
-            matches: list[np.ndarray] = []
-            for row in range(start, stop):
-                end = np.searchsorted(sorted_lower, boxes[1][row, 0], side="right")
-                candidates = order[:end]
-                keep = np.all(
-                    (boxes[0][row] <= second_boxes[1][candidates])
-                    & (second_boxes[0][candidates] <= boxes[1][row]),
-                    axis=1,
-                )
-                columns = np.sort(candidates[keep])
-                if columns.size:
-                    matches.append(
-                        np.column_stack(
-                            (np.full(columns.size, row - start, dtype=np.int64), columns)
-                        )
-                    )
-            pairs = (
-                np.concatenate(matches) if matches else np.empty((0, 2), dtype=np.int64)
+            pairs = _sweep_box_overlap_pairs(
+                (boxes[0][start:stop], boxes[1][start:stop]),
+                second_boxes,
+                order,
+                sorted_lower,
             )
         first = pairs[:, 0] + start
         decisions = enclosures.separation(first, pairs[:, 1] + offset)

@@ -25,6 +25,7 @@ from phydrax.geometry._approximate_source_coverage import (
     _overlapping_self_pairs,
     _possibly_overlapping_pairs,
     _surface_point,
+    _sweep_box_overlap_pairs,
     approximate_source_coverage,
     cad_material_sides,
     SourceCoverageUnavailable,
@@ -223,6 +224,53 @@ def test_bounded_cad_overlap_pairs_keep_lexicographic_order_across_blocks() -> N
     assert list(_overlapping_self_pairs(rows)) == [
         (first, second) for first in range(66) for second in range(first + 1, 66)
     ]
+
+
+def test_large_closed_box_sweep_matches_brute_force() -> None:
+    bank = [((float(3 * i), 0.0), (float(3 * i + 1), 1.0)) for i in range(1030)]
+    bank.extend(
+        (
+            ((1.0, 0.0), (2.0, 1.0)),
+            ((0.0, 0.0), (1.0, 1.0)),
+            ((1.0, 0.5), (1.0, 0.5)),
+            ((1e200, -1e200), (1e200, -1e200)),
+            ((-1e-200, -1e-200), (1e-200, 1e-200)),
+        )
+    )
+    queries = [
+        ((0.0, 0.0), (1.0, 1.0)),
+        ((1.0, 0.5), (1.0, 2.0)),
+        ((3.0, 1.0), (4.0, 1.0)),
+        ((1e200, -1e200), (1e200, -1e200)),
+        ((-1e-200, -1e-200), (1e-200, 1e-200)),
+        ((-10.0, -10.0), (-9.0, -9.0)),
+    ]
+    first_lower = np.asarray([box[0] for box in queries], dtype=np.float64)
+    first_upper = np.asarray([box[1] for box in queries], dtype=np.float64)
+
+    def overlaps(ordering: np.ndarray) -> list[tuple[int, int]]:
+        ordered_bank = [bank[int(index)] for index in ordering]
+        lower = np.asarray([box[0] for box in ordered_bank], dtype=np.float64)
+        upper = np.asarray([box[1] for box in ordered_bank], dtype=np.float64)
+        order = np.argsort(lower[:, 0], kind="stable")
+        actual = _sweep_box_overlap_pairs(
+            (first_lower, first_upper), (lower, upper), order, lower[order, 0]
+        )
+        expected = [
+            (i, j)
+            for i, (first_lo, first_hi) in enumerate(queries)
+            for j, (second_lo, second_hi) in enumerate(ordered_bank)
+            if all(
+                first_lo[axis] <= second_hi[axis] and second_lo[axis] <= first_hi[axis]
+                for axis in range(2)
+            )
+        ]
+        assert [tuple(pair) for pair in actual.tolist()] == expected
+        return [(i, int(ordering[j])) for i, j in expected]
+
+    identity = np.arange(len(bank), dtype=np.int64)
+    permutation = np.random.default_rng(816).permutation(identity)
+    assert sorted(overlaps(identity)) == sorted(overlaps(permutation))
 
 
 def test_exact_trim_triangulation_is_scoped_to_requested_patch(
