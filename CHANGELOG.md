@@ -627,6 +627,14 @@
   reduced-Newton correction gave `solve_native_conic_program` a new JIT key.
   The construction is now a cache of the planned content: equality and hashing
   use the cost and `content_id`, and flattening still carries it to preparation.
+- `solve_native_conic_program` holds a bounded set of compiled executables.
+  A search over many distinct program structures kept every compiled solve
+  alive through JAX's own trace, lowering and compilation caches, about 180 MB
+  per structure for the coupled tetrahedral metric program. The entry now
+  counts distinct compiled signatures against a 4 GiB budget (charged 210 MiB
+  each) and releases its compiled solves when a new signature would exceed it;
+  a released structure recompiles to the same result. Calls, error reporting
+  and tracing under an outer transformation are unchanged.
 - Native zero-set triangle admission can certify a whole-triangle translated
   extrusion when the tolerance-wide gradient-flow bound is inconclusive.
   Uniform endpoint signs, a strict directional derivative, outward interval
