@@ -644,6 +644,12 @@ def test_edge_point_batches_match_independent_segment_projection() -> None:
         np.testing.assert_array_equal(
             np.asarray(getattr(repeated, name))[:3], np.asarray(getattr(result, name))
         )
+    for row, point in enumerate(points):
+        single = _project(projection, [point], _EDGE, 0)
+        np.testing.assert_array_equal(
+            np.asarray(single.points[0]).view(np.uint64),
+            np.asarray(result.points[row]).view(np.uint64),
+        )
     distance = np.linalg.norm(perpendicular)
     assert np.all(np.asarray(result.distance_lower_bounds) <= distance)
     assert np.all(np.asarray(result.residuals) >= distance)
