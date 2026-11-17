@@ -740,7 +740,9 @@
   sparse factorized route. Its compiled solve depends only on the program
   shape. Vacuous orthant rows (zero coefficients and right-hand side) stay out
   of the barrier and its degree, so zero-padded programs follow the iterates of
-  the unpadded program. Sparse programs and other cone blocks refuse it.
+  the unpadded program. Its two retained block factors are admitted together
+  against the factorization byte budget at preparation. Sparse programs and
+  other cone blocks refuse it.
 - Coupled tetrahedral relocation programs execute in power-of-two capacity
   classes. A local search compiled one native solver per sparsity pattern,
   about 3 s and 210 MB each, and re-analyzed every pattern. A program whose

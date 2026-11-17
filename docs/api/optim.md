@@ -311,7 +311,9 @@ sparsity pattern, so every dense program of one shape and identity shares one
 executable. The route leaves vacuous orthant rows (zero coefficients and zero
 right-hand side) out of the barrier and its degree: they constrain nothing and
 have no interior slack, so a fixed-capacity program may pad its blocks with them
-and follows the iterates of the unpadded program. Sparse programs and other cone
+and follows the iterates of the unpadded program. Both block factors are retained
+through the iteration, so preparation refuses a program whose two factors together
+exceed `SolveResourcePolicy.factorization_bytes`. Sparse programs and other cone
 blocks refuse `"reduced"`.
 The embedding stops as soon as the original-coordinate audit certifies optimality or a
 primal/dual ray, so infeasible and unbounded sparse programs return
