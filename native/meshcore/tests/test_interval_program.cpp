@@ -45,6 +45,7 @@ constexpr std::int64_t kExtremumPair = 21;
 constexpr std::int64_t kExtremumReduce = 22;
 constexpr std::int64_t kDecide = 23;
 constexpr std::int64_t kAttain = 24;
+constexpr std::int64_t kDivideElementwise = 25;
 constexpr double kInfinity = std::numeric_limits<double>::infinity();
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 constexpr double kLargest = std::numeric_limits<double>::max();
@@ -798,7 +799,8 @@ void interval_capability_query() {
       (std::uint64_t{1} << kExp) | (std::uint64_t{1} << kLog) |
       (std::uint64_t{1} << kEqual) | (std::uint64_t{1} << kAbsolute) |
       (std::uint64_t{1} << kExtremumPair) | (std::uint64_t{1} << kExtremumReduce) |
-      (std::uint64_t{1} << kDecide) | (std::uint64_t{1} << kAttain);
+      (std::uint64_t{1} << kDecide) | (std::uint64_t{1} << kAttain) |
+      (std::uint64_t{1} << kDivideElementwise);
   PHX_CHECK(phx_mc_interval_program_capabilities(&opcodes) == PHX_MC_OK);
   PHX_CHECK(opcodes == expected);
   PHX_CHECK(phx_mc_interval_program_capabilities(nullptr) == PHX_MC_INVALID_ARGUMENT);
@@ -1047,6 +1049,51 @@ void floating_point_modes() {
   PHX_CHECK(phx::mc::floating_point_mode() == initial_mode);
 }
 
+void batched_elementwise_arithmetic() {
+  const std::int64_t rows[] = {kMultiply, 2, 1, 0, -1, 1, -1, 0,
+                               kAdd, 3, 1, 2, -1, 1, -1, 0};
+  constexpr int count = 257, width = 4;
+  std::vector<double> initial_lower(count * width), initial_upper(count * width);
+  for (int i = 0; i < count; ++i) {
+    initial_lower[i * width] = -0.1 * i;
+    initial_upper[i * width] = 0.1 * (i + 1);
+    initial_lower[i * width + 1] = 0.1;
+    initial_upper[i * width + 1] = 0.3;
+  }
+  auto low1 = initial_lower, high1 = initial_upper;
+  auto low4 = initial_lower, high4 = initial_upper;
+  PHX_CHECK(phx_mc_interval_program_batch(rows, 2, nullptr, 0, nullptr, 0,
+                                           low1.data(), high1.data(), width, count, 1) ==
+            PHX_MC_OK);
+  PHX_CHECK(phx_mc_interval_program_batch(rows, 2, nullptr, 0, nullptr, 0,
+                                           low4.data(), high4.data(), width, count, 4) ==
+            PHX_MC_OK);
+  for (int i = 0; i < count; ++i) {
+    double product_lower, product_upper, expected_lower, expected_upper;
+    const int at = i * width;
+    PHX_CHECK(phx_mc_interval_multiply(1, &initial_lower[at], &initial_upper[at],
+                                       &initial_lower[at + 1], &initial_upper[at + 1],
+                                       &product_lower, &product_upper) == PHX_MC_OK);
+    PHX_CHECK(phx_mc_interval_sum(1, &product_lower, &product_upper,
+                                  &initial_lower[at + 1], &initial_upper[at + 1], 0,
+                                  &expected_lower, &expected_upper) == PHX_MC_OK);
+    PHX_CHECK(same(low1[at + 3], expected_lower));
+    PHX_CHECK(same(high1[at + 3], expected_upper));
+    PHX_CHECK(same(low4[at + 3], expected_lower));
+    PHX_CHECK(same(high4[at + 3], expected_upper));
+  }
+  const std::int64_t invalid[] = {kSqrt, 2, 1, 0, -1, -1, -1, 0};
+  auto unchanged_low = initial_lower, unchanged_high = initial_upper;
+  PHX_CHECK(phx_mc_interval_program_batch(invalid, 1, nullptr, 0, nullptr, 0,
+                                           unchanged_low.data(), unchanged_high.data(),
+                                           width, count, 1) == PHX_MC_INVALID_INPUT);
+  PHX_CHECK(identical(unchanged_low, initial_lower));
+  PHX_CHECK(identical(unchanged_high, initial_upper));
+  PHX_CHECK(phx_mc_interval_program_batch(rows, 2, nullptr, 0, nullptr, 0,
+                                           unchanged_low.data(), unchanged_high.data(),
+                                           width, count, 0) == PHX_MC_INVALID_ARGUMENT);
+}
+
 }  // namespace
 
 int main() {
@@ -1065,6 +1112,7 @@ int main() {
   deterministic_random_programs();
   validation_and_empty_programs();
   prepared_ownership_and_refusal();
+  batched_elementwise_arithmetic();
   floating_point_modes();
   return phx::mc::test::finish("test_interval_program");
 }

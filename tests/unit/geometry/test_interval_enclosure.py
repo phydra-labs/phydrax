@@ -107,6 +107,16 @@ def test_interval_sum_zero_identity_does_not_hide_nan(host: bool) -> None:
             assert float(lower) == -np.inf and float(upper) == np.inf
 
 
+def test_interval_sum_signed_zero_is_independent_of_other_boxes() -> None:
+    zeros = np.asarray((-0.0, 1.0), dtype=np.float64)
+    together = interval_enclosure.interval_add((zeros, zeros), (zeros, zeros))
+    alone = interval_enclosure.interval_add(
+        (zeros[:1], zeros[:1]), (zeros[:1], zeros[:1])
+    )
+    for whole, single in zip(together, alone, strict=True):
+        np.testing.assert_array_equal(_bits(np.asarray(whole)[:1]), _bits(single))
+
+
 @pytest.mark.parametrize("host", (True, False))
 def test_interval_sum_encloses_exact_endpoints_and_preserves_signed_zero(
     host: bool,
@@ -137,6 +147,121 @@ def test_interval_sum_encloses_exact_endpoints_and_preserves_signed_zero(
 
 def _bits(value: np.ndarray | np.generic) -> np.ndarray:
     return np.asarray(value, dtype=np.float64).view(np.uint64)
+
+
+def test_native_batch_matches_elementwise_kernels_and_detects_tampering() -> None:
+    from phydrax._exact_kernels import float64_interval_product, float64_interval_sum
+
+    prepared = prepare_interval_function(
+        lambda x: x[0] * x[1] + x[2], 3, batch_capacity=1, execution="batched"
+    )
+    program = prepared.native_program
+    assert program is not None
+    rng = np.random.default_rng(847)
+    lower = rng.uniform(-10.0, 10.0, size=(300, 3))
+    upper = lower + rng.uniform(0.0, 1.0, size=lower.shape)
+    lower[:2] = ((-0.0, -0.0, -0.0), (0.0, 0.0, 0.0))
+    upper[:2] = lower[:2]
+    product = float64_interval_product(lower[:, 0], upper[:, 0], lower[:, 1], upper[:, 1])
+    expected = float64_interval_sum(*product, lower[:, 2], upper[:, 2], subtract=False)
+    for workers in (1, 4):
+        actual = program.evaluate_batch(lower, upper, workers=workers)
+        for result, reference in zip(actual, expected, strict=True):
+            np.testing.assert_array_equal(_bits(result), _bits(reference))
+        pieces = [
+            program.evaluate_batch(
+                lower[start : start + 7], upper[start : start + 7], workers=workers
+            )
+            for start in range(0, lower.shape[0], 7)
+        ]
+        for endpoint in range(2):
+            np.testing.assert_array_equal(
+                _bits(np.concatenate([piece[endpoint] for piece in pieces])),
+                _bits(expected[endpoint]),
+            )
+    rows = program.instructions.copy()
+    multiply_row = np.flatnonzero(rows[:, 0] == 5)[0]
+    rows[multiply_row, 0] = 2
+    altered = replace(program, instructions=rows)
+    faulty = altered.evaluate_batch(lower, upper)
+    assert np.any(_bits(faulty[0]) != _bits(expected[0]))
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_batched_random_programs_match_per_operation_reference(seed: int) -> None:
+    rng = np.random.default_rng(seed + 721)
+    operations = tuple(rng.choice(("add", "sub", "mul", "div", "sin", "cos"), 8))
+
+    def function(x: jax.Array) -> jax.Array:
+        value = x[0]
+        for operation in operations:
+            if operation == "add":
+                value = value + x[1]
+            elif operation == "sub":
+                value = value - x[1]
+            elif operation == "mul":
+                value = value * x[1]
+            elif operation == "div":
+                value = value / x[1]
+            elif operation == "sin":
+                value = jnp.sin(value)
+            else:
+                value = jnp.cos(value)
+        return value
+
+    lower = rng.uniform(-2.0, 2.0, size=(128, 2))
+    upper = lower + rng.uniform(0.0, 0.5, size=lower.shape)
+    lower[:2] = ((-0.0, -0.0), (0.0, 0.0))
+    upper[:2] = lower[:2]
+    expected = (lower[:, 0], upper[:, 0])
+    for operation in operations:
+        operands = (
+            (expected,)
+            if operation in ("sin", "cos")
+            else (
+                expected,
+                (lower[:, 1], upper[:, 1]),
+            )
+        )
+        expected = interval_enclosure._primitive(str(operation), operands, {})[0]
+    prepared = prepare_interval_function(
+        function, 2, batch_capacity=1, execution="batched"
+    )
+    program = prepared.native_program
+    assert program is not None
+    for workers in (1, 4):
+        actual = program.evaluate_batch(lower, upper, workers=workers)
+        for result, reference in zip(actual, expected, strict=True):
+            np.testing.assert_array_equal(_bits(result), _bits(reference))
+
+
+@pytest.mark.parametrize(
+    "function",
+    (
+        lambda x: -x,
+        lambda x: x * x,
+        lambda x: jnp.sum(x),
+        lambda x: jnp.dot(x, x + 1.0),
+        lambda x: x / (x + 1.0),
+    ),
+    ids=("negate", "square", "sum", "dot", "divide"),
+)
+def test_batched_program_matches_host_lowering(
+    function: Callable[[jax.Array], jax.Array],
+) -> None:
+    rng = np.random.default_rng(942)
+    lower = rng.uniform(0.0, 2.0, size=(40, 3))
+    upper = lower + rng.uniform(0.0, 0.5, size=lower.shape)
+    lower[:2] = ((-0.0, -0.0, -0.0), (0.0, 0.0, 0.0))
+    upper[:2] = lower[:2]
+    host = prepare_interval_function(function, 3, batch_capacity=1)
+    batched = prepare_interval_function(
+        function, 3, batch_capacity=1, execution="batched"
+    )
+    expected = host.evaluate(lower, upper)
+    actual = batched.evaluate(lower, upper)
+    for result, reference in zip(actual, expected, strict=True):
+        np.testing.assert_array_equal(_bits(result), _bits(reference))
 
 
 _FIRST_NAN = np.asarray(0x7FF8000000000001, dtype=np.uint64).view(np.float64)

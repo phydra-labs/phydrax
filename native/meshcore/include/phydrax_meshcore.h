@@ -805,6 +805,17 @@ PHX_MC_API int32_t phx_mc_interval_program_execute(
     const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
     int64_t index_count, const double* parameters, int64_t parameter_count, double* lower,
     double* upper, int64_t workspace_size);
+/* Execute one validated program over count independent, row-major workspaces.
+ * The arithmetic matches the elementwise interval kernels, and the result does
+ * not depend on parallelism. Workspaces must be disjoint and contain count *
+ * workspace_size entries each. Unsupported opcodes are refused before writes.
+ * Opcode 25 divides intervals using the elementwise host-kernel convention;
+ * reduction opcode 7 uses a_index -2 to accumulate from positive zero and
+ * -1 to begin from the first term. */
+PHX_MC_API int32_t phx_mc_interval_program_batch(
+    const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
+    int64_t index_count, const double* parameters, int64_t parameter_count, double* lower,
+    double* upper, int64_t workspace_size, int64_t count, int32_t parallelism);
 /* Bit n advertises interval-program opcode n; bit 0 is reserved. */
 PHX_MC_API int32_t phx_mc_interval_program_capabilities(uint64_t* opcodes);
 /* Execute an interval program as phx_mc_interval_program_execute, then record

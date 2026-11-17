@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 
 type HostArray = np.ndarray | np.generic
 type Interval = tuple[HostArray, HostArray]
-type IntervalExecution = Literal["host", "native"]
+type IntervalExecution = Literal["host", "native", "batched"]
 
 
 class IntervalExtensionError(ValueError):
@@ -222,19 +222,6 @@ def _native_float64(first: Interval, second: Interval, /) -> bool:
 
 
 def interval_add(first: Interval, second: Interval, /) -> Interval:
-    shape = np.broadcast_shapes(np.shape(first[0]), np.shape(second[0]))
-    if (
-        np.all(np.asarray(second[0]) == 0)
-        and np.all(np.asarray(second[1]) == 0)
-        and not any(np.any(np.isnan(value)) for value in first)
-    ):
-        return np.broadcast_to(first[0], shape), np.broadcast_to(first[1], shape)
-    if (
-        np.all(np.asarray(first[0]) == 0)
-        and np.all(np.asarray(first[1]) == 0)
-        and not any(np.any(np.isnan(value)) for value in second)
-    ):
-        return np.broadcast_to(second[0], shape), np.broadcast_to(second[1], shape)
     if _native_float64(first, second):
         return float64_interval_sum(*first, *second, subtract=False)
     return _host_interval_add(first, second)
@@ -2728,6 +2715,8 @@ class PreparedIntervalFunction:
                 self, "execution_reason", "host interval reference was requested."
             )
             return
+        if selected_execution == "batched" and self.batch_capacity != 1:
+            raise ValueError("batched interval execution requires batch_capacity=1.")
         object.__setattr__(self, "native_program", self._lower_native(None))
         object.__setattr__(
             self,
@@ -2747,6 +2736,7 @@ class PreparedIntervalFunction:
             self.batch_capacity,
             self.input_dimension,
             branch_axes,
+            elementwise=self.execution == "batched",
         )
         from .._meshcore import load_meshcore, MeshcoreUnavailableError
 
@@ -2813,6 +2803,8 @@ class PreparedIntervalFunction:
         self, lower: ArrayLike, upper: ArrayLike, /
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         lower_, upper_ = self._boxes(lower, upper)
+        if self.execution == "batched" and self.native_program is not None:
+            return self.native_program.evaluate_batch(lower_, upper_)
         count = lower_.shape[0]
         low_result = np.empty((count, *self.output_shape), dtype=np.float64)
         high_result = np.empty_like(low_result)
@@ -2878,7 +2870,7 @@ class PreparedIntervalFunction:
         continuous = np.empty((count,), dtype=np.bool_)
         jaxpr = self.closed_jaxpr.jaxpr
         native = None
-        if self.native_program is not None:
+        if self.native_program is not None and self.execution != "batched":
             native = self.native_branch_program
             if native is None:
                 native = self._lower_native(axes)
@@ -2970,8 +2962,12 @@ def prepare_interval_function(
 ) -> PreparedIntervalFunction:
     """Trace a pure point map and prepare outward interval evaluation.
 
-    ``host`` is the independent reference interpreter. ``native`` requires a
-    complete lowering and reports unsupported primitives explicitly.
+    ``host`` is the independent reference interpreter; ``native`` uses the
+    legacy outward-widening executor. ``batched`` requires ``batch_capacity=1``
+    and compiles a single-box program whose ``evaluate`` accepts aligned
+    ``(count, input_dimension)`` endpoint arrays in one native call. Batched
+    endpoint arithmetic is independent of box partition and worker count.
+    Both native modes refuse unsupported primitives explicitly.
     """
     selected_execution = parse(execution, IntervalExecution, "execution")
     if input_dimension < 1 or batch_capacity < 1:

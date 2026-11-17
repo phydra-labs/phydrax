@@ -417,18 +417,20 @@ def _with_hessian(
 def _cell_program(
     function: Callable[[Array], Array], dimension: int, /
 ) -> PreparedIntervalFunction:
-    """Prepare a cell integrand on the native executor when it lowers completely.
-
-    Both executions return outward-rounded enclosures of the same jaxpr; the
-    host interpreter is used only for programs with an operation the native
-    executor does not advertise.
-    """
+    """Prepare a cell integrand, using a whole-box batch when lowering permits."""
     try:
         return prepare_interval_function(
-            function, dimension, batch_capacity=_NATIVE_BATCH, execution="native"
+            function, dimension, batch_capacity=1, execution="batched"
         )
     except IntervalExtensionError:
-        return prepare_interval_function(function, dimension, batch_capacity=_HOST_BATCH)
+        try:
+            return prepare_interval_function(
+                function, dimension, batch_capacity=_NATIVE_BATCH, execution="native"
+            )
+        except IntervalExtensionError:
+            return prepare_interval_function(
+                function, dimension, batch_capacity=_HOST_BATCH
+            )
 
 
 def _surface_flux_program(patch: AbstractSurfacePatch, /) -> PreparedIntervalFunction:
@@ -514,16 +516,19 @@ def _surface_frame_program(patch: AbstractSurfacePatch, /) -> _IntervalProgram:
             return jnp.concatenate((flux[None], frame.T.reshape((-1,))))
 
         return _BoundProgram(_cell_program(revolution_frame, 17), lower, upper)
-    return prepare_interval_function(
-        lambda parameters: jnp.concatenate(
+
+    def frame(parameters: Array, /) -> Array:
+        return jnp.concatenate(
             (
                 _surface_flux(patch, parameters)[None],
                 jax.jacfwd(patch.evaluate)(parameters).T.reshape((-1,)),
             )
-        ),
-        2,
-        batch_capacity=1,
-    )
+        )
+
+    try:
+        return prepare_interval_function(frame, 2, batch_capacity=1, execution="batched")
+    except IntervalExtensionError:
+        return prepare_interval_function(frame, 2, batch_capacity=1)
 
 
 def _pcurve_point(pcurve: AbstractCurve, parameter: Array, /) -> Array:

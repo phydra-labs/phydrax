@@ -9,7 +9,9 @@
 #include "capi_guard.hpp"
 #include "elementary.hpp"
 #include "floating_point_mode.hpp"
+#include "interval_arithmetic.hpp"
 #include "interval_program.hpp"
+#include "parallel.hpp"
 #include "phydrax_meshcore.h"
 #include "rounding.hpp"
 
@@ -73,6 +75,7 @@ constexpr std::int64_t kDecide = 23;
 // A sum of a reduction's attainment indicators counts at least one element:
 // lower = maximum(lower, 1), upper unchanged.
 constexpr std::int64_t kAttain = 24;
+constexpr std::int64_t kDivideElementwise = 25;
 
 constexpr std::uint64_t kIntervalOpcodeCapabilities =
     (std::uint64_t{1} << kGather) | (std::uint64_t{1} << kAdd) |
@@ -86,7 +89,8 @@ constexpr std::uint64_t kIntervalOpcodeCapabilities =
     (std::uint64_t{1} << kExp) | (std::uint64_t{1} << kLog) |
     (std::uint64_t{1} << kEqual) | (std::uint64_t{1} << kAbsolute) |
     (std::uint64_t{1} << kExtremumPair) | (std::uint64_t{1} << kExtremumReduce) |
-    (std::uint64_t{1} << kDecide) | (std::uint64_t{1} << kAttain);
+    (std::uint64_t{1} << kDecide) | (std::uint64_t{1} << kAttain) |
+    (std::uint64_t{1} << kDivideElementwise);
 
 // Branch-evidence event rows: kind, test, size, a, a_index, boxes. Element k
 // is the workspace entry a + (a_index < 0 ? k : indices[a_index + k]); where
@@ -187,7 +191,7 @@ bool representatives_valid(const std::int64_t* indices, std::int64_t index_count
 bool row_valid(const Row& row, std::int64_t previous_end, const std::int64_t* indices,
                std::int64_t index_count, const double* parameters, std::int64_t parameter_count,
                std::int64_t workspace_size) noexcept {
-  if (row.opcode < kGather || row.opcode > kAttain) return false;
+  if (row.opcode < kGather || row.opcode > kDivideElementwise) return false;
   if (row.size < 0 || row.out < previous_end || row.out > workspace_size) return false;
   const std::int64_t room = workspace_size - row.out;
   switch (row.opcode) {
@@ -205,7 +209,7 @@ bool row_valid(const Row& row, std::int64_t previous_end, const std::int64_t* in
   };
   switch (row.opcode) {
     case kReduceSum: {
-      if (row.a_index != -1 || row.b != -1 || row.aux < 0) return false;
+      if ((row.a_index != -1 && row.a_index != -2) || row.b != -1 || row.aux < 0) return false;
       if (row.b_index < 0 || row.b_index >= parameter_count) return false;
       const double gamma = parameters[row.b_index];
       if (!std::isfinite(gamma) || !(gamma >= 0.0)) return false;
@@ -217,6 +221,7 @@ bool row_valid(const Row& row, std::int64_t previous_end, const std::int64_t* in
     case kSubtract:
     case kSubtractSame:
     case kMultiply:
+    case kDivideElementwise:
     case kMaximum:
     case kMinimum:
       return row.aux == 0 && operand(row.a, row.a_index) && operand(row.b, row.b_index);
@@ -334,7 +339,7 @@ inline void store_reduction(const Reduction& sum, double gamma, double* lower, d
 // Execute elements [begin, end) of a validated row.
 void execute_row(const Row& row, std::int64_t begin, std::int64_t end,
                  const std::int64_t* indices, const double* parameters, double* lower,
-                 double* upper) noexcept {
+                 double* upper, bool elementwise_arithmetic) noexcept {
   const std::int64_t out = row.out;
   switch (row.opcode) {
     case kGather:
@@ -349,8 +354,8 @@ void execute_row(const Row& row, std::int64_t begin, std::int64_t end,
         const std::int64_t input = address(indices, row.a, row.a_index, k);
         const double low = lower[input];
         const double high = upper[input];
-        lower[out + k] = -high;
-        upper[out + k] = -low;
+        lower[out + k] = elementwise_arithmetic ? down(-high) : -high;
+        upper[out + k] = elementwise_arithmetic ? up(-low) : -low;
       }
       return;
     case kSelect:
@@ -507,7 +512,7 @@ void execute_row(const Row& row, std::int64_t begin, std::int64_t end,
           const double low_square = low * low;
           const double high_square = high * high;
           const double rounded_low = down(crosses ? 0.0 : minimum(low_square, high_square));
-          lower[out + k] = crosses ? maximum(rounded_low, 0.0) : rounded_low;
+          lower[out + k] = (crosses || elementwise_arithmetic) ? maximum(rounded_low, 0.0) : rounded_low;
           upper[out + k] = up(maximum(low_square, high_square));
         } else if (row.opcode == kSqrt) {
           if (high < 0.0) {
@@ -561,6 +566,46 @@ void execute_row(const Row& row, std::int64_t begin, std::int64_t end,
     const double b_high = upper[b];
     double low = 0.0;
     double high = 0.0;
+    if (row.opcode == kDivideElementwise) {
+      if (b_low <= 0.0 && b_high >= 0.0) {
+        low = -std::numeric_limits<double>::infinity();
+        high = std::numeric_limits<double>::infinity();
+      } else {
+        const double rlow = 1.0 / b_high, rhigh = 1.0 / b_low;
+        const auto exact = [](double numerator, double denominator, double quotient) {
+          const double product = quotient * denominator;
+          return std::isfinite(quotient) && denominator != 0.0 && product == numerator &&
+                 phx::mc::interval::product_is_exact(quotient, denominator, product);
+        };
+        double reciprocal_low, reciprocal_high;
+        phx::mc::interval::round_out_inexact(
+            rlow, rhigh, exact(1.0, b_high, rlow), exact(1.0, b_low, rhigh),
+            reciprocal_low, reciprocal_high);
+        phx::mc::interval::interval_product(a_low, a_high, reciprocal_low, reciprocal_high,
+                                            low, high);
+        const double quotient = a_low / b_low;
+        if (a_low == a_high && b_low == b_high && exact(a_low, b_low, quotient))
+          low = high = quotient;
+      }
+      lower[out + k] = low;
+      upper[out + k] = high;
+      continue;
+    }
+    if (elementwise_arithmetic &&
+        (row.opcode == kAdd || row.opcode == kSubtract ||
+         row.opcode == kSubtractSame || row.opcode == kMultiply)) {
+      if (row.opcode == kMultiply) {
+        phx::mc::interval::interval_product(a_low, a_high, b_low, b_high, low, high);
+      } else {
+        phx::mc::interval::interval_sum(a_low, a_high, b_low, b_high,
+                                        row.opcode != kAdd, low, high);
+        if (row.opcode == kSubtractSame && std::isfinite(a_low) && std::isfinite(a_high))
+          low = high = 0.0;
+      }
+      lower[out + k] = low;
+      upper[out + k] = high;
+      continue;
+    }
     switch (row.opcode) {
       case kAdd: {
         const double sum_lower = a_low + b_low;
@@ -621,19 +666,34 @@ void execute_row(const Row& row, std::int64_t begin, std::int64_t end,
 }
 void execute_validated(const int64_t* instructions, int64_t instruction_count,
                        const int64_t* indices, const double* parameters,
-                       double* lower, double* upper) noexcept {
+                       double* lower, double* upper, bool elementwise_arithmetic = false) noexcept {
   for (int64_t row_index = 0; row_index < instruction_count; ++row_index) {
     const Row row = row_at(instructions, row_index);
     if (row.size == 0) continue;
     if (row.opcode == kReduceSum) {
       for (int64_t element = 0; element < row.size; ++element) {
         const int64_t base = row.a + element * row.aux;
-        Reduction sum;
-        accumulate(lower, upper, base, base + row.aux, sum);
-        store_reduction(sum, parameters[row.b_index], lower, upper, row.out + element);
+        if (elementwise_arithmetic) {
+          double low = 0.0, high = 0.0;
+          int64_t first = 0;
+          if (row.a_index == -1 && row.aux > 0) {
+            low = lower[base];
+            high = upper[base];
+            first = 1;
+          }
+          for (int64_t term = first; term < row.aux; ++term)
+            phx::mc::interval::interval_sum(low, high, lower[base + term],
+                                            upper[base + term], false, low, high);
+          lower[row.out + element] = low;
+          upper[row.out + element] = high;
+        } else {
+          Reduction sum;
+          accumulate(lower, upper, base, base + row.aux, sum);
+          store_reduction(sum, parameters[row.b_index], lower, upper, row.out + element);
+        }
       }
     } else {
-      execute_row(row, 0, row.size, indices, parameters, lower, upper);
+      execute_row(row, 0, row.size, indices, parameters, lower, upper, elementwise_arithmetic);
     }
   }
 }
@@ -753,6 +813,51 @@ int32_t phx_mc_interval_program_execute(const int64_t* instructions, int64_t ins
     }
     execute_validated(instructions, instruction_count, indices, parameters, lower, upper);
     return PHX_MC_OK;
+  });
+}
+
+int32_t phx_mc_interval_program_batch(const int64_t* instructions, int64_t instruction_count,
+                                      const int64_t* indices, int64_t index_count,
+                                      const double* parameters, int64_t parameter_count,
+                                      double* lower, double* upper, int64_t workspace_size,
+                                      int64_t count, int32_t parallelism) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (parallelism < 1 ||
+        !phx::mc::addressable(instruction_count, kFields, sizeof(int64_t)) ||
+        !phx::mc::addressable(index_count, 1, sizeof(int64_t)) ||
+        !phx::mc::addressable(parameter_count, 1, sizeof(double)) ||
+        !phx::mc::addressable(count, workspace_size, sizeof(double)) ||
+        (instruction_count > 0 && instructions == nullptr) ||
+        (index_count > 0 && indices == nullptr) ||
+        (parameter_count > 0 && parameters == nullptr) ||
+        (count > 0 && workspace_size > 0 && (lower == nullptr || upper == nullptr)))
+      return PHX_MC_INVALID_ARGUMENT;
+    if (!program_valid(instructions, instruction_count, indices, index_count, parameters,
+                       parameter_count, workspace_size))
+      return PHX_MC_INVALID_INPUT;
+    constexpr std::uint64_t supported =
+        (std::uint64_t{1} << kGather) | (std::uint64_t{1} << kAdd) |
+        (std::uint64_t{1} << kSubtract) | (std::uint64_t{1} << kMultiply) |
+        (std::uint64_t{1} << kNegate) | (std::uint64_t{1} << kReduceSum) |
+        (std::uint64_t{1} << kSine) | (std::uint64_t{1} << kCosine) |
+        (std::uint64_t{1} << kSquare) | (std::uint64_t{1} << kAbsolute) |
+        (std::uint64_t{1} << kExp) | (std::uint64_t{1} << kLog) |
+        (std::uint64_t{1} << kDivideElementwise);
+    for (int64_t row = 0; row < instruction_count; ++row)
+      if (!(supported & (std::uint64_t{1} << row_at(instructions, row).opcode)))
+        return PHX_MC_INVALID_INPUT;
+    if (count == 0 || workspace_size == 0) return PHX_MC_OK;
+    return phx::mc::parallel_for(
+        static_cast<std::size_t>(count), {64, static_cast<uint32_t>(parallelism)},
+        [&](std::size_t begin, std::size_t end, phx::mc::ChunkContext&) -> int32_t {
+          const phx::mc::GradualNearestScope mode;
+          if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+          const auto width = static_cast<std::size_t>(workspace_size);
+          for (std::size_t box = begin; box < end; ++box)
+            execute_validated(instructions, instruction_count, indices, parameters,
+                              lower + box * width, upper + box * width, true);
+          return PHX_MC_OK;
+        });
   });
 }
 
