@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from fractions import Fraction
-from itertools import combinations
+from itertools import combinations, islice
 from math import gcd, lcm
 from typing import Any, cast, final, NamedTuple
 
@@ -72,11 +72,15 @@ _VIOLATION_QUANTUM = 2.0**-10
 # this relative determinant |det E| / max_v prod |e| a cell's binary64 metric
 # determinant det(E^T E) is not certainly positive. No edit creates such a cell.
 _DETERMINANT_FLOOR = 2.0**-22
-# Deep goals use blocks of ``_GOAL_BLOCK`` steps; seeds batch eight pulls.
-# Screening batches at least ``_SCREEN_BATCH`` new goals. These are bounded
-# row-independent working sets, not limits on the search.
+# Goals and screening are batched with bounded row counts, not search limits.
 _GOAL_BLOCK = 64
-_SCREEN_BATCH = 256
+_SCREEN_BATCH = 1024
+_GOAL_PULL_BATCH = 16
+_SCREEN_WORK_BYTES = 32 * 1024**2
+_SEED_STEPS = np.arange(_SPLIT_PARAMETER_BITS + 1, dtype=np.int64)
+_GOAL_STEPS = np.arange(_GOAL_BLOCK, dtype=np.int64)
+_SEED_STEPS.setflags(write=False)
+_GOAL_STEPS.setflags(write=False)
 # The 24 bytes of one binary64 goal: goals are equal exactly when these are.
 _GOAL_KEY = np.dtype((np.void, 24))
 _TETRA_EDGE_CORNERS = tuple(combinations(range(4), 2))
@@ -433,6 +437,10 @@ class _NativeState:
     # by their ordered source vertex IDs (``_quantized_relocation_candidates``):
     # a pure function of the immutable source, built once per adaptation.
     source_supports: dict[tuple[int, ...], _SourceSupport] = field(default_factory=dict)
+    # Floating projection frames depend only on the same immutable source.
+    source_projections: dict[tuple[int, ...], tuple[np.ndarray, np.ndarray]] = field(
+        default_factory=dict
+    )
 
 
 @dataclass(slots=True)
@@ -1024,17 +1032,17 @@ def _fraction_stencil(
 
 
 def _binary64_ancestry(stencil: dict[int, Fraction], /) -> tuple[np.ndarray, np.ndarray]:
-    identifiers = np.asarray(sorted(stencil), dtype=np.uint64)
-    exact = [stencil[int(identifier)] for identifier in identifiers.tolist()]
-    weights = np.asarray([float(weight) for weight in exact], dtype=np.float64)
+    ordered = sorted(stencil)
+    identifiers = np.asarray(ordered, dtype=np.uint64)
+    exact = [stencil[identifier] for identifier in ordered]
+    converted = [float(weight) for weight in exact]
+    weights = np.asarray(converted, dtype=np.float64)
     # Integer forms of ``Fraction(float(w)) == w`` and ``sum(w) == 1``.
-    if any(
-        float(weight).as_integer_ratio() != (weight.numerator, weight.denominator)
-        for weight in exact
-    ):
-        raise FloatingPointError(
-            "Exact source ancestry is not representable in binary64."
-        )
+    for rounded, weight in zip(converted, exact, strict=True):
+        if rounded.as_integer_ratio() != (weight.numerator, weight.denominator):
+            raise FloatingPointError(
+                "Exact source ancestry is not representable in binary64."
+            )
     denominator = lcm(*(weight.denominator for weight in exact))
     if (
         sum(weight.numerator * (denominator // weight.denominator) for weight in exact)
@@ -6213,6 +6221,7 @@ def _quantized_relocation_candidates(
     frames: dict[tuple[int, ...], _SourceSupport] | None = None,
     images: _CarrierCache | None = None,
     fine_first: bool = False,
+    coarse_and_fine: bool = False,
 ) -> Iterator[tuple[dict[int, Fraction], np.ndarray]]:
     """Enumerate exact dyadic source carriers for one relocation target.
 
@@ -6220,6 +6229,8 @@ def _quantized_relocation_candidates(
     images retain the exact or declared-plane admission required by the
     native source complex. The target is rounded at each dyadic resolution
     through 53 bits, in fine-to-coarse or coarse-to-fine order.
+    With ``coarse_and_fine``, the first two results are the coarsest and
+    finest admissible carriers, sharing the same exact source location.
 
     Each support weight is rounded to the grid ``2**-bits`` through its
     partial sums (half to even, monotone, the last exactly one), so the
@@ -6310,7 +6321,13 @@ def _quantized_relocation_candidates(
     goal_x, goal_y, goal_z = (float(value) for value in goal)
     # A grid coarser than the move cannot resolve it; start where it can.
     first = min(max(int(np.floor(np.log2(span / np.sqrt(distance)))), 1), 53)
-    for bits in range(53, first - 1, -1) if fine_first else range(first, 54):
+    resolutions = iter(
+        range(53, first - 1, -1)
+        if fine_first and not coarse_and_fine
+        else range(first, 54)
+    )
+    searching_coarse = coarse_and_fine
+    while (bits := next(resolutions, None)) is not None:
         scale = 1 << bits
         merged = [0] * len(support)
         previous = 0
@@ -6372,6 +6389,9 @@ def _quantized_relocation_candidates(
             {support[index]: Fraction(merged[index], scale) for index in present},
             carrier,
         )
+        if searching_coarse:
+            resolutions = iter(range(53, first - 1, -1))
+            searching_coarse = False
 
 
 def _quantized_relocation(
@@ -6443,25 +6463,45 @@ def _relocation_goals(
     or correctly rounded per element, so every row is the stepwise goal.
     """
     if seed_only:
-        steps = np.arange(_SPLIT_PARAMETER_BITS + 1, dtype=np.int64)
-        for start in range(0, pulls.shape[0], 8):
+        steps = _SEED_STEPS
+        pull_batch = _SCREEN_BATCH // steps.size
+        for start in range(0, pulls.shape[0], pull_batch):
             goals = point + np.ldexp(
-                pulls[start : start + 8, None, :], -steps[None, :, None]
+                pulls[start : start + pull_batch, None, :], -steps[None, :, None]
             )
             reached = np.all(goals == point, axis=2)
             yield goals[np.cumsum(reached, axis=1) == 0]
         return
-    for pull in pulls:
-        start = 0
-        while True:
-            count = _GOAL_BLOCK
-            steps = np.arange(start, start + count, dtype=np.int64)
-            goals = point + np.ldexp(pull, -steps[:, None])
-            reached = np.flatnonzero(np.all(goals == point, axis=1))
-            yield goals[: reached[0] if reached.size else count]
-            if reached.size:
-                break
-            start += count
+    steps = _GOAL_STEPS
+    cursor = 0
+    while cursor < pulls.shape[0]:
+        block = pulls[cursor : cursor + _GOAL_PULL_BATCH]
+        goals = point + np.ldexp(block[:, None, :], -steps[None, :, None])
+        reached = np.all(goals == point, axis=2)
+        unresolved = np.flatnonzero(~np.any(reached, axis=1))
+        count = unresolved[0] + 1 if unresolved.size else block.shape[0]
+        yield goals[:count][np.cumsum(reached[:count], axis=1) == 0]
+        cursor += count
+        if unresolved.size:
+            pull = block[count - 1]
+            start = _GOAL_BLOCK
+            while True:
+                next_steps = np.arange(start, start + _GOAL_BLOCK, dtype=np.int64)
+                remaining = point + np.ldexp(pull, -next_steps[:, None])
+                end = np.flatnonzero(np.all(remaining == point, axis=1))
+                yield remaining[: end[0] if end.size else _GOAL_BLOCK]
+                if end.size:
+                    break
+                start += _GOAL_BLOCK
+
+
+class _RelocationStar(NamedTuple):
+    rows: np.ndarray
+    cell_ids: tuple[int, ...]
+    neighbors: tuple[int, ...]
+    local_rows: np.ndarray
+    local_cells: np.ndarray
+    spokes: np.ndarray
 
 
 class _RelocationPreparation(NamedTuple):
@@ -6469,11 +6509,13 @@ class _RelocationPreparation(NamedTuple):
     points: np.ndarray
     metrics: np.ndarray
     lengths: np.ndarray
+    qualities: np.ndarray
     classes: dict[tuple[int, int], int]
     protected: dict[tuple[int, int], bool]
     records: _BoundaryRecords
     edge_rows: np.ndarray
     incident_edges: dict[int, tuple[int, ...]]
+    stars: dict[int, _RelocationStar]
 
 
 def _prepare_relocation_geometry(
@@ -6495,6 +6537,7 @@ def _prepare_relocation_geometry(
         topology = previous[1].topology
         edge_rows = previous[1].edge_rows
         incident_edges = previous[1].incident_edges
+        stars = previous[1].stars
         # Equal incidence banks give an equal topology: share it with every
         # phase that reads this snapshot.
         tables = _snapshot_tables(state)
@@ -6504,6 +6547,7 @@ def _prepare_relocation_geometry(
     else:
         topology = _state_topology(state)
         edge_rows = _state_edge_rows(state)
+        stars: dict[int, _RelocationStar] = {}
         incident_lists: dict[int, list[int]] = defaultdict(list)
         for index, (first, second) in enumerate(topology.edge_cells):
             incident_lists[first].append(index)
@@ -6549,6 +6593,17 @@ def _prepare_relocation_geometry(
             tables.metric_table = (points, metrics, lengths)
     else:
         points, metrics, lengths = _metric_edge_table(state, topology)
+    cells = np.asarray(snapshot.tetrahedra, dtype=np.int64)
+    if can_update and previous is not None and moved_vertices is not None:
+        changed_cells = np.asarray(
+            sorted({cell for vertex in moved_vertices for cell in topology.vertex_cells[vertex]}),
+            dtype=np.int64,
+        )
+        qualities = previous[1].qualities.copy()
+        qualities[changed_cells] = _tetra_quality(points, metrics, cells[changed_cells])
+    else:
+        qualities = _tetra_quality(points, metrics, cells)
+    qualities.setflags(write=False)
     if (
         same_incidence
         and previous is not None
@@ -6584,11 +6639,13 @@ def _prepare_relocation_geometry(
         points,
         metrics,
         lengths,
+        qualities,
         classes,
         protected,
         records,
         edge_rows,
         incident_edges,
+        stars,
     )
 
 
@@ -6727,6 +6784,136 @@ def _screen_relocation_goals(
     return admitted
 
 
+class _RelocationScreenRequest(NamedTuple):
+    goals: np.ndarray
+    points: np.ndarray
+    metrics: np.ndarray
+    cells: np.ndarray
+    spokes: np.ndarray
+    measured: np.ndarray
+    before_band: tuple[tuple[int, ...], tuple[int, ...]]
+    before_quality: float
+    evaluate: Callable[[np.ndarray, np.ndarray], object]
+    admitted: np.ndarray
+
+
+def _screen_relocation_batch(requests: list[_RelocationScreenRequest], /) -> None:
+    """Screen independent constant-field, band-only stars in bounded groups."""
+    start = 0
+    while start < len(requests):
+        end = start
+        rows = neighbors = cells = 0
+        while end < len(requests):
+            request = requests[end]
+            next_rows = rows + request.goals.shape[0]
+            next_neighbors = max(neighbors, request.spokes.shape[0])
+            next_cells = max(cells, request.cells.shape[0])
+            # Include temporary corners, determinants, edge tensors and masks.
+            estimated = next_rows * (96 * next_neighbors + 320 * next_cells)
+            if estimated > _SCREEN_WORK_BYTES:
+                break
+            rows, neighbors, cells = next_rows, next_neighbors, next_cells
+            end += 1
+        if end == start:
+            request = requests[start]
+            per_goal = 96 * request.spokes.shape[0] + 320 * request.cells.shape[0]
+            limit = max(1, _SCREEN_WORK_BYTES // max(per_goal, 1))
+            for begin in range(0, request.goals.shape[0], limit):
+                end_goal = min(begin + limit, request.goals.shape[0])
+                request.admitted[begin:end_goal] = _screen_relocation_goals(
+                    request.goals[begin:end_goal], request.points, request.metrics,
+                    request.cells, request.spokes, request.measured,
+                    request.before_band, request.before_quality, True, True,
+                    request.evaluate,
+                )
+            start += 1
+            continue
+        _screen_relocation_batch_group(requests[start:end], neighbors, cells)
+        start = end
+
+
+def _screen_relocation_batch_group(
+    requests: list[_RelocationScreenRequest], neighbors: int, cells: int, /
+) -> None:
+    count = len(requests)
+    sizes = np.asarray([request.goals.shape[0] for request in requests], dtype=np.int64)
+    owner = np.repeat(np.arange(count, dtype=np.int64), sizes)
+    goals = np.concatenate([request.goals for request in requests])
+    points = np.zeros((count, neighbors, 3), dtype=np.float64)
+    present = np.zeros((count, neighbors), dtype=np.bool_)
+    measured = np.zeros((count, neighbors), dtype=np.bool_)
+    metrics = np.empty((count, 3, 3), dtype=np.float64)
+    corners = np.zeros((count, cells, 4, 3), dtype=np.float64)
+    moving = np.zeros((count, cells, 4), dtype=np.bool_)
+    cell_present = np.zeros((count, cells), dtype=np.bool_)
+    long_ref = np.zeros((count, neighbors), dtype=np.float64)
+    short_ref = np.zeros((count, neighbors), dtype=np.float64)
+    for index, request in enumerate(requests):
+        width = request.spokes.shape[0]
+        points[index, :width] = request.points[request.spokes[:, 1]]
+        present[index, :width] = True
+        measured[index, :width] = request.measured
+        metrics[index] = request.metrics[0]
+        cell_count = request.cells.shape[0]
+        corners[index, :cell_count] = request.points[request.cells]
+        moving[index, :cell_count] = request.cells == 0
+        cell_present[index, :cell_count] = True
+        long, short = request.before_band
+        long_ref[index, : len(long)] = long
+        short_ref[index, : len(short)] = short
+    delta = points[owner] - goals[:, None, :]
+    coincident = np.any(np.all(delta == 0.0, axis=2) & present[owner], axis=1)
+    flat_delta = delta.reshape((-1, 3))
+    tensors = np.broadcast_to(
+        metrics[owner, None], (owner.size, neighbors, 3, 3)
+    ).reshape((-1, 3, 3))
+    first = np.sqrt(np.einsum("ei,eij,ej->e", flat_delta, tensors, flat_delta))
+    lengths = (0.5 * (first + first)).reshape((owner.size, neighbors))
+    regular = np.all(
+        ~measured[owner] | (np.isfinite(lengths) & (lengths > 0.0)), axis=1
+    )
+    lengths = np.where(measured[owner] & regular[:, None], lengths, _UPPER)
+    long_rows, short_rows = _band_violation_rows(lengths)
+
+    def signs(values: np.ndarray, reference: np.ndarray) -> np.ndarray:
+        differences = values != reference
+        first_index = np.argmax(differences, axis=1)
+        row_index = np.arange(values.shape[0], dtype=np.int64)
+        comparison = np.where(
+            values[row_index, first_index] > reference[row_index, first_index], 1, -1
+        )
+        return np.where(np.any(differences, axis=1), comparison, 0)
+
+    long_sign = signs(long_rows, long_ref[owner])
+    short_sign = signs(short_rows, short_ref[owner])
+    selected = ~coincident & regular & (
+        (long_sign < 0) | ((long_sign == 0) & (short_sign < 0))
+    )
+    indices = np.flatnonzero(selected)
+    admitted = np.zeros((owner.size,), dtype=np.bool_)
+    if indices.size:
+        selected_owner = owner[indices]
+        values = np.where(
+            moving[selected_owner, :, :, None],
+            goals[indices, None, None, :],
+            corners[selected_owner],
+        ).reshape((-1, 4, 3))
+        determinants = np.linalg.det(values[:, 1:] - values[:, :1])
+        relative = _relative_determinants(values, determinants=determinants)
+        valid = (determinants > 0.0) & (relative > _DETERMINANT_FLOOR)
+        valid = valid.reshape((indices.size, cells)) | ~cell_present[selected_owner]
+        admitted[indices] = np.all(valid, axis=1)
+    offset = 0
+    for request in requests:
+        end = offset + request.goals.shape[0]
+        request.admitted[:] = admitted[offset:end]
+        for row in np.flatnonzero(~regular[offset:end] & ~coincident[offset:end]):
+            request.admitted[row] = (
+                request.evaluate(request.goals[row], request.metrics[0]) is not None
+            )
+        offset = end
+
+
 def _band_tangents(
     directions: np.ndarray, normals: np.ndarray, lengths: np.ndarray, pairs: bool, /
 ) -> np.ndarray:
@@ -6818,13 +7005,15 @@ def _relocation_proposals(
         else None
     )
     periodic = state.target_mesh.periodic_topology is not None
-    dimensions = np.asarray(snapshot.vertex_dimensions, dtype=np.int8)
-    protected_vertices = np.asarray(snapshot.protected_vertices, dtype=np.bool_)
-    cells = np.asarray(snapshot.tetrahedra, dtype=np.int64)
-    regions = np.asarray(snapshot.tetrahedron_regions, dtype=np.int64)
+    dimensions = snapshot.vertex_dimensions
+    protected_vertices = snapshot.protected_vertices
+    cells = snapshot.tetrahedra
+    regions = snapshot.tetrahedron_regions
     current_cell_ids = np.asarray(snapshot.cell_ids, dtype=np.int64)
     source_coordinates = state.source_points
     constant_metric = bool(np.all(state.source_metric == state.source_metric[0]))
+    prefetch_screens = not deep and band_only and constant_metric
+    pending_screens: list[_RelocationScreenRequest] = []
 
     def propose(vertex: int) -> _RelocationSearch | None:
         row = topology.vertex_row[vertex]
@@ -6841,34 +7030,57 @@ def _relocation_proposals(
         star = topology.vertex_cells[vertex]
         if not star:
             return None
-        star_rows = np.asarray(star, dtype=np.int64)
-        star_ids = tuple(int(current_cell_ids[cell]) for cell in star)
+        star_shape = prepared.stars.get(vertex)
+        if star_shape is None:
+            star_rows = np.asarray(star, dtype=np.int64)
+            star_ids = tuple(int(current_cell_ids[cell]) for cell in star)
+        else:
+            star_rows, star_ids = star_shape.rows, star_shape.cell_ids
         star_blocks = {state.cell_blocks[cell_id] for cell_id in star_ids}
         star_regions = {int(regions[cell]) for cell in star}
         if len(star_blocks) != 1 or len(star_regions) != 1:
             return None
-        neighbors = sorted(
-            {
-                int(other)
-                for cell in star
-                for other in topology.cell_vertex_ids[cell]
-                if int(other) != vertex
+        if star_shape is None:
+            neighbors = tuple(
+                sorted(
+                    {
+                        int(other)
+                        for cell in star
+                        for other in topology.cell_vertex_ids[cell]
+                        if int(other) != vertex
+                    }
+                )
+            )
+            # Star-local arrays: row 0 is the moving vertex.
+            local_rows = np.asarray(
+                [row, *(topology.vertex_row[neighbor] for neighbor in neighbors)],
+                dtype=np.int64,
+            )
+            local_index = {
+                int(global_row): index for index, global_row in enumerate(local_rows)
             }
-        )
-        # Star-local arrays: row 0 is the moving vertex.
-        local_rows = np.asarray(
-            [row, *(topology.vertex_row[neighbor] for neighbor in neighbors)],
-            dtype=np.int64,
-        )
-        local_index = {
-            int(global_row): index for index, global_row in enumerate(local_rows)
-        }
-        local_cells = np.asarray(
-            [[local_index[int(value)] for value in cell] for cell in cells[star_rows]],
-            dtype=np.int64,
-        ).reshape((-1, 4))
+            local_cells = np.asarray(
+                [[local_index[int(value)] for value in cell] for cell in cells[star_rows]],
+                dtype=np.int64,
+            ).reshape((-1, 4))
+            spokes = np.column_stack(
+                (
+                    np.zeros((len(neighbors),), dtype=np.int64),
+                    np.arange(1, len(neighbors) + 1, dtype=np.int64),
+                )
+            )
+            star_shape = _RelocationStar(
+                star_rows, star_ids, neighbors, local_rows, local_cells, spokes
+            )
+            prepared.stars[vertex] = star_shape
+        else:
+            neighbors = star_shape.neighbors
+            local_rows, local_cells, spokes = (
+                star_shape.local_rows, star_shape.local_cells, star_shape.spokes
+            )
         local_points = points[local_rows]
         local_metrics = metrics[local_rows]
+        local_constant = constant_metric and bool(np.all(local_metrics == local_metrics[0]))
         periodic_star = (
             (
                 np.asarray((vertex, *neighbors), dtype=np.int64),
@@ -6881,17 +7093,18 @@ def _relocation_proposals(
             if periodic
             else None
         )
-        spokes = np.column_stack(
-            (
-                np.zeros((len(neighbors),), dtype=np.int64),
-                np.arange(1, len(neighbors) + 1, dtype=np.int64),
-            )
-        )
         measured = np.asarray(
             [not protected_edges[_edge_key((vertex, other))] for other in neighbors],
             dtype=np.bool_,
         )
-        lengths = _metric_lengths(local_points, local_metrics, spokes)
+        # Incidence follows lexicographic edge order, so its opposite endpoints
+        # have the same order as ``neighbors``. Equal endpoint tensors make
+        # the metric length independent of the edge's orientation.
+        lengths = (
+            np.take(edge_lengths, prepared.incident_edges[vertex])
+            if local_constant
+            else _metric_lengths(local_points, local_metrics, spokes)
+        )
         before_band = _band_violations(lengths[measured])
         forces = (1.0 - 1.0 / lengths)[:, None] * (local_points[1:] - local_points[0])
         outside = measured & ((lengths < _LOWER) | (lengths > _UPPER))
@@ -6902,18 +7115,24 @@ def _relocation_proposals(
         pulls = np.concatenate(
             (forces[outside], mean_pull) if deep else (mean_pull, forces[outside])
         )
-        before = _tetra_quality(local_points, local_metrics, local_cells)
+        before = prepared.qualities[star_rows]
         # The carrier simplices are coplanar (one facet) or collinear (one
         # curve or segment): the first spans their affine hull.
-        corners = (
-            None
-            if simplices is None
-            else source_coordinates[[state.source_vertex_rows[v] for v in simplices[0]]]
-        )
-        projection = None
-        if corners is not None:
-            span = (corners[1:] - corners[0]).T
-            projection = span @ np.linalg.lstsq(span, np.eye(3), rcond=None)[0]
+        corners = projection = None
+        if simplices is not None:
+            simplex = simplices[0]
+            frame = state.source_projections.get(simplex)
+            if frame is None:
+                corners = source_coordinates[[state.source_vertex_rows[v] for v in simplex]]
+                span = (corners[1:] - corners[0]).T
+                projection = span @ np.linalg.lstsq(
+                    span, np.eye(3, dtype=np.float64), rcond=None
+                )[0]
+                corners.setflags(write=False)
+                projection.setflags(write=False)
+                frame = corners, projection
+                state.source_projections[simplex] = frame
+            corners, projection = frame
         frames = state.source_supports
         images: _CarrierCache = {}
         if deep and np.any(outside) and not constant_metric:
@@ -7021,7 +7240,7 @@ def _relocation_proposals(
 
         def evaluate(
             point: np.ndarray, metric: np.ndarray
-        ) -> tuple[np.ndarray, np.ndarray] | None:
+        ) -> tuple[np.ndarray, tuple[tuple[int, ...], tuple[int, ...]]] | None:
             # Star quality is the last objective component, not a separate
             # monotonicity constraint: a strict band improvement may lower
             # quality, provided every cell still clears the determinant floor.
@@ -7042,7 +7261,7 @@ def _relocation_proposals(
                 float(np.min(after)) > float(np.min(before)) + _IMPROVEMENT
             ):
                 return None
-            return after, moved_lengths
+            return after, after_band
 
         # Frames above are local to this vertex's source carrier.
         # Distinct pulls and backtracking steps can round to the very same
@@ -7086,26 +7305,37 @@ def _relocation_proposals(
             if size:
                 yield np.concatenate(batch)
 
+        goal_batches = fresh_goals()
+        first_screen: _RelocationScreenRequest | None = None
+        if prefetch_screens and local_constant:
+            first_goals = next(goal_batches, None)
+            if first_goals is not None:
+                first_screen = _RelocationScreenRequest(
+                    first_goals, local_points, local_metrics, local_cells, spokes,
+                    measured, before_band, before_quality, evaluate,
+                    np.zeros((first_goals.shape[0],), dtype=np.bool_),
+                )
+                pending_screens.append(first_screen)
+
+        def screened_goals() -> Iterator[np.ndarray]:
+            if first_screen is not None:
+                yield first_screen.goals[first_screen.admitted]
+            per_goal = 96 * spokes.shape[0] + 320 * local_cells.shape[0]
+            limit = max(1, _SCREEN_WORK_BYTES // max(per_goal, 1))
+            for goals in goal_batches:
+                for start in range(0, goals.shape[0], limit):
+                    block = goals[start : start + limit]
+                    yield block[
+                        _screen_relocation_goals(
+                            block, local_points, local_metrics, local_cells, spokes,
+                            measured, before_band, before_quality, band_only,
+                            constant_metric, evaluate,
+                        )
+                    ]
+
         def candidate_goals() -> Iterator[tuple[np.ndarray, bool]]:
             prepared: list[np.ndarray] = []
-            for goals in fresh_goals():
-                # Constant fields screen with the current tensor; graded
-                # fields must first locate the candidate's source tensor.
-                admitted = goals[
-                    _screen_relocation_goals(
-                        goals,
-                        local_points,
-                        local_metrics,
-                        local_cells,
-                        spokes,
-                        measured,
-                        before_band,
-                        before_quality,
-                        band_only,
-                        constant_metric,
-                        evaluate,
-                    )
-                ]
+            for admitted in screened_goals():
                 if refine:
                     prepared.extend(admitted)
                 for goal in admitted:
@@ -7139,6 +7369,21 @@ def _relocation_proposals(
                     candidates = (
                         choices if remaining else (() if first is None else (first,))
                     )
+                elif deep:
+                    candidates = tuple(
+                        islice(
+                            _quantized_relocation_candidates(
+                                state,
+                                simplices,
+                                goal,
+                                local_points[0],
+                                frames=frames,
+                                images=images,
+                                coarse_and_fine=True,
+                            ),
+                            2,
+                        )
+                    )
                 else:
                     quantized = _quantized_relocation(
                         state,
@@ -7148,24 +7393,7 @@ def _relocation_proposals(
                         frames=frames,
                         images=images,
                     )
-                    if deep:
-                        fine = next(
-                            _quantized_relocation_candidates(
-                                state,
-                                simplices,
-                                goal,
-                                local_points[0],
-                                frames=frames,
-                                images=images,
-                                fine_first=True,
-                            ),
-                            None,
-                        )
-                        candidates = tuple(
-                            value for value in (quantized, fine) if value is not None
-                        )
-                    else:
-                        candidates = () if quantized is None else (quantized,)
+                    candidates = () if quantized is None else (quantized,)
                 admitted: list[tuple[Any, dict[str, Any]]] = []
                 for stencil, carrier in candidates:
                     if np.array_equal(carrier, local_points[0]) or np.any(
@@ -7186,7 +7414,8 @@ def _relocation_proposals(
                     evaluated = evaluate(carrier, moved_metric)
                     if evaluated is None:
                         continue
-                    after, moved_lengths = evaluated
+                    after, after_band = evaluated
+                    after_quality = float(np.min(after))
                     current_stencil = None
                     if periodic_star is not None:
                         if star_records is None:
@@ -7214,15 +7443,12 @@ def _relocation_proposals(
                         "star_cell_ids": star_ids,
                         "star_vertices": frozenset((vertex, *neighbors)),
                         "cavity": frozenset(star_ids),
-                        "gain": float(np.min(after) - np.min(before)),
+                        "gain": after_quality - before_quality,
                         "badness": float(np.max(np.maximum(lengths, 1.0 / lengths))),
                         "block": next(iter(star_blocks)),
                         "region": next(iter(star_regions)),
                     }
-                    key = (
-                        _band_violations(moved_lengths[measured]),
-                        -float(np.min(after)),
-                    )
+                    key = (after_band, -after_quality)
                     admitted.append((key, proposal))
                 # At most the finite binary64 dyadic resolutions for one goal.
                 # Stable sorting preserves the previous first-best proposal.
@@ -7237,6 +7463,16 @@ def _relocation_proposals(
         topology.vertex_cells if violating_vertices is None else violating_vertices,
         key=lambda value: state.vertex_target_ids[value],
     )
+    if prefetch_screens:
+        # No native edit occurs until every proposal has been collected.
+        # Screen only a bounded group before constructing the next group.
+        for start in range(0, len(order), 16):
+            for vertex in order[start : start + 16]:
+                if vertex not in cache:
+                    cache[vertex] = propose(vertex)
+            if pending_screens:
+                _screen_relocation_batch(pending_screens)
+                pending_screens.clear()
     for vertex in order:
         # A deep search can be costly; don't construct another proposal whose
         # star cannot be batched with one already found. Deferred stars are

@@ -2128,7 +2128,7 @@ def test_relocation_screen_matches_scalar_star_admission(band_only: bool) -> Non
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
         dtype=np.float64,
     )
-    metrics = np.broadcast_to(4.0 * np.eye(3), (4, 3, 3)).copy()
+    metrics = np.broadcast_to(4.0 * np.eye(3, dtype=np.float64), (4, 3, 3)).copy()
     cells = np.asarray(((0, 1, 2, 3),), dtype=np.int64)
     spokes = np.asarray(((0, 1), (0, 2), (0, 3)), dtype=np.int64)
     measured = np.ones(3, dtype=np.bool_)
@@ -2178,6 +2178,42 @@ def test_relocation_screen_matches_scalar_star_admission(band_only: bool) -> Non
     assert actual[0]
     assert not actual[1]
     assert not actual[2]
+    if band_only:
+        points_extra = np.concatenate(
+            (points, np.asarray(((2.0, 2.0, 2.0),), dtype=np.float64))
+        )
+        metrics_extra = np.broadcast_to(
+            4.0 * np.eye(3, dtype=np.float64), (5, 3, 3)
+        ).copy()
+        spokes_extra = np.concatenate(
+            (spokes, np.asarray(((0, 4),), dtype=np.int64))
+        )
+        measured_extra = np.asarray((True, True, True, False), dtype=np.bool_)
+        first = metric._RelocationScreenRequest(
+            goals, points, metrics, cells, spokes, measured, before_band,
+            before_quality, evaluate, np.zeros(goals.shape[0], dtype=np.bool_),
+        )
+        second = metric._RelocationScreenRequest(
+            goals, points_extra, metrics_extra, cells, spokes_extra, measured_extra,
+            before_band, before_quality, evaluate, np.zeros(goals.shape[0], dtype=np.bool_),
+        )
+        metric._screen_relocation_batch([first, second])
+        np.testing.assert_array_equal(first.admitted, expected)
+        np.testing.assert_array_equal(second.admitted, expected)
+
+
+def test_relocation_deep_goals_keep_pull_order_across_blocks() -> None:
+    point = np.zeros(3, dtype=np.float64)
+    pulls = np.asarray(((1.0, 0.0, 0.0), (0.0, 2.0, 0.0)), dtype=np.float64)
+    expected = []
+    for pull in pulls:
+        for step in range(2100):
+            goal = point + np.ldexp(pull, -step)
+            if np.array_equal(goal, point):
+                break
+            expected.append(goal)
+    actual = np.concatenate(list(_relocation_goals(point, pulls)))
+    np.testing.assert_array_equal(actual, np.asarray(expected))
 
 
 def test_relocation_seed_goals_keep_pull_and_backtrack_order() -> None:
@@ -2359,6 +2395,19 @@ def test_relocation_can_refine_coarse_source_carriers() -> None:
     assert coarse is not None
     assert np.linalg.norm(fine[1] - goal) < np.linalg.norm(coarse[1] - goal)
     assert fine[0] != coarse[0]
+    combined = _quantized_relocation_candidates(
+        state, None, goal, current, coarse_and_fine=True
+    )
+    actual_coarse, actual_fine = next(combined), next(combined)
+    assert actual_coarse[0] == coarse[0]
+    assert actual_fine[0] == fine[0]
+    np.testing.assert_array_equal(actual_coarse[1], coarse[1])
+    np.testing.assert_array_equal(actual_fine[1], fine[1])
+    assert not list(
+        _quantized_relocation_candidates(
+            state, None, np.asarray((3.0, 3.0, 3.0)), current, coarse_and_fine=True
+        )
+    )
 
 
 def test_deep_boundary_relocation_keeps_affine_projection() -> None:
@@ -2367,6 +2416,35 @@ def test_deep_boundary_relocation_keeps_affine_projection() -> None:
         state, {}, deep=True, active_only=True, band_only=True
     )
     assert proposals
+
+
+@pytest.mark.parametrize("vertex", [0, 13, 26])
+def test_relocation_reuses_unoriented_constant_metric_spokes(vertex: int) -> None:
+    from phydrax.meshing import _tetra_metric as metric
+
+    tensor = np.asarray(
+        ((4.0, 0.5, -0.25), (0.5, 3.0, 0.125), (-0.25, 0.125, 2.0)),
+        dtype=np.float64,
+    )
+    state = _state(_source(), tensor)
+    prepared = metric._prepare_relocation_geometry(state)
+    edges = tuple(prepared.topology.edge_cells)
+    incident = prepared.incident_edges[vertex]
+    neighbors = sorted(
+        second if first == vertex else first
+        for first, second in (edges[index] for index in incident)
+    )
+    rows = np.asarray(
+        [prepared.topology.vertex_row[value] for value in (vertex, *neighbors)],
+        dtype=np.int64,
+    )
+    spokes = np.column_stack(
+        (np.zeros(len(neighbors), dtype=np.int64),
+         np.arange(1, len(neighbors) + 1, dtype=np.int64))
+    )
+    expected = metric._metric_lengths(prepared.points[rows], prepared.metrics[rows], spokes)
+    np.testing.assert_array_equal(np.take(prepared.lengths, incident), expected)
+    state.native.close()
 
 
 def test_active_relocation_prepares_only_violating_vertex_stars(
@@ -2403,6 +2481,7 @@ def test_relocation_preparation_reuses_only_identical_incidence() -> None:
     state = _state(_source(), np.eye(3) * 4.0)
     original = state.snapshot
     prepared = metric._prepare_relocation_geometry(state)
+    metric._relocation_proposals(state, {}, prepared=prepared)
     state.snapshot = original._replace(points=original.points.copy())
     unchanged = metric._prepare_relocation_geometry(state, previous=(original, prepared))
     assert unchanged.topology is prepared.topology
@@ -2410,6 +2489,7 @@ def test_relocation_preparation_reuses_only_identical_incidence() -> None:
     assert unchanged.protected is prepared.protected
     assert unchanged.records is prepared.records
     np.testing.assert_array_equal(unchanged.lengths, prepared.lengths)
+    np.testing.assert_array_equal(unchanged.qualities, prepared.qualities)
 
     vertex = int(original.vertex_ids[0])
     points = original.points.copy()
@@ -2426,6 +2506,14 @@ def test_relocation_preparation_reuses_only_identical_incidence() -> None:
     np.testing.assert_array_equal(updated.points, expected_points)
     np.testing.assert_array_equal(updated.metrics, expected_metrics)
     np.testing.assert_array_equal(updated.lengths, expected_lengths)
+    np.testing.assert_array_equal(
+        updated.qualities,
+        metric._tetra_quality(
+            expected_points, expected_metrics,
+            np.asarray(state.snapshot.tetrahedra, dtype=np.int64),
+        ),
+    )
+    assert np.any(updated.qualities != prepared.qualities)
     state.metric_by_vertex[vertex] = old_metric
 
     state.snapshot = original._replace(
@@ -2439,6 +2527,15 @@ def test_relocation_preparation_reuses_only_identical_incidence() -> None:
         changed.topology.cell_vertex_ids,
         metric._topology(state.snapshot).cell_vertex_ids,
     )
+    reused = metric._relocation_proposals(state, {}, prepared=changed)
+    fresh = metric._relocation_proposals(state, {})
+    assert len(reused) == len(fresh)
+    for first, second in zip(reused, fresh, strict=True):
+        assert len(first) == len(second)
+        for left, right in zip(first, second, strict=True):
+            assert left["vertex"] == right["vertex"]
+            assert left["stencil"] == right["stencil"]
+            np.testing.assert_array_equal(left["point"], right["point"])
 
 
 def test_relocation_reuses_identical_projected_goals(

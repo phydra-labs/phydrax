@@ -300,8 +300,9 @@
   partitions are computed once per source preparation; generic curve boxes
   reuse one prepared interval program; and per-face, per-edge and
   per-intersection-curve projection data is prepared once per projection call.
-- Tetrahedral metric relocation screens candidate goals in bounded blocks and
-  reuses equal endpoint metric lengths, reducing per-candidate host overhead.
+- Tetrahedral metric relocation screens bounded batches across independent
+  vertex stars, reuses source projections and incidence, and shares edge
+  lengths, cell qualities, exact carrier locations, and band results.
 - Exact geometric decisions are screened in binary64 before exact arithmetic,
   with unchanged results. The native zero-set band admission refuses a triangle
   as soon as its largest-residual point cannot be certified and reuses identical
