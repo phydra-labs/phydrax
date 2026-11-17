@@ -1,11 +1,14 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 """Fused exact symmetric-polynomial proofs and canonical control identities.
 
-A digest hashes UTF-8 ``phydrax-exact-controls\n`` followed, for each
-control in Bernstein order, by its number of nonzero radical terms and a
-newline, then ``radicand:numerator/denominator\n`` for each term in ascending
-radicand order. Rational values use radicand 1; zero has no terms. Fractions
-are reduced with positive denominator. The result is prefixed ``sha256:``.
+Rational nets hash the primitive common-denominator representation: the prefix
+``phydrax-exact-controls\\0R``, an eight-byte big-endian control count, the
+framed positive denominator, then each framed signed numerator in control
+order. Magnitudes are minimal big-endian bytes prefixed by an eight-byte length;
+signed integers add a leading sign byte (zero is nonnegative). Nets containing
+irrational radicals use the ``\\0A`` prefix, followed by the control count;
+each control then has an eight-byte term count and its sorted canonical terms,
+each comprising a framed radicand, signed numerator, and positive denominator.
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ import hashlib
 from array import array
 from collections.abc import Mapping, Sequence
 from fractions import Fraction
-from math import lcm
+from math import gcd, lcm
 from typing import cast, TYPE_CHECKING
 
 from ._exact_kernels import (
@@ -33,23 +36,54 @@ if TYPE_CHECKING:
     from .discretization._exact_algebraic_geometry import ExactScalar
 
 
+def _magnitude(value: int, /) -> bytes:
+    magnitude = abs(value)
+    data = magnitude.to_bytes((magnitude.bit_length() + 7) // 8, "big")
+    return len(data).to_bytes(8, "big") + data
+
+
+def _signed(value: int, /) -> bytes:
+    return bytes((int(value < 0),)) + _magnitude(value)
+
+
 def control_digest(controls: Sequence[ExactScalar], /) -> str:
-    """Digest an ordered exact control net, including radical-valued controls."""
+    """Digest exact control values in their canonical Bernstein order."""
     from .discretization._exact_algebraic_geometry import RadicalElement
 
-    digest = hashlib.sha256(b"phydrax-exact-controls\n")
+    rational: list[Fraction] = []
     for value in controls:
         if isinstance(value, RadicalElement):
-            terms = value.terms
+            if any(radicand != 1 for radicand, _ in value.terms):
+                break
+            rational.append(value.terms[0][1] if value.terms else Fraction(0))
         else:
-            rational = Fraction(value)
-            terms = ((1, rational),) if rational else ()
-        digest.update(f"{len(terms)}\n".encode())
-        for radicand, coefficient in terms:
-            digest.update(
-                f"{radicand}:{coefficient.numerator}/{coefficient.denominator}\n".encode()
+            rational.append(Fraction(value))
+    if len(rational) == len(controls):
+        scale = lcm(*(value.denominator for value in rational))
+        numerators = tuple(
+            value.numerator * (scale // value.denominator) for value in rational
+        )
+        divisor = gcd(scale, *numerators)
+        payload = bytearray(b"phydrax-exact-controls\0R")
+        payload.extend(len(controls).to_bytes(8, "big"))
+        payload.extend(_magnitude(scale // divisor))
+        for value in numerators:
+            payload.extend(_signed(value // divisor))
+    else:
+        payload = bytearray(b"phydrax-exact-controls\0A")
+        payload.extend(len(controls).to_bytes(8, "big"))
+        for value in controls:
+            terms = (
+                value.terms
+                if isinstance(value, RadicalElement)
+                else (((1, Fraction(value)),) if value else ())
             )
-    return "sha256:" + digest.hexdigest()
+            payload.extend(len(terms).to_bytes(8, "big"))
+            for radicand, coefficient in terms:
+                payload.extend(_magnitude(radicand))
+                payload.extend(_signed(coefficient.numerator))
+                payload.extend(_magnitude(coefficient.denominator))
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
 type _Polynomial = Mapping[tuple[int, ...], ExactScalar]
@@ -100,11 +134,7 @@ def symmetric_jacobian_verdicts(
         if any(k > 715827882 for entry in entries for index in entry for k in index):
             continue
         scale = lcm(
-            *(
-                Fraction(v).denominator
-                for entry in rational_entries
-                for v in entry.values()
-            )
+            *(v.denominator for entry in rational_entries for v in entry.values())
         )
         prepared.append((row, rational_entries, scale))
     if not prepared or not meshcore_available():
@@ -112,17 +142,17 @@ def symmetric_jacobian_verdicts(
     pending = prepared
     for limbs in _WORD_LIMBS:
         eligible = []
+        deferred = []
         for item in pending:
             _, entries, scale = item
             if scale.bit_length() <= 64 * limbs - 1 and all(
-                abs(
-                    Fraction(v).numerator * (scale // Fraction(v).denominator)
-                ).bit_length()
-                <= 64 * limbs - 1
+                abs(v.numerator * (scale // v.denominator)).bit_length() <= 64 * limbs - 1
                 for entry in entries
                 for v in entry.values()
             ):
                 eligible.append(item)
+            else:
+                deferred.append(item)
         if not eligible:
             continue
         offsets = [0]
@@ -131,11 +161,8 @@ def symmetric_jacobian_verdicts(
         for _, entries, scale in eligible:
             for entry in entries:
                 for index, value in entry.items():
-                    rational = Fraction(value)
                     exponents.extend(index)
-                    coefficients.append(
-                        rational.numerator * (scale // rational.denominator)
-                    )
+                    coefficients.append(value.numerator * (scale // value.denominator))
                 offsets.append(len(coefficients))
         count = len(eligible)
         digests = ctypes.create_string_buffer(count * dimension * 32)
@@ -157,6 +184,7 @@ def symmetric_jacobian_verdicts(
         )
         _raise_for_call(call, "symmetric_polynomial_verdicts")
         status_values, verdict_values = array("i", statuses.raw), array("i", verdicts.raw)
+        digest_bytes = digests.raw
         retry = []
         for position, item in enumerate(eligible):
             row = item[0]
@@ -168,9 +196,9 @@ def symmetric_jacobian_verdicts(
             results[row] = tuple(
                 (
                     verdict_values[position * dimension + m] == 1,
-                    "sha256:" + digests.raw[base + m * 32 : base + (m + 1) * 32].hex(),
+                    "sha256:" + digest_bytes[base + m * 32 : base + (m + 1) * 32].hex(),
                 )
                 for m in range(dimension)
             )
-        pending = [item for item in pending if item not in eligible] + retry
+        pending = deferred + retry
     return results

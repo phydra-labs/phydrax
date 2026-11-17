@@ -1,6 +1,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 from __future__ import annotations
 
+import hashlib
 import random
 from fractions import Fraction
 
@@ -111,6 +112,20 @@ def test_digest_radical_and_rational_identity() -> None:
     )
 
 
+def test_control_identity_uses_primitive_integer_net() -> None:
+    payload = (
+        b"phydrax-exact-controls\0R"
+        b"\0\0\0\0\0\0\0\3"
+        b"\0\0\0\0\0\0\0\1\6"
+        b"\0\0\0\0\0\0\0\0\1\4"
+        b"\1\0\0\0\0\0\0\0\1\1"
+        b"\0\0\0\0\0\0\0\0\0"
+    )
+    assert control_digest([Fraction(2, 3), Fraction(-1, 6), Fraction(0)]) == (
+        "sha256:" + hashlib.sha256(payload).hexdigest()
+    )
+
+
 def test_nonpositive_and_typed_refusal() -> None:
     zero = (0,)
     matrices: list[tuple[tuple[e.Polynomial, ...], ...]] = [
@@ -165,6 +180,22 @@ def test_large_denominator_and_gcd_reduction() -> None:
     expected = _reference(matrix, "box")
     assert symmetric_jacobian_verdicts([matrix], "box", 3) == [expected]
     assert all(positive for positive, _ in expected)
+
+
+def test_large_rational_nets_match_exact_reference() -> None:
+    rng = random.Random(91831)
+    matrices: list[tuple[tuple[e.Polynomial, ...], ...]] = []
+    for _ in range(32):
+        denominator = rng.getrandbits(180) | 1
+        polynomial: e.Polynomial = {
+            (0,): Fraction(rng.getrandbits(150) - (1 << 149), denominator),
+            (1,): Fraction(rng.getrandbits(150) - (1 << 149), denominator),
+            (2,): Fraction(rng.getrandbits(150) - (1 << 149), denominator),
+        }
+        matrices.append(((polynomial,),))
+    assert symmetric_jacobian_verdicts(matrices, "box", 1) == [
+        _reference(matrix, "box") for matrix in matrices
+    ]
 
 
 def test_oracle_rejects_omitted_minor_term_and_control_reordering() -> None:

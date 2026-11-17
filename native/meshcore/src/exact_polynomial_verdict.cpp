@@ -7,7 +7,6 @@
 #include <array>
 #include <bit>
 #include <cstdint>
-#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <string>
@@ -66,7 +65,76 @@ void shift(Big& a, uint32_t bit) {
   if (carry) a.push_back(uint32_t(carry));
 }
 
+size_t trailing_bits(const Big& a) {
+  size_t i = 0;
+  while (a[i] == 0) ++i;
+  return i * 32 + std::countr_zero(a[i]);
+}
+
+void shift_right(Big& a, size_t bits) {
+  const size_t words = bits / 32;
+  const unsigned rem = bits % 32;
+  for (size_t i = 0; i + words < a.size(); ++i) {
+    uint64_t v = a[i + words];
+    if (rem && i + words + 1 < a.size()) v |= uint64_t(a[i + words + 1]) << 32;
+    a[i] = uint32_t(v >> rem);
+  }
+  a.resize(a.size() - words);
+  trim(a);
+}
+
+void shift_left(Big& a, size_t bits) {
+  if (a.empty()) return;
+  const size_t words = bits / 32;
+  const unsigned rem = bits % 32;
+  if (words) a.insert(a.begin(), words, 0);
+  if (rem) {
+    uint64_t carry = 0;
+    for (auto& word : a) {
+      uint64_t v = (uint64_t(word) << rem) | carry;
+      word = uint32_t(v);
+      carry = v >> 32;
+    }
+    if (carry) a.push_back(uint32_t(carry));
+  }
+}
+
 Big divide(const Big& a, const Big& b, Big& remainder) {
+  if (b.size() == 1 && std::has_single_bit(b[0])) {
+    const unsigned bits = std::countr_zero(b[0]);
+    remainder.clear();
+    if (!a.empty()) {
+      const uint32_t low = a[0] & (b[0] - 1);
+      if (low) remainder.push_back(low);
+    }
+    Big q = a;
+    if (!q.empty()) shift_right(q, bits);
+    return q;
+  }
+  if (b.size() == 1) {
+    Big q(a.size());
+    uint64_t r = 0;
+    for (size_t i = a.size(); i-- > 0;) {
+      uint64_t v = (r << 32) | a[i];
+      q[i] = uint32_t(v / b[0]);
+      r = v % b[0];
+    }
+    trim(q);
+    remainder.clear();
+    if (r) remainder.push_back(uint32_t(r));
+    return q;
+  }
+  const size_t bits = trailing_bits(b);
+  if (bits == (b.size() - 1) * 32 + std::countr_zero(b.back()) &&
+      std::has_single_bit(b.back())) {
+    Big q = a;
+    remainder.assign(a.begin(), a.begin() + std::min(a.size(), bits / 32));
+    if (bits % 32 && bits / 32 < a.size())
+      remainder.push_back(a[bits / 32] & ((uint32_t{1} << (bits % 32)) - 1));
+    trim(remainder);
+    if (bits / 32 >= q.size()) q.clear(); else shift_right(q, bits);
+    return q;
+  }
   Big q(a.size(), 0);
   remainder.clear();
   for (size_t bit = a.size() * 32; bit-- > 0;) {
@@ -81,12 +149,20 @@ Big divide(const Big& a, const Big& b, Big& remainder) {
 }
 
 Big gcd(Big a, Big b) {
-  while (!b.empty()) {
-    Big r;
-    divide(a, b, r);
-    a = std::move(b);
-    b = std::move(r);
-  }
+  if (a.empty()) return b;
+  if (b.empty()) return a;
+  const size_t common = std::min(trailing_bits(a), trailing_bits(b));
+  if (a.size() == 1 && std::has_single_bit(a[0]))
+    return Big{uint32_t{1} << common};
+  if (b.size() == 1 && std::has_single_bit(b[0]))
+    return Big{uint32_t{1} << common};
+  shift_right(a, trailing_bits(a));
+  do {
+    shift_right(b, trailing_bits(b));
+    if (cmp(a, b) > 0) std::swap(a, b);
+    subtract(b, a);
+  } while (!b.empty());
+  shift_left(a, common);
   return a;
 }
 
@@ -105,27 +181,6 @@ Big multiply(const Big& a, const Big& b) {
   return out;
 }
 
-std::string decimal(Big a) {
-  if (a.empty()) return "0";
-  std::vector<uint32_t> parts;
-  while (!a.empty()) {
-    uint64_t r = 0;
-    for (size_t i = a.size(); i-- > 0;) {
-      uint64_t x = (r << 32) | a[i];
-      a[i] = uint32_t(x / 1000000000);
-      r = x % 1000000000;
-    }
-    parts.push_back(uint32_t(r));
-    trim(a);
-  }
-  std::string s = std::to_string(parts.back());
-  char buffer[10];
-  for (size_t i = parts.size() - 1; i-- > 0;) {
-    std::snprintf(buffer, sizeof(buffer), "%09u", static_cast<unsigned>(parts[i]));
-    s += buffer;
-  }
-  return s;
-}
 // FIPS 180-4 SHA-256, with input assembled in the public canonical encoding.
 std::array<uint8_t, 32> sha256(const std::string& text) {
   static constexpr uint32_t k[64] = {
@@ -231,25 +286,38 @@ bool control_shape(int dimension, int domain, const int32_t* indices, int64_t co
   return true;
 }
 
+void append_u64(std::string& text, uint64_t value) {
+  for (int i = 7; i >= 0; --i) text.push_back(char(value >> (8 * i)));
+}
+
+void append_magnitude(std::string& text, const Big& value) {
+  size_t bytes = value.size() * 4;
+  if (bytes) bytes -= std::countl_zero(value.back()) / 8;
+  append_u64(text, bytes);
+  for (size_t i = bytes; i-- > 0;)
+    text.push_back(char(value[i / 4] >> ((i % 4) * 8)));
+}
+
 std::array<uint8_t, 32> control_hash(const std::vector<uint8_t>& controls, int width,
                                      int64_t count, const Big& scale) {
-  std::string text = "phydrax-exact-controls\n";
+  Big divisor = scale;
+  for (int64_t j = 0; j < count && !(divisor.size() == 1 && divisor[0] == 1); ++j) {
+    bool negative = false;
+    Big numerator = integer(controls.data() + j * width, width, negative);
+    if (!numerator.empty()) divisor = gcd(std::move(divisor), std::move(numerator));
+  }
+  const bool reduced = divisor.size() == 1 && divisor[0] == 1;
+  Big remainder;
+  const Big denominator = reduced ? scale : divide(scale, divisor, remainder);
+  std::string text("phydrax-exact-controls\0R", 24);
+  append_u64(text, uint64_t(count));
+  append_magnitude(text, denominator);
   for (int64_t j = 0; j < count; ++j) {
     bool negative = false;
     Big numerator = integer(controls.data() + j * width, width, negative);
-    if (numerator.empty()) {
-      text += "0\n";
-      continue;
-    }
-    Big divisor = gcd(numerator, scale), remainder;
-    Big num = divide(numerator, divisor, remainder);
-    Big denom = divide(scale, divisor, remainder);
-    text += "1\n1:";
-    if (negative) text += '-';
-    text += decimal(num);
-    text += '/';
-    text += decimal(denom);
-    text += '\n';
+    if (!reduced && !numerator.empty()) numerator = divide(numerator, divisor, remainder);
+    text.push_back(negative && !numerator.empty() ? '\1' : '\0');
+    append_magnitude(text, numerator);
   }
   return sha256(text);
 }
