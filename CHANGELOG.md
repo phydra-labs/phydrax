@@ -252,6 +252,9 @@
 - Source preparation reuses exact patch and spline-span proofs only for the
   same unchanged live source. Rebuilt sources reprove their own content;
   per-target trim partitions and per-box interval bounds remain independent.
+- Oriented boundary proofs batch exact integer evaluations of simplex facet
+  traces and tetrahedron vertex links, without changing contact decisions,
+  finding order, or evidence encodings.
 - Native B-Rep projection reuses the selected intersection curve's fixed-shape
   tangent, while host trim fallback and surface-box validation avoid repeated
   eager dispatch. Trim realization and projection frame bits, and therefore
