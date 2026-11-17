@@ -679,45 +679,61 @@ def _use_source_parameter(
     return start + parameter * (stop - start)
 
 
+def _use_chart_points(
+    use: domain_owner.PatchCurveUse | domain_owner.PatchPoleUse,
+    parameters: tuple[Fraction, ...],
+    /,
+) -> tuple[tuple[Fraction, Fraction], ...]:
+    from phydrax.geometry.brep._boolean_core import line_chart_coefficients
+
+    if not parameters:
+        return ()
+    closes = isinstance(use, domain_owner.PatchCurveUse) and use.closes_chart_loop()
+    native = tuple(
+        _use_source_parameter(
+            use, Fraction(0) if closes and parameter == 1 else parameter
+        )
+        for parameter in parameters
+    )
+    points = domain_owner._pcurve_points(
+        use.pcurve, np.asarray([float(value) for value in native], dtype=np.float64)
+    )
+    chart = line_chart_coefficients(use.pcurve)
+    result: list[tuple[Fraction, Fraction]] = []
+    for native_exact, uv in zip(native, points, strict=True):
+        if not np.all(np.isfinite(uv)):
+            raise ValueError("Source p-curve evaluation must remain finite.")
+        if chart is None:
+            result.append(
+                (Fraction.from_float(float(uv[0])), Fraction.from_float(float(uv[1])))
+            )
+        else:
+            origin, direction = chart
+            values = tuple(
+                coordinate + slope * native_exact
+                if isinstance(coordinate, Fraction)
+                else Fraction.from_float(float(uv[axis]))
+                for axis, (coordinate, slope) in enumerate(
+                    zip(origin, direction, strict=True)
+                )
+            )
+            result.append((values[0], values[1]))
+    return tuple(result)
+
+
 def _use_chart_point(
     use: domain_owner.PatchCurveUse | domain_owner.PatchPoleUse,
     parameter: Fraction,
     /,
 ) -> tuple[Fraction, Fraction]:
-    # A use closing its chart loop returns to its start chart point exactly.
-    if (
-        parameter == 1
-        and isinstance(use, domain_owner.PatchCurveUse)
-        and use.closes_chart_loop()
-    ):
-        parameter = Fraction(0)
-    from phydrax.geometry.brep._boolean_core import line_chart_coefficients
-
-    native_exact = _use_source_parameter(use, parameter)
-    native = float(native_exact)
-    uv = np.asarray(
-        use.pcurve.evaluate(jnp.asarray(native, dtype=jnp.float64)),
-        dtype=np.float64,
-    ).reshape((2,))
-    if not np.all(np.isfinite(uv)):
-        raise ValueError("Source p-curve evaluation must remain finite.")
-    chart = line_chart_coefficients(use.pcurve)
-    if chart is None:
-        return Fraction.from_float(float(uv[0])), Fraction.from_float(float(uv[1]))
-    origin, direction = chart
-    values = tuple(
-        coordinate + slope * native_exact
-        if isinstance(coordinate, Fraction)
-        else Fraction.from_float(float(uv[axis]))
-        for axis, (coordinate, slope) in enumerate(zip(origin, direction, strict=True))
-    )
-    return values[0], values[1]
+    return _use_chart_points(use, (parameter,))[0]
 
 
 def _canonical_use_endpoints(
     use: domain_owner.PatchCurveUse | domain_owner.PatchPoleUse, /
 ) -> tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]]:
-    return _use_chart_point(use, Fraction(0)), _use_chart_point(use, Fraction(1))
+    points = _use_chart_points(use, (Fraction(0), Fraction(1)))
+    return points[0], points[1]
 
 
 def _curved_use_box_corners(
@@ -836,13 +852,21 @@ def _chart_inputs(
                 )
                 rows: list[int] = []
                 uv_values: list[tuple[Fraction, Fraction]] = []
+                interior = iter(
+                    _use_chart_points(
+                        use,
+                        tuple(
+                            value for value in traversal_parameters if value not in (0, 1)
+                        ),
+                    )
+                )
                 for parameter in traversal_parameters:
                     if parameter == 0:
                         uv = first_endpoint if use.sense > 0 else last_endpoint
                     elif parameter == 1:
                         uv = last_endpoint if use.sense > 0 else first_endpoint
                     else:
-                        uv = _use_chart_point(use, parameter)
+                        uv = next(interior)
                     row = point_row(uv)
                     rows.append(row)
                     uv_values.append(uv)
@@ -2697,14 +2721,20 @@ def _use_point(
     )[0]
 
 
-def _source_curve_point(
+def _source_curve_points(
     domain: domain_owner.MeshingDomain,
     curve: int,
-    parameter: Fraction,
+    parameters: tuple[Fraction, ...],
     /,
 ) -> np.ndarray:
     patch, use = _curve_owner_use(domain, curve)
-    return _use_point(domain, patch, use, parameter)
+    chart_points = _use_chart_points(use, parameters)
+    return domain.evaluate(
+        np.full(len(parameters), patch, dtype=np.int64),
+        np.asarray(
+            [[float(value) for value in uv] for uv in chart_points], dtype=np.float64
+        ),
+    )
 
 
 def _box_chord_bound(
@@ -3652,8 +3682,8 @@ def _pole_ring_stops(
     for neighbor in (loop[use_index - 1], loop[(use_index + 1) % len(loop)]):
         if not isinstance(neighbor, domain_owner.PatchCurveUse):
             continue
-        for parameter in parameters_by_curve.get(neighbor.curve, ()):
-            point = _use_chart_point(neighbor, parameter)
+        parameters = parameters_by_curve.get(neighbor.curve, ())
+        for point in _use_chart_points(neighbor, tuple(parameters)):
             offset = (point[fixed_axis] - pole) / span
             if point[free_axis] in ends and 0 < offset < alpha_limit:
                 stops[offset] = point[fixed_axis]
@@ -4121,7 +4151,7 @@ def _integrate_pole_ring_parameters(
                 first, last = _canonical_use_endpoints(use)
                 # A ring point already sampled on the curve keeps its parameter:
                 # its chart inverse may differ from it in the last bits.
-                known = {_use_chart_point(use, value) for value in parameters}
+                known = set(_use_chart_points(use, tuple(parameters)))
                 for pole_use_index, _pole_use in poles:
                     pole_chart = pole_charts[(patch, loop_index, pole_use_index)]
                     ring_points = (
@@ -4247,6 +4277,7 @@ def _add_global_vertex(
     source_parameters: list[tuple[float, float]],
     /,
     chart_point: np.ndarray | None = None,
+    source_point: np.ndarray | None = None,
 ) -> int:
     key = _global_vertex_key(domain, chart, local_row)
     uv = chart.points[local_row]
@@ -4258,7 +4289,9 @@ def _add_global_vertex(
         dimension, index = 1, int(key[1])
         source_parameter = key[2]
         assert isinstance(source_parameter, Fraction)
-        point = _source_curve_point(domain, index, source_parameter)
+        if source_point is None:
+            raise ValueError("Missing canonical source-curve point.")
+        point = source_point
         if chart_point is None:
             chart_point = domain.evaluate(
                 np.asarray((chart.patch,), dtype=np.int64),
@@ -4318,11 +4351,11 @@ def _chart_vertex_points(
     chart: _ChartMesh,
     rows: list[int],
     /,
-) -> dict[int, np.ndarray]:
-    """Evaluate new non-corner chart vertices in one source batch."""
+) -> tuple[dict[int, np.ndarray], dict[int, np.ndarray]]:
+    """Evaluate chart vertices and their canonical source-curve images in batches."""
     selected = [row for row in rows if row not in chart.corners]
     if not selected:
-        return {}
+        return {}, {}
     points = domain.evaluate(
         np.full(len(selected), chart.patch, dtype=np.int64),
         np.asarray(
@@ -4330,7 +4363,20 @@ def _chart_vertex_points(
             dtype=np.float64,
         ),
     )
-    return dict(zip(selected, points, strict=True))
+    grouped: dict[int, list[tuple[int, Fraction]]] = {}
+    for row in selected:
+        key = _global_vertex_key(domain, chart, row)
+        if key[0] == 1:
+            parameter = key[2]
+            assert isinstance(parameter, Fraction)
+            grouped.setdefault(int(key[1]), []).append((row, parameter))
+    source_points: dict[int, np.ndarray] = {}
+    for curve, entries in grouped.items():
+        values = _source_curve_points(domain, curve, tuple(value for _, value in entries))
+        source_points.update(
+            (row, point) for (row, _), point in zip(entries, values, strict=True)
+        )
+    return dict(zip(selected, points, strict=True)), source_points
 
 
 def _chart_triangles(
@@ -4547,7 +4593,9 @@ def _refine_charts(
     }
     local_rows: list[dict[int, int]] = []
     for chart in charts:
-        chart_points = _chart_vertex_points(domain, chart, list(range(len(chart.points))))
+        chart_points, source_points = _chart_vertex_points(
+            domain, chart, list(range(len(chart.points)))
+        )
         local_rows.append(
             {
                 row: _add_global_vertex(
@@ -4560,6 +4608,7 @@ def _refine_charts(
                     source_indices,
                     source_parameters,
                     chart_points.get(row),
+                    source_points.get(row),
                 )
                 for row in range(len(chart.points))
             }
@@ -4900,7 +4949,9 @@ def _refine_charts(
                 requested[edge] = local_row
             if not requested:
                 continue
-            chart_points = _chart_vertex_points(domain, chart, list(requested.values()))
+            chart_points, source_points = _chart_vertex_points(
+                domain, chart, list(requested.values())
+            )
             for local_row in requested.values():
                 mapping[local_row] = _add_global_vertex(
                     domain,
@@ -4912,6 +4963,7 @@ def _refine_charts(
                     source_indices,
                     source_parameters,
                     chart_points.get(local_row),
+                    source_points.get(local_row),
                 )
             children: list[tuple[int, int, int]] = []
             for triangle in old_triangles:
@@ -5179,10 +5231,17 @@ def _curve_edge_samples(
 ) -> float:
     chord = np.asarray(last, dtype=np.float64) - np.asarray(first, dtype=np.float64)
     maximum = 0.0
-    for index in range(1, sample_count + 1):
-        fraction = Fraction(index, sample_count + 1)
-        parameter = Fraction.from_float(float(lower + fraction * (upper - lower)))
-        point = _source_curve_point(domain, curve, parameter)
+    fractions = tuple(
+        Fraction(index, sample_count + 1) for index in range(1, sample_count + 1)
+    )
+    if not fractions:
+        return maximum
+    parameters = tuple(
+        Fraction.from_float(float(lower + fraction * (upper - lower)))
+        for fraction in fractions
+    )
+    points = _source_curve_points(domain, curve, parameters)
+    for fraction, point in zip(fractions, points, strict=True):
         along = float(fraction)
         maximum = max(
             maximum,
