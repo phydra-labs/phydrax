@@ -8,15 +8,23 @@ from typing import Literal, NamedTuple, Sequence
 
 import numpy as np
 
-from .._exact_polynomial_kernels import exact_jacobian_integrals
+from .._exact_polynomial_kernels import (
+    exact_basis_jacobian_integrals,
+    exact_jacobian_integrals,
+)
 from .._validation import finite_real_scalar, positive_finite_float
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
 from ..typing import checked
 from ._cell_geometry import (
+    _ExactRationalChartTerms,
+    BarycentricCellGeometryElement,
     CellGeometryElement,
     CellGeometrySpec,
     coordinate_effective_basis,
     PerCellRestrictedCellGeometryElement,
+    PolynomialComposedCellGeometryElement,
+    RationalComposedCellGeometryElement,
+    RestrictedCellGeometryElement,
     ScalarCoordinateElement,
 )
 from ._cell_geometry_validity import (
@@ -915,6 +923,70 @@ def mapped_geometry_cells(
     )
 
 
+def exact_block_cell_measures(
+    mesh: CellMesh, geometry: CellGeometrySpec, /
+) -> dict[int, Fraction]:
+    """Integrate compatible block maps exactly, omitting undecided mesh rows."""
+    elements, routes, _ = geometry.resolve(mesh)
+    bank = geometry.source_coordinates()
+    decided: dict[int, Fraction] = {}
+    offset = 0
+    for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
+        start = offset
+        offset += block.cell_count
+        if (
+            not isinstance(element, ScalarCoordinateElement)
+            or element.topological_dimension not in (2, 3)
+            or element.topological_dimension != mesh.ambient_dimension
+        ):
+            continue
+        source = element
+        while isinstance(
+            source,
+            BarycentricCellGeometryElement
+            | RestrictedCellGeometryElement
+            | PolynomialComposedCellGeometryElement
+            | RationalComposedCellGeometryElement,
+        ):
+            source = source.source_element
+        if (
+            isinstance(source, PerCellRestrictedCellGeometryElement)
+            and source is not element
+        ):
+            continue
+        try:
+            domain = bernstein_reference_domain(block.cell_kind)
+        except ValueError:
+            continue
+        route_rows = np.asarray(route, dtype=np.int64)
+        if isinstance(element, PerCellRestrictedCellGeometryElement):
+            groups: dict[tuple[_ExactRationalChartTerms, ...], list[int]] = {}
+            for row, chart in enumerate(element.chart_coefficients):
+                groups.setdefault(chart, []).append(row)
+            row_groups = tuple(groups.values())
+        else:
+            row_groups = (list(range(block.cell_count)),)
+        for rows in row_groups:
+            if not rows:
+                continue
+            try:
+                basis = coordinate_effective_basis(element, cell_row=rows[0])
+            except (ValueError, ZeroDivisionError, OverflowError):
+                continue
+            if not all(isinstance(value, dict) for value in basis):
+                continue
+            selected = route_rows if len(rows) == block.cell_count else route_rows[rows]
+            results = exact_basis_jacobian_integrals(
+                basis, bank, selected, domain, element.topological_dimension
+            )
+            decided.update(
+                (start + row, value)
+                for row, value in zip(rows, results, strict=True)
+                if value is not None
+            )
+    return decided
+
+
 def _coordinate_expression_rows(
     elements: Sequence[CellGeometryElement],
     routes: Sequence[np.ndarray],
@@ -1417,6 +1489,7 @@ __all__ = [
     "MappedGeometryCell",
     "certified_cell_measures",
     "certified_cell_moments",
+    "exact_block_cell_measures",
     "mapped_coordinate_expressions",
     "mapped_density_expression",
     "mapped_geometry_cells",

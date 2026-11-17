@@ -1025,6 +1025,19 @@ PHX_MC_API int32_t phx_mc_polynomial_jacobian_integrals(
     const int32_t* exponents, const uint8_t* coefficients, uint8_t* sums,
     int64_t* denominators, int64_t* counts, int32_t* item_status,
     int32_t word_limbs, int32_t parallelism);
+/* Shared nodal basis and routed exact coordinates. Sparse coordinates use
+ * numerator/denominator words; a zero denominator refuses the owning item.
+ * Successful sums are divided by (basis scale * returned coordinate scale)^d,
+ * then by the returned control denominator and count and by the reference
+ * volume denominator, as in phx_mc_polynomial_jacobian_integrals. */
+PHX_MC_API int32_t phx_mc_basis_jacobian_integrals(
+    int64_t count, int32_t dimension, int32_t domain, int64_t nodes, int64_t bank_rows,
+    const int64_t* routes, const int64_t* significands, const int16_t* exponents,
+    const int64_t* sparse_index, const int64_t* sparse_rows,
+    const uint8_t* sparse_numerators, const uint8_t* sparse_denominators,
+    const int64_t* basis_offsets, const int32_t* basis_exponents, const uint8_t* basis,
+    uint8_t* sums, uint8_t* scales, int64_t* denominators, int64_t* counts,
+    int32_t* item_status, int32_t word_limbs, int32_t parallelism);
 /* Leading principal minors of J + J^T. Each matrix entry owns a term range
  * in offsets, with integer coefficients and dimension-wide nonnegative
  * exponents. Output slots are item-major then minor order; each has capacity
