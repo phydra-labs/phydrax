@@ -2994,10 +2994,16 @@ class IntersectionCurve(AbstractCurve):
             chart_contractions = np.empty((n,), dtype=np.float64)
         else:
             chart_preconditioners, chart_contractions = analytic_certificate
+        region_boxes = (
+            np.asarray(first.parameter_box, dtype=np.float64),
+            np.asarray(second.parameter_box, dtype=np.float64),
+        )
         for index in range(n):
-            for offset, region in ((0, first), (2, second)):
-                region_lower = np.asarray(region.parameter_box[0])
-                region_upper = np.asarray(region.parameter_box[1])
+            for offset, region, region_box in (
+                (0, first, region_boxes[0]),
+                (2, second, region_boxes[1]),
+            ):
+                region_lower, region_upper = region_box
                 for endpoint in (start[index], end[index]):
                     for local_axis, period in enumerate(region.patch.periods):
                         axis = offset + local_axis
@@ -3592,11 +3598,13 @@ class IntersectionCurve(AbstractCurve):
                     self.num_charts - 1,
                 )
             )
+            chart_lower = np.asarray(self.chart_lower, dtype=np.float64)
+            chart_upper = np.asarray(self.chart_upper, dtype=np.float64)
             parameter_boxes = tuple(
                 np.stack(
                     (
-                        np.asarray(self.chart_lower[chart], dtype=np.float64),
-                        np.asarray(self.chart_upper[chart], dtype=np.float64),
+                        chart_lower[chart],
+                        chart_upper[chart],
                     )
                 )
                 for chart in range(first_chart, last_chart + 1)

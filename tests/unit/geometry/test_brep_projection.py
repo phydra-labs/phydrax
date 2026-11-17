@@ -517,6 +517,28 @@ def test_straight_revolution_batched_frames_match_scalar_projection() -> None:
         other._project_prepared(points, dimensions, indices, preparation=preparation)
 
 
+@pytest.mark.parametrize("dimension", (_FACE, _EDGE))
+def test_affine_projection_preparation_preserves_scalar_hits(dimension: Any) -> None:
+    model = brep_box((0.0, 0.0, 0.0), (2.0, 2.0, 2.0), coordinate_contract=_CONTRACT)
+    projection = phx.geometry.prepare_brep_projection(model)
+    points = np.asarray(((0.4, 0.6, 0.8), (1.1, 1.2, 1.3), (1.6, 0.7, 1.4)))
+    preparation = projection._prepare_project()
+    for point in points:
+        direct = projection._project_one(int(dimension), 0, point, None)
+        prepared = projection._project_one(
+            int(dimension), 0, point, None, preparation=preparation
+        )
+        assert prepared.status == direct.status
+        assert (prepared.lower, prepared.upper) == (direct.lower, direct.upper)
+        for actual, expected in (
+            (prepared.point, direct.point),
+            (prepared.parameters, direct.parameters),
+            (prepared.normal, direct.normal),
+            (prepared.tangents, direct.tangents),
+        ):
+            np.testing.assert_array_equal(actual, expected)
+
+
 def test_straight_revolution_ray_carrier_preserves_signed_profile_rate() -> None:
     from phydrax.geometry.brep._intersection import _revolution_cylinder_view
     from phydrax.geometry.brep._intersection_curve import SurfaceRegion

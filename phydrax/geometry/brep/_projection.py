@@ -116,6 +116,8 @@ class _ProjectionPreparation:
     faces: dict[int, _PreparedFace] = field(default_factory=dict)
     orientations: dict[tuple[int, int], float] = field(default_factory=dict)
     edges: dict[int, _PreparedEdge] = field(default_factory=dict)
+    plane_jacobians: dict[int, np.ndarray] = field(default_factory=dict)
+    line_derivatives: dict[int, np.ndarray] = field(default_factory=dict)
     intersections: dict[int, _IntersectionPreparation | None] = field(
         default_factory=dict
     )
@@ -1027,10 +1029,11 @@ def _line_curve_hit(
                 np.asarray(curve.evaluate(jnp.asarray(value)), dtype=np.float64)
                 for value in endpoints
             ]
-            parameter = endpoints[
-                int(np.argmin([np.sum((value - point) ** 2) for value in values]))
-            ]
-        closest = np.asarray(curve.evaluate(jnp.asarray(parameter)), dtype=np.float64)
+            nearest = int(np.argmin([np.sum((value - point) ** 2) for value in values]))
+            parameter = endpoints[nearest]
+            closest = values[nearest]
+        else:
+            closest = np.asarray(curve.evaluate(jnp.asarray(parameter)), dtype=np.float64)
         arc = _arc_distance(curve, point, (first, last, parameter))
         if arc is None:
             return _unresolved(1, edge, path)
@@ -1040,10 +1043,18 @@ def _line_curve_hit(
     tangents = _NAN_FRAME3.copy()
     # A hit certified beyond the caller's radius is discarded with its frame.
     if frame and not (distance_threshold is not None and lower > distance_threshold):
-        derivative = np.asarray(
-            jax.jacfwd(lambda value: curve.evaluate(value))(jnp.asarray(parameter)),
-            dtype=np.float64,
+        derivative = (
+            preparation.line_derivatives.get(edge)
+            if preparation is not None and isinstance(curve, (LineCurve, ExactLineCurve))
+            else None
         )
+        if derivative is None:
+            derivative = np.asarray(
+                jax.jacfwd(lambda value: curve.evaluate(value))(jnp.asarray(parameter)),
+                dtype=np.float64,
+            )
+            if preparation is not None and isinstance(curve, (LineCurve, ExactLineCurve)):
+                preparation.line_derivatives[edge] = derivative
         derivative_length = float(np.linalg.norm(derivative))
         tangent = derivative / derivative_length if derivative_length else _NAN3.copy()
         tangents = np.stack((tangent, _NAN3))
@@ -3614,12 +3625,24 @@ def _project_face(
     if defer_frame:
         normal, tangents, regular = _NAN3.copy(), _NAN_FRAME3.copy(), True
     else:
+        jacobian = None
+        if preparation is not None and isinstance(patch, PlanePatch):
+            jacobian = preparation.plane_jacobians.get(face)
+            if jacobian is None:
+                jacobian = np.asarray(
+                    jax.jacfwd(lambda chart: patch.evaluate(chart))(
+                        jnp.asarray(uv, dtype=jnp.float64)
+                    ),
+                    dtype=np.float64,
+                )
+                preparation.plane_jacobians[face] = jacobian
         normal, tangents, regular = _face_normal_and_frame(
             patch,
             uv,
             orientation,
             embedding=embedding,
             profile_interval=(float(bounds[0, 1]), float(bounds[1, 1])),
+            jacobian=jacobian,
         )
     if not regular and affine_distance_squared is not None:
         return _Hit(

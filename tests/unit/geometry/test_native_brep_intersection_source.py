@@ -932,6 +932,26 @@ def _orthogonal_branch_root() -> tuple[
     return curve, sibling, root
 
 
+def test_branch_bounding_box_unions_chart_enclosures(
+    _orthogonal_branch_root: tuple[
+        IntersectionCurve, IntersectionCurve, TripleSurfaceIntersectionRoot
+    ],
+) -> None:
+    curve, _, _ = _orthogonal_branch_root
+    chart_boxes = np.stack(
+        [
+            curve.bounding_box(float(chart), float(chart + 1))
+            for chart in range(curve.num_charts)
+        ]
+    )
+    expected = np.stack(
+        (np.min(chart_boxes[:, 0], axis=0), np.max(chart_boxes[:, 1], axis=0))
+    )
+    np.testing.assert_array_equal(
+        curve.bounding_box(0.0, float(curve.num_charts)), expected
+    )
+
+
 def test_branch_endpoint_refuses_another_component_with_overlapping_axis(
     _orthogonal_branch_root: tuple[
         IntersectionCurve, IntersectionCurve, TripleSurfaceIntersectionRoot
