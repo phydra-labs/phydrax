@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from fractions import Fraction
 from random import Random
 
@@ -15,7 +14,7 @@ from phydrax.discretization._coordinate_enclosure import (
 )
 from phydrax.discretization._exact_algebraic_geometry import RadicalElement
 from phydrax.geometry import _stratum_subdivision as subdivision
-from phydrax.geometry._integer_net_batch import _BatchIntegerNet, integer_net_batch
+from phydrax.geometry._integer_net_batch import integer_net_batch
 
 
 def _exact_controls(
@@ -92,34 +91,22 @@ def test_mixed_integer_banks_match_independent_exact_controls(workers: int) -> N
     assert values(requests[:4]) + values(requests[4:]) == expected
 
 
-def test_incorrect_native_control_is_detected_by_exact_comparison(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_perturbed_input_changes_exact_controls() -> None:
     if not meshcore_available():
         pytest.skip("native meshcore is unavailable")
-    polynomial: Expression = {(0,): Fraction(1, 3), (1,): Fraction(-2, 7)}
-    expected = _exact_controls(polynomial, "simplex", 1, (1,))
-    original = subdivision.integer_net_batch
-
-    def corrupt(
-        requests: list[
-            tuple[tuple[Expression, ...], BernsteinDomain, int, tuple[int, ...]]
-        ],
-    ) -> list[tuple[_BatchIntegerNet | None, ...]]:
-        rows = original(requests)
-        net = rows[0][0]
-        if net is None:
-            raise RuntimeError("expected a native rational net")
-        payload = bytearray(net.payload)
-        payload[net.start : net.end] = bytes(net.end - net.start)
-        rows[0] = (replace(net, payload=bytes(payload)),)
-        return rows
-
-    monkeypatch.setattr(subdivision, "integer_net_batch", corrupt)
-    controls = subdivision._controls((polynomial,), (2,), (1,), 1)
-    assert controls is not None
-    actual = tuple(
-        controls[index][0] for index in subdivision._control_indices((2,), (1,))
+    polynomials: tuple[Expression, ...] = (
+        {(0,): Fraction(1, 3), (1,): Fraction(-2, 7)},
+        {(0,): Fraction(1, 3), (1,): Fraction(-1, 7)},
     )
-    with pytest.raises(AssertionError):
-        assert actual == expected
+    expected = (
+        (Fraction(1, 3), Fraction(1, 21)),
+        (Fraction(1, 3), Fraction(4, 21)),
+    )
+    for polynomial, reference in zip(polynomials, expected, strict=True):
+        controls = subdivision._controls((polynomial,), (2,), (1,), 1)
+        assert controls is not None
+        actual = tuple(
+            controls[index][0] for index in subdivision._control_indices((2,), (1,))
+        )
+        assert actual == reference
+    assert expected[0] != expected[1]

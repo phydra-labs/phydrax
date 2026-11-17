@@ -106,14 +106,7 @@ def test_random_polynomial_signed_coverage(
     )
 
 
-def test_exact_fallbacks_preserve_algebraic_and_rational_maps(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        coverage,
-        "exact_jacobian_integrals",
-        lambda jacobians, domain, dimension: [None] * len(jacobians),
-    )
+def test_exact_integrals_preserve_algebraic_and_rational_maps() -> None:
     x: Polynomial = {(1, 0): Fraction(1)}
     y: Polynomial = {(0, 1): Fraction(1)}
     assert coverage.integrate_jacobian((x, y), "triangle") == Fraction(1, 2)

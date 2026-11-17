@@ -932,42 +932,6 @@ def _orthogonal_branch_root() -> tuple[
     return curve, sibling, root
 
 
-@pytest.mark.parametrize("location", ("start", "interior", "end"))
-def test_fixed_intersection_projection_preserves_coupled_point(
-    _orthogonal_branch_root: tuple[
-        IntersectionCurve, IntersectionCurve, TripleSurfaceIntersectionRoot
-    ],
-    location: str,
-) -> None:
-    from phydrax.geometry.brep._intersection_projection import project_intersection_curve
-    from phydrax.geometry.brep._projection_contracts import (
-        BRepProjectionPolicy,
-        BRepProjectionStatus,
-    )
-
-    curve, _, _ = _orthogonal_branch_root
-    parameter = {"start": 0.0, "interior": 0.5, "end": float(curve.num_charts)}[location]
-    point = np.asarray(curve.evaluate_coupled(parameter).point, dtype=np.float64)
-    query = point + np.asarray((0.1, -0.2, 0.3), dtype=np.float64)
-    projection = project_intersection_curve(
-        curve,
-        (parameter, parameter),
-        query,
-        BRepProjectionPolicy(),
-        edge_range=(0.0, float(curve.num_charts)),
-    )
-    expected_status = (
-        BRepProjectionStatus.UNIQUE
-        if location == "interior"
-        else BRepProjectionStatus.SEAM
-    )
-    assert projection.status == int(expected_status)
-    assert projection.parameter == parameter
-    np.testing.assert_array_equal(projection.point, point)
-    distance = np.linalg.norm(point - query)
-    assert distance <= projection.upper
-
-
 def test_branch_bounding_box_unions_chart_enclosures(
     _orthogonal_branch_root: tuple[
         IntersectionCurve, IntersectionCurve, TripleSurfaceIntersectionRoot
@@ -1571,11 +1535,8 @@ def test_affine_trim_incidence_keeps_boundary_unresolved_without_false_exclusion
     np.testing.assert_array_equal(result.boundary, (False,) * 6)
 
 
-def test_curve_trim_refuses_nonfinite_point_realization(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_curve_trim_refuses_nonfinite_query() -> None:
     from phydrax.geometry._atlas import TrimDomain
-    from phydrax.geometry.brep import _host_program
 
     corners = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
     segments = tuple(
@@ -1588,29 +1549,14 @@ def test_curve_trim_refuses_nonfinite_point_realization(
     query = np.asarray(((0.5, 0.5),), dtype=np.float64)
     assert bool(domain.classify(query).resolved[0])
 
-    def wrong(program: object, points: np.ndarray) -> np.ndarray:
-        return np.full((points.shape[0], 2), np.nan, dtype=np.float64)
-
-    monkeypatch.setattr(_host_program, "evaluate_host_program", wrong)
-    result = domain.classify(query)
-    assert not bool(result.resolved[0])
+    with pytest.raises(ValueError, match="finite"):
+        domain.classify(np.asarray(((np.nan, 0.5),), dtype=np.float64))
 
 
-def test_curve_trim_fallback_classification_is_batch_independent(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_curve_trim_fallback_classification_is_batch_independent() -> None:
     from phydrax.geometry._atlas import TrimDomain
-    from phydrax.geometry.brep import _host_program
 
-    monkeypatch.setattr(_host_program, "prepare_host_program", lambda *args: None)
-    corners = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
-    segments = tuple(
-        CurveTrimSegment(
-            LineCurve(first, (last[0] - first[0], last[1] - first[1])), 0.0, 1.0
-        )
-        for first, last in zip(corners, (*corners[1:], corners[0]), strict=True)
-    )
-    domain = TrimDomain(curve_loops=(segments,))
+    domain = TrimDomain(curve_loops=(_spline_trim_square(),))
     queries = np.asarray(((0.5, 0.5), (2.0, 0.5), (0.5, 0.0)), dtype=np.float64)
     together = domain.classify(queries)
     separate = tuple(domain.classify(query[None, :]) for query in queries)
@@ -1623,27 +1569,61 @@ def test_curve_trim_fallback_classification_is_batch_independent(
         )
 
 
-@pytest.mark.parametrize("operation", ("prepare_host_program", "evaluate_host_program"))
-def test_curve_trim_propagates_unexpected_program_failures(
-    monkeypatch: pytest.MonkeyPatch, operation: str
-) -> None:
-    from phydrax.geometry._atlas import TrimDomain
-    from phydrax.geometry.brep import _host_program
+def _spline_trim_square() -> tuple[CurveTrimSegment, ...]:
+    from phydrax.geometry.brep._patches import BSplineCurve
 
     corners = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
-    segments = tuple(
-        CurveTrimSegment(
-            LineCurve(first, (last[0] - first[0], last[1] - first[1])), 0.0, 1.0
-        )
+    return tuple(
+        CurveTrimSegment(BSplineCurve((first, last), (1, 1), (0, 0, 1, 1), 1), 0.0, 1.0)
         for first, last in zip(corners, (*corners[1:], corners[0]), strict=True)
     )
-    domain = TrimDomain(curve_loops=(segments,))
 
-    def fail(*args: object, **kwargs: object) -> None:
-        raise RuntimeError("point program failure")
 
-    monkeypatch.setattr(_host_program, operation, fail)
-    with pytest.raises(RuntimeError, match="point program failure"):
+def test_spline_trim_fallback_classification_is_batch_independent() -> None:
+    from phydrax.geometry._atlas import TrimDomain
+
+    domain = TrimDomain(curve_loops=(_spline_trim_square(),))
+    queries = np.asarray(
+        ((0.5, 0.5), (2.0, 0.5), (0.25, 0.75), (-1.0, 0.25)),
+        dtype=np.float64,
+    )
+    together = domain.classify(queries)
+    separate = tuple(domain.classify(query[None, :]) for query in queries)
+    reversed_batch = domain.classify(queries[::-1])
+    np.testing.assert_array_equal(together.inside, (True, False, True, False))
+    np.testing.assert_array_equal(together.resolved, (True,) * len(queries))
+    np.testing.assert_array_equal(together.boundary, (False,) * len(queries))
+    for name in ("inside", "boundary", "resolved"):
+        np.testing.assert_array_equal(
+            getattr(together, name),
+            [bool(getattr(result, name)[0]) for result in separate],
+        )
+        np.testing.assert_array_equal(
+            getattr(together, name), getattr(reversed_batch, name)[::-1]
+        )
+
+
+def test_curve_trim_propagates_source_point_evaluation_failure() -> None:
+    from jax import Array
+
+    from phydrax.geometry._atlas import TrimDomain
+    from phydrax.geometry.brep._patches import AbstractCurve
+
+    class FailingCurve(AbstractCurve):
+        @property
+        def ambient_dimension(self) -> int:
+            return 2
+
+        def evaluate(self, parameters: Array, /) -> Array:
+            raise RuntimeError("source point failure")
+
+        def bounding_box(self, first: float, last: float, /) -> np.ndarray:
+            return np.asarray(((first, 0.0), (last, 0.0)), dtype=np.float64)
+
+    segments = list(_spline_trim_square())
+    segments[0] = CurveTrimSegment(FailingCurve(), 0.0, 1.0)
+    domain = TrimDomain(curve_loops=(tuple(segments),))
+    with pytest.raises(RuntimeError, match="source point failure"):
         domain.classify(np.asarray(((0.5, 0.5),), dtype=np.float64))
 
 

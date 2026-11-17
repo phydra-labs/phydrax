@@ -1,4 +1,3 @@
-from collections.abc import Mapping, Sequence
 from fractions import Fraction
 
 import numpy as np
@@ -8,7 +7,6 @@ from phydrax._meshcore import meshcore_available
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization._cell_geometry import CellGeometrySpec
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
-from phydrax.discretization._coordinate_enclosure import BernsteinDomain, ExactScalar
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
 from phydrax.geometry._mapped_reference_domain import MappedReferenceDomain
 
@@ -96,11 +94,7 @@ def test_mapped_reference_domain_resolves_source_vertex_occurrences_and_exact_me
 
 @pytest.mark.meshcore
 @pytest.mark.skipif(not meshcore_available(), reason="meshcore unavailable")
-def test_exact_region_measure_detects_corrupt_native_numerator(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from phydrax.geometry import _mapped_coverage
-
+def test_exact_region_measure_detects_perturbed_source_geometry() -> None:
     reference_domain, mesh, geometry = _tetrahedral_reference()
     mapped = MappedReferenceDomain(
         reference_domain,
@@ -114,21 +108,22 @@ def test_exact_region_measure_detects_corrupt_native_numerator(
     reference = reference_domain.exact_region_measures()
     assert mapped.exact_region_measures() == reference
 
-    native_integrals = _mapped_coverage.exact_jacobian_integrals
-
-    def corrupt(
-        jacobians: Sequence[Sequence[Sequence[Mapping[tuple[int, ...], ExactScalar]]]],
-        domain: BernsteinDomain,
-        dimension: int,
-    ) -> list[Fraction | None]:
-        values = native_integrals(jacobians, domain, dimension)
-        assert all(value is not None for value in values)
-        return [
-            Fraction(value.numerator + 1, value.denominator)
-            if value is not None
-            else None
-            for value in values
-        ]
-
-    monkeypatch.setattr(_mapped_coverage, "exact_jacobian_integrals", corrupt)
-    assert mapped.exact_region_measures() != reference
+    perturbed_points = np.asarray(geometry.coordinates, dtype=np.float64).copy()
+    perturbed_points[1, 0] = 1.0 + 2.0**-20
+    perturbed_geometry = CellGeometrySpec(
+        dict(zip(geometry.block_names, geometry.elements, strict=True)),
+        dict(zip(geometry.block_names, geometry.geometry_dofs, strict=True)),
+        perturbed_points,
+    )
+    perturbed = MappedReferenceDomain(
+        reference_domain,
+        mesh,
+        perturbed_geometry,
+        np.asarray((0,), dtype=np.int64),
+        source_id="fault-tetra",
+        source_revision="revision-1",
+        coordinate_contract=SpatialCoordinateContract.si(),
+    )
+    exact_measure = Fraction.from_float(float(perturbed_points[1, 0])) / 6
+    assert perturbed.exact_region_measures() == (exact_measure,)
+    assert perturbed.exact_region_measures() != reference

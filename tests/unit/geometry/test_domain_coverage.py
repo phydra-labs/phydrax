@@ -1431,19 +1431,49 @@ def test_mapped_support_authority_drives_native_overset_wall_membership() -> Non
     assert np.all(np.asarray(source_mask.cell_status) == int(OversetCellStatus.HOLE))
 
 
-def test_exact_cell_measure_consumers_keep_ordered_failures_and_signed_values(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from dataclasses import replace
-
-    from phydrax.geometry import _domain_chart_chain, _domain_numerics
+def test_exact_cell_measure_consumers_keep_ordered_failures_and_signed_values() -> None:
+    from phydrax.discretization._cell_geometry import RationalComposedCellGeometryElement
+    from phydrax.discretization._coordinate_enclosure import RationalPolynomial
     from phydrax.geometry._domain_certification import (
         _source_region_measures,
         _target_region_measures,
     )
+    from phydrax.geometry._domain_chart_chain import _root_boundary_proof
     from phydrax.geometry._domain_preparation import prepare_domain_coverage
 
-    reference, mesh, geometry, regions = _split_square()
+    reference, original, _, regions = _split_square()
+    cells = ((0, 1, 4), (0, 4, 5), (6, 7, 8), (1, 3, 4))
+    names = ("first", "rational", "reversed", "last")
+    mesh = CellMesh(
+        np.concatenate(
+            (np.asarray(original.coordinates), np.asarray(original.coordinates)[[1, 3, 2]])
+        ),
+        tuple(
+            CellBlock(name, "triangle", np.asarray((cell,)), global_ids=(identifier,))
+            for name, cell, identifier in zip(
+                names, cells, (101, 202, 303, 404), strict=True
+            )
+        ),
+        vertex_global_ids=np.concatenate(
+            (np.asarray(original.vertex_global_ids), np.asarray((31, 37, 41)))
+        ),
+    )
+    linear = lagrange_element("triangle", 1)
+    rational = RationalComposedCellGeometryElement(
+        linear,
+        "triangle",
+        (
+            RationalPolynomial(
+                {(1, 0): Fraction(1)}, {(0, 0): Fraction(1), (1, 0): Fraction(1)}
+            ),
+            RationalPolynomial({(0, 1): Fraction(1)}, {(0, 0): Fraction(1)}),
+        ),
+    )
+    geometry = CellGeometrySpec(
+        {name: rational if name == "rational" else linear for name in names},
+        {name: np.asarray((cell,)) for name, cell in zip(names, cells, strict=True)},
+        mesh.coordinates,
+    )
     mapped = MappedReferenceDomain(
         reference,
         mesh,
@@ -1453,12 +1483,23 @@ def test_exact_cell_measure_consumers_keep_ordered_failures_and_signed_values(
         source_revision="r1",
         coordinate_contract=SpatialCoordinateContract.si(),
     )
-    x = {(1, 0): Fraction(1)}
-    y = {(0, 1): Fraction(1)}
-    maps = ((x, y), ({(1,): Fraction(1)},), (y, x), (x, y))
-    preparation = replace(
-        prepare_domain_coverage(mesh, geometry, regions, 2), coordinate_maps=maps
+    preparation = prepare_domain_coverage(mesh, geometry, regions, 2)
+
+    wrong_dimension = CellGeometrySpec(
+        {name: linear for name in names},
+        {name: np.asarray((cell,)) for name, cell in zip(names, cells, strict=True)},
+        np.asarray(mesh.coordinates)[:, :1],
     )
+    with pytest.raises(ValueError, match="source geometry must have the reference volume dimension"):
+        MappedReferenceDomain(
+            reference,
+            mesh,
+            wrong_dimension,
+            regions,
+            source_id="invalid-measure-dimension",
+            source_revision="r1",
+            coordinate_contract=SpatialCoordinateContract.si(),
+        )
 
     findings = []
     assert _target_region_measures(mesh, geometry, reference, preparation, findings) == (
@@ -1471,7 +1512,7 @@ def test_exact_cell_measure_consumers_keep_ordered_failures_and_signed_values(
             "unresolved",
             (202,),
             "Exact target-cell measure integration is unavailable: "
-            "Mapped Jacobian integration requires a 2-D or 3-D map..",
+            "Exact mapped integration requires a polynomial or constant denominator..",
         ),
         (
             "target_cell_orientation",
@@ -1488,7 +1529,7 @@ def test_exact_cell_measure_consumers_keep_ordered_failures_and_signed_values(
         preparation,
         findings,
         cell_measures={1: Fraction(1, 4)},
-    ) == (Fraction(3, 4), Fraction(0))
+    ) == (Fraction(1, 2), Fraction(0))
     assert [(f.check, f.entity_ids) for f in findings] == [
         ("target_cell_orientation", (303,))
     ]
@@ -1500,7 +1541,6 @@ def test_exact_cell_measure_consumers_keep_ordered_failures_and_signed_values(
         ("target_cell_orientation", (303,))
     ]
 
-    monkeypatch.setattr(_domain_numerics, "cell_coordinate_expressions", lambda *_: maps)
     findings = []
     assert _source_region_measures(mapped, findings, exact_cad=None) == (None, None)
     assert [(f.check, f.status, f.entity_ids) for f in findings] == [
@@ -1508,20 +1548,12 @@ def test_exact_cell_measure_consumers_keep_ordered_failures_and_signed_values(
         ("source_cell_orientation", "violated", (303,)),
     ]
 
-    monkeypatch.setattr(
-        _domain_chart_chain, "cell_coordinate_expressions", lambda *_: maps
-    )
-    monkeypatch.setattr(
-        _domain_chart_chain, "oriented_target_facets", lambda *_, **__: ((), ())
-    )
-    monkeypatch.setattr(
-        _domain_chart_chain, "partition_overlaps", lambda *_, **__: ((), ())
-    )
-    overlaps, facet_count, root_findings = _domain_chart_chain._root_boundary_proof(
-        mapped
-    )
-    assert (overlaps, facet_count) == ((), 0)
-    assert [(f.check, f.status, f.entity_ids) for f in root_findings] == [
-        ("reference_root_measure_unresolved", "unresolved", (202,)),
+    _, _, root_findings = _root_boundary_proof(mapped)
+    assert [
+        (f.check, f.status, f.entity_ids)
+        for f in root_findings
+        if f.check.startswith("reference_root_")
+    ] == [
         ("reference_root_orientation", "violated", (303,)),
+        ("reference_root_region_measure", "violated", (1,)),
     ]
