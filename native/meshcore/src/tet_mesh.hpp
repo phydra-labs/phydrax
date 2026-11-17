@@ -23,6 +23,7 @@
 
 #include "boundary_policy.hpp"
 #include "cavity.hpp"
+#include "facet_coverage.hpp"
 #include "plc3d.hpp"
 #include "source_construction.hpp"
 #include "zero_set_admission.hpp"
@@ -708,6 +709,8 @@ class TetMesh {
     std::vector<std::size_t> rows;
     std::vector<std::array<std::int32_t, 4>> primitives;
     std::vector<std::int32_t> indices;
+    std::vector<FacetCoverageBounds> bounds;
+    bool prepare_bounds = false;
   };
   bool source_carrier_valid(const TetEditVertex& vertex) const;
   bool source_face_valid(const TetEditFacet& facet,

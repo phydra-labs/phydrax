@@ -1357,7 +1357,8 @@ enum class PredicateCover : std::uint8_t { kCovered, kRefused, kUnknown };
 PredicateCover predicate_facet_cover(
     const double* subject, const double* original_points,
     std::span<const std::array<int32_t, 4>> original_faces,
-    std::span<const int32_t> selected, std::vector<std::size_t>& covering) {
+    std::span<const int32_t> selected, std::vector<std::size_t>& covering,
+    std::span<const FacetCoverageBounds> bounds) {
   covering.clear();
   const auto corner = [&](std::size_t face, int k) {
     if (face == 0) return subject + 3 * k;
@@ -1386,6 +1387,32 @@ PredicateCover predicate_facet_cover(
                                    subject_shape[2].data());
   }
   if (subject_orientation == 0) return PredicateCover::kRefused;
+  std::array<double, 3> subject_lower{};
+  std::array<double, 3> subject_upper{};
+  if (!bounds.empty()) {
+    for (int coordinate = 0; coordinate < 3; ++coordinate) {
+      subject_lower[coordinate] = std::min({subject[coordinate], subject[3 + coordinate],
+                                             subject[6 + coordinate]});
+      subject_upper[coordinate] = std::max({subject[coordinate], subject[3 + coordinate],
+                                             subject[6 + coordinate]});
+    }
+  }
+  // A regular coplanar triangle with a disjoint closed 3D box has no
+  // intersection with the subject. Its projection is separated in the
+  // subject plane, so it cannot contain, cover, overlap, or share an edge
+  // with the subject. Degenerate triangles must still be visited: a coplanar
+  // degenerate partner refuses coverage even when it is far away.
+  const auto disjoint_regular = [&](std::size_t row) {
+    if (bounds.empty()) return false;
+    const auto& box = bounds[static_cast<std::size_t>(selected[row - 1])];
+    if (!box.nondegenerate) return false;
+    for (int coordinate = 0; coordinate < 3; ++coordinate) {
+      if (box.upper[coordinate] < subject_lower[coordinate] ||
+          subject_upper[coordinate] < box.lower[coordinate]) return true;
+    }
+    return false;
+  };
+  bool skipped = false;
   // Coplanar partners in row order; a degenerate partner refuses the face.
   std::vector<std::size_t> partners;
   std::vector<int> orientations;
@@ -1394,6 +1421,10 @@ PredicateCover predicate_facet_cover(
   orientations.reserve(rows);
   shapes.reserve(rows);
   for (std::size_t row = 1; row <= rows; ++row) {
+    if (disjoint_regular(row)) {
+      skipped = true;
+      continue;
+    }
     bool coplanar = true;
     for (int k = 0; k < 3 && coplanar; ++k) {
       coplanar = orient3d(corner(0, 0), corner(0, 1), corner(0, 2), corner(row, k)) == 0;
@@ -1406,7 +1437,21 @@ PredicateCover predicate_facet_cover(
     orientations.push_back(orientation);
     shapes.push_back(shape);
   }
-  if (partners.empty()) return PredicateCover::kRefused;
+  if (partners.empty()) {
+    // With no retained partners, distinguish the original no-coplanar
+    // refusal from the original unknown result for separated coplanar faces.
+    if (skipped) {
+      for (std::size_t row = 1; row <= rows; ++row) {
+        if (!disjoint_regular(row)) continue;
+        bool coplanar = true;
+        for (int k = 0; k < 3 && coplanar; ++k) {
+          coplanar = orient3d(corner(0, 0), corner(0, 1), corner(0, 2), corner(row, k)) == 0;
+        }
+        if (coplanar) return PredicateCover::kUnknown;
+      }
+    }
+    return PredicateCover::kRefused;
+  }
   // Whether every vertex of `second` lies weakly outside one edge line of
   // `first` (positively oriented when first_orientation > 0).
   const auto outside_edge = [&](const Shape& first, int first_orientation, const Shape& second) {
@@ -1505,10 +1550,12 @@ PredicateCover predicate_facet_cover(
       bool clear = false;
       for (int e = 0; e < 3 && !clear; ++e) {
         clear = subject_orientation *
-                    orient2d(subject_shape[(e + 1) % 3].data(), subject_shape[(e + 2) % 3].data(), u) <= 0;
+                    orient2d(subject_shape[(e + 1) % 3].data(),
+                             subject_shape[(e + 2) % 3].data(), u) <= 0;
         if (clear) {
           clear = subject_orientation *
-                      orient2d(subject_shape[(e + 1) % 3].data(), subject_shape[(e + 2) % 3].data(), w) <= 0;
+                      orient2d(subject_shape[(e + 1) % 3].data(),
+                               subject_shape[(e + 2) % 3].data(), w) <= 0;
         }
       }
       if (!clear) return PredicateCover::kUnknown;
@@ -1523,9 +1570,11 @@ PredicateCover predicate_facet_cover(
 bool facet_coverage(const double* subject, const double* original_points,
                     std::span<const std::array<int32_t, 4>> original_faces,
                     std::span<const int32_t> rows, std::vector<int32_t>& contributors,
-                    bool predicate_proof, std::span<const int64_t> epochs) {
+                    bool predicate_proof, std::span<const int64_t> epochs,
+                    std::span<const FacetCoverageBounds> bounds) {
   contributors.clear();
   if (rows.empty()) return false;
+  if (!bounds.empty() && bounds.size() != original_faces.size()) return false;
   std::vector<int32_t> selected(rows.begin(), rows.end());
   std::sort(selected.begin(), selected.end(), [](int32_t a, int32_t b) {
     return a < b;
@@ -1556,7 +1605,8 @@ bool facet_coverage(const double* subject, const double* original_points,
   }
   if (predicate_proof && epochs.empty()) {
     std::vector<std::size_t> covering;
-    switch (predicate_facet_cover(subject, original_points, original_faces, selected, covering)) {
+    switch (predicate_facet_cover(subject, original_points, original_faces, selected, covering,
+                                  bounds)) {
       case PredicateCover::kCovered:
         contributors.clear();
         for (std::size_t index : covering) contributors.push_back(selected[index]);
@@ -1667,15 +1717,18 @@ bool facet_coverage(const double* subject, const double* original_points,
 bool exact_facet_coverage(
     const double* subject, const double* original_points,
     std::span<const std::array<int32_t, 4>> original_faces,
-    std::span<const int32_t> rows, std::vector<int32_t>& contributors) {
-  return facet_coverage(subject, original_points, original_faces, rows, contributors, true, {});
+    std::span<const int32_t> rows, std::vector<int32_t>& contributors,
+    std::span<const FacetCoverageBounds> bounds) {
+  return facet_coverage(subject, original_points, original_faces, rows, contributors,
+                        true, {}, bounds);
 }
 
 bool exact_facet_coverage_by_arrangement(
     const double* subject, const double* original_points,
     std::span<const std::array<int32_t, 4>> original_faces,
     std::span<const int32_t> rows, std::vector<int32_t>& contributors) {
-  return facet_coverage(subject, original_points, original_faces, rows, contributors, false, {});
+  return facet_coverage(subject, original_points, original_faces, rows, contributors,
+                        false, {}, {});
 }
 
 bool exact_facet_history_coverage(
@@ -1683,7 +1736,8 @@ bool exact_facet_history_coverage(
     std::span<const std::array<int32_t, 4>> original_faces,
     std::span<const int32_t> rows, std::span<const int64_t> epochs,
     std::vector<int32_t>& contributors) {
-  return facet_coverage(subject, original_points, original_faces, rows, contributors, false, epochs);
+  return facet_coverage(subject, original_points, original_faces, rows, contributors,
+                        false, epochs, {});
 }
 
 int relative_orient3d_exact(const double* a, const double* b, const double* c, const double* d,

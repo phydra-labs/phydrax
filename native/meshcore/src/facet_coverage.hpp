@@ -6,6 +6,13 @@
 #include <vector>
 
 namespace phx::mc {
+// Optional construction-local metadata, aligned with original_faces.
+struct FacetCoverageBounds {
+  std::array<double, 3> lower;
+  std::array<double, 3> upper;
+  bool nondegenerate;
+};
+
 
 // Exact planar union proof over explicitly selected original face rows. Only
 // positive-area coverage contributes; every subject fragment has exactly one
@@ -15,7 +22,8 @@ namespace phx::mc {
 bool exact_facet_coverage(
     const double* subject, const double* original_points,
     std::span<const std::array<int32_t, 4>> original_faces,
-    std::span<const int32_t> rows, std::vector<int32_t>& contributors);
+    std::span<const int32_t> rows, std::vector<int32_t>& contributors,
+    std::span<const FacetCoverageBounds> bounds = {});
 
 // Arrangement-only reference for independently checking the fast exact proof.
 bool exact_facet_coverage_by_arrangement(

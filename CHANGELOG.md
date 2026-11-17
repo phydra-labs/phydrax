@@ -249,6 +249,8 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Source-facet coverage skips provably disjoint nondegenerate triangles in its
+  fast proof, retaining degenerate partners and the full arrangement fallback.
 - Refinement reuses its live constrained-segment index when checking cavity
   edits, avoiding a full segment-bank scan for each candidate edge.
 - Exact facet coverage evaluates its predicate proof directly on source banks;

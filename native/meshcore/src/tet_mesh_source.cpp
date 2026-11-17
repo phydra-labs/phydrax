@@ -976,8 +976,10 @@ bool TetMesh::source_face_valid(const TetEditFacet& facet,
     exact_carriers = exact_carriers && witness.deviation == 0.0;
   }
   std::vector<std::int32_t> contributors;
-  if (exact_carriers && exact_facet_coverage(subject, source_points_.data(), primitives,
-                                              rows, contributors) && !contributors.empty()) {
+  if (exact_carriers &&
+      exact_facet_coverage(subject, source_points_.data(), primitives, rows, contributors,
+                           group->bounds) &&
+      !contributors.empty()) {
     // Coverage returns local primitive rows; slot four maps each to the source bank.
     // Unrelated triangles in one authored group can have different normals.
     for (std::int32_t contributor : contributors) {
