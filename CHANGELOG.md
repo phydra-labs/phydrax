@@ -260,6 +260,12 @@
   implicit-source adaptations changes. Periodic lifts keep the staged edit.
   Requires a meshcore build with `phx_mc_tet_mesh_probe_relocations` and
   `phx_mc_tet_mesh_apply_relocation`.
+- A `NATIVE_METRIC_3D` collapse that may move its survivor screens the
+  candidate survivor positions of one goal together before interpolating a
+  source metric for each: a position whose spoke lengths certainly fail the
+  objective is dropped at once, and every other position takes the unchanged
+  per-position evaluation, which alone admits. Proposals, accepted meshes and
+  evidence are unchanged.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep

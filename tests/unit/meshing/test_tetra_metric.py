@@ -1597,6 +1597,69 @@ def _relocation_cache_witness_state() -> _NativeState:
     )
 
 
+def _comparable(value: Any, /) -> Any:
+    """Nested proposal data with arrays as exact bytes."""
+    if isinstance(value, np.ndarray):
+        return value.dtype.str, value.shape, value.tobytes()
+    if isinstance(value, dict):
+        return tuple((key, _comparable(item)) for key, item in value.items())
+    if isinstance(value, tuple | list):
+        return tuple(_comparable(item) for item in value)
+    return value
+
+
+def test_collapse_survivor_prescreen_leaves_directed_collapses_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.meshing._tetra_metric as metric
+
+    # The pre-screen may drop only survivor carriers the per-carrier screen
+    # refuses, so a directed collapse is the same proposal with and without it.
+    screen = metric._refused_survivor_carriers
+    refused = 0
+
+    def counted(*arguments: Any) -> np.ndarray:
+        nonlocal refused
+        mask = screen(*arguments)
+        refused += int(np.count_nonzero(mask))
+        return mask
+
+    def admit_all(
+        _state: _NativeState, candidates: tuple[Any, ...], *_star: np.ndarray
+    ) -> np.ndarray:
+        return np.zeros((len(candidates),), dtype=np.bool_)
+
+    state = _relocation_cache_witness_state()
+    try:
+        records = _boundary_records(state)
+        topology = metric._state_topology(state)
+        _, protected = metric._current_edge_controls(state, topology)
+        directed = [
+            pair for edge in list(topology.edge_cells)[:40] for pair in (edge, edge[::-1])
+        ]
+        routes = []
+        for route in (counted, admit_all):
+            monkeypatch.setattr(metric, "_refused_survivor_carriers", route)
+            routes.append(
+                [
+                    metric._directed_collapse(
+                        state, topology, records, protected, removed, kept
+                    )
+                    for removed, kept in directed
+                ]
+            )
+    finally:
+        state.native.close()
+
+    screened, unscreened = routes
+    assert refused > 0
+    assert any(
+        proposal is not None and proposal["survivor"] is not None
+        for proposal in unscreened
+    )
+    assert _comparable(screened) == _comparable(unscreened)
+
+
 @pytest.fixture
 def _collective_facet_state() -> Iterator[_NativeState]:
     from phydrax._meshcore import PlcBoundaryPolicy, TetMesh3D, TetMeshSourceComplex
