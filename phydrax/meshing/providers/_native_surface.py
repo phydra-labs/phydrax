@@ -2980,6 +2980,18 @@ class _CurveChordBounds:
             self.intervals[key] = cached
         return cached
 
+    def prepare_points(self, curve: int, parameters: tuple[Fraction, ...], /) -> None:
+        patch, use = _curve_owner_use(self.domain, curve)
+        missing = tuple(
+            parameter
+            for parameter in dict.fromkeys(parameters)
+            if (patch, id(use), parameter) not in self.use_points
+        )
+        if missing:
+            points = _source_curve_points(self.domain, curve, missing)
+            for parameter, point in zip(missing, points, strict=True):
+                self.use_points[(patch, id(use), parameter)] = point
+
     def _point(
         self,
         patch: int,
@@ -3230,7 +3242,7 @@ def _trim_lens_bound(
     preparation: domain_owner.SourcePreparation,
     /,
 ) -> Fraction:
-    """Use the fidelity owner's continuous lens bound to schedule trim chords."""
+    """Use the fidelity owner's continuous lens bound for a single trim chord."""
     from phydrax.geometry._source_fidelity import _curved_trim_lens_cap
 
     if isinstance(use.pcurve, (ExactLineCurve, LineCurve)):
@@ -3245,6 +3257,54 @@ def _trim_lens_bound(
     return _curved_trim_lens_cap(domain.patches[patch].surface, lens, preparation)[0]
 
 
+def _trim_lens_bounds(
+    domain: domain_owner.MeshingDomain,
+    patch: int,
+    use: domain_owner.PatchCurveUse,
+    endpoints: tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]],
+    intervals: list[tuple[Fraction, Fraction]],
+    preparation: domain_owner.SourcePreparation,
+    /,
+) -> list[Fraction]:
+    """Bound each lens, conservatively including overlapping neighboring lenses."""
+    from phydrax.geometry._source_fidelity import (
+        _curved_trim_lens_box,
+        _curved_trim_lens_caps,
+    )
+
+    if isinstance(use.pcurve, (ExactLineCurve, LineCurve)):
+        return [Fraction(0)] * len(intervals)
+    parameters = tuple(
+        dict.fromkeys(value for interval in intervals for value in interval)
+    )
+    interior = tuple(value for value in parameters if value not in (0, 1))
+    points = dict(zip(interior, _use_chart_points(use, interior), strict=True))
+    points[Fraction(0)], points[Fraction(1)] = endpoints
+    lenses = tuple(
+        domain_boundary_owner._curved_trim_lens(
+            use,
+            points[first],
+            points[last],
+            float(_use_source_parameter(use, first)),
+            float(_use_source_parameter(use, last)),
+            preparation,
+        )
+        for first, last in intervals
+    )
+    surface = domain.patches[patch].surface
+    rows = []
+    for index, lens in enumerate(lenses):
+        if lens.parameter_bound == 0:
+            continue
+        box = _curved_trim_lens_box(surface, lens)
+        if box is None:
+            raise ValueError("A curved trim lens leaves the source parameter domain.")
+        lower, upper = box
+        rows.append((index, (lower, (upper[0], lower[1]), upper)))
+    caps = _curved_trim_lens_caps(surface, rows, lenses, preparation)
+    return [caps.get(index, Fraction(0)) for index in range(len(intervals))]
+
+
 def _curve_parameters(
     domain: domain_owner.MeshingDomain,
     curve_ids: tuple[int, ...],
@@ -3254,6 +3314,8 @@ def _curve_parameters(
     schedule: NativeSurfaceSchedule,
     preparation: domain_owner.SourcePreparation,
     /,
+    *,
+    chords: _CurveChordBounds | None = None,
 ) -> dict[int, set[Fraction]]:
     sizes = {
         patch: float(size)
@@ -3264,7 +3326,8 @@ def _curve_parameters(
     surface_tolerances = _hard_feature_tolerances(
         domain, specification, FeatureKind.SURFACE
     )
-    chords = _CurveChordBounds(preparation)
+    if chords is None:
+        chords = _CurveChordBounds(preparation)
     use_endpoints: dict[
         int, tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]]
     ] = {}
@@ -3310,28 +3373,34 @@ def _curve_parameters(
             initial.add(Fraction(1, 2))
         expanded = set(initial)
         ordered = sorted(initial)
-        for first, last in zip(ordered[:-1], ordered[1:], strict=True):
-            intervals = [(first, last)]
-            while intervals:
-                lower, upper = intervals.pop()
-                deviation, length = chords.interval(curve, lower, upper)
-                # Reserve half of the requested tolerance for the surface
-                # interpolation and endpoint errors checked at publication.
-                lens_limit = Fraction.from_float(fidelity_limit) / 2
-                lens_ok = all(
-                    _trim_lens_bound(
-                        domain,
-                        patch,
-                        use,
-                        use_endpoints[id(use)],
-                        lower,
-                        upper,
-                        preparation,
-                    )
-                    <= lens_limit
-                    for patch, use in selected_uses
+        intervals = list(zip(ordered[:-1], ordered[1:], strict=True))
+        lens_limit = Fraction.from_float(fidelity_limit) / 2
+        while intervals:
+            chords.prepare_points(
+                curve, tuple(value for interval in intervals for value in interval)
+            )
+            candidates = [
+                interval
+                for interval in intervals
+                for deviation, length in (chords.interval(curve, *interval),)
+                if deviation <= fidelity_limit and length <= edge_limit
+            ]
+            accepted = set(candidates)
+            for patch, use in selected_uses:
+                if not candidates:
+                    break
+                bounds = _trim_lens_bounds(
+                    domain, patch, use, use_endpoints[id(use)], candidates, preparation
                 )
-                if deviation <= fidelity_limit and length <= edge_limit and lens_ok:
+                accepted.difference_update(
+                    interval
+                    for interval, bound in zip(candidates, bounds, strict=True)
+                    if bound > lens_limit
+                )
+                candidates = [interval for interval in candidates if interval in accepted]
+            following = []
+            for lower, upper in intervals:
+                if (lower, upper) in accepted:
                     continue
                 midpoint = (lower + upper) / 2
                 if midpoint in (lower, upper) or float(midpoint) in (
@@ -3344,8 +3413,8 @@ def _curve_parameters(
                         entity_ids=(int(curve),),
                     )
                 expanded.add(midpoint)
-                intervals.append((midpoint, upper))
-                intervals.append((lower, midpoint))
+                following.extend(((lower, midpoint), (midpoint, upper)))
+            intervals = following
         parameters[curve] = expanded
     return parameters
 
@@ -4410,7 +4479,8 @@ def _chart_curve_bounds(
     chart: _ChartMesh, chords: _CurveChordBounds, /
 ) -> dict[tuple[int, int], float]:
     """Chord deviation bound of every trim edge; shared intervals are bounded once."""
-    bounds: dict[tuple[int, int], float] = {}
+    intervals: dict[tuple[int, int], tuple[int, Fraction, Fraction]] = {}
+    points: dict[int, list[Fraction]] = {}
     for edge, (
         curve,
         _occurrence,
@@ -4424,8 +4494,16 @@ def _chart_curve_bounds(
                 category=MeshingFailureCategory.INVALID_SOURCE,
                 entity_ids=(int(curve),),
             )
-        bounds[edge] = chords.interval(curve, min(first, last), max(first, last))[0]
-    return bounds
+        lower, upper = min(first, last), max(first, last)
+        intervals[edge] = (curve, lower, upper)
+        if (curve, lower, upper) not in chords.intervals:
+            points.setdefault(curve, []).extend((lower, upper))
+    for curve, parameters in points.items():
+        chords.prepare_points(curve, tuple(parameters))
+    return {
+        edge: chords.interval(curve, lower, upper)[0]
+        for edge, (curve, lower, upper) in intervals.items()
+    }
 
 
 def _apply_curve_edge_bounds(
@@ -4574,6 +4652,7 @@ def _refine_charts(
     preparation: domain_owner.SourcePreparation,
     /,
     *,
+    chords: _CurveChordBounds | None = None,
     seam_rounds: _SeamRounds | None = None,
 ) -> _RefinedSurface:
     """Refine source charts until every cell meets the physical schedule.
@@ -4626,7 +4705,8 @@ def _refine_charts(
     # Trim-edge chord bounds change only when a round splits a trim edge, and each
     # curve interval is bounded once. Unchanged cells keep their exact UV corners
     # and therefore their source bounds.
-    chords = _CurveChordBounds(preparation)
+    if chords is None:
+        chords = _CurveChordBounds(preparation)
     curve_bounds_by_chart = tuple(_chart_curve_bounds(chart, chords) for chart in charts)
     trim_edges = tuple(frozenset(chart.boundary_edges) for chart in charts)
     cell_bounds: dict[_CellBoundKey, tuple[float, float]] = {}
@@ -6082,6 +6162,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
 
             return execute_tensor_quads(self, preparation)
         curve_ids = _trim_curves(domain, self.selected_patches)
+        chords = _CurveChordBounds(preparation)
         parameters_by_curve = _curve_parameters(
             domain,
             curve_ids,
@@ -6090,6 +6171,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             self.specification,
             self.schedule,
             preparation,
+            chords=chords,
         )
         pole_charts = _pole_sampling(
             domain,
@@ -6175,6 +6257,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             self.specification,
             self.schedule,
             preparation,
+            chords=chords,
         )
         if (
             self.specification.quality_target is not None
