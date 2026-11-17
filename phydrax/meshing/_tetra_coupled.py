@@ -1265,22 +1265,21 @@ def _search_neighbor_patch(
     }
     target_ids = search.state.vertex_target_ids
     while pending:
-        vertex = min(pending, key=target_ids.__getitem__)
-        neighbor = pending.pop(vertex)
-        detail = neighbor.detail
-        by_vertex[detail.vertex] = detail
-        # Re-solve after the first eligible vertex in the owning stable order;
-        # a whole neighbor batch can exceed admission before this model is tried.
-        by_source[detail.vertex] = _ordered_source_cells(
-            search,
-            detail,
-            binding.edge,
-            index,
-            unit_direction=neighbor.unit_direction,
-        )[0]
-        vertices = tuple(
-            sorted(by_vertex, key=search.state.vertex_target_ids.__getitem__)
-        )
+        # One round admits every recorded blocker, in the owning stable order,
+        # before the patch is solved again. The search closure is unchanged: it
+        # ends only when a model has no blocker outside the patch. Solving after
+        # each single vertex instead costs one model per vertex of that closure.
+        for vertex in sorted(pending, key=target_ids.__getitem__):
+            neighbor = pending.pop(vertex)
+            by_vertex[vertex] = neighbor.detail
+            by_source[vertex] = _ordered_source_cells(
+                search,
+                neighbor.detail,
+                binding.edge,
+                index,
+                unit_direction=neighbor.unit_direction,
+            )[0]
+        vertices = tuple(sorted(by_vertex, key=target_ids.__getitem__))
         patch_incident = [
             i
             for i, edge in enumerate(search.edges)
