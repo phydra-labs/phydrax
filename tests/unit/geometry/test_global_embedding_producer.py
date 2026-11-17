@@ -1180,6 +1180,74 @@ def test_global_degree_refuses_mismatched_exact_interior_trace() -> None:
     )
 
 
+def _tetrahedra_sharing_a_curved_face(
+    first_bump: Fraction, second_bump: Fraction, second_cubic: Fraction, /
+) -> tuple[EmbeddingCell, EmbeddingCell]:
+    """Mapped tetrahedra on either side of the reference face ``z = 0``.
+
+    Both share vertices 10, 11 and 12. Their traces on that face are
+    ``(x, y, bump * x * y)``, the second with ``cubic * x * y * (1 - x - y)``
+    added, which vanishes at every corner and edge midpoint of the face.
+    """
+    x, y, z = axes(3)
+    face_bubble = multiply(multiply(x, y), subtract(subtract(constant(1, 3), x), y))
+    first = _mapped_tetrahedron(
+        1, (10, 11, 12, 13), (x, y, add(z, scale(multiply(x, y), first_bump)))
+    )
+    second = _mapped_tetrahedron(
+        2,
+        (10, 11, 12, 14),
+        (
+            x,
+            y,
+            add(
+                add(scale(z, Fraction(-1)), scale(multiply(x, y), second_bump)),
+                scale(face_bubble, second_cubic),
+            ),
+        ),
+    )
+    return first, second
+
+
+def test_simplex_traces_agree_exactly_on_their_shared_curved_face() -> None:
+    first, second = _tetrahedra_sharing_a_curved_face(
+        Fraction(1, 8), Fraction(1, 8), Fraction(0)
+    )
+
+    assert restriction_trace_equal(first, second, (10, 11, 12)) is True
+    assert restriction_trace_equal(second, first, (11, 12)) is True
+    values: dict[tuple[int, tuple[Fraction, ...]], tuple[ExactScalar, ...]] = {}
+    assert (
+        restriction_trace_equal(first, second, (10, 11, 12), point_values=values) is True
+    )
+    assert restriction_trace_equal(first, second, (10, 12), point_values=values) is True
+
+
+def test_simplex_trace_mismatch_at_one_face_midpoint_is_refused() -> None:
+    first, second = _tetrahedra_sharing_a_curved_face(
+        Fraction(1, 8), Fraction(1, 8) + Fraction(1, 4096), Fraction(0)
+    )
+
+    # The maps differ only where x * y is nonzero: on the face and on the edge
+    # opposite vertex 10, but not on the two edges through vertex 10.
+    assert restriction_trace_equal(first, second, (10, 11, 12)) is False
+    assert restriction_trace_equal(first, second, (11, 12)) is False
+    assert restriction_trace_equal(first, second, (10, 11)) is True
+    assert restriction_trace_equal(first, second, (10, 12)) is True
+
+
+def test_simplex_trace_mismatch_invisible_to_quadratic_nodes_is_refused() -> None:
+    # A cubic face bubble vanishes at all six quadratic nodes of the face, so
+    # only a lattice of the maps' actual degree separates the traces.
+    first, second = _tetrahedra_sharing_a_curved_face(
+        Fraction(1, 8), Fraction(1, 8), Fraction(1, 64)
+    )
+
+    assert restriction_trace_equal(first, second, (10, 11, 12)) is False
+    assert restriction_trace_equal(first, second, (10, 11)) is True
+    assert restriction_trace_equal(first, second, (11, 12)) is True
+
+
 def _embedded_triangles(
     coordinates: np.ndarray, cells: tuple[tuple[int, int, int], ...]
 ) -> tuple[CellMesh, CellGeometrySpec, CellValidityCertificate]:

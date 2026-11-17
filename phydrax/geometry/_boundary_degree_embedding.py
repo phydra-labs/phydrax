@@ -46,10 +46,17 @@ from ._exact_polyhedral_geometry import (
 )
 from ._mapped_embedding import prove_mapped_cell_injective
 from ._planar_chain_embedding import triangulate_planar_polygon
-from ._restricted_embedding import _trace_arguments, restriction_trace_equal
+from ._restricted_embedding import (
+    _trace_arguments,
+    restriction_trace_equal,
+    TracePointValues,
+)
 
 
 type BoundaryStatus = Literal["certified", "violated", "unresolved"]
+
+# Trace lattice points one boundary proof retains (three exact scalars each).
+_TRACE_VALUE_POINTS = 1 << 17
 
 
 @dataclass(frozen=True, slots=True)
@@ -1256,6 +1263,8 @@ def build_oriented_boundary(
 
     faces: list[BoundaryFace] = []
     exterior_cells: set[int] = set()
+    # Exact lattice values of the cells' traces, shared by a cell's facets.
+    trace_values: TracePointValues = {}
     for key, incident in occurrences.items():
         facet_id = facet_ids.get(key)
         if facet_id is None:
@@ -1287,10 +1296,13 @@ def build_oriented_boundary(
                     )
                 )
             first_index, second_index = incident[0][0], incident[1][0]
+            if len(trace_values) > _TRACE_VALUE_POINTS:
+                trace_values.clear()
             trace = restriction_trace_equal(
                 cells[first_index],
                 cells[second_index],
                 tuple(sorted(key)),
+                point_values=trace_values,
             )
             if trace is False:
                 findings.append(

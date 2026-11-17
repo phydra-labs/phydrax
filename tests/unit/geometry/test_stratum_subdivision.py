@@ -319,7 +319,7 @@ def test_batched_vertex_dispatch_matches_full_exact_contact(
     findings = embedding._nonperiodic_contacts(mesh, geometry, cells, values)
     assert not findings
     assert any("shared-stratum:1:cone-pieces:1" in value for value in values)
-    monkeypatch.setattr(embedding._VertexConeFilter, "prepare", lambda *_: None)
+    monkeypatch.setattr(embedding._VertexConeFilter, "prepare", lambda *_, **__: None)
     expected_values: list[str] = []
     expected = embedding._nonperiodic_contacts(mesh, geometry, cells, expected_values)
     assert findings == expected

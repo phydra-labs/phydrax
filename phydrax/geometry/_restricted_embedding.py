@@ -6,6 +6,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from fractions import Fraction
+from functools import lru_cache
+
 from ..discretization._coordinate_enclosure import (
     add,
     axes,
@@ -270,6 +274,127 @@ def reference_chart_composition_equal(
         return None
 
 
+type TracePointValues = dict[tuple[int, tuple[Fraction, ...]], tuple[ExactScalar, ...]]
+
+
+@lru_cache(maxsize=64)
+def _principal_lattice(parts: int, order: int, /) -> tuple[tuple[int, ...], ...]:
+    """Nonnegative integer weights of ``parts`` corners summing to ``order``."""
+    if parts == 1:
+        return ((order,),)
+    return tuple(
+        (first, *rest)
+        for first in range(order, -1, -1)
+        for rest in _principal_lattice(parts - 1, order - first)
+    )
+
+
+def _rational_simplex_map(
+    cell: EmbeddingCell, /
+) -> tuple[int, tuple[Polynomial, ...]] | None:
+    """Total degree and coordinates of a rational polynomial simplex map."""
+    if cell.domain != "simplex" or cell.pyramid_normalizations is not None:
+        return None
+    if cell.coordinate_expressions is None and (
+        cell.affine_offset is None or cell.affine_matrix is None
+    ):
+        return None
+    degree = 0
+    polynomials: list[Polynomial] = []
+    for expression in cell.coordinates:
+        if not isinstance(expression, dict):
+            return None
+        for exponent, coefficient in expression.items():
+            if type(coefficient) is not Fraction:
+                return None
+            degree = max(degree, sum(exponent))
+        polynomials.append(expression)
+    if not polynomials:
+        return None
+    return degree, tuple(polynomials)
+
+
+def _polynomial_value(
+    polynomial: Polynomial, point: tuple[Fraction, ...], /
+) -> ExactScalar:
+    total: ExactScalar = Fraction(0)
+    for exponent, coefficient in polynomial.items():
+        term = coefficient
+        for coordinate, power in zip(point, exponent, strict=True):
+            if power:
+                term = term * (coordinate if power == 1 else coordinate**power)
+                if not term:
+                    break
+        if term:
+            total = total + term
+    return total
+
+
+def _lattice_trace_equal(
+    first: EmbeddingCell,
+    second: EmbeddingCell,
+    ordered_ids: tuple[int, ...],
+    point_values: TracePointValues | None,
+    /,
+) -> bool | None:
+    """Decide trace equality of rational polynomial simplex cells by exact values.
+
+    A simplex cell restricts to the edge or face spanned by ``ordered_ids``
+    through an affine parameterization of that stratum, so both restrictions
+    are polynomials of total degree at most ``d`` in the stratum parameters,
+    where ``d`` bounds the total degree of both coordinate maps. The principal
+    lattice of order ``d`` of the stratum simplex is unisolvent for that
+    space: the restrictions are equal exactly when their exact values agree at
+    every lattice point. Corner values are the cells' exact corner images.
+    ``None`` declines (another cell domain, a rational map, or a non-rational
+    coefficient); the caller then compares the composed traces.
+    """
+    first_map = _rational_simplex_map(first)
+    second_map = _rational_simplex_map(second)
+    if first_map is None or second_map is None:
+        return None
+    order = max(first_map[0], second_map[0], 1)
+    values: TracePointValues = {} if point_values is None else point_values
+
+    def lattice_values(
+        cell: EmbeddingCell, polynomials: tuple[Polynomial, ...], /
+    ) -> Iterator[tuple[ExactScalar, ...]]:
+        corners = tuple(cell.vertex_ids.index(identifier) for identifier in ordered_ids)
+        references = tuple(cell.reference_vertices[corner] for corner in corners)
+        for weights in _principal_lattice(len(ordered_ids), order):
+            if order in weights:
+                yield cell.corner_images[corners[weights.index(order)]]
+                continue
+            point = tuple(
+                sum(
+                    (
+                        weight * reference[axis]
+                        for weight, reference in zip(weights, references, strict=True)
+                    ),
+                    Fraction(0),
+                )
+                / order
+                for axis in range(cell.dimension)
+            )
+            key = (id(cell), point)
+            found = values.get(key)
+            if found is None:
+                found = tuple(
+                    _polynomial_value(polynomial, point) for polynomial in polynomials
+                )
+                values[key] = found
+            yield found
+
+    return all(
+        left == right
+        for left, right in zip(
+            lattice_values(first, first_map[1]),
+            lattice_values(second, second_map[1]),
+            strict=True,
+        )
+    )
+
+
 def restriction_trace_equal(
     first: EmbeddingCell,
     second: EmbeddingCell,
@@ -277,11 +402,14 @@ def restriction_trace_equal(
     /,
     *,
     cache: dict[tuple[int, tuple[int, ...]], tuple[Expression, ...] | None] | None = None,
+    point_values: TracePointValues | None = None,
 ) -> bool | None:
     """Prove equality of exact polynomial/rational traces on a shared edge or face.
 
     ``None`` is an explicit lack of a supported exact restriction theorem; it is
-    never interpreted as matching geometry.
+    never interpreted as matching geometry. ``point_values`` lets a caller that
+    compares many strata of the same live cells share their exact lattice
+    values; it is keyed by cell object identity, so its cells must stay alive.
     """
     shared = tuple(sorted(set(shared_vertex_ids)))
     if not shared:
@@ -302,6 +430,12 @@ def restriction_trace_equal(
             == second.corner_images[second.vertex_ids.index(identifier)]
             for identifier in shared
         )
+    if len(shared) == 2 or (
+        len(shared) == 3 and first.dimension == second.dimension == 3
+    ):
+        decided = _lattice_trace_equal(first, second, shared, point_values)
+        if decided is not None:
+            return decided
     if len(shared) == 2:
         return _trace_equal_on_stratum(first, second, shared, cache)
     if len(shared) == 3 and first.dimension == second.dimension == 3:

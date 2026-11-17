@@ -141,6 +141,7 @@ from ._restricted_embedding import (
     _affine_arguments,
     _trace_arguments,
     restriction_trace_equal,
+    TracePointValues,
 )
 from ._separating_normals import (
     admit_all,
@@ -5961,6 +5962,7 @@ def _nonperiodic_contacts(
         shadows: dict[int, CellShadow | None] = {}
         stratum_residuals: dict[tuple[int, ...], tuple[Expression, ...] | None] = {}
         trace_cache: dict[tuple[int, tuple[int, ...]], tuple[Expression, ...] | None] = {}
+        trace_values: TracePointValues = {}
         subdivision_cache = subdivision_cache.renewed()
         ordered = first_block < second_block
         first_block, second_block = first_block[ordered], second_block[ordered]
@@ -6042,6 +6044,7 @@ def _nonperiodic_contacts(
                 shadows.clear()
                 stratum_residuals.clear()
                 trace_cache.clear()
+                trace_values.clear()
                 subdivision_cache = subdivision_cache.renewed()
             proof_pair_count += 1
             first_cell, second_cell = cells[first_index], cells[second_index]
@@ -6075,6 +6078,7 @@ def _nonperiodic_contacts(
                 original_cells[second_index],
                 shared,
                 cache=trace_cache,
+                point_values=trace_values,
             )
             if trace is False:
                 findings.append(
