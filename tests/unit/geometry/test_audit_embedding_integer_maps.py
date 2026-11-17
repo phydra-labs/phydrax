@@ -137,7 +137,8 @@ def test_audit_measures_match_exact_integration(
 def test_audit_measures_with_one_out_of_range_rational_cell() -> None:
     nodes = lagrange_reference_node_data(lagrange_element("triangle", 2))
     rows = []
-    for shift, quadratic in ((0, Fraction(1, 1 << 5000)), (3, Fraction(1, 5))):
+    quadratic_over_width = Fraction((1 << 5000) + 1, 1 << 5000)
+    for shift, quadratic in ((0, quadratic_over_width), (3, Fraction(1, 5))):
         local = []
         for node in nodes:
             assert node.exact_point is not None
@@ -148,13 +149,16 @@ def test_audit_measures_with_one_out_of_range_rational_cell() -> None:
     actual = audit_cell_mesh(mesh, geometry)
     assert actual.validity.all_certified
     assert actual.quality.evaluation.measure_exact is True
-    np.testing.assert_allclose(
-        actual.quality.evaluation.measures,
+    expected = np.asarray(
         [
-            float(Fraction(1, 2) + Fraction(1, 3 * (1 << 5000))),
+            float(Fraction(1, 2) + quadratic_over_width / 3),
             float(Fraction(17, 30)),
         ],
-        rtol=1e-6,
+        dtype=np.float64,
+    )
+    np.testing.assert_array_equal(
+        np.asarray(actual.quality.evaluation.measures).view(np.uint64),
+        expected.view(np.uint64),
     )
 
 
