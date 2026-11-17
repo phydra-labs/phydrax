@@ -85,6 +85,97 @@ def _random_polynomial(
     return {index: value for index, value in polynomial.items() if value}
 
 
+@pytest.mark.parametrize("dimension", [1, 2, 3])
+def test_interval_simplex_bounds_enclose_exact_restricted_controls(
+    dimension: int,
+) -> None:
+    generator = random.Random(1300 + dimension)
+    for _ in range(30):
+        polynomial = _random_polynomial(generator, "simplex", dimension, 3)
+        corners = tuple(
+            tuple(Fraction(generator.randint(-4, 12), 15) for _ in range(dimension))
+            for _ in range(dimension + 1)
+        )
+        arguments = tuple(
+            {
+                (0,) * dimension: corners[0][axis],
+                **{
+                    tuple(int(i == j) for i in range(dimension)): (
+                        corners[j + 1][axis] - corners[0][axis]
+                    )
+                    for j in range(dimension)
+                },
+            }
+            for axis in range(dimension)
+        )
+        exact = enclosure.polynomial_bounds(
+            enclosure.compose(polynomial, arguments), "simplex", dimension
+        )
+        lower, upper = enclosure.restricted_polynomial_bounds(polynomial, corners)
+        assert lower <= exact[0] <= exact[1] <= upper
+        magnitude = sum(abs(float(value)) for value in polynomial.values())
+        assert (exact[0] - lower) + (upper - exact[1]) <= 1e-10 * max(1.0, magnitude)
+
+
+def test_interval_simplex_rational_bounds_contain_exact_controls() -> None:
+    generator = random.Random(907)
+    for _ in range(20):
+        numerator = _random_polynomial(generator, "simplex", 2, 2)
+        expression = enclosure.RationalPolynomial(
+            numerator, {(0, 0): Fraction(2), (1, 0): Fraction(1, 3)}
+        )
+        corners = tuple(
+            tuple(Fraction(generator.randint(0, 8), 15) for _ in range(2))
+            for _ in range(3)
+        )
+        arguments: tuple[enclosure.ExpressionInput, ...] = tuple(
+            {
+                (0, 0): corners[0][axis],
+                (1, 0): corners[1][axis] - corners[0][axis],
+                (0, 1): corners[2][axis] - corners[0][axis],
+            }
+            for axis in range(2)
+        )
+        exact = enclosure.polynomial_bounds(
+            enclosure.compose_expression(expression, arguments), "simplex", 2
+        )
+        lower, upper = enclosure.restricted_polynomial_bounds(expression, corners)
+        assert lower <= exact[0] <= exact[1] <= upper
+
+
+def test_interval_simplex_rational_pole_is_unbounded() -> None:
+    expression = enclosure.RationalPolynomial(
+        {(0,): Fraction(1)}, {(0,): Fraction(-1, 2), (1,): Fraction(1)}
+    )
+    corners = ((Fraction(0),), (Fraction(1),))
+    assert enclosure.restricted_polynomial_bounds(expression, corners) == (
+        -float("inf"),
+        float("inf"),
+    )
+
+
+def test_interval_simplex_bounds_detect_dropped_term(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    polynomial: enclosure.Polynomial = {(0,): Fraction(0), (1,): Fraction(2)}
+    corners = ((Fraction(0),), (Fraction(1),))
+    exact = enclosure.polynomial_bounds(polynomial, "simplex", 1)
+
+    def dropped_term(
+        lower: np.ndarray,
+        upper: np.ndarray,
+        corners_lower: np.ndarray,
+        corners_upper: np.ndarray,
+        degree: int,
+        /,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        return np.zeros(1, dtype=np.float64), np.zeros(1, dtype=np.float64)
+
+    monkeypatch.setattr(enclosure, "interval_simplex_bounds", dropped_term)
+    lower, upper = enclosure.restricted_polynomial_bounds(polynomial, corners)
+    assert not (lower <= exact[0] and exact[1] <= upper)
+
+
 @pytest.mark.parametrize(
     ("domain", "dimension"),
     [

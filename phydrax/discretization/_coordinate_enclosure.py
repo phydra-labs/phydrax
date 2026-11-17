@@ -17,7 +17,11 @@ from typing import cast, Literal, NamedTuple, overload, Protocol, TYPE_CHECKING
 
 import numpy as np
 
-from .._exact_kernels import IntegerBernsteinNet, rational_bernstein_nets
+from .._exact_kernels import (
+    IntegerBernsteinNet,
+    interval_simplex_bounds,
+    rational_bernstein_nets,
+)
 from .._fingerprint import array_tree_fingerprint
 from .._meshcore import meshcore_available
 from ._exact_algebraic_geometry import (
@@ -1083,6 +1087,104 @@ def polynomial_bounds(
         coefficient_endpoint(min(controls), upper=False, saturate=True),
         coefficient_endpoint(max(controls), upper=True, saturate=True),
     )
+
+
+class PreparedSimplexPolynomial:
+    """Parent control intervals owned by one proof operation, not a content cache."""
+
+    def __init__(self, expression: ExpressionInput, dimension: int, /) -> None:
+        if dimension not in (1, 2, 3):
+            raise ValueError("simplex dimension must be one, two, or three.")
+        self.dimension = dimension
+        if isinstance(expression, RationalPolynomial):
+            self.numerator = PreparedSimplexPolynomial(expression.numerator, dimension)
+            self.denominator = PreparedSimplexPolynomial(
+                expression.denominator, dimension
+            )
+            self.degree = 0
+            self.lower = np.empty(0, dtype=np.float64)
+            self.upper = np.empty(0, dtype=np.float64)
+        else:
+            self.numerator = None
+            self.denominator = None
+            controls = bernstein_coefficients(expression, "simplex", dimension)
+            self.degree = bernstein_degree(expression, "simplex", dimension)[0]
+            self.lower = np.asarray(
+                [
+                    coefficient_endpoint(value, upper=False, saturate=True)
+                    for value in controls
+                ],
+                dtype=np.float64,
+            )
+            self.upper = np.asarray(
+                [
+                    coefficient_endpoint(value, upper=True, saturate=True)
+                    for value in controls
+                ],
+                dtype=np.float64,
+            )
+
+
+def restricted_polynomial_bounds(
+    expression: ExpressionInput | PreparedSimplexPolynomial,
+    corners: tuple[tuple[ExactScalar, ...], ...],
+    /,
+) -> tuple[float, float]:
+    """Bound exact Bernstein controls on a simplex with outward interval blossoms.
+
+    Exact parent controls and corner coordinates are rounded outward before the
+    native interval blossom. Multiaffinity encloses each exact restricted
+    control, whose convex hull contains the polynomial range. Quotients use
+    separate numerator and denominator enclosures and refuse a possible pole.
+    """
+    dimension = len(corners) - 1
+    if dimension not in (1, 2, 3) or any(len(row) != dimension for row in corners):
+        raise ValueError("simplex corners must have shape (dimension + 1, dimension).")
+    if not meshcore_available():
+        return -math.inf, math.inf
+    prepared = (
+        expression
+        if isinstance(expression, PreparedSimplexPolynomial)
+        else PreparedSimplexPolynomial(expression, dimension)
+    )
+    if prepared.dimension != dimension:
+        raise ValueError("prepared polynomial and corners must have the same dimension.")
+    if prepared.numerator is not None and prepared.denominator is not None:
+        numerator = restricted_polynomial_bounds(prepared.numerator, corners)
+        denominator = restricted_polynomial_bounds(prepared.denominator, corners)
+        if denominator[0] <= 0.0 <= denominator[1] or not all(
+            math.isfinite(value) for value in (*numerator, *denominator)
+        ):
+            return -math.inf, math.inf
+        values = tuple(a / b for a in numerator for b in denominator)
+        if any(math.isnan(value) for value in values):
+            return -math.inf, math.inf
+        return (
+            float(np.nextafter(min(values), -math.inf)),
+            float(np.nextafter(max(values), math.inf)),
+        )
+    corners_lower = np.asarray(
+        [
+            [
+                [coefficient_endpoint(value, upper=False, saturate=True) for value in row]
+                for row in corners
+            ]
+        ],
+        dtype=np.float64,
+    )
+    corners_upper = np.asarray(
+        [
+            [
+                [coefficient_endpoint(value, upper=True, saturate=True) for value in row]
+                for row in corners
+            ]
+        ],
+        dtype=np.float64,
+    )
+    low, high = interval_simplex_bounds(
+        prepared.lower, prepared.upper, corners_lower, corners_upper, prepared.degree
+    )
+    return float(low[0]), float(high[0])
 
 
 def affine_arguments(origin: np.ndarray, matrix: np.ndarray, /) -> tuple[Polynomial, ...]:

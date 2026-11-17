@@ -60,6 +60,7 @@ from ..discretization._coordinate_enclosure import (
     polynomial_bounds,
     pyramid_reference_to_box_arguments,
     RationalPolynomial,
+    restricted_polynomial_bounds,
     scale,
     subtract,
 )
@@ -1098,6 +1099,25 @@ def _full_column_rank(matrix: tuple[tuple[ExactScalar, ...], ...], /) -> bool:
     return pivot_row == columns
 
 
+def _standard_simplex_corners(dimension: int, /) -> tuple[tuple[Fraction, ...], ...]:
+    return ((Fraction(0),) * dimension,) + tuple(
+        tuple(Fraction(axis == index) for axis in range(dimension))
+        for index in range(dimension)
+    )
+
+
+def _image_bounds(
+    expression: Expression, domain: BernsteinDomain, dimension: int, /
+) -> tuple[float, float]:
+    if domain == "simplex":
+        bounds = restricted_polynomial_bounds(
+            expression, _standard_simplex_corners(dimension)
+        )
+        if all(isfinite(value) for value in bounds):
+            return bounds
+    return polynomial_bounds(expression, domain, dimension)
+
+
 def _root_reference_cell(
     kind: str, coordinates: tuple[Expression, ...], global_id: int, /
 ) -> EmbeddingCell | None:
@@ -1119,7 +1139,7 @@ def _root_reference_cell(
             for point in references
         )
         bounds = tuple(
-            polynomial_bounds(expression, domain, topology.dimension)
+            _image_bounds(expression, domain, topology.dimension)
             for expression in coordinates
         )
     except (ValueError, ZeroDivisionError):
@@ -1183,7 +1203,7 @@ def _affine_chart_cell(
         ):
             return None
         bounds = tuple(
-            polynomial_bounds(expression, cell.proof_domain, cell.dimension)
+            _image_bounds(expression, cell.proof_domain, cell.dimension)
             for expression in proof_arguments
             if expression is not None
         )
@@ -2580,15 +2600,24 @@ def _strict_image_separation(
         if not any(_sign(value) for value in normal):
             continue
         try:
+            first_expression = linear_combinations(first.proof_coordinates, (normal,))[0]
+            second_expression = linear_combinations(second.proof_coordinates, (normal,))[
+                0
+            ]
+            if first.proof_domain == "simplex" or second.proof_domain == "simplex":
+                first_range = _image_bounds(
+                    first_expression, first.proof_domain, first.dimension
+                )
+                second_range = _image_bounds(
+                    second_expression, second.proof_domain, second.dimension
+                )
+                if first_range[1] < second_range[0] or second_range[1] < first_range[0]:
+                    return True
             first_range = polynomial_bounds(
-                linear_combinations(first.proof_coordinates, (normal,))[0],
-                first.proof_domain,
-                first.dimension,
+                first_expression, first.proof_domain, first.dimension
             )
             second_range = polynomial_bounds(
-                linear_combinations(second.proof_coordinates, (normal,))[0],
-                second.proof_domain,
-                second.dimension,
+                second_expression, second.proof_domain, second.dimension
             )
         except (ValueError, ZeroDivisionError):
             continue

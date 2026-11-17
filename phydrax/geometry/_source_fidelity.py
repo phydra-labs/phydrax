@@ -28,7 +28,9 @@ from ..discretization._coordinate_enclosure import (
     ExactScalar,
     Polynomial,
     polynomial_bounds,
+    PreparedSimplexPolynomial,
     RationalPolynomial,
+    restricted_polynomial_bounds,
 )
 from ..discretization._exact_algebraic_geometry import coefficient_endpoint
 from ..discretization._reference_cell import reference_cell_topology
@@ -4498,11 +4500,46 @@ def _plane_axes_normal_deviation(
     return _acos_lower(cosine[1]), _acos_upper(cosine[0])
 
 
+def _exact_surface_jacobian_bounds(
+    expressions: tuple[Polynomial | RationalPolynomial, ...],
+    uv_triangle: Triangle2,
+    *,
+    composed: bool = False,
+    prepared: tuple[tuple[PreparedSimplexPolynomial, ...], ...] | None = None,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Bound exact surface derivatives, optionally using exact composition."""
+    arguments = _affine_triangle_arguments(uv_triangle) if composed else None
+    lower = np.empty((3, 2), dtype=np.float64)
+    upper = np.empty_like(lower)
+    for physical_axis, expression in enumerate(expressions):
+        for parameter in range(2):
+            if arguments is None:
+                tangent = (
+                    prepared[physical_axis][parameter]
+                    if prepared is not None
+                    else derivative(expression, parameter)
+                )
+                low, high = restricted_polynomial_bounds(tangent, uv_triangle)
+            else:
+                low, high = polynomial_bounds(
+                    compose_expression(derivative(expression, parameter), arguments),
+                    "simplex",
+                    2,
+                )
+            if not math.isfinite(low) or not math.isfinite(high) or low > high:
+                return None
+            lower[physical_axis, parameter] = low
+            upper[physical_axis, parameter] = high
+    return lower, upper
+
+
 def _surface_jacobian_bounds(
     surface: AbstractSurfacePatch,
     uv_triangle: Triangle2,
     preparation: SourcePreparation,
     /,
+    *,
+    composed: bool = False,
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """Enclose the physical Jacobian columns of a source surface on a chart triangle."""
     from ._source_interpolation import (
@@ -4513,20 +4550,14 @@ def _surface_jacobian_bounds(
 
     exact_surface = exact_surface_coordinate_expressions(surface)
     if exact_surface is not None:
-        arguments = _affine_triangle_arguments(uv_triangle)
-        lower = np.empty((3, 2), dtype=np.float64)
-        upper = np.empty_like(lower)
-        for physical_axis, expression in enumerate(exact_surface):
-            for parameter in range(2):
-                restricted = compose_expression(
-                    derivative(expression, parameter), arguments
-                )
-                low, high = polynomial_bounds(restricted, "simplex", 2)
-                if not math.isfinite(low) or not math.isfinite(high) or low > high:
-                    return None
-                lower[physical_axis, parameter] = low
-                upper[physical_axis, parameter] = high
-        return lower, upper
+        bounds = _exact_surface_jacobian_bounds(
+            exact_surface, uv_triangle, composed=composed
+        )
+        if bounds is None and not composed:
+            bounds = _exact_surface_jacobian_bounds(
+                exact_surface, uv_triangle, composed=True
+            )
+        return bounds
     spans = preparation.surface_spans(surface)
     if spans is not None:
         from ._meshing_domain import _span_enclosures_for_chart
@@ -4594,7 +4625,7 @@ class _DerivativeCache:
     enclosures serve both the interpolation and the normal bound of the cell.
     """
 
-    __slots__ = ("enclosures", "normal_nets", "preparation")
+    __slots__ = ("enclosures", "normal_nets", "preparation", "surface_tangents")
 
     def __init__(self, preparation: SourcePreparation, /) -> None:
         self.preparation = preparation
@@ -4602,6 +4633,24 @@ class _DerivativeCache:
             tuple[int, Triangle2], tuple[RationalBSplineSurfaceHessianEnclosure, ...]
         ] = {}
         self.normal_nets: dict[tuple[int, tuple[int, int]], _IntervalNet] = {}
+        self.surface_tangents: dict[
+            int, tuple[tuple[PreparedSimplexPolynomial, ...], ...]
+        ] = {}
+
+    def prepared_surface_tangents(
+        self, patch: int, expressions: tuple[Polynomial | RationalPolynomial, ...], /
+    ) -> tuple[tuple[PreparedSimplexPolynomial, ...], ...]:
+        tangents = self.surface_tangents.get(patch)
+        if tangents is None:
+            tangents = tuple(
+                tuple(
+                    PreparedSimplexPolynomial(derivative(expression, parameter), 2)
+                    for parameter in range(2)
+                )
+                for expression in expressions
+            )
+            self.surface_tangents[patch] = tangents
+        return tangents
 
     def patch_spans(
         self, surface: AbstractSurfacePatch, /
@@ -5229,19 +5278,26 @@ def _normal_deviation_for_cell(
     source: _PatchDerivativeSource | None = None
     enclosures: tuple[RationalBSplineSurfaceHessianEnclosure, ...] | None = None
     if exact_surface is not None:
-        arguments = _affine_triangle_arguments(uv_triangle)
-        low = np.empty((3, 2), dtype=np.float64)
-        high = np.empty_like(low)
-        for physical_axis, expression in enumerate(exact_surface):
-            for parameter in range(2):
-                restricted = compose_expression(
-                    derivative(expression, parameter), arguments
+        bounds = _exact_surface_jacobian_bounds(
+            exact_surface,
+            uv_triangle,
+            prepared=derivatives.prepared_surface_tangents(patch, exact_surface),
+        )
+        if bounds is not None:
+            low, high = bounds
+            source_cross = _normal_cross_interval(low, high, surface_patch.orientation)
+            cosine = _normal_cosine_bounds(source_cross, target_cross)
+            if cosine is not None:
+                angle = (
+                    _acos_lower(cosine[1]),
+                    _normal_angle_upper(source_cross, target_cross, cosine[0]),
                 )
-                lower, upper = polynomial_bounds(restricted, "simplex", 2)
-                if not math.isfinite(lower) or not math.isfinite(upper) or lower > upper:
-                    return None
-                low[physical_axis, parameter] = lower
-                high[physical_axis, parameter] = upper
+                if limit is None or angle[1] <= limit or angle[0] > limit:
+                    return angle
+        bounds = _exact_surface_jacobian_bounds(exact_surface, uv_triangle, composed=True)
+        if bounds is None:
+            return None
+        low, high = bounds
     else:
         spans = derivatives.patch_spans(surface)
         if (
@@ -5352,6 +5408,7 @@ def _curved_trim_lens_cap(
     /,
     *,
     jacobians: tuple[tuple[np.ndarray, np.ndarray] | None, ...] | None = None,
+    composed: bool = False,
 ) -> tuple[Fraction, Point2, Point2]:
     """Map a chart lens bound to physical distance using a Jacobian enclosure."""
     if lens.parameter_bound == 0:
@@ -5368,7 +5425,7 @@ def _curved_trim_lens_cap(
         )
     ):
         bounds = (
-            _surface_jacobian_bounds(surface, triangle, preparation)
+            _surface_jacobian_bounds(surface, triangle, preparation, composed=composed)
             if jacobians is None
             else jacobians[index]
         )
@@ -5391,6 +5448,9 @@ def _curved_trim_lens_caps(
     lenses: tuple[CurvedTrimLens, ...],
     preparation: SourcePreparation,
     /,
+    *,
+    composed: bool = False,
+    settle_zero: bool = True,
 ) -> dict[int, Fraction]:
     """Bound the physical distance a curved-trim lens adds to each target cell."""
     caps: dict[int, Fraction] = {}
@@ -5459,7 +5519,11 @@ def _curved_trim_lens_caps(
         for index, lens in enumerate(lenses)
         for cap, lower, upper in (
             _curved_trim_lens_cap(
-                surface, lens, preparation, jacobians=batched.get(index)
+                surface,
+                lens,
+                preparation,
+                jacobians=batched.get(index),
+                composed=composed,
             ),
         )
         if cap
@@ -5487,6 +5551,29 @@ def _curved_trim_lens_caps(
             for axis in range(2)
         ):
             caps[cell_id] = max(caps.get(cell_id, Fraction(0)), cap)
+    if (
+        settle_zero
+        and not composed
+        and any(caps.values())
+        and exact_surface_coordinate_expressions(surface) is not None
+    ):
+        try:
+            exact_caps = _curved_trim_lens_caps(
+                surface, chart_rows, lenses, preparation, composed=True
+            )
+        except (
+            ArithmeticError,
+            FloatingPointError,
+            IntervalExtensionError,
+            NotImplementedError,
+            TypeError,
+            ValueError,
+        ):
+            return caps
+        return {
+            cell_id: min(cap, exact_caps.get(cell_id, Fraction(0)))
+            for cell_id, cap in caps.items()
+        }
     return caps
 
 
@@ -7165,7 +7252,9 @@ def certify_source_fidelity(
                 (*target_charts, *(sliver for _, sliver in slivers)),
                 preparation,
             )
-            lens_caps = _curved_trim_lens_caps(surface, chart_rows, lenses, preparation)
+            lens_caps = _curved_trim_lens_caps(
+                surface, chart_rows, lenses, preparation, settle_zero=False
+            )
         except (
             ArithmeticError,
             FloatingPointError,
@@ -7336,6 +7425,37 @@ def certify_source_fidelity(
                     )
                 )
                 continue
+        if (
+            exact_surface_map is not None
+            and lens_caps
+            and any(
+                max(
+                    interpolation_bounds[chart_row] + endpoint_error,
+                    sliver_caps.get(chart_rows[chart_row][0], Fraction(0))
+                    + endpoint_error,
+                )
+                + lens_caps.get(chart_rows[chart_row][0], Fraction(0))
+                > Fraction(tolerance_)
+                for chart_row, endpoint_error in endpoint_errors.items()
+            )
+        ):
+            try:
+                exact_lens_caps = _curved_trim_lens_caps(
+                    surface, chart_rows, lenses, preparation, composed=True
+                )
+            except (
+                ArithmeticError,
+                FloatingPointError,
+                IntervalExtensionError,
+                NotImplementedError,
+                TypeError,
+                ValueError,
+            ):
+                exact_lens_caps = lens_caps
+            lens_caps = {
+                cell_id: min(cap, exact_lens_caps.get(cell_id, Fraction(0)))
+                for cell_id, cap in lens_caps.items()
+            }
         for chart_row, endpoint_error in endpoint_errors.items():
             cell_id, chart = chart_rows[chart_row]
             corners = target_corners[cell_id]
