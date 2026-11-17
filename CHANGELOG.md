@@ -456,6 +456,30 @@
   adaptation change. The JAX metric routines (`metric_edge_lengths`,
   `interpolate_mesh_metric`) keep their own arithmetic, whose values are not
   bit-identical across devices; the native adaptation reads none of them.
+- `NATIVE_METRIC_3D` generates the floating-point goals of its edits with
+  deterministic kernels of the native library as well: metric midpoints of
+  split edges, the three goals of a collapse survivor (midpoint, half of it,
+  and the center of the smallest metric ball of the merged link, by Welzl's
+  recursion over a fixed integer permutation), the frame and projection of a
+  boundary carrier, and the pulls of a relocation (spring forces, the
+  least-squares step and gradients of the measured lengths, band tangents).
+  They rest on a `log1p` kernel (within 7 ulp), a Cholesky factor, a
+  minimum-norm solve of small symmetric systems on the Jacobi iteration and
+  Gram-Schmidt, each in a written operation order; LAPACK, BLAS products and
+  NumPy's `log1p`/`log2` no longer appear in the adaptation. Goals propose
+  only: exact source points, exact predicates and the measured objective
+  decide as before, but an edit may now pick a different carrier than before
+  where the last bits of a goal mattered.
+- The metric field gate of `NATIVE_METRIC_3D` is a deterministic native
+  verdict with the tolerance it had (64 eps of the largest eigenvalue for the
+  symmetry defect and the smallest eigenvalue), so a field at that tolerance
+  is accepted or refused alike on every platform. A tensor with an entry
+  above `2**778` is refused: its lengths could overflow over the exact
+  coordinate domain. Periodic equivariance is checked as the congruence
+  `A^T M A = R` of a member's metric with its representative's, without an
+  inverse. A metric length that is zero, infinite or not a number is no
+  longer read as inside the band: an evaluation that meets one raises
+  `FloatingPointError`.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep

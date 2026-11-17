@@ -235,3 +235,159 @@ def test_recorded_survivor_goals_compose_the_midpoint_the_center_and_the_project
         without_center += valid == [1, 1, 0]
     assert complete > 30
     assert without_center == 2
+
+
+def test_recorded_hull_frames_are_orthonormal_bases_and_projectors() -> None:
+    full = 0
+    reduced = 0
+    for row in _rows("FRAME"):
+        corner_count = row[0]
+        corners = _values(row[1:10]).reshape((3, 3))[:corner_count]
+        rank = row[10]
+        basis = _values(row[11:17]).reshape((2, 3))
+        projector = _values(row[17:26]).reshape((3, 3))
+        assert not basis[rank:].any()
+        basis = basis[:rank]
+        edges = corners[1:] - corners[0]
+        assert rank == int(np.linalg.matrix_rank(edges)) if edges.any() else rank == 0
+        assert np.allclose(basis @ basis.T, np.eye(rank), rtol=0.0, atol=1.0e-14)
+        assert np.array_equal(projector, projector.T)
+        # The projector of the span of the edges, however they are factored.
+        reference = edges.T @ np.linalg.pinv(edges.T)
+        assert np.allclose(projector, reference, rtol=0.0, atol=1.0e-12)
+        full += rank == corner_count - 1
+        reduced += rank < corner_count - 1
+    assert full > 20
+    assert reduced == 3
+
+
+def test_recorded_goal_projections_apply_their_projector() -> None:
+    rows = _rows("PROJECT")
+    for row in rows:
+        origin = _values(row[0:3])
+        projector = _values(row[3:12]).reshape((3, 3))
+        goal = _values(row[12:15])
+        projected = _values(row[15:18])
+        reference = origin + projector @ (goal - origin)
+        extent = float(np.max(np.abs(np.concatenate((origin, goal))))) + 1.0
+        assert np.allclose(projected, reference, rtol=0.0, atol=1.0e-13 * extent)
+    assert len(rows) > 100
+
+
+def _reference_pulls(
+    points: np.ndarray,
+    metric: np.ndarray,
+    lengths: np.ndarray,
+    measured: np.ndarray,
+    deep: bool,
+    interior: bool,
+    basis: np.ndarray,
+    projector: np.ndarray | None,
+    jacobian: np.ndarray | None,
+    /,
+) -> list[np.ndarray]:
+    """The pulls by their definitions, with LAPACK for the least-squares step."""
+    lower = float.fromhex("0x1.6a09e667f3bccp-1")
+    upper = float.fromhex("0x1.6a09e667f3bcdp+0")
+    spokes = points[1:] - points[0]
+    forces = (1.0 - 1.0 / lengths)[:, None] * spokes
+    outside = np.flatnonzero(measured & ((lengths < lower) | (lengths > upper)))
+    mean = forces.mean(axis=0)
+    pulls: list[np.ndarray] = []
+    searching = deep and outside.size > 0
+    if searching and jacobian is not None:
+        residual = np.clip(lengths[measured], lower, upper) - lengths[measured]
+        step = np.linalg.lstsq(jacobian[:, measured].T, residual, rcond=2.0**-20)[0]
+        joint = basis.T @ step
+        if np.any(joint):
+            pulls.append(joint)
+        for spoke in outside:
+            direction = basis.T @ jacobian[:, spoke]
+            norm = float(np.linalg.norm(direction))
+            if norm > 0.0:
+                direction = direction * (float(np.linalg.norm(forces[spoke])) / norm)
+                pulls.append(direction if lengths[spoke] < lower else -direction)
+    if not deep:
+        pulls.append(mean)
+    pulls.extend(forces[outside])
+    if deep:
+        pulls.append(mean)
+    if searching:
+        active = np.flatnonzero(measured)
+        margins = np.minimum(
+            np.abs(lengths[active] - lower), np.abs(lengths[active] - upper)
+        )
+        active = active[np.argsort(margins, kind="stable")]
+        normals = spokes[active] @ metric
+        directions = forces[outside]
+        if projector is not None:
+            normals = normals @ projector
+            directions = directions @ projector
+        for direction in directions:
+            for normal, length in zip(normals, lengths[active], strict=True):
+                component = float(direction @ normal)
+                squared = float(normal @ normal)
+                crosses = (length < 1.0 and component > 0.0) or (
+                    length > 1.0 and component < 0.0
+                )
+                if crosses and squared > 0.0:
+                    pulls.append(direction - (component / squared) * normal)
+            if interior:
+                for left, right in combinations(range(len(normals)), 2):
+                    crossed = np.cross(normals[left], normals[right])
+                    squared = float(crossed @ crossed)
+                    if squared > 0.0:
+                        pulls.append((float(direction @ crossed) / squared) * crossed)
+    return pulls
+
+
+def test_recorded_relocation_pulls_follow_their_definitions() -> None:
+    deep_rows = 0
+    gradient_rows = 0
+    boundary_rows = 0
+    for row in _rows("PULLS"):
+        count, deep, interior, basis_count, has_projector, has_jacobian = row[:6]
+        cursor = 6
+        metric = _values(row[cursor : cursor + 9]).reshape((3, 3))
+        cursor += 9
+        points = _values(row[cursor : cursor + 3 * (count + 1)]).reshape((count + 1, 3))
+        cursor += 3 * (count + 1)
+        lengths = _values(row[cursor : cursor + count])
+        cursor += count
+        measured = np.asarray(row[cursor : cursor + count], dtype=np.bool_)
+        cursor += count
+        basis = _values(row[cursor : cursor + 9]).reshape((3, 3))[:basis_count]
+        cursor += 9
+        projector = _values(row[cursor : cursor + 9]).reshape((3, 3))
+        cursor += 9
+        jacobian = _values(row[cursor : cursor + 3 * count]).reshape((3, count))[
+            :basis_count
+        ]
+        cursor += 3 * count
+        written = row[cursor]
+        pulls = _values(row[cursor + 1 :]).reshape((written, 3))
+        reference = _reference_pulls(
+            points,
+            metric,
+            lengths,
+            measured,
+            bool(deep),
+            bool(interior),
+            basis,
+            projector if has_projector else None,
+            jacobian if has_jacobian else None,
+        )
+        assert written == len(reference)
+        scale = float(np.max(np.abs(np.asarray(reference)))) if reference else 1.0
+        assert np.allclose(
+            pulls,
+            np.asarray(reference).reshape((-1, 3)),
+            rtol=1.0e-9,
+            atol=1.0e-9 * scale,
+        )
+        deep_rows += bool(deep) and written > count
+        gradient_rows += bool(has_jacobian)
+        boundary_rows += not interior
+    assert deep_rows > 10
+    assert gradient_rows > 5
+    assert boundary_rows > 10

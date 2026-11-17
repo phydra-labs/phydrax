@@ -1383,6 +1383,27 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_metric_survivor_goals": (_I32, (_I64, _P, _P, _I32, _P, _P, _P)),
     "phx_mc_metric_tensor_properties": (_I32, (_I64, _P, _P, _P)),
     "phx_mc_metric_congruence_defects": (_I32, (_I64, _P, _P, _P, _P, _P)),
+    "phx_mc_metric_hull_frame": (_I32, (_I32, _P, _P, _P, ctypes.POINTER(_I32))),
+    "phx_mc_metric_project_goals": (_I32, (_I64, _P, _P, _P, _P)),
+    "phx_mc_metric_relocation_pulls": (
+        _I32,
+        (
+            _I64,
+            _P,
+            _P,
+            _P,
+            _P,
+            _I32,
+            _I32,
+            _I32,
+            _P,
+            _P,
+            _P,
+            _I64,
+            _P,
+            ctypes.POINTER(_I64),
+        ),
+    ),
 }
 
 
@@ -10007,6 +10028,156 @@ def metric_survivor_goals(
     return goals, valid.astype(np.bool_)
 
 
+def metric_hull_frame(corners: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+    """Orthonormal basis and projector of the affine hull of 2 or 3 corners.
+
+    The basis ``(rank, 3)`` spans the edges from the first corner
+    (Gram-Schmidt in corner order; dependent edges add no row) and the
+    ``(3, 3)`` projector is the orthogonal projector onto it. Deterministic
+    kernel values: the same bits on every platform.
+    """
+    hull = np.ascontiguousarray(corners, dtype=np.float64)
+    if hull.ndim != 2 or hull.shape[1] != 3 or hull.shape[0] not in (2, 3):
+        raise ValueError("corners must have shape (2, 3) or (3, 3).")
+    basis = np.empty((2, 3), dtype=np.float64)
+    projector = np.empty((3, 3), dtype=np.float64)
+    rank = _I32(0)
+    status = load_meshcore()["phx_mc_metric_hull_frame"](
+        hull.shape[0],
+        hull.ctypes.data,
+        basis.ctypes.data,
+        projector.ctypes.data,
+        ctypes.byref(rank),
+    )
+    _raise_for_call(status, "metric_hull_frame")
+    return basis[: rank.value].copy(), projector
+
+
+def metric_project_goals(
+    goals: np.ndarray, origin: np.ndarray, projector: np.ndarray, /
+) -> np.ndarray:
+    """``origin + projector (goal - origin)`` for ``(n, 3)`` goals.
+
+    Each coordinate is a fixed-order sum of three products: the same bits on
+    every platform.
+    """
+    rows = np.ascontiguousarray(goals, dtype=np.float64)
+    start = np.ascontiguousarray(origin, dtype=np.float64)
+    matrix = np.ascontiguousarray(projector, dtype=np.float64)
+    if (
+        rows.ndim != 2
+        or rows.shape[1] != 3
+        or start.shape != (3,)
+        or matrix.shape != (3, 3)
+    ):
+        raise ValueError(
+            "goals, origin and projector must have shapes (n, 3), (3,), (3, 3)."
+        )
+    projected = np.empty_like(rows)
+    status = load_meshcore()["phx_mc_metric_project_goals"](
+        rows.shape[0],
+        rows.ctypes.data,
+        start.ctypes.data,
+        matrix.ctypes.data,
+        projected.ctypes.data,
+    )
+    _raise_for_call(status, "metric_project_goals")
+    return projected
+
+
+def metric_relocation_pulls(
+    points: np.ndarray,
+    metric: np.ndarray,
+    lengths: np.ndarray,
+    measured: np.ndarray,
+    /,
+    *,
+    deep: bool,
+    interior: bool,
+    basis: np.ndarray,
+    projector: np.ndarray | None,
+    jacobian: np.ndarray | None,
+) -> np.ndarray:
+    """Pulls ``(p, 3)`` of a relocation: displacements of the first point.
+
+    ``points`` hold a vertex and then its ``n`` neighbors, ``metric`` the
+    tensor at the vertex, ``lengths`` the metric lengths of its spokes and
+    ``measured`` which of them count. A spoke is outside when it is measured
+    and its length is outside the band. The pulls, in order:
+
+    - with ``jacobian`` (derivatives of the spoke lengths along the rows of
+      ``basis``, shape ``(len(basis), n)``), for a deep search with an outside
+      spoke: the least-squares step that moves every measured spoke to the
+      band, then the gradient direction of each outside spoke;
+    - the spring forces of the outside spokes and their mean over all spokes
+      (forces first for a deep search, the mean first otherwise);
+    - for a deep search with an outside spoke: each outside force without its
+      part along every band normal it pushes across the band, then, for an
+      ``interior`` vertex, its part along each cross product of two normals.
+      Forces and normals are projected by ``projector`` when it is given.
+
+    A pull that is not finite is left out. Deterministic kernel values: the
+    same bits on every platform.
+    """
+    coordinates = np.ascontiguousarray(points, dtype=np.float64)
+    tensor = np.ascontiguousarray(metric, dtype=np.float64)
+    spokes = np.ascontiguousarray(lengths, dtype=np.float64)
+    counted = np.ascontiguousarray(measured, dtype=np.int8)
+    count = spokes.shape[0]
+    if (
+        coordinates.shape != (count + 1, 3)
+        or count < 1
+        or tensor.shape != (3, 3)
+        or spokes.ndim != 1
+        or counted.shape != (count,)
+    ):
+        raise ValueError(
+            "points, metric, lengths and measured must have shapes (n + 1, 3), "
+            "(3, 3), (n,), (n,) with n >= 1."
+        )
+    frame = np.ascontiguousarray(basis, dtype=np.float64)
+    if frame.ndim != 2 or frame.shape[1] != 3 or frame.shape[0] > 3:
+        raise ValueError("basis must have shape (k, 3) with k <= 3.")
+    matrix = None
+    if projector is not None:
+        matrix = np.ascontiguousarray(projector, dtype=np.float64)
+        if matrix.shape != (3, 3):
+            raise ValueError("projector must have shape (3, 3).")
+    derivatives = None
+    if jacobian is not None:
+        derivatives = np.ascontiguousarray(jacobian, dtype=np.float64)
+        if derivatives.shape != (frame.shape[0], count) or frame.shape[0] == 0:
+            raise ValueError("jacobian must have shape (len(basis), n) with a basis.")
+    # Rows the kernel can write if every measured spoke is outside the band:
+    # gradient pulls, forces and mean, tangents.
+    active = int(np.count_nonzero(counted))
+    capacity = active + 1
+    if derivatives is not None:
+        capacity += active + 1
+    if deep:
+        capacity += active * (active + (active * (active - 1) // 2 if interior else 0))
+    pulls = np.empty((capacity, 3), dtype=np.float64)
+    written = _I64(0)
+    status = load_meshcore()["phx_mc_metric_relocation_pulls"](
+        count,
+        coordinates.ctypes.data,
+        tensor.ctypes.data,
+        spokes.ctypes.data,
+        counted.ctypes.data,
+        int(deep),
+        int(interior),
+        frame.shape[0],
+        frame.ctypes.data,
+        None if matrix is None else matrix.ctypes.data,
+        None if derivatives is None else derivatives.ctypes.data,
+        capacity,
+        pulls.ctypes.data,
+        ctypes.byref(written),
+    )
+    _raise_for_call(status, "metric_relocation_pulls")
+    return pulls[: written.value].copy()
+
+
 __all__ = [
     "ARRANGEMENT_UNCLASSIFIED",
     "ArrangementClassification",
@@ -10094,9 +10265,12 @@ __all__ = [
     "metric_congruence_defects",
     "metric_interpolations",
     "metric_lengths",
+    "metric_hull_frame",
     "metric_logarithms",
     "metric_midpoints",
+    "metric_project_goals",
     "metric_relative_determinants",
+    "metric_relocation_pulls",
     "metric_survivor_goals",
     "metric_tensor_properties",
     "metric_tetra_quality",

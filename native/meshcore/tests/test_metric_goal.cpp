@@ -34,6 +34,9 @@ using phx::mc::test::value_of;
 #define PHX_MG_CENTER(...) {"PHX_MG_CENTER", {__VA_ARGS__}},
 #define PHX_MG_HULL(...) {"PHX_MG_HULL", {__VA_ARGS__}},
 #define PHX_MG_SURVIVOR(...) {"PHX_MG_SURVIVOR", {__VA_ARGS__}},
+#define PHX_MG_FRAME(...) {"PHX_MG_FRAME", {__VA_ARGS__}},
+#define PHX_MG_PROJECT(...) {"PHX_MG_PROJECT", {__VA_ARGS__}},
+#define PHX_MG_PULLS(...) {"PHX_MG_PULLS", {__VA_ARGS__}},
 const std::vector<BitRow> kRecorded = {
 #include "metric_goal_vectors.inc"
 };
@@ -292,12 +295,179 @@ void survivor_rows(std::vector<BitRow>& rows) {
   }
 }
 
+void frame_rows(std::vector<BitRow>& rows) {
+  struct Hull {
+    int corner_count;
+    std::array<double, 9> corners;
+  };
+  std::vector<Hull> hulls = {
+      {2, {0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0}},
+      {3, {0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0}},
+      {3, {1.0, 1.0, 1.0, 2.0, 3.0, 1.0, 0.0, 1.0, 5.0}},
+      // Dependent edges: a repeated corner and collinear corners.
+      {2, {1.0, 2.0, 3.0, 1.0, 2.0, 3.0, 0.0, 0.0, 0.0}},
+      {3, {0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 2.0, 2.0, 0.0}},
+      {3, {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}}};
+  IntegerGenerator generator{0x1f83d9abfb41bd6bULL};
+  for (int row = 0; row < 24; ++row) {
+    Hull hull{2 + row % 2, {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}};
+    for (int corner = 0; corner < hull.corner_count; ++corner) {
+      const Point point = generated_point(generator);
+      for (std::size_t axis = 0; axis < 3; ++axis) {
+        hull.corners[3 * static_cast<std::size_t>(corner) + axis] = point[axis];
+      }
+    }
+    hulls.push_back(hull);
+  }
+  for (const Hull& hull : hulls) {
+    double basis[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    double projector[9];
+    int32_t rank = -1;
+    PHX_CHECK(phx_mc_metric_hull_frame(hull.corner_count, hull.corners.data(), basis, projector,
+                                       &rank) == PHX_MC_OK);
+    BitRow record{"PHX_MG_FRAME", {static_cast<std::uint64_t>(hull.corner_count)}};
+    append_bits(record, hull.corners.data(), 9);
+    record.fields.push_back(static_cast<std::uint64_t>(rank));
+    append_bits(record, basis, 6);
+    append_bits(record, projector, 9);
+    rows.push_back(record);
+    // Goals projected onto this hull, together and one by one.
+    double goals[12];
+    for (int goal = 0; goal < 4; ++goal) {
+      const Point point = generated_point(generator);
+      for (std::size_t axis = 0; axis < 3; ++axis) {
+        goals[3 * static_cast<std::size_t>(goal) + axis] = point[axis];
+      }
+    }
+    double projected[12];
+    PHX_CHECK(phx_mc_metric_project_goals(4, goals, hull.corners.data(), projector, projected) ==
+              PHX_MC_OK);
+    for (std::size_t goal = 0; goal < 4; ++goal) {
+      BitRow projection{"PHX_MG_PROJECT", {}};
+      append_bits(projection, hull.corners.data(), 3);
+      append_bits(projection, projector, 9);
+      append_bits(projection, goals + 3 * goal, 3);
+      append_bits(projection, projected + 3 * goal, 3);
+      rows.push_back(projection);
+      double alone[3];
+      PHX_CHECK(phx_mc_metric_project_goals(1, goals + 3 * goal, hull.corners.data(), projector,
+                                            alone) == PHX_MC_OK);
+      for (std::size_t axis = 0; axis < 3; ++axis) {
+        PHX_CHECK(bits_of(alone[axis]) == bits_of(projected[3 * goal + axis]));
+      }
+    }
+  }
+}
+
+void pull_rows(std::vector<BitRow>& rows) {
+  IntegerGenerator generator{0x5be0cd19137e2179ULL};
+  for (int row = 0; row < 40; ++row) {
+    const std::int64_t count = generator.integer(3, 9);
+    const bool deep = row % 2 == 0;
+    const bool interior = row % 3 != 0;
+    const Metric metric = generated_metric(generator);
+    // The vertex at the origin of its star, the neighbors around it at a
+    // scale that leaves some spokes inside the band and some outside.
+    const double scale = power_of_two(-1 - row % 3);
+    std::vector<double> points = {0.0, 0.0, 0.0};
+    for (std::int64_t neighbor = 0; neighbor < count; ++neighbor) {
+      const Point point = generated_point(generator);
+      for (const double value : point) points.push_back(value * scale);
+    }
+    // Spoke lengths in the metric of the vertex at both ends.
+    std::vector<int64_t> spokes;
+    std::vector<double> metrics;
+    for (std::int64_t point = 0; point <= count; ++point) {
+      metrics.insert(metrics.end(), metric.begin(), metric.end());
+      if (point > 0) {
+        spokes.push_back(0);
+        spokes.push_back(point);
+      }
+    }
+    std::vector<double> lengths(static_cast<std::size_t>(count));
+    PHX_CHECK(phx_mc_metric_lengths(count, spokes.data(), count + 1, points.data(),
+                                    metrics.data(), lengths.data()) == PHX_MC_OK);
+    std::vector<int8_t> measured(static_cast<std::size_t>(count));
+    for (std::size_t spoke = 0; spoke < measured.size(); ++spoke) {
+      measured[spoke] = spoke % 4 == 3 ? 0 : 1;
+    }
+    double basis[9] = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+    double projector[9] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    int32_t basis_count = 3;
+    if (!interior) {
+      // A boundary vertex: the hull of a facet or a curve through the vertex.
+      double corners[9] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+      const int corner_count = 2 + (row / 3) % 2;
+      for (int corner = 1; corner < corner_count; ++corner) {
+        const Point point = generated_point(generator);
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+          corners[3 * static_cast<std::size_t>(corner) + axis] = point[axis];
+        }
+      }
+      for (double& value : basis) value = 0.0;
+      PHX_CHECK(phx_mc_metric_hull_frame(corner_count, corners, basis, projector, &basis_count) ==
+                PHX_MC_OK);
+    }
+    const bool with_jacobian = deep && row % 4 == 0 && basis_count > 0;
+    std::vector<double> jacobian(3 * static_cast<std::size_t>(count), 0.0);
+    if (with_jacobian) {
+      for (std::int64_t entry = 0; entry < basis_count * count; ++entry) {
+        jacobian[static_cast<std::size_t>(entry)] =
+            static_cast<double>(generator.integer(-128, 128)) * 0x1p-6;
+      }
+    }
+    const std::int64_t capacity = (count + 1) * 2 + count * (count + count * (count - 1) / 2);
+    std::vector<double> pulls(3 * static_cast<std::size_t>(capacity));
+    int64_t written = -1;
+    PHX_CHECK(phx_mc_metric_relocation_pulls(
+                  count, points.data(), metric.data(), lengths.data(), measured.data(),
+                  deep ? 1 : 0, interior ? 1 : 0, basis_count, basis,
+                  interior ? nullptr : projector, with_jacobian ? jacobian.data() : nullptr,
+                  capacity, pulls.data(), &written) == PHX_MC_OK);
+    BitRow record{"PHX_MG_PULLS",
+                  {static_cast<std::uint64_t>(count), deep ? 1U : 0U, interior ? 1U : 0U,
+                   static_cast<std::uint64_t>(basis_count), interior ? 0U : 1U,
+                   with_jacobian ? 1U : 0U}};
+    append_bits(record, metric.data(), 9);
+    append_bits(record, points.data(), points.size());
+    append_bits(record, lengths.data(), lengths.size());
+    for (const int8_t flag : measured) record.fields.push_back(static_cast<std::uint64_t>(flag));
+    append_bits(record, basis, 9);
+    append_bits(record, projector, 9);
+    append_bits(record, jacobian.data(), jacobian.size());
+    record.fields.push_back(static_cast<std::uint64_t>(written));
+    append_bits(record, pulls.data(), 3 * static_cast<std::size_t>(written));
+    rows.push_back(record);
+    // The exact count is enough room; one row less is refused.
+    if (written > 0) {
+      std::vector<double> exact(3 * static_cast<std::size_t>(written));
+      int64_t again = -1;
+      PHX_CHECK(phx_mc_metric_relocation_pulls(
+                    count, points.data(), metric.data(), lengths.data(), measured.data(),
+                    deep ? 1 : 0, interior ? 1 : 0, basis_count, basis,
+                    interior ? nullptr : projector, with_jacobian ? jacobian.data() : nullptr,
+                    written, exact.data(), &again) == PHX_MC_OK);
+      PHX_CHECK(again == written);
+      for (std::size_t index = 0; index < exact.size(); ++index) {
+        PHX_CHECK(bits_of(exact[index]) == bits_of(pulls[index]));
+      }
+      PHX_CHECK(phx_mc_metric_relocation_pulls(
+                    count, points.data(), metric.data(), lengths.data(), measured.data(),
+                    deep ? 1 : 0, interior ? 1 : 0, basis_count, basis,
+                    interior ? nullptr : projector, with_jacobian ? jacobian.data() : nullptr,
+                    written - 1, exact.data(), &again) == PHX_MC_CAPACITY_EXCEEDED);
+    }
+  }
+}
+
 std::vector<BitRow> evaluate() {
   std::vector<BitRow> rows;
   midpoint_rows(rows);
   center_rows(rows);
   hull_rows(rows);
   survivor_rows(rows);
+  frame_rows(rows);
+  pull_rows(rows);
   return rows;
 }
 
@@ -313,7 +483,15 @@ void emit(const std::vector<BitRow>& rows) {
       "//   Only the first `corner count` corners are data.\n"
       "// PHX_MG_SURVIVOR(count, corner count, the metrics of the survivor and of\n"
       "//                 the removed vertex, three corners, count points\n"
-      "//                 (survivor, removed vertex, link), three flags, three goals)\n");
+      "//                 (survivor, removed vertex, link), three flags, three goals)\n"
+      "// PHX_MG_FRAME(corner count, three corners, rank, two basis vectors, nine\n"
+      "//              projector values)\n"
+      "// PHX_MG_PROJECT(origin, nine projector values, goal, projected goal)\n"
+      "// PHX_MG_PULLS(count, deep, interior, basis count, has projector, has\n"
+      "//              jacobian, nine metric values, count + 1 points, count\n"
+      "//              lengths, count measured flags, three basis vectors, nine\n"
+      "//              projector values, 3 x count derivatives, pull count, pulls)\n"
+      "//   Unused basis vectors, projector values and derivatives are zero.\n");
   phx::mc::test::emit_rows(rows);
 }
 
