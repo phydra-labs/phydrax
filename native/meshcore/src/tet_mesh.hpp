@@ -700,7 +700,8 @@ class TetMesh {
                            std::int8_t orientation) const;
   bool source_carrier_valid(const TetEditVertex& vertex) const;
   bool source_face_valid(const TetEditFacet& facet,
-                         const RelocationOverlay* overlay = nullptr) const;
+                         const RelocationOverlay* overlay = nullptr,
+                         const std::vector<std::size_t>* group_rows = nullptr) const;
   TetEditStatus source_face_refusal_status() const noexcept {
     return implicit_source_ && implicit_source_->last_inconclusive
                ? TetEditStatus::kUncertainPredicate : TetEditStatus::kInvalidGeometry;

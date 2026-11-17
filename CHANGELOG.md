@@ -249,6 +249,9 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Tetrahedral mesh construction indexes source faces by group for its
+  validation pass, avoiding repeated scans while retaining source order and
+  exact coverage decisions.
 - Welded surface intersection checks group exact orientation predicates and
   skip redundant shared-vertex edge tests without changing contact decisions.
 - Welded topology audits group vertex and edge star lookups without changing

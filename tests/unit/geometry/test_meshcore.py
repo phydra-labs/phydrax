@@ -640,6 +640,46 @@ def _declared_unit_tet(
     )
 
 
+def test_tet_mesh_preserves_interleaved_source_facet_groups() -> None:
+    faces = np.asarray(((1, 3, 2), (0, 2, 3), (0, 3, 1), (0, 1, 2)), dtype=np.int32)
+    order = np.asarray((2, 1, 0, 3), dtype=np.int32)
+    groups = np.asarray((0, 1, 0, 1), dtype=np.int32)
+    labels = np.asarray((101, 202), dtype=np.int64)
+    segments = np.empty((0, 2), dtype=np.int32)
+    empty_rows = np.empty((0,), dtype=np.int32)
+    source = TetMeshSourceComplex(
+        UNIT_TET.copy(),
+        faces[order],
+        groups[order],
+        np.zeros((4,), dtype=np.float64),
+        segments,
+        empty_rows,
+        np.empty((0,), dtype=np.float64),
+        np.zeros((4,), dtype=np.int8),
+        np.full((4,), -1, dtype=np.int32),
+        np.zeros((4, 2), dtype=np.float64),
+        labels,
+        np.empty((0,), dtype=np.int64),
+        np.full((4, 3, 3), np.nan, dtype=np.float64),
+        np.zeros((4,), dtype=np.float64),
+    )
+    with TetMesh3D(
+        UNIT_TET,
+        np.asarray(((0, 1, 2, 3),), dtype=np.int32),
+        None,
+        faces,
+        labels[groups],
+        segments,
+        empty_rows,
+        source=source,
+    ) as state:
+        arrays = state.arrays()
+        np.testing.assert_array_equal(arrays.faces, faces)
+        np.testing.assert_array_equal(arrays.face_sources, labels[groups])
+        np.testing.assert_array_equal(arrays.source_faces, faces[order])
+        np.testing.assert_array_equal(arrays.source_face_group_rows, groups[order])
+
+
 def test_tet_candidate_quality_rechecks_geometry_and_retained_sizes() -> None:
     plane = np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
     with _declared_unit_tet(plane, 0.0) as state:

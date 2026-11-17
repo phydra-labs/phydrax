@@ -866,7 +866,8 @@ bool TetMesh::declared_face_valid(const DeclaredGroup& group, const double* cons
 }
 
 bool TetMesh::source_face_valid(const TetEditFacet& facet,
-                                const RelocationOverlay* overlay) const {
+                                const RelocationOverlay* overlay,
+                                const std::vector<std::size_t>* group_rows) const {
   if (implicit_source_) implicit_source_->last_inconclusive = false;
   if (facet.source < 0 || (facet.orientation != 1 && facet.orientation != -1)) return false;
   std::array<std::int32_t, 3> slots{};
@@ -949,9 +950,11 @@ bool TetMesh::source_face_valid(const TetEditFacet& facet,
 
   std::vector<std::array<std::int32_t, 4>> primitives;
   std::vector<std::int32_t> rows;
-  primitives.reserve(source_faces_.size() / 3);
-  rows.reserve(source_faces_.size() / 3);
-  for (std::size_t row = 0; row < source_faces_.size() / 3; ++row) {
+  const std::size_t count = group_rows == nullptr ? source_faces_.size() / 3 : group_rows->size();
+  primitives.reserve(count);
+  rows.reserve(count);
+  for (std::size_t index = 0; index < count; ++index) {
+    const std::size_t row = group_rows == nullptr ? index : (*group_rows)[index];
     if (source_face_groups_[row] != facet.source) continue;
     // Coverage uses only the first three fields; retain the exact bank row in slot four.
     primitives.push_back({source_faces_[3 * row], source_faces_[3 * row + 1],
@@ -1036,7 +1039,8 @@ bool TetMesh::source_face_valid(const TetEditFacet& facet,
     }
   }
 
-  for (std::size_t row = 0; row < source_faces_.size() / 3; ++row) {
+  for (std::size_t index = 0; index < count; ++index) {
+    const std::size_t row = group_rows == nullptr ? index : (*group_rows)[index];
     if (source_face_groups_[row] != facet.source) continue;
     if (point_deviations[0] > source_face_tolerances_[row] ||
         point_deviations[1] > source_face_tolerances_[row] ||
