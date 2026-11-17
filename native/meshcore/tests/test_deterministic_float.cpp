@@ -152,6 +152,18 @@ std::vector<std::array<double, 6>> eigen_inputs() {
       {0x1p-1000, 0x1p-1001, 0.0, 0x1p-1000, 0x1p-1002, 0x1p-1000},
       {0x1p+1000, 0x1p+999, 0x1p+998, 0x1p+1000, 0x1p+999, 0x1p+1000},
       {-2.0, 0.5, -0.25, -1.0, 0.125, -3.0},
+      // Entries at the top of the range: rotations must not overflow. The
+      // first has eigenvalues below the largest binary64 number; the next two
+      // have one beyond it and are refused.
+      {0x1.fffffffffffffp+1022, 0x1.fffffffffffffp+1021, 0.0, 0x1.fffffffffffffp+1022,
+       0x1.fffffffffffffp+1021, 0x1.fffffffffffffp+1022},
+      {-0x1.fffffffffffffp+1023, 0x1.fffffffffffffp+1023, 0.0, 0x1.fffffffffffffp+1023, 0.0,
+       1.0},
+      {0x1.fffffffffffffp+1023, 0x1.fffffffffffffp+1023, 0x1.fffffffffffffp+1023,
+       0x1.fffffffffffffp+1023, 0x1.fffffffffffffp+1023, 0x1.fffffffffffffp+1023},
+      // Subnormal entries, and the largest and smallest magnitudes together.
+      {0x3p-1074, 0x1p-1074, 0.0, 0x2p-1074, 0x1p-1074, 0x3p-1074},
+      {0x1p+1023, 0x1p-1074, 0.0, 0x1p-1074, 0x1p-1074, 0x1p+1023},
       // Refused: non-finite entries.
       {value_of(kNaN), 0.0, 0.0, 1.0, 0.0, 1.0},
       {1.0, value_of(kInfinity), 0.0, 1.0, 0.0, 1.0}};

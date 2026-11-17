@@ -53,10 +53,12 @@ double log(double x) noexcept;
 // NaN give NaN.
 double pow_two_thirds(double x) noexcept;
 
-// Determinant of a row-major 3x3 matrix by cofactors of its first row.
+// Determinant of a row-major 3x3 matrix by cofactors of its first row, and
+// v^T M v for a row-major 3x3 matrix (M v by rows, then the dot product).
+// Neither scales its operands: a product of finite entries beyond the
+// binary64 range gives an infinite result, or NaN when such terms cancel. A
+// NaN result, also from a NaN entry, is always 0x7ff8000000000000.
 double determinant3(const double* matrix) noexcept;
-
-// v^T M v for a row-major 3x3 matrix: M v by rows, then the dot product.
 double quadratic_form3(const double* vector, const double* matrix) noexcept;
 
 // Eigenvalues in ascending order (equal values keep their Jacobi order) and
@@ -67,15 +69,20 @@ struct SymmetricEigen3 {
 };
 
 // Cyclic Jacobi diagonalization of the symmetric matrix given by the upper
-// triangle of a row-major 3x3 array. Rotations run over (0,1), (0,2), (1,2) in
-// every sweep; an off-diagonal entry that cannot change either diagonal entry
+// triangle of a row-major 3x3 array, run on the matrix scaled by the power of
+// two that brings its largest entry into [1, 2), so no finite input can
+// overflow a rotation. Rotations run over (0,1), (0,2), (1,2) in every
+// sweep; an off-diagonal entry that cannot change either diagonal entry
 // (adding 100 times its magnitude leaves both unchanged) is set to zero; the
 // iteration ends when all three are exactly zero. False for a non-finite
-// entry or when 32 sweeps do not end the iteration; `out` is then unspecified.
+// entry, for an eigenvalue beyond the binary64 range, or when 32 sweeps do
+// not end the iteration; `out` is then unspecified.
 bool symmetric_eigen3(const double* matrix, SymmetricEigen3& out) noexcept;
 
 // V diag(mapped) V^T as a row-major 3x3 matrix. The upper triangle is summed
-// over the eigenvalues in order and mirrored, so the result is exactly symmetric.
+// over the eigenvalues in order and mirrored, so the result is exactly
+// symmetric. Infinite mapped values give infinite entries, or
+// 0x7ff8000000000000 where they cancel.
 std::array<double, 9> symmetric_function3(const SymmetricEigen3& eigen,
                                           const std::array<double, 3>& mapped) noexcept;
 
