@@ -187,6 +187,96 @@ def test_native_batch_matches_elementwise_kernels_and_detects_tampering() -> Non
     assert np.any(_bits(faulty[0]) != _bits(expected[0]))
 
 
+def test_batch_subtract_same_finite_and_unbounded() -> None:
+    prepared = prepare_interval_function(
+        lambda x: x[0] - x[1], 2, batch_capacity=1, execution="batched"
+    )
+    program = prepared.native_program
+    assert program is not None
+    rows = program.instructions.copy()
+    row = np.flatnonzero(rows[:, 0] == 3)[0]
+    rows[row, 0] = 4
+    rows[row, 5:7] = rows[row, 3:5]
+    program = replace(program, instructions=rows)
+    lower = np.asarray(((-3.0, 0.0), (-np.inf, 0.0)), dtype=np.float64)
+    upper = np.asarray(((4.0, 0.0), (np.inf, 0.0)), dtype=np.float64)
+    for workers in (1, 4):
+        low, high = program.evaluate_batch(lower, upper, workers=workers)
+        np.testing.assert_array_equal(_bits(low), _bits(np.asarray((0.0, -np.inf))))
+        np.testing.assert_array_equal(_bits(high), _bits(np.asarray((0.0, np.inf))))
+
+
+def test_power_per_element_is_batch_independent() -> None:
+    lower = np.asarray(
+        ((-2.0, 2.0), (0.0, 0.0), (0.5, 0.5), (1.0, -1.0), (2.0, 1.25)),
+        dtype=np.float64,
+    )
+    upper = np.asarray(
+        ((-1.0, 2.0), (0.0, 0.0), (1.5, 0.5), (2.0, -1.0), (3.0, 1.75)),
+        dtype=np.float64,
+    )
+    function = lambda x: jnp.power(x[0], x[1])
+    host = prepare_interval_function(function, 2, batch_capacity=5)
+    native = prepare_interval_function(function, 2, batch_capacity=1, execution="batched")
+    reference = host.evaluate(lower, upper)
+    result = native.evaluate(lower, upper)
+    for expected, actual in zip(reference, result, strict=True):
+        np.testing.assert_array_equal(_bits(expected), _bits(actual))
+    program = native.native_program
+    assert program is not None
+    altered = program.instructions.copy()
+    altered[altered[:, 0] == 27, 0] = 5
+    faulty = replace(program, instructions=altered).evaluate_batch(lower, upper)
+    assert np.any(_bits(reference[0]) != _bits(faulty[0]))
+    for index in range(lower.shape[0]):
+        for prepared in (host, native):
+            alone = prepared.evaluate(lower[index : index + 1], upper[index : index + 1])
+            for expected, actual in zip(reference, alone, strict=True):
+                np.testing.assert_array_equal(
+                    _bits(expected[index : index + 1]), _bits(actual)
+                )
+    invalid = np.asarray(((-1.0, 0.5),), dtype=np.float64)
+    for prepared in (host, native):
+        with pytest.raises(IntervalExtensionError, match="noninteger power"):
+            prepared.evaluate(invalid, invalid)
+
+
+def test_random_mixed_power_boxes_match_native_and_partitions() -> None:
+    rng = np.random.default_rng(9834)
+    exponents = rng.choice(np.asarray((-4.0, -1.0, 0.0, 1.0, 2.0, 3.0, 0.5, 1.5)), 128)
+    integer = exponents == np.floor(exponents)
+    base = rng.uniform(0.01, 3.0, size=128)
+    base[integer] = rng.uniform(-3.0, 3.0, size=np.count_nonzero(integer))
+    lower = np.column_stack((base, exponents))
+    upper = np.column_stack((base + rng.uniform(0.0, 0.5, size=128), exponents))
+    upper[~integer, 1] += rng.uniform(0.0, 0.4, size=np.count_nonzero(~integer))
+
+    def function(x: jax.Array) -> jax.Array:
+        return jnp.power(x[0], x[1])
+
+    host = prepare_interval_function(function, 2, batch_capacity=128)
+    native = prepare_interval_function(function, 2, batch_capacity=1, execution="batched")
+    reference = host.evaluate(lower, upper)
+    program = native.native_program
+    assert program is not None
+    for workers in (1, 4):
+        result = program.evaluate_batch(lower, upper, workers=workers)
+        pieces = [
+            program.evaluate_batch(
+                lower[start : start + 7], upper[start : start + 7], workers=workers
+            )
+            for start in range(0, 128, 7)
+        ]
+        for endpoint in range(2):
+            np.testing.assert_array_equal(
+                _bits(reference[endpoint]), _bits(result[endpoint])
+            )
+            np.testing.assert_array_equal(
+                _bits(reference[endpoint]),
+                _bits(np.concatenate([piece[endpoint] for piece in pieces])),
+            )
+
+
 @pytest.mark.parametrize("seed", range(8))
 def test_batched_random_programs_match_per_operation_reference(seed: int) -> None:
     rng = np.random.default_rng(seed + 721)

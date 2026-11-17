@@ -47,6 +47,7 @@ constexpr std::int64_t kDecide = 23;
 constexpr std::int64_t kAttain = 24;
 constexpr std::int64_t kDivideElementwise = 25;
 constexpr std::int64_t kAtan = 26;
+constexpr std::int64_t kPowerElementwise = 27;
 constexpr double kInfinity = std::numeric_limits<double>::infinity();
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 constexpr double kLargest = std::numeric_limits<double>::max();
@@ -801,7 +802,8 @@ void interval_capability_query() {
       (std::uint64_t{1} << kEqual) | (std::uint64_t{1} << kAbsolute) |
       (std::uint64_t{1} << kExtremumPair) | (std::uint64_t{1} << kExtremumReduce) |
       (std::uint64_t{1} << kDecide) | (std::uint64_t{1} << kAttain) |
-      (std::uint64_t{1} << kDivideElementwise) | (std::uint64_t{1} << kAtan);
+      (std::uint64_t{1} << kDivideElementwise) | (std::uint64_t{1} << kAtan) |
+      (std::uint64_t{1} << kPowerElementwise);
   PHX_CHECK(phx_mc_interval_program_capabilities(&opcodes) == PHX_MC_OK);
   PHX_CHECK(opcodes == expected);
   PHX_CHECK(phx_mc_interval_program_capabilities(nullptr) == PHX_MC_INVALID_ARGUMENT);
@@ -1083,6 +1085,21 @@ void batched_elementwise_arithmetic() {
     PHX_CHECK(same(low4[at + 3], expected_lower));
     PHX_CHECK(same(high4[at + 3], expected_upper));
   }
+  const std::int64_t same_rows[] = {kSubtractSame, 1, 1, 0, -1, 0, -1, 0};
+  double same_lower[] = {-3.0, 7.0, -kInfinity, 7.0};
+  double same_upper[] = {4.0, 7.0, kInfinity, 7.0};
+  PHX_CHECK(phx_mc_interval_program_batch(same_rows, 1, nullptr, 0, nullptr, 0,
+                                           same_lower, same_upper, 2, 2, 4) == PHX_MC_OK);
+  PHX_CHECK(same(same_lower[1], 0.0) && same(same_upper[1], 0.0));
+  PHX_CHECK(same(same_lower[3], -kInfinity) && same(same_upper[3], kInfinity));
+  const std::int64_t power_rows[] = {kPowerElementwise, 2, 1, 0, -1, 1, -1, 0};
+  double power_lower[] = {-2.0, 0.0, 0.0, 0.0, -1.0, 0.5, 0.0, 0.0};
+  double power_upper[] = {3.0, 0.0, 0.0, 0.0, -1.0, 0.5, 0.0, 0.0};
+  PHX_CHECK(phx_mc_interval_program_batch(power_rows, 1, nullptr, 0, nullptr, 0,
+                                           power_lower, power_upper, 4, 2, 1) == PHX_MC_OK);
+  PHX_CHECK(same(power_lower[2], 1.0) && same(power_upper[2], 1.0));
+  PHX_CHECK(same(power_lower[3], 0.0) && same(power_upper[3], 0.0));
+  PHX_CHECK(same(power_lower[7], -1.0) && same(power_upper[7], -1.0));
   const std::int64_t invalid[] = {kReciprocal, 2, 1, 0, -1, -1, -1, 0};
   auto unchanged_low = initial_lower, unchanged_high = initial_upper;
   PHX_CHECK(phx_mc_interval_program_batch(invalid, 1, nullptr, 0, nullptr, 0,

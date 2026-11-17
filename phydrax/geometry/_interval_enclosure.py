@@ -1593,31 +1593,42 @@ def _primitive(
             previous = _primitive("integer_pow", values, {"y": exponent - 1})[0]
             return (interval_multiply(previous, values[0]),)
         case "pow":
-            exponent = values[1]
-            selected = np.asarray(exponent[0], dtype=np.float64).reshape((-1,))
-            # An integer exponent that arrives as one value broadcast per box
-            # (e.g. ``blockiness / 2 - 1`` of a traced parameter) is an integer
-            # power, so ``0 ** 0`` stays 1 instead of ``exp(0 * log 0)``.
-            if (
-                selected.size
-                and np.array_equal(exponent[0], exponent[1])
-                and np.all(selected == selected[0])
-                and float(selected[0]).is_integer()
-            ):
-                shape = np.broadcast_shapes(np.shape(values[0][0]), np.shape(exponent[0]))
-                base = (
-                    np.broadcast_to(values[0][0], shape),
-                    np.broadcast_to(values[0][1], shape),
-                )
-                return _primitive("integer_pow", (base,), {"y": int(selected[0])})
-            if np.any(np.asarray(values[0][0]) < 0.0):
+            base_lower, base_upper, exponent_lower, exponent_upper = np.broadcast_arrays(
+                np.asarray(values[0][0], dtype=np.float64),
+                np.asarray(values[0][1], dtype=np.float64),
+                np.asarray(values[1][0], dtype=np.float64),
+                np.asarray(values[1][1], dtype=np.float64),
+            )
+            integer = (
+                (exponent_lower == exponent_upper)
+                & np.isfinite(exponent_lower)
+                & (exponent_lower == np.floor(exponent_lower))
+            )
+            if np.any((~integer) & (base_lower < 0.0)):
                 raise IntervalExtensionError(
                     "noninteger power requires a nonnegative base interval."
                 )
-            # log extends 0 to -inf, so exp(y log x) encloses 0**y for every
-            # exponent sign; a nonnegative base has a nonnegative real power.
-            power = interval_exp(interval_multiply(exponent, interval_log(values[0])))
-            return ((_ieee_maximum(power[0], 0.0), power[1]),)
+            low = np.empty(base_lower.shape, dtype=np.float64)
+            high = np.empty_like(low)
+            for power_value in np.unique(exponent_lower[integer]):
+                selected = integer & (exponent_lower == power_value)
+                result = _primitive(
+                    "integer_pow",
+                    ((base_lower[selected], base_upper[selected]),),
+                    {"y": int(power_value)},
+                )[0]
+                low[selected], high[selected] = result
+            other = ~integer
+            if np.any(other):
+                power = interval_exp(
+                    interval_multiply(
+                        (exponent_lower[other], exponent_upper[other]),
+                        interval_log((base_lower[other], base_upper[other])),
+                    )
+                )
+                low[other] = _ieee_maximum(power[0], 0.0)
+                high[other] = power[1]
+            return ((low, high),)
         case "maximum" | "max":
             return (interval_maximum(values[0], values[1]),)
         case "minimum" | "min":
