@@ -249,6 +249,10 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Welded surface intersection checks group exact orientation predicates and
+  skip redundant shared-vertex edge tests without changing contact decisions.
+- Welded topology audits group vertex and edge star lookups without changing
+  manifold findings or their ordering.
 - Boundary proofs reuse already evaluated exact facet lattice points within
   the bounded live proof, preserving findings and evidence identities.
 - Embedding preparation reuses each simplex block's exact reference frame,
