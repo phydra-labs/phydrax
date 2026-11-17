@@ -21,6 +21,9 @@ from fractions import Fraction
 from math import factorial, gcd, lcm
 from typing import cast, TYPE_CHECKING
 
+import numpy as np
+from numpy.typing import NDArray
+
 from ._exact_kernels import (
     _DOMAIN_CODES,
     _RANGE_ERROR,
@@ -35,6 +38,7 @@ from ._meshcore import _raise_for_call, load_meshcore, meshcore_available
 
 if TYPE_CHECKING:
     from .discretization._exact_algebraic_geometry import ExactScalar
+    from .discretization._exact_coordinate_bank import ExactCoordinateBank
 
 
 def _magnitude(value: int, /) -> bytes:
@@ -321,3 +325,132 @@ def exact_jacobian_integrals(
             )
         pending = deferred + retry
     return results
+
+
+def exact_basis_jacobian_integrals(
+    basis: tuple[_Polynomial, ...],
+    bank: ExactCoordinateBank,
+    routes: NDArray[np.int64],
+    domain: BernsteinDomain,
+    dimension: int,
+    /,
+    *,
+    parallelism: int | None = None,
+) -> list[Fraction | None]:
+    """Integrate routed nodal maps exactly; unsupported items are refused."""
+    if (
+        dimension not in (1, 2, 3)
+        or domain not in _DOMAIN_CODES
+        or (domain == "prism" and dimension != 3)
+    ):
+        raise ValueError("Unsupported Bernstein domain or dimension.")
+    workers = _workers(parallelism)
+    if routes.ndim != 2 or routes.dtype != np.dtype(np.int64):
+        raise ValueError("routes must be a rank-2 int64 array.")
+    if routes.shape[1] != len(basis) or bank.shape[1] != dimension:
+        raise ValueError("Basis, routes, and coordinate bank dimensions must agree.")
+    result: list[Fraction | None] = [None] * routes.shape[0]
+    if any(
+        not isinstance(value, (Fraction, int)) or isinstance(value, bool)
+        for polynomial in basis
+        for value in polynomial.values()
+    ):
+        return result
+    if any(
+        len(index) != dimension
+        or any(not isinstance(k, int) or k < 0 or k > 715827882 for k in index)
+        for polynomial in basis
+        for index in polynomial
+    ):
+        return result
+    rational = cast(tuple[Mapping[tuple[int, ...], Fraction | int], ...], basis)
+    basis_scale = lcm(
+        *(value.denominator for poly in rational for value in poly.values())
+    )
+    offsets = [0]
+    powers: list[int] = []
+    coefficients: list[int] = []
+    for poly in rational:
+        for index, value in poly.items():
+            powers.extend(index)
+            coefficients.append(value.numerator * (basis_scale // value.denominator))
+        offsets.append(len(coefficients))
+    if not result or not meshcore_available():
+        return result
+    sig, exp, sparse_index, sparse_rows, sparse_values = bank.canonical_parts()
+    route_array = np.ascontiguousarray(routes)
+    volume = (
+        factorial(dimension) if domain == "simplex" else 2 if domain == "prism" else 1
+    )
+    pending = np.arange(len(result), dtype=np.int64)
+    for limbs in _WORD_LIMBS:
+        bits = 64 * limbs - 1
+        if any(abs(value).bit_length() > bits for value in coefficients):
+            continue
+        numerators: list[int] = []
+        denominators: list[int] = []
+        for value in sparse_values:
+            if (
+                isinstance(value, Fraction)
+                and abs(value.numerator).bit_length() <= bits
+                and value.denominator.bit_length() <= bits
+            ):
+                numerators.append(value.numerator)
+                denominators.append(value.denominator)
+            else:
+                numerators.append(0)
+                denominators.append(0)
+        selected = np.ascontiguousarray(route_array[pending])
+        count = pending.size
+        sums = ctypes.create_string_buffer(count * 8 * limbs)
+        scales = ctypes.create_string_buffer(count * 8 * limbs)
+        control_denominators = ctypes.create_string_buffer(count * 8)
+        counts = ctypes.create_string_buffer(count * 8)
+        statuses = ctypes.create_string_buffer(count * 4)
+        call = load_meshcore()["phx_mc_basis_jacobian_integrals"](
+            count,
+            dimension,
+            _DOMAIN_CODES[domain],
+            len(basis),
+            len(bank),
+            selected.ctypes.data,
+            sig.ctypes.data,
+            exp.ctypes.data,
+            sparse_index.ctypes.data,
+            sparse_rows.ctypes.data,
+            _words(numerators, limbs) or b"\0",
+            _words(denominators, limbs) or b"\0",
+            array("q", offsets).tobytes(),
+            array("i", powers).tobytes() or b"\0",
+            _words(coefficients, limbs) or b"\0",
+            sums,
+            scales,
+            control_denominators,
+            counts,
+            statuses,
+            limbs,
+            workers,
+        )
+        _raise_for_call(call, "basis_jacobian_integrals")
+        status_values = array("i", statuses.raw)
+        control_values = array("q", control_denominators.raw)
+        count_values = array("q", counts.raw)
+        sum_words, scale_words = sums.raw, scales.raw
+        retry: list[int] = []
+        for position, row in enumerate(pending):
+            if status_values[position] == _RANGE_ERROR:
+                retry.append(int(row))
+                continue
+            _raise_for_call(status_values[position], "basis_jacobian_integrals")
+            scale = _word(scale_words, position, 8 * limbs)
+            result[int(row)] = Fraction(
+                _word(sum_words, position, 8 * limbs),
+                (basis_scale * scale) ** dimension
+                * control_values[position]
+                * count_values[position]
+                * volume,
+            )
+        if not retry:
+            break
+        pending = np.asarray(retry, dtype=np.int64)
+    return result

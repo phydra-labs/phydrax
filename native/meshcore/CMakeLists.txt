@@ -44,6 +44,7 @@ set(PHX_MC_SOURCES
   src/exact_kernels.cpp
   src/exact_polynomial_kernels.cpp
   src/exact_polynomial_integral.cpp
+  src/exact_basis_integral.cpp
   src/exact_polynomial_verdict.cpp
   src/feature_protection.cpp
   src/graph_partition.cpp
@@ -199,6 +200,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_exact_kernels)
   phx_mc_add_test(test_exact_polynomial_kernels)
   phx_mc_add_test(test_exact_polynomial_integral)
+  phx_mc_add_test(test_exact_basis_integral)
   phx_mc_add_test(test_clip)
   phx_mc_add_test(test_capi_guard)
   phx_mc_add_test(test_cavity)
