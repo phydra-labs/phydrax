@@ -819,8 +819,12 @@ def _rational_nodes(degree: int, /) -> np.ndarray:
 
 def _simplex_nodes(degree: int, dimension: int, /) -> np.ndarray:
     if degree == 0:
-        return np.full((1, dimension), 1.0 / (dimension + 1.0))
-    return _simplex_indices(degree, dimension)[:, 1:].astype(np.float64) / degree
+        return np.zeros((1, dimension), dtype=np.float64)
+    denominator = 1 << (degree - 1).bit_length()
+    indices = _simplex_indices(degree, dimension)[:, 1:]
+    # Flooring each coordinate leaves the exact remainder in barycentric axis 0.
+    numerators = (indices * denominator) // degree
+    return numerators.astype(np.float64) / denominator
 
 
 def _grid(axes: tuple[np.ndarray, ...], /) -> np.ndarray:

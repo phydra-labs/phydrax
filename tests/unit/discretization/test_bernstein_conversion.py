@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from phydrax._execution_resources import MemoryBudgetError
-from phydrax.discretization._cell_geometry_validity import _bernstein_plan
+from phydrax.discretization._cell_geometry_validity import _bernstein_plan, _simplex_nodes
 from phydrax.discretization._coordinate_enclosure import BernsteinDomain
 from phydrax.linalg._exact import solve_exact
 
@@ -45,6 +45,7 @@ def _basis(domain: str, degrees: tuple[int, ...], nodes: np.ndarray) -> list[lis
     [
         *((domain, (degree, degree)) for domain in ("box", "prism") for degree in range(5)),
         *(("simplex", (degree, dimension)) for dimension in (1, 2, 3) for degree in range(5)),
+        *(("simplex", (degree, dimension)) for dimension in (2, 3) for degree in (5, 6)),
         ("box", (2, 3, 1)),
         ("prism", (2, 3)),
     ],
@@ -115,3 +116,14 @@ def test_conversion_preparation_has_bounded_retention_and_refuses_oversize() -> 
         _bernstein_plan("simplex", (8, 3))
     with pytest.raises(MemoryBudgetError, match="bernstein_plan"):
         _bernstein_plan("box", (15, 15, 15))
+
+
+@pytest.mark.parametrize("degree", range(1, 13))
+@pytest.mark.parametrize("dimension", (2, 3))
+def test_simplex_nodes_stay_distinct_and_inside(degree: int, dimension: int) -> None:
+    nodes = _simplex_nodes(degree, dimension)
+    exact = tuple(tuple(Fraction(float(value)) for value in row) for row in nodes)
+    assert len(set(exact)) == math.comb(degree + dimension, dimension)
+    for row in exact:
+        assert all(value >= 0 for value in row)
+        assert sum(row, Fraction(0)) <= 1
