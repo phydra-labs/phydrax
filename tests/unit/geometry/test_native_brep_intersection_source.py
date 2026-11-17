@@ -932,6 +932,62 @@ def _orthogonal_branch_root() -> tuple[
     return curve, sibling, root
 
 
+@pytest.mark.parametrize("location", ("start", "interior", "end"))
+def test_fixed_intersection_projection_preserves_coupled_point(
+    _orthogonal_branch_root: tuple[
+        IntersectionCurve, IntersectionCurve, TripleSurfaceIntersectionRoot
+    ],
+    location: str,
+) -> None:
+    from phydrax.geometry.brep._intersection_projection import project_intersection_curve
+    from phydrax.geometry.brep._projection_contracts import (
+        BRepProjectionPolicy,
+        BRepProjectionStatus,
+    )
+
+    curve, _, _ = _orthogonal_branch_root
+    parameter = {"start": 0.0, "interior": 0.5, "end": float(curve.num_charts)}[location]
+    point = np.asarray(curve.evaluate_coupled(parameter).point, dtype=np.float64)
+    query = point + np.asarray((0.1, -0.2, 0.3), dtype=np.float64)
+    projection = project_intersection_curve(
+        curve,
+        (parameter, parameter),
+        query,
+        BRepProjectionPolicy(),
+        edge_range=(0.0, float(curve.num_charts)),
+    )
+    expected_status = (
+        BRepProjectionStatus.UNIQUE
+        if location == "interior"
+        else BRepProjectionStatus.SEAM
+    )
+    assert projection.status == int(expected_status)
+    assert projection.parameter == parameter
+    np.testing.assert_array_equal(projection.point, point)
+    distance = np.linalg.norm(point - query)
+    assert distance <= projection.upper
+
+
+def test_branch_bounding_box_unions_chart_enclosures(
+    _orthogonal_branch_root: tuple[
+        IntersectionCurve, IntersectionCurve, TripleSurfaceIntersectionRoot
+    ],
+) -> None:
+    curve, _, _ = _orthogonal_branch_root
+    chart_boxes = np.stack(
+        [
+            curve.bounding_box(float(chart), float(chart + 1))
+            for chart in range(curve.num_charts)
+        ]
+    )
+    expected = np.stack(
+        (np.min(chart_boxes[:, 0], axis=0), np.max(chart_boxes[:, 1], axis=0))
+    )
+    np.testing.assert_array_equal(
+        curve.bounding_box(0.0, float(curve.num_charts)), expected
+    )
+
+
 def test_branch_endpoint_refuses_another_component_with_overlapping_axis(
     _orthogonal_branch_root: tuple[
         IntersectionCurve, IntersectionCurve, TripleSurfaceIntersectionRoot
@@ -1513,6 +1569,55 @@ def test_affine_trim_incidence_keeps_boundary_unresolved_without_false_exclusion
     np.testing.assert_array_equal(result.resolved, (False, False, True, True, True, True))
     np.testing.assert_array_equal(result.inside, (False, False, True, False, True, False))
     np.testing.assert_array_equal(result.boundary, (False,) * 6)
+
+
+def test_curve_trim_refuses_nonfinite_point_realization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry._atlas import TrimDomain
+    from phydrax.geometry.brep import _host_program
+
+    corners = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+    segments = tuple(
+        CurveTrimSegment(
+            LineCurve(first, (last[0] - first[0], last[1] - first[1])), 0.0, 1.0
+        )
+        for first, last in zip(corners, (*corners[1:], corners[0]), strict=True)
+    )
+    domain = TrimDomain(curve_loops=(segments,))
+    query = np.asarray(((0.5, 0.5),), dtype=np.float64)
+    assert bool(domain.classify(query).resolved[0])
+
+    def wrong(program: object, points: np.ndarray) -> np.ndarray:
+        return np.full((points.shape[0], 2), np.nan, dtype=np.float64)
+
+    monkeypatch.setattr(_host_program, "evaluate_host_program", wrong)
+    result = domain.classify(query)
+    assert not bool(result.resolved[0])
+
+
+@pytest.mark.parametrize("operation", ("prepare_host_program", "evaluate_host_program"))
+def test_curve_trim_propagates_unexpected_program_failures(
+    monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    from phydrax.geometry._atlas import TrimDomain
+    from phydrax.geometry.brep import _host_program
+
+    corners = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+    segments = tuple(
+        CurveTrimSegment(
+            LineCurve(first, (last[0] - first[0], last[1] - first[1])), 0.0, 1.0
+        )
+        for first, last in zip(corners, (*corners[1:], corners[0]), strict=True)
+    )
+    domain = TrimDomain(curve_loops=(segments,))
+
+    def fail(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("point program failure")
+
+    monkeypatch.setattr(_host_program, operation, fail)
+    with pytest.raises(RuntimeError, match="point program failure"):
+        domain.classify(np.asarray(((0.5, 0.5),), dtype=np.float64))
 
 
 def test_coaxial_revolution_rim_is_one_closed_branch_with_chart_scale_margins() -> None:

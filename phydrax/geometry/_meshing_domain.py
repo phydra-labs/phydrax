@@ -890,6 +890,7 @@ class SourcePreparation:
         "_curve_box_programs",
         "_curve_spans",
         "_mapped_hessians",
+        "_host_jacobian_programs",
         "_programs",
         "_trim_chains",
         "_trim_partitions",
@@ -917,6 +918,9 @@ class SourcePreparation:
         ] = {}
         self._programs: dict[
             tuple[int, int], tuple[AbstractSurfacePatch, PreparedIntervalFunction]
+        ] = {}
+        self._host_jacobian_programs: dict[
+            int, tuple[AbstractSurfacePatch, PreparedIntervalFunction | None]
         ] = {}
         self._mapped_hessians: dict[
             tuple[int, int],
@@ -1147,6 +1151,19 @@ class SourcePreparation:
         program = prepare_interval_function(derivative, 2)
         self._programs[key] = (surface, program)
         return program
+
+    def host_jacobian_program(
+        self, surface: AbstractSurfacePatch, /
+    ) -> PreparedIntervalFunction | None:
+        """Prepare one batch-independent host Jacobian program per source carrier."""
+        from .brep._host_program import prepare_host_program
+
+        entry = self._host_jacobian_programs.get(id(surface))
+        if entry is None or entry[0] is not surface:
+            program = prepare_host_program(jax.jacfwd(surface.evaluate), 2)
+            self._host_jacobian_programs[id(surface)] = (surface, program)
+            return program
+        return entry[1]
 
     def mapped_curve_hessian(
         self, surface: AbstractSurfacePatch, pcurve: AbstractCurve, /
@@ -3978,7 +3995,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
         jacobian_lower, jacobian_upper = first.evaluate(lower, upper)
         hessian_lower, hessian_upper = second.evaluate(lower, upper)
         centers = np.mean(cells, axis=1)
-        center_jacobians = surface_differential_rows(surface, centers)
+        center_jacobians = surface_differential_rows(
+            surface, centers, preparation=preparation.host_jacobian_program
+        )
         result = np.full((cells.shape[0],), np.inf, dtype=np.float64)
         pi_upper = Fraction(float(np.nextafter(math.pi, math.inf)))
         for row in range(cells.shape[0]):
