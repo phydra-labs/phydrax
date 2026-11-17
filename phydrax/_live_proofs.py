@@ -59,6 +59,14 @@ def live_content_fingerprint(value: object, /) -> tuple[object, str]:
     leaves, treedef = jax.tree_util.tree_flatten(value)
     digest = hashlib.sha256()
     scalars: list[str] = []
+    # ABCs may register virtual subclasses at runtime. Recheck the finite
+    # fast-path set on every invocation so their meaning remains unchanged.
+    scalar_types = frozenset(
+        leaf_type
+        for leaf_type in _SCALAR_LEAF_TYPES
+        if not issubclass(leaf_type, _ARRAY_LEAVES)
+        and not issubclass(leaf_type, _ImmutableFingerprintLeaf)
+    )
 
     def flush() -> None:
         if scalars:
@@ -69,7 +77,7 @@ def live_content_fingerprint(value: object, /) -> tuple[object, str]:
 
     for leaf in leaves:
         leaf_type = type(leaf)
-        if leaf_type in _SCALAR_LEAF_TYPES:
+        if leaf_type in scalar_types:
             text = f"{leaf_type.__qualname__}:{leaf!r}"
             scalars.append(f"{len(text)}:{text}")
             continue

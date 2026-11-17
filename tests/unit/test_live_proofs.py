@@ -1,5 +1,7 @@
 import gc
 import hashlib
+import subprocess
+import sys
 from fractions import Fraction
 
 import equinox as eqx
@@ -141,6 +143,25 @@ def test_ledger_preserves_original_guard_for_all_leaf_kinds() -> None:
     assert ledger.find(operands) is None
     opaque.content = "first"
     assert ledger.find(operands) == "proved"
+
+
+def test_ledger_respects_later_virtual_immutable_registration() -> None:
+    # ABC registration is process-global, so isolate it from the other tests.
+    code = """
+from fractions import Fraction
+from phydrax._live_proofs import _ImmutableFingerprintLeaf, LiveProofLedger
+from tests.unit.test_live_proofs import _MixedOperand, _original_fingerprint
+
+Fraction._live_leaf_fingerprint = lambda self: str(self.numerator)
+_ImmutableFingerprintLeaf.register(Fraction)
+operand = _MixedOperand([Fraction(1, 3)])
+ledger = LiveProofLedger()
+ledger.record((operand,), _original_fingerprint((operand,)), "proved")
+assert ledger.find((operand,)) == "proved"
+operand.values[0] = Fraction(2, 3)
+assert ledger.find((operand,)) is None
+"""
+    subprocess.run([sys.executable, "-c", code], check=True, capture_output=True)
 
 
 def test_ledger_reuses_only_the_same_unchanged_live_operands() -> None:
