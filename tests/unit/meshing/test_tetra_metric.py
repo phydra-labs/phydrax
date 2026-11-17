@@ -37,6 +37,7 @@ from phydrax.meshing._tetra_metric import (
     _relocation_goals,
     _relocation_proposals,
     _replacement_candidates,
+    _source_cell_weights,
     _source_metric_from_stencil,
     _SourceSupport,
     _split_phase,
@@ -1058,7 +1059,7 @@ def test_coupled_model_requires_progress_on_its_selected_edge() -> None:
             cell = next(
                 record
                 for record in detail.source_cells
-                if _locate_source_weights(query, (record,)) is not None
+                if _source_cell_weights(query, record) is not None
             )
             selected_cells.append(cell)
         selected = tuple(selected_cells)
@@ -1133,7 +1134,7 @@ def test_coupled_quantization_retains_an_unchanged_endpoint(
             (
                 record
                 for record in details[1].source_cells
-                if _locate_source_weights(query, (record,)) is not None
+                if _source_cell_weights(query, record) is not None
             ),
             None,
         )
@@ -3036,6 +3037,64 @@ def test_source_locator_exact_boxes_match_exhaustive_barycentric_search(
                         expected = (cell_id, vertices, weights)
                         break
                 assert _locate_source_weights(point, state.source_records) == expected
+
+
+def test_source_locator_returns_the_first_cell_on_shared_faces_and_box_faces() -> None:
+    state = _state(_source(), np.eye(3))
+    try:
+        bank = state.source_records
+        records = bank.records
+
+        def exact(vertex: int) -> tuple[Fraction, Fraction, Fraction]:
+            row = state.source_points[state.source_vertex_rows[vertex]]
+            return (
+                Fraction(float(row[0])),
+                Fraction(float(row[1])),
+                Fraction(float(row[2])),
+            )
+
+        queries: list[tuple[Fraction, Fraction, Fraction]] = []
+        shared_faces = 0
+        for first, second in combinations(records, 2):
+            shared = sorted(set(first[1]) & set(second[1]))
+            if len(shared) == 3:
+                corners = [exact(vertex) for vertex in shared]
+                queries.append(
+                    (
+                        sum((corner[0] for corner in corners), Fraction(0)) / 3,
+                        sum((corner[1] for corner in corners), Fraction(0)) / 3,
+                        sum((corner[2] for corner in corners), Fraction(0)) / 3,
+                    )
+                )
+                shared_faces += 1
+        # Source vertices lie on box faces and corners of every incident cell.
+        queries.extend(exact(vertex) for record in records for vertex in record[1])
+        # A box corner can pass the box filter of a cell that does not contain it.
+        queries.extend(
+            (Fraction(record[5][0]), Fraction(record[5][1]), Fraction(record[4][2]))
+            for record in records
+        )
+        queries.append((Fraction(5), Fraction(5), Fraction(5)))
+        several = missed_after_box = 0
+        for query in queries:
+            containing = [
+                record[0]
+                for record in records
+                if _source_cell_weights(query, record) is not None
+            ]
+            rounded = np.asarray([float(value) for value in query])
+            in_box = np.all((bank.lower <= rounded) & (rounded <= bank.upper), axis=1)
+            several += len(containing) > 1
+            missed_after_box += int(np.count_nonzero(in_box)) > len(containing)
+            located = _locate_source_weights(query, bank)
+            assert (None if located is None else located[0]) == (
+                min(containing) if containing else None
+            )
+        assert _locate_source_weights(queries[-1], bank) is None
+        # The cases this test exists for all occur in the fixture.
+        assert shared_faces > 0 and several > 0 and missed_after_box > 0
+    finally:
+        state.native.close()
 
 
 def test_source_metric_log_reuse_matches_uncached_interpolation() -> None:

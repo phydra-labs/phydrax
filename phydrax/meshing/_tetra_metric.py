@@ -343,6 +343,26 @@ type _SourceTetRecord = tuple[
 ]
 
 
+@final
+@dataclass(frozen=True, slots=True, eq=False)
+class _SourceRecords:
+    """Source cell records in ascending cell ID with their binary64 boxes.
+
+    ``lower`` and ``upper`` repeat each record's box corners as arrays, one row
+    per record, so a point is compared against every box in one operation.
+    """
+
+    records: tuple[_SourceTetRecord, ...]
+    lower: np.ndarray
+    upper: np.ndarray
+
+    def __iter__(self) -> Iterator[_SourceTetRecord]:
+        return iter(self.records)
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+
 class _EditCounters(NamedTuple):
     splits: int = 0
     collapses: int = 0
@@ -399,7 +419,7 @@ class _NativeState:
     source_cell_vertices: np.ndarray
     source_cell_regions: np.ndarray
     source_cell_blocks: np.ndarray
-    source_records: tuple[_SourceTetRecord, ...]
+    source_records: _SourceRecords
     source_region_volumes: dict[int, float]
     source_identity: tuple[str, str, str, str]
     vertex_target_ids: dict[int, int]
@@ -1178,7 +1198,7 @@ def _source_tetra_inverse(
     /,
     *,
     exact_points: tuple[tuple[Fraction, Fraction, Fraction], ...] | None = None,
-) -> tuple[_SourceTetRecord, ...]:
+) -> _SourceRecords:
     records: list[_SourceTetRecord] = []
     for row, vertices in enumerate(cells):
         coordinates = [
@@ -1233,74 +1253,110 @@ def _source_tetra_inverse(
                 denominator,
             )
         )
-    return tuple(sorted(records, key=lambda row: row[0]))
+    return _source_records(tuple(sorted(records, key=lambda row: row[0])))
+
+
+def _source_records(records: tuple[_SourceTetRecord, ...], /) -> _SourceRecords:
+    """Bind records already in ascending cell ID to their box arrays."""
+    lower = np.asarray([record[4] for record in records], dtype=np.float64)
+    upper = np.asarray([record[5] for record in records], dtype=np.float64)
+    lower = lower.reshape((len(records), 3))
+    upper = upper.reshape((len(records), 3))
+    lower.setflags(write=False)
+    upper.setflags(write=False)
+    return _SourceRecords(records, lower, upper)
+
+
+def _integer_point(
+    point: tuple[Fraction, Fraction, Fraction], /
+) -> tuple[tuple[int, int, int], int]:
+    """An exact point as integer coordinates over one common denominator."""
+    denominator = lcm(*(value.denominator for value in point))
+    return (
+        (
+            point[0].numerator * (denominator // point[0].denominator),
+            point[1].numerator * (denominator // point[1].denominator),
+            point[2].numerator * (denominator // point[2].denominator),
+        ),
+        denominator,
+    )
+
+
+def _record_weights(
+    scaled_point: tuple[int, int, int],
+    point_denominator: int,
+    record: _SourceTetRecord,
+    /,
+) -> tuple[int, tuple[int, ...], tuple[Fraction, ...]] | None:
+    """Exact barycentric weights of an integer point in one source cell."""
+    common = record[7] * point_denominator
+    remaining = common
+    tail = []
+    for row in record[6]:
+        weight = (
+            row[0] * scaled_point[0]
+            + row[1] * scaled_point[1]
+            + row[2] * scaled_point[2]
+            + row[3] * point_denominator
+        )
+        if weight < 0 or weight > remaining:
+            return None
+        tail.append(weight)
+        remaining -= weight
+    return (
+        record[0],
+        record[1],
+        tuple(Fraction(value, common) for value in (remaining, *tail)),
+    )
+
+
+def _source_cell_weights(
+    point: tuple[Fraction, Fraction, Fraction],
+    record: _SourceTetRecord,
+    /,
+) -> tuple[int, tuple[int, ...], tuple[Fraction, ...]] | None:
+    """Exact barycentric weights of a point in one source cell, or ``None``."""
+    scaled_point, point_denominator = _integer_point(point)
+    return _record_weights(scaled_point, point_denominator, record)
 
 
 def _locate_source_weights(
     point: tuple[Fraction, Fraction, Fraction],
-    source_records: tuple[_SourceTetRecord, ...],
+    source_records: _SourceRecords,
     /,
 ) -> tuple[int, tuple[int, ...], tuple[Fraction, ...]] | None:
     """First source cell (by ID) containing an exact point, with its exact
     barycentric weights in the cell's vertex order."""
     try:
-        rounded = tuple(float(value) for value in point)
+        rounded = (float(point[0]), float(point[1]), float(point[2]))
     except OverflowError:
         # Source vertices are finite binary64, so an overflowed coordinate
         # lies outside every source box.
         return None
-    scaled_point: tuple[int, int, int] | None = None
-    point_denominator = 1
-    for (
-        cell_id,
-        vertices,
-        _inverse,
-        _origin,
-        lower,
-        upper,
-        affine,
-        denominator,
-    ) in source_records:
-        # Correct rounding is monotone and the bounds are binary64 source
-        # vertices: rounding a point within a closed box cannot leave it.
-        if any(
-            rounded[axis] < lower[axis] or rounded[axis] > upper[axis]
-            for axis in range(3)
-        ):
-            continue
-        if scaled_point is None:
-            point_denominator = lcm(*(value.denominator for value in point))
-            scaled_point = (
-                point[0].numerator * (point_denominator // point[0].denominator),
-                point[1].numerator * (point_denominator // point[1].denominator),
-                point[2].numerator * (point_denominator // point[2].denominator),
-            )
-        common = denominator * point_denominator
-        remaining = common
-        tail = []
-        for row in affine:
-            weight = (
-                row[0] * scaled_point[0]
-                + row[1] * scaled_point[1]
-                + row[2] * scaled_point[2]
-                + row[3] * point_denominator
-            )
-            if weight < 0 or weight > remaining:
-                break
-            tail.append(weight)
-            remaining -= weight
-        else:
-            return (
-                cell_id,
-                vertices,
-                tuple(Fraction(value, common) for value in (remaining, *tail)),
-            )
+    # Correct rounding is monotone and the bounds are binary64 source
+    # vertices: rounding a point within a closed box cannot leave it. The
+    # float comparison therefore never drops a containing cell; the exact
+    # integer test below decides among the boxes that pass.
+    inside = np.flatnonzero(
+        np.all(
+            (source_records.lower <= rounded) & (rounded <= source_records.upper),
+            axis=1,
+        )
+    )
+    if inside.size == 0:
+        return None
+    scaled_point, point_denominator = _integer_point(point)
+    records = source_records.records
+    for row in inside.tolist():
+        located = _record_weights(scaled_point, point_denominator, records[row])
+        if located is not None:
+            return located
     return None
 
 
 def _locate_source_stencil(
     point: np.ndarray,
-    source_records: tuple[_SourceTetRecord, ...],
+    source_records: _SourceRecords,
     /,
 ) -> tuple[int, dict[int, Fraction]] | None:
     query = tuple(Fraction(float(value)) for value in point)
@@ -7412,7 +7468,7 @@ def _relocation_proposals(
             # The current periodic star is fixed for this search. Build its
             # exact locator only if a carrier reaches this admission, then
             # retain it across subsequent carriers and generator resumptions.
-            star_records: tuple[_SourceTetRecord, ...] | None = None
+            star_records: _SourceRecords | None = None
             for goal, remaining in candidate_goals():
                 if refine:
                     choices = _quantized_relocation_candidates(
@@ -7592,7 +7648,7 @@ def _current_star_stencil(
     carrier: np.ndarray,
     /,
     *,
-    star_records: tuple[_SourceTetRecord, ...] | None = None,
+    star_records: _SourceRecords | None = None,
 ) -> dict[int, Fraction] | None:
     """Binary64 barycentric stencil of a carrier in the current star that
     reproduces it exactly, else ``None``.
