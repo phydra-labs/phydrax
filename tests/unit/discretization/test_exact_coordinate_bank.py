@@ -44,6 +44,23 @@ def test_bank_packs_dyadics_densely_and_keeps_other_scalars_sparse() -> None:
     )
 
 
+def test_canonical_parts_are_read_only_and_preserve_identity() -> None:
+    bank = ExactCoordinateBank.from_rows(_rows())
+    identity = bank.content_fingerprint()
+    significands, exponents, indices, offsets, sparse = bank.canonical_parts()
+    assert significands.dtype == np.dtype(np.int64)
+    assert exponents.dtype == np.dtype(np.int16)
+    assert indices.dtype == offsets.dtype == np.dtype(np.int64)
+    assert tuple(indices) == (3, 4, 6)
+    assert tuple(offsets) == (0, 0, 2, 3)
+    assert sparse == (_rows()[1][0], _rows()[1][1], _rows()[2][0])
+    for array in (significands, exponents, indices, offsets):
+        assert not array.flags.writeable
+        with pytest.raises(ValueError):
+            array.flat[0] = 0
+    assert bank.content_fingerprint() == identity
+
+
 def test_bank_equality_hash_and_immutability_are_canonical() -> None:
     rows = _rows()
     bank = ExactCoordinateBank.from_rows(rows)
@@ -221,7 +238,9 @@ def test_binary64_bank_exact_rows_match_random_finite_bits() -> None:
     values[~np.isfinite(values)] = 0.0
     matrix = values.reshape(-1, 3)
     bank = ExactCoordinateBank.from_binary64(matrix)
-    expected = tuple(tuple(Fraction.from_float(float(value)) for value in row) for row in matrix)
+    expected = tuple(
+        tuple(Fraction.from_float(float(value)) for value in row) for row in matrix
+    )
     assert tuple(bank) == expected
     assert bank.coefficient_payloads() == tuple(
         tuple(coefficient_payload(value) for value in row) for row in expected
@@ -234,13 +253,34 @@ def test_binary64_bank_exact_rows_match_random_finite_bits() -> None:
 
 
 def test_exact_bank_fingerprint_frames_shape_and_sparse_payload() -> None:
-    a = ExactCoordinateBank.from_rows(((Fraction(1), Fraction(2)), (Fraction(3), Fraction(4))))
+    a = ExactCoordinateBank.from_rows(
+        ((Fraction(1), Fraction(2)), (Fraction(3), Fraction(4)))
+    )
     reshaped = ExactCoordinateBank.from_rows(
         ((Fraction(1),), (Fraction(2),), (Fraction(3),), (Fraction(4),))
     )
-    same = ExactCoordinateBank.from_rows(((Fraction(1), Fraction(2)), (Fraction(3), Fraction(4))))
-    changed = ExactCoordinateBank.from_rows(((Fraction(1), Fraction(2)), (Fraction(3), Fraction(5))))
-    sparse = ExactCoordinateBank.from_rows(((Fraction(1, 3), Fraction(2)), (Fraction(3), Fraction(4))))
-    moved_sparse = ExactCoordinateBank.from_rows(((Fraction(1), Fraction(1, 3)), (Fraction(3), Fraction(4))))
+    same = ExactCoordinateBank.from_rows(
+        ((Fraction(1), Fraction(2)), (Fraction(3), Fraction(4)))
+    )
+    changed = ExactCoordinateBank.from_rows(
+        ((Fraction(1), Fraction(2)), (Fraction(3), Fraction(5)))
+    )
+    sparse = ExactCoordinateBank.from_rows(
+        ((Fraction(1, 3), Fraction(2)), (Fraction(3), Fraction(4)))
+    )
+    moved_sparse = ExactCoordinateBank.from_rows(
+        ((Fraction(1), Fraction(1, 3)), (Fraction(3), Fraction(4)))
+    )
     assert a.content_fingerprint() == same.content_fingerprint()
-    assert len({a.content_fingerprint(), reshaped.content_fingerprint(), changed.content_fingerprint(), sparse.content_fingerprint(), moved_sparse.content_fingerprint()}) == 5
+    assert (
+        len(
+            {
+                a.content_fingerprint(),
+                reshaped.content_fingerprint(),
+                changed.content_fingerprint(),
+                sparse.content_fingerprint(),
+                moved_sparse.content_fingerprint(),
+            }
+        )
+        == 5
+    )

@@ -113,7 +113,9 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
                         "A dense dyadic entry cannot be held in the sparse table."
                     )
             elif isinstance(value, RadicalElement):
-                canonical = canonical_exact_scalar(value, role="Exact coordinate bank entry")
+                canonical = canonical_exact_scalar(
+                    value, role="Exact coordinate bank entry"
+                )
                 if isinstance(canonical, Fraction):
                     raise ValueError(
                         "A rational radical cannot be held in the sparse table."
@@ -210,6 +212,24 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
     def rational(self) -> bool:
         """Whether every entry is a ``Fraction``."""
         return all(isinstance(value, Fraction) for value in self._sparse_values)
+
+    def canonical_parts(
+        self, /
+    ) -> tuple[
+        NDArray[np.int64],
+        NDArray[np.int16],
+        NDArray[np.int64],
+        NDArray[np.int64],
+        tuple[ExactScalar, ...],
+    ]:
+        """Read-only dyadic arrays, sparse indices, row offsets, and exact values."""
+        return (
+            self._significands.view(),
+            self._exponents.view(),
+            self._sparse_index.view(),
+            self._sparse_row_starts.view(),
+            self._sparse_values,
+        )
 
     def __len__(self) -> int:
         return self._shape[0]
