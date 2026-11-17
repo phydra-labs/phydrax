@@ -437,6 +437,144 @@ def test_circle_edge_frame_tracks_curve_geometry(radius: float) -> None:
     )
 
 
+def test_circle_edge_frames_preserve_identity_across_batch_sizes() -> None:
+    model = brep_cylinder(2.0, 2.0, coordinate_contract=_CONTRACT)
+    projection = phx.geometry.prepare_brep_projection(model)
+    edge = _circle_edge(projection, 2.0)
+    points = np.asarray(((3.0, 4.0, 2.0), (-4.0, 3.0, 2.0), (0.0, 0.0, 2.0)))
+    small = _project(projection, points, _EDGE, edge)
+    large = _project(projection, np.tile(points, (3, 1)), _EDGE, edge)
+    assert np.asarray(small.status).tolist() == [
+        _STATUS.UNIQUE,
+        _STATUS.UNIQUE,
+        _STATUS.NON_ISOLATED,
+    ]
+    for name in (
+        "points",
+        "parameters",
+        "status",
+        "distance_lower_bounds",
+        "residuals",
+        "normals",
+        "tangents",
+    ):
+        np.testing.assert_array_equal(
+            np.asarray(getattr(large, name))[: len(points)],
+            np.asarray(getattr(small, name)),
+        )
+    np.testing.assert_allclose(
+        np.abs(np.asarray(small.tangents)[:2, 0]),
+        ((0.8, 0.6, 0.0), (0.6, 0.8, 0.0)),
+        atol=1e-12,
+    )
+    single = _project(projection, points[:1], _EDGE, edge)
+    isolated = type(small)(
+        small.source_id,
+        small.source_revision,
+        small.dimensions[:1],
+        small.indices[:1],
+        small.queries[:1],
+        small.points[:1],
+        small.parameters[:1],
+        small.residuals[:1],
+        small.status[:1],
+        small.normals[:1],
+        small.tangents[:1],
+        distance_lower_bounds=small.distance_lower_bounds[:1],
+        occurrence_paths=small.occurrence_paths[:1],
+        frame_id=small.frame_id,
+    )
+    assert isolated.result_id == single.result_id
+
+
+def test_intersection_edge_frames_follow_both_cylinders_across_batches(
+    monkeypatch: Any,
+) -> None:
+    from dataclasses import replace
+
+    from phydrax.geometry.brep import _intersection_projection
+    from phydrax.geometry.brep._intersection_curve import IntersectionCurve
+    from tests.unit.interchange._native_cad_archive_worker import (
+        _orthogonal_quadric_boolean_model,
+    )
+
+    model = _orthogonal_quadric_boolean_model()
+    geometry = model.geometry
+    edge = next(
+        index
+        for index, carrier in enumerate(geometry.edge_curves)
+        if carrier >= 0
+        and isinstance(geometry.curves[carrier], IntersectionCurve)
+        and geometry.edge_ranges[index][0] < geometry.edge_ranges[index][1]
+    )
+    curve = geometry.curves[geometry.edge_curves[edge]]
+    assert isinstance(curve, IntersectionCurve)
+    first, last = np.asarray(geometry.edge_ranges[edge], dtype=np.float64)
+    parameters = first + (last - first) * np.asarray((0.3, 0.6))
+    points = np.stack(
+        [
+            np.asarray(curve.evaluate_coupled(value).point, dtype=np.float64)
+            for value in parameters
+        ]
+    )
+    projection = phx.geometry.prepare_brep_projection(model)
+    result = _project(projection, points, _EDGE, edge)
+    repeated = _project(projection, np.tile(points, (2, 1)), _EDGE, edge)
+    np.testing.assert_array_equal(result.status, [_STATUS.UNIQUE, _STATUS.UNIQUE])
+    for name in (
+        "points",
+        "parameters",
+        "status",
+        "distance_lower_bounds",
+        "residuals",
+        "normals",
+        "tangents",
+    ):
+        np.testing.assert_array_equal(
+            np.asarray(getattr(repeated, name))[:2], np.asarray(getattr(result, name))
+        )
+    projected = np.asarray(result.points)
+    tangent = np.asarray(result.tangents)[:, 0]
+    normal_first = projected * np.asarray((1.0, 1.0, 0.0))
+    normal_second = projected * np.asarray((0.0, 1.0, 1.0))
+    reference = np.cross(normal_first, normal_second)
+    reference /= np.linalg.norm(reference, axis=1)[:, None]
+    np.testing.assert_allclose(
+        np.abs(np.sum(tangent * reference, axis=1)), 1.0, atol=1e-10
+    )
+    single = _project(projection, points[:1], _EDGE, edge)
+    isolated = type(result)(
+        result.source_id,
+        result.source_revision,
+        result.dimensions[:1],
+        result.indices[:1],
+        result.queries[:1],
+        result.points[:1],
+        result.parameters[:1],
+        result.residuals[:1],
+        result.status[:1],
+        result.normals[:1],
+        result.tangents[:1],
+        distance_lower_bounds=result.distance_lower_bounds[:1],
+        occurrence_paths=result.occurrence_paths[:1],
+        frame_id=result.frame_id,
+    )
+    assert isolated.result_id == single.result_id
+    original = _intersection_projection.project_intersection_curve
+
+    def zero_tangent(*args: Any, **kwargs: Any) -> Any:
+        return replace(original(*args, **kwargs), tangent=np.zeros(3))
+
+    monkeypatch.setattr(
+        _intersection_projection, "project_intersection_curve", zero_tangent
+    )
+    fallback = _project(projection, points[:1], _EDGE, edge)
+    np.testing.assert_array_equal(fallback.status, single.status)
+    np.testing.assert_allclose(
+        fallback.tangents, single.tangents, atol=1e-12, equal_nan=True
+    )
+
+
 @pytest.mark.parametrize(
     ("model", "inside", "outside", "boundary"),
     [

@@ -158,7 +158,7 @@ from ._separating_normals import (
 )
 from ._stratum_subdivision import (
     _control_indices,
-    _controls,
+    _controls_many,
     _reference_slots,
     glued_face_monotone,
     glued_facet_monotone,
@@ -1562,7 +1562,7 @@ def _retained_root_charts(
                     and same_element_chart
                 ):
                     if coefficient_bank is None:
-                        coefficient_bank = geometry.source_coordinates()
+                        coefficient_bank = tuple(geometry.source_coordinates())
                     root_coordinates = _cell_expressions(
                         element.source_element,
                         tuple(
@@ -5289,6 +5289,34 @@ class _VertexConeFilter:
         exact_points: dict[tuple[ExactScalar, ...], int] = {}
         valid = np.zeros(count, dtype=np.bool_)
         indices = _control_indices((4,), (2,))
+
+        def endpoint(value: ExactScalar | int, scale: int, /, *, upper: bool) -> float:
+            if not isinstance(value, int):
+                return coefficient_endpoint(value, upper=upper)
+            rounded = value / scale
+            numerator, denominator = rounded.as_integer_ratio()
+            difference = numerator * scale - value * denominator
+            if (upper and difference < 0) or (not upper and difference > 0):
+                return float(np.nextafter(rounded, np.inf if upper else -np.inf))
+            return rounded
+
+        def matches(
+            values: tuple[ExactScalar | int, ...],
+            scale: int,
+            point: tuple[ExactScalar, ...],
+            /,
+        ) -> bool:
+            return all(
+                value * target.denominator == target.numerator * scale
+                if isinstance(value, int) and isinstance(target, Fraction)
+                else (Fraction(value, scale) if isinstance(value, int) else value)
+                == target
+                for value, target in zip(values, point, strict=True)
+            )
+
+        eligible: list[
+            tuple[int, EmbeddingCell, tuple[tuple[int, ...], tuple[tuple[int, ...], ...]]]
+        ] = []
         for row, cell in enumerate(cells):
             if stated is not None and not stated[row]:
                 # No pair of this cell is stated.
@@ -5315,23 +5343,35 @@ class _VertexConeFilter:
                     if isinstance(expression, dict)
                 ):
                     continue
-                controls = _controls(cell.coordinates, (4,), (2,), 3)
-                if controls is None:
-                    continue
+            except (ValueError, ZeroDivisionError, OverflowError):
+                continue
+            eligible.append((row, cell, layout))
+        batch = _controls_many(
+            [(cell.coordinates, (4,), (2,), 3) for _, cell, _ in eligible],
+            tolerate_errors=True,
+        )
+        for (row, cell, layout), controls in zip(eligible, batch, strict=True):
+            if controls is None:
+                continue
+            try:
                 corners = tuple(
                     indices.index(tuple(2 * int(slot == corner[0]) for slot in range(4)))
                     for corner in layout[1]
                 )
                 if any(
-                    controls[indices[slot]] != cell.corner_images[index]
+                    not matches(
+                        controls.values[indices[slot]],
+                        controls.scale,
+                        cell.corner_images[index],
+                    )
                     for index, slot in enumerate(corners)
                 ):
                     continue
                 lo = np.asarray(
                     [
                         [
-                            coefficient_endpoint(value, upper=False)
-                            for value in controls[index]
+                            endpoint(value, controls.scale, upper=False)
+                            for value in controls.values[index]
                         ]
                         for index in indices
                     ],
@@ -5340,8 +5380,8 @@ class _VertexConeFilter:
                 hi = np.asarray(
                     [
                         [
-                            coefficient_endpoint(value, upper=True)
-                            for value in controls[index]
+                            endpoint(value, controls.scale, upper=True)
+                            for value in controls.values[index]
                         ]
                         for index in indices
                     ],

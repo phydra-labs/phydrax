@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from fractions import Fraction
-from typing import final, Literal, NamedTuple
+from typing import final, Literal, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
@@ -20,9 +20,13 @@ from .._trainable import NonTrainableState
 from ..discretization._cell_geometry import CellGeometrySpec
 from ..discretization._cell_mesh import CellMesh
 from ..discretization._exact_algebraic_geometry import ExactScalar
+from ..discretization._mapped_geometry_measure import exact_block_cell_measures
 from ..typing import Dim, HostInt64
 from ._affine_plc_domain import AffinePlcDomain
-from ._approximate_source_coverage import ExactCadSourceBoundary
+from ._approximate_source_coverage import (
+    _require_coverage_handoff,
+    ExactCadSourceBoundary,
+)
 from ._domain_coverage import PiecewiseLinearDomain
 from ._domain_preparation import CellCoverageAssignment, DomainCoveragePreparation
 from ._embedding_state import (
@@ -53,6 +57,10 @@ from .implicit._restricted_delaunay_coverage import (
     RestrictedDelaunayCoverageWitness,
     validate_restricted_delaunay_coverage_witness,
 )
+
+
+if TYPE_CHECKING:
+    from .implicit._source_charts import AdaptiveImplicitRootChartMap
 
 
 type CoverageDomain = (
@@ -308,6 +316,7 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
         source: SourceBoundaryQuery | None = None,
         fidelity: SourceFidelityCertificate | None = None,
         source_coverage_witness: SourceCoverageWitness | None = None,
+        root_charts: AdaptiveImplicitRootChartMap | None = None,
         chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
         _validated_parent_embedding: ValidatedGlobalEmbedding | None = None,
     ) -> None:
@@ -322,6 +331,7 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
             source=source,
             fidelity=fidelity,
             source_coverage_witness=source_coverage_witness,
+            root_charts=root_charts,
             chart_parent=chart_parent,
             _validated_parent_embedding=_validated_parent_embedding,
         )
@@ -706,7 +716,8 @@ def _source_region_measures(
     exact_cad: ExactCadSourceBoundary | None,
 ) -> tuple[ExactScalar | None, ...]:
     """Integrate exact source measures; bounded source proofs retain no fake volume."""
-    from ._domain_numerics import affine_cell_measure, cell_coordinate_expressions
+    from ._domain_chart_chain import _cell_measures
+    from ._domain_numerics import cell_coordinate_expressions
 
     if isinstance(domain, AdaptiveImplicitSurface):
         return tuple(None for _ in domain.region_ids)
@@ -743,7 +754,14 @@ def _source_region_measures(
             )
             source_totals: list[ExactScalar] = [Fraction(0) for _ in domain.region_ids]
             unresolved_source_regions: set[int] = set()
-            for source_row, (expressions, block) in enumerate(
+            measured = iter(
+                _cell_measures(
+                    (expressions, block.cell_kind)
+                    for expressions, block in zip(source_maps, source_blocks, strict=True)
+                    if expressions is not None
+                )
+            )
+            for source_row, (expressions, _block) in enumerate(
                 zip(source_maps, source_blocks, strict=True)
             ):
                 region = int(source_regions[source_row])
@@ -752,7 +770,9 @@ def _source_region_measures(
                         raise ValueError(
                             "Mapped source root cell has no reference coordinate map."
                         )
-                    measure = affine_cell_measure(expressions, block.cell_kind)
+                    measure = next(measured)
+                    if isinstance(measure, Exception):
+                        raise measure
                 except (TypeError, ValueError, ZeroDivisionError) as error:
                     unresolved_source_regions.add(region)
                     findings.append(
@@ -812,13 +832,26 @@ def _target_region_measures(
     ``cell_measures`` replaces the measures of cells whose corners were
     substituted by exact source points, keyed by cell order.
     """
-    from ._domain_numerics import affine_cell_measure, polyhedral_cell_measures
+    from ._domain_chart_chain import _cell_measures
+    from ._domain_numerics import polyhedral_cell_measures
 
+    maps = tuple(
+        None
+        if cell_measures is not None and cell in cell_measures
+        else preparation.coordinate_maps[cell]
+        for cell in range(len(preparation.assignments))
+    )
     polyhedral_measures: tuple[Fraction | None, ...] | None = None
     polyhedral_measure_error: Exception | None = None
-    if any(expressions is None for expressions in preparation.coordinate_maps):
+    if any(
+        expressions is None
+        for cell, expressions in enumerate(maps)
+        if cell_measures is None or cell not in cell_measures
+    ):
         try:
-            polyhedral_measures = polyhedral_cell_measures(mesh, geometry)
+            polyhedral_measures = polyhedral_cell_measures(
+                mesh, geometry, coordinate_maps=preparation.coordinate_maps
+            )
         except (TypeError, ValueError, IndexError, ArithmeticError) as error:
             polyhedral_measure_error = error
     totals: list[ExactScalar] = [Fraction(0) for _ in domain.region_ids]
@@ -828,18 +861,25 @@ def _target_region_measures(
         for mesh_block in mesh.blocks
         for _ in range(mesh_block.cell_count)
     )
-    for cell, (assignment, expressions, cell_kind) in enumerate(
-        zip(
-            preparation.assignments,
-            preparation.coordinate_maps,
-            cell_kinds,
-            strict=True,
+    measured = iter(
+        _cell_measures(
+            (expressions, cell_kind)
+            for cell, (expressions, cell_kind) in enumerate(
+                zip(maps, cell_kinds, strict=True)
+            )
+            if expressions is not None
+            and (cell_measures is None or cell not in cell_measures)
         )
+    )
+    if len(preparation.coordinate_maps) != len(cell_kinds):
+        raise ValueError("Exact coordinate maps must align with target cell order.")
+    for cell, (assignment, _cell_kind) in enumerate(
+        zip(preparation.assignments, cell_kinds, strict=True)
     ):
         try:
             if cell_measures is not None and cell in cell_measures:
                 measure = cell_measures[cell]
-            elif expressions is None:
+            elif maps[cell] is None:
                 if polyhedral_measures is None:
                     raise ValueError(
                         "Exact polyhedral cell integration is unavailable: "
@@ -852,7 +892,9 @@ def _target_region_measures(
                     )
                 measure = polyhedral_measure
             else:
-                measure = affine_cell_measure(expressions, cell_kind)
+                measure = next(measured)
+                if isinstance(measure, Exception):
+                    raise measure
         except (TypeError, ValueError, IndexError, ArithmeticError) as error:
             unresolved_regions.add(assignment.region)
             if required:
@@ -966,6 +1008,7 @@ def _coverage_boundary_partition(
     source: SourceBoundaryQuery | None,
     fidelity: SourceFidelityCertificate | None,
     source_coverage_witness: SourceCoverageWitness | None,
+    root_charts: AdaptiveImplicitRootChartMap | None,
     chart_parent: tuple[CellMesh, CellGeometrySpec] | None,
     validated_parent_embedding: ValidatedGlobalEmbedding | None,
 ) -> _BoundaryCoverageProof:
@@ -1248,7 +1291,7 @@ def _coverage_boundary_partition(
             target_facets, issues = oriented_target_facets(
                 mesh,
                 preparation.cell_regions,
-                preparation.coordinate_maps,
+                tuple(preparation.coordinate_maps),
                 source_domain=source_domain,
                 geometry=geometry,
                 exact_face_images=True,
@@ -1413,6 +1456,7 @@ def _coverage_boundary_partition(
             source=source,
             fidelity=fidelity,
             embedding=embedding,
+            root_charts=root_charts,
         )
         if attempt.bounded is None:
             for failure in attempt.failures:
@@ -1463,7 +1507,7 @@ def _plc_source_points(
     from ._planar_coverage import resolve_plc_source_points, SourcePointRefusal
 
     try:
-        cells = affine_cell_corners(mesh, preparation.coordinate_maps)
+        cells = affine_cell_corners(mesh, tuple(preparation.coordinate_maps))
     except (TypeError, ValueError, KeyError, ArithmeticError) as error:
         findings.append(
             _coverage_finding(
@@ -1509,6 +1553,7 @@ def _prove_coverage(
     source: SourceBoundaryQuery | None,
     fidelity: SourceFidelityCertificate | None,
     source_coverage_witness: SourceCoverageWitness | None,
+    root_charts: AdaptiveImplicitRootChartMap | None,
     chart_parent: tuple[CellMesh, CellGeometrySpec] | None,
     _validated_parent_embedding: ValidatedGlobalEmbedding | None,
 ) -> _CoverageProof:
@@ -1540,6 +1585,8 @@ def _prove_coverage(
         source = fidelity.source
     if source is not None and not isinstance(source, SourceBoundaryQuery):
         raise TypeError("source must implement SourceBoundaryQuery.")
+    if root_charts is not None:
+        _require_coverage_handoff(root_charts, mesh, geometry, domain, source, fidelity)
     if source_coverage_witness is not None and not isinstance(
         source_coverage_witness,
         (
@@ -1638,9 +1685,15 @@ def _prove_coverage(
         source=source,
         fidelity=fidelity_for_coverage,
         source_coverage_witness=source_coverage_witness,
+        root_charts=root_charts,
         chart_parent=chart_parent,
         validated_parent_embedding=_validated_parent_embedding,
     )
+    # Block measures come straight from the shared basis and the coordinate
+    # bank; cells with substituted exact source corners keep their own measure.
+    cell_measures = exact_block_cell_measures(mesh, geometry)
+    if boundary.cell_measures is not None:
+        cell_measures.update(boundary.cell_measures)
     achieved = _target_region_measures(
         mesh,
         geometry,
@@ -1648,7 +1701,7 @@ def _prove_coverage(
         preparation,
         findings,
         required=boundary.coverage_method != "source_boundary_homotopy",
-        cell_measures=boundary.cell_measures,
+        cell_measures=cell_measures,
     )
     if boundary.coverage_method != "source_boundary_homotopy":
         for region, (source_measure, target_measure) in enumerate(
@@ -1704,10 +1757,17 @@ def certify_domain_coverage(
     source: SourceBoundaryQuery | None = None,
     fidelity: SourceFidelityCertificate | None = None,
     source_coverage_witness: SourceCoverageWitness | None = None,
+    root_charts: AdaptiveImplicitRootChartMap | None = None,
     chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
     _validated_parent_embedding: ValidatedGlobalEmbedding | None = None,
 ) -> DomainCoverageCertificate:
-    """Compute exact or witnessed bounded coverage from source authority."""
+    """Compute exact or witnessed bounded coverage from source authority.
+
+    ``root_charts`` may carry this operation's complete adaptive implicit map.
+    Its mesh, geometry, source, witness, domain and controls must be the same
+    live operands as the coverage request; a mismatch is refused explicitly.
+    The map is consumed transiently and is not retained by the certificate.
+    """
     return DomainCoverageCertificate(
         mesh,
         geometry,
@@ -1717,6 +1777,7 @@ def certify_domain_coverage(
         source=source,
         fidelity=fidelity,
         source_coverage_witness=source_coverage_witness,
+        root_charts=root_charts,
         chart_parent=chart_parent,
         _validated_parent_embedding=_validated_parent_embedding,
     )

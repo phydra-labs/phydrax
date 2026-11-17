@@ -194,6 +194,130 @@ def test_adaptive_interpolation_decides_naturally_ambiguous_bound() -> None:
     assert batch == (natural_result, singleton[0])
 
 
+def test_source_point_enclosures_match_elementwise_reference() -> None:
+    from phydrax.geometry._interval_enclosure import (
+        interval_add,
+        interval_cos,
+        interval_multiply,
+        interval_sin,
+    )
+    from phydrax.geometry.brep._patches import SpherePatch
+
+    model = brep_sphere(
+        1.0,
+        coordinate_contract=SpatialCoordinateContract.si(),
+        source_id="batched-point-enclosures",
+    )
+    preparation = SourcePreparation(MeshingDomain.from_brep(model))
+    surface = SpherePatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1)
+    program = preparation.derivative_program(surface, 0)
+    rng = np.random.default_rng(8501)
+    points = rng.uniform((-2.0, -1.0), (2.0, 1.0), size=(80, 2))
+    points[0] = 0.0
+    low = points - rng.uniform(0.0, 0.1, size=points.shape)
+    high = points + rng.uniform(0.0, 0.1, size=points.shape)
+    low[0] = high[0] = 0.0
+
+    coefficients = np.asarray((0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1), dtype=np.float64)
+    coefficients_low = np.nextafter(coefficients, -np.inf)
+    coefficients_high = np.nextafter(coefficients, np.inf)
+
+    def coefficient(first: int, last: int) -> tuple[np.ndarray, np.ndarray]:
+        return coefficients_low[None, first:last], coefficients_high[None, first:last]
+
+    longitude = (low[:, 0, None], high[:, 0, None])
+    latitude = (low[:, 1, None], high[:, 1, None])
+    radial = interval_add(
+        interval_multiply(interval_cos(longitude), coefficient(3, 6)),
+        interval_multiply(interval_sin(longitude), coefficient(6, 9)),
+    )
+    direction = interval_add(
+        interval_multiply(interval_cos(latitude), radial),
+        interval_multiply(interval_sin(latitude), coefficient(9, 12)),
+    )
+    reference = interval_add(
+        coefficient(0, 3), interval_multiply(coefficient(12, 13), direction)
+    )
+    batch = program.evaluate(low, high)
+    for expected, actual in zip(reference, batch, strict=True):
+        np.testing.assert_array_equal(
+            np.asarray(expected).view(np.uint64), actual.view(np.uint64)
+        )
+    for start in range(0, len(points), 7):
+        part = program.evaluate(low[start : start + 7], high[start : start + 7])
+        for endpoint in range(2):
+            np.testing.assert_array_equal(
+                part[endpoint].view(np.uint64),
+                batch[endpoint][start : start + 7].view(np.uint64),
+            )
+    assert batch[0][0, 0] <= 1.0 <= batch[1][0, 0]
+    inward_upper = batch[1].copy()
+    inward_upper[0, 0] = np.nextafter(1.0, -np.inf)
+    assert not batch[0][0, 0] <= 1.0 <= inward_upper[0, 0]
+
+
+def test_mapped_curve_chord_bound_matches_elementwise_reference() -> None:
+    import jax.numpy as jnp
+    from jax import Array
+
+    from phydrax.geometry._interval_enclosure import (
+        interval_add,
+        interval_multiply,
+        interval_square,
+        prepare_interval_function,
+    )
+    from phydrax.geometry._rational import fraction_endpoint
+    from phydrax.meshing.providers._native_surface import _second_order_chord_bound
+
+    def hessian(x: Array, /) -> Array:
+        return jnp.stack((x[0] * x[0], x[0] + 1.0, x[0] * 2.0))
+
+    program = prepare_interval_function(hessian, 1, batch_capacity=1, execution="batched")
+    rng = np.random.default_rng(616)
+    starts = rng.uniform(0.0, 0.8, size=32)
+    ends = starts + rng.uniform(0.01, 0.2, size=starts.shape)
+    points = (np.zeros((2, 3), dtype=np.float64), np.zeros((2, 3), dtype=np.float64))
+    chord = (np.zeros(3, dtype=np.float64), np.zeros(3, dtype=np.float64))
+    for first, last in zip(starts, ends, strict=True):
+        interval = (np.asarray(first), np.asarray(last))
+        components = (
+            interval_square(interval),
+            interval_add(interval, (np.asarray(1.0), np.asarray(1.0))),
+            interval_multiply(interval, (np.asarray(2.0), np.asarray(2.0))),
+        )
+        squared = sum(
+            (Fraction(max(abs(float(lo)), abs(float(hi)))) ** 2 for lo, hi in components),
+            Fraction(0),
+        )
+        native = (Fraction(float(first)), Fraction(float(last)))
+        expected = fraction_sqrt_interval(squared)[1] * (native[1] - native[0]) ** 2 / 8
+        expected_float = float(fraction_endpoint(expected, upper=True, saturate=True))
+        actual = _second_order_chord_bound(program, points, native, chord)
+        assert actual == expected_float
+        assert np.nextafter(actual, -np.inf) != expected_float
+
+
+def test_spline_mapped_curve_has_rigorous_hessian_at_origin() -> None:
+    from phydrax.geometry.brep._patches import BSplineCurve, SpherePatch
+
+    model = brep_sphere(
+        1.0, coordinate_contract=SpatialCoordinateContract.si(), source_id="spline-chord"
+    )
+    preparation = SourcePreparation(MeshingDomain.from_brep(model))
+    surface = SpherePatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1)
+    curve = BSplineCurve(
+        np.asarray(((0.0, 0.0), (0.5, 0.0), (1.0, 0.0)), dtype=np.float64),
+        np.ones((3,), dtype=np.float64),
+        np.asarray((0.0, 0.0, 0.0, 1.0, 1.0, 1.0), dtype=np.float64),
+        2,
+    )
+    program = preparation.mapped_curve_hessian(surface, curve)
+    assert program is not None
+    box = np.asarray(((0.0,),), dtype=np.float64)
+    lower, upper = program.evaluate(box, box)
+    assert lower[0, 0, 0, 0] <= -1.0 <= upper[0, 0, 0, 0]
+
+
 def test_adaptive_vertex_enclosures_cover_exact_midpoint_intervals() -> None:
     model = brep_sphere(
         1.0,

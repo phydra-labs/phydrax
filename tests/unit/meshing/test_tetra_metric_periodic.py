@@ -148,7 +148,7 @@ def test_periodic_coupled_model_lifts_one_consistent_source_choice_per_orbit() -
     from phydrax.meshing import _tetra_coupled as coupled
     from phydrax.meshing._tetra_metric import (
         _apply_relocation_batch,
-        _locate_source_weights,
+        _source_cell_weights,
     )
     from tests.unit.meshing.test_tetra_metric import _state
 
@@ -178,7 +178,7 @@ def test_periodic_coupled_model_lifts_one_consistent_source_choice_per_orbit() -
             records
             for records in combinations
             if all(
-                _locate_source_weights(query, (record,)) is not None
+                _source_cell_weights(query, record) is not None
                 for query, record in zip(queries, records, strict=True)
             )
         )

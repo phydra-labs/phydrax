@@ -25,7 +25,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from fractions import Fraction
-from math import atan2, pi, sqrt
+from math import pi, sqrt
 
 import numpy as np
 
@@ -260,33 +260,36 @@ def _regular_bezier_pieces(curve: BSplineCurve, /) -> tuple[_BezierPiece, ...]:
     return tuple(regular)
 
 
-def _angle(first: _Point, second: _Point, /) -> float:
-    return atan2(float(_cross(first, second)), float(_dot(first, second)))
-
-
-def bspline_turn_terms(curve: BSplineCurve, /) -> tuple[float, ...]:
+def bspline_turn_terms(
+    curve: BSplineCurve, /
+) -> tuple[tuple[_Point, _Point], tuple[tuple[_Point, _Point], ...]]:
     """Signed tangent turns of a profile B-spline from its exact hodograph.
 
     Each regular piece contributes the principal angle between its end
     tangents, which its pointed hodograph cone makes exact; consecutive pieces
     contribute their junction corner. A reversing junction is a cusp.
     """
-    terms: list[float] = []
+    terms: list[tuple[_Point, _Point]] = []
+    start: _Point | None = None
     previous: _Point | None = None
     for piece in _regular_bezier_pieces(curve):
         points = piece.points
         initial = _sub(points[1], points[0])
         final = _sub(points[-1], points[-2])
+        if start is None:
+            start = initial
         if previous is not None:
             if _cross(previous, initial) == 0 and _dot(previous, initial) < 0:
                 raise ValueError(
                     "Profile B-spline tangents must stay regular; got a cusp at "
                     "an internal knot."
                 )
-            terms.append(_angle(previous, initial))
-        terms.append(_angle(initial, final))
+            terms.append((previous, initial))
+        terms.append((initial, final))
         previous = final
-    return tuple(terms)
+    if start is None or previous is None:
+        raise ValueError("Profile B-spline must contain a regular span.")
+    return (start, previous), tuple(terms)
 
 
 def line_piece(start: Sequence[float], end: Sequence[float], /) -> tuple[_Piece, ...]:

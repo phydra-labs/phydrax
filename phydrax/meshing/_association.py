@@ -50,7 +50,11 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._archive_columns import StaticColumnArchiveRecipe, TextRowsArchiveRecipe
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import (
+    array_tree_fingerprint,
+    canonical_fingerprint,
+    rational_chart_bank_fingerprint,
+)
 from .._live_proofs import live_content_fingerprint, LiveProofLedger
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -58,7 +62,6 @@ from ..discretization import CellMesh, EntitySet
 from ..discretization._cell_complex import PolygonalConnectivity, TetrahedralConnectivity
 from ..discretization._cell_geometry_transition_types import CellGeometryTransition
 from ..discretization._cell_mesh import SimplicialConnectivity
-from ..discretization._exact_algebraic_geometry import coefficient_payload
 from ..geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryFaceImageWitness,
@@ -994,6 +997,18 @@ def _rows_or(value: ArrayLike | None, fill: Any, shape: Any, dtype: Any, /) -> n
     )
 
 
+def _fraction_rows_fingerprint(
+    rows: tuple[tuple[Fraction, ...] | None, ...], /
+) -> str:
+    """Bind optional exact rational rows without serializing individual JSON tokens."""
+    return rational_chart_bank_fingerprint(
+        tuple(
+            () if row is None else (tuple((v.numerator, v.denominator) for v in row),)
+            for row in rows
+        )
+    )
+
+
 class GeometryAssociation(StrictModule, NonTrainableState):
     """Audited map from exact mesh entities to authoritative geometry entities.
 
@@ -1395,19 +1410,13 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                 ),
                 "source_occurrence_paths": occurrences,
                 "source_region_sides": region_sides,
-                "source_parameter_intervals": tuple(
-                    None
-                    if interval is None
-                    else tuple(coefficient_payload(value) for value in interval)
-                    for interval in parameter_intervals
+                "source_parameter_intervals": _fraction_rows_fingerprint(
+                    parameter_intervals
                 ),
                 **(
                     {
-                        "target_parameter_intervals": tuple(
-                            None
-                            if interval is None
-                            else tuple(coefficient_payload(value) for value in interval)
-                            for interval in target_intervals
+                        "target_parameter_intervals": _fraction_rows_fingerprint(
+                            target_intervals
                         )
                     }
                     if any(interval is not None for interval in target_intervals)
@@ -1423,23 +1432,31 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                                     "kind": "source-boundary-image-pullback",
                                     "cell_global_id": piece.cell_global_id,
                                     "local_entity_index": piece.local_entity_index,
-                                    "image_rational_tokens": piece.image_rational_tokens,
                                     "source_chart_id": piece.source_chart_id,
                                 }
                                 if isinstance(piece, SourceBoundaryImagePullback)
-                                else piece
+                                else piece[:3]
                                 for piece in pieces
                             )
                             for pieces in target_pieces
+                        ),
+                        "target_reference_charts": rational_chart_bank_fingerprint(
+                            tuple(
+                                piece.image_rational_tokens
+                                if isinstance(piece, SourceBoundaryImagePullback)
+                                else piece[3]
+                                for pieces in target_pieces
+                                if pieces is not None
+                                for piece in pieces
+                            )
                         ),
                         "source_boundary_witness_id": source_boundary_witness_id,
                     }
                     if source_boundary_witness_id is not None
                     else {}
                 ),
-                "source_parameter_points": tuple(
-                    None if point is None else coefficient_payload(point)
-                    for point in parameter_points
+                "source_parameter_points": _fraction_rows_fingerprint(
+                    tuple(None if point is None else (point,) for point in parameter_points)
                 ),
                 "orientations": array_tree_fingerprint(orientations_),
                 "parent_dimensions": array_tree_fingerprint(parent_dimensions_),

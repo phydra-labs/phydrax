@@ -27,6 +27,7 @@ from ...discretization._exact_algebraic_geometry import (
 from .._atlas import TrimDomain, TrimEnclosures
 from .._interval_enclosure import (
     Interval,
+    interval_acos,
     interval_add,
     interval_cos,
     interval_divide,
@@ -591,10 +592,14 @@ def _angle(
         _scalar_interval(*magnitude), _scalar_interval(*direction_norm)
     )
     cosine = interval_divide(dot, denominator)
-    lower_cosine = float(np.clip(float(cosine[0]) - normal.slack, -1.0, 1.0))
-    upper_cosine = float(np.clip(float(cosine[1]) + normal.slack, -1.0, 1.0))
-    lower = float(np.nextafter(np.arccos(upper_cosine), -np.inf))
-    upper = float(np.nextafter(np.arccos(lower_cosine), np.inf))
+    widened = interval_add(cosine, _scalar_interval(-normal.slack, normal.slack))
+    angle = interval_acos(
+        (
+            np.asarray(np.clip(widened[0], -1.0, 1.0), dtype=np.float64),
+            np.asarray(np.clip(widened[1], -1.0, 1.0), dtype=np.float64),
+        )
+    )
+    lower, upper = float(angle[0]), float(angle[1])
     return max(0.0, lower), min(_PI, upper), False
 
 

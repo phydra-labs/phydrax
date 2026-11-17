@@ -10,10 +10,16 @@ from fractions import Fraction
 from typing import Any, final, overload, TYPE_CHECKING
 
 import numpy as np
+from jax.typing import ArrayLike
 from numpy.typing import DTypeLike, NDArray
 
+from .._fingerprint import canonical_fingerprint, numeric_array_fingerprint
 from ..geometry._rational import binary64_dyadic_entries, dyadic_entry
-from ._exact_algebraic_geometry import coefficient_payload, RadicalElement
+from ._exact_algebraic_geometry import (
+    canonical_exact_scalar,
+    coefficient_payload,
+    RadicalElement,
+)
 
 
 if TYPE_CHECKING:
@@ -106,7 +112,15 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
                     raise ValueError(
                         "A dense dyadic entry cannot be held in the sparse table."
                     )
-            elif not isinstance(value, RadicalElement):
+            elif isinstance(value, RadicalElement):
+                canonical = canonical_exact_scalar(
+                    value, role="Exact coordinate bank entry"
+                )
+                if isinstance(canonical, Fraction):
+                    raise ValueError(
+                        "A rational radical cannot be held in the sparse table."
+                    )
+            else:
                 raise TypeError("Exact coordinate bank entries must be ExactScalar.")
         shape = (int(sig.shape[0]), int(sig.shape[1]))
         # Sparse entries are stored in flat order, so one offset per row lets a
@@ -151,6 +165,8 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
             if len(row) != width:
                 raise ValueError("Exact coordinate rows must share one width.")
             for value in row:
+                if isinstance(value, RadicalElement):
+                    value = canonical_exact_scalar(value, role="Exact coordinate row")
                 if isinstance(value, Fraction):
                     entry = dyadic_entry(value)
                     if entry is not None and _dense(*entry):
@@ -174,7 +190,7 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
         )
 
     @classmethod
-    def from_binary64(cls, values: NDArray[np.float64], /) -> ExactCoordinateBank:
+    def from_binary64(cls, values: ArrayLike, /) -> ExactCoordinateBank:
         """Exact rows of finite binary64 coordinates (each entry is dyadic)."""
         array = np.asarray(values, dtype=np.float64)
         if array.ndim != 2:
@@ -196,6 +212,24 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
     def rational(self) -> bool:
         """Whether every entry is a ``Fraction``."""
         return all(isinstance(value, Fraction) for value in self._sparse_values)
+
+    def canonical_parts(
+        self, /
+    ) -> tuple[
+        NDArray[np.int64],
+        NDArray[np.int16],
+        NDArray[np.int64],
+        NDArray[np.int64],
+        tuple[ExactScalar, ...],
+    ]:
+        """Read-only dyadic arrays, sparse indices, row offsets, and exact values."""
+        return (
+            self._significands.view(),
+            self._exponents.view(),
+            self._sparse_index.view(),
+            self._sparse_row_starts.view(),
+            self._sparse_values,
+        )
 
     def __len__(self) -> int:
         return self._shape[0]
@@ -339,6 +373,57 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
             raise OverflowError("Exact coordinate is too large for binary64.")
         return result
 
+    def _interval_proposals(self) -> NDArray[np.float64]:
+        """Propose dense dyadics without refusing nonfinite or sparse entries."""
+        dense = self._exponents != _SPARSE
+        with np.errstate(over="ignore", under="ignore", invalid="ignore"):
+            proposals = np.ldexp(
+                self._significands.astype(np.float64),
+                np.where(dense, self._exponents.astype(np.int64), 0),
+            )
+        return np.where(dense, proposals, np.nan)
+
+    def interval_endpoints(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """Outward binary64 endpoints, lifting exceptional exact entries only."""
+        from ._exact_algebraic_geometry import coefficient_endpoint
+
+        lower = self._interval_proposals()
+        upper = lower.copy()
+        # The binary64 conversion is only a proposal. Verify its bits against
+        # the exact odd significand and exponent using integer arithmetic; a
+        # rounded, underflowed, or sparse entry takes directed exact conversion.
+        bits = lower.view(np.uint64)
+        fraction = bits & np.uint64((1 << 52) - 1)
+        exponent = (bits >> np.uint64(52)) & np.uint64(0x7FF)
+        mantissa = np.where(exponent == 0, fraction, fraction | np.uint64(1 << 52))
+        binary_exponent = np.where(exponent == 0, -1074, exponent.astype(np.int64) - 1075)
+        shift = self._exponents.astype(np.int64) - binary_exponent
+        magnitude = np.abs(self._significands).astype(np.uint64)
+        safe_shift = np.clip(shift, 0, 52).astype(np.uint64)
+        shifted_mantissa = np.right_shift(mantissa, safe_shift)
+        discarded = mantissa & (np.left_shift(np.uint64(1), safe_shift) - np.uint64(1))
+        same_sign = (bits >> np.uint64(63)) == (self._significands < 0)
+        exact_nonzero = (
+            (self._significands != 0)
+            & (exponent != np.uint64(0x7FF))
+            & (shift >= 0)
+            & (shift <= 52)
+            & (shifted_mantissa == magnitude)
+            & (discarded == 0)
+            & same_sign
+        )
+        exact_zero = (self._significands == 0) & (bits == 0)
+        exceptional = (self._exponents == _SPARSE) | ~(exact_nonzero | exact_zero)
+        width = self._shape[1]
+        for flat in np.flatnonzero(exceptional.reshape(-1)).tolist():
+            row, axis = divmod(flat, width)
+            value = self._entry(
+                flat, int(self._significands[row, axis]), int(self._exponents[row, axis])
+            )
+            lower[row, axis] = coefficient_endpoint(value, upper=False, saturate=True)
+            upper[row, axis] = coefficient_endpoint(value, upper=True, saturate=True)
+        return lower, upper
+
     def coefficient_payloads(
         self,
     ) -> tuple[
@@ -367,6 +452,20 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
                     payload.append(("rational", significand, 1 << -exponent))
             result.append(tuple(payload))
         return tuple(result)
+
+    def content_fingerprint(self) -> str:
+        """Bind canonical dense dyadics and exact sparse entries with framed arrays."""
+        return canonical_fingerprint(
+            {
+                "kind": "exact-coordinate-bank",
+                "significands": numeric_array_fingerprint(self._significands),
+                "exponents": numeric_array_fingerprint(self._exponents),
+                "sparse_indices": numeric_array_fingerprint(self._sparse_index),
+                "sparse_values": tuple(
+                    coefficient_payload(value) for value in self._sparse_values
+                ),
+            }
+        )
 
     def __array__(
         self, dtype: DTypeLike | None = None, copy: bool | None = None

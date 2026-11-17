@@ -9,13 +9,30 @@ from __future__ import annotations
 import dataclasses
 import math
 from fractions import Fraction
+from functools import cache
 from types import NotImplementedType
-from typing import overload
+from typing import overload, TYPE_CHECKING
 
 import numpy as np
 
-from .._interval_enclosure import interval_add, interval_multiply
+from .._interval_enclosure import interval_add, interval_multiply, IntervalExtensionError
 from .._rational import fraction_down, fraction_up
+
+
+if TYPE_CHECKING:
+    from .._interval_enclosure import PreparedIntervalFunction
+
+
+@cache
+def _period_program() -> PreparedIntervalFunction:
+    from .._interval_enclosure import prepare_interval_function
+
+    return prepare_interval_function(
+        lambda values: values[0] + values[1] * values[2],
+        3,
+        batch_capacity=1,
+        execution="batched",
+    )
 
 
 def fraction_bounds(value: Fraction, /) -> tuple[np.ndarray, np.ndarray]:
@@ -108,8 +125,14 @@ def period_scalar_bounds(
         np.asarray(np.nextafter(math.tau, -np.inf)),
         np.asarray(np.nextafter(math.tau, np.inf)),
     )
-    lower, upper = interval_add(
-        fraction_bounds(value.rational),
-        interval_multiply(fraction_bounds(value.turns), period),
-    )
-    return np.asarray(lower, dtype=np.float64), np.asarray(upper, dtype=np.float64)
+    rational = fraction_bounds(value.rational)
+    turns = fraction_bounds(value.turns)
+    try:
+        program = _period_program()
+    except IntervalExtensionError:
+        lower, upper = interval_add(rational, interval_multiply(turns, period))
+        return np.asarray(lower, dtype=np.float64), np.asarray(upper, dtype=np.float64)
+    lower = np.asarray([[rational[0], turns[0], period[0]]], dtype=np.float64)
+    upper = np.asarray([[rational[1], turns[1], period[1]]], dtype=np.float64)
+    result_lower, result_upper = program.evaluate(lower, upper)
+    return np.asarray(result_lower[0]), np.asarray(result_upper[0])

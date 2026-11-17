@@ -872,6 +872,37 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (_I64, _I32, _P, _P, _P, _P, _P, _P, _P, _P, _I32, _I32),
     ),
+    "phx_mc_polynomial_jacobian_integrals": (
+        _I32,
+        (_I64, _I32, _I32, _P, _P, _P, _P, _P, _P, _P, _I32, _I32),
+    ),
+    "phx_mc_basis_jacobian_integrals": (
+        _I32,
+        (
+            _I64,
+            _I32,
+            _I32,
+            _I64,
+            _I64,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _I32,
+            _I32,
+        ),
+    ),
     "phx_mc_symmetric_polynomial_verdicts": (
         _I32,
         (_I64, _I32, _I32, _P, _P, _P, _P, _P, _P, _P, _I32, _I32),
@@ -1213,6 +1244,53 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_tet_mesh_probe_edit": (
         _I32,
         (_P, ctypes.POINTER(_TetMeshEditRequest), _P, _P),
+    ),
+    "phx_mc_tet_mesh_probe_relocations": (
+        _I32,
+        (
+            _P,
+            _U64,
+            _I32,
+            _P,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _I64,
+            _I64,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+        ),
+    ),
+    "phx_mc_tet_mesh_apply_relocation": (
+        _I32,
+        (
+            _P,
+            _U64,
+            _I32,
+            _P,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _I64,
+            _I64,
+            _P,
+            _P,
+            _I64,
+            _P,
+            ctypes.POINTER(_I32),
+            ctypes.POINTER(_I32),
+        ),
     ),
     "phx_mc_tet_mesh_implicit_facet_refusal": (
         _I32,
@@ -7307,6 +7385,91 @@ def _tet_radius_target(value: float | None, /) -> float | None:
     return radius
 
 
+def relocated_tet_mesh_arrays(
+    arrays: TetMeshArrays,
+    vertex_ids: object,
+    vertex_rows: object,
+    points: object,
+    implicit_refusals: tuple[int, int] | None,
+    /,
+) -> TetMeshArrays:
+    """Return the arrays of a mesh after one applied in-place relocation.
+
+    ``arrays`` is the complete snapshot taken before
+    :meth:`TetMesh3D.apply_relocation` applied the relocation of ``vertex_ids``
+    (snapshot rows ``vertex_rows``) to ``points``, and ``implicit_refusals``
+    the live refusal counters after it. The result equals
+    :meth:`TetMesh3D.arrays` of the edited mesh: the relocation writes each
+    moved vertex's point, clears its source witness and edge parameter,
+    erases its ancestry row and advances the generation, and changes no other
+    bank. Unchanged banks are shared with ``arrays``.
+    """
+    moved_ids = _tet_mesh_vector(vertex_ids, "vertex_ids", np.dtype(np.uint64))
+    rows = _tet_mesh_vector(vertex_rows, "vertex_rows", np.dtype(np.int64))
+    targets = _points(points, "points", 3)
+    if rows.shape != moved_ids.shape or targets.shape[0] != rows.size:
+        raise ValueError("vertex_rows and points must hold one row per moved vertex.")
+    if (
+        np.any(rows < 0)
+        or np.any(rows >= arrays.vertex_ids.shape[0])
+        or not np.array_equal(arrays.vertex_ids[rows], moved_ids)
+    ):
+        raise ValueError("vertex_rows must be the snapshot rows of vertex_ids.")
+    if np.any(arrays.witness_strata[rows] != 0):
+        raise ValueError("An in-place relocation moves no source-witness vertex.")
+    implicit = arrays.implicit_source
+    if (implicit is None) != (implicit_refusals is None):
+        raise ValueError(
+            "implicit_refusals must be given exactly for an implicit-source mesh."
+        )
+    if implicit is not None and implicit_refusals is not None:
+        implicit = implicit._replace(
+            transversality_refusals=implicit_refusals[0],
+            distance_refusals=implicit_refusals[1],
+        )
+
+    def written(bank: np.ndarray, value: float | np.ndarray) -> np.ndarray:
+        # Most moved vertices already hold the cleared record: share the bank
+        # when the written rows are bit-identical (a signed zero is not).
+        current = bank[rows]
+        replacement = np.broadcast_to(np.asarray(value, dtype=bank.dtype), current.shape)
+        if current.tobytes() == replacement.tobytes():
+            return bank
+        result = bank.copy()
+        result[rows] = replacement
+        return result
+
+    offsets = arrays.vertex_ancestry_offsets
+    ancestor_ids = arrays.vertex_ancestor_ids
+    ancestor_winding = arrays.vertex_ancestor_winding
+    ancestry_weights = arrays.vertex_ancestry_weights
+    counts = np.diff(offsets)
+    if np.any(counts[rows] != 0):
+        erased = np.zeros(counts.shape, dtype=np.bool_)
+        erased[rows] = True
+        retained = ~np.repeat(erased, counts)
+        offsets = np.zeros(offsets.shape, dtype=offsets.dtype)
+        np.cumsum(np.where(erased, 0, counts), out=offsets[1:])
+        ancestor_ids = ancestor_ids[retained]
+        ancestor_winding = ancestor_winding[retained]
+        ancestry_weights = ancestry_weights[retained]
+    return arrays._replace(
+        points=written(arrays.points, targets),
+        witness_entities=written(arrays.witness_entities, -1),
+        witness_parameters=written(arrays.witness_parameters, 0.0),
+        witness_deviations=written(arrays.witness_deviations, 0.0),
+        vertex_edge_witness_present=written(arrays.vertex_edge_witness_present, 0),
+        vertex_edge_witness_endpoints=written(arrays.vertex_edge_witness_endpoints, 0),
+        vertex_edge_parameters=written(arrays.vertex_edge_parameters, 0.0),
+        generation=arrays.generation + 1,
+        vertex_ancestry_offsets=offsets,
+        vertex_ancestor_ids=ancestor_ids,
+        vertex_ancestor_winding=ancestor_winding,
+        vertex_ancestry_weights=ancestry_weights,
+        implicit_source=implicit,
+    )
+
+
 @final
 class TetMesh3D:
     """Owned native tetrahedral mesh with atomic edits and checked snapshots.
@@ -8611,6 +8774,156 @@ class TetMesh3D:
             )
             return TetMeshPlaneRecords(vertex_ids, face_rows, parameters, deviations)
 
+    def probe_relocations(
+        self,
+        expected_generation: int,
+        vertex_offsets: object,
+        vertex_ids: object,
+        points: object,
+        cell_offsets: object,
+        cell_ids: object,
+        *,
+        source_id: str | None = None,
+        source_revision: str | None = None,
+        source_map_id: str | None = None,
+        frame_id: str | None = None,
+    ) -> tuple[TetMeshEditStatus | None, ...]:
+        """Probe independent relocations against the live mesh without editing it.
+
+        Group ``g`` moves ``vertex_ids[vertex_offsets[g]:vertex_offsets[g + 1]]``
+        to the matching rows of ``points`` and declares the star cells
+        ``cell_ids[cell_offsets[g]:cell_offsets[g + 1]]``. Entry ``g`` of the
+        result is the status with which :meth:`apply_edit` would refuse that
+        relocation alone (unchanged witnesses and protection, cleared edge
+        parameter, no ancestry), or ``None`` when it may apply or the native
+        probe does not decide it. A decided refusal advances the implicit
+        refusal counters exactly as the refused edit would. The source identity
+        is the one the edit would name: all four fields, or none for an
+        unbound mesh.
+        """
+        generation = _tet_mesh_uint64(expected_generation, "expected_generation")
+        vertex_starts = _tet_mesh_vector(
+            vertex_offsets, "vertex_offsets", np.dtype(np.int64)
+        )
+        cell_starts = _tet_mesh_vector(cell_offsets, "cell_offsets", np.dtype(np.int64))
+        moved_ids = _tet_mesh_vector(vertex_ids, "vertex_ids", np.dtype(np.uint64))
+        star_ids = _tet_mesh_vector(cell_ids, "cell_ids", np.dtype(np.uint64))
+        targets = np.ascontiguousarray(_points(points, "points", 3))
+        if vertex_starts.size == 0 or vertex_starts.size != cell_starts.size:
+            raise ValueError(
+                "vertex_offsets and cell_offsets must hold one more entry than groups."
+            )
+        for starts, size, name in (
+            (vertex_starts, moved_ids.size, "vertex_offsets"),
+            (cell_starts, star_ids.size, "cell_offsets"),
+        ):
+            if starts[0] != 0 or starts[-1] != size or np.any(np.diff(starts) < 0):
+                raise ValueError(
+                    f"{name} must start at zero, not decrease and end at the bank size."
+                )
+        if targets.shape[0] != moved_ids.size:
+            raise ValueError("points must hold one row per moved vertex.")
+        if not np.all(np.isfinite(targets)):
+            raise ValueError("Relocation points must be finite.")
+        group_count = vertex_starts.size - 1
+        decided = np.zeros((group_count,), dtype=np.int32)
+        statuses = np.zeros((group_count,), dtype=np.int32)
+        identity_bound, identity_bytes, identity_buffers = _tet_mesh_identity_payload(
+            source_id, source_revision, source_map_id, frame_id
+        )
+        with self._lock:
+            _raise_for_call(
+                self._library["phx_mc_tet_mesh_probe_relocations"](
+                    self._live(),
+                    generation,
+                    identity_bound,
+                    _tet_mesh_identity_pointer(identity_bound, identity_buffers[0]),
+                    len(identity_bytes[0]),
+                    _tet_mesh_identity_pointer(identity_bound, identity_buffers[1]),
+                    len(identity_bytes[1]),
+                    _tet_mesh_identity_pointer(identity_bound, identity_buffers[2]),
+                    len(identity_bytes[2]),
+                    _tet_mesh_identity_pointer(identity_bound, identity_buffers[3]),
+                    len(identity_bytes[3]),
+                    group_count,
+                    _tet_mesh_pointer(vertex_starts),
+                    _tet_mesh_pointer(moved_ids),
+                    _tet_mesh_pointer(targets),
+                    _tet_mesh_pointer(cell_starts),
+                    _tet_mesh_pointer(star_ids),
+                    _tet_mesh_pointer(decided),
+                    _tet_mesh_pointer(statuses),
+                ),
+                "tet_mesh_probe_relocations",
+            )
+        return tuple(
+            TetMeshEditStatus(status) if refused else None
+            for refused, status in zip(decided.tolist(), statuses.tolist(), strict=True)
+        )
+
+    def apply_relocation(
+        self,
+        expected_generation: int,
+        vertex_ids: object,
+        points: object,
+        cell_ids: object,
+        *,
+        source_id: str | None = None,
+        source_revision: str | None = None,
+        source_map_id: str | None = None,
+        frame_id: str | None = None,
+    ) -> TetMeshEditStatus | None:
+        """Apply one relocation to the live mesh in place.
+
+        The relocation moves ``vertex_ids`` together to the matching rows of
+        ``points`` and declares the star cells ``cell_ids``; it is the edit of
+        one :meth:`probe_relocations` group. The result is the status
+        :meth:`apply_edit` would return for it: ``APPLIED`` after the moved
+        vertices' points, witnesses, edge parameters and ancestry are written
+        and the generation advanced (see :func:`relocated_tet_mesh_arrays`),
+        or a refusal that changes no mesh state. ``None`` means the mesh is
+        periodic or has exhausted its generations: nothing changed, and
+        :meth:`apply_edit` decides the relocation.
+        """
+        generation = _tet_mesh_uint64(expected_generation, "expected_generation")
+        moved_ids = _tet_mesh_vector(vertex_ids, "vertex_ids", np.dtype(np.uint64))
+        star_ids = _tet_mesh_vector(cell_ids, "cell_ids", np.dtype(np.uint64))
+        targets = np.ascontiguousarray(_points(points, "points", 3))
+        if targets.shape[0] != moved_ids.size:
+            raise ValueError("points must hold one row per moved vertex.")
+        if not np.all(np.isfinite(targets)):
+            raise ValueError("Relocation points must be finite.")
+        decided = _I32(0)
+        edit_status = _I32(0)
+        identity_bound, identity_bytes, identity_buffers = _tet_mesh_identity_payload(
+            source_id, source_revision, source_map_id, frame_id
+        )
+        with self._lock:
+            _raise_for_call(
+                self._library["phx_mc_tet_mesh_apply_relocation"](
+                    self._live(),
+                    generation,
+                    identity_bound,
+                    _tet_mesh_identity_pointer(identity_bound, identity_buffers[0]),
+                    len(identity_bytes[0]),
+                    _tet_mesh_identity_pointer(identity_bound, identity_buffers[1]),
+                    len(identity_bytes[1]),
+                    _tet_mesh_identity_pointer(identity_bound, identity_buffers[2]),
+                    len(identity_bytes[2]),
+                    _tet_mesh_identity_pointer(identity_bound, identity_buffers[3]),
+                    len(identity_bytes[3]),
+                    moved_ids.size,
+                    _tet_mesh_pointer(moved_ids),
+                    _tet_mesh_pointer(targets),
+                    star_ids.size,
+                    _tet_mesh_pointer(star_ids),
+                    ctypes.byref(decided),
+                    ctypes.byref(edit_status),
+                ),
+                "tet_mesh_apply_relocation",
+            )
+        return TetMeshEditStatus(edit_status.value) if decided.value else None
+
     def apply_edit(self, edit: TetMeshEdit) -> TetMeshEditStatus:
         with self._lock:
             _raise_for_call(
@@ -9425,6 +9738,7 @@ __all__ = [
     "quadratic_tetrahedron_validity",
     "regular_2d",
     "regular_3d",
+    "relocated_tet_mesh_arrays",
     "restricted_power_cells",
     "restricted_dual_3d",
     "restricted_centers_3d",

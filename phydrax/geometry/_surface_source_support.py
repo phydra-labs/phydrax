@@ -16,7 +16,11 @@ import jax
 import numpy as np
 from jax.typing import ArrayLike
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import (
+    array_tree_fingerprint,
+    canonical_fingerprint,
+    rational_chart_bank_fingerprint,
+)
 from .._live_proofs import live_content_fingerprint, LiveProofLedger
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
@@ -119,6 +123,18 @@ def _exact_uv(point: Sequence[object], name: str, /) -> tuple[Fraction, Fraction
     return (
         _fraction_coordinate(point[0], name),
         _fraction_coordinate(point[1], name),
+    )
+
+
+def _fraction_chart_fingerprint(charts: tuple[Corners, ...], /) -> str:
+    return rational_chart_bank_fingerprint(
+        tuple(
+            tuple(
+                tuple((value.numerator, value.denominator) for value in point)
+                for point in chart
+            )
+            for chart in charts
+        )
     )
 
 
@@ -852,29 +868,31 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
                 "coordinate_contract": self.coordinate_contract.spatial_id,
                 "cells": self.cell_global_ids,
                 "parameters": array_tree_fingerprint(self.root_parameters),
-                "exact_parameters": self.root_parameter_rational_tokens,
+                "exact_parameters": rational_chart_bank_fingerprint(
+                    self.root_parameter_rational_tokens
+                ),
                 "patches": array_tree_fingerprint(self.root_patches),
                 "source_root_cells": array_tree_fingerprint(self.source_root_cell_ids),
                 "boundary_occurrences": array_tree_fingerprint(self.boundary_occurrences),
                 **(
                     {
-                        "trim_roots": tuple(
-                            (
-                                root.patch,
-                                root.loop,
-                                root.use,
-                                *(
-                                    (value.numerator, value.denominator)
-                                    for value in (
-                                        root.first,
-                                        root.last,
-                                        *root.first_uv,
-                                        *root.last_uv,
-                                    )
-                                ),
+                        "trim_root_uses": tuple(root[:3] for root in self.trim_roots),
+                        "trim_root_parameters": rational_chart_bank_fingerprint(
+                            tuple(
+                                (
+                                    tuple(
+                                        (value.numerator, value.denominator)
+                                        for value in (
+                                            root.first,
+                                            root.last,
+                                            *root.first_uv,
+                                            *root.last_uv,
+                                        )
+                                    ),
+                                )
+                                for root in self.trim_roots
                             )
-                            for root in self.trim_roots
-                        )
+                        ),
                     }
                     if self.trim_roots
                     else {}
@@ -2651,10 +2669,7 @@ class SurfaceSourceRootAtlas(StrictModule, NonTrainableState):
                 "geometry": cell_geometry_id(self.geometry),
                 "root_cells": self.root_cell_ids,
                 "source_pieces": self.root_source_cell_ids,
-                "bounds": tuple(
-                    tuple((str(u), str(v)) for u, v in corners)
-                    for corners in self.root_parameter_bounds
-                ),
+                "bounds": _fraction_chart_fingerprint(self.root_parameter_bounds),
                 "parameters": array_tree_fingerprint(self.root_parameters),
                 "patches": array_tree_fingerprint(self.root_patches),
                 "coordinate_contract": self.coordinate_contract.spatial_id,
@@ -2834,9 +2849,8 @@ class PreparedSurfaceSourceSupport(StrictModule, NonTrainableState):
                 "root_atlas_cells": self.root_atlas_cell_ids,
                 "root_source_pieces": self.root_source_cell_ids,
                 "root_parameters": array_tree_fingerprint(self.root_parameters),
-                "root_parameter_bounds": tuple(
-                    tuple((str(u), str(v)) for u, v in chart)
-                    for chart in self.root_parameter_bounds
+                "root_parameter_bounds": _fraction_chart_fingerprint(
+                    self.root_parameter_bounds
                 ),
                 "root_patches": array_tree_fingerprint(self.root_patches),
                 "root_vertices": array_tree_fingerprint(self.root_corner_ids),

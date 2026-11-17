@@ -8,14 +8,23 @@ from typing import Literal, NamedTuple, Sequence
 
 import numpy as np
 
+from .._exact_polynomial_kernels import (
+    exact_basis_jacobian_integrals,
+    exact_jacobian_integrals,
+)
 from .._validation import finite_real_scalar, positive_finite_float
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
 from ..typing import checked
 from ._cell_geometry import (
+    _ExactRationalChartTerms,
+    BarycentricCellGeometryElement,
     CellGeometryElement,
     CellGeometrySpec,
     coordinate_effective_basis,
     PerCellRestrictedCellGeometryElement,
+    PolynomialComposedCellGeometryElement,
+    RationalComposedCellGeometryElement,
+    RestrictedCellGeometryElement,
     ScalarCoordinateElement,
 )
 from ._cell_geometry_validity import (
@@ -914,6 +923,70 @@ def mapped_geometry_cells(
     )
 
 
+def exact_block_cell_measures(
+    mesh: CellMesh, geometry: CellGeometrySpec, /
+) -> dict[int, Fraction]:
+    """Integrate compatible block maps exactly, omitting undecided mesh rows."""
+    elements, routes, _ = geometry.resolve(mesh)
+    bank = geometry.source_coordinates()
+    decided: dict[int, Fraction] = {}
+    offset = 0
+    for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
+        start = offset
+        offset += block.cell_count
+        if (
+            not isinstance(element, ScalarCoordinateElement)
+            or element.topological_dimension not in (2, 3)
+            or element.topological_dimension != mesh.ambient_dimension
+        ):
+            continue
+        source = element
+        while isinstance(
+            source,
+            BarycentricCellGeometryElement
+            | RestrictedCellGeometryElement
+            | PolynomialComposedCellGeometryElement
+            | RationalComposedCellGeometryElement,
+        ):
+            source = source.source_element
+        if (
+            isinstance(source, PerCellRestrictedCellGeometryElement)
+            and source is not element
+        ):
+            continue
+        try:
+            domain = bernstein_reference_domain(block.cell_kind)
+        except ValueError:
+            continue
+        route_rows = np.asarray(route, dtype=np.int64)
+        if isinstance(element, PerCellRestrictedCellGeometryElement):
+            groups: dict[tuple[_ExactRationalChartTerms, ...], list[int]] = {}
+            for row, chart in enumerate(element.chart_coefficients):
+                groups.setdefault(chart, []).append(row)
+            row_groups = tuple(groups.values())
+        else:
+            row_groups = (list(range(block.cell_count)),)
+        for rows in row_groups:
+            if not rows:
+                continue
+            try:
+                basis = coordinate_effective_basis(element, cell_row=rows[0])
+            except (ValueError, ZeroDivisionError, OverflowError):
+                continue
+            if not all(isinstance(value, dict) for value in basis):
+                continue
+            selected = route_rows if len(rows) == block.cell_count else route_rows[rows]
+            results = exact_basis_jacobian_integrals(
+                basis, bank, selected, domain, element.topological_dimension
+            )
+            decided.update(
+                (start + row, value)
+                for row, value in zip(rows, results, strict=True)
+                if value is not None
+            )
+    return decided
+
+
 def _coordinate_expression_rows(
     elements: Sequence[CellGeometryElement],
     routes: Sequence[np.ndarray],
@@ -1222,6 +1295,40 @@ def certified_cell_moments(
     )
 
 
+def _rational_polynomial_jacobian(
+    coordinates: tuple[Expression, ...], dimension: int, /
+) -> tuple[tuple[Polynomial, ...], ...] | None:
+    polynomials: list[Polynomial] = []
+    for coordinate in coordinates:
+        if isinstance(coordinate, RationalPolynomial):
+            denominator = coordinate.denominator.get((0,) * dimension)
+            if len(coordinate.denominator) != 1 or not isinstance(denominator, Fraction):
+                return None
+            if not all(
+                isinstance(value, Fraction) for value in coordinate.numerator.values()
+            ):
+                return None
+            polynomial = {
+                exponent: value / denominator
+                for exponent, value in coordinate.numerator.items()
+            }
+        else:
+            if not all(isinstance(value, Fraction) for value in coordinate.values()):
+                return None
+            polynomial = coordinate
+        polynomials.append(polynomial)
+    rows: list[tuple[Polynomial, ...]] = []
+    for polynomial in polynomials:
+        row: list[Polynomial] = []
+        for axis in range(dimension):
+            entry = derivative(polynomial, axis)
+            if isinstance(entry, RationalPolynomial):
+                raise RuntimeError("Polynomial derivative became rational.")
+            row.append(entry)
+        rows.append(tuple(row))
+    return tuple(rows)
+
+
 @checked
 def certified_cell_measures(
     mesh: CellMesh,
@@ -1270,14 +1377,51 @@ def certified_cell_measures(
             for exponent, coefficient in sorted(polynomial.items())
         )
 
+    pending: list[tuple[int, tuple[tuple[Polynomial, ...], ...], str]] = []
+    pending_domain: BernsteinDomain | None = None
+    pending_dimension = 0
+
+    def publish_pending() -> None:
+        if not pending:
+            return
+        if pending_domain is None:
+            raise RuntimeError("Missing reference domain for polynomial measures.")
+        integrals = exact_jacobian_integrals(
+            [jacobian for _, jacobian, _ in pending],
+            pending_domain,
+            pending_dimension,
+        )
+        for (row, jacobian, cell_kind), integral in zip(pending, integrals, strict=True):
+            if integral is None:
+                determinant = _determinant(jacobian, pending_dimension)
+                if isinstance(determinant, RationalPolynomial):
+                    raise RuntimeError("Polynomial Jacobian determinant became rational.")
+                integral = _polynomial_integral(determinant, cell_kind)
+            values[row], errors[row] = _publish_integral(integral)
+        pending.clear()
+
     for flattened_row, (scalar, coordinates) in enumerate(
         _coordinate_expression_rows(
             resolved_elements, resolved_routes, source_bank, cells
         )
     ):
         dimension = scalar.topological_dimension
+        ambient_dimension = len(coordinates)
+        polynomial_jacobian = (
+            _rational_polynomial_jacobian(coordinates, dimension)
+            if ambient_dimension == dimension and scalar.cell_kind != "pyramid"
+            else None
+        )
+        if polynomial_jacobian is not None:
+            domain = bernstein_reference_domain(scalar.cell_kind)
+            if pending and (domain != pending_domain or dimension != pending_dimension):
+                publish_pending()
+            pending_domain = domain
+            pending_dimension = dimension
+            pending.append((flattened_row, polynomial_jacobian, scalar.cell_kind))
+            continue
+        publish_pending()
         jacobian = _coordinate_jacobian(coordinates, dimension)
-        ambient_dimension = len(jacobian)
         if ambient_dimension == dimension:
             integral = _cancel_coordinate_factors(
                 _determinant(jacobian, dimension), coordinates, dimension
@@ -1327,6 +1471,7 @@ def certified_cell_measures(
             raise ValueError(
                 "Mapped cell measures require volume maps or embedded curve/surface maps."
             )
+    publish_pending()
     if (
         np.any(values <= errors)
         or np.any(~np.isfinite(values))
@@ -1344,6 +1489,7 @@ __all__ = [
     "MappedGeometryCell",
     "certified_cell_measures",
     "certified_cell_moments",
+    "exact_block_cell_measures",
     "mapped_coordinate_expressions",
     "mapped_density_expression",
     "mapped_geometry_cells",

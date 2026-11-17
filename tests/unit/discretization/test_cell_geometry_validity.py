@@ -4,11 +4,13 @@
 
 
 import pickle
+from copy import copy
 from dataclasses import dataclass, fields
 from fractions import Fraction
 from typing import Any
 
 import equinox as eqx
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -32,7 +34,9 @@ from phydrax.discretization._coordinate_enclosure import (
     Polynomial,
     RationalPolynomial,
 )
+from phydrax.discretization._exact_algebraic_geometry import RadicalElement
 from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
+from phydrax.geometry._rational import binary64_norm_upper
 from tests._support.validity_reuse import assert_incremental_matches_full
 
 
@@ -147,6 +151,92 @@ def test_exact_coordinate_bank_is_an_immutable_snapshot() -> None:
     assert tuple(geometry.source_coordinates()) == original
     assert geometry.source_coordinates(np.asarray((1,), dtype=np.int64)) == (original[1],)
 
+
+def test_cell_geometry_identity_binds_exact_bank_and_array_framing() -> None:
+    mesh = D.CellMesh(
+        np.asarray(((0.0,), (1.0,)), dtype=np.float64),
+        (D.CellBlock("cells", "interval", np.asarray(((0, 1),), dtype=np.int32)),),
+    )
+    element = D.fem.lagrange_element("interval", 1)
+
+    def make(exact: Fraction) -> CellGeometrySpec:
+        return CellGeometrySpec(
+            {"cells": element},
+            {"cells": np.asarray(((0, 1),), dtype=np.int32)},
+            mesh.coordinates,
+            source_mesh=mesh,
+            source_map=_MutableCoordinateProvider(((Fraction(0),), (exact,))),
+        )
+
+    first = make(Fraction(1))
+    same = make(Fraction(1))
+    changed = make(Fraction(1) + Fraction(1, 1 << 54))
+    identity = validity_module.cell_geometry_id(first)
+    assert validity_module.cell_geometry_id(same) == identity
+    assert validity_module.cell_geometry_id(changed) != identity
+
+    # Stored route and coordinate array dtype and shape are part of the framed content.
+    changed_dtype = eqx.tree_at(
+        lambda value: value.geometry_dofs,
+        first,
+        (jnp.asarray([[0, 1]], dtype=jnp.int64),),
+    )
+    changed_shape = eqx.tree_at(
+        lambda value: value.coordinates,
+        first,
+        jnp.asarray([[0.0, 1.0]], dtype=jnp.float64),
+    )
+    assert validity_module.cell_geometry_id(changed_dtype) != identity
+    assert validity_module.cell_geometry_id(changed_shape) != identity
+
+
+    restored = CellGeometrySpec.from_stored_fields(
+        first,
+        source_mesh=mesh,
+        source_map=first.source_map,
+        restriction_source=None,
+        elements={"cells": element},
+    )
+    assert validity_module.cell_geometry_id(restored) == identity
+    tampered = copy(first)
+    object.__setattr__(tampered, "exact_coordinate_bank", changed.exact_coordinate_bank)
+    with pytest.raises(ValueError, match="exact coordinate snapshot"):
+        CellGeometrySpec.from_stored_fields(
+            tampered,
+            source_mesh=mesh,
+            source_map=first.source_map,
+            restriction_source=None,
+            elements={"cells": element},
+        )
+
+
+def test_cell_geometry_identity_uses_canonical_exact_scalars() -> None:
+    radical = RadicalElement.sqrt(Fraction(2))
+
+    def make(value: Fraction | RadicalElement) -> CellGeometrySpec:
+        points = np.asarray(((0.0,), (float(value),)), dtype=np.float64)
+        mesh = D.CellMesh(
+            points,
+            (D.CellBlock("cells", "interval", np.asarray(((0, 1),), dtype=np.int32)),),
+        )
+        return CellGeometrySpec(
+            {"cells": D.fem.lagrange_element("interval", 1)},
+            {"cells": np.asarray(((0, 1),), dtype=np.int32)},
+            points,
+            source_mesh=mesh,
+            source_map=_MutableCoordinateProvider(((Fraction(0),), (value,))),
+        )
+
+    rational = make(Fraction(1))
+    rational_radical = make(RadicalElement(Fraction(1)))
+    assert validity_module.cell_geometry_id(rational) == validity_module.cell_geometry_id(
+        rational_radical
+    )
+    irrational = make(radical)
+    rounded_rational = make(Fraction.from_float(float(radical)))
+    assert validity_module.cell_geometry_id(irrational) != validity_module.cell_geometry_id(
+        rounded_rational
+    )
 
 def test_exact_coordinate_bank_rejects_inconsistent_execution_coefficients() -> None:
     mesh = D.CellMesh(
@@ -510,6 +600,148 @@ def test_quadratic_tetra_block_interval_preserves_fallback_and_parent() -> None:
     assert tuple(np.asarray(child_assisted.status)) == tuple(
         np.asarray(certificate.status)
     )
+
+
+def test_quadratic_tetra_screen_randomized_reference_and_chunks() -> None:
+    from math import prod
+
+    from phydrax.geometry._interval_enclosure import (
+        interval_add,
+        interval_multiply,
+        interval_sqrt,
+        interval_square,
+        interval_subtract,
+    )
+
+    rng = np.random.default_rng(83491)
+    element = D.fem.lagrange_element("tetrahedron", 2)
+    basis = cell_geometry_module.coordinate_source_basis(element)
+    assert basis is not None
+    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
+    cells = nodes[None, :, :] + rng.normal(0.0, 0.025, size=(80, 10, 3))
+    cells[::5, :, 0] *= -1.0
+    points = cells.reshape((-1, 3))
+    bounds = (np.nextafter(points, -np.inf), np.nextafter(points, np.inf))
+    routes = np.arange(points.shape[0], dtype=np.int64).reshape((-1, 10))
+    policy = D.CellValidityPolicy()
+
+    vertices = ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1))
+    gradients = np.empty((10, 3, 4), dtype=np.float64)
+    for dof, polynomial in enumerate(basis):
+        assert isinstance(polynomial, dict)
+        for axis in range(3):
+            for vertex, point in enumerate(vertices):
+                value = sum(
+                    (
+                        coefficient
+                        * exponent[axis]
+                        * prod(
+                            Fraction(point[i]) ** (exponent[i] - (i == axis))
+                            for i in range(3)
+                        )
+                        for exponent, coefficient in polynomial.items()
+                        if exponent[axis]
+                    ),
+                    Fraction(0),
+                )
+                gradients[dof, axis, vertex] = float(value)
+                assert Fraction(gradients[dof, axis, vertex]) == value
+
+    columns = []
+    for axis in range(3):
+        total = None
+        for dof in range(10):
+            point_interval = (
+                bounds[0][routes[:, dof], None, :],
+                bounds[1][routes[:, dof], None, :],
+            )
+            gradient = gradients[dof, axis][None, :, None]
+            term = interval_multiply(point_interval, (gradient, gradient))
+            total = term if total is None else interval_add(total, term)
+        assert total is not None
+        columns.append((np.min(total[0], axis=1), np.max(total[1], axis=1)))
+    matrix = tuple(
+        tuple((columns[col][0][:, row], columns[col][1][:, row]) for col in range(3))
+        for row in range(3)
+    )
+    determinant = None
+    for col in range(3):
+        first = interval_multiply(matrix[1][(col + 1) % 3], matrix[2][(col + 2) % 3])
+        second = interval_multiply(matrix[1][(col + 2) % 3], matrix[2][(col + 1) % 3])
+        term = interval_multiply(matrix[0][col], interval_subtract(first, second))
+        determinant = term if determinant is None else interval_add(determinant, term)
+    assert determinant is not None
+    floor = np.asarray(policy.determinant_floor(), dtype=np.float64)
+    floor_bound = (floor, floor)
+    for col in range(3):
+        norm_squared = interval_add(
+            interval_add(
+                interval_square(matrix[0][col]), interval_square(matrix[1][col])
+            ),
+            interval_square(matrix[2][col]),
+        )
+        floor_bound = interval_multiply(floor_bound, interval_sqrt(norm_squared))
+    lower = np.asarray(determinant[0], dtype=np.float64).reshape(-1)
+    upper = np.asarray(determinant[1], dtype=np.float64).reshape(-1)
+    floor_upper = np.asarray(floor_bound[1], dtype=np.float64).reshape(-1)
+    accepted = (
+        np.isfinite(lower)
+        & np.isfinite(upper)
+        & np.isfinite(floor_upper)
+        & (lower > floor_upper)
+    )
+    expected = (accepted, lower, upper)
+
+    def screen(selected: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        result = validity_module._quadratic_tetra_block_screen(
+            element, "tetrahedron", basis, selected, bounds, policy
+        )
+        assert result is not None
+        return result
+
+    actual = screen(routes)
+    chunks = [screen(routes[start : start + 7]) for start in range(0, len(routes), 7)]
+    for index in range(3):
+        np.testing.assert_array_equal(actual[index], expected[index])
+        np.testing.assert_array_equal(
+            actual[index], np.concatenate([chunk[index] for chunk in chunks])
+        )
+    faulty_lower = lower.copy()
+    faulty_lower[0] = np.nextafter(faulty_lower[0], np.inf)
+    with pytest.raises(AssertionError):
+        np.testing.assert_array_equal(actual[1], faulty_lower)
+
+
+def test_quadratic_tetra_screen_certificate_consumer_chunks() -> None:
+    rng = np.random.default_rng(90471)
+    element = D.fem.lagrange_element("tetrahedron", 2)
+    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
+    cells = nodes[None, :, :] + rng.normal(0.0, 0.025, size=(20, 10, 3))
+    cells[::5, :, 0] *= -1.0
+
+    def certify(selected: np.ndarray) -> Any:
+        points = selected.reshape((-1, 3))
+        routes = np.arange(len(points), dtype=np.int64).reshape((-1, 10))
+        geometry = CellGeometrySpec({"cells": element}, {"cells": routes}, points)
+        return D.certify_cell_geometry_validity(geometry)
+
+    certificate = certify(cells)
+    chunks = [certify(cells[start : start + 7]) for start in range(0, len(cells), 7)]
+    for name in (
+        "status",
+        "execution_status",
+        "source_status",
+        "determinant_lower",
+        "determinant_upper",
+        "source_determinant_lower",
+        "source_determinant_upper",
+        "depth",
+        "source_depth",
+    ):
+        np.testing.assert_array_equal(
+            np.asarray(getattr(certificate, name)),
+            np.concatenate([np.asarray(getattr(chunk, name)) for chunk in chunks]),
+        )
 
 
 def test_quadratic_tetra_block_distinguishes_exact_source_and_execution() -> None:
@@ -1345,6 +1577,25 @@ def _embedded(points: Any, *, bend: Any = 0.0) -> Any:
 CONVEX = ((0.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 2.0), (0.0, 1.0))
 # Notched square whose vertex-zero fan leaves the cell.
 CONCAVE = ((0.0, 0.0), (3.0, 0.0), (3.0, 3.0), (1.5, 1.0), (0.0, 3.0))
+
+
+def test_embedded_polygon_norm_enclosure_handles_downward_rounding() -> None:
+    # The nearest binary64 sqrt(3) is below the exact norm of this edge.
+    old_norm = Fraction(float.fromhex("0x1.bb67ae8584caap+0"))
+    assert old_norm * old_norm < Fraction(3)
+    upper = Fraction(float(binary64_norm_upper(np.asarray((1.0, 1.0, 1.0)))))
+    assert upper * upper >= Fraction(3)
+    points = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (1.0, 1.0, 1.0),
+            (0.0, 2.0, 1.0),
+            (-1.0, 1.0, 0.0),
+            (-1.0, 0.0, -0.5),
+        ),
+        dtype=np.float64,
+    )
+    assert _polygon_status(points) == Status.CERTIFIED_VALID
 
 
 def test_cell_geometry_validity_scenario_1() -> None:

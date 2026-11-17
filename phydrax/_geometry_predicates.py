@@ -310,9 +310,22 @@ def _filter(
     info = np.finfo(dtype)
     unit = float(info.eps) / 2.0
     first, second = spec.coefficient
-    relative = (first + second * unit) * unit
-    absolute = spec.multiplier * float(info.tiny) * (1.0 + largest) ** (spec.degree - 1)
-    bound = safety * (relative * permanent + absolute)
+    # The static error estimate is itself an upper bound, not an ordinary
+    # floating-point approximation. Direct every operation upward.
+    def upper(value: Any, /) -> Any:
+        if xp is np:
+            return np.nextafter(value, np.inf)
+        return flush_safe_outward(value, "up")
+
+    unit_value = xp.asarray(unit, dtype=dtype)
+    relative = upper(upper(first + upper(second * unit_value)) * unit_value)
+    largest_upper = upper(largest)
+    base = upper(1.0 + largest_upper)
+    power = base
+    for _ in range(spec.degree - 2):
+        power = upper(power * base)
+    absolute = upper(xp.asarray(spec.multiplier * float(info.tiny), dtype=dtype) * power)
+    bound = upper(safety * upper(upper(relative * permanent) + absolute))
     finite = xp.isfinite(det) & xp.isfinite(bound)
     decided = finite & (xp.abs(det) > bound)
     for point in points:

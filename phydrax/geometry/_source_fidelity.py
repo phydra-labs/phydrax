@@ -30,6 +30,7 @@ from ..discretization._coordinate_enclosure import (
     polynomial_bounds,
     PreparedSimplexPolynomial,
     RationalPolynomial,
+    restricted_polynomial_batch_bounds,
     restricted_polynomial_bounds,
 )
 from ..discretization._exact_algebraic_geometry import coefficient_endpoint
@@ -61,7 +62,8 @@ from ._meshing_domain import MeshingDomain, SourcePreparation
 from ._planar_primitives import (
     area2 as _polygon_area2,
     box_overlap_pairs,
-    interiors_separated,
+    integer_interiors_separated,
+    integer_polygon,
     intersection as _polygon_intersection,
     polygon_boxes,
     signed_area2 as _polygon_signed_area2,
@@ -113,7 +115,10 @@ if TYPE_CHECKING:
         ImplicitChartPremise,
         ValidatedImplicitChartParent,
     )
-    from .implicit._source_charts import AdaptiveImplicitRootChartMap
+    from .implicit._source_charts import (
+        _ImplicitChartHandoff,
+        AdaptiveImplicitRootChartMap,
+    )
     from .reconstruction._boundary import ReconstructedTriangleBoundarySource
 
 
@@ -215,12 +220,6 @@ def _area2(polygon: tuple[Point2, ...], /) -> Fraction:
     return _polygon_signed_area2(polygon) / 2
 
 
-def _intersection_area(first: Triangle2, second: Triangle2, /) -> Fraction:
-    if interiors_separated(first, second):
-        return Fraction(0)
-    return _polygon_area2(_polygon_intersection(first, second)) / 2
-
-
 def _screened_intersection_areas(
     first: tuple[Triangle2, ...],
     second: tuple[Triangle2, ...],
@@ -245,6 +244,14 @@ def _screened_intersection_areas(
         self_pairs=self_pairs,
     )
     decisions = triangle_pair_separation(first, second, pairs)
+    first_integers = tuple(map(integer_polygon, first)) if np.any(decisions < 0) else ()
+    second_integers = (
+        first_integers
+        if first is second
+        else tuple(map(integer_polygon, second))
+        if first_integers
+        else ()
+    )
     for (left, right), decision in zip(pairs.tolist(), decisions.tolist(), strict=True):
         if decision == 1:
             yield left, right, Fraction(0)
@@ -254,8 +261,14 @@ def _screened_intersection_areas(
                 right,
                 _polygon_area2(_polygon_intersection(first[left], second[right])) / 2,
             )
+        elif integer_interiors_separated(first_integers[left], second_integers[right]):
+            yield left, right, Fraction(0)
         else:
-            yield left, right, _intersection_area(first[left], second[right])
+            yield (
+                left,
+                right,
+                _polygon_area2(_polygon_intersection(first[left], second[right])) / 2,
+            )
 
 
 # Below this many pieces the fixed binary64 screen setup costs more than the
@@ -274,9 +287,20 @@ def _partition_intersection_areas(
     if len(first) >= _SCREENED_PARTITION_MIN_PIECES:
         yield from _screened_intersection_areas(first, second, self_pairs=self_pairs)
         return
+    first_integers = tuple(map(integer_polygon, first))
+    second_integers = (
+        first_integers if first is second else tuple(map(integer_polygon, second))
+    )
     for left, triangle in enumerate(first):
         for right in range(left + 1 if self_pairs else 0, len(second)):
-            yield left, right, _intersection_area(triangle, second[right])
+            if integer_interiors_separated(first_integers[left], second_integers[right]):
+                yield left, right, Fraction(0)
+            else:
+                yield (
+                    left,
+                    right,
+                    _polygon_area2(_polygon_intersection(triangle, second[right])) / 2,
+                )
 
 
 def _same_triangle_chain_boundary(
@@ -912,7 +936,7 @@ def reprove_actual_planar_chart_rows(charts: object, /) -> tuple[Triangle2, ...]
     )
     target_corners: dict[int, tuple[tuple[ExactScalar, ...], ...]] = {}
     elements, routes, _ = charts.geometry.resolve(charts.mesh)
-    coefficients = charts.geometry.source_coordinates()
+    coefficients = tuple(charts.geometry.source_coordinates())
     reference = (
         (Fraction(0), Fraction(0)),
         (Fraction(1), Fraction(0)),
@@ -2687,7 +2711,7 @@ def _target_vertex_exact_coordinates(
     vertex_ids = _integer_vector(mesh.vertex_global_ids)
     vertex_rows = {identifier: row for row, identifier in enumerate(vertex_ids)}
     elements, routes, _ = geometry.resolve(mesh)
-    coefficients = geometry.source_coordinates()
+    coefficients = tuple(geometry.source_coordinates())
     mesh_coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
     from ..discretization._cell_geometry import CellVertexGeometryElement
 
@@ -3088,7 +3112,7 @@ def _polyhedral_vertex_source_coordinates(
         raise TypeError(
             "Polyhedral source coordinates require vertex-defined CellGeometrySpec maps."
         )
-    coefficients = geometry.source_coordinates()
+    coefficients = tuple(geometry.source_coordinates())
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     mesh_coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
     result: dict[int, ExactPoint3] = {}
@@ -3554,7 +3578,7 @@ def _target_boundary_triangles(
     cells = _cell_global_rows(mesh)
     facet_routes = _volume_boundary_facet_lookup(mesh)
     elements, routes, _ = geometry.resolve(mesh)
-    coefficients = geometry.source_coordinates()
+    coefficients = tuple(geometry.source_coordinates())
     points_by_facet: dict[int, Triangle3] = {}
     for (cell_id, local_facet), (facet_id, boundary) in facet_routes.items():
         if not boundary:
@@ -5460,10 +5484,62 @@ def _curved_trim_lens_caps(
         exact_surface_coordinate_expressions,
     )
 
+    exact_surface = (
+        exact_surface_coordinate_expressions(surface)
+        if any(lens.parameter_bound != 0 for lens in lenses)
+        else None
+    )
     batched: dict[int, tuple[tuple[np.ndarray, np.ndarray] | None, ...]] = {}
-    if (
+    if not composed and exact_surface is not None:
+        rows: list[tuple[int, Triangle2]] = []
+        for index, lens in enumerate(lenses):
+            if lens.parameter_bound == 0:
+                continue
+            box = _curved_trim_lens_box(surface, lens)
+            if box is None:
+                break
+            lower, upper = box
+            rows.extend(
+                (
+                    (index, (lower, (upper[0], lower[1]), upper)),
+                    (index, (lower, upper, (lower[0], upper[1]))),
+                )
+            )
+        if rows:
+            corners = tuple(triangle for _, triangle in rows)
+            lower_bounds = np.empty((len(rows), 3, 2), dtype=np.float64)
+            upper_bounds = np.empty_like(lower_bounds)
+            valid = np.ones(len(rows), dtype=np.bool_)
+            for physical_axis, expression in enumerate(exact_surface):
+                for parameter in range(2):
+                    tangent = PreparedSimplexPolynomial(
+                        derivative(expression, parameter), 2
+                    )
+                    for row, (low, high) in enumerate(
+                        restricted_polynomial_batch_bounds(tangent, corners)
+                    ):
+                        if (
+                            not math.isfinite(low)
+                            or not math.isfinite(high)
+                            or low > high
+                        ):
+                            valid[row] = False
+                        lower_bounds[row, physical_axis, parameter] = low
+                        upper_bounds[row, physical_axis, parameter] = high
+            results: dict[int, list[tuple[np.ndarray, np.ndarray] | None]] = {}
+            for row, (index, triangle) in enumerate(rows):
+                bounds = (
+                    (lower_bounds[row], upper_bounds[row])
+                    if valid[row]
+                    else _exact_surface_jacobian_bounds(
+                        exact_surface, triangle, composed=True
+                    )
+                )
+                results.setdefault(index, []).append(bounds)
+            batched = {index: tuple(values) for index, values in results.items()}
+    elif (
         any(lens.parameter_bound != 0 for lens in lenses)
-        and exact_surface_coordinate_expressions(surface) is None
+        and exact_surface is None
         and preparation.surface_spans(surface) is None
         and (
             not _has_unexpanded_exact_surface_carrier(surface)
@@ -6595,6 +6671,7 @@ def certify_source_fidelity(
     maximum_normal_deviation: float | None = None,
     witness: SourceFidelityWitness | ValidatedSourceFidelityWitness | None = None,
     root_charts: AdaptiveImplicitRootChartMap | None = None,
+    _root_chart_handoff: _ImplicitChartHandoff | None = None,
     preparation: SourcePreparation | None = None,
     chart_parent: ImplicitChartPremise | None = None,
     validated_chart_parent: ValidatedImplicitChartParent | None = None,
@@ -6779,6 +6856,7 @@ def certify_source_fidelity(
                     tolerance=tolerance_,
                     maximum_normal_deviation=normal_limit,
                     root_charts=root_charts,
+                    _handoff=_root_chart_handoff,
                     chart_parent=chart_parent,
                     validated_chart_parent=validated_chart_parent,
                 )
@@ -6994,7 +7072,7 @@ def certify_source_fidelity(
             (),
         )
     elements, routes, _ = geometry.resolve(mesh)
-    coefficients = geometry.source_coordinates()
+    coefficients = tuple(geometry.source_coordinates())
     target_corners: dict[int, tuple[tuple[ExactScalar, ...], ...]] = {}
     selected_cells = set(cell_ids)
     for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
