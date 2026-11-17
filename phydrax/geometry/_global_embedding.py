@@ -7065,21 +7065,16 @@ def _periodic_facet_trace_certificate_id(
     topology: PeriodicMeshTopology,
     /,
 ) -> str | None:
-    """Reprove exact lifted vertex and whole mapped facet equivariance."""
-    if (
-        mesh.topological_dimension != 3
-        or mesh.ambient_dimension != 3
-        or mesh.periodic_topology is None
-        or topology.periodic_topology_id != mesh.periodic_topology.periodic_topology_id
-        or len(cells) != sum(block.cell_count for block in mesh.blocks)
-        or any(len(cell.coordinates) != 3 for cell in cells)
-    ):
-        return None
+    """Reprove exact lifted vertex and whole mapped facet equivariance.
+
+    ``cells`` may come from any holder: they are first reproved to be the
+    current charts of ``mesh`` and ``geometry``.
+    """
     try:
         geometry_id = cell_geometry_id(geometry)
     except (ArithmeticError, IndexError, KeyError, TypeError, ValueError):
         return None
-    if any(
+    if len(cells) != sum(block.cell_count for block in mesh.blocks) or any(
         cell.owning_mesh_id != mesh.mesh_id or cell.owning_geometry_id != geometry_id
         for cell in cells
     ):
@@ -7097,6 +7092,31 @@ def _periodic_facet_trace_certificate_id(
         ):
             return None
     except (ArithmeticError, IndexError, KeyError, TypeError, ValueError):
+        return None
+    return _current_periodic_facet_trace_id(mesh, geometry, cells, topology)
+
+
+def _current_periodic_facet_trace_id(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    cells: tuple[EmbeddingCell, ...],
+    topology: PeriodicMeshTopology,
+    /,
+) -> str | None:
+    """Prove exact lifted vertex and whole mapped facet equivariance.
+
+    ``cells`` must be the charts its caller prepared from ``mesh`` and
+    ``geometry`` for this proof; charts of any other provenance go through
+    `_periodic_facet_trace_certificate_id`.
+    """
+    if (
+        mesh.topological_dimension != 3
+        or mesh.ambient_dimension != 3
+        or mesh.periodic_topology is None
+        or topology.periodic_topology_id != mesh.periodic_topology.periodic_topology_id
+        or len(cells) != sum(block.cell_count for block in mesh.blocks)
+        or any(len(cell.coordinates) != 3 for cell in cells)
+    ):
         return None
     try:
         rebuilt = CellMesh.from_stored_fields(
@@ -7558,11 +7578,12 @@ def _proof(
             facet_trace: list[str | None] = []
 
             def facet_trace_id() -> str | None:
-                # The mesh, geometry, cells and topology are fixed for this
-                # proof, so one current-chart trace proof serves every route.
+                # The certificate prepared these charts from this mesh and
+                # geometry for this proof, and all four are fixed within it, so
+                # one current-chart trace proof serves every route.
                 if not facet_trace:
                     facet_trace.append(
-                        _periodic_facet_trace_certificate_id(
+                        _current_periodic_facet_trace_id(
                             mesh, geometry, periodic_cells, periodic_topology
                         )
                     )
