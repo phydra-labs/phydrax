@@ -279,8 +279,7 @@ class WeightTable final {
             return PHX_MC_RANGE_ERROR;
           }
         }
-        rows_ = compositions(n, dimension + 1);
-        parts_ = dimension + 1;
+        prepare_rows(n, dimension + 1);
         break;
       }
       case PHX_MC_BERNSTEIN_BOX: {
@@ -330,8 +329,7 @@ class WeightTable final {
           }
         }
         axis_lcm_.assign(1, line_lcm);
-        rows_ = compositions(triangle, 3);
-        parts_ = 3;
+        prepare_rows(triangle, 3);
         break;
       }
       default:
@@ -390,6 +388,14 @@ class WeightTable final {
   }
 
  private:
+  void prepare_rows(int32_t degree, int32_t parts) {
+    if (degree != rows_degree_ || parts != parts_) {
+      rows_ = compositions(degree, parts);
+      rows_degree_ = degree;
+      parts_ = parts;
+    }
+  }
+
   int32_t exponent(std::size_t term, int32_t axis) const noexcept {
     return exponents_[term * static_cast<std::size_t>(exponents_width()) +
                       static_cast<std::size_t>(axis)];
@@ -433,6 +439,7 @@ class WeightTable final {
   std::vector<std::uint64_t> scales_;
   std::vector<std::uint64_t> axis_lcm_;
   std::vector<int32_t> rows_;
+  int32_t rows_degree_ = -1;
   int32_t parts_ = 1;
   int64_t denominator_ = 1;
 };

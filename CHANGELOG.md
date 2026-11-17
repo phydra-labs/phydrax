@@ -251,6 +251,8 @@
 ### Changed
 - Batched exact Bernstein conversion validates eligible polynomial columns once
   while preserving their shared rational scale and item-local refusals.
+- Native Bernstein conversion reuses simplex control-index rows within a worker
+  when consecutive items have the same degree and dimension.
 - Welded surface intersection checks group exact orientation predicates and
   skip redundant shared-vertex edge tests without changing contact decisions.
 - Welded topology audits group vertex and edge star lookups without changing
