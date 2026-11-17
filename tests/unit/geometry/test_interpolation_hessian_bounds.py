@@ -213,7 +213,7 @@ def test_source_point_enclosures_match_host_and_detect_inward_bounds(
     program = preparation.derivative_program(surface, 0)
     host = replace(program, execution="host", function=None)
     rng = np.random.default_rng(8501)
-    points = rng.uniform((-2.0, -1.0), (2.0, 1.0), size=(40, 2))
+    points = rng.uniform((-2.0, -1.0), (2.0, 1.0), size=(80, 2))
     points[0] = 0.0
     low = points - rng.uniform(0.0, 0.1, size=points.shape)
     high = points + rng.uniform(0.0, 0.1, size=points.shape)
@@ -221,6 +221,11 @@ def test_source_point_enclosures_match_host_and_detect_inward_bounds(
     reference = host.evaluate(low, high)
     batch = program.evaluate(low, high)
     for expected, actual in zip(reference, batch, strict=True):
+        np.testing.assert_array_equal(expected.view(np.uint64), actual.view(np.uint64))
+    compiled = program.native_program
+    assert compiled is not None
+    parallel = compiled.evaluate_batch(low, high, workers=4)
+    for expected, actual in zip(batch, parallel, strict=True):
         np.testing.assert_array_equal(expected.view(np.uint64), actual.view(np.uint64))
     for start in range(0, len(points), 7):
         part = program.evaluate(low[start : start + 7], high[start : start + 7])
@@ -277,11 +282,16 @@ def test_mapped_curve_hessian_chord_bounds_are_batch_independent(
     assert program is not None
     host = replace(program, execution="host", function=None)
     rng = np.random.default_rng(616)
-    low = rng.uniform(0.0, 0.8, size=(20, 1))
+    low = rng.uniform(0.0, 0.8, size=(80, 1))
     high = low + rng.uniform(0.0, 0.2, size=low.shape)
     reference = host.evaluate(low, high)
     actual = program.evaluate(low, high)
     for expected, result in zip(reference, actual, strict=True):
+        np.testing.assert_array_equal(expected.view(np.uint64), result.view(np.uint64))
+    compiled = program.native_program
+    assert compiled is not None
+    parallel = compiled.evaluate_batch(low, high, workers=4)
+    for expected, result in zip(actual, parallel, strict=True):
         np.testing.assert_array_equal(expected.view(np.uint64), result.view(np.uint64))
     for row in range(len(low)):
         part = program.evaluate(low[row : row + 1], high[row : row + 1])

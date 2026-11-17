@@ -755,10 +755,10 @@ def test_period_bounds_match_elementwise_kernels_and_batch_partitions(
     values = tuple(
         PeriodOffset(Fraction(int(a), int(b)), Fraction(int(c), int(d)))
         for a, b, c, d in zip(
-            rng.integers(-30, 31, 40),
-            rng.integers(1, 20, 40),
-            rng.integers(-30, 31, 40),
-            rng.integers(1, 20, 40),
+            rng.integers(-30, 31, 80),
+            rng.integers(1, 20, 80),
+            rng.integers(-30, 31, 80),
+            rng.integers(1, 20, 80),
             strict=True,
         )
     )
@@ -781,6 +781,11 @@ def test_period_bounds_match_elementwise_kernels_and_batch_partitions(
     lower = np.asarray(lower_rows, dtype=np.float64)
     upper = np.asarray(upper_rows, dtype=np.float64)
     batch = program.evaluate(lower, upper)
+    native = program.native_program
+    assert native is not None
+    parallel = native.evaluate_batch(lower, upper, workers=4)
+    for expected, actual in zip(batch, parallel, strict=True):
+        np.testing.assert_array_equal(expected.view(np.uint64), actual.view(np.uint64))
     for index, value in enumerate(values):
         singleton = period_scalar_bounds(value)
         for endpoint in range(2):
