@@ -269,9 +269,9 @@
   does not cover every profile lists its `selected_profiles`, never claims
   workflow completion, and is refused by the installed native validation;
   merged selections covering every profile equal one complete run. The CAD
-  matrix solves its P2 diffusion system by PCG on the native Cholesky factor
-  under a declared budget instead of the default unpreconditioned solve; its
-  residual and boundary gates are unchanged.
+  matrix solves its P2 diffusion system by Jacobi-preconditioned CG on the
+  assembled sparse operator instead of the default solve; its residual and
+  boundary gates are unchanged.
 - Overset partitioning decides whether a piece and an obstacle overlap by an
   exact edge-separation test instead of constructing their exact clip, and
   screens candidate triangle pairs in binary64 first, with identical pieces

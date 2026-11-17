@@ -40,11 +40,6 @@ _VOLUME_RELATIVE_TOLERANCE = 1.0e-10
 _SOURCE_DEVIATION_TOLERANCE_M = 0.02
 _FE_RESIDUAL_TOLERANCE = 2.0e-8
 _FE_BOUNDARY_TOLERANCE = 1.0e-10
-# Declared execution budget of the curved-CAD P2 solve (a plan input, never
-# derived from host memory): bytes of the exact Cholesky factor used as the
-# PCG preconditioner, and of each solve workspace.
-_FE_FACTOR_BYTES = 4 * 1024**3
-_FE_SYMBOLIC_WORK = 64_000_000_000
 # The donor CAD volume profiles ran the donor default NativeVolumeSchedule,
 # whose radius-edge and dihedral targets were aims: unmet cells were published
 # as evidence, never hidden (c56614 phydrax/meshing/_volume_generation.py
@@ -1257,27 +1252,16 @@ def _cad_manufactured_value(points: Any, length: float) -> Any:
 
 
 def _fe_solve_policy() -> phx.linalg.LinearSolvePolicy:
-    """PCG on the exact native Cholesky factor under the declared budget."""
+    """Jacobi-preconditioned CG for the assembled symmetric positive definite system.
+
+    The assembled operator and its diagonal are the only retained solve state,
+    so the solve's memory is that of the sparse matrix.
+    """
     return phx.linalg.LinearSolvePolicy(
         phx.linalg.PCG(),
-        tolerance=phx.linalg.TolerancePolicy(relative=1.0e-14, absolute=0.0),
+        tolerance=phx.linalg.TolerancePolicy(relative=1.0e-12, absolute=0.0),
         preconditioning=phx.linalg.PreconditioningPolicy(
-            phx.linalg.SparseFactorizationPreconditionerBuilder(
-                phx.linalg.SparseFactorizationPolicy(
-                    "cholesky",
-                    ordering="approximate-minimum-degree",
-                    max_factor_nnz=_FE_FACTOR_BYTES // np.dtype(np.float64).itemsize,
-                    max_factor_bytes=_FE_FACTOR_BYTES,
-                    max_symbolic_work=_FE_SYMBOLIC_WORK,
-                )
-            )
-        ),
-        resources=phx.linalg.SolveResourcePolicy(
-            factorization_bytes=_FE_FACTOR_BYTES,
-            workspace_bytes=_FE_FACTOR_BYTES,
-            krylov_basis_bytes=_FE_FACTOR_BYTES,
-            preconditioner_bytes=_FE_FACTOR_BYTES,
-            recycling_state_bytes=_FE_FACTOR_BYTES,
+            phx.linalg.JacobiPreconditionerBuilder()
         ),
     )
 
@@ -1338,12 +1322,6 @@ def _solve_curved_cad_p2_fe(
     )
     operator, rhs = problem.linear_system(storage="sparse")
     prepared = phx.linalg.prepare(operator, _fe_solve_policy())
-    state = prepared.preconditioning_state
-    if state is None or not isinstance(
-        state.action, phx.linalg.SparseFactorizationPreconditioner
-    ):
-        raise RuntimeError("The curved CAD P2 solve did not retain its Cholesky factor.")
-    factor = state.action.factorization.plan
     solved = phx.linalg.solve(prepared, rhs)
     values = np.asarray(problem.expand(solved.value), dtype=np.float64)
     coordinates = np.asarray(space.dof_maps[0].dof_coordinates, dtype=np.float64)
@@ -1380,12 +1358,8 @@ def _solve_curved_cad_p2_fe(
         "solver": {
             "backend": str(prepared.plan.backend),
             "method": str(prepared.plan.method),
+            "preconditioner": "jacobi",
             "iterations": int(np.asarray(solved.diagnostics.iterations)),
-            "factorization": "supernodal-cholesky",
-            "factor_nnz": factor.factor_nnz,
-            "factor_bytes": factor.factor_bytes,
-            "symbolic_work": factor.symbolic_work,
-            "memory_budget_bytes": _FE_FACTOR_BYTES,
         },
         "passed": True,
     }
