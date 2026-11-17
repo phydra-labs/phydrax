@@ -1049,6 +1049,17 @@ struct PlcSourceFace {
   int32_t facet;
   int32_t source_triangle;
 };
+// One face of a planar polygon's cover: its vertices in the polygon's
+// orientation, the finite cell and slot carrying its constraint, and its
+// place in a scan of the complex (the lower of its two cells).
+struct PlcPlanarFace {
+  Triple oriented;
+  int32_t owner;
+  int slot;
+  int32_t scan_cell;
+  int scan_slot;
+};
+
 struct PlcPlanarPolygon {
   int32_t facet;
   int32_t source_triangle;
@@ -1063,6 +1074,13 @@ struct PlcPlanarPolygon {
   // Complete cover from a previous pass. Only candidate vertices are stored:
   // corner and volume slots can be renumbered when a source point is added.
   std::vector<Triple> cover;
+  // Every input triangle whose polygon belongs to this group, ascending.
+  std::vector<int32_t> group_triangles;
+  // `cover` as last verified, in scan order. It stays current until a cell
+  // through one of its faces is removed or the complex is rebuilt; verifying
+  // a current cover again would reproduce it.
+  std::vector<PlcPlanarFace> verified_cover;
+  bool cover_current = false;
 };
 
 struct PlcEdgePoint {
@@ -1721,11 +1739,19 @@ class PlcRecoveryBuilder {
       }
       PlcPlanarPolygon group{facet, source_triangle, axis,
                              {reference[0], reference[1], reference[2]}, orientation,
-                             members, std::move(loops), lower, upper, false, {}};
+                             members, std::move(loops), lower, upper, false, {}, {}, {}, false};
       const std::int32_t group_index = static_cast<std::int32_t>(planar_polygons_.size());
       planar_polygons_.push_back(std::move(group));
       for (std::int32_t polygon : component_polygons) {
         planar_polygon_index_[static_cast<std::size_t>(polygon)] = group_index;
+      }
+    }
+    for (std::size_t row = 0; row < triangle_count; ++row) {
+      const std::int32_t group = planar_polygon_index_[static_cast<std::size_t>(
+          candidate_.input_polygons[row])];
+      if (group >= 0) {
+        planar_polygons_[static_cast<std::size_t>(group)].group_triangles.push_back(
+            static_cast<std::int32_t>(row));
       }
     }
   }
@@ -1742,8 +1768,24 @@ class PlcRecoveryBuilder {
   bool point_in_planar_polygon(const PlcPlanarPolygon& polygon, const Expansion* q,
                                double scale) const {
     bool inside = false;
+    const int ray_axis = (polygon.axis + 2) % 3;
+    // The leading component of a nonoverlapping expansion is within one unit
+    // in its last place of the value, so a binary64 gap above this pad
+    // decides the strict side of a carrier-exact loop vertex; zero is
+    // undecided and falls through to the exact comparison.
+    const double ray = q[1].is_zero() ? 0.0 : q[1].data()[q[1].size() - 1];
+    const auto clear_side = [&](const ExactPointRef& vertex) {
+      if (vertex.exact != nullptr) return 0;
+      const double scaled = scale * vertex.carrier[ray_axis];
+      const double gap = scaled - ray;
+      const double pad = 0x1p-50 * (std::fabs(scaled) + std::fabs(ray)) +
+                         std::numeric_limits<double>::min();
+      return gap > pad ? 1 : (gap < -pad ? -1 : 0);
+    };
     for (const auto& loop : polygon.boundary_loops) {
       for (std::size_t i = 0, j = loop.size() - 1; i < loop.size(); j = i++) {
+        const int clear = clear_side(ref(loop[i]));
+        if (clear != 0 && clear == clear_side(ref(loop[j]))) continue;
         const int y = (polygon.axis + 2) % 3;
         Expansion a[2], b[2];
         a[1] = coordinate(ref(loop[i]), y).scaled(scale);
@@ -1772,29 +1814,32 @@ class PlcRecoveryBuilder {
     return inside;
   }
 
+  // Closed membership of a work vertex in the polygon: 2 inside, 1 outside.
+  uint8_t planar_vertex_membership(const PlcPlanarPolygon& polygon, int32_t work_vertex) const {
+    // Boundary vertices are exact input coordinates. Only ordinary
+    // vertices can be rejected using their carrier's projected box.
+    const ExactPointRef vertex = ref(work_vertex);
+    const int x = (polygon.axis + 1) % 3, y = (polygon.axis + 2) % 3;
+    const double* p = vertex.carrier;
+    const bool outside = vertex.exact == nullptr &&
+        (p[x] < polygon.lower[0] || p[x] > polygon.upper[0] ||
+         p[y] < polygon.lower[1] || p[y] > polygon.upper[1]);
+    bool contained = false;
+    if (!outside &&
+        orient(polygon.plane_vertices[0], polygon.plane_vertices[1],
+               polygon.plane_vertices[2], work_vertex) == 0) {
+      Expansion q[2];
+      projected(work_vertex, polygon.axis, 1.0, q);
+      contained = point_in_planar_polygon(polygon, q, 1.0);
+    }
+    return contained ? 2 : 1;
+  }
+
   bool face_in_planar_polygon(const PlcPlanarPolygon& polygon, const Triple& face,
                               std::vector<uint8_t>& vertex_membership) const {
     for (int slot = 0; slot < 3; ++slot) {
       uint8_t& membership = vertex_membership[static_cast<std::size_t>(face[slot])];
-      if (membership == 0) {
-        // Boundary vertices are exact input coordinates. Only ordinary
-        // vertices can be rejected using their carrier's projected box.
-        const ExactPointRef vertex = ref(face[slot]);
-        const int x = (polygon.axis + 1) % 3, y = (polygon.axis + 2) % 3;
-        const double* p = vertex.carrier;
-        const bool outside = vertex.exact == nullptr &&
-            (p[x] < polygon.lower[0] || p[x] > polygon.upper[0] ||
-             p[y] < polygon.lower[1] || p[y] > polygon.upper[1]);
-        bool contained = false;
-        if (!outside &&
-            orient(polygon.plane_vertices[0], polygon.plane_vertices[1],
-                   polygon.plane_vertices[2], face[slot]) == 0) {
-          Expansion q[2];
-          projected(face[slot], polygon.axis, 1.0, q);
-          contained = point_in_planar_polygon(polygon, q, 1.0);
-        }
-        membership = contained ? 2 : 1;
-      }
+      if (membership == 0) membership = planar_vertex_membership(polygon, face[slot]);
       if (membership == 1) return false;
     }
     const int axis = polygon.axis;
@@ -1804,13 +1849,34 @@ class PlcRecoveryBuilder {
              between_on_line(ref(a), ref(b), ref(c)) && !same_point(ref(c), ref(a)) &&
              !same_point(ref(c), ref(b));
     };
+    const int x = (axis + 1) % 3, y = (axis + 2) % 3;
     for (int face_side = 0; face_side < 3; ++face_side) {
       const int32_t first = face[face_side];
       const int32_t second = face[(face_side + 1) % 3];
+      const ExactPointRef side_first = ref(first), side_second = ref(second);
+      const bool side_exact = side_first.exact == nullptr && side_second.exact == nullptr;
+      const double side_lower[2] = {std::min(side_first.carrier[x], side_second.carrier[x]),
+                                    std::min(side_first.carrier[y], side_second.carrier[y])};
+      const double side_upper[2] = {std::max(side_first.carrier[x], side_second.carrier[x]),
+                                    std::max(side_first.carrier[y], side_second.carrier[y])};
       for (const auto& loop : polygon.boundary_loops) {
         for (std::size_t edge = 0; edge < loop.size(); ++edge) {
           const int32_t boundary_first = loop[edge];
           const int32_t boundary_second = loop[(edge + 1) % loop.size()];
+          if (side_exact) {
+            // Carrier-exact segments with disjoint closed projected boxes
+            // neither cross nor hold an endpoint of the other.
+            const ExactPointRef edge_first = ref(boundary_first);
+            const ExactPointRef edge_second = ref(boundary_second);
+            if (edge_first.exact == nullptr && edge_second.exact == nullptr) {
+              const double* p = edge_first.carrier;
+              const double* r = edge_second.carrier;
+              if (std::max(p[x], r[x]) < side_lower[0] || std::min(p[x], r[x]) > side_upper[0] ||
+                  std::max(p[y], r[y]) < side_lower[1] || std::min(p[y], r[y]) > side_upper[1]) {
+                continue;
+              }
+            }
+          }
           const int first_side =
               orient2d_projected(ref(first), ref(second), ref(boundary_first), axis);
           const int second_side =
@@ -1848,20 +1914,19 @@ class PlcRecoveryBuilder {
     // replacements since the preceding polygon pass.
     sync_complex();
     TetrahedralComplex& complex = triangulation_->complex();
-    struct PlanarFace {
-      Triple oriented;
-      int32_t owner;
-      int slot;
-      int32_t scan_cell;
-      int scan_slot;
-    };
+    using PlanarFace = PlcPlanarFace;
     std::vector<PlanarFace> covered;
+    std::vector<std::pair<int32_t, int>> scan;
     std::vector<Triple> replaced;
     // The triangulation and exact positions do not change during a polygon
     // scan, so each vertex's plane/closed-membership result is reusable.
     std::vector<uint8_t> vertex_membership(work_points_.size() / 3);
     for (PlcPlanarPolygon& polygon : planar_polygons_) {
       covered.clear();
+      bool reuse = polygon.recovered && !polygon.cover.empty();
+      const bool retained = reuse && polygon.cover_current;
+      if (retained) covered = polygon.verified_cover;
+      if (!retained) {
       std::fill(vertex_membership.begin(), vertex_membership.end(), 0);
       const int x = (polygon.axis + 1) % 3, y = (polygon.axis + 2) % 3;
       Expansion polygon_area;
@@ -1880,7 +1945,6 @@ class PlcRecoveryBuilder {
       // tetrahedralization (in particular an internal material interface).
       // Stage the alternate triangulation; retain its authored subfaces for
       // exact facet recovery until complete coverage has been established.
-      bool reuse = polygon.recovered && !polygon.cover.empty();
       if (reuse) {
         for (const Triple& key : polygon.cover) {
           int32_t cell = -1;
@@ -1942,13 +2006,34 @@ class PlcRecoveryBuilder {
         }
       }
       if (!reuse) {
-        for (std::size_t row = 0; row < complex.tets.size(); ++row) {
-          const int32_t cell = static_cast<int32_t>(row);
-          const Tetrahedron& tet = complex.tets[row];
-          if (tet.v[0] == kDeadVertex) continue;
-          for (int slot = 0; slot < 4; ++slot) {
+        // A face inside the polygon has its three vertices in the closed
+        // polygon, so only the faces of the cells around those vertices can
+        // be. In (cell, slot) order, from the lower cell of each face, they
+        // are met exactly as a scan of the whole complex meets them.
+        scan.clear();
+        for (std::size_t vertex = 0; vertex < incidence_.size(); ++vertex) {
+          const std::vector<int32_t>& cells = incidence_[vertex];
+          if (cells.empty()) continue;
+          uint8_t& membership = vertex_membership[vertex];
+          if (membership == 0) {
+            membership = planar_vertex_membership(polygon, static_cast<int32_t>(vertex));
+          }
+          if (membership != 2) continue;
+          for (int32_t cell : cells) {
+            const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+            for (int slot = 0; slot < 4; ++slot) {
+              if (tet.v[slot] != static_cast<int32_t>(vertex) && tet.n[slot] >= cell) {
+                scan.emplace_back(cell, slot);
+              }
+            }
+          }
+        }
+        std::sort(scan.begin(), scan.end());
+        scan.erase(std::unique(scan.begin(), scan.end()), scan.end());
+        for (const auto& [cell, slot] : scan) {
+          {
+            const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
             const int32_t other = tet.n[slot];
-            if (other < cell) continue;
             const Tetrahedron& neighbor = complex.tets[static_cast<std::size_t>(other)];
             const int back = neighbor_slot(neighbor, cell);
             if (is_ghost(tet) && is_ghost(neighbor)) continue;
@@ -1986,16 +2071,18 @@ class PlcRecoveryBuilder {
         return fail(PHX_MC_UNRESOLVED, kPlcNonrepresentable,
                     kPlcFacet, polygon.facet);
       }
+      }
       replaced.clear();
       const int32_t group = planar_polygon_index_[static_cast<std::size_t>(
           candidate_.input_polygons[static_cast<std::size_t>(polygon.source_triangle)])];
-      for (const auto& [key, source] : source_faces_) {
-        const int32_t source_polygon =
-            candidate_.input_polygons[static_cast<std::size_t>(source.source_triangle)];
-        if (planar_polygon_index_[static_cast<std::size_t>(source_polygon)] == group) {
+      // The subfaces of this group's triangles, in the table's key order.
+      for (std::int32_t triangle :
+           planar_polygons_[static_cast<std::size_t>(group)].group_triangles) {
+        for (const Triple& key : source_faces_.keys_of_triangle(triangle)) {
           replaced.push_back(key);
         }
       }
+      std::sort(replaced.begin(), replaced.end());
       for (const Triple& key : replaced) source_faces_.erase(key);
       for (const PlanarFace& face : covered) {
         if (!planar_source_faces_.emplace(
@@ -2016,6 +2103,20 @@ class PlcRecoveryBuilder {
             break;
           }
           polygon.cover.push_back(key);
+        }
+      }
+      if (!retained) {
+        for (const PlanarFace& face : polygon.verified_cover) {
+          cover_polygon_.erase(sorted_triple(face.oriented.data()));
+        }
+        polygon.cover_current = !polygon.cover.empty();
+        polygon.verified_cover.clear();
+        if (polygon.cover_current) {
+          polygon.verified_cover = covered;
+          const auto index = static_cast<int32_t>(&polygon - planar_polygons_.data());
+          for (const PlanarFace& face : covered) {
+            cover_polygon_[sorted_triple(face.oriented.data())] = index;
+          }
         }
       }
       polygon.recovered = true;
@@ -2263,6 +2364,12 @@ class PlcRecoveryBuilder {
     for (std::size_t row = 0; row < edge_chains_.size(); ++row) {
       if (edge_chains_[row].size() > 1) unverified_rows_.insert(row);
     }
+    // Cell indices of the old complex name nothing in the new one.
+    cover_polygon_.clear();
+    for (PlcPlanarPolygon& polygon : planar_polygons_) {
+      polygon.cover_current = false;
+      polygon.verified_cover.clear();
+    }
     return PHX_MC_OK;
   }
 
@@ -2289,7 +2396,12 @@ class PlcRecoveryBuilder {
         int32_t face[3];
         oriented_facet(event.v.data(), slot, face);
         if (face[0] >= 0 && face[1] >= 0 && face[2] >= 0) {
-          source_faces_.mark_unverified(sorted_triple(face));
+          const Triple key = sorted_triple(face);
+          source_faces_.mark_unverified(key);
+          const auto cover = cover_polygon_.find(key);
+          if (cover != cover_polygon_.end()) {
+            planar_polygons_[static_cast<std::size_t>(cover->second)].cover_current = false;
+          }
         }
       }
       for (int first = 0; first < 4; ++first) {
@@ -7069,6 +7181,8 @@ class PlcRecoveryBuilder {
   // Live cells (finite and ghost) through each work vertex, kept current
   // from the complex's edit journal.
   std::vector<std::vector<int32_t>> incidence_;
+  // Planar polygon holding each face of a current verified cover.
+  std::map<Triple, int32_t> cover_polygon_;
   std::vector<CellEvent> journal_;
   // Vertices whose incidence or vertex_tet_ hint changed since vertex_tet_
   // was last reset to the highest live finite cell through each vertex.
