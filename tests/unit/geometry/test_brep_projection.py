@@ -380,6 +380,46 @@ def test_native_torus_projects_interior_and_both_seam_points() -> None:
     np.testing.assert_allclose(result.normals[:5], outward, atol=1e-12)
 
 
+@pytest.mark.parametrize("minor", (0.5, 0.75))
+def test_torus_frame_batch_sizes_preserve_projection_evidence(minor: float) -> None:
+    projection = phx.geometry.prepare_brep_projection(
+        brep_torus(2.0, minor, coordinate_contract=_CONTRACT)
+    )
+    points = np.asarray(((1.5, 0.0, 0.3), (-1.0, -2.0, -0.4), (2.0, 0.0, 0.0)))
+    small = _project(projection, points, _FACE, 0)
+    large = _project(projection, np.tile(points, (3, 1)), _FACE, 0)
+    for name in ("points", "parameters", "status", "distance_lower_bounds", "residuals"):
+        np.testing.assert_array_equal(
+            np.asarray(getattr(large, name))[:3], np.asarray(getattr(small, name))
+        )
+    for name in ("normals", "tangents"):
+        np.testing.assert_allclose(
+            np.asarray(getattr(large, name))[:3],
+            np.asarray(getattr(small, name)),
+            atol=1e-14,
+            equal_nan=True,
+        )
+    center = np.asarray((2.0, 0.0, 0.0))
+    direction = points[0] - center
+    direction /= np.linalg.norm(direction)
+    np.testing.assert_allclose(small.points[0], center + minor * direction, atol=1e-12)
+    np.testing.assert_allclose(small.normals[0], direction, atol=1e-12)
+
+
+@pytest.mark.parametrize("radius", (1.0, 2.0))
+def test_circle_edge_frame_tracks_curve_geometry(radius: float) -> None:
+    model = brep_cylinder(radius, 2.0, coordinate_contract=_CONTRACT)
+    projection = phx.geometry.prepare_brep_projection(model)
+    edge = _circle_edge(projection, 2.0)
+    result = _project(projection, [[3.0, 4.0, 2.0]], _EDGE, edge)
+    np.testing.assert_allclose(
+        result.points[0], (0.6 * radius, 0.8 * radius, 2.0), atol=1e-12
+    )
+    np.testing.assert_allclose(
+        np.abs(np.asarray(result.tangents)[0, 0]), (0.8, 0.6, 0.0), atol=1e-12
+    )
+
+
 @pytest.mark.parametrize(
     ("model", "inside", "outside", "boundary"),
     [
@@ -535,6 +575,19 @@ def test_straight_revolution_batched_frames_match_scalar_projection() -> None:
         np.testing.assert_allclose(result.points[row], direct.point, equal_nan=True)
         np.testing.assert_allclose(result.normals[row], direct.normal, equal_nan=True)
         np.testing.assert_allclose(result.tangents[row], direct.tangents, equal_nan=True)
+    larger = _project(projection, np.tile(points, (3, 1)), _FACE, face)
+    for name in ("points", "parameters", "status", "distance_lower_bounds", "residuals"):
+        np.testing.assert_array_equal(
+            np.asarray(getattr(larger, name))[: len(points)],
+            np.asarray(getattr(result, name)),
+        )
+    for name in ("normals", "tangents"):
+        np.testing.assert_allclose(
+            np.asarray(getattr(larger, name))[: len(points)],
+            np.asarray(getattr(result, name)),
+            atol=1e-14,
+            equal_nan=True,
+        )
     preparation = projection._prepare_project()
     dimensions = np.full(points.shape[0], int(_FACE))
     indices = np.full(points.shape[0], face)

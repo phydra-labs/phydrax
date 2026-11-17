@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
+from functools import partial
 from math import ceil, floor, pi, sqrt, tau
 from typing import Any, cast, final
 
@@ -36,6 +37,7 @@ from .._source_boundary_records import SourceBoundaryDistance
 from ._intersection_projection import _IntersectionPreparation, _prepare_intersection
 from ._model import BRepModel
 from ._patches import (
+    AbstractCurve,
     AbstractSurfacePatch,
     BSplineCurve,
     BSplineSurfacePatch,
@@ -77,6 +79,21 @@ _NAN_FRAME3 = np.full((2, 3), np.nan, dtype=np.float64)
 
 _IDENTITY_ROTATION = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 _ZERO_TRANSLATION = (0.0, 0.0, 0.0)
+
+
+def _evaluate_patch(patch: AbstractSurfacePatch, parameters: Array, /) -> Array:
+    return patch.evaluate(parameters)
+
+
+def _evaluate_curve(curve: AbstractCurve, parameter: Array, /) -> Array:
+    return curve.evaluate(parameter)
+
+
+_patch_jacobian = eqx.filter_jit(jax.jacfwd(_evaluate_patch, argnums=1))
+_curve_derivative = eqx.filter_jit(jax.jacfwd(_evaluate_curve, argnums=1))
+_patch_jacobians = eqx.filter_jit(
+    jax.vmap(jax.jacfwd(_evaluate_patch, argnums=1), in_axes=(None, 0))
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -478,9 +495,7 @@ def _face_normal_and_frame(
 ) -> tuple[np.ndarray, np.ndarray, bool]:
     if jacobian is None:
         jacobian = np.asarray(
-            jax.jacfwd(lambda uv: patch.evaluate(uv))(
-                jnp.asarray(parameters, dtype=jnp.float64)
-            ),
+            _patch_jacobian(patch, jnp.asarray(parameters, dtype=jnp.float64)),
             dtype=np.float64,
         )
     normal = np.cross(jacobian[:, 0], jacobian[:, 1])
@@ -1050,7 +1065,7 @@ def _line_curve_hit(
         )
         if derivative is None:
             derivative = np.asarray(
-                jax.jacfwd(lambda value: curve.evaluate(value))(jnp.asarray(parameter)),
+                _curve_derivative(curve, jnp.asarray(parameter)),
                 dtype=np.float64,
             )
             if preparation is not None and isinstance(curve, (LineCurve, ExactLineCurve)):
@@ -3628,9 +3643,7 @@ def _project_face(
             jacobian = preparation.plane_jacobians.get(face)
             if jacobian is None:
                 jacobian = np.asarray(
-                    jax.jacfwd(lambda chart: patch.evaluate(chart))(
-                        jnp.asarray(uv, dtype=jnp.float64)
-                    ),
+                    _patch_jacobian(patch, jnp.asarray(uv, dtype=jnp.float64)),
                     dtype=np.float64,
                 )
                 preparation.plane_jacobians[face] = jacobian
@@ -5680,7 +5693,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                 pending.setdefault(hit.index, []).append(row)
         for face, selected in pending.items():
             patch = self.model.patches[face]
-            derivative = jax.vmap(jax.jacfwd(patch.evaluate))
+            derivative = partial(_patch_jacobians, patch)
             bounds = preparation.faces[face].bounds
             for start in range(0, len(selected), _QUERY_BUCKETS[-1]):
                 batch = selected[start : start + _QUERY_BUCKETS[-1]]
