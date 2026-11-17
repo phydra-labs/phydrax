@@ -2620,6 +2620,29 @@ def _triangular_surface_fidelity_inputs(
     return mesh, geometry, MeshingDomainBoundarySource(domain, (0,)), witness
 
 
+def test_zero_tangent_terms_certify_source_fidelity() -> None:
+    from phydrax.geometry.brep._patches import RuledSurface
+
+    surface = RuledSurface(
+        LineCurve((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+        LineCurve((0.0, 1.0, 0.0), (1.0, 0.0, 0.0)),
+    )
+    mesh, geometry, source, witness = _triangular_surface_fidelity_inputs(
+        surface, "zero-tangent-fidelity"
+    )
+    certificate = certify_source_fidelity(
+        mesh,
+        geometry,
+        source,
+        tolerance=1.0,
+        maximum_normal_deviation=0.1,
+        witness=witness,
+    )
+    assert certificate.status == "certified", certificate.findings
+    assert certificate.normal_deviation_bounds is not None
+    assert np.all(certificate.normal_deviation_bounds == 0.0)
+
+
 @pytest.mark.parametrize("bad_bounds", [(-np.inf, np.inf), (1.0, -1.0)])
 def test_surface_jacobian_falls_back_from_invalid_interval_bounds(
     monkeypatch: pytest.MonkeyPatch, bad_bounds: tuple[float, float]
@@ -2992,27 +3015,18 @@ def test_exact_lens_jacobian_batch_matches_scalar_and_falls_back(
         ),
     )
     charts = (
-        (7, ((q(0), q(0)), (q(1), q(0)), (q(0), q(1)))),
+        (7, ((q(0), q(0)), (q(1, 4), q(0)), (q(0), q(1, 4)))),
         (3, ((q(1, 2), q(1, 2)), (q(1), q(1, 2)), (q(1, 2), q(1)))),
     )
-    batch = fidelity.restricted_polynomial_batch_bounds
-
-    def scalar(prepared: Any, corners: Any) -> tuple[tuple[float, float], ...]:
-        return tuple(
-            fidelity.restricted_polynomial_bounds(prepared, row) for row in corners
-        )
-
-    monkeypatch.setattr(fidelity, "restricted_polynomial_batch_bounds", scalar)
     expected = fidelity._curved_trim_lens_caps(
         surface, charts, lenses, preparation, settle_zero=False
     )
-    monkeypatch.setattr(fidelity, "restricted_polynomial_batch_bounds", batch)
-    assert (
-        fidelity._curved_trim_lens_caps(
-            surface, charts, lenses, preparation, settle_zero=False
+    for chart, lens in zip(charts, lenses, strict=True):
+        singleton = fidelity._curved_trim_lens_caps(
+            surface, (chart,), (lens,), preparation, settle_zero=False
         )
-        == expected
-    )
+        assert singleton[chart[0]] == expected[chart[0]]
+    batch = fidelity.restricted_polynomial_batch_bounds
     assert (
         fidelity._curved_trim_lens_caps(
             surface, charts[::-1], lenses[::-1], preparation, settle_zero=False

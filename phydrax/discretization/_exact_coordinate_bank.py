@@ -371,13 +371,17 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
         binary_exponent = np.where(exponent == 0, -1074, exponent.astype(np.int64) - 1075)
         shift = self._exponents.astype(np.int64) - binary_exponent
         magnitude = np.abs(self._significands).astype(np.uint64)
-        represented = np.left_shift(magnitude, np.clip(shift, 0, 63).astype(np.uint64))
+        safe_shift = np.clip(shift, 0, 52).astype(np.uint64)
+        shifted_mantissa = np.right_shift(mantissa, safe_shift)
+        discarded = mantissa & (np.left_shift(np.uint64(1), safe_shift) - np.uint64(1))
         same_sign = (bits >> np.uint64(63)) == (self._significands < 0)
         exact_nonzero = (
             (self._significands != 0)
+            & (exponent != np.uint64(0x7FF))
             & (shift >= 0)
             & (shift <= 52)
-            & (represented == mantissa)
+            & (shifted_mantissa == magnitude)
+            & (discarded == 0)
             & same_sign
         )
         exact_zero = (self._significands == 0) & (bits == 0)
