@@ -726,14 +726,13 @@
   classes. A local search compiled one native solver per sparsity pattern,
   about 3 s and 210 MB each, and re-analyzed every pattern. A program whose
   class the declared materialization, resource, and factorization limits admit
-  is now
-  embedded as bounded dense data and solved on the reduced dense route, so a
-  search shares one compiled solve per class; larger programs keep the sparse
-  per-structure factorization. Results, certificates, and ray audits are
-  reported in original coordinates. On 40 captured sphere models every status,
-  iteration count, and decision is unchanged and primal solutions agree to
-  1e-17; the replay drops from 186 s to 55 s and from 49 compiled solvers to
-  10.
+  is now embedded as bounded dense data and solved on the reduced dense route,
+  so a search shares one compiled solve per class; larger programs keep the
+  sparse per-structure factorization. Results, certificates, and ray audits
+  are reported in original coordinates. On 40 captured sphere models every
+  status, iteration count, and decision is unchanged and primal solutions
+  agree to 1e-17; the replay drops from 186 s to 55 s and from 49 compiled
+  solvers to 10.
 - The native homogeneous conic iteration keeps its homogeneous scale strictly
   positive. A step limited by `tau` or `kappa` moved that scalar onto zero up
   to rounding, with an arbitrary sign. On infeasible programs, where `tau`
