@@ -1372,6 +1372,13 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_mesh_copy_constraint_parents": (_I32, (_P, _I64, _P)),
     "phx_mc_mesh_copy_constraint_ratios": (_I32, (_P, _I64, _P)),
     "phx_mc_mesh_free": (None, (_P,)),
+    "phx_mc_deterministic_float_self_test": (_I32, (ctypes.POINTER(_I32),)),
+    "phx_mc_metric_logarithms": (_I32, (_I64, _P, _P, _P)),
+    "phx_mc_metric_interpolate": (_I32, (_I64, _P, _P, _P, _I64, _P, _P, _P, _P)),
+    "phx_mc_metric_lengths": (_I32, (_I64, _P, _I64, _P, _P, _P)),
+    "phx_mc_metric_band_quanta": (_I32, (_I64, _P, _P, _P)),
+    "phx_mc_metric_relative_determinants": (_I32, (_I64, _P, _P, _P)),
+    "phx_mc_metric_tetra_quality": (_I32, (_I64, _P, _I64, _P, _P, _P)),
 }
 
 
@@ -1517,6 +1524,21 @@ def _bind(library: ctypes.CDLL, path: Path, /) -> MeshcoreLibrary | str:
         return (
             f"meshcore library {str(path)!r} is release {version}, but phydrax "
             f"{required} requires phydrax-meshcore=={required}."
+        )
+    # The deterministic binary64 kernels give one result per input only under
+    # the arithmetic they assume; a library without it is not this release.
+    failed_check = _I32(0)
+    if functions["phx_mc_deterministic_float_self_test"](ctypes.byref(failed_check)):
+        reasons = {
+            1: "binary64 rounding is not to nearest even",
+            2: "a product and a sum are fused into one operation",
+            3: "subnormal numbers are flushed to zero",
+            4: "a kernel result differs from its recorded bits",
+        }
+        reason = reasons.get(failed_check.value, "the floating-point mode cannot be set")
+        return (
+            f"meshcore library {str(path)!r} fails its deterministic arithmetic "
+            f"self-test: {reason}."
         )
     return MeshcoreLibrary(library, functions, path, version, build_hash)
 
@@ -9648,6 +9670,199 @@ class TetMesh3D:
                 pass
 
 
+# ------------------------------------------- deterministic metric measurements
+#
+# Binary64 values of the native deterministic kernels: the same bits for the
+# same input on every platform. They order and screen floating-point
+# proposals; every acceptance that rests on them is an exact comparison of
+# these values, and no validity decision does.
+
+
+def _metric_tensors(value: np.ndarray, name: str, /) -> np.ndarray:
+    array = np.ascontiguousarray(value, dtype=np.float64)
+    if array.ndim != 3 or array.shape[1:] != (3, 3):
+        raise ValueError(f"{name} must have shape (n, 3, 3).")
+    return array
+
+
+def _metric_rows(value: np.ndarray, name: str, width: int, /) -> np.ndarray:
+    array = np.asarray(value)
+    if array.dtype.kind not in "iu":
+        raise TypeError(f"{name} must be an integer array.")
+    if array.ndim != 2 or array.shape[1] != width:
+        raise ValueError(f"{name} must have shape (n, {width}).")
+    return np.ascontiguousarray(array, dtype=np.int64)
+
+
+def _metric_point_bank(
+    points: np.ndarray, metrics: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    coordinates = np.ascontiguousarray(points, dtype=np.float64)
+    tensors = _metric_tensors(metrics, "metrics")
+    if coordinates.ndim != 2 or coordinates.shape[1] != 3:
+        raise ValueError("points must have shape (n, 3).")
+    if tensors.shape[0] != coordinates.shape[0]:
+        raise ValueError("metrics must have one tensor per point.")
+    return coordinates, tensors
+
+
+def metric_logarithms(metrics: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+    """``log M`` of ``(n, 3, 3)`` metrics and whether each tensor is a metric.
+
+    A tensor whose eigenvalues are not all positive has no logarithm: its row
+    is zero and its flag is false.
+    """
+    tensors = _metric_tensors(metrics, "metrics")
+    logarithms = np.empty_like(tensors)
+    valid = np.empty((tensors.shape[0],), dtype=np.int8)
+    status = load_meshcore()["phx_mc_metric_logarithms"](
+        tensors.shape[0], tensors.ctypes.data, logarithms.ctypes.data, valid.ctypes.data
+    )
+    _raise_for_call(status, "metric_logarithms")
+    return logarithms, valid.astype(np.bool_)
+
+
+def metric_interpolations(
+    offsets: np.ndarray,
+    support: np.ndarray,
+    weights: np.ndarray,
+    source_metrics: np.ndarray,
+    source_logarithms: np.ndarray | None,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Log-Euclidean means ``exp(sum_k w_k log M_k)`` over source supports.
+
+    Row ``r`` averages the source rows ``support[offsets[r]:offsets[r + 1]]``
+    with the weights at the same positions, summed in that order. A support
+    whose tensors are all equal returns its first tensor unchanged, once that
+    tensor is a metric. ``source_logarithms`` are the logarithms of
+    ``source_metrics``, or ``None`` to evaluate them per row; supplied
+    logarithms are taken as those of the bank, whose tensors are then not
+    examined again. The flag of a row is false, and the row zero, when a
+    support tensor has no logarithm (it is not a metric) or the mean is not
+    finite.
+    """
+    sources = _metric_tensors(source_metrics, "source_metrics")
+    row_offsets = np.ascontiguousarray(offsets, dtype=np.int64)
+    rows = np.ascontiguousarray(support, dtype=np.int64)
+    coefficients = np.ascontiguousarray(weights, dtype=np.float64)
+    if row_offsets.ndim != 1 or row_offsets.shape[0] == 0:
+        raise ValueError("offsets must have shape (rows + 1,).")
+    if rows.shape != coefficients.shape or rows.shape != (int(row_offsets[-1]),):
+        raise ValueError("support and weights must have one entry per offset position.")
+    logarithms = None
+    if source_logarithms is not None:
+        logarithms = _metric_tensors(source_logarithms, "source_logarithms")
+        if logarithms.shape != sources.shape:
+            raise ValueError("source_logarithms must match source_metrics.")
+    count = row_offsets.shape[0] - 1
+    metrics = np.empty((count, 3, 3), dtype=np.float64)
+    valid = np.empty((count,), dtype=np.int8)
+    status = load_meshcore()["phx_mc_metric_interpolate"](
+        count,
+        row_offsets.ctypes.data,
+        rows.ctypes.data,
+        coefficients.ctypes.data,
+        sources.shape[0],
+        sources.ctypes.data,
+        None if logarithms is None else logarithms.ctypes.data,
+        metrics.ctypes.data,
+        valid.ctypes.data,
+    )
+    _raise_for_call(status, "metric_interpolations")
+    return metrics, valid.astype(np.bool_)
+
+
+def metric_lengths(
+    points: np.ndarray, metrics: np.ndarray, edges: np.ndarray, /
+) -> np.ndarray:
+    """Riemannian lengths of ``(n, 2)`` edges of point rows.
+
+    The log-mean ``(l_p - l_q) / log(l_p / l_q)`` of the two endpoint lengths
+    ``sqrt(d^T M d)`` (Alauzet 2010), and their arithmetic mean when they
+    agree within ``1e-6``. NaN where an endpoint tensor gives a negative form.
+    """
+    coordinates, tensors = _metric_point_bank(points, metrics)
+    rows = _metric_rows(edges, "edges", 2)
+    lengths = np.empty((rows.shape[0],), dtype=np.float64)
+    status = load_meshcore()["phx_mc_metric_lengths"](
+        rows.shape[0],
+        rows.ctypes.data,
+        coordinates.shape[0],
+        coordinates.ctypes.data,
+        tensors.ctypes.data,
+        lengths.ctypes.data,
+    )
+    _raise_for_call(status, "metric_lengths")
+    return lengths
+
+
+def metric_band_quanta(lengths: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+    """Quanta by which each length leaves the band ``[1/sqrt(2), sqrt(2)]``.
+
+    ``(above, below)`` as float arrays of the shape of ``lengths``: the
+    violation ``|log(length / band edge)|`` in quanta of ``2**-10`` rounded
+    up, at least one for a length outside the band and zero inside it. A zero
+    or infinite length has an infinite count; NaN violates nothing.
+    """
+    values = np.ascontiguousarray(lengths, dtype=np.float64)
+    above = np.empty_like(values)
+    below = np.empty_like(values)
+    status = load_meshcore()["phx_mc_metric_band_quanta"](
+        values.size, values.ctypes.data, above.ctypes.data, below.ctypes.data
+    )
+    _raise_for_call(status, "metric_band_quanta")
+    return above, below
+
+
+def metric_relative_determinants(corners: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+    """Determinants and relative determinants of ``(n, 4, 3)`` cell corners.
+
+    ``det(p1 - p0, p2 - p0, p3 - p0)``, and its magnitude over the largest
+    product of the three edge lengths at a corner (zero when either is not
+    finite or the product vanishes). The evaluated determinant is within
+    ``50 * 2**-53`` times that product of the exact one.
+    """
+    values = np.ascontiguousarray(corners, dtype=np.float64)
+    if values.ndim != 3 or values.shape[1:] != (4, 3):
+        raise ValueError("corners must have shape (n, 4, 3).")
+    determinants = np.empty((values.shape[0],), dtype=np.float64)
+    relative = np.empty((values.shape[0],), dtype=np.float64)
+    status = load_meshcore()["phx_mc_metric_relative_determinants"](
+        values.shape[0],
+        values.ctypes.data,
+        determinants.ctypes.data,
+        relative.ctypes.data,
+    )
+    _raise_for_call(status, "metric_relative_determinants")
+    return determinants, relative
+
+
+def metric_tetra_quality(
+    points: np.ndarray, metrics: np.ndarray, cells: np.ndarray, /
+) -> np.ndarray:
+    """Metric mean-ratio quality of ``(n, 4)`` cells of point rows.
+
+    ``12 (3 V)^(2/3) / sum l^2`` with the six metric edge lengths ``l`` and
+    the volume ``V`` in the log-Euclidean barycentric cell metric, whose
+    determinant is ``exp(mean_k log det M_k)``. Zero unless the metric volume
+    and the sum are both positive; NaN when both are infinite.
+    """
+    coordinates, tensors = _metric_point_bank(points, metrics)
+    rows = _metric_rows(cells, "cells", 4)
+    quality = np.empty((rows.shape[0],), dtype=np.float64)
+    status = load_meshcore()["phx_mc_metric_tetra_quality"](
+        rows.shape[0],
+        rows.ctypes.data,
+        coordinates.shape[0],
+        coordinates.ctypes.data,
+        tensors.ctypes.data,
+        quality.ctypes.data,
+    )
+    _raise_for_call(status, "metric_tetra_quality")
+    return quality
+
+
 __all__ = [
     "ARRANGEMENT_UNCLASSIFIED",
     "ArrangementClassification",
@@ -9731,6 +9946,12 @@ __all__ = [
     "meshcore_available",
     "meshcore_exact_domain",
     "meshcore_identity",
+    "metric_band_quanta",
+    "metric_interpolations",
+    "metric_lengths",
+    "metric_logarithms",
+    "metric_relative_determinants",
+    "metric_tetra_quality",
     "point_triangle_locations",
     "polygon_intersection_moments",
     "polygon_intersection_simplices",
