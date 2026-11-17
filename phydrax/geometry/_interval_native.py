@@ -196,6 +196,8 @@ class NativeIntervalProgram:
     def evaluate(
         self, lower: NDArray[np.float64], upper: NDArray[np.float64], /
     ) -> _Interval:
+        if self.elementwise:
+            raise ValueError("elementwise programs require evaluate_batch.")
         lower_workspace, upper_workspace = self._workspaces(lower, upper)
         from .._meshcore import interval_program_execute
 
@@ -283,6 +285,8 @@ class NativeIntervalProgram:
         NDArray[np.bool_],
     ]:
         """Enclosures and per-box ``(smooth, continuous)`` flags of one batch."""
+        if self.elementwise:
+            raise ValueError("elementwise programs cannot use legacy branch execution.")
         if self.events is None:
             raise IntervalExtensionError(
                 "native branch evidence requires a program lowered with box axes."
@@ -312,6 +316,8 @@ class NativeIntervalProgram:
 
     def box_program(self, /) -> IntervalBoxProgram:
         """Return the one-box native form: seeded workspace template and output entries."""
+        if self.elementwise:
+            raise ValueError("elementwise programs cannot use legacy box execution.")
         if self.batch_capacity != 1 or self.input_dimension != 3:
             raise ValueError(
                 "a native box program requires batch capacity 1 and three inputs."
@@ -1731,6 +1737,8 @@ def lower_interval_jaxpr(
 
     With ``branch_axes`` (the box axis of every traced variable) the program
     also carries the branch-evidence events of ``_BranchLedger``.
+    ``elementwise`` selects per-operation-identical arithmetic for
+    ``evaluate_batch``; unsupported extensions and opcodes are refused.
     """
     if len(closed_jaxpr.jaxpr.invars) != 1:
         raise IntervalExtensionError("native interval programs require one array input.")
