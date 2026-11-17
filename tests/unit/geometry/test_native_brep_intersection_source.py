@@ -1623,6 +1623,55 @@ def test_curve_trim_fallback_classification_is_batch_independent(
         )
 
 
+def _spline_trim_square() -> tuple[CurveTrimSegment, ...]:
+    from phydrax.geometry.brep._patches import BSplineCurve
+
+    corners = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+    return tuple(
+        CurveTrimSegment(BSplineCurve((first, last), (1, 1), (0, 0, 1, 1), 1), 0.0, 1.0)
+        for first, last in zip(corners, (*corners[1:], corners[0]), strict=True)
+    )
+
+
+def test_spline_trim_fallback_classification_is_batch_independent() -> None:
+    from phydrax.geometry._atlas import TrimDomain
+
+    domain = TrimDomain(curve_loops=(_spline_trim_square(),))
+    queries = np.asarray(
+        ((0.5, 0.5), (2.0, 0.5), (0.25, 0.75), (-1.0, 0.25)),
+        dtype=np.float64,
+    )
+    together = domain.classify(queries)
+    separate = tuple(domain.classify(query[None, :]) for query in queries)
+    reversed_batch = domain.classify(queries[::-1])
+    np.testing.assert_array_equal(together.inside, (True, False, True, False))
+    np.testing.assert_array_equal(together.resolved, (True,) * len(queries))
+    np.testing.assert_array_equal(together.boundary, (False,) * len(queries))
+    for name in ("inside", "boundary", "resolved"):
+        np.testing.assert_array_equal(
+            getattr(together, name),
+            [bool(getattr(result, name)[0]) for result in separate],
+        )
+        np.testing.assert_array_equal(
+            getattr(together, name), getattr(reversed_batch, name)[::-1]
+        )
+
+
+def test_spline_trim_fallback_propagates_point_evaluation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry import _atlas
+
+    domain = _atlas.TrimDomain(curve_loops=(_spline_trim_square(),))
+
+    def fail(segment: object, parameter: object) -> None:
+        raise RuntimeError("spline point failure")
+
+    monkeypatch.setattr(_atlas, "_evaluate_segment_point", fail)
+    with pytest.raises(RuntimeError, match="spline point failure"):
+        domain.classify(np.asarray(((0.5, 0.5),), dtype=np.float64))
+
+
 @pytest.mark.parametrize("operation", ("prepare_host_program", "evaluate_host_program"))
 def test_curve_trim_propagates_unexpected_program_failures(
     monkeypatch: pytest.MonkeyPatch, operation: str
