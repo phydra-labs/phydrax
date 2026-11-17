@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import Any, TYPE_CHECKING
 
@@ -18,6 +18,7 @@ from numpy.typing import NDArray
 
 from .._interpolation._bspline import bspline_jet_rule_alignment
 from .._jax_program import custom_jvp_rule_owner
+from .._meshcore import _raise_for_call, load_meshcore
 from ._interval_enclosure import (
     _as_interval,
     _CUSTOM_EXTENSIONS,
@@ -152,6 +153,32 @@ class NativeIntervalProgram:
     elementwise: bool = False
     events: NDArray[np.int64] | None = None
     """Branch-evidence event rows ``(rows, 6)``, present when lowered with box axes."""
+    _batch_arguments: tuple[int, int, int, int, int, int] = field(
+        init=False, repr=False, compare=False
+    )
+    _batch_output: slice | NDArray[np.int64] = field(
+        init=False, repr=False, compare=False
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "_batch_arguments",
+            (
+                self.instructions.ctypes.data,
+                self.instructions.shape[0],
+                self.indices.ctypes.data,
+                self.indices.size,
+                self.parameters.ctypes.data,
+                self.parameters.size,
+            ),
+        )
+        if self.output.locations is None:
+            start = self.output.offset
+            locations: slice | NDArray[np.int64] = slice(start, start + _size(self.output.shape))
+        else:
+            locations = self.output.locations.reshape((-1,))
+        object.__setattr__(self, "_batch_output", locations)
 
     def _workspaces(
         self, lower: NDArray[np.float64], upper: NDArray[np.float64], /
@@ -238,6 +265,16 @@ class NativeIntervalProgram:
             raise ValueError("batched interval boxes must be aligned and ordered.")
         if workers < 1:
             raise ValueError("workers must be positive.")
+        return self._evaluate_batch_validated(lower, upper, workers=workers)
+
+    def _evaluate_batch_validated(
+        self,
+        lower: NDArray[np.float64],
+        upper: NDArray[np.float64],
+        /,
+        *,
+        workers: int = 1,
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         count = lower.shape[0]
         low = np.zeros((count, self.workspace_size), dtype=np.float64)
         high = np.zeros_like(low)
@@ -247,15 +284,8 @@ class NativeIntervalProgram:
             size = seed.lower.size
             low[:, seed.offset : seed.offset + size] = seed.lower
             high[:, seed.offset : seed.offset + size] = seed.upper
-        from .._meshcore import _raise_for_call, load_meshcore
-
         status = load_meshcore()["phx_mc_interval_program_batch"](
-            self.instructions.ctypes.data,
-            self.instructions.shape[0],
-            self.indices.ctypes.data,
-            self.indices.size,
-            self.parameters.ctypes.data,
-            self.parameters.size,
+            *self._batch_arguments,
             low.ctypes.data,
             high.ctypes.data,
             self.workspace_size,
@@ -263,20 +293,15 @@ class NativeIntervalProgram:
             workers,
         )
         _raise_for_call(status, "interval_program_batch")
-        if np.any(low[:, self.domain_guards] < 0.0):
+        if self.domain_guards.size and np.any(low[:, self.domain_guards] < 0.0):
             raise IntervalExtensionError(
                 "noninteger power requires a nonnegative base interval."
             )
-        if self.output.locations is None:
-            locations = np.arange(
-                self.output.offset,
-                self.output.offset + _size(self.output.shape),
-                dtype=np.int64,
-            )
-        else:
-            locations = self.output.locations.reshape((-1,))
         shape = (count, *self.output.shape[1:])
-        return low[:, locations].reshape(shape), high[:, locations].reshape(shape)
+        return (
+            low[:, self._batch_output].reshape(shape),
+            high[:, self._batch_output].reshape(shape),
+        )
 
     def evaluate_branches(
         self, lower: NDArray[np.float64], upper: NDArray[np.float64], /

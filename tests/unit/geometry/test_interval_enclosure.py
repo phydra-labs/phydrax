@@ -149,6 +149,29 @@ def _bits(value: np.ndarray | np.generic) -> np.ndarray:
     return np.asarray(value, dtype=np.float64).view(np.uint64)
 
 
+def test_prepared_batch_encloses_exact_point_in_every_partition() -> None:
+    prepared = prepare_interval_function(
+        lambda x: jnp.stack((x[0] * x[0], x[0] + x[1])),
+        2,
+        batch_capacity=1,
+        execution="batched",
+    )
+    point = np.asarray(((0.1, -0.0),), dtype=np.float64)
+    exact = Fraction(float(point[0, 0])) ** 2
+    original = prepared.evaluate(point, point)
+    assert Fraction(float(original[0][0, 0])) <= exact
+    assert Fraction(float(original[1][0, 0])) >= exact
+    inward = np.nextafter(float(exact), -np.inf)
+    assert Fraction(float(inward)) < exact
+    for count in (1, 8, 64, 4096):
+        values = np.repeat(point, count, axis=0)
+        result = prepared.evaluate(values, values)
+        for actual, expected in zip(result, original, strict=True):
+            np.testing.assert_array_equal(
+                _bits(actual), np.repeat(_bits(expected), count, axis=0)
+            )
+
+
 def test_native_batch_matches_elementwise_kernels_and_detects_tampering() -> None:
     from phydrax._exact_kernels import float64_interval_product, float64_interval_sum
 
