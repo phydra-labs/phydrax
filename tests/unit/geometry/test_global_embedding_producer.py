@@ -347,6 +347,60 @@ def _mapped_tetrahedron(
     )
 
 
+def test_simplex_image_bounds_fall_back_when_interval_is_nonfinite(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.geometry._global_embedding as embedding
+
+    u, v = axes(2)
+    coordinates = (add(u, v), subtract(u, v))
+
+    def inconclusive(
+        expression: Expression, corners: tuple[tuple[Fraction, ...], ...], /
+    ) -> tuple[float, float]:
+        return -float("inf"), float("inf")
+
+    monkeypatch.setattr(embedding, "restricted_polynomial_bounds", inconclusive)
+    root = embedding._root_reference_cell("triangle", coordinates, 1)
+    assert root is not None
+    chart = embedding._affine_chart_cell(root, coordinates)
+    assert chart is not None
+    expected = tuple(
+        polynomial_bounds(expression, "simplex", 2) for expression in coordinates
+    )
+    assert tuple(zip(root.image_lower, root.image_upper, strict=True)) == expected
+    assert tuple(zip(chart.image_lower, chart.image_upper, strict=True)) == expected
+
+
+def test_strict_simplex_separation_falls_back_for_overlapping_intervals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.geometry._global_embedding as embedding
+
+    u, v = axes(2)
+    first = embedding._root_reference_cell("triangle", (u, v), 1)
+    separated = embedding._root_reference_cell("triangle", (add(u, constant(2, 2)), v), 2)
+    overlapping = embedding._root_reference_cell(
+        "triangle", (add(u, constant(Fraction(1, 2), 2)), v), 3
+    )
+    assert first is not None and separated is not None and overlapping is not None
+
+    def wide_bounds(
+        expression: Expression, corners: tuple[tuple[Fraction, ...], ...], /
+    ) -> tuple[float, float]:
+        return -100.0, 100.0
+
+    def candidate_planes(
+        first: EmbeddingCell, second: EmbeddingCell, shadows: dict[int, object], /
+    ) -> tuple[tuple[Fraction, ...], ...]:
+        return ((Fraction(1), Fraction(0)),)
+
+    monkeypatch.setattr(embedding, "restricted_polynomial_bounds", wide_bounds)
+    monkeypatch.setattr(embedding, "strict_separation_planes", candidate_planes)
+    assert embedding._strict_image_separation(first, separated, {})
+    assert not embedding._strict_image_separation(first, overlapping, {})
+
+
 def test_simplex_image_bounds_refuse_a_rational_pole() -> None:
     import phydrax.geometry._global_embedding as embedding
 
