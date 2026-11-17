@@ -682,6 +682,7 @@ def test_source_preparation_live_and_rebuilt_spline_carriers() -> None:
         )
 
     domain = _rational_spline_domain(_rational_spline_surfaces()[0], "span-reuse")
+    domain_ref = weakref.ref(domain)
     live_surface, live_curve = surface(), curve()
     surface_ref, curve_ref = weakref.ref(live_surface), weakref.ref(live_curve)
     box = np.asarray(((0.0, 0.0), (1.0, 1.0)), dtype=np.float64)
@@ -700,10 +701,11 @@ def test_source_preparation_live_and_rebuilt_spline_carriers() -> None:
         SourcePreparation(domain).curve_box(rebuilt_curve, 0., 1.), curve_box
     )
 
-    del first, second, live_surface, live_curve
+    del first, second, live_surface, live_curve, domain
     gc.collect()
     assert surface_ref() is None
     assert curve_ref() is None
+    assert domain_ref() is None
 
 
 def _expected_interpolation_error_squared(
