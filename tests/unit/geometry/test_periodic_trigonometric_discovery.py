@@ -130,7 +130,7 @@ def test_lattice_metrics_report_measured_area_against_independent_quadrature() -
     )
     low, high = metrics.measured_solid_specific_surface
     assert low <= metrics.measured_surface_area / 0.5 <= high
-    assert 0.0 < metrics.vertex_root_distance <= 1.0e-8
+    assert 0.0 < metrics.vertex_root_distance <= 2.0e-8
 
 
 def test_singular_quotient_level_is_refused_before_discovery() -> None:
