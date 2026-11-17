@@ -736,7 +736,8 @@ class TetMesh {
       const std::unordered_set<std::uint64_t>* changed_vertices = nullptr,
       const RelocationOverlay* overlay = nullptr) const;
   bool source_segment_valid(const TetEditSegment& segment,
-                            const RelocationOverlay* overlay = nullptr) const;
+                            const RelocationOverlay* overlay = nullptr,
+                            const std::vector<std::size_t>* group_rows = nullptr) const;
   template <bool WithRelocation>
   bool positive_impl(const std::int32_t* vertices,
                      const RelocationOverlay* overlay) const;

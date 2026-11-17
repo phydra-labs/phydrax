@@ -573,6 +573,12 @@ int32_t TetMesh::build_state(std::span<const double> points,
     const auto& group = source_rows == source_groups.end() ? no_source_rows : source_rows->second;
     if (!source_face_valid(candidate, nullptr, &group)) return PHX_MC_INVALID_INPUT;
   }
+  // Source segment row order determines the first successful exact witness.
+  std::map<std::int32_t, std::vector<std::size_t>> source_segment_rows;
+  for (std::size_t row = 0; row < source_segment_groups_.size(); ++row) {
+    source_segment_rows[source_segment_groups_[row]].push_back(row);
+  }
+  const std::vector<std::size_t> no_segment_rows;
   for (std::size_t row = 0; row < segment_count; ++row) {
     const TetSnapshotSegment& segment = segments_[row];
     TetEditSegment candidate;
@@ -580,7 +586,9 @@ int32_t TetMesh::build_state(std::span<const double> points,
     candidate.vertices = segment.vertices;
     candidate.source = segment.source;
     candidate.protected_segment = segment.protected_segment;
-    if (!source_segment_valid(candidate)) return PHX_MC_INVALID_INPUT;
+    const auto found = source_segment_rows.find(segment.source);
+    const auto& rows = found == source_segment_rows.end() ? no_segment_rows : found->second;
+    if (!source_segment_valid(candidate, nullptr, &rows)) return PHX_MC_INVALID_INPUT;
   }
   for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
     if (vertex_dimension_[vertex] < 0) return PHX_MC_INVALID_INPUT;

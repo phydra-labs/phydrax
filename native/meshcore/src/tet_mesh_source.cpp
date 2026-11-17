@@ -1283,7 +1283,8 @@ bool TetMesh::source_face_valid(const TetEditFacet& facet,
 }
 
 bool TetMesh::source_segment_valid(const TetEditSegment& segment,
-                                   const RelocationOverlay* overlay) const {
+                                   const RelocationOverlay* overlay,
+                                   const std::vector<std::size_t>* group_rows) const {
   if (segment.source < 0 || segment.vertices[0] == segment.vertices[1]) return false;
   const std::int32_t first = vertex_slot(segment.vertices[0]);
   const std::int32_t second = vertex_slot(segment.vertices[1]);
@@ -1303,7 +1304,9 @@ bool TetMesh::source_segment_valid(const TetEditSegment& segment,
   };
   const SourceWitness& first_witness = witness_at(first);
   const SourceWitness& second_witness = witness_at(second);
-  for (std::size_t row = 0; row < source_segment_groups_.size(); ++row) {
+  const std::size_t count = group_rows == nullptr ? source_segment_groups_.size() : group_rows->size();
+  for (std::size_t index = 0; index < count; ++index) {
+    const std::size_t row = group_rows == nullptr ? index : (*group_rows)[index];
     if (source_segment_groups_[row] != segment.source) continue;
     const double* corners[3] = {
         source_points_.data() + 3 * static_cast<std::size_t>(source_segments_[2 * row]),

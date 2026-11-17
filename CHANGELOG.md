@@ -249,6 +249,8 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Tetrahedral construction indexes source-segment rows by group while
+  retaining their exact witness-check order.
 - Declared-plane validation uses outward-rounded projected boundary-edge boxes
   to limit exact interior-intersection checks without changing edge order.
 - Declared-plane facet validation indexes outward-rounded exact projected
