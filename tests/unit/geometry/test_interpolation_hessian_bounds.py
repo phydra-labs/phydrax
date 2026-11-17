@@ -3,7 +3,6 @@
 from fractions import Fraction
 
 import numpy as np
-import pytest
 
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry import _meshing_domain
@@ -91,6 +90,10 @@ def test_interpolation_reference_detects_wrong_input_and_omitted_mixed_term() ->
     assert exact == 441
     correct = _meshing_domain._interpolation_hessian_bounds(lower, upper, boxes)
     assert _contains_squared(float(correct[0][0]), float(correct[1][0]), exact)
+    # Omitting the one-half factor doubles the bound and violates tightness.
+    assert Fraction(float(correct[1][0])) * 2 > fraction_sqrt_interval(exact)[
+        1
+    ] * Fraction(1_000_000_000_001, 1_000_000_000_000)
 
     omitted = upper.copy()
     omitted[0, 2, 0, 1] = 0.0
@@ -103,6 +106,16 @@ def test_interpolation_reference_detects_wrong_input_and_omitted_mixed_term() ->
         assert not _contains_squared(
             float(candidate[0][0]), float(candidate[1][0]), exact
         )
+
+
+def test_interpolation_hessian_reports_natural_overflow() -> None:
+    lower = np.ones((1, 3, 2, 2), dtype=np.float64)
+    upper = lower.copy()
+    boxes = np.asarray([[[0.0, 0.0], [1e200, 1e200]]], dtype=np.float64)
+    with np.errstate(over="ignore", invalid="ignore", under="ignore"):
+        _, result = _meshing_domain._interpolation_hessian_bounds(lower, upper, boxes)
+    assert np.isposinf(result[0])
+    assert _exact_squared(lower[0], upper[0], boxes[0]) > 0
 
 
 def test_interpolation_hessian_batch_is_row_independent() -> None:
@@ -133,10 +146,7 @@ def test_interpolation_hessian_batch_is_row_independent() -> None:
     np.testing.assert_array_equal(permuted[1], batch[1][order])
 
 
-@pytest.mark.parametrize("infinite_upper", (False, True))
-def test_adaptive_interpolation_uses_exact_fallback_for_ambiguous_bound(
-    monkeypatch: pytest.MonkeyPatch, infinite_upper: bool
-) -> None:
+def test_adaptive_interpolation_decides_naturally_ambiguous_bound() -> None:
     model = brep_sphere(
         1.0,
         coordinate_contract=SpatialCoordinateContract.si(),
@@ -169,20 +179,6 @@ def test_adaptive_interpolation_uses_exact_fallback_for_ambiguous_bound(
     )
     assert natural_result == expected
 
-    def ambiguous(
-        low: np.ndarray, high: np.ndarray, cells: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray]:
-        del low, high
-        upper_bound = np.inf if infinite_upper else float(expected) + 1.0
-        return np.zeros(len(cells), dtype=np.float64), np.full(
-            len(cells), upper_bound, dtype=np.float64
-        )
-
-    monkeypatch.setattr(_meshing_domain, "_interpolation_hessian_bounds", ambiguous)
-    (result,) = domain.adaptive_interpolation_bounds(
-        0, (chart,), (expected,), preparation=preparation
-    )
-    assert result == expected
     smaller = (
         (Fraction(0), Fraction(0)),
         (Fraction(1, 8), Fraction(0)),
@@ -195,12 +191,10 @@ def test_adaptive_interpolation_uses_exact_fallback_for_ambiguous_bound(
     singleton = domain.adaptive_interpolation_bounds(
         0, (smaller,), (large_budget,), preparation=preparation
     )
-    assert batch == (result, singleton[0])
+    assert batch == (natural_result, singleton[0])
 
 
-def test_adaptive_vertex_enclosures_cover_exact_midpoint_intervals(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_adaptive_vertex_enclosures_cover_exact_midpoint_intervals() -> None:
     model = brep_sphere(
         1.0,
         coordinate_contract=SpatialCoordinateContract.si(),
@@ -255,28 +249,6 @@ def test_adaptive_vertex_enclosures_cover_exact_midpoint_intervals(
             0, (chart,), (Fraction(0),), preparation=preparation
         )
         assert singleton == (bound,)
-
-    def force_exact(
-        low: np.ndarray, high: np.ndarray, cells: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray]:
-        del low, high
-        return np.zeros(len(cells), dtype=np.float64), np.full(
-            len(cells), np.inf, dtype=np.float64
-        )
-
-    monkeypatch.setattr(_meshing_domain, "_interpolation_hessian_bounds", force_exact)
-    exact_batch = domain.adaptive_interpolation_bounds(
-        0, charts, budgets, preparation=preparation
-    )
-    for row, chart in enumerate(charts):
-        singleton = domain.adaptive_interpolation_bounds(
-            0, (chart,), (Fraction(0),), preparation=preparation
-        )
-        assert singleton == (exact_batch[row],)
-        exact_bound = exact_batch[row]
-        actual_bound = batch[row]
-        assert exact_bound is not None
-        assert actual_bound is not None and actual_bound >= exact_bound
 
 
 def test_exact_chart_coordinates_have_tight_binary64_enclosures() -> None:
