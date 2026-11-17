@@ -870,10 +870,22 @@ def _canonical_form_block_routes(
     return tuple(routes), tuple(transforms)
 
 
+# Prism and mixed P1/P2 nodal layouts of one exact live mesh. The elements are
+# the canonical Lagrange elements, so their IDs determine the layout; its
+# arrays are read-only because every plan on that mesh shares them.
+_PRISM_NODAL_H1_LAYOUTS: LiveProofLedger[_FiniteElementDofLayout] = LiveProofLedger()
+
+
 def _prism_nodal_h1_dof_layout(
     mesh: CellMesh, elements: tuple[FiniteElementSpec, ...], /
 ) -> _FiniteElementDofLayout:
     """Route canonical prism and mixed P1/P2 traces by exact quarter-vertex weights."""
+    operands = (mesh,)
+    parameters = tuple(element.element_id for element in elements)
+    recorded = _PRISM_NODAL_H1_LAYOUTS.find(operands, parameters=parameters)
+    if recorded is not None:
+        return recorded
+    fingerprint = live_content_fingerprint(operands)
     entities = _topology_vertex_sets(mesh)
     lookups = tuple(
         {vertices: index for index, vertices in enumerate(level)} for level in entities
@@ -951,7 +963,9 @@ def _prism_nodal_h1_dof_layout(
         for entity in np.flatnonzero(mask):
             start = starts[degree][entity]
             boundary[start : start + level[entity]] = True
-    return _FiniteElementDofLayout(
+    for array in (*block_routes, boundary):
+        array.setflags(write=False)
+    layout = _FiniteElementDofLayout(
         conformity="H1",
         association="entity",
         global_count=int(offsets[-1]),
@@ -960,6 +974,8 @@ def _prism_nodal_h1_dof_layout(
         canonical_routes=tuple(block_routes),
         canonical_boundary=boundary,
     )
+    _PRISM_NODAL_H1_LAYOUTS.record(operands, fingerprint, layout, parameters=parameters)
+    return layout
 
 
 _HIGH_ORDER_H1_CONNECTIVITIES = (
