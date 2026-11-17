@@ -1,10 +1,12 @@
 import gc
+from fractions import Fraction
 
 import equinox as eqx
 import jax
 import numpy as np
 
 from phydrax._live_proofs import live_content_fingerprint, LiveProofLedger
+from phydrax.discretization._exact_coordinate_bank import ExactCoordinateBank
 
 
 class _Operand(eqx.Module):
@@ -45,3 +47,19 @@ def test_ledger_entry_dies_with_any_operand() -> None:
     del dropped
     gc.collect()
     assert not ledger._entries
+
+
+def test_live_guard_binds_exact_coordinate_bank_content() -> None:
+    first = ExactCoordinateBank.from_rows(((Fraction(1),),))
+    second = ExactCoordinateBank.from_rows(((Fraction(3),),))
+    assert live_content_fingerprint((first,)) != live_content_fingerprint((second,))
+    ledger: LiveProofLedger[str] = LiveProofLedger()
+    _record(ledger, (first,))
+    assert ledger.find((first,)) == "proved"
+    assert ledger.find((second,)) is None
+
+    replacement = np.frombuffer(
+        np.asarray([[3]], dtype=np.int64).tobytes(), dtype=np.int64
+    ).reshape((1, 1))
+    object.__setattr__(first, "_significands", replacement)
+    assert ledger.find((first,)) is None

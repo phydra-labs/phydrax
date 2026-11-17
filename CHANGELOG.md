@@ -252,6 +252,9 @@
 - Exact coordinate banks own immutable byte-backed integer arrays and reuse
   their framed content fingerprint per live bank; rebuilt banks revalidate and
   fingerprint independently. Scientific identities are unchanged.
+- Live proof guards bind opaque exact-coordinate leaves to their canonical
+  content as well as their live identity. This affects only in-process reuse;
+  persisted scientific identities remain unchanged.
 - CAD witness ancestry identities reuse the digest returned by the same
   live-PLC validation guard; rebuilt or mutated PLCs are revalidated.
 - Source preparation reuses exact patch and spline-span proofs only for the

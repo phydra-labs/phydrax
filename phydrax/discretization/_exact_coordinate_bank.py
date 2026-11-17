@@ -15,7 +15,7 @@ from jax.typing import ArrayLike
 from numpy.typing import DTypeLike, NDArray
 
 from .._fingerprint import canonical_fingerprint, numeric_array_fingerprint
-from .._live_proofs import live_content_fingerprint, LiveProofLedger
+from .._live_proofs import _ImmutableFingerprintLeaf, LiveProofLedger
 from ..geometry._rational import binary64_dyadic_entries, dyadic_entry
 from ._exact_algebraic_geometry import (
     canonical_exact_scalar,
@@ -101,7 +101,7 @@ def _dyadic_value(significand: int, exponent: int, /) -> Fraction:
 
 
 @final
-class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
+class ExactCoordinateBank(_ImmutableFingerprintLeaf, Sequence[tuple["ExactScalar", ...]]):
     """Immutable exact coordinate rows on the canonical integer-dyadic substrate.
 
     Each dyadic rational entry ``s * 2**e`` keeps its odd int64 significand
@@ -543,8 +543,9 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
         sealed = _immutable_sparse_values(self._sparse_values) and _sealed_parts(
             arrays, self._shape, len(sparse)
         )
-        operands = (self,)
-        recorded = _BANK_FINGERPRINTS.find(operands) if sealed else None
+        # The bytes-backed arrays cannot change; their identities and the sparse
+        # payload are checked below before accepting this identity-only hit.
+        recorded = _BANK_FINGERPRINTS._find_identity_bound(self) if sealed else None
         if recorded is not None:
             digest, references, previous_sparse = recorded
             if previous_sparse == sparse and all(
@@ -562,12 +563,13 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
             }
         )
         if sealed:
-            _BANK_FINGERPRINTS.record(
-                operands,
-                live_content_fingerprint(operands),
-                (digest, tuple(weakref.ref(array) for array in arrays), sparse),
+            _BANK_FINGERPRINTS._record_identity_bound(
+                self, (digest, tuple(weakref.ref(array) for array in arrays), sparse)
             )
         return digest
+
+    def _live_leaf_fingerprint(self, /) -> str:
+        return self.content_fingerprint()
 
     def __array__(
         self, dtype: DTypeLike | None = None, copy: bool | None = None
