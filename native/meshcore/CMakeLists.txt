@@ -68,6 +68,7 @@ set(PHX_MC_SOURCES
   src/tet_mesh_insertion.cpp
   src/tet_mesh_probe.cpp
   src/tet_mesh_refinement.cpp
+  src/tet_mesh_relocation.cpp
   src/tet_mesh_relocation_capi.cpp
   src/tet_mesh_source.cpp
   src/tet_mesh_state.cpp

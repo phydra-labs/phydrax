@@ -731,9 +731,10 @@ PHX_MC_API int32_t phx_mc_tet_mesh_probe_edit(
  * Group g moves vertices vertex_ids[vertex_offsets[g]..vertex_offsets[g+1])
  * to the matching rows of `points` and declares the star cells
  * cell_ids[cell_offsets[g]..cell_offsets[g+1]). Each group is probed alone
- * against the current state, as the relocation request that keeps every
- * witness and protection, clears the edge parameter and supplies no
- * ancestry. decided[g] is 1 when phx_mc_tet_mesh_apply_edit would refuse that
+ * against the current state, as the relocation request that states no source
+ * witness and no protection for the moved vertices, clears their edge
+ * parameters and supplies no ancestry. decided[g] is 1 when
+ * phx_mc_tet_mesh_apply_edit would refuse that
  * request with edit_statuses[g], and 0 when it may apply or the probe does not
  * decide it. Every decided refusal advances the implicit-source refusal
  * counters exactly as that refused apply_edit would; the implicit facet
@@ -748,6 +749,25 @@ PHX_MC_API int32_t phx_mc_tet_mesh_probe_relocations(
     const int64_t* vertex_offsets, const uint64_t* vertex_ids, const double* points,
     const int64_t* cell_offsets, const uint64_t* cell_ids, int32_t* decided,
     int32_t* edit_statuses);
+/* Applies one relocation in place: the request of
+ * phx_mc_tet_mesh_probe_relocations for a single group, moving `vertex_count`
+ * vertices together. `decided` is 1 with the `edit_status`
+ * phx_mc_tet_mesh_apply_edit would return for that request: APPLIED after the
+ * moved vertices' points, witnesses, edge parameters and ancestry are written
+ * and the generation advanced, or a refusal that changes no mesh state and
+ * advances the implicit-source refusal counters exactly as the refused
+ * apply_edit would. `decided` is 0, with nothing changed, when the mesh
+ * carries periodic records or a bound periodic identity or has exhausted its
+ * generations; phx_mc_tet_mesh_apply_edit decides those. A generation or
+ * source identity mismatch returns PHX_MC_STALE_GENERATION. The caller must
+ * synchronize against edits. */
+PHX_MC_API int32_t phx_mc_tet_mesh_apply_relocation(
+    phx_mc_tet_mesh* mesh, uint64_t expected_generation, int32_t identity_bound,
+    const char* source_id, int64_t source_id_length, const char* source_revision,
+    int64_t source_revision_length, const char* source_map_id, int64_t source_map_id_length,
+    const char* frame_id, int64_t frame_id_length, int64_t vertex_count,
+    const uint64_t* vertex_ids, const double* points, int64_t cell_count,
+    const uint64_t* cell_ids, int32_t* decided, int32_t* edit_status);
 /* Ephemeral evidence from the latest actual implicit-facet admission refusal.
  * The record belongs to the current mesh identity and generation only. */
 typedef struct phx_mc_tet_implicit_facet_refusal {

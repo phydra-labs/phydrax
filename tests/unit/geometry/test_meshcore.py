@@ -40,6 +40,7 @@ from phydrax._meshcore import (
     prepare_plc_source,
     recover_plc,
     recover_plc_3d,
+    relocated_tet_mesh_arrays,
     surface_envelope,
     TetMesh3D,
     TetMeshArrays,
@@ -1945,12 +1946,14 @@ def _interior_vertex_tet_mesh() -> TetMesh3D:
     )
 
 
-def _interior_relocation(generation: int, point: Any, cells: Any) -> TetMeshEdit:
+def _interior_relocation(
+    generation: int, point: Any, cells: Any, vertex: int = 14
+) -> TetMeshEdit:
     return TetMeshEdit(
         kind=TetMeshEditKind.RELOCATE,
         expected_generation=generation,
         removed_cell_ids=np.asarray(cells, dtype=np.uint64),
-        changed_vertex_ids=np.asarray((14,), dtype=np.uint64),
+        changed_vertex_ids=np.asarray((vertex,), dtype=np.uint64),
         changed_vertex_points=np.asarray((point,), dtype=np.float64),
         changed_witness_strata=np.zeros((1,), dtype=np.int8),
         changed_witness_entities=np.full((1,), -1, dtype=np.int32),
@@ -2038,3 +2041,159 @@ def test_tet_mesh_probe_relocations_refuses_malformed_groups(
             mesh.probe_relocations(
                 0, vertex_offsets, [14], points, cell_offsets, [100, 101, 102, 103]
             )
+
+
+_SPLIT_STAR = (300, 301, 302, 303, 304, 305)
+
+
+def _split_interior_edge(mesh: TetMesh3D) -> None:
+    """Split edge (10, 14) at vertex 15, which keeps its stencil and edge parameter."""
+    vertex_ids = np.asarray((10, 11, 12, 13, 14, 15), dtype=np.uint64)
+    boundary = {(1, 2, 3): 0, (0, 2, 3): 1, (0, 1, 3): 2, (0, 1, 2): 3}
+    local_faces = ((1, 3, 2), (0, 2, 3), (0, 3, 1), (0, 1, 2))
+    cells = [
+        [5 if vertex == replaced else vertex for vertex in cell]
+        for cell in ((0, 4, 2, 3), (0, 1, 4, 3), (0, 1, 2, 4))
+        for replaced in (4, 0)
+    ]
+    status = mesh.apply_edit(
+        TetMeshEdit(
+            TetMeshEditKind.SPLIT,
+            expected_generation=0,
+            split_edges=np.asarray(((10, 14),), dtype=np.uint64),
+            removed_cell_ids=np.asarray((101, 102, 103), dtype=np.uint64),
+            changed_vertex_ids=np.asarray((15,), dtype=np.uint64),
+            changed_vertex_points=np.asarray(((0.125, 0.125, 0.125),), dtype=np.float64),
+            changed_witness_strata=np.zeros((1,), dtype=np.int8),
+            changed_witness_entities=np.full((1,), -1, dtype=np.int32),
+            changed_witness_parameters=np.zeros((1, 2), dtype=np.float64),
+            changed_witness_deviations=np.zeros((1,), dtype=np.float64),
+            changed_protection_radii=np.zeros((1,), dtype=np.float64),
+            changed_protected_vertices=np.zeros((1,), dtype=np.int8),
+            changed_edge_witness_present=np.ones((1,), dtype=np.int8),
+            changed_edge_witness_endpoints=np.asarray(((10, 14),), dtype=np.uint64),
+            changed_edge_parameters=np.asarray((0.5,), dtype=np.float64),
+            changed_vertex_ancestry_offsets=np.asarray((0, 2), dtype=np.int64),
+            changed_vertex_ancestor_ids=np.asarray((10, 14), dtype=np.uint64),
+            changed_vertex_ancestor_winding=np.zeros((2, 3), dtype=np.int64),
+            changed_vertex_ancestry_weights=np.asarray((0.5, 0.5), dtype=np.float64),
+            replacement_cell_ids=np.asarray(_SPLIT_STAR, dtype=np.uint64),
+            replacement_cell_vertices=vertex_ids[np.asarray(cells, dtype=np.int64)],
+            replacement_cell_facet_sources=np.asarray(
+                [
+                    [
+                        boundary.get(tuple(sorted(cell[corner] for corner in face)), -1)
+                        for face in local_faces
+                    ]
+                    for cell in cells
+                ],
+                dtype=np.int32,
+            ),
+            replacement_cell_ancestry_offsets=np.arange(7, dtype=np.int64),
+            replacement_cell_ancestor_ids=np.repeat(
+                np.asarray((101, 102, 103), dtype=np.uint64), 2
+            ),
+        )
+    )
+    assert status is TetMeshEditStatus.APPLIED
+
+
+def _differing_fields(first: TetMeshArrays, second: TetMeshArrays) -> list[str]:
+    """Snapshot fields that are not bit-identical."""
+    differing = []
+    for name in TetMeshArrays._fields:
+        left, right = getattr(first, name), getattr(second, name)
+        if isinstance(left, np.ndarray):
+            equal = (
+                left.dtype == right.dtype
+                and left.shape == right.shape
+                and left.tobytes() == right.tobytes()
+            )
+        else:
+            equal = left == right
+        if not equal:
+            differing.append(name)
+    return differing
+
+
+def test_tet_mesh_in_place_relocation_equals_the_staged_relocation_edit() -> None:
+    point = (0.13, 0.12, 0.125)
+    with _interior_vertex_tet_mesh() as staged, _interior_vertex_tet_mesh() as direct:
+        _split_interior_edge(staged)
+        _split_interior_edge(direct)
+        before = direct.arrays()
+        row = int(np.flatnonzero(before.vertex_ids == 15)[0])
+        # The moved vertex carries the records a relocation must clear.
+        assert before.vertex_edge_witness_present[row] == 1
+        assert np.diff(before.vertex_ancestry_offsets)[row] == 2
+
+        assert (
+            staged.apply_edit(
+                _interior_relocation(before.generation, point, _SPLIT_STAR, vertex=15)
+            )
+            is TetMeshEditStatus.APPLIED
+        )
+        assert (
+            direct.apply_relocation(before.generation, [15], [point], _SPLIT_STAR)
+            is TetMeshEditStatus.APPLIED
+        )
+        after = direct.arrays()
+        assert _differing_fields(staged.arrays(), after) == []
+        derived = relocated_tet_mesh_arrays(before, [15], [row], [point], None)
+        assert _differing_fields(derived, after) == []
+        assert derived.tetrahedra is before.tetrahedra
+        np.testing.assert_array_equal(after.points[row], point)
+        assert after.vertex_edge_witness_present[row] == 0
+        assert after.vertex_ancestor_ids.size == 0
+        assert after.generation == before.generation + 1
+
+
+@pytest.mark.parametrize(
+    ("point", "cells"),
+    [
+        ((2.0, 2.0, 2.0), _SPLIT_STAR),
+        ((0.13, 0.12, 0.125), _SPLIT_STAR[:5]),
+        ((0.0, 0.0, 0.0), _SPLIT_STAR),
+    ],
+    ids=["inverted", "incomplete-star", "coincident"],
+)
+def test_tet_mesh_in_place_relocation_refuses_like_the_staged_edit(
+    point: tuple[float, float, float], cells: tuple[int, ...]
+) -> None:
+    with _interior_vertex_tet_mesh() as staged, _interior_vertex_tet_mesh() as direct:
+        _split_interior_edge(staged)
+        _split_interior_edge(direct)
+        before = direct.arrays()
+        refusal = staged.apply_edit(
+            _interior_relocation(before.generation, point, cells, vertex=15)
+        )
+        assert refusal is not TetMeshEditStatus.APPLIED
+        assert direct.apply_relocation(before.generation, [15], [point], cells) is refusal
+        assert _differing_fields(direct.arrays(), before) == []
+        with pytest.raises(MeshcoreError, match="STALE_GENERATION"):
+            direct.apply_relocation(before.generation + 1, [15], [point], cells)
+
+
+def test_relocated_tet_mesh_arrays_erases_only_the_moved_ancestry_rows() -> None:
+    with _interior_vertex_tet_mesh() as mesh:
+        arrays = mesh.arrays()._replace(
+            vertex_ancestry_offsets=np.asarray((0, 0, 2, 2, 3, 5), dtype=np.int64),
+            vertex_ancestor_ids=np.asarray((10, 12, 11, 10, 13), dtype=np.uint64),
+            vertex_ancestor_winding=np.arange(15, dtype=np.int64).reshape((5, 3)),
+            vertex_ancestry_weights=np.asarray((0.5, 0.5, 1.0, 0.25, 0.75)),
+        )
+    point = (0.5, 0.125, 0.125)
+    derived = relocated_tet_mesh_arrays(arrays, [11], [1], [point], None)
+    np.testing.assert_array_equal(derived.vertex_ancestry_offsets, (0, 0, 0, 0, 1, 3))
+    np.testing.assert_array_equal(derived.vertex_ancestor_ids, (11, 10, 13))
+    np.testing.assert_array_equal(
+        derived.vertex_ancestor_winding, ((6, 7, 8), (9, 10, 11), (12, 13, 14))
+    )
+    np.testing.assert_array_equal(derived.vertex_ancestry_weights, (1.0, 0.25, 0.75))
+    np.testing.assert_array_equal(derived.points[1], point)
+    np.testing.assert_array_equal(
+        derived.points[[0, 2, 3, 4]], arrays.points[[0, 2, 3, 4]]
+    )
+    assert derived.generation == arrays.generation + 1
+    with pytest.raises(ValueError, match="snapshot rows"):
+        relocated_tet_mesh_arrays(arrays, [11], [2], [point], None)

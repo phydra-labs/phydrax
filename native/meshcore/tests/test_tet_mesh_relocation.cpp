@@ -2,6 +2,7 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include "check.hpp"
 #include "phydrax_meshcore.h"
@@ -167,10 +168,81 @@ void batched_probe_guards_its_arguments() {
   phx_mc_tet_mesh_free(mesh);
 }
 
+void in_place_relocation_matches_the_request_apply() {
+  constexpr uint64_t moved = 14;
+  // Admissible, inverted, incomplete star, coincident with vertex 10.
+  constexpr std::array<double, 12> points{
+      0.3, 0.25, 0.25, 2.0, 2.0, 2.0, 0.3, 0.25, 0.25, 0.0, 0.0, 0.0};
+  constexpr std::array<int64_t, 4> cell_counts{4, 4, 3, 4};
+  // Relocations probed afterwards: back to the start, and inverted.
+  constexpr std::array<double, 6> later_points{0.25, 0.25, 0.25, 2.0, 2.0, 2.0};
+  constexpr std::array<uint64_t, 2> later_vertices{moved, moved};
+  constexpr std::array<int64_t, 3> later_vertex_offsets{0, 1, 2};
+  constexpr std::array<uint64_t, 8> later_cells{100, 101, 102, 103, 100, 101, 102, 103};
+  constexpr std::array<int64_t, 3> later_cell_offsets{0, 4, 8};
+  for (std::size_t row = 0; row < cell_counts.size(); ++row) {
+    phx_mc_tet_mesh* staged = create_mesh();
+    phx_mc_tet_mesh* direct = create_mesh();
+    PHX_CHECK(staged != nullptr && direct != nullptr);
+    if (staged == nullptr || direct == nullptr) return;
+    const phx_mc_tet_mesh_edit_request request =
+        relocation_request(0, &moved, points.data() + 3 * row, cell_counts[row], kCellIds.data());
+    int32_t staged_status = -1;
+    PHX_CHECK(phx_mc_tet_mesh_apply_edit(staged, &request, &staged_status) == PHX_MC_OK);
+    PHX_CHECK((staged_status == PHX_MC_TET_EDIT_APPLIED) == (row == 0));
+    int32_t decided = -1;
+    int32_t direct_status = -1;
+    PHX_CHECK(phx_mc_tet_mesh_apply_relocation(
+                  direct, 0, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0, 1, &moved,
+                  points.data() + 3 * row, cell_counts[row], kCellIds.data(), &decided,
+                  &direct_status) == PHX_MC_OK);
+    PHX_CHECK(decided == 1);
+    PHX_CHECK(direct_status == staged_status);
+    const uint64_t generation = generation_of(staged);
+    PHX_CHECK(generation == (row == 0 ? 1U : 0U));
+    PHX_CHECK(generation_of(direct) == generation);
+
+    // Both meshes then answer the same relocations alike.
+    std::array<std::array<int32_t, 2>, 2> later_decided{{{-1, -1}, {-2, -2}}};
+    std::array<std::array<int32_t, 2>, 2> later_status{{{-1, -1}, {-2, -2}}};
+    const std::array<phx_mc_tet_mesh*, 2> meshes{staged, direct};
+    for (std::size_t side = 0; side < meshes.size(); ++side) {
+      PHX_CHECK(phx_mc_tet_mesh_probe_relocations(
+                    meshes[side], generation, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
+                    2, later_vertex_offsets.data(), later_vertices.data(), later_points.data(),
+                    later_cell_offsets.data(), later_cells.data(), later_decided[side].data(),
+                    later_status[side].data()) == PHX_MC_OK);
+    }
+    PHX_CHECK(later_decided[0] == (std::array<int32_t, 2>{0, 1}));
+    PHX_CHECK(later_decided[1] == later_decided[0]);
+    PHX_CHECK(later_status[1] == later_status[0]);
+
+    // The consumed generation is stale for a second in-place relocation.
+    if (row == 0) {
+      decided = -1;
+      PHX_CHECK(phx_mc_tet_mesh_apply_relocation(
+                    direct, 0, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0, 1, &moved,
+                    later_points.data(), 4, kCellIds.data(), &decided, &direct_status) ==
+                PHX_MC_STALE_GENERATION);
+      PHX_CHECK(decided == 0);
+      PHX_CHECK(generation_of(direct) == 1);
+    }
+    phx_mc_tet_mesh_free(staged);
+    phx_mc_tet_mesh_free(direct);
+  }
+  int32_t decided = -1;
+  int32_t status = -1;
+  PHX_CHECK(phx_mc_tet_mesh_apply_relocation(
+                nullptr, 0, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0, 1, &moved,
+                points.data(), 4, kCellIds.data(), &decided, &status) ==
+            PHX_MC_INVALID_ARGUMENT);
+}
+
 }  // namespace
 
 int main() {
   batched_probe_matches_the_single_request_probe();
   batched_probe_guards_its_arguments();
+  in_place_relocation_matches_the_request_apply();
   return phx::mc::test::finish("test_tet_mesh_relocation");
 }
