@@ -24,6 +24,12 @@ from .._geometry_predicates import orient3d, PredicateMode, PredicateSign
 from .._meshcore import (
     interval_program_execute,
     IntervalBoxProgram,
+    metric_band_quanta,
+    metric_interpolations,
+    metric_lengths,
+    metric_logarithms,
+    metric_relative_determinants,
+    metric_tetra_quality,
     PlcBoundaryPolicy,
     relocated_tet_mesh_arrays,
     TetMesh3D,
@@ -83,19 +89,12 @@ _SCREEN_GOAL_BYTES = 2048
 _SCREEN_NEIGHBOR_BYTES = 512
 _SCREEN_CELL_BYTES = 2048
 # The survivor pre-screen of a collapse evaluates one goal's carriers together
-# and refuses only those the per-carrier screen certainly refuses. Its metric
-# and quadratic forms are the same formulas in a different operation order:
-# they agree with the per-carrier values to a few rounding errors of the
-# largest metric eigenvalue times the squared edge, and the lengths to a few
-# rounding errors more. The slacks below exceed those differences by orders of
-# magnitude and stay orders of magnitude below a violation quantum; a carrier
-# whose violation counts could differ within them takes the per-carrier screen.
+# with the kernels of the per-carrier screen, row by row, so it refuses
+# exactly the carriers that screen refuses by their violations.
 _SURVIVOR_SCREEN_MINIMUM = 4
 # Carriers are quantized lazily; a block bounds the ones a collapse that
 # stops early has quantized in vain.
 _SURVIVOR_SCREEN_BLOCK = 16
-_SURVIVOR_FORM_SLACK = 2.0**-40
-_SURVIVOR_LENGTH_SLACK = 2.0**-30
 _SEED_STEPS = np.arange(_SPLIT_PARAMETER_BITS + 1, dtype=np.int64)
 _GOAL_STEPS = np.arange(_GOAL_BLOCK, dtype=np.int64)
 _SEED_STEPS.setflags(write=False)
@@ -167,7 +166,17 @@ class TetraMetricUnmetEdge(NamedTuple):
 
 
 class TetraMetricEvidence(StrictModule, NonTrainableState):
-    """Actual native operation counts and final SPD-metric measurements."""
+    """Actual native operation counts and final SPD-metric measurements.
+
+    The metric lengths, the metric quality and the region volume error are
+    binary64 values of the deterministic native kernels (``metric_lengths``,
+    ``metric_tetra_quality``, ``metric_relative_determinants``): the same
+    mesh gives the same values on every platform, within the error bounds
+    stated at the kernels (``exp`` 4 ulp, ``log`` 6 ulp, ``x^(2/3)`` relative
+    ``2^-43``). They are measurements of the adapted mesh. During adaptation
+    every acceptance that uses such a value is an exact comparison of kernel
+    values, and the validity of an edit rests on exact predicates alone.
+    """
 
     status: TetraMetricStatus = eqx.field(static=True)
     passes: int = eqx.field(static=True)
@@ -520,48 +529,22 @@ class _CandidateTetraSnapshot(NamedTuple):
     cell_ids: np.ndarray
 
 
-def _metric_lengths(
-    points: np.ndarray, metrics: np.ndarray, edges: np.ndarray, /
-) -> np.ndarray:
-    """Host Riemannian edge lengths, the formula of ``metric_edge_lengths``.
-
-    The log-mean ``(l_p - l_q) / log(l_p / l_q)`` of the endpoint lengths
-    (Alauzet 2010) is evaluated in NumPy: the host route measures small,
-    changing edge sets whose shapes would otherwise each compile a kernel.
-    """
-    if edges.shape[0] == 0:
-        return np.zeros((0,), dtype=np.float64)
-    delta = points[edges[:, 1]] - points[edges[:, 0]]
-    first = np.sqrt(np.einsum("ei,eij,ej->e", delta, metrics[edges[:, 0]], delta))
-    second = np.sqrt(np.einsum("ei,eij,ej->e", delta, metrics[edges[:, 1]], delta))
-    return _logarithmic_mean(first, second)
-
-
-def _logarithmic_mean(first: np.ndarray, second: np.ndarray, /) -> np.ndarray:
-    """Log-mean of the two endpoint lengths of each edge (``_metric_lengths``)."""
-    ratio = second / np.where(first > 0.0, first, 1.0)
-    nearly_equal = np.abs(ratio - 1.0) <= 1.0e-6
-    safe_ratio = np.where(nearly_equal, 2.0, ratio)
-    logarithmic = (first - second) / np.log(1.0 / safe_ratio)
-    return np.where(nearly_equal, 0.5 * (first + second), logarithmic)
-
-
 def _band_violations(lengths: np.ndarray, /) -> tuple[tuple[int, ...], tuple[int, ...]]:
     """Max-first quantized long and short distances ``|log(l / band edge)|``.
 
     Each violation is counted in quanta ``_VIOLATION_QUANTUM`` rounded up, so
     any violation is at least one quantum and an in-band edge is none.
     """
-    values = np.asarray(lengths, dtype=np.float64).reshape((-1,))
-
-    def quanta(violation: np.ndarray) -> tuple[int, ...]:
-        counts = np.maximum(np.ceil(violation / _VIOLATION_QUANTUM), 1.0)
-        return tuple(sorted((int(value) for value in counts.tolist()), reverse=True))
-
-    return (
-        quanta(np.log(values[values > _UPPER] / _UPPER)),
-        quanta(np.log(_LOWER / values[values < _LOWER])),
+    above, below = metric_band_quanta(
+        np.asarray(lengths, dtype=np.float64).reshape((-1,))
     )
+
+    def quanta(counts: np.ndarray) -> tuple[int, ...]:
+        return tuple(
+            sorted((int(value) for value in counts[counts != 0.0].tolist()), reverse=True)
+        )
+
+    return quanta(above), quanta(below)
 
 
 def _objective_decreases(
@@ -591,84 +574,29 @@ def _objective_decreases(
 
 
 def _metric_logarithms(tensors: np.ndarray, /) -> np.ndarray:
-    values, vectors = np.linalg.eigh(tensors)
-    if not np.all(values > 0.0):
+    logarithms, valid = metric_logarithms(tensors)
+    if not np.all(valid):
         raise FloatingPointError("Log-Euclidean interpolation requires SPD metrics.")
-    return np.einsum("...ij,...j,...kj->...ik", vectors, np.log(values), vectors)
-
-
-def _log_euclidean_mean(tensors: np.ndarray, weights: np.ndarray, /) -> np.ndarray:
-    """Host ``exp(sum_k w_k log M_k)`` of ``interpolate_mesh_metric``."""
-    mean = np.einsum("...k,...kij->...ij", weights, _metric_logarithms(tensors))
-    mean_values, mean_vectors = np.linalg.eigh(0.5 * (mean + np.swapaxes(mean, -1, -2)))
-    return np.einsum(
-        "...ij,...j,...kj->...ik", mean_vectors, np.exp(mean_values), mean_vectors
-    )
-
-
-def _tetra_quality(
-    points: np.ndarray, metrics: np.ndarray, cells: np.ndarray, /
-) -> np.ndarray:
-    """Metric mean-ratio quality in the log-Euclidean barycentric cell metric.
-
-    Only ``det`` of the cell metric enters, and the log-Euclidean mean has
-    ``log det = mean_k log det M_k``.
-    """
-    if cells.shape[0] == 0:
-        return np.zeros((0,), dtype=np.float64)
-    log_det = np.mean(np.log(np.linalg.det(metrics[cells])), axis=1)
-    edges = cells[:, _TETRA_EDGES].reshape((-1, 2))
-    lengths = _metric_lengths(points, metrics, edges).reshape((cells.shape[0], 6))
-    corners = points[cells]
-    jacobian = np.swapaxes(corners[:, 1:] - corners[:, :1], -1, -2)
-    volume = np.abs(np.linalg.det(jacobian)) / 6.0
-    metric_volume = volume * np.exp(0.5 * log_det)
-    denominator = np.sum(lengths * lengths, axis=1)
-    return np.where(
-        (metric_volume > 0.0) & (denominator > 0.0),
-        12.0 * np.power(3.0 * metric_volume, 2.0 / 3.0) / denominator,
-        0.0,
-    )
-
-
-def _relative_determinants(
-    corners: np.ndarray, /, *, determinants: np.ndarray | None = None
-) -> np.ndarray:
-    """Native ``relative_determinant``: ``|det E|`` over the largest product of
-    the three edge lengths at a vertex, for ``(n, 4, 3)`` cell corners."""
-    values = np.asarray(corners, dtype=np.float64).reshape((-1, 4, 3))
-    if determinants is None:
-        determinants = np.linalg.det(values[:, 1:] - values[:, :1])
-    determinants = np.abs(determinants)
-    lengths = np.linalg.norm(values[:, :, None, :] - values[:, None, :, :], axis=-1)
-    lengths[:, np.arange(4), np.arange(4)] = 1.0
-    products = np.max(np.prod(lengths, axis=2), axis=1)
-    return np.where(
-        np.isfinite(determinants) & np.isfinite(products) & (products > 0.0),
-        determinants / np.where(products > 0.0, products, 1.0),
-        0.0,
-    )
+    return logarithms
 
 
 def _clears_determinant_floor(corners: np.ndarray, /) -> bool:
     """Whether every created cell clears the improvement determinant floor."""
-    return bool(np.all(_relative_determinants(corners) > _DETERMINANT_FLOOR))
+    _, relative = metric_relative_determinants(corners.reshape((-1, 4, 3)))
+    return bool(np.all(relative > _DETERMINANT_FLOOR))
 
 
 def _floor_oriented(corners: np.ndarray, /) -> bool:
     """Whether cells are positively oriented above the determinant floor.
 
-    A relative determinant above ``_DETERMINANT_FLOOR`` (2^-22) exceeds the
-    binary64 error bound of the evaluated determinant (a small multiple of
-    ``2^-53`` times the Hadamard bound, itself at most the largest vertex edge
-    product) by orders of magnitude, so the float sign is the exact orientation.
+    The evaluated determinant is within ``50 * 2^-53`` times the largest vertex
+    edge product of the exact one, and a relative determinant above
+    ``_DETERMINANT_FLOOR`` (2^-22) exceeds that bound by orders of magnitude,
+    so the float sign is the exact orientation.
     """
-    values = np.asarray(corners, dtype=np.float64).reshape((-1, 4, 3))
-    determinants = np.linalg.det(values[:, 1:] - values[:, :1])
+    determinants, relative = metric_relative_determinants(corners.reshape((-1, 4, 3)))
     return bool(np.all(determinants > 0.0)) and bool(
-        np.all(
-            _relative_determinants(values, determinants=determinants) > _DETERMINANT_FLOOR
-        )
+        np.all(relative > _DETERMINANT_FLOOR)
     )
 
 
@@ -991,12 +919,9 @@ def _ring_triangulation(
         ),
         axis=1,
     ).reshape((-1, 4))
-    corners = points[created]
-    determinants = np.linalg.det(corners[:, 1:] - corners[:, :1])
-    floor_cleared = (determinants > 0.0) & (
-        _relative_determinants(corners, determinants=determinants) > _DETERMINANT_FLOOR
-    )
-    cell_quality = _tetra_quality(points, metrics, created)
+    determinants, relative = metric_relative_determinants(points[created])
+    floor_cleared = (determinants > 0.0) & (relative > _DETERMINANT_FLOOR)
+    cell_quality = metric_tetra_quality(points, metrics, created)
     admitted = (
         (floor_cleared & np.isfinite(cell_quality) & (cell_quality > 0.0))
         .reshape((-1, 2))
@@ -1190,24 +1115,20 @@ def _source_metric_from_stencil(
         [source_vertex_rows[int(identifier)] for identifier in identifiers],
         dtype=np.int64,
     )
-    # A constant tensor field is an exact fixed point of log-Euclidean
-    # interpolation, not an exp/log round-trip with accumulated roundoff.
-    samples = source_metric[rows]
-    if np.all(samples == samples[0]):
-        return samples[0]
-    if source_metric_log is None:
-        values = _log_euclidean_mean(samples, weights)
-    else:
-        mean = np.einsum("...k,...kij->...ij", weights, source_metric_log[rows])
-        mean_values, mean_vectors = np.linalg.eigh(0.5 * (mean + mean.T))
-        values = np.einsum(
-            "...ij,...j,...kj->...ik", mean_vectors, np.exp(mean_values), mean_vectors
-        )
-    if values.shape != (3, 3) or np.any(~np.isfinite(values)):
+    # One row over the stencil's own support in ascending source identifier
+    # order; a support of equal tensors returns its tensor unchanged.
+    values, valid = metric_interpolations(
+        np.asarray((0, rows.size), dtype=np.int64),
+        rows,
+        weights,
+        source_metric,
+        source_metric_log,
+    )
+    if not valid[0]:
         raise FloatingPointError(
             "Source metric interpolation is not a finite SPD tensor."
         )
-    return values
+    return values[0]
 
 
 def _source_tetra_inverse(
@@ -1626,9 +1547,8 @@ def _declared_face_planes(points: np.ndarray, faces: np.ndarray, /) -> np.ndarra
 
 
 def _cell_volume(points: np.ndarray, cells: np.ndarray, /) -> np.ndarray:
-    corners = points[cells]
-    edges = np.swapaxes(corners[:, 1:] - corners[:, :1], -1, -2)
-    return np.abs(np.linalg.det(edges)) / 6.0
+    determinants, _ = metric_relative_determinants(points[cells])
+    return np.abs(determinants) / 6.0
 
 
 def _region_volumes(
@@ -3649,7 +3569,7 @@ def _metric_edge_table(
             ],
             dtype=np.int64,
         ).reshape((-1, 2))
-    lengths = _metric_lengths(points, metrics, edge_rows)
+    lengths = metric_lengths(points, metrics, edge_rows)
     if not shared:
         return points, metrics, lengths
     metrics.setflags(write=False)
@@ -3944,7 +3864,7 @@ def _split_effects(
         dtype=np.int64,
     ).reshape((-1, 4))
     return (
-        _metric_lengths(extended_points, extended_metrics, pairs),
+        metric_lengths(extended_points, extended_metrics, pairs),
         _clears_determinant_floor(extended_points[created]),
     )
 
@@ -4423,7 +4343,7 @@ def _directed_collapse(
             if not protected[_edge_key((center, other))]
         }
     )
-    before_lengths = _metric_lengths(
+    before_lengths = metric_lengths(
         local_points,
         local_metrics,
         np.asarray(
@@ -4469,7 +4389,7 @@ def _directed_collapse(
             return None
         # Reject a non-decreasing metric objective before exact orientation;
         # the surviving candidates still receive every geometric check.
-        after_lengths = _metric_lengths(moved_points, moved_metrics, after_spokes)
+        after_lengths = metric_lengths(moved_points, moved_metrics, after_spokes)
         # Prepare lazily to preserve the original refusal/error ordering.
         if before_violations is None:
             before_violations = _band_violations(before_lengths)
@@ -4482,7 +4402,7 @@ def _directed_collapse(
         if not np.all(signs == 1) or not _clears_determinant_floor(moved_points[rows]):
             rejected_variants.add(key)
             return None
-        quality = _tetra_quality(moved_points, moved_metrics, rows)
+        quality = metric_tetra_quality(moved_points, moved_metrics, rows)
         if not np.all(np.isfinite(quality)) or np.any(quality <= 0.0):
             rejected_variants.add(key)
             return None
@@ -4544,7 +4464,7 @@ def _directed_collapse(
                     break
     if best is None:
         return None
-    before_quality = _tetra_quality(local_points, local_metrics, cavity_cells)
+    before_quality = metric_tetra_quality(local_points, local_metrics, cavity_cells)
     parents = removed_parents + (
         [int(cell_ids[row]) for row in kept_only_rows] if survivor is not None else []
     )
@@ -4657,79 +4577,52 @@ def _refused_survivor_carriers(
     One evaluation over all carriers of a goal: coincidence with a link
     vertex (exact), then the survivor's spoke lengths at each carrier's
     interpolated source metric against the star's violations before the
-    collapse. A carrier is refused only if its violation counts are the same
-    at both ends of the slack interval around every length and do not
-    decrease; every other carrier is left to the per-carrier screen, which
-    alone admits. The result therefore selects among refusals only.
+    collapse. The metric of a carrier is the mean over its own stencil and
+    every length is the kernel value of its own row, so these are the values
+    the per-carrier screen evaluates and a carrier is refused here exactly
+    when its violations do not decrease there. A carrier without a metric, or
+    with a zero or infinite spoke, is left to the per-carrier screen, which
+    alone admits and alone reports those cases.
     """
-    refused = np.zeros((len(candidates),), dtype=np.bool_)
+    count = len(candidates)
+    refused = np.zeros((count,), dtype=np.bool_)
     if not np.all(np.isfinite(before_lengths)) or np.any(before_lengths <= 0.0):
         return refused
     carriers = np.asarray([carrier for _, carrier in candidates], dtype=np.float64)
-    others = local_points[after_spokes[:, 1]]
-    delta = others[None, :, :] - carriers[:, None, :]
-    coincident = np.any(np.all(delta == 0.0, axis=2), axis=1)
-    support = sorted({identifier for stencil, _ in candidates for identifier in stencil})
-    column = {identifier: index for index, identifier in enumerate(support)}
-    weights = np.zeros((len(candidates), len(support)), dtype=np.float64)
-    for row, (stencil, _) in enumerate(candidates):
-        for identifier, weight in stencil.items():
-            weights[row, column[identifier]] = float(weight)
-    rows = np.asarray(
-        [state.source_vertex_rows[int(identifier)] for identifier in support],
-        dtype=np.int64,
+    other_rows = after_spokes[:, 1]
+    others = local_points[other_rows]
+    coincident = np.any(
+        np.all(others[None, :, :] == carriers[:, None, :], axis=2), axis=1
     )
-    samples = state.source_metric[rows]
-    with np.errstate(all="ignore"):
-        if np.all(samples == samples[0]):
-            metrics = np.broadcast_to(samples[0], (len(candidates), 3, 3))
-            largest = np.full(
-                (len(candidates),), np.linalg.eigvalsh(samples[0])[-1], dtype=np.float64
-            )
-        else:
-            if state.source_metric_log is None:
-                sample_values, sample_vectors = np.linalg.eigh(samples)
-                if not np.all(sample_values > 0.0):
-                    return refused
-                logarithms = (sample_vectors * np.log(sample_values)[:, None, :]) @ (
-                    np.swapaxes(sample_vectors, -1, -2)
-                )
-            else:
-                logarithms = state.source_metric_log[rows]
-            mean = np.tensordot(weights, logarithms, axes=1)
-            values, vectors = np.linalg.eigh(0.5 * (mean + np.swapaxes(mean, -1, -2)))
-            metrics = (vectors * np.exp(values)[:, None, :]) @ np.swapaxes(
-                vectors, -1, -2
-            )
-            largest = np.exp(values[:, -1])
-        other_metrics = local_metrics[after_spokes[:, 1]]
-        squared = np.sum(delta * delta, axis=2)
-        first_form = np.sum((delta @ metrics) * delta, axis=2)
-        second_form = np.sum(
-            np.matmul(delta[:, :, None, :], other_metrics[None])[:, :, 0, :] * delta,
-            axis=2,
-        )
-        first_slack = _SURVIVOR_FORM_SLACK * largest[:, None] * squared
-        second_slack = (
-            _SURVIVOR_FORM_SLACK
-            * np.linalg.eigvalsh(other_metrics)[None, :, -1]
-            * squared
-        )
-        lower = _logarithmic_mean(
-            np.sqrt(first_form - first_slack), np.sqrt(second_form - second_slack)
-        ) * (1.0 - _SURVIVOR_LENGTH_SLACK)
-        upper = _logarithmic_mean(
-            np.sqrt(first_form + first_slack), np.sqrt(second_form + second_slack)
-        ) * (1.0 + _SURVIVOR_LENGTH_SLACK)
-        # Counts are monotone in each length, so equal sorted rows at the two
-        # ends are the violations of every length in between.
-        long, short = _band_violation_rows(lower)
-        long_upper, short_upper = _band_violation_rows(upper)
-        certain = (
-            np.all(np.isfinite(lower) & np.isfinite(upper) & (lower > 0.0), axis=1)
-            & np.all(long == long_upper, axis=1)
-            & np.all(short == short_upper, axis=1)
-        )
+    offsets = np.zeros((count + 1,), dtype=np.int64)
+    support: list[int] = []
+    weights: list[float] = []
+    for row, (stencil, _) in enumerate(candidates):
+        for identifier in sorted(stencil):
+            support.append(state.source_vertex_rows[int(identifier)])
+            weights.append(float(stencil[identifier]))
+        offsets[row + 1] = len(support)
+    metrics, valid = metric_interpolations(
+        offsets,
+        np.asarray(support, dtype=np.int64),
+        np.asarray(weights, dtype=np.float64),
+        state.source_metric,
+        state.source_metric_log,
+    )
+    spokes = others.shape[0]
+    lengths = metric_lengths(
+        np.concatenate((carriers, others)),
+        np.concatenate((metrics, local_metrics[other_rows])),
+        np.stack(
+            (
+                np.repeat(np.arange(count, dtype=np.int64), spokes),
+                np.tile(count + np.arange(spokes, dtype=np.int64), count),
+            ),
+            axis=1,
+        ),
+    ).reshape((count, spokes))
+    long, short = _band_violation_rows(lengths)
+    counted = valid & np.all(np.isfinite(long) & np.isfinite(short), axis=1)
 
     def order(rows: np.ndarray, reference: tuple[int, ...]) -> np.ndarray:
         width = max(rows.shape[1], len(reference))
@@ -4742,7 +4635,7 @@ def _refused_survivor_carriers(
     before_long, before_short = _band_violations(before_lengths)
     long_order = order(long, before_long)
     decreases = (long_order < 0) | ((long_order == 0) & (order(short, before_short) < 0))
-    return coincident | (certain & ~decreases)
+    return coincident | (counted & ~decreases)
 
 
 def _unrefused_carriers(
@@ -4813,9 +4706,16 @@ def _survivor_moves(
     def goals() -> Iterator[np.ndarray]:
         for fraction in (parameter, 0.5 * parameter):
             yield endpoints[0] + fraction * (endpoints[1] - endpoints[0])
-        yield _metric_enclosing_center(
-            local_points[2:], _log_euclidean_mean(local_metrics[:2], np.full(2, 0.5))
+        mean, mean_valid = metric_interpolations(
+            np.asarray((0, 2), dtype=np.int64),
+            np.arange(2, dtype=np.int64),
+            np.full((2,), 0.5, dtype=np.float64),
+            local_metrics[:2],
+            None,
         )
+        if not mean_valid[0]:
+            raise FloatingPointError("Log-Euclidean interpolation requires SPD metrics.")
+        yield _metric_enclosing_center(local_points[2:], mean[0])
 
     coordinates = state.source_points
     for goal in goals():
@@ -4865,7 +4765,7 @@ def _edge_set_lengths(
         [[topology.vertex_row[a], topology.vertex_row[b]] for a, b in edges],
         dtype=np.int64,
     ).reshape((-1, 2))
-    return _metric_lengths(points, metrics, rows)
+    return metric_lengths(points, metrics, rows)
 
 
 def _facet_group_map(
@@ -5812,16 +5712,13 @@ def _replacement_candidates(
         after_rows = [oriented for _, oriented in oriented_records]
         before_counts = [rows.shape[0] for rows in before_rows]
         after_counts = [rows.shape[0] for rows in after_rows]
-        qualities = _tetra_quality(
+        qualities = metric_tetra_quality(
             points, metrics, np.concatenate([*before_rows, *after_rows])
         )
         before_qualities = split_rows(qualities[: sum(before_counts)], before_counts)
         after_qualities = split_rows(qualities[sum(before_counts) :], after_counts)
-        floors = split_rows(
-            _relative_determinants(points[np.concatenate(after_rows)])
-            > _DETERMINANT_FLOOR,
-            after_counts,
-        )
+        _, relative = metric_relative_determinants(points[np.concatenate(after_rows)])
+        floors = split_rows(relative > _DETERMINANT_FLOOR, after_counts)
         survivors = []
         for index, (record, oriented) in enumerate(oriented_records):
             before, after = before_qualities[index], after_qualities[index]
@@ -6810,9 +6707,7 @@ def _prepare_relocation_geometry(
             dtype=np.int64,
         )
         lengths = previous[1].lengths.copy()
-        lengths[changed_edges] = _metric_lengths(
-            points, metrics, edge_rows[changed_edges]
-        )
+        lengths[changed_edges] = metric_lengths(points, metrics, edge_rows[changed_edges])
         metrics.setflags(write=False)
         lengths.setflags(write=False)
         tables = _snapshot_tables(state)
@@ -6834,9 +6729,11 @@ def _prepare_relocation_geometry(
             dtype=np.int64,
         )
         qualities = previous[1].qualities.copy()
-        qualities[changed_cells] = _tetra_quality(points, metrics, cells[changed_cells])
+        qualities[changed_cells] = metric_tetra_quality(
+            points, metrics, cells[changed_cells]
+        )
     else:
-        qualities = _tetra_quality(points, metrics, cells)
+        qualities = metric_tetra_quality(points, metrics, cells)
     qualities.setflags(write=False)
     if (
         same_incidence
@@ -6886,24 +6783,16 @@ def _prepare_relocation_geometry(
 
 
 def _band_violation_rows(lengths: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
-    """``_band_violations`` of each row of finite positive ``(g, m)`` lengths.
+    """``_band_violations`` of each row of ``(g, m)`` lengths.
 
     Each row's long (short) quanta are the same elementwise values, sorted
     descending and padded with zeros to ``m``. Violations are at least one
     quantum, so the lexicographic order of padded rows is the max-first tuple
-    order (a proper prefix is smaller).
+    order (a proper prefix is smaller). A zero or infinite length has an
+    infinite count.
     """
-    long = lengths > _UPPER
-    short = lengths < _LOWER
-    long_quanta = np.ceil(
-        np.log(np.where(long, lengths, _UPPER) / _UPPER) / _VIOLATION_QUANTUM
-    )
-    short_quanta = np.ceil(
-        np.log(_LOWER / np.where(short, lengths, _LOWER)) / _VIOLATION_QUANTUM
-    )
-    long_counts = np.where(long, np.maximum(long_quanta, 1.0), 0.0)
-    short_counts = np.where(short, np.maximum(short_quanta, 1.0), 0.0)
-    return -np.sort(-long_counts, axis=1), -np.sort(-short_counts, axis=1)
+    above, below = metric_band_quanta(lengths)
+    return -np.sort(-above, axis=1), -np.sort(-below, axis=1)
 
 
 def _lexicographic_signs(rows: np.ndarray, reference: np.ndarray, /) -> np.ndarray:
@@ -6947,9 +6836,9 @@ def _screen_relocation_goals(
     stacked[:, 0] = goals
 
     def oriented(rows: np.ndarray) -> np.ndarray:
-        values = stacked[rows][:, local_cells].reshape((-1, 4, 3))
-        determinants = np.linalg.det(values[:, 1:] - values[:, :1])
-        relative = _relative_determinants(values, determinants=determinants)
+        determinants, relative = metric_relative_determinants(
+            stacked[rows][:, local_cells].reshape((-1, 4, 3))
+        )
         shape = (rows.size, local_cells.shape[0])
         return np.all((determinants > 0.0).reshape(shape), axis=1) & np.all(
             (relative > _DETERMINANT_FLOOR).reshape(shape), axis=1
@@ -6969,26 +6858,12 @@ def _screen_relocation_goals(
             (-1, 3, 3)
         )
 
-    if np.all(local_metrics == local_metrics[0]):
-        # Equal endpoint tensors give identical endpoint lengths. Reuse the
-        # first contraction rather than evaluating a second contraction and
-        # its logarithmic mean for every candidate spoke. Zero and nonfinite
-        # lengths must still take evaluate's ordinary exceptional path.
-        delta = (stacked[rows][:, spokes[:, 1]] - stacked[rows][:, spokes[:, 0]]).reshape(
-            (-1, 3)
-        )
-        tensors = np.broadcast_to(local_metrics[0], (delta.shape[0], 3, 3))
-        first = np.sqrt(np.einsum("ei,eij,ej->e", delta, tensors, delta))
-        lengths = np.where(
-            np.isfinite(first) & (first > 0.0), 0.5 * (first + first), np.nan
-        ).reshape((rows.size, -1))[:, measured]
-    else:
-        offsets = size * np.arange(rows.size, dtype=np.int64)
-        lengths = _metric_lengths(
-            stacked[rows].reshape((-1, 3)),
-            star_metrics(rows.size),
-            (spokes[None] + offsets[:, None, None]).reshape((-1, 2)),
-        ).reshape((rows.size, -1))[:, measured]
+    offsets = size * np.arange(rows.size, dtype=np.int64)
+    lengths = metric_lengths(
+        stacked[rows].reshape((-1, 3)),
+        star_metrics(rows.size),
+        (spokes[None] + offsets[:, None, None]).reshape((-1, 2)),
+    ).reshape((rows.size, -1))[:, measured]
     regular = np.all(np.isfinite(lengths) & (lengths > 0.0), axis=1)
     for row in rows[~regular].tolist():
         admitted[row] = evaluate(goals[row], local_metrics[0]) is not None
@@ -7011,7 +6886,7 @@ def _screen_relocation_goals(
     tied = rows[signs == 0]
     if tied.size:
         offsets = size * np.arange(tied.size, dtype=np.int64)
-        quality = _tetra_quality(
+        quality = metric_tetra_quality(
             stacked[tied].reshape((-1, 3)),
             star_metrics(tied.size),
             (local_cells[None] + offsets[:, None, None]).reshape((-1, 4)),
@@ -7119,13 +6994,19 @@ def _screen_relocation_batch_group(
     coincident = np.any(
         np.all(points[owner] == goals[:, None, :], axis=2) & present[owner], axis=1
     )
-    delta = points[owner] - goals[:, None, :]
-    flat_delta = delta.reshape((-1, 3))
-    tensors = np.broadcast_to(
-        metrics[owner, None], (owner.size, neighbors, 3, 3)
-    ).reshape((-1, 3, 3))
-    first = np.sqrt(np.einsum("ei,eij,ej->e", flat_delta, tensors, flat_delta))
-    lengths = (0.5 * (first + first)).reshape((owner.size, neighbors))
+    # Every spoke runs from its goal to a neighbor of the goal's star, under
+    # the star's one tensor at both ends: the rows the per-goal screen measures.
+    goal_rows = np.arange(owner.size, dtype=np.int64)
+    neighbor_rows = (
+        owner.size
+        + owner[:, None] * neighbors
+        + np.arange(neighbors, dtype=np.int64)[None]
+    )
+    lengths = metric_lengths(
+        np.concatenate((goals, points.reshape((-1, 3)))),
+        np.concatenate((metrics[owner], np.repeat(metrics, neighbors, axis=0))),
+        np.stack((np.repeat(goal_rows, neighbors), neighbor_rows.reshape((-1,))), axis=1),
+    ).reshape((owner.size, neighbors))
     regular = np.all(~measured[owner] | (np.isfinite(lengths) & (lengths > 0.0)), axis=1)
     lengths = np.where(measured[owner] & regular[:, None], lengths, _UPPER)
     long_rows, short_rows = _band_violation_rows(lengths)
@@ -7153,8 +7034,7 @@ def _screen_relocation_batch_group(
             goals[indices, None, None, :],
             corners[selected_owner],
         ).reshape((-1, 4, 3))
-        determinants = np.linalg.det(values[:, 1:] - values[:, :1])
-        relative = _relative_determinants(values, determinants=determinants)
+        determinants, relative = metric_relative_determinants(values)
         valid = (determinants > 0.0) & (relative > _DETERMINANT_FLOOR)
         valid = valid.reshape((indices.size, cells)) | ~cell_present[selected_owner]
         admitted[indices] = np.all(valid, axis=1)
@@ -7376,7 +7256,7 @@ def _relocation_proposals(
         lengths = (
             np.take(edge_lengths, prepared.incident_edges[vertex])
             if local_constant
-            else _metric_lengths(local_points, local_metrics, spokes)
+            else metric_lengths(local_points, local_metrics, spokes)
         )
         before_band = _band_violations(lengths[measured])
         forces = (1.0 - 1.0 / lengths)[:, None] * (local_points[1:] - local_points[0])
@@ -7448,7 +7328,7 @@ def _relocation_proposals(
                     trial_metrics = local_metrics.copy()
                     trial_metrics[0] = trial_metric
                     derivative = (
-                        _metric_lengths(trial_points, trial_metrics, spokes) - lengths
+                        metric_lengths(trial_points, trial_metrics, spokes) - lengths
                     ) / displacement
                     break
                 derivatives.append(derivative)
@@ -7526,13 +7406,13 @@ def _relocation_proposals(
                 return None
             moved_metrics = local_metrics.copy()
             moved_metrics[0] = metric
-            moved_lengths = _metric_lengths(moved_points, moved_metrics, spokes)
+            moved_lengths = metric_lengths(moved_points, moved_metrics, spokes)
             after_band = _band_violations(moved_lengths[measured])
             if band_only and after_band == before_band:
                 return None
             if after_band > before_band or not _floor_oriented(moved_points[local_cells]):
                 return None
-            after = _tetra_quality(moved_points, moved_metrics, local_cells)
+            after = metric_tetra_quality(moved_points, moved_metrics, local_cells)
             if after_band == before_band and not (
                 float(np.min(after)) > float(np.min(before)) + _IMPROVEMENT
             ):
@@ -8236,7 +8116,7 @@ def _native_metric_measurements(
     _, protected_by_key = _current_edge_controls(state, topology)
     protected = np.asarray([protected_by_key[edge] for edge in edge_keys], dtype=np.bool_)
     cells = np.asarray(state.snapshot.tetrahedra, dtype=np.int64)
-    qualities = _tetra_quality(points, metrics, cells)
+    qualities = metric_tetra_quality(points, metrics, cells)
     regions = np.asarray(state.snapshot.tetrahedron_regions, dtype=np.int64)
     volumes = _region_volumes(points, cells, regions)
     volume_error = _relative_region_error(state.source_region_volumes, volumes)

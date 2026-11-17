@@ -13,7 +13,13 @@ import pytest
 
 import phydrax as phx
 from phydrax._geometry_predicates import PredicateMode
-from phydrax._meshcore import TetMeshEdit, TetMeshEditKind, TetMeshEditStatus
+from phydrax._meshcore import (
+    metric_lengths,
+    metric_tetra_quality,
+    TetMeshEdit,
+    TetMeshEditKind,
+    TetMeshEditStatus,
+)
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
 from phydrax.meshing._canonical import certify_cell_mesh
 from phydrax.meshing._lineage import EntityLineageKind
@@ -1616,6 +1622,8 @@ def test_directed_collapses_of_the_sphere_witness_keep_their_recorded_proposals(
     # edges give 59 proposals, 58 of them with a moved survivor. The digest
     # covers only exact data: the survivor's source stencil and binary64
     # carrier, the integer violation quanta and the replaced and created cells.
+    # The same proposals result with the measurements on the deterministic
+    # native kernels, which replaced the NumPy ones that produced the record.
     recorded = "3328eb514d50347a7c50ee73a01ff2f0de3fc793963b37ff098fee4123a8115b"
     state = _relocation_cache_witness_state()
     try:
@@ -1661,9 +1669,7 @@ def test_directed_collapses_of_the_sphere_witness_keep_their_recorded_proposals(
     assert hashlib.sha256(text.encode()).hexdigest() == recorded
 
 
-def test_survivor_prescreen_leaves_positions_at_the_band_edge_to_the_exact_route() -> (
-    None
-):
+def test_survivor_prescreen_refuses_the_positions_that_do_not_shorten_the_star() -> None:
     from phydrax.meshing._tetra_metric import _refused_survivor_carriers
 
     # One measured spoke from the survivor position to a link vertex at the
@@ -1674,6 +1680,7 @@ def test_survivor_prescreen_leaves_positions_at_the_band_edge_to_the_exact_route
     lengths = {
         "in band": 1.0,
         "one ulp inside": float(np.nextafter(upper, 0.0)),
+        "on the band edge": upper,
         "one ulp outside": float(np.nextafter(upper, np.inf)),
         "first quantum": upper * (1.0 + 2.0**-20),
         "far outside": 3.0,
@@ -1693,12 +1700,15 @@ def test_survivor_prescreen_leaves_positions_at_the_band_edge_to_the_exact_route
     finally:
         state.native.close()
 
-    # Dropping the position one ulp inside the band would lose an improving
-    # collapse; the one an ulp outside is refused later by the exact route.
+    # The spoke length is the kernel value the per-position screen measures,
+    # so the decision is sharp at the band edge: dropping the position one ulp
+    # inside would lose an improving collapse, keeping the one an ulp outside
+    # would only defer its refusal.
     assert dict(zip(lengths, refused.tolist(), strict=True)) == {
         "in band": False,
         "one ulp inside": False,
-        "one ulp outside": False,
+        "on the band edge": False,
+        "one ulp outside": True,
         "first quantum": True,
         "far outside": True,
         "on the link vertex": True,
@@ -2252,8 +2262,8 @@ def test_relocation_screen_matches_scalar_star_admission(band_only: bool) -> Non
         ((0.2, 0.2, 0.2), (1.0, 0.0, 0.0), (0.8, 0.8, 0.8), (0.0, 0.0, 0.0)),
         dtype=np.float64,
     )
-    before_band = metric._band_violations(metric._metric_lengths(points, metrics, spokes))
-    before_quality = float(np.min(metric._tetra_quality(points, metrics, cells)))
+    before_band = metric._band_violations(metric_lengths(points, metrics, spokes))
+    before_quality = float(np.min(metric_tetra_quality(points, metrics, cells)))
 
     def evaluate(point: np.ndarray, tensor: np.ndarray) -> object:
         if np.any(np.all(points[1:] == point, axis=1)):
@@ -2262,14 +2272,12 @@ def test_relocation_screen_matches_scalar_star_admission(band_only: bool) -> Non
         moved[0] = point
         moved_metrics = metrics.copy()
         moved_metrics[0] = tensor
-        after_band = metric._band_violations(
-            metric._metric_lengths(moved, moved_metrics, spokes)
-        )
+        after_band = metric._band_violations(metric_lengths(moved, moved_metrics, spokes))
         if (band_only and after_band == before_band) or after_band > before_band:
             return None
         if not metric._floor_oriented(moved[cells]):
             return None
-        quality = float(np.min(metric._tetra_quality(moved, moved_metrics, cells)))
+        quality = float(np.min(metric_tetra_quality(moved, moved_metrics, cells)))
         if (
             after_band == before_band
             and not quality > before_quality + metric._IMPROVEMENT
@@ -2575,9 +2583,7 @@ def test_relocation_reuses_unoriented_constant_metric_spokes(vertex: int) -> Non
             np.arange(1, len(neighbors) + 1, dtype=np.int64),
         )
     )
-    expected = metric._metric_lengths(
-        prepared.points[rows], prepared.metrics[rows], spokes
-    )
+    expected = metric_lengths(prepared.points[rows], prepared.metrics[rows], spokes)
     np.testing.assert_array_equal(np.take(prepared.lengths, incident), expected)
     state.native.close()
 
@@ -2643,7 +2649,7 @@ def test_relocation_preparation_reuses_only_identical_incidence() -> None:
     np.testing.assert_array_equal(updated.lengths, expected_lengths)
     np.testing.assert_array_equal(
         updated.qualities,
-        metric._tetra_quality(
+        metric_tetra_quality(
             expected_points,
             expected_metrics,
             np.asarray(state.snapshot.tetrahedra, dtype=np.int64),

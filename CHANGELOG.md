@@ -438,11 +438,29 @@
   source and witness with equal frame and controls and every needed piece
   proof; otherwise coverage prepares its own as before.
 - A `NATIVE_METRIC_3D` collapse that may move its survivor screens the
-  candidate survivor positions of one goal together before interpolating a
-  source metric for each: a position whose spoke lengths certainly fail the
-  objective is dropped at once, and every other position takes the unchanged
-  per-position evaluation, which alone admits. Proposals, accepted meshes and
-  evidence are unchanged.
+  candidate survivor positions of one goal together before the per-position
+  evaluation: a position whose spoke lengths do not decrease the objective
+  is dropped at once, on the kernel values the per-position evaluation
+  itself uses, which alone admits.
+- `NATIVE_METRIC_3D` measures metric edge lengths, band violations,
+  log-Euclidean means, cell quality and relative determinants with
+  deterministic binary64 kernels of the native library instead of NumPy and
+  LAPACK. The kernels use only correctly rounded `+ - * /` and `sqrt` in a
+  written order, their own `exp` and `log` (within 4 and 6 ulp, with the
+  error budgets at the code) and a cyclic Jacobi iteration for the 3x3
+  eigenproblems, so the same input gives the same bits on every platform;
+  recorded bit vectors are compared by the native tests on each compiler. The
+  library checks the arithmetic it assumes (rounding to nearest even, no
+  fused multiply-add, gradual underflow) when it is loaded and is refused
+  where that differs. The measurements of `TetraMetricEvidence`
+  (`minimum_metric_length`, `maximum_metric_length`,
+  `minimum_metric_quality`, `maximum_region_volume_error`) are binary64
+  values of these kernels; every acceptance that uses them is an exact
+  comparison of those values, and validity is decided by exact predicates as
+  before. Adapted meshes, edit digests and evidence identities of the native
+  adaptation change. The JAX metric routines (`metric_edge_lengths`,
+  `interpolate_mesh_metric`) keep their own arithmetic, whose values are not
+  bit-identical across devices; the native adaptation reads none of them.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep
