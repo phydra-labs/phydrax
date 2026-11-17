@@ -9,21 +9,87 @@ from __future__ import annotations
 import ctypes
 from array import array
 from collections.abc import Sequence
+from dataclasses import dataclass
 from fractions import Fraction
 from math import lcm
 from typing import cast
+
+import numpy as np
 
 from .._exact_kernels import (
     _control_count,
     _DOMAIN_CODES,
     _limbs_for,
     _RANGE_ERROR,
-    _words,
     _workers,
-    IntegerBernsteinNet,
 )
 from .._meshcore import _raise_for_call, load_meshcore, meshcore_available
 from ..discretization._coordinate_enclosure import BernsteinDomain, Expression
+
+
+@dataclass(frozen=True, slots=True)
+class _BatchIntegerNet:
+    """One net's range in an immutable native batch payload."""
+
+    payload: bytes
+    start: int
+    end: int
+    word_bytes: int
+    count: int
+    scale: int
+    least: int
+    greatest: int
+
+    def numerator(self, index: int, /) -> int:
+        if not 0 <= index < self.count:
+            raise IndexError("control index out of range.")
+        start = self.start + index * self.word_bytes
+        return int.from_bytes(
+            memoryview(self.payload)[start : start + self.word_bytes],
+            "little",
+            signed=True,
+        )
+
+    def numerators(self) -> tuple[int, ...]:
+        words = memoryview(self.payload)[self.start : self.end]
+        width = self.word_bytes
+        return tuple(
+            int.from_bytes(words[index : index + width], "little", signed=True)
+            for index in range(0, len(words), width)
+        )
+
+    def control(self, index: int, /) -> Fraction:
+        return Fraction(self.numerator(index), self.scale)
+
+    def controls(self) -> tuple[Fraction, ...]:
+        return tuple(Fraction(value, self.scale) for value in self.numerators())
+
+
+def _pack_words(values: Sequence[int], limbs: int, /) -> bytes:
+    """Pack signed native words in little-endian order without per-value encoding."""
+    if not values:
+        return b""
+    if all(-(1 << 63) <= value < (1 << 63) for value in values):
+        signed = np.asarray(values, dtype=np.int64)
+        words = np.empty((len(values), limbs), dtype="<u8")
+        words[:, 0] = signed.view(np.uint64)
+        words[:, 1:] = np.where(
+            signed[:, None] < 0, np.uint64(0xFFFFFFFFFFFFFFFF), np.uint64(0)
+        )
+        return words.tobytes()
+
+    bits = 64 * limbs
+    mask = (1 << bits) - 1
+
+    def combine(start: int, end: int) -> int:
+        if end - start == 1:
+            return values[start] & mask
+        middle = (start + end) // 2
+        return combine(start, middle) | (
+            combine(middle, end) << (bits * (middle - start))
+        )
+
+    return combine(0, len(values)).to_bytes(len(values) * limbs * 8, "little")
 
 
 def integer_net_batch(
@@ -33,9 +99,9 @@ def integer_net_batch(
     /,
     *,
     parallelism: int | None = None,
-) -> list[tuple[IntegerBernsteinNet | None, ...]]:
+) -> list[tuple[_BatchIntegerNet | None, ...]]:
     """Convert eligible columns using common input scales, retaining item refusals."""
-    results: list[list[IntegerBernsteinNet | None]] = [
+    results: list[list[_BatchIntegerNet | None]] = [
         [None] * len(polynomials) for polynomials, _, _, _ in requests
     ]
     if not meshcore_available():
@@ -112,7 +178,7 @@ def integer_net_batch(
             array("i", (value for item in items for value in item[2])).tobytes(),
             array("q", term_offsets).tobytes(),
             array("i", (value for item in items for value in item[3])).tobytes(),
-            _words([value for item in items for value in item[4]], limbs),
+            _pack_words([value for item in items for value in item[4]], limbs),
             array("q", control_offsets).tobytes(),
             controls,
             denominators,
@@ -130,11 +196,10 @@ def integer_net_batch(
             if statuses[position] == _RANGE_ERROR:
                 continue
             _raise_for_call(statuses[position], "bernstein_controls")
-            results[row][column] = IntegerBernsteinNet(
-                payload[
-                    control_offsets[position] * width : control_offsets[position + 1]
-                    * width
-                ],
+            results[row][column] = _BatchIntegerNet(
+                payload,
+                control_offsets[position] * width,
+                control_offsets[position + 1] * width,
                 width,
                 count,
                 scale * den[position],

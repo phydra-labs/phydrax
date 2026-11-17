@@ -249,6 +249,8 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Exact stratum Bernstein controls use bulk integer word-bank transfer, retaining
+  the same exact controls, subdivision decisions, and proof evidence.
 - Source preparation reuses exact patch and spline-span proofs only for the
   same unchanged live source. Rebuilt sources reprove their own content;
   per-target trim partitions and per-box interval bounds remain independent.

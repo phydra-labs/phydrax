@@ -39,7 +39,7 @@ from typing import cast
 
 import numpy as np
 
-from .._exact_kernels import bisect_integer_nets, IntegerBernsteinNet
+from .._exact_kernels import bisect_integer_nets
 from .._meshcore import meshcore_available
 from ..discretization._coordinate_enclosure import (
     bernstein_coefficients,
@@ -54,7 +54,7 @@ from ..discretization._coordinate_enclosure import (
 from ..discretization._exact_algebraic_geometry import RadicalElement
 from ..linalg._exact import matmul_exact, symmetric_product_minors_exact
 from ._embedding_cells import EmbeddingCell
-from ._integer_net_batch import integer_net_batch
+from ._integer_net_batch import _BatchIntegerNet, integer_net_batch
 from ._mapped_embedding import (
     monotone_preconditioner,
     subdivided_jacobian_controls,
@@ -97,6 +97,8 @@ def _make_controls(values: dict[_Index, _Vector], /) -> _Controls:
 
 def _integer_controls(values: dict[_Index, tuple[int, ...]], scale: int, /) -> _Controls:
     divisor = gcd(scale, *(value for row in values.values() for value in row))
+    if divisor == 1:
+        return _Controls(cast(dict[_Index, _Vector], values), scale)
     return _Controls(
         {
             index: tuple(value // divisor for value in row)
@@ -326,13 +328,34 @@ def _controls_many(
             else None
             for request in requests
         ]
+    try:
+        prepared = _prepare_scaled_columns(requests, native)
+    except (ValueError, ZeroDivisionError, OverflowError):
+        # A malformed or refused item must not invalidate its neighbors.
+        prepared = {}
     result: list[_Controls | None] = []
-    for (polynomials, groups, degree, dimension), nets in zip(
-        requests, native, strict=True
+    index_plans: dict[tuple[tuple[int, ...], tuple[int, ...]], tuple[_Index, ...]] = {}
+    for position, ((polynomials, groups, degree, dimension), nets) in enumerate(
+        zip(requests, native, strict=True)
     ):
         try:
+            indices = None
+            if all(isinstance(polynomial, dict) for polynomial in polynomials):
+                key = (groups, degree)
+                indices = index_plans.get(key)
+                if indices is None:
+                    indices = _control_indices(groups, degree)
+                    index_plans[key] = indices
             result.append(
-                _controls_from_nets(polynomials, groups, degree, dimension, nets)
+                _controls_from_nets(
+                    polynomials,
+                    groups,
+                    degree,
+                    dimension,
+                    nets,
+                    prepared=prepared.get(position),
+                    indices=indices,
+                )
             )
         except (ValueError, ZeroDivisionError, OverflowError):
             if not tolerate_errors:
@@ -351,34 +374,116 @@ def _controls(
     return _controls_many([(polynomials, groups, degree, dimension)])[0]
 
 
+def _prepare_scaled_columns(
+    requests: list[tuple[tuple[Expression, ...], tuple[int, ...], tuple[int, ...], int]],
+    native: list[tuple[_BatchIntegerNet | None, ...]],
+    /,
+) -> dict[int, tuple[int, list[list[int]]]]:
+    nets: list[_BatchIntegerNet] = []
+    scales: list[int] = []
+    spans: list[tuple[int, int, int, int]] = []
+    for position, ((polynomials, _, _, _), row) in enumerate(
+        zip(requests, native, strict=True)
+    ):
+        if not row or any(not isinstance(polynomial, dict) for polynomial in polynomials):
+            continue
+        if any(net is None for net in row):
+            continue
+        eligible = [net for net in row if net is not None]
+        scale = lcm(*(net.scale for net in eligible))
+        start = len(nets)
+        nets.extend(eligible)
+        scales.extend([scale] * len(eligible))
+        spans.append((position, start, len(nets), scale))
+    columns = _scaled_net_columns(nets, scales)
+    return {
+        position: (scale, columns[start:end]) for position, start, end, scale in spans
+    }
+
+
+def _scaled_net_columns(
+    nets: list[_BatchIntegerNet], scales: list[int], /
+) -> list[list[int]]:
+    """Decode fixed-width two's-complement banks and apply per-item scales."""
+    banks: dict[tuple[int, int], list[tuple[int, _BatchIntegerNet]]] = {}
+    for position, net in enumerate(nets):
+        banks.setdefault((net.word_bytes, net.count), []).append((position, net))
+    columns: dict[int, list[int]] = {}
+    for (width, count), bank in banks.items():
+        first = bank[0][1]
+        contiguous = all(
+            previous.payload is current.payload and previous.end == current.start
+            for (_, previous), (_, current) in zip(bank, bank[1:])
+        )
+        if contiguous:
+            buffer = memoryview(first.payload)[first.start : bank[-1][1].end]
+        else:
+            buffer = memoryview(
+                b"".join(memoryview(net.payload)[net.start : net.end] for _, net in bank)
+            )
+        limbs = np.frombuffer(buffer, dtype=np.dtype("<u8")).reshape(
+            len(bank), count, width // 8
+        )
+        low = limbs[..., 0].view(np.dtype("<i8"))
+        extension = np.where(low < 0, np.uint64(0xFFFFFFFFFFFFFFFF), np.uint64(0))
+        fits = bool(np.all(limbs[..., 1:] == extension[..., None]))
+        if fits:
+            values = low
+        else:
+            # Start with the signed top limb, then append unsigned lower limbs.
+            values = limbs[..., -1].view(np.dtype("<i8")).astype(np.object_)
+            for limb in range(width // 8 - 2, -1, -1):
+                values = (values << 64) + limbs[..., limb].astype(np.object_)
+        factors = [scales[position] // net.scale for position, net in bank]
+        factor_array: np.ndarray | None = None
+        if fits and all(0 < factor <= np.iinfo(np.int64).max for factor in factors):
+            factor_array = np.asarray(factors, dtype=np.int64)
+            bound = np.iinfo(np.int64).max // factor_array
+            fits = bool(
+                np.all(values.min(axis=1) >= -bound)
+                and np.all(values.max(axis=1) <= bound)
+            )
+        else:
+            fits = False
+        if fits and factor_array is not None:
+            scaled = values * factor_array[:, None]
+        else:
+            scaled = (
+                values.astype(np.object_) * np.asarray(factors, dtype=np.object_)[:, None]
+            )
+        for (position, _), column in zip(bank, scaled.tolist(), strict=True):
+            columns[position] = column
+    return [columns[position] for position in range(len(nets))]
+
+
 def _controls_from_nets(
     polynomials: tuple[Expression, ...],
     groups: tuple[int, ...],
     degree: tuple[int, ...],
     dimension: int,
-    native: tuple[IntegerBernsteinNet | None, ...],
+    native: tuple[_BatchIntegerNet | None, ...],
     /,
+    *,
+    prepared: tuple[int, list[list[int]]] | None = None,
+    indices: tuple[_Index, ...] | None = None,
 ) -> _Controls | None:
+    if prepared is not None:
+        scale, columns = prepared
+        if indices is None:
+            indices = _control_indices(groups, degree)
+        return _integer_controls(dict(zip(indices, zip(*columns), strict=True)), scale)
     if any(not isinstance(polynomial, dict) for polynomial in polynomials):
         return None
-    indices = _control_indices(groups, degree)
-    polynomial_maps = [
-        polynomial for polynomial in polynomials if isinstance(polynomial, dict)
-    ]
+    if indices is None:
+        indices = _control_indices(groups, degree)
     if native and all(net is not None for net in native):
         nets = [net for net in native if net is not None]
         scale = lcm(*(net.scale for net in nets))
-        columns = [
-            tuple(value * (scale // net.scale) for value in net.numerators())
-            for net in nets
-        ]
-        return _integer_controls(
-            {
-                index: tuple(column[row] for column in columns)
-                for row, index in enumerate(indices)
-            },
-            scale,
-        )
+        columns = _scaled_net_columns(nets, [scale] * len(nets))
+        return _integer_controls(dict(zip(indices, zip(*columns), strict=True)), scale)
+    polynomial_maps = [
+        polynomial for polynomial in polynomials if isinstance(polynomial, dict)
+    ]
     columns = [
         net.controls()
         if net is not None
