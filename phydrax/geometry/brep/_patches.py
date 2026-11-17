@@ -294,7 +294,7 @@ class AbstractSurfacePatch(StrictModule):
         """Enclose the authoritative source map on a validated UV rectangle."""
         from ._root_bindings import _patch_box
 
-        box = np.asarray(self.validate_parameter_box(parameter_box), dtype=np.float64)
+        box = _host_parameter_box(self, parameter_box)
         return _patch_box(self, box[0], box[1])
 
     def derivative_bounds(
@@ -305,7 +305,7 @@ class AbstractSurfacePatch(StrictModule):
         Exact-capable source carriers override this method. Unsupported families
         refuse rather than substituting samples or a tessellation fit.
         """
-        self.validate_parameter_box(parameter_box)
+        _host_parameter_box(self, parameter_box)
         if isinstance(order, bool) or not isinstance(order, int) or order != 1:
             raise ValueError("Surface derivative bounds currently support order=1 only.")
         raise NotImplementedError(
@@ -328,7 +328,7 @@ class AbstractSurfacePatch(StrictModule):
 
     def is_c1_on(self, parameter_box: ConvertibleToArray, /) -> bool:
         """Report established C1 continuity, not an assumption about custom patches."""
-        self.validate_parameter_box(parameter_box)
+        _host_parameter_box(self, parameter_box)
         return type(self) in (
             PlanePatch,
             CylinderPatch,
@@ -376,6 +376,14 @@ class AbstractSurfacePatch(StrictModule):
         )
 
     def validate_parameter_box(self, parameter_box: ConvertibleToArray, /) -> Array:
+        return jnp.asarray(
+            AbstractSurfacePatch._validate_parameter_box_host(self, parameter_box),
+            dtype=jnp.float64,
+        )
+
+    def _validate_parameter_box_host(
+        self, parameter_box: ConvertibleToArray, /
+    ) -> np.ndarray:
         box = np.asarray(parameter_box, dtype=np.float64)
         if (
             box.shape != (2, 2)
@@ -397,7 +405,23 @@ class AbstractSurfacePatch(StrictModule):
                 raise ValueError(
                     "A periodic parameter interval may cover at most one period."
                 )
-        return jnp.asarray(box, dtype=jnp.float64)
+        return box
+
+
+def _host_parameter_box(
+    patch: AbstractSurfacePatch, parameter_box: ConvertibleToArray, /
+) -> np.ndarray:
+    """Validate on the host without bypassing custom public validators."""
+    validator = type(patch).validate_parameter_box
+    if validator is AbstractSurfacePatch.validate_parameter_box:
+        return patch._validate_parameter_box_host(parameter_box)
+    if validator is OffsetSurface.validate_parameter_box and isinstance(
+        patch, OffsetSurface
+    ):
+        return _host_parameter_box(patch.base, parameter_box)
+    if validator is RuledSurface.validate_parameter_box:
+        return patch._validate_parameter_box_host(parameter_box)
+    return np.asarray(patch.validate_parameter_box(parameter_box), dtype=np.float64)
 
 
 class OffsetSurface(AbstractSurfacePatch):
@@ -2083,6 +2107,14 @@ class RuledSurface(AbstractSurfacePatch):
         u, v = values[..., 0], values[..., 1, None]
         return (1.0 - v) * self.first.evaluate(u) + v * self.second.evaluate(u)
 
+    def _validate_parameter_box_host(
+        self, parameter_box: ConvertibleToArray, /
+    ) -> np.ndarray:
+        box = super()._validate_parameter_box_host(parameter_box)
+        if box[0, 1] < 0.0 or box[1, 1] > 1.0:
+            raise ValueError("RuledSurface v parameters must lie in [0, 1].")
+        return box
+
     def validate_parameter_box(self, parameter_box: ConvertibleToArray, /) -> Array:
         box = super().validate_parameter_box(parameter_box)
         values = np.asarray(box)
@@ -2091,7 +2123,7 @@ class RuledSurface(AbstractSurfacePatch):
         return box
 
     def is_c1_on(self, parameter_box: ConvertibleToArray, /) -> bool:
-        box = np.asarray(self.validate_parameter_box(parameter_box))
+        box = _host_parameter_box(self, parameter_box)
         first, last = float(box[0, 0]), float(box[1, 0])
         return self.first.is_c1_on(first, last) and self.second.is_c1_on(first, last)
 
@@ -2197,11 +2229,7 @@ class RuledSurface(AbstractSurfacePatch):
                 "Ruled derivative u extension requires exact analytic cylinder rails."
             )
         extension = u_extension or v_extension
-        box = (
-            raw_box
-            if extension
-            else np.asarray(self.validate_parameter_box(raw_box), dtype=np.float64)
-        )
+        box = raw_box if extension else _host_parameter_box(self, raw_box)
         if analytic_rails:
             rail_first = self.first
             rail_second = self.second
@@ -2403,7 +2431,7 @@ class ExtrusionSurface(AbstractSurfacePatch):
         )
 
     def is_c1_on(self, parameter_box: ConvertibleToArray, /) -> bool:
-        box = self.validate_parameter_box(parameter_box)
+        box = _host_parameter_box(self, parameter_box)
         return self.curve.is_c1_on(float(box[0, 0]), float(box[1, 0]))
 
     def is_c1_along(
@@ -2416,7 +2444,7 @@ class ExtrusionSurface(AbstractSurfacePatch):
         self, parameter_box: ConvertibleToArray, /, *, order: int = 1
     ) -> tuple[np.ndarray, np.ndarray]:
         """Enclose ``(curve'(u), direction)``; the generator column is the exact vector."""
-        box = np.asarray(self.validate_parameter_box(parameter_box), dtype=np.float64)
+        box = _host_parameter_box(self, parameter_box)
         if isinstance(order, bool) or not isinstance(order, int) or order != 1:
             raise ValueError("ExtrusionSurface derivative bounds support order=1 only.")
         if not self.curve.is_c1_on(float(box[0, 0]), float(box[1, 0])):
@@ -5045,7 +5073,7 @@ class PlanePatch(AbstractSurfacePatch):
     def derivative_bounds(
         self, parameter_box: ConvertibleToArray, /, *, order: int = 1
     ) -> tuple[np.ndarray, np.ndarray]:
-        self.validate_parameter_box(parameter_box)
+        _host_parameter_box(self, parameter_box)
         if isinstance(order, bool) or not isinstance(order, int) or order != 1:
             raise ValueError("Plane derivative bounds support order=1 only.")
         jacobian = np.column_stack(
@@ -5181,7 +5209,7 @@ class CylinderPatch(AbstractSurfacePatch):
         )
         from .._rational import fraction_down, fraction_up
 
-        box = np.asarray(self.validate_parameter_box(parameter_box), dtype=np.float64)
+        box = _host_parameter_box(self, parameter_box)
         if isinstance(order, bool) or not isinstance(order, int) or order != 1:
             raise ValueError("Cylinder derivative bounds support order=1 only.")
 
@@ -5289,7 +5317,7 @@ class ConePatch(AbstractSurfacePatch):
             interval_sin,
         )
 
-        box = np.asarray(self.validate_parameter_box(parameter_box), dtype=np.float64)
+        box = _host_parameter_box(self, parameter_box)
         if isinstance(order, bool) or not isinstance(order, int) or order != 1:
             raise ValueError("Cone derivative bounds support order=1 only.")
         angle = (box[0, 0], box[1, 0])
@@ -5402,7 +5430,7 @@ class SpherePatch(AbstractSurfacePatch):
             interval_sin,
         )
 
-        box = np.asarray(self.validate_parameter_box(parameter_box), dtype=np.float64)
+        box = _host_parameter_box(self, parameter_box)
         if isinstance(order, bool) or not isinstance(order, int) or order != 1:
             raise ValueError("Sphere derivative bounds support order=1 only.")
         longitude = (box[0, 0], box[1, 0])
@@ -5618,7 +5646,7 @@ class TorusPatch(AbstractSurfacePatch):
         )
         from .._rational import fraction_down, fraction_up
 
-        box = np.asarray(self.validate_parameter_box(parameter_box), dtype=np.float64)
+        box = _host_parameter_box(self, parameter_box)
         if isinstance(order, bool) or not isinstance(order, int) or order != 1:
             raise ValueError("Torus derivative bounds support order=1 only.")
 
@@ -6039,7 +6067,7 @@ class BSplineSurfacePatch(AbstractSurfacePatch):
         )
 
     def is_c1_on(self, parameter_box: ConvertibleToArray, /) -> bool:
-        box = np.asarray(self.validate_parameter_box(parameter_box), dtype=np.float64)
+        box = _host_parameter_box(self, parameter_box)
         for knots, degree, axis in (
             (np.asarray(self.u_knots), self.u_degree, 0),
             (np.asarray(self.v_knots), self.v_degree, 1),
@@ -6123,7 +6151,7 @@ def bspline_surface_derivative_bounds(
     """Enclose the Jacobian columns of ``patch`` on a UV box from its prepared spans."""
     from .._rational import fraction_down, fraction_up
 
-    box = np.asarray(patch.validate_parameter_box(parameter_box), dtype=np.float64)
+    box = _host_parameter_box(patch, parameter_box)
     query = tuple(
         tuple(Fraction.from_float(float(value)) for value in box[:, axis])
         for axis in range(2)

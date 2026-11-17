@@ -452,6 +452,72 @@ def test_prism_and_tetrahedron_sharing_a_vertex_are_separated_by_subdivision() -
     assert counts is not None and sum(counts) > 0
 
 
+def test_subdivision_proof_matches_python_exact_roots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if not subdivision.meshcore_available():
+        pytest.skip("native meshcore is unavailable")
+    corners = (_p(1, 0, 1), _p(2, 0, 1), _p(1.5, 0.5, 1), _p(1.5, 0.125, 1.75))
+    neighbour = _cell(5, "simplex:3", (4, 9, 10, 11), corners, _bend())
+    residuals = _stratum_residuals(_FIRST, (4,))
+    assert residuals is not None
+    native = subdivided_stratum_separation(
+        _FIRST, neighbour, (4,), residuals, StratumSubdivisionCache()
+    )
+    monkeypatch.setattr(subdivision, "meshcore_available", lambda: False)
+    exact = subdivided_stratum_separation(
+        _FIRST, neighbour, (4,), residuals, StratumSubdivisionCache()
+    )
+    assert native is not None
+    assert native == exact
+
+
+def test_vertex_cone_batches_preserve_exact_outward_endpoints() -> None:
+    from phydrax.discretization._exact_algebraic_geometry import coefficient_endpoint
+    from phydrax.geometry._global_embedding import _VertexConeFilter
+
+    cells = tuple(
+        _cell(
+            index,
+            "tetrahedron",
+            tuple(range(4)),
+            _TETRAHEDRON,
+            _bend(Fraction(index, 13)),
+        )
+        for index in range(1, 5)
+    )
+    whole = _VertexConeFilter.prepare(cells)
+    if whole is None:
+        pytest.skip("native meshcore is unavailable")
+    halves = (_VertexConeFilter.prepare(cells[:2]), _VertexConeFilter.prepare(cells[2:]))
+    assert all(half is not None for half in halves)
+    for row, cell in enumerate(cells):
+        columns = tuple(
+            bernstein_coefficients(expression, "simplex", 3, degree=(2,))
+            for expression in cell.coordinates
+            if isinstance(expression, dict)
+        )
+        expected_lower = np.asarray(
+            [
+                [coefficient_endpoint(column[index], upper=False) for column in columns]
+                for index in range(10)
+            ]
+        )
+        expected_upper = np.asarray(
+            [
+                [coefficient_endpoint(column[index], upper=True) for column in columns]
+                for index in range(10)
+            ]
+        )
+        assert whole.valid[row]
+        np.testing.assert_array_equal(whole.lower[row], expected_lower)
+        np.testing.assert_array_equal(whole.upper[row], expected_upper)
+        half = halves[row // 2]
+        assert half is not None
+        np.testing.assert_array_equal(half.lower[row % 2], expected_lower)
+        np.testing.assert_array_equal(half.upper[row % 2], expected_upper)
+
+
 def test_batched_straight_edge_cones_reject_overlap_and_curved_trace() -> None:
     from phydrax.geometry._global_embedding import _VertexConeFilter
 
