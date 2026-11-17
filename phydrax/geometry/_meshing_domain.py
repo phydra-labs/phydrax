@@ -863,6 +863,7 @@ class SourcePreparation:
 
     __slots__ = (
         "_box_programs",
+        "_curve_box_programs",
         "_curve_spans",
         "_mapped_hessians",
         "_programs",
@@ -874,6 +875,9 @@ class SourcePreparation:
         self.domain = domain
         self._box_programs: dict[
             int, tuple[AbstractSurfacePatch, PreparedIntervalFunction]
+        ] = {}
+        self._curve_box_programs: dict[
+            int, tuple[AbstractCurve, PreparedIntervalFunction]
         ] = {}
         self._surface_spans: dict[
             int,
@@ -1041,9 +1045,32 @@ class SourcePreparation:
         return np.asarray(surface.bounding_box(parameter_box), dtype=np.float64)
 
     def curve_box(self, curve: AbstractCurve, first: float, last: float, /) -> np.ndarray:
-        """``curve.bounding_box(first, last)`` from prepared spline spans."""
+        """``curve.bounding_box(first, last)`` using prepared source artifacts."""
         if isinstance(curve, BSplineCurve):
             return bspline_curve_bounds(curve, self.curve_spans(curve), first, last)
+        if type(curve).bounding_box is AbstractCurve.bounding_box:
+            from .brep._root_bindings import _source_coefficients_are_binary
+
+            if not _source_coefficients_are_binary(curve):
+                raise NotImplementedError(
+                    "This curve has no source-authoritative interval realization."
+                )
+            AbstractCurve.is_c1_on(curve, first, last)
+            entry = self._curve_box_programs.get(id(curve))
+            if entry is None or entry[0] is not curve:
+
+                def value(parameter: Array, /) -> Array:
+                    return curve.evaluate(parameter[0])
+
+                program = prepare_interval_function(value, 1)
+                self._curve_box_programs[id(curve)] = (curve, program)
+            else:
+                program = entry[1]
+            lower, upper = program.evaluate(
+                np.asarray(((first,),), dtype=np.float64),
+                np.asarray(((last,),), dtype=np.float64),
+            )
+            return np.stack((lower[0], upper[0]))
         return np.asarray(curve.bounding_box(first, last), dtype=np.float64)
 
     def _surface_box_program(
