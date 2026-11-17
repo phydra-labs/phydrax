@@ -2815,7 +2815,7 @@ class PreparedIntervalFunction:
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         lower_, upper_ = self._boxes(lower, upper)
         if self.execution == "batched" and self.native_program is not None:
-            return self.native_program.evaluate_batch(lower_, upper_)
+            return self.native_program._evaluate_batch_validated(lower_, upper_)
         count = lower_.shape[0]
         low_result = np.empty((count, *self.output_shape), dtype=np.float64)
         high_result = np.empty_like(low_result)

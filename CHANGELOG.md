@@ -253,9 +253,9 @@
   outward angle enclosures. Mixed conic and rational-spline profiles sum
   directed turn endpoints exactly. Ambiguous turning proofs are refused, so
   profile admission and chart coordinates can change near a turning boundary.
-- B-Rep normal and dihedral ranges, blend tangency bounds, and native-curve
-  turning controls use outward interval inverse trigonometry and norm bounds.
-  Stored angle endpoints and hard-control outcomes can consequently change.
+- Native interval execution avoids duplicate validation and batches torus
+  source boxes and curve chord evaluations within each pass. Enclosure
+  endpoints and per-item proof decisions remain unchanged.
 - Source preparation reuses exact patch and spline-span proofs only for the
   same unchanged live source. Rebuilt sources reprove their own content;
   per-target trim partitions and per-box interval bounds remain independent.

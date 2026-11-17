@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 from bisect import bisect_left, bisect_right
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import assert_never, final, Literal
@@ -2910,29 +2910,23 @@ def _chord_endpoint_error(
     return max(errors)
 
 
+type _ChordJob = tuple[
+    PreparedIntervalFunction,
+    tuple[np.ndarray, np.ndarray],
+    tuple[Fraction, Fraction],
+    tuple[np.ndarray, np.ndarray],
+]
+
+
 def _second_order_chord_bound(
-    program: PreparedIntervalFunction,
+    low: np.ndarray,
+    high: np.ndarray,
     endpoints: tuple[np.ndarray, np.ndarray],
     native: tuple[Fraction, Fraction],
     chord: tuple[np.ndarray, np.ndarray],
     /,
 ) -> float:
-    """Distance bound from a mapped p-curve interval to a chord.
-
-    Componentwise linear interpolation of ``g = surface o pcurve`` over a
-    parameter interval of width ``h`` deviates by at most
-    ``h^2 / 8 * sup|g_i''|``. Endpoint enclosures include source evaluation and
-    parameter rounding, rather than treating rounded point evaluations as exact.
-    """
-    lower = float(fraction_endpoint(min(native), upper=False))
-    upper = float(fraction_endpoint(max(native), upper=True))
-    try:
-        low, high = program.evaluate(
-            np.asarray(((lower,),), dtype=np.float64),
-            np.asarray(((upper,),), dtype=np.float64),
-        )
-    except (IntervalExtensionError, NotImplementedError):
-        return math.inf
+    """Bound interpolation error using exact width and endpoint enclosures."""
     if not np.all(np.isfinite(low)) or not np.all(np.isfinite(high)):
         return math.inf
     magnitudes = np.maximum(np.abs(low), np.abs(high)).reshape((-1,))
@@ -2944,6 +2938,45 @@ def _second_order_chord_bound(
         return math.inf
     bound = interpolation + endpoint_error
     return float(fraction_endpoint(bound, upper=True, saturate=True))
+
+
+def _second_order_chord_bounds(jobs: list[_ChordJob], /) -> list[float]:
+    """Evaluate same-program boxes together, isolating typed interval refusals."""
+    results = [math.inf] * len(jobs)
+    groups: dict[int, list[int]] = {}
+    for index, (program, _, _, _) in enumerate(jobs):
+        groups.setdefault(id(program), []).append(index)
+    for indices in groups.values():
+        program = jobs[indices[0]][0]
+        lower = np.asarray(
+            [[float(fraction_endpoint(min(jobs[i][2]), upper=False))] for i in indices],
+            dtype=np.float64,
+        )
+        upper = np.asarray(
+            [[float(fraction_endpoint(max(jobs[i][2]), upper=True))] for i in indices],
+            dtype=np.float64,
+        )
+        try:
+            lows, highs = program.evaluate(lower, upper)
+        except (IntervalExtensionError, NotImplementedError):
+            for position, index in enumerate(indices):
+                try:
+                    low, high = program.evaluate(
+                        lower[position : position + 1], upper[position : position + 1]
+                    )
+                except (IntervalExtensionError, NotImplementedError):
+                    continue
+                _, endpoints, native, chord = jobs[index]
+                results[index] = _second_order_chord_bound(
+                    low, high, endpoints, native, chord
+                )
+        else:
+            for position, index in enumerate(indices):
+                _, endpoints, native, chord = jobs[index]
+                results[index] = _second_order_chord_bound(
+                    lows[position], highs[position], endpoints, native, chord
+                )
+    return results
 
 
 @final
@@ -2980,12 +3013,55 @@ class _CurveChordBounds:
     def interval(
         self, curve: int, lower: Fraction, upper: Fraction, /
     ) -> tuple[float, float]:
-        key = (int(curve), lower, upper)
-        cached = self.intervals.get(key)
-        if cached is None:
-            cached = self._interval(int(curve), lower, upper)
-            self.intervals[key] = cached
-        return cached
+        self.prepare_intervals(((int(curve), lower, upper),))
+        return self.intervals[(int(curve), lower, upper)]
+
+    def prepare_intervals(
+        self, intervals: tuple[tuple[int, Fraction, Fraction], ...], /
+    ) -> None:
+        keys = tuple(key for key in dict.fromkeys(intervals) if key not in self.intervals)
+        try:
+            completed = self._prepare_intervals(keys)
+        except Exception:
+            # A later interval may fail while an earlier generator is suspended.
+            # Replay in consumer order so the first sequential failure wins.
+            if len(keys) > 1:
+                for key in keys:
+                    self.intervals.update(self._prepare_intervals((key,)))
+            raise
+        self.intervals.update((key, completed[key]) for key in keys)
+
+    def _prepare_intervals(
+        self, intervals: tuple[tuple[int, Fraction, Fraction], ...], /
+    ) -> dict[tuple[int, Fraction, Fraction], tuple[float, float]]:
+        completed: dict[tuple[int, Fraction, Fraction], tuple[float, float]] = {}
+        pending: list[
+            tuple[tuple[int, Fraction, Fraction], Generator[_ChordJob, float, tuple[float, float]]]
+        ] = []
+        jobs: list[_ChordJob] = []
+        for key in intervals:
+            work = self._interval(*key)
+            try:
+                job = next(work)
+            except StopIteration as done:
+                completed[key] = done.value
+            else:
+                pending.append((key, work))
+                jobs.append(job)
+        while pending:
+            bounds = _second_order_chord_bounds(jobs)
+            next_pending = []
+            next_jobs = []
+            for (key, work), bound in zip(pending, bounds, strict=True):
+                try:
+                    job = work.send(bound)
+                except StopIteration as done:
+                    completed[key] = done.value
+                else:
+                    next_pending.append((key, work))
+                    next_jobs.append(job)
+            pending, jobs = next_pending, next_jobs
+        return completed
 
     def prepare_points(self, curve: int, parameters: tuple[Fraction, ...], /) -> None:
         patch, use = _curve_owner_use(self.domain, curve)
@@ -3150,7 +3226,7 @@ class _CurveChordBounds:
 
     def _interval(
         self, curve: int, lower: Fraction, upper: Fraction, /
-    ) -> tuple[float, float]:
+    ) -> Generator[_ChordJob, float, tuple[float, float]]:
         domain = self.domain
         first = self._curve_point(curve, lower)
         last = self._curve_point(curve, upper)
@@ -3214,15 +3290,13 @@ class _CurveChordBounds:
                 else None
             )
             if program is not None:
-                use_deviation = min(
-                    use_deviation,
-                    _second_order_chord_bound(
-                        program,
-                        endpoint_bounds,
-                        (native_first, native_last),
-                        (first, last),
-                    ),
+                second_order = yield (
+                    program,
+                    endpoint_bounds,
+                    (native_first, native_last),
+                    (first, last),
                 )
+                use_deviation = min(use_deviation, second_order)
             deviation = max(deviation, use_deviation)
             diagonal = float(
                 binary64_norm_upper(
@@ -3424,6 +3498,9 @@ def _curve_parameters(
         while intervals:
             chords.prepare_points(
                 curve, tuple(value for interval in intervals for value in interval)
+            )
+            chords.prepare_intervals(
+                tuple((curve, lower, upper) for lower, upper in intervals)
             )
             candidates = [
                 interval
@@ -4546,6 +4623,7 @@ def _chart_curve_bounds(
             points.setdefault(curve, []).extend((lower, upper))
     for curve, parameters in points.items():
         chords.prepare_points(curve, tuple(parameters))
+    chords.prepare_intervals(tuple(intervals.values()))
     return {
         edge: chords.interval(curve, lower, upper)[0]
         for edge, (curve, lower, upper) in intervals.items()

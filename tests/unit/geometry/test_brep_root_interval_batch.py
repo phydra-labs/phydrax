@@ -12,6 +12,11 @@ from phydrax.geometry._interval_enclosure import (
     interval_multiply,
     interval_sin,
 )
+from phydrax.geometry.brep import _root_bindings
+from phydrax.geometry.brep._intersection_curve import (
+    _PreparedPairValue,
+    SurfacePairSystem,
+)
 from phydrax.geometry.brep._patches import (
     AbstractSurfacePatch,
     CylinderPatch,
@@ -193,3 +198,56 @@ def test_inward_reference_endpoint_is_rejected(index: int, witness: Fraction) ->
     assert Fraction.from_float(float(inward[0, 0])) > witness
     with pytest.raises(AssertionError):
         np.testing.assert_array_equal(actual.view(np.uint64), inward.view(np.uint64))
+
+
+def test_surface_pair_batch_matches_per_item_enclosures() -> None:
+    torus = _patches_and_references()[2][0]
+    plane = _patches_and_references()[0][0]
+    prepared = _PreparedPairValue(SurfacePairSystem(torus, plane))
+    lower = np.array(
+        [[0.0, 0.0, 0.0, 0.0], [-1.2, 0.3, -0.5, 0.2], [2.0, -2.0, 1.0, -1.0]],
+        dtype=np.float64,
+    )
+    upper = lower + np.array(
+        [[1e-10, 1e-10, 0.0, 0.0], [0.4, 0.6, 0.3, 0.7], [0.2, 0.9, 0.5, 0.8]],
+        dtype=np.float64,
+    )
+    batch = prepared.evaluate(lower, upper)
+    singles = [prepared.evaluate(lower[i : i + 1], upper[i : i + 1]) for i in range(3)]
+    for side in range(2):
+        expected = np.concatenate([result[side] for result in singles])
+        np.testing.assert_array_equal(batch[side].view(np.uint64), expected.view(np.uint64))
+
+
+def test_surface_pair_rejects_inward_torus_endpoint_fault(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    torus = _patches_and_references()[2][0]
+    plane = _patches_and_references()[0][0]
+    prepared = _PreparedPairValue(SurfacePairSystem(torus, plane))
+    lower = np.zeros((2, 4), dtype=np.float64)
+    upper = lower.copy()
+    upper[:, :2] = 1e-10
+    witness = Fraction(55, 21)
+
+    def contains_witness() -> None:
+        low, high = prepared.evaluate(lower, upper)
+        for index in range(2):
+            assert Fraction.from_float(float(low[index, 0])) <= witness
+            assert Fraction.from_float(float(high[index, 0])) >= witness
+
+    contains_witness()
+    program = _root_bindings._torus_trigonometric_program()
+
+    class InwardProgram:
+        def evaluate(
+            self, lower: np.ndarray, upper: np.ndarray, /
+        ) -> tuple[np.ndarray, np.ndarray]:
+            low, high = program.evaluate(lower, upper)
+            low[:, 0, 0] = 0.9
+            high[:, 0, 0] = 0.9
+            return low, high
+
+    monkeypatch.setattr(_root_bindings, "_torus_trigonometric_program", InwardProgram)
+    with pytest.raises(AssertionError):
+        contains_witness()
