@@ -2564,7 +2564,9 @@ def test_collapsed_pole_slivers_complete_the_partition_within_their_cap_bound() 
         )
     )
 
-    def witness_for(rows: tuple[int, ...], /) -> SurfaceChartWitness:
+    def witness_for(
+        rows: tuple[int, ...], /
+    ) -> tuple[CellMesh, CellGeometrySpec, SurfaceChartWitness]:
         triangles = np.asarray(
             [
                 tuple(
@@ -2576,14 +2578,16 @@ def test_collapsed_pole_slivers_complete_the_partition_within_their_cap_bound() 
             dtype=np.int64,
         )
         mesh = _mesh(points, triangles)
-        return _witness(
+        geometry = CellGeometrySpec.affine(mesh)
+        witness = _witness(
             mesh,
-            CellGeometrySpec.affine(mesh),
+            geometry,
             domain,
             np.asarray([charts[row] for row in rows], dtype=np.float64),
         )
+        return mesh, geometry, witness
 
-    complete = witness_for(tuple(range(len(charts))))
+    complete_mesh, complete_geometry, complete = witness_for(tuple(range(len(charts))))
     exact_charts = tuple(
         _exact_triangle2(tuple((Fraction(u), Fraction(v)) for u, v in chart))
         for chart in charts
@@ -2595,6 +2599,12 @@ def test_collapsed_pole_slivers_complete_the_partition_within_their_cap_bound() 
     assert {owner for owner, _ in slivers} == {0, 1, 6, 7}
     preparation = SourcePreparation(source.domain)
     assert _partition_findings(source, complete, preparation) == ()
+    assert (
+        validate_source_fidelity_witness(
+            complete_mesh, complete_geometry, source, complete
+        ).partition_findings
+        == ()
+    )
 
     rng = np.random.default_rng(7)
     for _owner, sliver in slivers:
@@ -2608,11 +2618,13 @@ def test_collapsed_pole_slivers_complete_the_partition_within_their_cap_bound() 
         )
         assert source.pole_sliver_cap_bound(0, sliver) >= Fraction(sampled_diameter)
 
-    missing_fan = witness_for(tuple(range(1, len(charts))))
+    missing_mesh, missing_geometry, missing_fan = witness_for(tuple(range(1, len(charts))))
     assert any(
         finding.check == "source_chart_coverage" and finding.status == "violated"
         for finding in _partition_findings(source, missing_fan, preparation)
     )
+    with pytest.raises(ValueError, match="not a complete reference partition"):
+        validate_source_fidelity_witness(missing_mesh, missing_geometry, source, missing_fan)
 
 
 def test_curved_trim_reference_follows_target_chords_within_certified_lenses() -> None:
