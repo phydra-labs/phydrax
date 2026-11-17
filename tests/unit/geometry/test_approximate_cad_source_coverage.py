@@ -138,6 +138,37 @@ def test_random_exact_intersections_match_reference() -> None:
             assert _intersection_area(first, rows[j]) == expected
 
 
+def test_exact_intersection_contacts_and_extreme_scales() -> None:
+    zero, one = Fraction(0), Fraction(1)
+    base = ((zero, zero), (one, zero), (zero, one))
+    examples = (
+        ((Fraction(-1, 2), Fraction(1, 2)), (one, Fraction(1, 2)), (one, one)),
+        ((zero, zero), (Fraction(1, 3), zero), (zero, Fraction(1, 3))),
+        ((one, zero), (one, one), (zero, one)),
+        ((one, zero), (2 * one, zero), (one, one)),
+        ((2 * one, zero), (3 * one, zero), (2 * one, one)),
+    )
+    for scale_x, scale_y, offset in (
+        (one, one, zero),
+        (Fraction(2**150), Fraction(1, 2**180), Fraction(2**220)),
+        (Fraction(1, 3 * 2**130), Fraction(2**170, 7), Fraction(-(2**200), 11)),
+    ):
+
+        def transform(triangle: _Triangle2) -> _Triangle2:
+            points = tuple((offset + x * scale_x, y * scale_y) for x, y in triangle)
+            return points[0], points[1], points[2]
+
+        first = transform(base)
+        for example in examples:
+            second = transform(example)
+            assert _intersection_area(first, second) == _reference_intersection(
+                first, second
+            )
+            assert _intersection_area(second, first) == _reference_intersection(
+                second, first
+            )
+
+
 def test_exact_chart_intersection_handles_clockwise_root_and_target() -> None:
     zero, one, half = Fraction(0), Fraction(1), Fraction(1, 2)
     root = ((zero, zero), (one, zero), (zero, one))
@@ -191,6 +222,21 @@ def test_bounded_cad_overlap_pairs_keep_lexicographic_order_across_blocks() -> N
     assert list(_overlapping_self_pairs(rows)) == [
         (first, second) for first in range(66) for second in range(first + 1, 66)
     ]
+
+
+def test_large_cad_partition_finds_overlap_independent_of_other_rows() -> None:
+    rows: tuple[_Triangle2, ...] = tuple(
+        (
+            (Fraction(3 * i), Fraction(0)),
+            (Fraction(3 * i + 1), Fraction(0)),
+            (Fraction(3 * i), Fraction(1)),
+        )
+        for i in range(1050)
+    )
+    expanded = (*rows, rows[0], rows[1])
+    assert list(_overlapping_self_pairs(expanded)) == [(0, 1050), (1, 1051)]
+    assert _covered_by_declared_triangles(rows, rows)
+    assert not _covered_by_declared_triangles((rows[0],), (rows[1], *rows[2:]))
 
 
 def test_exact_trim_triangulation_is_scoped_to_requested_patch(
