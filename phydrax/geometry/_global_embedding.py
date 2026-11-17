@@ -2027,14 +2027,21 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
 
 
 def _cell_map_findings(
-    cells: tuple[EmbeddingCell, ...], /, *, binding: MeshCertificateBinding
+    cells: tuple[EmbeddingCell, ...],
+    /,
+    *,
+    binding: MeshCertificateBinding,
+    owing: NDArray[np.bool_] | None = None,
 ) -> tuple[list[MeshCertificateFinding], list[MeshEmbeddingWitness], set[int]]:
+    """Prove mapped cells injective; ``owing`` selects the cells that owe a proof."""
     findings: list[MeshCertificateFinding] = []
     witnesses: list[MeshEmbeddingWitness] = []
     expressions: list[str] = []
     injective_cells: set[int] = set()
     for index, cell in enumerate(cells):
         if cell.affine or not cell.coordinates:
+            continue
+        if owing is not None and not owing[index]:
             continue
         try:
             witness = prove_mapped_cell_injective(cell)
@@ -2076,8 +2083,10 @@ def _cell_map_findings(
                 (binding.binding_id,),
                 tuple(
                     cell.global_id
-                    for cell in cells
-                    if not cell.affine and cell.coordinates
+                    for index, cell in enumerate(cells)
+                    if not cell.affine
+                    and cell.coordinates
+                    and (owing is None or owing[index])
                 ),
                 tuple(expressions),
             )
@@ -7248,11 +7257,14 @@ def _proof(
         map_witnesses: list[MeshEmbeddingWitness] = []
         checks.append("forward_reference_chain_cell_injectivity")
         injective_cells: set[int] = set()
-    else:
+    elif periodic is not None:
         map_findings, map_witnesses, injective_cells = _cell_map_findings(
             cells, binding=binding
         )
         state_findings.extend(map_findings)
+    else:
+        # The nonperiodic route decides with its boundary which cells owe a proof.
+        map_findings, map_witnesses, injective_cells = [], [], set()
     checks.append("cell_map_injectivity")
     reference_chain_used = reference_chain_ready and not state_findings
     if periodic is not None:
@@ -7408,13 +7420,27 @@ def _proof(
             degree_one_boundary,
             exterior_cells,
         ) = _boundary_findings(mesh, cells)
-        state_findings.extend(boundary)
-        checks.extend(("oriented_boundary", "exterior_degree"))
         # Positive local Jacobians, exactly cancelling interior traces and one
         # embedded closed shell make the map injective: it has degree zero
         # outside the shell, the degree changes by one across it, and each
-        # regular preimage contributes one. No interior cell pair is then owed.
-        local_premises = not state_findings and not map_findings
+        # regular preimage contributes one. No interior cell pair is then owed,
+        # and only the cells that own exterior facets owe an injectivity proof
+        # (their facets must be embedded patches); every other cell enters
+        # through its certified positive Jacobian.
+        owing: NDArray[np.bool_] | None = None
+        if not state_findings and not boundary:
+            if degree_one_boundary:
+                owing = np.zeros((len(cells),), dtype=np.bool_)
+            elif exterior_cells is not None:
+                owing = np.zeros((len(cells),), dtype=np.bool_)
+                owing[np.asarray(exterior_cells, dtype=np.intp)] = True
+        map_findings, map_witnesses, injective_cells = _cell_map_findings(
+            cells, binding=binding, owing=owing
+        )
+        state_findings.extend(map_findings)
+        state_findings.extend(boundary)
+        checks.extend(("oriented_boundary", "exterior_degree"))
+        local_premises = not state_findings
         contact_values: list[str] = []
         participants: NDArray[np.bool_] | None = None
         if local_premises and degree_one_boundary:
