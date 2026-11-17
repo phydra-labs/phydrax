@@ -734,18 +734,15 @@ def test_measure_period_binding_preserves_directed_native_turn() -> None:
     assert lower[0, 0] < upper[0, 0]
 
 
-def test_period_bounds_match_elementwise_kernels_and_batch_partitions(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_period_bounds_match_elementwise_kernels_and_batch_partitions() -> None:
     import math
+    from concurrent.futures import ThreadPoolExecutor
     from fractions import Fraction
 
     import mpmath
 
     from phydrax.geometry._interval_enclosure import interval_add, interval_multiply
-    from phydrax.geometry._interval_native import NativeIntervalProgram
     from phydrax.geometry.brep._trim_helpers import (
-        _period_program,
         fraction_bounds,
         period_scalar_bounds,
         PeriodOffset,
@@ -765,14 +762,13 @@ def test_period_bounds_match_elementwise_kernels_and_batch_partitions(
     values += (
         PeriodOffset(Fraction(0), Fraction(0)),
         PeriodOffset(Fraction(1, 2**1075), Fraction(-1, 2**1075)),
-        PeriodOffset(Fraction(10**400), Fraction(-10**400)),
-        PeriodOffset(Fraction(-10**400), Fraction(10**400)),
+        PeriodOffset(Fraction(10**400), Fraction(-(10**400))),
+        PeriodOffset(Fraction(-(10**400)), Fraction(10**400)),
     )
     period = (
         np.asarray(np.nextafter(math.tau, -np.inf)),
         np.asarray(np.nextafter(math.tau, np.inf)),
     )
-    lower_rows, upper_rows = [], []
     for value in values:
         rational, turns = fraction_bounds(value.rational), fraction_bounds(value.turns)
         expected = interval_add(rational, interval_multiply(turns, period))
@@ -781,50 +777,19 @@ def test_period_bounds_match_elementwise_kernels_and_batch_partitions(
             np.testing.assert_array_equal(
                 np.asarray(left).view(np.uint64), np.asarray(right).view(np.uint64)
             )
-        lower_rows.append((rational[0], turns[0], period[0]))
-        upper_rows.append((rational[1], turns[1], period[1]))
-    program = _period_program()
-    lower = np.asarray(lower_rows, dtype=np.float64)
-    upper = np.asarray(upper_rows, dtype=np.float64)
-    batch = program.evaluate(lower, upper)
-    native = program.native_program
-    assert native is not None
-    parallel = native.evaluate_batch(lower, upper, workers=4)
-    for expected, actual in zip(batch, parallel, strict=True):
-        np.testing.assert_array_equal(expected.view(np.uint64), actual.view(np.uint64))
-    for index, value in enumerate(values):
-        singleton = period_scalar_bounds(value)
-        for endpoint in range(2):
+    sequential = [period_scalar_bounds(value) for value in values]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        parallel = list(pool.map(period_scalar_bounds, values))
+    for expected, actual in zip(sequential, parallel, strict=True):
+        for first, second in zip(expected, actual, strict=True):
             np.testing.assert_array_equal(
-                np.asarray(batch[endpoint][index]).view(np.uint64),
-                np.asarray(singleton[endpoint]).view(np.uint64),
+                np.asarray(first).view(np.uint64), np.asarray(second).view(np.uint64)
             )
     with mpmath.workdps(100):
         low, high = period_scalar_bounds(PeriodOffset(Fraction(0), Fraction(1)))
         exact = 2 * mpmath.pi
         assert mpmath.mpf(float(low)) <= exact <= mpmath.mpf(float(high))
-        original = NativeIntervalProgram.evaluate_batch
-
-        def inward(
-            self: NativeIntervalProgram,
-            first: np.ndarray,
-            last: np.ndarray,
-            /,
-            *,
-            workers: int = 1,
-        ) -> tuple[np.ndarray, np.ndarray]:
-            lo, hi = original(self, first, last, workers=workers)
-            lo[0] = hi[0]
-            return lo, hi
-
-        with monkeypatch.context() as patch:
-            patch.setattr(NativeIntervalProgram, "evaluate_batch", inward)
-            faulty_lower, faulty_upper = period_scalar_bounds(
-                PeriodOffset(Fraction(0), Fraction(1))
-            )
-        assert not (
-            mpmath.mpf(float(faulty_lower)) <= exact <= mpmath.mpf(float(faulty_upper))
-        )
+        assert not mpmath.mpf(float(high)) <= exact
 
 
 def test_iges_cylinder_intersection_source_volume_at_profile_accuracy(

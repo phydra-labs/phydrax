@@ -23,21 +23,43 @@ Polygon: TypeAlias = tuple[Point, ...]
 
 
 def cross(first: Point, second: Point, third: Point, /) -> Fraction:
-    return (second[0] - first[0]) * (third[1] - first[1]) - (second[1] - first[1]) * (
-        third[0] - first[0]
+    denominators = tuple(
+        lcm(point[0].denominator, point[1].denominator)
+        for point in (first, second, third)
     )
+    vertices = tuple(
+        (
+            point[0].numerator * (denominator // point[0].denominator),
+            point[1].numerator * (denominator // point[1].denominator),
+        )
+        for point, denominator in zip((first, second, third), denominators, strict=True)
+    )
+    (ax, ay), (bx, by), (cx, cy) = vertices
+    da, db, dc = denominators
+    numerator = (bx * da - ax * db) * (cy * da - ay * dc) - (by * da - ay * db) * (
+        cx * da - ax * dc
+    )
+    return Fraction(numerator, da * da * db * dc)
 
 
 def signed_area2(polygon: Polygon, /) -> Fraction:
     if len(polygon) < 3:
         return Fraction(0)
-    return sum(
-        (
-            first[0] * second[1] - first[1] * second[0]
-            for first, second in zip(polygon, polygon[1:] + polygon[:1], strict=True)
-        ),
-        Fraction(0),
+    denominator = lcm(
+        *(coordinate.denominator for point in polygon for coordinate in point)
     )
+    vertices = tuple(
+        (
+            point[0].numerator * (denominator // point[0].denominator),
+            point[1].numerator * (denominator // point[1].denominator),
+        )
+        for point in polygon
+    )
+    numerator = sum(
+        first[0] * second[1] - first[1] * second[0]
+        for first, second in zip(vertices, vertices[1:] + vertices[:1], strict=True)
+    )
+    return Fraction(numerator, denominator * denominator)
 
 
 def _clean(polygon: Polygon, /) -> Polygon:
@@ -200,22 +222,57 @@ def segment_overlap(
     )
 
 
-def interiors_separated(first: Polygon, second: Polygon, /) -> bool:
-    """Whether an edge line of either convex polygon exactly separates their interiors.
+@dataclass(frozen=True, slots=True)
+class IntegerPolygon:
+    """Exact integer vertices with one positive common coordinate denominator."""
 
-    Two convex polygons have disjoint interiors exactly when a supporting line
-    of one of their edges leaves the other polygon in its closed outer half
-    plane, so this decides zero overlap area without clipping.
-    """
+    vertices: tuple[tuple[int, int], ...]
+    denominator: int
+    orientation: int
+
+
+def integer_polygon(polygon: Polygon, /) -> IntegerPolygon:
+    denominator = lcm(
+        *(coordinate.denominator for point in polygon for coordinate in point)
+    )
+    vertices = tuple(
+        (
+            point[0].numerator * (denominator // point[0].denominator),
+            point[1].numerator * (denominator // point[1].denominator),
+        )
+        for point in polygon
+    )
+    area = sum(
+        first[0] * second[1] - first[1] * second[0]
+        for first, second in zip(vertices, vertices[1:] + vertices[:1], strict=True)
+    )
+    return IntegerPolygon(vertices, denominator, (area > 0) - (area < 0))
+
+
+def integer_interiors_separated(first: IntegerPolygon, second: IntegerPolygon, /) -> bool:
+    """Prove separation using integer edge orientations and exact coordinate scales."""
     for inner, outer in ((first, second), (second, first)):
-        orientation = signed_area2(inner)
-        if orientation == 0:
+        if inner.orientation == 0:
             return True
-        for index in range(len(inner)):
-            start, end = inner[index], inner[(index + 1) % len(inner)]
-            if all(cross(start, end, point) * orientation <= 0 for point in outer):
+        for index, start in enumerate(inner.vertices):
+            end = inner.vertices[(index + 1) % len(inner.vertices)]
+            dx, dy = end[0] - start[0], end[1] - start[1]
+            if all(
+                (
+                    dx * (point[1] * inner.denominator - start[1] * outer.denominator)
+                    - dy * (point[0] * inner.denominator - start[0] * outer.denominator)
+                )
+                * inner.orientation
+                <= 0
+                for point in outer.vertices
+            ):
                 return True
     return False
+
+
+def interiors_separated(first: Polygon, second: Polygon, /) -> bool:
+    """Whether a supporting line exactly separates two convex polygon interiors."""
+    return integer_interiors_separated(integer_polygon(first), integer_polygon(second))
 
 
 type PolygonBoxes = tuple[np.ndarray, np.ndarray]

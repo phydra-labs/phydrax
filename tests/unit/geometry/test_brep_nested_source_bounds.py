@@ -133,141 +133,217 @@ def test_revolution_mapped_isoline_derivative_uses_nondegenerate_chart() -> None
     assert np.all(upper >= np.array((0.0, 1.0, 0.0), dtype=np.float64))
 
 
-def test_ruled_bounds_randomized_native_host_endpoint_parity(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    assert _patches._ruled_blend_program() is not None
+from phydrax.geometry._interval_enclosure import (
+    Interval,
+    interval_add as add,
+    interval_cos as cos,
+    interval_divide as divide,
+    interval_multiply as mul,
+    interval_sin as sin,
+    interval_subtract as sub,
+)
+from phydrax.geometry._rational import fraction_down, fraction_up
+
+
+def _point(value: object) -> tuple[np.ndarray, np.ndarray]:
+    array = np.asarray(value, dtype=np.float64)
+    return array, array
+
+
+def _fraction(value: Fraction) -> tuple[np.ndarray, np.ndarray]:
+    return (
+        np.asarray(fraction_down(value), dtype=np.float64),
+        np.asarray(fraction_up(value), dtype=np.float64),
+    )
+
+
+def _neg(value: Interval) -> tuple[np.ndarray, np.ndarray]:
+    return -np.asarray(value[1]), -np.asarray(value[0])
+
+
+def _stack_interval(
+    *values: Interval,
+) -> tuple[np.ndarray, np.ndarray]:
+    return (
+        np.stack([value[0] for value in values], axis=-1),
+        np.stack([value[1] for value in values], axis=-1),
+    )
+
+
+def _parity(actual: object, expected: object) -> None:
+    np.testing.assert_array_equal(
+        np.asarray(actual, dtype=np.float64).view(np.uint64),
+        np.asarray(expected, dtype=np.float64).view(np.uint64),
+    )
+
+
+def _blend(
+    v: Interval,
+    first: Interval,
+    second: Interval,
+) -> Interval:
+    return add(mul(sub(_point(1), v), first), mul(v, second))
+
+
+def test_ruled_bounds_randomized_endpoint_parity() -> None:
     rng = np.random.default_rng(73439)
     for _ in range(32):
         vectors = rng.integers(-8, 9, size=(4, 3))
-        vectors[1, 0] = 1
-        vectors[3, 0] = -1
-        surface = RuledSurface(
-            LineCurve(vectors[0], vectors[1]), LineCurve(vectors[2], vectors[3])
-        )
-        u = np.sort(rng.uniform(-2.0, 2.0, size=2))
-        v = np.sort(rng.uniform(0.0, 1.0, size=2))
+        vectors[1, 0], vectors[3, 0] = 1, -1
+        rails = (LineCurve(vectors[0], vectors[1]), LineCurve(vectors[2], vectors[3]))
+        surface = RuledSurface(*rails)
+        u, v = np.sort(rng.uniform(-2, 2, size=2)), np.sort(rng.uniform(0, 1, size=2))
         box = np.array(((u[0], v[0]), (u[1], v[1])), dtype=np.float64)
-        actual_box = surface.bounding_box(box)
-        actual_derivative = surface.derivative_bounds(box)
-        with monkeypatch.context() as context:
-            context.setattr(_patches, "_ruled_blend_program", lambda: None)
-            expected_box = surface.bounding_box(box)
-            expected_derivative = surface.derivative_bounds(box)
-        np.testing.assert_array_equal(
-            actual_box.view(np.uint64), expected_box.view(np.uint64)
-        )
-        for actual, expected in zip(actual_derivative, expected_derivative, strict=True):
-            np.testing.assert_array_equal(
-                actual.view(np.uint64), expected.view(np.uint64)
+        rail_boxes = [rail.bounding_box(*u) for rail in rails]
+        value = _blend((v[0], v[1]), tuple(rail_boxes[0]), tuple(rail_boxes[1]))
+        expected = np.stack(
+            (
+                np.maximum(value[0], np.minimum(rail_boxes[0][0], rail_boxes[1][0])),
+                np.minimum(value[1], np.maximum(rail_boxes[0][1], rail_boxes[1][1])),
             )
+        )
+        _parity(surface.bounding_box(box), expected)
+        along = _blend(
+            (v[0], v[1]), rails[0].derivative_bounds(*u), rails[1].derivative_bounds(*u)
+        )
+        across = sub(tuple(rail_boxes[1]), tuple(rail_boxes[0]))
+        _parity(surface.derivative_bounds(box), _stack_interval(along, across))
 
 
-def test_ruled_bounds_reject_inward_fault_by_exact_witness(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def _witness_fault(bounds: np.ndarray, index: tuple[int, ...], exact: Fraction) -> None:
+    lower = Fraction.from_float(float(bounds[(0, *index)]))
+    upper = Fraction.from_float(float(bounds[(1, *index)]))
+    assert lower <= exact <= upper
+    faulty = bounds.copy()
+    faulty[(1, *index)] = fraction_down(exact) - 1.0
+    assert not (
+        Fraction.from_float(float(faulty[(0, *index)]))
+        <= exact
+        <= Fraction.from_float(float(faulty[(1, *index)]))
+    )
+    with pytest.raises(AssertionError):
+        _parity(faulty, bounds)
+
+
+def test_ruled_bounds_reject_inward_fault_by_exact_witness() -> None:
     surface = RuledSurface(
-        LineCurve((0, 0, 0), (1, 0, 0)),
-        LineCurve((0, 1, 0), (2, 0, 0)),
+        LineCurve((0, 0, 0), (1, 0, 0)), LineCurve((0, 1, 0), (2, 0, 0))
     )
     box = np.array(((0.0, 0.25), (1.0, 0.75)), dtype=np.float64)
-
-    def contains_witness() -> tuple[bool, bool]:
-        bounds = surface.bounding_box(box)
-        lower, upper = surface.derivative_bounds(box)
-        # At (u, v) = (1, 3/4), x = 7/4 and dx/du = 7/4.
-        exact = Fraction(7, 4)
-        return (
-            Fraction.from_float(bounds[0, 0])
-            <= exact
-            <= Fraction.from_float(bounds[1, 0]),
-            Fraction.from_float(lower[0, 0]) <= exact <= Fraction.from_float(upper[0, 0]),
-        )
-
-    assert contains_witness() == (True, True)
-    original = _patches._ruled_blend
-
-    def inward(
-        v: _patches.Interval, first: _patches.Interval, second: _patches.Interval, /
-    ) -> _patches.Interval:
-        lower, upper = original(v, first, second)
-        upper_array = np.array(upper, dtype=np.float64, copy=True).reshape(3)
-        upper_array[0] = 0.0
-        return lower, upper_array
-
-    monkeypatch.setattr(_patches, "_ruled_blend", inward)
-    assert contains_witness() == (False, False)
+    _witness_fault(surface.bounding_box(box), (0,), Fraction(7, 4))
+    _witness_fault(np.asarray(surface.derivative_bounds(box)), (0, 0), Fraction(7, 4))
 
 
-def test_circle_derivative_randomized_native_host_endpoint_parity(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    assert _patches._circle_derivative_program(3) is not None
+def _circle_derivative(first: float, last: float) -> tuple[np.ndarray, np.ndarray]:
+    angle = (np.asarray(first, dtype=np.float64), np.asarray(last, dtype=np.float64))
+    negative = (_fraction(Fraction(-1, 3)), _point(0), _point(0))
+    positive = (_point(0), _fraction(Fraction(1, 3)), _point(0))
+    components = [
+        add(mul(a, sin(angle)), mul(b, cos(angle)))
+        for a, b in zip(negative, positive, strict=True)
+    ]
+    return _stack_interval(*components)
+
+
+def test_circle_derivative_randomized_endpoint_parity() -> None:
     circle = CircleCurve(
-        (0, 0, 0),
-        (1, 0, 0),
-        (0, 1, 0),
-        1.0 / 3.0,
-        radius_exact=Fraction(1, 3),
+        (0, 0, 0), (1, 0, 0), (0, 1, 0), 1.0 / 3.0, radius_exact=Fraction(1, 3)
     )
     rng = np.random.default_rng(4821)
     for _ in range(64):
-        samples = rng.uniform(-8.0, 8.0, size=2)
+        samples = rng.uniform(-8, 8, size=2)
         first, last = sorted((float(samples[0]), float(samples[1])))
-        actual = circle.derivative_bounds(first, last)
-        with monkeypatch.context() as context:
-            context.setattr(
-                _patches, "_circle_derivative_program", lambda dimension: None
-            )
-            expected = circle.derivative_bounds(first, last)
-        for value, reference in zip(actual, expected, strict=True):
-            np.testing.assert_array_equal(
-                value.view(np.uint64), reference.view(np.uint64)
-            )
+        _parity(circle.derivative_bounds(first, last), _circle_derivative(first, last))
+    reference = np.asarray(_circle_derivative(0.0, 0.0))
+    _parity(circle.derivative_bounds(0.0, 0.0), reference)
+    _witness_fault(reference, (1,), Fraction(1, 3))
 
 
-def test_circle_derivative_exact_witness_detects_inward_fault(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    circle = CircleCurve(
-        (0, 0, 0),
-        (1, 0, 0),
-        (0, 1, 0),
-        1.0 / 3.0,
-        radius_exact=Fraction(1, 3),
-    )
-    program = _patches._circle_derivative_program(3)
-    assert program is not None
-
-    def contains_witness() -> bool:
-        lower, upper = circle.derivative_bounds(0.0, 0.0)
-        return (
-            Fraction.from_float(lower[1])
-            <= Fraction(1, 3)
-            <= Fraction.from_float(upper[1])
+def _cross(axis: tuple, vector: tuple) -> tuple:
+    return tuple(
+        sub(
+            mul(axis[(i + 1) % 3], vector[(i + 2) % 3]),
+            mul(axis[(i + 2) % 3], vector[(i + 1) % 3]),
         )
-
-    assert contains_witness()
-
-    class InwardProgram:
-        def evaluate(
-            self, lower: NDArray[np.float64], upper: NDArray[np.float64], /
-        ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-            result_lower, result_upper = program.evaluate(lower, upper)
-            result_upper[0, 1] = 0.0
-            return result_lower, result_upper
-
-    monkeypatch.setattr(
-        _patches, "_circle_derivative_program", lambda dimension: InwardProgram()
+        for i in range(3)
     )
-    assert not contains_witness()
+
+
+def _revolution_reference(box: np.ndarray, circle: bool) -> tuple[np.ndarray, tuple]:
+    axis = tuple(_point(x) for x in (0, 0, 1))
+    origin = tuple(_point(0) for _ in range(3))
+    angle = (box[0, 0], box[1, 0])
+    c, s = cos(angle), sin(angle)
+    if circle:
+        pc, ps = cos((box[0, 1], box[1, 1])), sin((box[0, 1], box[1, 1]))
+        center = tuple(_point(x) for x in (1, 0, 0))
+        a = (_fraction(Fraction(1, 3)), _point(0), _point(0))
+        b = (_point(0), _point(0), _fraction(Fraction(1, 3)))
+        na = (_fraction(Fraction(-1, 3)), _point(0), _point(0))
+        relative = tuple(
+            add(add(center[i], mul(a[i], pc)), mul(b[i], ps)) for i in range(3)
+        )
+        tangent = tuple(add(mul(na[i], ps), mul(b[i], pc)) for i in range(3))
+
+        def dot(vector: tuple) -> tuple:
+            result = _point(0)
+            for i in range(3):
+                result = add(result, mul(axis[i], vector[i]))
+            return result
+
+        axial, axial_tangent = dot(relative), dot(tangent)
+        cross, cross_tangent = _cross(axis, relative), _cross(axis, tangent)
+        one_minus_c = sub(_point(1), c)
+        position = tuple(
+            add(
+                origin[i],
+                add(
+                    add(mul(relative[i], c), mul(cross[i], s)),
+                    mul(mul(axis[i], axial), one_minus_c),
+                ),
+            )
+            for i in range(3)
+        )
+        along = tuple(
+            add(
+                add(mul(relative[i], _neg(s)), mul(cross[i], c)),
+                mul(mul(axis[i], axial), s),
+            )
+            for i in range(3)
+        )
+        profile = tuple(
+            add(
+                add(mul(tangent[i], c), mul(cross_tangent[i], s)),
+                mul(mul(axis[i], axial_tangent), one_minus_c),
+            )
+            for i in range(3)
+        )
+    else:
+        radial = tuple(_point(x) for x in (1, 0, 0))
+        tangent = tuple(_point(0) for _ in range(3))
+        axial = (np.asarray(box[0, 1]), np.asarray(box[1, 1]))
+        cross, cross_tangent = _cross(axis, radial), _cross(axis, tangent)
+        position = tuple(
+            add(
+                origin[i],
+                add(add(mul(axis[i], axial), mul(radial[i], c)), mul(cross[i], s)),
+            )
+            for i in range(3)
+        )
+        along = tuple(add(mul(radial[i], _neg(s)), mul(cross[i], c)) for i in range(3))
+        profile = tuple(
+            add(
+                add(mul(axis[i], _point(1)), mul(tangent[i], c)), mul(cross_tangent[i], s)
+            )
+            for i in range(3)
+        )
+    value = _stack_interval(*position)
+    derivative = _stack_interval(_stack_interval(*along), _stack_interval(*profile))
+    return np.asarray(value), derivative
 
 
 @pytest.mark.parametrize("circle_profile", (False, True))
-def test_revolution_randomized_native_host_endpoint_parity(
-    circle_profile: bool,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_revolution_randomized_endpoint_parity(circle_profile: bool) -> None:
     profile = (
         CircleCurve(
             (1, 0, 0), (1, 0, 0), (0, 0, 1), 1.0 / 3.0, radius_exact=Fraction(1, 3)
@@ -276,80 +352,31 @@ def test_revolution_randomized_native_host_endpoint_parity(
         else LineCurve((1, 0, 0), (0, 0, 1))
     )
     surface = RevolutionSurface(profile, (0, 0, 0), (0, 0, 1))
-    name = "_revolution_circle_program" if circle_profile else "_revolution_line_program"
-    program = getattr(_patches, name)
-    assert program(False) is not None and program(True) is not None
     rng = np.random.default_rng(963)
     for _ in range(32):
-        lower = rng.uniform(-1.0, 1.0, size=2)
-        upper = lower + rng.uniform(0.01, 1.0, size=2)
-        box = np.stack((lower, upper))
-        actual_box = surface.bounding_box(box)
-        actual_derivative = surface.derivative_bounds(box)
-        with monkeypatch.context() as context:
-            context.setattr(_patches, name, lambda derivative: None)
-            expected_box = surface.bounding_box(box)
-            expected_derivative = surface.derivative_bounds(box)
-        np.testing.assert_array_equal(
-            actual_box.view(np.uint64), expected_box.view(np.uint64)
-        )
-        for actual, expected in zip(actual_derivative, expected_derivative, strict=True):
-            np.testing.assert_array_equal(
-                actual.view(np.uint64), expected.view(np.uint64)
-            )
+        lower = rng.uniform(-1, 1, size=2)
+        box = np.stack((lower, lower + rng.uniform(0.01, 1, size=2)))
+        value, derivative = _revolution_reference(box, circle_profile)
+        _parity(surface.bounding_box(box), value)
+        _parity(surface.derivative_bounds(box), derivative)
+    box = np.array(((0.0, 0.0), (0.25, 0.25)), dtype=np.float64)
+    exact = Fraction(4, 3) if circle_profile else Fraction(1)
+    value, derivative = _revolution_reference(box, circle_profile)
+    _parity(surface.bounding_box(box), value)
+    _parity(surface.derivative_bounds(box), derivative)
+    _witness_fault(value, (0,), exact)
+    _witness_fault(np.asarray(derivative), (1, 0), exact)
 
 
-@pytest.mark.parametrize("circle_profile", (False, True))
-def test_revolution_inward_fault_breaks_exact_witness(
-    circle_profile: bool,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    profile = (
-        CircleCurve((1, 0, 0), (1, 0, 0), (0, 0, 1), 1.0)
-        if circle_profile
-        else LineCurve((1, 0, 0), (0, 0, 1))
-    )
+def test_revolution_unsupported_ellipse_derivative() -> None:
+    profile = EllipseCurve((1, 0, 0), (1, 0, 0), (0, 0, 1), 1, 2)
     surface = RevolutionSurface(profile, (0, 0, 0), (0, 0, 1))
-    box = np.zeros((2, 2), dtype=np.float64)
-    expected = Fraction(2 if circle_profile else 1)
-    name = "_revolution_circle_program" if circle_profile else "_revolution_line_program"
-    prepare = getattr(_patches, name)
-
-    def witnesses() -> tuple[bool, bool]:
-        bounds = surface.bounding_box(box)
-        lower, upper = surface.derivative_bounds(box)
-        return (
-            Fraction.from_float(bounds[0, 0])
-            <= expected
-            <= Fraction.from_float(bounds[1, 0]),
-            Fraction.from_float(lower[1, 0])
-            <= expected
-            <= Fraction.from_float(upper[1, 0]),
-        )
-
-    assert witnesses() == (True, True)
-
-    class InwardProgram:
-        def __init__(self, derivative: bool) -> None:
-            self.derivative = derivative
-
-        def evaluate(
-            self, lower: NDArray[np.float64], upper: NDArray[np.float64], /
-        ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-            program = prepare(self.derivative)
-            assert program is not None
-            result_lower, result_upper = program.evaluate(lower, upper)
-            if self.derivative:
-                result_upper[0, 1, 0] = 0.0
-            else:
-                result_upper[0, 0] = 0.0
-            return result_lower, result_upper
-
-    monkeypatch.setattr(_patches, name, lambda derivative: InwardProgram(derivative))
-    assert witnesses() == (False, False)
+    box = np.array(((0.0, 0.0), (0.25, 0.25)), dtype=np.float64)
+    with pytest.raises(NotImplementedError, match="line profile"):
+        surface.derivative_bounds(box)
 
 
-def _rooted_cylinder_ruled_surface() -> RuledSurface:
+def _rooted_cylinder_ruled_surface() -> tuple[RuledSurface, ConicRootLinePCurve]:
     conic = CircleCurve((0, 0, 0), (1, 0, 0), (0, 1, 0), 1)
     root = ConicParameterRoot(conic, Fraction(3, 5), Fraction(4, 5))
     first = CylinderPatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1)
@@ -357,218 +384,142 @@ def _rooted_cylinder_ruled_surface() -> RuledSurface:
     pcurve = ConicRootLinePCurve(root, Fraction(1, 3), Fraction(2, 3))
     return RuledSurface(
         SurfaceMappedCurve(first, pcurve), SurfaceMappedCurve(second, pcurve)
+    ), pcurve
+
+
+def test_rooted_cylinder_ruled_derivative_randomized_endpoint_parity() -> None:
+    surface, pcurve = _rooted_cylinder_ruled_surface()
+    rng = np.random.default_rng(75841)
+    for _ in range(32):
+        box = np.stack((rng.uniform(0.05, 0.4, size=2), rng.uniform(0.6, 0.95, size=2)))
+        chart = pcurve.bounding_box(box[0, 0], box[1, 0])
+        c, s = cos((chart[0, 0], chart[1, 0])), sin((chart[0, 0], chart[1, 0]))
+        height = (chart[0, 1], chart[1, 1])
+        rails = []
+        for x in (0, 2):
+            coords = []
+            for origin, ca, sa, axis in zip(
+                (x, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), strict=True
+            ):
+                radial = add(mul(_point(ca), c), mul(_point(sa), s))
+                coords.append(add(add(_point(origin), radial), mul(_point(axis), height)))
+            rails.append(_stack_interval(*coords))
+        v = (box[0, 1], box[1, 1])
+        velocity = (_point(0), _point(0), _fraction(Fraction(2, 3)))
+        along = _stack_interval(*(_blend(v, item, item) for item in velocity))
+        across = sub(rails[1], rails[0])
+        _parity(surface.derivative_bounds(box), _stack_interval(along, across))
+    _witness_fault(
+        np.asarray(
+            surface.derivative_bounds(
+                np.array(((0.25, 0.25), (0.75, 0.75)), dtype=np.float64)
+            )
+        ),
+        (0, 1),
+        Fraction(2),
     )
 
 
-def test_rooted_cylinder_ruled_derivative_randomized_native_host_parity(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    assert _patches._cylinder_rail_program() is not None
-    surface = _rooted_cylinder_ruled_surface()
-    rng = np.random.default_rng(75841)
-    for _ in range(32):
-        lower = rng.uniform(0.05, 0.4, size=2)
-        upper = rng.uniform(0.6, 0.95, size=2)
-        box = np.stack((lower, upper))
-        actual = surface.derivative_bounds(box)
-        with monkeypatch.context() as context:
-            context.setattr(_patches, "_cylinder_rail_program", lambda: None)
-            expected = surface.derivative_bounds(box)
-        for value, reference in zip(actual, expected, strict=True):
-            np.testing.assert_array_equal(
-                value.view(np.uint64), reference.view(np.uint64)
-            )
-
-
-def test_rooted_cylinder_ruled_derivative_detects_inward_fault(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    surface = _rooted_cylinder_ruled_surface()
-    box = np.asarray(((0.25, 0.25), (0.75, 0.75)), dtype=np.float64)
-    program = _patches._cylinder_rail_program()
-    assert program is not None
-
-    def contains_witness() -> bool:
-        lower, upper = surface.derivative_bounds(box)
-        return Fraction.from_float(lower[0, 1]) <= 2 <= Fraction.from_float(upper[0, 1])
-
-    assert contains_witness()
-
-    class InwardProgram:
-        def evaluate(
-            self, lower: NDArray[np.float64], upper: NDArray[np.float64], /
-        ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-            result_lower, result_upper = program.evaluate(lower, upper)
-            result_lower[0, 0] = 100.0
-            return result_lower, result_upper
-
-    monkeypatch.setattr(_patches, "_cylinder_rail_program", lambda: InwardProgram())
-    assert not contains_witness()
-
-
 @pytest.mark.parametrize("ellipse", (False, True))
-def test_conic_bounds_randomized_native_host_and_batch_parity(
-    ellipse: bool,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_conic_bounds_randomized_endpoint_parity(ellipse: bool) -> None:
     curve = (
         EllipseCurve(
             (0, 0, 0),
             (1, 0, 0),
             (0, 1, 0),
-            1.0 / 3.0,
-            2.0 / 3.0,
+            1 / 3,
+            2 / 3,
             first_radius_exact=Fraction(1, 3),
             second_radius_exact=Fraction(2, 3),
         )
         if ellipse
         else CircleCurve(
-            (0, 0, 0),
-            (1, 0, 0),
-            (0, 1, 0),
-            1.0 / 3.0,
-            radius_exact=Fraction(1, 3),
+            (0, 0, 0), (1, 0, 0), (0, 1, 0), 1 / 3, radius_exact=Fraction(1, 3)
         )
     )
-    program = _patches._conic_trig_program()
-    assert program is not None
     rng = np.random.default_rng(98413)
-    starts = rng.uniform(-8.0, 8.0, size=48)
-    ends = starts + rng.uniform(0.0, 5.0, size=48)
-    boxes = [
-        (float(first), float(last)) for first, last in zip(starts, ends, strict=True)
-    ]
-    single = [curve.bounding_box(first, last) for first, last in boxes]
-    with monkeypatch.context() as context:
-        context.setattr(_patches, "_conic_trig_program", lambda: None)
-        reference = [curve.bounding_box(first, last) for first, last in boxes]
-    for value, expected in zip(single, reference, strict=True):
-        np.testing.assert_array_equal(value.view(np.uint64), expected.view(np.uint64))
-
-    lower, upper = program.evaluate(starts[:, None], ends[:, None])
-    rows = {box: index for index, box in enumerate(boxes)}
-
-    class BatchedProgram:
-        def evaluate(
-            self, first: NDArray[np.float64], last: NDArray[np.float64], /
-        ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-            index = rows[(float(first[0, 0]), float(last[0, 0]))]
-            return lower[index : index + 1], upper[index : index + 1]
-
-    with monkeypatch.context() as context:
-        context.setattr(_patches, "_conic_trig_program", lambda: BatchedProgram())
-        batched = [curve.bounding_box(first, last) for first, last in boxes]
-    for value, expected in zip(batched, single, strict=True):
-        np.testing.assert_array_equal(value.view(np.uint64), expected.view(np.uint64))
+    for _ in range(48):
+        first = float(rng.uniform(-8, 8))
+        last = first + float(rng.uniform(0, 5))
+        angle = (np.asarray(first, dtype=np.float64), np.asarray(last, dtype=np.float64))
+        c, s = cos(angle), sin(angle)
+        radii = (Fraction(1, 3), Fraction(2 if ellipse else 1, 3))
+        expected = np.array(
+            [
+                [
+                    fraction_down(radii[0] * Fraction.from_float(float(c[0]))),
+                    fraction_down(radii[1] * Fraction.from_float(float(s[0]))),
+                    0,
+                ],
+                [
+                    fraction_up(radii[0] * Fraction.from_float(float(c[1]))),
+                    fraction_up(radii[1] * Fraction.from_float(float(s[1]))),
+                    0,
+                ],
+            ],
+            dtype=np.float64,
+        )
+        _parity(curve.bounding_box(first, last), expected)
+    _witness_fault(curve.bounding_box(0.0, 0.0), (0,), Fraction(1, 3))
 
 
-@pytest.mark.parametrize("ellipse", (False, True))
-def test_conic_bounds_trig_inward_fault_breaks_exact_witness(
-    ellipse: bool,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    curve = (
-        EllipseCurve((0, 0, 0), (1, 0, 0), (0, 1, 0), 1, 2)
-        if ellipse
-        else CircleCurve((0, 0, 0), (1, 0, 0), (0, 1, 0), 1)
-    )
-    program = _patches._conic_trig_program()
-    assert program is not None
-
-    def contains_witness() -> bool:
-        box = curve.bounding_box(0.0, 0.0)
-        return Fraction.from_float(box[0, 0]) <= 1 <= Fraction.from_float(box[1, 0])
-
-    assert contains_witness()
-
-    class InwardProgram:
-        def evaluate(
-            self, lower: NDArray[np.float64], upper: NDArray[np.float64], /
-        ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-            result_lower, result_upper = program.evaluate(lower, upper)
-            result_lower[0, 0] = 0.0
-            result_upper[0, 0] = 0.0
-            return result_lower, result_upper
-
-    monkeypatch.setattr(_patches, "_conic_trig_program", lambda: InwardProgram())
-    assert not contains_witness()
-
-
-def _analytic_surface(
-    kind: _patches._AnalyticSurfaceKind,
-) -> _patches.AbstractSurfacePatch:
-    origin = (0, 0, 0)
-    first = (1, 0, 0)
-    second = (0, 1, 0)
-    axis = (0, 0, 1)
+def _analytic_surface(kind: str) -> _patches.AbstractSurfacePatch:
+    origin, first, second, axis = (0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)
     if kind == "cylinder":
         return CylinderPatch(
-            origin, first, second, axis, 1.0 / 3.0, radius_exact=Fraction(1, 3)
+            origin, first, second, axis, 1 / 3, radius_exact=Fraction(1, 3)
         )
     if kind == "cone":
-        return _patches.ConePatch(origin, first, second, axis, 1.0 / 3.0, 0.25)
+        return _patches.ConePatch(origin, first, second, axis, 1 / 3, 0.25)
     if kind == "sphere":
-        return _patches.SpherePatch(origin, first, second, axis, 1.0 / 3.0)
+        return _patches.SpherePatch(origin, first, second, axis, 1 / 3)
     return _patches.TorusPatch(
-        origin, first, second, axis, 2, 1.0 / 3.0, minor_radius_exact=Fraction(1, 3)
+        origin, first, second, axis, 2, 1 / 3, minor_radius_exact=Fraction(1, 3)
     )
 
 
+def _analytic_reference(kind: str, box: np.ndarray) -> tuple:
+    first, second, axis = _point((1, 0, 0)), _point((0, 1, 0)), _point((0, 0, 1))
+    su, cu = sin((box[0, 0], box[1, 0])), cos((box[0, 0], box[1, 0]))
+    radius = _fraction(Fraction(1, 3)) if kind in ("cylinder", "torus") else _point(1 / 3)
+    if kind == "cylinder":
+        du = add(mul(mul(_neg(radius), su), first), mul(mul(radius, cu), second))
+        return _stack_interval(du, axis)
+    radial = add(mul(cu, first), mul(su, second))
+    tangent = add(mul(_neg(su), first), mul(cu, second))
+    if kind == "cone":
+        angle = _point(0.25)
+        tan = divide(sin(angle), cos(angle))
+        du = mul(add(radius, mul((box[0, 1], box[1, 1]), tan)), tangent)
+        dv = add(axis, mul(tan, radial))
+    else:
+        sv, cv = sin((box[0, 1], box[1, 1])), cos((box[0, 1], box[1, 1]))
+        tv = add(mul(_neg(sv), radial), mul(cv, axis))
+        du = (
+            mul(radius, mul(cv, tangent))
+            if kind == "sphere"
+            else mul(add(_point(2), mul(radius, cv)), tangent)
+        )
+        dv = mul(radius, tv)
+    return _stack_interval(du, dv)
+
+
 @pytest.mark.parametrize("kind", ("cylinder", "cone", "sphere", "torus"))
-def test_analytic_surface_derivative_randomized_host_parity(
-    kind: _patches._AnalyticSurfaceKind,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_analytic_surface_derivative_randomized_endpoint_parity(kind: str) -> None:
     surface = _analytic_surface(kind)
-    assert _patches._analytic_surface_program(kind) is not None
     rng = np.random.default_rng(92741)
     for _ in range(48):
-        lower = rng.uniform(-1.0, 0.0, size=2)
-        upper = lower + rng.uniform(0.01, 1.0, size=2)
-        box = np.stack((lower, upper))
-        actual = surface.derivative_bounds(box)
-        with monkeypatch.context() as context:
-            context.setattr(_patches, "_analytic_surface_program", lambda selected: None)
-            expected = surface.derivative_bounds(box)
-        for value, reference in zip(actual, expected, strict=True):
-            np.testing.assert_array_equal(
-                value.view(np.uint64), reference.view(np.uint64)
-            )
-
-
-@pytest.mark.parametrize("kind", ("cylinder", "cone", "sphere", "torus"))
-def test_analytic_surface_derivative_inward_fault_breaks_exact_witness(
-    kind: _patches._AnalyticSurfaceKind,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    surface = _analytic_surface(kind)
-    program = _patches._analytic_surface_program(kind)
-    assert program is not None
-    box = np.asarray(((-0.25, -0.25), (0.25, 0.25)), dtype=np.float64)
-    if kind == "torus":
-        exact = Fraction(7, 3)
-    elif kind == "cylinder":
-        exact = Fraction(1, 3)
-    else:
-        exact = Fraction.from_float(1.0 / 3.0)
-
-    def contains_witness() -> bool:
-        lower, upper = surface.derivative_bounds(box)
-        return (
-            Fraction.from_float(lower[1, 0]) <= exact <= Fraction.from_float(upper[1, 0])
-        )
-
-    assert contains_witness()
-
-    class InwardProgram:
-        def evaluate(
-            self, lower: NDArray[np.float64], upper: NDArray[np.float64], /
-        ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-            result_lower, result_upper = program.evaluate(lower, upper)
-            result_upper[0, 1, 0] = 0.0
-            return result_lower, result_upper
-
-    monkeypatch.setattr(
-        _patches, "_analytic_surface_program", lambda selected: InwardProgram()
+        lower = rng.uniform(-1, 0, size=2)
+        box = np.stack((lower, lower + rng.uniform(0.01, 1, size=2)))
+        _parity(surface.derivative_bounds(box), _analytic_reference(kind, box))
+    box = np.array(((-0.25, -0.25), (0.25, 0.25)), dtype=np.float64)
+    exact = (
+        Fraction(7, 3)
+        if kind == "torus"
+        else Fraction(1, 3)
+        if kind == "cylinder"
+        else Fraction.from_float(1 / 3)
     )
-    assert not contains_witness()
+    reference = np.asarray(_analytic_reference(kind, box))
+    _parity(surface.derivative_bounds(box), reference)
+    _witness_fault(reference, (1, 0), exact)

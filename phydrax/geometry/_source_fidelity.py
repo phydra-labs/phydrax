@@ -62,7 +62,8 @@ from ._meshing_domain import MeshingDomain, SourcePreparation
 from ._planar_primitives import (
     area2 as _polygon_area2,
     box_overlap_pairs,
-    interiors_separated,
+    integer_interiors_separated,
+    integer_polygon,
     intersection as _polygon_intersection,
     polygon_boxes,
     signed_area2 as _polygon_signed_area2,
@@ -216,12 +217,6 @@ def _area2(polygon: tuple[Point2, ...], /) -> Fraction:
     return _polygon_signed_area2(polygon) / 2
 
 
-def _intersection_area(first: Triangle2, second: Triangle2, /) -> Fraction:
-    if interiors_separated(first, second):
-        return Fraction(0)
-    return _polygon_area2(_polygon_intersection(first, second)) / 2
-
-
 def _screened_intersection_areas(
     first: tuple[Triangle2, ...],
     second: tuple[Triangle2, ...],
@@ -246,6 +241,14 @@ def _screened_intersection_areas(
         self_pairs=self_pairs,
     )
     decisions = triangle_pair_separation(first, second, pairs)
+    first_integers = tuple(map(integer_polygon, first)) if np.any(decisions < 0) else ()
+    second_integers = (
+        first_integers
+        if first is second
+        else tuple(map(integer_polygon, second))
+        if first_integers
+        else ()
+    )
     for (left, right), decision in zip(pairs.tolist(), decisions.tolist(), strict=True):
         if decision == 1:
             yield left, right, Fraction(0)
@@ -255,8 +258,14 @@ def _screened_intersection_areas(
                 right,
                 _polygon_area2(_polygon_intersection(first[left], second[right])) / 2,
             )
+        elif integer_interiors_separated(first_integers[left], second_integers[right]):
+            yield left, right, Fraction(0)
         else:
-            yield left, right, _intersection_area(first[left], second[right])
+            yield (
+                left,
+                right,
+                _polygon_area2(_polygon_intersection(first[left], second[right])) / 2,
+            )
 
 
 # Below this many pieces the fixed binary64 screen setup costs more than the
@@ -275,9 +284,20 @@ def _partition_intersection_areas(
     if len(first) >= _SCREENED_PARTITION_MIN_PIECES:
         yield from _screened_intersection_areas(first, second, self_pairs=self_pairs)
         return
+    first_integers = tuple(map(integer_polygon, first))
+    second_integers = (
+        first_integers if first is second else tuple(map(integer_polygon, second))
+    )
     for left, triangle in enumerate(first):
         for right in range(left + 1 if self_pairs else 0, len(second)):
-            yield left, right, _intersection_area(triangle, second[right])
+            if integer_interiors_separated(first_integers[left], second_integers[right]):
+                yield left, right, Fraction(0)
+            else:
+                yield (
+                    left,
+                    right,
+                    _polygon_area2(_polygon_intersection(triangle, second[right])) / 2,
+                )
 
 
 def _same_triangle_chain_boundary(
