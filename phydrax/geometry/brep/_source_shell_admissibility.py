@@ -11,7 +11,6 @@ proved independently.
 
 from __future__ import annotations
 
-import weakref
 from dataclasses import dataclass
 from fractions import Fraction
 from typing import TYPE_CHECKING, TypeGuard
@@ -19,6 +18,7 @@ from typing import TYPE_CHECKING, TypeGuard
 import numpy as np
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._live_proofs import live_content_fingerprint, LiveProofLedger
 from .._mesh_certificates import _same_tree_content
 from ._boolean_coincidence import prove_surface_correspondence
 from ._boolean_core import boolean_face_chart_box
@@ -1568,9 +1568,8 @@ def _reference_patch_partition(
     }
 
 
-# One proof per live source chart bank and tolerance: the proof is pure in the
-# immutable charts, and every call still verifies their current identity.
-_SHELL_RECORDS: dict[tuple[int, str], SourceShellAdmissibility | None] = {}
+# One proof per live, unchanged source chart bank and tolerance.
+_PROVEN_SHELLS: LiveProofLedger[SourceShellAdmissibility] = LiveProofLedger()
 
 
 def certify_single_source_shell(
@@ -1590,17 +1589,16 @@ def certify_single_source_shell(
         or tolerance < 0
     ):
         return None
-    key = id(charts), float(tolerance).hex()
-    if key not in _SHELL_RECORDS:
-        record = _prove_single_source_shell(charts, tolerance)
-        _SHELL_RECORDS[key] = record
-        weakref.finalize(charts, _SHELL_RECORDS.pop, key, None)
-        return record
-    try:
-        charts.require_current()
-    except (TypeError, ValueError):
-        return None
-    return _SHELL_RECORDS[key]
+    operands = (charts,)
+    parameters = (float(tolerance),)
+    proven = _PROVEN_SHELLS.find(operands, parameters=parameters)
+    if proven is not None:
+        return proven
+    fingerprint = live_content_fingerprint(operands)
+    admissibility = _prove_single_source_shell(charts, tolerance)
+    if admissibility is not None:
+        _PROVEN_SHELLS.record(operands, fingerprint, admissibility, parameters=parameters)
+    return admissibility
 
 
 def _prove_single_source_shell(
