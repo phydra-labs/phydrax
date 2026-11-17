@@ -92,6 +92,7 @@ set(PHX_MC_HEADERS
   src/reference_tetrahedron_clip.inc
   src/filtered.hpp
   src/floating_point_mode.hpp
+  src/interval_arithmetic.hpp
   src/geometry3.hpp
   src/intersections.hpp
   src/mesh.hpp

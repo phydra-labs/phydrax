@@ -924,6 +924,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (_P, _I64, _P, _I64, _P, _I64, _P, _P, _I64),
     ),
+    "phx_mc_interval_program_batch": (
+        _I32,
+        (_P, _I64, _P, _I64, _P, _I64, _P, _P, _I64, _I64, _I32),
+    ),
     "phx_mc_interval_program_branches": (
         _I32,
         (_P, _I64, _P, _I64, _P, _I64, _P, _P, _I64, _P, _I64, _I64, _P, _P),
