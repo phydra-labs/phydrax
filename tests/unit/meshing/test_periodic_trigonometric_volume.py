@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from fractions import Fraction
 from functools import cache
 from itertools import permutations
 
@@ -152,6 +153,10 @@ def test_periodic_network_mesh_certifies_and_closes_through_paired_cell_faces(
     family: _G.TrigonometricFamily, diameter: float
 ) -> None:
     volume = _volume(family, diameter)
+    # Identity lattice: the certified Frobenius stretch is at least sqrt(3).
+    assert Fraction(volume.vertex_root_distance) ** 2 >= 3 * Fraction(
+        volume.root_error
+    ) ** 2
     surface = volume.surface
     assert surface.topology is not None
 

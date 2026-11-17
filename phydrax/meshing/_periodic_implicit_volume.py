@@ -31,6 +31,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._cell_mesh import CellBlock, CellMesh
 from ..discretization._periodic_topology import PeriodicMeshTopology
+from ..geometry._rational import binary64_norm_upper
 from ..geometry.implicit._periodic_discovery import (
     lift_reduced_points,
     PeriodicImplicitSurface,
@@ -169,7 +170,7 @@ class PeriodicImplicitVolume(StrictModule, NonTrainableState):
         """Cartesian bound on every contour vertex's distance from a field root."""
         # A reduced displacement d moves a point by d @ vectors in space.
         vectors = np.asarray(self.surface.cell.vectors, dtype=np.float64)
-        stretch = float(np.linalg.norm(vectors, ord=2))
+        stretch = float(binary64_norm_upper(vectors.reshape(-1)))
         return float(np.nextafter(stretch * self.root_error, np.inf))
 
 
