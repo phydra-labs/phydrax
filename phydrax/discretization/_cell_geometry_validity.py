@@ -111,7 +111,9 @@ from ._coordinate_enclosure import (
     normalize_pyramid_reference_expression,
     Polynomial,
     polynomial_bounds,
+    PreparedSimplexPolynomial,
     RationalPolynomial,
+    restricted_polynomial_bounds,
     RestrictedCoordinateMapPreparation,
     scale,
     subtract,
@@ -1615,6 +1617,24 @@ def _certify_exact_polynomial_cell(
             else CellValidityStatus.CERTIFIED_VALID
         )
         return status, lower, upper, 0
+    prepared = None
+    if domain == "simplex" and dimension <= 3 and threshold > 0.0:
+        prepared = PreparedSimplexPolynomial(determinant, dimension)
+        corners = (
+            tuple(Fraction(0) for _ in range(dimension)),
+            *(
+                tuple(Fraction(int(axis == vertex)) for axis in range(dimension))
+                for vertex in range(dimension)
+            ),
+        )
+        interval_lower, interval_upper = restricted_polynomial_bounds(prepared, corners)
+        if interval_lower > threshold:
+            return (
+                CellValidityStatus.CERTIFIED_VALID,
+                interval_lower,
+                interval_upper,
+                0,
+            )
     subdivision = _reference_subdivision(domain, dimension)
     root_controls = bernstein_coefficients(determinant, domain, dimension)
     root_lower, root_upper = _bernstein_enclosure(root_controls)
@@ -1653,6 +1673,22 @@ def _certify_exact_polynomial_cell(
             tuple(float(value) for value in point) for point in parent_points
         }
         for child_origin, child_matrix in zip(child_origins, child_matrices, strict=True):
+            child_global_origin, child_global_matrix = _exact_child_affine(
+                origin, matrix, child_origin, child_matrix
+            )
+            child_points = tuple(
+                _exact_affine_image(child_global_origin, child_global_matrix, point)
+                for point in vertices
+            )
+            if prepared is not None:
+                child_lower, child_upper = restricted_polynomial_bounds(
+                    prepared, child_points
+                )
+                if child_lower > threshold:
+                    maximum_depth = max(maximum_depth, level + 1)
+                    lower = min(lower, child_lower)
+                    upper = max(upper, child_upper)
+                    continue
             child_polynomial = compose(
                 piece,
                 _exact_affine_arguments(child_origin, child_matrix),
@@ -1676,13 +1712,6 @@ def _certify_exact_polynomial_cell(
                 upper = max(upper, child_upper)
                 continue
 
-            child_global_origin, child_global_matrix = _exact_child_affine(
-                origin, matrix, child_origin, child_matrix
-            )
-            child_points = tuple(
-                _exact_affine_image(child_global_origin, child_global_matrix, point)
-                for point in vertices
-            )
             has_new_vertex = any(
                 tuple(float(value) for value in point) not in parent_representations
                 for point in child_points

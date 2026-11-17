@@ -50,6 +50,8 @@ set(PHX_MC_SOURCES
   src/implicit_polygon.cpp
   src/quad_topology.cpp
   src/interval_program.cpp
+  src/interval_simplex_restrict.cpp
+  src/interval_basis_bounds.cpp
   src/intersections.cpp
   src/level_set.cpp
   src/mixed_refinement.cpp
@@ -202,6 +204,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_graph_partition)
   phx_mc_add_test(test_intersections)
   phx_mc_add_test(test_interval_program)
+  phx_mc_add_test(test_interval_simplex_restrict)
   phx_mc_add_test(test_parallel)
   phx_mc_add_test(test_plc3d)
   phx_mc_add_test(test_quadratic_bounds)

@@ -57,6 +57,7 @@ def certify_periodic_mapped_contacts(
     from ._global_embedding import (
         _cell_simplices,
         _contact_is_declared,
+        _exact_image_box_separation,
         _piece_contacts,
         _plane_side_shared_contacts,
         _shared_curved_facet_separation,
@@ -377,6 +378,10 @@ def certify_periodic_mapped_contacts(
                 if zero and i >= j:
                     continue
                 first, second = base[i], images[j]
+                if _exact_image_box_separation(
+                    first, second, second_translation=None if zero else translation
+                ):
+                    continue
                 shared = tuple(sorted(set(first.vertex_ids) & set(second.vertex_ids)))
                 trace = restriction_trace_equal(first, second, shared, cache=trace_cache)
                 entity_ids = (cells[i].global_id, cells[j].global_id)

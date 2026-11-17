@@ -923,6 +923,32 @@ PHX_MC_API int32_t phx_mc_interval_sum(
     int64_t count, const double* first_lower, const double* first_upper,
     const double* second_lower, const double* second_upper, int32_t subtract, double* lower,
     double* upper);
+/* Batched simplex Bernstein restriction. Controls are shared across all items
+ * and ordered by descending compositions of degree into dimension + 1 parts.
+ * Corners have shape (count, dimension + 1, dimension); each lower/upper pair
+ * encloses a Cartesian coordinate, including coordinates outside the reference
+ * simplex. Results enclose all restricted controls, hence the polynomial on
+ * each simplex. Nonfinite or reversed inputs and nonfinite intermediate
+ * results produce the whole real line for the affected item. Dimension is
+ * 1..3, degree and count are nonnegative, and workers is positive. Inputs and
+ * outputs must not overlap. */
+PHX_MC_API int32_t phx_mc_interval_simplex_restrict(
+    int32_t dimension, int32_t degree, int64_t count, const double* control_lower,
+    const double* control_upper, const double* corners_lower, const double* corners_upper,
+    double* result_lower, double* result_upper, int32_t workers);
+/* Bounds of linear combinations of common-degree Bernstein control banks.
+ * Basis endpoints are (basis_count, controls), coefficient endpoints are
+ * (count, basis_count, components), outputs are (count, components).
+ * The inner endpoints bracket each exact extremal control from the opposite
+ * side; they bound the possible excess of the outer endpoints. Input banks
+ * may overlap each other, but output banks must not overlap any input or output
+ * bank; overlapping banks are rejected with PHX_MC_INVALID_ARGUMENT. */
+PHX_MC_API int32_t phx_mc_interval_basis_bounds(
+    int64_t count, int64_t basis_count, int64_t controls, int64_t components,
+    const double* basis_lower, const double* basis_upper,
+    const double* coefficient_lower, const double* coefficient_upper,
+    double* result_lower, double* result_upper, double* inner_lower, double* inner_upper,
+    int32_t workers);
 #define PHX_MC_ELEMENTARY_EXP 0
 #define PHX_MC_ELEMENTARY_LOG 1
 #define PHX_MC_ELEMENTARY_SIN 2

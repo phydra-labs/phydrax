@@ -29,6 +29,7 @@ from phydrax.discretization._coordinate_enclosure import (
     Expression,
     normalize_pyramid_reference_derivative,
     normalize_pyramid_reference_expression,
+    Polynomial,
     RationalPolynomial,
 )
 from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
@@ -38,6 +39,30 @@ from tests._support.validity_reuse import assert_incremental_matches_full
 D = phx.discretization
 G = phx.geometry
 Status = D.CellValidityStatus
+
+
+def test_simplex_threshold_falls_back_when_interval_is_inconclusive() -> None:
+    determinant: Polynomial = {(0, 0): Fraction(1) + Fraction(1, 2**54)}
+    status, lower, upper, depth = validity_module._certify_exact_polynomial_cell(
+        determinant, "simplex", 2, 1.0
+    )
+    assert status == Status.CERTIFIED_VALID
+    assert lower <= 1.0 < upper
+    assert depth == 0
+
+
+def test_simplex_subdivision_certifies_positive_threshold() -> None:
+    determinant: Polynomial = {
+        (0,): Fraction(13, 50),
+        (1,): Fraction(-1),
+        (2,): Fraction(1),
+    }
+    status, lower, upper, depth = validity_module._certify_exact_polynomial_cell(
+        determinant, "simplex", 1, 0.005
+    )
+    assert status == Status.CERTIFIED_VALID
+    assert 0.005 < lower <= 0.01 <= upper
+    assert depth >= 1
 
 
 def _polygon_status(points: Any, policy: Any = None) -> Any:
