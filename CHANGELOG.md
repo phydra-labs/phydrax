@@ -267,6 +267,10 @@
   rational coordinate bases with integer arithmetic. Supported nodal boundary
   carriers are read from the exact bank, with face maps built only when their
   proofs need them. Exact maps and coverage evidence retain their previous values.
+- Cell validity batches exact-coordinate rounding checks, retaining exact
+  scalar fallback and the same recorded maximum error.
+- Affine cell validity combines exact dyadic Jacobians and determinant bounds
+  in blocks, with interval threshold screening and exact fallback.
 - CAD source bounds, analytic surface derivatives, periodic offsets, and the
   quadratic tetrahedron screen execute supported interval programs in batches.
   Their directed endpoints and exact-arithmetic fallback remain unchanged.

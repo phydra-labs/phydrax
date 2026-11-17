@@ -86,6 +86,7 @@ from ..linalg import (
 )
 from ..linalg._exact import determinant_exact, determinant_small_algebra, solve_exact
 from ..typing import ConvertibleToArray
+from ._affine_dyadic_validity import affine_dyadic_quality
 from ._cell_complex import PolyhedralConnectivity
 from ._cell_geometry import (
     _execution_reference_arguments,
@@ -107,7 +108,7 @@ from ._coordinate_enclosure import (
     coordinate_execution_basis,
     coordinate_execution_map_expressions,
     coordinate_map_expressions,
-    coordinate_point_rounding_error,
+    coordinate_point_rounding_bound,
     coordinate_source_basis,
     CoordinateSourceBank,
     derivative,
@@ -120,6 +121,7 @@ from ._coordinate_enclosure import (
     normalize_pyramid_reference_expression,
     Polynomial,
     polynomial_bounds,
+    PreparedLinearCombinationBasis,
     PreparedSimplexPolynomial,
     RationalPolynomial,
     restricted_polynomial_batch_bounds,
@@ -2384,6 +2386,9 @@ def _certify_source_block(
         and not isinstance(element, PerCellRestrictedCellGeometryElement)
         else None
     )
+    prepared_plain_basis = (
+        None if plain_basis is None else PreparedLinearCombinationBasis(plain_basis)
+    )
     try:
         screened = _quadratic_tetra_block_screen(
             element, cell_kind, plain_basis, routes, point_bounds, policy
@@ -2396,11 +2401,33 @@ def _certify_source_block(
         lower[mask] = screened_lower[mask]
         upper[mask] = screened_upper[mask]
         # Direct interval proofs do not claim a reusable exact-map digest.
+    remaining = (
+        np.flatnonzero(~mask) if screened is not None else np.arange(count, dtype=np.intp)
+    )
+    coordinate_rows: dict[int, tuple[ExactScalar, ...]] | None = None
+    if isinstance(coordinates, ExactCoordinateBank) and remaining.size:
+        indices = np.unique(routes[remaining])
+        if np.all(indices >= 0) and np.all(indices < len(coordinates)):
+            coordinate_rows = dict(
+                zip(indices.tolist(), coordinates.rows(indices), strict=True)
+            )
+    affine_quality_rows: list[tuple[bool, Fraction] | None] = [None] * count
+    if plain_basis is not None and isinstance(coordinates, ExactCoordinateBank):
+        batch = affine_dyadic_quality(
+            plain_basis,
+            coordinates,
+            routes[remaining],
+            dimension,
+            Fraction(policy.determinant_floor()),
+        )
+        for row, result in zip(remaining, batch, strict=True):
+            affine_quality_rows[int(row)] = result
     for row in range(routes.shape[0]):
         if screened is not None and mask[row]:
             continue
         local = tuple(
-            coordinates[int(routes[row, column])] for column in range(routes.shape[1])
+            coordinates[index] if coordinate_rows is None else coordinate_rows[index]
+            for index in routes[row].tolist()
         )
         basis = plain_basis
         expressions = (
@@ -2450,7 +2477,11 @@ def _certify_source_block(
                     tuple(local[dof][axis] for dof in range(len(local)))
                     for axis in range(len(local[0]))
                 )
-                expressions = linear_combinations(basis, components)
+                expressions = (
+                    prepared_plain_basis.combine(components)
+                    if basis is plain_basis and prepared_plain_basis is not None
+                    else linear_combinations(basis, components)
+                )
         # Without a proof domain an unsupported nonaffine map is reported, so
         # only maps with a domain carry reusable records.
         digest = None if domain is None else _map_digest(cell_kind, expressions)
@@ -2502,7 +2533,16 @@ def _certify_source_block(
                 apex_unique[row] = _pyramid_apex_unique(expressions, dimension)
         else:
             _, jacobian = affine
-            status[row], determinant = _affine_quality(jacobian, dimension, policy)
+            batch_quality = affine_quality_rows[row]
+            if batch_quality is None:
+                status[row], determinant = _affine_quality(jacobian, dimension, policy)
+            else:
+                valid, determinant = batch_quality
+                status[row] = (
+                    CellValidityStatus.CERTIFIED_VALID
+                    if valid
+                    else CellValidityStatus.INVALID
+                )
             lower[row] = coefficient_endpoint(determinant, upper=False, saturate=True)
             upper[row] = coefficient_endpoint(determinant, upper=True, saturate=True)
         if digest is not None:
@@ -3222,14 +3262,8 @@ def certify_cell_geometry_validity(
     )
     source_coordinate_distinct = distinct_source
     coefficient_rounding_error = (
-        max(
-            (
-                coordinate_point_rounding_error(point, values[row])
-                for row, point in enumerate(source_coordinates)
-            ),
-            default=Fraction(0),
-        )
-        if source_coordinates is not None
+        coordinate_point_rounding_bound(source_coordinates, values)
+        if source_coordinates is not None and distinct_source
         else Fraction(0)
     )
     element_rounding_error: ExactScalar = Fraction(0)

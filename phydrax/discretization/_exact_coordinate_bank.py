@@ -292,6 +292,19 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
             raise IndexError("Exact coordinate bank row is out of range.")
         return tuple(self._row(int(row)) for row in selected.tolist())
 
+    def dyadic_rows(
+        self, indices: NDArray[np.integer[Any]], /
+    ) -> tuple[NDArray[np.int64], NDArray[np.int16], NDArray[np.bool_]]:
+        """Gather packed dyadics and identify entries requiring sparse handling."""
+        selected = np.asarray(indices)
+        if selected.ndim != 2 or selected.dtype.kind not in "iu":
+            raise TypeError("Exact coordinate bank row routes must be an integer matrix.")
+        if np.any(selected < 0) or np.any(selected >= len(self)):
+            raise IndexError("Exact coordinate bank row is out of range.")
+        significands = self._significands[selected]
+        exponents = self._exponents[selected]
+        return significands, exponents, exponents != _SPARSE
+
     def take(self, indices: NDArray[np.integer[Any]], /) -> ExactCoordinateBank:
         """The bank of the selected rows, without materializing them."""
         selected = np.asarray(indices)

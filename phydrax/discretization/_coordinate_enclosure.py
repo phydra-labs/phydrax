@@ -1540,7 +1540,7 @@ def rounded_point(point: tuple[ExactScalar, ...], /) -> np.ndarray:
     return result
 
 
-def coordinate_point_rounding_error(
+def _coordinate_point_rounding_error(
     point: tuple[ExactScalar, ...], representative: np.ndarray, /
 ) -> Fraction:
     """Return an exact Euclidean error bound for one rounded point."""
@@ -1557,6 +1557,55 @@ def coordinate_point_rounding_error(
     from ..linalg._hermitian_spectral import fraction_sqrt_interval
 
     return fraction_sqrt_interval(squared)[1]
+
+
+def coordinate_point_rounding_bound(
+    coordinates: CoordinateSourceBank, representatives: np.ndarray, /
+) -> Fraction:
+    """Return the maximum exact point-rounding bound for a coordinate bank."""
+    rounded = np.asarray(representatives, dtype=np.float64)
+    if rounded.ndim != 2 or rounded.shape[0] != len(coordinates):
+        raise ValueError("coordinate point representatives must be aligned rows.")
+
+    from ._exact_coordinate_bank import ExactCoordinateBank
+
+    if (
+        isinstance(coordinates, ExactCoordinateBank)
+        and rounded.shape == coordinates.shape
+        and np.all(np.isfinite(rounded))
+    ):
+        lower, upper = coordinates.interval_endpoints()
+        magnitude_mask = np.uint64((1 << 63) - 1)
+        bits = rounded.view(np.uint64)
+        lower_bits = lower.view(np.uint64)
+        upper_bits = upper.view(np.uint64)
+        # Both proved endpoints must be the representative; normalize signed
+        # zero before comparing binary64 encodings as integers.
+        bits = np.where((bits & magnitude_mask) == 0, np.uint64(0), bits)
+        lower_bits = np.where(
+            (lower_bits & magnitude_mask) == 0, np.uint64(0), lower_bits
+        )
+        upper_bits = np.where(
+            (upper_bits & magnitude_mask) == 0, np.uint64(0), upper_bits
+        )
+        exact = np.all((lower_bits == bits) & (upper_bits == bits), axis=1)
+        return max(
+            (
+                _coordinate_point_rounding_error(coordinates[row], rounded[row])
+                for row in np.flatnonzero(~exact).tolist()
+            ),
+            default=Fraction(0),
+        )
+
+    return max(
+        (
+            _coordinate_point_rounding_error(
+                point, rounded[index : index + 1].reshape(-1)
+            )
+            for index, point in enumerate(coordinates)
+        ),
+        default=Fraction(0),
+    )
 
 
 def compose_expression(
@@ -2037,7 +2086,7 @@ __all__ = [
     "coordinate_execution_map_expressions",
     "coordinate_map_expressions",
     "coordinate_partition_unity_reference_chain",
-    "coordinate_point_rounding_error",
+    "coordinate_point_rounding_bound",
     "coordinate_reference_chain",
     "coordinate_source_basis",
     "coordinate_source_signature",
