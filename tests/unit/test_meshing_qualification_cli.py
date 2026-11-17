@@ -243,7 +243,7 @@ def test_selected_implicit_profiles_merge_to_the_complete_run(
     for module in (native_implicit, cli):
         monkeypatch.setattr(module, "runtime_identity", lambda: {"engine": "unit-test"})
 
-    def run(name: str, *extra: str) -> tuple[int, dict[str, object], Path]:
+    def run(name: str, *extra: str) -> tuple[int, dict[str, Any], Path]:
         output = tmp_path / f"{name}.json"
         status = cli.main(["--scenario", scenario, "--output", str(output), *extra])
         return status, json.loads(output.read_text()), output
