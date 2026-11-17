@@ -103,6 +103,55 @@ def test_null_meshcore_identity_is_reported_as_unavailable() -> None:
     assert "returned null from phx_mc_version" in unavailable
 
 
+@pytest.mark.parametrize(
+    ("failed_check", "reason"),
+    [
+        (1, "rounding is not to nearest even"),
+        (2, "fused into one operation"),
+        (3, "flushed to zero"),
+        (4, "differs from its recorded bits"),
+    ],
+    ids=["rounding", "contraction", "underflow", "kernel-bits"],
+)
+def test_meshcore_failing_its_arithmetic_self_test_is_unavailable(
+    failed_check: int, reason: str
+) -> None:
+    release = importlib.metadata.version("phydrax").encode()
+
+    class Function:
+        restype = None
+        argtypes = None
+
+        def __init__(self, value: Any) -> None:
+            self.value = value
+
+        def __call__(self) -> Any:
+            return self.value
+
+    class SelfTest(Function):
+        def __call__(self, failed: Any) -> Any:  # ty: ignore[invalid-method-override]
+            failed._obj.value = failed_check
+            return self.value
+
+    class Library:
+        def __init__(self) -> None:
+            self.functions = {
+                name: Function(release if name == "phx_mc_version" else b"0" * 64)
+                for name in meshcore._SIGNATURES
+            }
+            self.functions["phx_mc_deterministic_float_self_test"] = SelfTest(9)
+
+        def __getitem__(self, name: Any) -> Any:
+            return self.functions[name]
+
+    # ty: ignore[invalid-argument-type]
+    unavailable = meshcore._bind(Library(), Path("other-arithmetic-meshcore"))
+
+    assert isinstance(unavailable, str)
+    assert "deterministic arithmetic self-test" in unavailable
+    assert reason in unavailable
+
+
 @pytest.mark.meshcore
 @pytest.mark.skipif(
     not meshcore_available(), reason="native phydrax-meshcore library is not available"

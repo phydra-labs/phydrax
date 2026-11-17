@@ -102,6 +102,21 @@ def test_native_simplex_p1_manufactured_diffusion() -> None:
     assert residual <= 1.0e-8
 
 
+@pytest.mark.parametrize("kind", ("tetrahedron", "simplex:3"))
+def test_quadratic_tetrahedral_routes_follow_canonical_edges(kind: str) -> None:
+    points, cells = _tetrahedra(2)
+    mesh = _mesh(points, cells, kind)
+    element = phx.discretization.lagrange_element(kind, 2)
+    dof_map = phx.discretization.FiniteElementDofMap(mesh, (element,))
+    coordinates = np.asarray(dof_map.dof_coordinates)
+    routes = np.asarray(dof_map.cell_dofs[0])
+    reference_nodes = np.asarray(element.reference_nodes)
+    for local_dof, reference in enumerate(reference_nodes):
+        weights = np.concatenate(([1.0 - np.sum(reference)], reference))
+        expected = np.einsum("i,cij->cj", weights, points[cells])
+        np.testing.assert_allclose(coordinates[routes[:, local_dof]], expected, atol=1e-15)
+
+
 def _annulus(parameters: np.ndarray) -> np.ndarray:
     radius = 1.0 + parameters[..., 0]
     angle = 0.5 * np.pi * parameters[..., 1]

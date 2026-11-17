@@ -29,7 +29,7 @@ from ...linalg._exact import (
 )
 from ...linalg._hermitian_spectral import fraction_sqrt_interval
 from ...typing import checked
-from .._atlas import _curve_loops_point_state, TrimEnclosures
+from .._atlas import _CoarseChordPlan, _curve_loops_point_state, TrimEnclosures
 from .._interval_enclosure import PreparedIntervalFunction
 from .._planar_embedding import PlanarEmbedding
 from .._rational import fraction_endpoint, rational_cross, rational_dot, rational_vector
@@ -126,11 +126,21 @@ class _ProjectionPreparation:
     model: BRepModel
     boxes: dict[int, np.ndarray]
     enclosures: dict[int, TrimEnclosures] = field(default_factory=dict)
+    coarse_chords: dict[int, _CoarseChordPlan | None] = field(default_factory=dict)
+    torus_distances: dict[int, _TorusDistancePreparation | None] = field(
+        default_factory=dict
+    )
     lifts: dict[tuple[int, int], bool] = field(default_factory=dict)
     angle_bounds: dict[int, tuple[float, float] | None] = field(default_factory=dict)
     faces: dict[int, _PreparedFace] = field(default_factory=dict)
     orientations: dict[tuple[int, int], float] = field(default_factory=dict)
     edges: dict[int, _PreparedEdge] = field(default_factory=dict)
+    segment_distances: dict[int, _SegmentDistancePreparation | None] = field(
+        default_factory=dict
+    )
+    arc_distances: dict[int, _ArcDistancePreparation | None] = field(
+        default_factory=dict
+    )
     plane_jacobians: dict[int, np.ndarray] = field(default_factory=dict)
     line_derivatives: dict[int, np.ndarray] = field(default_factory=dict)
     circle_endpoints: dict[int, tuple[np.ndarray, np.ndarray]] = field(
@@ -160,6 +170,29 @@ class _PreparedEdge:
     direction: np.ndarray | None
     squared: float
     axes: tuple[np.ndarray, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _SegmentDistancePreparation:
+    origin: tuple[ExactScalar, ...]
+    direction: tuple[ExactScalar, ...]
+    squared: ExactScalar
+    first: Fraction
+    last: Fraction
+
+
+@dataclass(frozen=True, slots=True)
+class _ArcDistancePreparation:
+    center: tuple[Fraction, ...]
+    first: tuple[Fraction, ...]
+    normal: tuple[Fraction, ...]
+    radius: Fraction
+    deviation: Fraction
+    normal_squared: Fraction
+    first_squared: Fraction
+    rejected: tuple[Fraction, ...]
+    rejected_squared: Fraction
+    endpoint_trig: tuple[tuple[Any, Any], tuple[Any, Any]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -619,6 +652,7 @@ def _trim_classification(
     /,
     *,
     enclosures: dict[int, TrimEnclosures] | None = None,
+    coarse_chords: dict[int, _CoarseChordPlan | None] | None = None,
 ) -> int | None:
     """Classify a chart point only when every authored trim is a line p-curve."""
     from ._boolean_core import line_chart_coefficients
@@ -638,7 +672,7 @@ def _trim_classification(
                 "TrimDomain.classify points must be finite with trailing dimension two."
             )
         inside, boundary, resolved = _curve_loops_point_state(
-            domain._enclosure_loops(prepared), point
+            domain._enclosure_loops(prepared), point, coarse=coarse_chords
         )
         if not resolved:
             return None
@@ -1065,7 +1099,9 @@ def _line_curve_hit(
             if pending_point
             else np.asarray(curve.evaluate(jnp.asarray(parameter)), dtype=np.float64)
         )
-        segment = _segment_distance(curve, point, (first, last))
+        segment = _segment_distance(
+            curve, point, (first, last), edge=edge, preparation=preparation
+        )
         if segment is None:
             return _unresolved(1, edge, path)
         lower, upper = segment
@@ -1077,7 +1113,9 @@ def _line_curve_hit(
         x = float(relative @ edge_data.axes[0])
         y = float(relative @ edge_data.axes[1])
         if x == 0.0 and y == 0.0:
-            around = _arc_distance(curve, point, (first, last, first))
+            around = _arc_distance(
+                curve, point, (first, last, first), edge=edge, preparation=preparation
+            )
             if around is None:
                 return _unresolved(1, edge, path)
             return _Hit(
@@ -1118,7 +1156,9 @@ def _line_curve_hit(
                 if pending_point
                 else np.asarray(curve.evaluate(jnp.asarray(parameter)), dtype=np.float64)
             )
-        arc = _arc_distance(curve, point, (first, last, parameter))
+        arc = _arc_distance(
+            curve, point, (first, last, parameter), edge=edge, preparation=preparation
+        )
         if arc is None:
             return _unresolved(1, edge, path)
         lower, upper = arc
@@ -1758,21 +1798,17 @@ def _sphere_distance(
     return None if radial is None else _directed_distance(*_absolute(*radial))
 
 
-def _torus_distance(
-    patch: TorusPatch, point: np.ndarray, /
-) -> tuple[float, float] | None:
-    """Enclose the distance from ``point`` to the torus.
+@dataclass(frozen=True, slots=True)
+class _TorusDistancePreparation:
+    center: tuple[Fraction, ...]
+    axis: tuple[Fraction, ...]
+    major: Fraction
+    minor: Fraction
+    axis_squared: Fraction
+    deviation: Fraction
 
-    The exact chart ``c + (M + m cos t)(cos u f + sin u s) + m sin t a`` is
-    compared with the ring torus of rational stand-ins ``c~, M~, m~`` and the
-    orthonormal frame ``f*, s*, a* = a~/|a~|`` (``_frame_deviation``). Over every
-    parameter pair the charts differ by at most ``|c - c~| +
-    |(M f - M~ f~, M s - M~ s~)| + |(m f - m~ f~, m s - m~ s~)| + |m a - m~ a~| +
-    (M~ + m~) |(f~ - f*, s~ - s*)| + m~ | |a~|^2 - 1 |``, which bounds the change
-    of the distance to the image. The ring torus distance is
-    ``| hypot(rho - M~, z) - m~ |`` with ``z^2 = w^2 / |a~|^2``,
-    ``w = (p - c~) . a~`` and ``rho^2 = |p - c~|^2 - z^2``.
-    """
+
+def _prepare_torus_distance(patch: TorusPatch, /) -> _TorusDistancePreparation | None:
     center = _shadow(patch.center_exact)
     first = _shadow(patch.first_axis_exact)
     second = _shadow(patch.second_axis_exact)
@@ -1801,6 +1837,35 @@ def _torus_distance(
         + (major + minor) * frame
         + minor * abs(axis_squared - 1)
     )
+    return _TorusDistancePreparation(center, axis, major, minor, axis_squared, deviation)
+
+
+def _torus_distance(
+    patch: TorusPatch,
+    point: np.ndarray,
+    /,
+    *,
+    prepared: _TorusDistancePreparation | None = None,
+) -> tuple[float, float] | None:
+    """Enclose the distance from ``point`` to the torus.
+
+    The exact chart ``c + (M + m cos t)(cos u f + sin u s) + m sin t a`` is
+    compared with the ring torus of rational stand-ins ``c~, M~, m~`` and the
+    orthonormal frame ``f*, s*, a* = a~/|a~|`` (``_frame_deviation``). Over every
+    parameter pair the charts differ by at most ``|c - c~| +
+    |(M f - M~ f~, M s - M~ s~)| + |(m f - m~ f~, m s - m~ s~)| + |m a - m~ a~| +
+    (M~ + m~) |(f~ - f*, s~ - s*)| + m~ | |a~|^2 - 1 |``, which bounds the change
+    of the distance to the image. The ring torus distance is
+    ``| hypot(rho - M~, z) - m~ |`` with ``z^2 = w^2 / |a~|^2``,
+    ``w = (p - c~) . a~`` and ``rho^2 = |p - c~|^2 - z^2``.
+    """
+    if prepared is None:
+        prepared = _prepare_torus_distance(patch)
+    if prepared is None:
+        return None
+    center, axis = prepared.center, prepared.axis
+    major, minor = prepared.major, prepared.minor
+    axis_squared, deviation = prepared.axis_squared, prepared.deviation
     relative = tuple(
         value - base for value, base in zip(rational_vector(point), center, strict=True)
     )
@@ -2041,17 +2106,9 @@ def _meridian_circle_distance(
     )
 
 
-def _segment_distance(
-    curve: LineCurve | ExactLineCurve,
-    point: np.ndarray,
-    parameters: tuple[float, float],
-    /,
-) -> tuple[float, float] | None:
-    """Enclose the distance from ``point`` to the exact line segment of an edge.
-
-    The segment is ``o + t d`` over the edge's parameter range; the clamped
-    exact foot parameter gives the exact squared distance.
-    """
+def _prepare_segment_distance(
+    curve: LineCurve | ExactLineCurve, parameters: tuple[float, float], /
+) -> _SegmentDistancePreparation | None:
     if isinstance(curve, LineCurve):
         origin, direction = curve.origin_exact, curve.direction_exact
     else:
@@ -2063,12 +2120,42 @@ def _segment_distance(
     squared = _exact_dot(direction, direction)
     if squared == 0:
         return None
+    return _SegmentDistancePreparation(
+        origin, direction, squared, Fraction(parameters[0]), Fraction(parameters[1])
+    )
+
+
+def _segment_distance(
+    curve: LineCurve | ExactLineCurve,
+    point: np.ndarray,
+    parameters: tuple[float, float],
+    /,
+    *,
+    edge: int,
+    preparation: _ProjectionPreparation | None,
+) -> tuple[float, float] | None:
+    """Enclose the distance from ``point`` to the exact line segment of an edge.
+
+    The segment is ``o + t d`` over the edge's parameter range; the clamped
+    exact foot parameter gives the exact squared distance.
+    """
+    if preparation is None:
+        prepared = _prepare_segment_distance(curve, parameters)
+    else:
+        if edge not in preparation.segment_distances:
+            preparation.segment_distances[edge] = _prepare_segment_distance(
+                curve, parameters
+            )
+        prepared = preparation.segment_distances[edge]
+    if prepared is None:
+        return None
+    origin, direction, squared = prepared.origin, prepared.direction, prepared.squared
     relative = tuple(
         value - base for value, base in zip(rational_vector(point), origin, strict=True)
     )
     parameter = min(
-        Fraction(parameters[1]),
-        max(Fraction(parameters[0]), _exact_dot(relative, direction) / squared),
+        prepared.last,
+        max(prepared.first, _exact_dot(relative, direction) / squared),
     )
     offset = tuple(
         value - parameter * rate for value, rate in zip(relative, direction, strict=True)
@@ -2076,8 +2163,64 @@ def _segment_distance(
     return _affine_distance_bounds(_exact_dot(offset, offset))
 
 
+def _prepare_arc_distance(
+    curve: CircleCurve, parameters: tuple[float, float], /
+) -> _ArcDistancePreparation | None:
+    from ._intersection_curve import interval_context
+    from ._intersection_projection import _scalar
+
+    center = _shadow(curve.center_exact)
+    first = _shadow(curve.first_axis_exact)
+    second = _shadow(curve.second_axis_exact)
+    (radius,) = _shadow((curve.radius_exact,))
+    normal = rational_cross(first, second)
+    frame = _frame_deviation(first, second, normal)
+    if frame is None or not radius > 0:
+        return None
+    deviation = (
+        _shadow_deviation(curve.center_exact, center)
+        + _shadow_deviation(
+            tuple(
+                curve.radius_exact * value
+                for value in (*curve.first_axis_exact, *curve.second_axis_exact)
+            ),
+            tuple(radius * value for value in (*first, *second)),
+        )
+        + radius * frame
+    )
+    first_squared = rational_dot(first, first)
+    rejected = tuple(
+        value - rational_dot(second, first) / first_squared * base
+        for value, base in zip(second, first, strict=True)
+    )
+    context = interval_context(80)
+    angles = tuple(_scalar(context, Fraction(value)) for value in parameters)
+    endpoint_trig = (
+        (context.cos(angles[0]), context.sin(angles[0])),
+        (context.cos(angles[1]), context.sin(angles[1])),
+    )
+    return _ArcDistancePreparation(
+        center,
+        first,
+        normal,
+        radius,
+        deviation,
+        rational_dot(normal, normal),
+        first_squared,
+        rejected,
+        rational_dot(rejected, rejected),
+        endpoint_trig,
+    )
+
+
 def _arc_distance(
-    curve: CircleCurve, point: np.ndarray, parameters: tuple[float, float, float], /
+    curve: CircleCurve,
+    point: np.ndarray,
+    parameters: tuple[float, float, float],
+    /,
+    *,
+    edge: int,
+    preparation: _ProjectionPreparation | None,
 ) -> tuple[float, float] | None:
     """Enclose the distance from ``point`` to a circle arc.
 
@@ -2099,51 +2242,44 @@ def _arc_distance(
     from ._intersection_projection import _bounds, _scalar
 
     first_parameter, last_parameter, parameter = parameters
-    center = _shadow(curve.center_exact)
-    first = _shadow(curve.first_axis_exact)
-    second = _shadow(curve.second_axis_exact)
-    (radius,) = _shadow((curve.radius_exact,))
-    normal = rational_cross(first, second)
-    frame = _frame_deviation(first, second, normal)
-    if frame is None or not radius > 0:
+    if preparation is None:
+        prepared = _prepare_arc_distance(curve, (first_parameter, last_parameter))
+    else:
+        if edge not in preparation.arc_distances:
+            preparation.arc_distances[edge] = _prepare_arc_distance(
+                curve, (first_parameter, last_parameter)
+            )
+        prepared = preparation.arc_distances[edge]
+    if prepared is None:
         return None
-    deviation = (
-        _shadow_deviation(curve.center_exact, center)
-        + _shadow_deviation(
-            tuple(
-                curve.radius_exact * value
-                for value in (*curve.first_axis_exact, *curve.second_axis_exact)
-            ),
-            tuple(radius * value for value in (*first, *second)),
-        )
-        + radius * frame
-    )
+    center, first, normal = prepared.center, prepared.first, prepared.normal
+    radius, deviation = prepared.radius, prepared.deviation
     relative = tuple(
         value - base for value, base in zip(rational_vector(point), center, strict=True)
     )
     squared = rational_dot(relative, relative)
-    height_squared = rational_dot(relative, normal) ** 2 / rational_dot(normal, normal)
+    height_squared = rational_dot(relative, normal) ** 2 / prepared.normal_squared
     radial = _root_difference(squared - height_squared, radius * radius)
     if radial is None:
         return None
     circle = _hypotenuse(radial, height_squared)
     # e1* = e1~/|e1~| and e2* = s'/|s'| with s' = e2~ - (e2~.e1~/|e1~|^2) e1~.
-    first_squared = rational_dot(first, first)
-    rejected = tuple(
-        value - rational_dot(second, first) / first_squared * base
-        for value, base in zip(second, first, strict=True)
-    )
+    first_squared, rejected = prepared.first_squared, prepared.rejected
     context = interval_context(80)
     x = _scalar(context, rational_dot(relative, first)) / context.sqrt(
         _scalar(context, first_squared)
     )
     y = _scalar(context, rational_dot(relative, rejected)) / context.sqrt(
-        _scalar(context, rational_dot(rejected, rejected))
+        _scalar(context, prepared.rejected_squared)
     )
 
-    def at(value: float, /) -> tuple[Fraction, Fraction] | None:
-        angle = _scalar(context, Fraction(value))
-        alignment = x * context.cos(angle) + y * context.sin(angle)
+    def at(
+        value: float, trig: tuple[Any, Any] | None = None, /
+    ) -> tuple[Fraction, Fraction] | None:
+        if trig is None:
+            angle = _scalar(context, Fraction(value))
+            trig = (context.cos(angle), context.sin(angle))
+        alignment = x * trig[0] + y * trig[1]
         bounds = _bounds(
             _scalar(context, squared + radius * radius)
             - 2 * _scalar(context, radius) * alignment
@@ -2153,7 +2289,11 @@ def _arc_distance(
         lower, upper = (max(Fraction(0), Fraction(bound)) for bound in bounds)
         return fraction_sqrt_interval(lower)[0], fraction_sqrt_interval(upper)[1]
 
-    samples = tuple(at(value) for value in (first_parameter, last_parameter, parameter))
+    samples = (
+        at(first_parameter, prepared.endpoint_trig[0]),
+        at(last_parameter, prepared.endpoint_trig[1]),
+        at(parameter),
+    )
     if any(sample is None for sample in samples):
         return None
     upper = min(sample[1] for sample in samples if sample is not None)
@@ -3244,7 +3384,14 @@ def _project_face(
         major, minor = prepared.radii
         if not major > minor > 0.0:
             return _unresolved(2, face, path)
-        carrier_distance = _torus_distance(patch, point)
+        torus_prepared = None
+        if preparation is not None:
+            if face not in preparation.torus_distances:
+                preparation.torus_distances[face] = _prepare_torus_distance(patch)
+            torus_prepared = preparation.torus_distances[face]
+            if torus_prepared is None:
+                return _unresolved(2, face, path)
+        carrier_distance = _torus_distance(patch, point, prepared=torus_prepared)
         if carrier_distance is None:
             return _unresolved(2, face, path)
         tube_x, tube_y = radial - major, z
@@ -3542,7 +3689,13 @@ def _project_face(
         trim = (
             0
             if outside_bounds
-            else _trim_classification(model, face, uv, enclosures=enclosures)
+            else _trim_classification(
+                model,
+                face,
+                uv,
+                enclosures=enclosures,
+                coarse_chords=None if preparation is None else preparation.coarse_chords,
+            )
         )
     if trim is None or trim == 0:
         # A carrier minimum whose periodic representative lies on a chart seam

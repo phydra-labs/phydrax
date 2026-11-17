@@ -7,7 +7,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from collections.abc import Callable, Sequence
 from fractions import Fraction
-from typing import Protocol, TYPE_CHECKING
+from typing import NamedTuple, Protocol, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -609,13 +609,74 @@ def _curve_loop_chords(
     )
 
 
+class _CoarseChordPlan(NamedTuple):
+    guards: tuple[np.ndarray, ...]
+    polygon: tuple[tuple[Fraction, Fraction], ...]
+
+
+def _coarse_chord_plan(
+    loop: tuple[_SegmentEnclosures, ...], /
+) -> _CoarseChordPlan | None:
+    """Prepare the exact polygon selected when every full segment box misses."""
+    boxes: list[np.ndarray] = []
+    endpoints: list[tuple[np.ndarray, np.ndarray]] = []
+    for segment in loop:
+        box = _curve_segment_box(segment, 0.0, 1.0)
+        first, last = _segment_points(segment, (0.0, 1.0))
+        if box is None or first is None or last is None:
+            return None
+        boxes.append(box)
+        endpoints.append((first, last))
+    guards = list(boxes)
+    for index, (start, _) in enumerate(endpoints):
+        previous = (index - 1) % len(loop)
+        end = endpoints[previous][1]
+        if not np.array_equal(end, start):
+            incoming, outgoing = boxes[previous], boxes[index]
+            if _boxes_disjoint(incoming, outgoing):
+                return None
+            guards.append(
+                np.stack(
+                    (
+                        np.minimum(incoming[0], outgoing[0]),
+                        np.maximum(incoming[1], outgoing[1]),
+                    )
+                )
+            )
+    points: list[np.ndarray] = []
+    for first, last in endpoints:
+        for point in (first, last):
+            if not points or not np.array_equal(points[-1], point):
+                points.append(point)
+    if len(points) > 1 and np.array_equal(points[0], points[-1]):
+        points.pop()
+    polygon = tuple(
+        (Fraction.from_float(float(point[0])), Fraction.from_float(float(point[1])))
+        for point in points
+    )
+    return _CoarseChordPlan(tuple(guards), polygon)
+
+
 def _curve_loops_point_state(
-    loops: _LoopEnclosures, point: np.ndarray, /
+    loops: _LoopEnclosures,
+    point: np.ndarray,
+    /,
+    *,
+    coarse: dict[int, _CoarseChordPlan | None] | None = None,
 ) -> tuple[bool, bool, bool]:
     query_box = np.stack((point, point))
     states: list[bool] = []
     for loop in loops:
-        polygon = _curve_loop_chords(loop, query_box)
+        key = id(loop)
+        plan = None if coarse is None else coarse.get(key)
+        if plan is not None and all(
+            _boxes_disjoint(box, query_box) for box in plan.guards
+        ):
+            polygon = plan.polygon
+        else:
+            polygon = _curve_loop_chords(loop, query_box)
+            if polygon is not None and coarse is not None and key not in coarse:
+                coarse[key] = _coarse_chord_plan(loop)
         if polygon is None:
             return False, False, False
         inside, boundary = _polygon_point_state(
