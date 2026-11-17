@@ -407,6 +407,7 @@ def test_intersection_trim_eager_fallback_classifies_public_queries() -> None:
             (bounds[0, 0] - width[0], bounds[1, 1] + width[1]),
         )
     )
+
     together = domain.classify(queries)
     separately = tuple(domain.classify(query[None, :]) for query in queries)
     assert np.any(np.asarray(together.resolved))
@@ -460,7 +461,6 @@ def test_fixed_chart_trim_classification_is_partition_independent() -> None:
         np.testing.assert_array_equal(
             getattr(together, name), np.asarray(getattr(reversed_result, name))[::-1]
         )
-
 
 def test_seam_crossing_quadric_loop_closes_under_exact_per_chart_decks(
     tmp_path: Path,
