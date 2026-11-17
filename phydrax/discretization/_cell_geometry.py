@@ -3802,6 +3802,16 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
         # Exact images by (block, coefficient route, root reference point):
         # cells sharing coefficients and a root point share one evaluation.
         images: dict[tuple[int, bytes, tuple[Any, ...]], tuple[Any, ...]] = {}
+        # Plain rational bases: the nonzero basis values of each (block, point),
+        # numbered, and the exact image of each (numbered point, bank rows).
+        point_plans: dict[
+            tuple[int, tuple[Any, ...]],
+            tuple[int, tuple[int, ...], tuple[Any, ...]],
+        ] = {}
+        plain_images: dict[tuple[int, int, tuple[int, ...]], tuple[Any, ...]] = {}
+        # The caller's point rows stay alive for this call, so a row object
+        # (often one tuple shared by a whole block) is classified once.
+        point_kinds: dict[int, bool] = {}
         results = []
         for identifier, point_rows in zip(
             identifiers.tolist(), reference_points, strict=True
@@ -3824,18 +3834,23 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
                 if lift is None
                 else lift(route)
             )
-            for point in point_rows:
-                if any(
-                    not isinstance(value, (Fraction, RadicalElement)) for value in point
-                ):
-                    raise TypeError(
-                        "Exact reference points must use Fraction or RadicalElement scalars."
-                    )
+            rational_points = point_kinds.get(id(point_rows))
+            if rational_points is None:
+                for point in point_rows:
+                    if any(
+                        not isinstance(value, (Fraction, RadicalElement))
+                        for value in point
+                    ):
+                        raise TypeError(
+                            "Exact reference points must use Fraction or RadicalElement scalars."
+                        )
+                rational_points = all(
+                    isinstance(value, Fraction) for point in point_rows for value in point
+                )
+                point_kinds[id(point_rows)] = rational_points
             composed = composed_parts(element, block_index, local_row)
-            rational_data = all(
+            rational_data = rational_points and all(
                 isinstance(value, Fraction) for row in coefficients for value in row
-            ) and all(
-                isinstance(value, Fraction) for point in point_rows for value in point
             )
             if composed is None and rational_data:
                 # A cell-independent polynomial basis is formed once per block
@@ -3863,20 +3878,45 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
                         raise ValueError(
                             "Exact coordinate basis and local coefficient bank disagree."
                         )
-                    route_key = route.tobytes()
+                    route_rows = route.tolist()
+                    # A lifted bank is per cell; an unlifted node shares its
+                    # image with every cell routing the same bank rows.
+                    scope = -1 if lift is None else local_row
                     cell_results = []
                     for point in point_rows:
                         exact_point = tuple(point)
-                        key = (block_index, route_key, exact_point)
-                        value = images.get(key)
-                        if value is None:
-                            value = combine(
-                                coefficients,
-                                tuple(
-                                    evaluate(basis, exact_point) for basis in plain_basis
-                                ),
+                        plan = point_plans.get((block_index, exact_point))
+                        if plan is None:
+                            weights = tuple(
+                                evaluate(basis, exact_point) for basis in plain_basis
                             )
-                            images[key] = value
+                            plan = (
+                                len(point_plans),
+                                tuple(
+                                    dof
+                                    for dof, weight in enumerate(weights)
+                                    if weight != 0
+                                ),
+                                tuple(weight for weight in weights if weight != 0),
+                            )
+                            point_plans[(block_index, exact_point)] = plan
+                        ordinal, active, weights = plan
+                        node_key = (
+                            ordinal,
+                            scope,
+                            tuple(route_rows[dof] for dof in active),
+                        )
+                        value = plain_images.get(node_key)
+                        if value is None:
+                            # Zero basis values add nothing to the exact sum.
+                            value = (
+                                combine(
+                                    tuple(coefficients[dof] for dof in active), weights
+                                )
+                                if active
+                                else tuple(Fraction(0) for _ in coefficients[0])
+                            )
+                            plain_images[node_key] = value
                         cell_results.append(value)
                     results.append(tuple(cell_results))
                     continue
