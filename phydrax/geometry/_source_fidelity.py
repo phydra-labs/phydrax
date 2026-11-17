@@ -16,6 +16,7 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from .._live_proofs import live_content_fingerprint, LiveProofLedger
 from ..discretization._cell_geometry import CellGeometrySpec, ScalarCoordinateElement
 from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._cell_mesh import CellBlock, CellMesh, PolyhedralBlock
@@ -1360,6 +1361,13 @@ def _validate_piecewise_linear_chart_witness(
 
 _VALIDATION_TOKEN = object()
 
+# Completed witness validations by their exact live operands (mesh, coordinate
+# map, source query, witness). The outcome is the validation's partition
+# findings, wrapped because "none" is an outcome; it never holds an operand.
+_VALIDATED_WITNESSES: LiveProofLedger[
+    tuple[tuple[MeshCertificateFinding, ...] | None]
+] = LiveProofLedger()
+
 
 @final
 class ValidatedSourceFidelityWitness(tuple):
@@ -1431,15 +1439,24 @@ def validate_source_fidelity_witness(
     """Revalidate witness identity and its actual source/target mathematical premises.
 
     A :class:`ValidatedSourceFidelityWitness` made for these exact operands is
-    returned unchanged; for other operands its witness is validated again.
+    returned unchanged; for other operands its witness is validated again. A
+    validation this process completed on these same live, unchanged operands
+    is not repeated.
     """
     if isinstance(witness, ValidatedSourceFidelityWitness):
         if witness.binds(mesh, geometry, source):
             return witness
         witness = witness.witness
-    partition_findings = _validate_source_fidelity_witness(
-        mesh, geometry, source, witness
-    )
+    operands = (mesh, geometry, source, witness)
+    validated = _VALIDATED_WITNESSES.find(operands)
+    if validated is None:
+        fingerprint = live_content_fingerprint(operands)
+        partition_findings = _validate_source_fidelity_witness(
+            mesh, geometry, source, witness
+        )
+        _VALIDATED_WITNESSES.record(operands, fingerprint, (partition_findings,))
+    else:
+        (partition_findings,) = validated
     return ValidatedSourceFidelityWitness(
         mesh,
         geometry,
