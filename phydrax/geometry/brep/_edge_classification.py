@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from ..._exact_kernels import float64_interval_elementary
 from ..._strict import StrictModule
 from ...discretization._exact_algebraic_geometry import (
     coefficient_interval,
@@ -23,6 +24,7 @@ from ...discretization._exact_algebraic_geometry import (
 from ...typing import ConvertibleToArray, parse
 from .._interval_enclosure import (
     Interval,
+    interval_acos,
     interval_add,
     interval_divide,
     interval_multiply,
@@ -376,19 +378,19 @@ def _cell_sign_angle(
             _float_interval(_norm(_cross(normal_a, normal_b))),
             _float_interval(dot),
         )
-        lower = float(np.nextafter(np.arctan(max(0.0, float(ratio[0]))), -np.inf))
-        upper = float(np.nextafter(np.arctan(max(0.0, float(ratio[1]))), np.inf))
+        angle = float64_interval_elementary(
+            "atan", np.maximum(ratio[0], 0.0), np.maximum(ratio[1], 0.0)
+        )
+        lower, upper = float(angle[0]), float(angle[1])
     else:
         cosine = interval_divide(
             _float_interval(dot),
             interval_multiply(_float_interval(norm_a), _float_interval(norm_b)),
         )
-        lower = float(
-            np.nextafter(np.arccos(np.clip(float(cosine[1]), -1.0, 1.0)), -np.inf)
+        angle = interval_acos(
+            (np.clip(cosine[0], -1.0, 1.0), np.clip(cosine[1], -1.0, 1.0))
         )
-        upper = float(
-            np.nextafter(np.arccos(np.clip(float(cosine[0]), -1.0, 1.0)), np.inf)
-        )
+        lower, upper = float(angle[0]), float(angle[1])
     return (
         sign[0],
         sign[1],
@@ -735,14 +737,10 @@ def _exact_revolution_circle_classification(
     cosine = interval_divide(scalar_interval(dot(normal_a, normal_b)), norm_product)
     if not np.all(np.isfinite(cosine)):
         return None
-    cosine_lower = float(np.clip(cosine[0], -1.0, 1.0))
-    cosine_upper = float(np.clip(cosine[1], -1.0, 1.0))
+    angle = interval_acos((np.clip(cosine[0], -1.0, 1.0), np.clip(cosine[1], -1.0, 1.0)))
     dihedral = (
-        max(0.0, float(np.nextafter(np.arccos(cosine_upper), -np.inf))),
-        min(
-            float(np.nextafter(np.pi, np.inf)),
-            float(np.nextafter(np.arccos(cosine_lower), np.inf)),
-        ),
+        max(0.0, float(angle[0])),
+        min(float(np.nextafter(np.pi, np.inf)), float(angle[1])),
     )
     radius_bounds = scalar_interval(curve.radius_exact)
     period_bounds = period_scalar_bounds(PeriodOffset(Fraction(0), Fraction(1)))
