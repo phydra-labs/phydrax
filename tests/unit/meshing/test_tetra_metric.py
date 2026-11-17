@@ -750,12 +750,11 @@ def test_coupled_fallback_resource_refusal_preserves_state_and_demand(
             search.edges.index(binding.edge),
         )
     assert error.value.result is None
-    # The refused model already holds every blocker the pair model recorded.
-    assert len(error.value.binding.vertices) == len(binding.vertices) + len(
-        attempt.neighbors
-    )
+    # The refused patch extends the pair only by blockers the pair recorded.
+    blockers = {neighbor.detail.vertex for neighbor in attempt.neighbors}
+    refused = set(error.value.binding.vertices)
+    assert set(binding.vertices) < refused <= set(binding.vertices) | blockers
     assert error.value.demand.variables == 3 * len(error.value.binding.vertices)
-    assert set(binding.vertices) < set(error.value.binding.vertices)
     assert state.snapshot.generation == before.generation
     np.testing.assert_array_equal(state.snapshot.points, before.points)
 
@@ -822,14 +821,12 @@ def test_coupled_closure_resource_refusal_preserves_later_demand(
     indirect=True,
     ids=("slack-four-vertex-chain", "six-vertex-chain"),
 )
-def test_coupled_closure_admits_every_recorded_blocker_per_round(
+def test_coupled_closure_stops_at_first_admitted_patch(
     _blocked_chain_model: _BlockedChainModel,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from phydrax.meshing import _tetra_coupled as coupled
 
-    # Solving after each single vertex costs one model per vertex of the
-    # closure. A round takes every blocker the previous model recorded.
     state, search, details, selected, incident, binding = _blocked_chain_model
     policy = phx.optim.ConvexSolvePolicy(
         phx.optim.NativeHomogeneousConic(newton="factorized")
@@ -840,14 +837,14 @@ def test_coupled_closure_admits_every_recorded_blocker_per_round(
         search, details, selected, incident, binding, policy, counters
     )
     assert attempt.applied == 0
+    blockers = {neighbor.detail.vertex for neighbor in attempt.neighbors}
+    assert blockers and not blockers & set(binding.vertices)
     search_model = coupled._search_model
-    rounds: list[tuple[int, int]] = []
+    patches: list[tuple[tuple[int, ...], int]] = []
 
     def recorded(*args: Any, **kwargs: Any) -> Any:
         result = search_model(*args, **kwargs)
-        inside = set(args[4].vertices)
-        outside = {neighbor.detail.vertex for neighbor in result.neighbors} - inside
-        rounds.append((len(inside), len(outside)))
+        patches.append((args[4].vertices, result.applied))
         return result
 
     monkeypatch.setattr(coupled, "_search_model", recorded)
@@ -861,11 +858,15 @@ def test_coupled_closure_admits_every_recorded_blocker_per_round(
         attempt.neighbors,
         search.edges.index(binding.edge),
     )
-    assert rounds[0][0] == len(binding.vertices) + len(attempt.neighbors)
-    for (size, blockers), (following, _) in zip(rounds, rounds[1:], strict=False):
-        assert following == size + blockers
-    moved = np.count_nonzero(np.any(state.snapshot.points != before.points, axis=1))
+    # The closure is admitted, no model is tried after the admitted patch, and
+    # that patch extends the pair by its recorded blocking neighbors.
     assert applied > 0
+    assert [count for _, count in patches[:-1]] == [0] * (len(patches) - 1)
+    admitted, count = patches[-1]
+    assert count == applied
+    assert set(binding.vertices) < set(admitted)
+    assert blockers & set(admitted)
+    moved = np.count_nonzero(np.any(state.snapshot.points != before.points, axis=1))
     assert applied == counters["relocations"] == moved
     assert state.snapshot.generation == before.generation + 1
     assert coupled._prepare_search(state).before < search.before
