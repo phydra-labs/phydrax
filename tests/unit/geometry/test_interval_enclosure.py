@@ -1146,6 +1146,12 @@ def _quadratic_spline(
     return value
 
 
+def test_batched_execution_refuses_unsupported_spline_and_platform_sqrt() -> None:
+    for function in (_quadratic_spline("clip"), lambda x: jnp.sqrt(x)):
+        with pytest.raises(IntervalExtensionError):
+            prepare_interval_function(function, 1, batch_capacity=1, execution="batched")
+
+
 def _sampled_range(
     function: Callable[[jax.Array], jax.Array], first: float, last: float
 ) -> tuple[float, float]:
