@@ -249,6 +249,9 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native meshing, mesh certification, and high-order curving temporarily raise
+  the young-generation collection threshold while retaining cyclic collection;
+  prior collector settings and all scientific identities are preserved.
 - Native B-Rep projection reuses the selected intersection curve's fixed-shape
   tangent, while host trim fallback and surface-box validation avoid repeated
   eager dispatch. Trim realization and projection frame bits, and therefore
