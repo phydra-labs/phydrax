@@ -539,6 +539,60 @@ def test_welded_audit_counts_disconnected_vertex_stars() -> None:
     assert findings[0] == findings[1]
 
 
+def test_welded_audit_reports_disconnected_edge_and_vertex_stars() -> None:
+    points = np.asarray(
+        ((0, 0, 0), (0, 0, 1), (1, 0, 0), (0, 1, 0), (-1, 0, 0), (0, -1, 0)),
+        dtype=np.float64,
+    )
+    mesh = phx.discretization.CellMesh(
+        points,
+        (phx.discretization.CellBlock(
+            "cells", "tetrahedron", np.asarray(((0, 1, 2, 3), (0, 1, 4, 5)), dtype=np.int32)
+        ),),
+    )
+    audit = phx.meshing.audit_cell_mesh(
+        mesh, phx.discretization.CellGeometrySpec.affine(mesh)
+    )
+    assert audit.issues == ("nonmanifold_edges", "nonmanifold_vertices")
+    assert dict(audit.check_counts)["nonmanifold_edges"] == 1
+    assert dict(audit.check_counts)["nonmanifold_vertices"] == 2
+    assert dict(audit.check_counts)["self_intersection"] == 0
+
+
+@pytest.mark.parametrize(
+    ("second", "expected"),
+    (
+        (((0.5, 0.5, -1), (0.5, 0.5, 1), (1.5, 0.5, 0)), 1),
+        (((1, 0, 0), (1, -1, 1), (1, -1, -1)), 1),
+        (((1, -(2.0**-40), 0), (1, -1 - 2.0**-40, 1), (1, -1 - 2.0**-40, -1)), 0),
+        (((0.5, 0.5, 0), (2.5, 0.5, 0), (0.5, 2.5, 0)), 1),
+        (((3, 0, 0), (4, 0, 0), (3, 1, 0)), 0),
+    ),
+    ids=("crossing", "touching", "touch-perturbed", "coplanar-overlap", "separated"),
+)
+def test_welded_audit_triangle_contact_is_batch_independent(
+    second: tuple[tuple[float, float, float], ...], expected: int
+) -> None:
+    first = ((0, 0, 0), (2, 0, 0), (0, 2, 0))
+    remote = ((10, 0, 0), (12, 0, 0), (10, 2, 0))
+    reports = []
+    for vertices, cells in (
+        ((*first, *second), ((0, 1, 2), (3, 4, 5))),
+        ((*first, *second, *remote), ((0, 1, 2), (3, 4, 5), (6, 7, 8))),
+    ):
+        mesh = phx.discretization.CellMesh(
+            np.asarray(vertices, dtype=np.float64),
+            (phx.discretization.CellBlock("cells", "triangle", np.asarray(cells, dtype=np.int32)),),
+        )
+        audit = phx.meshing.audit_cell_mesh(
+            mesh, phx.discretization.CellGeometrySpec.affine(mesh)
+        )
+        assert audit.issues == (("self_intersection",) if expected else ())
+        assert dict(audit.check_counts)["self_intersection"] == expected
+        reports.append(tuple(audit.check_counts))
+    assert reports[0] == reports[1]
+
+
 def test_audit_quality_scenario_5() -> None:
     # Notched square: the vertex-zero fan folds over itself, the cell does not.
     points = np.asarray(((0.0, 0.0), (3.0, 0.0), (3.0, 3.0), (1.5, 1.0), (0.0, 3.0)))
