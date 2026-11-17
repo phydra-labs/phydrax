@@ -498,6 +498,13 @@ def _line_value(line: _HomogeneousPoint, point: _HomogeneousPoint, /) -> int:
     return line[0] * point[0] + line[1] * point[1] + line[2] * point[2]
 
 
+def _triangle_orientation(triangle: _Triangle2, /) -> int:
+    """Exact orientation without constructing a rational area."""
+    first, second, third = (_homogeneous_point(point) for point in triangle)
+    value = _line_value(_integer_line(first, second), third)
+    return (value > 0) - (value < 0)
+
+
 def _integer_intersection(
     first: _HomogeneousPoint,
     second: _HomogeneousPoint,
@@ -1947,6 +1954,8 @@ def _cad_chart_topology_degree(
     }
     row_targets: list[tuple[int, int, int]] = []
     row_uv: list[_Triangle2] = []
+    row_chart_signs: list[int] = []
+    target_charts: dict[tuple[tuple[tuple[int, int], ...], ...], _Triangle3] = {}
     row_labels: list[tuple[_VertexKey, _VertexKey, _VertexKey]] = []
     for row, (cell_raw, local_raw, patch) in enumerate(
         zip(
@@ -1971,7 +1980,11 @@ def _cad_chart_topology_degree(
         reference_vertices = block_corners[id(block)]
         connectivity = block_vertices[id(block)]
         ids = []
-        target_chart = _triangle3(witness.target_reference_chart(row))
+        tokens = witness.target_reference_rational_tokens[row]
+        target_chart = target_charts.get(tokens)
+        if target_chart is None:
+            target_chart = _triangle3(witness.target_reference_chart(row))
+            target_charts[tokens] = target_chart
         for exact_point in target_chart:
             matches = tuple(
                 slot
@@ -1990,12 +2003,14 @@ def _cad_chart_topology_degree(
                 status="violated",
             )
         uv = _triangle2(witness.source_parameter_chart(row))
-        if _area2(uv) == 0:
+        chart_sign = _triangle_orientation(uv)
+        if chart_sign == 0:
             raise SourceCoverageUnavailable(
                 "A CAD source chart triangle is degenerate.", status="violated"
             )
         row_targets.append((ids[0], ids[1], ids[2]))
         row_uv.append(uv)
+        row_chart_signs.append(chart_sign)
         # Plane-chart rows are labelled below, once every curve label is known.
         if patch in plane_patches:
             row_labels.append(((), (), ()))
@@ -2071,10 +2086,9 @@ def _cad_chart_topology_degree(
     row_degree_signs: dict[int, dict[int, int]] = {}
     for row, patch in enumerate(patch_rows):
         pair = pairs[patch]
-        uv = row_uv[row]
         targets = row_targets[row]
         labels = row_labels[row]
-        chart_sign = 1 if _area2(uv) > 0 else -1
+        chart_sign = row_chart_signs[row]
         patch_signs = dict(signs_by_patch[patch])
         cell_id = int(witness.cell_global_ids[row])
         local_face = int(witness.local_entity_indices[row])
