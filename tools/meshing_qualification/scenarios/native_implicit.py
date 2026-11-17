@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import jax.numpy as jnp
@@ -619,29 +619,120 @@ def _volume_case(
     return record
 
 
-# Keep source setup and exception boundaries inline: receipts observe the original
-# scientific ordering rather than moving preparation or changing failure ownership.
+_PROFILE_IDS = (
+    "sphere",
+    "sphere-adaptive-refinement",
+    "offset-ring-torus",
+    "hidden-disconnected-components",
+)
+
+
+def _matrix_record(
+    profile_ids: Sequence[str],
+    cases: list[dict[str, object]],
+    failures: list[str],
+    meshcore: str,
+    /,
+) -> dict[str, object]:
+    """Aggregate of ``profile_ids``, which follow the declared profile order.
+
+    A record that does not cover every declared profile lists its
+    ``selected_profiles``; it is one part of the scenario, never its result.
+    """
+    covered = len(profile_ids) == len(_PROFILE_IDS)
+    return {
+        "status": "failed" if failures else "passed",
+        "workflow": "native adaptive implicit source -> tetrahedral volume mesh -> source-faithful refinement",
+        "source_registry": "tools/meshing_qualification/native_case_migration.json#implicit-domain",
+        **({} if covered else {"selected_profiles": list(profile_ids)}),
+        "cases": cases,
+        "failures": failures,
+        "required_contracts": [
+            "analytic sphere refinement with independent exact volume",
+            "offset ring torus with independent exact volume and handle topology",
+            "disconnected hidden components with independent component and total-volume oracles",
+            "source-faithful adaptation with revalidated geometry fidelity",
+        ],
+        "runtime": runtime_identity(),
+        "meshcore_identity": meshcore,
+    }
+
+
+# Each profile keeps its receipt and failure ownership: its start receipt, then
+# its source setup outside the failure boundary, then its case inside it. The
+# profiles are independent; ``profiles`` selects a subset in declared order.
 def native_implicit_adaptation(
-    *, checkpoint: Callable[[dict[str, object]], None] | None = None
+    *,
+    checkpoint: Callable[[dict[str, object]], None] | None = None,
+    profiles: frozenset[str] | None = None,
 ) -> dict[str, object]:
     meshcore = require_meshcore()
+    if profiles is not None:
+        unknown = sorted(profiles - set(_PROFILE_IDS))
+        if unknown or not profiles:
+            raise ValueError(
+                f"Profile selection must name declared implicit profiles; got unknown {unknown!r}."
+            )
+    selected = tuple(
+        profile_id
+        for profile_id in _PROFILE_IDS
+        if profiles is None or profile_id in profiles
+    )
     cases: list[dict[str, object]] = []
     failures: list[str] = []
 
-    if checkpoint is not None:
-        checkpoint({"profile_id": "sphere", "event": "profile-start"})
+    def start(profile_id: str, /) -> None:
+        if checkpoint is not None:
+            checkpoint({"profile_id": profile_id, "event": "profile-start"})
+
+    def run(profile_id: str, case: Callable[[], dict[str, object]], /) -> None:
+        try:
+            cases.append(case())
+        except Exception as error:
+            failures.append(f"{profile_id}: {type(error).__name__}: {error}")
+            if checkpoint is not None:
+                checkpoint(
+                    {
+                        "profile_id": profile_id,
+                        "event": "profile-complete",
+                        "record": {"status": "failed", "failure": failures[-1]},
+                    }
+                )
+        else:
+            if checkpoint is not None:
+                checkpoint(
+                    {
+                        "profile_id": profile_id,
+                        "event": "profile-complete",
+                        "record": cases[-1],
+                    }
+                )
+
     sphere_radius = 0.371
-    sphere_model = phx.geometry.Sphere(
-        (0.0, 0.0, 0.0), sphere_radius, feature_id="native-qualification:implicit-sphere"
-    ).compile()
-    sphere = AnalyticImplicitProfile(
-        sphere_model, _CONTRACT, source_id="native-qualification:implicit-sphere"
-    )
-    try:
-        cases.append(
-            _volume_case(
+    sphere_source: AnalyticImplicitProfile | None = None
+
+    def sphere() -> AnalyticImplicitProfile:
+        # One source for both sphere profiles, compiled by the first to run.
+        nonlocal sphere_source
+        if sphere_source is None:
+            sphere_model = phx.geometry.Sphere(
+                (0.0, 0.0, 0.0),
+                sphere_radius,
+                feature_id="native-qualification:implicit-sphere",
+            ).compile()
+            sphere_source = AnalyticImplicitProfile(
+                sphere_model, _CONTRACT, source_id="native-qualification:implicit-sphere"
+            )
+        return sphere_source
+
+    if "sphere" in selected:
+        start("sphere")
+        source = sphere()
+        run(
+            "sphere",
+            lambda: _volume_case(
                 "sphere",
-                sphere,
+                source,
                 (4.0 / 3.0) * np.pi * sphere_radius**3,
                 size=sphere_radius / 2.0,
                 tolerance=0.02,
@@ -649,30 +740,16 @@ def native_implicit_adaptation(
                 adaptation_rounds=1,
                 witness=np.zeros(3),
                 enclosure=_ball_enclosure(sphere_radius),
-            )
+            ),
         )
-    except Exception as error:
-        failures.append(f"sphere: {type(error).__name__}: {error}")
-        if checkpoint is not None:
-            checkpoint(
-                {
-                    "profile_id": "sphere",
-                    "event": "profile-complete",
-                    "record": {"status": "failed", "failure": failures[-1]},
-                }
-            )
-    else:
-        if checkpoint is not None:
-            checkpoint(
-                {"profile_id": "sphere", "event": "profile-complete", "record": cases[-1]}
-            )
-    if checkpoint is not None:
-        checkpoint({"profile_id": "sphere-adaptive-refinement", "event": "profile-start"})
-    try:
-        cases.append(
-            _volume_case(
+    if "sphere-adaptive-refinement" in selected:
+        start("sphere-adaptive-refinement")
+        source = sphere()
+        run(
+            "sphere-adaptive-refinement",
+            lambda: _volume_case(
                 "sphere-adaptive-refinement",
-                sphere,
+                source,
                 (4.0 / 3.0) * np.pi * sphere_radius**3,
                 size=sphere_radius / 2.0,
                 tolerance=0.02,
@@ -687,46 +764,29 @@ def native_implicit_adaptation(
                 # acceptance are unchanged.
                 accepted_minimum_metric_length=0.67,
                 enclosure=_ball_enclosure(sphere_radius),
-            )
+            ),
         )
-    except Exception as error:
-        failures.append(f"sphere-adaptive-refinement: {type(error).__name__}: {error}")
-        if checkpoint is not None:
-            checkpoint(
-                {
-                    "profile_id": "sphere-adaptive-refinement",
-                    "event": "profile-complete",
-                    "record": {"status": "failed", "failure": failures[-1]},
-                }
-            )
-    else:
-        if checkpoint is not None:
-            checkpoint(
-                {
-                    "profile_id": "sphere-adaptive-refinement",
-                    "event": "profile-complete",
-                    "record": cases[-1],
-                }
-            )
 
-    if checkpoint is not None:
-        checkpoint({"profile_id": "offset-ring-torus", "event": "profile-start"})
-    torus_minor = 0.371
-    torus_major = 2.0 * torus_minor
-    torus_inner, torus_outer = torus_major - torus_minor, torus_major + torus_minor
-    torus_center = torus_minor * np.asarray((0.0331, -0.0191, 0.0466), dtype=np.float64)
-    torus_model = phx.geometry.Torus(
-        torus_center,
-        torus_inner,
-        torus_outer,
-        feature_id="native-qualification:offset-ring-torus",
-    ).compile()
-    torus = AnalyticImplicitProfile(
-        torus_model, _CONTRACT, source_id="native-qualification:offset-ring-torus"
-    )
-    try:
-        cases.append(
-            _volume_case(
+    if "offset-ring-torus" in selected:
+        start("offset-ring-torus")
+        torus_minor = 0.371
+        torus_major = 2.0 * torus_minor
+        torus_inner, torus_outer = torus_major - torus_minor, torus_major + torus_minor
+        torus_center = torus_minor * np.asarray(
+            (0.0331, -0.0191, 0.0466), dtype=np.float64
+        )
+        torus_model = phx.geometry.Torus(
+            torus_center,
+            torus_inner,
+            torus_outer,
+            feature_id="native-qualification:offset-ring-torus",
+        ).compile()
+        torus = AnalyticImplicitProfile(
+            torus_model, _CONTRACT, source_id="native-qualification:offset-ring-torus"
+        )
+        run(
+            "offset-ring-torus",
+            lambda: _volume_case(
                 "offset-ring-torus",
                 torus,
                 2.0 * np.pi**2 * torus_major * torus_minor**2,
@@ -739,66 +799,45 @@ def native_implicit_adaptation(
                 fidelity_levels=2,
                 witness=torus_center + np.asarray((torus_major, 0.0, 0.0)),
                 enclosure=_ring_torus_enclosure(torus_minor, torus_major),
-            )
+            ),
         )
-    except Exception as error:
-        failures.append(f"offset-ring-torus: {type(error).__name__}: {error}")
-        if checkpoint is not None:
-            checkpoint(
-                {
-                    "profile_id": "offset-ring-torus",
-                    "event": "profile-complete",
-                    "record": {"status": "failed", "failure": failures[-1]},
-                }
-            )
-    else:
-        if checkpoint is not None:
-            checkpoint(
-                {
-                    "profile_id": "offset-ring-torus",
-                    "event": "profile-complete",
-                    "record": cases[-1],
-                }
-            )
 
-    if checkpoint is not None:
-        checkpoint(
-            {"profile_id": "hidden-disconnected-components", "event": "profile-start"}
+    if "hidden-disconnected-components" in selected:
+        start("hidden-disconnected-components")
+        hidden_source_id = "native-qualification:implicit-hidden-component"
+        hidden_geometry = phx.geometry.Union(
+            (
+                phx.geometry.Sphere((-0.6, 0.0, 0.0), 0.3, feature_id="hidden-left"),
+                phx.geometry.Sphere((0.6, 0.0, 0.0), 0.3, feature_id="hidden-right"),
+            ),
+            feature_id="hidden-two-component-union",
+        ).compile()
+        domain = np.asarray(((-1.2, -0.8, -0.8), (1.2, 0.8, 0.8)), dtype=np.float64)
+        # A sharp union is a NONSMOOTH field certificate, which adaptive discovery
+        # admits only on explicit request (AdaptiveImplicitSurfacePolicy
+        # .allow_nonsmooth_field); the route reuses this same policy.
+        policy = AdaptiveImplicitSurfacePolicy(
+            relative_cell_diameter=0.01 / float(np.linalg.norm(domain[1] - domain[0])),
+            root_tolerance=1.0e-10,
+            allow_nonsmooth_field=True,
         )
-    hidden_source_id = "native-qualification:implicit-hidden-component"
-    hidden_geometry = phx.geometry.Union(
-        (
-            phx.geometry.Sphere((-0.6, 0.0, 0.0), 0.3, feature_id="hidden-left"),
-            phx.geometry.Sphere((0.6, 0.0, 0.0), 0.3, feature_id="hidden-right"),
-        ),
-        feature_id="hidden-two-component-union",
-    ).compile()
-    domain = np.asarray(((-1.2, -0.8, -0.8), (1.2, 0.8, 0.8)), dtype=np.float64)
-    # A sharp union is a NONSMOOTH field certificate, which adaptive discovery
-    # admits only on explicit request (AdaptiveImplicitSurfacePolicy
-    # .allow_nonsmooth_field); the route reuses this same policy.
-    policy = AdaptiveImplicitSurfacePolicy(
-        relative_cell_diameter=0.01 / float(np.linalg.norm(domain[1] - domain[0])),
-        root_tolerance=1.0e-10,
-        allow_nonsmooth_field=True,
-    )
-    try:
-        discovery = discover_adaptive_implicit_surface(
-            hidden_geometry,
-            domain=domain,
-            policy=policy,
-            source_id=hidden_source_id,
-        )
-        source = NativeImplicitSource(
-            hidden_geometry,
-            hidden_source_id,
-            "revision-1",
-            discovery=discovery,
-        )
-        cases.append(
-            _volume_case(
+
+        def hidden_case() -> dict[str, object]:
+            discovery = discover_adaptive_implicit_surface(
+                hidden_geometry,
+                domain=domain,
+                policy=policy,
+                source_id=hidden_source_id,
+            )
+            hidden_source = NativeImplicitSource(
+                hidden_geometry,
+                hidden_source_id,
+                "revision-1",
+                discovery=discovery,
+            )
+            return _volume_case(
                 "hidden-disconnected-components",
-                source,
+                hidden_source,
                 2.0 * (4.0 / 3.0) * np.pi * 0.3**3,
                 size=0.14,
                 tolerance=0.02,
@@ -806,41 +845,64 @@ def native_implicit_adaptation(
                 discovery=discovery,
                 policy=policy,
             )
-        )
-    except Exception as error:
-        failures.append(
-            f"hidden-disconnected-components: {type(error).__name__}: {error}"
-        )
-        if checkpoint is not None:
-            checkpoint(
-                {
-                    "profile_id": "hidden-disconnected-components",
-                    "event": "profile-complete",
-                    "record": {"status": "failed", "failure": failures[-1]},
-                }
-            )
-    else:
-        if checkpoint is not None:
-            checkpoint(
-                {
-                    "profile_id": "hidden-disconnected-components",
-                    "event": "profile-complete",
-                    "record": cases[-1],
-                }
-            )
 
-    return {
-        "status": "failed" if failures else "passed",
-        "workflow": "native adaptive implicit source -> tetrahedral volume mesh -> source-faithful refinement",
-        "source_registry": "tools/meshing_qualification/native_case_migration.json#implicit-domain",
-        "cases": cases,
-        "failures": failures,
-        "required_contracts": [
-            "analytic sphere refinement with independent exact volume",
-            "offset ring torus with independent exact volume and handle topology",
-            "disconnected hidden components with independent component and total-volume oracles",
-            "source-faithful adaptation with revalidated geometry fidelity",
-        ],
-        "runtime": runtime_identity(),
-        "meshcore_identity": meshcore,
-    }
+        run("hidden-disconnected-components", hidden_case)
+
+    return _matrix_record(selected, cases, failures, meshcore)
+
+
+def merge_native_implicit_adaptation_selections(
+    selections: Sequence[dict[str, object]], /
+) -> dict[str, object]:
+    """Combine selected-run records into the record of the profiles they cover.
+
+    Every selection must be a record of this scenario under one native
+    library, and no profile may repeat. Selections that together cover every
+    declared profile give the record of one complete run.
+    """
+    cases: dict[str, dict[str, object]] = {}
+    failures: dict[str, str] = {}
+    identities: set[object] = set()
+    covered: list[str] = []
+    for selection in selections:
+        selected = selection.get("selected_profiles", list(_PROFILE_IDS))
+        selection_cases = selection.get("cases")
+        selection_failures = selection.get("failures")
+        if (
+            selection.get("scenario") != "native-implicit-adaptation"
+            or not isinstance(selected, list)
+            or not isinstance(selection_cases, list)
+            or not isinstance(selection_failures, list)
+        ):
+            raise ValueError(
+                "Each selection must be a native implicit adaptation record."
+            )
+        failed = {
+            str(failure).split(":", 1)[0]: str(failure) for failure in selection_failures
+        }
+        passed = {str(case.get("case")): case for case in selection_cases}
+        if (
+            len(failed) != len(selection_failures)
+            or len(passed) != len(selection_cases)
+            or sorted((*failed, *passed)) != sorted(selected)
+        ):
+            raise ValueError("A selection's cases and failures must match its profiles.")
+        covered.extend(selected)
+        cases.update(passed)
+        failures.update(failed)
+        identities.add(selection.get("meshcore_identity"))
+    repeated = sorted({profile for profile in covered if covered.count(profile) > 1})
+    unknown = sorted(set(covered) - set(_PROFILE_IDS))
+    if repeated or unknown or not covered:
+        raise ValueError(
+            f"Profile selections must cover declared implicit profiles once; got repeated {repeated!r}, unknown {unknown!r}."
+        )
+    if len(identities) != 1 or not isinstance(next(iter(identities)), str):
+        raise ValueError("Profile selections must share one native library identity.")
+    ordered = tuple(profile for profile in _PROFILE_IDS if profile in covered)
+    return _matrix_record(
+        ordered,
+        [cases[profile] for profile in ordered if profile in cases],
+        [failures[profile] for profile in ordered if profile in failures],
+        str(next(iter(identities))),
+    )

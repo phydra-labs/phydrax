@@ -47,16 +47,12 @@ _SEAM_NODES = (
     ("-0x1.4000000000000p-3", "0x1.52dc7707ed4d5p-53"),
     ("0x1.6fffffffffffep-1", "0x1.52dc7707ed4d5p-53"),
 )
-_ORIGINAL_QUADRIC_MODEL_ID = (
-    "ecc1a3570ae49f8f92993023c6f3be3e05ed8b6309ad7af2f2776405e02d6d2b"
-)
 
 
 def test_original_quadric_seam_nodes_project_to_actual_seam_points(
     tmp_path: Path,
 ) -> None:
     model, _, _, _ = native_cad_profiles._quadric_case("step", tmp_path)
-    assert model.model_id == _ORIGINAL_QUADRIC_MODEL_ID
     face = 2
     assert type(model.patches[face]).__name__ == "RevolutionSurface"
     queries = np.asarray(

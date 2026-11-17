@@ -22,6 +22,10 @@ _PROFILE_MERGERS = {
         ".scenarios.native_cad_profiles",
         "merge_native_cad_profile_selections",
     ),
+    "native-implicit-adaptation": (
+        ".scenarios.native_implicit",
+        "merge_native_implicit_adaptation_selections",
+    ),
 }
 _PROFILE_SELECTABLE = tuple(_PROFILE_MERGERS)
 
@@ -65,7 +69,6 @@ def _invoke(
                 "native-moving-overset",
                 "native-reconstruction",
                 "native-image-material",
-                "native-implicit-adaptation",
                 "native-distributed-lifecycle",
                 "native-cold-fe-fv-continuation",
             ):

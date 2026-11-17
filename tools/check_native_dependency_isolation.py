@@ -465,6 +465,12 @@ def _validate_native_results(
                 if field in scenario_record:
                     failure[field] = scenario_record[field]
             failures[name] = failure
+        elif "selected_profiles" in scenario_record:
+            # A profile selection is one part of a scenario, never its result.
+            failures[name] = {
+                "status": "partial-profile-selection",
+                "selected_profiles": scenario_record["selected_profiles"],
+            }
         elif scenario_record.get("scenario") != name:
             failures[name] = {
                 "status": "scenario-identity-mismatch",

@@ -89,6 +89,16 @@ def test_native_results_reject_mislabeled_scenario_records() -> None:
         _validate_native_results({"status": "passed", "scenarios": records})
 
 
+def test_native_results_reject_a_passed_partial_profile_selection() -> None:
+    records = _passed_records()
+    records["native-cad-profile-matrix"]["selected_profiles"] = [
+        "native-cad-lifecycle:step"
+    ]
+
+    with pytest.raises(RuntimeError, match="partial-profile-selection"):
+        _validate_native_results({"status": "passed", "scenarios": records})
+
+
 def test_backend_check_requires_a_real_native_identity() -> None:
     scenario = NATIVE_SCENARIOS[0]
 

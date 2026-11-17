@@ -215,6 +215,68 @@ def test_selected_cad_profiles_merge_to_the_complete_run(
         )
 
 
+def test_selected_implicit_profiles_merge_to_the_complete_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from tools.meshing_qualification.scenarios import native_implicit
+
+    scenario = "native-implicit-adaptation"
+
+    def volume_case(
+        name: str, *arguments: object, **keywords: object
+    ) -> dict[str, object]:
+        if name == "offset-ring-torus":
+            raise RuntimeError("torus refused")
+        return {"status": "passed", "case": name}
+
+    monkeypatch.setattr(native_implicit, "_volume_case", volume_case)
+    monkeypatch.setattr(
+        native_implicit,
+        "discover_adaptive_implicit_surface",
+        lambda *arguments, **keywords: None,
+    )
+    monkeypatch.setattr(
+        native_implicit, "NativeImplicitSource", lambda *arguments, **keywords: None
+    )
+    monkeypatch.setattr(native_implicit, "require_meshcore", lambda: "meshcore unit-test")
+    for module in (native_implicit, cli):
+        monkeypatch.setattr(module, "runtime_identity", lambda: {"engine": "unit-test"})
+
+    def run(name: str, *extra: str) -> tuple[int, dict[str, object], Path]:
+        output = tmp_path / f"{name}.json"
+        status = cli.main(["--scenario", scenario, "--output", str(output), *extra])
+        return status, json.loads(output.read_text()), output
+
+    # One failed and one passed profile, requested out of declared order.
+    status, first, first_path = run(
+        "first", "--profile", "offset-ring-torus", "--profile", "sphere"
+    )
+    assert status == 1
+    record = first["scenarios"][scenario]
+    assert record["selected_profiles"] == ["sphere", "offset-ring-torus"]
+    assert [case["case"] for case in record["cases"]] == ["sphere"]
+    assert record["failures"] == ["offset-ring-torus: RuntimeError: torus refused"]
+    status, _, rest_path = run(
+        "rest",
+        "--profile",
+        "hidden-disconnected-components",
+        "--profile",
+        "sphere-adaptive-refinement",
+    )
+    assert status == 0
+
+    status, complete, _ = run("complete")
+    assert status == 1
+    assert "selected_profiles" not in complete["scenarios"][scenario]
+    status, merged, _ = run(
+        "merged", "--merge", str(rest_path), "--merge", str(first_path)
+    )
+    assert status == 1
+    assert merged == complete
+    with pytest.raises(ValueError, match="repeated"):
+        run("repeated", "--merge", str(first_path), "--merge", str(first_path))
+
+
 @pytest.mark.parametrize(
     ("scenario", "profile"),
     [
@@ -1085,7 +1147,9 @@ def test_combined_cold_continuation_requires_each_component(
     if failed == "owner_fv":
         owner_fv["status"] = "failed"
     monkeypatch.setattr(cold_fe_fv, "native_cold_restore", lambda: fe)
-    monkeypatch.setattr(cold_owner_local, "native_cold_owner_local", lambda: owner_fe)
+    monkeypatch.setattr(
+        cold_owner_local, "native_cold_owner_local", lambda *, checkpoint: owner_fe
+    )
     monkeypatch.setattr(cold_fe_fv, "_owner_local_fv_continuation", lambda: owner_fv)
 
     def child(phase: str, archive: Path) -> dict[str, object]:
