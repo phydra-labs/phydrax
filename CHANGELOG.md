@@ -249,6 +249,9 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Exact coordinate banks own immutable byte-backed integer arrays and reuse
+  their framed content fingerprint per live bank; rebuilt banks revalidate and
+  fingerprint independently. Scientific identities are unchanged.
 - Source preparation reuses exact patch and spline-span proofs only for the
   same unchanged live source. Rebuilt sources reprove their own content;
   per-target trim partitions and per-box interval bounds remain independent.
