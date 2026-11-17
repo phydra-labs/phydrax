@@ -303,10 +303,9 @@ _INCIRCLE = _Filter("incircle", _incircle_kernel, 2, 4, (10.0, 96.0), 4, 384.0)
 _INSPHERE = _Filter("insphere", _insphere_kernel, 3, 5, (16.0, 224.0), 5, 2880.0)
 
 
-def _filter(
-    xp: ModuleType, spec: _Filter, points: tuple, dtype: Any, safety: float, /
-) -> tuple:
-    det, permanent, zero, largest = spec.kernel(xp, *points)
+def _filter_bound(
+    xp: ModuleType, spec: _Filter, permanent: Any, largest: Any, dtype: Any, safety: float, /
+) -> Any:
     info = np.finfo(dtype)
     unit = float(info.eps) / 2.0
     first, second = spec.coefficient
@@ -325,7 +324,14 @@ def _filter(
     for _ in range(spec.degree - 2):
         power = upper(power * base)
     absolute = upper(xp.asarray(spec.multiplier * float(info.tiny), dtype=dtype) * power)
-    bound = upper(safety * upper(upper(relative * permanent) + absolute))
+    return upper(safety * upper(upper(relative * permanent) + absolute))
+
+
+def _filter(
+    xp: ModuleType, spec: _Filter, points: tuple, dtype: Any, safety: float, /
+) -> tuple:
+    det, permanent, zero, largest = spec.kernel(xp, *points)
+    bound = _filter_bound(xp, spec, permanent, largest, dtype, safety)
     finite = xp.isfinite(det) & xp.isfinite(bound)
     decided = finite & (xp.abs(det) > bound)
     for point in points:

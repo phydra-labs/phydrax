@@ -847,6 +847,9 @@
   coverage tolerances, mapped normals and the identities that include them
   can change in their last digits, and inputs at a threshold can change from
   certified to unresolved.
+- Simplicial locator Bernstein conversions use exact rational table
+  preparation and include table-rounding error in their boxes; locator
+  tabulation and custom degree metadata remain separate limitations.
 - On x86-64 with FMA a `NewtonKrylov` step could be refused with
   `LINEAR_SOLVE_FAILED` although its linear solve had converged. The compiler
   evaluated the linear residual in two fused kernels and contracted only one
