@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Sequence
 from dataclasses import asdict, replace
 from fractions import Fraction
 from pathlib import Path
@@ -5897,13 +5898,57 @@ def _run_profile(profile_id: str, /) -> dict[str, object]:
     return _run_wall_profile(name)
 
 
+def _hybrid_matrix_record(profiles: dict[str, dict[str, object]], /) -> dict[str, object]:
+    """Aggregate of ``profiles``, which follow the declared profile order.
+
+    A record that does not cover every declared profile lists its
+    ``selected_profiles`` and never claims workflow completion.
+    """
+    passed = sum(value["status"] == "passed" for value in profiles.values())
+    failed = len(profiles) - passed
+    covered = len(profiles) == len(_migration_profiles())
+    return {
+        "status": "passed" if failed == 0 else "failed",
+        "mandatory_workflow_completion": (
+            "complete" if covered and failed == 0 else "incomplete"
+        ),
+        "workflow": _WORKFLOW,
+        "source_registry": "tools/meshing_qualification/native_case_migration.json#workflow_contracts[hybrid-layers]",
+        "attempted_profile_count": len(profiles),
+        "passed_profile_count": passed,
+        "failed_profile_count": failed,
+        **({} if covered else {"selected_profiles": list(profiles)}),
+        "profile_attempts": profiles,
+        "tolerances": {
+            "relative_layer_thickness": _LAYER_TOLERANCE,
+            "growth_rate_error": _LAYER_TOLERANCE,
+            "volume_closure_relative": _VOLUME_TOLERANCE,
+            "geometry_certificate": "all active layer cells independently certified valid",
+        },
+    }
+
+
 def native_hybrid_layer_profile_matrix(
-    *, checkpoint: Callable[[dict[str, object]], None] | None = None
+    *,
+    checkpoint: Callable[[dict[str, object]], None] | None = None,
+    profiles: frozenset[str] | None = None,
 ) -> dict[str, object]:
-    """Attempt every recovered hybrid layer profile using its original physical input."""
+    """Attempt the recovered hybrid layer profiles using their original physical input.
+
+    The profiles are independent. ``profiles`` selects a subset by profile ID,
+    executed in declared order.
+    """
     profile_ids = _migration_profiles()
-    profiles: dict[str, dict[str, object]] = {}
+    if profiles is not None:
+        unknown = sorted(profiles - set(profile_ids))
+        if unknown or not profiles:
+            raise ValueError(
+                f"Profile selection must name declared hybrid layer profiles; got unknown {unknown!r}."
+            )
+    attempts: dict[str, dict[str, object]] = {}
     for profile_id in profile_ids:
+        if profiles is not None and profile_id not in profiles:
+            continue
         if checkpoint is not None:
             checkpoint({"profile_id": profile_id, "event": "profile-start"})
         try:
@@ -5927,29 +5972,46 @@ def native_hybrid_layer_profile_matrix(
                 "error_type": type(error).__name__,
                 "error": str(error),
             }
-        profiles[profile_id] = {"profile_id": profile_id, **record}
+        attempts[profile_id] = {"profile_id": profile_id, **record}
         if checkpoint is not None:
             checkpoint(
                 {
                     "profile_id": profile_id,
                     "event": "profile-complete",
-                    "record": profiles[profile_id],
+                    "record": attempts[profile_id],
                 }
             )
-    passed = sum(value["status"] == "passed" for value in profiles.values())
-    failed = len(profiles) - passed
-    return {
-        "status": "passed" if failed == 0 else "failed",
-        "workflow": _WORKFLOW,
-        "source_registry": "tools/meshing_qualification/native_case_migration.json#workflow_contracts[hybrid-layers]",
-        "attempted_profile_count": len(profiles),
-        "passed_profile_count": passed,
-        "failed_profile_count": failed,
-        "profile_attempts": profiles,
-        "tolerances": {
-            "relative_layer_thickness": _LAYER_TOLERANCE,
-            "growth_rate_error": _LAYER_TOLERANCE,
-            "volume_closure_relative": _VOLUME_TOLERANCE,
-            "geometry_certificate": "all active layer cells independently certified valid",
-        },
-    }
+    return _hybrid_matrix_record(attempts)
+
+
+def merge_native_hybrid_layer_profile_selections(
+    selections: Sequence[dict[str, object]], /
+) -> dict[str, object]:
+    """Combine selected-run records into the record of the profiles they cover.
+
+    Every selection must be a record of this scenario, and no profile may
+    repeat. Selections that together cover every declared profile give the
+    record of one complete run.
+    """
+    gathered: dict[str, dict[str, object]] = {}
+    for selection in selections:
+        attempts = selection.get("profile_attempts")
+        if selection.get("scenario") != "native-hybrid-layer-matrix" or not isinstance(
+            attempts, dict
+        ):
+            raise ValueError(
+                "Each selection must be a native hybrid layer matrix record."
+            )
+        repeated = sorted(gathered.keys() & attempts.keys())
+        if repeated:
+            raise ValueError(f"Profile selections repeat {repeated!r}.")
+        gathered.update(attempts)
+    declared = _migration_profiles()
+    unknown = sorted(gathered.keys() - set(declared))
+    if unknown or not gathered:
+        raise ValueError(
+            f"Profile selections must cover declared hybrid layer profiles; got unknown {unknown!r}."
+        )
+    return _hybrid_matrix_record(
+        {profile: gathered[profile] for profile in declared if profile in gathered}
+    )

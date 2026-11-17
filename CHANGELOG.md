@@ -264,13 +264,14 @@
   source-triangle index, skips boundary edges whose closed projected boxes are
   disjoint from a face side, and decides clear ray sides without expansions.
 - `python -m tools.meshing_qualification` accepts `--profile ID` to run selected
-  profiles of the CAD profile matrix or the implicit adaptation matrix, and
-  `--merge PATH` to combine such runs. A run that does not cover every profile
-  lists its `selected_profiles`, never claims workflow completion, and is
-  refused by the installed native validation; merged selections covering every
-  profile equal one complete run. The CAD matrix solves its P2 diffusion system
-  by PCG on the native Cholesky factor under a declared budget instead of the
-  default unpreconditioned solve; its residual and boundary gates are unchanged.
+  profiles of the CAD profile, implicit adaptation, reconstruction, and
+  hybrid-layer matrices and `--merge PATH` to combine such runs. A run that
+  does not cover every profile lists its `selected_profiles`, never claims
+  workflow completion, and is refused by the installed native validation;
+  merged selections covering every profile equal one complete run. The CAD
+  matrix solves its P2 diffusion system by PCG on the native Cholesky factor
+  under a declared budget instead of the default unpreconditioned solve; its
+  residual and boundary gates are unchanged.
 - Nonperiodic coupled relocation can resolve pair-only stalls with bounded
   neighbor patches selected from audited infeasibility evidence. The complete
   pair/carrier phase still runs first; source constraints, native admission,

@@ -5,6 +5,7 @@ import json
 from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -277,6 +278,102 @@ def test_selected_implicit_profiles_merge_to_the_complete_run(
         run("repeated", "--merge", str(first_path), "--merge", str(first_path))
 
 
+def _merge_selected_profiles(
+    tmp_path: Path, scenario: str, declared: list[str], first: list[str]
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], Path]:
+    """Run ``first`` and the rest as selections, a complete run, and their merge."""
+
+    def execute(name: str, *extra: str) -> dict[str, Any]:
+        output = tmp_path / f"{scenario}-{name}.json"
+        cli.main(["--scenario", scenario, "--output", str(output), *extra])
+        return json.loads(output.read_text())
+
+    rest = [profile for profile in declared if profile not in first]
+    execute("first", *(part for profile in first for part in ("--profile", profile)))
+    execute("rest", *(part for profile in rest for part in ("--profile", profile)))
+    first_path = tmp_path / f"{scenario}-first.json"
+    rest_path = tmp_path / f"{scenario}-rest.json"
+    complete = execute("complete")
+    merged = execute("merged", "--merge", str(rest_path), "--merge", str(first_path))
+    selection = json.loads(first_path.read_text())["scenarios"][scenario]
+    return selection, complete, merged, first_path
+
+
+def test_selected_reconstruction_profiles_merge_to_the_complete_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from tools.meshing_qualification.scenarios import reconstruction
+
+    def qualify(kind: str, scale: int, directory: str) -> dict[str, object]:
+        profile = reconstruction._profile_id(kind, scale)
+        if (kind, scale) == ("torus", 2):
+            raise RuntimeError("writer refused")
+        return {
+            "profile": profile,
+            "status": "failed" if (kind, scale) == ("lobed-sphere", 1) else "passed",
+        }
+
+    monkeypatch.setattr(reconstruction, "_qualify_profile", qualify)
+    monkeypatch.setattr(reconstruction, "require_meshcore", lambda: {"native": "unit"})
+    monkeypatch.setattr(reconstruction, "runtime_identity", lambda: {"engine": "unit"})
+    monkeypatch.setattr(cli, "runtime_identity", lambda: {"engine": "unit"})
+    monkeypatch.setenv("PHYDRAX_RECONSTRUCTION_CAPTURE_DIR", str(tmp_path))
+    declared = [
+        reconstruction._profile_id(kind, scale)
+        for kind, scale in reconstruction._PROFILES
+    ]
+    first = [declared[3], declared[0]]
+    selection, complete, merged, first_path = _merge_selected_profiles(
+        tmp_path, "native-reconstruction", declared, first
+    )
+    # A selection runs in declared order, keeps its own failures, and never
+    # claims completion.
+    assert selection["selected_profiles"] == [declared[0], declared[3]]
+    assert selection["mandatory_workflow_completion"] == "incomplete"
+    assert selection["failures"] == [
+        f"{declared[0]}: research gate incomplete",
+        f"{declared[3]}: RuntimeError: writer refused",
+    ]
+    record = complete["scenarios"]["native-reconstruction"]
+    assert "selected_profiles" not in record
+    assert [case["profile"] for case in record["cases"]] == [
+        profile for profile in declared if profile != declared[3]
+    ]
+    assert merged == complete
+    with pytest.raises(ValueError, match="repeat"):
+        cli.merge_selections("native-reconstruction", (first_path, first_path))
+
+
+def test_selected_hybrid_layer_profiles_merge_to_the_complete_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from tools.meshing_qualification.scenarios import native_hybrid_profiles
+
+    declared = list(native_hybrid_profiles._migration_profiles())
+
+    def run_profile(profile_id: str) -> dict[str, object]:
+        if profile_id == declared[7]:
+            raise RuntimeError("oracle refused")
+        return {"status": "passed"}
+
+    monkeypatch.setattr(native_hybrid_profiles, "_run_profile", run_profile)
+    monkeypatch.setattr(cli, "runtime_identity", lambda: {"engine": "unit"})
+    first = [declared[20], declared[7], declared[2]]
+    selection, complete, merged, first_path = _merge_selected_profiles(
+        tmp_path, "native-hybrid-layer-matrix", declared, first
+    )
+    assert selection["selected_profiles"] == [declared[2], declared[7], declared[20]]
+    assert selection["mandatory_workflow_completion"] == "incomplete"
+    assert selection["failed_profile_count"] == 1
+    record = complete["scenarios"]["native-hybrid-layer-matrix"]
+    assert "selected_profiles" not in record
+    assert record["attempted_profile_count"] == len(declared)
+    assert record["mandatory_workflow_completion"] == "incomplete"
+    assert merged == complete
+    with pytest.raises(ValueError, match="repeat"):
+        cli.merge_selections("native-hybrid-layer-matrix", (first_path, first_path))
+
+
 @pytest.mark.parametrize(
     ("scenario", "profile"),
     [
@@ -284,6 +381,16 @@ def test_selected_implicit_profiles_merge_to_the_complete_run(
             "native-cad-profile-matrix", "native-cad-lifecycle:undeclared", id="unknown"
         ),
         pytest.param("native-tpms", "native-cad-lifecycle:step", id="unsupported"),
+        pytest.param(
+            "native-reconstruction",
+            "native-reconstruction-lifecycle:undeclared",
+            id="unknown-reconstruction",
+        ),
+        pytest.param(
+            "native-hybrid-layer-matrix",
+            "native-hybrid-lifecycle:undeclared",
+            id="unknown-hybrid-layer",
+        ),
     ],
 )
 def test_profile_selection_refuses_unknown_profiles_and_unsupported_scenarios(

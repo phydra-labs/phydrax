@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, replace
 from fractions import Fraction
 from pathlib import Path
@@ -1774,58 +1774,159 @@ def _qualify_profile(kind: str, scale: int, directory: str, /) -> dict[str, obje
     )
 
 
-def native_reconstruction(
-    *, checkpoint: Callable[[dict[str, object]], None] | None = None
+_PROFILES = tuple(
+    (kind, scale)
+    for kind in ("lobed-sphere", "torus", "rotated-ellipsoid")
+    for scale in (1, 2)
+)
+
+type _ProfileOutcome = tuple[dict[str, object] | None, tuple[str, ...]]
+
+
+def _reconstruction_record(
+    outcomes: dict[str, _ProfileOutcome], meshcore: object, runtime: object, /
 ) -> dict[str, object]:
+    """Aggregate of per-profile ``(case, failures)`` in declared profile order.
+
+    A record that does not cover every declared profile lists its
+    ``selected_profiles`` and never claims workflow completion.
+    """
+    failures = [
+        failure
+        for _, profile_failures in outcomes.values()
+        for failure in profile_failures
+    ]
+    covered = len(outcomes) == len(_PROFILES)
+    return {
+        "status": "failed" if failures else "passed",
+        "mandatory_workflow_completion": (
+            "complete" if covered and not failures else "incomplete"
+        ),
+        "workflow": "native defective point cloud -> reconstruction -> PLC volume -> "
+        "marked refinement -> all-field transfer/reanalysis -> independent cold continuation",
+        "source_registry": "tools/meshing_qualification/native_case_migration.json#imperfect-surface",
+        **({} if covered else {"selected_profiles": list(outcomes)}),
+        "profiles": {
+            profile: {
+                "status": "failed" if profile_failures else "passed",
+                "failures": list(profile_failures),
+            }
+            for profile, (_, profile_failures) in outcomes.items()
+        },
+        "cases": [case for case, _ in outcomes.values() if case is not None],
+        "failures": failures,
+        "meshcore_identity": meshcore,
+        "runtime": runtime,
+    }
+
+
+def native_reconstruction(
+    *,
+    checkpoint: Callable[[dict[str, object]], None] | None = None,
+    profiles: frozenset[str] | None = None,
+) -> dict[str, object]:
+    """Qualify the original reconstruction profiles; ``profiles`` selects a subset.
+
+    The profiles are independent and run in declared order.
+    """
+    if profiles is not None:
+        declared = {_profile_id(kind, scale) for kind, scale in _PROFILES}
+        unknown = sorted(profiles - declared)
+        if unknown or not profiles:
+            raise ValueError(
+                f"Profile selection must name declared reconstruction profiles; got unknown {unknown!r}."
+            )
     meshcore = require_meshcore()
     directory = os.environ.get("PHYDRAX_RECONSTRUCTION_CAPTURE_DIR")
     if not directory:
         import tempfile
 
         directory = tempfile.mkdtemp(prefix="phydrax-native-reconstruction-")
-    cases: list[dict[str, object]] = []
-    failures: list[str] = []
-    for kind in ("lobed-sphere", "torus", "rotated-ellipsoid"):
-        for scale in (1, 2):
-            profile_id = _profile_id(kind, scale)
-            if checkpoint is not None:
-                checkpoint({"profile_id": profile_id, "event": "profile-start"})
-            try:
-                case = _qualify_profile(kind, scale, directory)
-            except Exception as error:
-                failures.append(
-                    f"{_profile_id(kind, scale)}: {type(error).__name__}: {error}"
-                )
-                if checkpoint is not None:
-                    checkpoint(
-                        {
-                            "profile_id": profile_id,
-                            "event": "profile-complete",
-                            "record": {"status": "failed", "failure": failures[-1]},
-                        }
-                    )
-                continue
-            cases.append(case)
+    outcomes: dict[str, _ProfileOutcome] = {}
+    for kind, scale in _PROFILES:
+        profile_id = _profile_id(kind, scale)
+        if profiles is not None and profile_id not in profiles:
+            continue
+        if checkpoint is not None:
+            checkpoint({"profile_id": profile_id, "event": "profile-start"})
+        try:
+            case = _qualify_profile(kind, scale, directory)
+        except Exception as error:
+            failure = f"{profile_id}: {type(error).__name__}: {error}"
+            outcomes[profile_id] = (None, (failure,))
             if checkpoint is not None:
                 checkpoint(
                     {
                         "profile_id": profile_id,
                         "event": "profile-complete",
-                        "record": case,
+                        "record": {"status": "failed", "failure": failure},
                     }
                 )
-            if case["status"] != "passed":
-                failures.append(f"{_profile_id(kind, scale)}: research gate incomplete")
-    return {
-        "status": "failed" if failures else "passed",
-        "workflow": "native defective point cloud -> reconstruction -> PLC volume -> "
-        "marked refinement -> all-field transfer/reanalysis -> independent cold continuation",
-        "source_registry": "tools/meshing_qualification/native_case_migration.json#imperfect-surface",
-        "cases": cases,
-        "failures": failures,
-        "meshcore_identity": meshcore,
-        "runtime": runtime_identity(),
-    }
+            continue
+        outcomes[profile_id] = (
+            case,
+            ()
+            if case["status"] == "passed"
+            else (f"{profile_id}: research gate incomplete",),
+        )
+        if checkpoint is not None:
+            checkpoint(
+                {
+                    "profile_id": profile_id,
+                    "event": "profile-complete",
+                    "record": case,
+                }
+            )
+    return _reconstruction_record(outcomes, meshcore, runtime_identity())
+
+
+def merge_native_reconstruction_selections(
+    selections: Sequence[dict[str, object]], /
+) -> dict[str, object]:
+    """Combine selected-run records into the record of the profiles they cover.
+
+    Every selection must be a record of this scenario with one native identity,
+    and no profile may repeat. Selections that together cover every declared
+    profile give the record of one complete run.
+    """
+    gathered: dict[str, _ProfileOutcome] = {}
+    meshcore: object = None
+    for index, selection in enumerate(selections):
+        profiles = selection.get("profiles")
+        cases = selection.get("cases")
+        if (
+            selection.get("scenario") != "native-reconstruction"
+            or not isinstance(profiles, dict)
+            or not isinstance(cases, list)
+        ):
+            raise ValueError("Each selection must be a native reconstruction record.")
+        if index == 0:
+            meshcore = selection.get("meshcore_identity")
+        elif selection.get("meshcore_identity") != meshcore:
+            raise ValueError(
+                "Profile selections must share one native meshcore identity."
+            )
+        repeated = sorted(gathered.keys() & profiles.keys())
+        if repeated:
+            raise ValueError(f"Profile selections repeat {repeated!r}.")
+        by_profile = {case["profile"]: case for case in cases}
+        if not by_profile.keys() <= profiles.keys():
+            raise ValueError(
+                "A reconstruction case names a profile outside its selection."
+            )
+        for profile, entry in profiles.items():
+            gathered[profile] = (by_profile.get(profile), tuple(entry["failures"]))
+    declared = tuple(_profile_id(kind, scale) for kind, scale in _PROFILES)
+    unknown = sorted(gathered.keys() - set(declared))
+    if unknown or not gathered:
+        raise ValueError(
+            f"Profile selections must cover declared reconstruction profiles; got unknown {unknown!r}."
+        )
+    return _reconstruction_record(
+        {profile: gathered[profile] for profile in declared if profile in gathered},
+        meshcore,
+        selections[0].get("runtime"),
+    )
 
 
 # Donor c56614a9f scenarios/envelope.py open sheet and controls, unchanged:

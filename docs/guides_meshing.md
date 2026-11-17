@@ -3942,14 +3942,15 @@ flushing and syncing each event before execution continues. Without either
 option, events go to standard error and the final JSON stays on standard output.
 A shared distributed FE result is labeled with its producing cold-continuation
 scenario rather than being executed twice.
-The profiles of `native-cad-profile-matrix` and `native-implicit-adaptation`
-are independent. `--profile ID` (repeatable) runs only the named profiles of
-one such scenario, in declared order, so separate processes can execute it
-concurrently. A run that does not cover every declared profile lists its
-`selected_profiles` and reports the status of those profiles only; the CAD
-matrix then reports `mandatory_workflow_completion` as incomplete, and the
-canonical installed validation refuses any record that lists
-`selected_profiles`.
+The profiles of `native-cad-profile-matrix`, `native-implicit-adaptation`,
+`native-reconstruction`, and `native-hybrid-layer-matrix` are independent.
+`--profile ID` (repeatable) runs only the named profiles of one such scenario,
+in declared order, so separate processes can execute it concurrently. A run
+that does not cover every declared profile lists its `selected_profiles` and
+reports the status of those profiles only; the CAD, reconstruction, and
+hybrid-layer matrices then report `mandatory_workflow_completion` as
+incomplete, and the canonical installed validation refuses any record that
+lists `selected_profiles`.
 `--merge PATH` (repeatable, with the one `--scenario`) combines the final
 outputs of such runs instead of executing: the profiles must not repeat and
 the runs must share one runtime identity, and selections that together cover
