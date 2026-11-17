@@ -1056,12 +1056,12 @@ class SourcePreparation:
             return _placed_point_box(
                 surface.placement, self.surface_box(surface.source, parameter_box)
             )
-        from .brep._patches import TorusPatch
+        from .brep._patches import _host_parameter_box, TorusPatch
         from .brep._root_bindings import _exact_span_surface_box, _patch_box
         from .brep._tspline import TSplineSurfacePatch
 
         if isinstance(surface, (BSplineSurfacePatch, TSplineSurfacePatch)):
-            box = np.asarray(surface.validate_parameter_box(parameter_box), np.float64)
+            box = _host_parameter_box(surface, parameter_box)
             spans = self.surface_spans(surface)
             if spans is None:
                 raise RuntimeError("A spline carrier prepared no exact spans.")
@@ -1069,14 +1069,10 @@ class SourcePreparation:
         if isinstance(surface, TorusPatch):
             from .brep._root_bindings import _exact_torus_patch_box
 
-            box = np.asarray(
-                surface.validate_parameter_box(parameter_box), dtype=np.float64
-            )
+            box = _host_parameter_box(surface, parameter_box)
             return _exact_torus_patch_box(surface, box[0], box[1])
         if type(surface).bounding_box is AbstractSurfacePatch.bounding_box:
-            box = np.asarray(
-                surface.validate_parameter_box(parameter_box), dtype=np.float64
-            )
+            box = _host_parameter_box(surface, parameter_box)
             return _patch_box(
                 surface, box[0], box[1], interval_program=self._surface_box_program
             )
