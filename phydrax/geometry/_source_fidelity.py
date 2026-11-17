@@ -233,11 +233,13 @@ def _screened_intersection_areas(
     separated pairs have zero area, provably overlapping pairs clip directly,
     and only undecided pairs run the exact separation test first.
     """
+    first_boxes = polygon_boxes(first)
+    second_boxes = first_boxes if first is second else polygon_boxes(second)
     pairs = box_overlap_pairs(
         len(first),
         len(second),
-        polygon_boxes(first),
-        polygon_boxes(second),
+        first_boxes,
+        second_boxes,
         self_pairs=self_pairs,
     )
     decisions = triangle_pair_separation(first, second, pairs)
@@ -666,13 +668,13 @@ def _partition_findings(
         target_area = sum(target_areas, Fraction(0))
         source_overlap = any(
             area > 0
-            for _, _, area in _screened_intersection_areas(
+            for _, _, area in _partition_intersection_areas(
                 declared, declared, self_pairs=True
             )
         )
         target_overlap = any(
             area > 0
-            for _, _, area in _screened_intersection_areas(
+            for _, _, area in _partition_intersection_areas(
                 target, target, self_pairs=True
             )
         )
@@ -1361,11 +1363,9 @@ def _validate_piecewise_linear_chart_witness(
 
 _VALIDATION_TOKEN = object()
 
-# Completed witness validations by their exact live operands (mesh, coordinate
-# map, source query, witness). The outcome is the validation's partition
-# findings, wrapped because "none" is an outcome; it never holds an operand.
+# Outcomes hold only immutable findings and target row indices, never operands.
 _VALIDATED_WITNESSES: LiveProofLedger[
-    tuple[tuple[MeshCertificateFinding, ...] | None]
+    tuple[tuple[MeshCertificateFinding, ...] | None, tuple[tuple[int, int], ...] | None]
 ] = LiveProofLedger()
 
 
@@ -1390,13 +1390,16 @@ class ValidatedSourceFidelityWitness(tuple):
         /,
         *,
         partition_findings: tuple[MeshCertificateFinding, ...] | None,
+        target_rows: tuple[tuple[int, int], ...] | None,
         token: object,
     ) -> ValidatedSourceFidelityWitness:
         if token is not _VALIDATION_TOKEN:
             raise TypeError(
                 "Validated witnesses are created only by validate_source_fidelity_witness."
             )
-        return tuple.__new__(cls, (mesh, geometry, source, witness, partition_findings))
+        return tuple.__new__(
+            cls, (mesh, geometry, source, witness, partition_findings, target_rows)
+        )
 
     @property
     def mesh(self) -> CellMesh:
@@ -1417,6 +1420,10 @@ class ValidatedSourceFidelityWitness(tuple):
     @property
     def partition_findings(self) -> tuple[MeshCertificateFinding, ...] | None:
         return self[4]
+
+    @property
+    def target_rows(self) -> tuple[tuple[int, int], ...] | None:
+        return self[5]
 
     def binds(
         self,
@@ -1451,18 +1458,27 @@ def validate_source_fidelity_witness(
     validated = _VALIDATED_WITNESSES.find(operands)
     if validated is None:
         fingerprint = live_content_fingerprint(operands)
+        validated_target_rows: list[tuple[tuple[int, int], ...]] = []
         partition_findings = _validate_source_fidelity_witness(
-            mesh, geometry, source, witness
+            mesh,
+            geometry,
+            source,
+            witness,
+            target_rows_out=validated_target_rows,
         )
-        _VALIDATED_WITNESSES.record(operands, fingerprint, (partition_findings,))
+        target_rows = validated_target_rows[0] if validated_target_rows else None
+        _VALIDATED_WITNESSES.record(
+            operands, fingerprint, (partition_findings, target_rows)
+        )
     else:
-        (partition_findings,) = validated
+        partition_findings, target_rows = validated
     return ValidatedSourceFidelityWitness(
         mesh,
         geometry,
         source,
         witness,
         partition_findings=partition_findings,
+        target_rows=target_rows,
         token=_VALIDATION_TOKEN,
     )
 
@@ -1476,6 +1492,7 @@ def _validate_source_fidelity_witness(
     *,
     domain_coverage: SourceBoundaryChartCover | None = None,
     preparation: SourcePreparation | None = None,
+    target_rows_out: list[tuple[tuple[int, int], ...]] | None = None,
 ) -> tuple[MeshCertificateFinding, ...] | None:
     # `domain_coverage`: the domain source's chart cover, already computed by a
     # caller that holds it (a reconstructed query's prepared domain cover).
@@ -1805,7 +1822,7 @@ def _validate_source_fidelity_witness(
                 raise ValueError(
                     "Surface source chart witness is not a complete exact partition."
                 )
-            _, _, target_orientation = _surface_target_chart_rows(
+            target_rows, _, target_orientation = _surface_target_chart_rows(
                 mesh, geometry, domain_source, witness
             )
             source_orientation = tuple(1 if _area2(chart) > 0 else -1 for chart in charts)
@@ -1831,6 +1848,8 @@ def _validate_source_fidelity_witness(
                 raise ValueError(
                     "Surface source query does not reproduce a complete exact chart cover."
                 )
+            if target_rows_out is not None:
+                target_rows_out.append(target_rows)
             return
     from .implicit._adaptive_discovery import AdaptiveImplicitBoundarySource
 
@@ -4292,18 +4311,29 @@ def _surface_target_chart_rows(
                 "Full-source volume chart witness must bind every exterior target facet."
             )
 
-    parent_reference_triangles = tuple(
-        _exact_triangle3(
-            _fractions_from_chart_tokens(witness.target_reference_rational_tokens, row)
-        )
-        for row in range(count)
-    )
+    exact_rows: dict[tuple[tuple[tuple[int, int], ...], ...], Triangle3] = {}
+    parent_reference_triangles: list[Triangle3] = []
+    for row in range(count):
+        tokens = witness.target_reference_rational_tokens[row]
+        triangle = exact_rows.get(tokens)
+        if triangle is None:
+            triangle = _exact_triangle3(
+                _fractions_from_chart_tokens(
+                    witness.target_reference_rational_tokens, row
+                )
+            )
+            exact_rows[tokens] = triangle
+        parent_reference_triangles.append(triangle)
     grouped: dict[tuple[int, int], list[Triangle2]] = {}
     domains: dict[tuple[int, int], tuple[Triangle2, ...]] = {}
     reference_rows: list[Triangle2] = []
     cell_rows: list[tuple[int, int]] = []
     orientation_signs: list[int] = []
     facet_owners: dict[int, tuple[int, int]] = {}
+    face_charts: dict[
+        tuple[str, int, Triangle3], tuple[tuple[Triangle2, ...], tuple[Triangle2, ...]]
+    ] = {}
+    chart_orientations: dict[Triangle2, int] = {}
     for row in range(count):
         cell_id = cell_ids[row]
         local_entity = int(local_entities[row])
@@ -4325,9 +4355,12 @@ def _surface_target_chart_rows(
             raise TypeError(
                 "Standard volume-boundary charts require reference-cell blocks."
             )
-        target_charts, domain = _face_reference_chart(
-            block.cell_kind, local_entity, parent_reference_triangles[row]
-        )
+        chart_key = (block.cell_kind, local_entity, parent_reference_triangles[row])
+        face_chart = face_charts.get(chart_key)
+        if face_chart is None:
+            face_chart = _face_reference_chart(*chart_key)
+            face_charts[chart_key] = face_chart
+        target_charts, domain = face_chart
         if len(target_charts) != 1:
             raise ValueError("A volume chart row must map one parent-reference triangle.")
         target_chart = target_charts[0]
@@ -4336,11 +4369,19 @@ def _surface_target_chart_rows(
         domains[key] = domain
         reference_rows.append(target_chart)
         cell_rows.append((block_index, cell_row))
-        orientation_signs.append(1 if _area2(target_chart) > 0 else -1)
+        orientation = chart_orientations.get(target_chart)
+        if orientation is None:
+            orientation = 1 if _area2(target_chart) > 0 else -1
+            chart_orientations[target_chart] = orientation
+        orientation_signs.append(orientation)
+    checked_partitions: set[tuple[tuple[Triangle2, ...], tuple[Triangle2, ...]]] = set()
     for key, triangles in grouped.items():
-        _require_reference_chart_partition(
-            tuple(triangles), domains[key], require_complete=not partial_target
-        )
+        partition = (tuple(triangles), domains[key])
+        if partition not in checked_partitions:
+            _require_reference_chart_partition(
+                *partition, require_complete=not partial_target
+            )
+            checked_partitions.add(partition)
     return tuple(cell_rows), tuple(reference_rows), tuple(orientation_signs)
 
 
@@ -5926,7 +5967,15 @@ def _certify_domain_surface_chart_fidelity(
     domain_source = _surface_query_root(source)
     preparation = SourcePreparation.of(domain_source.domain, preparation)
 
-    if validated is None or not validated.binds(mesh, geometry, source):
+    target_rows: tuple[tuple[int, int], ...] | None = None
+    if (
+        validated is not None
+        and validated.binds(mesh, geometry, source)
+        and validated.witness is witness
+    ):
+        target_rows = validated.target_rows
+    else:
+        validated_target_rows: list[tuple[tuple[int, int], ...]] = []
         _validate_source_fidelity_witness(
             mesh,
             geometry,
@@ -5934,9 +5983,15 @@ def _certify_domain_surface_chart_fidelity(
             witness,
             domain_coverage=domain_coverage,
             preparation=preparation,
+            target_rows_out=validated_target_rows,
         )
+        if validated_target_rows:
+            target_rows = validated_target_rows[0]
     patch_rows, charts, plane_patches = _surface_source_chart_rows(domain_source, witness)
-    target_rows, _, _ = _surface_target_chart_rows(mesh, geometry, domain_source, witness)
+    if target_rows is None:
+        target_rows, _, _ = _surface_target_chart_rows(
+            mesh, geometry, domain_source, witness
+        )
     evidence = certify_domain_surface_charts(
         mesh,
         geometry,
@@ -6878,9 +6933,14 @@ def certify_source_fidelity(
             )
             continue
         route_rows = np.asarray(route, dtype=np.int64)
+        block_cell_ids = np.asarray(block.global_ids, dtype=np.int64)
+        reference_vertices = tuple(
+            tuple(Fraction(float(value)) for value in point)
+            for point in np.asarray(reference_cell_topology("triangle").vertices)
+        )
         for row_index in range(route_rows.shape[0]):
             row = route_rows[row_index]
-            cell_id = int(block.global_ids[row_index])
+            cell_id = int(block_cell_ids[row_index])
             if cell_id not in selected_cells:
                 continue
             local = tuple(
@@ -6902,14 +6962,9 @@ def certify_source_fidelity(
                     )
                 )
                 continue
-            reference_vertices = reference_cell_topology("triangle").vertices
             target_corners[cell_id] = tuple(
                 tuple(
-                    evaluate_expression(
-                        expression,
-                        tuple(Fraction(float(value)) for value in point),
-                    )
-                    for expression in expressions
+                    evaluate_expression(expression, point) for expression in expressions
                 )
                 for point in reference_vertices
             )
