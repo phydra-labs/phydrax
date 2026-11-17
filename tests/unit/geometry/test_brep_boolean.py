@@ -369,6 +369,53 @@ def test_closed_branch_endpoints_isolated_on_opposite_seam_bind_one_chart_point(
         )
 
 
+def test_intersection_trim_eager_fallback_classifies_public_queries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry.brep import _host_program
+
+    first = brep_cylinder(
+        1.0, 4.0, base_center=(0.0, 0.0, -2.0), coordinate_contract=_COORDINATES
+    )
+    second = brep_cylinder(
+        0.8,
+        4.0,
+        base_center=(0.0, -2.0, 0.0),
+        axis=(0.0, 1.0, 0.0),
+        coordinate_contract=_COORDINATES,
+    )
+    model = boolean_brep(first, second, "intersection").model
+    face, domain = next(
+        (face, domain)
+        for face, domain in enumerate(model.trim_domains)
+        if domain is not None
+        and any(
+            isinstance(segment.curve, IntersectionPCurve)
+            for loop in domain.curve_loops
+            for segment in loop
+            if isinstance(segment, CurveTrimSegment)
+        )
+    )
+    bounds = np.asarray(model.parameter_bounds, dtype=np.float64)[face]
+    width = bounds[1] - bounds[0]
+    queries = np.stack(
+        (
+            bounds[0] - width,
+            bounds[1] + width,
+            (bounds[0, 0] - width[0], bounds[1, 1] + width[1]),
+        )
+    )
+    monkeypatch.setattr(_host_program, "prepare_host_program", lambda *args: None)
+    together = domain.classify(queries)
+    separately = tuple(domain.classify(query[None, :]) for query in queries)
+    assert np.any(np.asarray(together.resolved))
+    for name in ("inside", "boundary", "resolved"):
+        np.testing.assert_array_equal(
+            getattr(together, name),
+            [bool(getattr(result, name)[0]) for result in separately],
+        )
+
+
 def test_seam_crossing_quadric_loop_closes_under_exact_per_chart_decks(
     tmp_path: Path,
 ) -> None:
