@@ -259,6 +259,10 @@
   avoiding repeated affine solves without changing cell charts or identities.
 - Cell validity prepares dyadic source-coordinate endpoints and point-rounding
   bounds in blocks while retaining exact fallback and unchanged certificate bits.
+- Intersection-curve projection can isolate simple stationary roots with
+  outward interval bounds and exact endpoint signs, falling back to exact
+  isolation. Its root identities may change; projection result identities
+  change only through their output arrays.
 - Global embedding contact passes reuse exact stratum root nets only for the
   same live cell and exact stratum and residual; the table is discarded when
   the proof returns. Contact decisions and witness identities are unchanged.

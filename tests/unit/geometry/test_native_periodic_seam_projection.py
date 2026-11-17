@@ -87,3 +87,27 @@ def test_original_quadric_seam_nodes_project_to_actual_seam_points(
         inside, np.full((count,), 2, dtype=np.int64), np.full((count,), face)
     )
     assert np.all(np.asarray(interior.status) == int(BRepProjectionStatus.UNIQUE))
+
+
+def test_exact_seam_foot_preserves_projection_with_repeated_stationary_root(
+    tmp_path: Path,
+) -> None:
+    model, _, _, _ = native_cad_profiles._quadric_case("step", tmp_path)
+    query = np.asarray([[-0.71875, 0.0, 0.6]], dtype=np.float64)
+    result = phx.geometry.prepare_brep_projection(model).project(
+        query, np.asarray([2], dtype=np.int64), np.asarray([2], dtype=np.int64)
+    )
+    # Parent exact-isolator result for this on-curve query, whose squared
+    # stationarity polynomial has a double half-angle root at zero.
+    np.testing.assert_array_equal(result.status, [int(BRepProjectionStatus.SEAM)])
+    np.testing.assert_array_equal(result.points, query)
+    np.testing.assert_array_equal(
+        result.parameters,
+        [[float.fromhex("0x1.921fb54442d18p+2"), float.fromhex("0x1.0aaaaaaaaaaabp-2")]],
+    )
+    np.testing.assert_array_equal(result.residuals, [0.0])
+    np.testing.assert_array_equal(result.distance_lower_bounds, [0.0])
+    np.testing.assert_allclose(result.normals, [[0.0, 0.0, 1.0]], atol=1e-14)
+    np.testing.assert_allclose(
+        result.tangents, [[[0.0, -1.0, 0.0], [1.0, 0.0, 0.0]]], atol=1e-14
+    )
