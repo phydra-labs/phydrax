@@ -1221,21 +1221,42 @@ def _target_boundary_successors(
     triangles: tuple[_Triangle2, ...], /
 ) -> dict[_Point2, list[_Point2]]:
     """Directed target boundary edges with the target interior on their left."""
-    counts: Counter[frozenset[_Point2]] = Counter()
+    vertices: dict[_Point2, int] = {}
     oriented: list[_Triangle2] = []
+    vertex_ids: list[int] = []
     for triangle in triangles:
         area = _cross2(*triangle)
         if area == 0:
             raise ValueError("Target chart triangles must have nonzero chart area.")
-        oriented.append(triangle if area > 0 else (triangle[0], triangle[2], triangle[1]))
-        for index in range(3):
-            counts[frozenset((triangle[index], triangle[(index + 1) % 3]))] += 1
+        ordered = triangle if area > 0 else (triangle[0], triangle[2], triangle[1])
+        oriented.append(ordered)
+        for point in ordered:
+            vertex_ids.append(vertices.setdefault(point, len(vertices)))
+    if not oriented:
+        return {}
+
+    ids = np.asarray(vertex_ids, dtype=np.int64).reshape(-1, 3)
+    starts = ids.reshape(-1)
+    stops = ids[:, (1, 2, 0)].reshape(-1)
+    lower = np.minimum(starts, stops)
+    upper = np.maximum(starts, stops)
+    order = np.lexsort((upper, lower))
+    sorted_lower = lower[order]
+    sorted_upper = upper[order]
+    adjacent = (sorted_lower[1:] == sorted_lower[:-1]) & (
+        sorted_upper[1:] == sorted_upper[:-1]
+    )
+    singleton = np.ones(order.size, dtype=np.bool_)
+    singleton[1:] &= ~adjacent
+    singleton[:-1] &= ~adjacent
+    boundary = np.zeros(order.size, dtype=np.bool_)
+    boundary[order[singleton]] = True
     successors: dict[_Point2, list[_Point2]] = {}
-    for triangle in oriented:
-        for index in range(3):
-            start, stop = triangle[index], triangle[(index + 1) % 3]
-            if counts[frozenset((start, stop))] == 1:
-                successors.setdefault(start, []).append(stop)
+    for edge in np.flatnonzero(boundary):
+        triangle = oriented[edge // 3]
+        index = edge % 3
+        start, stop = triangle[index], triangle[(index + 1) % 3]
+        successors.setdefault(start, []).append(stop)
     return successors
 
 
