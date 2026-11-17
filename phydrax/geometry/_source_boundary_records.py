@@ -463,10 +463,12 @@ def _validated_rational_chart_tokens(
         tuple[tuple[_RationalToken, ...], ...], tuple[tuple[_RationalToken, ...], ...]
     ] = {}
     for row_index, row in enumerate(supplied):
+        canonical_input = isinstance(row, tuple)
         if len(row) != corners:
             raise ValueError(f"{name} chart rows have the wrong corner count.")
         points: list[tuple[_RationalToken, ...]] = []
         for corner_index, point in enumerate(row):
+            canonical_input = canonical_input and isinstance(point, tuple)
             if len(point) != dimension:
                 raise ValueError(
                     f"{name} chart points have the wrong coordinate dimension."
@@ -476,16 +478,18 @@ def _validated_rational_chart_tokens(
                 if (
                     not isinstance(token, tuple)
                     or len(token) != 2
-                    or any(
-                        isinstance(value, (bool, np.bool_))
-                        or not isinstance(value, (int, np.integer))
-                        for value in token
-                    )
+                    or isinstance(token[0], (bool, np.bool_))
+                    or not isinstance(token[0], (int, np.integer))
+                    or isinstance(token[1], (bool, np.bool_))
+                    or not isinstance(token[1], (int, np.integer))
                 ):
                     raise TypeError(
                         f"{name} coordinates must be integer numerator/denominator pairs."
                     )
-                numerator, denominator = (int(value) for value in token)
+                numerator, denominator = int(token[0]), int(token[1])
+                canonical_input = canonical_input and (
+                    type(token[0]) is int and type(token[1]) is int
+                )
                 if denominator <= 0:
                     raise ValueError(f"{name} denominators must be positive.")
                 represented = float(realization[row_index, corner_index, axis])
@@ -500,19 +504,7 @@ def _validated_rational_chart_tokens(
                 coordinates.append((numerator, denominator))
             points.append(tuple(coordinates))
         canonical_row = tuple(points)
-        if (
-            isinstance(row, tuple)
-            and row == canonical_row
-            and all(
-                isinstance(point, tuple)
-                and all(
-                    isinstance(token, tuple)
-                    and all(type(value) is int for value in token)
-                    for token in point
-                )
-                for point in row
-            )
-        ):
+        if canonical_input and row == canonical_row:
             canonical_row = row
         result.append(distinct.setdefault(canonical_row, canonical_row))
     return tuple(result)
