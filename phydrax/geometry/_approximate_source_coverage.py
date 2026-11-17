@@ -1558,8 +1558,13 @@ def _cad_target_root_partition(
                 raise SourceCoverageUnavailable(
                     "CAD plane mixes source charts.", status="violated"
                 )
+        # The retained charts may hold an equal restored domain object; their
+        # boundary source answers only a preparation of its own live domain.
         declared = charts.boundary_source._trim_partition_reference_unchecked(
-            patch, rows, SourcePreparation(domain), plane=patch in plane_patches
+            patch,
+            rows,
+            SourcePreparation(charts.boundary_source.domain),
+            plane=patch in plane_patches,
         )[0]
         source_area = sum((abs(_area2(t)) for t in declared), Fraction(0))
         if (
