@@ -764,6 +764,56 @@ def test_parametric_layer_core_certifies_mixed_prism_tet_source_maps(
     evidence.require_current(result.construction.mesh, result.construction.geometry)
 
 
+def test_parametric_layer_replay_rejects_exact_distance_above_tolerance() -> None:
+    from phydrax.discretization import CellGeometrySpec
+    from phydrax.meshing._layer_curving_records import _validate_parametric_chart_geometry
+
+    if not meshcore_available():
+        pytest.skip("native boundary-layer generation requires meshcore")
+    result, _, _, _ = make_layer_curving_archive_case()
+    evidence = result.source_evidence
+    geometry = result.candidate_geometry
+    assert evidence is not None and geometry is not None
+    charts = evidence.source_surface_charts
+    assert charts is not None
+    mesh = result.construction.mesh
+    _validate_parametric_chart_geometry(
+        mesh, geometry, charts, evidence.chart_witness, evidence.chart_column_identity, 1.0
+    )
+    points = np.asarray(geometry.coordinates).copy()
+    origin_rows = np.flatnonzero(np.all(points == 0.0, axis=1))
+    assert origin_rows.size
+    def altered_with(point: tuple[float, float, float]) -> CellGeometrySpec:
+        candidate = points.copy()
+        candidate[origin_rows[0]] = point
+        return CellGeometrySpec(
+            dict(zip(geometry.block_names, geometry.elements, strict=True)),
+            dict(zip(geometry.block_names, geometry.geometry_dofs, strict=True)),
+            candidate,
+        )
+
+    for point in ((1.0, 0.0, 0.0), (0.5, 0.0, 0.0)):
+        _validate_parametric_chart_geometry(
+            mesh,
+            altered_with(point),
+            charts,
+            evidence.chart_witness,
+            evidence.chart_column_identity,
+            1.0,
+        )
+    assert Fraction(1) + Fraction(1, 2**54) > Fraction(1)
+    altered = altered_with((1.0, 2.0**-27, 0.0))
+    with pytest.raises(ValueError, match="outside its exact source-chart tolerance"):
+        _validate_parametric_chart_geometry(
+            mesh,
+            altered,
+            charts,
+            evidence.chart_witness,
+            evidence.chart_column_identity,
+            1.0,
+        )
+
+
 def test_adaptive_implicit_layer_builds_and_revalidates_source_evidence() -> None:
     if not meshcore_available():
         pytest.skip("native boundary-layer generation requires meshcore")
@@ -819,6 +869,77 @@ def test_mapped_root_layer_builds_and_revalidates_exact_source_evidence() -> Non
     )
     evidence.revalidate(result.construction.mesh, result.candidate_geometry)
 
+
+def test_mapped_layer_trace_normal_uses_reproducible_rounded_length() -> None:
+    from decimal import Decimal, localcontext
+
+    if not meshcore_available():
+        pytest.skip("native boundary-layer generation requires meshcore")
+    result, _, _, _ = make_mapped_layer_curving_archive_case()
+    evidence = result.source_evidence
+    assert evidence is not None and evidence.mapped_chart_trace is not None
+    trace = evidence.mapped_chart_trace
+    for row in range(trace.tangents.shape[0]):
+        normal = trace.normals[row]
+        cross = np.cross(trace.tangents[row, 0, :], trace.tangents[row, 1, :])
+        rounded_squares = tuple(float(value) * float(value) for value in cross)
+        rounded_sum = float(sum((Fraction(value) for value in rounded_squares), Fraction(0)))
+        with localcontext() as context:
+            context.prec = 200
+            exact_sum = Fraction(rounded_sum)
+            root = (Decimal(exact_sum.numerator) / Decimal(exact_sum.denominator)).sqrt()
+            length = float(root)
+        expected = np.asarray([float(value) / length for value in cross], dtype=np.float64)
+        np.testing.assert_array_equal(normal, expected)
+
+
+def test_layer_trace_accepts_nonzero_underflow_scale_frames() -> None:
+    from phydrax.meshing._layer_curving_records import (
+        LayerColumnProjectionIdentity,
+        LayerCurvingMappedChartTrace,
+        LayerCurvingProjectionTrace,
+    )
+
+    indices = np.asarray([0], dtype=np.int64)
+    zero_scalar = np.asarray([0.0], dtype=np.float64)
+    zero_point = np.zeros((1, 3), dtype=np.float64)
+    zero_chart = np.zeros((1, 2), dtype=np.float64)
+    identity = LayerColumnProjectionIdentity(
+        indices, indices, indices, ("row",), ((0,),), (("column",),), ((0,),)
+    )
+    tiny = 2.0**-600
+    tangents = np.asarray([[[1.0, 0.0, 0.0], [0.0, tiny, 0.0]]], dtype=np.float64)
+    normals = np.asarray([[0.0, 0.0, tiny]], dtype=np.float64)
+    point = ((Fraction(0), Fraction(0), Fraction(0)),)
+
+    def projection(frame: np.ndarray) -> LayerCurvingProjectionTrace:
+        return LayerCurvingProjectionTrace(
+            "source", "revision", "frame",
+            indices, indices, indices, indices, ((0,),), identity,
+            ("entity",), ("entity",), ((),), ((),),
+            zero_point, zero_chart, zero_point,
+            zero_scalar, zero_scalar, indices, ("source",), ("revision",), ("frame",), (),
+            normals=normals, tangents=frame, chart_witness_rows=indices,
+            target_reference_points=point,
+        )
+
+    assert projection(tangents).resolved
+    assert not projection(np.zeros_like(tangents)).resolved
+
+    def mapped(frame: np.ndarray, normal: np.ndarray) -> LayerCurvingMappedChartTrace:
+        return LayerCurvingMappedChartTrace(
+            "source", "revision", "frame", "query",
+            indices, indices, indices, indices, point, point,
+            ((Fraction(0), Fraction(0)),), ("chart",), ("entity",), ((),),
+            indices, indices, indices, zero_point, zero_point,
+            zero_scalar, zero_scalar, normal, frame, identity,
+        )
+
+    assert mapped(tangents, normals).resolved
+    with pytest.raises(ValueError, match="singular physical frame"):
+        mapped(np.zeros_like(tangents), normals)
+    with pytest.raises(ValueError, match="singular physical frame"):
+        mapped(tangents, np.zeros_like(normals))
 
 @pytest.mark.parametrize(
     "make_case",
