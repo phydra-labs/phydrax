@@ -3,8 +3,10 @@ from __future__ import annotations
 import importlib
 import json
 from argparse import Namespace
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -1085,7 +1087,13 @@ def test_combined_cold_continuation_requires_each_component(
     if failed == "owner_fv":
         owner_fv["status"] = "failed"
     monkeypatch.setattr(cold_fe_fv, "native_cold_restore", lambda: fe)
-    monkeypatch.setattr(cold_owner_local, "native_cold_owner_local", lambda: owner_fe)
+
+    def owner_local(
+        *, checkpoint: Callable[[dict[str, object]], None] | None = None
+    ) -> dict[str, Any]:
+        return owner_fe
+
+    monkeypatch.setattr(cold_owner_local, "native_cold_owner_local", owner_local)
     monkeypatch.setattr(cold_fe_fv, "_owner_local_fv_continuation", lambda: owner_fv)
 
     def child(phase: str, archive: Path) -> dict[str, object]:
