@@ -601,6 +601,118 @@ def test_quadratic_tetra_block_interval_preserves_fallback_and_parent() -> None:
     )
 
 
+def test_quadratic_tetra_screen_randomized_native_parity_and_chunks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    program = validity_module._tetra_screen_interval_program()
+    if program is None:
+        pytest.skip("native batched interval execution is unavailable")
+    rng = np.random.default_rng(83491)
+    element = D.fem.lagrange_element("tetrahedron", 2)
+    basis = cell_geometry_module.coordinate_source_basis(element)
+    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
+    cells = nodes[None, :, :] + rng.normal(0.0, 0.025, size=(80, 10, 3))
+    cells[::5, :, 0] *= -1.0
+    points = cells.reshape((-1, 3))
+    bounds = (np.nextafter(points, -np.inf), np.nextafter(points, np.inf))
+    routes = np.arange(points.shape[0], dtype=np.int64).reshape((-1, 10))
+    policy = D.CellValidityPolicy()
+
+    def screen(selected: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        result = validity_module._quadratic_tetra_block_screen(
+            element, "tetrahedron", basis, selected, bounds, policy
+        )
+        assert result is not None
+        return result
+
+    native = screen(routes)
+    chunks = [screen(routes[start : start + 7]) for start in range(0, len(routes), 7)]
+    for index in range(3):
+        np.testing.assert_array_equal(
+            native[index], np.concatenate([x[index] for x in chunks])
+        )
+    compiled = program.native_program
+    assert compiled is not None
+    original_evaluate = validity_module.PreparedIntervalFunction.evaluate
+
+    def evaluate_parallel(
+        self: validity_module.PreparedIntervalFunction,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        /,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if self is program:
+            return compiled.evaluate_batch(lower, upper, workers=4)
+        return original_evaluate(self, lower, upper)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            validity_module.PreparedIntervalFunction, "evaluate", evaluate_parallel
+        )
+        parallel = screen(routes)
+    for actual, expected in zip(parallel, native, strict=True):
+        np.testing.assert_array_equal(actual, expected)
+    with monkeypatch.context() as patch:
+        patch.setattr(validity_module, "_tetra_screen_interval_program", lambda: None)
+        host = screen(routes)
+    for actual, expected in zip(native, host, strict=True):
+        np.testing.assert_array_equal(actual, expected)
+    geometry = CellGeometrySpec({"cells": element}, {"cells": routes}, points)
+    native_certificate = D.certify_cell_geometry_validity(geometry)
+    with monkeypatch.context() as patch:
+        patch.setattr(validity_module, "_tetra_screen_interval_program", lambda: None)
+        host_certificate = D.certify_cell_geometry_validity(geometry)
+    for name in (
+        "status",
+        "execution_status",
+        "source_status",
+        "determinant_lower",
+        "determinant_upper",
+        "source_determinant_lower",
+        "source_determinant_upper",
+        "depth",
+        "source_depth",
+    ):
+        np.testing.assert_array_equal(
+            np.asarray(getattr(native_certificate, name)),
+            np.asarray(getattr(host_certificate, name)),
+        )
+
+
+def test_quadratic_tetra_screen_detects_inward_endpoint_fault(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    program = validity_module._tetra_screen_interval_program()
+    if program is None:
+        pytest.skip("native batched interval execution is unavailable")
+    element = D.fem.lagrange_element("tetrahedron", 2)
+    basis = cell_geometry_module.coordinate_source_basis(element)
+    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
+    routes = np.arange(10, dtype=np.int64).reshape((1, 10))
+    policy = D.CellValidityPolicy()
+    expected = validity_module._quadratic_tetra_block_screen(
+        element, "tetrahedron", basis, routes, (nodes, nodes), policy
+    )
+    assert expected is not None
+
+    class InwardProgram:
+        def evaluate(
+            self, lower: np.ndarray, upper: np.ndarray
+        ) -> tuple[np.ndarray, np.ndarray]:
+            lo, hi = program.evaluate(lower, upper)
+            lo[:, 0] = np.nextafter(lo[:, 0], np.inf)
+            hi[:, 0] = np.nextafter(hi[:, 0], -np.inf)
+            return lo, hi
+
+    monkeypatch.setattr(validity_module, "_tetra_screen_interval_program", InwardProgram)
+    faulty = validity_module._quadratic_tetra_block_screen(
+        element, "tetrahedron", basis, routes, (nodes, nodes), policy
+    )
+    assert faulty is not None
+    assert np.any(faulty[1] != expected[1])
+    assert np.any(faulty[2] != expected[2])
+
+
 def test_quadratic_tetra_block_distinguishes_exact_source_and_execution() -> None:
     element = D.fem.lagrange_element("tetrahedron", 2)
     nodes = np.asarray(element.reference_nodes, dtype=np.float64)

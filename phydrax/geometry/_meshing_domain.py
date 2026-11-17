@@ -1117,7 +1117,11 @@ class SourcePreparation:
         entry = self._box_programs.get(id(surface))
         if entry is not None and entry[0] is surface:
             return entry[1]
-        program = prepare_interval_function(surface.evaluate, 2)
+        from .brep._host_program import prepare_host_program
+
+        program = prepare_host_program(surface.evaluate, 2)
+        if program is None:
+            program = prepare_interval_function(surface.evaluate, 2)
         self._box_programs[id(surface)] = (surface, program)
         return program
 
@@ -1148,7 +1152,11 @@ class SourcePreparation:
         derivative: Callable[[Array], Array] = surface.evaluate
         for _ in range(order):
             derivative = jax.jacfwd(derivative)
-        program = prepare_interval_function(derivative, 2)
+        from .brep._host_program import prepare_host_program
+
+        program = prepare_host_program(derivative, 2)
+        if program is None:
+            program = prepare_interval_function(derivative, 2)
         self._programs[key] = (surface, program)
         return program
 
@@ -1177,10 +1185,13 @@ class SourcePreparation:
         def mapped(parameter: Array) -> Array:
             return surface.evaluate(pcurve.evaluate(parameter[0]))
 
+        from .brep._host_program import prepare_host_program
+
         try:
-            program = prepare_interval_function(
-                jax.jacfwd(jax.jacfwd(mapped)), 1, batch_capacity=1
-            )
+            derivative = jax.jacfwd(jax.jacfwd(mapped))
+            program = prepare_host_program(derivative, 1)
+            if program is None:
+                program = prepare_interval_function(derivative, 1, batch_capacity=1)
         except (IntervalExtensionError, NotImplementedError):
             program = None
         self._mapped_hessians[key] = (surface, pcurve, program)

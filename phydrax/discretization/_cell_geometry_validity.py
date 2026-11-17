@@ -65,6 +65,9 @@ from ..geometry._interval_enclosure import (
     interval_sqrt,
     interval_square,
     interval_subtract,
+    IntervalExtensionError,
+    prepare_interval_function,
+    PreparedIntervalFunction,
 )
 from ..geometry._rational import fraction_up
 from ..linalg import (
@@ -2098,6 +2101,46 @@ def _interval_quadratic_simplex_certificate(
     return _interval_jacobian_certificate(tuple(rows), 3, policy)
 
 
+def _tetra_screen_program(values: Array, /) -> Array:
+    points = values[:30].reshape((10, 3))
+    gradients = values[30:150].reshape((10, 3, 4))
+    selector = values[151] > 0.0
+    columns = []
+    for axis in range(3):
+        total = points[0, :, None] * gradients[0, axis, None, :]
+        for dof in range(1, 10):
+            total = total + points[dof, :, None] * gradients[dof, axis, None, :]
+        # An undecided selector takes the hull of all four vertex intervals.
+        columns.append(
+            jnp.where(selector, jnp.min(total, axis=1), jnp.max(total, axis=1))
+        )
+    determinant = None
+    for column in range(3):
+        first = columns[(column + 1) % 3][1] * columns[(column + 2) % 3][2]
+        second = columns[(column + 2) % 3][1] * columns[(column + 1) % 3][2]
+        term = columns[column][0] * (first - second)
+        determinant = term if determinant is None else determinant + term
+    if determinant is None:
+        raise RuntimeError("A tetrahedron determinant requires three columns.")
+    floor_bound = values[150]
+    for column in columns:
+        norm_squared = (jnp.square(column[0]) + jnp.square(column[1])) + jnp.square(
+            column[2]
+        )
+        floor_bound = floor_bound * jnp.sqrt(norm_squared)
+    return jnp.stack((determinant, floor_bound))
+
+
+@cache
+def _tetra_screen_interval_program() -> PreparedIntervalFunction | None:
+    try:
+        return prepare_interval_function(
+            _tetra_screen_program, 152, batch_capacity=1, execution="batched"
+        )
+    except IntervalExtensionError:
+        return None
+
+
 def _quadratic_tetra_block_screen(
     element: ScalarCoordinateElement,
     cell_kind: str,
@@ -2158,6 +2201,31 @@ def _quadratic_tetra_block_screen(
     determinant_lower = np.full(count, np.nan)
     determinant_upper = np.full(count, np.nan)
     floor = np.asarray(policy.determinant_floor(), dtype=np.float64)
+    program = _tetra_screen_interval_program()
+    if program is not None and count:
+        lower_boxes = np.empty((count, 152), dtype=np.float64)
+        upper_boxes = np.empty_like(lower_boxes)
+        lower_boxes[:, :30] = point_bounds[0][routes].reshape((count, 30))
+        upper_boxes[:, :30] = point_bounds[1][routes].reshape((count, 30))
+        lower_boxes[:, 30:150] = gradient_lower.reshape(120)
+        upper_boxes[:, 30:150] = gradient_upper.reshape(120)
+        lower_boxes[:, 150] = upper_boxes[:, 150] = floor
+        lower_boxes[:, 151] = -1.0
+        upper_boxes[:, 151] = 1.0
+        try:
+            lower, upper = program.evaluate(lower_boxes, upper_boxes)
+        except IntervalExtensionError:
+            pass
+        else:
+            determinant_lower = lower[:, 0]
+            determinant_upper = upper[:, 0]
+            accepted = (
+                np.isfinite(determinant_lower)
+                & np.isfinite(determinant_upper)
+                & np.isfinite(upper[:, 1])
+                & (determinant_lower > upper[:, 1])
+            )
+            return accepted, determinant_lower, determinant_upper
     for start in range(0, count, 2048):
         stop = min(start + 2048, count)
         chunk = routes[start:stop]
