@@ -256,6 +256,13 @@ def test_cad_plc_rebuilt_chart_owner_is_reproved_and_tampering_is_refused(
         validated=validated,
     )
     assert cad_plc.cad_fidelity_tolerance is not None
+    _, live_fidelity = _certify_cad_surface(
+        charts,
+        cad_plc.cad_fidelity_tolerance,
+        cad_plc.cad_maximum_normal_deviation,
+        np.asarray(report.embedding.binding.junction_vertices, dtype=np.int64),
+        computed_surface=computed,
+    )
     rebuilt_charts = copy.copy(charts)
     _, rebuilt_fidelity = _certify_cad_surface(
         rebuilt_charts,
@@ -265,6 +272,7 @@ def test_cad_plc_rebuilt_chart_owner_is_reproved_and_tampering_is_refused(
         computed_surface=computed,
     )
     assert cad_plc.cad_fidelity is not None
+    assert live_fidelity.certificate_id == cad_plc.cad_fidelity.certificate_id
     assert rebuilt_fidelity.certificate_id == cad_plc.cad_fidelity.certificate_id
     assert rebuilt_fidelity.status == "certified"
 
