@@ -645,6 +645,8 @@ def test_source_trim_preparation_respects_live_domain_identity_and_lifetime() ->
 
     rebuilt = copy(domain)
     assert rebuilt is not domain
+    with pytest.raises(AttributeError):
+        setattr(preparation, "domain", rebuilt)
     rebuilt_source = MeshingDomainBoundarySource(rebuilt, (0,))
     with pytest.raises(ValueError, match="only the meshing domain it was prepared for"):
         rebuilt_source.trim_partition_reference(0, triangles, preparation=preparation)

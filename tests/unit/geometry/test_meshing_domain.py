@@ -606,6 +606,48 @@ def test_domain_validation_detects_mutated_readonly_owning_curve_array() -> None
         domain.require_current(validated=validated)
 
 
+def test_rebuilt_restriction_query_reprepares_its_live_root_domain() -> None:
+    from copy import copy
+
+    from phydrax.geometry._source_fidelity import certify_source_fidelity
+    from phydrax.geometry._surface_source_support import (
+        SurfaceNativeRestrictionBoundarySource,
+    )
+    from phydrax.meshing.providers import NativeMeshingProvider
+    from tools.meshing_qualification.scenarios.native_family_matrix import (
+        _CONTRACT,
+        _quarter_surface_case,
+    )
+
+    case = _quarter_surface_case(4)
+    result = (
+        NativeMeshingProvider(case.options)
+        .plan(case.source, case.specification, coordinate_contract=_CONTRACT)
+        .execute()
+    )
+    assert result.certification is not None
+    inputs = result.certification.inputs
+    source = inputs.source
+    assert isinstance(source, SurfaceNativeRestrictionBoundarySource)
+    assert inputs.fidelity_witness is not None
+    assert inputs.fidelity_tolerance is not None
+    root_domain = copy(source.root.domain)
+    assert root_domain is not source.domain
+    assert root_domain.domain_id == source.domain.domain_id
+    root = MeshingDomainBoundarySource(root_domain, source.root.patches)
+    query = SurfaceNativeRestrictionBoundarySource(root, source.support, source.mesh, source.geometry)
+    fresh = certify_source_fidelity(
+        source.mesh, source.geometry, query, tolerance=inputs.fidelity_tolerance,
+        witness=inputs.fidelity_witness,
+    )
+    carried = certify_source_fidelity(
+        source.mesh, source.geometry, query, tolerance=inputs.fidelity_tolerance,
+        witness=inputs.fidelity_witness, preparation=SourcePreparation(source.domain),
+    )
+    assert carried.status == fresh.status == "certified"
+    assert carried.certificate_id == fresh.certificate_id
+
+
 def _rational_spline_surfaces() -> tuple[BSplineSurfacePatch, TSplineSurfacePatch]:
     zero = Fraction(0)
     one = Fraction(1)

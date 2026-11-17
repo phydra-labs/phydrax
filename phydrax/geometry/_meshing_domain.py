@@ -950,11 +950,11 @@ class SourcePreparation:
         "_trim_chains",
         "_trim_partitions",
         "_surface_spans",
-        "domain",
+        "_domain",
     )
 
     def __init__(self, domain: MeshingDomain, /) -> None:
-        self.domain = domain
+        self._domain = domain
         self._box_programs: dict[
             int, tuple[AbstractSurfacePatch, PreparedIntervalFunction]
         ] = {}
@@ -992,6 +992,11 @@ class SourcePreparation:
             tuple[int, bool, tuple[_Triangle2, ...]],
             tuple[tuple[_Triangle2, ...], tuple[CurvedTrimLens, ...]],
         ] = {}
+
+    @property
+    def domain(self) -> MeshingDomain:
+        """The exact live domain whose source artifacts this preparation owns."""
+        return self._domain
 
     @classmethod
     def of(
@@ -1071,10 +1076,11 @@ class SourcePreparation:
 
     def require(self, domain: MeshingDomain, /) -> None:
         """Refuse to answer queries of a different meshing domain."""
-        if domain is not self.domain:
-            raise ValueError(
-                "A source preparation answers only the meshing domain it was prepared for."
-            )
+        if domain is self.domain:
+            return
+        raise ValueError(
+            "A source preparation answers only the meshing domain it was prepared for."
+        )
 
     def surface_spans(
         self, surface: AbstractSurfacePatch, /
