@@ -653,8 +653,15 @@ def test_cad_chart_partition_rejects_overlap_and_gap_in_either_order() -> None:
     )
     overlap = [(row[0], first[1], *row[2:]) if row is other else row for row in rows]
     gap = [(row[0], smaller, *row[2:]) if row is first else row for row in rows]
+    flipped: list[_CadFaceRow] = [
+        (patch, (uv[0], uv[2], uv[1]), (ref[0], ref[2], ref[1]), cell, face)
+        if index % 2
+        else (patch, uv, ref, cell, face)
+        for index, (patch, uv, ref, cell, face) in enumerate(rows)
+    ]
     for changed, message in (
         (rows, None),
+        (flipped, None),
         (overlap, f"CAD target charts overlap on patch {first[0]}."),
         (gap, f"CAD source chart area differs on patch {first[0]}."),
     ):
