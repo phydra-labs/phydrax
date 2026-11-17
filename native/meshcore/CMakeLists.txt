@@ -41,6 +41,8 @@ set(PHX_MC_SOURCES
   src/tet_mesh_capi.cpp
   src/delaunay2d.cpp
   src/delaunay3d.cpp
+  src/deterministic_float.cpp
+  src/deterministic_float_capi.cpp
   src/exact_kernels.cpp
   src/exact_polynomial_kernels.cpp
   src/exact_polynomial_integral.cpp
@@ -99,6 +101,7 @@ set(PHX_MC_HEADERS
   src/facet_coverage.hpp
   src/reference_tetrahedron_clip.inc
   src/filtered.hpp
+  src/deterministic_float.hpp
   src/floating_point_mode.hpp
   src/interval_arithmetic.hpp
   src/geometry3.hpp
@@ -167,6 +170,8 @@ target_compile_definitions(phydrax_meshcore_objects PUBLIC
   PHX_MC_BUILD_HASH="${PHX_MC_BUILD_HASH}")
 target_compile_options(phydrax_meshcore_objects PUBLIC ${PHX_MC_FP_FLAGS}
   PRIVATE $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>)
+# Every branch above forbids contraction; sources that depend on it check this.
+target_compile_definitions(phydrax_meshcore_objects PUBLIC PHX_MC_FP_CONTRACT_OFF=1)
 if(PHX_MC_SANITIZE)
   if(MSVC)
     message(FATAL_ERROR "PHX_MC_SANITIZE requires a Clang or GCC toolchain.")
@@ -210,6 +215,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_facet_coverage)
   phx_mc_add_test(test_graph_partition)
   phx_mc_add_test(test_intersections)
+  phx_mc_add_test(test_deterministic_float)
   phx_mc_add_test(test_interval_program)
   phx_mc_add_test(test_interval_simplex_restrict)
   phx_mc_add_test(test_parallel)
