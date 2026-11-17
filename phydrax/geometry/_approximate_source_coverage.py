@@ -1224,6 +1224,15 @@ def _cad_target_root_partition(
         for row, identifier in enumerate(np.asarray(block.global_ids, dtype=np.int64))
     }
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    # Host connectivity and exact reference corners per block, not per chart row.
+    block_vertices = {id(block): np.asarray(block.vertices) for block in mesh.blocks}
+    block_corners = {
+        id(block): tuple(
+            tuple(_fraction(float(x)) for x in point)
+            for point in reference_cell_topology(block.cell_kind).vertices
+        )
+        for block in mesh.blocks
+    }
     targets: list[tuple[int, int, int]] = []
     triangles: list[_Triangle2] = []
     grouped: dict[int, list[_Triangle2]] = {}
@@ -1256,9 +1265,8 @@ def _cad_target_root_partition(
                 "CAD target face is invalid.", status="violated"
             )
         slots = set(reference.entities[2][local_face])
-        corners = tuple(
-            tuple(_fraction(float(x)) for x in point) for point in reference.vertices
-        )
+        corners = block_corners[id(block)]
+        connectivity = block_vertices[id(block)]
         ids: list[int] = []
         for point in _triangle3(witness.target_reference_chart(row)):
             matches = [
@@ -1270,9 +1278,7 @@ def _cad_target_root_partition(
                 raise SourceCoverageUnavailable(
                     "CAD target corner is not a face vertex.", status="violated"
                 )
-            ids.append(
-                int(vertex_ids[int(np.asarray(block.vertices)[cell_row, matches[0]])])
-            )
+            ids.append(int(vertex_ids[int(connectivity[cell_row, matches[0]])]))
         if len(set(ids)) != 3:
             raise SourceCoverageUnavailable(
                 "CAD target face repeats a vertex.", status="violated"
@@ -1737,6 +1743,17 @@ def _cad_chart_topology_degree(
         for row, identifier in enumerate(np.asarray(block.global_ids, dtype=np.int64))
     }
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    # Host connectivity and exact reference corners per block, not per chart row.
+    block_vertices = {
+        id(block): np.asarray(block.vertices, dtype=np.int64) for block in mesh.blocks
+    }
+    block_corners = {
+        id(block): tuple(
+            tuple(_fraction(float(value)) for value in point)
+            for point in reference_cell_topology(block.cell_kind).vertices
+        )
+        for block in mesh.blocks
+    }
     row_targets: list[tuple[int, int, int]] = []
     row_uv: list[_Triangle2] = []
     row_labels: list[tuple[_VertexKey, _VertexKey, _VertexKey]] = []
@@ -1760,10 +1777,8 @@ def _cad_chart_topology_degree(
                 "A CAD chart triangle names an invalid target face.", status="violated"
             )
         face_slots = {int(value) for value in faces[local_face]}
-        reference_vertices = tuple(
-            tuple(_fraction(float(value)) for value in point)
-            for point in reference.vertices
-        )
+        reference_vertices = block_corners[id(block)]
+        connectivity = block_vertices[id(block)]
         ids = []
         target_chart = _triangle3(witness.target_reference_chart(row))
         for exact_point in target_chart:
@@ -1777,17 +1792,7 @@ def _cad_chart_topology_degree(
                     "CAD seam proof currently requires target chart corners at stable volume-mesh vertices.",
                     status="unresolved",
                 )
-            ids.append(
-                int(
-                    vertex_ids[
-                        int(
-                            np.asarray(block.vertices, dtype=np.int64)[
-                                cell_row, matches[0]
-                            ]
-                        )
-                    ]
-                )
-            )
+            ids.append(int(vertex_ids[int(connectivity[cell_row, matches[0]])]))
         if len(ids) != 3 or len(set(ids)) != 3 or not set(ids) <= set(face_key):
             raise SourceCoverageUnavailable(
                 "A CAD chart triangle changes its target face vertex ancestry.",
