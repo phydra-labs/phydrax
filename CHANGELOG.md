@@ -249,6 +249,7 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+
 - Native B-Rep projection reuses the selected intersection curve's fixed-shape
   tangent, while host trim fallback and surface-box validation avoid repeated
   eager dispatch. Trim realization and projection frame bits, and therefore

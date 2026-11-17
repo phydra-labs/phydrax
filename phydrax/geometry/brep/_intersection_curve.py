@@ -1333,6 +1333,19 @@ def _orthogonal_cylinder_curve_branch_sign(
     return _orthogonal_cylinder_branch_sign(family, node_lower, node_upper)
 
 
+def _unique_nearest_interval_integer(value: Any, /) -> int | None:
+    """Select an integer only when the entire enclosure lies inside its cell."""
+    from mpmath.libmp import to_rational
+
+    lower = Fraction(*to_rational(value._mpi_[0]))
+    upper = Fraction(*to_rational(value._mpi_[1]))
+    shifted_lower = lower + Fraction(1, 2)
+    nearest = shifted_lower.numerator // shifted_lower.denominator
+    if Fraction(2 * nearest - 1, 2) < lower <= upper < Fraction(2 * nearest + 1, 2):
+        return nearest
+    return None
+
+
 def _orthogonal_cylinder_chart_angle_data(
     curve: IntersectionCurve,
     family: _OrthogonalCylinderFamily,
@@ -1368,40 +1381,51 @@ def _orthogonal_cylinder_chart_angle_data(
     angle_axis = 2 * family.large_index
     start = np.asarray(curve.chart_start, dtype=np.float64)[chart]
     end = np.asarray(curve.chart_end, dtype=np.float64)[chart]
-    theta = 0.5 * float(start[theta_axis]) + 0.5 * float(end[theta_axis])
-    point = orthogonal_cylinder_graph_point(
-        family, theta, branch_sign, float(start[angle_axis])
-    )
-    if point is None:
-        return None
-    cosine, sine = math.cos(theta), math.sin(theta)
+    context = interval_context(80)
+
+    def scalar(value: Fraction) -> Any:
+        return context.mpf(value.numerator) / context.mpf(value.denominator)
+
+    theta = (
+        Fraction.from_float(float(start[theta_axis]))
+        + Fraction.from_float(float(end[theta_axis]))
+    ) / 2
+    cosine, sine = context.cos(scalar(theta)), context.sin(scalar(theta))
     normal_cosine, normal_sine = family.small_normal_coefficients
-    radial_n = float(family.delta_n) + float(family.small_radius) * (
-        float(normal_cosine) * cosine + float(normal_sine) * sine
+    radial_n = scalar(family.delta_n) + scalar(family.small_radius) * (
+        scalar(normal_cosine) * cosine + scalar(normal_sine) * sine
     )
-    radicand = float(family.large_radius**2) - radial_n * radial_n
-    if not math.isfinite(radicand) or radicand <= 0.0:
+    radicand = scalar(family.large_radius) ** 2 - radial_n**2
+    if radicand.a <= 0:
         return None
-    radial_large = branch_sign * math.sqrt(radicand)
+    radial_large = branch_sign * context.sqrt(radicand)
     first_component = (
-        float(cosine_coefficients[0]) * radial_large
-        + float(cosine_coefficients[1]) * radial_n
+        scalar(cosine_coefficients[0]) * radial_large
+        + scalar(cosine_coefficients[1]) * radial_n
     )
     second_component = (
-        float(sine_coefficients[0]) * radial_large
-        + float(sine_coefficients[1]) * radial_n
+        scalar(sine_coefficients[0]) * radial_large
+        + scalar(sine_coefficients[1]) * radial_n
     )
     if mode == 1:
-        if second_component == 0.0:
+        if second_component.a <= 0 <= second_component.b:
             return None
-        angle = angle_sign * 0.5 * math.pi - math.atan(first_component / second_component)
+        sign = 1 if second_component.a > 0 else -1
+        angle = angle_sign * context.pi / 2 - context.atan2(
+            sign * first_component, sign * second_component
+        )
     else:
-        if first_component == 0.0:
+        if first_component.a <= 0 <= first_component.b:
             return None
-        angle = math.atan(second_component / first_component)
+        sign = 1 if first_component.a > 0 else -1
+        angle = context.atan2(sign * second_component, sign * first_component)
         if angle_sign < 0:
-            angle += math.pi
-    turns = int(round((float(point[angle_axis]) - angle) / math.tau))
+            angle += context.pi
+    reference = scalar(Fraction.from_float(float(start[angle_axis])))
+    turn_interval = (reference - angle) / (2 * context.pi)
+    turns = _unique_nearest_interval_integer(turn_interval)
+    if turns is None:
+        raise NotImplementedError("The cylinder chart turn is not uniquely determined.")
     return mode, angle_sign, turns
 
 
