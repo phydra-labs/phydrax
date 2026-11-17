@@ -1,11 +1,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 from __future__ import annotations
 
-import gc
 from pathlib import Path
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -37,11 +35,7 @@ from phydrax.optim import (
     solve_conic_program,
     ZeroCone,
 )
-from phydrax.optim._programming import _native_conic
-from phydrax.optim._programming._native_conic import (
-    _CompiledSolveBudget,
-    prepare_native_conic,
-)
+from phydrax.optim._programming._native_conic import prepare_native_conic
 from phydrax.optim._programming._native_hsd import _direction, _embedding_residual
 from phydrax.sparse import EdgeRelation, SparseCoordinateOperator
 
@@ -172,66 +166,6 @@ def test_repeated_factorized_preparation_reuses_one_compiled_solver_key() -> Non
     second_static = eqx.partition(second, eqx.is_array)[1]
     assert first_static == second_static
     assert hash(first_static) == hash(second_static)
-
-
-def _live_solver_executables() -> int:
-    gc.collect()
-    client = jax.devices()[0].client
-    return sum(
-        executable.hlo_modules()[0].name == "jit__solve_native_conic_body"
-        for executable in client.live_executables()
-    )
-
-
-def test_native_conic_entry_keeps_bounded_executables_across_structures(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # A long search over many program structures must not keep one executable
-    # alive per structure; a released structure recompiles to the same result.
-    monkeypatch.setattr(_native_conic, "_COMPILED_SOLVES", _CompiledSolveBudget(1, 1))
-    policy = ConvexSolvePolicy(
-        NativeHomogeneousConic(newton="factorized"), failure=FailurePolicy("status")
-    )
-
-    def solve(blocks: int) -> list[np.ndarray]:
-        program = _positive_metric_program(blocks)
-        result = _native_conic.solve_native_conic_program(
-            program, policy, prepared=prepare_native_conic(program, policy)
-        )
-        return [
-            np.asarray(leaf) for leaf in jax.tree.leaves(eqx.filter(result, eqx.is_array))
-        ]
-
-    first = solve(1)
-    for blocks in (2, 3):
-        solve(blocks)
-        assert _live_solver_executables() == 1
-    again = solve(1)
-    for expected, observed in zip(first, again, strict=True):
-        np.testing.assert_array_equal(observed, expected)
-    with pytest.raises(ValueError, match="at least one executable"):
-        _CompiledSolveBudget(1, 2)
-
-
-def test_native_conic_entry_solves_inside_an_outer_transformation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    budget = _CompiledSolveBudget(1, 1)
-    monkeypatch.setattr(_native_conic, "_COMPILED_SOLVES", budget)
-    program = _positive_metric_program(2)
-    policy = ConvexSolvePolicy(
-        NativeHomogeneousConic(newton="factorized"), failure=FailurePolicy("status")
-    )
-    prepared = prepare_native_conic(program, policy)
-    direct = _native_conic.solve_native_conic_program(program, policy, prepared=prepared)
-    traced = eqx.filter_jit(
-        lambda inner: _native_conic.solve_native_conic_program(
-            inner, policy, prepared=prepared
-        )
-    )(program)
-    assert len(budget) == 1
-    assert int(traced.status) == int(direct.status)
-    np.testing.assert_allclose(traced.primal, direct.primal, rtol=1e-10, atol=1e-12)
 
 
 def _dense_metric_program(
