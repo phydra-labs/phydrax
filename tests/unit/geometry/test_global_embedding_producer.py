@@ -6,6 +6,7 @@ import subprocess
 import sys
 from fractions import Fraction
 from pathlib import Path
+from random import Random
 from typing import cast
 
 import equinox as eqx
@@ -37,6 +38,7 @@ from phydrax.discretization._coordinate_enclosure import (
     evaluate_expression,
     Expression,
     multiply,
+    Polynomial,
     polynomial_bounds,
     scale,
     subtract,
@@ -85,6 +87,7 @@ from phydrax.geometry._mapped_embedding import (
 )
 from phydrax.geometry._planar_primitives import TriangleEnclosures
 from phydrax.geometry._restricted_embedding import (
+    rational_simplex_trace_values,
     reference_chart_composition_equal,
     restriction_trace_equal,
 )
@@ -1216,6 +1219,67 @@ def _tetrahedra_sharing_a_curved_face(
         ),
     )
     return first, second
+
+
+@pytest.mark.parametrize("order", (2, 3, 4, 5))
+def test_random_rational_simplex_trace_matches_fraction_reference(order: int) -> None:
+    rng = Random(817 + order)
+    polynomials: tuple[Polynomial, ...] = tuple(
+        {
+            (x, y, z): Fraction(rng.randint(-9, 9), rng.randint(1, 11))
+            for x in range(order + 1)
+            for y in range(order + 1 - x)
+            for z in range(order + 1 - x - y)
+        }
+        for _ in range(3)
+    )
+    polynomials[0][(1, 1, 0)] = Fraction(5, 7)
+    first = _mapped_tetrahedron(1, (10, 11, 12, 13), polynomials)
+    same_face = tuple(dict(polynomial) for polynomial in polynomials)
+    same_face[0][(0, 0, 1)] += Fraction(7, 13)
+    second = _mapped_tetrahedron(2, (10, 11, 12, 14), same_face)
+    different_face = tuple(dict(polynomial) for polynomial in same_face)
+    different_face[0][(1, 1, 0)] += Fraction(1, 17)
+    third = _mapped_tetrahedron(3, (10, 11, 12, 15), different_face)
+
+    for cell, expected in ((second, True), (third, False)):
+        assert restriction_trace_equal(first, cell, (10, 11, 12)) is expected
+    lattice = rational_simplex_trace_values(first, (10, 11, 12))
+    assert lattice is not None
+    actual_order, rows = lattice
+    assert actual_order == order
+    references = first.reference_vertices[:3]
+    caught_dropped_term = False
+    caught_wrong_scale = False
+    for weights, values in rows:
+        point = tuple(
+            sum(
+                (weight * reference[axis] for weight, reference in zip(weights, references, strict=True)),
+                Fraction(0),
+            )
+            / order
+            for axis in range(3)
+        )
+        expected_values = tuple(
+            sum(
+                (
+                    coefficient
+                    * point[0] ** exponent[0]
+                    * point[1] ** exponent[1]
+                    * point[2] ** exponent[2]
+                    for exponent, coefficient in polynomial.items()
+                ),
+                Fraction(0),
+            )
+            for polynomial in polynomials
+        )
+        assert values == expected_values
+        dropped = expected_values[0] - Fraction(5, 7) * point[0] * point[1]
+        caught_dropped_term |= values[0] != dropped
+        caught_wrong_scale |= values[0] != expected_values[0] / 2
+
+    assert caught_dropped_term
+    assert caught_wrong_scale
 
 
 def test_simplex_traces_agree_exactly_on_their_shared_curved_face() -> None:
