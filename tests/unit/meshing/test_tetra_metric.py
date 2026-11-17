@@ -2120,9 +2120,94 @@ def test_collapse_moves_its_survivor_to_the_collapsed_edge_midpoint() -> None:
     assert not _relocation_proposals(state, cache)
 
 
+@pytest.mark.parametrize("band_only", [False, True])
+def test_relocation_screen_matches_scalar_star_admission(band_only: bool) -> None:
+    from phydrax.meshing import _tetra_metric as metric
+
+    points = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+        dtype=np.float64,
+    )
+    metrics = np.broadcast_to(4.0 * np.eye(3), (4, 3, 3)).copy()
+    cells = np.asarray(((0, 1, 2, 3),), dtype=np.int64)
+    spokes = np.asarray(((0, 1), (0, 2), (0, 3)), dtype=np.int64)
+    measured = np.ones(3, dtype=np.bool_)
+    goals = np.asarray(
+        ((0.2, 0.2, 0.2), (1.0, 0.0, 0.0), (0.8, 0.8, 0.8), (0.0, 0.0, 0.0)),
+        dtype=np.float64,
+    )
+    before_band = metric._band_violations(metric._metric_lengths(points, metrics, spokes))
+    before_quality = float(np.min(metric._tetra_quality(points, metrics, cells)))
+
+    def evaluate(point: np.ndarray, tensor: np.ndarray) -> object:
+        if np.any(np.all(points[1:] == point, axis=1)):
+            return None
+        moved = points.copy()
+        moved[0] = point
+        moved_metrics = metrics.copy()
+        moved_metrics[0] = tensor
+        after_band = metric._band_violations(
+            metric._metric_lengths(moved, moved_metrics, spokes)
+        )
+        if (band_only and after_band == before_band) or after_band > before_band:
+            return None
+        if not metric._floor_oriented(moved[cells]):
+            return None
+        quality = float(np.min(metric._tetra_quality(moved, moved_metrics, cells)))
+        if after_band == before_band and not quality > before_quality + metric._IMPROVEMENT:
+            return None
+        return quality
+
+    actual = metric._screen_relocation_goals(
+        goals,
+        points,
+        metrics,
+        cells,
+        spokes,
+        measured,
+        before_band,
+        before_quality,
+        band_only,
+        True,
+        evaluate,
+    )
+    expected = np.asarray(
+        [evaluate(goal, metrics[0]) is not None for goal in goals], dtype=np.bool_
+    )
+    np.testing.assert_array_equal(actual, expected)
+    assert actual[0]
+    assert not actual[1]
+    assert not actual[2]
+
+
+def test_relocation_seed_goals_keep_pull_and_backtrack_order() -> None:
+    point = np.asarray((1.0, -2.0, 0.5), dtype=np.float64)
+    pulls = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.25, -0.5),
+            (2.0**-55, 0.0, 0.0),
+            (-0.5, 0.0, 1.0),
+        ),
+        dtype=np.float64,
+    )
+    pulls = np.tile(pulls, (3, 1))
+    expected = []
+    for pull in pulls:
+        for step in range(6):
+            goal = point + np.ldexp(pull, -step)
+            if np.array_equal(goal, point):
+                break
+            expected.append(goal)
+    actual = np.concatenate(list(_relocation_goals(point, pulls, seed_only=True)))
+    np.testing.assert_array_equal(actual, np.asarray(expected))
+
+
 def test_relocation_backtracks_to_binary64_resolution() -> None:
     point = np.ones(3)
-    goals = list(_relocation_goals(point, np.asarray(((1.0, 0.0, 0.0),))))
+    goals = np.concatenate(
+        list(_relocation_goals(point, np.asarray(((1.0, 0.0, 0.0),))))
+    )
     assert len(goals) > 6
     np.testing.assert_array_equal(goals[12], point + np.asarray((2.0**-12, 0.0, 0.0)))
     assert not np.array_equal(goals[-1], point)
@@ -2389,9 +2474,8 @@ def test_relocation_reuses_identical_projected_goals(
     assert baseline and baseline_calls
 
     def duplicated(*args: Any, **kwargs: Any) -> Any:
-        for goal in original_goals(*args, **kwargs):
-            yield goal
-            yield goal.copy()
+        for goals in original_goals(*args, **kwargs):
+            yield np.repeat(goals, 2, axis=0)
 
     monkeypatch.setattr(metric, "_relocation_goals", duplicated)
     calls = 0
