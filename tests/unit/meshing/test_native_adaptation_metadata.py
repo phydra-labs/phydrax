@@ -1,4 +1,7 @@
+from copy import copy
+
 import numpy as np
+import pytest
 
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization import CellBlock, CellMesh
@@ -103,3 +106,90 @@ def test_native_refinement_preserves_world_frame_and_oriented_source_boundary() 
         np.sort(np.asarray(edges.entity_ids[edges.subset("boundary").mask])),
     )
     np.testing.assert_array_equal(source.mesh.coordinates, coordinates)
+
+
+def test_bisection_preserves_shared_and_independent_scoped_fidelity() -> None:
+    from phydrax.geometry._source_fidelity import certify_source_fidelity
+    from phydrax.meshing._bisection import BisectionCompatibility
+    from phydrax.meshing._certification_inputs import (
+        MeshCertificationInputs,
+        ScopedFidelityInput,
+    )
+    from phydrax.meshing._implicit_association_transfer import ImplicitAssociationTransfer
+    from phydrax.meshing.providers._native_sources import NativeImplicitSource
+    from tests.unit.meshing.test_source_association_transfer import (
+        _implicit_surface_result,
+        _profile,
+    )
+
+    initial = _implicit_surface_result(_profile())
+    assert initial.certification is not None
+    original = initial.certification.inputs
+    query, witness = original.source, original.fidelity_witness
+    assert query is not None and witness is not None
+    assert isinstance(original.feature_source, NativeImplicitSource)
+    distinct = copy(witness)
+
+    def inputs(scoped: tuple[ScopedFidelityInput, ...]) -> MeshCertificationInputs:
+        return MeshCertificationInputs(
+            initial.mesh,
+            initial.geometry,
+            original.schedule,
+            source_id=original.source_id,
+            source_revision=original.source_revision,
+            domain=original.domain,
+            cell_regions=original.cell_regions,
+            source=query,
+            fidelity_tolerance=original.fidelity_tolerance,
+            maximum_normal_deviation=original.maximum_normal_deviation,
+            junction_vertices=original.junction_vertices,
+            protected_features=original.protected_features,
+            scoped_fidelity=scoped,
+            fidelity_witness=witness,
+            feature_source=original.feature_source,
+            source_coverage_witness=original.source_coverage_witness,
+        )
+
+    forged = copy(witness)
+    object.__setattr__(forged, "source_query_id", "forged-query")
+    with pytest.raises(ValueError):
+        inputs(((query, forged, 0.2),))
+
+    source = certify_cell_mesh(
+        initial.mesh,
+        initial.coordinate_contract,
+        geometry=initial.geometry,
+        certification_inputs=inputs(((query, witness, 0.2), (query, distinct, 0.19))),
+        patches=initial.patches,
+        zones=initial.zones,
+        labels=initial.labels,
+        attributes=initial.attributes,
+        associations=initial.associations,
+        surface_source=initial.surface_source,
+    )
+    result = execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            source,
+            MarkedMeshAdaptation(np.asarray(source.mesh.entity_set(2).entity_ids)),
+            policy=MeshAdaptationPolicy(
+                MeshAdaptationRoute.NATIVE_BISECTION,
+                compatibility=BisectionCompatibility.UNIFORM_REFINEMENT,
+                association_transfer=ImplicitAssociationTransfer(original.feature_source),
+            ),
+        )
+    )
+    target = result.target
+    assert target.certification is not None
+    target_inputs = target.certification.inputs
+    assert len(target_inputs.scoped_fidelity) == 2
+    assert len(target.certification.scoped_fidelity) == 2
+    for (scoped_query, scoped_witness, tolerance), certificate in zip(
+        target_inputs.scoped_fidelity, target.certification.scoped_fidelity, strict=True
+    ):
+        independent = certify_source_fidelity(
+            target.mesh, target.geometry, scoped_query,
+            tolerance=tolerance, witness=scoped_witness,
+        )
+        assert certificate.status == independent.status
+        assert certificate.findings == independent.findings
+        assert certificate.certificate_id == independent.certificate_id
