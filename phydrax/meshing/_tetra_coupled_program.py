@@ -357,9 +357,14 @@ def _layout(
 
 
 def _capacity_demand(layout: _CapacityLayout, /, *, quadratic: bool) -> tuple[int, int]:
-    """Dense input and reduced-factor entries of one capacity class."""
+    """Dense input entries and reduced-system entries of one capacity class.
+
+    The reduced system is counted as its full square. That covers the two
+    block factors and their coupling image, and is never below the factor
+    nonzeros of a sparse factorization of any program in the class.
+    """
     n, rows = layout.variable_capacity, sum(layout.block_capacities)
-    zero = sum(
+    reduced = n + sum(
         capacity
         for capacity, is_zero in zip(
             layout.block_capacities, layout.zero_blocks, strict=True
@@ -367,7 +372,7 @@ def _capacity_demand(layout: _CapacityLayout, /, *, quadratic: bool) -> tuple[in
         if is_zero
     )
     inputs = rows * n + rows + 3 * n + (n * n if quadratic else 0)
-    return inputs, n * n + zero * zero
+    return inputs, reduced * reduced
 
 
 def _capacity_admitted(
@@ -376,25 +381,25 @@ def _capacity_admitted(
     """Whether the declared budgets admit dense execution of this class.
 
     Capacity classes trade a bounded dense program for one compiled solve per
-    class. A class beyond the materialization or factorization budget keeps
-    the sparse program and its per-structure factorization.
+    class. The class must fit the materialization and resource budgets and the
+    method's declared factorization limits; a class beyond any of them keeps
+    the sparse program, which admits or refuses under those limits itself.
     """
+    method = policy.method
+    if not isinstance(method, NativeHomogeneousConic):
+        return False
     inputs, factor = _capacity_demand(layout, quadratic=quadratic)
     itemsize = np.dtype(np.float64).itemsize
-    reduced = layout.variable_capacity + sum(
-        capacity
-        for capacity, is_zero in zip(
-            layout.block_capacities, layout.zero_blocks, strict=True
-        )
-        if is_zero
-    )
     materialization, resources = policy.materialization, policy.resources
+    limits = method.factorization
     return (
         inputs <= materialization.max_entries
-        and reduced * reduced <= materialization.max_entries
+        and factor <= materialization.max_entries
         and inputs * itemsize <= materialization.max_bytes
-        and factor * itemsize <= resources.factorization_bytes
-        and (inputs + reduced * reduced) * itemsize
+        and factor <= limits.max_factor_nnz
+        and factor * itemsize
+        <= min(limits.max_factor_bytes, resources.factorization_bytes)
+        and (inputs + factor) * itemsize
         <= min(resources.workspace_bytes, materialization.max_workspace_bytes)
     )
 
