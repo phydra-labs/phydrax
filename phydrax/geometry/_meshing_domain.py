@@ -1066,7 +1066,7 @@ class SourcePreparation:
 
     def require(self, domain: MeshingDomain, /) -> None:
         """Refuse to answer queries of a different meshing domain."""
-        if domain is not self.domain and domain.domain_id != self.domain.domain_id:
+        if domain is not self.domain:
             raise ValueError(
                 "A source preparation answers only the meshing domain it was prepared for."
             )

@@ -57,6 +57,7 @@ from phydrax.geometry._meshing_domain import (
     MeshingDomainRegion,
     MeshingSurfacePatch,
     PatchCurveUse,
+    SourcePreparation,
 )
 from phydrax.geometry.brep import brep_box
 from phydrax.geometry.brep._patches import AbstractCurve, LineCurve, PlanePatch
@@ -635,12 +636,15 @@ def test_source_trim_preparation_respects_live_domain_identity_and_lifetime() ->
     domain, _, _ = _cad_box_domain()
     source = MeshingDomainBoundarySource(domain, (0,))
     triangles = source.boundary_parameter_triangles()[0][1]
-    expected = source.trim_partition_reference(0, triangles)
-    assert source.trim_partition_reference(0, triangles) == expected
+    preparation = SourcePreparation(domain)
+    expected = source.trim_partition_reference(0, triangles, preparation=preparation)
+    assert source.trim_partition_reference(0, triangles, preparation=preparation) == expected
 
     rebuilt = copy(domain)
     assert rebuilt is not domain
     rebuilt_source = MeshingDomainBoundarySource(rebuilt, (0,))
+    with pytest.raises(ValueError, match="only the meshing domain it was prepared for"):
+        rebuilt_source.trim_partition_reference(0, triangles, preparation=preparation)
     assert rebuilt_source.trim_partition_reference(0, triangles) == expected
 
     authority = rebuilt.brep_authority
@@ -653,9 +657,12 @@ def test_source_trim_preparation_respects_live_domain_identity_and_lifetime() ->
     stale = eqx.tree_at(lambda value: value.brep_authority, rebuilt, stale_authority)
     with pytest.raises(ValueError, match="content has changed"):
         MeshingDomainBoundarySource(stale, (0,))
+    stale_source = eqx.tree_at(lambda value: value.domain, rebuilt_source, stale)
+    with pytest.raises(ValueError, match="content has changed"):
+        stale_source.trim_partition_reference(0, triangles, preparation=preparation)
 
     reference = weakref.ref(domain)
-    del source, domain
+    del source, domain, preparation
     gc.collect()
     assert reference() is None
 
