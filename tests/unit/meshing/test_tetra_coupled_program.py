@@ -265,13 +265,53 @@ def test_capacity_class_result_is_reported_in_original_coordinates() -> None:
         result.certificate.inequality_dual_ray,
     ):
         assert value.shape == (constraints,)
-    assert result.provenance.structure_id == primary.program.structure_id
     # The restored residual is the original program's residual, row for row.
     np.testing.assert_allclose(
         result.cone_primal_residual,
         matrix @ np.asarray(result.primal) + np.asarray(result.cone_slack) - rhs,
         atol=1e-12,
     )
+
+
+@pytest.mark.parametrize(
+    "sparse", (False, True), ids=("capacity-class", "sparse-structure")
+)
+@pytest.mark.parametrize(
+    "scales",
+    ((0.0, 0.5, 0.3), (0.5, 1.0, 0.3), (0.75, 2.0, 1.0), (-1.0, -1.0, 1.0)),
+    ids=("tight", "half", "coupled", "negative"),
+)
+def test_infeasible_model_is_proven_by_its_primary_ray(
+    scales: tuple[float, float, float], sparse: bool
+) -> None:
+    # x0 = x1, x0 >= 1, x1 <= limit < 1 is infeasible. The homogeneous scale
+    # then tends to zero; stepping it onto zero stalled these models until the
+    # iteration limit and left the proof to a second program.
+    limit, coupling, bound = scales
+    rows = [
+        _row((0,), [-1.0], identity=(0,)),
+        _row((1,), [1.0], identity=(1,)),
+        _row((0, 2), [coupling, 1.0], identity=(2,)),
+        _row((2,), [-1.0], identity=(3,)),
+    ]
+    rhs = [-1.0, limit, bound, 0.0]
+    equalities = [_row((0, 1), [1.0, -1.0], _RowRole.CARRIER, identity=(9,))]
+    policy = (
+        _policy(materialization=MaterializationPolicy(max_entries=150))
+        if sparse
+        else _policy()
+    )
+    primary = prepare_primary(
+        rows, rhs, equalities, 3, "infeasible-ray", policy, _ProgramCache()
+    )
+    assert (primary.layout is None) == sparse
+    solved = _solve(rows, rhs, equalities, policy, _binding((0,)))
+    assert int(solved.result.status) == int(ConvexProgramStatus.PRIMAL_INFEASIBLE)
+    assert solved.certificate_result is None
+    assert solved.ray_audit is not None and bool(solved.ray_audit.valid)
+    ray = np.asarray(solved.ray_audit.inequality_ray)
+    assert ray.shape == (5,)
+    assert np.min(ray[1:]) >= -1e-12
 
 
 def test_certificate_admission_refusal_preserves_primary_result() -> None:
