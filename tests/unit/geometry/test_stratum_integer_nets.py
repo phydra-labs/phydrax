@@ -230,6 +230,31 @@ def test_bulk_net_decoding_matches_exact_signed_controls_and_subdivision() -> No
         assert actual_level == expected_level
 
 
+@pytest.mark.parametrize("domain,degree", [("simplex", (1,)), ("box", (1, 1))])
+@pytest.mark.parametrize("workers", [1, 4])
+def test_bulk_net_mixed_exact_columns(
+    domain: BernsteinDomain, degree: tuple[int, ...], workers: int
+) -> None:
+    if not subdivision.meshcore_available():
+        pytest.skip("Meshcore is unavailable")
+    from phydrax.discretization._coordinate_enclosure import _fraction_controls
+
+    polynomials: tuple[Expression, ...] = (
+        {},
+        {(0, 0): -7},
+        {(1, 0): Fraction(-(1 << 300), 3), (0, 1): Fraction(7, 5)},
+        {(0, 0): 1 << 4200},
+        {(0, 0): RadicalElement.sqrt(2)},
+    )
+    result = subdivision.integer_net_batch(
+        [(polynomials, domain, 2, degree)], parallelism=workers
+    )[0]
+    for polynomial, net in zip(polynomials[:3], result[:3], strict=True):
+        assert net is not None
+        assert net.controls() == _fraction_controls(polynomial, domain, 2, degree)
+    assert result[3:] == (None, None)
+
+
 def test_bulk_net_conversion_is_independent_of_batch_split_and_workers() -> None:
     if not subdivision.meshcore_available():
         pytest.skip("Meshcore is unavailable")

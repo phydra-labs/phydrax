@@ -108,10 +108,10 @@ def integer_net_batch(
     ] = {}
     for row, (polynomials, domain, dimension, degree) in enumerate(requests):
         rational = cast(
-            list[dict[tuple[int, ...], Fraction | int]],
+            list[tuple[int, dict[tuple[int, ...], Fraction | int]]],
             [
-                polynomial
-                for polynomial in polynomials
+                (column, polynomial)
+                for column, polynomial in enumerate(polynomials)
                 if isinstance(polynomial, dict)
                 and all(
                     isinstance(value, (Fraction, int)) and not isinstance(value, bool)
@@ -122,18 +122,12 @@ def integer_net_batch(
         scale = lcm(
             *(
                 value.denominator
-                for polynomial in rational
+                for _, polynomial in rational
                 for value in polynomial.values()
             )
         )
-        for column, polynomial in enumerate(polynomials):
-            if not isinstance(polynomial, dict) or not all(
-                isinstance(value, (Fraction, int)) and not isinstance(value, bool)
-                for value in polynomial.values()
-            ):
-                continue
-            rational_polynomial = cast(dict[tuple[int, ...], Fraction | int], polynomial)
-            if any(len(exponent) != dimension for exponent in polynomial):
+        for column, rational_polynomial in rational:
+            if any(len(exponent) != dimension for exponent in rational_polynomial):
                 raise ValueError(
                     "Bernstein dimension must match polynomial monomial dimensions."
                 )
@@ -148,7 +142,7 @@ def integer_net_batch(
             )
             if limbs is None:
                 continue
-            exponents = tuple(power for exponent in polynomial for power in exponent)
+            exponents = tuple(power for exponent in rational_polynomial for power in exponent)
             count = _control_count(domain, dimension, degree)
             banks.setdefault((domain, dimension, limbs), []).append(
                 (row, column, degree, exponents, numerators, count, scale)
