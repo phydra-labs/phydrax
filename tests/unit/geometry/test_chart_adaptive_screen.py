@@ -252,12 +252,16 @@ def test_adaptive_chart_decisions_are_batch_independent() -> None:
         )
 
     batch_evidence = evidence(order)
+    _, _, _, batch_witness = _case(domain, charts, order)
+    batch_ids = tuple(int(value) for value in batch_witness.cell_global_ids)
+    assert len(set(batch_evidence.deviation_bounds[:, 1].tolist())) > 1
     for row in order:
+        position = batch_ids.index(101 + int(row))
         single, expected = _decisions(domain, charts, np.asarray((row,)), tolerance)
-        assert single == expected == (batch[int(row)],)
+        assert single == expected == (batch[position],)
         one = evidence(np.asarray((row,)))
         np.testing.assert_array_equal(
-            batch_evidence.deviation_bounds[int(row)].view(np.uint64),
+            batch_evidence.deviation_bounds[position].view(np.uint64),
             one.deviation_bounds[0].view(np.uint64),
         )
 
