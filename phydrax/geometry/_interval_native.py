@@ -63,6 +63,7 @@ _EXTREMUM_REDUCE = 22
 _DECIDE = 23
 _ATTAIN = 24
 _DIVIDE_ELEMENTWISE = 25
+_ATAN = 26
 
 # Branch-evidence event kinds and tests (phx_mc_interval_program_branches).
 _KINK = 0
@@ -880,13 +881,14 @@ class _Builder:
             denominator = self._mapped(values[1], output_shape)
             reciprocal = self._emit_unary(_RECIPROCAL, denominator, output_shape)
             return (self._emit_binary(_MULTIPLY, values[0], reciprocal, output_shape),)
-        if name in ("neg", "abs", "square", "sqrt", "sin", "cos"):
+        if name in ("neg", "abs", "square", "sqrt", "sin", "cos", "atan"):
             opcode = {
                 "neg": _NEGATE,
                 "square": _SQUARE,
                 "sqrt": _SQRT,
                 "sin": _SINE,
                 "cos": _COSINE,
+                "atan": _ATAN,
                 "abs": _ABSOLUTE,
             }[name]
             return (self._emit_unary(opcode, values[0], output_shape),)
@@ -1217,6 +1219,7 @@ class _Builder:
             "abs",
             "sin",
             "cos",
+            "atan",
             "integer_pow",
             "pow",
             "max",
@@ -1784,6 +1787,17 @@ def lower_interval_jaxpr(
                 _REDUCE_SUM,
                 _SINE,
                 _COSINE,
+                _SQRT,
+                _COMPARE,
+                _SELECT,
+                _MAXIMUM,
+                _MINIMUM,
+                _EQUAL,
+                _EXTREMUM_PAIR,
+                _EXTREMUM_REDUCE,
+                _DECIDE,
+                _ATTAIN,
+                _ATAN,
                 _SQUARE,
                 _ABSOLUTE,
                 _EXP,

@@ -76,6 +76,7 @@ constexpr std::int64_t kDecide = 23;
 // lower = maximum(lower, 1), upper unchanged.
 constexpr std::int64_t kAttain = 24;
 constexpr std::int64_t kDivideElementwise = 25;
+constexpr std::int64_t kAtan = 26;
 
 constexpr std::uint64_t kIntervalOpcodeCapabilities =
     (std::uint64_t{1} << kGather) | (std::uint64_t{1} << kAdd) |
@@ -90,7 +91,7 @@ constexpr std::uint64_t kIntervalOpcodeCapabilities =
     (std::uint64_t{1} << kEqual) | (std::uint64_t{1} << kAbsolute) |
     (std::uint64_t{1} << kExtremumPair) | (std::uint64_t{1} << kExtremumReduce) |
     (std::uint64_t{1} << kDecide) | (std::uint64_t{1} << kAttain) |
-    (std::uint64_t{1} << kDivideElementwise);
+    (std::uint64_t{1} << kDivideElementwise) | (std::uint64_t{1} << kAtan);
 
 // Branch-evidence event rows: kind, test, size, a, a_index, boxes. Element k
 // is the workspace entry a + (a_index < 0 ? k : indices[a_index + k]); where
@@ -191,7 +192,7 @@ bool representatives_valid(const std::int64_t* indices, std::int64_t index_count
 bool row_valid(const Row& row, std::int64_t previous_end, const std::int64_t* indices,
                std::int64_t index_count, const double* parameters, std::int64_t parameter_count,
                std::int64_t workspace_size) noexcept {
-  if (row.opcode < kGather || row.opcode > kDivideElementwise) return false;
+  if (row.opcode < kGather || row.opcode > kAtan) return false;
   if (row.size < 0 || row.out < previous_end || row.out > workspace_size) return false;
   const std::int64_t room = workspace_size - row.out;
   switch (row.opcode) {
@@ -488,11 +489,13 @@ void execute_row(const Row& row, std::int64_t begin, std::int64_t end,
       return;
     case kExp:
     case kLog:
+    case kAtan:
       for (std::int64_t k = begin; k < end; ++k) {
         const std::int64_t input = address(indices, row.a, row.a_index, k);
         const phx::mc::elementary::Enclosure result =
             row.opcode == kExp ? phx::mc::elementary::exp(lower[input], upper[input])
-                               : phx::mc::elementary::log(lower[input], upper[input]);
+            : row.opcode == kLog ? phx::mc::elementary::log(lower[input], upper[input])
+                                 : phx::mc::elementary::atan(lower[input], upper[input]);
         lower[out + k] = result.lower;
         upper[out + k] = result.upper;
       }
@@ -840,9 +843,14 @@ int32_t phx_mc_interval_program_batch(const int64_t* instructions, int64_t instr
         (std::uint64_t{1} << kSubtract) | (std::uint64_t{1} << kMultiply) |
         (std::uint64_t{1} << kNegate) | (std::uint64_t{1} << kReduceSum) |
         (std::uint64_t{1} << kSine) | (std::uint64_t{1} << kCosine) |
-        (std::uint64_t{1} << kSquare) | (std::uint64_t{1} << kAbsolute) |
+        (std::uint64_t{1} << kSqrt) | (std::uint64_t{1} << kSquare) |
+        (std::uint64_t{1} << kAbsolute) | (std::uint64_t{1} << kCompare) |
+        (std::uint64_t{1} << kEqual) | (std::uint64_t{1} << kSelect) |
+        (std::uint64_t{1} << kMaximum) | (std::uint64_t{1} << kMinimum) |
+        (std::uint64_t{1} << kExtremumPair) | (std::uint64_t{1} << kExtremumReduce) |
+        (std::uint64_t{1} << kDecide) | (std::uint64_t{1} << kAttain) |
         (std::uint64_t{1} << kExp) | (std::uint64_t{1} << kLog) |
-        (std::uint64_t{1} << kDivideElementwise);
+        (std::uint64_t{1} << kDivideElementwise) | (std::uint64_t{1} << kAtan);
     for (int64_t row = 0; row < instruction_count; ++row)
       if (!(supported & (std::uint64_t{1} << row_at(instructions, row).opcode)))
         return PHX_MC_INVALID_INPUT;

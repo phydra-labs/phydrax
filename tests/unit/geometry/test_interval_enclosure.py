@@ -240,11 +240,14 @@ def test_batched_random_programs_match_per_operation_reference(seed: int) -> Non
     (
         lambda x: -x,
         lambda x: x * x,
+        lambda x: jnp.sqrt(x),
+        lambda x: jnp.arctan(x),
+        lambda x: jnp.where(x > 1.0, x, -x),
         lambda x: jnp.sum(x),
         lambda x: jnp.dot(x, x + 1.0),
         lambda x: x / (x + 1.0),
     ),
-    ids=("negate", "square", "sum", "dot", "divide"),
+    ids=("negate", "square", "sqrt", "atan", "select", "sum", "dot", "divide"),
 )
 def test_batched_program_matches_host_lowering(
     function: Callable[[jax.Array], jax.Array],
@@ -1146,10 +1149,11 @@ def _quadratic_spline(
     return value
 
 
-def test_batched_execution_refuses_unsupported_spline_and_platform_sqrt() -> None:
-    for function in (_quadratic_spline("clip"), lambda x: jnp.sqrt(x)):
-        with pytest.raises(IntervalExtensionError):
-            prepare_interval_function(function, 1, batch_capacity=1, execution="batched")
+def test_batched_execution_refuses_unsupported_spline() -> None:
+    with pytest.raises(IntervalExtensionError):
+        prepare_interval_function(
+            _quadratic_spline("clip"), 1, batch_capacity=1, execution="batched"
+        )
 
 
 def _sampled_range(

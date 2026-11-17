@@ -46,6 +46,7 @@ constexpr std::int64_t kExtremumReduce = 22;
 constexpr std::int64_t kDecide = 23;
 constexpr std::int64_t kAttain = 24;
 constexpr std::int64_t kDivideElementwise = 25;
+constexpr std::int64_t kAtan = 26;
 constexpr double kInfinity = std::numeric_limits<double>::infinity();
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 constexpr double kLargest = std::numeric_limits<double>::max();
@@ -800,7 +801,7 @@ void interval_capability_query() {
       (std::uint64_t{1} << kEqual) | (std::uint64_t{1} << kAbsolute) |
       (std::uint64_t{1} << kExtremumPair) | (std::uint64_t{1} << kExtremumReduce) |
       (std::uint64_t{1} << kDecide) | (std::uint64_t{1} << kAttain) |
-      (std::uint64_t{1} << kDivideElementwise);
+      (std::uint64_t{1} << kDivideElementwise) | (std::uint64_t{1} << kAtan);
   PHX_CHECK(phx_mc_interval_program_capabilities(&opcodes) == PHX_MC_OK);
   PHX_CHECK(opcodes == expected);
   PHX_CHECK(phx_mc_interval_program_capabilities(nullptr) == PHX_MC_INVALID_ARGUMENT);
@@ -1082,7 +1083,7 @@ void batched_elementwise_arithmetic() {
     PHX_CHECK(same(low4[at + 3], expected_lower));
     PHX_CHECK(same(high4[at + 3], expected_upper));
   }
-  const std::int64_t invalid[] = {kSqrt, 2, 1, 0, -1, -1, -1, 0};
+  const std::int64_t invalid[] = {kReciprocal, 2, 1, 0, -1, -1, -1, 0};
   auto unchanged_low = initial_lower, unchanged_high = initial_upper;
   PHX_CHECK(phx_mc_interval_program_batch(invalid, 1, nullptr, 0, nullptr, 0,
                                            unchanged_low.data(), unchanged_high.data(),
