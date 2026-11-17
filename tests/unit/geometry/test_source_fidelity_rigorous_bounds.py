@@ -246,9 +246,9 @@ def test_analytic_projection_representatives_and_identity_ignore_libm(
     assert here.result_id == there.result_id
     monkeypatch.undo()
 
-    for index, (x, y, z) in enumerate(queries[:6]):
+    for index in range(6):
         with mp.workdps(80):
-            mx, my, mz = (mp.mpf(float(value)) for value in (x, y, z))
+            mx, my, mz = (mp.mpf(float(queries[index, axis])) for axis in range(3))
             radial = mp.sqrt(mx * mx + my * my)
             longitude = mp.atan2(my, mx) % (2 * mp.pi)
             if family == "sphere":
