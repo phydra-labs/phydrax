@@ -19,6 +19,7 @@ import hashlib
 import threading
 import weakref
 from abc import ABC, abstractmethod
+from fractions import Fraction
 from typing import Any, Generic, TypeVar
 
 import jax
@@ -29,6 +30,12 @@ from ._fingerprint import iter_array_bytes
 
 _T = TypeVar("_T")
 _ARRAY_LEAVES = (np.ndarray, np.generic, jax.Array)
+# Exact concrete types take the fast path; unrecognized types retain the
+# original isinstance dispatch, including subclasses and opaque leaves.
+_SCALAR_LEAF_TYPES = frozenset(
+    (bool, int, float, str, bytes, Fraction, type(None), tuple)
+)
+_CONCRETE_ARRAY_TYPES = frozenset((np.ndarray, *jax.Array.__subclasses__()))
 
 
 class _ImmutableFingerprintLeaf(ABC):
@@ -52,6 +59,14 @@ def live_content_fingerprint(value: object, /) -> tuple[object, str]:
     leaves, treedef = jax.tree_util.tree_flatten(value)
     digest = hashlib.sha256()
     scalars: list[str] = []
+    # ABCs may register virtual subclasses at runtime. Recheck the finite
+    # fast-path set on every invocation so their meaning remains unchanged.
+    scalar_types = frozenset(
+        leaf_type
+        for leaf_type in _SCALAR_LEAF_TYPES
+        if not issubclass(leaf_type, _ARRAY_LEAVES)
+        and not issubclass(leaf_type, _ImmutableFingerprintLeaf)
+    )
 
     def flush() -> None:
         if scalars:
@@ -61,7 +76,12 @@ def live_content_fingerprint(value: object, /) -> tuple[object, str]:
             scalars.clear()
 
     for leaf in leaves:
-        if not isinstance(leaf, _ARRAY_LEAVES):
+        leaf_type = type(leaf)
+        if leaf_type in scalar_types:
+            text = f"{leaf_type.__qualname__}:{leaf!r}"
+            scalars.append(f"{len(text)}:{text}")
+            continue
+        if leaf_type not in _CONCRETE_ARRAY_TYPES and not isinstance(leaf, _ARRAY_LEAVES):
             text = f"{type(leaf).__qualname__}:{leaf!r}"
             scalars.append(f"{len(text)}:{text}")
             if isinstance(leaf, _ImmutableFingerprintLeaf):
@@ -151,7 +171,11 @@ class LiveProofLedger(Generic[_T]):
         if entry is None:
             return None
         references, fingerprint, outcome = entry
-        if fingerprint is not None or references[0] is None or references[0]() is not operand:
+        if (
+            fingerprint is not None
+            or references[0] is None
+            or references[0]() is not operand
+        ):
             return None
         return outcome
 
