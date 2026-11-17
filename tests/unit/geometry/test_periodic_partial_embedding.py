@@ -5,6 +5,7 @@ from fractions import Fraction
 from itertools import permutations, product
 
 import numpy as np
+import pytest
 
 from phydrax.discretization._cell_geometry import CellGeometrySpec
 from phydrax.discretization._cell_geometry_validity import (
@@ -530,3 +531,135 @@ def test_edge_pinched_single_layer_quotient_is_unresolved() -> None:
         finding.check == "periodic_quotient_incidence_unresolved"
         for finding in certificate.findings
     )
+
+
+_HEXAHEDRON_CORNERS = (
+    (0, 0, 0),
+    (1, 0, 0),
+    (1, 1, 0),
+    (0, 1, 0),
+    (0, 0, 1),
+    (1, 0, 1),
+    (1, 1, 1),
+    (0, 1, 1),
+)
+_SHELL_DEGREE_CHECKS = {
+    "periodic_exterior_cell_contacts",
+    "periodic_global_degree_one_injectivity",
+}
+
+
+def _hexahedral_quotient(
+    cubes: tuple[GridPoint, ...],
+    periodic_axes: tuple[int, ...],
+    *,
+    winding_multiplier: int = 1,
+) -> tuple[CellMesh, CellGeometrySpec]:
+    """Unit hexahedra with two layers per period; they take the mapped contact route."""
+    coordinates = sorted(
+        {
+            tuple(cube[axis] + corner[axis] for axis in range(3))
+            for cube in cubes
+            for corner in _HEXAHEDRON_CORNERS
+        }
+    )
+    index = {point: row for row, point in enumerate(coordinates)}
+    rows = [
+        tuple(
+            index[tuple(cube[axis] + corner[axis] for axis in range(3))]
+            for corner in _HEXAHEDRON_CORNERS
+        )
+        for cube in cubes
+    ]
+    mesh = _periodic_quotient(
+        coordinates,
+        (("column", "hexahedron", rows),),
+        periodic_axes,
+        2,
+        winding_multiplier,
+    )
+    return mesh, CellGeometrySpec.affine(mesh)
+
+
+def _solid_column() -> tuple[GridPoint, ...]:
+    return tuple((i, j, k) for i in range(3) for j in range(3) for k in range(2))
+
+
+def test_solid_periodic_column_certifies_by_the_shell_degree_theorem() -> None:
+    from phydrax.geometry._periodic_embedding import periodic_single_shell_exterior_cells
+
+    mesh, geometry = _hexahedral_quotient(_solid_column(), (2,))
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    certificate = certify_global_embedding(mesh, geometry, validity)
+
+    topology = mesh.periodic_topology
+    assert topology is not None
+    exterior = periodic_single_shell_exterior_cells(mesh, topology)
+    assert exterior is not None
+    # The two central hexahedra of the 3 x 3 column own no boundary facet.
+    interior = sorted(set(range(18)) - set(exterior.tolist()))
+    assert interior == [
+        row for row, cube in enumerate(_solid_column()) if cube[:2] == (1, 1)
+    ]
+    assert certificate.status == "certified", certificate.findings
+    assert {
+        "periodic_exact_cell_contacts",
+        "periodic_subdomain_boundary",
+    } | _SHELL_DEGREE_CHECKS <= set(certificate.evaluated_checks)
+    assert any(
+        witness.theorem == "periodic_global_degree_one_injectivity"
+        for witness in certificate.witnesses
+    )
+
+
+def test_doubly_wrapped_solid_column_is_refused_at_its_shell() -> None:
+    # The interior hexahedra also overlap, but only the shell is paired: the
+    # doubled shell alone must refuse the degree theorem.
+    mesh, geometry = _hexahedral_quotient(_solid_column(), (2,), winding_multiplier=2)
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    certificate = certify_global_embedding(mesh, geometry, validity)
+
+    assert validity.all_certified
+    assert certificate.status == "violated"
+    assert any(
+        finding.check == "periodic_cell_contact" and finding.status == "violated"
+        for finding in certificate.findings
+    )
+    assert "periodic_exterior_cell_contacts" in certificate.evaluated_checks
+    assert "periodic_global_degree_one_injectivity" not in certificate.evaluated_checks
+    assert not any(
+        witness.theorem == "periodic_global_degree_one_injectivity"
+        for witness in certificate.witnesses
+    )
+
+
+@pytest.mark.parametrize(
+    ("cubes", "periodic_axes"),
+    [
+        pytest.param(
+            tuple(cube for cube in _solid_column() if cube[:2] != (1, 1)),
+            (2,),
+            id="hollow-column-inner-and-outer-shell",
+        ),
+        pytest.param(
+            tuple((i, j, k) for i in range(2) for j in range(2) for k in range(3)),
+            (0, 1),
+            id="slab-bottom-and-top-shell",
+        ),
+    ],
+)
+def test_two_shell_periodic_quotients_keep_the_complete_pair_route(
+    cubes: tuple[GridPoint, ...], periodic_axes: tuple[int, ...]
+) -> None:
+    from phydrax.geometry._periodic_embedding import periodic_single_shell_exterior_cells
+
+    mesh, geometry = _hexahedral_quotient(cubes, periodic_axes)
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    certificate = certify_global_embedding(mesh, geometry, validity)
+
+    topology = mesh.periodic_topology
+    assert topology is not None
+    # With two shells, one embedded shell no longer bounds the covered region.
+    assert periodic_single_shell_exterior_cells(mesh, topology) is None
+    assert certificate.status == "certified", certificate.findings
+    assert not _SHELL_DEGREE_CHECKS & set(certificate.evaluated_checks)

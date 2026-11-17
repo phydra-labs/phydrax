@@ -401,6 +401,119 @@ def _quotient_faces_pair_oriented(
     return "with_boundary"
 
 
+def _linked_component_count(
+    count: int, first: NDArray[np.int64], second: NDArray[np.int64], /
+) -> int:
+    """Connected components of ``count`` nodes under undirected links."""
+    labels = np.arange(count, dtype=np.int64)
+    while True:
+        # Each node takes the least label across its links, then jumps to that
+        # label's own label. A fixed point has equal labels across every link.
+        low = np.minimum(labels[first], labels[second])
+        updated = labels.copy()
+        np.minimum.at(updated, first, low)
+        np.minimum.at(updated, second, low)
+        updated = updated[updated]
+        if np.array_equal(updated, labels):
+            return np.unique(labels).size
+        labels = updated
+
+
+def _paired_rows(
+    keys: NDArray[np.int64], values: NDArray[np.int64], /
+) -> NDArray[np.int64] | None:
+    """The two values of every key as ``(pairs, 2)`` rows, or ``None`` if unpaired."""
+    order = np.argsort(keys, kind="stable")
+    ordered = keys[order]
+    if ordered.size % 2 or np.any(ordered[0::2] != ordered[1::2]):
+        return None
+    return values[order].reshape((-1, 2))
+
+
+def periodic_single_shell_exterior_cells(
+    mesh: CellMesh, topology: PeriodicMeshTopology, /
+) -> NDArray[np.int64] | None:
+    """Lifted cell rows that own a boundary facet of a single-shell partial quotient.
+
+    Returns ``None`` unless the topological premises of the degree theorem for
+    a quotient with boundary hold: an exact translation group of rank below the
+    dimension (so the covering space is not compact), one connected oriented
+    quotient 3-complex, and one connected closed oriented manifold boundary
+    shell. The caller owes positive cell maps, exact quotient facet traces and
+    the embedding of the shell.
+    """
+    period = topology.cell
+    if (
+        mesh.ambient_dimension != 3
+        or mesh.topological_dimension != 3
+        or topology.topological_dimension != 3
+        or not isinstance(period, (PeriodicCell, PeriodicIsometryGroup))
+        or period.rank >= 3
+    ):
+        return None
+    if isinstance(period, PeriodicIsometryGroup):
+        from ..discretization._periodic_exact import exact_periodic_generators
+
+        generators, _ = exact_periodic_generators(period)
+        if any(
+            generator[row][column] != int(row == column)
+            for generator in generators
+            for row in range(3)
+            for column in range(3)
+        ):
+            return None
+    if _quotient_faces_pair_oriented(mesh, topology) != "with_boundary":
+        return None
+    quotient = topology.quotient
+    face_boundary = np.asarray(
+        quotient.entity_sets[2].subset("boundary").mask, dtype=np.bool_
+    )
+
+    def rows(
+        complex_: CellComplexTopology, degree: int, /
+    ) -> tuple[NDArray[np.int64], NDArray[np.int64]]:
+        relation = complex_.incidences[degree].relation
+        valid = np.asarray(relation.valid, dtype=np.bool_)
+        return (
+            np.asarray(relation.source_indices, dtype=np.int64)[valid],
+            np.asarray(relation.target_indices, dtype=np.int64)[valid],
+        )
+
+    # The oriented-quotient classification binds every interior face to two
+    # cells and every boundary edge to two boundary faces.
+    faces, cells = rows(quotient, 2)
+    interior = ~face_boundary[faces]
+    neighbors = _paired_rows(faces[interior], cells[interior])
+    if (
+        neighbors is None
+        or _linked_component_count(
+            quotient.entity_sets[3].count, neighbors[:, 0], neighbors[:, 1]
+        )
+        != 1
+    ):
+        return None
+    edges, edge_faces = rows(quotient, 1)
+    on_shell = face_boundary[edge_faces]
+    shell_neighbors = _paired_rows(edges[on_shell], edge_faces[on_shell])
+    shell_rows = np.cumsum(face_boundary, dtype=np.int64) - 1
+    if (
+        shell_neighbors is None
+        or _linked_component_count(
+            np.flatnonzero(face_boundary).size,
+            shell_rows[shell_neighbors[:, 0]],
+            shell_rows[shell_neighbors[:, 1]],
+        )
+        != 1
+    ):
+        return None
+    lifted = mesh.topology
+    if lifted.topology_id != topology.lifted_complex_id or len(lifted.incidences) < 3:
+        return None
+    face_orbits, _ = _lifted_orbit_maps(topology, 2)
+    lifted_faces, lifted_cells = rows(lifted, 2)
+    return np.unique(lifted_cells[face_boundary[face_orbits[lifted_faces]]])
+
+
 def _point3(point: tuple[ExactScalar, ...], /) -> Point3:
     if len(point) != 3:
         raise ValueError(
