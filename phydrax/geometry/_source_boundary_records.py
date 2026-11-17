@@ -24,6 +24,7 @@ from .._fingerprint import (
     numeric_array_fingerprint,
     rational_chart_bank_fingerprint,
 )
+from .._live_proofs import live_content_fingerprint, LiveProofLedger
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
     from ..discretization._cell_mesh import CellMesh
     from ..meshing._association import GeometryAssociation
     from ..meshing._plc_source import PiecewiseLinearComplex
+    from ._meshing_domain import MeshingDomain
     from ._piecewise_linear_boundary import PiecewiseLinearBoundarySource
     from .reconstruction._envelope import (
         SurfaceEnvelopeMode,
@@ -753,6 +755,33 @@ class SourceBoundaryFaceImageWitness(StrictModule, NonTrainableState):
         validate_source_fidelity_witness(mesh, geometry, source, self)
 
 
+_PATCH_CHART_CAPABILITIES: LiveProofLedger[tuple[str | None, bool]] = LiveProofLedger()
+
+
+def _source_patch_chart_capability(
+    domain: MeshingDomain, patch: int, /
+) -> tuple[str | None, bool]:
+    """Prove one patch's plane and affine chart capability for this live source."""
+    from ..meshing.providers._native_cad_volume import _exact_patch_chart
+    from ._domain_boundary import exact_plane_chart
+    from .brep._patches import _exact_cross3
+
+    operands, parameters = (domain,), (patch,)
+    capability = _PATCH_CHART_CAPABILITIES.find(operands, parameters=parameters)
+    if capability is None:
+        fingerprint = live_content_fingerprint(operands)
+        plane = exact_plane_chart(domain, patch)
+        affine = _exact_patch_chart(domain, patch)
+        capability = (
+            None if plane is None else plane.chart_id,
+            affine is not None and any(_exact_cross3(affine[1], affine[2])),
+        )
+        _PATCH_CHART_CAPABILITIES.record(
+            operands, fingerprint, capability, parameters=parameters
+        )
+    return capability
+
+
 class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
     """Cell-bound source chart pieces for curves and oriented surface boundaries.
 
@@ -1095,10 +1124,6 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                 "SourceBoundaryChartWitness rows and source identities must align."
             )
         if cad_plc is not None:
-            from ..meshing.providers._native_cad_volume import _exact_patch_chart
-            from ._domain_boundary import exact_plane_chart
-            from .brep._patches import _exact_cross3
-
             domain = cad_source_charts.domain
             patch_keys = domain.stratum_entity_ids(2)
             patch_by_key = {
@@ -1126,12 +1151,7 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                 if root < 0:
                     capability = patch_charts.get(patch)
                     if capability is None:
-                        plane = exact_plane_chart(domain, patch)
-                        affine = _exact_patch_chart(domain, patch)
-                        capability = (
-                            None if plane is None else plane.chart_id,
-                            affine is not None and any(_exact_cross3(affine[1], affine[2])),
-                        )
+                        capability = _source_patch_chart_capability(domain, patch)
                         patch_charts[patch] = capability
                     plane_id, affine_nondegenerate = capability
                     if charts[row] != plane_id and not (
