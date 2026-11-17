@@ -1205,16 +1205,22 @@ def _layer_core_history_transition(
     ):
         raise ValueError("Original material density or per-region inventory changed.")
     geometry_transition = adaptation.transition.geometry_transition
+    # The spaces and the transition are fixed here, so a field name fixes its
+    # operator; every transaction attempt and field of that name reuses it.
+    transfer_operators: dict[str, Any] = {}
 
     def transfer_field(field: Any, layout: Any, context: Any, args: Any) -> Any:
         del context, args
-        operator = nested_nodal_transfer(
-            source_space,
-            target_space,
-            geometry_transition,
-            layout.name,
-            semantics="interpolate",
-        )
+        operator = transfer_operators.get(layout.name)
+        if operator is None:
+            operator = nested_nodal_transfer(
+                source_space,
+                target_space,
+                geometry_transition,
+                layout.name,
+                semantics="interpolate",
+            )
+            transfer_operators[layout.name] = operator
         return operator.apply(field)
 
     def transfer_material(materials: Any, lineage: Any, args: Any) -> Any:
