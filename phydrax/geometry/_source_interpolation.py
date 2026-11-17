@@ -419,11 +419,12 @@ def _fraction_float_interval(value: Fraction, /) -> tuple[float, float]:
     represented = float(value)
     if not math.isfinite(represented):
         raise ValueError("Exact chart coordinate exceeds finite interval resolution.")
-    rounded = Fraction.from_float(represented)
-    lower = (
-        float(np.nextafter(represented, -math.inf)) if rounded > value else represented
-    )
-    upper = float(np.nextafter(represented, math.inf)) if rounded < value else represented
+    numerator, denominator = represented.as_integer_ratio()
+    # Compare the exact binary64 value with the rational without constructing
+    # another Fraction; both comparisons must retain exact endpoint semantics.
+    difference = numerator * value.denominator - value.numerator * denominator
+    lower = math.nextafter(represented, -math.inf) if difference > 0 else represented
+    upper = math.nextafter(represented, math.inf) if difference < 0 else represented
     return lower, upper
 
 
@@ -590,6 +591,42 @@ def exact_affine_boundary_source(query: MeshingDomainBoundarySource, /) -> bool:
     return True
 
 
+def _float_component_norm_interval(
+    lower: np.ndarray, upper: np.ndarray, /
+) -> tuple[float, float] | None:
+    """Enclose the existing exact norm upper endpoint for nonnegative components.
+
+    The exact square-root routine rescales subnormal and overflowing squared
+    norms; leave those cases to it rather than guessing its rational endpoint.
+    """
+    with np.errstate(over="ignore", under="ignore", invalid="ignore"):
+        squares_lower = np.maximum(0.0, np.nextafter(lower * lower, -math.inf))
+        squares_upper = np.nextafter(upper * upper, math.inf)
+        sum_lower = 0.0
+        sum_upper = 0.0
+        for lo, hi in zip(squares_lower, squares_upper, strict=True):
+            sum_lower = max(0.0, float(np.nextafter(sum_lower + lo, -math.inf)))
+            sum_upper = float(np.nextafter(sum_upper + hi, math.inf))
+        if sum_lower < np.finfo(np.float64).tiny or not math.isfinite(sum_upper):
+            return None
+        # The original routine starts at sqrt(float(exact squared norm)), then
+        # only moves upward until its square encloses the exact squared norm.
+        # One successor encloses both that initial estimate and the ceiling.
+        return (
+            max(0.0, float(np.nextafter(np.sqrt(sum_lower), -math.inf))),
+            float(np.nextafter(np.sqrt(sum_upper), math.inf)),
+        )
+
+
+def _exact_component_norm(components: tuple[Fraction, ...], /) -> Fraction:
+    nonzero = tuple(value for value in components if value)
+    if len(nonzero) < 2:
+        return abs(nonzero[0]) if nonzero else Fraction(0)
+    return fraction_sqrt_interval(sum((value * value for value in nonzero), Fraction(0)))[
+        1
+    ]
+
+
 def _exact_surface_interpolation_bound(
     expressions: tuple[Polynomial, ...],
     chart: tuple[tuple[Fraction, Fraction], ...],
@@ -653,20 +690,22 @@ def _exact_surface_interpolation_bound(
             }
             for axis in range(2)
         )
-        component_errors: list[Fraction] = []
+        component_errors: list[float] = []
         for residual in residuals:
             sub_residual = compose_expression(residual, sub_arguments)
             lower, upper = polynomial_bounds(sub_residual, "simplex", 2)
             if not math.isfinite(lower) or not math.isfinite(upper):
                 return math.inf
-            component_errors.append(
-                max(abs(Fraction.from_float(lower)), abs(Fraction.from_float(upper)))
-            )
+            component_errors.append(max(abs(lower), abs(upper)))
+        components = np.asarray(component_errors, dtype=np.float64)
+        enclosure = _float_component_norm_interval(components, components)
+        if enclosure is not None and Fraction(enclosure[1]) <= maximum_upper:
+            continue
         maximum_upper = max(
             maximum_upper,
-            fraction_sqrt_interval(
-                sum((value * value for value in component_errors), Fraction(0))
-            )[1],
+            _exact_component_norm(
+                tuple(Fraction.from_float(value) for value in component_errors)
+            ),
         )
     return fraction_endpoint(maximum_upper, upper=True, saturate=True)
 
@@ -1733,7 +1772,7 @@ def certify_domain_surface_charts(
                     tuple(evaluate_expression(value, point) for value in mapped)
                     for point in barycentric_corners
                 )
-                residual_components: list[Fraction] = []
+                residual_components: list[float] = []
                 target_map_unbounded = False
                 is_affine = True
                 for axis, expression in enumerate(mapped):
@@ -1752,27 +1791,26 @@ def certify_domain_surface_charts(
                         isinstance(residual, RationalPolynomial)
                         and not residual.numerator
                     ):
-                        residual_components.append(Fraction(0))
+                        residual_components.append(0.0)
                         continue
                     if isinstance(residual, dict) and not residual:
-                        residual_components.append(Fraction(0))
+                        residual_components.append(0.0)
                         continue
                     bound_lower, bound_upper = polynomial_bounds(residual, "simplex", 2)
                     if not math.isfinite(bound_lower) or not math.isfinite(bound_upper):
                         target_map_unbounded = True
                         continue
-                    residual_components.append(
-                        max(
-                            abs(Fraction.from_float(bound_lower)),
-                            abs(Fraction.from_float(bound_upper)),
-                        )
-                    )
+                    residual_components.append(max(abs(bound_lower), abs(bound_upper)))
                 if target_map_unbounded:
                     target_interpolation = math.inf
                 else:
-                    target_interpolation = fraction_sqrt_interval(
-                        sum((value * value for value in residual_components), Fraction(0))
-                    )[1]
+                    target_interpolation = _exact_component_norm(
+                        tuple(
+                            Fraction.from_float(value)
+                            for value in residual_components
+                            if value
+                        )
+                    )
         except (
             ArithmeticError,
             FloatingPointError,
@@ -1825,11 +1863,26 @@ def certify_domain_surface_charts(
                         corners[corner], exact_source[corner], strict=True
                     )
                 )
+            if endpoint_error:
+                try:
+                    component_intervals = tuple(
+                        _fraction_float_interval(value) for value in component_errors
+                    )
+                    lower_components, upper_components = (
+                        np.asarray(values, dtype=np.float64)
+                        for values in zip(*component_intervals, strict=True)
+                    )
+                    enclosure = _float_component_norm_interval(
+                        lower_components, upper_components
+                    )
+                    if enclosure is not None and Fraction(enclosure[1]) <= endpoint_error:
+                        continue
+                except (OverflowError, ValueError):
+                    # Extreme exact endpoints still use the exact norm below.
+                    pass
             endpoint_error = max(
                 endpoint_error,
-                fraction_sqrt_interval(
-                    sum((value * value for value in component_errors), Fraction(0))
-                )[1],
+                _exact_component_norm(component_errors),
             )
         if exact_surface is not None and _exact_surface_map_is_affine(exact_surface):
             source_interpolation = Fraction(0)
