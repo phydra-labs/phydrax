@@ -515,6 +515,30 @@ def test_audit_quality_scenario_4() -> None:
     assert "self_intersection" not in dict(skipped.check_counts)
 
 
+def test_welded_audit_counts_disconnected_vertex_stars() -> None:
+    first = np.asarray(
+        ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (-1.0, 0.0), (-1.0, -1.0)),
+        dtype=np.float64,
+    )
+    points = np.concatenate((first, first + np.asarray((10.0, 0.0))), axis=0)
+    triangles = np.asarray(
+        ((0, 1, 2), (0, 3, 4), (5, 6, 7), (5, 8, 9)), dtype=np.int32
+    )
+    findings = []
+    for cells in (triangles, triangles[::-1]):
+        mesh = phx.discretization.CellMesh(
+            points, (phx.discretization.CellBlock("cells", "triangle", cells),)
+        )
+        audit = phx.meshing.audit_cell_mesh(
+            mesh, phx.discretization.CellGeometrySpec.affine(mesh)
+        )
+        findings.append((audit.issues, tuple(audit.check_counts)))
+        assert not audit.passed
+        assert audit.issues == ("nonmanifold_vertices",)
+        assert dict(audit.check_counts)["nonmanifold_vertices"] == 2
+    assert findings[0] == findings[1]
+
+
 def test_audit_quality_scenario_5() -> None:
     # Notched square: the vertex-zero fan folds over itself, the cell does not.
     points = np.asarray(((0.0, 0.0), (3.0, 0.0), (3.0, 3.0), (1.5, 1.0), (0.0, 3.0)))

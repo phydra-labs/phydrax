@@ -370,16 +370,26 @@ def _star_components(
     nodes = np.unique(
         np.concatenate((entity_rows, entity_cells[:, None]), axis=1), axis=0
     )
-    first = _lookup(nodes, np.concatenate((keys, first_cells[:, None]), axis=1))
-    second = _lookup(nodes, np.concatenate((keys, second_cells[:, None]), axis=1))
+    queries = np.concatenate(
+        (
+            np.concatenate((keys, first_cells[:, None]), axis=1),
+            np.concatenate((keys, second_cells[:, None]), axis=1),
+        ),
+        axis=0,
+    )
+    positions = _lookup(nodes, queries)
+    first, second = positions[: len(first_cells)], positions[len(first_cells) :]
     graph = coo_matrix(
         (np.ones(first.size, dtype=np.int8), (first, second)),
         shape=(nodes.shape[0], nodes.shape[0]),
     )
     _, labels = connected_components(graph, directed=False)
-    entities, entity_index = np.unique(nodes[:, :-1], axis=0, return_inverse=True)
-    pairs = np.unique(np.stack((entity_index.reshape(-1), labels), axis=1), axis=0)
-    components = np.bincount(pairs[:, 0], minlength=entities.shape[0])
+    starts = np.concatenate(
+        (np.asarray((True,), dtype=np.bool_), np.any(nodes[1:, :-1] != nodes[:-1, :-1], axis=1))
+    )
+    entity_index = np.cumsum(starts, dtype=np.int64) - 1
+    pairs = np.unique(np.stack((entity_index, labels), axis=1), axis=0)
+    components = np.bincount(pairs[:, 0], minlength=int(np.count_nonzero(starts)))
     return int(np.count_nonzero(components > 1))
 
 
