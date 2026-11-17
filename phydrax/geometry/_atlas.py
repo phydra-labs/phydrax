@@ -250,6 +250,11 @@ def _turn_start_parameter(segment: _CurveTrimSegment, parameter: float, /) -> fl
     return 1.0 - turn_end
 
 
+@eqx.filter_jit
+def _evaluate_segment_point(segment: _CurveTrimSegment, parameter: ArrayLike, /) -> Array:
+    return segment.evaluate(jnp.asarray(parameter))
+
+
 def _segment_points(
     record: _SegmentEnclosures, parameters: Sequence[float], /
 ) -> tuple[np.ndarray | None, ...]:
@@ -268,8 +273,13 @@ def _segment_points(
             dtype=np.float64,
         )
         if record.point_program is None:
+            # Each realization has a fixed scalar shape: these values can become
+            # exact winding identities and must not depend on neighboring queries.
             values = tuple(
-                np.asarray(segment.evaluate(jnp.asarray(value[0])), dtype=np.float64)
+                np.asarray(
+                    _evaluate_segment_point(segment, np.asarray(value[0])),
+                    dtype=np.float64,
+                )
                 for value in query
             )
         else:

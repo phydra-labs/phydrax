@@ -1096,6 +1096,14 @@ def _line_curve_hit(
             if preparation is not None and isinstance(curve, (LineCurve, ExactLineCurve))
             else None
         )
+        if (
+            derivative is None
+            and spline_projection is not None
+            and spline_projection.tangent is not None
+            and np.all(np.isfinite(spline_projection.tangent))
+            and np.any(spline_projection.tangent != 0.0)
+        ):
+            derivative = spline_projection.tangent
         if derivative is None:
             derivative = np.asarray(
                 _curve_derivative(curve, jnp.asarray(parameter)),
