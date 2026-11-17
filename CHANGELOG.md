@@ -679,6 +679,13 @@
   iteration count, and decision is unchanged and primal solutions agree to
   1e-17; the replay drops from 186 s to 55 s and from 49 compiled solvers to
   10.
+- The native homogeneous conic iteration keeps its homogeneous scale strictly
+  positive. A step limited by `tau` or `kappa` moved that scalar onto zero up
+  to rounding, with an arbitrary sign. On infeasible programs, where `tau`
+  tends to zero, that stalled the iteration until its step limit, left the
+  proof to a second certificate program, or left the embedding's interior and
+  raised from the barrier step. Such steps now stop at the fraction the cone
+  steps use. Feasible solves that never reach that boundary are unchanged.
 - Native zero-set triangle admission can certify a whole-triangle translated
   extrusion when the tolerance-wide gradient-flow bound is inconclusive.
   Uniform endpoint signs, a strict directional derivative, outward interval
