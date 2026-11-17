@@ -42,7 +42,10 @@ type _CoefficientPayload = (
     tuple[str, int, int] | tuple[str, tuple[tuple[int, int, int], ...]]
 )
 type _BankFingerprint = tuple[
-    str, tuple[weakref.ReferenceType[NDArray[Any]], ...], tuple[_CoefficientPayload, ...], int
+    str,
+    tuple[weakref.ReferenceType[NDArray[Any]], ...],
+    tuple[_CoefficientPayload, ...],
+    int,
 ]
 _BANK_FINGERPRINTS: LiveProofLedger[_BankFingerprint] = LiveProofLedger()
 
@@ -51,7 +54,9 @@ def _sealed_array(array: NDArray[_Integer], /) -> NDArray[_Integer]:
     """Own immutable bytes directly, without a mutable array in the base chain."""
     sealed = np.ndarray(array.shape, dtype=array.dtype, buffer=array.tobytes(order="C"))
     if not isinstance(sealed.base, bytes) or sealed.flags.writeable:
-        raise ValueError("Exact coordinate bank arrays must be backed by immutable bytes.")
+        raise ValueError(
+            "Exact coordinate bank arrays must be backed by immutable bytes."
+        )
     return sealed
 
 
@@ -469,9 +474,14 @@ class ExactCoordinateBank(_ImmutableFingerprintLeaf, Sequence[tuple["ExactScalar
 
     def interval_endpoints(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         """Outward binary64 endpoints, lifting exceptional exact entries only."""
+        return self._verified_interval_endpoints(self._interval_proposals())
+
+    def _verified_interval_endpoints(
+        self, lower: NDArray[np.float64]
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """Verify proposals in place, converting rejected entries exactly."""
         from ._exact_algebraic_geometry import coefficient_endpoint
 
-        lower = self._interval_proposals()
         upper = lower.copy()
         # The binary64 conversion is only a proposal. Verify its bits against
         # the exact odd significand and exponent using integer arithmetic; a
@@ -563,12 +573,16 @@ class ExactCoordinateBank(_ImmutableFingerprintLeaf, Sequence[tuple["ExactScalar
             or index.shape != (len(self._sparse_values),)
             or offsets.shape != (shape[0] + 1,)
         ):
-            raise ValueError("Exact coordinate bank derived shapes or dtypes are invalid.")
+            raise ValueError(
+                "Exact coordinate bank derived shapes or dtypes are invalid."
+            )
         expected_offsets = np.searchsorted(
             index, np.arange(shape[0] + 1, dtype=np.int64) * shape[1]
         )
         if not np.array_equal(offsets, expected_offsets):
-            raise ValueError("Exact coordinate bank row offsets differ from sparse indices.")
+            raise ValueError(
+                "Exact coordinate bank row offsets differ from sparse indices."
+            )
 
         def contents(array: np.ndarray, /) -> bytes:
             if (
@@ -624,7 +638,13 @@ class ExactCoordinateBank(_ImmutableFingerprintLeaf, Sequence[tuple["ExactScalar
         )
         if sealed:
             _BANK_FINGERPRINTS._record_identity_bound(
-                self, (digest, tuple(weakref.ref(array) for array in arrays), sparse, self._hash)
+                self,
+                (
+                    digest,
+                    tuple(weakref.ref(array) for array in arrays),
+                    sparse,
+                    self._hash,
+                ),
             )
         return digest
 
