@@ -716,6 +716,79 @@ def _certified_sign(value: _Interval, /) -> NDArray[np.int8]:
     return np.where(value[0] > 0, 1, np.where(value[1] < 0, -1, 0)).astype(np.int8)
 
 
+@dataclass(frozen=True, slots=True)
+class SpatialTriangleEnclosures:
+    """Outward corner enclosures, exact point identities, and interval plane normals."""
+
+    lower: NDArray[np.float64]
+    upper: NDArray[np.float64]
+    point_ids: NDArray[np.int64]
+    normals: _Interval
+    nondegenerate: NDArray[np.bool_]
+
+    @classmethod
+    def prepare(
+        cls,
+        lower: NDArray[np.float64],
+        upper: NDArray[np.float64],
+        point_ids: NDArray[np.int64],
+        /,
+    ) -> SpatialTriangleEnclosures:
+        corners = (lower, upper)
+        with np.errstate(invalid="ignore", over="ignore"):
+            origin = _interval_take(corners, (slice(None), 0))
+            normals = _interval_cross(
+                _interval_sub(_interval_take(corners, (slice(None), 1)), origin),
+                _interval_sub(_interval_take(corners, (slice(None), 2)), origin),
+            )
+        finite = np.all(np.isfinite(lower) & np.isfinite(upper), axis=(1, 2))
+        nondegenerate = finite & np.any(_certified_sign(normals) != 0, axis=1)
+        return cls(lower, upper, point_ids, normals, nondegenerate)
+
+    def common_hull_contacts(
+        self, first: NDArray[np.intp], second: NDArray[np.intp], /
+    ) -> NDArray[np.bool_]:
+        """Certify intersection contained in the hull of equal exact corners.
+
+        Both triangles must have a certified nonzero normal. Strictly separated
+        boxes imply empty intersection. For either triangle's plane, if every
+        other corner is common or lies strictly on the same side, convexity
+        puts its intersection with that plane in the hull of common corners.
+        At least one strict corner is required; coplanar and straddling cases
+        remain undecided. False means undecided, not a contact claim.
+        """
+        admitted = self.nondegenerate[first] & self.nondegenerate[second]
+        equal = self.point_ids[first][:, :, None] == self.point_ids[second][:, None, :]
+        common = np.any(equal, axis=(1, 2))
+        boxes = np.any(
+            (self.upper[first].max(axis=1) < self.lower[second].min(axis=1))
+            | (self.upper[second].max(axis=1) < self.lower[first].min(axis=1)),
+            axis=1,
+        )
+        certified = admitted & ~common & boxes
+        with np.errstate(invalid="ignore", over="ignore"):
+            for plane, other, shared in (
+                (first, second, np.any(equal, axis=1)),
+                (second, first, np.any(equal, axis=2)),
+            ):
+                corners = (self.lower, self.upper)
+                origin = _interval_take(corners, (plane, 0))
+                normal = _interval_take(self.normals, plane)
+                signs = _certified_sign(
+                    _interval_dot(
+                        (normal[0][:, None], normal[1][:, None]),
+                        _interval_sub(
+                            _interval_take(corners, other),
+                            (origin[0][:, None], origin[1][:, None]),
+                        ),
+                    )
+                )
+                positive = np.all(shared | (signs == 1), axis=1)
+                negative = np.all(shared | (signs == -1), axis=1)
+                certified |= admitted & np.any(~shared, axis=1) & (positive | negative)
+        return certified
+
+
 # Face `m` of a tetrahedron omits corner `m`; its plane passes through the
 # remaining corners in this order.
 _FACE_CORNERS = np.asarray(((1, 2, 3), (2, 3, 0), (3, 0, 1), (0, 1, 2)), dtype=np.intp)
@@ -1016,6 +1089,28 @@ def _point_key(point: Point3, /) -> Hashable:
     if len(rationals) == len(point):
         return tuple((value.numerator, value.denominator) for value in rationals)
     return point
+
+
+def outward_spatial_triangle_enclosures(
+    triangles: Sequence[tuple[Point3, ...]], /
+) -> SpatialTriangleEnclosures:
+    """Prepare exact point identities and rational-only finite corner enclosures."""
+    identities: dict[Hashable, int] = {}
+    points: list[Point3] = []
+    rows: list[int] = []
+    for triangle in triangles:
+        for point in triangle:
+            key = _point_key(point)
+            identifier = identities.get(key)
+            if identifier is None:
+                identifier = identities[key] = len(points)
+                points.append(point)
+            rows.append(identifier)
+    point_ids = np.asarray(rows, dtype=np.int64).reshape((len(triangles), 3))
+    lower, upper = _rational_point_enclosures(points)
+    return SpatialTriangleEnclosures.prepare(
+        lower[point_ids], upper[point_ids], point_ids
+    )
 
 
 def outward_tetrahedron_enclosures(

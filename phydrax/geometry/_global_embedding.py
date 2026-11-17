@@ -100,6 +100,7 @@ from ._exact_polyhedral_geometry import (
     _sub3,
     contact_is_declared,
     determinant3,
+    outward_spatial_triangle_enclosures,
     outward_tetrahedron_enclosures,
     Point2,
     Point3,
@@ -108,6 +109,7 @@ from ._exact_polyhedral_geometry import (
     point_on_segment2,
     point_on_segment3,
     segment_contact_points3,
+    SpatialTriangleEnclosures,
     tetrahedron_contact_points,
     TetrahedronEnclosures,
     triangle_contact_points2,
@@ -5865,6 +5867,69 @@ class _PlanarTriangleFilter:
         return cleared
 
 
+@dataclass(frozen=True, slots=True)
+class _SpatialTriangleFilter:
+    """Certify straight spatial triangle pairs with matching declared corners."""
+
+    enclosures: SpatialTriangleEnclosures
+    offsets: NDArray[np.intp]
+    filtered: NDArray[np.bool_]
+    vertex_ids: NDArray[np.int64]
+
+    @classmethod
+    def prepare(
+        cls, mesh: CellMesh, cells: tuple[EmbeddingCell, ...], /
+    ) -> _SpatialTriangleFilter | None:
+        if mesh.ambient_dimension != 3 or mesh.topological_dimension != 2:
+            return None
+        filtered = np.zeros(len(cells), dtype=np.bool_)
+        offsets = np.zeros(len(cells), dtype=np.intp)
+        vertex_ids = np.full((len(cells), 3), -1, dtype=np.int64)
+        triangles: list[tuple[Point3, ...]] = []
+        for index, cell in enumerate(cells):
+            if (
+                cell.dimension != 2
+                or (not cell.affine and cell.coordinates)
+                or cell.kind not in ("triangle", "simplex:2")
+                or len(cell.vertex_ids) != 3
+                or len(cell.corner_images) != 3
+                or any(len(point) != 3 for point in cell.corner_images)
+            ):
+                continue
+            filtered[index] = True
+            offsets[index] = len(triangles)
+            vertex_ids[index] = cell.vertex_ids
+            triangles.append(tuple(_point3(point) for point in cell.corner_images))
+        if not triangles:
+            return None
+        return cls(
+            outward_spatial_triangle_enclosures(triangles), offsets, filtered, vertex_ids
+        )
+
+    def certify(
+        self, first: NDArray[np.intp], second: NDArray[np.intp], /
+    ) -> NDArray[np.bool_]:
+        """Clear only pairs whose exact common corners are the declared stratum."""
+        cleared = np.zeros(first.shape, dtype=np.bool_)
+        rows = np.flatnonzero(self.filtered[first] & self.filtered[second])
+        if not rows.size:
+            return cleared
+        left, right = first[rows], second[rows]
+        point_ids = self.enclosures.point_ids
+        consistent = np.all(
+            (
+                point_ids[self.offsets[left]][:, :, None]
+                == point_ids[self.offsets[right]][:, None, :]
+            )
+            == (self.vertex_ids[left][:, :, None] == self.vertex_ids[right][:, None, :]),
+            axis=(1, 2),
+        )
+        cleared[rows] = consistent & self.enclosures.common_hull_contacts(
+            self.offsets[left], self.offsets[right]
+        )
+        return cleared
+
+
 def _nonperiodic_contacts(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -5972,6 +6037,7 @@ def _nonperiodic_contacts(
     ] = {}
     piece_filter = _VolumePieceFilter.prepare(mesh, cells, simplices)
     planar_filter = _PlanarTriangleFilter.prepare(mesh, cells)
+    spatial_filter = _SpatialTriangleFilter.prepare(mesh, cells)
     vertex_cone_filter = (
         _VertexConeFilter.prepare(original_cells, stated=participants)
         if any(not cell.affine and cell.coordinates for cell in cells)
@@ -6022,6 +6088,9 @@ def _nonperiodic_contacts(
             first_block, second_block = first_block[~cleared], second_block[~cleared]
         if planar_filter is not None:
             cleared = planar_filter.certify(first_block, second_block)
+            first_block, second_block = first_block[~cleared], second_block[~cleared]
+        if spatial_filter is not None:
+            cleared = spatial_filter.certify(first_block, second_block)
             first_block, second_block = first_block[~cleared], second_block[~cleared]
         vertex_cones = (
             vertex_cone_filter.certify(first_block, second_block)

@@ -60,6 +60,7 @@ from phydrax.geometry._boundary_degree_embedding import (
 )
 from phydrax.geometry._embedding_cells import EmbeddingCell, prepare_embedding_cells
 from phydrax.geometry._exact_polyhedral_geometry import (
+    outward_spatial_triangle_enclosures,
     Point3,
     point_on_segment2,
     triangle_contact_points2,
@@ -74,6 +75,7 @@ from phydrax.geometry._global_embedding import (
     _shared_curved_facet_separation,
     _shared_edge_cone_separation,
     _shared_edge_separation,
+    _SpatialTriangleFilter,
     certify_global_embedding,
     GlobalEmbeddingCertificate,
 )
@@ -1577,6 +1579,60 @@ def test_planar_segments_sharing_one_vertex_certify_their_exact_corner() -> None
     assert validity.all_certified
     assert certificate.status == "certified", certificate.findings
     assert "exact_cell_contacts" in certificate.evaluated_checks
+
+
+@pytest.mark.parametrize(
+    ("second", "expected"),
+    (
+        (((0, 0, 0), (1, 1, -1), (1, 1, 1)), False),
+        (((0, 0, 0), (2, 0, 0), (1, 1, 0)), False),
+        (((0, 0, 0), (1, 0, 0), (2, 0, 0)), False),
+        (((0, 0, 0), (2, 0, 0), (0, 0, 1)), True),
+        (((0, 0, 0), (1, 0, 1), (0, 1, 1)), True),
+        (((3, 0, 0), (4, 0, 0), (3, 1, 0)), True),
+        (((3, 0, 0), (4, 0, 0), (5, 0, 0)), False),
+    ),
+)
+def test_spatial_triangle_enclosure_contact_decisions(
+    second: tuple[Point3, ...], expected: bool
+) -> None:
+    first: tuple[Point3, ...] = (
+        (Fraction(0), Fraction(0), Fraction(0)),
+        (Fraction(2), Fraction(0), Fraction(0)),
+        (Fraction(0), Fraction(2), Fraction(0)),
+    )
+    enclosure = outward_spatial_triangle_enclosures((first, second))
+    result = enclosure.common_hull_contacts(
+        np.asarray([0], dtype=np.intp), np.asarray([1], dtype=np.intp)
+    )
+    assert bool(result[0]) is expected
+    reverse = enclosure.common_hull_contacts(
+        np.asarray([1], dtype=np.intp), np.asarray([0], dtype=np.intp)
+    )
+    assert bool(reverse[0]) is expected
+
+
+def test_spatial_filter_refuses_duplicate_points_with_distinct_vertex_ids() -> None:
+    mesh = CellMesh(
+        np.asarray(
+            ((0, 0, 0), (2, 0, 0), (0, 2, 0), (0, 0, 0), (0, 0, 1), (2, 0, 0)),
+            dtype=np.float64,
+        ),
+        (
+            CellBlock(
+                "triangles",
+                "triangle",
+                np.asarray(((0, 1, 2), (3, 5, 4)), dtype=np.int32),
+            ),
+        ),
+    )
+    geometry = CellGeometrySpec.affine(mesh)
+    cells = prepare_embedding_cells(mesh, geometry)
+    screen = _SpatialTriangleFilter.prepare(mesh, cells)
+    assert screen is not None
+    assert not screen.certify(
+        np.asarray([0], dtype=np.intp), np.asarray([1], dtype=np.intp)
+    )[0]
 
 
 def test_bent_spatial_triangles_meet_only_on_their_shared_edge() -> None:
