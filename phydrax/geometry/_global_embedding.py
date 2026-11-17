@@ -5942,15 +5942,17 @@ def _nonperiodic_contacts(
             for start in range(0, left.size, 1024):
                 yield left[start : start + 1024], right[start : start + 1024]
 
+    subdivision_cache = StratumSubdivisionCache()
     for first_block, second_block in contact_blocks():
-        # Retain derived material for at most 64 pairs that need exact work.
+        # Retain pair-derived material for at most 64 pairs that need exact
+        # work; a renewed subdivision workset keeps only per-cell controls.
         # Screened pairs allocate none of these caches and must not evict them.
         # stratum_sources preserves the original first-source authority.
         vertex_frames: dict[tuple[int, int], _VertexResidualFrame | None] = {}
         shadows: dict[int, CellShadow | None] = {}
         stratum_residuals: dict[tuple[int, ...], tuple[Expression, ...] | None] = {}
         trace_cache: dict[tuple[int, tuple[int, ...]], tuple[Expression, ...] | None] = {}
-        subdivision_cache = StratumSubdivisionCache()
+        subdivision_cache = subdivision_cache.renewed()
         ordered = first_block < second_block
         first_block, second_block = first_block[ordered], second_block[ordered]
         piece_certificates: dict[tuple[int, int], NDArray[np.bool_]] = {}
@@ -6031,7 +6033,7 @@ def _nonperiodic_contacts(
                 shadows.clear()
                 stratum_residuals.clear()
                 trace_cache.clear()
-                subdivision_cache = StratumSubdivisionCache()
+                subdivision_cache = subdivision_cache.renewed()
             proof_pair_count += 1
             first_cell, second_cell = cells[first_index], cells[second_index]
             first_pieces, second_pieces = simplices[first_index], simplices[second_index]

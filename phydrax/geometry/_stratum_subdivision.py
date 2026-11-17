@@ -139,6 +139,27 @@ class StratumSubdivisionCache:
         default_factory=dict
     )
 
+    def renewed(self) -> StratumSubdivisionCache:
+        """A fresh pair workset that keeps this one's per-cell exact controls.
+
+        Pieces, subdivision trees and per-pair maps are dropped. A cell meets
+        its neighbors across several worksets, so its geometry controls,
+        Jacobian controls and corner metric are kept while they describe at
+        most `_RETAINED_CELLS` cells; reference edge maps are cell-independent.
+        """
+        if max(len(self.geometry), len(self.simplex_jacobians)) > _RETAINED_CELLS:
+            return StratumSubdivisionCache(reference_edge_maps=self.reference_edge_maps)
+        return StratumSubdivisionCache(
+            geometry=self.geometry,
+            simplex_jacobians=self.simplex_jacobians,
+            reference_edge_maps=self.reference_edge_maps,
+            corner_affine_inverses=self.corner_affine_inverses,
+        )
+
+
+# Cells whose exact controls one renewed workset chain retains (a few kB each).
+_RETAINED_CELLS = 8192
+
 
 def _compositions(total: int, parts: int, /) -> tuple[_Index, ...]:
     if parts == 1:
