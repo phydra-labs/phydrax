@@ -1652,7 +1652,7 @@ def _profile_covers_singularities_away_from_zero_set(
     found = False
     for boxes in _possible_zero_box_blocks(cover):
         found = True
-        if any(profile._field_singular_set_intersects_box(box) for box in boxes):
+        if profile._field_singular_set_intersects_boxes(boxes):
             return False
     return found
 

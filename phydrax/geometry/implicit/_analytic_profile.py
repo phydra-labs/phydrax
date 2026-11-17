@@ -734,59 +734,114 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
             )
         self.validate_source_integrity()
 
-    def _field_singular_set_intersects_box(self, box: np.ndarray, /) -> bool:
-        """Test exact contact with the profile's signed-distance singular set."""
-        bounds = np.asarray(box, dtype=np.float64)
+    def _field_singular_set_intersects_boxes(self, boxes: np.ndarray, /) -> bool:
+        """Decide whether any box meets the exact signed-distance singular set."""
+        bounds = np.asarray(boxes, dtype=np.float64)
         if (
-            bounds.shape != (2, 3)
+            bounds.ndim != 3
+            or bounds.shape[1:] != (2, 3)
             or np.any(~np.isfinite(bounds))
-            or np.any(bounds[0] > bounds[1])
+            or np.any(bounds[:, 0] > bounds[:, 1])
         ):
             raise ValueError("A singularity query requires one finite ordered 3D box.")
-        lower = tuple(Fraction.from_float(float(value)) for value in bounds[0])
-        upper = tuple(Fraction.from_float(float(value)) for value in bounds[1])
-        center = tuple(Fraction.from_float(float(value)) for value in self.center)
+        center = np.asarray(self.center, dtype=np.float64)
+        contains = (bounds[:, 0] <= center) & (center <= bounds[:, 1])
         match self.family:
             case "sphere":
-                return all(
-                    lower[axis] <= center[axis] <= upper[axis] for axis in range(3)
-                )
+                return bool(np.any(np.all(contains, axis=1)))
             case "ring-torus":
-                if (
-                    lower[0] <= center[0] <= upper[0]
-                    and lower[1] <= center[1] <= upper[1]
-                ):
+                if np.any(contains[:, 0] & contains[:, 1]):
                     return True
-                if not lower[2] <= center[2] <= upper[2]:
+                selected = np.flatnonzero(contains[:, 2])
+                if not selected.size:
                     return False
-                minimum_distance = tuple(
-                    Fraction(0)
-                    if lower[axis] <= center[axis] <= upper[axis]
-                    else min(
-                        abs(lower[axis] - center[axis]),
-                        abs(upper[axis] - center[axis]),
+                from .._interval_enclosure import interval_subtract
+
+                lower = bounds[selected, 0, :2]
+                upper = bounds[selected, 1, :2]
+                center_xy = np.broadcast_to(center[:2], lower.shape)
+                closest = np.where(
+                    contains[selected, :2],
+                    center_xy,
+                    np.where(lower > center_xy, lower, upper),
+                )
+                nearest_difference = interval_subtract(
+                    (closest, closest), (center_xy, center_xy)
+                )
+                lower_difference = interval_subtract(
+                    (lower, lower), (center_xy, center_xy)
+                )
+                upper_difference = interval_subtract(
+                    (upper, upper), (center_xy, center_xy)
+                )
+                nearest_squared = interval_multiply(
+                    nearest_difference, nearest_difference
+                )
+                lower_squared = interval_multiply(lower_difference, lower_difference)
+                upper_squared = interval_multiply(upper_difference, upper_difference)
+                nearest_low, nearest_high = (
+                    np.asarray(value, dtype=np.float64) for value in nearest_squared
+                )
+                far_low = np.maximum(lower_squared[0], upper_squared[0])
+                far_high = np.maximum(lower_squared[1], upper_squared[1])
+                minimum = interval_add(
+                    (nearest_low[:, 0], nearest_high[:, 0]),
+                    (nearest_low[:, 1], nearest_high[:, 1]),
+                )
+                maximum = interval_add(
+                    (far_low[:, 0], far_high[:, 0]),
+                    (far_low[:, 1], far_high[:, 1]),
+                )
+                radius = np.asarray([self.major_radius], dtype=np.float64)
+                radius_squared = interval_multiply((radius, radius), (radius, radius))
+                minimum_low, minimum_high = (np.asarray(value) for value in minimum)
+                maximum_low, maximum_high = (np.asarray(value) for value in maximum)
+                radius_low, radius_high = (np.asarray(value) for value in radius_squared)
+                outside = (radius_high < minimum_low) | (radius_low > maximum_high)
+                inside = (minimum_high <= radius_low) & (radius_high <= maximum_low)
+                if np.any(inside):
+                    return True
+                exact_center = tuple(
+                    Fraction.from_float(float(value)) for value in center[:2]
+                )
+                exact_radius = Fraction.from_float(self.major_radius)
+                exact_radius_squared = exact_radius * exact_radius
+                for row in np.flatnonzero(~outside):
+                    exact_lower = tuple(
+                        Fraction.from_float(float(value)) for value in lower[row]
                     )
-                    for axis in range(2)
-                )
-                maximum_distance = tuple(
-                    max(
-                        abs(lower[axis] - center[axis]),
-                        abs(upper[axis] - center[axis]),
+                    exact_upper = tuple(
+                        Fraction.from_float(float(value)) for value in upper[row]
                     )
-                    for axis in range(2)
-                )
-                minimum_radius_squared = sum(
-                    (value * value for value in minimum_distance), Fraction(0)
-                )
-                maximum_radius_squared = sum(
-                    (value * value for value in maximum_distance), Fraction(0)
-                )
-                major_radius_squared = Fraction.from_float(self.major_radius) ** 2
-                return (
-                    minimum_radius_squared
-                    <= major_radius_squared
-                    <= maximum_radius_squared
-                )
+                    minimum_distance = tuple(
+                        Fraction(0)
+                        if exact_lower[axis] <= exact_center[axis] <= exact_upper[axis]
+                        else min(
+                            abs(exact_lower[axis] - exact_center[axis]),
+                            abs(exact_upper[axis] - exact_center[axis]),
+                        )
+                        for axis in range(2)
+                    )
+                    maximum_distance = tuple(
+                        max(
+                            abs(exact_lower[axis] - exact_center[axis]),
+                            abs(exact_upper[axis] - exact_center[axis]),
+                        )
+                        for axis in range(2)
+                    )
+                    minimum_radius_squared = sum(
+                        (value * value for value in minimum_distance), Fraction(0)
+                    )
+                    maximum_radius_squared = sum(
+                        (value * value for value in maximum_distance), Fraction(0)
+                    )
+                    if (
+                        minimum_radius_squared
+                        <= exact_radius_squared
+                        <= maximum_radius_squared
+                    ):
+                        return True
+                return False
             case _ as unreachable:
                 assert_never(unreachable)
 
