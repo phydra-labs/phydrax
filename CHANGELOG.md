@@ -405,6 +405,12 @@
   prepared and coverage accepts it only for the identical live mesh, geometry,
   source and witness with equal frame and controls and every needed piece
   proof; otherwise coverage prepares its own as before.
+- A `NATIVE_METRIC_3D` collapse that may move its survivor screens the
+  candidate survivor positions of one goal together before interpolating a
+  source metric for each: a position whose spoke lengths certainly fail the
+  objective is dropped at once, and every other position takes the unchanged
+  per-position evaluation, which alone admits. Proposals, accepted meshes and
+  evidence are unchanged.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep

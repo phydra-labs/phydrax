@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Iterator
 from fractions import Fraction
 from itertools import combinations, permutations, product
@@ -1604,6 +1606,103 @@ def _relocation_cache_witness_state() -> _NativeState:
         fixed_vertices=np.zeros(points.shape[0], dtype=np.bool_),
         implicit_source=implicit,
     )
+
+
+def test_directed_collapses_of_the_sphere_witness_keep_their_recorded_proposals() -> None:
+    import phydrax.meshing._tetra_metric as metric
+
+    # Recorded on the commit before the survivor pre-screen (1579d19d3, Windows
+    # x86-64) from this same loop: the 80 directed collapses of the first 40
+    # edges give 59 proposals, 58 of them with a moved survivor. The digest
+    # covers only exact data: the survivor's source stencil and binary64
+    # carrier, the integer violation quanta and the replaced and created cells.
+    recorded = "3328eb514d50347a7c50ee73a01ff2f0de3fc793963b37ff098fee4123a8115b"
+    state = _relocation_cache_witness_state()
+    try:
+        records = _boundary_records(state)
+        topology = metric._state_topology(state)
+        _, protected = metric._current_edge_controls(state, topology)
+        rows: list[tuple[Any, ...]] = []
+        for edge in list(topology.edge_cells)[:40]:
+            for removed, kept in (edge, edge[::-1]):
+                proposal = metric._directed_collapse(
+                    state, topology, records, protected, removed, kept
+                )
+                if proposal is None:
+                    rows.append((removed, kept, None))
+                    continue
+                survivor = proposal["survivor"]
+                rows.append(
+                    (
+                        removed,
+                        kept,
+                        None
+                        if survivor is None
+                        else (
+                            sorted(
+                                (int(vertex), weight.numerator, weight.denominator)
+                                for vertex, weight in survivor["stencil"].items()
+                            ),
+                            [float(value).hex() for value in survivor["point"]],
+                        ),
+                        [
+                            [int(count) for count in part]
+                            for part in proposal["added_violations"]
+                        ],
+                        [int(cell) for cell in proposal["removed_cell_ids"]],
+                        np.asarray(proposal["replacement_cell_vertices"]).tolist(),
+                    )
+                )
+    finally:
+        state.native.close()
+
+    assert sum(len(row) > 3 and row[2] is not None for row in rows) == 58
+    text = json.dumps(rows, separators=(",", ":"))
+    assert hashlib.sha256(text.encode()).hexdigest() == recorded
+
+
+def test_survivor_prescreen_leaves_positions_at_the_band_edge_to_the_exact_route() -> (
+    None
+):
+    from phydrax.meshing._tetra_metric import _refused_survivor_carriers
+
+    # One measured spoke from the survivor position to a link vertex at the
+    # origin, unit metric. Before the collapse the star holds one long edge in
+    # the first violation quantum, so a position improves the objective only
+    # if its spoke is in the band.
+    upper = float(np.sqrt(2.0))
+    lengths = {
+        "in band": 1.0,
+        "one ulp inside": float(np.nextafter(upper, 0.0)),
+        "one ulp outside": float(np.nextafter(upper, np.inf)),
+        "first quantum": upper * (1.0 + 2.0**-20),
+        "far outside": 3.0,
+        "on the link vertex": 0.0,
+    }
+    state = _state(_source(2), np.eye(3, dtype=np.float64))
+    try:
+        stencil = {int(state.source_vertex_ids[0]): Fraction(1)}
+        refused = _refused_survivor_carriers(
+            state,
+            [(stencil, np.asarray((length, 0.0, 0.0))) for length in lengths.values()],
+            np.asarray(((9.0, 9.0, 9.0), (8.0, 8.0, 8.0), (0.0, 0.0, 0.0))),
+            np.broadcast_to(np.eye(3, dtype=np.float64), (3, 3, 3)),
+            np.asarray(((0, 2),), dtype=np.int64),
+            np.asarray((upper * (1.0 + 2.0**-20),), dtype=np.float64),
+        )
+    finally:
+        state.native.close()
+
+    # Dropping the position one ulp inside the band would lose an improving
+    # collapse; the one an ulp outside is refused later by the exact route.
+    assert dict(zip(lengths, refused.tolist(), strict=True)) == {
+        "in band": False,
+        "one ulp inside": False,
+        "one ulp outside": False,
+        "first quantum": True,
+        "far outside": True,
+        "on the link vertex": True,
+    }
 
 
 @pytest.fixture
