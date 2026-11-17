@@ -984,10 +984,21 @@ class PeriodicMeshTopology(StrictModule, NonTrainableState):
             lifted_ids = np.asarray(
                 lifted.topology.entity_sets[degree].entity_ids, dtype=np.int64
             )
-            members = np.empty((len(unique_keys),), dtype=np.int64)
-            for quotient_row in range(len(unique_keys)):
-                copies = np.flatnonzero(orbit == quotient_row)
-                members[quotient_row] = copies[np.argmin(lifted_ids[copies])]
+            # Each orbit is represented by its member of least lifted ID. The
+            # stable sort keeps the lowest row among equal IDs, as one scan of
+            # the orbit per quotient row did. ``rows`` is nonempty here.
+            by_orbit = np.lexsort((lifted_ids, orbit))
+            sorted_orbit = orbit[by_orbit]
+            first = np.flatnonzero(
+                np.concatenate(
+                    (np.ones((1,), dtype=np.bool_), sorted_orbit[1:] != sorted_orbit[:-1])
+                )
+            )
+            if not np.array_equal(
+                sorted_orbit[first], np.arange(len(unique_keys), dtype=sorted_orbit.dtype)
+            ):
+                raise ValueError("A periodic quotient entity has no lifted member.")
+            members = by_orbit[first].astype(np.int64)
             defaults = lifted_ids[members]
             if quotient_id_ancestry is not None and degree in quotient_id_ancestry:
                 quotient_ids, next_ids[degree] = _continued_ids(
