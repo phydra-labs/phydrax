@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
+from fractions import Fraction
 from typing import overload
 
 import numpy as np
@@ -22,6 +23,7 @@ from ..discretization._cell_geometry import (
 )
 from ..discretization._cell_mesh import CellMesh
 from ..discretization._coordinate_enclosure import (
+    affine_map,
     CoordinateSourceBank,
     Expression,
     PreparedLinearCombinationBasis,
@@ -56,10 +58,64 @@ class _LazyCoordinateMaps(Sequence[tuple[Expression, ...] | None]):
         self._restricted: dict[int, RestrictedCoordinateMapPreparation] = {}
         self._bases: dict[int, PreparedLinearCombinationBasis] = {}
         self._maps: dict[int, tuple[Expression, ...] | None] = {}
+        self._source_bases: dict[int, tuple[Expression, ...]] = {}
         self._prepare()
 
     def __len__(self) -> int:
         return self._count
+
+    def has_vertex_defined_cells(self) -> bool:
+        if self._rows is None:
+            raise RuntimeError("Coordinate map preparation is incomplete.")
+        return any(row is None for row in self._rows)
+
+    def is_affine(self, index: int, dimension: int, /) -> bool:
+        if self._rows is None:
+            raise RuntimeError("Coordinate map preparation is incomplete.")
+        row = self._rows[index]
+        if row is None:
+            return False
+        block_index, element, routes, row_index = row
+        basis = self._source_bases.get(block_index)
+        if basis is None or isinstance(element, PerCellRestrictedCellGeometryElement):
+            basis = coordinate_effective_basis(element, cell_row=row_index)
+            if not isinstance(element, PerCellRestrictedCellGeometryElement):
+                self._source_bases[block_index] = basis
+        if len(basis) != routes.shape[1]:
+            raise ValueError(
+                "Exact coordinate basis and local source bank widths differ."
+            )
+        if all(isinstance(value, dict) for value in basis) and not isinstance(
+            element, PerCellRestrictedCellGeometryElement
+        ):
+            polynomials = tuple(value for value in basis if isinstance(value, dict))
+            powers = {
+                power
+                for value in polynomials
+                for power in value
+                if len(power) != dimension or sum(power) > 1
+            }
+            if not powers:
+                return True
+            coefficients = self._coefficients
+            if coefficients is None:
+                raise RuntimeError("Coordinate map preparation is incomplete.")
+            local = tuple(coefficients[int(value)] for value in routes[row_index])
+            if not local:
+                raise ValueError("Coordinate map requires a nonempty coefficient bank.")
+            return not any(
+                sum(
+                    (
+                        polynomial.get(power, Fraction(0)) * values[axis]
+                        for polynomial, values in zip(polynomials, local, strict=True)
+                    ),
+                    Fraction(0),
+                )
+                for axis in range(len(local[0]))
+                for power in powers
+            )
+        expressions = self[index]
+        return expressions is not None and affine_map(expressions, dimension) is not None
 
     def _prepare(self) -> None:
         if self._rows is not None:
@@ -162,6 +218,20 @@ class DomainCoveragePreparation:
     cell_regions: np.ndarray
     assignments: tuple[CellCoverageAssignment, ...]
     coordinate_maps: Sequence[tuple[Expression, ...] | None]
+
+    def has_vertex_defined_cells(self) -> bool:
+        maps = self.coordinate_maps
+        if isinstance(maps, _LazyCoordinateMaps):
+            return maps.has_vertex_defined_cells()
+        return any(value is None for value in maps)
+
+    def has_nonaffine_cells(self, dimension: int, /) -> bool:
+        maps = self.coordinate_maps
+        if isinstance(maps, _LazyCoordinateMaps):
+            return any(not maps.is_affine(index, dimension) for index in range(len(maps)))
+        return any(
+            value is None or affine_map(value, dimension) is None for value in maps
+        )
 
 
 def prepare_domain_coverage(
