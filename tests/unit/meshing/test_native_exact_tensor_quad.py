@@ -3,6 +3,7 @@ from dataclasses import replace
 from fractions import Fraction
 from pathlib import Path
 
+import equinox as eqx
 import numpy as np
 import pytest
 
@@ -110,6 +111,26 @@ def test_exact_rational_root_has_whole_cell_injectivity_proof() -> None:
     atlas = prepare_surface_source_root_atlas(
         domain, (0,), SpatialCoordinateContract.si()
     )
+    from phydrax.geometry._surface_source_support import SurfaceSourceRootAtlas
+
+    rebuilt = SurfaceSourceRootAtlas(
+        atlas.domain,
+        atlas.mesh,
+        atlas.geometry,
+        atlas.root_parameters,
+        atlas.root_patches,
+        atlas.coordinate_contract,
+        root_source_cell_ids=atlas.root_source_cell_ids,
+        root_parameter_bounds=atlas.root_parameter_bounds,
+    )
+    assert rebuilt.atlas_id == atlas.atlas_id
+    forged = eqx.tree_at(
+        lambda value: value.root_parameter_bounds[0][0][0],
+        atlas,
+        atlas.root_parameter_bounds[0][0][0] + Fraction(1, 2**1200),
+    )
+    with pytest.raises(ValueError, match="root-chart identity changed"):
+        forged.require_current()
     (cell,) = prepare_embedding_cells(atlas.mesh, atlas.geometry)
     proof = prove_mapped_cell_injective(cell)
     assert proof is not None
@@ -202,6 +223,14 @@ def test_exact_quarter_source_recipe_replays_and_rejects_forgery(
     assert isinstance(restored, SurfaceNativeRestrictionBoundarySource)
     restored.require_current()
     assert restored.source_scope_id == source.source_scope_id
+    assert restored.support.support_id == source.support.support_id
+    forged_support = eqx.tree_at(
+        lambda value: value.root_parameter_bounds[0][0][0],
+        source.support,
+        source.support.root_parameter_bounds[0][0][0] + Fraction(1, 2**1200),
+    )
+    with pytest.raises(ValueError, match="root charts changed"):
+        forged_support.require_current()
     with pytest.raises(ValueError):
         restore_model_archive_value(
             recipe._replace(support=recipe.support._replace(expected_support_id="forged"))

@@ -436,6 +436,7 @@ def _cad_surface() -> tuple[MeshingDomain, CellMeshingResult]:
 
 
 def test_surface_source_projected_recipe_reconstructs_canonical_owners() -> None:
+    from phydrax._archive_columns import ExactTensorArchiveRecipe
     from phydrax._model._structure import model_archive_projection
     from phydrax.discretization._cell_geometry_transition_types import cell_geometry_id
     from phydrax.geometry._surface_source_archive import restore_surface_source_charts
@@ -452,6 +453,41 @@ def test_surface_source_projected_recipe_reconstructs_canonical_owners() -> None
         item.association_id for item in source.associations
     )
     restored.require_current()
+    exact = source.root_parameter_exact
+    row, corner, axis = next(
+        (row, corner, axis)
+        for row, chart in enumerate(exact)
+        for corner, point in enumerate(chart)
+        for axis, value in enumerate(point)
+        if value != 0
+    )
+    changed_rows = [list(chart) for chart in exact]
+    point = list(changed_rows[row][corner])
+    point[axis] += Fraction(1, 2**1200)
+    changed_rows[row][corner] = (point[0], point[1])
+    changed_exact = tuple(tuple(chart) for chart in changed_rows)
+    assert float(changed_exact[row][corner][axis]) == float(exact[row][corner][axis])
+    changed = SurfaceSourceCharts(
+        source.domain,
+        source.mesh,
+        source.geometry,
+        source.coordinate_contract,
+        source.root_parameters,
+        source.root_patches,
+        source.associations,
+        source.boundary_source,
+        source_root_cell_ids=source.source_root_cell_ids,
+        source_piece_ids=source.source_piece_ids,
+        root_parameter_exact=changed_exact,
+        boundary_occurrences=source.boundary_occurrences,
+        trim_roots=source.trim_roots,
+    )
+    assert changed.source_chart_id != source.source_chart_id
+    forged = recipe._replace(
+        root_parameter_exact=ExactTensorArchiveRecipe.encode(changed_exact, rational=True)
+    )
+    with pytest.raises(ValueError, match="differ from their exact recipe"):
+        restore_surface_source_charts(forged)
     with pytest.raises(TypeError, match="CellGeometrySpec"):
         restore_surface_source_charts(recipe._replace(geometry=None))
 

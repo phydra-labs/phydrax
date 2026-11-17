@@ -264,6 +264,27 @@ def array_tree_fingerprint(tree: PyTree[Any], /) -> dict[str, Any]:
     }
 
 
+def compact_array_tree_fingerprint(tree: PyTree[Any], /) -> str:
+    """Hash array paths, exact shapes, explicit little-endian dtypes and bytes."""
+    digest = hashlib.sha256(b"array-tree\0")
+    for path, value in _array_records(tree):
+        dtype = value.dtype.newbyteorder("<")
+        if dtype.fields is not None or dtype.kind not in "biufcSUmM":
+            raise TypeError("Array tree fingerprints require fixed-format scalar dtypes.")
+        if dtype.kind in "biufc" and (dtype.kind, dtype.itemsize) not in _FIXED_NUMERIC_FORMATS:
+            raise TypeError("Array tree fingerprints require fixed-format numeric dtypes.")
+        normalized = np.asarray(value, dtype=dtype)
+        metadata = canonical_json(
+            {"path": path, "shape": list(value.shape), "dtype": dtype.str}
+        ).encode("ascii")
+        digest.update(len(metadata).to_bytes(8, "big"))
+        digest.update(metadata)
+        digest.update(normalized.nbytes.to_bytes(8, "big"))
+        for chunk in iter_array_bytes(normalized):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _canonical_text(value: Any, /) -> str:
     parts: list[str] = []
     _write_canonical(value, parts.append)
@@ -283,7 +304,10 @@ def _write_canonical(value: Any, write: Callable[[str], object], /) -> None:
     elif kind is tuple or kind is list:
         _write_sequence(value, write)
     elif kind is dict:
-        _write_mapping(value, write)
+        if _plain_json_size((value,), _SEQUENCE_CHUNK) >= 0:
+            write(_ENCODER.encode(value))
+        else:
+            _write_mapping(value, write)
     elif isinstance(value, (jax.Array, np.ndarray, np.generic)):
         write(_ENCODER.encode({"__array__": array_tree_fingerprint(np.asarray(value))}))
     elif isinstance(value, Mapping):
@@ -302,8 +326,7 @@ def _write_canonical(value: Any, write: Callable[[str], object], /) -> None:
 
 
 def _plain_json_size(value: tuple[Any, ...] | list[Any], budget: int, /) -> int:
-    """Remaining ``budget`` after the items of a nest of tuples/lists of JSON
-    scalars, or -1 when the nest holds anything else or exceeds the budget."""
+    """Remaining budget for a plain JSON nest, or -1 for other or larger values."""
     for item in value:
         budget -= 1
         if budget < 0:
@@ -311,9 +334,17 @@ def _plain_json_size(value: tuple[Any, ...] | list[Any], budget: int, /) -> int:
         kind = type(item)
         if kind in _JSON_SCALAR_TYPES:
             continue
-        if kind is not tuple and kind is not list:
+        if kind is dict:
+            if any(type(key) is not str for key in item):
+                return -1
+            budget -= len(item)
+            if budget < 0:
+                return -1
+            budget = _plain_json_size(tuple(item.values()), budget)
+        elif kind is tuple or kind is list:
+            budget = _plain_json_size(item, budget)
+        else:
             return -1
-        budget = _plain_json_size(item, budget)
         if budget < 0:
             return -1
     return budget
@@ -337,6 +368,21 @@ def _write_sequence(
         # A bounded nest of tuples/lists of JSON scalars encodes as JSON
         # arrays exactly as the item-by-item walk below writes it.
         write(_ENCODER.encode(value))
+        return
+    if type(value) in (tuple, list):
+        write("[")
+        for start in range(0, len(value), 256):
+            if start:
+                write(",")
+            chunk = value[start : start + 256]
+            if _plain_json_size(chunk, _SEQUENCE_CHUNK) >= 0:
+                write(_ENCODER.encode(chunk)[1:-1])
+            else:
+                for index, item in enumerate(chunk):
+                    if index:
+                        write(",")
+                    _write_canonical(item, write)
+        write("]")
         return
     write("[")
     for index, item in enumerate(value):
@@ -425,6 +471,7 @@ __all__ = [
     "array_tree_signature",
     "canonical_fingerprint",
     "canonical_json",
+    "compact_array_tree_fingerprint",
     "canonical_array_hex_fingerprint",
     "canonical_array_list_fingerprint",
     "canonical_mapping",

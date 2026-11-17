@@ -1,3 +1,4 @@
+from copy import copy
 from fractions import Fraction
 from typing import Literal
 
@@ -11,6 +12,8 @@ from phydrax.geometry._source_boundary_records import (
     SourceBoundaryChartCover,
     SourceBoundaryChartWitness,
     SourceBoundaryDistance,
+    SourceBoundaryFaceImageWitness,
+    SourceBoundaryImagePullback,
     SourceBoundarySamples,
 )
 
@@ -427,3 +430,95 @@ def test_source_chart_identity_binds_cad_ancestry() -> None:
         != make(True, root, association("parent-a"), other_plc).witness_id
     )
     assert first.witness_id != make(True, root, association("parent-b")).witness_id
+    forged = copy(association("parent-a"))
+    object.__setattr__(forged, "source_entity_ids", ("other-edge",))
+    with pytest.raises(ValueError, match="recomputed identity"):
+        make(True, root, forged)
+
+    patch_entities = domain.stratum_entity_ids(2)
+    other = next(index for index in range(len(patch_entities)) if index != patch)
+
+    def two_patches(second_chart: str) -> SourceBoundaryChartWitness:
+        return SourceBoundaryChartWitness(
+            mesh_id="mesh",
+            geometry_id="geometry",
+            topology_id="topology",
+            source_id=source.source_id,
+            source_revision=source.source_revision,
+            source_query_id="query",
+            chart_dimension=2,
+            reference_dimension=2,
+            cell_global_ids=np.asarray([1, 2], dtype=np.int64),
+            entity_global_ids=np.asarray([1, 2], dtype=np.int64),
+            local_entity_indices=np.asarray([-1, -1], dtype=np.int32),
+            target_reference_vertices=np.repeat(triangle, 2, axis=0),
+            source_chart_ids=(entity, second_chart),
+            source_entity_ids=(entity, patch_entities[other]),
+            occurrence_paths=(path, domain.source_occurrences[2][other]),
+            source_parameters=np.repeat(triangle, 2, axis=0),
+            orientations=np.asarray([1, 1], dtype=np.int8),
+            cad_plc=plc,
+            cad_curve_association=association("parent-a"),
+            cad_root_cell_ids=np.asarray([-1, -1], dtype=np.int64),
+        )
+
+    assert two_patches(patch_entities[other]).source_entity_ids
+    with pytest.raises(ValueError, match="exact plane chart"):
+        two_patches(entity)
+
+
+def test_face_image_identity_and_exact_integer_degeneracy() -> None:
+    def make(
+        triangle: tuple[tuple[Fraction, ...], ...],
+    ) -> SourceBoundaryFaceImageWitness:
+        return SourceBoundaryFaceImageWitness(
+            mesh_id="mesh",
+            geometry_id="geometry",
+            topology_id="topology",
+            source_id="source",
+            source_revision="revision",
+            source_query_id="query",
+            cell_global_ids=np.asarray((1,), dtype=np.int64),
+            entity_global_ids=np.asarray((2,), dtype=np.int64),
+            local_entity_indices=np.asarray((0,), dtype=np.int64),
+            source_chart_ids=("chart",),
+            source_entity_ids=("face",),
+            occurrence_paths=((),),
+            source_region_sides=((None, "region"),),
+            orientations=np.asarray((1,), dtype=np.int8),
+            image_triangle_rational_tokens=rational_chart_tokens((triangle,)),
+        )
+
+    zero = Fraction(0)
+    triangle = ((zero, zero, zero), (Fraction(1, 3), zero, zero), (zero, Fraction(1, 2), zero))
+    changed = ((zero, zero, zero), (Fraction(2, 3), zero, zero), (zero, Fraction(1, 2), zero))
+    first = make(triangle)
+    assert first.witness_id == make(triangle).witness_id
+    assert first.witness_id != make(changed).witness_id
+    assert first.image_triangle(0) == triangle
+    with pytest.raises(ValueError, match="degenerate"):
+        make(((zero, zero, zero), (Fraction(1, 3), zero, zero), (Fraction(2, 3), zero, zero)))
+    with pytest.raises(ValueError, match="canonical rational"):
+        SourceBoundaryImagePullback(
+            1, 0, (((2, 4), (0, 1), (0, 1)), ((0, 1), (0, 1), (0, 1))), "chart"
+        )
+
+    rng = np.random.default_rng(293)
+    for _ in range(80):
+        numerators = rng.integers(-8, 9, size=(3, 3), dtype=np.int64)
+        denominators = rng.integers(1, 9, size=(3, 3), dtype=np.int64)
+        random_triangle = tuple(
+            tuple(Fraction(int(numerators[i, j]), int(denominators[i, j])) for j in range(3))
+            for i in range(3)
+        )
+        first_edge = tuple(random_triangle[1][i] - random_triangle[0][i] for i in range(3))
+        second_edge = tuple(random_triangle[2][i] - random_triangle[0][i] for i in range(3))
+        nonzero = any(
+            first_edge[i] * second_edge[j] - first_edge[j] * second_edge[i]
+            for i, j in ((0, 1), (0, 2), (1, 2))
+        )
+        if nonzero:
+            assert make(random_triangle).image_triangle(0) == random_triangle
+        else:
+            with pytest.raises(ValueError, match="degenerate"):
+                make(random_triangle)

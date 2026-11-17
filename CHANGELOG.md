@@ -257,6 +257,9 @@
 - B-Rep normal and dihedral ranges, blend tangency bounds, and native-curve
   turning controls use outward interval inverse trigonometry and norm bounds.
   Stored angle endpoints and hard-control outcomes can consequently change.
+- CAD source-chart, face-image, and geometry-association identities frame exact
+  rational tables as bytes. These identities and dependent records change;
+  restored records still revalidate their complete exact content.
 - CAD source bounds, analytic surface derivatives, periodic offsets, and the
   quadratic tetrahedron screen execute supported interval programs in batches.
   Their directed endpoints and exact-arithmetic fallback remain unchanged.

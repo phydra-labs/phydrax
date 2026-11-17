@@ -137,9 +137,60 @@ def test_partial_edge_support_is_archived_and_identity_bound() -> None:
     assert rebuilt.association_id == first.association_id
     assert rebuilt.target_parameter_intervals == ((Fraction(0), half),)
     assert association((Fraction(0), Fraction(1))).association_id == whole.association_id
+    second_recipe = GeometryAssociationArchiveRecipe.from_association(second)
+    forged = GeometryAssociationArchiveRecipe.from_association(first)._replace(
+        target_parameter_intervals=second_recipe.target_parameter_intervals
+    )
+    with pytest.raises(ValueError, match="recomputed identity"):
+        forged.restore()
+    large = Fraction(2**100 + 1, 2**101 + 3)
+    assert association((Fraction(0), large)).association_id != first.association_id
     for invalid in ((Fraction(-1), half), (half, half), (half, Fraction(2))):
         with pytest.raises(ValueError, match="Target edge intervals"):
             association(invalid)
+
+
+def test_exact_source_parameters_bind_identity_and_restore() -> None:
+    def association(
+        interval: tuple[Fraction, Fraction] | None, point: Fraction | None
+    ) -> GeometryAssociation:
+        return GeometryAssociation(
+            GeometryAssociationKind.PIECEWISE_LINEAR,
+            "source",
+            "revision",
+            "edges",
+            np.asarray((7,), dtype=np.int64),
+            ("curve",),
+            np.asarray((0.0,), dtype=np.float64),
+            exact=True,
+            source_roles=(GeometrySourceEntityRole.EDGE,),
+            source_parameter_intervals=(interval,),
+            source_parameter_points=(point,),
+        )
+
+    first = association((Fraction(-2), Fraction(1, 3)), None)
+    same = association((Fraction(-4, 2), Fraction(2, 6)), None)
+    changed = association((Fraction(-2), Fraction(1, 5)), None)
+    point = association(None, Fraction(1, 3))
+    other_point = association(None, Fraction(1, 5))
+    assert first.association_id == same.association_id
+    assert first.association_id != changed.association_id
+    assert point.association_id != other_point.association_id
+    first_recipe = GeometryAssociationArchiveRecipe.from_association(first)
+    changed_recipe = GeometryAssociationArchiveRecipe.from_association(changed)
+    point_recipe = GeometryAssociationArchiveRecipe.from_association(point)
+    other_point_recipe = GeometryAssociationArchiveRecipe.from_association(other_point)
+    assert first_recipe.restore().association_id == first.association_id
+    assert point_recipe.restore().association_id == point.association_id
+    forged_interval = first_recipe._replace(
+        source_parameter_intervals=changed_recipe.source_parameter_intervals
+    )
+    forged_point = point_recipe._replace(
+        source_parameter_points=other_point_recipe.source_parameter_points
+    )
+    for forged in (forged_interval, forged_point):
+        with pytest.raises(ValueError, match="recomputed identity"):
+            forged.restore()
 
 
 def test_face_piece_support_is_witness_bound_and_archived() -> None:
@@ -168,6 +219,35 @@ def test_face_piece_support_is_witness_bound_and_archived() -> None:
     assert restored.association_id == association.association_id
     assert restored.target_reference_pieces == pieces
     assert restored.source_boundary_witness_id == "witness"
+    changed_tokens = (
+        tokens[0],
+        ((2, 1), (0, 1), (0, 1)),
+        tokens[2],
+    )
+    changed_pieces = (((9, 0, (), changed_tokens),),)
+    changed = GeometryAssociation(
+        GeometryAssociationKind.PIECEWISE_LINEAR,
+        "source",
+        "revision",
+        "faces",
+        np.asarray((7,), dtype=np.int64),
+        ("facet",),
+        np.asarray((0.0,), dtype=np.float64),
+        exact=True,
+        source_roles=(GeometrySourceEntityRole.FACET,),
+        source_region_sides=(("material", None),),
+        target_reference_pieces=changed_pieces,
+        source_boundary_witness_id="witness",
+        orientations=np.asarray((1,), dtype=np.int8),
+    )
+    assert changed.association_id != association.association_id
+    changed_recipe = GeometryAssociationArchiveRecipe.from_association(changed)
+    assert changed_recipe.restore().association_id == changed.association_id
+    forged = GeometryAssociationArchiveRecipe.from_association(association)._replace(
+        target_reference_pieces=changed_recipe.target_reference_pieces
+    )
+    with pytest.raises(ValueError, match="recomputed identity"):
+        forged.restore()
     with pytest.raises(ValueError, match="witness"):
         GeometryAssociation(
             GeometryAssociationKind.PIECEWISE_LINEAR,
