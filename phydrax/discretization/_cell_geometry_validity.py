@@ -1069,19 +1069,20 @@ _BERNSTEIN_MAX_DIMENSION = 8
 
 def _admit_bernstein_plan(domain: BernsteinDomain, degrees: tuple[int, ...], /) -> None:
     """Bound retained table bytes and exact rational solve dimensions."""
-    if domain == "simplex":
-        degree, dimension = degrees
-        axis_degrees = (degree,)
-    elif domain == "prism":
-        dimension = 3
-        axis_degrees = degrees
-        if len(degrees) != 2:
-            raise ValueError("Prism Bernstein plans require two degrees.")
-    elif domain == "box":
-        dimension = len(degrees)
-        axis_degrees = degrees
-    else:
-        raise ValueError(f"Unknown Bernstein parameter domain {domain!r}.")
+    match domain:
+        case "simplex":
+            degree, dimension = degrees
+            axis_degrees: tuple[int, ...] = (degree,)
+        case "prism":
+            dimension = 3
+            axis_degrees = degrees
+            if len(degrees) != 2:
+                raise ValueError("Prism Bernstein plans require two degrees.")
+        case "box":
+            dimension = len(degrees)
+            axis_degrees = degrees
+        case _:
+            raise ValueError(f"Unknown Bernstein parameter domain {domain!r}.")
     if dimension < 1 or any(degree < 0 for degree in axis_degrees):
         raise ValueError("Bernstein degrees must be nonnegative with positive dimension.")
     if dimension > _BERNSTEIN_MAX_DIMENSION:
@@ -1094,15 +1095,18 @@ def _admit_bernstein_plan(domain: BernsteinDomain, degrees: tuple[int, ...], /) 
             8 * (max(axis_degrees) + 1) ** 2,
             8 * (_BERNSTEIN_MAX_DEGREE + 1) ** 2,
         )
-    if domain == "simplex":
-        rows = math.comb(degrees[0] + dimension, dimension)
-        solve_rows = rows
-    elif domain == "prism":
-        solve_rows = math.comb(degrees[0] + 2, 2)
-        rows = solve_rows * (degrees[1] + 1)
-    else:
-        rows = math.prod(degree + 1 for degree in degrees)
-        solve_rows = max(degrees) + 1
+    match domain:
+        case "simplex":
+            rows = math.comb(degrees[0] + dimension, dimension)
+            solve_rows = rows
+        case "prism":
+            solve_rows = math.comb(degrees[0] + 2, 2)
+            rows = solve_rows * (degrees[1] + 1)
+        case "box":
+            rows = math.prod(degree + 1 for degree in degrees)
+            solve_rows = max(degrees) + 1
+        case _:
+            assert_never(domain)
     if solve_rows > _BERNSTEIN_EXACT_ROWS:
         raise MemoryBudgetError(
             "bernstein_exact_inverse", 8 * solve_rows**2, 8 * _BERNSTEIN_EXACT_ROWS**2

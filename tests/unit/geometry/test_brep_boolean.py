@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from phydrax._physical import SpatialCoordinateContract
+from phydrax.geometry._atlas import TrimDomain
 from phydrax.geometry._cad_revision import AssociationStatus
 from phydrax.geometry.brep import brep_box, brep_cylinder, brep_sphere
 from phydrax.geometry.brep._boolean import boolean_brep
@@ -369,10 +370,7 @@ def test_closed_branch_endpoints_isolated_on_opposite_seam_bind_one_chart_point(
         )
 
 
-def test_intersection_trim_eager_fallback_classifies_public_queries(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from phydrax.geometry.brep import _host_program
+def _intersection_trim_domain() -> tuple[TrimDomain, np.ndarray]:
 
     first = brep_cylinder(
         1.0, 4.0, base_center=(0.0, 0.0, -2.0), coordinate_contract=_COORDINATES
@@ -396,7 +394,11 @@ def test_intersection_trim_eager_fallback_classifies_public_queries(
             if isinstance(segment, CurveTrimSegment)
         )
     )
-    bounds = np.asarray(model.parameter_bounds, dtype=np.float64)[face]
+    return domain, np.asarray(model.parameter_bounds, dtype=np.float64)[face]
+
+
+def test_intersection_trim_eager_fallback_classifies_public_queries() -> None:
+    domain, bounds = _intersection_trim_domain()
     width = bounds[1] - bounds[0]
     queries = np.stack(
         (
@@ -405,7 +407,6 @@ def test_intersection_trim_eager_fallback_classifies_public_queries(
             (bounds[0, 0] - width[0], bounds[1, 1] + width[1]),
         )
     )
-    monkeypatch.setattr(_host_program, "prepare_host_program", lambda *args: None)
     together = domain.classify(queries)
     separately = tuple(domain.classify(query[None, :]) for query in queries)
     assert np.any(np.asarray(together.resolved))
@@ -413,6 +414,51 @@ def test_intersection_trim_eager_fallback_classifies_public_queries(
         np.testing.assert_array_equal(
             getattr(together, name),
             [bool(getattr(result, name)[0]) for result in separately],
+        )
+
+
+def test_fixed_chart_trim_classification_is_partition_independent() -> None:
+    domain, bounds = _intersection_trim_domain()
+    width = bounds[1] - bounds[0]
+    queries = np.stack(
+        (
+            bounds[0] + width * 0.25,
+            bounds[0] + width * 0.5,
+            bounds[0] + width * 0.75,
+            bounds[0] - width,
+        )
+    )
+    together = domain.classify(queries)
+    separately = tuple(domain.classify(query[None, :]) for query in queries)
+    np.testing.assert_array_equal(together.resolved, (True, True, True, True))
+    np.testing.assert_array_equal(together.inside, (False, True, False, False))
+    for name in ("inside", "boundary", "resolved"):
+        np.testing.assert_array_equal(
+            getattr(together, name),
+            [bool(getattr(result, name)[0]) for result in separately],
+        )
+    reversed_loops = []
+    for loop in domain.curve_loops:
+        reversed_segments = []
+        for segment in reversed(loop):
+            assert isinstance(segment, CurveTrimSegment)
+            reversed_segments.append(
+                CurveTrimSegment(
+                    segment.curve,
+                    segment.first,
+                    segment.last,
+                    reversed=not segment.reversed,
+                    first_root=segment.first_root,
+                    last_root=segment.last_root,
+                )
+            )
+        reversed_loops.append(tuple(reversed_segments))
+    reversed_result = TrimDomain(curve_loops=tuple(reversed_loops)).classify(
+        queries[::-1]
+    )
+    for name in ("inside", "boundary", "resolved"):
+        np.testing.assert_array_equal(
+            getattr(together, name), np.asarray(getattr(reversed_result, name))[::-1]
         )
 
 

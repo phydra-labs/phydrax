@@ -7,7 +7,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from collections.abc import Callable, Sequence
 from fractions import Fraction
-from typing import Protocol
+from typing import Protocol, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -20,6 +20,10 @@ from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..linalg import orthonormal_frame
+
+
+if TYPE_CHECKING:
+    from ._interval_enclosure import PreparedIntervalFunction
 
 
 class _CurveTrimSegment(Protocol):
@@ -172,6 +176,7 @@ class _SegmentEnclosures:
         "segment",
         "point_program",
         "point_program_ready",
+        "chart_programs",
     )
 
     def __init__(self, segment: _CurveTrimSegment, /) -> None:
@@ -179,6 +184,7 @@ class _SegmentEnclosures:
         self.boxes: dict[tuple[float, float], np.ndarray | None] = {}
         self.points: dict[float, np.ndarray | None] = {}
         self.point_program = None
+        self.chart_programs: dict[int, PreparedIntervalFunction | None] = {}
         self.point_program_ready = False
         self.affine_span = _affine_trim_span(segment)
 
@@ -281,10 +287,103 @@ def _compiled_trim_fallback_supported(segment: _CurveTrimSegment, /) -> bool:
     )
 
 
+def _trim_fallback_point(segment: _CurveTrimSegment, parameter: float, /) -> np.ndarray:
+    if _compiled_trim_fallback_supported(segment):
+        return np.asarray(
+            _evaluate_segment_point(segment, np.asarray(parameter)), dtype=np.float64
+        )
+    return np.asarray(
+        segment.evaluate(jnp.asarray(parameter, dtype=jnp.float64)), dtype=np.float64
+    )
+
+
+def _trim_point_chart(segment: _CurveTrimSegment, parameter: float, /) -> int | None:
+    """Select a proved interior chart; boundary-adjacent points stay eager."""
+    from .brep._intersection_curve import CurveTrimSegment, IntersectionPCurve
+
+    if (
+        not isinstance(segment, CurveTrimSegment)
+        or type(segment) is not CurveTrimSegment
+        or type(segment.curve) is not IntersectionPCurve
+    ):
+        return None
+    pcurve = segment.curve
+    if pcurve.last <= int(pcurve.first) + 1.0:
+        return None
+    local = Fraction.from_float(parameter)
+    if segment.reversed:
+        local = 1 - local
+    source = Fraction.from_float(segment.first) + local * Fraction.from_float(
+        segment.last - segment.first
+    )
+    carrier = (
+        Fraction.from_float(pcurve.first + pcurve.last) - source
+        if pcurve.reversed
+        else source
+    )
+    chart = min(carrier.numerator // carrier.denominator, pcurve.curve.num_charts - 1)
+    if not 0 <= chart < pcurve.curve.num_charts:
+        return None
+    scale = max(
+        1.0,
+        abs(segment.first),
+        abs(segment.last),
+        abs(pcurve.first),
+        abs(pcurve.last),
+        abs(parameter),
+    )
+    margin = Fraction.from_float(16.0 * np.finfo(np.float64).eps * scale)
+    if carrier - chart <= margin or chart + 1 - carrier <= margin:
+        return None
+    return chart
+
+
+def _trim_chart_points(
+    record: _SegmentEnclosures, query: np.ndarray, /
+) -> tuple[np.ndarray, ...]:
+    from .brep._host_program import evaluate_host_program, prepare_host_program
+    from .brep._intersection_curve import CurveTrimSegment, IntersectionPCurve
+
+    segment = record.segment
+    if not isinstance(segment, CurveTrimSegment) or not isinstance(
+        segment.curve, IntersectionPCurve
+    ):
+        raise RuntimeError("Fixed trim charts require an intersection p-curve.")
+    result: list[np.ndarray | None] = [None] * len(query)
+    groups: dict[int, list[int]] = {}
+    for index, value in enumerate(query):
+        chart = _trim_point_chart(segment, float(value[0]))
+        if chart is None:
+            result[index] = _trim_fallback_point(segment, float(value[0]))
+        else:
+            groups.setdefault(chart, []).append(index)
+    for chart, indices in groups.items():
+        if chart not in record.chart_programs:
+            evaluate = segment.curve._chart_evaluator(chart)
+            record.chart_programs[chart] = prepare_host_program(
+                lambda value: evaluate(
+                    jnp.asarray(segment.source_parameters(value[0]), dtype=jnp.float64)
+                ),
+                1,
+            )
+        program = record.chart_programs[chart]
+        if program is None:
+            for index in indices:
+                result[index] = _trim_fallback_point(segment, float(query[index, 0]))
+        else:
+            values = evaluate_host_program(program, query[indices])
+            for index, value in zip(indices, values, strict=True):
+                result[index] = np.asarray(value, dtype=np.float64)
+    if any(value is None for value in result):
+        raise RuntimeError("Incomplete fixed-chart trim point evaluation.")
+    return tuple(value for value in result if value is not None)
+
+
 def _segment_points(
     record: _SegmentEnclosures, parameters: Sequence[float], /
 ) -> tuple[np.ndarray | None, ...]:
     from .brep._host_program import evaluate_host_program, prepare_host_program
+    from .brep._intersection_curve import CurveTrimSegment, IntersectionPCurve
 
     points, segment = record.points, record.segment
     missing = tuple(dict.fromkeys(value for value in parameters if value not in points))
@@ -298,26 +397,17 @@ def _segment_points(
             [[_turn_start_parameter(segment, value)] for value in missing],
             dtype=np.float64,
         )
-        if record.point_program is None:
-            if _compiled_trim_fallback_supported(segment):
-                # A fixed scalar shape preserves exact winding representatives.
-                values = tuple(
-                    np.asarray(
-                        _evaluate_segment_point(segment, np.asarray(value[0])),
-                        dtype=np.float64,
-                    )
-                    for value in query
-                )
-            else:
-                # Some carriers inspect source arrays on the host and cannot
-                # accept tracers. Preserve their original eager scalar route.
-                values = tuple(
-                    np.asarray(
-                        segment.evaluate(jnp.asarray(value[0], dtype=jnp.float64)),
-                        dtype=np.float64,
-                    )
-                    for value in query
-                )
+        if (
+            record.point_program is None
+            and isinstance(segment, CurveTrimSegment)
+            and type(segment) is CurveTrimSegment
+            and type(segment.curve) is IntersectionPCurve
+        ):
+            values = _trim_chart_points(record, query)
+        elif record.point_program is None:
+            values = tuple(
+                _trim_fallback_point(segment, float(value[0])) for value in query
+            )
         else:
             values = evaluate_host_program(record.point_program, query)
         for parameter, raw in zip(missing, values, strict=True):
