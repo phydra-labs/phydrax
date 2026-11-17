@@ -848,6 +848,32 @@ PHX_MC_API int32_t phx_mc_interval_program_execute(
     double* upper, int64_t workspace_size);
 /* Bit n advertises interval-program opcode n; bit 0 is reserved. */
 PHX_MC_API int32_t phx_mc_interval_program_capabilities(uint64_t* opcodes);
+/* Deterministic binary64 kernels: the same bits for the same input on every
+ * platform, from correctly rounded + - * / and sqrt in a fixed order, without
+ * libm or LAPACK. They steer floating-point proposals; their error bounds
+ * (exp 4 ulp, log 6 ulp, x^(2/3) relative 2^-43 on [2^-128, 2^128]) are no
+ * basis for an exact decision. Rows are independent and evaluated in order.
+ * phx_mc_deterministic_float_self_test returns PHX_MC_OK when this build and
+ * thread have the arithmetic the kernels assume and fixed kernel results have
+ * their expected bits, else PHX_MC_INTERNAL_ERROR with `failed_check` naming
+ * the first failure: 1 not round-to-nearest-even in binary64, 2 a product
+ * fused with a sum, 3 subnormals flushed, 4 a kernel result differs. */
+PHX_MC_API int32_t phx_mc_deterministic_float_self_test(int32_t* failed_check);
+PHX_MC_API int32_t phx_mc_deterministic_exp(int64_t count, const double* values,
+                                            double* results);
+PHX_MC_API int32_t phx_mc_deterministic_log(int64_t count, const double* values,
+                                            double* results);
+PHX_MC_API int32_t phx_mc_deterministic_pow_two_thirds(int64_t count, const double* values,
+                                                       double* results);
+/* Cyclic Jacobi eigen decomposition of `count` symmetric 3x3 matrices, each
+ * given by the upper triangle of nine row-major values. values[3r..] are the
+ * eigenvalues of row r in ascending order and vectors[9r..] the row-major
+ * matrix whose columns are the matching orthonormal eigenvectors.
+ * converged[r] is 0, with zero outputs, for a non-finite matrix or one the
+ * fixed sweep cap does not diagonalize. */
+PHX_MC_API int32_t phx_mc_deterministic_symmetric_eigen3(int64_t count, const double* matrices,
+                                                         double* values, double* vectors,
+                                                         int8_t* converged);
 /* Execute an interval program as phx_mc_interval_program_execute, then record
  * per-box branch evidence: smooth[b] and continuous[b] start at 1 for every
  * box b < box_count, and each event row (kind, test, size, a, a_index, boxes;

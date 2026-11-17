@@ -1321,6 +1321,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_mesh_copy_constraint_parents": (_I32, (_P, _I64, _P)),
     "phx_mc_mesh_copy_constraint_ratios": (_I32, (_P, _I64, _P)),
     "phx_mc_mesh_free": (None, (_P,)),
+    "phx_mc_deterministic_float_self_test": (_I32, (ctypes.POINTER(_I32),)),
 }
 
 
@@ -1466,6 +1467,21 @@ def _bind(library: ctypes.CDLL, path: Path, /) -> MeshcoreLibrary | str:
         return (
             f"meshcore library {str(path)!r} is release {version}, but phydrax "
             f"{required} requires phydrax-meshcore=={required}."
+        )
+    # The deterministic binary64 kernels give one result per input only under
+    # the arithmetic they assume; a library without it is not this release.
+    failed_check = _I32(0)
+    if functions["phx_mc_deterministic_float_self_test"](ctypes.byref(failed_check)):
+        reasons = {
+            1: "binary64 rounding is not to nearest even",
+            2: "a product and a sum are fused into one operation",
+            3: "subnormal numbers are flushed to zero",
+            4: "a kernel result differs from its recorded bits",
+        }
+        reason = reasons.get(failed_check.value, "the floating-point mode cannot be set")
+        return (
+            f"meshcore library {str(path)!r} fails its deterministic arithmetic "
+            f"self-test: {reason}."
         )
     return MeshcoreLibrary(library, functions, path, version, build_hash)
 
