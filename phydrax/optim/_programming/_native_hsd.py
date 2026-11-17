@@ -7,11 +7,13 @@ from typing import assert_never
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import Array
 
 from phydrax._strict import StrictModule
 
 from ...linalg import (
+    AbstractSparseLinearOperator,
     ArraySpace,
     DenseLinearOperator,
     DenseLU,
@@ -32,8 +34,10 @@ from ._cones import AbstractConvexCone, NonnegativeCone, ProductCone, ZeroCone
 from ._native_hsd_factorized import (
     factor_reduced_newton,
     factorized_direction,
-    FactorizedNewtonFactor,
     FactorizedNewtonPlan,
+    prepare_dense_reduced_newton,
+    ReducedNewtonFactor,
+    ReducedNewtonPlan,
 )
 from ._policy import ConvexSolvePolicy, ConvexTermination, NativeHomogeneousConic
 from ._problem import (
@@ -106,8 +110,51 @@ def _centrality(
     return jnp.concatenate(tuple(pieces))
 
 
+def _vacuous_orthant_rows(program: ConicProgram) -> Array:
+    """Mark orthant rows with zero coefficients and zero right-hand side.
+
+    Such a row reads ``s = 0, s >= 0``: it constrains nothing and has no
+    interior slack. Leaving it out of the barrier is exact, and lets
+    fixed-capacity programs pad their orthant blocks.
+    """
+    matrix = program.constraint_matrix
+    if isinstance(matrix, AbstractSparseLinearOperator):
+        raise TypeError("Vacuous-row detection requires a dense constraint matrix.")
+    orthant = np.concatenate(
+        [
+            np.full((block.dimension,), isinstance(block, NonnegativeCone))
+            for block in _blocks(program.cone)
+        ]
+    )
+    return (
+        jnp.asarray(orthant)
+        & jnp.all(matrix == 0.0, axis=-1)
+        & (program.constraint_rhs == 0.0)
+    )
+
+
+def _without_inert(value: Array, inert: Array | None) -> Array:
+    return value if inert is None else jnp.where(inert, 0.0, value)
+
+
+def _barrier_mean(
+    vector: Array, n: int, m: int, parameter: float, inert: Array | None
+) -> Array:
+    """Mean complementarity over the barrier degree and the homogeneous pair."""
+    products = vector[n + m : n + 2 * m] * vector[n : n + m]
+    pair = vector[-2] * vector[-1]
+    if inert is None:
+        return (jnp.sum(products) + pair) / (parameter + 1.0)
+    degree = parameter - jnp.sum(inert, dtype=vector.dtype)
+    return (jnp.sum(jnp.where(inert, 0.0, products)) + pair) / (degree + 1.0)
+
+
 def _embedding_residual(
-    program: ConicProgram, barrier: ConeBarrierOracle, vector: Array, mu: Array
+    program: ConicProgram,
+    barrier: ConeBarrierOracle,
+    vector: Array,
+    mu: Array,
+    inert: Array | None = None,
 ) -> Array:
     n, m = program.num_variables, program.num_constraints
     x = vector[:n]
@@ -131,6 +178,9 @@ def _embedding_residual(
         + kappa
     )
     centrality = _centrality(program.cone, barrier, s, z, mu)
+    if inert is not None:
+        primal = jnp.where(inert, 0.0, primal)
+        centrality = jnp.where(inert, 0.0, centrality)
     scalar_centrality = tau * kappa - mu
     # Align equation blocks with (x, z, s, tau, kappa). A one-row gap shift
     # otherwise creates a long artificial permutation cycle in matrix-free
@@ -259,6 +309,7 @@ def _normalized_audit(
     program: ConicProgram,
     vector: Array,
     policy: ConvexSolvePolicy,
+    inert: Array | None = None,
 ) -> tuple[Array, Array]:
     # Reuse the canonical original-coordinate audit, including cone-block
     # complementarity aggregation, requested relative/absolute thresholds and
@@ -270,8 +321,8 @@ def _normalized_audit(
     tau = vector[-2]
     safe_tau = jnp.maximum(tau, jnp.sqrt(jnp.finfo(vector.dtype).eps))
     primal = vector[:n] / safe_tau
-    dual = vector[n : n + m] / safe_tau
-    slack = vector[n + m : n + 2 * m] / safe_tau
+    dual = _without_inert(vector[n : n + m], inert) / safe_tau
+    slack = _without_inert(vector[n + m : n + 2 * m], inert) / safe_tau
     zero_bounds = jnp.zeros_like(primal)
     audit = _audit_result(
         program,
@@ -323,7 +374,9 @@ def solve_homogeneous_conic(
 
     Sparse programs solve Newton systems through the policy's explicit route:
     ``"factorized"`` requires the structure's prepared ``newton`` plan and
-    ``"matrix-free"`` uses native GMRES. Dense programs use dense LU.
+    ``"matrix-free"`` uses native GMRES. Dense programs use dense LU on the
+    full embedding, or with ``"reduced"`` the dense reduced-KKT block factor.
+    The reduced route keeps vacuous orthant rows out of the barrier.
     """
     if program.batch_shape:
         raise ValueError("Homogeneous conic kernel currently requires one case.")
@@ -345,7 +398,8 @@ def solve_homogeneous_conic(
     relative_tolerance = min(1e-10, max(tolerance * 0.01, 1e-14))
     absolute_tolerance = min(1e-12, max(tolerance * 0.01, 1e-14))
     linear_policy = None
-    factorized: FactorizedNewtonPlan | None = None
+    factorized: ReducedNewtonPlan | None = None
+    inert: Array | None = None
     if sparse:
         match method.newton:
             case "factorized":
@@ -372,13 +426,22 @@ def solve_homogeneous_conic(
                     failure=FailurePolicy("status"),
                     resources=audit_policy.resources,
                 )
+            case "reduced":
+                raise ValueError(
+                    "NativeHomogeneousConic(newton='reduced') requires dense "
+                    "program data; sparse programs select 'factorized' or "
+                    "'matrix-free'."
+                )
             case _ as unreachable:
                 assert_never(unreachable)
     elif newton is not None:
         raise ValueError("Dense homogeneous programs do not use a reduced-KKT plan.")
+    elif method.newton == "reduced":
+        factorized = prepare_dense_reduced_newton(program, audit_policy)
+        inert = _vacuous_orthant_rows(program)
 
     def newton_direction(
-        vector_: Array, mu_: Array, factor: FactorizedNewtonFactor | None
+        vector_: Array, mu_: Array, factor: ReducedNewtonFactor | None
     ) -> tuple[Array, Array, Array]:
         if factorized is None or factor is None:
             result = _direction(program, barrier, vector_, mu_, linear=linear_policy)
@@ -389,7 +452,7 @@ def solve_homogeneous_conic(
             program,
             vector_,
             mu_,
-            lambda value: _embedding_residual(program, barrier, value, mu_),
+            lambda value: _embedding_residual(program, barrier, value, mu_, inert),
             _newton_row_scale(program, vector_),
             relative_tolerance,
             absolute_tolerance,
@@ -413,10 +476,7 @@ def solve_homogeneous_conic(
     def iteration(_: Array, state: _LoopState) -> _LoopState:
         vector_, active_, iterations_, _, _ = state
         n, m = program.num_variables, program.num_constraints
-        slack = vector_[n + m : n + 2 * m]
-        dual_ = vector_[n : n + m]
-        tau, kappa = vector_[-2], vector_[-1]
-        mu = (jnp.sum(slack * dual_) + tau * kappa) / (barrier.parameter + 1.0)
+        mu = _barrier_mean(vector_, n, m, barrier.parameter, inert)
         zero_mu = jnp.asarray(0.0, dtype=mu.dtype)
         affine_factor = (
             None
@@ -428,10 +488,7 @@ def solve_homogeneous_conic(
         )
         affine_step = _step_bound(program, barrier, vector_, affine)
         affine_vector = vector_ + affine_step * affine
-        affine_mu = (
-            jnp.sum(affine_vector[n + m : n + 2 * m] * affine_vector[n : n + m])
-            + affine_vector[-2] * affine_vector[-1]
-        ) / (barrier.parameter + 1.0)
+        affine_mu = _barrier_mean(affine_vector, n, m, barrier.parameter, inert)
         sigma = jnp.clip(
             (affine_mu / jnp.maximum(mu, jnp.finfo(mu.dtype).tiny)) ** 3, 0.0, 1.0
         )
@@ -450,12 +507,16 @@ def solve_homogeneous_conic(
         residual = jnp.max(
             jnp.abs(
                 _embedding_residual(
-                    program, barrier, candidate, jnp.asarray(0.0, dtype=mu.dtype)
+                    program,
+                    barrier,
+                    candidate,
+                    jnp.asarray(0.0, dtype=mu.dtype),
+                    inert,
                 )
             ),
             initial=0.0,
         )
-        optimal, certified = _normalized_audit(program, candidate, audit_policy)
+        optimal, certified = _normalized_audit(program, candidate, audit_policy, inert)
         converged = (residual <= tolerance) & (mu <= tolerance) & optimal
         accepted = active_ & affine_ok & corrected_ok & jnp.all(jnp.isfinite(candidate))
         next_vector = jax.lax.cond(
@@ -487,18 +548,16 @@ def solve_homogeneous_conic(
         (vector, active, iterations, last_linear_status, direction_failed),
     )
     n, m = program.num_variables, program.num_constraints
-    slack = vector[n + m : n + 2 * m]
-    dual = vector[n : n + m]
-    mu = (jnp.sum(slack * dual) + vector[-2] * vector[-1]) / (barrier.parameter + 1.0)
+    mu = _barrier_mean(vector, n, m, barrier.parameter, inert)
     residual = jnp.max(
         jnp.abs(
             _embedding_residual(
-                program, barrier, vector, jnp.asarray(0.0, dtype=vector.dtype)
+                program, barrier, vector, jnp.asarray(0.0, dtype=vector.dtype), inert
             )
         ),
         initial=0.0,
     )
-    optimal, _ = _normalized_audit(program, vector, audit_policy)
+    optimal, _ = _normalized_audit(program, vector, audit_policy, inert)
     active = ~(
         jnp.all(jnp.isfinite(vector))
         & (residual <= tolerance)
@@ -509,8 +568,8 @@ def solve_homogeneous_conic(
     safe_tau = jnp.maximum(tau, jnp.sqrt(jnp.finfo(tau.dtype).eps))
     return HomogeneousConicState(
         vector[:n] / safe_tau,
-        vector[n : n + m] / safe_tau,
-        vector[n + m : n + 2 * m] / safe_tau,
+        _without_inert(vector[n : n + m], inert) / safe_tau,
+        _without_inert(vector[n + m : n + 2 * m], inert) / safe_tau,
         tau,
         vector[-1],
         active,
