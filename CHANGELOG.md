@@ -262,16 +262,29 @@
   mapped-cell injectivity proof. The shell may have any genus. Meshes with
   cavities or several components keep the complete cell-pair proof.
   Certificate checks, witnesses and identities change accordingly.
+- Straight triangle cells of a surface mesh in space are cleared by an
+  outward-rounded binary64 screen before exact contact work: a pair is
+  certified when its boxes are strictly separated, when one triangle's plane
+  holds every non-shared corner of the other strictly on one side, or when a
+  coordinate projection in which both triangles have certified nonzero area
+  certifies the planar contact. Undecided pairs keep the exact rational route.
+- Equality of the exact traces of two rational polynomial simplex cells on a
+  shared edge or face is decided by their exact values on the principal
+  lattice of the maps' degree on that stratum, which is unisolvent for the
+  traces, instead of by composing both traces symbolically. Other cells keep
+  the composed comparison.
 - CAD source coverage and curving repeat less work, with unchanged decisions:
-  chart coverage converts block connectivity once per block and prepares the
+  chart coverage converts block connectivity once per block, prepares the
   overlap boxes and corner enclosures once per triangle bank instead of once
-  per 64-row block; exact straight-map evaluation shares one image per geometry
-  node instead of one per cell; a mapped cell's contact chart reuses its
-  prepared image bounds; curved contact proofs keep each cell's exact Bernstein
-  controls across pair worksets and prepare vertex-cone controls only for the
-  cells whose pairs are stated; and the monotone-map preconditioner search
-  returns a seed that already clears the exact check's rounding instead of
-  solving cutting-plane programs for it.
+  per 64-row block, and skips that screen for banks of fewer than eight rows
+  (one target row per root chart is the common case); exact straight-map
+  evaluation shares one image per geometry node instead of one per cell; a
+  mapped cell's contact chart reuses its prepared image bounds and is refused
+  as soon as an edge midpoint leaves its corner chord; curved contact proofs
+  keep each cell's exact Bernstein controls across pair worksets and prepare
+  vertex-cone controls only for the cells whose pairs are stated; and the
+  monotone-map preconditioner search returns a seed that already clears the
+  exact check's rounding instead of solving cutting-plane programs for it.
 - Proofs completed in this process are not repeated on the same live,
   unchanged operands: the CAD source shell proof (per chart bank and
   tolerance), source-fidelity witness validation (per mesh, coordinate map,
