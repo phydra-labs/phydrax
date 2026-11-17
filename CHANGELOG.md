@@ -714,6 +714,25 @@
   reduced-Newton correction gave `solve_native_conic_program` a new JIT key.
   The construction is now a cache of the planned content: equality and hashing
   use the cost and `content_id`, and flattening still carries it to preparation.
+- `NativeHomogeneousConic(newton="reduced")` solves dense programs with zero
+  and nonnegative cone blocks through the dense reduced quasi-definite KKT
+  system, factored as a block LDLᵀ by two native Cholesky factorizations, with
+  the regularization, refinement, correction, and acceptance gates of the
+  sparse factorized route. Its compiled solve depends only on the program
+  shape. Vacuous orthant rows (zero coefficients and right-hand side) stay out
+  of the barrier and its degree, so zero-padded programs follow the iterates of
+  the unpadded program. Sparse programs and other cone blocks refuse it.
+- Coupled tetrahedral relocation programs execute in power-of-two capacity
+  classes. A local search compiled one native solver per sparsity pattern,
+  about 3 s and 210 MB each, and re-analyzed every pattern. A program whose
+  class the declared materialization and factorization budgets admit is now
+  embedded as bounded dense data and solved on the reduced dense route, so a
+  search shares one compiled solve per class; larger programs keep the sparse
+  per-structure factorization. Results, certificates, and ray audits are
+  reported in original coordinates. On 40 captured sphere models every status,
+  iteration count, and decision is unchanged and primal solutions agree to
+  1e-17; the replay drops from 186 s to 55 s and from 49 compiled solvers to
+  10.
 - Native zero-set triangle admission can certify a whole-triangle translated
   extrusion when the tolerance-wide gradient-flow bound is inconclusive.
   Uniform endpoint signs, a strict directional derivative, outward interval

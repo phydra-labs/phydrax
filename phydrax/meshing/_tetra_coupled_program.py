@@ -2,17 +2,25 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Sparse native programs for bounded local coupled relocation."""
+"""Native programs for bounded local coupled relocation.
+
+A program whose power-of-two capacity class the declared budgets admit
+executes as bounded dense data on the reduced dense Newton route, so one
+compiled solve serves every program of that class. Larger programs execute as
+sparse programs with a per-structure factorization.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import auto, Enum
 from operator import index
-from typing import NamedTuple
+from typing import Final, NamedTuple
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from ..config import x64_enabled
@@ -20,12 +28,15 @@ from ..linalg import ArraySpace, OperatorProperties
 from ..linalg._sparse_factorizations import _refresh_workspace_bytes
 from ..optim import (
     ConicProgram,
+    ConvexProgramResult,
     ConvexSolvePolicy,
     NativeHomogeneousConic,
     NonnegativeCone,
     ProductCone,
+    solve_prepared_convex_program,
     ZeroCone,
 )
+from ..optim._programming._audit import audit_conic_dual_infeasibility_ray, DualRayAudit
 from ..optim._programming._lifecycle import (
     bind_convex_numeric,
     ConvexProgramTemplate,
@@ -33,8 +44,13 @@ from ..optim._programming._lifecycle import (
     PreparedConvexProgram,
 )
 from ..optim._programming._native_conic import PreparedNativeConic
+from ..optim._programming._types import ConvexProgramProvenance
 from ..sparse import EdgeRelation, SparseCoordinateOperator
 from ..sparse._linear import _storage_index_dtype
+
+
+# Smallest capacity class, so tiny programs do not fragment into many classes.
+_MINIMUM_CAPACITY: Final = 8
 
 
 class _RowRole(Enum):
@@ -123,18 +139,49 @@ class _ProgramDemand(NamedTuple):
     symbolic_work: int | None
 
 
+class _CapacityLayout(NamedTuple):
+    """Original sizes of one program inside its power-of-two capacity class."""
+
+    variables: int
+    blocks: tuple[int, ...]
+    zero_blocks: tuple[bool, ...]
+    variable_capacity: int
+    block_capacities: tuple[int, ...]
+
+    @property
+    def rows(self) -> np.ndarray:
+        """Execution row of every original constraint row, in original order."""
+        offsets = np.concatenate(([0], np.cumsum(self.block_capacities[:-1])))
+        return np.concatenate(
+            [
+                offset + np.arange(size, dtype=np.int64)
+                for offset, size in zip(offsets, self.blocks, strict=True)
+            ]
+        ).astype(np.int64)
+
+
 class _PreparedCoupledProgram(NamedTuple):
+    """Original-coordinate program with its bound execution program.
+
+    ``layout`` is present when ``prepared`` binds the dense capacity-class
+    program rather than ``program`` itself; ``policy`` is the declared policy.
+    """
+
     program: ConicProgram
     prepared: PreparedConvexProgram
     demand: _ProgramDemand
+    layout: _CapacityLayout | None
+    policy: ConvexSolvePolicy
 
 
 class _ProgramCache:
-    """Two structure-and-policy keyed templates owned by one search."""
+    """Structure-and-policy keyed templates owned by one search."""
 
     def __init__(self) -> None:
         self.primary: ConvexProgramTemplate | None = None
         self.certificate: ConvexProgramTemplate | None = None
+        self.capacity: dict[tuple[str, str], ConvexProgramTemplate] = {}
+        self.execution_policies: dict[str, ConvexSolvePolicy] = {}
 
 
 def _demand(n: int, e: int, m: int, entries: int, *, quadratic: bool) -> _ProgramDemand:
@@ -267,7 +314,160 @@ def _prepare(
         symbolic_work=factor.symbolic_work,
     )
     return _PreparedCoupledProgram(
-        program, bind_convex_numeric(template, program), admitted
+        program, bind_convex_numeric(template, program), admitted, None, policy
+    )
+
+
+def _capacity(count: int, /) -> int:
+    """Power-of-two capacity class that holds ``count`` entries."""
+    return max(_MINIMUM_CAPACITY, 1 << max(count - 1, 0).bit_length())
+
+
+def _layout(
+    variables: int, blocks: tuple[int, ...], zero_blocks: tuple[bool, ...], /
+) -> _CapacityLayout:
+    return _CapacityLayout(
+        variables,
+        blocks,
+        zero_blocks,
+        _capacity(variables),
+        tuple(_capacity(block) for block in blocks),
+    )
+
+
+def _capacity_demand(layout: _CapacityLayout, /, *, quadratic: bool) -> tuple[int, int]:
+    """Dense input and reduced-factor entries of one capacity class."""
+    n, rows = layout.variable_capacity, sum(layout.block_capacities)
+    zero = sum(
+        capacity
+        for capacity, is_zero in zip(
+            layout.block_capacities, layout.zero_blocks, strict=True
+        )
+        if is_zero
+    )
+    inputs = rows * n + rows + 3 * n + (n * n if quadratic else 0)
+    return inputs, n * n + zero * zero
+
+
+def _capacity_admitted(
+    layout: _CapacityLayout, policy: ConvexSolvePolicy, /, *, quadratic: bool
+) -> bool:
+    """Whether the declared budgets admit dense execution of this class.
+
+    Capacity classes trade a bounded dense program for one compiled solve per
+    class. A class beyond the materialization or factorization budget keeps
+    the sparse program and its per-structure factorization.
+    """
+    inputs, factor = _capacity_demand(layout, quadratic=quadratic)
+    itemsize = np.dtype(np.float64).itemsize
+    reduced = layout.variable_capacity + sum(
+        capacity
+        for capacity, is_zero in zip(
+            layout.block_capacities, layout.zero_blocks, strict=True
+        )
+        if is_zero
+    )
+    materialization, resources = policy.materialization, policy.resources
+    return (
+        inputs <= materialization.max_entries
+        and reduced * reduced <= materialization.max_entries
+        and inputs * itemsize <= materialization.max_bytes
+        and factor * itemsize <= resources.factorization_bytes
+        and (inputs + reduced * reduced) * itemsize
+        <= min(resources.workspace_bytes, materialization.max_workspace_bytes)
+    )
+
+
+def _capacity_program(
+    layout: _CapacityLayout,
+    row_indices: np.ndarray,
+    columns: np.ndarray,
+    values: np.ndarray,
+    rhs: np.ndarray,
+    linear: np.ndarray,
+    /,
+    *,
+    quadratic: bool,
+    kind: str,
+    evidence: str,
+) -> ConicProgram:
+    """Embed one program in its capacity class as bounded dense data.
+
+    Padding variables have zero cost and no coefficients, and padding rows have
+    zero coefficients and right-hand side, so the padded program has the same
+    solutions on the original coordinates. Its identity names only the class:
+    every program of one class shares one compiled solve.
+    """
+    n = layout.variable_capacity
+    capacities = layout.block_capacities
+    rows = layout.rows
+    matrix = np.zeros((sum(capacities), n), dtype=np.float64)
+    np.add.at(matrix, (rows[row_indices], columns), values)
+    right = np.zeros(sum(capacities), dtype=np.float64)
+    right[rows] = rhs
+    objective = np.zeros(n, dtype=np.float64)
+    objective[: layout.variables] = linear
+    cone = ProductCone(
+        tuple(
+            ZeroCone(capacity) if is_zero else NonnegativeCone(capacity)
+            for capacity, is_zero in zip(capacities, layout.zero_blocks, strict=True)
+        )
+    )
+    sizes = "x".join(str(capacity) for capacity in capacities)
+    return ConicProgram(
+        jnp.asarray(np.eye(n, dtype=np.float64)) if quadratic else None,
+        jnp.asarray(objective),
+        jnp.asarray(matrix),
+        jnp.asarray(right),
+        cone,
+        problem_id=f"coupled-{kind}-capacity:{n}:{sizes}",
+        convexity_evidence=evidence,
+    )
+
+
+def _prepare_capacity(
+    program: ConicProgram,
+    execution: ConicProgram,
+    layout: _CapacityLayout,
+    demand: _ProgramDemand,
+    policy: ConvexSolvePolicy,
+    cache: _ProgramCache,
+) -> _PreparedCoupledProgram:
+    method = policy.method
+    if not isinstance(method, NativeHomogeneousConic) or method.newton != "factorized":
+        raise TypeError("Coupled programs require factorized NativeHomogeneousConic.")
+    selected = cache.execution_policies.get(policy.policy_id)
+    if selected is None:
+        selected = ConvexSolvePolicy(
+            NativeHomogeneousConic(
+                primal_step=method.primal_step,
+                dual_step=method.dual_step,
+                extrapolation=method.extrapolation,
+                newton="reduced",
+                factorization=method.factorization,
+            ),
+            termination=policy.termination,
+            regularization=policy.regularization,
+            materialization=policy.materialization,
+            resources=policy.resources,
+            failure=policy.failure,
+        )
+        cache.execution_policies[policy.policy_id] = selected
+    key = (execution.structure_id, selected.policy_id)
+    template = cache.capacity.get(key)
+    if template is None:
+        template = prepare_convex_template(execution, selected)
+        cache.capacity[key] = template
+    inputs, factor = _capacity_demand(layout, quadratic=execution.quadratic is not None)
+    itemsize = np.dtype(np.float64).itemsize
+    admitted = demand._replace(
+        factor_nnz=factor,
+        factor_bytes=factor * itemsize,
+        workspace_bytes=inputs * itemsize,
+        symbolic_work=0,
+    )
+    return _PreparedCoupledProgram(
+        program, bind_convex_numeric(template, execution), admitted, layout, policy
     )
 
 
@@ -333,6 +533,7 @@ def prepare_primary(
             evidence={"positive_definite": "construction"},
         ),
     )
+    evidence = "Identity quadratic is positive definite by construction."
     program = ConicProgram(
         quadratic,
         jnp.zeros(n, dtype=jnp.float64),
@@ -340,9 +541,23 @@ def prepare_primary(
         jnp.asarray(np.concatenate((np.zeros(len(equalities), dtype=np.float64), right))),
         ProductCone((ZeroCone(len(equalities)), NonnegativeCone(len(rows)))),
         problem_id=structure,
-        convexity_evidence="Identity quadratic is positive definite by construction.",
+        convexity_evidence=evidence,
     )
-    return _prepare(program, demand, policy, cache, certificate=False)
+    layout = _layout(n, (len(equalities), len(rows)), (True, False))
+    if not _capacity_admitted(layout, policy, quadratic=True):
+        return _prepare(program, demand, policy, cache, certificate=False)
+    execution = _capacity_program(
+        layout,
+        row_indices,
+        columns,
+        values,
+        np.concatenate((np.zeros(len(equalities), dtype=np.float64), right)),
+        np.zeros(n, dtype=np.float64),
+        quadratic=True,
+        kind="primary",
+        evidence=evidence,
+    )
+    return _prepare_capacity(program, execution, layout, demand, policy, cache)
 
 
 def prepare_certificate(
@@ -350,7 +565,7 @@ def prepare_certificate(
     policy: ConvexSolvePolicy,
     cache: _ProgramCache,
 ) -> _PreparedCoupledProgram:
-    if primary.prepared.plan.policy.policy_id != policy.policy_id:
+    if primary.policy.policy_id != policy.policy_id:
         raise ValueError("Certificate policy must match the primary program policy.")
     demand = certificate_demand(primary)
     admit_inputs(demand, policy)
@@ -387,6 +602,9 @@ def prepare_certificate(
     rhs = np.concatenate(
         (np.zeros(n, dtype=np.float64), lower_rhs, np.ones(m, dtype=np.float64))
     )
+    evidence = (
+        "Linear objective, original transpose equalities, and explicit dual box rows."
+    )
     program = ConicProgram(
         None,
         original.constraint_rhs,
@@ -394,6 +612,159 @@ def prepare_certificate(
         jnp.asarray(rhs),
         ProductCone((ZeroCone(n), NonnegativeCone(m), NonnegativeCone(m))),
         problem_id=identity,
-        convexity_evidence="Linear objective, original transpose equalities, and explicit dual box rows.",
+        convexity_evidence=evidence,
     )
-    return _prepare(program, demand, policy, cache, certificate=True)
+    layout = _layout(m, (n, m, m), (True, False, False))
+    if not _capacity_admitted(layout, policy, quadratic=False):
+        return _prepare(program, demand, policy, cache, certificate=True)
+    execution = _capacity_program(
+        layout,
+        rows[order],
+        columns[order],
+        values[order],
+        rhs,
+        np.asarray(original.constraint_rhs, dtype=np.float64),
+        quadratic=False,
+        kind="certificate",
+        evidence=evidence,
+    )
+    return _prepare_capacity(program, execution, layout, demand, policy, cache)
+
+
+def _original_result(
+    result: ConvexProgramResult, prepared: _PreparedCoupledProgram, /
+) -> ConvexProgramResult:
+    """Restore one capacity-class result to the original program's coordinates."""
+    layout = prepared.layout
+    if layout is None:
+        return result
+    n, capacity, rows = layout.variables, layout.variable_capacity, layout.rows
+    blocks = len(layout.blocks)
+    complementarity = np.concatenate(
+        (
+            np.arange(blocks),
+            blocks + np.arange(n),
+            blocks + capacity + np.arange(n),
+        )
+    )
+
+    def variables(value: Array) -> Array:
+        return jnp.asarray(np.asarray(value)[:n])
+
+    def constraints(value: Array) -> Array:
+        return jnp.asarray(np.asarray(value)[rows])
+
+    executed = result.provenance
+    provenance = ConvexProgramProvenance(
+        numeric_version=executed.numeric_version,
+        problem_id=prepared.program.problem_id,
+        structure_id=prepared.program.structure_id,
+        policy_id=executed.policy_id,
+        method_id=executed.method_id,
+        backend=executed.backend,
+        backend_version=executed.backend_version,
+        convexity_evidence=prepared.program.convexity_evidence,
+        regularization=executed.regularization,
+        numeric_binding_id=executed.numeric_binding_id,
+    )
+    return eqx.tree_at(
+        lambda value: (
+            value.primal,
+            value.lower_bound_dual,
+            value.upper_bound_dual,
+            value.stationarity_residual,
+            value.solver_stationarity_residual,
+            value.certificate.primal_ray,
+            value.certificate.lower_bound_dual_ray,
+            value.certificate.upper_bound_dual_ray,
+            value.cone_slack,
+            value.cone_dual,
+            value.cone_primal_residual,
+            value.cone_violation,
+            value.cone_dual_violation,
+            value.certificate.inequality_dual_ray,
+            value.complementarity_residual,
+            value.provenance,
+        ),
+        result,
+        (
+            variables(result.primal),
+            variables(result.lower_bound_dual),
+            variables(result.upper_bound_dual),
+            variables(result.stationarity_residual),
+            variables(result.solver_stationarity_residual),
+            variables(result.certificate.primal_ray),
+            variables(result.certificate.lower_bound_dual_ray),
+            variables(result.certificate.upper_bound_dual_ray),
+            constraints(result.cone_slack),
+            constraints(result.cone_dual),
+            constraints(result.cone_primal_residual),
+            constraints(result.cone_violation),
+            constraints(result.cone_dual_violation),
+            constraints(result.certificate.inequality_dual_ray),
+            jnp.asarray(np.asarray(result.complementarity_residual)[complementarity]),
+            provenance,
+        ),
+    )
+
+
+def solve_coupled(prepared: _PreparedCoupledProgram, /) -> ConvexProgramResult:
+    """Execute one prepared coupled program; report in original coordinates."""
+    result = solve_prepared_convex_program(prepared.prepared).result
+    return _original_result(result, prepared)
+
+
+_AUDIT_RAY = eqx.filter_jit(audit_conic_dual_infeasibility_ray)
+
+
+def audit_dual_ray(
+    prepared: _PreparedCoupledProgram,
+    candidate: Array,
+    lower_candidate: Array,
+    upper_candidate: Array,
+    /,
+    *,
+    tolerance: float,
+) -> DualRayAudit:
+    """Audit an original-coordinate dual ray against the prepared program.
+
+    A capacity-class program holds the original coefficients with zero
+    padding, so auditing the zero-extended ray on it is the same audit and
+    shares the class's compiled kernel.
+    """
+    layout = prepared.layout
+    if layout is None:
+        return _AUDIT_RAY(
+            prepared.program,
+            candidate,
+            lower_candidate,
+            upper_candidate,
+            tolerance=tolerance,
+        )
+    n, rows = layout.variables, layout.rows
+
+    def extended(value: Array, capacity: int, index: np.ndarray) -> Array:
+        host = np.zeros(capacity, dtype=np.float64)
+        host[index] = np.asarray(value, dtype=np.float64)
+        return jnp.asarray(host)
+
+    execution = prepared.prepared.program
+    if not isinstance(execution, ConicProgram):
+        raise TypeError("A capacity-class binding holds a conic execution program.")
+    variables = np.arange(n)
+    audit = _AUDIT_RAY(
+        execution,
+        extended(candidate, sum(layout.block_capacities), rows),
+        extended(lower_candidate, layout.variable_capacity, variables),
+        extended(upper_candidate, layout.variable_capacity, variables),
+        tolerance=tolerance,
+    )
+    return DualRayAudit(
+        audit.equality_ray,
+        jnp.asarray(np.asarray(audit.inequality_ray)[rows]),
+        jnp.asarray(np.asarray(audit.lower_bound_ray)[:n]),
+        jnp.asarray(np.asarray(audit.upper_bound_ray)[:n]),
+        audit.residual_norm,
+        audit.objective,
+        audit.valid,
+    )

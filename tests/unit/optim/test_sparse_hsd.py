@@ -31,6 +31,7 @@ from phydrax.optim import (
     NonnegativeCone,
     prepare_convex_program,
     ProductCone,
+    SecondOrderCone,
     solve_conic_program,
     ZeroCone,
 )
@@ -165,6 +166,147 @@ def test_repeated_factorized_preparation_reuses_one_compiled_solver_key() -> Non
     second_static = eqx.partition(second, eqx.is_array)[1]
     assert first_static == second_static
     assert hash(first_static) == hash(second_static)
+
+
+def _dense_metric_program(
+    blocks: int, padding: tuple[int, int, int] = (0, 0, 0)
+) -> ConicProgram:
+    # The positive-metric program as dense data: per block right - left = 0 and
+    # left + right = 2 with x >= 0, zero-padded by (variables, equalities, rows).
+    size = 2 * blocks
+    pad_variables, pad_equalities, pad_rows = padding
+    variables = size + pad_variables
+    equalities = size + pad_equalities
+    matrix = np.zeros((equalities + size + pad_rows, variables), dtype=np.float64)
+    rhs = np.zeros(matrix.shape[0], dtype=np.float64)
+    for block in range(blocks):
+        left, right = 2 * block, 2 * block + 1
+        matrix[left, [left, right]] = (-1.0, 1.0)
+        matrix[right, [left, right]] = (1.0, 1.0)
+        rhs[right] = 2.0
+    matrix[equalities + np.arange(size), np.arange(size)] = -1.0
+    quadratic = np.eye(variables, dtype=np.float64)
+    quadratic[:size, :size] *= np.exp((1 / 1.1) ** 2)
+    return ConicProgram(
+        jnp.asarray(quadratic),
+        jnp.zeros((variables,), dtype=jnp.float64),
+        jnp.asarray(matrix),
+        jnp.asarray(rhs),
+        ProductCone((ZeroCone(equalities), NonnegativeCone(size + pad_rows))),
+        problem_id=f"dense-metric:{variables}:{equalities}:{size + pad_rows}",
+        convexity_evidence="construction",
+    )
+
+
+def _reduced_policy(steps: int = 64) -> ConvexSolvePolicy:
+    return ConvexSolvePolicy(
+        NativeHomogeneousConic(newton="reduced"),
+        termination=ConvexTermination(absolute=1e-7, maximum_steps=steps),
+        failure=FailurePolicy("status"),
+    )
+
+
+@pytest.mark.parametrize("blocks", (1, 4))
+@pytest.mark.parametrize(
+    "padding", ((0, 0, 0), (3, 2, 5)), ids=("exact-size", "capacity-padded")
+)
+def test_reduced_dense_route_solves_the_program_and_ignores_vacuous_padding(
+    blocks: int, padding: tuple[int, int, int]
+) -> None:
+    size = 2 * blocks
+    result = solve_conic_program(
+        _dense_metric_program(blocks, padding), policy=_reduced_policy()
+    )
+    assert bool(result.successful)
+    np.testing.assert_allclose(result.primal[:size], np.ones(size), atol=1e-7)
+    np.testing.assert_array_equal(result.primal[size:], np.zeros(padding[0]))
+    equalities = size + padding[1]
+    slack = np.asarray(result.cone_slack)
+    dual = np.asarray(result.cone_dual)
+    np.testing.assert_array_equal(slack[equalities + size :], np.zeros(padding[2]))
+    np.testing.assert_array_equal(dual[equalities + size :], np.zeros(padding[2]))
+    np.testing.assert_array_equal(dual[size:equalities], np.zeros(padding[1]))
+    assert float(result.kkt_residual_norm) <= 1e-7
+
+
+def _active_box_program(pad_rows: int) -> ConicProgram:
+    # min 1/2 |x|^2 - c.x with coupled upper limits that bind at the optimum,
+    # so the centering path decides every interrupted iterate.
+    matrix = np.asarray(
+        [
+            [1.0, 0.5, 0.0, 0.0],
+            [0.0, 1.0, 0.5, 0.0],
+            [0.0, 0.0, 1.0, 0.5],
+            [0.5, 0.0, 0.0, 1.0],
+            [-1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, -1.0],
+        ],
+        dtype=np.float64,
+    )
+    rows = matrix.shape[0]
+    padded = np.zeros((rows + pad_rows, 4), dtype=np.float64)
+    padded[:rows] = matrix
+    rhs = np.zeros(rows + pad_rows, dtype=np.float64)
+    rhs[:rows] = (0.5, 0.75, 1.0, 0.6, 0.0, 0.0)
+    return ConicProgram(
+        jnp.eye(4, dtype=jnp.float64),
+        -jnp.asarray([1.0, 2.0, 3.0, 4.0], dtype=jnp.float64),
+        jnp.asarray(padded),
+        jnp.asarray(rhs),
+        NonnegativeCone(rows + pad_rows),
+        problem_id=f"dense-active-box:{rows + pad_rows}",
+        convexity_evidence="construction",
+    )
+
+
+@pytest.mark.parametrize("steps", (1, 2, 64), ids=("one-step", "two-steps", "solved"))
+def test_reduced_dense_route_follows_the_unpadded_path_under_padding(steps: int) -> None:
+    # Vacuous rows must stay out of the barrier and its degree: an interrupted
+    # solve stops at the iterate the unpadded program reaches.
+    padded = solve_conic_program(_active_box_program(10), policy=_reduced_policy(steps))
+    reference = solve_conic_program(_active_box_program(0), policy=_reduced_policy(steps))
+    assert int(padded.status) == int(reference.status)
+    assert int(padded.iterations) == int(reference.iterations)
+    np.testing.assert_allclose(padded.primal, reference.primal, rtol=0.0, atol=1e-12)
+    np.testing.assert_allclose(
+        padded.cone_dual[:6], reference.cone_dual, rtol=0.0, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        padded.cone_slack[:6], reference.cone_slack, rtol=0.0, atol=1e-12
+    )
+
+
+def test_reduced_dense_route_keeps_an_infeasible_zero_row() -> None:
+    # 0 x + s = -1 with s >= 0 has zero coefficients but is not vacuous; treating
+    # it as padding would report the infeasible program optimal.
+    program = ConicProgram(
+        jnp.eye(2, dtype=jnp.float64),
+        jnp.zeros((2,), dtype=jnp.float64),
+        jnp.asarray([[-1.0, 0.0], [0.0, 0.0], [0.0, 0.0]], dtype=jnp.float64),
+        jnp.asarray([-1.0, -1.0, 0.0], dtype=jnp.float64),
+        NonnegativeCone(3),
+        problem_id="dense-infeasible-zero-row",
+        convexity_evidence="construction",
+    )
+    result = solve_conic_program(program, policy=_reduced_policy())
+    assert int(result.status) == int(ConvexProgramStatus.PRIMAL_INFEASIBLE)
+    assert bool(result.certificate.dual_ray_valid)
+
+
+def test_reduced_route_refuses_sparse_programs_and_curved_cones() -> None:
+    with pytest.raises(ValueError, match="requires dense program data"):
+        solve_conic_program(_positive_metric_program(), policy=_reduced_policy())
+    curved = ConicProgram(
+        jnp.eye(3, dtype=jnp.float64),
+        jnp.zeros((3,), dtype=jnp.float64),
+        -jnp.eye(3, dtype=jnp.float64),
+        jnp.zeros((3,), dtype=jnp.float64),
+        SecondOrderCone(3),
+        problem_id="dense-second-order",
+        convexity_evidence="construction",
+    )
+    with pytest.raises(ValueError, match="zero and nonnegative cone blocks"):
+        solve_conic_program(curved, policy=_reduced_policy())
 
 
 def test_sparse_newton_direction_satisfies_consumer_equation_and_work_refusal() -> None:

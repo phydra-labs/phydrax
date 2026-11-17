@@ -27,7 +27,7 @@ from ._types import ConvexProgramCapabilities
 ConvexDifferentiationMode: TypeAlias = Literal[
     "active-set-kkt", "barrier-kkt", "algorithmic", "none"
 ]
-NativeConicNewtonRoute: TypeAlias = Literal["factorized", "matrix-free"]
+NativeConicNewtonRoute: TypeAlias = Literal["factorized", "matrix-free", "reduced"]
 
 
 class ConvexTermination(StrictModule):
@@ -100,7 +100,14 @@ class NativeHomogeneousConic(AbstractConvexProgramMethod):
     per program structure under ``factorization`` and numerically refreshed each
     iteration; preparation refuses when the reduced pattern exceeds the declared
     symbolic budget. ``"matrix-free"`` uses unpreconditioned native GMRES on
-    the full embedding. Dense programs always use the dense LU Newton solve.
+    the full embedding. Dense programs use the dense LU Newton solve on the
+    full embedding unless ``"reduced"`` is selected: it eliminates the same
+    unknowns into the dense reduced KKT system, factored by two Cholesky
+    factorizations, for programs whose cone blocks are zero and nonnegative.
+    Its compiled solve depends only on the program shape, and it leaves
+    vacuous orthant rows (zero coefficients and right-hand side) out of the
+    barrier, so fixed-capacity programs may pad with them. Sparse programs
+    refuse ``"reduced"``.
     """
 
     primal_step: float = eqx.field(static=True)
