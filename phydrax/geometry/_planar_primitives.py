@@ -468,17 +468,27 @@ def triangle_pair_separation(
     nonrepresentable corners are undecided.
     """
     rows = np.asarray(pairs, dtype=np.int64).reshape((-1, 2))
-    decisions = np.full(rows.shape[0], -1, dtype=np.int8)
     if rows.shape[0] == 0:
-        return decisions
+        return np.full(0, -1, dtype=np.int8)
     identities: dict[Point, int] = {}
     first_bank = _triangle_bank(first, identities)
     second_bank = first_bank if second is first else _triangle_bank(second, identities)
-    valid = first_bank.valid[rows[:, 0]] & second_bank.valid[rows[:, 1]]
-    selected = np.flatnonzero(valid)
+    return _bank_pair_separation(first_bank, rows[:, 0], second_bank, rows[:, 1])
+
+
+def _bank_pair_separation(
+    first_bank: _TriangleBank,
+    first: np.ndarray,
+    second_bank: _TriangleBank,
+    second: np.ndarray,
+    /,
+) -> np.ndarray:
+    """`triangle_pair_separation` decisions of banks sharing one identity map."""
+    decisions = np.full(first.shape[0], -1, dtype=np.int8)
+    selected = np.flatnonzero(first_bank.valid[first] & second_bank.valid[second])
     if selected.size == 0:
         return decisions
-    first_rows, second_rows = rows[selected, 0], rows[selected, 1]
+    first_rows, second_rows = first[selected], second[selected]
     forward, forward_meets, _, _ = _directed_separation(
         first_bank, first_rows, second_bank, second_rows
     )
@@ -509,6 +519,10 @@ class TriangleEnclosures:
     @property
     def point_ids(self) -> np.ndarray:
         return self.bank.corners
+
+    def separation(self, first: np.ndarray, second: np.ndarray, /) -> np.ndarray:
+        """`triangle_pair_separation` decisions for row pairs of this prepared bank."""
+        return _bank_pair_separation(self.bank, first, self.bank, second)
 
     def common_hull_contacts(
         self, first: np.ndarray, second: np.ndarray, /

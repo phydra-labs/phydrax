@@ -30,6 +30,7 @@ from ._planar_primitives import (
     box_overlap_pairs,
     polygon_boxes,
     triangle_pair_separation,
+    TriangleEnclosures,
 )
 from ._source_boundary_records import SourceBoundaryChartWitness, SourceBoundaryQuery
 from ._source_fidelity_certificate import SourceFidelityCertificate
@@ -535,20 +536,52 @@ def _possibly_overlapping_pairs(
     return [(left, right) for left, right in pairs[decisions != 1].tolist()]
 
 
+def _blocked_overlapping_pairs(
+    rows: tuple[_Triangle2, ...], others: tuple[_Triangle2, ...] | None, /
+) -> Iterator[tuple[int, int, list[tuple[int, int]]]]:
+    """Per bounded block of ``rows``: ``(start, stop, pairs)`` that may overlap.
+
+    ``pairs`` holds ``(row, other row)`` with exact overlap possibly positive;
+    ``others`` of None pairs ``rows`` with itself. Boxes and corner enclosures
+    are prepared once for both banks, never once per block, and only one
+    block's pair bank is retained at a time.
+    """
+    second = rows if others is None else others
+    offset = 0 if others is None else len(rows)
+    boxes = polygon_boxes(rows)
+    second_boxes = boxes if others is None else polygon_boxes(second)
+    enclosures = TriangleEnclosures.prepare(rows if others is None else rows + others)
+    for start in range(0, len(rows), 64):
+        stop = min(start + 64, len(rows))
+        pairs = box_overlap_pairs(
+            stop - start,
+            len(second),
+            None if boxes is None else (boxes[0][start:stop], boxes[1][start:stop]),
+            second_boxes,
+            self_pairs=False,
+        )
+        first = pairs[:, 0] + start
+        decisions = enclosures.separation(first, pairs[:, 1] + offset)
+        keep = decisions != 1
+        yield (
+            start,
+            stop,
+            list(zip(first[keep].tolist(), pairs[keep, 1].tolist(), strict=True)),
+        )
+
+
 def _covered_by_declared_triangles(
     rows: tuple[_Triangle2, ...], declared: tuple[_Triangle2, ...], /
 ) -> bool:
     """Prove each target's exact area lies in the declared triangle bank.
 
     The outward box and interval screens discard only zero-area intersections.
-    Process bounded target blocks instead of retaining the global pair bank.
     """
-    for start in range(0, len(rows), 64):
-        block = rows[start : start + 64]
-        candidates: list[list[int]] = [[] for _ in block]
-        for left, right in _possibly_overlapping_pairs(block, declared, False):
-            candidates[left].append(right)
-        for triangle, indices in zip(block, candidates, strict=True):
+    for start, stop, pairs in _blocked_overlapping_pairs(rows, declared):
+        candidates: list[list[int]] = [[] for _ in range(start, stop)]
+        for row, index in pairs:
+            candidates[row - start].append(index)
+        for triangle, indices in zip(rows[start:stop], candidates, strict=True):
             if sum(
                 (_intersection_area(triangle, declared[index]) for index in indices),
                 Fraction(0),
@@ -559,12 +592,10 @@ def _covered_by_declared_triangles(
 
 def _overlapping_self_pairs(rows: tuple[_Triangle2, ...], /) -> Iterator[tuple[int, int]]:
     """Stream potentially intersecting row pairs in their original order."""
-    for start in range(0, len(rows), 64):
-        block = rows[start : start + 64]
-        for left, right in _possibly_overlapping_pairs(block, rows, False):
-            first = start + left
-            if first < right:
-                yield first, right
+    for _, _, pairs in _blocked_overlapping_pairs(rows, None):
+        for first, second in pairs:
+            if first < second:
+                yield first, second
 
 
 def _volume_face_owners(
