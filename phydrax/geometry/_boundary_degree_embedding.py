@@ -1016,6 +1016,65 @@ def _off_plane(
     return _strictly_one_side(signs, point_mask)
 
 
+def _apex_edge_separates(
+    points: _Interval,
+    normals: _Interval,
+    rows: np.ndarray,
+    apex: np.ndarray,
+    other_rows: np.ndarray,
+    other_apex: np.ndarray,
+    /,
+) -> np.ndarray:
+    """A plane through a shared apex and an edge of `rows` separates the triangles.
+
+    The plane contains the apex, the edge direction `d` and the triangle normal `n`
+    (normal `n x d`).  The triangle of `rows` lies in one closed half-space and meets
+    the plane in that edge; if both free vertices of the other triangle are strictly
+    on the opposite side, the closed triangles meet exactly at the apex.
+    """
+    vertex = _rows(points, rows, apex)
+    normal = (normals[0][rows], normals[1][rows])
+    free = tuple(
+        _interval_sub(_rows(points, other_rows, (other_apex + shift) % 3), vertex)
+        for shift in (1, 2)
+    )
+    separated = np.zeros((rows.shape[0],), dtype=np.bool_)
+    for shift in (1, 2):
+        edge = _interval_sub(_rows(points, rows, (apex + shift) % 3), vertex)
+        opposite = _interval_sub(_rows(points, rows, (apex + 3 - shift) % 3), vertex)
+        plane = _interval_cross(normal, edge)
+        own = _certified_sign(_interval_dot(plane, opposite))
+        others = tuple(_certified_sign(_interval_dot(plane, row)) for row in free)
+        separated |= (own != 0) & (others[0] == -own) & (others[1] == -own)
+    return separated
+
+
+def _common_edge_opens(
+    points: _Interval,
+    first_rows: np.ndarray,
+    second_rows: np.ndarray,
+    first_shared: np.ndarray,
+    second_shared: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Edge-adjacent triangles whose free vertices lie on opposite sides of the edge.
+
+    With `u, w` the common edge and `a, b` the free vertices, a certified negative
+    `((w-u) x (a-u)) . ((w-u) x (b-u))` excludes the coplanar fold, the only way two
+    edge-sharing triangles can meet beyond their common edge.
+    """
+    free_first = np.argmin(first_shared, axis=1)
+    start = (free_first + 1) % 3
+    origin = _rows(points, first_rows, start)
+    edge = _interval_sub(_rows(points, first_rows, (free_first + 2) % 3), origin)
+    first_free = _interval_sub(_rows(points, first_rows, free_first), origin)
+    second_free = _interval_sub(
+        _rows(points, second_rows, np.argmin(second_shared, axis=1)), origin
+    )
+    product = _interval_dot(
+        _interval_cross(edge, first_free), _interval_cross(edge, second_free)
+    )
+    return product[1] < 0
 
 
 def _triangle_enclosures(
@@ -1060,14 +1119,17 @@ def _triangle_enclosures(
 
 
 def _undecided_contact_pairs(
+    faces: tuple[BoundaryFace, ...],
     triangles: tuple[BoundaryTriangle, ...],
     vertex_images: dict[int, Point3],
     /,
 ) -> Iterator[tuple[int, int]]:
     """Ordered triangle pairs whose contact finding needs the exact predicate.
 
-    Pairs absent from the binary64 broad phase have disjoint exact boxes. Among the
-    candidates, outward-rounded predicates clear only strictly separated triangles.
+    Pairs absent from the binary64 broad phase have disjoint exact boxes.  Among the
+    candidates, a pair is cleared only when outward-rounded predicates prove the
+    exact contact set is empty or exactly the declared common vertex or edge, which
+    are the pairs for which the exact scan records no finding.
     """
     count = len(triangles)
     enclosures = _triangle_enclosures(triangles, vertex_images) if count > 1 else None
@@ -1086,12 +1148,40 @@ def _undecided_contact_pairs(
     first_shared, second_shared = np.any(equal, axis=2), np.any(equal, axis=1)
     shared = first_shared.sum(axis=1)
     cleared = np.zeros(first.shape, dtype=np.bool_)
-    candidate = admitted[first] & admitted[second] & (shared == 0)
+    candidate = admitted[first] & admitted[second] & (shared < 3)
     rows = np.flatnonzero(candidate)
     cleared[rows] = _off_plane(
         points, normals, first[rows], second[rows], ~second_shared[rows]
     ) | _off_plane(points, normals, second[rows], first[rows], ~first_shared[rows])
 
+    apex_rows = rows[(shared[rows] == 1) & ~cleared[rows]]
+    first_apex = np.argmax(first_shared[apex_rows], axis=1)
+    second_apex = np.argmax(second_shared[apex_rows], axis=1)
+    cleared[apex_rows] = _apex_edge_separates(
+        points, normals, first[apex_rows], first_apex, second[apex_rows], second_apex
+    ) | _apex_edge_separates(
+        points, normals, second[apex_rows], second_apex, first[apex_rows], first_apex
+    )
+
+    edge_rows = rows[(shared[rows] == 2) & ~cleared[rows]]
+    cleared[edge_rows] = _common_edge_opens(
+        points,
+        first[edge_rows],
+        second[edge_rows],
+        first_shared[edge_rows],
+        second_shared[edge_rows],
+    )
+    # Edge-sharing pairs are admissible only along a declared common face edge.
+    for row in np.flatnonzero(cleared & (shared == 2)):
+        left_triangle, right_triangle = triangles[first[row]], triangles[second[row]]
+        if left_triangle.parent_face == right_triangle.parent_face:
+            continue
+        left, right = sorted(
+            set(left_triangle.vertex_ids).intersection(right_triangle.vertex_ids)
+        )
+        cleared[row] = _loop_has_edge(
+            faces[left_triangle.parent_face].vertex_ids, left, right
+        ) and _loop_has_edge(faces[right_triangle.parent_face].vertex_ids, left, right)
     for row in np.flatnonzero(~cleared):
         yield int(first[row]), int(second[row])
 
@@ -1228,7 +1318,9 @@ def _boundary_triangle_contacts(
     """
     findings: list[BoundaryFinding] = []
     integer_triangles = tuple(integer_triangle(triangle.points) for triangle in triangles)
-    for first_index, second_index in _undecided_contact_pairs(triangles, vertex_images):
+    for first_index, second_index in _undecided_contact_pairs(
+        faces, triangles, vertex_images
+    ):
         finding = _integer_triangle_contact_finding(
             faces,
             triangles[first_index],
