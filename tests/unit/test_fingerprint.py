@@ -25,6 +25,8 @@ from phydrax._fingerprint import (
     canonical_fingerprint,
     iter_array_bytes,
     LazyCanonicalSequence,
+    numeric_array_fingerprint,
+    rational_chart_bank_fingerprint,
 )
 from phydrax.discretization import CellMesh
 from phydrax.lifecycle._composition_rebind import Composition, CompositionEntry
@@ -392,3 +394,44 @@ def test_canonical_fingerprints_of_meshes_certificates_witnesses_and_archives(
     assert len(corpus) > 100
     for value in corpus:
         assert canonical_fingerprint(value) == _legacy_canonical_fingerprint(value)
+
+
+def test_rational_chart_bank_fingerprint_frames_signed_arbitrary_integers() -> None:
+    bank = ((((0, 1), (-(1 << 300), (1 << 301) + 1)),),)
+    assert rational_chart_bank_fingerprint(bank) == rational_chart_bank_fingerprint(bank)
+    alternatives = (
+        (),
+        ((),),
+        ((((0, 1), (1 << 300, (1 << 301) + 1)),),),
+        ((((0, 1), (-(1 << 300), (1 << 301) + 3)),),),
+        ((((0, 1),), ((-(1 << 300), (1 << 301) + 1),)),),
+    )
+    assert all(
+        rational_chart_bank_fingerprint(value) != rational_chart_bank_fingerprint(bank)
+        for value in alternatives
+    )
+
+
+def test_numeric_array_fingerprint_frames_endianness_dtype_shape_and_content() -> None:
+    values = np.asarray([[1, -2], [3, 4]], dtype="<i8")
+    identity = numeric_array_fingerprint(values)
+    assert numeric_array_fingerprint(values.astype(">i8")) == identity
+    assert numeric_array_fingerprint(values.copy()) == identity
+    assert numeric_array_fingerprint(values.reshape(4)) != identity
+    assert numeric_array_fingerprint(values.astype(np.int32)) != identity
+    assert numeric_array_fingerprint(values + 1) != identity
+    assert numeric_array_fingerprint(np.asarray([0.0], dtype=np.float64)) != (
+        numeric_array_fingerprint(np.asarray([-0.0], dtype=np.float64))
+    )
+    with pytest.raises(TypeError):
+        numeric_array_fingerprint(np.asarray(["x"]))
+
+
+@pytest.mark.parametrize(("dtype", "maximum"), [(np.longdouble, 8), (np.clongdouble, 16)])
+def test_numeric_array_fingerprint_rejects_extended_float_formats(
+    dtype: type[np.generic], maximum: int
+) -> None:
+    if np.dtype(dtype).itemsize <= maximum:
+        pytest.skip("Platform aliases the extended type to a supported format.")
+    with pytest.raises(TypeError, match="fixed-format"):
+        numeric_array_fingerprint(np.asarray([0], dtype=dtype))

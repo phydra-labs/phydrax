@@ -89,3 +89,137 @@ def test_quadrilateral_chart_preserves_kind_exact_coordinates_and_archive() -> N
     assert restored.witness_id == witness.witness_id
     with pytest.raises(ValueError, match="corner count"):
         rational_chart_tokens((chart,))
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "geometry_id",
+        "topology_id",
+        "domain_id",
+        "cell_global_ids",
+        "source_root_cell_ids",
+        "source_piece_ids",
+        "geometry_entity_ids",
+        "occurrence_paths",
+        "root_mesh_cell_bindings",
+    ),
+)
+def test_surface_chart_identity_binds_fields(field: str) -> None:
+    original = _chart_witness(exact=True)
+    recipe = SurfaceChartWitnessArchiveRecipe.from_witness(original)
+    assert recipe.restore().witness_id == original.witness_id
+    changed = SurfaceChartWitness(
+        geometry_id="other" if field == "geometry_id" else original.geometry_id,
+        topology_id="other" if field == "topology_id" else original.topology_id,
+        domain_id="other" if field == "domain_id" else original.domain_id,
+        cell_global_ids=(
+            np.asarray((72,), dtype=np.int64)
+            if field == "cell_global_ids"
+            else original.cell_global_ids
+        ),
+        patches=original.patches,
+        charts=original.charts,
+        source_root_cell_ids=(
+            np.asarray((902,), dtype=np.int64)
+            if field == "source_root_cell_ids"
+            else original.source_root_cell_ids
+        ),
+        source_piece_ids=((2, 3, 5),)
+        if field == "source_piece_ids"
+        else original.source_piece_ids,
+        geometry_entity_ids=("other",)
+        if field == "geometry_entity_ids"
+        else original.geometry_entity_ids,
+        occurrence_paths=(("other",),)
+        if field == "occurrence_paths"
+        else original.occurrence_paths,
+        chart_rational_tokens=original.chart_rational_tokens,
+        root_mesh_cell_bindings=(
+            (SurfaceRootMeshCellBinding("root-geometry", "root-topology", 77),)
+            if field == "root_mesh_cell_bindings"
+            else original.root_mesh_cell_bindings
+        ),
+    )
+    assert changed.witness_id != original.witness_id
+
+
+def test_surface_chart_restore_rejects_tampered_identity() -> None:
+    recipe = SurfaceChartWitnessArchiveRecipe.from_witness(_chart_witness(exact=True))
+    with pytest.raises(ValueError, match="differs from its recomputed identity"):
+        recipe._replace(domain_id="other-domain").restore()
+
+
+@pytest.mark.parametrize("token", ((2, 6), (1, 0), (1, 2), (True, 3)))
+def test_surface_chart_witness_rejects_invalid_exact_tokens(
+    token: tuple[int, int],
+) -> None:
+    original = _chart_witness(exact=True)
+    tokens = ((((0, 1), (0, 1)), (token, (0, 1)), ((0, 1), (1, 1))),)
+    with pytest.raises((TypeError, ValueError)):
+        SurfaceChartWitness(
+            geometry_id=original.geometry_id,
+            topology_id=original.topology_id,
+            domain_id=original.domain_id,
+            cell_global_ids=original.cell_global_ids,
+            patches=original.patches,
+            charts=original.charts,
+            source_root_cell_ids=original.source_root_cell_ids,
+            source_piece_ids=original.source_piece_ids,
+            geometry_entity_ids=original.geometry_entity_ids,
+            occurrence_paths=original.occurrence_paths,
+            chart_rational_tokens=tokens,
+            root_mesh_cell_bindings=original.root_mesh_cell_bindings,
+        )
+
+
+def test_surface_chart_identity_binds_kind_patch_and_chart_bits() -> None:
+    original = _chart_witness(exact=True)
+    tokens = original.chart_rational_tokens
+    chart = np.asarray(original.charts).copy()
+
+    def make(
+        kind: str,
+        patches: np.ndarray,
+        pieces: tuple[tuple[int, ...], ...],
+        charts: np.ndarray,
+        exact_tokens: tuple[tuple[tuple[tuple[int, int], tuple[int, int]], ...], ...],
+    ) -> SurfaceChartWitness:
+        return SurfaceChartWitness(
+            geometry_id=original.geometry_id,
+            topology_id=original.topology_id,
+            domain_id=original.domain_id,
+            cell_kind=kind,
+            cell_global_ids=original.cell_global_ids,
+            patches=patches,
+            charts=charts,
+            source_root_cell_ids=original.source_root_cell_ids,
+            source_piece_ids=pieces,
+            geometry_entity_ids=original.geometry_entity_ids,
+            occurrence_paths=original.occurrence_paths,
+            chart_rational_tokens=exact_tokens,
+            root_mesh_cell_bindings=original.root_mesh_cell_bindings,
+        )
+
+    patch = np.asarray((2,), dtype=np.int32)
+    assert (
+        make("triangle", patch, ((2, 3, 4),), chart, tokens).witness_id
+        == original.witness_id
+    )
+    assert (
+        make(
+            "triangle", np.asarray((3,), dtype=np.int32), ((3, 3, 4),), chart, tokens
+        ).witness_id
+        != original.witness_id
+    )
+    chart[0, 0, 0] = -0.0
+    assert (
+        make("triangle", patch, ((2, 3, 4),), chart, tokens).witness_id
+        != original.witness_id
+    )
+    quad = np.concatenate((chart, np.asarray([[[0.0, 0.5]]], dtype=np.float64)), axis=1)
+    quad_tokens = (tokens[0] + (((0, 1), (1, 2)),),)
+    assert (
+        make("quadrilateral", patch, ((2, 3, 4),), quad, quad_tokens).witness_id
+        != original.witness_id
+    )
