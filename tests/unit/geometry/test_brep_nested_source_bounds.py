@@ -492,3 +492,83 @@ def test_conic_bounds_trig_inward_fault_breaks_exact_witness(
 
     monkeypatch.setattr(_patches, "_conic_trig_program", lambda: InwardProgram())
     assert not contains_witness()
+
+
+def _analytic_surface(
+    kind: _patches._AnalyticSurfaceKind,
+) -> _patches.AbstractSurfacePatch:
+    origin = (0, 0, 0)
+    first = (1, 0, 0)
+    second = (0, 1, 0)
+    axis = (0, 0, 1)
+    if kind == "cylinder":
+        return CylinderPatch(
+            origin, first, second, axis, 1.0 / 3.0, radius_exact=Fraction(1, 3)
+        )
+    if kind == "cone":
+        return _patches.ConePatch(origin, first, second, axis, 1.0 / 3.0, 0.25)
+    if kind == "sphere":
+        return _patches.SpherePatch(origin, first, second, axis, 1.0 / 3.0)
+    return _patches.TorusPatch(
+        origin, first, second, axis, 2, 1.0 / 3.0, minor_radius_exact=Fraction(1, 3)
+    )
+
+
+@pytest.mark.parametrize("kind", ("cylinder", "cone", "sphere", "torus"))
+def test_analytic_surface_derivative_randomized_host_parity(
+    kind: _patches._AnalyticSurfaceKind,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    surface = _analytic_surface(kind)
+    assert _patches._analytic_surface_program(kind) is not None
+    rng = np.random.default_rng(92741)
+    for _ in range(48):
+        lower = rng.uniform(-1.0, 0.0, size=2)
+        upper = lower + rng.uniform(0.01, 1.0, size=2)
+        box = np.stack((lower, upper))
+        actual = surface.derivative_bounds(box)
+        with monkeypatch.context() as context:
+            context.setattr(_patches, "_analytic_surface_program", lambda selected: None)
+            expected = surface.derivative_bounds(box)
+        for value, reference in zip(actual, expected, strict=True):
+            np.testing.assert_array_equal(
+                value.view(np.uint64), reference.view(np.uint64)
+            )
+
+
+@pytest.mark.parametrize("kind", ("cylinder", "cone", "sphere", "torus"))
+def test_analytic_surface_derivative_inward_fault_breaks_exact_witness(
+    kind: _patches._AnalyticSurfaceKind,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    surface = _analytic_surface(kind)
+    program = _patches._analytic_surface_program(kind)
+    assert program is not None
+    box = np.asarray(((-0.25, -0.25), (0.25, 0.25)), dtype=np.float64)
+    if kind == "torus":
+        exact = Fraction(7, 3)
+    elif kind == "cylinder":
+        exact = Fraction(1, 3)
+    else:
+        exact = Fraction.from_float(1.0 / 3.0)
+
+    def contains_witness() -> bool:
+        lower, upper = surface.derivative_bounds(box)
+        return (
+            Fraction.from_float(lower[1, 0]) <= exact <= Fraction.from_float(upper[1, 0])
+        )
+
+    assert contains_witness()
+
+    class InwardProgram:
+        def evaluate(
+            self, lower: NDArray[np.float64], upper: NDArray[np.float64], /
+        ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+            result_lower, result_upper = program.evaluate(lower, upper)
+            result_upper[0, 1, 0] = 0.0
+            return result_lower, result_upper
+
+    monkeypatch.setattr(
+        _patches, "_analytic_surface_program", lambda selected: InwardProgram()
+    )
+    assert not contains_witness()

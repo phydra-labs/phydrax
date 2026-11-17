@@ -45,6 +45,97 @@ from ...typing import ConvertibleToArray, Dim, Float64, Scalar
 from .._interval_enclosure import Interval, PreparedIntervalFunction
 
 
+type _AnalyticSurfaceKind = Literal["cylinder", "cone", "sphere", "torus"]
+
+
+@lru_cache(maxsize=4)
+def _analytic_surface_program(
+    kind: _AnalyticSurfaceKind, /
+) -> PreparedIntervalFunction | None:
+    from .._interval_enclosure import IntervalExtensionError, prepare_interval_function
+
+    def evaluate(values: Array, /) -> Array:
+        u, v = values[0], values[1]
+        first, second, axis = values[2:5], values[5:8], values[8:11]
+        radius, major, negative_u, negative_v, tangent, negative_radius = values[11:17]
+        sine_u, cosine_u = jnp.sin(u), jnp.cos(u)
+        if kind == "cylinder":
+            du = (negative_radius * sine_u) * first + (radius * cosine_u) * second
+            return jnp.stack((du, axis), axis=-1)
+        radial = cosine_u * first + sine_u * second
+        tangent_u = negative_u * first + cosine_u * second
+        if kind == "cone":
+            cone_radius = radius + v * tangent
+            du = cone_radius * tangent_u
+            dv = axis + tangent * radial
+        else:
+            cosine_v = jnp.cos(v)
+            tangent_v = negative_v * radial + cosine_v * axis
+            if kind == "sphere":
+                du = radius * (cosine_v * tangent_u)
+                dv = radius * tangent_v
+            else:
+                ring_radius = major + radius * cosine_v
+                du = ring_radius * tangent_u
+                dv = radius * tangent_v
+        return jnp.stack((du, dv), axis=-1)
+
+    try:
+        return prepare_interval_function(
+            evaluate, 17, batch_capacity=1, execution="batched"
+        )
+    except IntervalExtensionError:
+        return None
+
+
+def _analytic_surface_bounds(
+    kind: _AnalyticSurfaceKind,
+    program: PreparedIntervalFunction,
+    box: np.ndarray,
+    first: Interval,
+    second: Interval,
+    axis: Interval,
+    radius: Interval,
+    major: Interval,
+    tangent: Interval,
+    negative_radius: Interval,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    from .._interval_enclosure import interval_sin
+
+    zero = (np.asarray(0.0), np.asarray(0.0))
+    if kind == "cylinder":
+        negative_u = zero
+    else:
+        sin_u = interval_sin((box[0, 0], box[1, 0]))
+        negative_u = (-np.asarray(sin_u[1]), -np.asarray(sin_u[0]))
+    if kind in ("sphere", "torus"):
+        sin_v = interval_sin((box[0, 1], box[1, 1]))
+        negative_v = (-np.asarray(sin_v[1]), -np.asarray(sin_v[0]))
+    else:
+        negative_v = zero
+    # Negating endpoints is exact; a traced neg primitive would widen them.
+    intervals = (
+        first,
+        second,
+        axis,
+        radius,
+        major,
+        negative_u,
+        negative_v,
+        tangent,
+        negative_radius,
+    )
+    lower = np.concatenate(
+        (box[0], *(np.asarray(value[0]).reshape(-1) for value in intervals))
+    )[None, :]
+    upper = np.concatenate(
+        (box[1], *(np.asarray(value[1]).reshape(-1) for value in intervals))
+    )[None, :]
+    result = program.evaluate(lower, upper)
+    return result[0][0], result[1][0]
+
+
 @lru_cache(maxsize=1)
 def _cylinder_rail_program() -> PreparedIntervalFunction | None:
     from .._interval_enclosure import IntervalExtensionError, prepare_interval_function
@@ -5111,12 +5202,27 @@ class CylinderPatch(AbstractSurfacePatch):
             )
 
         angle = (box[0, 0], box[1, 0])
-        sine, cosine = interval_sin(angle), interval_cos(angle)
         radius = exact_interval(self.radius_exact)
         negative_radius = (-radius[1], -radius[0])
         first_axis = vector_interval(self.first_axis_exact)
         second_axis = vector_interval(self.second_axis_exact)
         axis = vector_interval(self.axis_exact)
+        program = _analytic_surface_program("cylinder")
+        if program is not None:
+            zero = (np.asarray(0.0), np.asarray(0.0))
+            return _analytic_surface_bounds(
+                "cylinder",
+                program,
+                box,
+                first_axis,
+                second_axis,
+                axis,
+                radius,
+                zero,
+                zero,
+                negative_radius,
+            )
+        sine, cosine = interval_sin(angle), interval_cos(angle)
         first_term = interval_multiply(
             interval_multiply(negative_radius, sine), first_axis
         )
@@ -5187,9 +5293,31 @@ class ConePatch(AbstractSurfacePatch):
         if isinstance(order, bool) or not isinstance(order, int) or order != 1:
             raise ValueError("Cone derivative bounds support order=1 only.")
         angle = (box[0, 0], box[1, 0])
-        sine, cosine = interval_sin(angle), interval_cos(angle)
         first_axis = np.asarray(self.first_axis, dtype=np.float64)
         second_axis = np.asarray(self.second_axis, dtype=np.float64)
+        program = _analytic_surface_program("cone")
+        if program is not None:
+            semi_angle = np.float64(np.asarray(self.semi_angle))
+            tan_angle = interval_divide(
+                interval_sin((semi_angle, semi_angle)),
+                interval_cos((semi_angle, semi_angle)),
+            )
+            reference_radius = np.asarray(self.reference_radius, dtype=np.float64)
+            axis = np.asarray(self.axis, dtype=np.float64)
+            zero = (np.asarray(0.0), np.asarray(0.0))
+            return _analytic_surface_bounds(
+                "cone",
+                program,
+                box,
+                (first_axis, first_axis),
+                (second_axis, second_axis),
+                (axis, axis),
+                (reference_radius, reference_radius),
+                zero,
+                tan_angle,
+                zero,
+            )
+        sine, cosine = interval_sin(angle), interval_cos(angle)
         radial = interval_add(
             interval_multiply(cosine, (first_axis, first_axis)),
             interval_multiply(sine, (second_axis, second_axis)),
@@ -5279,11 +5407,27 @@ class SpherePatch(AbstractSurfacePatch):
             raise ValueError("Sphere derivative bounds support order=1 only.")
         longitude = (box[0, 0], box[1, 0])
         latitude = (box[0, 1], box[1, 1])
-        sin_u, cos_u = interval_sin(longitude), interval_cos(longitude)
-        sin_v, cos_v = interval_sin(latitude), interval_cos(latitude)
         first_axis = np.asarray(self.first_axis, dtype=np.float64)
         second_axis = np.asarray(self.second_axis, dtype=np.float64)
         axis = np.asarray(self.axis, dtype=np.float64)
+        program = _analytic_surface_program("sphere")
+        if program is not None:
+            radius = np.asarray(self.radius, dtype=np.float64)
+            zero = (np.asarray(0.0), np.asarray(0.0))
+            return _analytic_surface_bounds(
+                "sphere",
+                program,
+                box,
+                (first_axis, first_axis),
+                (second_axis, second_axis),
+                (axis, axis),
+                (radius, radius),
+                zero,
+                zero,
+                zero,
+            )
+        sin_u, cos_u = interval_sin(longitude), interval_cos(longitude)
+        sin_v, cos_v = interval_sin(latitude), interval_cos(latitude)
         radial = interval_add(
             interval_multiply(cos_u, (first_axis, first_axis)),
             interval_multiply(sin_u, (second_axis, second_axis)),
@@ -5496,11 +5640,28 @@ class TorusPatch(AbstractSurfacePatch):
 
         longitude = (box[0, 0], box[1, 0])
         tube = (box[0, 1], box[1, 1])
-        sin_u, cos_u = interval_sin(longitude), interval_cos(longitude)
-        sin_v, cos_v = interval_sin(tube), interval_cos(tube)
         first_axis = vector_interval(self.first_axis_exact)
         second_axis = vector_interval(self.second_axis_exact)
         axis = vector_interval(self.axis_exact)
+        program = _analytic_surface_program("torus")
+        if program is not None:
+            major = exact_interval(self.major_radius_exact)
+            minor = exact_interval(self.minor_radius_exact)
+            zero = (np.asarray(0.0), np.asarray(0.0))
+            return _analytic_surface_bounds(
+                "torus",
+                program,
+                box,
+                first_axis,
+                second_axis,
+                axis,
+                minor,
+                major,
+                zero,
+                zero,
+            )
+        sin_u, cos_u = interval_sin(longitude), interval_cos(longitude)
+        sin_v, cos_v = interval_sin(tube), interval_cos(tube)
         radial = interval_add(
             interval_multiply(cos_u, first_axis),
             interval_multiply(sin_u, second_axis),
