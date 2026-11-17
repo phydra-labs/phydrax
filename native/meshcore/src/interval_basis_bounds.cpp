@@ -1,5 +1,6 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -8,7 +9,17 @@
 #include "floating_point_mode.hpp"
 #include "interval_arithmetic.hpp"
 #include "parallel.hpp"
+#include "wide_integer.hpp"
 #include "phydrax_meshcore.h"
+
+namespace {
+bool overlaps(const double* first, std::size_t first_bytes,
+              const double* second, std::size_t second_bytes) noexcept {
+  const auto a = reinterpret_cast<std::uintptr_t>(first);
+  const auto b = reinterpret_cast<std::uintptr_t>(second);
+  return a <= b ? b - a < first_bytes : a - b < second_bytes;
+}
+}  // namespace
 
 // Every exact common-degree control is a linear combination of the basis
 // controls. Outward intervals for each factor, product, and sum therefore
@@ -23,15 +34,36 @@ extern "C" int32_t phx_mc_interval_basis_bounds(
   return phx::mc::guarded([&]() -> int32_t {
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    int64_t output_count = 0;
     if (count < 0 || basis_count < 1 || controls < 1 || components < 1 || workers < 1 ||
+        !phx::mc::checked_multiply(count, components, output_count) ||
         !phx::mc::addressable(basis_count, controls, sizeof(double)) ||
-        !phx::mc::addressable(count, components, sizeof(double)) ||
-        !phx::mc::addressable(count * components, basis_count, sizeof(double)))
+        !phx::mc::addressable(1, output_count, sizeof(double)) ||
+        !phx::mc::addressable(output_count, basis_count, sizeof(double)))
       return PHX_MC_INVALID_ARGUMENT;
     if (count == 0) return PHX_MC_OK;
     if (!basis_lower || !basis_upper || !coefficient_lower || !coefficient_upper ||
         !result_lower || !result_upper || !inner_lower || !inner_upper)
       return PHX_MC_INVALID_ARGUMENT;
+    const auto basis_bytes = static_cast<std::size_t>(basis_count) *
+                             static_cast<std::size_t>(controls) * sizeof(double);
+    const auto output_bytes = static_cast<std::size_t>(output_count) * sizeof(double);
+    const auto coefficient_bytes = static_cast<std::size_t>(output_count) *
+                                   static_cast<std::size_t>(basis_count) * sizeof(double);
+    const std::array<const double*, 4> inputs{
+        basis_lower, basis_upper, coefficient_lower, coefficient_upper};
+    const std::array<std::size_t, 4> input_bytes{
+        basis_bytes, basis_bytes, coefficient_bytes, coefficient_bytes};
+    const std::array<double*, 4> outputs{
+        result_lower, result_upper, inner_lower, inner_upper};
+    for (std::size_t i = 0; i < outputs.size(); ++i) {
+      for (std::size_t j = 0; j < inputs.size(); ++j)
+        if (overlaps(outputs[i], output_bytes, inputs[j], input_bytes[j]))
+          return PHX_MC_INVALID_ARGUMENT;
+      for (std::size_t j = 0; j < i; ++j)
+        if (overlaps(outputs[i], output_bytes, outputs[j], output_bytes))
+          return PHX_MC_INVALID_ARGUMENT;
+    }
     constexpr double inf = std::numeric_limits<double>::infinity();
     return phx::mc::parallel_for(static_cast<std::size_t>(count),
         phx::mc::ParallelRequest{16, static_cast<uint32_t>(workers)},

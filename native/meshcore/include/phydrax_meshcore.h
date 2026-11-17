@@ -928,7 +928,9 @@ PHX_MC_API int32_t phx_mc_interval_simplex_restrict(
  * Basis endpoints are (basis_count, controls), coefficient endpoints are
  * (count, basis_count, components), outputs are (count, components).
  * The inner endpoints bracket each exact extremal control from the opposite
- * side; they bound the possible excess of the outer endpoints. */
+ * side; they bound the possible excess of the outer endpoints. Input banks
+ * may overlap each other, but output banks must not overlap any input or output
+ * bank; overlapping banks are rejected with PHX_MC_INVALID_ARGUMENT. */
 PHX_MC_API int32_t phx_mc_interval_basis_bounds(
     int64_t count, int64_t basis_count, int64_t controls, int64_t components,
     const double* basis_lower, const double* basis_upper,

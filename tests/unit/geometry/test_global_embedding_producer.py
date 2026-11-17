@@ -4,7 +4,7 @@ import json
 import os
 import subprocess
 import sys
-from dataclasses import replace
+from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 from typing import cast
@@ -2650,6 +2650,17 @@ def test_integer_markowitz_nullspace_matches_the_exact_sparse_factorization() ->
     assert checked["nullity_one"] and checked["other"]
 
 
+@dataclass
+class _ExactImageSource:
+    bank: tuple[tuple[Fraction, ...], ...]
+    source_id: str = "interval-image-source"
+    source_revision: str = "interval-image-revision"
+    source_map_id: str = "interval-image-map"
+
+    def source_coordinates(self) -> tuple[tuple[Fraction, ...], ...]:
+        return self.bank
+
+
 def _curved_separated_image_boxes(
     second_shift: Fraction,
 ) -> tuple[CellMesh, CellGeometrySpec, tuple[EmbeddingCell, ...]]:
@@ -2659,7 +2670,7 @@ def _curved_separated_image_boxes(
 
     def image(shift: Fraction, point: tuple[Fraction, ...], /) -> tuple[Fraction, ...]:
         u, v = point
-        return u + shift, v + u * v / 8
+        return u + shift - v * (1 - v) / 3, v + u * v / 8
 
     shifts = (Fraction(0), second_shift)
     points = np.asarray(
@@ -2677,8 +2688,8 @@ def _curved_separated_image_boxes(
         points,
         (CellBlock("cells", "triangle", np.arange(6, dtype=np.int32).reshape(2, 3)),),
     )
-    coordinates = np.empty((2 * element.local_dof_count, 2), dtype=np.float64)
-    for row, shift in enumerate(shifts):
+    bank_rows: list[tuple[Fraction, ...]] = []
+    for shift in shifts:
         for node in nodes:
             if node.exact_point is None:
                 raise AssertionError("Quadratic triangle nodes must be exact.")
@@ -2686,53 +2697,40 @@ def _curved_separated_image_boxes(
                 rational_coefficient(value, role="triangle node")
                 for value in node.exact_point
             )
-            coordinates[row * element.local_dof_count + node.local_dof] = tuple(
-                float(value) for value in image(shift, point)
-            )
+            bank_rows.append(image(shift, point))
+    coordinates = np.asarray(bank_rows, dtype=np.float64)
     geometry = CellGeometrySpec(
         {"cells": element},
         {"cells": np.arange(len(coordinates), dtype=np.int32).reshape(2, -1)},
         coordinates,
+        source_map=_ExactImageSource(tuple(bank_rows)),
+        source_mesh=mesh,
     )
-    cells = prepare_embedding_cells(mesh, geometry)
-    widened = []
-    for cell in cells:
-        bounds = tuple(
-            polynomial_bounds(expression, "simplex", 2) for expression in cell.coordinates
-        )
-        widened.append(
-            replace(
-                cell,
-                image_lower=(bounds[0][0] - 1 / 32, bounds[1][0]),
-                image_upper=(bounds[0][1] + 1 / 32, bounds[1][1]),
-                image_inner_bounds=bounds,
-            )
-        )
-    return mesh, geometry, tuple(widened)
+    return mesh, geometry, prepare_embedding_cells(mesh, geometry)
 
 
 @pytest.mark.parametrize("periodic", (False, True))
-def test_widened_image_boxes_retry_exact_separation(
-    periodic: bool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import phydrax.geometry._global_embedding as embedding
-    import phydrax.geometry._restricted_embedding as restricted
+def test_widened_image_boxes_retry_exact_separation(periodic: bool) -> None:
     from phydrax.discretization._periodic_cell import PeriodicCell
     from phydrax.discretization._periodic_topology import PeriodicMeshTopology
     from phydrax.geometry._periodic_mapped_contacts import (
         certify_periodic_mapped_contacts,
     )
 
-    gap = Fraction(1, 64)
-    shift = -3 + gap if periodic else 1 + gap
+    gap = Fraction(1, 2**52)
+    translation = Fraction(4) if periodic else Fraction(0)
+    shift = Fraction(7, 6) + gap - translation
     mesh, geometry, cells = _curved_separated_image_boxes(shift)
-    monkeypatch.setattr(embedding, "_straight_planar_polygon", lambda *args: None)
-    monkeypatch.setattr(embedding, "_strict_image_separation", lambda *args: False)
-    monkeypatch.setattr(
-        embedding, "restriction_trace_equal", lambda *args, **kwargs: None
-    )
-    monkeypatch.setattr(
-        restricted, "restriction_trace_equal", lambda *args, **kwargs: None
+    first, second = cells
+    shifted_expression = add(second.coordinates[0], constant(translation, 2))
+    first_exact = polynomial_bounds(first.coordinates[0], "simplex", 2)
+    second_exact = polynomial_bounds(shifted_expression, "simplex", 2)
+    assert first_exact[1] < second_exact[0]
+    assert Fraction(second.image_lower[0]) + translation <= Fraction(first.image_upper[0])
+    assert first.image_inner_bounds is not None
+    assert second.image_inner_bounds is not None
+    assert Fraction(first.image_inner_bounds[0][1]) < (
+        Fraction(second.image_inner_bounds[0][0]) + translation
     )
 
     if periodic:
@@ -2744,19 +2742,8 @@ def test_widened_image_boxes_retry_exact_separation(
         )
         result = certify_periodic_mapped_contacts(mesh, cells, topology)
         assert result.status == "certified", result.findings
-        monkeypatch.setattr(
-            embedding, "_exact_image_box_separation", lambda *args, **kwargs: False
-        )
-        result = certify_periodic_mapped_contacts(mesh, cells, topology)
-        assert result.status == "unresolved"
-        assert any(
-            check == "periodic_mapped_contact_unresolved" and "winding (1,)" in detail
-            for check, _, detail in result.findings
-        )
     else:
-        assert not _nonperiodic_contacts(mesh, geometry, cells)
-        monkeypatch.setattr(
-            embedding, "_exact_image_box_separation", lambda *args, **kwargs: False
-        )
-        findings = _nonperiodic_contacts(mesh, geometry, cells)
-        assert any(finding.status == "unresolved" for finding in findings)
+        validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+        certificate = certify_global_embedding(mesh, geometry, validity)
+        assert validity.all_certified
+        assert certificate.status == "certified", certificate.findings

@@ -117,6 +117,30 @@ int main() {
                                              nullptr, nullptr, 1) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(phx_mc_interval_simplex_restrict(1, 0, 0, nullptr, nullptr, nullptr, nullptr,
                                              nullptr, nullptr, 1) == PHX_MC_OK);
+  double basis_lower[] = {1.0, 0.0};
+  const double basis_upper[] = {3.0};
+  const double coefficients[] = {2.0, 1.0};
+  double result_lower[2], result_upper[2], inner_lower[2], inner_upper[2];
+  PHX_CHECK(phx_mc_interval_basis_bounds(
+      2, 1, 1, 1, basis_lower, basis_upper, coefficients, coefficients,
+      result_lower, result_upper, inner_lower, inner_upper, 1) == PHX_MC_OK);
+  PHX_CHECK(result_lower[1] <= 1.5 && result_upper[1] >= 1.5);
+  PHX_CHECK(phx_mc_interval_basis_bounds(
+      2, 1, 1, 1, basis_lower, basis_upper, coefficients, coefficients,
+      basis_lower, result_upper, inner_lower, inner_upper, 1) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(basis_lower[0] == 1.0 && basis_lower[1] == 0.0);
+  PHX_CHECK(phx_mc_interval_basis_bounds(
+      2, 1, 1, 1, basis_lower, basis_upper, coefficients, coefficients,
+      result_lower, result_lower, inner_lower, inner_upper, 1) == PHX_MC_INVALID_ARGUMENT);
+  double overlapping_outputs[3];
+  PHX_CHECK(phx_mc_interval_basis_bounds(
+      2, 1, 1, 1, basis_lower, basis_upper, coefficients, coefficients,
+      overlapping_outputs, overlapping_outputs + 1, inner_lower, inner_upper,
+      1) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_interval_basis_bounds(
+      std::numeric_limits<int64_t>::max(), 1, 1, 2, basis_lower, basis_upper,
+      coefficients, coefficients, result_lower, result_upper, inner_lower, inner_upper,
+      1) == PHX_MC_INVALID_ARGUMENT);
   const int original_round = std::fegetround();
   PHX_CHECK(std::fesetround(FE_UPWARD) == 0);
   PHX_CHECK(phx_mc_interval_simplex_restrict(1, 0, 1, &one, &one, corners, corners,
