@@ -6195,7 +6195,7 @@ def _nonperiodic_contacts(
             for start in range(0, left.size, 1024):
                 yield left[start : start + 1024], right[start : start + 1024]
 
-    subdivision_cache = StratumSubdivisionCache()
+    subdivision_cache = StratumSubdivisionCache(proof_roots={})
     for first_block, second_block in contact_blocks():
         # Retain pair-derived material for at most 64 pairs that need exact
         # work; a renewed subdivision workset keeps only per-cell controls.
@@ -6344,7 +6344,7 @@ def _nonperiodic_contacts(
                     zip(
                         batch_offsets,
                         subdivided_stratum_separations(
-                            tuple(batch_requests), StratumSubdivisionCache()
+                            tuple(batch_requests), subdivision_cache
                         ),
                         strict=True,
                     )

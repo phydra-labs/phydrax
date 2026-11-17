@@ -249,6 +249,9 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Global embedding contact passes reuse exact stratum root nets only for the
+  same live cell and exact stratum and residual; the table is discarded when
+  the proof returns. Contact decisions and witness identities are unchanged.
 - Curved profile turning and analytic cylinder chart-sheet selection use
   outward angle enclosures. Mixed conic and rational-spline profiles sum
   directed turn endpoints exactly. Ambiguous turning proofs are refused, so
