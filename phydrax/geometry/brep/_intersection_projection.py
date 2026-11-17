@@ -886,14 +886,14 @@ def _select_candidate_projection(
             if family.large_index == 0
             else _batched_cylinder_points_large_second
         )
-        point = np.asarray(
-            evaluate(curve, np.asarray([best.parameter], dtype=np.float64))[0],
-            dtype=np.float64,
-        )[0]
+        realized = evaluate(curve, np.asarray([best.parameter], dtype=np.float64))
+        point = np.asarray(realized[0], dtype=np.float64)[0]
+        tangent = np.asarray(realized[3], dtype=np.float64)[0]
     else:
         point = evaluate_host_program(
             point_program, np.asarray([[best.parameter]], dtype=np.float64)
         )[0]
+        tangent = None
     squared = sum(
         (
             (F.from_float(float(x)) - F.from_float(float(y))) ** 2
@@ -910,6 +910,7 @@ def _select_candidate_projection(
         int(status),
         ("intersection", curve.branch_id),
         best.root_id,
+        tangent,
     )
 
 
