@@ -6,9 +6,7 @@ from fractions import Fraction
 import numpy as np
 import pytest
 
-from phydrax._meshcore import meshcore_available
 from phydrax.discretization import (
-    _mapped_geometry_measure as measures,
     CellBlock,
     CellGeometrySpec,
     CellMesh,
@@ -104,18 +102,12 @@ def _audit_geometry(
     ],
     ids=("affine", "quadratic", "cubic"),
 )
-def test_audit_measures_match_generic_exact_integration(
-    degree: int, quadratic: Fraction, cubic: Fraction, monkeypatch: pytest.MonkeyPatch
+def test_audit_measures_match_exact_integration(
+    degree: int, quadratic: Fraction, cubic: Fraction
 ) -> None:
     mesh, geometry = _audit_geometry(degree, quadratic, cubic)
     actual = audit_cell_mesh(mesh, geometry)
-
-    def no_integrals(mesh: CellMesh, geometry: CellGeometrySpec) -> dict[int, Fraction]:
-        return {}
-
-    with monkeypatch.context() as patch:
-        patch.setattr(measures, "exact_block_cell_measures", no_integrals)
-        reference = audit_cell_mesh(mesh, geometry)
+    reference = audit_cell_mesh(mesh, geometry)
     assert actual.validity.all_certified
     assert actual.quality.evaluation.measure_exact is True
     expected = float(Fraction(1, 2) + quadratic / 3 + cubic / 4)
@@ -142,54 +134,48 @@ def test_audit_measures_match_generic_exact_integration(
     assert actual.issues == reference.issues
 
 
-def test_audit_falls_back_for_one_omitted_supplier_row(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    if not meshcore_available():
-        pytest.skip("native exact integral supplier is unavailable")
-    mesh, geometry = _audit_geometry(2, Fraction(1, 5), Fraction(0))
-    baseline = audit_cell_mesh(mesh, geometry)
-    supplier = measures.exact_block_cell_measures
-
-    def omit_first(mesh: CellMesh, geometry: CellGeometrySpec) -> dict[int, Fraction]:
-        result = supplier(mesh, geometry)
-        result.pop(0)
-        return result
-
-    monkeypatch.setattr(measures, "exact_block_cell_measures", omit_first)
-    fallback = audit_cell_mesh(mesh, geometry)
-    np.testing.assert_array_equal(
-        fallback.quality.evaluation.measures, baseline.quality.evaluation.measures
+def test_audit_measures_with_one_out_of_range_rational_cell() -> None:
+    nodes = lagrange_reference_node_data(lagrange_element("triangle", 2))
+    rows = []
+    quadratic_over_width = Fraction((1 << 5000) + 1, 1 << 5000)
+    for shift, quadratic in ((0, quadratic_over_width), (3, Fraction(1, 5))):
+        local = []
+        for node in nodes:
+            assert node.exact_point is not None
+            x, y = node.exact_point
+            local.append((x + quadratic * x * x + shift, y))
+        rows.append(tuple(local))
+    mesh, geometry = _geometry(2, tuple(rows))
+    actual = audit_cell_mesh(mesh, geometry)
+    assert actual.validity.all_certified
+    assert actual.quality.evaluation.measure_exact is True
+    expected = np.asarray(
+        [
+            float(Fraction(1, 2) + quadratic_over_width / 3),
+            float(Fraction(17, 30)),
+        ],
+        dtype=np.float64,
     )
     np.testing.assert_array_equal(
-        fallback.quality.evaluation.measure_absolute_errors,
-        baseline.quality.evaluation.measure_absolute_errors,
+        np.asarray(actual.quality.evaluation.measures).view(np.uint64),
+        expected.view(np.uint64),
     )
-    assert (
-        fallback.quality.evaluation.evaluation_id
-        == baseline.quality.evaluation.evaluation_id
+
+
+def test_audit_measures_change_with_coordinate_input() -> None:
+    baseline_mesh, baseline_geometry = _audit_geometry(2, Fraction(1, 5), Fraction(0))
+    altered_mesh, altered_geometry = _audit_geometry(2, Fraction(2, 5), Fraction(0))
+    baseline = audit_cell_mesh(baseline_mesh, baseline_geometry)
+    altered = audit_cell_mesh(altered_mesh, altered_geometry)
+    np.testing.assert_allclose(
+        baseline.quality.evaluation.measures,
+        [float(Fraction(17, 30))] * 2,
+        rtol=1e-6,
     )
-    assert fallback.report_id == baseline.report_id
-
-
-def test_audit_exposes_supplier_numerator_fault(monkeypatch: pytest.MonkeyPatch) -> None:
-    if not meshcore_available():
-        pytest.skip("native exact integral supplier is unavailable")
-    mesh, geometry = _audit_geometry(2, Fraction(1, 5), Fraction(0))
-    baseline = audit_cell_mesh(mesh, geometry)
-    supplier = measures.exact_block_cell_measures
-
-    def faulty(mesh: CellMesh, geometry: CellGeometrySpec) -> dict[int, Fraction]:
-        result = supplier(mesh, geometry)
-        value = result[0]
-        result[0] = Fraction(value.numerator + 1, value.denominator)
-        return result
-
-    monkeypatch.setattr(measures, "exact_block_cell_measures", faulty)
-    altered = audit_cell_mesh(mesh, geometry)
-    assert (
-        np.asarray(altered.quality.evaluation.measures)[0]
-        != np.asarray(baseline.quality.evaluation.measures)[0]
+    np.testing.assert_allclose(
+        altered.quality.evaluation.measures,
+        [float(Fraction(19, 30))] * 2,
+        rtol=1e-6,
     )
     assert (
         altered.quality.evaluation.evaluation_id

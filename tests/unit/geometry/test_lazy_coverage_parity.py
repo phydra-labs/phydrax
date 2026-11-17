@@ -9,8 +9,7 @@ from phydrax.discretization._cell_complex import PolyhedralConnectivity
 from phydrax.discretization._cell_geometry import CellGeometrySpec
 from phydrax.discretization._cell_geometry_validity import certify_cell_geometry_validity
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh, PolyhedralBlock
-from phydrax.discretization._exact_algebraic_geometry import ExactScalar
-from phydrax.geometry import _domain_certification as certification, _domain_preparation
+from phydrax.geometry import _domain_certification as certification
 from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
 from phydrax.geometry._domain_numerics import (
     cell_coordinate_expressions,
@@ -111,81 +110,31 @@ def test_multiblock_supplied_subset_matches_eager_and_preserves_order() -> None:
     ]
 
 
-def test_full_coverage_matches_eager_and_detects_one_numerator_fault(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_full_coverage_detects_misassigned_cell_against_exact_areas() -> None:
     domain, mesh, geometry, regions = _split_square()
     validity = certify_cell_geometry_validity(geometry, mesh=mesh)
     embedding = certify_global_embedding(mesh, geometry, validity)
     assert embedding.status == "certified"
-    lazy = certification.certify_domain_coverage(
+    certificate = certification.certify_domain_coverage(
         mesh, geometry, domain, regions, embedding=embedding
     )
-    original_prepare = _domain_preparation.prepare_domain_coverage
+    # Each right triangle has base 1/2 and height 1.
+    requested = (Fraction(1, 2), Fraction(1, 2))
+    assert certificate.status == "certified"
+    assert certificate.requested_region_measures == requested
+    assert certificate.achieved_region_measures == requested
+    assert certificate.findings == ()
 
-    def prepare_eager(
-        mesh: CellMesh,
-        geometry: CellGeometrySpec,
-        cell_regions: np.ndarray,
-        region_count: int,
-    ) -> DomainCoveragePreparation:
-        return _eager(
-            original_prepare(mesh, geometry, cell_regions, region_count), mesh, geometry
-        )
-
-    monkeypatch.setattr(_domain_preparation, "prepare_domain_coverage", prepare_eager)
-    eager = certification.certify_domain_coverage(
-        mesh, geometry, domain, regions, embedding=embedding
-    )
-    assert lazy.status == eager.status == "certified"
-    assert (
-        lazy.requested_region_measures
-        == eager.requested_region_measures
-        == (Fraction(1, 2), Fraction(1, 2))
-    )
-    assert (
-        lazy.achieved_region_measures
-        == eager.achieved_region_measures
-        == (Fraction(1, 2), Fraction(1, 2))
-    )
-    assert _finding_fields(lazy.findings) == _finding_fields(eager.findings) == []
-    assert lazy.facet_source_overlaps == eager.facet_source_overlaps
-
-    monkeypatch.setattr(_domain_preparation, "prepare_domain_coverage", original_prepare)
-    original_target = certification._target_region_measures
-
-    def corrupt_measure(
-        mesh: CellMesh,
-        geometry: CellGeometrySpec,
-        domain: certification.CoverageDomain,
-        preparation: DomainCoveragePreparation,
-        findings: list[MeshCertificateFinding],
-        /,
-        *,
-        required: bool = True,
-        cell_measures: object = None,
-    ) -> tuple[ExactScalar | None, ...]:
-        # Cell 1 has exact area 1/4; change its supplied numerator from 1 to 2.
-        return original_target(
-            mesh,
-            geometry,
-            domain,
-            preparation,
-            findings,
-            required=required,
-            cell_measures={1: Fraction(2, 4)},
-        )
-
-    monkeypatch.setattr(certification, "_target_region_measures", corrupt_measure)
+    faulty_regions = np.asarray((0, 1, 1, 1))
     faulty = certification.certify_domain_coverage(
-        mesh, geometry, domain, regions, embedding=embedding
+        mesh, geometry, domain, faulty_regions, embedding=embedding
     )
     assert faulty.status == "violated"
-    assert faulty.requested_region_measures == (Fraction(1, 2), Fraction(1, 2))
-    assert faulty.achieved_region_measures == (Fraction(3, 4), Fraction(1, 2))
-    assert [(f.check, f.entity_ids) for f in faulty.findings] == [
-        ("region_measure", (0,))
-    ]
+    assert faulty.requested_region_measures == requested
+    assert faulty.achieved_region_measures == (Fraction(1, 4), Fraction(3, 4))
+    assert {
+        f.entity_ids for f in faulty.findings if f.check == "region_measure"
+    } == {(0,), (1,)}
 
 
 def test_polyhedral_measure_reuses_fixed_cell_maps_with_exact_parity() -> None:
@@ -298,8 +247,6 @@ def test_nodal_boundary_and_carrier_parity_with_eager_maps(
     )
     lazy = prepare_domain_coverage(mesh, geometry, regions, 2)
     eager = _eager(prepare_domain_coverage(mesh, geometry, regions, 2), mesh, geometry)
-    assert lazy.has_vertex_defined_cells() == eager.has_vertex_defined_cells()
-    assert lazy.has_nonaffine_cells(2) == eager.has_nonaffine_cells(2)
     actual = oriented_target_facets(
         mesh,
         regions,

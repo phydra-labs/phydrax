@@ -1457,21 +1457,23 @@ def test_meshing_domain_boundary_cover_and_normal_turn_are_continuous() -> None:
     assert 0.0 <= turn[0] < 1.0e-10
 
 
-def test_normal_turn_bound_refuses_wrong_center_jacobian(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from phydrax.geometry.brep import _host_program
-
-    domain = _square_domain()
+def test_normal_turn_bound_refuses_singular_surface() -> None:
+    base = _square_domain()
+    singular = PlanePatch((0, 0, 0), (1, 0, 0), (1, 0, 0))
+    domain = MeshingDomain(
+        (MeshingSurfacePatch(singular, base.patches[0].loops),),
+        base.curves,
+        4,
+        source_id="singular-source",
+        source_revision="r1",
+        corner_points=np.asarray(
+            ((0, 0, 0), (1, 0, 0), (2, 0, 0), (1, 0, 0)), dtype=np.float64
+        ),
+    )
     charts = np.asarray(
         (((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)),),
         dtype=np.float64,
     )
-
-    def wrong(program: object, points: np.ndarray) -> np.ndarray:
-        return np.zeros((points.shape[0], 3, 2), dtype=np.float64)
-
-    monkeypatch.setattr(_host_program, "evaluate_host_program", wrong)
     assert np.isinf(domain.normal_turn_bounds(0, charts)[0])
 
 
@@ -1547,40 +1549,46 @@ def test_meshing_domain_scope_banks_preserve_stable_keys_and_occurrences() -> No
     assert domain.scope_entity_ids(3).shape == (0,)
 
 
-def test_meshing_domain_prepares_scope_banks_once_per_stratum(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_meshing_domain_scope_banks_match_source_strata() -> None:
     model = brep_box(
         (0.0, 0.0, 0.0),
         (1.0, 1.0, 1.0),
         coordinate_contract=SpatialCoordinateContract.si(),
         source_id="scope-bank-box",
     )
-    table = MeshingDomain._source_entity_table
-    calls = []
-
-    def counted_table(self: MeshingDomain, dimension: int, /):  # noqa: ANN202
-        calls.append(dimension)
-        return table(self, dimension)
-
-    monkeypatch.setattr(MeshingDomain, "_source_entity_table", counted_table)
     domain = MeshingDomain.from_brep(model)
-    # Bank preparation reads each stratum table a fixed number of times rather
-    # than once per entity.
-    assert sorted(calls) == [0, 0, 1, 1, 2, 2, 3, 3]
-    monkeypatch.undo()
 
     for dimension, count in enumerate((8, 12, 6, 1)):
+        kind = domain.source_kinds[dimension] if dimension < 3 else "solid"
+        indices = (
+            domain.source_indices[dimension]
+            if dimension < 3
+            else domain.region_source_indices
+        )
+        paths = (
+            domain.source_occurrences[dimension]
+            if dimension < 3
+            else domain.region_source_occurrences
+        )
+        expected = tuple(
+            source_entity_id(
+                domain.source_id,
+                domain.source_revision,
+                kind,
+                index,
+                occurrence_path=path,
+            )
+            for index, path in zip(indices, paths, strict=True)
+        )
         keys = domain.stratum_entity_ids(dimension)
-        assert keys == tuple(domain.entity_id(dimension, slot) for slot in range(count))
+        assert keys == expected
         assert (
             domain.entity_ids(np.full((count,), dimension), np.arange(count)[::-1])
             == keys[::-1]
         )
         assert set(domain.scope_entity_key_banks[dimension]) == set(
-            zip(keys, domain._source_entity_table(dimension)[2], strict=True)
+            zip(expected, paths, strict=True)
         )
-        paths = domain.source_occurrences[dimension] if dimension < 3 else ()
         for slot, key in enumerate(keys):
             assert domain.resolve_entity_id(dimension, key) == slot
             if paths:

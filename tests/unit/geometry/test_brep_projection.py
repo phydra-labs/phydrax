@@ -487,12 +487,77 @@ def test_circle_edge_frames_preserve_identity_across_batch_sizes() -> None:
     assert isolated.result_id == single.result_id
 
 
-def test_intersection_edge_frames_follow_both_cylinders_across_batches(
-    monkeypatch: Any,
-) -> None:
-    from dataclasses import replace
+def test_trimmed_circle_endpoint_projection_is_batch_independent() -> None:
+    from phydrax.geometry.brep._constructors import (
+        brep_extrusion,
+        PlanarProfile,
+        ProfileArc,
+        ProfileLoop,
+        ProfilePlane,
+    )
+    from phydrax.geometry.brep._patches import CircleCurve
 
-    from phydrax.geometry.brep import _intersection_projection
+    profile = PlanarProfile(
+        ProfilePlane(),
+        ProfileLoop(
+            ((0.0, -4.0), (0.0, 4.0)),
+            (ProfileArc((-3.0, 0.0)), ProfileArc((3.0, 0.0))),
+        ),
+    )
+    model = brep_extrusion(profile, (0.0, 0.0, 2.0), coordinate_contract=_CONTRACT)
+    geometry = model.geometry
+    edge = next(
+        index
+        for index, carrier in enumerate(geometry.edge_curves)
+        if carrier >= 0
+        and isinstance(geometry.curves[carrier], CircleCurve)
+        and 0.0 < geometry.edge_ranges[index][1] - geometry.edge_ranges[index][0] < np.pi
+    )
+    curve = geometry.curves[geometry.edge_curves[edge]]
+    assert isinstance(curve, CircleCurve)
+    first, last = np.asarray(geometry.edge_ranges[edge], dtype=np.float64)
+    angles = np.asarray((first - 0.1, last + 0.1))
+    center = np.asarray(curve.center)
+    axis0, axis1 = np.asarray(curve.first_axis), np.asarray(curve.second_axis)
+    radius = float(curve.radius)
+    points = center + 2.0 * radius * (
+        np.cos(angles)[:, None] * axis0 + np.sin(angles)[:, None] * axis1
+    )
+    projection = phx.geometry.prepare_brep_projection(model)
+    result = _project(projection, points, _EDGE, edge)
+    repeated = _project(projection, np.tile(points, (3, 1)), _EDGE, edge)
+    np.testing.assert_array_equal(result.status, [_STATUS.SEAM, _STATUS.SEAM])
+    np.testing.assert_array_equal(np.asarray(result.parameters)[:, 0], (first, last))
+    for name in (
+        "points",
+        "parameters",
+        "status",
+        "distance_lower_bounds",
+        "residuals",
+        "normals",
+        "tangents",
+    ):
+        np.testing.assert_array_equal(
+            np.asarray(getattr(repeated, name))[:2], np.asarray(getattr(result, name))
+        )
+    for row, point in enumerate(points):
+        single = _project(projection, [point], _EDGE, edge)
+        for name in (
+            "points",
+            "parameters",
+            "status",
+            "distance_lower_bounds",
+            "residuals",
+            "normals",
+            "tangents",
+        ):
+            np.testing.assert_array_equal(
+                np.asarray(getattr(single, name))[0],
+                np.asarray(getattr(result, name))[row],
+            )
+
+
+def test_intersection_edge_frames_follow_both_cylinders_across_batches() -> None:
     from phydrax.geometry.brep._intersection_curve import IntersectionCurve
     from tests.unit.interchange._native_cad_archive_worker import (
         _orthogonal_quadric_boolean_model,
@@ -560,19 +625,32 @@ def test_intersection_edge_frames_follow_both_cylinders_across_batches(
         frame_id=result.frame_id,
     )
     assert isolated.result_id == single.result_id
-    original = _intersection_projection.project_intersection_curve
-
-    def zero_tangent(*args: Any, **kwargs: Any) -> Any:
-        return replace(original(*args, **kwargs), tangent=np.zeros(3))
-
-    monkeypatch.setattr(
-        _intersection_projection, "project_intersection_curve", zero_tangent
+    endpoints = np.stack(
+        [
+            np.asarray(curve.evaluate_coupled(value).point, dtype=np.float64)
+            for value in (first, last)
+        ]
     )
-    fallback = _project(projection, points[:1], _EDGE, edge)
-    np.testing.assert_array_equal(fallback.status, single.status)
-    np.testing.assert_allclose(
-        fallback.tangents, single.tangents, atol=1e-12, equal_nan=True
+    endpoint_result = _project(projection, endpoints, _EDGE, edge)
+    np.testing.assert_allclose(endpoint_result.points, endpoints, rtol=0, atol=1e-14)
+    assert np.all(np.asarray(endpoint_result.residuals) <= 1e-12)
+    for row, point in enumerate(endpoints):
+        one = _project(projection, [point], _EDGE, edge)
+        np.testing.assert_array_equal(
+            np.asarray(one.points[0]).view(np.uint64),
+            np.asarray(endpoint_result.points[row]).view(np.uint64),
+        )
+        np.testing.assert_array_equal(one.status, endpoint_result.status[row : row + 1])
+    far_query = points[0] + np.asarray((5.25, -7.5, 11.75), dtype=np.float64)
+    far = _project(projection, [far_query], _EDGE, edge)
+    squared = sum(
+        (
+            (Fraction.from_float(float(a)) - Fraction.from_float(float(b))) ** 2
+            for a, b in zip(far.points[0], far_query, strict=True)
+        ),
+        Fraction(0),
     )
+    assert Fraction.from_float(float(far.residuals[0])) ** 2 >= squared
 
 
 @pytest.mark.parametrize(
@@ -812,28 +890,17 @@ def test_edge_point_batches_match_independent_segment_projection() -> None:
     assert np.all(np.asarray(result.residuals) >= distance)
 
 
-def test_edge_point_reference_detects_wrong_native_result(monkeypatch: Any) -> None:
-    from phydrax.geometry.brep import _projection as implementation
-
+def test_edge_point_residual_encloses_far_query_exactly() -> None:
     model = brep_box((0.0, 0.0, 0.0), (2.0, 2.0, 2.0), coordinate_contract=_CONTRACT)
     projection = phx.geometry.prepare_brep_projection(model)
     vertices = np.asarray(model.geometry.vertex_points, dtype=np.float64)
     first, last = vertices[np.asarray(model.geometry.edge_vertices[0])]
-    expected = (first + last) / 2
-    original = implementation.evaluate_host_program
-
-    def wrong(program: Any, points: np.ndarray) -> np.ndarray:
-        return original(program, points) + 1.0
-
-    monkeypatch.setattr(implementation, "evaluate_host_program", wrong)
-    monkeypatch.setattr(
-        implementation, "_distance_bounds", lambda first, second: (0.0, 0.0)
-    )
-    result = _project(projection, [expected], _EDGE, 0)
+    query = (first + last) / 2 + np.asarray((5.25, -7.5, 11.75), dtype=np.float64)
+    result = _project(projection, [query], _EDGE, 0)
     squared = sum(
         (
             (Fraction.from_float(float(a)) - Fraction.from_float(float(b))) ** 2
-            for a, b in zip(result.points[0], expected, strict=True)
+            for a, b in zip(result.points[0], query, strict=True)
         ),
         Fraction(0),
     )
@@ -1864,6 +1931,104 @@ def _rectangle_face_model(patch: Any, bounds: tuple[tuple[float, float], ...]) -
         coordinate_contract=_CONTRACT,
         report=report,
     )
+
+
+@pytest.mark.parametrize(
+    ("surface", "periodic_axis"),
+    (("cylinder", 0), ("cone", 0), ("sphere", 0), ("torus", 0), ("torus", 1)),
+)
+def test_periodic_landmark_projection_matches_scalar_source_route(
+    surface: str, periodic_axis: int
+) -> None:
+    from phydrax.geometry.brep._patches import (
+        ConePatch,
+        CylinderPatch,
+        SpherePatch,
+        TorusPatch,
+    )
+
+    origin, first, second, axis = (
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+    )
+    period = 2.0 * np.pi
+    if surface == "cylinder":
+        patch = CylinderPatch(origin, first, second, axis, 1.0)
+        bounds = ((0.0, -1.0), (period, 1.0))
+    elif surface == "cone":
+        patch = ConePatch(origin, first, second, axis, 1.0, 0.25)
+        bounds = ((0.0, -1.0), (period, 1.0))
+    elif surface == "sphere":
+        patch = SpherePatch(origin, first, second, axis, 1.0)
+        bounds = ((0.0, -1.0), (period, 1.0))
+    else:
+        patch = TorusPatch(origin, first, second, axis, 2.0, 0.5)
+        bounds = ((0.0, 0.0), (period, period))
+    angles = np.asarray(
+        [
+            value
+            for anchor in (0.0, np.pi, period)
+            for value in (
+                np.nextafter(anchor, -np.inf),
+                anchor,
+                np.nextafter(anchor, np.inf),
+            )
+        ],
+        dtype=np.float64,
+    )
+    charts = np.asarray(
+        [(angle, 0.3) if periodic_axis == 0 else (0.7, angle) for angle in angles],
+        dtype=np.float64,
+    )
+    u, v = charts[:, 0], charts[:, 1]
+    if surface == "cylinder":
+        points = np.stack((2 * np.cos(u), 2 * np.sin(u), v), axis=1)
+    elif surface == "cone":
+        radius = 1 + v * np.tan(0.25) + 0.2
+        points = np.stack((radius * np.cos(u), radius * np.sin(u), v), axis=1)
+    elif surface == "sphere":
+        points = np.stack(
+            (2 * np.cos(v) * np.cos(u), 2 * np.cos(v) * np.sin(u), 2 * np.sin(v)),
+            axis=1,
+        )
+    else:
+        points = np.stack(
+            (
+                (2 + 0.8 * np.cos(v)) * np.cos(u),
+                (2 + 0.8 * np.cos(v)) * np.sin(u),
+                0.8 * np.sin(v),
+            ),
+            axis=1,
+        )
+    projection = phx.geometry.prepare_brep_projection(
+        _rectangle_face_model(patch, bounds)
+    )
+    count = points.shape[0]
+    dimensions = np.full(count, int(_FACE), dtype=np.int32)
+    indices = np.zeros(count, dtype=np.int32)
+    batched = projection.project(points, dimensions, indices)
+    face_id = next(
+        entity.entity_id
+        for entity in projection.boundary_entities
+        if entity.dimension == 2 and entity.index == 0
+    )
+    scalar_route = projection.project_boundary(points, entity_ids=(face_id,))
+    np.testing.assert_array_equal(
+        np.asarray(batched.points).view(np.uint64),
+        np.asarray(scalar_route.points).view(np.uint64),
+    )
+    np.testing.assert_array_equal(batched.status, scalar_route.status)
+    for row in range(count):
+        single = projection.project(
+            points[row : row + 1], dimensions[row : row + 1], indices[row : row + 1]
+        )
+        np.testing.assert_array_equal(
+            np.asarray(single.points[0]).view(np.uint64),
+            np.asarray(batched.points[row]).view(np.uint64),
+        )
+        np.testing.assert_array_equal(single.status, batched.status[row : row + 1])
 
 
 @pytest.mark.parametrize("frame", ("radical", "rounded"))

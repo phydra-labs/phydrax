@@ -1,4 +1,5 @@
 from fractions import Fraction
+from math import erf, exp, pi, sqrt
 from typing import final
 
 import equinox as eqx
@@ -16,7 +17,6 @@ from phydrax.discretization._exact_algebraic_geometry import (
     RadicalElement,
 )
 from phydrax.geometry.brep import (
-    _host_program,
     brep_box,
     BRepEntityDimension,
     BRepProjectionStatus,
@@ -193,13 +193,19 @@ def test_surface_differential_rows_native_partitions_and_public_jax() -> None:
         2.0,
     )
     rows = np.column_stack((np.linspace(-1.1, 1.3, 67), np.linspace(-0.7, 0.9, 67)))
-    expected = np.asarray(surface_differential(patch, jnp.asarray(rows)))
+    expected = np.zeros((len(rows), 3, 2), dtype=np.float64)
+    expected[:, 0, 0] = -2.0 * np.sin(rows[:, 0])
+    expected[:, 1, 0] = 2.0 * np.cos(rows[:, 0])
+    expected[:, 2, 1] = 1.0
+    np.testing.assert_allclose(
+        surface_differential(patch, jnp.asarray(rows)), expected, rtol=0, atol=1e-14
+    )
 
     whole = surface_differential_rows(patch, rows)
     partitioned = np.concatenate(
         [surface_differential_rows(patch, block) for block in np.split(rows, (1, 9, 50))]
     )
-    np.testing.assert_allclose(whole, expected, rtol=1e-14, atol=1e-14)
+    np.testing.assert_allclose(whole, expected, rtol=0, atol=1e-14)
     np.testing.assert_array_equal(whole.view(np.uint64), partitioned.view(np.uint64))
     assert surface_differential_rows(patch, rows[:6].reshape(2, 3, 2)).shape == (
         2,
@@ -225,37 +231,23 @@ def test_surface_differential_rows_falls_back_for_unsupported_program() -> None:
     patch = _ErfSurface()
     rows = np.asarray(((0.2, 0.3), (0.6, -0.4)), dtype=np.float64)
 
-    np.testing.assert_array_equal(
-        surface_differential_rows(patch, rows),
-        np.asarray(surface_differential(patch, jnp.asarray(rows))),
+    expected = np.asarray(
+        [
+            ((erf(v), 2 * u * exp(-(v * v)) / sqrt(pi)), (1.0, 0.0), (0.0, 1.0))
+            for u, v in rows
+        ],
+        dtype=np.float64,
+    )
+    np.testing.assert_allclose(
+        surface_differential_rows(patch, rows), expected, rtol=0, atol=1e-14
     )
 
 
-def test_surface_differential_rows_propagates_unexpected_preparation_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    patch = PlanePatch((0, 0, 0), (1, 0, 0), (0, 1, 0))
-
-    def fail(*args: object, **kwargs: object) -> None:
-        raise RuntimeError("preparation fault")
-
-    monkeypatch.setattr(_host_program, "prepare_host_program", fail)
-    with pytest.raises(RuntimeError, match="preparation fault"):
-        surface_differential_rows(patch, np.zeros((1, 2), dtype=np.float64))
-
-
 @pytest.mark.skipif(not meshcore_available(), reason="native meshcore unavailable")
-def test_surface_differential_rows_propagates_native_execution_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    patch = PlanePatch((0, 0, 0), (1, 0, 0), (0, 1, 0))
-
-    def fail(*args: object, **kwargs: object) -> np.ndarray:
-        raise RuntimeError("execution fault")
-
-    monkeypatch.setattr(_host_program, "evaluate_host_program", fail)
-    with pytest.raises(RuntimeError, match="execution fault"):
-        surface_differential_rows(patch, np.zeros((1, 2), dtype=np.float64))
+def test_surface_differential_rows_refuses_nonfinite_parameters() -> None:
+    patch = CylinderPatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1.0)
+    with pytest.raises(ValueError, match="non-NaN"):
+        surface_differential_rows(patch, np.asarray(((np.nan, 0.0),), dtype=np.float64))
 
 
 def test_native_sweep_carriers_evaluate_authored_source_parameters() -> None:

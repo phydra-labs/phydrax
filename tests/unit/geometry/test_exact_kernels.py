@@ -188,25 +188,14 @@ def test_interval_simplex_rational_pole_is_unbounded() -> None:
     )
 
 
-def test_interval_simplex_bounds_detect_dropped_term(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    polynomial: enclosure.Polynomial = {(0,): Fraction(0), (1,): Fraction(2)}
+def test_interval_simplex_bounds_detect_dropped_term() -> None:
+    polynomial: enclosure.Polynomial = {(1,): Fraction(2)}
+    perturbed: enclosure.Polynomial = {}
     corners = ((Fraction(0),), (Fraction(1),))
-    exact = enclosure.polynomial_bounds(polynomial, "simplex", 1)
-
-    def dropped_term(
-        lower: np.ndarray,
-        upper: np.ndarray,
-        corners_lower: np.ndarray,
-        corners_upper: np.ndarray,
-        degree: int,
-        /,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        return np.zeros(1, dtype=np.float64), np.zeros(1, dtype=np.float64)
-
-    monkeypatch.setattr(enclosure, "interval_simplex_bounds", dropped_term)
+    exact = (Fraction(0), Fraction(2))
     lower, upper = enclosure.restricted_polynomial_bounds(polynomial, corners)
+    assert lower <= exact[0] <= exact[1] <= upper
+    lower, upper = enclosure.restricted_polynomial_bounds(perturbed, corners)
     assert not (lower <= exact[0] and exact[1] <= upper)
 
 
@@ -291,32 +280,33 @@ def test_interval_basis_bounds_are_independent_of_batch_and_workers() -> None:
         )
 
 
-def test_prepared_basis_oracle_detects_a_dropped_component(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_prepared_basis_refuses_nonfinite_combination() -> None:
+    basis: tuple[enclosure.Expression, ...] = (
+        {(0,): Fraction(1)},
+        {(0,): Fraction(1)},
+    )
+    coefficient = Fraction.from_float(np.finfo(np.float64).max)
+    assert 2 * coefficient > Fraction.from_float(np.finfo(np.float64).max)
+    lower, upper = ExactCoordinateBank.from_rows(
+        ((coefficient,), (coefficient,))
+    ).interval_endpoints()
+    prepared = enclosure.PreparedIntervalBasis(basis, "simplex", 1)
+    assert prepared.batch_bounds(lower[None, ...], upper[None, ...]) == (None,)
+
+
+def test_prepared_basis_oracle_detects_a_dropped_component() -> None:
     basis: tuple[enclosure.Expression, ...] = (
         {(0,): Fraction(1)},
         {(1,): Fraction(1)},
     )
     prepared = enclosure.PreparedIntervalBasis(basis, "simplex", 1)
-
-    def dropped_term(
-        lower: np.ndarray,
-        upper: np.ndarray,
-        coefficient_lower: np.ndarray,
-        coefficient_upper: np.ndarray,
-        /,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        result = np.zeros((1, 1), dtype=np.float64)
-        return result, result, result, result
-
-    monkeypatch.setattr(enclosure, "interval_basis_bounds", dropped_term)
-    lower, upper = ExactCoordinateBank.from_rows(
-        ((Fraction(0),), (Fraction(2),))
-    ).interval_endpoints()
-    bounds = prepared.batch_bounds(lower[None, ...], upper[None, ...])[0]
-    assert bounds is not None
-    assert not (bounds.outer[0][0] <= 0.0 and 2.0 <= bounds.outer[0][1])
+    for coefficient, contains_exact in ((Fraction(2), True), (Fraction(0), False)):
+        lower, upper = ExactCoordinateBank.from_rows(
+            ((Fraction(0),), (coefficient,))
+        ).interval_endpoints()
+        bounds = prepared.batch_bounds(lower[None, ...], upper[None, ...])[0]
+        assert bounds is not None
+        assert (bounds.outer[0][0] <= 0.0 and 2.0 <= bounds.outer[0][1]) is contains_exact
 
 
 @pytest.mark.parametrize(
