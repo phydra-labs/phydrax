@@ -27,6 +27,8 @@ from ...discretization._exact_algebraic_geometry import (
     rational_coefficient,
 )
 from .._interval_enclosure import (
+    interval_asin,
+    interval_divide,
     interval_multiply,
     interval_subtract,
     prepare_interval_function,
@@ -2635,10 +2637,12 @@ def parallel_cylinder_g1_bounds(
         raise BRepBlendUnsupported(
             "unsupported parallel-cylinder blend: normal-angle enclosure is unresolved"
         )
-    angles = 2.0 * np.arcsin(np.nextafter(norms / 2.0, np.inf))
-    for _ in range(4):
-        angles = np.nextafter(angles, np.inf)
-    return np.stack((np.zeros(2, dtype=np.float64), angles), axis=1)
+    two = np.asarray(2.0, dtype=np.float64)
+    ratio = interval_divide((np.zeros_like(norms), norms), (two, two))
+    # The gate above proves norms < 2; directed rounding may reach the endpoint.
+    ratio = (np.maximum(ratio[0], 0.0), np.minimum(ratio[1], 1.0))
+    angle_upper = interval_multiply(interval_asin(ratio), (two, two))[1]
+    return np.stack((np.zeros(2, dtype=np.float64), angle_upper), axis=1)
 
 
 class ParallelCylinderRadiusMap(AbstractBRepParameterMap):

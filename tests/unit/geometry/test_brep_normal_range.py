@@ -64,6 +64,53 @@ def test_cylinder_normal_ranges_match_analytic_side_and_cap_cones() -> None:
         assert np.asarray(face.singular_points).shape == (0, 2, 3)
 
 
+def test_stored_normal_angles_enclose_exact_endpoint_and_rational_cosines() -> None:
+    import mpmath
+
+    model = brep_cylinder(1.0, 2.0, coordinate_contract=_CONTRACT)
+    top = _face_at_height(model, 2.0)
+    bottom = _face_at_height(model, 0.0)
+    side = _face_at_height(model, 1.0)
+    axial = brep_normal_ranges(
+        model, (0.0, 0.0, 1.0), draft_angle=0.0, angular_tolerance=2.0e-2
+    )
+    oblique = brep_normal_ranges(
+        model, (3.0, 0.0, 4.0), draft_angle=0.0, angular_tolerance=2.0e-2
+    )
+
+    def contains_cosine(bounds: np.ndarray, cosine: Fraction) -> bool:
+        with mpmath.workdps(100):
+            if cosine == 1:
+                return float(bounds[0]) <= 0.0 <= float(bounds[1])
+            if cosine == -1:
+                return (
+                    mpmath.mpf(float(bounds[0]))
+                    <= mpmath.pi
+                    <= mpmath.mpf(float(bounds[1]))
+                )
+            exact = mpmath.mpf(cosine.numerator) / cosine.denominator
+            return (
+                mpmath.cos(mpmath.mpf(float(bounds[0])))
+                >= exact
+                >= mpmath.cos(mpmath.mpf(float(bounds[1])))
+            )
+
+    top_bounds = np.asarray(axial[top].angle_enclosure, dtype=np.float64)
+    bottom_bounds = np.asarray(axial[bottom].angle_enclosure, dtype=np.float64)
+    side_bounds = np.asarray(axial[side].angle_enclosure, dtype=np.float64)
+    oblique_bounds = np.asarray(oblique[top].angle_enclosure, dtype=np.float64)
+    assert contains_cosine(top_bounds, Fraction(1))
+    assert contains_cosine(side_bounds, Fraction(0))
+    assert contains_cosine(bottom_bounds, Fraction(-1))
+    assert contains_cosine(oblique_bounds, Fraction(4, 5))
+
+    # Zero is exact: one binary64 step inward from its lower bound excludes it.
+    assert top_bounds[0] == 0.0
+    inward = top_bounds.copy()
+    inward[0] = np.nextafter(inward[0], np.inf)
+    assert not (inward[0] <= 0.0 <= inward[1])
+
+
 def test_cone_normal_range_contains_analytic_draft_angle() -> None:
     model = brep_cone(1.0, 2.0, 3.0, coordinate_contract=_CONTRACT)
     side = _ranges(model)[_face_at_height(model, 1.5)]

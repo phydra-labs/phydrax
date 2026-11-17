@@ -393,6 +393,28 @@ def test_supported_blend_families_preserve_exact_source_and_report_lineage(
         assert result.g1_angle_bounds.shape == (0, 2)
 
 
+@pytest.mark.parametrize("family", ("closed-cylinder", "closed-cone", "closed-sphere"))
+def test_closed_seam_fillet_encloses_exact_tangent_angle(family: _Family) -> None:
+    source, edge = _fixture(family)
+    result = brep_fillet(source, (source.edge_ids[edge],), 0.25)
+    assert result.status == "certified", result.reason
+    bounds = np.asarray(result.g1_angle_bounds)
+
+    # Both analytic contacts have identical unit normals, hence cosine one
+    # and exact angle zero, independent of the rounded normal witnesses.
+    def contains_zero(values: np.ndarray) -> np.ndarray:
+        return (values[:, 0] <= 0.0) & (0.0 <= values[:, 1])
+
+    assert bounds.shape == (2, 2)
+    assert np.all(contains_zero(bounds))
+    for contact in range(2):
+        inward = bounds.copy()
+        inward[contact, 0] = np.nextafter(0.0, np.inf)
+        accepted = contains_zero(inward)
+        assert not accepted[contact]
+        assert accepted[1 - contact]
+
+
 def test_closed_cylinder_fillet_radius_derivative_preserves_cap_height() -> None:
     source, edge = _fixture("closed-cylinder")
     result = brep_fillet(source, (source.edge_ids[edge],), 0.25)

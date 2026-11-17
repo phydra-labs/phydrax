@@ -254,6 +254,9 @@
   eager dispatch. Trim realization and projection frame bits, and therefore
   `BRepProjectionResult.result_id`, can change; certification gates and source
   identities remain unchanged.
+- B-Rep normal and dihedral ranges, blend tangency bounds, and native-curve
+  turning controls use outward interval inverse trigonometry and norm bounds.
+  Stored angle endpoints and hard-control outcomes can consequently change.
 - CAD source bounds, analytic surface derivatives, periodic offsets, and the
   quadratic tetrahedron screen execute supported interval programs in batches.
   Their directed endpoints and exact-arithmetic fallback remain unchanged.
