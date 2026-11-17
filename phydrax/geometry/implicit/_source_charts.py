@@ -1523,15 +1523,32 @@ def _profile_covers_singularities_away_from_zero_set(
 
 
 @dataclass(frozen=True, slots=True)
+class _PieceIntervalInputs:
+    """Geometry held fixed until a piece's initial field boxes are enclosed."""
+
+    face: _FaceEnclosure
+    triangle: TriangleReference
+    tangents: IntervalDerivative3x2
+    center_tangents: IntervalDerivative3x2
+    offsets: IntervalVector2
+
+
+type _PieceResidual = tuple[IntervalVector3, Interval, Interval | None]
+
+
+@dataclass(frozen=True, slots=True)
 class _BoxRequests:
     """Field and Hessian boxes one piece proof needs before its next step."""
 
     field: tuple[tuple[np.ndarray, np.ndarray], ...]
     hessian: tuple[tuple[np.ndarray, np.ndarray], ...] = ()
+    piece: _PieceIntervalInputs | None = None
 
 
 type _FieldBox = tuple[Interval, IntervalVector3]
-type _BoxResults = tuple[tuple[_FieldBox, ...], tuple[IntervalMatrix3, ...]]
+type _BoxResults = tuple[
+    tuple[_FieldBox, ...], tuple[IntervalMatrix3, ...], _PieceResidual | None
+]
 type _PieceSteps = Generator[_BoxRequests, _BoxResults, _PieceOutcome]
 
 
@@ -1652,6 +1669,10 @@ def _evaluate_box_requests(
             for row in range(len(hessian_boxes))
         ]
     results: list[_BoxResults | None] = []
+    piece_inputs: list[
+        tuple[_PieceIntervalInputs, _FieldBox, _FieldBox, IntervalMatrix3]
+    ] = []
+    piece_rows: list[int] = []
     field_start = hessian_start = 0
     for request in requests:
         field_stop = field_start + len(request.field)
@@ -1659,15 +1680,22 @@ def _evaluate_box_requests(
         if bool(np.all(field_smooth[field_start:field_stop])) and bool(
             np.all(hessian_smooth[hessian_start:hessian_stop])
         ):
-            results.append(
-                (
-                    tuple(field_values[field_start:field_stop]),
-                    tuple(hessian_values[hessian_start:hessian_stop]),
-                )
-            )
+            fields = tuple(field_values[field_start:field_stop])
+            hessians = tuple(hessian_values[hessian_start:hessian_stop])
+            results.append((fields, hessians, None))
+            if request.piece is not None:
+                piece_rows.append(len(results) - 1)
+                piece_inputs.append((request.piece, fields[0], fields[1], hessians[0]))
         else:
             results.append(None)
         field_start, hessian_start = field_stop, hessian_stop
+    for row, residual in zip(
+        piece_rows, _piece_interval_batches(piece_inputs), strict=True
+    ):
+        result = results[row]
+        if result is None:
+            raise RuntimeError("A smooth implicit piece lost its interval boxes.")
+        results[row] = (result[0], result[1], residual)
     return results
 
 
@@ -1744,7 +1772,7 @@ def _run_piece_workset(
             result = results[offset]
             # Each response is consumed exactly once. Release it before the
             # next proof allocates its next-round boxes.
-            results[offset] = ((), ())
+            results[offset] = ((), (), None)
             if result is None:
                 steps[index].close()
                 outcomes[index] = _CREASE_OUTCOME
@@ -1964,65 +1992,252 @@ def _piece_curvatures(
     )
 
 
-def _taylor_value_interval(
-    center_value: Interval,
-    center_gradient: IntervalVector3,
-    center_tangents: IntervalDerivative3x2,
-    gradient: IntervalVector3,
-    hessian: IntervalMatrix3,
-    tangents: IntervalDerivative3x2,
-    curvatures: tuple[IntervalVector3, IntervalVector3, IntervalVector3],
-    offsets: IntervalVector2,
-    /,
-) -> Interval:
-    """Second-order Taylor form of ``g(u) = f(P(u))`` about the piece centre ``c``.
+type _IntervalLanes = tuple[np.ndarray, np.ndarray]
 
-    ``g(c + d) = g(c) + Dg(c) d + d^T D^2 g(xi) d / 2`` with ``xi`` in the piece and
-    ``D^2 g_jk = P_j^T H P_k + grad f . P_jk`` enclosed over the piece. The
-    first-order term uses the narrow centre gradient, so a face whose gradient
-    turns across the piece is not charged that turn times the full offset.
-    """
-    linear = _mean_value_interval(
-        center_value, _chain_slopes(center_gradient, center_tangents), offsets
+
+def _lane_interval(values: np.ndarray, /) -> _IntervalLanes:
+    return values[..., 0], values[..., 1]
+
+
+def _lane_add(first: _IntervalLanes, second: _IntervalLanes, /) -> _IntervalLanes:
+    return (
+        np.nextafter(first[0] + second[0], -np.inf),
+        np.nextafter(first[1] + second[1], np.inf),
     )
 
-    # H P_j per Hessian row: hessian_tangents[row][j] encloses (H P_j)_row.
-    hessian_tangents = tuple(_chain_slopes(hessian[row], tangents) for row in range(3))
 
-    def second(first: int, second_axis: int, curvature: int, /) -> Interval:
-        return sum_interval(
+def _lane_multiply(first: _IntervalLanes, second: _IntervalLanes, /) -> _IntervalLanes:
+    ac = first[0] * second[0]
+    ad = first[0] * second[1]
+    bc = first[1] * second[0]
+    bd = first[1] * second[1]
+    invalid = np.isnan(ac) | np.isnan(ad) | np.isnan(bc) | np.isnan(bd)
+    low = ac
+    high = ac
+    for product in (ad, bc, bd):
+        # Python's min/max keep the first operand on ties, including signed zero.
+        low = np.where(product < low, product, low)
+        high = np.where(product > high, product, high)
+    return (
+        np.where(invalid, -np.inf, np.nextafter(low, -np.inf)),
+        np.where(invalid, np.inf, np.nextafter(high, np.inf)),
+    )
+
+
+def _lane_scale(value: _IntervalLanes, scalar: float, /) -> _IntervalLanes:
+    first = value[0] * scalar
+    second = value[1] * scalar
+    return (
+        np.nextafter(np.where(second < first, second, first), -np.inf),
+        np.nextafter(np.where(second > first, second, first), np.inf),
+    )
+
+
+def _lane_sum(values: tuple[_IntervalLanes, ...], /) -> _IntervalLanes:
+    zero = np.zeros_like(values[0][0], dtype=np.float64)
+    total = (zero, zero)
+    for value in values:
+        total = _lane_add(total, value)
+    return total
+
+
+def _lane_intersection(
+    first: _IntervalLanes, second: _IntervalLanes, /
+) -> _IntervalLanes:
+    lower = np.where(second[0] > first[0], second[0], first[0])
+    upper = np.where(second[1] < first[1], second[1], first[1])
+    overlaps = lower <= upper
+    return np.where(overlaps, lower, first[0]), np.where(overlaps, upper, first[1])
+
+
+def _lane_slopes(
+    row: np.ndarray, tangents: np.ndarray, /
+) -> tuple[_IntervalLanes, _IntervalLanes]:
+    return (
+        _lane_sum(
+            tuple(
+                _lane_multiply(
+                    _lane_interval(row[:, axis]), _lane_interval(tangents[:, axis, 0])
+                )
+                for axis in range(3)
+            )
+        ),
+        _lane_sum(
+            tuple(
+                _lane_multiply(
+                    _lane_interval(row[:, axis]), _lane_interval(tangents[:, axis, 1])
+                )
+                for axis in range(3)
+            )
+        ),
+    )
+
+
+def _lane_mean(
+    center: _IntervalLanes,
+    slopes: tuple[_IntervalLanes, _IntervalLanes],
+    offsets: np.ndarray,
+    /,
+) -> _IntervalLanes:
+    return _lane_sum(
+        (
+            center,
+            _lane_multiply(slopes[0], _lane_interval(offsets[:, 0])),
+            _lane_multiply(slopes[1], _lane_interval(offsets[:, 1])),
+        )
+    )
+
+
+def _offset_square(value: Interval, /) -> Interval:
+    magnitude = max(abs(value[0]), abs(value[1]))
+    lower = 0.0 if value[0] <= 0.0 <= value[1] else min(value[0] ** 2, value[1] ** 2)
+    return (
+        math.nextafter(lower, -math.inf) if lower > 0.0 else 0.0,
+        math.nextafter(magnitude * magnitude, math.inf),
+    )
+
+
+def _lane_taylor(
+    center_value: np.ndarray,
+    center_gradient: np.ndarray,
+    center_tangents: np.ndarray,
+    gradient: np.ndarray,
+    hessian: np.ndarray,
+    tangents: np.ndarray,
+    curvatures: np.ndarray,
+    offsets: np.ndarray,
+    squares: np.ndarray,
+    /,
+) -> _IntervalLanes:
+    linear = _lane_mean(
+        _lane_interval(center_value),
+        _lane_slopes(center_gradient, center_tangents),
+        offsets,
+    )
+    hessian_tangents = tuple(_lane_slopes(hessian[:, row], tangents) for row in range(3))
+
+    def second(first: int, second_axis: int, curvature: int, /) -> _IntervalLanes:
+        return _lane_sum(
             (
                 *(
-                    _interval_multiply(
-                        tangents[row][first], hessian_tangents[row][second_axis]
+                    _lane_multiply(
+                        _lane_interval(tangents[:, row, first]),
+                        hessian_tangents[row][second_axis],
                     )
                     for row in range(3)
                 ),
                 *(
-                    _interval_multiply(gradient[row], curvatures[row][curvature])
+                    _lane_multiply(
+                        _lane_interval(gradient[:, row]),
+                        _lane_interval(curvatures[:, row, curvature]),
+                    )
                     for row in range(3)
                 ),
             )
         )
 
-    def square(value: Interval, /) -> Interval:
-        magnitude = max(abs(value[0]), abs(value[1]))
-        lower = 0.0 if value[0] <= 0.0 <= value[1] else min(value[0] ** 2, value[1] ** 2)
-        return (
-            math.nextafter(lower, -math.inf) if lower > 0.0 else 0.0,
-            math.nextafter(magnitude * magnitude, math.inf),
-        )
-
-    quadratic = sum_interval(
+    quadratic = _lane_sum(
         (
-            _interval_multiply(second(0, 0, 0), square(offsets[0])),
-            _interval_scale(
-                _interval_multiply(second(0, 1, 1), _interval_multiply(*offsets)), 2.0
+            _lane_multiply(second(0, 0, 0), _lane_interval(squares[:, 0])),
+            _lane_scale(
+                _lane_multiply(
+                    second(0, 1, 1),
+                    _lane_multiply(
+                        _lane_interval(offsets[:, 0]), _lane_interval(offsets[:, 1])
+                    ),
+                ),
+                2.0,
             ),
-            _interval_multiply(second(1, 1, 2), square(offsets[1])),
+            _lane_multiply(second(1, 1, 2), _lane_interval(squares[:, 1])),
         )
     )
-    return _interval_add(linear, _interval_scale(quadratic, 0.5))
+    return _lane_add(linear, _lane_scale(quadratic, 0.5))
+
+
+def _piece_interval_batches(
+    inputs: Sequence[tuple[_PieceIntervalInputs, _FieldBox, _FieldBox, IntervalMatrix3]],
+    /,
+) -> list[_PieceResidual]:
+    """Evaluate the same interval operation order for each independent piece."""
+    if not inputs:
+        return []
+    natural_values = np.asarray([item[1][0] for item in inputs], dtype=np.float64)
+    natural_gradients = np.asarray([item[1][1] for item in inputs], dtype=np.float64)
+    center_values = np.asarray([item[2][0] for item in inputs], dtype=np.float64)
+    center_gradients = np.asarray([item[2][1] for item in inputs], dtype=np.float64)
+    hessians = np.asarray([item[3] for item in inputs], dtype=np.float64)
+    tangents = np.asarray([item[0].tangents for item in inputs], dtype=np.float64)
+    center_tangents = np.asarray(
+        [item[0].center_tangents for item in inputs], dtype=np.float64
+    )
+    offsets = np.asarray([item[0].offsets for item in inputs], dtype=np.float64)
+    with np.errstate(over="ignore", invalid="ignore", under="ignore"):
+        gradients = tuple(
+            _lane_intersection(
+                _lane_interval(natural_gradients[:, axis]),
+                _lane_mean(
+                    _lane_interval(center_gradients[:, axis]),
+                    _lane_slopes(hessians[:, axis], tangents),
+                    offsets,
+                ),
+            )
+            for axis in range(3)
+        )
+        gradient_array = np.stack(
+            [np.stack(gradient, axis=-1) for gradient in gradients], axis=1
+        )
+        norms = [
+            _gradient_norm_interval(gradient_array[row, :, 0], gradient_array[row, :, 1])
+            for row in range(len(inputs))
+        ]
+        active = [row for row, norm in enumerate(norms) if not norm[0] <= 0.0]
+        values: dict[int, Interval] = {}
+        if active:
+            active_inputs = [inputs[row][0] for row in active]
+            curvature = np.asarray(
+                [_piece_curvatures(item.face, item.triangle) for item in active_inputs],
+                dtype=np.float64,
+            )
+            squares = np.asarray(
+                [
+                    [_offset_square(value) for value in item.offsets]
+                    for item in active_inputs
+                ],
+                dtype=np.float64,
+            )
+            target = tangents[active]
+            offset = offsets[active]
+            gradient = gradient_array[active]
+            center_value = center_values[active]
+            mean = _lane_mean(
+                _lane_interval(center_value), _lane_slopes(gradient, target), offset
+            )
+            taylor = _lane_taylor(
+                center_value,
+                center_gradients[active],
+                center_tangents[active],
+                gradient,
+                hessians[active],
+                target,
+                curvature,
+                offset,
+                squares,
+            )
+            residual = _lane_intersection(
+                _lane_intersection(_lane_interval(natural_values[active]), mean), taylor
+            )
+            values = {
+                row: (float(residual[0][index]), float(residual[1][index]))
+                for index, row in enumerate(active)
+            }
+    return [
+        (
+            _interval_vector3(gradient_array[row, :, 0], gradient_array[row, :, 1]),
+            norms[row],
+            values.get(row),
+        )
+        for row in range(len(inputs))
+    ]
 
 
 def _shifted_center_box(
@@ -2101,64 +2316,23 @@ def _face_piece_steps(
             False,
         )
     center_low, center_high, offsets, center_tangents = _piece_center(face, triangle)
-    fields, hessians = yield _BoxRequests(
-        ((p_low, p_high), (center_low, center_high)), ((p_low, p_high),)
+    fields, hessians, piece = yield _BoxRequests(
+        ((p_low, p_high), (center_low, center_high)),
+        ((p_low, p_high),),
+        _PieceIntervalInputs(
+            face, triangle, target_derivatives, center_tangents, offsets
+        ),
     )
-    (natural_value, natural_gradient), (center_value, center_gradient) = fields
+    (_, _), (center_value, center_gradient) = fields
     hessian_intervals = hessians[0]
-    # Mean-value forms about the piece centre c: any smooth g of the target
-    # point satisfies g(P(u)) in g(P(c)) + Dg(P box) P_u(piece) (u - c). A
-    # natural box extension straddles the zero set across its whole box; these
-    # forms shrink with the piece and keep the root tube close to the face.
-    gradient_p: IntervalVector3 = (
-        _intersect_intervals(
-            natural_gradient[0],
-            _mean_value_interval(
-                center_gradient[0],
-                _chain_slopes(hessian_intervals[0], target_derivatives),
-                offsets,
-            ),
-        ),
-        _intersect_intervals(
-            natural_gradient[1],
-            _mean_value_interval(
-                center_gradient[1],
-                _chain_slopes(hessian_intervals[1], target_derivatives),
-                offsets,
-            ),
-        ),
-        _intersect_intervals(
-            natural_gradient[2],
-            _mean_value_interval(
-                center_gradient[2],
-                _chain_slopes(hessian_intervals[2], target_derivatives),
-                offsets,
-            ),
-        ),
-    )
-    gradient_lower = np.asarray([value[0] for value in gradient_p], dtype=np.float64)
-    gradient_upper = np.asarray([value[1] for value in gradient_p], dtype=np.float64)
-    gradient_norm = _gradient_norm_interval(gradient_lower, gradient_upper)
+    if piece is None:
+        raise RuntimeError("An implicit piece omitted its interval residual.")
+    gradient_p, gradient_norm, residual = piece
     if gradient_norm[0] <= 0.0:
         return None, "target face has no strict source-gradient norm enclosure", True
-    value_low, value_high = _intersect_intervals(
-        _intersect_intervals(
-            natural_value,
-            _mean_value_interval(
-                center_value, _chain_slopes(gradient_p, target_derivatives), offsets
-            ),
-        ),
-        _taylor_value_interval(
-            center_value,
-            center_gradient,
-            center_tangents,
-            gradient_p,
-            hessian_intervals,
-            target_derivatives,
-            _piece_curvatures(face, triangle),
-            offsets,
-        ),
-    )
+    if residual is None:
+        raise RuntimeError("A regular implicit piece omitted its residual bounds.")
+    value_low, value_high = residual
     residual = (value_low, value_high)
     exact_on_source = value_low == 0.0 and value_high == 0.0
     # The normal-line root parameter interval T contains 0 and the root estimated
@@ -2230,7 +2404,7 @@ def _face_piece_steps(
                 _shifted_center_box(center_low, center_high, center_gradient, shift)
                 for shift in root_parameters
             ]
-            fields, _ = yield _BoxRequests(
+            fields, _, _ = yield _BoxRequests(
                 (
                     (tube_lower, tube_upper),
                     *endpoint_boxes,
@@ -2601,7 +2775,7 @@ def _centered_root_distance(
         _interval_square(center_parameters), _interval_square(center_norm)
     )
     tube = _lifted_box(base_box, parameters, gradient_p)
-    fields, _ = yield _BoxRequests((_box_arrays(tube),))
+    fields, _, _ = yield _BoxRequests((_box_arrays(tube),))
     derivatives = _chart_derivative_intervals(
         target_derivatives, gradient_p, fields[0][1], hessian_p, parameters
     )
@@ -2654,7 +2828,7 @@ def _narrowed_root_parameters(
     """
     for _ in range(steps):
         middle = 0.5 * parameters[0] + 0.5 * parameters[1]
-        fields, _ = yield _BoxRequests(
+        fields, _, _ = yield _BoxRequests(
             (
                 _box_arrays(_lifted_box(base_box, (middle, middle), gradient_p)),
                 _box_arrays(_lifted_box(base_box, parameters, gradient_p)),
@@ -2990,7 +3164,7 @@ def _transversal_injectivity(
         _, results = yield _FaceRound(
             queries=(_BoxRequests(((face_low, face_high),), ((face_low, face_high),)),)
         )
-        ((_, face_gradient),), (face_hessian,) = results[0]
+        ((_, face_gradient),), (face_hessian,), _ = results[0]
         face_fields = (face_gradient, face_hessian)
     conditioner = face.conditioner
     # For a conditioned face A K replaces A: det[A K, w] = det K det[A, w].
@@ -4287,6 +4461,34 @@ def _edge_polynomial(
     Rational coefficients expand binomially into the canonical form
     `compose_expression` returns; other coefficients compose there.
     """
+    if (
+        start in _STANDARD_TRIANGLE
+        and stop in _STANDARD_TRIANGLE
+        and all(exponent in ((0, 0), (1, 0), (0, 1)) for exponent in expression)
+    ):
+        zero = Fraction(0)
+        constant = expression.get((0, 0), zero)
+        along_u = expression.get((1, 0), zero)
+        along_v = expression.get((0, 1), zero)
+        if all(isinstance(value, Fraction) for value in (constant, along_u, along_v)):
+            first = (
+                constant + along_u
+                if start[0]
+                else constant + along_v
+                if start[1]
+                else constant
+            )
+            last = (
+                constant + along_u
+                if stop[0]
+                else constant + along_v
+                if stop[1]
+                else constant
+            )
+            change = last - first
+            return {
+                power: value for power, value in (((0,), first), ((1,), change)) if value
+            }
     first_start, second_start = start
     first_step, second_step = stop[0] - first_start, stop[1] - second_start
     result: dict[int, Fraction] = {}

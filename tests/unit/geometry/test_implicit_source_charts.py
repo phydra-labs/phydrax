@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import math
 from collections.abc import Sequence
 from dataclasses import replace
 from fractions import Fraction
@@ -76,9 +77,20 @@ from phydrax.geometry.implicit._policy import (
 )
 from phydrax.geometry.implicit._source_charts import (
     _AdaptiveImplicitProjectionResult,
+    _chain_slopes,
+    _interval_add,
+    _interval_multiply,
+    _interval_scale,
+    _mean_value_interval,
     AdaptiveImplicitRootChartMap,
     certify_adaptive_implicit_charts,
+    Interval,
+    IntervalDerivative3x2,
+    IntervalMatrix3,
+    IntervalVector2,
+    IntervalVector3,
     prepare_adaptive_implicit_root_charts,
+    sum_interval,
 )
 from phydrax.meshing._curving import _straight_geometry
 from phydrax.typing import ConvertibleToArray, Identifier, PRNGKey
@@ -90,6 +102,235 @@ type GridCorner = tuple[int, int, int]
 type GridEdge = tuple[GridCorner, GridCorner]
 type SourceCellKey = tuple[int, int, int, int]
 type RootEdgeTriangle = tuple[GridEdge, GridEdge, GridEdge]
+
+
+def _scalar_taylor_interval(
+    center_value: Interval,
+    center_gradient: IntervalVector3,
+    center_tangents: IntervalDerivative3x2,
+    gradient: IntervalVector3,
+    hessian: IntervalMatrix3,
+    tangents: IntervalDerivative3x2,
+    curvatures: tuple[IntervalVector3, IntervalVector3, IntervalVector3],
+    offsets: IntervalVector2,
+    /,
+) -> Interval:
+    """Second-order Taylor form of ``g(u) = f(P(u))`` about the piece centre ``c``.
+
+    ``g(c + d) = g(c) + Dg(c) d + d^T D^2 g(xi) d / 2`` with ``xi`` in the piece and
+    ``D^2 g_jk = P_j^T H P_k + grad f . P_jk`` enclosed over the piece. The
+    first-order term uses the narrow centre gradient, so a face whose gradient
+    turns across the piece is not charged that turn times the full offset.
+    """
+    linear = _mean_value_interval(
+        center_value, _chain_slopes(center_gradient, center_tangents), offsets
+    )
+
+    # H P_j per Hessian row: hessian_tangents[row][j] encloses (H P_j)_row.
+    hessian_tangents = tuple(_chain_slopes(hessian[row], tangents) for row in range(3))
+
+    def second(first: int, second_axis: int, curvature: int, /) -> Interval:
+        return sum_interval(
+            (
+                *(
+                    _interval_multiply(
+                        tangents[row][first], hessian_tangents[row][second_axis]
+                    )
+                    for row in range(3)
+                ),
+                *(
+                    _interval_multiply(gradient[row], curvatures[row][curvature])
+                    for row in range(3)
+                ),
+            )
+        )
+
+    def square(value: Interval, /) -> Interval:
+        magnitude = max(abs(value[0]), abs(value[1]))
+        lower = 0.0 if value[0] <= 0.0 <= value[1] else min(value[0] ** 2, value[1] ** 2)
+        return (
+            math.nextafter(lower, -math.inf) if lower > 0.0 else 0.0,
+            math.nextafter(magnitude * magnitude, math.inf),
+        )
+
+    quadratic = sum_interval(
+        (
+            _interval_multiply(second(0, 0, 0), square(offsets[0])),
+            _interval_scale(
+                _interval_multiply(second(0, 1, 1), _interval_multiply(*offsets)), 2.0
+            ),
+            _interval_multiply(second(1, 1, 2), square(offsets[1])),
+        )
+    )
+    return _interval_add(linear, _interval_scale(quadratic, 0.5))
+
+
+def test_batched_interval_operations_match_scalar_bits() -> None:
+    random = np.random.default_rng(71)
+    first = np.sort(random.uniform(-10.0, 10.0, (128, 2)), axis=-1)
+    second = np.sort(random.uniform(-10.0, 10.0, (128, 2)), axis=-1)
+    tiny = np.nextafter(0.0, 1.0)
+    first[:5] = (
+        (-0.0, 0.0),
+        (-np.inf, np.inf),
+        (-tiny, tiny),
+        (np.inf, np.inf),
+        (-np.inf, -np.inf),
+    )
+    second[:5] = (
+        (0.0, -0.0),
+        (-0.0, 0.0),
+        (tiny, tiny),
+        (-np.inf, -np.inf),
+        (np.inf, np.inf),
+    )
+    first_lanes = (first[:, 0], first[:, 1])
+    second_lanes = (second[:, 0], second[:, 1])
+    with np.errstate(over="ignore", invalid="ignore", under="ignore"):
+        actual = (
+            source_charts._lane_add(first_lanes, second_lanes),
+            source_charts._lane_multiply(first_lanes, second_lanes),
+            source_charts._lane_intersection(first_lanes, second_lanes),
+            source_charts._lane_scale(first_lanes, -1.0),
+        )
+    operations = (
+        lambda a, b: source_charts._interval_add(a, b),
+        lambda a, b: source_charts._interval_multiply(a, b),
+        lambda a, b: source_charts._intersect_intervals(a, b),
+        lambda a, b: source_charts._interval_scale(a, -1.0),
+    )
+    for observed, operation in zip(actual, operations, strict=True):
+        expected = np.asarray(
+            [
+                operation(
+                    (float(first[row, 0]), float(first[row, 1])),
+                    (float(second[row, 0]), float(second[row, 1])),
+                )
+                for row in range(len(first))
+            ],
+            dtype=np.float64,
+        )
+        np.testing.assert_array_equal(
+            observed[0].view(np.uint64), expected[:, 0].view(np.uint64)
+        )
+        np.testing.assert_array_equal(
+            observed[1].view(np.uint64), expected[:, 1].view(np.uint64)
+        )
+
+
+def test_batched_taylor_bounds_match_scalar_bits_and_batch_splits() -> None:
+    random = np.random.default_rng(417)
+    count = 67
+
+    def intervals(shape: tuple[int, ...]) -> np.ndarray:
+        result = np.sort(random.uniform(-2.0, 2.0, (*shape, 2)), axis=-1)
+        result[0] = (-0.0, 0.0)
+        result[1] = (-np.inf, np.inf)
+        result[2] = (-np.nextafter(0.0, 1.0), np.nextafter(0.0, 1.0))
+        return result
+
+    center = intervals((count,))
+    center_gradient = intervals((count, 3))
+    center_tangents = intervals((count, 3, 2))
+    gradient = intervals((count, 3))
+    hessian = intervals((count, 3, 3))
+    tangents = intervals((count, 3, 2))
+    curvatures = intervals((count, 3, 3))
+    offsets = np.sort(random.uniform(-1.0, 1.0, (count, 2, 2)), axis=-1)
+    offsets[0] = (-0.0, 0.0)
+    offsets[1] = (-1.0, 1.0)
+    offsets[2] = (-np.nextafter(0.0, 1.0), np.nextafter(0.0, 1.0))
+    squares = np.asarray(
+        [
+            [
+                source_charts._offset_square(cast(Interval, tuple(map(float, value))))
+                for value in row
+            ]
+            for row in offsets
+        ],
+        dtype=np.float64,
+    )
+    arguments = (
+        center,
+        center_gradient,
+        center_tangents,
+        gradient,
+        hessian,
+        tangents,
+        curvatures,
+        offsets,
+        squares,
+    )
+    with np.errstate(over="ignore", invalid="ignore", under="ignore"):
+        lower, upper = source_charts._lane_taylor(*arguments)
+        singles = [
+            source_charts._lane_taylor(
+                *(argument[row : row + 1] for argument in arguments)
+            )
+            for row in range(count)
+        ]
+    scalar = np.asarray(
+        [
+            _scalar_taylor_interval(
+                cast(Interval, tuple(map(float, center[row]))),
+                cast(IntervalVector3, tuple(map(tuple, center_gradient[row].tolist()))),
+                cast(
+                    IntervalDerivative3x2,
+                    tuple(
+                        tuple(map(tuple, value))
+                        for value in center_tangents[row].tolist()
+                    ),
+                ),
+                cast(IntervalVector3, tuple(map(tuple, gradient[row].tolist()))),
+                cast(
+                    IntervalMatrix3,
+                    tuple(tuple(map(tuple, value)) for value in hessian[row].tolist()),
+                ),
+                cast(
+                    IntervalDerivative3x2,
+                    tuple(tuple(map(tuple, value)) for value in tangents[row].tolist()),
+                ),
+                cast(
+                    tuple[IntervalVector3, IntervalVector3, IntervalVector3],
+                    tuple(tuple(map(tuple, value)) for value in curvatures[row].tolist()),
+                ),
+                cast(IntervalVector2, tuple(map(tuple, offsets[row].tolist()))),
+            )
+            for row in range(count)
+        ],
+        dtype=np.float64,
+    )
+    np.testing.assert_array_equal(lower.view(np.uint64), scalar[:, 0].view(np.uint64))
+    np.testing.assert_array_equal(upper.view(np.uint64), scalar[:, 1].view(np.uint64))
+    np.testing.assert_array_equal(
+        lower.view(np.uint64),
+        np.concatenate([value[0] for value in singles]).view(np.uint64),
+    )
+    np.testing.assert_array_equal(
+        upper.view(np.uint64),
+        np.concatenate([value[1] for value in singles]).view(np.uint64),
+    )
+
+
+def test_narrowed_piece_gradient_cannot_certify(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bounds, hessian, surface, face, _ = _near_band_sphere_face()
+
+    def broken_intersection(
+        first: source_charts._IntervalLanes, second: source_charts._IntervalLanes, /
+    ) -> source_charts._IntervalLanes:
+        zero = np.zeros_like(first[0], dtype=np.float64)
+        return zero, zero
+
+    monkeypatch.setattr(source_charts, "_lane_intersection", broken_intersection)
+    step = source_charts._face_piece_steps(
+        surface, face, source_charts._STANDARD_TRIANGLE, 1, (0, 1, 2), None, None
+    )
+    (outcome,), _ = source_charts._run_piece_steps(bounds, hessian, (step,))
+    proof, detail, _ = outcome
+    assert proof is None
+    assert "gradient norm enclosure" in detail
 
 
 def _grid_corner(values: np.ndarray, /) -> GridCorner:
