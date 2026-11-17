@@ -78,18 +78,12 @@ def _pack_words(values: Sequence[int], limbs: int, /) -> bytes:
         )
         return words.tobytes()
 
-    bits = 64 * limbs
-    mask = (1 << bits) - 1
-
-    def combine(start: int, end: int) -> int:
-        if end - start == 1:
-            return values[start] & mask
-        middle = (start + end) // 2
-        return combine(start, middle) | (
-            combine(middle, end) << (bits * (middle - start))
-        )
-
-    return combine(0, len(values)).to_bytes(len(values) * limbs * 8, "little")
+    integers = np.asarray(values, dtype=np.object_)
+    words = np.empty((len(values), limbs), dtype="<u8")
+    mask = (1 << 64) - 1
+    for limb in range(limbs):
+        words[:, limb] = (integers >> (64 * limb)) & mask
+    return words.tobytes()
 
 
 def integer_net_batch(
