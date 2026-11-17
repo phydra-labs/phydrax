@@ -140,7 +140,7 @@ class _PreparedPairValue(StrictModule):
         self, lower: ArrayLike, upper: ArrayLike, /
     ) -> tuple[np.ndarray, np.ndarray]:
         from .._interval_enclosure import interval_subtract
-        from ._root_bindings import _patch_box
+        from ._root_bindings import _patch_boxes
 
         lower_ = np.asarray(lower, dtype=np.float64)
         upper_ = np.asarray(upper, dtype=np.float64)
@@ -152,9 +152,15 @@ class _PreparedPairValue(StrictModule):
             return self.binary_value.evaluate(lower_, upper_)
         result_lower = np.empty((lower_.shape[0], 3), dtype=np.float64)
         result_upper = np.empty_like(result_lower)
+        boxes = _patch_boxes(
+            tuple(
+                (patch, lower_[index, start : start + 2], upper_[index, start : start + 2])
+                for index in range(lower_.shape[0])
+                for patch, start in ((self.system.first, 0), (self.system.second, 2))
+            )
+        )
         for index in range(lower_.shape[0]):
-            first = _patch_box(self.system.first, lower_[index, :2], upper_[index, :2])
-            second = _patch_box(self.system.second, lower_[index, 2:], upper_[index, 2:])
+            first, second = boxes[2 * index : 2 * index + 2]
             result_lower[index], result_upper[index] = interval_subtract(
                 (first[0], first[1]), (second[0], second[1])
             )
