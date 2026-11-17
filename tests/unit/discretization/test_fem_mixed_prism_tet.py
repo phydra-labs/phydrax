@@ -445,7 +445,9 @@ def test_mixed_form_entity_routing_matches_triangular_trace(
             mesh, block, elements[index], 0, np.asarray(mesh.vertex_global_ids)
         )
         execution = np.asarray(dofs.cell_transforms[index][0])
-        np.testing.assert_array_equal(np.asarray(exact, dtype=execution.dtype), execution)
+        np.testing.assert_array_equal(
+            np.asarray(exact.rows, dtype=execution.dtype), execution
+        )
     coefficients = np.arange(dofs.global_dof_count, dtype=np.float64) / 17.0
     prism_points = jnp.asarray(((0.2, 0.2, 1.0), (0.6, 0.1, 1.0)))
     tetra_points = jnp.asarray(((0.6, 0.2, 0.2), (0.3, 0.1, 0.6)))
@@ -1168,7 +1170,7 @@ def test_operation_local_reference_gradients_preserve_actual_form_orientation(
             cached = _exact_form_cell_transform(
                 mesh, block, element, row, vertex_ids, transform_cache, gradient_cache
             )
-            assert cached == uncached
+            assert cached.rows == uncached.rows
     assert set(gradient_cache) == (
         {block.cell_kind for block in mesh.blocks} if twist == "twisted" else set()
     )
