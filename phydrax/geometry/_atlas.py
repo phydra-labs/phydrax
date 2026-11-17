@@ -258,33 +258,29 @@ def _segment_points(
     points, segment = record.points, record.segment
     missing = tuple(dict.fromkeys(value for value in parameters if value not in points))
     if missing:
-        try:
-            if not record.point_program_ready:
-                record.point_program = prepare_host_program(
-                    lambda value: segment.evaluate(value[0]), 1
-                )
-                record.point_program_ready = True
-            query = np.asarray(
-                [[_turn_start_parameter(segment, value)] for value in missing],
-                dtype=np.float64,
+        if not record.point_program_ready:
+            record.point_program = prepare_host_program(
+                lambda value: segment.evaluate(value[0]), 1
             )
-            if record.point_program is None:
-                values = tuple(
-                    np.asarray(segment.evaluate(jnp.asarray(value[0])), dtype=np.float64)
-                    for value in query
-                )
-            else:
-                values = evaluate_host_program(record.point_program, query)
-            for parameter, raw in zip(missing, values, strict=True):
-                value = np.asarray(raw, dtype=np.float64).reshape(-1)
-                if value.shape != (2,) or not np.all(np.isfinite(value)):
-                    points[parameter] = None
-                else:
-                    value.setflags(write=False)
-                    points[parameter] = value
-        except (AttributeError, NotImplementedError, TypeError, ValueError, RuntimeError):
-            for parameter in missing:
+            record.point_program_ready = True
+        query = np.asarray(
+            [[_turn_start_parameter(segment, value)] for value in missing],
+            dtype=np.float64,
+        )
+        if record.point_program is None:
+            values = tuple(
+                np.asarray(segment.evaluate(jnp.asarray(value[0])), dtype=np.float64)
+                for value in query
+            )
+        else:
+            values = evaluate_host_program(record.point_program, query)
+        for parameter, raw in zip(missing, values, strict=True):
+            value = np.asarray(raw, dtype=np.float64).reshape(-1)
+            if value.shape != (2,) or not np.all(np.isfinite(value)):
                 points[parameter] = None
+            else:
+                value.setflags(write=False)
+                points[parameter] = value
     return tuple(points[parameter] for parameter in parameters)
 
 

@@ -1596,6 +1596,30 @@ def test_curve_trim_refuses_nonfinite_point_realization(
     assert not bool(result.resolved[0])
 
 
+@pytest.mark.parametrize("operation", ("prepare_host_program", "evaluate_host_program"))
+def test_curve_trim_propagates_unexpected_program_failures(
+    monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    from phydrax.geometry._atlas import TrimDomain
+    from phydrax.geometry.brep import _host_program
+
+    corners = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+    segments = tuple(
+        CurveTrimSegment(
+            LineCurve(first, (last[0] - first[0], last[1] - first[1])), 0.0, 1.0
+        )
+        for first, last in zip(corners, (*corners[1:], corners[0]), strict=True)
+    )
+    domain = TrimDomain(curve_loops=(segments,))
+
+    def fail(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("point program failure")
+
+    monkeypatch.setattr(_host_program, operation, fail)
+    with pytest.raises(RuntimeError, match="point program failure"):
+        domain.classify(np.asarray(((0.5, 0.5),), dtype=np.float64))
+
+
 def test_coaxial_revolution_rim_is_one_closed_branch_with_chart_scale_margins() -> None:
     from phydrax._physical import SpatialCoordinateContract
     from phydrax.geometry.brep import brep_cylinder

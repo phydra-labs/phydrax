@@ -7,7 +7,6 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
-from functools import partial
 from math import ceil, floor, pi, sqrt, tau
 from typing import Any, cast, final
 
@@ -93,9 +92,6 @@ def _evaluate_curve(curve: AbstractCurve, parameter: Array, /) -> Array:
 
 _patch_jacobian = eqx.filter_jit(jax.jacfwd(_evaluate_patch, argnums=1))
 _curve_derivative = eqx.filter_jit(jax.jacfwd(_evaluate_curve, argnums=1))
-_patch_jacobians = eqx.filter_jit(
-    jax.vmap(jax.jacfwd(_evaluate_patch, argnums=1), in_axes=(None, 0))
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +137,9 @@ class _ProjectionPreparation:
         default_factory=dict
     )
     patch_programs: dict[int, PreparedIntervalFunction | None] = field(
+        default_factory=dict
+    )
+    frame_programs: dict[int, PreparedIntervalFunction | None] = field(
         default_factory=dict
     )
     intersections: dict[int, _IntersectionPreparation | None] = field(
@@ -208,6 +207,19 @@ def _distance_bounds(first: np.ndarray, second: np.ndarray, /) -> tuple[float, f
     return max(0.0, float(np.nextafter(distance - error, -np.inf))), float(
         np.nextafter(distance + error, np.inf)
     )
+
+
+def _exact_point_distance_upper(first: np.ndarray, second: np.ndarray, /) -> float:
+    """Outward upper distance between the exact values of two binary64 points."""
+    squared = sum(
+        (
+            (Fraction.from_float(float(a)) - Fraction.from_float(float(b))) ** 2
+            for a, b in zip(first, second, strict=True)
+        ),
+        Fraction(0),
+    )
+    upper = fraction_sqrt_interval(squared)[1]
+    return fraction_endpoint(upper, upper=True, saturate=True)
 
 
 def _map_frame(frame: np.ndarray, matrix: np.ndarray, /) -> np.ndarray:
@@ -5598,6 +5610,10 @@ class NativeBRepProjection(AbstractBRepProjection):
             finite_points = np.all(np.isfinite(points_3d), axis=1)
             if np.any(finite_points):
                 points[finite_points] = self.embedding.to_planar(points_3d[finite_points])
+                for row in np.flatnonzero(finite_points):
+                    upper[row] = max(
+                        upper[row], _exact_point_distance_upper(queries[row], points[row])
+                    )
             normals = np.full((len(hits), 2), np.nan, dtype=np.float64)
             tangents = _map_frame(
                 tangents_3d,
@@ -5760,52 +5776,58 @@ class NativeBRepProjection(AbstractBRepProjection):
                 hits[row] = replace(
                     hit,
                     point=value,
-                    upper=max(hit.upper, _distance_bounds(world[row], value)[1]),
+                    upper=max(hit.upper, _exact_point_distance_upper(world[row], value)),
                     pending_point=False,
                 )
-        # The source map and its derivative program are shared per patch;
-        # evaluate bounded query batches rather than tracing one JAX derivative
-        # for every requested point. Occurrence transforms remain per hit.
-        from ._patches import _QUERY_BUCKETS, bucketed_query_rows
-
+        # Frame values enter result identities and regularity decisions. Native
+        # interval representatives are batch-independent; unsupported patches
+        # retain one fixed-shape JAX evaluation per item.
         pending: dict[int, list[int]] = {}
         for row, hit in enumerate(hits):
             if hit.pending_frame:
                 pending.setdefault(hit.index, []).append(row)
         for face, selected in pending.items():
             patch = self.model.patches[face]
-            derivative = partial(_patch_jacobians, patch)
+            if face not in preparation.frame_programs:
+                preparation.frame_programs[face] = prepare_host_program(
+                    jax.jacfwd(patch.evaluate), 2
+                )
+            program = preparation.frame_programs[face]
+            parameters = np.asarray(
+                [hits[row].parameters for row in selected], dtype=np.float64
+            )
+            if program is None:
+                jacobians = tuple(
+                    np.asarray(_patch_jacobian(patch, jnp.asarray(parameter)))
+                    for parameter in parameters
+                )
+            else:
+                jacobians = evaluate_host_program(program, parameters)
             bounds = preparation.faces[face].bounds
-            for start in range(0, len(selected), _QUERY_BUCKETS[-1]):
-                batch = selected[start : start + _QUERY_BUCKETS[-1]]
-                parameters = np.asarray([hits[row].parameters for row in batch])
-                jacobians = bucketed_query_rows(derivative, parameters)
-                for row, jacobian in zip(batch, jacobians, strict=True):
-                    hit = hits[row]
-                    occurrence = self._target_occurrences(2, face, hit.path)[0]
-                    normal, tangents, regular = _face_normal_and_frame(
-                        patch,
-                        hit.parameters,
-                        self._face_orientation(
-                            face, occurrence.solid, preparation=preparation
-                        ),
-                        embedding=None,
-                        profile_interval=(float(bounds[0, 1]), float(bounds[1, 1])),
-                        jacobian=jacobian,
-                    )
-                    if occurrence.path:
-                        rotation = np.asarray(occurrence.rotation, dtype=np.float64)
-                        normal = (
-                            rotation @ normal if np.all(np.isfinite(normal)) else normal
-                        )
-                        tangents = _map_frame(tangents, rotation.T)
-                    hits[row] = replace(
-                        hit,
-                        normal=normal,
-                        tangents=tangents,
-                        status=hit.status if regular else _SINGULAR,
-                        pending_frame=False,
-                    )
+            for row, jacobian in zip(selected, jacobians, strict=True):
+                hit = hits[row]
+                occurrence = self._target_occurrences(2, face, hit.path)[0]
+                normal, tangents, regular = _face_normal_and_frame(
+                    patch,
+                    hit.parameters,
+                    self._face_orientation(
+                        face, occurrence.solid, preparation=preparation
+                    ),
+                    embedding=None,
+                    profile_interval=(float(bounds[0, 1]), float(bounds[1, 1])),
+                    jacobian=np.asarray(jacobian, dtype=np.float64),
+                )
+                if occurrence.path:
+                    rotation = np.asarray(occurrence.rotation, dtype=np.float64)
+                    normal = rotation @ normal if np.all(np.isfinite(normal)) else normal
+                    tangents = _map_frame(tangents, rotation.T)
+                hits[row] = replace(
+                    hit,
+                    normal=normal,
+                    tangents=tangents,
+                    status=hit.status if regular else _SINGULAR,
+                    pending_frame=False,
+                )
         return self._result(queries, hits)
 
     def project_boundary(

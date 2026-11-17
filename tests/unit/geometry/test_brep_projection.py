@@ -393,12 +393,29 @@ def test_torus_frame_batch_sizes_preserve_projection_evidence(minor: float) -> N
             np.asarray(getattr(large, name))[:3], np.asarray(getattr(small, name))
         )
     for name in ("normals", "tangents"):
-        np.testing.assert_allclose(
-            np.asarray(getattr(large, name))[:3],
-            np.asarray(getattr(small, name)),
-            atol=1e-14,
-            equal_nan=True,
+        np.testing.assert_array_equal(
+            np.asarray(getattr(large, name))[:3], np.asarray(getattr(small, name))
         )
+    single = _project(projection, points[:1], _FACE, 0)
+    for batch in (small, large):
+        isolated = type(batch)(
+            batch.source_id,
+            batch.source_revision,
+            batch.dimensions[:1],
+            batch.indices[:1],
+            batch.queries[:1],
+            batch.points[:1],
+            batch.parameters[:1],
+            batch.residuals[:1],
+            batch.status[:1],
+            batch.normals[:1],
+            batch.tangents[:1],
+            distance_lower_bounds=batch.distance_lower_bounds[:1],
+            occurrence_paths=batch.occurrence_paths[:1],
+            frame_id=batch.frame_id,
+        )
+        assert isolated.result_id == single.result_id
+        np.testing.assert_array_equal(isolated.status, single.status)
     center = np.asarray((2.0, 0.0, 0.0))
     direction = points[0] - center
     direction /= np.linalg.norm(direction)
@@ -573,10 +590,14 @@ def test_straight_revolution_batched_frames_match_scalar_projection() -> None:
         direct = projection._project_one(2, face, point, None)
         assert int(result.status[row]) == direct.status
         np.testing.assert_allclose(
-            result.points[row], direct.point, atol=1e-14, equal_nan=True
+            result.points[row], direct.point, rtol=0, atol=1e-14, equal_nan=True
         )
-        np.testing.assert_allclose(result.normals[row], direct.normal, equal_nan=True)
-        np.testing.assert_allclose(result.tangents[row], direct.tangents, equal_nan=True)
+        np.testing.assert_allclose(
+            result.normals[row], direct.normal, rtol=0, atol=1e-14, equal_nan=True
+        )
+        np.testing.assert_allclose(
+            result.tangents[row], direct.tangents, rtol=0, atol=1e-14, equal_nan=True
+        )
     larger = _project(projection, np.tile(points, (3, 1)), _FACE, face)
     for name in ("points", "parameters", "status", "distance_lower_bounds", "residuals"):
         np.testing.assert_array_equal(
@@ -584,11 +605,9 @@ def test_straight_revolution_batched_frames_match_scalar_projection() -> None:
             np.asarray(getattr(result, name)),
         )
     for name in ("normals", "tangents"):
-        np.testing.assert_allclose(
+        np.testing.assert_array_equal(
             np.asarray(getattr(larger, name))[: len(points)],
             np.asarray(getattr(result, name)),
-            atol=1e-14,
-            equal_nan=True,
         )
     preparation = projection._prepare_project()
     dimensions = np.full(points.shape[0], int(_FACE))
@@ -669,10 +688,18 @@ def test_edge_point_reference_detects_wrong_native_result(monkeypatch: Any) -> N
         return original(program, points) + 1.0
 
     monkeypatch.setattr(implementation, "evaluate_host_program", wrong)
-    result = _project(projection, [expected], _EDGE, 0)
-    assert float(result.residuals[0]) >= np.linalg.norm(
-        np.asarray(result.points[0]) - expected
+    monkeypatch.setattr(
+        implementation, "_distance_bounds", lambda first, second: (0.0, 0.0)
     )
+    result = _project(projection, [expected], _EDGE, 0)
+    squared = sum(
+        (
+            (Fraction.from_float(float(a)) - Fraction.from_float(float(b))) ** 2
+            for a, b in zip(result.points[0], expected, strict=True)
+        ),
+        Fraction(0),
+    )
+    assert Fraction.from_float(float(result.residuals[0])) ** 2 >= squared
     assert float(result.residuals[0]) > 1.0
 
 
