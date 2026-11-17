@@ -273,6 +273,11 @@
   lattice of the maps' degree on that stratum, which is unisolvent for the
   traces, instead of by composing both traces symbolically. Other cells keep
   the composed comparison.
+- Mapped injectivity of a simplex cell is tried first through one constant
+  preconditioner over its Bernstein control Jacobians when there are at most
+  eight of them (four for a quadratic tetrahedron). The polynomial-minor
+  routes still decide every cell that attempt leaves open, and the witness
+  of a cell it proves changes accordingly.
 - CAD source coverage and curving repeat less work, with unchanged decisions:
   chart coverage converts block connectivity once per block, prepares the
   overlap boxes and corner enclosures once per triangle bank instead of once
@@ -293,13 +298,16 @@
   `PiecewiseLinearComplex.from_stored_fields`. A copy, a rebuild or a changed
   array is still proved in full.
 - Native surface meshing, source-fidelity and chart proofs, and B-Rep
-  projection evaluate in batches and prepare per-entity data once, with
-  unchanged decisions: p-curve and source-curve points, trim-lens Jacobian
-  bounds, chord and lens bounds, chart parameter boxes and interpolation
-  bounds are evaluated per batch with one enclosure per row; identical trim
-  partitions are computed once per source preparation; generic curve boxes
-  reuse one prepared interval program; and per-face, per-edge and
-  per-intersection-curve projection data is prepared once per projection call.
+  projection evaluate in batches and prepare per-entity data once: line
+  p-curve and source-curve points, trim-lens Jacobian bounds, chord and lens
+  bounds, chart parameter boxes and interpolation bounds are evaluated per
+  batch with one enclosure per row; identical trim partitions are computed
+  once per source preparation; generic curve boxes reuse one prepared
+  interval program; and per-face, per-edge and per-intersection-curve
+  projection data is prepared once per projection call. A p-curve whose chart
+  points are binary64 values keeps one scalar evaluation per parameter: a
+  vectorized evaluation can round the last bit differently, and surface
+  meshing compares a parameter's chart point exactly wherever it recurs.
 - Tetrahedral metric relocation screens bounded batches across independent
   vertex stars, reuses source projections and incidence, and shares edge
   lengths, cell qualities, exact carrier locations, and band results.
