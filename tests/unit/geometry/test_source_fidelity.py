@@ -2618,13 +2618,17 @@ def test_collapsed_pole_slivers_complete_the_partition_within_their_cap_bound() 
         )
         assert source.pole_sliver_cap_bound(0, sliver) >= Fraction(sampled_diameter)
 
-    missing_mesh, missing_geometry, missing_fan = witness_for(tuple(range(1, len(charts))))
+    missing_mesh, missing_geometry, missing_fan = witness_for(
+        tuple(range(1, len(charts)))
+    )
     assert any(
         finding.check == "source_chart_coverage" and finding.status == "violated"
         for finding in _partition_findings(source, missing_fan, preparation)
     )
     with pytest.raises(ValueError, match="not a complete reference partition"):
-        validate_source_fidelity_witness(missing_mesh, missing_geometry, source, missing_fan)
+        validate_source_fidelity_witness(
+            missing_mesh, missing_geometry, source, missing_fan
+        )
 
 
 def test_curved_trim_reference_follows_target_chords_within_certified_lenses() -> None:
