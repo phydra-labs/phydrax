@@ -197,9 +197,18 @@ def _boundary_vertex_links_are_cycles(
     ):
         lifted_edge_ends.setdefault(edge, []).append((vertex, int(sign)))
 
+    # Lifted edges grouped by face, each group in incidence order.
+    by_face = np.argsort(edge_faces, kind="stable")
+    grouped_faces, grouped_edges = edge_faces[by_face], edge_sources[by_face]
+    boundary_faces = np.flatnonzero(face_boundary)
+    boundary_representatives = face_representatives[boundary_faces]
+    group_begins = np.searchsorted(grouped_faces, boundary_representatives, side="left")
+    group_ends = np.searchsorted(grouped_faces, boundary_representatives, side="right")
     links: dict[int, list[tuple[_EdgeEnd, _EdgeEnd]]] = {}
-    for face in np.flatnonzero(face_boundary).tolist():
-        face_edges = edge_sources[edge_faces == face_representatives[face]].tolist()
+    for group_begin, group_end in zip(
+        group_begins.tolist(), group_ends.tolist(), strict=True
+    ):
+        face_edges = grouped_edges[group_begin:group_end].tolist()
         corners: dict[int, list[_EdgeEnd]] = {}
         for edge in face_edges:
             ends = lifted_edge_ends.get(edge, [])
@@ -296,20 +305,22 @@ def _quotient_faces_pair_oriented(
     )
     if face_boundary.shape != (face_count,):
         return None
-    face_orientations = np.zeros((face_count,), dtype=np.float64)
-    for face in range(face_count):
-        selected = face_signs[face_indices == face]
-        if selected.size == 1:
-            if not face_boundary[face] or abs(float(selected[0])) != 1.0:
-                return None
-            face_orientations[face] = selected[0]
-        elif (
-            selected.size != 2
-            or face_boundary[face]
-            or float(np.sum(selected)) != 0.0
-            or np.any(np.abs(selected) != 1.0)
-        ):
-            return None
+    # Each quotient face bounds one cell on the boundary (with unit sign) or two
+    # cells with cancelling unit signs. Counts and sign sums of unit signs are
+    # exact in binary64.
+    listed = (face_indices >= 0) & (face_indices < face_count)
+    listed_faces, listed_signs = face_indices[listed], face_signs[listed]
+    if np.any(np.abs(listed_signs) != 1.0):
+        return None
+    face_cells = np.bincount(listed_faces, minlength=face_count)
+    face_orientations = np.bincount(
+        listed_faces, weights=listed_signs, minlength=face_count
+    )
+    if not np.all(
+        ((face_cells == 1) & face_boundary)
+        | ((face_cells == 2) & ~face_boundary & (face_orientations == 0.0))
+    ):
+        return None
     if not np.any(face_boundary):
         return "closed"
     if dimension == 2:
@@ -331,17 +342,26 @@ def _quotient_faces_pair_oriented(
         edge_boundary, boundary_edge_counts > 0
     ):
         return None
-    for edge in np.flatnonzero(edge_boundary):
-        selected = on_boundary & (edge_sources == edge)
-        boundary_coefficients = (
-            edge_signs[selected] * face_orientations[edge_faces[selected]]
-        )
-        if (
-            boundary_coefficients.size != 2
-            or float(np.sum(boundary_coefficients)) != 0.0
-            or np.any(np.abs(boundary_coefficients) != 1.0)
-        ):
-            return None
+    # Every boundary edge lies on exactly two boundary faces whose induced
+    # orientations cancel. The count check above already binds every boundary
+    # face side to a boundary edge.
+    boundary_coefficients = (
+        edge_signs[on_boundary] * face_orientations[edge_faces[on_boundary]]
+    )
+    if np.any(np.abs(boundary_coefficients) != 1.0) or not np.all(
+        (
+            (boundary_edge_counts == 2)
+            & (
+                np.bincount(
+                    edge_sources[on_boundary],
+                    weights=boundary_coefficients,
+                    minlength=edge_count,
+                )
+                == 0.0
+            )
+        )[edge_boundary]
+    ):
+        return None
 
     vertex_count = quotient.entity_sets[0].count
     vertex_boundary = np.asarray(
@@ -365,14 +385,15 @@ def _quotient_faces_pair_oriented(
         vertex_boundary, boundary_vertex_counts > 0
     ):
         return None
-    for edge in np.flatnonzero(edge_boundary):
-        selected = vertex_signs[on_boundary_edge & (edge_indices == edge)]
-        if (
-            selected.size != 2
-            or float(np.sum(selected)) != 0.0
-            or np.any(np.abs(selected) != 1.0)
-        ):
-            return None
+    # Every boundary edge has exactly two ends with opposite unit signs.
+    end_edges, end_signs = edge_indices[on_boundary_edge], vertex_signs[on_boundary_edge]
+    if np.any(np.abs(end_signs) != 1.0) or not np.all(
+        (
+            (np.bincount(end_edges, minlength=edge_count) == 2)
+            & (np.bincount(end_edges, weights=end_signs, minlength=edge_count) == 0.0)
+        )[edge_boundary]
+    ):
+        return None
     if not _boundary_vertex_links_are_cycles(
         mesh, topology, face_boundary, edge_boundary, vertex_boundary
     ):
