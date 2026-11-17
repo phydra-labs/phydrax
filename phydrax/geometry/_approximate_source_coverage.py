@@ -44,6 +44,7 @@ from .implicit._adaptive_discovery import (
 
 if TYPE_CHECKING:
     from ._domain_boundary import _RootedJunction
+    from ._domain_certification import CoverageDomain
     from ._meshing_domain import PatchCurveUse, SourcePreparation
     from ._planar_coverage import OrientedFacet
     from ._surface_source_support import _CadCurveUseBinding, SurfaceSourceCharts
@@ -69,6 +70,50 @@ class SourceCoverageUnavailable(ValueError):
     ) -> None:
         super().__init__(message)
         self.status = status
+
+
+def _require_coverage_handoff(
+    root_charts: AdaptiveImplicitRootChartMap,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    domain: CoverageDomain,
+    source: SourceBoundaryQuery | None,
+    fidelity: SourceFidelityCertificate | None,
+    /,
+) -> None:
+    """Validate the operation-local coverage capability before any fallback."""
+    from .implicit._source_charts import (
+        _AdaptiveImplicitBoundaryCarrier,
+        _require_live_coverage_charts,
+        AdaptiveImplicitRootChartMap,
+    )
+
+    if not isinstance(root_charts, AdaptiveImplicitRootChartMap):
+        raise TypeError("root_charts must be AdaptiveImplicitRootChartMap or None.")
+    if (
+        not isinstance(domain, AdaptiveImplicitSurface)
+        or not isinstance(
+            source, (AdaptiveImplicitBoundarySource, _AdaptiveImplicitBoundaryCarrier)
+        )
+        or not isinstance(fidelity, SourceFidelityCertificate)
+        or not isinstance(fidelity.witness, SourceBoundaryChartWitness)
+    ):
+        raise ValueError(
+            "Implicit coverage root charts require their live source and fidelity witness."
+        )
+    _require_live_coverage_charts(
+        root_charts,
+        mesh,
+        geometry,
+        source,
+        fidelity.witness,
+        tolerance=fidelity.tolerance,
+        maximum_normal_deviation=fidelity.maximum_normal_deviation,
+    )
+    if root_charts._surface is not domain:
+        raise ValueError(
+            "Implicit coverage root charts require the identical live source domain."
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,16 +458,18 @@ def _fraction(value: float, /) -> Fraction:
 def _area2(points: tuple[tuple[Fraction, Fraction], ...], /) -> Fraction:
     if len(points) < 3:
         return Fraction(0)
-    return (
-        sum(
-            (
-                first[0] * second[1] - first[1] * second[0]
-                for first, second in zip(points, (*points[1:], points[0]), strict=True)
-            ),
-            Fraction(0),
-        )
-        / 2
+    denominator = math.lcm(
+        *(coordinate.denominator for point in points for coordinate in point)
     )
+    vertices = tuple(
+        tuple(value.numerator * (denominator // value.denominator) for value in point)
+        for point in points
+    )
+    numerator = sum(
+        first[0] * second[1] - first[1] * second[0]
+        for first, second in zip(vertices, (*vertices[1:], vertices[0]), strict=True)
+    )
+    return Fraction(numerator, 2 * denominator * denominator)
 
 
 def _cross2(
@@ -431,9 +478,23 @@ def _cross2(
     point: tuple[Fraction, Fraction],
     /,
 ) -> Fraction:
-    return (second[0] - first[0]) * (point[1] - first[1]) - (second[1] - first[1]) * (
-        point[0] - first[0]
+    denominators = tuple(
+        math.lcm(vertex[0].denominator, vertex[1].denominator)
+        for vertex in (first, second, point)
     )
+    vertices = tuple(
+        (
+            vertex[0].numerator * (denominator // vertex[0].denominator),
+            vertex[1].numerator * (denominator // vertex[1].denominator),
+        )
+        for vertex, denominator in zip((first, second, point), denominators, strict=True)
+    )
+    (ax, ay), (bx, by), (cx, cy) = vertices
+    da, db, dc = denominators
+    numerator = (bx * da - ax * db) * (cy * da - ay * dc) - (by * da - ay * db) * (
+        cx * da - ax * dc
+    )
+    return Fraction(numerator, da * da * db * dc)
 
 
 def _line_intersection(
@@ -642,6 +703,7 @@ def _volume_face_owners(
             sum((point[2] for point in reference_vertices), Fraction(0))
             / len(reference_vertices),
         )
+        reference_signs: dict[int, int] = {}
         for row in range(block.cell_count):
             cell_id = int(identifiers[row])
             region = int(cell_regions[global_cell])
@@ -652,32 +714,34 @@ def _volume_face_owners(
                 )
                 grouped.setdefault(key, []).append((cell_id, region, local_face))
                 by_cell_face[(cell_id, local_face)] = key
-                points = tuple(reference_vertices[slot] for slot in slots)
-                if len(points) < 3:
-                    raise SourceCoverageUnavailable(
-                        "Target reference face has fewer than three vertices.",
-                        status="unresolved",
+                if local_face not in reference_signs:
+                    points = tuple(reference_vertices[slot] for slot in slots)
+                    if len(points) < 3:
+                        raise SourceCoverageUnavailable(
+                            "Target reference face has fewer than three vertices.",
+                            status="unresolved",
+                        )
+                    normal = _cross3((points[0], points[1], points[2]))
+                    center = (
+                        sum((point[0] for point in points), Fraction(0)) / len(points),
+                        sum((point[1] for point in points), Fraction(0)) / len(points),
+                        sum((point[2] for point in points), Fraction(0)) / len(points),
                     )
-                normal = _cross3((points[0], points[1], points[2]))
-                center = (
-                    sum((point[0] for point in points), Fraction(0)) / len(points),
-                    sum((point[1] for point in points), Fraction(0)) / len(points),
-                    sum((point[2] for point in points), Fraction(0)) / len(points),
-                )
-                outward = _dot3(
-                    normal,
-                    (
-                        center[0] - cell_center[0],
-                        center[1] - cell_center[1],
-                        center[2] - cell_center[2],
-                    ),
-                )
-                if outward == 0:
-                    raise SourceCoverageUnavailable(
-                        "Target reference face has no oriented outward normal.",
-                        status="unresolved",
+                    outward = _dot3(
+                        normal,
+                        (
+                            center[0] - cell_center[0],
+                            center[1] - cell_center[1],
+                            center[2] - cell_center[2],
+                        ),
                     )
-                face_outward_sign[(cell_id, local_face)] = 1 if outward > 0 else -1
+                    if outward == 0:
+                        raise SourceCoverageUnavailable(
+                            "Target reference face has no oriented outward normal.",
+                            status="unresolved",
+                        )
+                    reference_signs[local_face] = 1 if outward > 0 else -1
+                face_outward_sign[(cell_id, local_face)] = reference_signs[local_face]
             global_cell += 1
     if global_cell != cell_regions.size:
         raise SourceCoverageUnavailable(
@@ -2242,6 +2306,7 @@ def _cad_chart_partition(
         rooted = True
     targets_by_patch: dict[int, list[_Triangle2]] = {}
     plane_by_patch: dict[int, bool] = {}
+    plane_chart_ids: dict[int, str | None] = {}
     patch_rows: list[int] = []
     for row, (source_chart_id, source_entity_id, occurrence) in enumerate(
         zip(
@@ -2262,8 +2327,12 @@ def _cad_chart_partition(
             ) from error
         plane = source_chart_id != source_entity_id
         if plane:
-            plane_chart = exact_plane_chart(domain, patch)
-            if plane_chart is None or source_chart_id != plane_chart.chart_id:
+            if patch not in plane_chart_ids:
+                plane_chart = exact_plane_chart(domain, patch)
+                plane_chart_ids[patch] = (
+                    None if plane_chart is None else plane_chart.chart_id
+                )
+            if source_chart_id != plane_chart_ids[patch]:
                 raise SourceCoverageUnavailable(
                     "CAD source chart and authored face identity differ.",
                     status="violated",
@@ -2616,8 +2685,10 @@ def _adaptive_implicit_root_chart_degree(
     embedding: GlobalEmbeddingCertificate,
     witness: SourceBoundaryChartWitness,
     /,
+    *,
+    root_charts: AdaptiveImplicitRootChartMap | None = None,
 ) -> tuple[str, int, int, float | None]:
-    """Recompute complete whole-face charts and their degree one.
+    """Prove degree one from complete whole-face charts.
 
     A witness naming every scaffold triangle exactly once keeps the one-to-one
     scaffold argument. Any other target (a remeshed carrier) proves degree one
@@ -2634,10 +2705,14 @@ def _adaptive_implicit_root_chart_degree(
     returned last (``None`` for the chart arguments).
     """
     from ..discretization._cell_geometry_validity import cell_geometry_id
-    from .implicit._source_charts import prepare_adaptive_implicit_root_charts
+    from .implicit._source_charts import (
+        _require_live_coverage_charts,
+        prepare_adaptive_implicit_root_charts,
+    )
 
-    try:
-        root_map = prepare_adaptive_implicit_root_charts(
+    if root_charts is not None:
+        _require_live_coverage_charts(
+            root_charts,
             mesh,
             geometry,
             source,
@@ -2645,17 +2720,32 @@ def _adaptive_implicit_root_chart_degree(
             tolerance=fidelity.tolerance,
             maximum_normal_deviation=fidelity.maximum_normal_deviation,
         )
-    except (
-        TypeError,
-        ValueError,
-        IndexError,
-        ArithmeticError,
-        FloatingPointError,
-    ) as error:
-        raise SourceCoverageUnavailable(
-            f"Adaptive implicit whole-face root chart is unresolved: {error}",
-            status="unresolved",
-        ) from error
+        if root_charts._surface is not domain:
+            raise ValueError(
+                "Implicit coverage root charts require the identical live source domain."
+            )
+        root_map = root_charts
+    else:
+        try:
+            root_map = prepare_adaptive_implicit_root_charts(
+                mesh,
+                geometry,
+                source,
+                witness,
+                tolerance=fidelity.tolerance,
+                maximum_normal_deviation=fidelity.maximum_normal_deviation,
+            )
+        except (
+            TypeError,
+            ValueError,
+            IndexError,
+            ArithmeticError,
+            FloatingPointError,
+        ) as error:
+            raise SourceCoverageUnavailable(
+                f"Adaptive implicit whole-face root chart is unresolved: {error}",
+                status="unresolved",
+            ) from error
     evidence = root_map.chart_evidence
     scaffold_mesh = domain.mesh
     if scaffold_mesh is None:
@@ -3294,6 +3384,7 @@ def approximate_source_coverage(
     source: SourceBoundaryQuery | None,
     fidelity: SourceFidelityCertificate | None,
     embedding: GlobalEmbeddingCertificate,
+    root_charts: AdaptiveImplicitRootChartMap | None = None,
 ) -> SourceCoverageAttempt:
     """Prove bounded oriented material coverage from source-chart homotopy data.
 
@@ -3311,6 +3402,9 @@ def approximate_source_coverage(
         return SourceCoverageAttempt(
             None, (SourceCoverageFailure(check, status, detail, entity_ids),)
         )
+
+    if root_charts is not None:
+        _require_coverage_handoff(root_charts, mesh, geometry, domain, source, fidelity)
 
     if not isinstance(domain, (MeshingDomain, AdaptiveImplicitSurface)):
         return fail(
@@ -3553,6 +3647,7 @@ def approximate_source_coverage(
                         fidelity,
                         embedding,
                         witness,
+                        root_charts=root_charts,
                     )
                 )
             except SourceCoverageUnavailable as chart_error:

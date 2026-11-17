@@ -30,6 +30,7 @@ from phydrax._interpolation import _bspline_extraction as extraction
 from phydrax._meshcore import meshcore_available
 from phydrax.discretization import _coordinate_enclosure as enclosure
 from phydrax.discretization._exact_algebraic_geometry import coefficient_endpoint
+from phydrax.discretization._exact_coordinate_bank import ExactCoordinateBank
 from phydrax.geometry import _interval_enclosure as interval_enclosure
 
 
@@ -83,6 +84,239 @@ def _random_polynomial(
             )
         polynomial[tuple(index)] = value
     return {index: value for index, value in polynomial.items() if value}
+
+
+@pytest.mark.parametrize("dimension", [1, 2, 3])
+def test_interval_simplex_bounds_enclose_exact_restricted_controls(
+    dimension: int,
+) -> None:
+    generator = random.Random(1300 + dimension)
+    for _ in range(30):
+        polynomial = _random_polynomial(generator, "simplex", dimension, 3)
+        corners = tuple(
+            tuple(Fraction(generator.randint(-4, 12), 15) for _ in range(dimension))
+            for _ in range(dimension + 1)
+        )
+        arguments = tuple(
+            {
+                (0,) * dimension: corners[0][axis],
+                **{
+                    tuple(int(i == j) for i in range(dimension)): (
+                        corners[j + 1][axis] - corners[0][axis]
+                    )
+                    for j in range(dimension)
+                },
+            }
+            for axis in range(dimension)
+        )
+        exact = enclosure.polynomial_bounds(
+            enclosure.compose(polynomial, arguments), "simplex", dimension
+        )
+        lower, upper = enclosure.restricted_polynomial_bounds(polynomial, corners)
+        assert lower <= exact[0] <= exact[1] <= upper
+        magnitude = sum(abs(float(value)) for value in polynomial.values())
+        assert (exact[0] - lower) + (upper - exact[1]) <= 1e-10 * max(1.0, magnitude)
+
+
+@pytest.mark.parametrize("rational", (False, True))
+def test_simplex_restriction_batch_matches_singletons(
+    rational: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    generator = random.Random(301)
+    polynomial = _random_polynomial(generator, "simplex", 2, 3)
+    expression: enclosure.Expression = (
+        enclosure.RationalPolynomial(
+            polynomial, {(0, 0): Fraction(1), (1, 0): Fraction(1, 3)}
+        )
+        if rational
+        else polynomial
+    )
+    prepared = enclosure.PreparedSimplexPolynomial(expression, 2)
+    corners = tuple(
+        tuple(
+            tuple(Fraction(generator.randint(-8, 12), 15) for _ in range(2))
+            for _ in range(3)
+        )
+        for _ in range(25)
+    )
+    monkeypatch.setenv("PHX_MESHCORE_THREADS", "1")
+    singleton = np.asarray(
+        [enclosure.restricted_polynomial_bounds(prepared, row) for row in corners],
+        dtype=np.float64,
+    ).view(np.uint64)
+    monkeypatch.setenv("PHX_MESHCORE_THREADS", "4")
+    batch = np.asarray(
+        enclosure.restricted_polynomial_batch_bounds(prepared, corners), dtype=np.float64
+    ).view(np.uint64)
+    np.testing.assert_array_equal(batch, singleton)
+
+
+def test_interval_simplex_rational_bounds_contain_exact_controls() -> None:
+    generator = random.Random(907)
+    for _ in range(20):
+        numerator = _random_polynomial(generator, "simplex", 2, 2)
+        expression = enclosure.RationalPolynomial(
+            numerator, {(0, 0): Fraction(2), (1, 0): Fraction(1, 3)}
+        )
+        corners = tuple(
+            tuple(Fraction(generator.randint(0, 8), 15) for _ in range(2))
+            for _ in range(3)
+        )
+        arguments: tuple[enclosure.ExpressionInput, ...] = tuple(
+            {
+                (0, 0): corners[0][axis],
+                (1, 0): corners[1][axis] - corners[0][axis],
+                (0, 1): corners[2][axis] - corners[0][axis],
+            }
+            for axis in range(2)
+        )
+        exact = enclosure.polynomial_bounds(
+            enclosure.compose_expression(expression, arguments), "simplex", 2
+        )
+        lower, upper = enclosure.restricted_polynomial_bounds(expression, corners)
+        assert lower <= exact[0] <= exact[1] <= upper
+
+
+def test_interval_simplex_rational_pole_is_unbounded() -> None:
+    expression = enclosure.RationalPolynomial(
+        {(0,): Fraction(1)}, {(0,): Fraction(-1, 2), (1,): Fraction(1)}
+    )
+    corners = ((Fraction(0),), (Fraction(1),))
+    assert enclosure.restricted_polynomial_bounds(expression, corners) == (
+        -float("inf"),
+        float("inf"),
+    )
+
+
+def test_interval_simplex_bounds_detect_dropped_term(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    polynomial: enclosure.Polynomial = {(0,): Fraction(0), (1,): Fraction(2)}
+    corners = ((Fraction(0),), (Fraction(1),))
+    exact = enclosure.polynomial_bounds(polynomial, "simplex", 1)
+
+    def dropped_term(
+        lower: np.ndarray,
+        upper: np.ndarray,
+        corners_lower: np.ndarray,
+        corners_upper: np.ndarray,
+        degree: int,
+        /,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        return np.zeros(1, dtype=np.float64), np.zeros(1, dtype=np.float64)
+
+    monkeypatch.setattr(enclosure, "interval_simplex_bounds", dropped_term)
+    lower, upper = enclosure.restricted_polynomial_bounds(polynomial, corners)
+    assert not (lower <= exact[0] and exact[1] <= upper)
+
+
+@pytest.mark.parametrize(
+    ("domain", "dimension"),
+    [("simplex", 2), ("simplex", 3), ("box", 2), ("box", 3), ("prism", 3)],
+)
+def test_prepared_basis_bounds_enclose_exact_coordinate_combinations(
+    domain: enclosure.BernsteinDomain, dimension: int
+) -> None:
+    generator = random.Random(932 + dimension)
+    basis: tuple[enclosure.Polynomial, ...] = tuple(
+        _random_polynomial(generator, domain, dimension, 3) for _ in range(4)
+    )
+    degrees = tuple(
+        enclosure.bernstein_degree(value, domain, dimension) for value in basis
+    )
+    degree = tuple(max(axis) for axis in zip(*degrees, strict=True))
+    prepared = enclosure.PreparedIntervalBasis(basis, domain, dimension)
+    for _ in range(12):
+        local = tuple(
+            tuple(Fraction(generator.randint(-8, 8), 7) for _ in range(3)) for _ in basis
+        )
+        combinations = enclosure.linear_combinations(
+            basis,
+            tuple(tuple(row[axis] for row in local) for axis in range(3)),
+        )
+        lower, upper = ExactCoordinateBank.from_rows(local).interval_endpoints()
+        bounds = prepared.batch_bounds(lower[None, ...], upper[None, ...])[0]
+        assert bounds is not None
+        for axis, (expression, (lower, upper), (inner_lower, inner_upper)) in enumerate(
+            zip(combinations, bounds.outer, bounds.inner, strict=True)
+        ):
+            exact_lower, exact_upper = enclosure.polynomial_bounds(
+                expression, domain, dimension
+            )
+            controls = enclosure.bernstein_coefficients(
+                expression, domain, dimension, degree=degree
+            )
+            control_lower = coefficient_endpoint(
+                min(controls), upper=False, saturate=True
+            )
+            control_upper = coefficient_endpoint(max(controls), upper=True, saturate=True)
+            assert lower <= control_lower <= inner_lower
+            assert inner_upper <= control_upper <= upper
+            assert exact_lower <= inner_lower and inner_upper <= exact_upper
+            magnitude = max(
+                1.0,
+                sum(
+                    abs(float(coefficient)) * abs(float(local[row][axis]))
+                    for row, polynomial in enumerate(basis)
+                    for coefficient in polynomial.values()
+                ),
+            )
+            assert (control_lower - lower) + (upper - control_upper) <= 1e-10 * magnitude
+
+
+def test_interval_basis_bounds_are_independent_of_batch_and_workers() -> None:
+    generator = np.random.default_rng(849)
+    basis = generator.uniform(-3.0, 3.0, (4, 10))
+    coefficients = generator.uniform(-2.0, 2.0, (37, 4, 3))
+    serial = _exact_kernels.interval_basis_bounds(
+        basis, basis, coefficients, coefficients, parallelism=1
+    )
+    parallel = _exact_kernels.interval_basis_bounds(
+        basis, basis, coefficients, coefficients, parallelism=4
+    )
+    batches = tuple(
+        _exact_kernels.interval_basis_bounds(
+            basis,
+            basis,
+            coefficients[start : start + 7],
+            coefficients[start : start + 7],
+            parallelism=4,
+        )
+        for start in range(0, len(coefficients), 7)
+    )
+    for index, expected in enumerate(serial):
+        assert np.array_equal(expected, parallel[index])
+        assert np.array_equal(
+            expected, np.concatenate([batch[index] for batch in batches])
+        )
+
+
+def test_prepared_basis_oracle_detects_a_dropped_component(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    basis: tuple[enclosure.Expression, ...] = (
+        {(0,): Fraction(1)},
+        {(1,): Fraction(1)},
+    )
+    prepared = enclosure.PreparedIntervalBasis(basis, "simplex", 1)
+
+    def dropped_term(
+        lower: np.ndarray,
+        upper: np.ndarray,
+        coefficient_lower: np.ndarray,
+        coefficient_upper: np.ndarray,
+        /,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        result = np.zeros((1, 1), dtype=np.float64)
+        return result, result, result, result
+
+    monkeypatch.setattr(enclosure, "interval_basis_bounds", dropped_term)
+    lower, upper = ExactCoordinateBank.from_rows(
+        ((Fraction(0),), (Fraction(2),))
+    ).interval_endpoints()
+    bounds = prepared.batch_bounds(lower[None, ...], upper[None, ...])[0]
+    assert bounds is not None
+    assert not (bounds.outer[0][0] <= 0.0 and 2.0 <= bounds.outer[0][1])
 
 
 @pytest.mark.parametrize(

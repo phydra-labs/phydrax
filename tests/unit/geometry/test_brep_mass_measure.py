@@ -734,6 +734,64 @@ def test_measure_period_binding_preserves_directed_native_turn() -> None:
     assert lower[0, 0] < upper[0, 0]
 
 
+def test_period_bounds_match_elementwise_kernels_and_batch_partitions() -> None:
+    import math
+    from concurrent.futures import ThreadPoolExecutor
+    from fractions import Fraction
+
+    import mpmath
+
+    from phydrax.geometry._interval_enclosure import interval_add, interval_multiply
+    from phydrax.geometry.brep._trim_helpers import (
+        fraction_bounds,
+        period_scalar_bounds,
+        PeriodOffset,
+    )
+
+    rng = np.random.default_rng(317)
+    values = tuple(
+        PeriodOffset(Fraction(int(a), int(b)), Fraction(int(c), int(d)))
+        for a, b, c, d in zip(
+            rng.integers(-30, 31, 80),
+            rng.integers(1, 20, 80),
+            rng.integers(-30, 31, 80),
+            rng.integers(1, 20, 80),
+            strict=True,
+        )
+    )
+    values += (
+        PeriodOffset(Fraction(0), Fraction(0)),
+        PeriodOffset(Fraction(1, 2**1075), Fraction(-1, 2**1075)),
+        PeriodOffset(Fraction(10**400), Fraction(-(10**400))),
+        PeriodOffset(Fraction(-(10**400)), Fraction(10**400)),
+    )
+    period = (
+        np.asarray(np.nextafter(math.tau, -np.inf)),
+        np.asarray(np.nextafter(math.tau, np.inf)),
+    )
+    for value in values:
+        rational, turns = fraction_bounds(value.rational), fraction_bounds(value.turns)
+        expected = interval_add(rational, interval_multiply(turns, period))
+        actual = period_scalar_bounds(value)
+        for left, right in zip(expected, actual, strict=True):
+            np.testing.assert_array_equal(
+                np.asarray(left).view(np.uint64), np.asarray(right).view(np.uint64)
+            )
+    sequential = [period_scalar_bounds(value) for value in values]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        parallel = list(pool.map(period_scalar_bounds, values))
+    for expected, actual in zip(sequential, parallel, strict=True):
+        for first, second in zip(expected, actual, strict=True):
+            np.testing.assert_array_equal(
+                np.asarray(first).view(np.uint64), np.asarray(second).view(np.uint64)
+            )
+    with mpmath.workdps(100):
+        low, high = period_scalar_bounds(PeriodOffset(Fraction(0), Fraction(1)))
+        exact = 2 * mpmath.pi
+        assert mpmath.mpf(float(low)) <= exact <= mpmath.mpf(float(high))
+        assert not mpmath.mpf(float(high)) <= exact
+
+
 def test_iges_cylinder_intersection_source_volume_at_profile_accuracy(
     tmp_path: Path,
 ) -> None:

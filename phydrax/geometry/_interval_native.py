@@ -62,6 +62,9 @@ _EXTREMUM_PAIR = 21
 _EXTREMUM_REDUCE = 22
 _DECIDE = 23
 _ATTAIN = 24
+_DIVIDE_ELEMENTWISE = 25
+_ATAN = 26
+_POWER_ELEMENTWISE = 27
 
 # Branch-evidence event kinds and tests (phx_mc_interval_program_branches).
 _KINK = 0
@@ -146,6 +149,7 @@ class NativeIntervalProgram:
     output: _Tensor
     domain_guards: NDArray[np.int64]
     """Workspace entries (real-power bases) that must be nonnegative."""
+    elementwise: bool = False
     events: NDArray[np.int64] | None = None
     """Branch-evidence event rows ``(rows, 6)``, present when lowered with box axes."""
 
@@ -194,6 +198,8 @@ class NativeIntervalProgram:
     def evaluate(
         self, lower: NDArray[np.float64], upper: NDArray[np.float64], /
     ) -> _Interval:
+        if self.elementwise:
+            raise ValueError("elementwise programs require evaluate_batch.")
         lower_workspace, upper_workspace = self._workspaces(lower, upper)
         from .._meshcore import interval_program_execute
 
@@ -206,6 +212,72 @@ class NativeIntervalProgram:
         )
         return self._output(lower_workspace, upper_workspace)
 
+    def evaluate_batch(
+        self,
+        lower: NDArray[np.float64],
+        upper: NDArray[np.float64],
+        /,
+        *,
+        workers: int = 1,
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """Evaluate a one-box program on aligned ``(count, input_dimension)`` boxes.
+
+        Each box follows the elementwise native interval kernels in instruction
+        order; its result is independent of worker count and batch partitioning.
+        """
+        if self.batch_capacity != 1 or not self.elementwise:
+            raise ValueError("batched execution requires an elementwise one-box program.")
+        if (
+            lower.ndim != 2
+            or lower.shape[1] != self.input_dimension
+            or upper.shape != lower.shape
+            or np.any(np.isnan(lower))
+            or np.any(np.isnan(upper))
+            or np.any(lower > upper)
+        ):
+            raise ValueError("batched interval boxes must be aligned and ordered.")
+        if workers < 1:
+            raise ValueError("workers must be positive.")
+        count = lower.shape[0]
+        low = np.zeros((count, self.workspace_size), dtype=np.float64)
+        high = np.zeros_like(low)
+        low[:, : self.input_dimension] = lower
+        high[:, : self.input_dimension] = upper
+        for seed in self.seeds:
+            size = seed.lower.size
+            low[:, seed.offset : seed.offset + size] = seed.lower
+            high[:, seed.offset : seed.offset + size] = seed.upper
+        from .._meshcore import _raise_for_call, load_meshcore
+
+        status = load_meshcore()["phx_mc_interval_program_batch"](
+            self.instructions.ctypes.data,
+            self.instructions.shape[0],
+            self.indices.ctypes.data,
+            self.indices.size,
+            self.parameters.ctypes.data,
+            self.parameters.size,
+            low.ctypes.data,
+            high.ctypes.data,
+            self.workspace_size,
+            count,
+            workers,
+        )
+        _raise_for_call(status, "interval_program_batch")
+        if np.any(low[:, self.domain_guards] < 0.0):
+            raise IntervalExtensionError(
+                "noninteger power requires a nonnegative base interval."
+            )
+        if self.output.locations is None:
+            locations = np.arange(
+                self.output.offset,
+                self.output.offset + _size(self.output.shape),
+                dtype=np.int64,
+            )
+        else:
+            locations = self.output.locations.reshape((-1,))
+        shape = (count, *self.output.shape[1:])
+        return low[:, locations].reshape(shape), high[:, locations].reshape(shape)
+
     def evaluate_branches(
         self, lower: NDArray[np.float64], upper: NDArray[np.float64], /
     ) -> tuple[
@@ -215,6 +287,8 @@ class NativeIntervalProgram:
         NDArray[np.bool_],
     ]:
         """Enclosures and per-box ``(smooth, continuous)`` flags of one batch."""
+        if self.elementwise:
+            raise ValueError("elementwise programs cannot use legacy branch execution.")
         if self.events is None:
             raise IntervalExtensionError(
                 "native branch evidence requires a program lowered with box axes."
@@ -244,6 +318,8 @@ class NativeIntervalProgram:
 
     def box_program(self, /) -> IntervalBoxProgram:
         """Return the one-box native form: seeded workspace template and output entries."""
+        if self.elementwise:
+            raise ValueError("elementwise programs cannot use legacy box execution.")
         if self.batch_capacity != 1 or self.input_dimension != 3:
             raise ValueError(
                 "a native box program requires batch capacity 1 and three inputs."
@@ -281,8 +357,10 @@ class _Builder:
         batch_capacity: int,
         input_dimension: int,
         branch_axes: Mapping[jax_core.Var, int | None] | None = None,
+        elementwise: bool = False,
         /,
     ) -> None:
+        self.elementwise = elementwise
         self.batch_capacity = batch_capacity
         self.input_dimension = input_dimension
         self.next_offset = batch_capacity * input_dimension
@@ -435,6 +513,10 @@ class _Builder:
         return output
 
     def _divide_one(self, denominator: _Tensor, output_shape: _Shape, /) -> _Tensor:
+        if self.elementwise:
+            ones = np.ones(output_shape, dtype=np.float64)
+            one = self._seed(ones, ones, exact=ones)
+            return self._emit_binary(_DIVIDE_ELEMENTWISE, one, denominator, output_shape)
         reciprocal = self._emit_unary(_RECIPROCAL, denominator, output_shape)
         ones = np.ones(output_shape, dtype=np.float64)
         one = self._seed(ones, ones, exact=ones)
@@ -514,9 +596,18 @@ class _Builder:
         )
         product = self._emit_binary(_MULTIPLY, left_mapped, right_mapped, product_shape)
         if not contract_shape:
+            if self.elementwise:
+                zeros = np.zeros(output_shape, dtype=np.float64)
+                zero = self._seed(zeros, zeros, exact=zeros)
+                return self._emit_binary(_ADD, zero, product, output_shape)
             return product
+        if self.elementwise and len(contract_shape) != 1:
+            raise IntervalExtensionError("batched dot requires one contraction axis.")
         return self._reduce_sum(
-            product, tuple(range(contract_start, len(product_shape))), output_shape
+            product,
+            tuple(range(contract_start, len(product_shape))),
+            output_shape,
+            zero_initial=self.elementwise,
         )
 
     def _slice(
@@ -532,7 +623,13 @@ class _Builder:
         return _Tensor(output_shape, value.offset, locations, exact)
 
     def _reduce_sum(
-        self, value: _Tensor, axes: tuple[int, ...], output_shape: _Shape, /
+        self,
+        value: _Tensor,
+        axes: tuple[int, ...],
+        output_shape: _Shape,
+        /,
+        *,
+        zero_initial: bool = False,
     ) -> _Tensor:
         current = value
         rank = len(value.shape)
@@ -577,7 +674,7 @@ class _Builder:
                     output.offset,
                     _size(result_shape),
                     ordered.offset,
-                    -1,
+                    -2 if zero_initial else -1,
                     -1,
                     parameter,
                     terms,
@@ -755,13 +852,15 @@ class _Builder:
         same_input: bool,
         /,
     ) -> tuple[_Tensor, ...]:
-        folded = self._fold_exact(name, values, output_shape)
-        if folded is not None:
-            return (folded,)
+        if not self.elementwise:
+            folded = self._fold_exact(name, values, output_shape)
+            if folded is not None:
+                return (folded,)
         if name in ("add", "add_any"):
-            for zero, other in ((values[0], values[1]), (values[1], values[0])):
-                if zero.exact is not None and np.all(zero.exact == 0.0):
-                    return (self._mapped(other, output_shape),)
+            if not self.elementwise:
+                for zero, other in ((values[0], values[1]), (values[1], values[0])):
+                    if zero.exact is not None and np.all(zero.exact == 0.0):
+                        return (self._mapped(other, output_shape),)
             return (self._emit_binary(_ADD, values[0], values[1], output_shape),)
         if name == "sub":
             return (self._emit_binary(_SUBTRACT, values[0], values[1], output_shape),)
@@ -769,17 +868,43 @@ class _Builder:
             if same_input:
                 return (self._emit_unary(_SQUARE, values[0], output_shape),)
             return (self._emit_binary(_MULTIPLY, values[0], values[1], output_shape),)
+        if self.elementwise and name == "pow":
+            output = self._allocate(output_shape)
+            guard = self._reserve(output_shape)
+            a, a_index = self._operand(values[0], output_shape)
+            b, b_index = self._operand(values[1], output_shape)
+            self.rows.append(
+                (
+                    _POWER_ELEMENTWISE,
+                    output.offset,
+                    _size(output_shape),
+                    a,
+                    a_index,
+                    b,
+                    b_index,
+                    0,
+                )
+            )
+            self.domain_guards.extend(range(guard, guard + _size(output_shape)))
+            return (output,)
         if name == "div":
+            if self.elementwise:
+                return (
+                    self._emit_binary(
+                        _DIVIDE_ELEMENTWISE, values[0], values[1], output_shape
+                    ),
+                )
             denominator = self._mapped(values[1], output_shape)
             reciprocal = self._emit_unary(_RECIPROCAL, denominator, output_shape)
             return (self._emit_binary(_MULTIPLY, values[0], reciprocal, output_shape),)
-        if name in ("neg", "abs", "square", "sqrt", "sin", "cos"):
+        if name in ("neg", "abs", "square", "sqrt", "sin", "cos", "atan"):
             opcode = {
                 "neg": _NEGATE,
                 "square": _SQUARE,
                 "sqrt": _SQRT,
                 "sin": _SINE,
                 "cos": _COSINE,
+                "atan": _ATAN,
                 "abs": _ABSOLUTE,
             }[name]
             return (self._emit_unary(opcode, values[0], output_shape),)
@@ -798,6 +923,10 @@ class _Builder:
                 )[0]
                 return (self._divide_one(positive, output_shape),)
             if exponent == 1:
+                if self.elementwise:
+                    ones = np.ones(output_shape, dtype=np.float64)
+                    one = self._seed(ones, ones, exact=ones)
+                    return (self._emit_binary(_MULTIPLY, one, value, output_shape),)
                 return (value,)
             if exponent % 2 == 0:
                 half = self._lower_arithmetic(
@@ -1106,6 +1235,7 @@ class _Builder:
             "abs",
             "sin",
             "cos",
+            "atan",
             "integer_pow",
             "pow",
             "max",
@@ -1418,6 +1548,8 @@ class _Builder:
         /,
     ) -> None:
         """Ledger events of one equation, as ``_BranchLedger.inspect``."""
+        if self.elementwise and self.branch_axes is None:
+            return
         name = equation.primitive.name
         result = equation.outvars[0] if equation.outvars else None
         match name:
@@ -1524,6 +1656,10 @@ class _Builder:
                 # The host evaluates a declared extension instead of the call,
                 # so its output is a fresh value with no declared regularity.
                 declared = name == "custom_jvp_call" and _declares_extension(equation)
+                if declared and self.elementwise:
+                    raise IntervalExtensionError(
+                        "batched execution cannot inline a declared interval extension."
+                    )
                 if not declared:
                     self.values.descend(inner.invars, equation.invars)
                     nested_outputs = inner.outvars
@@ -1615,15 +1751,19 @@ def lower_interval_jaxpr(
     input_dimension: int,
     /,
     branch_axes: Mapping[jax_core.Var, int | None] | None = None,
+    *,
+    elementwise: bool = False,
 ) -> NativeIntervalProgram:
     """Compile a one-input real jaxpr or refuse its unsupported primitives.
 
     With ``branch_axes`` (the box axis of every traced variable) the program
     also carries the branch-evidence events of ``_BranchLedger``.
+    ``elementwise`` selects per-operation-identical arithmetic for
+    ``evaluate_batch``; unsupported extensions and opcodes are refused.
     """
     if len(closed_jaxpr.jaxpr.invars) != 1:
         raise IntervalExtensionError("native interval programs require one array input.")
-    builder = _Builder(batch_capacity, input_dimension, branch_axes)
+    builder = _Builder(batch_capacity, input_dimension, branch_axes, elementwise)
     input_variable = closed_jaxpr.jaxpr.invars[0]
     input_shape = _real_shape(input_variable)
     expected_input_shape = (batch_capacity, input_dimension)
@@ -1654,6 +1794,40 @@ def lower_interval_jaxpr(
     indices.setflags(write=False)
     parameters.setflags(write=False)
     opcodes = frozenset(int(opcode) for opcode in instructions[:, 0])
+    if elementwise:
+        unsupported = opcodes.difference(
+            {
+                _GATHER,
+                _ADD,
+                _SUBTRACT,
+                _MULTIPLY,
+                _NEGATE,
+                _REDUCE_SUM,
+                _SINE,
+                _COSINE,
+                _SQRT,
+                _COMPARE,
+                _SELECT,
+                _MAXIMUM,
+                _MINIMUM,
+                _EQUAL,
+                _EXTREMUM_PAIR,
+                _EXTREMUM_REDUCE,
+                _DECIDE,
+                _ATTAIN,
+                _ATAN,
+                _POWER_ELEMENTWISE,
+                _SQUARE,
+                _ABSOLUTE,
+                _EXP,
+                _LOG,
+                _DIVIDE_ELEMENTWISE,
+            }
+        )
+        if unsupported:
+            raise IntervalExtensionError(
+                f"batched interval lowering cannot preserve opcodes {tuple(sorted(unsupported))}."
+            )
     events = None
     if branch_axes is not None:
         events = np.asarray(builder.events, dtype=np.int64).reshape((-1, 6))
@@ -1669,6 +1843,7 @@ def lower_interval_jaxpr(
         output=output,
         domain_guards=_immutable_indices(builder.domain_guards),
         opcodes=opcodes,
+        elementwise=elementwise,
         events=events,
     )
 

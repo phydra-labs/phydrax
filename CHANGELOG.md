@@ -249,6 +249,44 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+
+- Native B-Rep projection reuses the selected intersection curve's fixed-shape
+  tangent, while host trim fallback and surface-box validation avoid repeated
+  eager dispatch. Trim realization and projection frame bits, and therefore
+  `BRepProjectionResult.result_id`, can change; certification gates and source
+  identities remain unchanged.
+- B-Rep normal and dihedral ranges, blend tangency bounds, and native-curve
+  turning controls use outward interval inverse trigonometry and norm bounds.
+  Stored angle endpoints and hard-control outcomes can consequently change.
+- CAD source-chart, face-image, and geometry-association identities frame exact
+  rational tables as bytes. These identities and dependent records change;
+  restored records still revalidate their complete exact content.
+- Domain coverage prepares exact coordinate maps on demand and combines shared
+  rational coordinate bases with integer arithmetic. Exact maps and coverage
+  evidence retain their previous values.
+- CAD source bounds, analytic surface derivatives, periodic offsets, and the
+  quadratic tetrahedron screen execute supported interval programs in batches.
+  Their directed endpoints and exact-arithmetic fallback remain unchanged.
+- Mapped-cell image boxes, compatible chart screens, exact lens Jacobians, and
+  determinant child restrictions now batch independent interval requests.
+  Previously successful bounds and pair-screen fallbacks are unchanged.
+  Zero-valued high-degree terms now canonicalize before simplex control
+  preparation, so formerly refused or exact-fallback cases may certify by
+  the interval route.
+- Exact-coordinate interval endpoints verify binary64 proposals without
+  unsigned shift overflow; inexact or out-of-range proposals use directed,
+  saturating exact conversion.
+- `NATIVE_METRIC_3D` vertex relocation off the periodic lift asks meshcore
+  once per round which independent moves it refuses, instead of isolating
+  them by repeated trial edits, and applies an admitted move in place: the
+  native relocation check already runs on the unchanged mesh, so the commit
+  writes only the moved vertices and no longer copies and audits the whole
+  mesh or reads it back. Accepted meshes, edits and statuses are unchanged.
+  `TetraMetricEvidence.implicit_refusals` now counts one refusal per refused
+  move per round rather than one per trial edit, so the evidence identity of
+  implicit-source adaptations changes. Periodic lifts keep the staged edit.
+  Requires a meshcore build with `phx_mc_tet_mesh_probe_relocations` and
+  `phx_mc_tet_mesh_apply_relocation`.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep

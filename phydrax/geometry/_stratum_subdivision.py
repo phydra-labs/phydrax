@@ -34,10 +34,13 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from fractions import Fraction
 from itertools import combinations, product
+from math import gcd, lcm
 from typing import cast
 
 import numpy as np
 
+from .._exact_kernels import bisect_integer_nets, IntegerBernsteinNet
+from .._meshcore import meshcore_available
 from ..discretization._coordinate_enclosure import (
     bernstein_coefficients,
     bernstein_degree,
@@ -51,6 +54,7 @@ from ..discretization._coordinate_enclosure import (
 from ..discretization._exact_algebraic_geometry import RadicalElement
 from ..linalg._exact import matmul_exact, symmetric_product_minors_exact
 from ._embedding_cells import EmbeddingCell
+from ._integer_net_batch import integer_net_batch
 from ._mapped_embedding import (
     monotone_preconditioner,
     subdivided_jacobian_controls,
@@ -59,8 +63,101 @@ from ._mapped_embedding import (
 
 
 _Index = tuple[int, ...]
-_Vector = tuple[ExactScalar, ...]
-_Controls = dict[_Index, _Vector]
+_Vector = tuple[ExactScalar | int, ...]
+
+
+@dataclass(frozen=True)
+class _Controls:
+    """Controls over one positive scale; radicals retain exact scalar values."""
+
+    values: dict[_Index, _Vector]
+    scale: int
+
+    def __getitem__(self, index: _Index, /) -> tuple[ExactScalar, ...]:
+        return tuple(
+            Fraction(value, self.scale) if isinstance(value, int) else value
+            for value in self.values[index]
+        )
+
+
+def _make_controls(values: dict[_Index, _Vector], /) -> _Controls:
+    if any(isinstance(value, RadicalElement) for row in values.values() for value in row):
+        return _Controls(values, 1)
+    rational = {
+        index: tuple(Fraction(cast(Fraction | int, value)) for value in row)
+        for index, row in values.items()
+    }
+    scale = lcm(*(value.denominator for row in rational.values() for value in row))
+    numerators = {
+        index: tuple(value.numerator * (scale // value.denominator) for value in row)
+        for index, row in rational.items()
+    }
+    return _integer_controls(numerators, scale)
+
+
+def _integer_controls(values: dict[_Index, tuple[int, ...]], scale: int, /) -> _Controls:
+    divisor = gcd(scale, *(value for row in values.values() for value in row))
+    return _Controls(
+        {
+            index: tuple(value // divisor for value in row)
+            for index, row in values.items()
+        },
+        scale // divisor,
+    )
+
+
+def _decoded_controls(controls: _Controls, /) -> dict[_Index, _Vector]:
+    if all(isinstance(value, int) for row in controls.values.values() for value in row):
+        return {
+            index: tuple(Fraction(cast(int, value), controls.scale) for value in row)
+            for index, row in controls.values.items()
+        }
+    return controls.values
+
+
+def _affine_controls(
+    controls: _Controls, rows: list[tuple[ExactScalar, ...]], /
+) -> _Controls:
+    if all(
+        isinstance(value, int) for vector in controls.values.values() for value in vector
+    ) and all(not isinstance(value, RadicalElement) for row in rows for value in row):
+        rational = [
+            tuple(Fraction(cast(Fraction | int, value)) for value in row) for row in rows
+        ]
+        scale = lcm(*(value.denominator for row in rational for value in row))
+        coefficients = [
+            tuple(value.numerator * (scale // value.denominator) for value in row)
+            for row in rational
+        ]
+        return _integer_controls(
+            {
+                index: tuple(
+                    row[0] * controls.scale
+                    + sum(a * cast(int, b) for a, b in zip(row[1:], vector, strict=True))
+                    for row in coefficients
+                )
+                for index, vector in controls.values.items()
+            },
+            controls.scale * scale,
+        )
+    return _make_controls(
+        {
+            index: tuple(
+                row[0]
+                + sum(
+                    (
+                        coefficient * value
+                        for coefficient, value in zip(row[1:], vector, strict=True)
+                    ),
+                    Fraction(0),
+                )
+                for row in rows
+            )
+            for index, vector in _decoded_controls(controls).items()
+        }
+    )
+
+
 _Barycentric = tuple[Fraction, ...]
 _SIMPLEX_KINDS = ("tetrahedron", "simplex:3")
 _PIECE_KINDS = ("triangle", "simplex:2", *_SIMPLEX_KINDS)
@@ -72,7 +169,7 @@ _RESOLUTION = 2.0**-44
 _CHILD_CACHE_ENTRIES = 256
 
 
-def _sign(value: ExactScalar, /) -> int:
+def _sign(value: ExactScalar | int, /) -> int:
     if isinstance(value, RadicalElement):
         return value.sign()
     return int(value > 0) - int(value < 0)
@@ -125,8 +222,8 @@ class StratumSubdivisionCache:
     jacobian_controls: dict[tuple[int, int], tuple[_Matrix, ...] | None] = field(
         default_factory=dict
     )
-    simplex_jacobians: dict[int, tuple[EmbeddingCell, tuple[_Matrix, ...] | None]] = (
-        field(default_factory=dict)
+    simplex_jacobians: dict[int, tuple[EmbeddingCell, _JacobianControls | None]] = field(
+        default_factory=dict
     )
     reference_edge_maps: dict[
         tuple[tuple[tuple[Fraction, ...], ...], int],
@@ -202,6 +299,47 @@ def _domain(groups: tuple[int, ...], /) -> BernsteinDomain:
     return "simplex" if len(groups) == 1 else "prism"
 
 
+def _controls_many(
+    requests: list[tuple[tuple[Expression, ...], tuple[int, ...], tuple[int, ...], int]],
+    /,
+    *,
+    tolerate_errors: bool = False,
+) -> list[_Controls | None]:
+    try:
+        native = (
+            integer_net_batch(
+                [
+                    (polynomials, _domain(groups), dimension, degree)
+                    for polynomials, groups, degree, dimension in requests
+                ]
+            )
+            if meshcore_available()
+            else [tuple(None for _ in request[0]) for request in requests]
+        )
+    except (ValueError, ZeroDivisionError, OverflowError):
+        if not tolerate_errors:
+            raise
+        return [
+            _controls_many([request], tolerate_errors=True)[0]
+            if len(requests) > 1
+            else None
+            for request in requests
+        ]
+    result: list[_Controls | None] = []
+    for (polynomials, groups, degree, dimension), nets in zip(
+        requests, native, strict=True
+    ):
+        try:
+            result.append(
+                _controls_from_nets(polynomials, groups, degree, dimension, nets)
+            )
+        except (ValueError, ZeroDivisionError, OverflowError):
+            if not tolerate_errors:
+                raise
+            result.append(None)
+    return result
+
+
 def _controls(
     polynomials: tuple[Expression, ...],
     groups: tuple[int, ...],
@@ -209,22 +347,61 @@ def _controls(
     dimension: int,
     /,
 ) -> _Controls | None:
-    columns: list[tuple[ExactScalar, ...]] = []
-    for polynomial in polynomials:
-        if not isinstance(polynomial, dict):
-            return None
-        columns.append(
-            bernstein_coefficients(polynomial, _domain(groups), dimension, degree=degree)
+    return _controls_many([(polynomials, groups, degree, dimension)])[0]
+
+
+def _controls_from_nets(
+    polynomials: tuple[Expression, ...],
+    groups: tuple[int, ...],
+    degree: tuple[int, ...],
+    dimension: int,
+    native: tuple[IntegerBernsteinNet | None, ...],
+    /,
+) -> _Controls | None:
+    if any(not isinstance(polynomial, dict) for polynomial in polynomials):
+        return None
+    indices = _control_indices(groups, degree)
+    polynomial_maps = [
+        polynomial for polynomial in polynomials if isinstance(polynomial, dict)
+    ]
+    if native and all(net is not None for net in native):
+        nets = [net for net in native if net is not None]
+        scale = lcm(*(net.scale for net in nets))
+        columns = [
+            tuple(value * (scale // net.scale) for value in net.numerators())
+            for net in nets
+        ]
+        return _integer_controls(
+            {
+                index: tuple(column[row] for column in columns)
+                for row, index in enumerate(indices)
+            },
+            scale,
         )
-    return {
-        index: tuple(column[row] for column in columns)
-        for row, index in enumerate(_control_indices(groups, degree))
-    }
+    columns = [
+        net.controls()
+        if net is not None
+        else bernstein_coefficients(polynomial, _domain(groups), dimension, degree=degree)
+        for polynomial, net in zip(polynomial_maps, native, strict=True)
+    ]
+    return _make_controls(
+        {
+            index: tuple(column[row] for column in columns)
+            for row, index in enumerate(indices)
+        }
+    )
+
+
+def _float_value(value: ExactScalar | int, scale: int, /) -> float:
+    return value / scale if isinstance(value, int) else float(value)
 
 
 def _float_points(controls: _Controls, /) -> np.ndarray:
     return np.asarray(
-        [[float(value) for value in vector] for vector in controls.values()],
+        [
+            [_float_value(value, controls.scale) for value in vector]
+            for vector in controls.values.values()
+        ],
         dtype=np.float64,
     )
 
@@ -242,7 +419,8 @@ def _corner_points(
             for slot in slots
         )
         corners[choice] = np.asarray(
-            [float(value) for value in controls[index]], dtype=np.float64
+            [_float_value(value, controls.scale) for value in controls.values[index]],
+            dtype=np.float64,
         )
     return corners
 
@@ -308,6 +486,7 @@ def _root_piece(
     /,
     *,
     cache: StratumSubdivisionCache | None = None,
+    prepared_residual: tuple[tuple[int, ...], _Controls] | None = None,
 ) -> _Piece | None:
     dimension = cell.dimension
     if (
@@ -367,40 +546,11 @@ def _root_piece(
             (expression.get(zero, Fraction(0)),)
             + tuple(expression.get(axis, Fraction(0)) for axis in axes)
         )
-    offsets = (
-        tuple(row[0] for row in affine_rows)
-        if len(affine_rows) == ambient
-        and all(
-            row[1:] == tuple(Fraction(int(index == axis)) for index in range(ambient))
-            for axis, row in enumerate(affine_rows)
-        )
-        else None
-    )
-    if offsets is not None:
+    if residuals and len(affine_rows) == len(residuals):
         residual_degree = geometry_degree
-        residual = {
-            index: tuple(
-                value + offset for value, offset in zip(vector, offsets, strict=True)
-            )
-            for index, vector in geometry.items()
-        }
-    elif residuals and len(affine_rows) == len(residuals):
-        residual_degree = geometry_degree
-        residual = {
-            index: tuple(
-                row[0]
-                + sum(
-                    (
-                        coefficient * value
-                        for coefficient, value in zip(row[1:], vector, strict=True)
-                        if coefficient
-                    ),
-                    Fraction(0),
-                )
-                for row in affine_rows
-            )
-            for index, vector in geometry.items()
-        }
+        residual = _affine_controls(geometry, affine_rows)
+    elif prepared_residual is not None:
+        residual_degree, residual = prepared_residual
     else:
         composed = tuple(
             compose_expression(residual, cell.coordinates) for residual in residuals
@@ -411,7 +561,9 @@ def _root_piece(
         if residual_degree is None:
             return None
         residual = (
-            _controls(composed, groups, residual_degree, dimension) if composed else {}
+            _controls(composed, groups, residual_degree, dimension)
+            if composed
+            else _Controls({}, 1)
         )
         if residual is None:
             return None
@@ -441,36 +593,78 @@ def _bisect_controls(
     The left half keeps vertex ``first`` and moves ``second`` to the midpoint;
     the right half keeps ``second`` and moves ``first`` there.
     """
-    left: _Controls = {}
-    right: _Controls = {}
+    if not controls.values:
+        return controls, controls
+    integer = all(
+        isinstance(value, int) for row in controls.values.values() for value in row
+    )
     lines: dict[_Index, list[_Index]] = {}
-    for index in controls:
+    for index in controls.values:
         rest = tuple(
             value for slot, value in enumerate(index) if slot not in (first, second)
         )
         lines.setdefault(rest, []).append(index)
-    half = Fraction(1, 2)
-    for indices in lines.values():
-        total = indices[0][first] + indices[0][second]
-        ordered = sorted(indices, key=lambda index: index[second])
-        levels = [[controls[index] for index in ordered]]
+    indices = tuple(
+        index
+        for line in lines.values()
+        for index in sorted(line, key=lambda item: item[second])
+    )
+    exponent = max(index[first] + index[second] for index in indices)
+    if integer and meshcore_available():
+        rows = tuple(
+            tuple(cast(int, value) for value in controls.values[index])
+            for index in indices
+        )
+        result = bisect_integer_nets([rows], indices, first, second)
+        halves = result.halves[0]
+        if halves is not None:
+            scale = controls.scale << result.exponent
+            return (
+                _integer_controls(dict(zip(indices, halves[0], strict=True)), scale),
+                _integer_controls(dict(zip(indices, halves[1], strict=True)), scale),
+            )
+    left: dict[_Index, _Vector] = {}
+    right: dict[_Index, _Vector] = {}
+    for line in lines.values():
+        total = line[0][first] + line[0][second]
+        ordered = sorted(line, key=lambda index: index[second])
+        levels = [[controls.values[index] for index in ordered]]
         for _ in range(total):
             previous = levels[-1]
             levels.append(
                 [
                     tuple(
-                        (left_value + right_value) * half
-                        for left_value, right_value in zip(
-                            previous[row], previous[row + 1], strict=True
-                        )
+                        (a + b) if integer else (a + b) * Fraction(1, 2)
+                        for a, b in zip(previous[row], previous[row + 1], strict=True)
                     )
                     for row in range(len(previous) - 1)
                 ]
             )
         for step, index in enumerate(ordered):
-            left[index] = levels[step][0]
-            right[index] = levels[total - step][step]
-    return left, right
+            if integer:
+                left[index] = tuple(
+                    value * (1 << (exponent - step)) for value in levels[step][0]
+                )
+                right[index] = tuple(
+                    value * (1 << (exponent - total + step))
+                    for value in levels[total - step][step]
+                )
+            else:
+                left[index] = levels[step][0]
+                right[index] = levels[total - step][step]
+    if integer:
+        # All values originated as Python integers and only integer arithmetic was used.
+        return (
+            _integer_controls(
+                {key: tuple(cast(int, v) for v in row) for key, row in left.items()},
+                controls.scale << exponent,
+            ),
+            _integer_controls(
+                {key: tuple(cast(int, v) for v in row) for key, row in right.items()},
+                controls.scale << exponent,
+            ),
+        )
+    return _Controls(left, 1), _Controls(right, 1)
 
 
 def _bisect(piece: _Piece, first: int, second: int, /) -> tuple[_Piece, _Piece]:
@@ -480,9 +674,7 @@ def _bisect(piece: _Piece, first: int, second: int, /) -> tuple[_Piece, _Piece]:
     )
     middle_on_stratum = piece.on_stratum[first] and piece.on_stratum[second]
     geometry = _bisect_controls(piece.geometry, first, second)
-    residual = (
-        _bisect_controls(piece.residual, first, second) if piece.residual else ({}, {})
-    )
+    residual = _bisect_controls(piece.residual, first, second)
     children: list[_Piece] = []
     for moved, geometry_controls, residual_controls in (
         (second, geometry[0], residual[0]),
@@ -617,20 +809,22 @@ def _integer_direction(direction: np.ndarray, /) -> tuple[int, ...] | None:
     return values if any(values) else None
 
 
-def _dot(direction: tuple[int, ...], vector: _Vector, /) -> ExactScalar:
-    total: ExactScalar = Fraction(0)
+def _dot(direction: tuple[int, ...], vector: _Vector, /) -> ExactScalar | int:
+    total: ExactScalar | int = 0
     for coefficient, value in zip(direction, vector, strict=True):
         if coefficient:
             total = total + coefficient * value
     return total
 
 
-def _exactly_positive(direction: np.ndarray | None, vectors: list[_Vector], /) -> bool:
+def _exactly_positive(
+    direction: np.ndarray | None, vectors: list[tuple[_Vector, int]], /
+) -> bool:
     if direction is None:
         return False
     normal = _integer_direction(direction)
     return normal is not None and all(
-        _sign(_dot(normal, vector)) > 0 for vector in vectors
+        _sign(_dot(normal, vector)) > 0 for vector, _ in vectors
     )
 
 
@@ -644,30 +838,39 @@ def _hull_separated(first: _Piece, second: _Piece, /) -> bool:
     normal = _integer_direction(direction)
     if normal is None:
         return False
-    first_values = [_dot(normal, vector) for vector in first.geometry.values()]
-    second_values = [_dot(normal, vector) for vector in second.geometry.values()]
+    first_values = [_dot(normal, vector) for vector in first.geometry.values.values()]
+    second_values = [_dot(normal, vector) for vector in second.geometry.values.values()]
     lowest = first_values[0]
     for value in first_values[1:]:
         if _sign(value - lowest) < 0:
             lowest = value
-    return all(_sign(lowest - value) > 0 for value in second_values)
+    return all(
+        _sign(lowest * second.geometry.scale - value * first.geometry.scale) > 0
+        for value in second_values
+    )
 
 
-def _cone_vectors(piece: _Piece, side: int, /) -> list[_Vector] | None:
+def _cone_vectors(piece: _Piece, side: int, /) -> list[tuple[_Vector, int]] | None:
     """Off-stratum residual controls oriented by ``side``; stratum controls must vanish."""
-    vectors: list[_Vector] = []
-    for index, vector in piece.residual.items():
+    vectors: list[tuple[_Vector, int]] = []
+    for index, vector in piece.residual.values.items():
         if all(piece.on_stratum[slot] for slot, value in enumerate(index) if value):
             if any(_sign(value) for value in vector):
                 return None
             continue
-        vectors.append(vector if side > 0 else tuple(-value for value in vector))
+        vectors.append(
+            (
+                vector if side > 0 else tuple(-value for value in vector),
+                piece.residual.scale,
+            )
+        )
     return vectors
 
 
-def _float_rows(vectors: list[_Vector], /) -> np.ndarray:
+def _float_rows(vectors: list[tuple[_Vector, int]], /) -> np.ndarray:
     return np.asarray(
-        [[float(value) for value in vector] for vector in vectors], dtype=np.float64
+        [[_float_value(value, scale) for value in vector] for vector, scale in vectors],
+        dtype=np.float64,
     ).reshape(len(vectors), -1)
 
 
@@ -687,6 +890,87 @@ def _cone_test(first: _Piece, second: _Piece, /) -> tuple[bool, int | None]:
     return False, None
 
 
+def _prepare_root_nets(
+    cells: tuple[EmbeddingCell, ...],
+    stratum: tuple[int, ...],
+    residuals: tuple[Expression, ...],
+    cache: StratumSubdivisionCache,
+    /,
+) -> dict[int, tuple[tuple[int, ...], _Controls]]:
+    """Prepare independent geometry and non-affine residual nets together."""
+    requests: list[
+        tuple[tuple[Expression, ...], tuple[int, ...], tuple[int, ...], int]
+    ] = []
+    owners: list[tuple[EmbeddingCell, bool, tuple[int, ...]]] = []
+    for cell in cells:
+        if (cell.global_id, stratum) in cache.roots:
+            continue
+        try:
+            layout = _reference_slots(cell)
+            if (
+                layout is None
+                or cell.dimension not in (2, 3)
+                or len(cell.coordinates) not in (2, 3)
+                or len(cell.coordinates) < cell.dimension
+                or len(cell.vertex_ids) != len(cell.reference_vertices)
+            ):
+                continue
+            on_slots = {
+                slot
+                for index, slots in enumerate(layout[1])
+                if cell.vertex_ids[index] in stratum
+                for slot in slots
+            }
+            if any(
+                (cell.vertex_ids[index] in stratum)
+                != all(slot in on_slots for slot in slots)
+                for index, slots in enumerate(layout[1])
+            ):
+                continue
+            groups = layout[0]
+            degree = _degree(cell.coordinates, groups, cell.dimension)
+            if degree is None:
+                continue
+            existing = cache.geometry.get(id(cell))
+            if existing is None or existing[0] is not cell:
+                requests.append((cell.coordinates, groups, degree, cell.dimension))
+                owners.append((cell, False, degree))
+            ambient = len(cell.coordinates)
+            zero = (0,) * ambient
+            axes = tuple(
+                tuple(int(index == axis) for index in range(ambient))
+                for axis in range(ambient)
+            )
+            affine = residuals and all(
+                isinstance(expression, dict)
+                and all(exponent == zero or exponent in axes for exponent in expression)
+                for expression in residuals
+            )
+            if residuals and not affine:
+                composed = tuple(
+                    compose_expression(residual, cell.coordinates)
+                    for residual in residuals
+                )
+                residual_degree = _degree(composed, groups, cell.dimension)
+                if residual_degree is not None:
+                    requests.append((composed, groups, residual_degree, cell.dimension))
+                    owners.append((cell, True, residual_degree))
+        except (ArithmeticError, IndexError, KeyError, TypeError, ValueError):
+            # Preserve the original root path's handling for ineligible cells.
+            continue
+    prepared: dict[int, tuple[tuple[int, ...], _Controls]] = {}
+    for (cell, residual, degree), controls in zip(
+        owners, _controls_many(requests, tolerate_errors=True), strict=True
+    ):
+        if controls is None:
+            continue
+        if residual:
+            prepared[id(cell)] = (degree, controls)
+        else:
+            cache.geometry[id(cell)] = (cell, degree, controls)
+    return prepared
+
+
 def subdivided_stratum_separation(
     first: EmbeddingCell,
     second: EmbeddingCell,
@@ -704,11 +988,18 @@ def subdivided_stratum_separation(
     binary64 resolution first.
     """
     stratum = tuple(sorted(shared_ids))
+    prepared_residuals = _prepare_root_nets((first, second), stratum, residuals, cache)
     pieces: list[_Piece] = []
     for cell in (first, second):
         key = (cell.global_id, stratum)
         if key not in cache.roots:
-            cache.roots[key] = _root_piece(cell, stratum, residuals, cache=cache)
+            cache.roots[key] = _root_piece(
+                cell,
+                stratum,
+                residuals,
+                cache=cache,
+                prepared_residual=prepared_residuals.get(id(cell)),
+            )
         piece = cache.roots[key]
         if piece is None:
             return None
@@ -741,6 +1032,26 @@ def subdivided_stratum_separation(
 
 
 _Matrix = tuple[tuple[ExactScalar, ...], ...]
+
+
+@dataclass(frozen=True)
+class _JacobianControls:
+    """A whole Jacobian control net over one positive exact scale."""
+
+    dimension: int
+    controls: _Controls
+
+    def decoded(self) -> tuple[_Matrix, ...]:
+        return tuple(
+            tuple(
+                tuple(
+                    Fraction(value) if isinstance(value, int) else value
+                    for value in vector[row * self.dimension : (row + 1) * self.dimension]
+                )
+                for row in range(self.dimension)
+            )
+            for vector in _decoded_controls(self.controls).values()
+        )
 
 
 def _determinant(matrix: _Matrix, /) -> ExactScalar:
@@ -830,7 +1141,7 @@ def _edge_matrix(points: tuple[tuple[ExactScalar, ...], ...], origin: int, /) ->
     )
 
 
-def _jacobian_controls(cell: EmbeddingCell, /) -> tuple[_Matrix, ...] | None:
+def _jacobian_controls(cell: EmbeddingCell, /) -> _JacobianControls | None:
     """Bernstein controls of the reference Jacobian on the unit reference simplex."""
     dimension = cell.dimension
     entries: list[list[dict[_Index, ExactScalar]]] = []
@@ -845,8 +1156,10 @@ def _jacobian_controls(cell: EmbeddingCell, /) -> tuple[_Matrix, ...] | None:
                     lowered = tuple(
                         value - int(index == axis) for index, value in enumerate(exponent)
                     )
-                    derivative[lowered] = derivative.get(lowered, Fraction(0)) + (
-                        coefficient * exponent[axis]
+                    derivative[lowered] = (
+                        coefficient
+                        if exponent[axis] == 1
+                        else coefficient * exponent[axis]
                     )
             row.append(derivative or {(0,) * dimension: Fraction(0)})
         entries.append(row)
@@ -858,21 +1171,13 @@ def _jacobian_controls(cell: EmbeddingCell, /) -> tuple[_Matrix, ...] | None:
             for entry in row
         ),
     )
-    columns = [
-        [
-            bernstein_coefficients(entry, "simplex", dimension, degree=(degree,))
-            for entry in row
-        ]
-        for row in entries
-    ]
-    count = len(columns[0][0])
-    return tuple(
-        tuple(
-            tuple(columns[row][column][index] for column in range(dimension))
-            for row in range(dimension)
-        )
-        for index in range(count)
+    controls = _controls(
+        tuple(entry for row in entries for entry in row),
+        (dimension + 1,),
+        (degree,),
+        dimension,
     )
+    return None if controls is None else _JacobianControls(dimension, controls)
 
 
 def _cached_reference_edges(
@@ -909,7 +1214,7 @@ def _cached_corner_metric(
 
 def _cached_simplex_jacobians(
     cell: EmbeddingCell, cache: StratumSubdivisionCache | None, /
-) -> tuple[_Matrix, ...] | None:
+) -> _JacobianControls | None:
     if cache is None:
         return _jacobian_controls(cell)
     entry = cache.simplex_jacobians.get(id(cell))
@@ -917,6 +1222,47 @@ def _cached_simplex_jacobians(
         entry = (cell, _jacobian_controls(cell))
         cache.simplex_jacobians[id(cell)] = entry
     return entry[1]
+
+
+def _jacobian_controls_positive(
+    controls: _JacobianControls, metric: _Matrix, glue: _Matrix | None = None, /
+) -> bool:
+    """Check the common-scaled net without normalizing individual controls."""
+    factors = (metric,) if glue is None else (metric, glue)
+    if all(
+        isinstance(value, Fraction | int)
+        for factor in factors
+        for row in factor
+        for value in row
+    ) and all(
+        isinstance(value, int)
+        for vector in controls.controls.values.values()
+        for value in vector
+    ):
+        rational_factors = cast(
+            tuple[tuple[tuple[Fraction | int, ...], ...], ...], factors
+        )
+        dimension = controls.dimension
+        for vector in controls.controls.values.values():
+            integer_vector = cast(tuple[int, ...], vector)
+            matrix = tuple(
+                integer_vector[row * dimension : (row + 1) * dimension]
+                for row in range(dimension)
+            )
+            product = (
+                (rational_factors[0], matrix)
+                if glue is None
+                else (rational_factors[0], matrix, rational_factors[1])
+            )
+            if any(value <= 0 for value in symmetric_product_minors_exact(*product)):
+                return False
+        return True
+    return all(
+        _positive_definite_symmetric_part(metric, control)
+        if glue is None
+        else _positive_definite_symmetric_part(metric, control, glue)
+        for control in controls.decoded()
+    )
 
 
 def _fixed_glued_monotone(
@@ -988,11 +1334,8 @@ def _fixed_glued_monotone(
     second_controls = _cached_simplex_jacobians(second, cache)
     if first_controls is None or second_controls is None:
         return False
-    return all(
-        _positive_definite_symmetric_part(metric, control) for control in first_controls
-    ) and all(
-        _positive_definite_symmetric_part(metric, control, glue)
-        for control in second_controls
+    return _jacobian_controls_positive(first_controls, metric) and (
+        _jacobian_controls_positive(second_controls, metric, glue)
     )
 
 
@@ -1072,8 +1415,8 @@ def _glued_monotone(
     if first_controls is None or second_controls is None:
         return False
     glued_controls = (
-        *first_controls,
-        *(_product(control, glue) for control in second_controls),
+        *first_controls.decoded(),
+        *(_product(control, glue) for control in second_controls.decoded()),
     )
     if all(
         _positive_definite_symmetric_part(metric, control) for control in glued_controls

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from fractions import Fraction
+from functools import lru_cache
 from typing import cast, TYPE_CHECKING, TypeAlias, Union
 
 import equinox as eqx
@@ -30,6 +31,7 @@ from .._interval_enclosure import (
     Interval,
     interval_add,
     interval_multiply,
+    IntervalExtensionError,
     prepare_interval_function,
     PreparedIntervalFunction,
 )
@@ -234,25 +236,36 @@ def _binary_components(value: object, /) -> bool:
     return True
 
 
+@lru_cache(maxsize=1)
+def _cylinder_trigonometric_program() -> PreparedIntervalFunction:
+    def values(parameters: Array, /) -> Array:
+        return jnp.stack((jnp.cos(parameters), jnp.sin(parameters)))
+
+    try:
+        return prepare_interval_function(values, 1, batch_capacity=1, execution="batched")
+    except IntervalExtensionError:
+        return prepare_interval_function(values, 1, batch_capacity=1)
+
+
 def _exact_cylinder_patch_box(
     patch: object, lower: np.ndarray, upper: np.ndarray, /
 ) -> np.ndarray:
-    from .._interval_enclosure import interval_cos, interval_sin
     from .._rational import fraction_down, fraction_up
     from ._patches import CylinderPatch
 
     if not isinstance(patch, CylinderPatch):
         raise TypeError("Exact cylinder bounds require a CylinderPatch source.")
-    angle = (np.asarray(lower[0]), np.asarray(upper[0]))
-    cosine_float = interval_cos(angle)
-    sine_float = interval_sin(angle)
+    trig_lower, trig_upper = _cylinder_trigonometric_program().evaluate(
+        np.asarray(lower[:1], dtype=np.float64)[None],
+        np.asarray(upper[:1], dtype=np.float64)[None],
+    )
     cosine = (
-        Fraction.from_float(float(cosine_float[0])),
-        Fraction.from_float(float(cosine_float[1])),
+        Fraction.from_float(float(trig_lower[0, 0, 0])),
+        Fraction.from_float(float(trig_upper[0, 0, 0])),
     )
     sine = (
-        Fraction.from_float(float(sine_float[0])),
-        Fraction.from_float(float(sine_float[1])),
+        Fraction.from_float(float(trig_lower[0, 1, 0])),
+        Fraction.from_float(float(trig_upper[0, 1, 0])),
     )
     height = (
         Fraction.from_float(float(lower[1])),
@@ -300,10 +313,20 @@ def _exact_cylinder_patch_box(
     return np.asarray((lower_values, upper_values), dtype=np.float64)
 
 
+@lru_cache(maxsize=1)
+def _torus_trigonometric_program() -> PreparedIntervalFunction:
+    def values(parameters: Array, /) -> Array:
+        return jnp.stack((jnp.cos(parameters), jnp.sin(parameters)))
+
+    try:
+        return prepare_interval_function(values, 2, batch_capacity=1, execution="batched")
+    except IntervalExtensionError:
+        return prepare_interval_function(values, 2, batch_capacity=1)
+
+
 def _exact_torus_patch_box(
     patch: object, lower: np.ndarray, upper: np.ndarray, /
 ) -> np.ndarray:
-    from .._interval_enclosure import interval_cos, interval_sin
     from .._rational import fraction_down, fraction_up
     from ._patches import TorusPatch
 
@@ -337,12 +360,14 @@ def _exact_torus_patch_box(
             float(upper_value)
         )
 
-    longitude = (np.asarray(lower[0]), np.asarray(upper[0]))
-    tube = (np.asarray(lower[1]), np.asarray(upper[1]))
-    cosine_u = float_interval(interval_cos(longitude))
-    sine_u = float_interval(interval_sin(longitude))
-    cosine_v = float_interval(interval_cos(tube))
-    sine_v = float_interval(interval_sin(tube))
+    trig_lower, trig_upper = _torus_trigonometric_program().evaluate(
+        np.asarray(lower, dtype=np.float64)[None],
+        np.asarray(upper, dtype=np.float64)[None],
+    )
+    cosine_u = float_interval((trig_lower[0, 0, 0], trig_upper[0, 0, 0]))
+    sine_u = float_interval((trig_lower[0, 1, 0], trig_upper[0, 1, 0]))
+    cosine_v = float_interval((trig_lower[0, 0, 1], trig_upper[0, 0, 1]))
+    sine_v = float_interval((trig_lower[0, 1, 1], trig_upper[0, 1, 1]))
     center = tuple(exact_interval(value) for value in patch.center_exact)
     first_axis = tuple(exact_interval(value) for value in patch.first_axis_exact)
     second_axis = tuple(exact_interval(value) for value in patch.second_axis_exact)
@@ -534,11 +559,15 @@ def _patch_box(
         raise NotImplementedError(
             "Exact patch coefficients have no registered algebraic interval realization."
         )
-    evaluator = (
-        prepare_interval_function(patch.evaluate, 2)
-        if interval_program is None
-        else interval_program(patch)
-    )
+    if interval_program is not None:
+        evaluator = interval_program(patch)
+    else:
+        try:
+            evaluator = prepare_interval_function(
+                patch.evaluate, 2, batch_capacity=1, execution="batched"
+            )
+        except IntervalExtensionError:
+            evaluator = prepare_interval_function(patch.evaluate, 2, batch_capacity=1)
     lo, hi = evaluator.evaluate(
         np.asarray(lower, dtype=np.float64)[None],
         np.asarray(upper, dtype=np.float64)[None],

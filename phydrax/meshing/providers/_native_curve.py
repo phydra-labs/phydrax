@@ -50,12 +50,18 @@ from ...geometry._curve_boundary import (
     SegmentChartCurve,
 )
 from ...geometry._interval_enclosure import (
+    interval_acos,
+    interval_add,
+    interval_divide,
+    interval_multiply,
+    interval_subtract,
     IntervalExtensionError,
     prepare_interval_function,
     PreparedIntervalFunction,
 )
 from ...geometry._rational import (
     binary64_difference_magnitude,
+    binary64_norm_lower,
     binary64_norm_upper,
     upper_float,
 )
@@ -2195,6 +2201,47 @@ def _organization(
     )
 
 
+def _chord_turn_upper(
+    first: np.ndarray, junction: np.ndarray, last: np.ndarray, /
+) -> tuple[float, bool]:
+    """Enclose the turn of two represented chords, refusing unresolved norms."""
+    a = interval_subtract((junction, junction), (first, first))
+    b = interval_subtract((last, last), (junction, junction))
+    product = interval_multiply(a, b)
+    product_lower = np.asarray(product[0], dtype=np.float64).reshape(-1)
+    product_upper = np.asarray(product[1], dtype=np.float64).reshape(-1)
+    dot = (np.asarray(0.0), np.asarray(0.0))
+    for axis in range(first.size):
+        dot = interval_add(dot, (product_lower[axis], product_upper[axis]))
+
+    def norm_bounds(
+        vector: tuple[np.ndarray, np.ndarray], /
+    ) -> tuple[np.ndarray, np.ndarray]:
+        lower, upper = vector
+        minimum = np.where(
+            (lower <= 0.0) & (upper >= 0.0),
+            0.0,
+            np.minimum(np.abs(lower), np.abs(upper)),
+        )
+        maximum = np.maximum(np.abs(lower), np.abs(upper))
+        return binary64_norm_lower(minimum), binary64_norm_upper(maximum)
+
+    denominator = interval_multiply(
+        norm_bounds((np.asarray(a[0]), np.asarray(a[1]))),
+        norm_bounds((np.asarray(b[0]), np.asarray(b[1]))),
+    )
+    if (
+        float(np.asarray(denominator[0])) <= 0.0
+        or not np.isfinite(denominator[1])
+        or not np.isfinite(dot[0])
+        or not np.isfinite(dot[1])
+    ):
+        return float(interval_acos((np.asarray(-1.0), np.asarray(-1.0)))[1]), True
+    cosine = interval_divide(dot, denominator)
+    cosine = (np.clip(cosine[0], -1.0, 1.0), np.clip(cosine[1], -1.0, 1.0))
+    return float(interval_acos(cosine)[1]), False
+
+
 def _curve_compliance(
     prepared: PreparedCurveNetwork,
     vertices: np.ndarray,
@@ -2315,6 +2362,7 @@ def _curve_compliance(
             requested.append((f"{key}:normal_angle", control.normal_angle))
             local_rows = np.flatnonzero(selected)
             turns: list[float] = []
+            unresolved = False
             for first, second in zip(local_rows[:-1], local_rows[1:], strict=True):
                 if (
                     prepared.scope_entity_ids[cell_rows[first]]
@@ -2322,19 +2370,21 @@ def _curve_compliance(
                     or cells[first, 1] != cells[second, 0]
                 ):
                     continue
-                a = vertices[cells[first, 1]] - vertices[cells[first, 0]]
-                b = vertices[cells[second, 1]] - vertices[cells[second, 0]]
-                cosine = float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
-                turns.append(math.acos(float(np.clip(cosine, -1.0, 1.0))))
+                turn, indeterminate = _chord_turn_upper(
+                    vertices[cells[first, 0]],
+                    vertices[cells[first, 1]],
+                    vertices[cells[second, 1]],
+                )
+                turns.append(turn)
+                unresolved |= indeterminate
             turning = max(turns, default=0.0)
             achieved.append((f"{key}:maximum_chord_turning", turning))
             tolerance = (
                 policy.absolute_tolerance
                 + policy.relative_tolerance * control.normal_angle
             )
-            if (
-                control.strength is SizeControlStrength.HARD
-                and turning > control.normal_angle + tolerance
+            if control.strength is SizeControlStrength.HARD and (
+                unresolved or turning > control.normal_angle + tolerance
             ):
                 issues.append(f"normal_angle:{control.control_id}")
     for feature in prepared.specification.protected_features:

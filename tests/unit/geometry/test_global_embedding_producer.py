@@ -4,8 +4,10 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
+from random import Random
 from typing import cast
 
 import equinox as eqx
@@ -37,6 +39,7 @@ from phydrax.discretization._coordinate_enclosure import (
     evaluate_expression,
     Expression,
     multiply,
+    Polynomial,
     polynomial_bounds,
     scale,
     subtract,
@@ -44,6 +47,7 @@ from phydrax.discretization._coordinate_enclosure import (
 from phydrax.discretization._exact_algebraic_geometry import (
     ExactScalar,
     RadicalElement,
+    rational_coefficient,
 )
 from phydrax.discretization._nested_reference_types import (
     ExactReferenceChartExpression,
@@ -85,6 +89,7 @@ from phydrax.geometry._mapped_embedding import (
 )
 from phydrax.geometry._planar_primitives import TriangleEnclosures
 from phydrax.geometry._restricted_embedding import (
+    rational_simplex_trace_values,
     reference_chart_composition_equal,
     restriction_trace_equal,
 )
@@ -339,6 +344,79 @@ def _mapped_tetrahedron(
         tuple(upper for _, upper in bounds),
         tuple(tuple(face) for face in topology.entities[2]),
     )
+
+
+def test_simplex_image_bounds_fall_back_when_interval_is_nonfinite(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.geometry._global_embedding as embedding
+
+    u, v = axes(2)
+    coordinates = (add(u, v), subtract(u, v))
+
+    def inconclusive(
+        expression: Expression, corners: tuple[tuple[Fraction, ...], ...], /
+    ) -> tuple[float, float]:
+        return -float("inf"), float("inf")
+
+    monkeypatch.setattr(embedding, "restricted_polynomial_bounds", inconclusive)
+    root = embedding._root_reference_cell("triangle", coordinates, 1)
+    assert root is not None
+    chart = embedding._affine_chart_cell(root, coordinates)
+    assert chart is not None
+    expected = tuple(
+        polynomial_bounds(expression, "simplex", 2) for expression in coordinates
+    )
+    assert tuple(zip(root.image_lower, root.image_upper, strict=True)) == expected
+    assert tuple(zip(chart.image_lower, chart.image_upper, strict=True)) == expected
+
+
+def test_strict_simplex_separation_falls_back_for_overlapping_intervals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.geometry._global_embedding as embedding
+
+    u, v = axes(2)
+    first = embedding._root_reference_cell("triangle", (u, v), 1)
+    separated = embedding._root_reference_cell("triangle", (add(u, constant(2, 2)), v), 2)
+    overlapping = embedding._root_reference_cell(
+        "triangle", (add(u, constant(Fraction(1, 2), 2)), v), 3
+    )
+    assert first is not None and separated is not None and overlapping is not None
+
+    def wide_bounds(
+        expression: Expression, corners: tuple[tuple[Fraction, ...], ...], /
+    ) -> tuple[float, float]:
+        return -100.0, 100.0
+
+    def candidate_planes(
+        first: EmbeddingCell, second: EmbeddingCell, shadows: dict[int, object], /
+    ) -> tuple[tuple[Fraction, ...], ...]:
+        return ((Fraction(1), Fraction(0)),)
+
+    monkeypatch.setattr(embedding, "restricted_polynomial_bounds", wide_bounds)
+    monkeypatch.setattr(embedding, "strict_separation_planes", candidate_planes)
+    assert embedding._strict_image_separation(first, separated, {})
+    assert not embedding._strict_image_separation(first, overlapping, {})
+
+
+def test_strict_simplex_separation_accepts_certified_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.geometry._global_embedding as embedding
+
+    u, v = axes(2)
+    first = embedding._root_reference_cell("triangle", (u, v), 1)
+    second = embedding._root_reference_cell("triangle", (add(u, constant(2, 2)), v), 2)
+    assert first is not None and second is not None
+
+    def candidate_planes(
+        first: EmbeddingCell, second: EmbeddingCell, shadows: dict[int, object], /
+    ) -> tuple[tuple[Fraction, ...], ...]:
+        return ((Fraction(1), Fraction(0)),)
+
+    monkeypatch.setattr(embedding, "strict_separation_planes", candidate_planes)
+    assert embedding._strict_image_separation(first, second, {})
 
 
 def _radical_linear_tetra_geometry(
@@ -703,6 +781,13 @@ def _radical_global_embedding_identity() -> tuple[
         raise AssertionError(
             "The radical fixture did not retain its injectivity witness."
         )
+    if not all(
+        "control_digests:" in expression and "sha256:" in expression
+        for theorem, _, values in witnesses
+        if theorem == "mapped_cell_injective"
+        for expression in values
+    ):
+        raise AssertionError("Mapped injectivity evidence must retain control digests.")
     return (
         str(certificate.status),
         certificate.certificate_id,
@@ -1211,6 +1296,70 @@ def _tetrahedra_sharing_a_curved_face(
     return first, second
 
 
+@pytest.mark.parametrize("order", (2, 3, 4, 5))
+def test_random_rational_simplex_trace_matches_fraction_reference(order: int) -> None:
+    rng = Random(817 + order)
+    polynomials: tuple[Polynomial, ...] = tuple(
+        {
+            (x, y, z): Fraction(rng.randint(-9, 9), rng.randint(1, 11))
+            for x in range(order + 1)
+            for y in range(order + 1 - x)
+            for z in range(order + 1 - x - y)
+        }
+        for _ in range(3)
+    )
+    polynomials[0][(1, 1, 0)] = Fraction(5, 7)
+    first = _mapped_tetrahedron(1, (10, 11, 12, 13), polynomials)
+    same_face = tuple(dict(polynomial) for polynomial in polynomials)
+    same_face[0][(0, 0, 1)] += Fraction(7, 13)
+    second = _mapped_tetrahedron(2, (10, 11, 12, 14), same_face)
+    different_face = tuple(dict(polynomial) for polynomial in same_face)
+    different_face[0][(1, 1, 0)] += Fraction(1, 17)
+    third = _mapped_tetrahedron(3, (10, 11, 12, 15), different_face)
+
+    for cell, expected in ((second, True), (third, False)):
+        assert restriction_trace_equal(first, cell, (10, 11, 12)) is expected
+    lattice = rational_simplex_trace_values(first, (10, 11, 12))
+    assert lattice is not None
+    actual_order, rows = lattice
+    assert actual_order == order
+    references = first.reference_vertices[:3]
+    caught_dropped_term = False
+    caught_wrong_scale = False
+    for weights, values in rows:
+        point = tuple(
+            sum(
+                (
+                    weight * reference[axis]
+                    for weight, reference in zip(weights, references, strict=True)
+                ),
+                Fraction(0),
+            )
+            / order
+            for axis in range(3)
+        )
+        expected_values = tuple(
+            sum(
+                (
+                    coefficient
+                    * point[0] ** exponent[0]
+                    * point[1] ** exponent[1]
+                    * point[2] ** exponent[2]
+                    for exponent, coefficient in polynomial.items()
+                ),
+                Fraction(0),
+            )
+            for polynomial in polynomials
+        )
+        assert values == expected_values
+        dropped = expected_values[0] - Fraction(5, 7) * point[0] * point[1]
+        caught_dropped_term |= values[0] != dropped
+        caught_wrong_scale |= values[0] != expected_values[0] / 2
+
+    assert caught_dropped_term
+    assert caught_wrong_scale
+
+
 def test_simplex_traces_agree_exactly_on_their_shared_curved_face() -> None:
     first, second = _tetrahedra_sharing_a_curved_face(
         Fraction(1, 8), Fraction(1, 8), Fraction(0)
@@ -1498,6 +1647,93 @@ def test_affine_simplex_preparation_retains_exact_corners_without_polynomials(
         )
         == cell.corner_images
     )
+
+
+@pytest.mark.parametrize("fallback", (False, True))
+def test_curved_cell_image_boxes_retain_interior_contact(
+    fallback: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from phydrax.geometry import _embedding_cells
+
+    element = lagrange_element("triangle", 2)
+    nodes = lagrange_reference_node_data(element)
+    vertices = reference_cell_topology("triangle").vertices
+
+    def image(cell: int, point: tuple[Fraction, ...], /) -> tuple[Fraction, Fraction]:
+        u, v = point
+        if cell == 0:
+            return u, v - u * (1 - u)
+        if cell == 2:
+            return u + 3, v - u * (1 - u)
+        return Fraction(3, 8) + u / 4, -Fraction(1, 8) - v / 8 - u * (1 - u) / 8
+
+    coordinates = np.empty((3 * element.local_dof_count, 2), dtype=np.float64)
+    for cell in range(3):
+        for node in nodes:
+            if node.exact_point is None:
+                raise AssertionError("Quadratic triangle nodes must be exact.")
+            point = tuple(
+                rational_coefficient(value, role="triangle node")
+                for value in node.exact_point
+            )
+            coordinates[cell * element.local_dof_count + node.local_dof] = tuple(
+                float(value) for value in image(cell, point)
+            )
+    points = np.asarray(
+        [
+            tuple(
+                float(value)
+                for value in image(cell, tuple(Fraction(float(x)) for x in point))
+            )
+            for cell in range(3)
+            for point in vertices
+        ],
+        dtype=np.float64,
+    )
+    mesh = CellMesh(
+        points,
+        (CellBlock("cells", "triangle", np.arange(9, dtype=np.int32).reshape(3, 3)),),
+    )
+    geometry = CellGeometrySpec(
+        {"cells": element},
+        {"cells": np.arange(len(coordinates), dtype=np.int32).reshape(3, -1)},
+        coordinates,
+    )
+    if fallback:
+        monkeypatch.setattr(
+            _embedding_cells.PreparedIntervalBasis,
+            "batch_bounds",
+            lambda self, lower, upper: (None,) * len(lower),
+        )
+    cells = prepare_embedding_cells(mesh, geometry)
+    first_point = (Fraction(1, 2), Fraction(3, 32))
+    second_point = (Fraction(1, 2), Fraction(0))
+    contact = image(0, first_point)
+    assert contact == image(1, second_point)
+    for cell, point in zip(cells[:2], (first_point, second_point), strict=True):
+        assert (
+            tuple(evaluate_expression(expr, point) for expr in cell.coordinates)
+            == contact
+        )
+        assert all(
+            Fraction(lower) <= value <= Fraction(upper)
+            for lower, value, upper in zip(
+                cell.image_lower, contact, cell.image_upper, strict=True
+            )
+        )
+    distant = image(2, first_point)
+    assert all(
+        Fraction(lower) <= value <= Fraction(upper)
+        for lower, value, upper in zip(
+            cells[2].image_lower, distant, cells[2].image_upper, strict=True
+        )
+    )
+    tree = prepare_bvh(
+        np.asarray([cell.image_lower for cell in cells], dtype=np.float64),
+        np.asarray([cell.image_upper for cell in cells], dtype=np.float64),
+    )
+    left, right = bvh_overlap_pairs_host(tree, tree, include_touching=True)
+    assert any({int(a), int(b)} == {0, 1} for a, b in zip(left, right, strict=True))
 
 
 def test_restored_embedding_refuses_a_forged_stored_validity_proof() -> None:
@@ -2488,3 +2724,197 @@ def test_integer_markowitz_nullspace_matches_the_exact_sparse_factorization() ->
         if _full_column_rank_modulo_prime(rows, columns):
             assert factorization.evidence.rank == columns
     assert checked["nullity_one"] and checked["other"]
+
+
+@dataclass
+class _ExactImageSource:
+    bank: tuple[tuple[Fraction, ...], ...]
+    source_id: str = "interval-image-source"
+    source_revision: str = "interval-image-revision"
+    source_map_id: str = "interval-image-map"
+
+    def source_coordinates(self) -> tuple[tuple[Fraction, ...], ...]:
+        return self.bank
+
+
+def _curved_separated_image_boxes(
+    second_shift: Fraction,
+) -> tuple[CellMesh, CellGeometrySpec, tuple[EmbeddingCell, ...]]:
+    element = lagrange_element("triangle", 2)
+    reference = reference_cell_topology("triangle").vertices
+    nodes = lagrange_reference_node_data(element)
+
+    def image(shift: Fraction, point: tuple[Fraction, ...], /) -> tuple[Fraction, ...]:
+        u, v = point
+        return u + shift - v * (1 - v) / 3, v + u * v / 8
+
+    shifts = (Fraction(0), second_shift)
+    points = np.asarray(
+        [
+            tuple(
+                float(value)
+                for value in image(shift, tuple(Fraction(float(x)) for x in point))
+            )
+            for shift in shifts
+            for point in reference
+        ],
+        dtype=np.float64,
+    )
+    mesh = CellMesh(
+        points,
+        (CellBlock("cells", "triangle", np.arange(6, dtype=np.int32).reshape(2, 3)),),
+    )
+    bank_rows: list[tuple[Fraction, ...]] = []
+    for shift in shifts:
+        for node in nodes:
+            if node.exact_point is None:
+                raise AssertionError("Quadratic triangle nodes must be exact.")
+            point = tuple(
+                rational_coefficient(value, role="triangle node")
+                for value in node.exact_point
+            )
+            bank_rows.append(image(shift, point))
+    coordinates = np.asarray(bank_rows, dtype=np.float64)
+    geometry = CellGeometrySpec(
+        {"cells": element},
+        {"cells": np.arange(len(coordinates), dtype=np.int32).reshape(2, -1)},
+        coordinates,
+        source_map=_ExactImageSource(tuple(bank_rows)),
+        source_mesh=mesh,
+    )
+    return mesh, geometry, prepare_embedding_cells(mesh, geometry)
+
+
+def test_mixed_image_boxes_are_independent_of_block_partition_and_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_mesh, base_geometry, _ = _curved_separated_image_boxes(Fraction(7, 6))
+    triangle_element = base_geometry.elements[0]
+    triangle_routes = np.asarray(base_geometry.geometry_dofs[0], dtype=np.int32)
+    quad_element = lagrange_element("quadrilateral", 1)
+    quad_vertices = np.asarray(
+        reference_cell_topology("quadrilateral").vertices, dtype=np.float64
+    ) + np.asarray((10.0, 0.0), dtype=np.float64)
+    quad_nodes = np.asarray(
+        [
+            tuple(float(value) for value in node.exact_point)
+            for node in lagrange_reference_node_data(quad_element)
+            if node.exact_point is not None
+        ],
+        dtype=np.float64,
+    ) + np.asarray((10.0, 0.0), dtype=np.float64)
+    coordinates = np.concatenate((np.asarray(base_geometry.coordinates), quad_nodes))
+    bank = tuple(
+        tuple(rational_coefficient(value, role="image coordinate") for value in row)
+        for row in base_geometry.source_coordinates()
+    ) + tuple(tuple(Fraction(float(value)) for value in row) for row in quad_nodes)
+
+    def prepare(
+        groups: tuple[tuple[int, ...], ...], reverse: bool
+    ) -> dict[int, np.ndarray]:
+        blocks = []
+        elements = {}
+        routes = {}
+        for index, group in enumerate(groups):
+            name = f"triangles-{index}"
+            selected = np.asarray(group, dtype=np.int32)
+            blocks.append(
+                CellBlock(
+                    name,
+                    "triangle",
+                    np.asarray(base_mesh.blocks[0].vertices)[selected],
+                    global_ids=np.asarray([100 + row for row in group], dtype=np.int64),
+                )
+            )
+            elements[name] = triangle_element
+            routes[name] = triangle_routes[selected]
+        if reverse:
+            blocks.reverse()
+        blocks.append(
+            CellBlock(
+                "quad",
+                "quadrilateral",
+                np.asarray(((6, 7, 8, 9),), dtype=np.int32),
+                global_ids=np.asarray((102,), dtype=np.int64),
+            )
+        )
+        elements["quad"] = quad_element
+        routes["quad"] = np.arange(
+            len(bank) - len(quad_nodes), len(bank), dtype=np.int32
+        )[None, :]
+        mesh = CellMesh(
+            np.concatenate((np.asarray(base_mesh.coordinates), quad_vertices)),
+            tuple(blocks),
+        )
+        geometry = CellGeometrySpec(
+            elements,
+            routes,
+            coordinates,
+            source_map=_ExactImageSource(bank),
+            source_mesh=mesh,
+        )
+        return {
+            cell.global_id: np.asarray(
+                (
+                    *cell.image_lower,
+                    *cell.image_upper,
+                    *(
+                        value
+                        for pair in (cell.image_inner_bounds or ())
+                        for value in pair
+                    ),
+                ),
+                dtype=np.float64,
+            ).view(np.uint64)
+            for cell in prepare_embedding_cells(mesh, geometry)
+        }
+
+    monkeypatch.setenv("PHX_MESHCORE_THREADS", "1")
+    block = prepare(((0, 1),), False)
+    split = prepare(((0,), (1,)), True)
+    monkeypatch.setenv("PHX_MESHCORE_THREADS", "4")
+    reordered = prepare(((1, 0),), True)
+    assert block.keys() == split.keys() == reordered.keys()
+    for cell_id in block:
+        np.testing.assert_array_equal(block[cell_id], split[cell_id])
+        np.testing.assert_array_equal(block[cell_id], reordered[cell_id])
+
+
+@pytest.mark.parametrize("periodic", (False, True))
+def test_widened_image_boxes_retry_exact_separation(periodic: bool) -> None:
+    from phydrax.discretization._periodic_cell import PeriodicCell
+    from phydrax.discretization._periodic_topology import PeriodicMeshTopology
+    from phydrax.geometry._periodic_mapped_contacts import (
+        certify_periodic_mapped_contacts,
+    )
+
+    gap = Fraction(1, 2**52)
+    translation = Fraction(4) if periodic else Fraction(0)
+    shift = Fraction(7, 6) + gap - translation
+    mesh, geometry, cells = _curved_separated_image_boxes(shift)
+    first, second = cells
+    shifted_expression = add(second.coordinates[0], constant(translation, 2))
+    first_exact = polynomial_bounds(first.coordinates[0], "simplex", 2)
+    second_exact = polynomial_bounds(shifted_expression, "simplex", 2)
+    assert first_exact[1] < second_exact[0]
+    assert Fraction(second.image_lower[0]) + translation <= Fraction(first.image_upper[0])
+    assert first.image_inner_bounds is not None
+    assert second.image_inner_bounds is not None
+    assert Fraction(first.image_inner_bounds[0][1]) < (
+        Fraction(second.image_inner_bounds[0][0]) + translation
+    )
+
+    if periodic:
+        topology = PeriodicMeshTopology(
+            mesh,
+            PeriodicCell(np.asarray(((4.0, 0.0),), dtype=np.float64)),
+            np.arange(6, dtype=np.int32),
+            np.zeros((6, 1), dtype=np.int32),
+        )
+        result = certify_periodic_mapped_contacts(mesh, cells, topology)
+        assert result.status == "certified", result.findings
+    else:
+        validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+        certificate = certify_global_embedding(mesh, geometry, validity)
+        assert validity.all_certified
+        assert certificate.status == "certified", certificate.findings

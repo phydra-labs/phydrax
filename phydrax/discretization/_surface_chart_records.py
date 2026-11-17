@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fractions import Fraction
+from math import gcd
 from typing import NamedTuple, Protocol, runtime_checkable, Sequence, TYPE_CHECKING
 
 import equinox as eqx
@@ -15,7 +16,12 @@ from .._archive_columns import (
     StaticColumnArchiveRecipe,
     TextColumnArchiveRecipe,
 )
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import (
+    array_tree_fingerprint,
+    canonical_fingerprint,
+    numeric_array_fingerprint,
+    rational_chart_bank_fingerprint,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
@@ -237,19 +243,19 @@ def _validated_chart_rational_tokens(
         return rational_chart_tokens(exact, cell_kind=cell_kind)
     if not isinstance(supplied, tuple) or len(supplied) != count:
         raise ValueError("Rational chart tokens must align with their cell rows.")
-    exact_rows: list[_ExactChart] = []
+    canonical_rows: list[_ChartRationalCell] = []
     for row in supplied:
         if not isinstance(row, tuple) or len(row) != corners:
             raise ValueError(
                 "Rational chart token corner count must match its cell kind."
             )
-        points: list[_ExactPoint] = []
+        points: list[_ChartRationalPoint] = []
         for point in row:
             if not isinstance(point, tuple) or len(point) != 2:
                 raise ValueError(
                     "Rational chart token corners must have two coordinates."
                 )
-            coordinates: list[Fraction] = []
+            coordinates: list[_ChartRationalToken] = []
             for token in point:
                 if (
                     not isinstance(token, tuple)
@@ -266,18 +272,17 @@ def _validated_chart_rational_tokens(
                 numerator, denominator = (int(value) for value in token)
                 if denominator <= 0:
                     raise ValueError("Chart token denominators must be positive.")
-                exact = Fraction(numerator, denominator)
-                if (exact.numerator, exact.denominator) != (numerator, denominator):
+                if gcd(numerator, denominator) != 1:
                     raise ValueError("Chart tokens must be reduced rational pairs.")
-                coordinates.append(exact)
+                coordinates.append((numerator, denominator))
             points.append((coordinates[0], coordinates[1]))
-        exact_rows.append(tuple(points))
-    canonical = rational_chart_tokens(exact_rows, cell_kind=cell_kind)
+        canonical_rows.append(tuple(points))
+    canonical = tuple(canonical_rows)
     rounded = np.asarray(
         [
             [
-                [float(value) for value in point]
-                for point in _exact_chart_from_tokens(canonical, row)
+                [numerator / denominator for numerator, denominator in point]
+                for point in canonical[row]
             ]
             for row in range(count)
         ],
@@ -470,10 +475,10 @@ class SurfaceChartWitness(StrictModule, NonTrainableState):
         rational_bank = _validated_chart_rational_tokens(
             chart_rational_tokens, chart, ids.size, cell_kind=cell_kind
         )
-        charts_exact = tuple(
-            _exact_chart_from_tokens(rational_bank, row) for row in range(ids.size)
-        )
-        if any(not _area(value) for value in charts_exact):
+        if any(
+            not _area(_exact_chart_from_tokens((row,), 0))
+            for row in dict.fromkeys(rational_bank)
+        ):
             raise ValueError("Surface chart witness contains a degenerate material cell.")
         order = np.argsort(ids, kind="stable")
         sorted_source_roots = np.asarray(source_roots[order], dtype=np.int64)
@@ -503,14 +508,16 @@ class SurfaceChartWitness(StrictModule, NonTrainableState):
                 "topology": topology_id,
                 "domain": domain_id,
                 "cell_kind": cell_kind,
-                "cells": array_tree_fingerprint(sorted_ids),
-                "source_root_cells": array_tree_fingerprint(sorted_source_roots),
+                "cells": numeric_array_fingerprint(sorted_ids),
+                "source_root_cells": numeric_array_fingerprint(sorted_source_roots),
                 "source_pieces": sorted_source_pieces,
-                "patches": array_tree_fingerprint(sorted_patches),
-                "charts": array_tree_fingerprint(sorted_charts),
+                "patches": numeric_array_fingerprint(sorted_patches),
+                "charts": numeric_array_fingerprint(sorted_charts),
                 "entities": self.geometry_entity_ids,
                 "occurrences": self.occurrence_paths,
-                "chart_rational_tokens": self.chart_rational_tokens,
+                "chart_rational_tokens": rational_chart_bank_fingerprint(
+                    self.chart_rational_tokens
+                ),
                 "root_mesh_cell_bindings": tuple(
                     None
                     if binding is None

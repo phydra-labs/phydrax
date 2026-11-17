@@ -23,8 +23,11 @@ from phydrax._fingerprint import (
     array_tree_fingerprint,
     canonical_array_hex_fingerprint,
     canonical_fingerprint,
+    compact_array_tree_fingerprint,
     iter_array_bytes,
     LazyCanonicalSequence,
+    numeric_array_fingerprint,
+    rational_chart_bank_fingerprint,
 )
 from phydrax.discretization import CellMesh
 from phydrax.lifecycle._composition_rebind import Composition, CompositionEntry
@@ -290,6 +293,17 @@ def test_canonical_fingerprint_matches_copy_then_encode(value: Any) -> None:
     )
 
 
+def test_canonical_fingerprint_preserves_large_nested_mapping_payloads() -> None:
+    payload = {
+        "signature": [
+            {"path": f"row-{index}", "shape": [3, index % 7], "dtype": "<i8"}
+            for index in range(7_000)
+        ],
+        "nested": {"snow": ("é", None, -0.0), "flags": [True, False]},
+    }
+    assert canonical_fingerprint(payload) == _legacy_canonical_fingerprint(payload)
+
+
 def test_canonical_fingerprint_streams_nested_payloads_without_copies() -> None:
     def payload(cells: int) -> dict[str, Any]:
         exponents = ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1))
@@ -392,3 +406,79 @@ def test_canonical_fingerprints_of_meshes_certificates_witnesses_and_archives(
     assert len(corpus) > 100
     for value in corpus:
         assert canonical_fingerprint(value) == _legacy_canonical_fingerprint(value)
+
+
+def test_rational_chart_bank_fingerprint_frames_signed_arbitrary_integers() -> None:
+    bank = ((((0, 1), (-(1 << 300), (1 << 301) + 1)),),)
+    assert rational_chart_bank_fingerprint(bank) == rational_chart_bank_fingerprint(bank)
+    alternatives = (
+        (),
+        ((),),
+        ((((0, 1), (1 << 300, (1 << 301) + 1)),),),
+        ((((0, 1), (-(1 << 300), (1 << 301) + 3)),),),
+        ((((0, 1),), ((-(1 << 300), (1 << 301) + 1),)),),
+    )
+    assert all(
+        rational_chart_bank_fingerprint(value) != rational_chart_bank_fingerprint(bank)
+        for value in alternatives
+    )
+
+
+def test_numeric_array_fingerprint_frames_endianness_dtype_shape_and_content() -> None:
+    values = np.asarray([[1, -2], [3, 4]], dtype="<i8")
+    identity = numeric_array_fingerprint(values)
+    assert numeric_array_fingerprint(values.astype(">i8")) == identity
+    assert numeric_array_fingerprint(values.copy()) == identity
+    assert numeric_array_fingerprint(values.reshape(4)) != identity
+    assert numeric_array_fingerprint(values.astype(np.int32)) != identity
+    assert numeric_array_fingerprint(values + 1) != identity
+    assert numeric_array_fingerprint(np.asarray([0.0], dtype=np.float64)) != (
+        numeric_array_fingerprint(np.asarray([-0.0], dtype=np.float64))
+    )
+    with pytest.raises(TypeError):
+        numeric_array_fingerprint(np.asarray(["x"]))
+
+
+@pytest.mark.parametrize(("dtype", "maximum"), [(np.longdouble, 8), (np.clongdouble, 16)])
+def test_numeric_array_fingerprint_rejects_extended_float_formats(
+    dtype: type[np.generic], maximum: int
+) -> None:
+    if np.dtype(dtype).itemsize <= maximum:
+        pytest.skip("Platform aliases the extended type to a supported format.")
+    with pytest.raises(TypeError, match="fixed-format"):
+        numeric_array_fingerprint(np.asarray([0], dtype=dtype))
+
+
+def test_compact_array_tree_fingerprint_binds_paths_shapes_and_bytes() -> None:
+    values = np.asarray([[1, 2], [3, 4]], dtype="<i8")
+    identity = compact_array_tree_fingerprint({"data": values})
+    assert compact_array_tree_fingerprint({"data": values.astype(">i8")}) == identity
+    assert compact_array_tree_fingerprint({"data": values.copy()}) == identity
+    assert compact_array_tree_fingerprint({"other": values}) != identity
+    assert compact_array_tree_fingerprint({"data": values.reshape(4)}) != identity
+    assert compact_array_tree_fingerprint({"data": values.astype(np.int32)}) != identity
+    assert compact_array_tree_fingerprint({"data": values + 1}) != identity
+    assert compact_array_tree_fingerprint({"data": np.asarray(1, dtype=np.int64)}) != (
+        compact_array_tree_fingerprint({"data": np.asarray([1], dtype=np.int64)})
+    )
+    with pytest.raises(TypeError, match="object dtype"):
+        compact_array_tree_fingerprint({"data": np.asarray(["x"], dtype=np.object_)})
+    with pytest.raises(TypeError, match="fixed-format scalar"):
+        compact_array_tree_fingerprint(np.zeros(1, dtype=[("field", "<i8")]))
+
+
+def test_compact_array_tree_fingerprint_preserves_binary64_evidence_bits() -> None:
+    patterns = np.asarray(
+        [0, 1 << 63, 1, (1 << 63) | 1, 0x7FF8000000000001, 0x7FF8000000000002,
+         0x7FF0000000000001],
+        dtype=np.uint64,
+    )
+    values = patterns.view(np.float64)
+    identities = tuple(
+        compact_array_tree_fingerprint(values[index : index + 1])
+        for index in range(values.size)
+    )
+    assert len(set(identities)) == len(identities)
+    assert compact_array_tree_fingerprint(values) == compact_array_tree_fingerprint(
+        values.astype(">f8")
+    )

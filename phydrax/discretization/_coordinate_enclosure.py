@@ -17,7 +17,12 @@ from typing import cast, Literal, NamedTuple, overload, Protocol, TYPE_CHECKING
 
 import numpy as np
 
-from .._exact_kernels import IntegerBernsteinNet, rational_bernstein_nets
+from .._exact_kernels import (
+    IntegerBernsteinNet,
+    interval_basis_bounds,
+    interval_simplex_bounds,
+    rational_bernstein_nets,
+)
 from .._fingerprint import array_tree_fingerprint
 from .._meshcore import meshcore_available
 from ._exact_algebraic_geometry import (
@@ -500,23 +505,7 @@ def sum_polynomials(values: Sequence[ExpressionInput], dimension: int, /) -> Exp
     return result
 
 
-@overload
-def linear_combinations(
-    basis: Sequence[Mapping[tuple[int, ...], ExactScalar]],
-    coefficients: Sequence[Sequence[ExactScalar]],
-    /,
-) -> tuple[Polynomial, ...]: ...
-
-
-@overload
-def linear_combinations(
-    basis: Sequence[ExpressionInput],
-    coefficients: Sequence[Sequence[ExactScalar]],
-    /,
-) -> tuple[Expression, ...]: ...
-
-
-def linear_combinations(
+def _linear_combinations_fallback(
     basis: Sequence[ExpressionInput],
     coefficients: Sequence[Sequence[ExactScalar]],
     /,
@@ -540,7 +529,10 @@ def linear_combinations(
                 for function, coefficient in zip(basis, row, strict=True):
                     scalar = _scalar(coefficient)
                     if scalar:
-                        assert isinstance(function, RationalPolynomial)
+                        if not isinstance(function, RationalPolynomial):
+                            raise ValueError(
+                                "Rational basis lost its common denominator."
+                            )
                         for exponent, value in function.numerator.items():
                             total = numerator.get(exponent, Fraction(0)) + scalar * value
                             if total:
@@ -559,6 +551,103 @@ def linear_combinations(
         )
         for row in coefficients
     )
+
+
+class PreparedLinearCombinationBasis:
+    """Operation-local integer representation of a rational polynomial basis.
+
+    Unsupported bases and coefficient rows use the original exact expression
+    arithmetic, including rational-expression pole preservation.
+    """
+
+    def __init__(self, basis: Sequence[ExpressionInput], /) -> None:
+        self._basis = tuple(basis)
+        self._integer_basis: (
+            tuple[tuple[tuple[tuple[int, ...], int], ...], ...] | None
+        ) = None
+        self._denominator = 1
+        if all(
+            not isinstance(function, RationalPolynomial)
+            and _rational_values(function.values())
+            for function in self._basis
+        ):
+            polynomials = cast(
+                tuple[Mapping[tuple[int, ...], Fraction | int], ...], self._basis
+            )
+            self._denominator = lcm(
+                *(
+                    value.denominator
+                    for function in polynomials
+                    for value in function.values()
+                )
+            )
+            self._integer_basis = tuple(
+                tuple(
+                    (exponent, value.numerator * (self._denominator // value.denominator))
+                    for exponent, value in function.items()
+                    if value
+                )
+                for function in polynomials
+            )
+
+    def combine(
+        self, coefficients: Sequence[Sequence[ExactScalar]], /
+    ) -> tuple[Expression, ...]:
+        if any(len(row) != len(self._basis) for row in coefficients):
+            raise ValueError("linear-combination rows must align with the basis width.")
+        if self._basis:
+            _expression_dimension(self._basis[0])
+        if self._integer_basis is None:
+            return _linear_combinations_fallback(self._basis, coefficients)
+        results: list[Expression] = []
+        for row in coefficients:
+            if not _rational_values(row):
+                results.extend(_linear_combinations_fallback(self._basis, (row,)))
+                continue
+            rationals = cast(Sequence[Fraction | int], row)
+            denominator = lcm(*(value.denominator for value in rationals))
+            totals: dict[tuple[int, ...], int] = {}
+            for terms, value in zip(self._integer_basis, rationals, strict=True):
+                multiplier = value.numerator * (denominator // value.denominator)
+                if multiplier:
+                    for exponent, numerator in terms:
+                        total = totals.get(exponent, 0) + multiplier * numerator
+                        if total:
+                            totals[exponent] = total
+                        else:
+                            totals.pop(exponent, None)
+            common_denominator = self._denominator * denominator
+            results.append(
+                {
+                    exponent: Fraction(total, common_denominator)
+                    for exponent, total in totals.items()
+                }
+            )
+        return tuple(results)
+
+
+@overload
+def linear_combinations(
+    basis: Sequence[Mapping[tuple[int, ...], ExactScalar]],
+    coefficients: Sequence[Sequence[ExactScalar]],
+    /,
+) -> tuple[Polynomial, ...]: ...
+
+
+@overload
+def linear_combinations(
+    basis: Sequence[ExpressionInput],
+    coefficients: Sequence[Sequence[ExactScalar]],
+    /,
+) -> tuple[Expression, ...]: ...
+
+
+def linear_combinations(
+    basis: Sequence[ExpressionInput],
+    coefficients: Sequence[Sequence[ExactScalar]],
+    /,
+) -> tuple[Expression, ...]:
+    return _linear_combinations_fallback(basis, coefficients)
 
 
 @overload
@@ -1085,6 +1174,259 @@ def polynomial_bounds(
     )
 
 
+class IntervalBasisBounds(NamedTuple):
+    outer: tuple[tuple[float, float], ...]
+    inner: tuple[tuple[float, float], ...]
+
+
+class PreparedIntervalBasis:
+    """Operation-local common-degree basis controls for outward image boxes.
+
+    Every basis control is converted outward from its exact value. The native
+    interval sum encloses each control of the exact coordinate combination,
+    whose Bernstein convex hull contains the entire simplex, box, or prism.
+    The minimum upper control and maximum lower control bound the extrema from
+    the opposite side. Degree elevation is convex, so these inner endpoints
+    also bound the possible excess relative to the least-degree exact hull.
+    """
+
+    def __init__(
+        self, basis: tuple[Expression, ...], domain: BernsteinDomain, dimension: int, /
+    ) -> None:
+        self.lower: np.ndarray | None = None
+        self.upper: np.ndarray | None = None
+        if (
+            not basis
+            or not meshcore_available()
+            or any(isinstance(expression, RationalPolynomial) for expression in basis)
+        ):
+            return
+        polynomials = tuple(
+            expression
+            for expression in basis
+            if not isinstance(expression, RationalPolynomial)
+        )
+        degrees = tuple(
+            bernstein_degree(value, domain, dimension) for value in polynomials
+        )
+        degree = tuple(max(axis) for axis in zip(*degrees, strict=True))
+        controls = tuple(
+            bernstein_coefficients(value, domain, dimension, degree=degree)
+            for value in polynomials
+        )
+        self.lower = np.asarray(
+            [
+                [coefficient_endpoint(value, upper=False, saturate=True) for value in row]
+                for row in controls
+            ],
+            dtype=np.float64,
+        )
+        self.upper = np.asarray(
+            [
+                [coefficient_endpoint(value, upper=True, saturate=True) for value in row]
+                for row in controls
+            ],
+            dtype=np.float64,
+        )
+
+    def batch_bounds(
+        self, lower: np.ndarray, upper: np.ndarray, /
+    ) -> tuple[IntervalBasisBounds | None, ...]:
+        """Enclose each coefficient bank independently in one native call."""
+        if lower.ndim != 3 or lower.shape != upper.shape:
+            raise ValueError(
+                "Coefficient interval banks must have matching rank-three shapes."
+            )
+        count, width, components = lower.shape
+        if (
+            self.lower is None
+            or self.upper is None
+            or width != self.lower.shape[0]
+            or components == 0
+        ):
+            return (None,) * count
+        low, high, inner_low, inner_high = interval_basis_bounds(
+            self.lower, self.upper, lower, upper
+        )
+        finite = np.all(np.isfinite(low) & np.isfinite(high), axis=1)
+        return tuple(
+            IntervalBasisBounds(
+                tuple(
+                    (float(a), float(b)) for a, b in zip(low[row], high[row], strict=True)
+                ),
+                tuple(
+                    (float(a), float(b))
+                    for a, b in zip(inner_low[row], inner_high[row], strict=True)
+                ),
+            )
+            if finite[row]
+            else None
+            for row in range(count)
+        )
+
+
+class PreparedSimplexPolynomial:
+    """Parent control intervals owned by one proof operation, not a content cache."""
+
+    def __init__(self, expression: ExpressionInput, dimension: int, /) -> None:
+        if dimension not in (1, 2, 3):
+            raise ValueError("simplex dimension must be one, two, or three.")
+        self.dimension = dimension
+        if isinstance(expression, RationalPolynomial):
+            self.numerator = PreparedSimplexPolynomial(expression.numerator, dimension)
+            self.denominator = PreparedSimplexPolynomial(
+                expression.denominator, dimension
+            )
+            self.degree = 0
+            self.lower = np.empty(0, dtype=np.float64)
+            self.upper = np.empty(0, dtype=np.float64)
+        else:
+            self.numerator = None
+            self.denominator = None
+            value, degree = _controls_input(expression, "simplex", dimension, None)
+            controls = bernstein_coefficients(value, "simplex", dimension, degree=degree)
+            self.degree = degree[0]
+            self.lower = np.asarray(
+                [
+                    coefficient_endpoint(value, upper=False, saturate=True)
+                    for value in controls
+                ],
+                dtype=np.float64,
+            )
+            self.upper = np.asarray(
+                [
+                    coefficient_endpoint(value, upper=True, saturate=True)
+                    for value in controls
+                ],
+                dtype=np.float64,
+            )
+
+
+def restricted_polynomial_bounds(
+    expression: ExpressionInput | PreparedSimplexPolynomial,
+    corners: tuple[tuple[ExactScalar, ...], ...],
+    /,
+) -> tuple[float, float]:
+    """Bound exact Bernstein controls on a simplex with outward interval blossoms.
+
+    Exact parent controls and corner coordinates are rounded outward before the
+    native interval blossom. Multiaffinity encloses each exact restricted
+    control, whose convex hull contains the polynomial range. Quotients use
+    separate numerator and denominator enclosures and refuse a possible pole.
+    """
+    dimension = len(corners) - 1
+    if dimension not in (1, 2, 3) or any(len(row) != dimension for row in corners):
+        raise ValueError("simplex corners must have shape (dimension + 1, dimension).")
+    if not meshcore_available():
+        return -math.inf, math.inf
+    prepared = (
+        expression
+        if isinstance(expression, PreparedSimplexPolynomial)
+        else PreparedSimplexPolynomial(expression, dimension)
+    )
+    if prepared.dimension != dimension:
+        raise ValueError("prepared polynomial and corners must have the same dimension.")
+    if prepared.numerator is not None and prepared.denominator is not None:
+        numerator = restricted_polynomial_bounds(prepared.numerator, corners)
+        denominator = restricted_polynomial_bounds(prepared.denominator, corners)
+        if denominator[0] <= 0.0 <= denominator[1] or not all(
+            math.isfinite(value) for value in (*numerator, *denominator)
+        ):
+            return -math.inf, math.inf
+        values = tuple(a / b for a in numerator for b in denominator)
+        if any(math.isnan(value) for value in values):
+            return -math.inf, math.inf
+        return (
+            float(np.nextafter(min(values), -math.inf)),
+            float(np.nextafter(max(values), math.inf)),
+        )
+    corners_lower = np.asarray(
+        [
+            [
+                [coefficient_endpoint(value, upper=False, saturate=True) for value in row]
+                for row in corners
+            ]
+        ],
+        dtype=np.float64,
+    )
+    corners_upper = np.asarray(
+        [
+            [
+                [coefficient_endpoint(value, upper=True, saturate=True) for value in row]
+                for row in corners
+            ]
+        ],
+        dtype=np.float64,
+    )
+    low, high = interval_simplex_bounds(
+        prepared.lower, prepared.upper, corners_lower, corners_upper, prepared.degree
+    )
+    return float(low[0]), float(high[0])
+
+
+def restricted_polynomial_batch_bounds(
+    prepared: PreparedSimplexPolynomial,
+    corners: tuple[tuple[tuple[ExactScalar, ...], ...], ...],
+    /,
+) -> tuple[tuple[float, float], ...]:
+    """Enclose independent simplex restrictions of one prepared polynomial."""
+    dimension = prepared.dimension
+    if any(
+        len(simplex) != dimension + 1 or any(len(row) != dimension for row in simplex)
+        for simplex in corners
+    ):
+        raise ValueError("simplex corners must have shape (dimension + 1, dimension).")
+    if not corners:
+        return ()
+    if not meshcore_available():
+        return ((-math.inf, math.inf),) * len(corners)
+    if prepared.numerator is not None and prepared.denominator is not None:
+        numerator = restricted_polynomial_batch_bounds(prepared.numerator, corners)
+        denominator = restricted_polynomial_batch_bounds(prepared.denominator, corners)
+        result = []
+        for top, bottom in zip(numerator, denominator, strict=True):
+            if bottom[0] <= 0.0 <= bottom[1] or not all(
+                math.isfinite(value) for value in (*top, *bottom)
+            ):
+                result.append((-math.inf, math.inf))
+                continue
+            values = tuple(a / b for a in top for b in bottom)
+            if any(math.isnan(value) for value in values):
+                result.append((-math.inf, math.inf))
+                continue
+            result.append(
+                (
+                    float(np.nextafter(min(values), -math.inf)),
+                    float(np.nextafter(max(values), math.inf)),
+                )
+            )
+        return tuple(result)
+    lower = np.asarray(
+        [
+            [
+                [coefficient_endpoint(value, upper=False, saturate=True) for value in row]
+                for row in simplex
+            ]
+            for simplex in corners
+        ],
+        dtype=np.float64,
+    )
+    upper = np.asarray(
+        [
+            [
+                [coefficient_endpoint(value, upper=True, saturate=True) for value in row]
+                for row in simplex
+            ]
+            for simplex in corners
+        ],
+        dtype=np.float64,
+    )
+    low, high = interval_simplex_bounds(
+        prepared.lower, prepared.upper, lower, upper, prepared.degree
+    )
+    return tuple((float(a), float(b)) for a, b in zip(low, high, strict=True))
+
+
 def affine_arguments(origin: np.ndarray, matrix: np.ndarray, /) -> tuple[Polynomial, ...]:
     """Represent a finite binary64 affine chart exactly over Fraction coefficients."""
     offset = np.asarray(origin, dtype=np.float64)
@@ -1490,7 +1832,7 @@ def coordinate_map_expressions(
     components = tuple(
         tuple(bank[dof][axis] for dof in range(len(bank))) for axis in range(len(bank[0]))
     )
-    return linear_combinations(basis, components)
+    return PreparedLinearCombinationBasis(basis).combine(components)
 
 
 def coordinate_execution_map_expressions(
@@ -1677,6 +2019,7 @@ __all__ = [
     "Expression",
     "ExpressionInput",
     "Polynomial",
+    "PreparedLinearCombinationBasis",
     "RationalPolynomial",
     "PyramidApexNormalization",
     "add",

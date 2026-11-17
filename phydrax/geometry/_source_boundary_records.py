@@ -10,13 +10,20 @@ from dataclasses import dataclass, fields
 from enum import IntEnum
 from fractions import Fraction
 from itertools import groupby
+from math import gcd
 from typing import final, Literal, Protocol, runtime_checkable, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
 from jax.typing import ArrayLike
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import (
+    array_tree_fingerprint,
+    canonical_fingerprint,
+    compact_array_tree_fingerprint,
+    numeric_array_fingerprint,
+    rational_chart_bank_fingerprint,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
@@ -388,7 +395,7 @@ class SourceBoundaryImagePullback:
                     or type(token[0]) is not int
                     or type(token[1]) is not int
                     or token[1] <= 0
-                    or Fraction(token[0], token[1]).as_integer_ratio() != token
+                    or gcd(token[0], token[1]) != 1
                 ):
                     raise ValueError("Image pullbacks require canonical rational tokens.")
         if (
@@ -436,14 +443,18 @@ def _validated_rational_chart_tokens(
     /,
 ) -> SourceBoundaryRationalChartBank:
     if supplied is None:
-        exact = (
+        generated_rows: dict[
+            tuple[tuple[_RationalToken, ...], ...],
+            tuple[tuple[_RationalToken, ...], ...],
+        ] = {}
+        rows = (
             tuple(
-                tuple(Fraction.from_float(float(value)) for value in point)
+                tuple(float(value).as_integer_ratio() for value in point)
                 for point in row
             )
             for row in realization
         )
-        return rational_chart_tokens(exact)
+        return tuple(generated_rows.setdefault(row, row) for row in rows)
     if len(supplied) != count:
         raise ValueError(f"{name} must contain one exact chart row per witness row.")
     result: list[tuple[tuple[_RationalToken, ...], ...]] = []
@@ -476,18 +487,16 @@ def _validated_rational_chart_tokens(
                 numerator, denominator = (int(value) for value in token)
                 if denominator <= 0:
                     raise ValueError(f"{name} denominators must be positive.")
-                exact = Fraction(numerator, denominator)
-                canonical = (exact.numerator, exact.denominator)
                 represented = float(realization[row_index, corner_index, axis])
                 if (
-                    canonical != (numerator, denominator)
+                    gcd(numerator, denominator) != 1
                     or not np.isfinite(represented)
-                    or float(exact) != represented
+                    or numerator / denominator != represented
                 ):
                     raise ValueError(
                         f"{name} exact coordinate differs from its binary64 realization."
                     )
-                coordinates.append(canonical)
+                coordinates.append((numerator, denominator))
             points.append(tuple(coordinates))
         canonical_row = tuple(points)
         if (
@@ -635,11 +644,25 @@ class SourceBoundaryFaceImageWitness(StrictModule, NonTrainableState):
             SourceBoundaryImagePullback(
                 int(raw_banks[0][row]), int(raw_banks[2][row]), tokens[row], charts[row]
             )
-            points = _fractions_from_chart_tokens((tokens[row],), 0)
-            first = tuple(points[1][axis] - points[0][axis] for axis in range(3))
-            second = tuple(points[2][axis] - points[0][axis] for axis in range(3))
+            first = tuple(
+                (
+                    tokens[row][1][axis][0] * tokens[row][0][axis][1]
+                    - tokens[row][0][axis][0] * tokens[row][1][axis][1],
+                    tokens[row][1][axis][1] * tokens[row][0][axis][1],
+                )
+                for axis in range(3)
+            )
+            second = tuple(
+                (
+                    tokens[row][2][axis][0] * tokens[row][0][axis][1]
+                    - tokens[row][0][axis][0] * tokens[row][2][axis][1],
+                    tokens[row][2][axis][1] * tokens[row][0][axis][1],
+                )
+                for axis in range(3)
+            )
             if not any(
-                first[i] * second[j] - first[j] * second[i]
+                first[i][0] * second[j][0] * first[j][1] * second[i][1]
+                != first[j][0] * second[i][0] * first[i][1] * second[j][1]
                 for i, j in ((0, 1), (0, 2), (1, 2))
             ):
                 raise ValueError(
@@ -708,7 +731,9 @@ class SourceBoundaryFaceImageWitness(StrictModule, NonTrainableState):
                 "entities": self.source_entity_ids,
                 "occurrences": self.occurrence_paths,
                 "region_sides": self.source_region_sides,
-                "image_triangles": self.image_triangle_rational_tokens,
+                "image_triangles": rational_chart_bank_fingerprint(
+                    self.image_triangle_rational_tokens
+                ),
             }
         )
 
@@ -1090,6 +1115,7 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                     strict=True,
                 )
             }
+            patch_charts: dict[int, tuple[str | None, bool]] = {}
             for row, (entity, path) in enumerate(zip(entities, paths, strict=True)):
                 patch = patch_by_key.get((entity, path))
                 if patch is None:
@@ -1098,16 +1124,19 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                     )
                 root = int(cad_roots[row])
                 if root < 0:
-                    plane = exact_plane_chart(domain, patch)
-                    affine = _exact_patch_chart(domain, patch)
-                    affine_valid = (
-                        affine is not None
-                        and charts[row] == entity
-                        and any(_exact_cross3(affine[1], affine[2]))
-                    )
-                    if (
-                        plane is None or charts[row] != plane.chart_id
-                    ) and not affine_valid:
+                    capability = patch_charts.get(patch)
+                    if capability is None:
+                        plane = exact_plane_chart(domain, patch)
+                        affine = _exact_patch_chart(domain, patch)
+                        capability = (
+                            None if plane is None else plane.chart_id,
+                            affine is not None and any(_exact_cross3(affine[1], affine[2])),
+                        )
+                        patch_charts[patch] = capability
+                    plane_id, affine_nondegenerate = capability
+                    if charts[row] != plane_id and not (
+                        charts[row] == entity and affine_nondegenerate
+                    ):
                         raise ValueError(
                             "CAD rows without a root require an exact plane chart."
                         )
@@ -1259,8 +1288,9 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                 "kind": "source-boundary-chart-witness",
                 "identities": identity_values,
                 "dimensions": (chart_dimension, reference_dimension),
-                "arrays": array_tree_fingerprint(
-                    (
+                "arrays": tuple(
+                    numeric_array_fingerprint(value)
+                    for value in (
                         self.cell_global_ids,
                         self.entity_global_ids,
                         self.local_entity_indices,
@@ -1277,8 +1307,8 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                 "entities": self.source_entity_ids,
                 "occurrences": self.occurrence_paths,
                 "exact_rational_charts": (
-                    self.target_reference_rational_tokens,
-                    self.source_parameter_rational_tokens,
+                    rational_chart_bank_fingerprint(self.target_reference_rational_tokens),
+                    rational_chart_bank_fingerprint(self.source_parameter_rational_tokens),
                 ),
                 "cad_ancestry": (
                     None
@@ -1291,7 +1321,7 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                         # are stored evidence and are not hashed here. The
                         # source charts enter through ``source_chart_id``,
                         # which excludes their association residual evidence.
-                        array_tree_fingerprint(
+                        compact_array_tree_fingerprint(
                             tuple(
                                 getattr(cad_plc, item.name)
                                 for item in fields(cad_plc)
@@ -1301,33 +1331,7 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                     ),
                     None
                     if cad_curve_association is None
-                    else (
-                        cad_curve_association.association_id,
-                        cad_curve_association.association_kind.value,
-                        cad_curve_association.source_id,
-                        cad_curve_association.source_revision,
-                        cad_curve_association.target_entity_set_id,
-                        cad_curve_association.source_entity_ids,
-                        tuple(
-                            None if role is None else role.value
-                            for role in cad_curve_association.source_roles
-                        ),
-                        cad_curve_association.source_occurrence_paths,
-                        cad_curve_association.source_region_sides,
-                        tuple(
-                            None
-                            if interval is None
-                            else tuple(str(value) for value in interval)
-                            for interval in cad_curve_association.source_parameter_intervals
-                        ),
-                        tuple(
-                            None if value is None else str(value)
-                            for value in cad_curve_association.source_parameter_points
-                        ),
-                        cad_curve_association.exact,
-                        cad_curve_association.provenance.value,
-                        cad_curve_association.parent_association_id,
-                    ),
+                    else cad_curve_association.association_id,
                 ),
             }
         )

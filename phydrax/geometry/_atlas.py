@@ -165,12 +165,21 @@ class _SegmentEnclosures:
     record is created by the classifying call and dropped with it.
     """
 
-    __slots__ = ("affine_span", "boxes", "points", "segment")
+    __slots__ = (
+        "affine_span",
+        "boxes",
+        "points",
+        "segment",
+        "point_program",
+        "point_program_ready",
+    )
 
     def __init__(self, segment: _CurveTrimSegment, /) -> None:
         self.segment = segment
         self.boxes: dict[tuple[float, float], np.ndarray | None] = {}
         self.points: dict[float, np.ndarray | None] = {}
+        self.point_program = None
+        self.point_program_ready = False
         self.affine_span = _affine_trim_span(segment)
 
 
@@ -241,27 +250,52 @@ def _turn_start_parameter(segment: _CurveTrimSegment, parameter: float, /) -> fl
     return 1.0 - turn_end
 
 
-def _segment_point(record: _SegmentEnclosures, parameter: float, /) -> np.ndarray | None:
+@eqx.filter_jit
+def _evaluate_segment_point(segment: _CurveTrimSegment, parameter: ArrayLike, /) -> Array:
+    return segment.evaluate(jnp.asarray(parameter))
+
+
+def _segment_points(
+    record: _SegmentEnclosures, parameters: Sequence[float], /
+) -> tuple[np.ndarray | None, ...]:
+    from .brep._host_program import evaluate_host_program, prepare_host_program
+
     points, segment = record.points, record.segment
-    if parameter not in points:
-        try:
-            value = np.asarray(
-                segment.evaluate(
-                    jnp.asarray(
-                        _turn_start_parameter(segment, parameter), dtype=jnp.float64
-                    )
-                ),
-                dtype=np.float64,
-            ).reshape(-1)
-        except (AttributeError, NotImplementedError, TypeError, ValueError, RuntimeError):
-            points[parameter] = None
+    missing = tuple(dict.fromkeys(value for value in parameters if value not in points))
+    if missing:
+        if not record.point_program_ready:
+            record.point_program = prepare_host_program(
+                lambda value: segment.evaluate(value[0]), 1
+            )
+            record.point_program_ready = True
+        query = np.asarray(
+            [[_turn_start_parameter(segment, value)] for value in missing],
+            dtype=np.float64,
+        )
+        if record.point_program is None:
+            # Each realization has a fixed scalar shape: these values can become
+            # exact winding identities and must not depend on neighboring queries.
+            values = tuple(
+                np.asarray(
+                    _evaluate_segment_point(segment, np.asarray(value[0])),
+                    dtype=np.float64,
+                )
+                for value in query
+            )
         else:
+            values = evaluate_host_program(record.point_program, query)
+        for parameter, raw in zip(missing, values, strict=True):
+            value = np.asarray(raw, dtype=np.float64).reshape(-1)
             if value.shape != (2,) or not np.all(np.isfinite(value)):
                 points[parameter] = None
             else:
                 value.setflags(write=False)
                 points[parameter] = value
-    return points[parameter]
+    return tuple(points[parameter] for parameter in parameters)
+
+
+def _segment_point(record: _SegmentEnclosures, parameter: float, /) -> np.ndarray | None:
+    return _segment_points(record, (parameter,))[0]
 
 
 def _curve_segment_box(
@@ -284,7 +318,7 @@ def _compute_segment_box(
         box = np.asarray(record.segment.bounding_box(first, last), dtype=np.float64)
     except (AttributeError, NotImplementedError, TypeError, ValueError, RuntimeError):
         return None
-    start, end = _segment_point(record, first), _segment_point(record, last)
+    start, end = _segment_points(record, (first, last))
     if (
         start is None
         or end is None

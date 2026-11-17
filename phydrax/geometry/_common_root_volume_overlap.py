@@ -68,6 +68,7 @@ from ..linalg._exact import determinant_exact, solve_exact
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
 from . import _supermesh as supermesh_owner
 from ._global_embedding import certify_global_embedding, GlobalEmbeddingCertificate
+from ._rational import binary64_difference_magnitude, binary64_norm_lower
 
 
 if TYPE_CHECKING:
@@ -3503,28 +3504,46 @@ def prepare_common_root_volume_refinement(
     overlap_error_values = np.asarray(overlap_errors, dtype=np.float64).reshape(
         (-1, source_cell_errors.shape[1])
     )
-    source_overlap_error = np.bincount(
-        source_overlap, weights=overlap_error_values[:, 0], minlength=source_count
+    source_overlap_error = np.zeros(source_count, dtype=np.float64)
+    target_overlap_error = np.zeros(target_count, dtype=np.float64)
+    for source_row, target_row, error in zip(
+        source_overlap, target_overlap, overlap_error_values[:, 0], strict=True
+    ):
+        source_overlap_error[source_row] = max(
+            np.nextafter(source_overlap_error[source_row] + error, -np.inf), 0.0
+        )
+        target_overlap_error[target_row] = max(
+            np.nextafter(target_overlap_error[target_row] + error, -np.inf), 0.0
+        )
+    source_diameter = binary64_norm_lower(
+        binary64_difference_magnitude(source_upper, source_lower)[0]
     )
-    target_overlap_error = np.bincount(
-        target_overlap, weights=overlap_error_values[:, 0], minlength=target_count
+    target_diameter = binary64_norm_lower(
+        binary64_difference_magnitude(target_upper, target_lower)[0]
     )
-    source_tolerance = (
-        policy.coverage_tolerance * source_measures
-        + source_cell_errors[:, 0]
-        + source_overlap_error
-        + supermesh_owner._COVERAGE_ROUNDOFF_ULPS
-        * np.finfo(np.float64).eps
-        * np.linalg.norm(source_upper - source_lower, axis=1) ** 3
+    roundoff = supermesh_owner._COVERAGE_ROUNDOFF_ULPS * np.finfo(np.float64).eps
+    source_slack = np.full_like(source_diameter, roundoff)
+    target_slack = np.full_like(target_diameter, roundoff)
+    for _ in range(3):
+        source_slack = np.maximum(np.nextafter(source_slack * source_diameter, -np.inf), 0.0)
+        target_slack = np.maximum(np.nextafter(target_slack * target_diameter, -np.inf), 0.0)
+    source_tolerance = np.maximum(
+        np.nextafter(policy.coverage_tolerance * source_measures, -np.inf), 0.0
     )
-    target_tolerance = (
-        policy.coverage_tolerance * target_measures
-        + target_cell_errors[:, 0]
-        + target_overlap_error
-        + supermesh_owner._COVERAGE_ROUNDOFF_ULPS
-        * np.finfo(np.float64).eps
-        * np.linalg.norm(target_upper - target_lower, axis=1) ** 3
+    target_tolerance = np.maximum(
+        np.nextafter(policy.coverage_tolerance * target_measures, -np.inf), 0.0
     )
+    for source_term, target_term in (
+        (source_cell_errors[:, 0], target_cell_errors[:, 0]),
+        (source_overlap_error, target_overlap_error),
+        (source_slack, target_slack),
+    ):
+        source_tolerance = np.maximum(
+            np.nextafter(source_tolerance + source_term, -np.inf), 0.0
+        )
+        target_tolerance = np.maximum(
+            np.nextafter(target_tolerance + target_term, -np.inf), 0.0
+        )
     status, reason = supermesh_owner._coverage_status(
         source_defects, target_defects, source_tolerance, target_tolerance, policy
     )
@@ -4302,7 +4321,7 @@ def _chart_image_box_disjoint(
     /,
 ) -> bool:
     source_scale = max(
-        float(np.sqrt(sum(float(a - b) ** 2 for a, b in zip(first, second, strict=True))))
+        sum((a - b) * (a - b) for a, b in zip(first, second, strict=True))
         for first, second in combinations(source_vertices, 2)
     )
     stack = [_canonical_reference_tetrahedron()]
@@ -4323,11 +4342,7 @@ def _chart_image_box_disjoint(
         ):
             continue
         target_scale = max(
-            float(
-                np.sqrt(
-                    sum(float(a - b) ** 2 for a, b in zip(first, second, strict=True))
-                )
-            )
+            sum((a - b) * (a - b) for a, b in zip(first, second, strict=True))
             for first, second in combinations(vertices, 2)
         )
         if target_scale <= source_scale or not _has_binary64_tetrahedron_interior(

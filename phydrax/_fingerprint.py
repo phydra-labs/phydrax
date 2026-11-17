@@ -102,6 +102,68 @@ def array_bytes_digest(value: np.ndarray, /) -> str:
     return digest.hexdigest()
 
 
+_FIXED_NUMERIC_FORMATS = frozenset(
+    (kind, width)
+    for kind, widths in (
+        ("b", (1,)),
+        ("i", (1, 2, 4, 8)),
+        ("u", (1, 2, 4, 8)),
+        ("f", (2, 4, 8)),
+        ("c", (8, 16)),
+    )
+    for width in widths
+)
+
+
+def numeric_array_fingerprint(value: np.ndarray, /) -> str:
+    """Hash a numeric array with explicit little-endian dtype and shape framing."""
+    array = np.asarray(value)
+    if (array.dtype.kind, array.dtype.itemsize) not in _FIXED_NUMERIC_FORMATS:
+        raise TypeError(
+            "Numeric array fingerprints require a fixed-format numeric dtype."
+        )
+    dtype = array.dtype.newbyteorder("<")
+    normalized = np.asarray(array, dtype=dtype)
+    metadata = canonical_json({"dtype": dtype.str, "shape": list(array.shape)}).encode(
+        "ascii"
+    )
+    digest = hashlib.sha256(b"numeric-array\0")
+    digest.update(len(metadata).to_bytes(8, "big"))
+    digest.update(metadata)
+    for chunk in iter_array_bytes(normalized):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
+def rational_chart_bank_fingerprint(
+    bank: tuple[tuple[tuple[tuple[int, int], ...], ...], ...], /
+) -> str:
+    """Hash a rational chart table from framed, signed big-endian row digests."""
+    digest = hashlib.sha256(b"rational-chart-bank\0")
+    digest.update(len(bank).to_bytes(8, "big"))
+    rows: dict[tuple[tuple[tuple[int, int], ...], ...], bytes] = {}
+    for row in bank:
+        row_hash = rows.get(row)
+        if row_hash is None:
+            encoded_row = bytearray(b"rational-chart-row\0")
+            encoded_row.extend(len(row).to_bytes(8, "big"))
+            for point in row:
+                encoded_row.extend(len(point).to_bytes(8, "big"))
+                for numerator, denominator in point:
+                    for value in (numerator, denominator):
+                        magnitude = abs(value)
+                        encoded = magnitude.to_bytes(
+                            (magnitude.bit_length() + 7) // 8, "big"
+                        )
+                        encoded_row.append(value < 0)
+                        encoded_row.extend(len(encoded).to_bytes(8, "big"))
+                        encoded_row.extend(encoded)
+            row_hash = hashlib.sha256(encoded_row).digest()
+            rows[row] = row_hash
+        digest.update(row_hash)
+    return digest.hexdigest()
+
+
 def canonical_array_hex_fingerprint(value: np.ndarray, /) -> str:
     """Fingerprint the canonical JSON string of C-order hexadecimal bytes."""
     digest = hashlib.sha256(b'"')
@@ -202,6 +264,27 @@ def array_tree_fingerprint(tree: PyTree[Any], /) -> dict[str, Any]:
     }
 
 
+def compact_array_tree_fingerprint(tree: PyTree[Any], /) -> str:
+    """Hash array paths, exact shapes, explicit little-endian dtypes and bytes."""
+    digest = hashlib.sha256(b"array-tree\0")
+    for path, value in _array_records(tree):
+        dtype = value.dtype.newbyteorder("<")
+        if dtype.fields is not None or dtype.kind not in "biufcSUmM":
+            raise TypeError("Array tree fingerprints require fixed-format scalar dtypes.")
+        if dtype.kind in "biufc" and (dtype.kind, dtype.itemsize) not in _FIXED_NUMERIC_FORMATS:
+            raise TypeError("Array tree fingerprints require fixed-format numeric dtypes.")
+        normalized = np.asarray(value, dtype=dtype)
+        metadata = canonical_json(
+            {"path": path, "shape": list(value.shape), "dtype": dtype.str}
+        ).encode("ascii")
+        digest.update(len(metadata).to_bytes(8, "big"))
+        digest.update(metadata)
+        digest.update(normalized.nbytes.to_bytes(8, "big"))
+        for chunk in iter_array_bytes(normalized):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _canonical_text(value: Any, /) -> str:
     parts: list[str] = []
     _write_canonical(value, parts.append)
@@ -221,7 +304,10 @@ def _write_canonical(value: Any, write: Callable[[str], object], /) -> None:
     elif kind is tuple or kind is list:
         _write_sequence(value, write)
     elif kind is dict:
-        _write_mapping(value, write)
+        if _plain_json_size((value,), _SEQUENCE_CHUNK) >= 0:
+            write(_ENCODER.encode(value))
+        else:
+            _write_mapping(value, write)
     elif isinstance(value, (jax.Array, np.ndarray, np.generic)):
         write(_ENCODER.encode({"__array__": array_tree_fingerprint(np.asarray(value))}))
     elif isinstance(value, Mapping):
@@ -240,8 +326,7 @@ def _write_canonical(value: Any, write: Callable[[str], object], /) -> None:
 
 
 def _plain_json_size(value: tuple[Any, ...] | list[Any], budget: int, /) -> int:
-    """Remaining ``budget`` after the items of a nest of tuples/lists of JSON
-    scalars, or -1 when the nest holds anything else or exceeds the budget."""
+    """Remaining budget for a plain JSON nest, or -1 for other or larger values."""
     for item in value:
         budget -= 1
         if budget < 0:
@@ -249,9 +334,17 @@ def _plain_json_size(value: tuple[Any, ...] | list[Any], budget: int, /) -> int:
         kind = type(item)
         if kind in _JSON_SCALAR_TYPES:
             continue
-        if kind is not tuple and kind is not list:
+        if kind is dict:
+            if any(type(key) is not str for key in item):
+                return -1
+            budget -= len(item)
+            if budget < 0:
+                return -1
+            budget = _plain_json_size(tuple(item.values()), budget)
+        elif kind is tuple or kind is list:
+            budget = _plain_json_size(item, budget)
+        else:
             return -1
-        budget = _plain_json_size(item, budget)
         if budget < 0:
             return -1
     return budget
@@ -275,6 +368,21 @@ def _write_sequence(
         # A bounded nest of tuples/lists of JSON scalars encodes as JSON
         # arrays exactly as the item-by-item walk below writes it.
         write(_ENCODER.encode(value))
+        return
+    if type(value) in (tuple, list):
+        write("[")
+        for start in range(0, len(value), 256):
+            if start:
+                write(",")
+            chunk = value[start : start + 256]
+            if _plain_json_size(chunk, _SEQUENCE_CHUNK) >= 0:
+                write(_ENCODER.encode(chunk)[1:-1])
+            else:
+                for index, item in enumerate(chunk):
+                    if index:
+                        write(",")
+                    _write_canonical(item, write)
+        write("]")
         return
     write("[")
     for index, item in enumerate(value):
@@ -363,8 +471,11 @@ __all__ = [
     "array_tree_signature",
     "canonical_fingerprint",
     "canonical_json",
+    "compact_array_tree_fingerprint",
     "canonical_array_hex_fingerprint",
     "canonical_array_list_fingerprint",
     "canonical_mapping",
     "iter_array_bytes",
+    "numeric_array_fingerprint",
+    "rational_chart_bank_fingerprint",
 ]

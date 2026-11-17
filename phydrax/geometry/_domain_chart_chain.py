@@ -6,10 +6,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from fractions import Fraction
-from itertools import combinations
+from itertools import combinations, groupby
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -331,6 +331,34 @@ def _finding(
     return MeshCertificateFinding(check, status, kind, ids, detail=detail)
 
 
+def _cell_measures(
+    cells: Iterable[tuple[tuple[Expression, ...], str]], /
+) -> Iterator[ExactScalar | Exception]:
+    """Integrate consecutive compatible cells, isolating failures in input order."""
+    from ._mapped_coverage import integrate_jacobians
+
+    for kind, group in groupby(cells, key=lambda cell: cell[1]):
+        maps = [expressions for expressions, _ in group]
+        index = 0
+        while index < len(maps):
+            batch = integrate_jacobians(iter(maps[index:]), kind)
+            while index < len(maps):
+                try:
+                    measure = next(batch)
+                except Exception:
+                    # A failed batch can be caused by a later map. Recompute only
+                    # this cell so its original exception and later cells survive.
+                    try:
+                        measure = affine_cell_measure(maps[index], kind)
+                    except Exception as error:
+                        measure = error
+                    index += 1
+                    yield measure
+                    break
+                index += 1
+                yield measure
+
+
 def _root_boundary_proof(
     domain: MappedReferenceDomain,
 ) -> tuple[tuple[FacetOverlap, ...], int, tuple[MeshCertificateFinding, ...]]:
@@ -377,6 +405,20 @@ def _root_boundary_proof(
         )
     root_measures = domain.reference_domain.exact_region_measures()
     achieved: list[ExactScalar] = [Fraction(0) for _ in domain.region_ids]
+    measured = iter(
+        _cell_measures(
+            (expression, block.cell_kind)
+            for expression, block in zip(
+                expressions,
+                (
+                    block
+                    for block in reference_mesh.blocks
+                    for _ in range(block.cell_count)
+                ),
+            )
+            if expression is not None
+        )
+    )
     cursor = 0
     for block in reference_mesh.blocks:
         for row in range(block.cell_count):
@@ -384,7 +426,9 @@ def _root_boundary_proof(
                 root_expression = expressions[cursor]
                 if root_expression is None:
                     raise ValueError("Reference root cell has no exact coordinate map.")
-                measure = affine_cell_measure(root_expression, block.cell_kind)
+                measure = next(measured)
+                if isinstance(measure, Exception):
+                    raise measure
             except (TypeError, ValueError, ZeroDivisionError) as error:
                 findings.append(
                     _finding(

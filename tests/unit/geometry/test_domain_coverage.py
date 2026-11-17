@@ -1322,3 +1322,99 @@ def test_mapped_support_authority_drives_native_overset_wall_membership() -> Non
     source_mask = connectivity.blanking_of("probe")
     assert np.all(np.asarray(source_mask.vertex_status) == int(OversetVertexStatus.HOLE))
     assert np.all(np.asarray(source_mask.cell_status) == int(OversetCellStatus.HOLE))
+
+
+def test_exact_cell_measure_consumers_keep_ordered_failures_and_signed_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+
+    from phydrax.geometry import _domain_chart_chain, _domain_numerics
+    from phydrax.geometry._domain_certification import (
+        _source_region_measures,
+        _target_region_measures,
+    )
+    from phydrax.geometry._domain_preparation import prepare_domain_coverage
+
+    reference, mesh, geometry, regions = _split_square()
+    mapped = MappedReferenceDomain(
+        reference,
+        mesh,
+        geometry,
+        regions,
+        source_id="measure-isolation",
+        source_revision="r1",
+        coordinate_contract=SpatialCoordinateContract.si(),
+    )
+    x = {(1, 0): Fraction(1)}
+    y = {(0, 1): Fraction(1)}
+    maps = ((x, y), ({(1,): Fraction(1)},), (y, x), (x, y))
+    preparation = replace(
+        prepare_domain_coverage(mesh, geometry, regions, 2), coordinate_maps=maps
+    )
+
+    findings = []
+    assert _target_region_measures(mesh, geometry, reference, preparation, findings) == (
+        None,
+        None,
+    )
+    assert [(f.check, f.status, f.entity_ids, f.detail) for f in findings] == [
+        (
+            "region_measure_unresolved",
+            "unresolved",
+            (202,),
+            "Exact target-cell measure integration is unavailable: "
+            "Mapped Jacobian integration requires a 2-D or 3-D map..",
+        ),
+        (
+            "target_cell_orientation",
+            "violated",
+            (303,),
+            "A target cell has nonpositive exact signed measure.",
+        ),
+    ]
+    findings = []
+    assert _target_region_measures(
+        mesh,
+        geometry,
+        reference,
+        preparation,
+        findings,
+        cell_measures={1: Fraction(1, 4)},
+    ) == (Fraction(3, 4), Fraction(0))
+    assert [(f.check, f.entity_ids) for f in findings] == [
+        ("target_cell_orientation", (303,))
+    ]
+    findings = []
+    assert _target_region_measures(
+        mesh, geometry, reference, preparation, findings, required=False
+    ) == (None, None)
+    assert [(f.check, f.entity_ids) for f in findings] == [
+        ("target_cell_orientation", (303,))
+    ]
+
+    monkeypatch.setattr(_domain_numerics, "cell_coordinate_expressions", lambda *_: maps)
+    findings = []
+    assert _source_region_measures(mapped, findings, exact_cad=None) == (None, None)
+    assert [(f.check, f.status, f.entity_ids) for f in findings] == [
+        ("source_region_measure_unresolved", "unresolved", (202,)),
+        ("source_cell_orientation", "violated", (303,)),
+    ]
+
+    monkeypatch.setattr(
+        _domain_chart_chain, "cell_coordinate_expressions", lambda *_: maps
+    )
+    monkeypatch.setattr(
+        _domain_chart_chain, "oriented_target_facets", lambda *_, **__: ((), ())
+    )
+    monkeypatch.setattr(
+        _domain_chart_chain, "partition_overlaps", lambda *_, **__: ((), ())
+    )
+    overlaps, facet_count, root_findings = _domain_chart_chain._root_boundary_proof(
+        mapped
+    )
+    assert (overlaps, facet_count) == ((), 0)
+    assert [(f.check, f.status, f.entity_ids) for f in root_findings] == [
+        ("reference_root_measure_unresolved", "unresolved", (202,)),
+        ("reference_root_orientation", "violated", (303,)),
+    ]

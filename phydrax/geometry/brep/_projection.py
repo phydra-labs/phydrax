@@ -30,12 +30,15 @@ from ...linalg._exact import (
 from ...linalg._hermitian_spectral import fraction_sqrt_interval
 from ...typing import checked
 from .._atlas import _curve_loops_point_state, TrimEnclosures
+from .._interval_enclosure import PreparedIntervalFunction
 from .._planar_embedding import PlanarEmbedding
 from .._rational import fraction_endpoint, rational_cross, rational_dot, rational_vector
 from .._source_boundary_records import SourceBoundaryDistance
+from ._host_program import evaluate_host_program, prepare_host_program
 from ._intersection_projection import _IntersectionPreparation, _prepare_intersection
 from ._model import BRepModel
 from ._patches import (
+    AbstractCurve,
     AbstractSurfacePatch,
     BSplineCurve,
     BSplineSurfacePatch,
@@ -79,6 +82,18 @@ _IDENTITY_ROTATION = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 _ZERO_TRANSLATION = (0.0, 0.0, 0.0)
 
 
+def _evaluate_patch(patch: AbstractSurfacePatch, parameters: Array, /) -> Array:
+    return patch.evaluate(parameters)
+
+
+def _evaluate_curve(curve: AbstractCurve, parameter: Array, /) -> Array:
+    return curve.evaluate(parameter)
+
+
+_patch_jacobian = eqx.filter_jit(jax.jacfwd(_evaluate_patch, argnums=1))
+_curve_derivative = eqx.filter_jit(jax.jacfwd(_evaluate_curve, argnums=1))
+
+
 @dataclass(frozen=True, slots=True)
 class _Occurrence:
     path: tuple[str, ...]
@@ -116,6 +131,17 @@ class _ProjectionPreparation:
     faces: dict[int, _PreparedFace] = field(default_factory=dict)
     orientations: dict[tuple[int, int], float] = field(default_factory=dict)
     edges: dict[int, _PreparedEdge] = field(default_factory=dict)
+    plane_jacobians: dict[int, np.ndarray] = field(default_factory=dict)
+    line_derivatives: dict[int, np.ndarray] = field(default_factory=dict)
+    curve_programs: dict[int, PreparedIntervalFunction | None] = field(
+        default_factory=dict
+    )
+    patch_programs: dict[int, PreparedIntervalFunction | None] = field(
+        default_factory=dict
+    )
+    frame_programs: dict[int, PreparedIntervalFunction | None] = field(
+        default_factory=dict
+    )
     intersections: dict[int, _IntersectionPreparation | None] = field(
         default_factory=dict
     )
@@ -159,6 +185,7 @@ class _Hit:
     piece_id: tuple[object, ...] | None = None
     root_id: tuple[object, ...] | None = None
     pending_frame: bool = False
+    pending_point: bool = False
 
 
 def _distance_bounds(first: np.ndarray, second: np.ndarray, /) -> tuple[float, float]:
@@ -180,6 +207,19 @@ def _distance_bounds(first: np.ndarray, second: np.ndarray, /) -> tuple[float, f
     return max(0.0, float(np.nextafter(distance - error, -np.inf))), float(
         np.nextafter(distance + error, np.inf)
     )
+
+
+def _exact_point_distance_upper(first: np.ndarray, second: np.ndarray, /) -> float:
+    """Outward upper distance between the exact values of two binary64 points."""
+    squared = sum(
+        (
+            (Fraction.from_float(float(a)) - Fraction.from_float(float(b))) ** 2
+            for a, b in zip(first, second, strict=True)
+        ),
+        Fraction(0),
+    )
+    upper = fraction_sqrt_interval(squared)[1]
+    return fraction_endpoint(upper, upper=True, saturate=True)
 
 
 def _map_frame(frame: np.ndarray, matrix: np.ndarray, /) -> np.ndarray:
@@ -476,9 +516,7 @@ def _face_normal_and_frame(
 ) -> tuple[np.ndarray, np.ndarray, bool]:
     if jacobian is None:
         jacobian = np.asarray(
-            jax.jacfwd(lambda uv: patch.evaluate(uv))(
-                jnp.asarray(parameters, dtype=jnp.float64)
-            ),
+            _patch_jacobian(patch, jnp.asarray(parameters, dtype=jnp.float64)),
             dtype=np.float64,
         )
     normal = np.cross(jacobian[:, 0], jacobian[:, 1])
@@ -666,7 +704,7 @@ def _full_chart_rectangle(model: BRepModel, face: int, /) -> bool:
     loops = geometry.face_loops[face]
     if len(loops) != 1:
         return False
-    bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
+    bounds = np.asarray(model.parameter_bounds, dtype=np.float64)[face]
     scale = max(1.0, float(np.max(np.abs(bounds))))
     tolerance = 256.0 * np.finfo(np.float64).eps * scale
     vertical: tuple[list[tuple[float, float]], list[tuple[float, float]]] = ([], [])
@@ -772,7 +810,7 @@ def _full_period(model: BRepModel, face: int, axis: int, /) -> bool:
 
 def _prepare_face(model: BRepModel, face: int, /) -> _PreparedFace:
     patch = model.patches[face]
-    bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
+    bounds = np.asarray(model.parameter_bounds, dtype=np.float64)[face]
     origin = None
     axes: tuple[np.ndarray, ...] = ()
     valid_frame = True
@@ -888,6 +926,7 @@ def _line_curve_hit(
     frame: bool = True,
     distance_threshold: float | None = None,
     preparation: _ProjectionPreparation | None = None,
+    defer_point: bool = False,
 ) -> _Hit:
     geometry = model.geometry
     carrier = geometry.edge_curves[edge]
@@ -925,6 +964,7 @@ def _line_curve_hit(
             preparation.edges[edge] = edge_data
     first, last = edge_data.ranges
     spline_projection = None
+    pending_point = False
     if isinstance(curve, (BSplineCurve, IntersectionCurve)):
         if isinstance(curve, IntersectionCurve):
             from ._intersection_projection import project_intersection_curve
@@ -991,7 +1031,12 @@ def _line_curve_hit(
         if squared <= np.finfo(np.float64).tiny:
             return _unresolved(1, edge, path)
         parameter = float(np.clip((point - origin) @ direction / squared, first, last))
-        closest = np.asarray(curve.evaluate(jnp.asarray(parameter)), dtype=np.float64)
+        pending_point = defer_point
+        closest = (
+            _NAN3.copy()
+            if pending_point
+            else np.asarray(curve.evaluate(jnp.asarray(parameter)), dtype=np.float64)
+        )
         segment = _segment_distance(curve, point, (first, last))
         if segment is None:
             return _unresolved(1, edge, path)
@@ -1027,10 +1072,16 @@ def _line_curve_hit(
                 np.asarray(curve.evaluate(jnp.asarray(value)), dtype=np.float64)
                 for value in endpoints
             ]
-            parameter = endpoints[
-                int(np.argmin([np.sum((value - point) ** 2) for value in values]))
-            ]
-        closest = np.asarray(curve.evaluate(jnp.asarray(parameter)), dtype=np.float64)
+            nearest = int(np.argmin([np.sum((value - point) ** 2) for value in values]))
+            parameter = endpoints[nearest]
+            closest = values[nearest]
+        else:
+            pending_point = defer_point
+            closest = (
+                _NAN3.copy()
+                if pending_point
+                else np.asarray(curve.evaluate(jnp.asarray(parameter)), dtype=np.float64)
+            )
         arc = _arc_distance(curve, point, (first, last, parameter))
         if arc is None:
             return _unresolved(1, edge, path)
@@ -1040,10 +1091,26 @@ def _line_curve_hit(
     tangents = _NAN_FRAME3.copy()
     # A hit certified beyond the caller's radius is discarded with its frame.
     if frame and not (distance_threshold is not None and lower > distance_threshold):
-        derivative = np.asarray(
-            jax.jacfwd(lambda value: curve.evaluate(value))(jnp.asarray(parameter)),
-            dtype=np.float64,
+        derivative = (
+            preparation.line_derivatives.get(edge)
+            if preparation is not None and isinstance(curve, (LineCurve, ExactLineCurve))
+            else None
         )
+        if (
+            derivative is None
+            and spline_projection is not None
+            and spline_projection.tangent is not None
+            and np.all(np.isfinite(spline_projection.tangent))
+            and np.any(spline_projection.tangent != 0.0)
+        ):
+            derivative = spline_projection.tangent
+        if derivative is None:
+            derivative = np.asarray(
+                _curve_derivative(curve, jnp.asarray(parameter)),
+                dtype=np.float64,
+            )
+            if preparation is not None and isinstance(curve, (LineCurve, ExactLineCurve)):
+                preparation.line_derivatives[edge] = derivative
         derivative_length = float(np.linalg.norm(derivative))
         tangent = derivative / derivative_length if derivative_length else _NAN3.copy()
         tangents = np.stack((tangent, _NAN3))
@@ -1062,6 +1129,7 @@ def _line_curve_hit(
         path,
         None if spline_projection is None else spline_projection.piece_id,
         None if spline_projection is None else spline_projection.root_id,
+        pending_point=pending_point,
     )
 
 
@@ -1076,7 +1144,7 @@ def _natural_rectangle_trim(model: BRepModel, face: int, /) -> bool:
     geometry = model.geometry
     if geometry is None or len(geometry.face_loops[face]) != 1:
         return False
-    bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
+    bounds = np.asarray(model.parameter_bounds, dtype=np.float64)[face]
     corners = {(float(bounds[i, 0]), float(bounds[j, 1])) for i in (0, 1) for j in (0, 1)}
     loop = geometry.face_loops[face][0]
     path: list[tuple[float, float]] = []
@@ -3259,9 +3327,7 @@ def _project_face(
         else:
             return _unresolved(2, face, path)
         second_axis = np.cross(axis, radial_axis)
-        first_parameter, last_parameter = (
-            float(value) for value in np.asarray(model.parameter_bounds[face])[:, 1]
-        )
+        first_parameter, last_parameter = (float(value) for value in bounds[:, 1])
         segment_ends = tuple(
             tuple(
                 start + Fraction(parameter) * rate
@@ -3614,12 +3680,22 @@ def _project_face(
     if defer_frame:
         normal, tangents, regular = _NAN3.copy(), _NAN_FRAME3.copy(), True
     else:
+        jacobian = None
+        if preparation is not None and isinstance(patch, PlanePatch):
+            jacobian = preparation.plane_jacobians.get(face)
+            if jacobian is None:
+                jacobian = np.asarray(
+                    _patch_jacobian(patch, jnp.asarray(uv, dtype=jnp.float64)),
+                    dtype=np.float64,
+                )
+                preparation.plane_jacobians[face] = jacobian
         normal, tangents, regular = _face_normal_and_frame(
             patch,
             uv,
             orientation,
             embedding=embedding,
             profile_interval=(float(bounds[0, 1]), float(bounds[1, 1])),
+            jacobian=jacobian,
         )
     if not regular and affine_distance_squared is not None:
         return _Hit(
@@ -5335,6 +5411,7 @@ class NativeBRepProjection(AbstractBRepProjection):
         distance_threshold: float | None = None,
         angle_bounds: dict[int, tuple[float, float] | None] | None = None,
         defer_frame: bool = False,
+        batch_points: bool = False,
         preparation: _ProjectionPreparation | None = None,
         _occurrence: _Occurrence | None = None,
     ) -> _Hit:
@@ -5374,6 +5451,21 @@ class NativeBRepProjection(AbstractBRepProjection):
                     occurrence.path,
                 )
             elif dimension == BRepEntityDimension.EDGE:
+                defer_point = False
+                carrier = self.model.geometry.edge_curves[index]
+                if (
+                    batch_points
+                    and preparation is not None
+                    and len(targets) == 1
+                    and carrier >= 0
+                ):
+                    curve = self.model.geometry.curves[carrier]
+                    if isinstance(curve, (LineCurve, ExactLineCurve, CircleCurve)):
+                        if carrier not in preparation.curve_programs:
+                            preparation.curve_programs[carrier] = prepare_host_program(
+                                lambda value: curve.evaluate(value[0]), 1
+                            )
+                        defer_point = preparation.curve_programs[carrier] is not None
                 hit = _line_curve_hit(
                     self.model,
                     index,
@@ -5382,6 +5474,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                     self.policy,
                     distance_threshold=distance_threshold,
                     preparation=preparation,
+                    defer_point=defer_point,
                 )
             elif dimension == BRepEntityDimension.FACE:
                 prepared = None
@@ -5451,6 +5544,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                     hit.piece_id,
                     hit.root_id,
                     hit.pending_frame,
+                    hit.pending_point,
                 )
             hits.append(hit)
         if len(hits) == 1:
@@ -5524,6 +5618,10 @@ class NativeBRepProjection(AbstractBRepProjection):
             finite_points = np.all(np.isfinite(points_3d), axis=1)
             if np.any(finite_points):
                 points[finite_points] = self.embedding.to_planar(points_3d[finite_points])
+                for row in np.flatnonzero(finite_points):
+                    upper[row] = max(
+                        upper[row], _exact_point_distance_upper(queries[row], points[row])
+                    )
             normals = np.full((len(hits), 2), np.nan, dtype=np.float64)
             tangents = _map_frame(
                 tangents_3d,
@@ -5637,6 +5735,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                     boxes=boxes,
                     angle_bounds=angle_bounds,
                     preparation=preparation,
+                    batch_points=True,
                     defer_frame=(
                         isinstance(
                             patch, (ConePatch, CylinderPatch, SpherePatch, TorusPatch)
@@ -5648,49 +5747,95 @@ class NativeBRepProjection(AbstractBRepProjection):
                     ),
                 )
             )
-        # The source map and its derivative program are shared per patch;
-        # evaluate bounded query batches rather than tracing one JAX derivative
-        # for every requested point. Occurrence transforms remain per hit.
-        from ._patches import _QUERY_BUCKETS, bucketed_query_rows
-
+        pending_points: dict[tuple[int, int], list[int]] = {}
+        for row, hit in enumerate(hits):
+            if hit.pending_point:
+                carrier = self.model.geometry.edge_curves[hit.index]
+                pending_points.setdefault((1, carrier), []).append(row)
+            elif hit.pending_frame:
+                face = hit.index
+                if face not in preparation.patch_programs:
+                    preparation.patch_programs[face] = prepare_host_program(
+                        self.model.patches[face].evaluate, 2
+                    )
+                if preparation.patch_programs[face] is not None:
+                    pending_points.setdefault((2, face), []).append(row)
+        for (dimension, source), selected in pending_points.items():
+            program = (
+                preparation.curve_programs[source]
+                if dimension == 1
+                else preparation.patch_programs[source]
+            )
+            if program is None:
+                raise RuntimeError("Missing prepared projection point program.")
+            parameters = np.asarray(
+                [hits[row].parameters[:dimension] for row in selected],
+                dtype=np.float64,
+            )
+            values = evaluate_host_program(program, parameters)
+            for row, value in zip(selected, values, strict=True):
+                value = np.asarray(value, dtype=np.float64)
+                hit = hits[row]
+                occurrence = self._target_occurrences(dimension, hit.index, hit.path)[0]
+                if occurrence.path:
+                    value = np.asarray(
+                        occurrence.rotation, dtype=np.float64
+                    ) @ value + np.asarray(occurrence.translation, dtype=np.float64)
+                hits[row] = replace(
+                    hit,
+                    point=value,
+                    upper=max(hit.upper, _exact_point_distance_upper(world[row], value)),
+                    pending_point=False,
+                )
+        # Frame values enter result identities and regularity decisions. Native
+        # interval representatives are batch-independent; unsupported patches
+        # retain one fixed-shape JAX evaluation per item.
         pending: dict[int, list[int]] = {}
         for row, hit in enumerate(hits):
             if hit.pending_frame:
                 pending.setdefault(hit.index, []).append(row)
         for face, selected in pending.items():
             patch = self.model.patches[face]
-            derivative = jax.vmap(jax.jacfwd(patch.evaluate))
+            if face not in preparation.frame_programs:
+                preparation.frame_programs[face] = prepare_host_program(
+                    jax.jacfwd(patch.evaluate), 2
+                )
+            program = preparation.frame_programs[face]
+            parameters = np.asarray(
+                [hits[row].parameters for row in selected], dtype=np.float64
+            )
+            if program is None:
+                jacobians = tuple(
+                    np.asarray(_patch_jacobian(patch, jnp.asarray(parameter)))
+                    for parameter in parameters
+                )
+            else:
+                jacobians = evaluate_host_program(program, parameters)
             bounds = preparation.faces[face].bounds
-            for start in range(0, len(selected), _QUERY_BUCKETS[-1]):
-                batch = selected[start : start + _QUERY_BUCKETS[-1]]
-                parameters = np.asarray([hits[row].parameters for row in batch])
-                jacobians = bucketed_query_rows(derivative, parameters)
-                for row, jacobian in zip(batch, jacobians, strict=True):
-                    hit = hits[row]
-                    occurrence = self._target_occurrences(2, face, hit.path)[0]
-                    normal, tangents, regular = _face_normal_and_frame(
-                        patch,
-                        hit.parameters,
-                        self._face_orientation(
-                            face, occurrence.solid, preparation=preparation
-                        ),
-                        embedding=None,
-                        profile_interval=(float(bounds[0, 1]), float(bounds[1, 1])),
-                        jacobian=jacobian,
-                    )
-                    if occurrence.path:
-                        rotation = np.asarray(occurrence.rotation, dtype=np.float64)
-                        normal = (
-                            rotation @ normal if np.all(np.isfinite(normal)) else normal
-                        )
-                        tangents = _map_frame(tangents, rotation.T)
-                    hits[row] = replace(
-                        hit,
-                        normal=normal,
-                        tangents=tangents,
-                        status=hit.status if regular else _SINGULAR,
-                        pending_frame=False,
-                    )
+            for row, jacobian in zip(selected, jacobians, strict=True):
+                hit = hits[row]
+                occurrence = self._target_occurrences(2, face, hit.path)[0]
+                normal, tangents, regular = _face_normal_and_frame(
+                    patch,
+                    hit.parameters,
+                    self._face_orientation(
+                        face, occurrence.solid, preparation=preparation
+                    ),
+                    embedding=None,
+                    profile_interval=(float(bounds[0, 1]), float(bounds[1, 1])),
+                    jacobian=np.asarray(jacobian, dtype=np.float64),
+                )
+                if occurrence.path:
+                    rotation = np.asarray(occurrence.rotation, dtype=np.float64)
+                    normal = rotation @ normal if np.all(np.isfinite(normal)) else normal
+                    tangents = _map_frame(tangents, rotation.T)
+                hits[row] = replace(
+                    hit,
+                    normal=normal,
+                    tangents=tangents,
+                    status=hit.status if regular else _SINGULAR,
+                    pending_frame=False,
+                )
         return self._result(queries, hits)
 
     def project_boundary(

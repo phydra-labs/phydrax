@@ -798,6 +798,7 @@ def _mesh_evidence_issues(
             association.validate_target(binding[1])
         except ValueError:
             issues.append("association_target_ids")
+        target_kinds: tuple[bool, bool] | None = None
         for row, (identifier, source, resolved) in enumerate(
             zip(
                 np.asarray(association.target_global_ids),
@@ -808,6 +809,16 @@ def _mesh_evidence_issues(
         ):
             if not resolved:
                 continue
+            if target_kinds is None:
+                dimension = mesh.topological_dimension
+                target_kinds = (
+                    dimension >= 1
+                    and association.target_entity_set_id
+                    == mesh.entity_set(1).entity_set_id,
+                    dimension >= 2
+                    and association.target_entity_set_id
+                    == mesh.entity_set(2).entity_set_id,
+                )
             key = (
                 association.association_kind,
                 association.source_id,
@@ -824,13 +835,11 @@ def _mesh_evidence_issues(
             interval = association.target_parameter_intervals[row]
             source_interval = association.source_parameter_intervals[row]
             facet_edge = (
-                mesh.topological_dimension >= 1
-                and association.target_entity_set_id == mesh.entity_set(1).entity_set_id
+                target_kinds[0]
                 and association.source_roles[row] is GeometrySourceEntityRole.FACET
             )
             edge_face = (
-                mesh.topological_dimension >= 2
-                and association.target_entity_set_id == mesh.entity_set(2).entity_set_id
+                target_kinds[1]
                 and association.source_roles[row] is GeometrySourceEntityRole.EDGE
                 and piece_witness is not None
             )

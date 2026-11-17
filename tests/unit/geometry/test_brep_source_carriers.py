@@ -9,12 +9,14 @@ import pytest
 from jax import Array
 
 from phydrax._fingerprint import canonical_fingerprint
+from phydrax._meshcore import meshcore_available
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization._exact_algebraic_geometry import (
     coefficient_payload,
     RadicalElement,
 )
 from phydrax.geometry.brep import (
+    _host_program,
     brep_box,
     BRepEntityDimension,
     BRepProjectionStatus,
@@ -48,11 +50,14 @@ from phydrax.geometry.brep._patches import (
     PlanePatch,
     RevolutionSurface,
     SpherePatch,
+    surface_differential,
+    surface_differential_rows,
     SurfaceIsoparametricCurve,
     SurfaceMappedCurve,
     TorusPatch,
 )
 from phydrax.geometry.brep._root_bindings import BRepConicVertex, BRepRootSupport
+from phydrax.typing import ConvertibleToArray
 from phydrax.units import MILLIMETER
 
 
@@ -176,6 +181,81 @@ def test_unknown_surface_does_not_inherit_analytic_continuity() -> None:
 
     assert not cusp.is_c1_on(box)
     assert plane.is_c1_on(box)
+
+
+@pytest.mark.skipif(not meshcore_available(), reason="native meshcore unavailable")
+def test_surface_differential_rows_native_partitions_and_public_jax() -> None:
+    patch = CylinderPatch(
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+        2.0,
+    )
+    rows = np.column_stack((np.linspace(-1.1, 1.3, 67), np.linspace(-0.7, 0.9, 67)))
+    expected = np.asarray(surface_differential(patch, jnp.asarray(rows)))
+
+    whole = surface_differential_rows(patch, rows)
+    partitioned = np.concatenate(
+        [surface_differential_rows(patch, block) for block in np.split(rows, (1, 9, 50))]
+    )
+    np.testing.assert_allclose(whole, expected, rtol=1e-14, atol=1e-14)
+    np.testing.assert_array_equal(whole.view(np.uint64), partitioned.view(np.uint64))
+    assert surface_differential_rows(patch, rows[:6].reshape(2, 3, 2)).shape == (
+        2,
+        3,
+        3,
+        2,
+    )
+    jacobian = jax.jacfwd(lambda uv: surface_differential(patch, uv))(
+        jnp.asarray((0.3, 0.4))
+    )
+    assert jacobian.shape == (3, 2, 2)
+
+
+@final
+class _ErfSurface(AbstractSurfacePatch):
+    def evaluate(self, parameters: Array, /) -> Array:
+        u, v = parameters[..., 0], parameters[..., 1]
+        return jnp.stack((u * jax.lax.erf(v), u, v), axis=-1)
+
+
+@pytest.mark.skipif(not meshcore_available(), reason="native meshcore unavailable")
+def test_surface_differential_rows_falls_back_for_unsupported_program() -> None:
+    patch = _ErfSurface()
+    rows = np.asarray(((0.2, 0.3), (0.6, -0.4)), dtype=np.float64)
+
+    np.testing.assert_array_equal(
+        surface_differential_rows(patch, rows),
+        np.asarray(surface_differential(patch, jnp.asarray(rows))),
+    )
+
+
+def test_surface_differential_rows_propagates_unexpected_preparation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    patch = PlanePatch((0, 0, 0), (1, 0, 0), (0, 1, 0))
+
+    def fail(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("preparation fault")
+
+    monkeypatch.setattr(_host_program, "prepare_host_program", fail)
+    with pytest.raises(RuntimeError, match="preparation fault"):
+        surface_differential_rows(patch, np.zeros((1, 2), dtype=np.float64))
+
+
+@pytest.mark.skipif(not meshcore_available(), reason="native meshcore unavailable")
+def test_surface_differential_rows_propagates_native_execution_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    patch = PlanePatch((0, 0, 0), (1, 0, 0), (0, 1, 0))
+
+    def fail(*args: object, **kwargs: object) -> np.ndarray:
+        raise RuntimeError("execution fault")
+
+    monkeypatch.setattr(_host_program, "evaluate_host_program", fail)
+    with pytest.raises(RuntimeError, match="execution fault"):
+        surface_differential_rows(patch, np.zeros((1, 2), dtype=np.float64))
 
 
 def test_native_sweep_carriers_evaluate_authored_source_parameters() -> None:
@@ -1114,6 +1194,51 @@ def test_ruled_surface_retains_rail_parameterization_and_directional_derivative(
     assert surface.is_c1_along(0, 0.2, 0.0, 1.0)
     with pytest.raises(ValueError):
         surface.validate_parameter_box(((0.0, -0.1), (1.0, 1.0)))
+    with pytest.raises(ValueError):
+        surface.is_c1_on(((0.0, -0.1), (1.0, 1.0)))
+
+
+def test_surface_box_host_consumers_preserve_validation_and_public_array() -> None:
+    plane = PlanePatch((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
+    box = np.asarray(((-1.0, -2.0), (3.0, 4.0)), dtype=np.float64)
+    validated = plane.validate_parameter_box(box)
+    assert isinstance(validated, Array)
+    np.testing.assert_array_equal(validated, box)
+    lower, upper = plane.derivative_bounds(box)
+    np.testing.assert_array_equal(lower, ((1.0, 0.0), (0.0, 1.0), (0.0, 0.0)))
+    np.testing.assert_array_equal(upper, lower)
+    assert plane.is_c1_on(box)
+    with pytest.raises(ValueError, match="increasing"):
+        plane.derivative_bounds(((0.0, 0.0), (0.0, 1.0)))
+
+    cylinder = CylinderPatch(
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+        1.0,
+    )
+    with pytest.raises(ValueError, match="at most one period"):
+        cylinder.derivative_bounds(((0.0, 0.0), (7.0, 1.0)))
+
+
+def test_surface_host_consumers_honor_custom_box_validation() -> None:
+    class RestrictedPatch(AbstractSurfacePatch):
+        def evaluate(self, parameters: Array, /) -> Array:
+            return jnp.stack((parameters[0], parameters[1], parameters[0] * 0))
+
+        def validate_parameter_box(self, parameter_box: ConvertibleToArray, /) -> Array:
+            box = super().validate_parameter_box(parameter_box)
+            if np.asarray(box)[1, 0] > 1.0:
+                raise ValueError("custom surface restriction")
+            return box
+
+    surface = RestrictedPatch()
+    assert not surface.is_c1_on(((0.0, 0.0), (1.0, 1.0)))
+    with pytest.raises(ValueError, match="custom surface restriction"):
+        surface.is_c1_on(((0.0, 0.0), (2.0, 1.0)))
+    with pytest.raises(ValueError, match="custom surface restriction"):
+        surface.derivative_bounds(((0.0, 0.0), (2.0, 1.0)))
 
 
 def test_ruled_surface_does_not_infer_continuity_of_custom_rails() -> None:

@@ -890,6 +890,7 @@ class SourcePreparation:
         "_curve_box_programs",
         "_curve_spans",
         "_mapped_hessians",
+        "_host_jacobian_programs",
         "_programs",
         "_trim_chains",
         "_trim_partitions",
@@ -917,6 +918,9 @@ class SourcePreparation:
         ] = {}
         self._programs: dict[
             tuple[int, int], tuple[AbstractSurfacePatch, PreparedIntervalFunction]
+        ] = {}
+        self._host_jacobian_programs: dict[
+            int, tuple[AbstractSurfacePatch, PreparedIntervalFunction | None]
         ] = {}
         self._mapped_hessians: dict[
             tuple[int, int],
@@ -1052,12 +1056,12 @@ class SourcePreparation:
             return _placed_point_box(
                 surface.placement, self.surface_box(surface.source, parameter_box)
             )
-        from .brep._patches import TorusPatch
+        from .brep._patches import _host_parameter_box, TorusPatch
         from .brep._root_bindings import _exact_span_surface_box, _patch_box
         from .brep._tspline import TSplineSurfacePatch
 
         if isinstance(surface, (BSplineSurfacePatch, TSplineSurfacePatch)):
-            box = np.asarray(surface.validate_parameter_box(parameter_box), np.float64)
+            box = _host_parameter_box(surface, parameter_box)
             spans = self.surface_spans(surface)
             if spans is None:
                 raise RuntimeError("A spline carrier prepared no exact spans.")
@@ -1065,14 +1069,10 @@ class SourcePreparation:
         if isinstance(surface, TorusPatch):
             from .brep._root_bindings import _exact_torus_patch_box
 
-            box = np.asarray(
-                surface.validate_parameter_box(parameter_box), dtype=np.float64
-            )
+            box = _host_parameter_box(surface, parameter_box)
             return _exact_torus_patch_box(surface, box[0], box[1])
         if type(surface).bounding_box is AbstractSurfacePatch.bounding_box:
-            box = np.asarray(
-                surface.validate_parameter_box(parameter_box), dtype=np.float64
-            )
+            box = _host_parameter_box(surface, parameter_box)
             return _patch_box(
                 surface, box[0], box[1], interval_program=self._surface_box_program
             )
@@ -1113,7 +1113,11 @@ class SourcePreparation:
         entry = self._box_programs.get(id(surface))
         if entry is not None and entry[0] is surface:
             return entry[1]
-        program = prepare_interval_function(surface.evaluate, 2)
+        from .brep._host_program import prepare_host_program
+
+        program = prepare_host_program(surface.evaluate, 2)
+        if program is None:
+            program = prepare_interval_function(surface.evaluate, 2)
         self._box_programs[id(surface)] = (surface, program)
         return program
 
@@ -1144,9 +1148,26 @@ class SourcePreparation:
         derivative: Callable[[Array], Array] = surface.evaluate
         for _ in range(order):
             derivative = jax.jacfwd(derivative)
-        program = prepare_interval_function(derivative, 2)
+        from .brep._host_program import prepare_host_program
+
+        program = prepare_host_program(derivative, 2)
+        if program is None:
+            program = prepare_interval_function(derivative, 2)
         self._programs[key] = (surface, program)
         return program
+
+    def host_jacobian_program(
+        self, surface: AbstractSurfacePatch, /
+    ) -> PreparedIntervalFunction | None:
+        """Prepare one batch-independent host Jacobian program per source carrier."""
+        from .brep._host_program import prepare_host_program
+
+        entry = self._host_jacobian_programs.get(id(surface))
+        if entry is None or entry[0] is not surface:
+            program = prepare_host_program(jax.jacfwd(surface.evaluate), 2)
+            self._host_jacobian_programs[id(surface)] = (surface, program)
+            return program
+        return entry[1]
 
     def mapped_curve_hessian(
         self, surface: AbstractSurfacePatch, pcurve: AbstractCurve, /
@@ -1160,10 +1181,13 @@ class SourcePreparation:
         def mapped(parameter: Array) -> Array:
             return surface.evaluate(pcurve.evaluate(parameter[0]))
 
+        from .brep._host_program import prepare_host_program
+
         try:
-            program = prepare_interval_function(
-                jax.jacfwd(jax.jacfwd(mapped)), 1, batch_capacity=1
-            )
+            derivative = jax.jacfwd(jax.jacfwd(mapped))
+            program = prepare_host_program(derivative, 1)
+            if program is None:
+                program = prepare_interval_function(derivative, 1, batch_capacity=1)
         except (IntervalExtensionError, NotImplementedError):
             program = None
         self._mapped_hessians[key] = (surface, pcurve, program)
@@ -1515,6 +1539,67 @@ def _fraction_magnitude(lower: float, upper: float, /) -> Fraction:
     return Fraction(max(abs(lower), abs(upper)))
 
 
+def _interpolation_hessian_bounds(
+    lower: np.ndarray, upper: np.ndarray, boxes: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Enclose the Hessian norm bound, independently for every leaf.
+
+    Each binary64 operation is followed separately by an outward step. IEEE
+    square root and the basic operations are correctly rounded; no reduction or
+    fused operation can change an individual leaf's result.
+    """
+    down = -np.inf
+    up = np.inf
+    width = boxes[:, 1] - boxes[:, 0]
+    width_lower = np.maximum(np.nextafter(width, down), 0.0)
+    width_upper = np.nextafter(width, up)
+    magnitude = np.maximum(np.abs(lower), np.abs(upper))
+    squared_lower = np.zeros(len(boxes), dtype=np.float64)
+    squared_upper = np.zeros(len(boxes), dtype=np.float64)
+    for physical in range(lower.shape[1]):
+        component_lower = np.zeros(len(boxes), dtype=np.float64)
+        component_upper = np.zeros(len(boxes), dtype=np.float64)
+        for first in range(2):
+            for second in range(2):
+                product_lower = np.maximum(
+                    np.nextafter(width_lower[:, first] * width_lower[:, second], down),
+                    0.0,
+                )
+                product_upper = np.nextafter(
+                    width_upper[:, first] * width_upper[:, second], up
+                )
+                term_lower = np.maximum(
+                    np.nextafter(
+                        magnitude[:, physical, first, second] * product_lower, down
+                    ),
+                    0.0,
+                )
+                term_upper = np.nextafter(
+                    magnitude[:, physical, first, second] * product_upper, up
+                )
+                component_lower = np.maximum(
+                    np.nextafter(component_lower + term_lower, down), 0.0
+                )
+                component_upper = np.nextafter(component_upper + term_upper, up)
+        component_lower = np.maximum(np.nextafter(component_lower * 0.5, down), 0.0)
+        component_upper = np.nextafter(component_upper * 0.5, up)
+        squared_lower = np.maximum(
+            np.nextafter(
+                squared_lower
+                + np.maximum(np.nextafter(component_lower * component_lower, down), 0.0),
+                down,
+            ),
+            0.0,
+        )
+        squared_upper = np.nextafter(
+            squared_upper + np.nextafter(component_upper * component_upper, up), up
+        )
+    return (
+        np.maximum(np.nextafter(np.sqrt(squared_lower), down), 0.0),
+        np.nextafter(np.sqrt(squared_upper), up),
+    )
+
+
 def _adaptive_triangle_interpolation_bounds(
     surface: AbstractSurfacePatch,
     charts: Sequence[_ExactUVChart],
@@ -1532,6 +1617,8 @@ def _adaptive_triangle_interpolation_bounds(
     refines its leaves above its budget until its bound meets the budget, a vertex
     lower bound exceeds it, or a leaf above it reaches binary64 enclosure resolution.
     ``None`` marks a row whose Hessian enclosure is nonfinite.
+    Batched binary64 arithmetic is stepped outward after each operation; exact
+    rational accumulation decides comparisons that overlap those enclosures.
     """
     if len(charts) != len(budgets):
         raise ValueError("Every interpolation chart needs exactly one budget.")
@@ -1606,12 +1693,56 @@ def _adaptive_triangle_interpolation_bounds(
         + Fraction(1, 2**1022)
         for values in corner_values
     )
-    # (upper, lower) of |S(q) - I_T S(q)| at each refinement vertex; zero at corners.
-    vertex_terms: dict[tuple[int, _Barycentric], tuple[Fraction, Fraction]] = {
-        (row, weights): (Fraction(0), Fraction(0))
+    # Intervals enclose the former exact upper and lower vertex terms.
+    vertex_terms: dict[
+        tuple[int, _Barycentric], tuple[Fraction, Fraction, Fraction, Fraction]
+    ] = {
+        (row, weights): (Fraction(0), Fraction(0), Fraction(0), Fraction(0))
         for row in range(len(charts))
         for weights in _UNIT_BARYCENTRICS
     }
+    vertex_points: dict[tuple[int, _Barycentric], tuple[np.ndarray, np.ndarray]] = {}
+    exact_vertices: dict[tuple[int, _Barycentric], tuple[Fraction, Fraction]] = {
+        key: (Fraction(0), Fraction(0)) for key in vertex_terms
+    }
+
+    def exact_vertex(key: tuple[int, _Barycentric], /) -> tuple[Fraction, Fraction]:
+        cached = exact_vertices.get(key)
+        if cached is not None:
+            return cached
+        row, weights = key
+        low, high = vertex_points[key]
+        upper_squared = Fraction(0)
+        lower_squared = Fraction(0)
+        for axis, corner_axis in enumerate(zip(*corner_values[row], strict=True)):
+            interpolated_lower = sum(
+                (
+                    weight * bounds[0]
+                    for weight, bounds in zip(weights, corner_axis, strict=True)
+                ),
+                Fraction(0),
+            )
+            interpolated_upper = sum(
+                (
+                    weight * bounds[1]
+                    for weight, bounds in zip(weights, corner_axis, strict=True)
+                ),
+                Fraction(0),
+            )
+            difference_lower = Fraction(float(low[axis])) - interpolated_upper
+            difference_upper = Fraction(float(high[axis])) - interpolated_lower
+            magnitude = max(abs(difference_lower), abs(difference_upper))
+            upper_squared += magnitude * magnitude
+            if difference_lower > 0:
+                lower_squared += difference_lower * difference_lower
+            elif difference_upper < 0:
+                lower_squared += difference_upper * difference_upper
+        result = (
+            fraction_sqrt_interval(upper_squared)[1],
+            fraction_sqrt_interval(lower_squared)[0],
+        )
+        exact_vertices[key] = result
+        return result
 
     def evaluate_vertices(keys: Sequence[tuple[int, _Barycentric]], /) -> None:
         missing = tuple(dict.fromkeys(key for key in keys if key not in vertex_terms))
@@ -1620,44 +1751,105 @@ def _adaptive_triangle_interpolation_bounds(
         lower, upper = point_enclosures(
             [chart_point(row, weights) for row, weights in missing]
         )
-        for index, (row, weights) in enumerate(missing):
-            upper_squared = Fraction(0)
-            lower_squared = Fraction(0)
-            for axis, corner_axis in enumerate(zip(*corner_values[row], strict=True)):
-                interpolated_lower = sum(
-                    (
-                        weight * bounds[0]
-                        for weight, bounds in zip(weights, corner_axis, strict=True)
-                    ),
-                    Fraction(0),
-                )
-                interpolated_upper = sum(
-                    (
-                        weight * bounds[1]
-                        for weight, bounds in zip(weights, corner_axis, strict=True)
-                    ),
-                    Fraction(0),
-                )
-                difference_lower = (
-                    Fraction(float(lower[index, axis])) - interpolated_upper
-                )
-                difference_upper = (
-                    Fraction(float(upper[index, axis])) - interpolated_lower
-                )
-                magnitude = max(abs(difference_lower), abs(difference_upper))
-                upper_squared += magnitude * magnitude
-                if difference_lower > 0:
-                    lower_squared += difference_lower * difference_lower
-                elif difference_upper < 0:
-                    lower_squared += difference_upper * difference_upper
-            vertex_terms[(row, weights)] = (
-                fraction_sqrt_interval(upper_squared)[1],
-                fraction_sqrt_interval(lower_squared)[0],
+        rows = np.asarray([row for row, _ in missing], dtype=np.intp)
+        weights = np.asarray(
+            [[float(weight) for weight in barycentric] for _, barycentric in missing],
+            dtype=np.float64,
+        )
+        # Midpoint weights remain exact rationals, not their binary64 identities.
+        weight_low = np.maximum(np.nextafter(weights, -np.inf), 0.0)
+        weight_high = np.minimum(np.nextafter(weights, np.inf), 1.0)
+        corner_low = corner_lower.reshape(len(charts), 3, -1)[rows]
+        corner_high = corner_upper.reshape(len(charts), 3, -1)[rows]
+        with np.errstate(over="ignore", invalid="ignore", under="ignore"):
+            interp_low_low = np.zeros_like(lower)
+            interp_low_high = np.zeros_like(lower)
+            interp_high_low = np.zeros_like(lower)
+            interp_high_high = np.zeros_like(lower)
+            for corner in range(3):
+                wl = weight_low[:, corner, None]
+                wh = weight_high[:, corner, None]
+                for values, is_upper in (
+                    (corner_low[:, corner], False),
+                    (corner_high[:, corner], True),
+                ):
+                    product_low = np.nextafter(
+                        np.where(values >= 0, wl, wh) * values, -np.inf
+                    )
+                    product_high = np.nextafter(
+                        np.where(values >= 0, wh, wl) * values, np.inf
+                    )
+                    if is_upper:
+                        interp_high_low = np.nextafter(
+                            interp_high_low + product_low, -np.inf
+                        )
+                        interp_high_high = np.nextafter(
+                            interp_high_high + product_high, np.inf
+                        )
+                    else:
+                        interp_low_low = np.nextafter(
+                            interp_low_low + product_low, -np.inf
+                        )
+                        interp_low_high = np.nextafter(
+                            interp_low_high + product_high, np.inf
+                        )
+            dl_low = np.nextafter(lower - interp_high_high, -np.inf)
+            dl_high = np.nextafter(lower - interp_high_low, np.inf)
+            du_low = np.nextafter(upper - interp_low_high, -np.inf)
+            du_high = np.nextafter(upper - interp_low_low, np.inf)
+            upper_mag_low = np.maximum(
+                np.maximum(np.maximum(dl_low, -dl_high), 0.0),
+                np.maximum(np.maximum(du_low, -du_high), 0.0),
             )
+            upper_mag_high = np.maximum(
+                np.maximum(np.abs(dl_low), np.abs(dl_high)),
+                np.maximum(np.abs(du_low), np.abs(du_high)),
+            )
+            lower_mag_low = np.maximum(np.maximum(dl_low, -du_high), 0.0)
+            lower_mag_high = np.maximum(np.maximum(dl_high, -du_low), 0.0)
+            sums = [np.zeros(len(missing), dtype=np.float64) for _ in range(4)]
+            for axis in range(lower.shape[1]):
+                for index, magnitude in enumerate(
+                    (upper_mag_low, upper_mag_high, lower_mag_low, lower_mag_high)
+                ):
+                    direction = -np.inf if index % 2 == 0 else np.inf
+                    squared = np.nextafter(
+                        magnitude[:, axis] * magnitude[:, axis], direction
+                    )
+                    sums[index] = np.maximum(
+                        np.nextafter(sums[index] + np.maximum(squared, 0.0), direction),
+                        0.0,
+                    )
+            # An extra step encloses the prior rational sqrt endpoints.
+            roots = [
+                np.maximum(
+                    np.nextafter(
+                        np.nextafter(
+                            np.sqrt(value), -np.inf if index % 2 == 0 else np.inf
+                        ),
+                        -np.inf if index % 2 == 0 else np.inf,
+                    ),
+                    0.0,
+                )
+                for index, value in enumerate(sums)
+            ]
+        for index, key in enumerate(missing):
+            vertex_points[key] = (lower[index], upper[index])
+            endpoints = tuple(float(root[index]) for root in roots)
+            if not all(math.isfinite(value) for value in endpoints):
+                exact_upper, exact_lower = exact_vertex(key)
+                vertex_terms[key] = (exact_upper, exact_upper, exact_lower, exact_lower)
+            else:
+                vertex_terms[key] = (
+                    Fraction(endpoints[0]),
+                    Fraction(endpoints[1]),
+                    Fraction(endpoints[2]),
+                    Fraction(endpoints[3]),
+                )
 
     def hessian_terms(
         leaves: Sequence[tuple[int, _BarycentricTriangle]], /
-    ) -> list[Fraction | None]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         points_by_leaf = [
             [chart_point(row, weights) for weights in triangle]
             for row, triangle in leaves
@@ -1680,42 +1872,37 @@ def _adaptive_triangle_interpolation_bounds(
         lower, upper = hessian_program.evaluate(boxes_[:, 0], boxes_[:, 1])
         lower_ = np.asarray(lower, dtype=np.float64)
         upper_ = np.asarray(upper, dtype=np.float64)
-        terms: list[Fraction | None] = []
-        for index in range(len(leaves)):
-            low = lower_[index]
-            high = upper_[index]
-            if not np.all(np.isfinite(low)) or not np.all(np.isfinite(high)):
-                terms.append(None)
-                continue
-            widths = tuple(
-                Fraction(float(boxes_[index, 1, axis]))
-                - Fraction(float(boxes_[index, 0, axis]))
-                for axis in range(2)
+        with np.errstate(over="ignore", invalid="ignore", under="ignore"):
+            bounds_lower, bounds_upper = _interpolation_hessian_bounds(
+                lower_, upper_, boxes_
             )
-            width_products = tuple(
-                tuple(widths[first] * widths[second] for second in range(2))
-                for first in range(2)
-            )
-            squared = Fraction(0)
-            for physical in range(low.shape[0]):
-                component = (
-                    sum(
-                        (
-                            _fraction_magnitude(
-                                float(low[physical, first, second]),
-                                float(high[physical, first, second]),
-                            )
-                            * width_products[first][second]
-                            for first in range(2)
-                            for second in range(2)
-                        ),
-                        Fraction(0),
-                    )
-                    / 2
+        return lower_, upper_, boxes_, bounds_lower, bounds_upper
+
+    def exact_hessian(low: np.ndarray, high: np.ndarray, box: np.ndarray, /) -> Fraction:
+        widths = tuple(
+            Fraction(float(box[1, axis])) - Fraction(float(box[0, axis]))
+            for axis in range(2)
+        )
+        squared = Fraction(0)
+        for physical in range(low.shape[0]):
+            component = (
+                sum(
+                    (
+                        _fraction_magnitude(
+                            float(low[physical, first, second]),
+                            float(high[physical, first, second]),
+                        )
+                        * widths[first]
+                        * widths[second]
+                        for first in range(2)
+                        for second in range(2)
+                    ),
+                    Fraction(0),
                 )
-                squared += component * component
-            terms.append(fraction_sqrt_interval(squared)[1])
-        return terms
+                / 2
+            )
+            squared += component * component
+        return fraction_sqrt_interval(squared)[1]
 
     def make_leaves(
         pending: Sequence[tuple[int, _BarycentricTriangle]], /
@@ -1724,10 +1911,42 @@ def _adaptive_triangle_interpolation_bounds(
             [(row, weights) for row, triangle in pending for weights in triangle]
         )
         result: list[tuple[int, _InterpolationLeaf]] = []
-        for (row, triangle), hessian in zip(pending, hessian_terms(pending), strict=True):
-            terms = [vertex_terms[(row, weights)] for weights in triangle]
-            vertex_upper = max(term[0] for term in terms)
-            resolution = max(term[0] - term[1] for term in terms) + resolution_floors[row]
+        lower, upper, boxes, hessian_lower, hessian_upper = hessian_terms(pending)
+        for index, (row, triangle) in enumerate(pending):
+            keys = [(row, weights) for weights in triangle]
+            terms = [vertex_terms[key] for key in keys]
+            vertex_low = max(term[0] for term in terms)
+            vertex_upper = max(term[1] for term in terms)
+            resolution_low = (
+                max(term[0] - term[3] for term in terms) + resolution_floors[row]
+            )
+            resolution = max(term[1] - term[2] for term in terms) + resolution_floors[row]
+            if not np.all(np.isfinite(lower[index])) or not np.all(
+                np.isfinite(upper[index])
+            ):
+                hessian = None
+            else:
+                high_float = float(np.nextafter(hessian_upper[index], np.inf))
+                if math.isfinite(high_float):
+                    low = Fraction(
+                        float(max(np.nextafter(hessian_lower[index], -np.inf), 0.0))
+                    )
+                    hessian = Fraction(high_float)
+                    ambiguous = (
+                        low + vertex_low <= budgets[row] < hessian + vertex_upper
+                        or low <= resolution
+                        and hessian > resolution_low
+                    )
+                else:
+                    ambiguous = True
+                if ambiguous:
+                    hessian = exact_hessian(lower[index], upper[index], boxes[index])
+                    exact_terms = [exact_vertex(key) for key in keys]
+                    vertex_upper = max(term[0] for term in exact_terms)
+                    resolution = (
+                        max(term[0] - term[1] for term in exact_terms)
+                        + resolution_floors[row]
+                    )
             result.append(
                 (
                     row,
@@ -1780,10 +1999,12 @@ def _adaptive_triangle_interpolation_bounds(
             break
         for row, leaf in make_leaves(pending):
             leaves[row].append(leaf)
-            row_lower[row] = max(
-                row_lower[row],
-                *(vertex_terms[(row, weights)][1] for weights in leaf[0]),
-            )
+            for weights in leaf[0]:
+                key = (row, weights)
+                _, _, low, high = vertex_terms[key]
+                if low <= budgets[row] < high:
+                    low = exact_vertex(key)[1]
+                row_lower[row] = max(row_lower[row], low)
     result: list[Fraction | None] = []
     for row_leaves in leaves:
         bounds = [leaf[2] for leaf in row_leaves]
@@ -3781,7 +4002,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
         jacobian_lower, jacobian_upper = first.evaluate(lower, upper)
         hessian_lower, hessian_upper = second.evaluate(lower, upper)
         centers = np.mean(cells, axis=1)
-        center_jacobians = surface_differential_rows(surface, centers)
+        center_jacobians = surface_differential_rows(
+            surface, centers, preparation=preparation.host_jacobian_program
+        )
         result = np.full((cells.shape[0],), np.inf, dtype=np.float64)
         pi_upper = Fraction(float(np.nextafter(math.pi, math.inf)))
         for row in range(cells.shape[0]):
