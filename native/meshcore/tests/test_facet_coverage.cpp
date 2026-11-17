@@ -31,6 +31,23 @@ void test_exact_partition_and_arrangement_reference_agree() {
   PHX_CHECK(fast.empty());
 }
 
+void test_noncontiguous_rows_and_disjoint_degenerate_partner() {
+  const double subject[] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+  const double points[] = {
+      0, 0, 1, 1, 0, 1, 0, 1, 1,
+      2, 0, 0, 3, 0, 0, 4, 0, 0,
+      0, 1, 0, 0, 0, 0, 1, 0, 0};
+  const std::array<std::array<int32_t, 4>, 3> faces{{
+      {0, 1, 2, 0}, {3, 4, 5, 0}, {7, 8, 6, 0}}};
+  const std::array<int32_t, 2> selected{2, 0};
+  std::vector<int32_t> contributors;
+  PHX_CHECK(exact_facet_coverage(subject, points, faces, selected, contributors));
+  PHX_CHECK(contributors == std::vector<int32_t>({2}));
+  const std::array<int32_t, 3> degenerate{2, 1, 0};
+  PHX_CHECK(!exact_facet_coverage(subject, points, faces, degenerate, contributors));
+  PHX_CHECK(contributors.empty());
+}
+
 void test_history_supersedes_only_older_covered_fragments() {
   const double points[] = {0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
                            0.0, 1.0, 0.0, 0.5, 0.5, 0.0};
@@ -53,6 +70,7 @@ void test_history_supersedes_only_older_covered_fragments() {
 
 int main() {
   test_exact_partition_and_arrangement_reference_agree();
+  test_noncontiguous_rows_and_disjoint_degenerate_partner();
   test_history_supersedes_only_older_covered_fragments();
   return phx::mc::test::finish("test_facet_coverage");
 }

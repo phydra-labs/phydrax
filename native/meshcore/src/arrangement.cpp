@@ -1354,13 +1354,17 @@ enum class PredicateCover : std::uint8_t { kCovered, kRefused, kUnknown };
 // partners as the arrangement. A configuration neither proof decides (an
 // overlap, a T-junction or boundary edge across the subject, a gap) is left to
 // the arrangement.
-PredicateCover predicate_facet_cover(const double* coordinates,
-                                     std::span<const std::int64_t> triangles,
-                                     std::size_t rows, std::vector<std::size_t>& covering) {
+PredicateCover predicate_facet_cover(
+    const double* subject, const double* original_points,
+    std::span<const std::array<int32_t, 4>> original_faces,
+    std::span<const int32_t> selected, std::vector<std::size_t>& covering) {
   covering.clear();
   const auto corner = [&](std::size_t face, int k) {
-    return coordinates + 3 * static_cast<std::size_t>(triangles[3 * face + k]);
+    if (face == 0) return subject + 3 * k;
+    const auto& vertices = original_faces[static_cast<std::size_t>(selected[face - 1])];
+    return original_points + 3 * static_cast<std::size_t>(vertices[k]);
   };
+  const std::size_t rows = selected.size();
   // Projection: the first axis whose subject normal component is nonzero, as
   // the arrangement's exact normal sign of face 0 selects it.
   int axis = -1;
@@ -1373,12 +1377,13 @@ PredicateCover predicate_facet_cover(const double* coordinates,
     }
     return shape;
   };
-  Shape subject{};
+  Shape subject_shape{};
   int subject_orientation = 0;
   for (int a = 0; a < 3 && subject_orientation == 0; ++a) {
     axis = a;
-    subject = project(0);
-    subject_orientation = orient2d(subject[0].data(), subject[1].data(), subject[2].data());
+    subject_shape = project(0);
+    subject_orientation = orient2d(subject_shape[0].data(), subject_shape[1].data(),
+                                   subject_shape[2].data());
   }
   if (subject_orientation == 0) return PredicateCover::kRefused;
   // Coplanar partners in row order; a degenerate partner refuses the face.
@@ -1419,8 +1424,8 @@ PredicateCover predicate_facet_cover(const double* coordinates,
   std::vector<std::int8_t> separated(partners.size(), -1);
   const auto separated_from_subject = [&](std::size_t p) {
     if (separated[p] < 0) {
-      separated[p] = outside_edge(subject, subject_orientation, shapes[p]) ||
-                             outside_edge(shapes[p], orientations[p], subject)
+      separated[p] = outside_edge(subject_shape, subject_orientation, shapes[p]) ||
+                             outside_edge(shapes[p], orientations[p], subject_shape)
                          ? 1
                          : 0;
     }
@@ -1434,7 +1439,7 @@ PredicateCover predicate_facet_cover(const double* coordinates,
       for (int k = 0; k < 3 && inside; ++k) {
         inside = orientations[p] * orient2d(shapes[p][(k + 1) % 3].data(),
                                             shapes[p][(k + 2) % 3].data(),
-                                            subject[v].data()) >= 0;
+                                            subject_shape[v].data()) >= 0;
       }
     }
     if (inside) found = p;
@@ -1492,7 +1497,7 @@ PredicateCover predicate_facet_cover(const double* coordinates,
       int positive = 0;
       int negative = 0;
       for (int v = 0; v < 3; ++v) {
-        const int side = orient2d(u, w, subject[v].data());
+        const int side = orient2d(u, w, subject_shape[v].data());
         positive += side > 0;
         negative += side < 0;
       }
@@ -1500,10 +1505,10 @@ PredicateCover predicate_facet_cover(const double* coordinates,
       bool clear = false;
       for (int e = 0; e < 3 && !clear; ++e) {
         clear = subject_orientation *
-                    orient2d(subject[(e + 1) % 3].data(), subject[(e + 2) % 3].data(), u) <= 0;
+                    orient2d(subject_shape[(e + 1) % 3].data(), subject_shape[(e + 2) % 3].data(), u) <= 0;
         if (clear) {
           clear = subject_orientation *
-                      orient2d(subject[(e + 1) % 3].data(), subject[(e + 2) % 3].data(), w) <= 0;
+                      orient2d(subject_shape[(e + 1) % 3].data(), subject_shape[(e + 2) % 3].data(), w) <= 0;
         }
       }
       if (!clear) return PredicateCover::kUnknown;
@@ -1539,28 +1544,19 @@ bool facet_coverage(const double* subject, const double* original_points,
     throw std::length_error("Facet coverage input exceeds addressable index range.");
   }
   const std::size_t m = 3 * (selected.size() + 1);
-  std::vector<double> coordinates;
-  std::vector<std::int64_t> triangles;
-  coordinates.reserve(3 * m);
-  triangles.reserve(m);
   for (int k = 0; k < 9; ++k) {
     if (!std::isfinite(subject[k])) return false;
-    coordinates.push_back(subject[k]);
   }
-  for (std::int64_t k = 0; k < 3; ++k) triangles.push_back(k);
   for (int32_t row : selected) {
     if (row < 0 || static_cast<std::size_t>(row) >= original_faces.size()) return false;
     const auto& face = original_faces[static_cast<std::size_t>(row)];
     for (int corner = 0; corner < 3; ++corner) {
       if (face[corner] < 0) return false;
-      triangles.push_back(static_cast<std::int64_t>(coordinates.size() / 3));
-      const double* point = original_points + 3 * static_cast<std::size_t>(face[corner]);
-      coordinates.insert(coordinates.end(), point, point + 3);
     }
   }
   if (predicate_proof && epochs.empty()) {
     std::vector<std::size_t> covering;
-    switch (predicate_facet_cover(coordinates.data(), triangles, selected.size(), covering)) {
+    switch (predicate_facet_cover(subject, original_points, original_faces, selected, covering)) {
       case PredicateCover::kCovered:
         contributors.clear();
         for (std::size_t index : covering) contributors.push_back(selected[index]);
@@ -1569,6 +1565,22 @@ bool facet_coverage(const double* subject, const double* original_points,
         return false;
       case PredicateCover::kUnknown:
         break;
+    }
+  }
+  // The arrangement needs an owned, densely indexed coordinate bank only
+  // when the direct predicate proof cannot decide.
+  std::vector<double> coordinates;
+  std::vector<std::int64_t> triangles;
+  coordinates.reserve(3 * m);
+  triangles.reserve(m);
+  coordinates.insert(coordinates.end(), subject, subject + 9);
+  for (std::int64_t k = 0; k < 3; ++k) triangles.push_back(k);
+  for (int32_t row : selected) {
+    const auto& face = original_faces[static_cast<std::size_t>(row)];
+    for (int corner = 0; corner < 3; ++corner) {
+      triangles.push_back(static_cast<std::int64_t>(coordinates.size() / 3));
+      const double* point = original_points + 3 * static_cast<std::size_t>(face[corner]);
+      coordinates.insert(coordinates.end(), point, point + 3);
     }
   }
   try {

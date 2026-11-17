@@ -249,6 +249,8 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Exact facet coverage evaluates its predicate proof directly on source banks;
+  it materializes arrangement coordinates only when the proof is inconclusive.
 - Tetrahedral mesh construction indexes source faces by group for its
   validation pass, avoiding repeated scans while retaining source order and
   exact coverage decisions.
