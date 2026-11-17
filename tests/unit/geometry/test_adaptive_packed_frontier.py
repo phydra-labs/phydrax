@@ -5,8 +5,10 @@
 """The packed traversal agrees with the original scalar BFS, not its wiring."""
 
 import itertools
+import math
 import mmap
 import weakref
+from fractions import Fraction
 from typing import Protocol
 
 import numpy as np
@@ -21,7 +23,10 @@ from phydrax.geometry.implicit._adaptive_discovery import (
     _FieldEnclosures,
     _grid_coordinate,
     _grid_coordinate_fraction,
+    _norm_upper,
+    _norm_upper_rows,
     _outward_coordinate,
+    _target_level,
 )
 from phydrax.geometry.implicit._adaptive_packed_frontier import (
     _Coordinates,
@@ -32,6 +37,56 @@ from phydrax.geometry.implicit._policy import (
     AdaptiveImplicitBoxIssue,
     AdaptiveImplicitSurfaceStatus,
 )
+
+
+@pytest.mark.parametrize("exponent", [0, -1, -10, -100, -1022, -1074])
+def test_target_level_exact_binary_powers_and_neighbors(exponent: int) -> None:
+    power = math.ldexp(1.0, exponent)
+    values = (np.nextafter(power, 0.0), power, np.nextafter(power, np.inf))
+    # A zero diagonal isolates the initial level from the correction loop.
+    domain = np.zeros((2, 3), dtype=np.float64)
+    for value in values:
+        if value <= 0.0:
+            continue
+        exact = Fraction(float(value))
+        expected = 0
+        while Fraction(1, 1 << expected) > exact:
+            expected += 1
+        assert _target_level(domain, float(value)) == expected
+
+
+@pytest.mark.parametrize("relative", [0.5, 0.25, 0.3, 0.125])
+def test_target_level_applies_diameter_correction(relative: float) -> None:
+    domain = np.asarray([[0.0, 0.0, 0.0], [3.0, 4.0, 2.0]])
+    diagonal = _norm_upper(domain[1] - domain[0])
+    target = relative * diagonal
+    level = _target_level(domain, relative)
+    assert np.nextafter(math.ldexp(diagonal, -level), np.inf) <= target
+    assert np.nextafter(math.ldexp(diagonal, 1 - level), np.inf) > target
+
+
+def test_diameter_bounds_are_deterministic_and_enclose_exact_lengths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden_hypot(*args: float) -> float:
+        raise AssertionError("platform hypot must not determine diameter bounds")
+
+    monkeypatch.setattr(math, "hypot", forbidden_hypot)
+    rows = np.asarray(
+        [
+            [0.0, 0.0, 0.0],
+            [3.0, 4.0, 0.0],
+            [0.1, -0.3, 0.7],
+            [np.nextafter(0.0, 1.0), 0.0, 0.0],
+            [1e100, 1e-100, -1e100],
+        ],
+        dtype=np.float64,
+    )
+    bounds = _norm_upper_rows(rows)
+    for row, bound in zip(rows, bounds):
+        assert bound == _norm_upper(row)
+        exact_squared = sum((Fraction(float(x)) ** 2 for x in row), Fraction(0))
+        assert math.isinf(bound) or Fraction(float(bound)) ** 2 >= exact_squared
 
 
 class _Bounds(Protocol):
