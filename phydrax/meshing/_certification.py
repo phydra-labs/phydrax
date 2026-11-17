@@ -821,6 +821,14 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         )
         findings = list(_audit_findings(inputs, audit, multiregion))
         findings.extend(embedding.findings)
+        from ..geometry.implicit._adaptive_discovery import AdaptiveImplicitSurface
+        from ..geometry.implicit._source_charts import _ImplicitChartHandoff
+
+        chart_handoff = (
+            _ImplicitChartHandoff()
+            if isinstance(inputs.domain, AdaptiveImplicitSurface)
+            else None
+        )
         fidelity = None
         if inputs.source is not None:
             if inputs.fidelity_tolerance is None:
@@ -854,6 +862,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                         inputs.fidelity_witness,
                     ),
                     chart_parent=fidelity_premise,
+                    _root_chart_handoff=chart_handoff,
                     validated_chart_parent=validated_chart_parent,
                 )
             if stored_main is not None:
@@ -918,6 +927,14 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                         root.require_current(inputs.feature_source, root.specification)
                     chart_parent = (root.mesh, root.geometry)
                 coverage_source, coverage_fidelity = _coverage_operands(inputs, fidelity)
+                root_charts = None if chart_handoff is None else chart_handoff.root_charts
+                if root_charts is not None and (
+                    coverage_source is not root_charts.source
+                    or root_charts._surface is not inputs.domain
+                    or coverage_fidelity is None
+                    or coverage_fidelity.witness is not root_charts.witness
+                ):
+                    root_charts = None
                 coverage = certify_domain_coverage(
                     inputs.mesh,
                     inputs.geometry,
@@ -927,6 +944,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                     source=coverage_source,
                     fidelity=coverage_fidelity,
                     source_coverage_witness=inputs.source_coverage_witness,
+                    root_charts=root_charts,
                     chart_parent=chart_parent,
                     _validated_parent_embedding=_validated_chart_parent_embedding,
                 )

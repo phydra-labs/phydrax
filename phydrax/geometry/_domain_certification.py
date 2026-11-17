@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from fractions import Fraction
-from typing import final, Literal, NamedTuple
+from typing import final, Literal, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
@@ -22,7 +22,10 @@ from ..discretization._cell_mesh import CellMesh
 from ..discretization._exact_algebraic_geometry import ExactScalar
 from ..typing import Dim, HostInt64
 from ._affine_plc_domain import AffinePlcDomain
-from ._approximate_source_coverage import ExactCadSourceBoundary
+from ._approximate_source_coverage import (
+    _require_coverage_handoff,
+    ExactCadSourceBoundary,
+)
 from ._domain_coverage import PiecewiseLinearDomain
 from ._domain_preparation import CellCoverageAssignment, DomainCoveragePreparation
 from ._embedding_state import (
@@ -53,6 +56,10 @@ from .implicit._restricted_delaunay_coverage import (
     RestrictedDelaunayCoverageWitness,
     validate_restricted_delaunay_coverage_witness,
 )
+
+
+if TYPE_CHECKING:
+    from .implicit._source_charts import AdaptiveImplicitRootChartMap
 
 
 type CoverageDomain = (
@@ -308,6 +315,7 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
         source: SourceBoundaryQuery | None = None,
         fidelity: SourceFidelityCertificate | None = None,
         source_coverage_witness: SourceCoverageWitness | None = None,
+        root_charts: AdaptiveImplicitRootChartMap | None = None,
         chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
         _validated_parent_embedding: ValidatedGlobalEmbedding | None = None,
     ) -> None:
@@ -322,6 +330,7 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
             source=source,
             fidelity=fidelity,
             source_coverage_witness=source_coverage_witness,
+            root_charts=root_charts,
             chart_parent=chart_parent,
             _validated_parent_embedding=_validated_parent_embedding,
         )
@@ -966,6 +975,7 @@ def _coverage_boundary_partition(
     source: SourceBoundaryQuery | None,
     fidelity: SourceFidelityCertificate | None,
     source_coverage_witness: SourceCoverageWitness | None,
+    root_charts: AdaptiveImplicitRootChartMap | None,
     chart_parent: tuple[CellMesh, CellGeometrySpec] | None,
     validated_parent_embedding: ValidatedGlobalEmbedding | None,
 ) -> _BoundaryCoverageProof:
@@ -1413,6 +1423,7 @@ def _coverage_boundary_partition(
             source=source,
             fidelity=fidelity,
             embedding=embedding,
+            root_charts=root_charts,
         )
         if attempt.bounded is None:
             for failure in attempt.failures:
@@ -1509,6 +1520,7 @@ def _prove_coverage(
     source: SourceBoundaryQuery | None,
     fidelity: SourceFidelityCertificate | None,
     source_coverage_witness: SourceCoverageWitness | None,
+    root_charts: AdaptiveImplicitRootChartMap | None,
     chart_parent: tuple[CellMesh, CellGeometrySpec] | None,
     _validated_parent_embedding: ValidatedGlobalEmbedding | None,
 ) -> _CoverageProof:
@@ -1540,6 +1552,8 @@ def _prove_coverage(
         source = fidelity.source
     if source is not None and not isinstance(source, SourceBoundaryQuery):
         raise TypeError("source must implement SourceBoundaryQuery.")
+    if root_charts is not None:
+        _require_coverage_handoff(root_charts, mesh, geometry, domain, source, fidelity)
     if source_coverage_witness is not None and not isinstance(
         source_coverage_witness,
         (
@@ -1638,6 +1652,7 @@ def _prove_coverage(
         source=source,
         fidelity=fidelity_for_coverage,
         source_coverage_witness=source_coverage_witness,
+        root_charts=root_charts,
         chart_parent=chart_parent,
         validated_parent_embedding=_validated_parent_embedding,
     )
@@ -1704,10 +1719,17 @@ def certify_domain_coverage(
     source: SourceBoundaryQuery | None = None,
     fidelity: SourceFidelityCertificate | None = None,
     source_coverage_witness: SourceCoverageWitness | None = None,
+    root_charts: AdaptiveImplicitRootChartMap | None = None,
     chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
     _validated_parent_embedding: ValidatedGlobalEmbedding | None = None,
 ) -> DomainCoverageCertificate:
-    """Compute exact or witnessed bounded coverage from source authority."""
+    """Compute exact or witnessed bounded coverage from source authority.
+
+    ``root_charts`` may carry this operation's complete adaptive implicit map.
+    Its mesh, geometry, source, witness, domain and controls must be the same
+    live operands as the coverage request; a mismatch is refused explicitly.
+    The map is consumed transiently and is not retained by the certificate.
+    """
     return DomainCoverageCertificate(
         mesh,
         geometry,
@@ -1717,6 +1739,7 @@ def certify_domain_coverage(
         source=source,
         fidelity=fidelity,
         source_coverage_witness=source_coverage_witness,
+        root_charts=root_charts,
         chart_parent=chart_parent,
         _validated_parent_embedding=_validated_parent_embedding,
     )

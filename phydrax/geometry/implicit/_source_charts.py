@@ -11,6 +11,7 @@ from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from functools import cache, partial
 from typing import final, Literal, Protocol, runtime_checkable, TYPE_CHECKING
+from weakref import ref, ReferenceType
 
 import equinox as eqx
 import jax
@@ -306,6 +307,9 @@ class AdaptiveImplicitRootChartMap:
         self.geometry_id = cell_geometry_id(geometry)
         self.chart_evidence = tuple(face.evidence for face in faces)
         self._faces = faces
+        # Minted only after this live map's own proof preparation finishes.
+        self._coverage_owner: ReferenceType[AdaptiveImplicitRootChartMap] | None = None
+        self._coverage_faces: tuple[_PreparedFace, ...] | None = None
         self._bounds = bounds
         self._surface = surface
         self._hessian_program = hessian_program
@@ -568,7 +572,10 @@ class AdaptiveImplicitRootChartMap:
 def _coverage_chart_complete(charts: AdaptiveImplicitRootChartMap, /) -> bool:
     """Whether every coverage-visible chart has its own retained piece proofs."""
     return (
-        charts.reused_row_count == 0
+        charts._coverage_owner is not None
+        and charts._coverage_owner() is charts
+        and charts._coverage_faces is charts._faces
+        and charts.reused_row_count == 0
         and bool(charts._faces)
         and len(charts._faces) == len(charts.chart_evidence)
         and len(charts._faces) == len(charts.witness.source_chart_ids)
@@ -5084,6 +5091,8 @@ def _prepare_root_charts(
     )
     root_map.chart_rows = rows
     root_map.reused_row_count = len(setups) - len(proved)
+    root_map._coverage_faces = root_map._faces
+    root_map._coverage_owner = ref(root_map)
     return root_map
 
 
