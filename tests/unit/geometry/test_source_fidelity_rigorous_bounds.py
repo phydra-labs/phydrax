@@ -234,8 +234,13 @@ def test_analytic_projection_representatives_and_identity_ignore_libm(
     )
     there = profile.project_boundary(queries)
     for name in (
-        "points", "parameters", "normals", "tangents", "status",
-        "residuals", "distance_lower_bounds",
+        "points",
+        "parameters",
+        "normals",
+        "tangents",
+        "status",
+        "residuals",
+        "distance_lower_bounds",
     ):
         np.testing.assert_array_equal(getattr(here, name), getattr(there, name))
     assert here.result_id == there.result_id

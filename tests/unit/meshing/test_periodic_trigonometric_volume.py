@@ -154,9 +154,9 @@ def test_periodic_network_mesh_certifies_and_closes_through_paired_cell_faces(
 ) -> None:
     volume = _volume(family, diameter)
     # Identity lattice: the certified Frobenius stretch is at least sqrt(3).
-    assert Fraction(volume.vertex_root_distance) ** 2 >= 3 * Fraction(
-        volume.root_error
-    ) ** 2
+    assert (
+        Fraction(volume.vertex_root_distance) ** 2 >= 3 * Fraction(volume.root_error) ** 2
+    )
     surface = volume.surface
     assert surface.topology is not None
 

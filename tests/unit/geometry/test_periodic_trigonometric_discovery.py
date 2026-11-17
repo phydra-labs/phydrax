@@ -90,9 +90,10 @@ def test_quotient_discovery_reports_cited_cubic_cell_genus_and_half_fraction(
     assert metrics.solid_fraction_lower <= 0.5 <= metrics.solid_fraction_upper
     # The reported Cartesian certificate uses the Frobenius lattice bound.
     # For the identity lattice this is sqrt(3), not the spectral value 1.
-    assert Fraction(metrics.vertex_root_distance) ** 2 >= 3 * Fraction(
-        surface.root_error
-    ) ** 2
+    assert (
+        Fraction(metrics.vertex_root_distance) ** 2
+        >= 3 * Fraction(surface.root_error) ** 2
+    )
     assert metrics.porosity_lower <= 0.5 <= metrics.porosity_upper
 
 
