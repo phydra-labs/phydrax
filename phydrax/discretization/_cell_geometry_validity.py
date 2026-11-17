@@ -83,7 +83,7 @@ from ..linalg import (
     inverse_small_linear,
     SmallLinearSolvePlan,
 )
-from ..linalg._exact import determinant_exact, determinant_small_algebra
+from ..linalg._exact import determinant_exact, determinant_small_algebra, solve_exact
 from ..typing import ConvertibleToArray
 from ._cell_complex import PolyhedralConnectivity
 from ._cell_geometry import (
@@ -795,12 +795,6 @@ def _underflow_free_norm(values: np.ndarray, /, *, axis: int) -> np.ndarray:
 # Bernstein parameter domains ------------------------------------------------
 
 
-def _bernstein_1d(degree: int, points: np.ndarray, /) -> np.ndarray:
-    powers = np.arange(degree + 1)
-    binomial = np.asarray([math.comb(degree, value) for value in powers], np.float64)
-    t = points[..., None]
-    return binomial * t**powers * (1.0 - t) ** (degree - powers)
-
 
 def _simplex_indices(degree: int, dimension: int, /) -> np.ndarray:
     return np.asarray(
@@ -813,26 +807,16 @@ def _simplex_indices(degree: int, dimension: int, /) -> np.ndarray:
     ).reshape(-1, dimension + 1)
 
 
-def _bernstein_simplex(degree: int, dimension: int, points: np.ndarray, /) -> np.ndarray:
-    indices = _simplex_indices(degree, dimension)
-    barycentric = np.concatenate(
-        (1.0 - np.sum(points, axis=-1, keepdims=True), points), axis=-1
-    )
-    multinomial = np.asarray(
-        [
-            math.factorial(degree) / math.prod(math.factorial(value) for value in row)
-            for row in indices
-        ],
+
+
+def _rational_nodes(degree: int, /) -> np.ndarray:
+    if degree == 0:
+        return np.asarray((0.5,), dtype=np.float64)
+    denominator = 1 << (degree - 1).bit_length()
+    return np.asarray(
+        [((index * denominator + degree // 2) // degree) / denominator for index in range(degree + 1)],
         dtype=np.float64,
     )
-    return multinomial * np.prod(
-        barycentric[..., None, :] ** indices[None, :, :], axis=-1
-    )
-
-
-def _chebyshev_nodes(degree: int, /) -> np.ndarray:
-    index = np.arange(degree + 1, dtype=np.float64)
-    return 0.5 * (1.0 - np.cos((2.0 * index + 1.0) * np.pi / (2.0 * degree + 2.0)))
 
 
 def _simplex_nodes(degree: int, dimension: int, /) -> np.ndarray:
@@ -841,15 +825,6 @@ def _simplex_nodes(degree: int, dimension: int, /) -> np.ndarray:
     return _simplex_indices(degree, dimension)[:, 1:].astype(np.float64) / degree
 
 
-def _tensor(values: tuple[np.ndarray, ...], /) -> np.ndarray:
-    """Tensor product of per-axis basis tables sharing the leading point axis."""
-
-    result = values[0]
-    for value in values[1:]:
-        result = (result[..., :, None] * value[..., None, :]).reshape(
-            value.shape[:-1] + (-1,)
-        )
-    return result
 
 
 def _grid(axes: tuple[np.ndarray, ...], /) -> np.ndarray:
@@ -951,6 +926,7 @@ class _BernsteinPlan:
     nodes: np.ndarray
     coefficients_from_values: np.ndarray
     conversion_norm: float
+    conversion_rounding_norm: float
     vertex_indices: np.ndarray
     subdivision: _ReferenceSubdivision
 
@@ -1011,6 +987,76 @@ def _reference_subdivision(
     )
 
 
+@cache
+def _exact_bernstein_inverse(
+    degree: int, dimension: int, simplex: bool, /
+) -> tuple[tuple[Fraction, ...], ...]:
+    """Exact inverse of a Bernstein basis evaluated at representable nodes."""
+    if simplex:
+        nodes = _simplex_nodes(degree, dimension)
+        indices = tuple(tuple(int(value) for value in row) for row in _simplex_indices(degree, dimension))
+        barycentric = tuple(
+            (Fraction(1) - sum(point, Fraction(0)), *point)
+            for point in (
+                tuple(Fraction(float(value)) for value in row) for row in nodes
+            )
+        )
+        matrix = [
+            [
+                math.factorial(degree)
+                // math.prod(math.factorial(power) for power in exponent)
+                * math.prod(
+                    (value**power for value, power in zip(row, exponent, strict=True)),
+                    start=Fraction(1),
+                )
+                for exponent in indices
+            ]
+            for row in barycentric
+        ]
+    else:
+        nodes = _rational_nodes(degree)
+        matrix = [
+            [
+                math.comb(degree, power) * Fraction(float(node))**power
+                * (1 - Fraction(float(node)))**(degree - power)
+                for power in range(degree + 1)
+            ]
+            for node in nodes
+        ]
+    identity = [
+        [Fraction(int(row == column)) for column in range(len(matrix))]
+        for row in range(len(matrix))
+    ]
+    return tuple(tuple(row) for row in solve_exact(matrix, identity))
+
+
+def _exact_tensor_conversion(
+    factors: tuple[tuple[tuple[Fraction, ...], ...], ...], /
+) -> tuple[np.ndarray, float, float]:
+    """Round the exact Kronecker inverse once and bound its row-wise error."""
+    indices = tuple(product(*(range(len(factor)) for factor in factors)))
+    conversion = np.empty((len(indices), len(indices)), dtype=np.float64)
+    norm = Fraction(0)
+    error_norm = Fraction(0)
+    for row, row_index in enumerate(indices):
+        row_norm = Fraction(0)
+        row_error = Fraction(0)
+        for column, column_index in enumerate(indices):
+            exact = math.prod(
+                factor[i][j]
+                for factor, i, j in zip(factors, row_index, column_index, strict=True)
+            )
+            value = float(exact)
+            conversion[row, column] = value
+            rounded = Fraction(value)
+            row_norm += abs(rounded)
+            row_error += abs(rounded - exact)
+        norm = max(norm, row_norm)
+        error_norm = max(error_norm, row_error)
+    conversion.setflags(write=False)
+    return conversion, fraction_up(norm), fraction_up(error_norm)
+
+
 @host_table_cache(
     max_entries=256,
     max_bytes=1048576,
@@ -1022,6 +1068,7 @@ def _reference_subdivision(
             value.nodes,
             value.coefficients_from_values,
             value.conversion_norm,
+            value.conversion_rounding_norm,
             value.vertex_indices,
         )
     ),
@@ -1031,14 +1078,9 @@ def _bernstein_plan(
 ) -> _BernsteinPlan:
     match domain:
         case "box":
-            axes = tuple(_chebyshev_nodes(degree) for degree in degrees)
+            axes = tuple(_rational_nodes(degree) for degree in degrees)
             nodes = _grid(axes)
-            basis = _tensor(
-                tuple(
-                    _bernstein_1d(degree, nodes[:, axis])
-                    for axis, degree in enumerate(degrees)
-                )
-            )
+            factors = tuple(_exact_bernstein_inverse(degree, 1, False) for degree in degrees)
             vertex_indices = np.ravel_multi_index(
                 tuple(
                     np.asarray(values)
@@ -1049,13 +1091,13 @@ def _bernstein_plan(
         case "simplex":
             degree, dimension = degrees
             nodes = _simplex_nodes(degree, dimension)
-            basis = _bernstein_simplex(degree, dimension, nodes)
+            factors = (_exact_bernstein_inverse(degree, dimension, True),)
             indices = _simplex_indices(degree, dimension)
             vertex_indices = np.flatnonzero(np.max(indices, axis=1) == degree)
         case "prism":
             triangle_degree, axial_degree = degrees
             triangle_nodes = _simplex_nodes(triangle_degree, 2)
-            axial_nodes = _chebyshev_nodes(axial_degree)
+            axial_nodes = _rational_nodes(axial_degree)
             nodes = np.concatenate(
                 (
                     np.repeat(triangle_nodes, axial_nodes.size, axis=0),
@@ -1063,11 +1105,9 @@ def _bernstein_plan(
                 ),
                 axis=1,
             )
-            basis = _tensor(
-                (
-                    _bernstein_simplex(triangle_degree, 2, nodes[:, :2]),
-                    _bernstein_1d(axial_degree, nodes[:, 2]),
-                )
+            factors = (
+                _exact_bernstein_inverse(triangle_degree, 2, True),
+                _exact_bernstein_inverse(axial_degree, 1, False),
             )
             triangle_vertices = np.flatnonzero(
                 np.max(_simplex_indices(triangle_degree, 2), axis=1) == triangle_degree
@@ -1078,15 +1118,19 @@ def _bernstein_plan(
             ).reshape(-1)
         case _:
             raise ValueError(f"Unknown Bernstein parameter domain {domain!r}.")
-    # The conversion operator is applied to every piece of every level; it is
-    # prepared once per (domain, degree) like other reference-element tables.
-    conversion = np.linalg.solve(basis, np.eye(basis.shape[0]))
+    # Exact rational inverse at the stored nodes, rounded once per entry.
+    # Consumers bound table rounding by rounding_norm * max(abs(node_values));
+    # their existing terms cover node evaluation and matrix multiplication.
+    conversion, conversion_norm, rounding_norm = _exact_tensor_conversion(factors)
     vertex_indices = np.unique(vertex_indices)
+    nodes.setflags(write=False)
+    vertex_indices.setflags(write=False)
     return _BernsteinPlan(
         domain,
         nodes,
         conversion,
-        float(np.max(np.sum(np.abs(conversion), axis=1))),
+        conversion_norm,
+        rounding_norm,
         vertex_indices,
         _reference_subdivision(domain, nodes.shape[1]),
     )
@@ -1251,7 +1295,12 @@ def _evaluate_pieces(
         points.shape[-1],
         reference.shape[-1],
     )
-    return coefficient, margin + absolute
+    # The plan's separately bounded table rounding multiplies the evaluated
+    # node values; the other terms retain their existing evaluation model.
+    table_rounding = np.nextafter(
+        plan.conversion_rounding_norm * np.max(np.abs(values), axis=1), np.inf
+    )
+    return coefficient, np.nextafter(np.nextafter(margin + absolute, np.inf) + table_rounding, np.inf)
 
 
 def _underflow_margin(
