@@ -945,8 +945,9 @@ def _large_seam_frame(
         rational_dot(small_axis, large_second),
         rational_dot(family.normal, large_second),
     )
+    # Host reads here and in the atlas layout: both run for every projected point.
     seam = Fraction.from_float(
-        float(family.source_regions[family.large_index].parameter_box[0, 0])
+        float(np.asarray(family.source_regions[family.large_index].parameter_box)[0, 0])
     )
     return cosine, sine, seam
 
@@ -1271,13 +1272,13 @@ def _orthogonal_cylinder_atlas_layout(
         or int(node_axes[0]) != theta_axis
         or int(node_axes[-1]) != theta_axis
         or Fraction.from_float(float(node_values[0]))
-        != Fraction.from_float(float(small_region.parameter_box[0, 0]))
+        != Fraction.from_float(float(np.asarray(small_region.parameter_box)[0, 0]))
         or Fraction.from_float(float(node_values[-1]))
         - Fraction.from_float(float(node_values[0]))
         != Fraction.from_float(float(small_period))
     ):
         return False
-    seam = Fraction.from_float(float(large_region.parameter_box[0, 0]))
+    seam = Fraction.from_float(float(np.asarray(large_region.parameter_box)[0, 0]))
     for node in range(charts + 1):
         thetas = [
             *((float(chart_end[node - 1, theta_axis]),) if node > 0 else ()),

@@ -361,11 +361,14 @@ class _PreparedProjection:
         self, index: int, multiplicity: int, turn: int, tl: float, th: float
     ) -> bool:
         handled = False
+        # Host banks: this loop runs for every root and turn of every query.
+        node_lower = np.asarray(self.curve.node_lower)
+        node_upper = np.asarray(self.curve.node_upper)
         for node in range(1, self.curve.num_charts):
             if self.last < node - 1 or self.first > node + 1:
                 continue
-            node_lo = float(self.curve.node_lower[node, self.axis])
-            node_hi = float(self.curve.node_upper[node, self.axis])
+            node_lo = float(node_lower[node, self.axis])
+            node_hi = float(node_upper[node, self.axis])
             if th < node_lo or tl > node_hi:
                 continue
             node_order = self.finite_node_order(index, turn, node, node_lo, node_hi)
