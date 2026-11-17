@@ -65,6 +65,10 @@ void test_noncontiguous_rows_and_disjoint_degenerate_partner() {
   PHX_CHECK(contributors.empty());
   PHX_CHECK(!exact_facet_coverage(subject, points, faces, far_noncoplanar, contributors, bounds));
   PHX_CHECK(contributors.empty());
+  const std::array<int32_t, 2> repeated_sorted{2, 2};
+  const std::array<int32_t, 3> repeated_unsorted{2, 0, 2};
+  PHX_CHECK(!exact_facet_coverage(subject, points, faces, repeated_sorted, contributors));
+  PHX_CHECK(!exact_facet_coverage(subject, points, faces, repeated_unsorted, contributors));
   for (unsigned mask = 1; mask < (1U << faces.size()); ++mask) {
     std::vector<int32_t> subset;
     for (int row = static_cast<int>(faces.size()) - 1; row >= 0; --row) {

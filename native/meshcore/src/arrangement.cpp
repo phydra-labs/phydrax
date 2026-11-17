@@ -1575,10 +1575,13 @@ bool facet_coverage(const double* subject, const double* original_points,
   contributors.clear();
   if (rows.empty()) return false;
   if (!bounds.empty() && bounds.size() != original_faces.size()) return false;
-  std::vector<int32_t> selected(rows.begin(), rows.end());
-  std::sort(selected.begin(), selected.end(), [](int32_t a, int32_t b) {
-    return a < b;
-  });
+  std::vector<int32_t> sorted;
+  std::span<const int32_t> selected = rows;
+  if (!std::is_sorted(rows.begin(), rows.end())) {
+    sorted.assign(rows.begin(), rows.end());
+    std::sort(sorted.begin(), sorted.end());
+    selected = sorted;
+  }
   if (std::adjacent_find(selected.begin(), selected.end()) != selected.end()) return false;
   if (!epochs.empty() &&
       (epochs.size() != rows.size() || !std::equal(rows.begin(), rows.end(), selected.begin()) ||
