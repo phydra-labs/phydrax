@@ -380,6 +380,63 @@ def test_native_torus_projects_interior_and_both_seam_points() -> None:
     np.testing.assert_allclose(result.normals[:5], outward, atol=1e-12)
 
 
+@pytest.mark.parametrize("minor", (0.5, 0.75))
+def test_torus_frame_batch_sizes_preserve_projection_evidence(minor: float) -> None:
+    projection = phx.geometry.prepare_brep_projection(
+        brep_torus(2.0, minor, coordinate_contract=_CONTRACT)
+    )
+    points = np.asarray(((1.5, 0.0, 0.3), (-1.0, -2.0, -0.4), (2.0, 0.0, 0.0)))
+    small = _project(projection, points, _FACE, 0)
+    large = _project(projection, np.tile(points, (3, 1)), _FACE, 0)
+    for name in ("points", "parameters", "status", "distance_lower_bounds", "residuals"):
+        np.testing.assert_array_equal(
+            np.asarray(getattr(large, name))[:3], np.asarray(getattr(small, name))
+        )
+    for name in ("normals", "tangents"):
+        np.testing.assert_array_equal(
+            np.asarray(getattr(large, name))[:3], np.asarray(getattr(small, name))
+        )
+    single = _project(projection, points[:1], _FACE, 0)
+    for batch in (small, large):
+        isolated = type(batch)(
+            batch.source_id,
+            batch.source_revision,
+            batch.dimensions[:1],
+            batch.indices[:1],
+            batch.queries[:1],
+            batch.points[:1],
+            batch.parameters[:1],
+            batch.residuals[:1],
+            batch.status[:1],
+            batch.normals[:1],
+            batch.tangents[:1],
+            distance_lower_bounds=batch.distance_lower_bounds[:1],
+            occurrence_paths=batch.occurrence_paths[:1],
+            frame_id=batch.frame_id,
+        )
+        assert isolated.result_id == single.result_id
+        np.testing.assert_array_equal(isolated.status, single.status)
+    center = np.asarray((2.0, 0.0, 0.0))
+    direction = points[0] - center
+    direction /= np.linalg.norm(direction)
+    np.testing.assert_allclose(small.points[0], center + minor * direction, atol=1e-12)
+    np.testing.assert_allclose(small.normals[0], direction, atol=1e-12)
+
+
+@pytest.mark.parametrize("radius", (1.0, 2.0))
+def test_circle_edge_frame_tracks_curve_geometry(radius: float) -> None:
+    model = brep_cylinder(radius, 2.0, coordinate_contract=_CONTRACT)
+    projection = phx.geometry.prepare_brep_projection(model)
+    edge = _circle_edge(projection, 2.0)
+    result = _project(projection, [[3.0, 4.0, 2.0]], _EDGE, edge)
+    np.testing.assert_allclose(
+        result.points[0], (0.6 * radius, 0.8 * radius, 2.0), atol=1e-12
+    )
+    np.testing.assert_allclose(
+        np.abs(np.asarray(result.tangents)[0, 0]), (0.8, 0.6, 0.0), atol=1e-12
+    )
+
+
 @pytest.mark.parametrize(
     ("model", "inside", "outside", "boundary"),
     [
@@ -483,6 +540,37 @@ def test_exact_line_boundary_proof_rejects_nearby_and_endpoint_queries() -> None
     assert _exact_line_boundary_parameter(model, face, nearby, lifts={}) is None
 
 
+def test_straight_revolution_projection_preserves_distance_and_axis_evidence() -> None:
+    from phydrax.geometry.brep._patches import LineCurve, RevolutionSurface
+    from phydrax.geometry.brep._projection import _exact_cylinder
+
+    model = brep_cylinder(1.0, 2.0, coordinate_contract=_CONTRACT)
+    projection = phx.geometry.prepare_brep_projection(model)
+    face = next(
+        index
+        for index, patch in enumerate(model.patches)
+        if isinstance(patch, RevolutionSurface)
+        and isinstance(patch.curve, LineCurve)
+        and _exact_cylinder(model, index) is not None
+    )
+    points = np.asarray(((0.0, 2.0, 1.0), (0.0, 0.0, 1.0)))
+    result = _project(projection, points, _FACE, face)
+
+    assert int(result.status[0]) in (_STATUS.UNIQUE, _STATUS.SEAM)
+    np.testing.assert_allclose(result.points[0], (0.0, 1.0, 1.0), atol=1e-14)
+    assert float(result.distance_lower_bounds[0]) <= 1.0 <= float(result.residuals[0])
+    assert result.entity_ids()[0] == source_entity_id(
+        projection.source_id,
+        projection.source_revision,
+        "face",
+        face,
+        occurrence_path=result.occurrence_paths[0],
+    )
+    assert int(result.status[1]) == _STATUS.NON_ISOLATED
+    assert np.isnan(np.asarray(result.points)[1]).all()
+    assert float(result.distance_lower_bounds[1]) <= 1.0 <= float(result.residuals[1])
+
+
 def test_straight_revolution_batched_frames_match_scalar_projection() -> None:
     from phydrax.geometry.brep._patches import LineCurve, RevolutionSurface
     from phydrax.geometry.brep._projection import _exact_cylinder
@@ -501,9 +589,26 @@ def test_straight_revolution_batched_frames_match_scalar_projection() -> None:
     for row, point in enumerate(points):
         direct = projection._project_one(2, face, point, None)
         assert int(result.status[row]) == direct.status
-        np.testing.assert_allclose(result.points[row], direct.point, equal_nan=True)
-        np.testing.assert_allclose(result.normals[row], direct.normal, equal_nan=True)
-        np.testing.assert_allclose(result.tangents[row], direct.tangents, equal_nan=True)
+        np.testing.assert_allclose(
+            result.points[row], direct.point, rtol=0, atol=1e-14, equal_nan=True
+        )
+        np.testing.assert_allclose(
+            result.normals[row], direct.normal, rtol=0, atol=1e-14, equal_nan=True
+        )
+        np.testing.assert_allclose(
+            result.tangents[row], direct.tangents, rtol=0, atol=1e-14, equal_nan=True
+        )
+    larger = _project(projection, np.tile(points, (3, 1)), _FACE, face)
+    for name in ("points", "parameters", "status", "distance_lower_bounds", "residuals"):
+        np.testing.assert_array_equal(
+            np.asarray(getattr(larger, name))[: len(points)],
+            np.asarray(getattr(result, name)),
+        )
+    for name in ("normals", "tangents"):
+        np.testing.assert_array_equal(
+            np.asarray(getattr(larger, name))[: len(points)],
+            np.asarray(getattr(result, name)),
+        )
     preparation = projection._prepare_project()
     dimensions = np.full(points.shape[0], int(_FACE))
     indices = np.full(points.shape[0], face)
@@ -515,6 +620,87 @@ def test_straight_revolution_batched_frames_match_scalar_projection() -> None:
     other = phx.geometry.prepare_brep_projection(other_model)
     with pytest.raises(ValueError, match="different source model"):
         other._project_prepared(points, dimensions, indices, preparation=preparation)
+
+
+@pytest.mark.parametrize("dimension", (_FACE, _EDGE))
+def test_affine_projection_preparation_preserves_scalar_hits(dimension: Any) -> None:
+    model = brep_box((0.0, 0.0, 0.0), (2.0, 2.0, 2.0), coordinate_contract=_CONTRACT)
+    projection = phx.geometry.prepare_brep_projection(model)
+    points = np.asarray(((0.4, 0.6, 0.8), (1.1, 1.2, 1.3), (1.6, 0.7, 1.4)))
+    preparation = projection._prepare_project()
+    for point in points:
+        direct = projection._project_one(int(dimension), 0, point, None)
+        prepared = projection._project_one(
+            int(dimension), 0, point, None, preparation=preparation
+        )
+        assert prepared.status == direct.status
+        assert (prepared.lower, prepared.upper) == (direct.lower, direct.upper)
+        for actual, expected in (
+            (prepared.point, direct.point),
+            (prepared.parameters, direct.parameters),
+            (prepared.normal, direct.normal),
+            (prepared.tangents, direct.tangents),
+        ):
+            np.testing.assert_array_equal(actual, expected)
+
+
+def test_edge_point_batches_match_independent_segment_projection() -> None:
+    model = brep_box((0.0, 0.0, 0.0), (2.0, 2.0, 2.0), coordinate_contract=_CONTRACT)
+    projection = phx.geometry.prepare_brep_projection(model)
+    vertices = np.asarray(model.geometry.vertex_points, dtype=np.float64)
+    first, last = vertices[np.asarray(model.geometry.edge_vertices[0])]
+    direction = last - first
+    perpendicular = np.cross(direction, (1.0, 2.0, 3.0))
+    if np.linalg.norm(perpendicular) == 0:
+        perpendicular = np.cross(direction, (0.0, 1.0, 0.0))
+    parameters = np.asarray((0.2, 0.5, 0.8))
+    expected = first + parameters[:, None] * direction
+    points = expected + perpendicular
+    result = _project(projection, points, _EDGE, 0)
+    repeated = _project(projection, np.tile(points, (3, 1)), _EDGE, 0)
+    np.testing.assert_allclose(result.points, expected, rtol=0, atol=1e-12)
+    for name in ("points", "parameters", "status", "distance_lower_bounds", "residuals"):
+        np.testing.assert_array_equal(
+            np.asarray(getattr(repeated, name))[:3], np.asarray(getattr(result, name))
+        )
+    for row, point in enumerate(points):
+        single = _project(projection, [point], _EDGE, 0)
+        np.testing.assert_array_equal(
+            np.asarray(single.points[0]).view(np.uint64),
+            np.asarray(result.points[row]).view(np.uint64),
+        )
+    distance = np.linalg.norm(perpendicular)
+    assert np.all(np.asarray(result.distance_lower_bounds) <= distance)
+    assert np.all(np.asarray(result.residuals) >= distance)
+
+
+def test_edge_point_reference_detects_wrong_native_result(monkeypatch: Any) -> None:
+    from phydrax.geometry.brep import _projection as implementation
+
+    model = brep_box((0.0, 0.0, 0.0), (2.0, 2.0, 2.0), coordinate_contract=_CONTRACT)
+    projection = phx.geometry.prepare_brep_projection(model)
+    vertices = np.asarray(model.geometry.vertex_points, dtype=np.float64)
+    first, last = vertices[np.asarray(model.geometry.edge_vertices[0])]
+    expected = (first + last) / 2
+    original = implementation.evaluate_host_program
+
+    def wrong(program: Any, points: np.ndarray) -> np.ndarray:
+        return original(program, points) + 1.0
+
+    monkeypatch.setattr(implementation, "evaluate_host_program", wrong)
+    monkeypatch.setattr(
+        implementation, "_distance_bounds", lambda first, second: (0.0, 0.0)
+    )
+    result = _project(projection, [expected], _EDGE, 0)
+    squared = sum(
+        (
+            (Fraction.from_float(float(a)) - Fraction.from_float(float(b))) ** 2
+            for a, b in zip(result.points[0], expected, strict=True)
+        ),
+        Fraction(0),
+    )
+    assert Fraction.from_float(float(result.residuals[0])) ** 2 >= squared
+    assert float(result.residuals[0]) > 1.0
 
 
 def test_straight_revolution_ray_carrier_preserves_signed_profile_rate() -> None:

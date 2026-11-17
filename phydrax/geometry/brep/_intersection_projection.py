@@ -32,7 +32,11 @@ from typing import Any
 import numpy as np
 
 from ...algebraic._exact_univariate import _gcd, RealRootIsolator
+from .._interval_enclosure import PreparedIntervalFunction
+from ._host_program import evaluate_host_program, prepare_host_program
 from ._intersection_curve import (
+    _batched_cylinder_points_large_first,
+    _batched_cylinder_points_large_second,
     _large_seam_frame,
     _orthogonal_cylinder_curve_branch_sign,
     _OrthogonalCylinderFamily,
@@ -177,6 +181,7 @@ class _IntersectionPreparation:
     node_values: np.ndarray
     node_lower: np.ndarray
     node_upper: np.ndarray
+    point_program: PreparedIntervalFunction | None
     seams: dict[
         Fraction,
         tuple[
@@ -213,6 +218,7 @@ def _prepare_intersection(curve: IntersectionCurve, /) -> _IntersectionPreparati
         np.asarray(curve.node_values),
         np.asarray(curve.node_lower),
         np.asarray(curve.node_upper),
+        prepare_host_program(lambda value: curve.evaluate(value[0]), 1),
     )
 
 
@@ -830,10 +836,12 @@ def _append_endpoint_candidate(
 
 def _select_candidate_projection(
     curve: IntersectionCurve,
+    family: _OrthogonalCylinderFamily,
     parameter_range: tuple[float, float],
     query: np.ndarray,
     policy: BRepProjectionPolicy,
     candidates: list[_Candidate],
+    point_program: PreparedIntervalFunction | None,
     ctx: Any,
 ) -> CurveProjection:
     """Compare certified distance enclosures and preserve distinct roots."""
@@ -872,7 +880,20 @@ def _select_candidate_projection(
         if best.endpoint
         else BRepProjectionStatus.UNIQUE
     )
-    point = np.asarray(curve.evaluate_coupled(best.parameter).point, dtype=np.float64)
+    if point_program is None:
+        evaluate = (
+            _batched_cylinder_points_large_first
+            if family.large_index == 0
+            else _batched_cylinder_points_large_second
+        )
+        point = np.asarray(
+            evaluate(curve, np.asarray([best.parameter], dtype=np.float64))[0],
+            dtype=np.float64,
+        )[0]
+    else:
+        point = evaluate_host_program(
+            point_program, np.asarray([[best.parameter]], dtype=np.float64)
+        )[0]
     squared = sum(
         (
             (F.from_float(float(x)) - F.from_float(float(y))) ** 2
@@ -977,7 +998,14 @@ def project_intersection_curve(
         return unresolved()
     if first == last:
         return _select_candidate_projection(
-            curve, (first, last), query, policy, candidates, ctx
+            curve,
+            family,
+            (first, last),
+            query,
+            policy,
+            candidates,
+            preparation.point_program,
+            ctx,
         )
     if polynomial == (F(0),):
         if aa != (F(0),) or bb != (F(0),):
@@ -1042,5 +1070,12 @@ def project_intersection_curve(
     if prepared.uncertain:
         return unresolved()
     return _select_candidate_projection(
-        curve, (first, last), query, policy, candidates, ctx
+        curve,
+        family,
+        (first, last),
+        query,
+        policy,
+        candidates,
+        preparation.point_program,
+        ctx,
     )

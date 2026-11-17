@@ -60,6 +60,7 @@ from ..discretization._coordinate_enclosure import (
     polynomial_bounds,
     pyramid_reference_to_box_arguments,
     RationalPolynomial,
+    restricted_polynomial_bounds,
     scale,
     subtract,
 )
@@ -115,7 +116,7 @@ from ._exact_polyhedral_geometry import (
     triangle_contact_points2,
     triangle_contact_points3,
 )
-from ._mapped_embedding import prove_mapped_cell_injective
+from ._mapped_embedding import prove_mapped_cell_injective, prove_mapped_cells_injective
 from ._mesh_certificates import (
     certificate_status,
     MeshCertificateBinding,
@@ -1098,6 +1099,25 @@ def _full_column_rank(matrix: tuple[tuple[ExactScalar, ...], ...], /) -> bool:
     return pivot_row == columns
 
 
+def _standard_simplex_corners(dimension: int, /) -> tuple[tuple[Fraction, ...], ...]:
+    return ((Fraction(0),) * dimension,) + tuple(
+        tuple(Fraction(axis == index) for axis in range(dimension))
+        for index in range(dimension)
+    )
+
+
+def _image_bounds(
+    expression: Expression, domain: BernsteinDomain, dimension: int, /
+) -> tuple[float, float]:
+    if domain == "simplex":
+        bounds = restricted_polynomial_bounds(
+            expression, _standard_simplex_corners(dimension)
+        )
+        if all(isfinite(value) for value in bounds):
+            return bounds
+    return polynomial_bounds(expression, domain, dimension)
+
+
 def _root_reference_cell(
     kind: str, coordinates: tuple[Expression, ...], global_id: int, /
 ) -> EmbeddingCell | None:
@@ -1119,7 +1139,7 @@ def _root_reference_cell(
             for point in references
         )
         bounds = tuple(
-            polynomial_bounds(expression, domain, topology.dimension)
+            _image_bounds(expression, domain, topology.dimension)
             for expression in coordinates
         )
     except (ValueError, ZeroDivisionError):
@@ -1183,7 +1203,7 @@ def _affine_chart_cell(
         ):
             return None
         bounds = tuple(
-            polynomial_bounds(expression, cell.proof_domain, cell.dimension)
+            _image_bounds(expression, cell.proof_domain, cell.dimension)
             for expression in proof_arguments
             if expression is not None
         )
@@ -2097,17 +2117,18 @@ def _cell_map_findings(
     witnesses: list[MeshEmbeddingWitness] = []
     expressions: list[str] = []
     injective_cells: set[int] = set()
-    for index, cell in enumerate(cells):
-        if cell.affine or not cell.coordinates:
-            continue
-        if owing is not None and not owing[index]:
-            continue
-        try:
-            witness = prove_mapped_cell_injective(cell)
-        except (ValueError, ZeroDivisionError) as error:
+    selected = tuple(
+        (index, cell)
+        for index, cell in enumerate(cells)
+        if not cell.affine and cell.coordinates and (owing is None or owing[index])
+    )
+    proofs = prove_mapped_cells_injective(tuple(cell for _, cell in selected))
+    for (index, cell), proof in zip(selected, proofs, strict=True):
+        if isinstance(proof, (ValueError, ZeroDivisionError)):
             witness = None
-            detail = str(error)
+            detail = str(proof)
         else:
+            witness = proof
             detail = "Exact projected-Jacobian positivity was not decided by the available Bernstein controls."
         if witness is None:
             findings.append(
@@ -2128,9 +2149,9 @@ def _cell_map_findings(
             expressions.append(
                 f"cell:{cell.global_id}:projection_rows:{witness.projection_rows}:"
                 f"projection_matrix:{projection_matrix}:"
-                f"controls:{witness.principal_minor_controls}"
+                f"control_digests:{witness.principal_minor_controls}"
                 + (
-                    f":denominator_controls:{witness.denominator_controls}"
+                    f":denominator_control_digests:{witness.denominator_controls}"
                     if witness.denominator_controls
                     else ""
                 )
@@ -2561,6 +2582,59 @@ def _bilinear_quad_triangle_contact_is_declared(
     return False
 
 
+def _exact_image_box_separation(
+    first: EmbeddingCell,
+    second: EmbeddingCell,
+    /,
+    *,
+    second_translation: tuple[ExactScalar, ...] | None = None,
+) -> bool:
+    """Retry only when interval excess can hide an exact box separation.
+
+    Each inner endpoint brackets the corresponding exact control extremum
+    from inside. Degree elevation only tightens the exact Bernstein hull, so
+    if those inner hulls overlap, the original exact boxes also overlap.
+    """
+    if first.image_inner_bounds is None and second.image_inner_bounds is None:
+        return False
+
+    def inner(
+        cell: EmbeddingCell, axis: int, translation: tuple[ExactScalar, ...] | None, /
+    ) -> tuple[float, float]:
+        if cell.image_inner_bounds is None:
+            return cell.image_lower[axis], cell.image_upper[axis]
+        lower, upper = cell.image_inner_bounds[axis]
+        if translation is None:
+            return lower, upper
+        return (
+            coefficient_endpoint(Fraction(lower) + translation[axis], upper=True),
+            coefficient_endpoint(Fraction(upper) + translation[axis], upper=False),
+        )
+
+    for axis in range(len(first.image_lower)):
+        first_inner = inner(first, axis, None)
+        second_inner = inner(second, axis, second_translation)
+        if first_inner[1] >= second_inner[0] and second_inner[1] >= first_inner[0]:
+            continue
+        first_exact = (
+            (first.image_lower[axis], first.image_upper[axis])
+            if first.image_inner_bounds is None
+            else polynomial_bounds(
+                first.proof_coordinates[axis], first.proof_domain, first.dimension
+            )
+        )
+        second_exact = (
+            (second.image_lower[axis], second.image_upper[axis])
+            if second.image_inner_bounds is None
+            else polynomial_bounds(
+                second.proof_coordinates[axis], second.proof_domain, second.dimension
+            )
+        )
+        if first_exact[1] < second_exact[0] or second_exact[1] < first_exact[0]:
+            return True
+    return False
+
+
 def _strict_image_separation(
     first: EmbeddingCell,
     second: EmbeddingCell,
@@ -2580,15 +2654,24 @@ def _strict_image_separation(
         if not any(_sign(value) for value in normal):
             continue
         try:
+            first_expression = linear_combinations(first.proof_coordinates, (normal,))[0]
+            second_expression = linear_combinations(second.proof_coordinates, (normal,))[
+                0
+            ]
+            if first.proof_domain == "simplex" or second.proof_domain == "simplex":
+                first_range = _image_bounds(
+                    first_expression, first.proof_domain, first.dimension
+                )
+                second_range = _image_bounds(
+                    second_expression, second.proof_domain, second.dimension
+                )
+                if first_range[1] < second_range[0] or second_range[1] < first_range[0]:
+                    return True
             first_range = polynomial_bounds(
-                linear_combinations(first.proof_coordinates, (normal,))[0],
-                first.proof_domain,
-                first.dimension,
+                first_expression, first.proof_domain, first.dimension
             )
             second_range = polynomial_bounds(
-                linear_combinations(second.proof_coordinates, (normal,))[0],
-                second.proof_domain,
-                second.dimension,
+                second_expression, second.proof_domain, second.dimension
             )
         except (ValueError, ZeroDivisionError):
             continue
@@ -6175,6 +6258,15 @@ def _nonperiodic_contacts(
                 # residual and glued-map proofs.
                 first_cell = original_cells[first_index]
                 second_cell = original_cells[second_index]
+            if _exact_image_box_separation(
+                original_cells[first_index], original_cells[second_index]
+            ):
+                if proof_values is not None:
+                    proof_values.append(
+                        f"cell-pair:{first_cell.global_id}:{second_cell.global_id}:"
+                        "exact-bernstein-image-separation"
+                    )
+                continue
             if (
                 first_cell.dimension != second_cell.dimension
                 or first_cell.dimension != mesh.topological_dimension

@@ -14,7 +14,7 @@ from typing import cast
 
 import numpy as np
 
-from ..discretization._cell_geometry import _coordinate_coefficient_identity
+from .._exact_polynomial_kernels import control_digest, symmetric_jacobian_verdicts
 from ..discretization._coordinate_enclosure import (
     add,
     axes,
@@ -49,14 +49,14 @@ class MappedInjectivityWitness:
     """Exact monotonicity proof for one source-bound coordinate projection.
 
     ``projection_rows`` selects ambient output coordinates. The exact square
-    ``projection_matrix`` left-preconditions those coordinates; Bernstein
-    principal-minor controls prove strict monotonicity over the reference cell.
+    ``projection_matrix`` left-preconditions those coordinates; each digest
+    identifies the ordered exact controls proving one principal minor positive.
     """
 
     projection_rows: tuple[int, ...]
     projection_matrix: tuple[tuple[ExactScalar, ...], ...]
-    principal_minor_controls: tuple[tuple[str, ...], ...]
-    denominator_controls: tuple[tuple[str, ...], ...] = ()
+    principal_minor_controls: tuple[str, ...]
+    denominator_controls: tuple[str, ...] = ()
 
 
 def _sign(value: ExactScalar, /) -> int:
@@ -91,13 +91,13 @@ def _determinant(matrix: tuple[tuple[Expression, ...], ...]) -> Expression:
 
 def _strict_positive_controls(
     polynomial: Expression, domain: BernsteinDomain, dimension: int
-) -> tuple[str, ...] | None:
+) -> str | None:
     if not isinstance(polynomial, dict):
         return None
     controls = bernstein_coefficients(polynomial, domain, dimension)
     if not controls or any(_sign(value) <= 0 for value in controls):
         return None
-    return tuple(repr(_coordinate_coefficient_identity(value)) for value in controls)
+    return control_digest(controls)
 
 
 def _positive_definite_controls(
@@ -105,7 +105,20 @@ def _positive_definite_controls(
     domain: BernsteinDomain,
     dimension: int,
     /,
-) -> tuple[tuple[str, ...], ...] | None:
+    *,
+    skip_native: bool = False,
+) -> tuple[str, ...] | None:
+    if not skip_native and all(
+        isinstance(entry, dict) for row in jacobian for entry in row
+    ):
+        polynomial_jacobian = cast(tuple[tuple[Polynomial, ...], ...], jacobian)
+        native = symmetric_jacobian_verdicts((polynomial_jacobian,), domain, dimension)[0]
+        if native is not None:
+            return (
+                tuple(digest for positive, digest in native)
+                if all(positive for positive, _ in native)
+                else None
+            )
     symmetric = tuple(
         tuple(
             scale(
@@ -116,7 +129,7 @@ def _positive_definite_controls(
         )
         for first in range(dimension)
     )
-    controls: list[tuple[str, ...]] = []
+    controls: list[str] = []
     for size in range(1, dimension + 1):
         principal = tuple(
             tuple(symmetric[row][column] for column in range(size)) for row in range(size)
@@ -133,7 +146,7 @@ def _positive_denominator(
     domain: BernsteinDomain,
     dimension: int,
     /,
-) -> tuple[Polynomial, tuple[str, ...]] | None:
+) -> tuple[Polynomial, str] | None:
     """Prove one rational denominator has one strict sign on the whole cell."""
     polynomial = dict(denominator)
     controls = _strict_positive_controls(polynomial, domain, dimension)
@@ -151,10 +164,10 @@ def _polynomial_scaled_jacobian(
     domain: BernsteinDomain,
     dimension: int,
     /,
-) -> tuple[tuple[tuple[Expression, ...], ...], tuple[tuple[str, ...], ...]] | None:
+) -> tuple[tuple[tuple[Expression, ...], ...], tuple[str, ...]] | None:
     """Clear denominators with one proved-positive common factor for all entries."""
     denominators: list[Polynomial] = []
-    evidence: list[tuple[str, ...]] = []
+    evidence: list[str] = []
     normalized: list[list[tuple[Polynomial, Polynomial | None]]] = []
     for row in jacobian:
         normalized_row: list[tuple[Polynomial, Polynomial | None]] = []
@@ -187,25 +200,29 @@ def _polynomial_scaled_jacobian(
     return tuple(output), tuple(evidence)
 
 
-def prove_mapped_cell_injective(
-    cell: EmbeddingCell, /
-) -> MappedInjectivityWitness | None:
-    """Prove injectivity by exact monotonicity after a constant linear projection.
+@dataclass(frozen=True, slots=True)
+class _PreparedMappedCell:
+    cell: EmbeddingCell
+    domain: BernsteinDomain
+    dimension: int
+    ambient: int
+    jacobian: tuple[tuple[Expression, ...], ...]
+    center_jacobian_expressions: tuple[tuple[Expression, ...], ...]
+    denominator_proof: tuple[str, ...]
+    identity: tuple[tuple[ExactScalar, ...], ...]
 
-    On a convex reference cell, positive definiteness of the projected
-    Jacobian's symmetric part implies strict monotonicity. The projection
-    preconditioner is solved exactly at the reference-cell centroid, then its
-    Bernstein principal-minor controls prove positivity across the whole cell.
-    """
+
+def _prepare_mapped_cell(cell: EmbeddingCell, /) -> _PreparedMappedCell | None:
+    """Prepare the common exact Jacobian and denominator evidence once."""
     if cell.affine:
-        return MappedInjectivityWitness((), (), ())
+        return None
     coordinates = cell.proof_coordinates
     dimension = cell.dimension
     ambient = len(coordinates)
     if dimension < 1 or dimension > 3 or ambient < dimension:
         return None
     domain = cell.proof_domain
-    denominator_evidence: list[tuple[str, ...]] = []
+    denominator_evidence: list[str] = []
     for expression in coordinates:
         if isinstance(expression, RationalPolynomial):
             proof = _positive_denominator(expression.denominator, domain, dimension)
@@ -259,12 +276,44 @@ def prove_mapped_cell_injective(
         tuple(Fraction(int(row == column)) for column in range(dimension))
         for row in range(dimension)
     )
+    return _PreparedMappedCell(
+        cell,
+        domain,
+        dimension,
+        ambient,
+        jacobian,
+        center_jacobian_expressions,
+        denominator_proof,
+        identity,
+    )
 
-    for rows in combinations(range(ambient), dimension):
-        direct = tuple(
-            tuple(jacobian[row][axis] for axis in range(dimension)) for row in rows
-        )
-        controls = _positive_definite_controls(direct, domain, dimension)
+
+def _finish_mapped_cell(
+    prepared: _PreparedMappedCell,
+    /,
+    *,
+    first_controls: tuple[str, ...] | None = None,
+    first_decided: bool = False,
+    first_refused: bool = False,
+) -> MappedInjectivityWitness | None:
+    cell = prepared.cell
+    domain = prepared.domain
+    dimension = prepared.dimension
+    ambient = prepared.ambient
+    jacobian = prepared.jacobian
+    center_jacobian_expressions = prepared.center_jacobian_expressions
+    denominator_proof = prepared.denominator_proof
+    identity = prepared.identity
+    for position, rows in enumerate(combinations(range(ambient), dimension)):
+        if position == 0 and first_decided:
+            controls = first_controls
+        else:
+            direct = tuple(
+                tuple(jacobian[row][axis] for axis in range(dimension)) for row in rows
+            )
+            controls = _positive_definite_controls(
+                direct, domain, dimension, skip_native=position == 0 and first_refused
+            )
         if controls is not None:
             return MappedInjectivityWitness(rows, identity, controls, denominator_proof)
 
@@ -383,6 +432,85 @@ def prove_mapped_cell_injective(
                     rows, found[0], found[1], denominator_proof
                 )
     return None
+
+
+def prove_mapped_cell_injective(
+    cell: EmbeddingCell, /
+) -> MappedInjectivityWitness | None:
+    """Prove injectivity by exact monotonicity after a constant linear projection."""
+    if cell.affine:
+        return MappedInjectivityWitness((), (), ())
+    prepared = _prepare_mapped_cell(cell)
+    return None if prepared is None else _finish_mapped_cell(prepared)
+
+
+def prove_mapped_cells_injective(
+    cells: tuple[EmbeddingCell, ...], /
+) -> tuple[MappedInjectivityWitness | None | ValueError | ZeroDivisionError, ...]:
+    """Prove cells in order, batching their first direct square projections.
+
+    Expected proof errors are returned per cell for the findings consumer.
+    A native refusal retains the original exact Python proof and fallback ladder.
+    """
+    prepared_cells: list[_PreparedMappedCell | None] = []
+    results: list[MappedInjectivityWitness | None | ValueError | ZeroDivisionError] = []
+    groups: dict[tuple[BernsteinDomain, int], list[int]] = {}
+    for index, cell in enumerate(cells):
+        try:
+            prepared = _prepare_mapped_cell(cell)
+        except (ValueError, ZeroDivisionError) as error:
+            prepared_cells.append(None)
+            results.append(error)
+            continue
+        prepared_cells.append(prepared)
+        results.append(MappedInjectivityWitness((), (), ()) if cell.affine else None)
+        if prepared is not None:
+            groups.setdefault((prepared.domain, prepared.dimension), []).append(index)
+
+    verdicts: dict[int, tuple[tuple[bool, str], ...] | None] = {}
+    for (domain, dimension), indices in groups.items():
+        matrices = []
+        for index in indices:
+            prepared = prepared_cells[index]
+            if prepared is None:
+                raise RuntimeError("Missing prepared mapped cell.")
+            direct = tuple(row[:dimension] for row in prepared.jacobian[:dimension])
+            matrices.append(cast(tuple[tuple[Polynomial, ...], ...], direct))
+        try:
+            decisions = symmetric_jacobian_verdicts(matrices, domain, dimension)
+        except (ValueError, ZeroDivisionError):
+            # A malformed member must not turn its neighbors into findings.
+            for index, matrix in zip(indices, matrices, strict=True):
+                try:
+                    verdicts[index] = symmetric_jacobian_verdicts(
+                        (matrix,), domain, dimension
+                    )[0]
+                except (ValueError, ZeroDivisionError) as error:
+                    results[index] = error
+        else:
+            verdicts.update(zip(indices, decisions, strict=True))
+
+    for index, prepared in enumerate(prepared_cells):
+        if prepared is None or isinstance(
+            results[index], (ValueError, ZeroDivisionError)
+        ):
+            continue
+        verdict = verdicts[index]
+        controls = (
+            tuple(digest for positive, digest in verdict)
+            if verdict is not None and all(positive for positive, _ in verdict)
+            else None
+        )
+        try:
+            results[index] = _finish_mapped_cell(
+                prepared,
+                first_controls=controls,
+                first_decided=verdict is not None,
+                first_refused=verdict is None,
+            )
+        except (ValueError, ZeroDivisionError) as error:
+            results[index] = error
+    return tuple(results)
 
 
 SUBDIVISION_LEVELS = 2
@@ -778,12 +906,12 @@ def _float_search_preconditioner(controls: np.ndarray, /) -> np.ndarray | None:
 
 def monotone_preconditioner(
     controls: tuple[_ExactMatrix, ...], /
-) -> tuple[_ExactMatrix, tuple[tuple[str, ...], ...]] | None:
+) -> tuple[_ExactMatrix, tuple[str, ...]] | None:
     """An exact ``M`` with ``sym(M C)`` positive definite at every control ``C``.
 
     The positive definite cone is convex, so ``sym(M J(x))`` is then positive
     definite for every convex combination ``J(x)`` of the controls. Returns
-    ``M`` with the leading principal minors of every ``sym(M C)`` (per size).
+    ``M`` with digests of the leading principal minors of every ``sym(M C)``.
     """
     if not controls:
         return None
@@ -805,7 +933,7 @@ def monotone_preconditioner(
         for row in proposal
     )
     integer_matrix = tuple(tuple(int(value) for value in row) for row in matrix)
-    minors: list[list[str]] = [[] for _ in range(size)]
+    minors: list[list[ExactScalar]] = [[] for _ in range(size)]
     for control in controls:
         if all(isinstance(value, Fraction | int) for row in control for value in row):
             values = symmetric_product_minors_exact(
@@ -817,8 +945,8 @@ def monotone_preconditioner(
         for order, minor in enumerate(values):
             if _sign(minor) <= 0:
                 return None
-            minors[order].append(repr(_coordinate_coefficient_identity(minor)))
-    return matrix, tuple(tuple(values) for values in minors)
+            minors[order].append(minor)
+    return matrix, tuple(control_digest(tuple(values)) for values in minors)
 
 
 def _leading_minors(
@@ -851,6 +979,7 @@ __all__ = [
     "MappedInjectivityWitness",
     "monotone_preconditioner",
     "prove_mapped_cell_injective",
+    "prove_mapped_cells_injective",
     "SUBDIVISION_LEVELS",
     "subdivided_jacobian_controls",
 ]

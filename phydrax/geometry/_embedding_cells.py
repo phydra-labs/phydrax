@@ -36,6 +36,7 @@ from ..discretization._coordinate_enclosure import (
     linear_combinations,
     normalize_pyramid_reference_expression,
     polynomial_bounds,
+    PreparedIntervalBasis,
     pyramid_reference_to_box_arguments,
     PyramidApexNormalization,
     RationalPolynomial,
@@ -348,6 +349,8 @@ class EmbeddingCell:
     # Derived/reindexed/shifted charts do not carry mesh-reuse authority.
     owning_mesh_id: str | None = None
     owning_geometry_id: str | None = None
+    # Opposite-side extremum bounds limit the possible interval-box excess.
+    image_inner_bounds: tuple[tuple[float, float], ...] | None = None
 
     @property
     def coordinates(self) -> tuple[Expression, ...]:
@@ -442,6 +445,7 @@ _CellChart = tuple[
     tuple[tuple[float, float], ...],
     tuple[PyramidApexNormalization, ...] | None,
     tuple[Expression, ...] | None,
+    tuple[tuple[float, float], ...] | None,
 ]
 
 
@@ -478,6 +482,7 @@ def _straight_cell_chart(
         bounds,
         None,
         None,
+        None,
     )
 
 
@@ -491,6 +496,7 @@ def _mapped_cell_chart(
     references: tuple[tuple[Fraction, ...], ...],
     ambient: int,
     basis: tuple[Expression, ...] | None = None,
+    prepared_basis: list[PreparedIntervalBasis] | None = None,
     /,
 ) -> _CellChart:
     """Chart of a cell from its exact composed per-cell coordinate expressions."""
@@ -529,15 +535,33 @@ def _mapped_cell_chart(
     )
     offset: tuple[ExactScalar, ...] | None
     matrix: tuple[tuple[ExactScalar, ...], ...] | None
+    inner_bounds: tuple[tuple[float, float], ...] | None = None
     if linear_chart is None:
         corners = tuple(
             tuple(_evaluate(expression, point) for expression in proof_coordinates)
             for point in proof_references
         )
         offset, matrix = _solve_affine(references, corners)
-        bounds = tuple(
-            polynomial_bounds(expression, cast(BernsteinDomain, proof_domain), dimension)
-            for expression in proof_coordinates
+        interval_bounds = None
+        if prepared_basis is not None and basis is not None:
+            if not prepared_basis:
+                prepared_basis.append(
+                    PreparedIntervalBasis(
+                        basis, cast(BernsteinDomain, proof_domain), dimension
+                    )
+                )
+            interval_bounds = prepared_basis[0].bounds(local)
+        if interval_bounds is not None:
+            inner_bounds = interval_bounds.inner
+        bounds = (
+            interval_bounds.outer
+            if interval_bounds is not None
+            else tuple(
+                polynomial_bounds(
+                    expression, cast(BernsteinDomain, proof_domain), dimension
+                )
+                for expression in proof_coordinates
+            )
         )
     else:
         corners, offset, matrix, bounds = linear_chart
@@ -564,6 +588,7 @@ def _mapped_cell_chart(
         bounds,
         pyramid_normalizations,
         pyramid_reference_arguments,
+        inner_bounds,
     )
 
 
@@ -626,6 +651,14 @@ def _iter_embedding_cells(
                     element, references, dimension, route_rows.shape[1]
                 )
         chart_bases: dict[bytes, tuple[Expression, ...]] = {}
+        fixed_basis: tuple[Expression, ...] | None = None
+        prepared_basis: list[PreparedIntervalBasis] | None = (
+            []
+            if not vertex_element
+            and kind != "pyramid"
+            and not isinstance(element, PerCellRestrictedCellGeometryElement)
+            else None
+        )
         for local_index in range(rows.shape[0]):
             row = rows[local_index : local_index + 1].reshape(-1)
             route = route_rows[local_index : local_index + 1].reshape(-1)
@@ -678,6 +711,7 @@ def _iter_embedding_cells(
                     ),
                     None,
                     None,
+                    None,
                 )
                 cell_references: tuple[tuple[Fraction, ...], ...] = ()
                 cell_domain = "polyhedron" if kind == "polyhedron" else "polygon"
@@ -707,6 +741,12 @@ def _iter_embedding_cells(
                     )
                 else:
                     basis = None
+                    if prepared_basis is not None:
+                        if fixed_basis is None:
+                            fixed_basis = coordinate_effective_basis(
+                                element, cell_row=local_index
+                            )
+                        basis = fixed_basis
                     if isinstance(element, PerCellRestrictedCellGeometryElement):
                         from ..discretization._cell_geometry_validity import _map_digest
 
@@ -730,12 +770,20 @@ def _iter_embedding_cells(
                         references,
                         ambient,
                         basis,
+                        prepared_basis,
                     )
                 cell_references = references
                 cell_domain = domain
-            coordinates, corners, offset, matrix, bounds, normalizations, arguments = (
-                chart
-            )
+            (
+                coordinates,
+                corners,
+                offset,
+                matrix,
+                bounds,
+                normalizations,
+                arguments,
+                inner_bounds,
+            ) = chart
             lower = tuple(value[0] for value in bounds)
             upper = tuple(value[1] for value in bounds)
             if not all(math.isfinite(value) for value in (*lower, *upper)):
@@ -763,6 +811,7 @@ def _iter_embedding_cells(
                 arguments,
                 owning_mesh_id,
                 owning_geometry_id,
+                inner_bounds,
             )
         block_offset += block.cell_count
 

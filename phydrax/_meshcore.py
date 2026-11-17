@@ -857,9 +857,25 @@ class _TetMeshEditRequest(ctypes.Structure):
 
 
 _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
+    "phx_mc_interval_simplex_restrict": (
+        _I32,
+        (_I32, _I32, _I64, _P, _P, _P, _P, _P, _P, _I32),
+    ),
+    "phx_mc_interval_basis_bounds": (
+        _I32,
+        (_I64, _I64, _I64, _I64, _P, _P, _P, _P, _P, _P, _P, _P, _I32),
+    ),
     "phx_mc_version": (ctypes.c_char_p, ()),
     "phx_mc_build_hash": (ctypes.c_char_p, ()),
     "phx_mc_exact_domain": (None, (_P, _P)),
+    "phx_mc_symmetric_polynomial_minors": (
+        _I32,
+        (_I64, _I32, _P, _P, _P, _P, _P, _P, _P, _P, _I32, _I32),
+    ),
+    "phx_mc_symmetric_polynomial_verdicts": (
+        _I32,
+        (_I64, _I32, _I32, _P, _P, _P, _P, _P, _P, _P, _I32, _I32),
+    ),
     "phx_mc_orient2d": (_I32, (_I64, _P, _P, _P, _P)),
     "phx_mc_orient3d": (_I32, (_I64, _P, _P, _P, _P, _P)),
     "phx_mc_incircle": (_I32, (_I64, _P, _P, _P, _P, _P)),
@@ -923,6 +939,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_interval_program_execute": (
         _I32,
         (_P, _I64, _P, _I64, _P, _I64, _P, _P, _I64),
+    ),
+    "phx_mc_interval_program_batch": (
+        _I32,
+        (_P, _I64, _P, _I64, _P, _I64, _P, _P, _I64, _I64, _I32),
     ),
     "phx_mc_interval_program_branches": (
         _I32,

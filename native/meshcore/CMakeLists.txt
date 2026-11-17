@@ -42,12 +42,16 @@ set(PHX_MC_SOURCES
   src/delaunay2d.cpp
   src/delaunay3d.cpp
   src/exact_kernels.cpp
+  src/exact_polynomial_kernels.cpp
+  src/exact_polynomial_verdict.cpp
   src/feature_protection.cpp
   src/graph_partition.cpp
   src/hex_topology.cpp
   src/implicit_polygon.cpp
   src/quad_topology.cpp
   src/interval_program.cpp
+  src/interval_simplex_restrict.cpp
+  src/interval_basis_bounds.cpp
   src/intersections.cpp
   src/level_set.cpp
   src/mixed_refinement.cpp
@@ -92,6 +96,7 @@ set(PHX_MC_HEADERS
   src/reference_tetrahedron_clip.inc
   src/filtered.hpp
   src/floating_point_mode.hpp
+  src/interval_arithmetic.hpp
   src/geometry3.hpp
   src/intersections.hpp
   src/mesh.hpp
@@ -191,6 +196,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_delaunay2d)
   phx_mc_add_test(test_delaunay3d)
   phx_mc_add_test(test_exact_kernels)
+  phx_mc_add_test(test_exact_polynomial_kernels)
   phx_mc_add_test(test_clip)
   phx_mc_add_test(test_capi_guard)
   phx_mc_add_test(test_cavity)
@@ -198,6 +204,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_graph_partition)
   phx_mc_add_test(test_intersections)
   phx_mc_add_test(test_interval_program)
+  phx_mc_add_test(test_interval_simplex_restrict)
   phx_mc_add_test(test_parallel)
   phx_mc_add_test(test_plc3d)
   phx_mc_add_test(test_quadratic_bounds)
