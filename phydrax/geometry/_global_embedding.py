@@ -115,7 +115,7 @@ from ._exact_polyhedral_geometry import (
     triangle_contact_points2,
     triangle_contact_points3,
 )
-from ._mapped_embedding import prove_mapped_cell_injective
+from ._mapped_embedding import prove_mapped_cell_injective, prove_mapped_cells_injective
 from ._mesh_certificates import (
     certificate_status,
     MeshCertificateBinding,
@@ -2097,17 +2097,18 @@ def _cell_map_findings(
     witnesses: list[MeshEmbeddingWitness] = []
     expressions: list[str] = []
     injective_cells: set[int] = set()
-    for index, cell in enumerate(cells):
-        if cell.affine or not cell.coordinates:
-            continue
-        if owing is not None and not owing[index]:
-            continue
-        try:
-            witness = prove_mapped_cell_injective(cell)
-        except (ValueError, ZeroDivisionError) as error:
+    selected = tuple(
+        (index, cell)
+        for index, cell in enumerate(cells)
+        if not cell.affine and cell.coordinates and (owing is None or owing[index])
+    )
+    proofs = prove_mapped_cells_injective(tuple(cell for _, cell in selected))
+    for (index, cell), proof in zip(selected, proofs, strict=True):
+        if isinstance(proof, (ValueError, ZeroDivisionError)):
             witness = None
-            detail = str(error)
+            detail = str(proof)
         else:
+            witness = proof
             detail = "Exact projected-Jacobian positivity was not decided by the available Bernstein controls."
         if witness is None:
             findings.append(
