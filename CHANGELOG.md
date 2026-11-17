@@ -284,11 +284,6 @@
   lattice of the maps' degree on that stratum, which is unisolvent for the
   traces, instead of by composing both traces symbolically. Other cells keep
   the composed comparison.
-- Mapped injectivity of a simplex cell is tried first through one constant
-  preconditioner over its Bernstein control Jacobians when there are at most
-  eight of them (four for a quadratic tetrahedron). The polynomial-minor
-  routes still decide every cell that attempt leaves open, and the witness
-  of a cell it proves changes accordingly.
 - CAD source coverage and curving repeat less work, with unchanged decisions:
   chart coverage converts block connectivity once per block, prepares the
   overlap boxes and corner enclosures once per triangle bank instead of once

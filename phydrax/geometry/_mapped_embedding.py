@@ -260,30 +260,6 @@ def prove_mapped_cell_injective(
         for row in range(dimension)
     )
 
-    # A low-degree simplex Jacobian has few Bernstein control matrices (the four
-    # corner Jacobians of a quadratic tetrahedron). One constant preconditioner
-    # that makes every control's symmetric part positive definite proves the
-    # whole cell at about half the cost of the polynomial minor routes below,
-    # which still decide every cell this attempt leaves open.
-    if domain == "simplex" and cell.pyramid_normalizations is None:
-        for rows in combinations(range(ambient), dimension):
-            matrices = subdivided_jacobian_controls(
-                tuple(
-                    tuple(jacobian[row][axis] for axis in range(dimension))
-                    for row in rows
-                ),
-                domain,
-                dimension,
-                0,
-            )
-            if matrices is None or len(matrices) > _FIRST_CONTROL_MATRICES:
-                break
-            found = monotone_preconditioner(matrices)
-            if found is not None:
-                return MappedInjectivityWitness(
-                    rows, found[0], found[1], denominator_proof
-                )
-
     for rows in combinations(range(ambient), dimension):
         direct = tuple(
             tuple(jacobian[row][axis] for axis in range(dimension)) for row in rows
@@ -410,8 +386,6 @@ def prove_mapped_cell_injective(
 
 
 SUBDIVISION_LEVELS = 2
-# Control matrices up to which one preconditioner search is tried first.
-_FIRST_CONTROL_MATRICES = 8
 _HALF = Fraction(1, 2)
 _AffineMap = tuple[tuple[Fraction, ...], tuple[tuple[Fraction, ...], ...]]
 
