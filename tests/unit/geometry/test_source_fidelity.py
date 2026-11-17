@@ -618,6 +618,55 @@ def test_validated_random_chart_partitions_report_exact_defects() -> None:
                     validate_source_fidelity_witness(mesh, geometry, source, witness)
 
 
+def test_validated_partition_reports_patch_findings_in_source_order() -> None:
+    domain = _polyhedral_query_domain()
+    source = MeshingDomainBoundarySource(domain, (0, 1))
+    points = np.asarray(domain.corner_points, dtype=np.float64)
+    cells = np.asarray(((0, 1, 2), (0, 2, 3), (4, 5, 6), (4, 6, 7)), dtype=np.int64)
+    mesh = _mesh(points, cells)
+    geometry = CellGeometrySpec.affine(mesh)
+    charts = points[cells, :2].copy()
+    charts[0] = charts[0, ::-1]
+    charts[2] = charts[3]
+    patch_rows = (0, 0, 1, 1)
+    roots = tuple(int(value) for value in domain.scope_entity_ids(2))
+    root_by_key = {domain.source_entity_key_for_scope(2, value): value for value in roots}
+    witness = SurfaceChartWitness(
+        geometry_id=cell_geometry_id(geometry),
+        topology_id=mesh.topology_id,
+        domain_id=domain.domain_id,
+        cell_global_ids=np.asarray(mesh.blocks[0].global_ids, dtype=np.int64),
+        patches=np.asarray(patch_rows, dtype=np.int64),
+        charts=charts,
+        source_root_cell_ids=np.asarray(
+            [
+                root_by_key[
+                    (domain.entity_id(2, patch), domain.source_occurrences[2][patch])
+                ]
+                for patch in patch_rows
+            ],
+            dtype=np.int64,
+        ),
+        source_piece_ids=tuple(
+            (patch, int(domain.source_indices[2][patch])) for patch in patch_rows
+        ),
+        geometry_entity_ids=tuple(domain.entity_id(2, patch) for patch in patch_rows),
+        occurrence_paths=tuple(
+            domain.source_occurrences[2][patch] for patch in patch_rows
+        ),
+        root_mesh_cell_bindings=(None,) * len(patch_rows),
+    )
+    findings = _partition_findings(source, witness, SourcePreparation(domain))
+    assert tuple(
+        (finding.check, finding.status, finding.entity_ids) for finding in findings
+    ) == (
+        ("source_chart_orientation", "violated", (0,)),
+        ("source_chart_coverage", "violated", (1,)),
+    )
+    with pytest.raises(ValueError, match="not a complete reference partition"):
+        validate_source_fidelity_witness(mesh, geometry, source, witness)
+
+
 def test_polyhedral_surface_chart_uses_actual_triangulated_face_vertices() -> None:
     points = np.asarray(
         (
