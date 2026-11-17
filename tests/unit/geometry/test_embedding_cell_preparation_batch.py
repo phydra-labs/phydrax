@@ -6,6 +6,7 @@ from fractions import Fraction
 
 import numpy as np
 
+from phydrax._meshcore import meshcore_available
 from phydrax.discretization import CellBlock, CellGeometrySpec, CellMesh, lagrange_element
 from phydrax.discretization._cell_geometry_validity import cell_geometry_id
 from phydrax.discretization._coordinate_enclosure import Expression, Polynomial
@@ -150,7 +151,7 @@ def test_p2_tetrahedra_match_exact_fraction_reference() -> None:
             tuple(_endpoint(hi, upper=True) for _, hi in exact_bounds),
             facets, None, None, mesh.mesh_id, cell_geometry_id(geometry), None,
         )
-        if not affine and cell.image_inner_bounds is not None:
+        if not affine and meshcore_available():
             outer, inner = _interval_bounds(nodes, rows[index])
             expected = replace(
                 expected,
