@@ -18,6 +18,7 @@ from ..._strict import StrictModule
 from ..._validation import positive_finite_float
 from ...discretization._exact_algebraic_geometry import ExactScalar
 from ...typing import checked, parse
+from .._interval_enclosure import interval_asin, interval_divide, interval_multiply
 from .._rational import binary64_norm_upper, rational_vector
 from ._assembly import BRepAffinePlacement
 from ._constructors import BRepTessellationPolicy
@@ -702,7 +703,13 @@ def _g1_bounds(
             differences = np.asarray(certificate.normal_difference_bounds)
             magnitudes = np.max(np.abs(differences), axis=-1)
             lengths = binary64_norm_upper(magnitudes)
-            upper = np.nextafter(2 * np.arcsin(np.minimum(1.0, lengths / 2)), np.inf)
+            two = np.asarray(2.0, dtype=np.float64)
+            ratio = interval_divide((np.zeros_like(lengths), lengths), (two, two))
+            # Unit normal differences cannot exceed two; intersect the enclosure
+            # with that geometric domain before applying the monotone inverse.
+            ratio = (np.clip(ratio[0], 0.0, 1.0), np.clip(ratio[1], 0.0, 1.0))
+            angle = interval_multiply(interval_asin(ratio), (two, two))
+            upper = np.asarray(angle[1], dtype=np.float64)
             return jnp.asarray(
                 np.stack((np.zeros_like(upper), upper), axis=-1), dtype=jnp.float64
             )
