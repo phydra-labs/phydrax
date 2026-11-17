@@ -695,10 +695,17 @@ def _use_chart_points(
         )
         for parameter in parameters
     )
-    points = domain_owner._pcurve_points(
-        use.pcurve, np.asarray([float(value) for value in native], dtype=np.float64)
-    )
     chart = line_chart_coefficients(use.pcurve)
+    scalars = np.asarray([float(value) for value in native], dtype=np.float64)
+    # Exact line coordinates leave the binary64 points only as finiteness
+    # witnesses. Every other chart point is compared exactly wherever its
+    # parameter recurs, so it may not depend on the batch it was evaluated in.
+    points = (
+        domain_owner._pcurve_points(use.pcurve, scalars)
+        if chart is not None
+        and all(isinstance(coordinate, Fraction) for coordinate in chart[0])
+        else domain_owner._pcurve_points_per_parameter(use.pcurve, scalars)
+    )
     result: list[tuple[Fraction, Fraction]] = []
     for native_exact, uv in zip(native, points, strict=True):
         if not np.all(np.isfinite(uv)):

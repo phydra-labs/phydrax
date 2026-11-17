@@ -118,6 +118,28 @@ def _pcurve_points(pcurve: AbstractCurve, parameters: np.ndarray, /) -> np.ndarr
     )
 
 
+def _pcurve_points_per_parameter(
+    pcurve: AbstractCurve, parameters: np.ndarray, /
+) -> np.ndarray:
+    """`_pcurve_points` with one scalar dispatch per parameter.
+
+    A vectorized evaluation can round the last bit differently from the scalar
+    one, so a batched point depends on the batch it was evaluated in. Callers
+    that compare a parameter's binary64 chart point exactly across call sites
+    need this batch-independent form.
+    """
+    return np.asarray(
+        [
+            np.asarray(
+                pcurve.evaluate(jnp.asarray(value, dtype=jnp.float64)),
+                dtype=np.float64,
+            ).reshape((2,))
+            for value in np.asarray(parameters, dtype=np.float64).reshape((-1,))
+        ],
+        dtype=np.float64,
+    ).reshape((-1, 2))
+
+
 _PERIOD_SHADOW = Fraction.from_float(math.tau)
 
 
