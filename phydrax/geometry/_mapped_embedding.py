@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
 from dataclasses import dataclass
 from fractions import Fraction
 from itertools import combinations, product
@@ -288,14 +288,16 @@ def _prepare_mapped_cell(cell: EmbeddingCell, /) -> _PreparedMappedCell | None:
     )
 
 
-def _finish_mapped_cell(
-    prepared: _PreparedMappedCell,
-    /,
-    *,
-    first_controls: tuple[str, ...] | None = None,
-    first_decided: bool = False,
-    first_refused: bool = False,
-) -> MappedInjectivityWitness | None:
+type _ProofMatrix = tuple[tuple[Expression, ...], ...]
+type _ProofStep = tuple[int, int]
+type _ProofLadder = Generator[
+    tuple[_ProofStep, _ProofMatrix],
+    tuple[str, ...] | None,
+    MappedInjectivityWitness | None,
+]
+
+
+def _mapped_cell_ladder(prepared: _PreparedMappedCell, /) -> _ProofLadder:
     cell = prepared.cell
     domain = prepared.domain
     dimension = prepared.dimension
@@ -305,15 +307,10 @@ def _finish_mapped_cell(
     denominator_proof = prepared.denominator_proof
     identity = prepared.identity
     for position, rows in enumerate(combinations(range(ambient), dimension)):
-        if position == 0 and first_decided:
-            controls = first_controls
-        else:
-            direct = tuple(
-                tuple(jacobian[row][axis] for axis in range(dimension)) for row in rows
-            )
-            controls = _positive_definite_controls(
-                direct, domain, dimension, skip_native=position == 0 and first_refused
-            )
+        direct = tuple(
+            tuple(jacobian[row][axis] for axis in range(dimension)) for row in rows
+        )
+        controls = yield (0, position), direct
         if controls is not None:
             return MappedInjectivityWitness(rows, identity, controls, denominator_proof)
 
@@ -325,7 +322,7 @@ def _finish_mapped_cell(
         / len(cell.reference_vertices)
         for axis in range(dimension)
     )
-    for rows in combinations(range(ambient), dimension):
+    for position, rows in enumerate(combinations(range(ambient), dimension)):
         center_jacobian: tuple[tuple[ExactScalar, ...], ...] = tuple(
             tuple(
                 evaluate_expression(center_jacobian_expressions[row][axis], center)
@@ -355,7 +352,7 @@ def _finish_mapped_cell(
             tuple(projected_columns[axis][row] for axis in range(dimension))
             for row in range(dimension)
         )
-        controls = _positive_definite_controls(projected_jacobian, domain, dimension)
+        controls = yield (1, position), projected_jacobian
         if controls is not None:
             return MappedInjectivityWitness(
                 rows, projection_matrix, controls, denominator_proof
@@ -402,7 +399,7 @@ def _finish_mapped_cell(
                 tuple(projected_columns[axis][row] for axis in range(dimension))
                 for row in range(dimension)
             )
-            controls = _positive_definite_controls(projected_jacobian, domain, dimension)
+            controls = yield (2, 0), projected_jacobian
             if controls is not None:
                 return MappedInjectivityWitness(
                     tuple(range(ambient)), projection_matrix, controls, denominator_proof
@@ -441,75 +438,114 @@ def prove_mapped_cell_injective(
     if cell.affine:
         return MappedInjectivityWitness((), (), ())
     prepared = _prepare_mapped_cell(cell)
-    return None if prepared is None else _finish_mapped_cell(prepared)
+    if prepared is None:
+        return None
+    ladder = _mapped_cell_ladder(prepared)
+    try:
+        _, matrix = next(ladder)
+        while True:
+            controls = _positive_definite_controls(
+                matrix, prepared.domain, prepared.dimension
+            )
+            _, matrix = ladder.send(controls)
+    except StopIteration as result:
+        return result.value
 
 
 def prove_mapped_cells_injective(
     cells: tuple[EmbeddingCell, ...], /
 ) -> tuple[MappedInjectivityWitness | None | ValueError | ZeroDivisionError, ...]:
-    """Prove cells in order, batching their first direct square projections.
+    """Prove cells in order, batching every corresponding projection step.
 
-    Expected proof errors are returned per cell for the findings consumer.
-    A native refusal retains the original exact Python proof and fallback ladder.
+    Expected proof errors are returned per cell. A native refusal is resolved
+    with the exact Python controls for that item before its ladder advances.
     """
-    prepared_cells: list[_PreparedMappedCell | None] = []
     results: list[MappedInjectivityWitness | None | ValueError | ZeroDivisionError] = []
-    groups: dict[tuple[BernsteinDomain, int], list[int]] = {}
+    pending: dict[
+        int, tuple[_PreparedMappedCell, _ProofLadder, _ProofStep, _ProofMatrix]
+    ] = {}
     for index, cell in enumerate(cells):
+        results.append(None)
         try:
+            if cell.affine:
+                results[index] = MappedInjectivityWitness((), (), ())
+                continue
             prepared = _prepare_mapped_cell(cell)
-        except (ValueError, ZeroDivisionError) as error:
-            prepared_cells.append(None)
-            results.append(error)
-            continue
-        prepared_cells.append(prepared)
-        results.append(MappedInjectivityWitness((), (), ()) if cell.affine else None)
-        if prepared is not None:
-            groups.setdefault((prepared.domain, prepared.dimension), []).append(index)
-
-    verdicts: dict[int, tuple[tuple[bool, str], ...] | None] = {}
-    for (domain, dimension), indices in groups.items():
-        matrices = []
-        for index in indices:
-            prepared = prepared_cells[index]
             if prepared is None:
-                raise RuntimeError("Missing prepared mapped cell.")
-            direct = tuple(row[:dimension] for row in prepared.jacobian[:dimension])
-            matrices.append(cast(tuple[tuple[Polynomial, ...], ...], direct))
-        try:
-            decisions = symmetric_jacobian_verdicts(matrices, domain, dimension)
-        except (ValueError, ZeroDivisionError):
-            # A malformed member must not turn its neighbors into findings.
-            for index, matrix in zip(indices, matrices, strict=True):
-                try:
-                    verdicts[index] = symmetric_jacobian_verdicts(
-                        (matrix,), domain, dimension
-                    )[0]
-                except (ValueError, ZeroDivisionError) as error:
-                    results[index] = error
-        else:
-            verdicts.update(zip(indices, decisions, strict=True))
-
-    for index, prepared in enumerate(prepared_cells):
-        if prepared is None or isinstance(
-            results[index], (ValueError, ZeroDivisionError)
-        ):
-            continue
-        verdict = verdicts[index]
-        controls = (
-            tuple(digest for positive, digest in verdict)
-            if verdict is not None and all(positive for positive, _ in verdict)
-            else None
-        )
-        try:
-            results[index] = _finish_mapped_cell(
-                prepared,
-                first_controls=controls,
-                first_decided=verdict is not None,
-                first_refused=verdict is None,
-            )
+                continue
+            ladder = _mapped_cell_ladder(prepared)
+            try:
+                step, matrix = next(ladder)
+            except StopIteration as result:
+                results[index] = result.value
+            else:
+                pending[index] = prepared, ladder, step, matrix
         except (ValueError, ZeroDivisionError) as error:
             results[index] = error
+
+    while pending:
+        step = min(item[2] for item in pending.values())
+        groups: dict[tuple[BernsteinDomain, int], list[int]] = {}
+        for index, (prepared, _, candidate_step, _) in pending.items():
+            if candidate_step == step:
+                groups.setdefault((prepared.domain, prepared.dimension), []).append(index)
+        for (domain, dimension), indices in groups.items():
+            matrices = [pending[index][3] for index in indices]
+            polynomial_indices = [
+                index
+                for index, matrix in zip(indices, matrices, strict=True)
+                if all(isinstance(entry, dict) for row in matrix for entry in row)
+            ]
+            decisions: dict[int, tuple[tuple[bool, str], ...] | None] = {}
+            if polynomial_indices:
+                polynomial_matrices = [
+                    cast(tuple[tuple[Polynomial, ...], ...], pending[index][3])
+                    for index in polynomial_indices
+                ]
+                try:
+                    verdicts = symmetric_jacobian_verdicts(
+                        polynomial_matrices, domain, dimension
+                    )
+                except (ValueError, ZeroDivisionError):
+                    # Isolate malformed items without changing their neighbors.
+                    for index, matrix in zip(
+                        polynomial_indices, polynomial_matrices, strict=True
+                    ):
+                        try:
+                            decisions[index] = symmetric_jacobian_verdicts(
+                                (matrix,), domain, dimension
+                            )[0]
+                        except (ValueError, ZeroDivisionError) as error:
+                            results[index] = error
+                            del pending[index]
+                else:
+                    decisions.update(zip(polynomial_indices, verdicts, strict=True))
+            for index in indices:
+                if index not in pending:
+                    continue
+                prepared, ladder, _, matrix = pending[index]
+                try:
+                    verdict = decisions.get(index)
+                    if verdict is None:
+                        controls = _positive_definite_controls(
+                            matrix, domain, dimension, skip_native=True
+                        )
+                    else:
+                        controls = (
+                            tuple(digest for positive, digest in verdict)
+                            if all(positive for positive, _ in verdict)
+                            else None
+                        )
+                    try:
+                        next_step, next_matrix = ladder.send(controls)
+                    except StopIteration as result:
+                        results[index] = result.value
+                        del pending[index]
+                    else:
+                        pending[index] = prepared, ladder, next_step, next_matrix
+                except (ValueError, ZeroDivisionError) as error:
+                    results[index] = error
+                    del pending[index]
     return tuple(results)
 
 
