@@ -1,7 +1,11 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Bounded cyclic-collection scheduling for allocation-heavy host operations."""
+"""Bounded cyclic-collection scheduling for allocation-heavy host operations.
+
+Scopes restore their entry thresholds only while the installed thresholds remain
+unchanged. An observed external change is retained across overlapping scopes.
+"""
 
 import gc
 from collections.abc import Iterator
@@ -17,10 +21,18 @@ _LOCK = RLock()
 @dataclass(slots=True)
 class _Entry:
     thresholds: tuple[int, int, int]
+    installed: tuple[int, int, int]
+    superseded: bool = False
     active: bool = True
 
 
 _ENTRIES: list[_Entry] = []
+
+
+def _observe_thresholds(current: tuple[int, int, int], /) -> None:
+    if _ENTRIES and current != _ENTRIES[-1].installed:
+        for entry in _ENTRIES:
+            entry.superseded = True
 
 
 @contextmanager
@@ -34,9 +46,11 @@ def collection_scope() -> Iterator[None]:
     with _LOCK:
         if gc.isenabled():
             previous = gc.get_threshold()
-            entry = _Entry(previous)
+            _observe_thresholds(previous)
+            installed = (max(previous[0], _YOUNG_THRESHOLD), *previous[1:])
+            entry = _Entry(previous, installed)
             _ENTRIES.append(entry)
-            gc.set_threshold(max(previous[0], _YOUNG_THRESHOLD), *previous[1:])
+            gc.set_threshold(*installed)
         else:
             entry = None
     try:
@@ -44,7 +58,10 @@ def collection_scope() -> Iterator[None]:
     finally:
         if entry is not None:
             with _LOCK:
+                _observe_thresholds(gc.get_threshold())
                 entry.active = False
                 while _ENTRIES and not _ENTRIES[-1].active:
-                    previous = _ENTRIES.pop().thresholds
-                    gc.set_threshold(*previous)
+                    _observe_thresholds(gc.get_threshold())
+                    completed = _ENTRIES.pop()
+                    if not completed.superseded:
+                        gc.set_threshold(*completed.thresholds)

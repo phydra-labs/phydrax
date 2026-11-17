@@ -42,6 +42,72 @@ def test_nested_scopes_preserve_higher_caller_threshold() -> None:
         gc.set_threshold(*previous)
 
 
+def test_external_threshold_update_is_not_overwritten() -> None:
+    previous = gc.get_threshold()
+    try:
+        gc.set_threshold(701, 13, 17)
+        with collection_scope():
+            assert gc.get_threshold() == (50_000, 13, 17)
+            gc.set_threshold(100_000, 21, 23)
+        assert gc.get_threshold() == (100_000, 21, 23)
+    finally:
+        gc.set_threshold(*previous)
+
+
+@pytest.mark.parametrize("updated", ((100_000, 21, 23), (1_234, 21, 23)))
+def test_external_threshold_update_survives_nested_scopes(
+    updated: tuple[int, int, int],
+) -> None:
+    previous = gc.get_threshold()
+    try:
+        gc.set_threshold(701, 13, 17)
+        with collection_scope():
+            gc.set_threshold(*updated)
+            with collection_scope():
+                assert gc.get_threshold() == (max(updated[0], 50_000), *updated[1:])
+            assert gc.get_threshold() == updated
+        assert gc.get_threshold() == updated
+    finally:
+        gc.set_threshold(*previous)
+
+
+@pytest.mark.parametrize("reset_to_installed", (False, True))
+def test_external_threshold_update_survives_out_of_order_scopes(
+    reset_to_installed: bool,
+) -> None:
+    previous = gc.get_threshold()
+    entered = Event()
+    release = Event()
+    worker: Thread | None = None
+    try:
+        gc.set_threshold(701, 13, 17)
+        with collection_scope():
+
+            def run() -> None:
+                with collection_scope():
+                    entered.set()
+                    if not release.wait(10):
+                        raise RuntimeError("scope release timed out")
+
+            worker = Thread(target=run)
+            worker.start()
+            assert entered.wait(10)
+            gc.set_threshold(100_000, 21, 23)
+        assert gc.get_threshold() == (100_000, 21, 23)
+        expected = (50_000, 13, 17) if reset_to_installed else (100_000, 21, 23)
+        if reset_to_installed:
+            gc.set_threshold(*expected)
+        release.set()
+        worker.join(timeout=10)
+        assert not worker.is_alive()
+        assert gc.get_threshold() == expected
+    finally:
+        release.set()
+        if worker is not None:
+            worker.join(timeout=10)
+        gc.set_threshold(*previous)
+
+
 def test_disabled_collection_is_untouched() -> None:
     enabled = gc.isenabled()
     previous = gc.get_threshold()
