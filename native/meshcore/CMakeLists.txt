@@ -43,6 +43,8 @@ set(PHX_MC_SOURCES
   src/delaunay3d.cpp
   src/deterministic_float.cpp
   src/deterministic_float_capi.cpp
+  src/metric_float.cpp
+  src/metric_float_capi.cpp
   src/exact_kernels.cpp
   src/exact_polynomial_kernels.cpp
   src/exact_polynomial_integral.cpp
@@ -102,6 +104,7 @@ set(PHX_MC_HEADERS
   src/reference_tetrahedron_clip.inc
   src/filtered.hpp
   src/deterministic_float.hpp
+  src/metric_float.hpp
   src/floating_point_mode.hpp
   src/interval_arithmetic.hpp
   src/geometry3.hpp
@@ -216,6 +219,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_graph_partition)
   phx_mc_add_test(test_intersections)
   phx_mc_add_test(test_deterministic_float)
+  phx_mc_add_test(test_metric_float)
   phx_mc_add_test(test_interval_program)
   phx_mc_add_test(test_interval_simplex_restrict)
   phx_mc_add_test(test_parallel)
