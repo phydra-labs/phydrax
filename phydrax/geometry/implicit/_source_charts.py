@@ -10,7 +10,7 @@ from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from functools import cache, partial
-from typing import Literal, Protocol, runtime_checkable, TYPE_CHECKING
+from typing import final, Literal, Protocol, runtime_checkable, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -563,6 +563,134 @@ class AdaptiveImplicitRootChartMap:
                 "Prepared implicit root charts were prepared for a different mesh, "
                 "geometry, source, witness or control."
             )
+
+
+def _coverage_chart_complete(charts: AdaptiveImplicitRootChartMap, /) -> bool:
+    """Whether every coverage-visible chart has its own retained piece proofs."""
+    return (
+        charts.reused_row_count == 0
+        and bool(charts._faces)
+        and len(charts._faces) == len(charts.chart_evidence)
+        and len(charts._faces) == len(charts.witness.source_chart_ids)
+        and all(
+            face.evidence is evidence
+            and evidence.status == "certified"
+            and (
+                (evidence.bound == "root_chart" and bool(face.pieces))
+                or evidence.bound == "root_witness"
+            )
+            for face, evidence in zip(charts._faces, charts.chart_evidence, strict=True)
+        )
+    )
+
+
+def _same_chart_control(first: float | None, second: float | None, /) -> bool:
+    if first is None or second is None:
+        return first is second
+    return float(first).hex() == float(second).hex()
+
+
+def _live_chart_operands(
+    charts: AdaptiveImplicitRootChartMap,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    source: AdaptiveImplicitSourceQuery,
+    witness: SourceBoundaryChartWitness,
+    /,
+    *,
+    tolerance: float | None,
+    maximum_normal_deviation: float | None,
+) -> bool:
+    return (
+        charts.mesh is mesh
+        and charts.geometry is geometry
+        and charts.source is source
+        and charts.witness is witness
+        and _same_chart_control(charts.tolerance, tolerance)
+        and _same_chart_control(charts.maximum_normal_deviation, maximum_normal_deviation)
+    )
+
+
+def _require_live_coverage_charts(
+    charts: AdaptiveImplicitRootChartMap,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    source: AdaptiveImplicitSourceQuery,
+    witness: SourceBoundaryChartWitness,
+    /,
+    *,
+    tolerance: float | None,
+    maximum_normal_deviation: float | None,
+) -> None:
+    """Refuse a coverage handoff not bound to these live operands and proofs."""
+    if not _live_chart_operands(
+        charts,
+        mesh,
+        geometry,
+        source,
+        witness,
+        tolerance=tolerance,
+        maximum_normal_deviation=maximum_normal_deviation,
+    ):
+        raise ValueError(
+            "Implicit coverage root charts require identical live operands and controls."
+        )
+    charts.require_request(
+        mesh,
+        geometry,
+        source,
+        witness,
+        tolerance=tolerance,
+        maximum_normal_deviation=maximum_normal_deviation,
+    )
+    adaptive, frame = _source_authority(source)
+    if charts._surface is not adaptive.surface or charts.frame_id != frame:
+        raise ValueError(
+            "Implicit coverage root charts require the identical live source frame."
+        )
+    if not _coverage_chart_complete(charts):
+        raise ValueError(
+            "Implicit coverage root charts require complete retained piece proofs."
+        )
+
+
+@final
+class _ImplicitChartHandoff:
+    """One operation's optional complete live chart map; never a content cache."""
+
+    __slots__ = ("_root_charts",)
+
+    def __init__(self) -> None:
+        self._root_charts: AdaptiveImplicitRootChartMap | None = None
+
+    @property
+    def root_charts(self) -> AdaptiveImplicitRootChartMap | None:
+        return self._root_charts
+
+    def offer(
+        self,
+        charts: AdaptiveImplicitRootChartMap,
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        source: AdaptiveImplicitSourceQuery,
+        witness: SourceBoundaryChartWitness,
+        /,
+        *,
+        tolerance: float,
+        maximum_normal_deviation: float | None,
+    ) -> None:
+        if self._root_charts is not None:
+            raise RuntimeError("An implicit chart handoff may be filled only once.")
+        if _live_chart_operands(
+            charts,
+            mesh,
+            geometry,
+            source,
+            witness,
+            tolerance=tolerance,
+            maximum_normal_deviation=maximum_normal_deviation,
+        ) and _coverage_chart_complete(charts):
+            self._root_charts = charts
 
 
 def _interval_add(first: Interval, second: Interval, /) -> Interval:
@@ -6701,6 +6829,7 @@ def certify_adaptive_implicit_charts(
     root_charts: AdaptiveImplicitRootChartMap | None = None,
     chart_parent: ImplicitChartPremise | None = None,
     validated_chart_parent: ValidatedImplicitChartParent | None = None,
+    _handoff: _ImplicitChartHandoff | None = None,
 ) -> SourceFidelityCertificate:
     """Certify nonlinear P1/P2/P3 target maps against an adaptive implicit root cover.
 
@@ -6797,6 +6926,16 @@ def certify_adaptive_implicit_charts(
                     ),
                 ),
             )
+    if _handoff is not None:
+        _handoff.offer(
+            root_map,
+            mesh,
+            geometry,
+            source,
+            witness,
+            tolerance=tolerance,
+            maximum_normal_deviation=maximum_normal_deviation,
+        )
     findings: list[MeshCertificateFinding] = []
     for evidence in root_map.chart_evidence:
         if evidence.status != "certified":
