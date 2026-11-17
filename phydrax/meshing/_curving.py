@@ -1557,6 +1557,7 @@ def _curving_target_result(
     *,
     prior_transition: CellMeshTransition | None = None,
     embedding: GlobalEmbeddingCertificate,
+    computed_validity: ComputedCellValidity,
 ) -> tuple[
     CellMeshingResult | None,
     MeshCertificationReport | None,
@@ -1659,7 +1660,7 @@ def _curving_target_result(
             planar_embedding=source_result.planar_embedding,
             layer_curving_evidence=layer_curving_evidence,
             embedding=embedding if reuse else None,
-            validity=embedding.validity if reuse else None,
+            _computed_validity=computed_validity if reuse else None,
         )
         if prior_transition is not None:
             material_chain = _extend_prior_volume_material_chain(
@@ -1785,6 +1786,7 @@ def _evidence(
             projection,
             prior_transition=prior_transition,
             embedding=embedding,
+            computed_validity=computed_validity,
         )
         if locally_accepted
         else (None, None, None, None, None)
