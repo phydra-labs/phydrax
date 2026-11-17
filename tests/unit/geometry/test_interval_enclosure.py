@@ -1,5 +1,6 @@
 import hashlib
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import replace
 from fractions import Fraction
 from itertools import product
@@ -163,6 +164,11 @@ def test_prepared_batch_encloses_exact_point_in_every_partition() -> None:
     assert Fraction(float(original[1][0, 0])) >= exact
     inward = np.nextafter(float(exact), -np.inf)
     assert Fraction(float(inward)) < exact
+    program = prepared.native_program
+    assert program is not None
+    copied = deepcopy(program).evaluate_batch(point, point)
+    for actual, expected in zip(copied, original, strict=True):
+        np.testing.assert_array_equal(_bits(actual), _bits(expected))
     for count in (1, 8, 64, 4096):
         values = np.repeat(point, count, axis=0)
         result = prepared.evaluate(values, values)

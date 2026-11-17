@@ -153,26 +153,11 @@ class NativeIntervalProgram:
     elementwise: bool = False
     events: NDArray[np.int64] | None = None
     """Branch-evidence event rows ``(rows, 6)``, present when lowered with box axes."""
-    _batch_arguments: tuple[int, int, int, int, int, int] = field(
-        init=False, repr=False, compare=False
-    )
     _batch_output: slice | NDArray[np.int64] = field(
         init=False, repr=False, compare=False
     )
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "_batch_arguments",
-            (
-                self.instructions.ctypes.data,
-                self.instructions.shape[0],
-                self.indices.ctypes.data,
-                self.indices.size,
-                self.parameters.ctypes.data,
-                self.parameters.size,
-            ),
-        )
         if self.output.locations is None:
             start = self.output.offset
             locations: slice | NDArray[np.int64] = slice(start, start + _size(self.output.shape))
@@ -276,8 +261,8 @@ class NativeIntervalProgram:
         workers: int = 1,
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         count = lower.shape[0]
-        low = np.zeros((count, self.workspace_size), dtype=np.float64)
-        high = np.zeros_like(low)
+        workspace = np.zeros((2, count, self.workspace_size), dtype=np.float64)
+        low, high = workspace[0], workspace[1]
         low[:, : self.input_dimension] = lower
         high[:, : self.input_dimension] = upper
         for seed in self.seeds:
@@ -285,7 +270,12 @@ class NativeIntervalProgram:
             low[:, seed.offset : seed.offset + size] = seed.lower
             high[:, seed.offset : seed.offset + size] = seed.upper
         status = load_meshcore()["phx_mc_interval_program_batch"](
-            *self._batch_arguments,
+            self.instructions.ctypes.data,
+            self.instructions.shape[0],
+            self.indices.ctypes.data,
+            self.indices.size,
+            self.parameters.ctypes.data,
+            self.parameters.size,
             low.ctypes.data,
             high.ctypes.data,
             self.workspace_size,
