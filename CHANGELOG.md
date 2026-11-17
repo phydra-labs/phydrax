@@ -308,6 +308,16 @@
   replay of a restored CAD complex in
   `PiecewiseLinearComplex.from_stored_fields`. A copy, a rebuild or a changed
   array is still proved in full.
+- Mixed prism/tetrahedron lifecycles repeat less exact work, with unchanged
+  results: the agreement of the two cell charts on every shared facet is
+  proved once per live mesh and coordinate map instead of in every
+  `FiniteElementPlan` on them; the exact cell-local density projection
+  (`nested_nodal_transfer` with density semantics) combines tabulated
+  reference moments per cell instead of expanding and integrating every basis
+  product, and cells with one reference map and a constant Jacobian share
+  their projection; nested entity containment is computed once per reference
+  placement; and exact chart rows already proved to include their cell are
+  shared by content across reference-map witnesses.
 - Native surface meshing, source-fidelity and chart proofs, and B-Rep
   projection evaluate in batches and prepare per-entity data once: line
   p-curve and source-curve points, trim-lens Jacobian bounds, chord and lens
