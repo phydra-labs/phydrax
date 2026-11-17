@@ -1,3 +1,5 @@
+import gc
+import weakref
 from copy import copy
 from fractions import Fraction
 from typing import Literal
@@ -425,6 +427,9 @@ def test_source_chart_identity_binds_cad_ancestry() -> None:
     assert first.witness_id == make(True, root, association("parent-a")).witness_id
     assert first.witness_id != make(False, root, None).witness_id
     assert first.witness_id != make(True, -1, association("parent-a")).witness_id
+    assert make(True, -1, association("parent-a")).witness_id == make(
+        True, -1, association("parent-a")
+    ).witness_id
     assert (
         first.witness_id
         != make(True, root, association("parent-a"), other_plc).witness_id
@@ -522,3 +527,56 @@ def test_face_image_identity_and_exact_integer_degeneracy() -> None:
         else:
             with pytest.raises(ValueError, match="degenerate"):
                 make(random_triangle)
+
+
+def test_live_cad_chart_preparation_does_not_retain_source() -> None:
+    from phydrax.meshing._association import (
+        GeometryAssociation,
+        GeometryAssociationKind,
+        GeometrySourceEntityRole,
+    )
+    from phydrax.meshing.providers._native_cad_volume import NativeCadVolumeSource
+    from tests.unit.meshing.test_native_cad_volume import _cad_surface
+
+    def construct() -> weakref.ReferenceType[object]:
+        domain, surface = _cad_surface()
+        source = NativeCadVolumeSource(domain, surface, maximum_deviation=0.1, boundary="fixed")
+        plc = source.plc_source.complex
+        charts = plc.cad_source_charts
+        assert charts is not None
+        patch = int(np.asarray(charts.root_patches)[0])
+        entity = domain.stratum_entity_ids(2)[patch]
+        association = GeometryAssociation(
+            GeometryAssociationKind.CURVE,
+            source.source_id,
+            source.source_revision,
+            "target-edges",
+            np.asarray([1], dtype=np.int64),
+            ("edge",),
+            np.asarray([0.0], dtype=np.float64),
+            source_dimensions=np.asarray([1], dtype=np.int32),
+            source_indices=np.asarray([0], dtype=np.int64),
+            source_roles=(GeometrySourceEntityRole.EDGE,),
+            source_parameter_intervals=((Fraction(0), Fraction(1)),),
+            orientations=np.asarray([1], dtype=np.int8),
+        )
+        triangle = np.asarray([[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]], dtype=np.float64)
+        witness = SourceBoundaryChartWitness(
+            mesh_id="mesh", geometry_id="geometry", topology_id="topology",
+            source_id=source.source_id, source_revision=source.source_revision,
+            source_query_id="query", chart_dimension=2, reference_dimension=2,
+            cell_global_ids=np.asarray([1], dtype=np.int64),
+            entity_global_ids=np.asarray([1], dtype=np.int64),
+            local_entity_indices=np.asarray([-1], dtype=np.int32),
+            target_reference_vertices=triangle, source_chart_ids=(entity,),
+            source_entity_ids=(entity,), occurrence_paths=(domain.source_occurrences[2][patch],),
+            source_parameters=triangle, orientations=np.asarray([1], dtype=np.int8),
+            cad_plc=plc, cad_curve_association=association,
+            cad_root_cell_ids=np.asarray([-1], dtype=np.int64),
+        )
+        assert witness.source_chart_ids == (entity,)
+        return weakref.ref(domain)
+
+    reference = construct()
+    gc.collect()
+    assert reference() is None

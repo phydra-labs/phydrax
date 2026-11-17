@@ -249,6 +249,9 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Source preparation reuses exact patch and spline-span proofs only for the
+  same unchanged live source. Rebuilt sources reprove their own content;
+  per-target trim partitions and per-box interval bounds remain independent.
 - CAD source-chart, face-image, and geometry-association identities frame exact
   rational tables as bytes. These identities and dependent records change;
   restored records still revalidate their complete exact content.
