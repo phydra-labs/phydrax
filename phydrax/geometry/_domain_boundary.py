@@ -30,7 +30,6 @@ from ..discretization._exact_algebraic_geometry import (
     coefficient_payload,
     coefficient_rounding_error,
 )
-from ..linalg._exact import determinant_exact
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
 from ..typing import checked
 from ._embedding_state import MeshCertificateFinding
@@ -1555,36 +1554,43 @@ def _trim_enclosure_triangles(
     return tuple(triangles)
 
 
+def _integer_distance_points(
+    points: tuple[tuple[Fraction, ...], ...], /
+) -> tuple[tuple[tuple[int, ...], ...], int]:
+    scale = math.lcm(*(value.denominator for point in points for value in point))
+    return (
+        tuple(
+            tuple(value.numerator * (scale // value.denominator) for value in point)
+            for point in points
+        ),
+        scale,
+    )
+
+
+def _integer_segment_squared(
+    point: tuple[int, ...], first: tuple[int, ...], second: tuple[int, ...], /
+) -> tuple[int, int]:
+    direction = tuple(b - a for a, b in zip(first, second, strict=True))
+    relative = tuple(p - a for p, a in zip(point, first, strict=True))
+    length = sum(value * value for value in direction)
+    along = sum(a * b for a, b in zip(relative, direction, strict=True))
+    squared = sum(value * value for value in relative)
+    if along <= 0 or length == 0:
+        return squared, 1
+    if along >= length:
+        return squared - 2 * along + length, 1
+    return squared * length - along * along, length
+
+
 def _point_segment_squared(
     point: tuple[Fraction, ...],
     first: tuple[Fraction, ...],
     second: tuple[Fraction, ...],
     /,
 ) -> Fraction:
-    direction = tuple(b - a for a, b in zip(first, second, strict=True))
-    length_squared = sum((value * value for value in direction), Fraction(0))
-    if not length_squared:
-        return sum(
-            ((value - a) ** 2 for value, a in zip(point, first, strict=True)), Fraction(0)
-        )
-    parameter = (
-        sum(
-            (
-                (value - a) * delta
-                for value, a, delta in zip(point, first, direction, strict=True)
-            ),
-            Fraction(0),
-        )
-        / length_squared
-    )
-    parameter = min(max(parameter, Fraction(0)), Fraction(1))
-    return sum(
-        (
-            (value - a - parameter * delta) ** 2
-            for value, a, delta in zip(point, first, direction, strict=True)
-        ),
-        Fraction(0),
-    )
+    points, scale = _integer_distance_points((point, first, second))
+    numerator, denominator = _integer_segment_squared(*points)
+    return Fraction(numerator, denominator * scale * scale)
 
 
 def _point_triangle_squared(
@@ -1592,51 +1598,30 @@ def _point_triangle_squared(
     triangle: _Triangle3,
     /,
 ) -> Fraction:
-    origin = triangle[0]
-    first = (
-        triangle[1][0] - origin[0],
-        triangle[1][1] - origin[1],
-        triangle[1][2] - origin[2],
-    )
-    second = (
-        triangle[2][0] - origin[0],
-        triangle[2][1] - origin[1],
-        triangle[2][2] - origin[2],
-    )
-    relative = (
-        point[0] - origin[0],
-        point[1] - origin[1],
-        point[2] - origin[2],
-    )
-    gram = (
-        (
-            sum((a * a for a in first), Fraction(0)),
-            sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0)),
-        ),
-        (
-            sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0)),
-            sum((a * a for a in second), Fraction(0)),
-        ),
-    )
-    right = (
-        (sum((a * b for a, b in zip(first, relative, strict=True)), Fraction(0)),),
-        (sum((a * b for a, b in zip(second, relative, strict=True)), Fraction(0)),),
-    )
-    determinant = determinant_exact(gram)
-    if determinant:
-        from ..linalg._exact import solve_exact
-
-        solution = solve_exact(gram, right)
-        u, v = solution[0][0], solution[1][0]
-        if u >= 0 and v >= 0 and u + v <= 1:
-            residual = tuple(
-                relative[axis] - u * first[axis] - v * second[axis] for axis in range(3)
-            )
-            return sum((value * value for value in residual), Fraction(0))
-    return min(
-        _point_segment_squared(point, triangle[index], triangle[(index + 1) % 3])
-        for index in range(3)
-    )
+    points, scale = _integer_distance_points((point, *triangle))
+    query, origin, vertex1, vertex2 = points
+    first = tuple(b - a for a, b in zip(origin, vertex1, strict=True))
+    second = tuple(b - a for a, b in zip(origin, vertex2, strict=True))
+    relative = tuple(b - a for a, b in zip(origin, query, strict=True))
+    aa = sum(a * a for a in first)
+    ab = sum(a * b for a, b in zip(first, second, strict=True))
+    bb = sum(b * b for b in second)
+    ar = sum(a * r for a, r in zip(first, relative, strict=True))
+    br = sum(b * r for b, r in zip(second, relative, strict=True))
+    rr = sum(r * r for r in relative)
+    determinant = aa * bb - ab * ab
+    u = bb * ar - ab * br
+    v = aa * br - ab * ar
+    if determinant and u >= 0 and v >= 0 and u + v <= determinant:
+        numerator = rr * determinant - u * ar - v * br
+        return Fraction(numerator, determinant * scale * scale)
+    edges = ((origin, vertex1), (vertex1, vertex2), (vertex2, origin))
+    numerator, denominator = _integer_segment_squared(query, *edges[0])
+    for edge in edges[1:]:
+        candidate, divisor = _integer_segment_squared(query, *edge)
+        if candidate * denominator < numerator * divisor:
+            numerator, denominator = candidate, divisor
+    return Fraction(numerator, denominator * scale * scale)
 
 
 class _DistanceScreen:
