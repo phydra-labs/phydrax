@@ -1330,6 +1330,8 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_metric_tetra_quality": (_I32, (_I64, _P, _I64, _P, _P, _P)),
     "phx_mc_metric_midpoints": (_I32, (_I64, _P, _P, _P, _P, _P, _P)),
     "phx_mc_metric_survivor_goals": (_I32, (_I64, _P, _P, _I32, _P, _P, _P)),
+    "phx_mc_metric_tensor_properties": (_I32, (_I64, _P, _P, _P)),
+    "phx_mc_metric_congruence_defects": (_I32, (_I64, _P, _P, _P, _P, _P)),
 }
 
 
@@ -9754,7 +9756,8 @@ def metric_band_quanta(lengths: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     ``(above, below)`` as float arrays of the shape of ``lengths``: the
     violation ``|log(length / band edge)|`` in quanta of ``2**-10`` rounded
     up, at least one for a length outside the band and zero inside it. A zero
-    or infinite length has an infinite count; NaN violates nothing.
+    or infinite length has an infinite count. A NaN length was not measured
+    and has no count: both are NaN.
     """
     values = np.ascontiguousarray(lengths, dtype=np.float64)
     above = np.empty_like(values)
@@ -9812,6 +9815,59 @@ def metric_tetra_quality(
     )
     _raise_for_call(status, "metric_tetra_quality")
     return quality
+
+
+def metric_tensor_properties(tensors: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+    """Whether ``(n, 3, 3)`` tensors are symmetric and positive definite.
+
+    The gate of a metric field. With ``lambda`` the eigenvalues of the
+    symmetric part ``(M + M^T) / 2`` and ``tol = 64 eps max |lambda|``, a
+    tensor is symmetric when ``max |M - M^T| <= tol`` and positive definite
+    when it is symmetric and ``min lambda > tol``. Neither holds for a
+    non-finite entry. A deterministic kernel verdict: the same on every
+    platform.
+    """
+    values = _metric_tensors(tensors, "tensors")
+    symmetric = np.empty((values.shape[0],), dtype=np.int8)
+    positive_definite = np.empty((values.shape[0],), dtype=np.int8)
+    status = load_meshcore()["phx_mc_metric_tensor_properties"](
+        values.shape[0],
+        values.ctypes.data,
+        symmetric.ctypes.data,
+        positive_definite.ctypes.data,
+    )
+    _raise_for_call(status, "metric_tensor_properties")
+    return symmetric.astype(np.bool_), positive_definite.astype(np.bool_)
+
+
+def metric_congruence_defects(
+    linear: np.ndarray, metrics: np.ndarray, references: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Defects of the congruences ``A^T M A = R`` of ``(n, 3, 3)`` arrays.
+
+    The form in which a metric ``M`` at the image of a linear map ``A`` agrees
+    with the metric ``R`` at its source. Returns the infinity norms of
+    ``A^T M A - R`` and, as their scale, the larger of the infinity norms of
+    ``A^T M A`` and ``R``. Deterministic kernel values: the same bits on
+    every platform.
+    """
+    maps = _metric_tensors(linear, "linear")
+    tensors = _metric_tensors(metrics, "metrics")
+    sources = _metric_tensors(references, "references")
+    if tensors.shape != maps.shape or sources.shape != maps.shape:
+        raise ValueError("linear, metrics and references must have the same shape.")
+    errors = np.empty((maps.shape[0],), dtype=np.float64)
+    scales = np.empty((maps.shape[0],), dtype=np.float64)
+    status = load_meshcore()["phx_mc_metric_congruence_defects"](
+        maps.shape[0],
+        maps.ctypes.data,
+        tensors.ctypes.data,
+        sources.ctypes.data,
+        errors.ctypes.data,
+        scales.ctypes.data,
+    )
+    _raise_for_call(status, "metric_congruence_defects")
+    return errors, scales
 
 
 def metric_midpoints(
@@ -9984,12 +10040,14 @@ __all__ = [
     "meshcore_exact_domain",
     "meshcore_identity",
     "metric_band_quanta",
+    "metric_congruence_defects",
     "metric_interpolations",
     "metric_lengths",
     "metric_logarithms",
     "metric_midpoints",
     "metric_relative_determinants",
     "metric_survivor_goals",
+    "metric_tensor_properties",
     "metric_tetra_quality",
     "point_triangle_locations",
     "polygon_intersection_moments",

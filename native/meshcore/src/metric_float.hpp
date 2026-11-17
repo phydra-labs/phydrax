@@ -50,8 +50,9 @@ double length(const double* p, const double* q, const double* metric_p,
 
 // Violation quanta of a length: `above` is max(ceil(log(length / sqrt 2) *
 // 2^10), 1) for a length above the band and 0 otherwise, `below` the same for
-// log((1/sqrt 2) / length) below it. A NaN length violates nothing; an
-// infinite or zero length gives an infinite count.
+// log((1/sqrt 2) / length) below it. An infinite or zero length gives an
+// infinite count. A NaN length was not measured and has no count: both are
+// 0x7ff8000000000000.
 void band_quanta(double length, double& above, double& below) noexcept;
 
 // det(p1 - p0, p2 - p0, p3 - p0) of four corners (12 values) and that
@@ -68,5 +69,24 @@ void relative_determinant(const double* corners, double& determinant,
 // the order (0,1), (0,2), (0,3), (1,2), (1,3), (2,3). 0 unless V_M and the
 // sum are both positive; NaN when both are infinite.
 double tetra_quality(const double* corners, const double* metrics) noexcept;
+
+// Whether a full row-major 3x3 tensor is admitted as the metric of a field.
+// With lambda the eigenvalues of its symmetric part (M + M^T) / 2 from the
+// Jacobi iteration and tol = 64 * 2^-52 * max |lambda|: `symmetric` when
+// max |M - M^T| <= tol, and `positive_definite` when it is symmetric and
+// min lambda > tol. Neither for a non-finite entry, an eigenvalue beyond the
+// binary64 range or an iteration that does not end.
+void tensor_properties(const double* tensor, bool& symmetric,
+                       bool& positive_definite) noexcept;
+
+// Defect of the congruence A^T M A = R of row-major 3x3 arrays, the form in
+// which a metric M at the image of a linear map A agrees with the metric R at
+// its source: `error` is the infinity norm (largest absolute row sum) of
+// A^T M A - R and `scale` the larger of the infinity norms of A^T M A and R.
+// M A and then A^T (M A) are formed by rows, each entry a sum of three
+// products in column order. Both are 0x7ff8000000000000 when a row sum is
+// not a number.
+void congruence_defect(const double* linear, const double* metric, const double* reference,
+                       double& error, double& scale) noexcept;
 
 }  // namespace phx::mc::metric

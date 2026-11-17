@@ -184,4 +184,40 @@ int32_t phx_mc_metric_tetra_quality(int64_t cell_count, const int64_t* cells,
   return PHX_MC_OK;
 }
 
+int32_t phx_mc_metric_tensor_properties(int64_t count, const double* tensors, int8_t* symmetric,
+                                        int8_t* positive_definite) {
+  if (!addressable(count, 9, sizeof(double)) ||
+      (count > 0 &&
+       (tensors == nullptr || symmetric == nullptr || positive_definite == nullptr))) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  const phx::mc::GradualNearestScope mode;
+  if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+  for (int64_t row = 0; row < count; ++row) {
+    bool is_symmetric = false;
+    bool is_positive_definite = false;
+    phx::mc::metric::tensor_properties(tensors + 9 * row, is_symmetric, is_positive_definite);
+    symmetric[row] = is_symmetric ? 1 : 0;
+    positive_definite[row] = is_positive_definite ? 1 : 0;
+  }
+  return PHX_MC_OK;
+}
+
+int32_t phx_mc_metric_congruence_defects(int64_t count, const double* linear,
+                                         const double* metrics, const double* references,
+                                         double* errors, double* scales) {
+  if (!addressable(count, 9, sizeof(double)) ||
+      (count > 0 && (linear == nullptr || metrics == nullptr || references == nullptr ||
+                     errors == nullptr || scales == nullptr))) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  const phx::mc::GradualNearestScope mode;
+  if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+  for (int64_t row = 0; row < count; ++row) {
+    phx::mc::metric::congruence_defect(linear + 9 * row, metrics + 9 * row, references + 9 * row,
+                                       errors[row], scales[row]);
+  }
+  return PHX_MC_OK;
+}
+
 }  // extern "C"

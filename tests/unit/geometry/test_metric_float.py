@@ -162,13 +162,19 @@ def test_recorded_lengths_are_logarithmic_means_of_the_end_lengths() -> None:
 def test_recorded_band_quanta_count_the_logarithmic_violation() -> None:
     above_rows = 0
     below_rows = 0
+    unmeasured = 0
     with localcontext() as context:
         context.prec = 60
         for length_bits, above_bits, below_bits in _rows("BAND"):
             length = _binary64(length_bits)
             above = _binary64(above_bits)
             below = _binary64(below_bits)
-            if math.isnan(length) or _LOWER <= length <= _UPPER:
+            if math.isnan(length):
+                # Not measured: neither inside the band nor a violation.
+                assert above_bits == _NAN_BITS and below_bits == _NAN_BITS
+                unmeasured += 1
+                continue
+            if _LOWER <= length <= _UPPER:
                 assert above == 0.0 and below == 0.0
                 continue
             # The kernel takes the logarithm of the rounded quotient.
@@ -191,6 +197,7 @@ def test_recorded_band_quanta_count_the_logarithmic_violation() -> None:
                 assert recorded == max(float(math.ceil(quanta)), 1.0)
     assert above_rows > 20
     assert below_rows > 5
+    assert unmeasured == 6
 
 
 def test_recorded_determinants_are_within_their_stated_error() -> None:
@@ -272,6 +279,100 @@ def test_recorded_qualities_are_metric_mean_ratios() -> None:
     assert zero == 5
 
 
+def test_recorded_tensor_properties_follow_the_field_gate() -> None:
+    accepted = 0
+    refused = 0
+    for row in _rows("PROPERTIES"):
+        tensor = _values(row[:9]).reshape((3, 3))
+        symmetric, definite = bool(row[9]), bool(row[10])
+        assert not (definite and not symmetric)
+        if not np.all(np.isfinite(tensor)):
+            assert not symmetric and not definite
+            refused += 1
+            continue
+        scale = float(np.max(np.abs(tensor)))
+        if scale == 0.0:
+            # The zero tensor is symmetric and has no positive eigenvalue.
+            assert symmetric and not definite
+            refused += 1
+            continue
+        scaled = tensor / scale
+        if not np.all(np.isfinite(0.5 * (scaled + scaled.T))):
+            continue
+        eigenvalues = np.linalg.eigvalsh(0.5 * (scaled + scaled.T))
+        largest = float(np.max(np.abs(eigenvalues)))
+        if not np.isfinite(largest * scale):
+            # An eigenvalue beyond the binary64 range: no verdict.
+            assert not symmetric and not definite
+            refused += 1
+            continue
+        tolerance = 64.0 * np.finfo(np.float64).eps * largest
+        defect = float(np.max(np.abs(scaled - scaled.T)))
+        smallest = float(eigenvalues[0])
+        # Away from the two thresholds the verdict is the reference one; at a
+        # threshold it depends on the last bits of the eigenvalues.
+        if abs(defect - tolerance) > 0.01 * tolerance:
+            assert symmetric == (defect <= tolerance)
+        if symmetric and abs(smallest - tolerance) > 0.01 * tolerance:
+            assert definite == (smallest > tolerance)
+        accepted += definite
+        refused += not definite
+    assert accepted > 35
+    assert refused > 10
+
+
+def test_recorded_congruence_defects_are_exact_up_to_rounding() -> None:
+    agreeing = 0
+    differing = 0
+    for row in _rows("CONGRUENCE"):
+        linear = [
+            [Fraction(v) for v in _values(row[3 * i : 3 * i + 3])] for i in range(3)
+        ]
+        metric_values = _values(row[9:18])
+        reference_values = _values(row[18:27])
+        error = _binary64(row[27])
+        scale = _binary64(row[28])
+        if not (
+            np.all(np.isfinite(metric_values)) and np.all(np.isfinite(reference_values))
+        ):
+            assert row[27] == _NAN_BITS and row[28] == _NAN_BITS
+            continue
+        metric = [
+            [Fraction(v) for v in metric_values[3 * i : 3 * i + 3]] for i in range(3)
+        ]
+        reference = [
+            [Fraction(v) for v in reference_values[3 * i : 3 * i + 3]] for i in range(3)
+        ]
+        image = [
+            [
+                sum(
+                    linear[k][i] * metric[k][m] * linear[m][j]
+                    for k in range(3)
+                    for m in range(3)
+                )
+                for j in range(3)
+            ]
+            for i in range(3)
+        ]
+        exact_error = max(
+            sum(abs(image[i][j] - reference[i][j]) for j in range(3)) for i in range(3)
+        )
+        exact_scale = max(
+            max(sum(abs(image[i][j]) for j in range(3)) for i in range(3)),
+            max(sum(abs(reference[i][j]) for j in range(3)) for i in range(3)),
+        )
+        slack = 64 * _UNIT_ROUNDOFF * exact_scale
+        assert abs(Fraction(error) - exact_error) <= slack
+        assert abs(Fraction(scale) - exact_scale) <= slack
+        agreeing += exact_error == 0
+        differing += exact_error > 0
+        if exact_error == 0:
+            # An exact isometry image has no defect at all.
+            assert error == 0.0
+    assert agreeing > 15
+    assert differing > 15
+
+
 @pytest.mark.parametrize(
     ("kind", "fields"),
     [
@@ -281,6 +382,8 @@ def test_recorded_qualities_are_metric_mean_ratios() -> None:
         ("BAND", 3),
         ("RELATIVE", 14),
         ("QUALITY", 17),
+        ("PROPERTIES", 11),
+        ("CONGRUENCE", 29),
     ],
 )
 def test_recorded_rows_have_their_declared_fields(kind: str, fields: int) -> None:
