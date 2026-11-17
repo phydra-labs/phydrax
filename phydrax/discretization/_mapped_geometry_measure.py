@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 import math
+from collections import OrderedDict
 from collections.abc import Iterator
 from fractions import Fraction
 from typing import Literal, NamedTuple, Sequence
@@ -59,6 +60,7 @@ from ._exact_algebraic_geometry import (
     coefficient_interval,
     coefficient_payload,
 )
+from ._exact_coordinate_bank import ExactCoordinateBank
 from ._reference_cell import reference_cell_topology
 
 
@@ -999,12 +1001,96 @@ def exact_block_cell_measures(
     return decided
 
 
+class _DyadicMappedBasis:
+    """Operation-local integer basis for exact packed coordinate combinations."""
+
+    def __init__(self, basis: tuple[Expression, ...], /) -> None:
+        self.terms: tuple[tuple[tuple[tuple[int, ...], int], ...], ...] | None = None
+        self.denominator = 1
+        if not basis or any(
+            not isinstance(value, dict)
+            or any(
+                not isinstance(coefficient, Fraction) for coefficient in value.values()
+            )
+            for value in basis
+        ):
+            return
+        denominator = 1
+        for polynomial in basis:
+            if isinstance(polynomial, dict):
+                for coefficient in polynomial.values():
+                    if isinstance(coefficient, Fraction):
+                        denominator = math.lcm(denominator, coefficient.denominator)
+        terms = []
+        for polynomial in basis:
+            if not isinstance(polynomial, dict):
+                return
+            row = []
+            for power, coefficient in polynomial.items():
+                if not isinstance(coefficient, Fraction):
+                    return
+                if coefficient:
+                    row.append(
+                        (
+                            power,
+                            coefficient.numerator
+                            * (denominator // coefficient.denominator),
+                        )
+                    )
+            terms.append(tuple(row))
+        self.denominator = denominator
+        self.terms = tuple(terms)
+
+    def combine(
+        self, significands: list[list[int]], exponents: list[list[int]], /
+    ) -> tuple[Expression, ...] | None:
+        if self.terms is None or not significands or len(significands) != len(self.terms):
+            return None
+        ambient = len(significands[0])
+        if any(len(row) != ambient for row in significands) or any(
+            exponent < -1022 or exponent > 1023 for row in exponents for exponent in row
+        ):
+            return None
+        result: list[Expression] = []
+        for axis in range(ambient):
+            active = [
+                exponents[index][axis]
+                for index, row in enumerate(significands)
+                if row[axis]
+            ]
+            minimum = min(active, default=0)
+            if active and max(active) - minimum > 128:
+                return None
+            totals: dict[tuple[int, ...], int] = {}
+            for index, (row, terms) in enumerate(
+                zip(significands, self.terms, strict=True)
+            ):
+                multiplier = (
+                    row[axis] << (exponents[index][axis] - minimum) if row[axis] else 0
+                )
+                for power, coefficient in terms:
+                    total = totals.get(power, 0) + multiplier * coefficient
+                    if total:
+                        totals[power] = total
+                    else:
+                        totals.pop(power, None)
+            denominator = self.denominator << max(-minimum, 0)
+            result.append(
+                {
+                    power: Fraction(total << max(minimum, 0), denominator)
+                    for power, total in totals.items()
+                }
+            )
+        return tuple(result)
+
+
 def _coordinate_expression_rows(
     elements: Sequence[CellGeometryElement],
     routes: Sequence[np.ndarray],
     source_bank: CoordinateSourceBank,
-    cells: Sequence[MappedGeometryCell],
     /,
+    *,
+    selected: set[int] | None = None,
 ) -> Iterator[tuple[ScalarCoordinateElement, tuple[Expression, ...]]]:
     """Share exact restricted-map and basis preparation across block cells."""
     route_banks: dict[int, np.ndarray | None] = {}
@@ -1013,39 +1099,97 @@ def _coordinate_expression_rows(
         route_banks[key] = None if key in route_banks else route
     preparations: dict[int, RestrictedCoordinateMapPreparation] = {}
     prepared_bases: dict[
-        int, tuple[tuple[Expression, ...], PreparedLinearCombinationBasis]
+        int,
+        tuple[tuple[Expression, ...], PreparedLinearCombinationBasis, _DyadicMappedBasis],
     ] = {}
-    for element, local, cell_row in cells:
+    restricted_bases: OrderedDict[
+        tuple[int, tuple[_ExactRationalChartTerms, ...]],
+        tuple[tuple[Expression, ...], PreparedLinearCombinationBasis, _DyadicMappedBasis],
+    ] = OrderedDict()
+    offset = 0
+    for element, route in zip(elements, routes, strict=True):
+        selected_rows = [
+            row
+            for row in range(len(route))
+            if selected is None or offset + row in selected
+        ]
+        offset += len(route)
+        if not selected_rows:
+            continue
         if not isinstance(element, ScalarCoordinateElement):
             raise TypeError("Mapped cell measures require scalar coordinate elements.")
-        coordinates = None
-        route_bank = route_banks.get(id(element))
-        if (
-            isinstance(element, PerCellRestrictedCellGeometryElement)
-            and route_bank is not None
-            and all(type(value) is Fraction for row in local for value in row)
-        ):
-            preparation = preparations.get(id(element))
-            if preparation is None:
-                preparation = RestrictedCoordinateMapPreparation(
-                    element, source_bank, route_bank, mode="source"
-                )
-                preparations[id(element)] = preparation
-            coordinates = preparation.expressions(cell_row)
-        if coordinates is None:
+        packed_significands: list[list[list[int]]] = []
+        packed_exponents: list[list[list[int]]] = []
+        packed_dense: list[bool] = []
+        if isinstance(source_bank, ExactCoordinateBank):
+            significands, exponents, dense = source_bank.dyadic_rows(
+                np.asarray(route, dtype=np.int64)[selected_rows]
+            )
+            packed_significands = significands.tolist()
+            packed_exponents = exponents.tolist()
+            packed_dense = np.all(dense, axis=(1, 2)).tolist()
+        for index, cell_row in enumerate(selected_rows):
+            coordinates = None
             key = id(element)
             prepared_basis = prepared_bases.get(key)
-            if prepared_basis is None or isinstance(
-                element, PerCellRestrictedCellGeometryElement
-            ):
-                basis = coordinate_effective_basis(element, cell_row=cell_row)
-                prepared_basis = (basis, PreparedLinearCombinationBasis(basis))
-                if not isinstance(element, PerCellRestrictedCellGeometryElement):
+            if not isinstance(element, PerCellRestrictedCellGeometryElement):
+                if prepared_basis is None:
+                    basis = coordinate_effective_basis(element, cell_row=cell_row)
+                    prepared_basis = (
+                        basis,
+                        PreparedLinearCombinationBasis(basis),
+                        _DyadicMappedBasis(basis),
+                    )
                     prepared_bases[key] = prepared_basis
-            coordinates = _mapped_basis_expressions(
-                prepared_basis[0], local, prepared=prepared_basis[1]
-            )
-        yield element, coordinates
+                if packed_dense and packed_dense[index]:
+                    coordinates = prepared_basis[2].combine(
+                        packed_significands[index], packed_exponents[index]
+                    )
+            elif packed_dense and packed_dense[index]:
+                chart_key = (key, element.chart_coefficients[cell_row])
+                prepared_basis = restricted_bases.get(chart_key)
+                if prepared_basis is None:
+                    basis = coordinate_effective_basis(element, cell_row=cell_row)
+                    prepared_basis = (
+                        basis,
+                        PreparedLinearCombinationBasis(basis),
+                        _DyadicMappedBasis(basis),
+                    )
+                    restricted_bases[chart_key] = prepared_basis
+                    if len(restricted_bases) > 64:
+                        restricted_bases.popitem(last=False)
+                else:
+                    restricted_bases.move_to_end(chart_key)
+                coordinates = prepared_basis[2].combine(
+                    packed_significands[index], packed_exponents[index]
+                )
+            if coordinates is None:
+                local = tuple(source_bank[int(row)] for row in route[cell_row])
+                route_bank = route_banks.get(key)
+                if (
+                    isinstance(element, PerCellRestrictedCellGeometryElement)
+                    and route_bank is not None
+                    and all(type(value) is Fraction for row in local for value in row)
+                ):
+                    preparation = preparations.get(key)
+                    if preparation is None:
+                        preparation = RestrictedCoordinateMapPreparation(
+                            element, source_bank, route_bank, mode="source"
+                        )
+                        preparations[key] = preparation
+                    coordinates = preparation.expressions(cell_row)
+                if coordinates is None:
+                    if prepared_basis is None:
+                        basis = coordinate_effective_basis(element, cell_row=cell_row)
+                        prepared_basis = (
+                            basis,
+                            PreparedLinearCombinationBasis(basis),
+                            _DyadicMappedBasis(basis),
+                        )
+                    coordinates = _mapped_basis_expressions(
+                        prepared_basis[0], local, prepared=prepared_basis[1]
+                    )
+            yield element, coordinates
 
 
 def _integrate_volume_density(
@@ -1252,8 +1396,7 @@ def certified_cell_moments(
     elements, raw_routes, _ = geometry.resolve(mesh)
     routes = tuple(np.asarray(route, dtype=np.int64) for route in raw_routes)
     source_bank = geometry.source_coordinates()
-    cells = _mapped_geometry_cells(elements, routes, source_bank)
-    count, dimension = len(cells), mesh.ambient_dimension
+    count, dimension = sum(len(route) for route in routes), mesh.ambient_dimension
     measures = np.empty((count,), dtype=np.float64)
     measure_errors = np.empty_like(measures)
     first = np.empty((count, dimension), dtype=np.float64)
@@ -1271,7 +1414,7 @@ def certified_cell_moments(
     exact = True
     jacobian_degrees: list[int | None] = []
     for row, (element, coordinates) in enumerate(
-        _coordinate_expression_rows(elements, routes, source_bank, cells)
+        _coordinate_expression_rows(elements, routes, source_bank)
     ):
         jacobian = _coordinate_jacobian(coordinates, dimension)
         density = _cancel_coordinate_factors(
@@ -1391,15 +1534,15 @@ def certified_cell_measures(
     resolved_elements, raw_routes, _ = geometry.resolve(mesh)
     resolved_routes = tuple(np.asarray(route, dtype=np.int64) for route in raw_routes)
     source_bank = geometry.source_coordinates()
-    cells = _mapped_geometry_cells(resolved_elements, resolved_routes, source_bank)
-    values = np.empty((len(cells),), dtype=np.float64)
+    count = sum(len(route) for route in resolved_routes)
+    values = np.empty((count,), dtype=np.float64)
     errors = np.empty_like(values)
     exact = True
     block_integrals = exact_block_cell_measures(mesh, geometry)
     for row, integral in block_integrals.items():
         values[row], errors[row] = _publish_integral(integral)
-    fallback_rows = [row for row in range(len(cells)) if row not in block_integrals]
-    absolute_per_cell = Fraction(absolute) / max(len(cells), 1)
+    fallback_rows = [row for row in range(count) if row not in block_integrals]
+    absolute_per_cell = Fraction(absolute) / max(count, 1)
     relative_fraction = Fraction(relative)
     embedded_integrals: dict[tuple[object, ...], tuple[float, float, bool]] = {}
 
@@ -1438,7 +1581,7 @@ def certified_cell_measures(
             resolved_elements,
             resolved_routes,
             source_bank,
-            [cells[row] for row in fallback_rows],
+            selected=set(fallback_rows),
         ),
         strict=True,
     ):
