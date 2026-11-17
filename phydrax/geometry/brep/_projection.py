@@ -29,7 +29,7 @@ from ...linalg._exact import (
 )
 from ...linalg._hermitian_spectral import fraction_sqrt_interval
 from ...typing import checked
-from .._atlas import _curve_loops_point_state, TrimEnclosures
+from .._atlas import _CoarseChordPlan, _curve_loops_point_state, TrimEnclosures
 from .._interval_enclosure import PreparedIntervalFunction
 from .._planar_embedding import PlanarEmbedding
 from .._rational import fraction_endpoint, rational_cross, rational_dot, rational_vector
@@ -126,6 +126,7 @@ class _ProjectionPreparation:
     model: BRepModel
     boxes: dict[int, np.ndarray]
     enclosures: dict[int, TrimEnclosures] = field(default_factory=dict)
+    coarse_chords: dict[int, _CoarseChordPlan | None] = field(default_factory=dict)
     lifts: dict[tuple[int, int], bool] = field(default_factory=dict)
     angle_bounds: dict[int, tuple[float, float] | None] = field(default_factory=dict)
     faces: dict[int, _PreparedFace] = field(default_factory=dict)
@@ -619,6 +620,7 @@ def _trim_classification(
     /,
     *,
     enclosures: dict[int, TrimEnclosures] | None = None,
+    coarse_chords: dict[int, _CoarseChordPlan | None] | None = None,
 ) -> int | None:
     """Classify a chart point only when every authored trim is a line p-curve."""
     from ._boolean_core import line_chart_coefficients
@@ -638,7 +640,7 @@ def _trim_classification(
                 "TrimDomain.classify points must be finite with trailing dimension two."
             )
         inside, boundary, resolved = _curve_loops_point_state(
-            domain._enclosure_loops(prepared), point
+            domain._enclosure_loops(prepared), point, coarse=coarse_chords
         )
         if not resolved:
             return None
@@ -3542,7 +3544,13 @@ def _project_face(
         trim = (
             0
             if outside_bounds
-            else _trim_classification(model, face, uv, enclosures=enclosures)
+            else _trim_classification(
+                model,
+                face,
+                uv,
+                enclosures=enclosures,
+                coarse_chords=None if preparation is None else preparation.coarse_chords,
+            )
         )
     if trim is None or trim == 0:
         # A carrier minimum whose periodic representative lies on a chart seam
