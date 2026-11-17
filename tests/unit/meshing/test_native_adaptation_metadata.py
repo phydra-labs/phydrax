@@ -109,25 +109,21 @@ def test_native_refinement_preserves_world_frame_and_oriented_source_boundary() 
 
 
 def test_bisection_preserves_shared_and_independent_scoped_fidelity() -> None:
+    from phydrax.discretization._surface_chart_records import SurfaceChartWitness
     from phydrax.geometry._source_fidelity import certify_source_fidelity
     from phydrax.meshing._bisection import BisectionCompatibility
     from phydrax.meshing._certification_inputs import (
         MeshCertificationInputs,
         ScopedFidelityInput,
     )
-    from phydrax.meshing._implicit_association_transfer import ImplicitAssociationTransfer
-    from phydrax.meshing.providers._native_sources import NativeImplicitSource
-    from tests.unit.meshing.test_source_association_transfer import (
-        _implicit_surface_result,
-        _profile,
-    )
+    from phydrax.meshing._surface_association_transfer import SurfaceAssociationTransfer
+    from tests.unit.meshing.test_transition_acceptance import tiny_chart_source
 
-    initial = _implicit_surface_result(_profile())
+    domain, initial = tiny_chart_source()
     assert initial.certification is not None
     original = initial.certification.inputs
     query, witness = original.source, original.fidelity_witness
-    assert query is not None and witness is not None
-    assert isinstance(original.feature_source, NativeImplicitSource)
+    assert query is not None and isinstance(witness, SurfaceChartWitness)
     distinct = copy(witness)
 
     def inputs(scoped: tuple[ScopedFidelityInput, ...]) -> MeshCertificationInputs:
@@ -151,7 +147,7 @@ def test_bisection_preserves_shared_and_independent_scoped_fidelity() -> None:
         )
 
     forged = copy(witness)
-    object.__setattr__(forged, "source_query_id", "forged-query")
+    object.__setattr__(forged, "domain_id", "forged-domain")
     with pytest.raises(ValueError):
         inputs(((query, forged, 0.2),))
 
@@ -160,21 +156,26 @@ def test_bisection_preserves_shared_and_independent_scoped_fidelity() -> None:
         initial.coordinate_contract,
         geometry=initial.geometry,
         certification_inputs=inputs(((query, witness, 0.2), (query, distinct, 0.19))),
+        boundary=initial.boundary,
         patches=initial.patches,
         zones=initial.zones,
         labels=initial.labels,
         attributes=initial.attributes,
         associations=initial.associations,
         surface_source=initial.surface_source,
+        region_boundary_evidence=initial.region_boundary_evidence,
+        planar_embedding=initial.planar_embedding,
     )
     result = execute_mesh_adaptation(
         prepare_mesh_adaptation(
             source,
-            MarkedMeshAdaptation(np.asarray(source.mesh.entity_set(2).entity_ids)),
+            MarkedMeshAdaptation(
+                np.asarray(source.mesh.entity_set(2).entity_ids, dtype=np.int64)
+            ),
             policy=MeshAdaptationPolicy(
                 MeshAdaptationRoute.NATIVE_BISECTION,
                 compatibility=BisectionCompatibility.UNIFORM_REFINEMENT,
-                association_transfer=ImplicitAssociationTransfer(original.feature_source),
+                association_transfer=SurfaceAssociationTransfer(domain),
             ),
         )
     )
