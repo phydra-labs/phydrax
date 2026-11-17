@@ -413,16 +413,18 @@ def _fraction(value: float, /) -> Fraction:
 def _area2(points: tuple[tuple[Fraction, Fraction], ...], /) -> Fraction:
     if len(points) < 3:
         return Fraction(0)
-    return (
-        sum(
-            (
-                first[0] * second[1] - first[1] * second[0]
-                for first, second in zip(points, (*points[1:], points[0]), strict=True)
-            ),
-            Fraction(0),
-        )
-        / 2
+    denominator = math.lcm(
+        *(coordinate.denominator for point in points for coordinate in point)
     )
+    vertices = tuple(
+        tuple(value.numerator * (denominator // value.denominator) for value in point)
+        for point in points
+    )
+    numerator = sum(
+        first[0] * second[1] - first[1] * second[0]
+        for first, second in zip(vertices, (*vertices[1:], vertices[0]), strict=True)
+    )
+    return Fraction(numerator, 2 * denominator * denominator)
 
 
 def _cross2(
@@ -431,9 +433,23 @@ def _cross2(
     point: tuple[Fraction, Fraction],
     /,
 ) -> Fraction:
-    return (second[0] - first[0]) * (point[1] - first[1]) - (second[1] - first[1]) * (
-        point[0] - first[0]
+    denominators = tuple(
+        math.lcm(vertex[0].denominator, vertex[1].denominator)
+        for vertex in (first, second, point)
     )
+    vertices = tuple(
+        (
+            vertex[0].numerator * (denominator // vertex[0].denominator),
+            vertex[1].numerator * (denominator // vertex[1].denominator),
+        )
+        for vertex, denominator in zip((first, second, point), denominators, strict=True)
+    )
+    (ax, ay), (bx, by), (cx, cy) = vertices
+    da, db, dc = denominators
+    numerator = (bx * da - ax * db) * (cy * da - ay * dc) - (by * da - ay * db) * (
+        cx * da - ax * dc
+    )
+    return Fraction(numerator, da * da * db * dc)
 
 
 def _line_intersection(
@@ -642,6 +658,7 @@ def _volume_face_owners(
             sum((point[2] for point in reference_vertices), Fraction(0))
             / len(reference_vertices),
         )
+        reference_signs: dict[int, int] = {}
         for row in range(block.cell_count):
             cell_id = int(identifiers[row])
             region = int(cell_regions[global_cell])
@@ -652,32 +669,34 @@ def _volume_face_owners(
                 )
                 grouped.setdefault(key, []).append((cell_id, region, local_face))
                 by_cell_face[(cell_id, local_face)] = key
-                points = tuple(reference_vertices[slot] for slot in slots)
-                if len(points) < 3:
-                    raise SourceCoverageUnavailable(
-                        "Target reference face has fewer than three vertices.",
-                        status="unresolved",
+                if local_face not in reference_signs:
+                    points = tuple(reference_vertices[slot] for slot in slots)
+                    if len(points) < 3:
+                        raise SourceCoverageUnavailable(
+                            "Target reference face has fewer than three vertices.",
+                            status="unresolved",
+                        )
+                    normal = _cross3((points[0], points[1], points[2]))
+                    center = (
+                        sum((point[0] for point in points), Fraction(0)) / len(points),
+                        sum((point[1] for point in points), Fraction(0)) / len(points),
+                        sum((point[2] for point in points), Fraction(0)) / len(points),
                     )
-                normal = _cross3((points[0], points[1], points[2]))
-                center = (
-                    sum((point[0] for point in points), Fraction(0)) / len(points),
-                    sum((point[1] for point in points), Fraction(0)) / len(points),
-                    sum((point[2] for point in points), Fraction(0)) / len(points),
-                )
-                outward = _dot3(
-                    normal,
-                    (
-                        center[0] - cell_center[0],
-                        center[1] - cell_center[1],
-                        center[2] - cell_center[2],
-                    ),
-                )
-                if outward == 0:
-                    raise SourceCoverageUnavailable(
-                        "Target reference face has no oriented outward normal.",
-                        status="unresolved",
+                    outward = _dot3(
+                        normal,
+                        (
+                            center[0] - cell_center[0],
+                            center[1] - cell_center[1],
+                            center[2] - cell_center[2],
+                        ),
                     )
-                face_outward_sign[(cell_id, local_face)] = 1 if outward > 0 else -1
+                    if outward == 0:
+                        raise SourceCoverageUnavailable(
+                            "Target reference face has no oriented outward normal.",
+                            status="unresolved",
+                        )
+                    reference_signs[local_face] = 1 if outward > 0 else -1
+                face_outward_sign[(cell_id, local_face)] = reference_signs[local_face]
             global_cell += 1
     if global_cell != cell_regions.size:
         raise SourceCoverageUnavailable(
@@ -2242,6 +2261,7 @@ def _cad_chart_partition(
         rooted = True
     targets_by_patch: dict[int, list[_Triangle2]] = {}
     plane_by_patch: dict[int, bool] = {}
+    plane_chart_ids: dict[int, str | None] = {}
     patch_rows: list[int] = []
     for row, (source_chart_id, source_entity_id, occurrence) in enumerate(
         zip(
@@ -2262,8 +2282,12 @@ def _cad_chart_partition(
             ) from error
         plane = source_chart_id != source_entity_id
         if plane:
-            plane_chart = exact_plane_chart(domain, patch)
-            if plane_chart is None or source_chart_id != plane_chart.chart_id:
+            if patch not in plane_chart_ids:
+                plane_chart = exact_plane_chart(domain, patch)
+                plane_chart_ids[patch] = (
+                    None if plane_chart is None else plane_chart.chart_id
+                )
+            if source_chart_id != plane_chart_ids[patch]:
                 raise SourceCoverageUnavailable(
                     "CAD source chart and authored face identity differ.",
                     status="violated",

@@ -57,6 +57,87 @@ _CadFaceRow = tuple[int, _Triangle2, _ReferenceTriangle3, int, int]
 _PhysicalTriangle3 = tuple[_Point3, _Point3, _Point3]
 
 
+def _reference_area(polygon: tuple[_Point2, ...]) -> Fraction:
+    if len(polygon) < 3:
+        return Fraction(0)
+    return (
+        sum(
+            (
+                a[0] * b[1] - a[1] * b[0]
+                for a, b in zip(polygon, (*polygon[1:], polygon[0]), strict=True)
+            ),
+            Fraction(0),
+        )
+        / 2
+    )
+
+
+def _reference_intersection(subject: _Triangle2, clip: _Triangle2) -> Fraction:
+    def cross(a: _Point2, b: _Point2, p: _Point2) -> Fraction:
+        return (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
+
+    orientation = _reference_area(clip)
+    if orientation == 0:
+        return Fraction(0)
+    if orientation < 0:
+        clip = (clip[2], clip[1], clip[0])
+    polygon: tuple[_Point2, ...] = subject
+    for a, b in zip(clip, (*clip[1:], clip[0]), strict=True):
+        if not polygon:
+            return Fraction(0)
+        result: list[_Point2] = []
+        previous = polygon[-1]
+        previous_side = cross(a, b, previous)
+        for current in polygon:
+            current_side = cross(a, b, current)
+            if (current_side >= 0) != (previous_side >= 0):
+                t = previous_side / (previous_side - current_side)
+                result.append(
+                    (
+                        previous[0] + t * (current[0] - previous[0]),
+                        previous[1] + t * (current[1] - previous[1]),
+                    )
+                )
+            if current_side >= 0:
+                result.append(current)
+            previous, previous_side = current, current_side
+        polygon = tuple(result)
+    return abs(_reference_area(polygon))
+
+
+def test_random_exact_intersections_match_reference() -> None:
+    rng = np.random.default_rng(5821)
+    triangles: list[_Triangle2] = []
+
+    def coordinate() -> Fraction:
+        return Fraction(int(rng.integers(-8, 9)), int(rng.integers(1, 10)))
+
+    for _ in range(60):
+        triangles.append(
+            (
+                (coordinate(), coordinate()),
+                (coordinate(), coordinate()),
+                (coordinate(), coordinate()),
+            )
+        )
+    zero, one = Fraction(0), Fraction(1)
+    base = ((zero, zero), (one, zero), (zero, one))
+    triangles.extend(
+        (
+            base,
+            base,
+            ((one, zero), (one, one), (zero, one)),
+            ((one, zero), (one + Fraction(1, 10**20), zero), (one, one)),
+        )
+    )
+    rows = tuple(triangles)
+    for i, first in enumerate(rows):
+        assert _area2(first) == _reference_area(first)
+        for j in range(i + 1, len(rows)):
+            expected = _reference_intersection(first, rows[j])
+            assert _intersection_area(first, rows[j]) == expected
+
+
 def test_exact_chart_intersection_handles_clockwise_root_and_target() -> None:
     zero, one, half = Fraction(0), Fraction(1), Fraction(1, 2)
     root = ((zero, zero), (one, zero), (zero, one))
