@@ -512,15 +512,21 @@ def test_quadratic_tetra_block_interval_preserves_fallback_and_parent() -> None:
     )
 
 
-def test_quadratic_tetra_screen_randomized_native_parity_and_chunks(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    program = validity_module._tetra_screen_interval_program()
-    if program is None:
-        pytest.skip("native batched interval execution is unavailable")
+def test_quadratic_tetra_screen_randomized_reference_and_chunks() -> None:
+    from math import prod
+
+    from phydrax.geometry._interval_enclosure import (
+        interval_add,
+        interval_multiply,
+        interval_sqrt,
+        interval_square,
+        interval_subtract,
+    )
+
     rng = np.random.default_rng(83491)
     element = D.fem.lagrange_element("tetrahedron", 2)
     basis = cell_geometry_module.coordinate_source_basis(element)
+    assert basis is not None
     nodes = np.asarray(element.reference_nodes, dtype=np.float64)
     cells = nodes[None, :, :] + rng.normal(0.0, 0.025, size=(80, 10, 3))
     cells[::5, :, 0] *= -1.0
@@ -529,6 +535,73 @@ def test_quadratic_tetra_screen_randomized_native_parity_and_chunks(
     routes = np.arange(points.shape[0], dtype=np.int64).reshape((-1, 10))
     policy = D.CellValidityPolicy()
 
+    vertices = ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1))
+    gradients = np.empty((10, 3, 4), dtype=np.float64)
+    for dof, polynomial in enumerate(basis):
+        assert isinstance(polynomial, dict)
+        for axis in range(3):
+            for vertex, point in enumerate(vertices):
+                value = sum(
+                    (
+                        coefficient
+                        * exponent[axis]
+                        * prod(
+                            Fraction(point[i]) ** (exponent[i] - (i == axis))
+                            for i in range(3)
+                        )
+                        for exponent, coefficient in polynomial.items()
+                        if exponent[axis]
+                    ),
+                    Fraction(0),
+                )
+                gradients[dof, axis, vertex] = float(value)
+                assert Fraction(gradients[dof, axis, vertex]) == value
+
+    columns = []
+    for axis in range(3):
+        total = None
+        for dof in range(10):
+            point_interval = (
+                bounds[0][routes[:, dof], None, :],
+                bounds[1][routes[:, dof], None, :],
+            )
+            gradient = gradients[dof, axis][None, :, None]
+            term = interval_multiply(point_interval, (gradient, gradient))
+            total = term if total is None else interval_add(total, term)
+        assert total is not None
+        columns.append((np.min(total[0], axis=1), np.max(total[1], axis=1)))
+    matrix = tuple(
+        tuple((columns[col][0][:, row], columns[col][1][:, row]) for col in range(3))
+        for row in range(3)
+    )
+    determinant = None
+    for col in range(3):
+        first = interval_multiply(matrix[1][(col + 1) % 3], matrix[2][(col + 2) % 3])
+        second = interval_multiply(matrix[1][(col + 2) % 3], matrix[2][(col + 1) % 3])
+        term = interval_multiply(matrix[0][col], interval_subtract(first, second))
+        determinant = term if determinant is None else interval_add(determinant, term)
+    assert determinant is not None
+    floor = np.asarray(policy.determinant_floor(), dtype=np.float64)
+    floor_bound = (floor, floor)
+    for col in range(3):
+        norm_squared = interval_add(
+            interval_add(
+                interval_square(matrix[0][col]), interval_square(matrix[1][col])
+            ),
+            interval_square(matrix[2][col]),
+        )
+        floor_bound = interval_multiply(floor_bound, interval_sqrt(norm_squared))
+    lower = np.asarray(determinant[0], dtype=np.float64).reshape(-1)
+    upper = np.asarray(determinant[1], dtype=np.float64).reshape(-1)
+    floor_upper = np.asarray(floor_bound[1], dtype=np.float64).reshape(-1)
+    accepted = (
+        np.isfinite(lower)
+        & np.isfinite(upper)
+        & np.isfinite(floor_upper)
+        & (lower > floor_upper)
+    )
+    expected = (accepted, lower, upper)
+
     def screen(selected: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         result = validity_module._quadratic_tetra_block_screen(
             element, "tetrahedron", basis, selected, bounds, policy
@@ -536,43 +609,34 @@ def test_quadratic_tetra_screen_randomized_native_parity_and_chunks(
         assert result is not None
         return result
 
-    native = screen(routes)
+    actual = screen(routes)
     chunks = [screen(routes[start : start + 7]) for start in range(0, len(routes), 7)]
     for index in range(3):
+        np.testing.assert_array_equal(actual[index], expected[index])
         np.testing.assert_array_equal(
-            native[index], np.concatenate([x[index] for x in chunks])
+            actual[index], np.concatenate([chunk[index] for chunk in chunks])
         )
-    compiled = program.native_program
-    assert compiled is not None
-    original_evaluate = validity_module.PreparedIntervalFunction.evaluate
+    faulty_lower = lower.copy()
+    faulty_lower[0] = np.nextafter(faulty_lower[0], np.inf)
+    with pytest.raises(AssertionError):
+        np.testing.assert_array_equal(actual[1], faulty_lower)
 
-    def evaluate_parallel(
-        self: validity_module.PreparedIntervalFunction,
-        lower: np.ndarray,
-        upper: np.ndarray,
-        /,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        if self is program:
-            return compiled.evaluate_batch(lower, upper, workers=4)
-        return original_evaluate(self, lower, upper)
 
-    with monkeypatch.context() as patch:
-        patch.setattr(
-            validity_module.PreparedIntervalFunction, "evaluate", evaluate_parallel
-        )
-        parallel = screen(routes)
-    for actual, expected in zip(parallel, native, strict=True):
-        np.testing.assert_array_equal(actual, expected)
-    with monkeypatch.context() as patch:
-        patch.setattr(validity_module, "_tetra_screen_interval_program", lambda: None)
-        host = screen(routes)
-    for actual, expected in zip(native, host, strict=True):
-        np.testing.assert_array_equal(actual, expected)
-    geometry = CellGeometrySpec({"cells": element}, {"cells": routes}, points)
-    native_certificate = D.certify_cell_geometry_validity(geometry)
-    with monkeypatch.context() as patch:
-        patch.setattr(validity_module, "_tetra_screen_interval_program", lambda: None)
-        host_certificate = D.certify_cell_geometry_validity(geometry)
+def test_quadratic_tetra_screen_certificate_consumer_chunks() -> None:
+    rng = np.random.default_rng(90471)
+    element = D.fem.lagrange_element("tetrahedron", 2)
+    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
+    cells = nodes[None, :, :] + rng.normal(0.0, 0.025, size=(20, 10, 3))
+    cells[::5, :, 0] *= -1.0
+
+    def certify(selected: np.ndarray) -> Any:
+        points = selected.reshape((-1, 3))
+        routes = np.arange(len(points), dtype=np.int64).reshape((-1, 10))
+        geometry = CellGeometrySpec({"cells": element}, {"cells": routes}, points)
+        return D.certify_cell_geometry_validity(geometry)
+
+    certificate = certify(cells)
+    chunks = [certify(cells[start : start + 7]) for start in range(0, len(cells), 7)]
     for name in (
         "status",
         "execution_status",
@@ -585,43 +649,9 @@ def test_quadratic_tetra_screen_randomized_native_parity_and_chunks(
         "source_depth",
     ):
         np.testing.assert_array_equal(
-            np.asarray(getattr(native_certificate, name)),
-            np.asarray(getattr(host_certificate, name)),
+            np.asarray(getattr(certificate, name)),
+            np.concatenate([np.asarray(getattr(chunk, name)) for chunk in chunks]),
         )
-
-
-def test_quadratic_tetra_screen_detects_inward_endpoint_fault(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    program = validity_module._tetra_screen_interval_program()
-    if program is None:
-        pytest.skip("native batched interval execution is unavailable")
-    element = D.fem.lagrange_element("tetrahedron", 2)
-    basis = cell_geometry_module.coordinate_source_basis(element)
-    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
-    routes = np.arange(10, dtype=np.int64).reshape((1, 10))
-    policy = D.CellValidityPolicy()
-    expected = validity_module._quadratic_tetra_block_screen(
-        element, "tetrahedron", basis, routes, (nodes, nodes), policy
-    )
-    assert expected is not None
-
-    class InwardProgram:
-        def evaluate(
-            self, lower: np.ndarray, upper: np.ndarray
-        ) -> tuple[np.ndarray, np.ndarray]:
-            lo, hi = program.evaluate(lower, upper)
-            lo[:, 0] = np.nextafter(lo[:, 0], np.inf)
-            hi[:, 0] = np.nextafter(hi[:, 0], -np.inf)
-            return lo, hi
-
-    monkeypatch.setattr(validity_module, "_tetra_screen_interval_program", InwardProgram)
-    faulty = validity_module._quadratic_tetra_block_screen(
-        element, "tetrahedron", basis, routes, (nodes, nodes), policy
-    )
-    assert faulty is not None
-    assert np.any(faulty[1] != expected[1])
-    assert np.any(faulty[2] != expected[2])
 
 
 def test_quadratic_tetra_block_distinguishes_exact_source_and_execution() -> None:
