@@ -258,10 +258,17 @@
   exactly cancelling interior traces and an embedded shell make the map
   injective, so interior cell pairs are no longer proved one by one. A planar
   shell needs no cell-pair proof at all; a curved shell needs exact contact
-  proofs only among the cells that own its facets. The shell may have any
-  genus. Meshes with cavities or several components keep the complete
-  cell-pair proof. Certificate checks, witnesses and identities change
-  accordingly.
+  proofs only among the cells that own its facets, and only those cells owe a
+  mapped-cell injectivity proof. The shell may have any genus. Meshes with
+  cavities or several components keep the complete cell-pair proof.
+  Certificate checks, witnesses and identities change accordingly.
+- CAD source coverage and curving repeat less work, with unchanged decisions:
+  chart coverage converts block connectivity once per block and prepares the
+  overlap boxes and corner enclosures once per triangle bank instead of once
+  per 64-row block; the source shell proof is kept for a live chart bank and
+  tolerance; exact straight-map evaluation shares one image per geometry node
+  instead of one per cell; and a mapped cell's contact chart reuses its
+  prepared image bounds.
 - Exact geometric decisions are screened in binary64 before exact arithmetic,
   with unchanged results. The native zero-set band admission refuses a triangle
   as soon as its largest-residual point cannot be certified and reuses identical
