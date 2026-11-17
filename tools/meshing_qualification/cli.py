@@ -22,6 +22,14 @@ _PROFILE_MERGERS = {
         ".scenarios.native_cad_profiles",
         "merge_native_cad_profile_selections",
     ),
+    "native-hybrid-layer-matrix": (
+        ".scenarios.native_hybrid_profiles",
+        "merge_native_hybrid_layer_profile_selections",
+    ),
+    "native-reconstruction": (
+        ".scenarios.reconstruction",
+        "merge_native_reconstruction_selections",
+    ),
 }
 _PROFILE_SELECTABLE = tuple(_PROFILE_MERGERS)
 
@@ -56,14 +64,12 @@ def _invoke(
             elif name in (
                 "native-general-families",
                 "native-planar-feature-matrix",
-                "native-hybrid-layer-matrix",
                 "native-periodic-profile-matrix",
                 "native-constrained-solids",
                 "native-design-loop",
                 "native-tpms",
                 "native-polyhedral",
                 "native-moving-overset",
-                "native-reconstruction",
                 "native-image-material",
                 "native-implicit-adaptation",
                 "native-distributed-lifecycle",
