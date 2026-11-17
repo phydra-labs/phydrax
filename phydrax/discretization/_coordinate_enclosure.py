@@ -1217,8 +1217,9 @@ class PreparedSimplexPolynomial:
         else:
             self.numerator = None
             self.denominator = None
-            controls = bernstein_coefficients(expression, "simplex", dimension)
-            self.degree = bernstein_degree(expression, "simplex", dimension)[0]
+            value, degree = _controls_input(expression, "simplex", dimension, None)
+            controls = bernstein_coefficients(value, "simplex", dimension, degree=degree)
+            self.degree = degree[0]
             self.lower = np.asarray(
                 [
                     coefficient_endpoint(value, upper=False, saturate=True)
