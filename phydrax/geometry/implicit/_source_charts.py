@@ -4101,6 +4101,9 @@ class _FaceSetup:
     # Digest of everything the face proof reads; ``None`` when a coefficient
     # has no canonical exact spelling.
     identity_key: bytes | None
+    corner_points: list[tuple[bytes, ...]] = field(
+        default_factory=list, compare=False, repr=False
+    )
 
 
 def _face_identity_key(
@@ -4219,16 +4222,20 @@ def _face_setup(
 
 
 def _face_corner_point_bytes(setup: _FaceSetup) -> tuple[bytes, ...]:
-    return tuple(
-        np.asarray(
+    if not setup.corner_points:
+        setup.corner_points.append(
             tuple(
-                float(evaluate_expression(expression, corner))
-                for expression in setup.cell_expressions
-            ),
-            dtype=np.float64,
-        ).tobytes()
-        for corner in setup.reference_corners
-    )
+                np.asarray(
+                    tuple(
+                        float(evaluate_expression(expression, corner))
+                        for expression in setup.cell_expressions
+                    ),
+                    dtype=np.float64,
+                ).tobytes()
+                for corner in setup.reference_corners
+            )
+        )
+    return setup.corner_points[0]
 
 
 def _face_root_corners(
