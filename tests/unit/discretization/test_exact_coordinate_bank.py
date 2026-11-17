@@ -157,42 +157,42 @@ def test_interval_endpoints_match_directed_exact_coefficients() -> None:
     np.testing.assert_array_equal(upper.view(np.uint64), expected_upper.view(np.uint64))
 
 
-def test_interval_endpoints_reject_an_inexact_binary64_proposal(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    values = ((Fraction(1), Fraction(-3, 8), Fraction(1, 2**1074)),)
-    bank = ExactCoordinateBank.from_rows(values)
-    monkeypatch.setattr(
-        ExactCoordinateBank,
-        "_interval_proposals",
-        lambda self: np.zeros(self.shape, dtype=np.float64),
+def test_interval_endpoints_reject_an_inexact_binary64_proposal() -> None:
+    values = (
+        (Fraction(1), Fraction(-3, 8), Fraction(1, 2**1074)),
+        (Fraction(2**53 + 1), Fraction(-(2**53 + 1)), Fraction(1, 2**1075)),
     )
+    bank = ExactCoordinateBank.from_rows(values)
     lower, upper = bank.interval_endpoints()
-    expected = np.asarray(values, dtype=np.float64)
-    np.testing.assert_array_equal(lower.view(np.uint64), expected.view(np.uint64))
-    np.testing.assert_array_equal(upper.view(np.uint64), expected.view(np.uint64))
+    minimum = float.fromhex("0x0.0000000000001p-1022")
+    expected_lower = np.asarray(
+        ((1.0, -0.375, minimum), (float(2**53), -float(2**53 + 2), 0.0)),
+        dtype=np.float64,
+    )
+    expected_upper = np.asarray(
+        ((1.0, -0.375, minimum), (float(2**53 + 2), -float(2**53), minimum)),
+        dtype=np.float64,
+    )
+    np.testing.assert_array_equal(lower.view(np.uint64), expected_lower.view(np.uint64))
+    np.testing.assert_array_equal(upper.view(np.uint64), expected_upper.view(np.uint64))
+    assert np.all(lower[1] < upper[1])
 
 
-def test_interval_endpoints_reject_wrapped_significand_proposals(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_interval_endpoints_reject_wrapped_significand_proposals() -> None:
     exact = Fraction((2**62 + 2**50 + 1) * 4)
     bank = ExactCoordinateBank.from_rows(((exact, -exact),))
     proposal = float.fromhex("0x1.0000000000004p+52")
-    monkeypatch.setattr(
-        ExactCoordinateBank,
-        "_interval_proposals",
-        lambda self: np.asarray(((proposal, -proposal),), dtype=np.float64),
-    )
-    lower, upper = bank.interval_endpoints()
-    for axis, value in enumerate((exact, -exact)):
-        assert lower[0, axis] == coefficient_endpoint(value, upper=False, saturate=True)
-        assert upper[0, axis] == coefficient_endpoint(value, upper=True, saturate=True)
+    proposals = np.asarray(((proposal, -proposal),), dtype=np.float64)
+    lower, upper = bank._verified_interval_endpoints(proposals)
+    below = float.fromhex("0x1.0010000000000p+64")
+    above = float.fromhex("0x1.0010000000001p+64")
+    expected_lower = np.asarray(((below, -above),), dtype=np.float64)
+    expected_upper = np.asarray(((above, -below),), dtype=np.float64)
+    np.testing.assert_array_equal(lower.view(np.uint64), expected_lower.view(np.uint64))
+    np.testing.assert_array_equal(upper.view(np.uint64), expected_upper.view(np.uint64))
 
 
-def test_interval_endpoints_reject_invalid_shift_proposals(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_interval_endpoints_reject_invalid_shift_proposals() -> None:
     values = (
         Fraction(1),
         Fraction(-1),
@@ -211,24 +211,17 @@ def test_interval_endpoints_reject_invalid_shift_proposals(
         ),
         dtype=np.float64,
     )
-    monkeypatch.setattr(
-        ExactCoordinateBank, "_interval_proposals", lambda self: proposals.copy()
-    )
-    lower, upper = bank.interval_endpoints()
-    expected = np.asarray((values,), dtype=np.float64)
+    lower, upper = bank._verified_interval_endpoints(proposals)
+    minimum = float.fromhex("0x0.0000000000001p-1022")
+    expected = np.asarray(((1.0, -1.0, minimum, -minimum),), dtype=np.float64)
     np.testing.assert_array_equal(lower.view(np.uint64), expected.view(np.uint64))
     np.testing.assert_array_equal(upper.view(np.uint64), expected.view(np.uint64))
 
 
-def test_interval_endpoints_reject_discarded_bits_and_wrong_sign(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_interval_endpoints_reject_discarded_bits_and_wrong_sign() -> None:
     bank = ExactCoordinateBank.from_rows(((Fraction(3), Fraction(-3)),))
     proposal = np.asarray(((np.nextafter(3.0, np.inf), 3.0),), dtype=np.float64)
-    monkeypatch.setattr(
-        ExactCoordinateBank, "_interval_proposals", lambda self: proposal.copy()
-    )
-    lower, upper = bank.interval_endpoints()
+    lower, upper = bank._verified_interval_endpoints(proposal)
     expected = np.asarray(((3.0, -3.0),), dtype=np.float64)
     np.testing.assert_array_equal(lower.view(np.uint64), expected.view(np.uint64))
     np.testing.assert_array_equal(upper.view(np.uint64), expected.view(np.uint64))

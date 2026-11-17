@@ -124,3 +124,84 @@ def test_curved_contact_certificates_with_exact_contact_oracles(
         )
     else:
         assert certificate.status == "certified", certificate.findings
+
+
+def _shared_edge_certificate(
+    selected: tuple[int, ...],
+) -> tuple[str, tuple[str, ...]]:
+    vertices = np.asarray(
+        (
+            (0, 0, 0),
+            (0, 0, 1),
+            (1, 0, 0),
+            (0, 1, 0),
+            (-1, 1, 0),
+            (-1, -1, 0),
+            (1, -1, 0),
+            (2, -1, 0),
+        ),
+        dtype=np.float64,
+    )
+    cells = ((0, 1, 2, 3), (0, 1, 4, 5), (0, 1, 6, 7))
+    element = lagrange_element("tetrahedron", 2)
+    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
+
+    def image(points: np.ndarray) -> np.ndarray:
+        x, y, z = points.T
+        return np.column_stack((x + y * z / 8, y, z))
+
+    identifiers = sorted({vertex for index in selected for vertex in cells[index]})
+    local = {identifier: row for row, identifier in enumerate(identifiers)}
+    connectivity = np.asarray(
+        [[local[vertex] for vertex in cells[index]] for index in selected], dtype=np.int32
+    )
+    mesh = CellMesh(
+        image(vertices[identifiers]),
+        (
+            CellBlock(
+                "curved",
+                "tetrahedron",
+                connectivity,
+                global_ids=np.asarray([10 + index for index in selected], dtype=np.int64),
+            ),
+        ),
+        vertex_global_ids=np.asarray(identifiers, dtype=np.int64),
+    )
+    coordinates = []
+    routes = []
+    for index in selected:
+        corners = vertices[np.asarray(cells[index], dtype=np.int64)]
+        reference = corners[0] + nodes @ (corners[1:] - corners[0])
+        start = len(coordinates)
+        coordinates.extend(image(reference))
+        routes.append(tuple(range(start, len(coordinates))))
+    geometry = CellGeometrySpec(
+        {"curved": element},
+        {"curved": np.asarray(routes, dtype=np.int32)},
+        np.asarray(coordinates, dtype=np.float64),
+    )
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    certificate = embedding.certify_global_embedding(mesh, geometry, validity)
+    assert validity.all_certified and certificate.status == "certified"
+    evidence = tuple(
+        value
+        for witness in certificate.witnesses
+        for value in witness.exact_values
+        if value.startswith("cell-pair:")
+    )
+    return certificate.certificate_id, evidence
+
+
+def test_shared_edge_certificate_matches_independent_pair_proofs() -> None:
+    combined, values = _shared_edge_certificate((0, 1, 2))
+    first, first_values = _shared_edge_certificate((0, 1))
+    second, second_values = _shared_edge_certificate((0, 2))
+    assert (combined, first, second) == (
+        "e7bdde70079a6c4d0cdad06908c25250f694a80063cdb4f99c31ba3e29f0f170",
+        "9422c999aa1c227826527065f2d115dc31a008121e561bd0399a861b458d2d9f",
+        "e39cd5b18a98ed30838891a6cd501026f74df6a0b69199465046a7d04716bc3f",
+    )
+    assert first_values == tuple(value for value in values if "cell-pair:10:11:" in value)
+    assert second_values == tuple(
+        value for value in values if "cell-pair:10:12:" in value
+    )

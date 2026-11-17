@@ -1114,7 +1114,10 @@ def test_parametric_surface_feature_preserves_requested_fidelity(hard: bool) -> 
         assert observed <= base.maximum_deviation
 
 
-def test_public_parametric_surface_protected_feature() -> None:
+@pytest.mark.parametrize("same_tolerance", (True, False))
+def test_public_parametric_surface_protected_feature(
+    same_tolerance: bool, tmp_path: Path
+) -> None:
     from phydrax.meshing import NativeMeshingOptions, NativeMeshingProvider
 
     domain = _square_domain()
@@ -1124,7 +1127,7 @@ def test_public_parametric_surface_protected_feature() -> None:
         base.target,
         base.scope,
         size_controls=base.size_controls,
-        maximum_deviation=base.maximum_deviation,
+        maximum_deviation=0.003 if same_tolerance else base.maximum_deviation,
         protected_features=(feature,),
     )
     result = (
@@ -1135,6 +1138,48 @@ def test_public_parametric_surface_protected_feature() -> None:
     key = f"feature:{feature.feature_id}:maximum_deviation"
     assert dict(result.compliance.requested)[key] == 0.003
     assert dict(result.compliance.achieved)[key] <= 0.003
+    report = result.certification
+    assert report is not None
+    assert report.passed
+    assert report.fidelity is not None
+    assert len(report.scoped_fidelity) == 1
+    primary = report.fidelity
+    scoped = report.scoped_fidelity[0]
+    assert primary.status == scoped.status == "certified"
+    assert primary.source_cell_global_ids == scoped.source_cell_global_ids
+    assert primary.source_patch_ids == scoped.source_patch_ids
+    assert primary.witness is not None and scoped.witness is not None
+    assert primary.witness.witness_id == scoped.witness.witness_id
+    if same_tolerance:
+        assert primary.certificate_id == scoped.certificate_id
+        assert primary.findings == scoped.findings
+        from phydrax.meshing._model_codec import (
+            read_model_artifact,
+            restore_model_archive_value,
+            write_model_artifact,
+        )
+        from phydrax.meshing._result import CellMeshingResult
+
+        path = tmp_path / "surface-feature.phx"
+        write_model_artifact(path, result, limits=None)
+        restored = read_model_artifact(
+            path,
+            expected_type=CellMeshingResult,
+            restore=restore_model_archive_value,
+            limits=None,
+        )
+        assert restored.result_id == result.result_id
+        assert restored.certification is not None
+        assert restored.certification.report_id == report.report_id
+        assert restored.certification.fidelity is not None
+        assert restored.certification.fidelity.certificate_id == primary.certificate_id
+        assert (
+            restored.certification.scoped_fidelity[0].certificate_id
+            == scoped.certificate_id
+        )
+    else:
+        assert primary.tolerance != scoped.tolerance
+        assert primary.certificate_id != scoped.certificate_id
 
 
 def test_surface_feature_scope_does_not_tighten_an_unselected_curved_patch() -> None:
@@ -1212,6 +1257,18 @@ def test_surface_feature_scope_does_not_tighten_an_unselected_curved_patch() -> 
     assert set(np.asarray(certificate.source_cell_global_ids).tolist()) == set(
         np.asarray(witness.cell_global_ids)[np.asarray(witness.patches) == 0].tolist()
     )
+    assert construction.certification.fidelity_source is not None
+    assert construction.certification.fidelity_tolerance is not None
+    primary = certify_source_fidelity(
+        construction.mesh,
+        construction.geometry,
+        construction.certification.fidelity_source,
+        tolerance=construction.certification.fidelity_tolerance,
+        witness=construction.certification.fidelity_witness,
+    )
+    assert primary.status == "certified"
+    assert set(certificate.source_cell_global_ids) < set(primary.source_cell_global_ids)
+    assert certificate.certificate_id != primary.certificate_id
     assert dict(construction.compliance.achieved)["maximum_deviation"] > 0.0
     incomplete = SurfaceChartWitness(
         geometry_id=witness.geometry_id,

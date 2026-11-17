@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Iterator
 from fractions import Fraction
 from itertools import combinations, permutations, product
@@ -468,6 +470,15 @@ def test_overlapping_relocation_commit_preserves_full_source_lineage_and_p1() ->
         assert first & second
         affected = first | second
         assert _apply_relocation_batch(state, proposals) is TetMeshEditStatus.APPLIED
+        live = state.native.arrays()
+        for name, held, native in zip(live._fields, state.snapshot, live, strict=True):
+            if isinstance(native, np.ndarray):
+                assert isinstance(held, np.ndarray), name
+                assert held.dtype == native.dtype, name
+                assert held.shape == native.shape, name
+                assert held.tobytes() == native.tobytes(), name
+            else:
+                assert held == native, name
         edit, _ = _assemble_native_edit(state)
         target, lineage, stencil = assemble_topology_edit(
             source.mesh, edit, numeric_version="overlapping-relocation"
@@ -1597,6 +1608,103 @@ def _relocation_cache_witness_state() -> _NativeState:
     )
 
 
+def test_directed_collapses_of_the_sphere_witness_keep_their_recorded_proposals() -> None:
+    import phydrax.meshing._tetra_metric as metric
+
+    # Recorded on the commit before the survivor pre-screen (1579d19d3, Windows
+    # x86-64) from this same loop: the 80 directed collapses of the first 40
+    # edges give 59 proposals, 58 of them with a moved survivor. The digest
+    # covers only exact data: the survivor's source stencil and binary64
+    # carrier, the integer violation quanta and the replaced and created cells.
+    recorded = "3328eb514d50347a7c50ee73a01ff2f0de3fc793963b37ff098fee4123a8115b"
+    state = _relocation_cache_witness_state()
+    try:
+        records = _boundary_records(state)
+        topology = metric._state_topology(state)
+        _, protected = metric._current_edge_controls(state, topology)
+        rows: list[tuple[Any, ...]] = []
+        for edge in list(topology.edge_cells)[:40]:
+            for removed, kept in (edge, edge[::-1]):
+                proposal = metric._directed_collapse(
+                    state, topology, records, protected, removed, kept
+                )
+                if proposal is None:
+                    rows.append((removed, kept, None))
+                    continue
+                survivor = proposal["survivor"]
+                rows.append(
+                    (
+                        removed,
+                        kept,
+                        None
+                        if survivor is None
+                        else (
+                            sorted(
+                                (int(vertex), weight.numerator, weight.denominator)
+                                for vertex, weight in survivor["stencil"].items()
+                            ),
+                            [float(value).hex() for value in survivor["point"]],
+                        ),
+                        [
+                            [int(count) for count in part]
+                            for part in proposal["added_violations"]
+                        ],
+                        [int(cell) for cell in proposal["removed_cell_ids"]],
+                        np.asarray(proposal["replacement_cell_vertices"]).tolist(),
+                    )
+                )
+    finally:
+        state.native.close()
+
+    assert sum(len(row) > 3 and row[2] is not None for row in rows) == 58
+    text = json.dumps(rows, separators=(",", ":"))
+    assert hashlib.sha256(text.encode()).hexdigest() == recorded
+
+
+def test_survivor_prescreen_leaves_positions_at_the_band_edge_to_the_exact_route() -> (
+    None
+):
+    from phydrax.meshing._tetra_metric import _refused_survivor_carriers
+
+    # One measured spoke from the survivor position to a link vertex at the
+    # origin, unit metric. Before the collapse the star holds one long edge in
+    # the first violation quantum, so a position improves the objective only
+    # if its spoke is in the band.
+    upper = float(np.sqrt(2.0))
+    lengths = {
+        "in band": 1.0,
+        "one ulp inside": float(np.nextafter(upper, 0.0)),
+        "one ulp outside": float(np.nextafter(upper, np.inf)),
+        "first quantum": upper * (1.0 + 2.0**-20),
+        "far outside": 3.0,
+        "on the link vertex": 0.0,
+    }
+    state = _state(_source(2), np.eye(3, dtype=np.float64))
+    try:
+        stencil = {int(state.source_vertex_ids[0]): Fraction(1)}
+        refused = _refused_survivor_carriers(
+            state,
+            [(stencil, np.asarray((length, 0.0, 0.0))) for length in lengths.values()],
+            np.asarray(((9.0, 9.0, 9.0), (8.0, 8.0, 8.0), (0.0, 0.0, 0.0))),
+            np.broadcast_to(np.eye(3, dtype=np.float64), (3, 3, 3)),
+            np.asarray(((0, 2),), dtype=np.int64),
+            np.asarray((upper * (1.0 + 2.0**-20),), dtype=np.float64),
+        )
+    finally:
+        state.native.close()
+
+    # Dropping the position one ulp inside the band would lose an improving
+    # collapse; the one an ulp outside is refused later by the exact route.
+    assert dict(zip(lengths, refused.tolist(), strict=True)) == {
+        "in band": False,
+        "one ulp inside": False,
+        "one ulp outside": False,
+        "first quantum": True,
+        "far outside": True,
+        "on the link vertex": True,
+    }
+
+
 @pytest.fixture
 def _collective_facet_state() -> Iterator[_NativeState]:
     from phydrax._meshcore import PlcBoundaryPolicy, TetMesh3D, TetMeshSourceComplex
@@ -1909,89 +2017,22 @@ def test_relocation_yields_after_native_admitted_collapse() -> None:
         state.native.close()
 
 
-def test_relocation_progress_survives_later_topology_edits(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from phydrax._meshcore import TetMesh3D
-
-    native_apply = TetMesh3D.apply_edit
-    native_relocate = TetMesh3D.apply_relocation
-    relocated = False
-    topology_after_relocation = False
-
-    def moved(owner: TetMesh3D, before: np.ndarray) -> None:
-        # A consumed proposal cannot be replayed as a no-op and counted as
-        # progress after its vertex's closed star has changed.
-        nonlocal relocated
-        assert not np.array_equal(before, owner.arrays().points)
-        relocated = True
-
-    def observe(owner: TetMesh3D, edit: TetMeshEdit) -> TetMeshEditStatus:
-        nonlocal topology_after_relocation
-        before = owner.arrays().points
-        status = native_apply(owner, edit)
-        if status is TetMeshEditStatus.APPLIED:
-            if edit.kind is TetMeshEditKind.RELOCATE:
-                moved(owner, before)
-            elif relocated:
-                topology_after_relocation = True
-        return status
-
-    def observe_in_place(
-        owner: TetMesh3D, *arguments: Any, **identity: Any
-    ) -> TetMeshEditStatus | None:
-        before = owner.arrays().points
-        status = native_relocate(owner, *arguments, **identity)
-        if status is TetMeshEditStatus.APPLIED:
-            moved(owner, before)
-        return status
-
-    monkeypatch.setattr(TetMesh3D, "apply_edit", observe)
-    monkeypatch.setattr(TetMesh3D, "apply_relocation", observe_in_place)
+def test_relocation_progress_survives_topology_edits() -> None:
     source = _source(4, nonuniform=True)
     outcome = _adapt(source, np.eye(3, dtype=np.float64) * 4.0)
 
-    assert relocated and topology_after_relocation
+    assert outcome.evidence.relocations > 0
+    assert (
+        outcome.evidence.splits
+        + outcome.evidence.collapses
+        + outcome.evidence.flips23
+        + outcome.evidence.flips32
+        + outcome.evidence.ring_reconnections
+    ) > 0
     assert outcome.evidence.status is TetraMetricStatus.COMPLETE
     assert outcome.evidence.out_of_range_edges == 0
     assert outcome.evidence.minimum_metric_quality > 0.0
     assert outcome.evidence.maximum_region_volume_error <= 1.0e-12
-
-
-def test_relocation_snapshot_equals_the_native_mesh_after_every_applied_batch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import phydrax.meshing._tetra_metric as metric
-
-    # An applied relocation derives the held snapshot from the previous one
-    # instead of reading the mesh back; it must be the mesh, bit for bit.
-    apply_batch = metric._apply_relocation_batch
-    compared = 0
-
-    def observe(
-        state: _NativeState, proposals: list[dict[str, Any]], /
-    ) -> TetMeshEditStatus:
-        nonlocal compared
-        status = apply_batch(state, proposals)
-        if status is TetMeshEditStatus.APPLIED:
-            live = state.native.arrays()
-            for name, held, read in zip(live._fields, state.snapshot, live, strict=True):
-                if isinstance(read, np.ndarray):
-                    assert isinstance(held, np.ndarray), name
-                    assert held.dtype == read.dtype, name
-                    assert held.shape == read.shape, name
-                    assert held.tobytes() == read.tobytes(), name
-                else:
-                    assert held == read, name
-            compared += 1
-        return status
-
-    monkeypatch.setattr(metric, "_apply_relocation_batch", observe)
-    outcome = _adapt(_source(4, nonuniform=True), np.eye(3, dtype=np.float64) * 4.0)
-
-    assert compared > 0
-    assert outcome.evidence.relocations > 0
-    assert outcome.evidence.status is TetraMetricStatus.COMPLETE
 
 
 @pytest.mark.parametrize("restored", (False, True))

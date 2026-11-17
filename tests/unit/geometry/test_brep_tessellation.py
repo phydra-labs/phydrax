@@ -213,6 +213,58 @@ def test_local_span_reuse_requires_unchanged_brep_source() -> None:
     assert cold.surface_spans(reversed_incidence.patches[0]) is not original
 
 
+def test_tessellation_rebinds_equal_rebuilt_model_preparation() -> None:
+    from copy import copy
+
+    model = brep_box(
+        (0.0, 0.0, 0.0),
+        (1.0, 1.0, 1.0),
+        coordinate_contract=SpatialCoordinateContract.si(),
+    )
+    preparation = SourcePreparation(MeshingDomain.from_brep(model))
+    rebuilt = copy(model)
+    assert rebuilt is not model and rebuilt.model_id == model.model_id
+    policy = _policy(linear=0.1, angular=0.5)
+    prepared_mesh, prepared_proof = tessellate_brep_model(
+        model, policy, preparation=preparation
+    )
+    rebuilt_mesh, rebuilt_proof = tessellate_brep_model(
+        rebuilt, policy, preparation=preparation
+    )
+    fresh_mesh, fresh_proof = tessellate_brep_model(rebuilt, policy)
+    np.testing.assert_array_equal(rebuilt_mesh.vertices, fresh_mesh.vertices)
+    np.testing.assert_array_equal(rebuilt_mesh.triangles, fresh_mesh.triangles)
+    assert prepared_proof.status == rebuilt_proof.status == fresh_proof.status == "certified"
+    np.testing.assert_array_equal(prepared_mesh.vertices, fresh_mesh.vertices)
+    canonical = preparation.domain
+    alternate = MeshingDomain(
+        canonical.patches,
+        canonical.curves,
+        canonical.corner_count,
+        source_id=canonical.source_id,
+        source_revision=canonical.source_revision,
+        regions=canonical.regions,
+        tolerance=canonical.tolerance,
+        accuracy="bounded_approximation",
+        source_indices=canonical.source_indices,
+        source_occurrences=canonical.source_occurrences,
+        region_source_indices=canonical.region_source_indices,
+        region_source_occurrences=canonical.region_source_occurrences,
+        source_kinds=canonical.source_kinds,
+        authority_id=canonical.authority_id,
+        brep_authority=model,
+        corner_points=canonical.corner_points,
+    )
+    assert alternate.brep_authority is model
+    assert alternate.accuracy != canonical.accuracy
+    alternate_mesh, alternate_proof = tessellate_brep_model(
+        model, policy, preparation=SourcePreparation(alternate)
+    )
+    np.testing.assert_array_equal(alternate_mesh.vertices, fresh_mesh.vertices)
+    np.testing.assert_array_equal(alternate_mesh.triangles, fresh_mesh.triangles)
+    assert alternate_proof.certificate_id == fresh_proof.certificate_id
+
+
 def _offset_ruled_model(contract: SpatialCoordinateContract) -> BRepModel:
     source = brep_planar_face(
         PlanarProfile(

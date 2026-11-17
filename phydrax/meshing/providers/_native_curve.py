@@ -2662,6 +2662,13 @@ class _PreparedCurveRoute(StrictModule, NonTrainableState):
         fidelity_source = (
             None if fidelity_tolerance is None else _curve_source_query(prepared)
         )
+        fidelity_witness = (
+            None
+            if fidelity_source is None
+            else _curve_chart_witness(
+                mesh, geometry, fidelity_source, prepared, cell_rows, cell_parameters
+            )
+        )
         junction_rows = np.flatnonzero(vertex_junctions >= 0)
         junction_vertices = np.asarray(
             [np.asarray(mesh.vertex_global_ids)[row] for row in junction_rows],
@@ -2673,19 +2680,30 @@ class _PreparedCurveRoute(StrictModule, NonTrainableState):
                 continue
             feature_ids = np.asarray(feature.scope.entity_ids, dtype=np.int64)
             if feature.feature_kind is FeatureKind.CURVE:
-                feature_query = _curve_source_query(prepared, feature_ids)
                 selected_cells = np.flatnonzero(
                     np.isin(prepared.scope_entity_ids[cell_rows], feature_ids)
                 )
-                feature_witness = _curve_chart_witness(
-                    mesh,
-                    geometry,
-                    feature_query,
-                    prepared,
-                    cell_rows,
-                    cell_parameters,
-                    selected_cells,
-                )
+                if (
+                    fidelity_source is not None
+                    and fidelity_witness is not None
+                    and np.array_equal(feature_ids, prepared.scope_entity_ids)
+                    and np.array_equal(
+                        selected_cells, np.arange(cell_rows.size, dtype=np.int64)
+                    )
+                ):
+                    feature_query = fidelity_source
+                    feature_witness = fidelity_witness
+                else:
+                    feature_query = _curve_source_query(prepared, feature_ids)
+                    feature_witness = _curve_chart_witness(
+                        mesh,
+                        geometry,
+                        feature_query,
+                        prepared,
+                        cell_rows,
+                        cell_parameters,
+                        selected_cells,
+                    )
                 scoped_fidelity.append(
                     (feature_query, feature_witness, feature.maximum_deviation)
                 )
@@ -2711,18 +2729,7 @@ class _PreparedCurveRoute(StrictModule, NonTrainableState):
             scoped_fidelity=tuple(scoped_fidelity),
             junction_vertices=junction_vertices if junction_rows.size else None,
             protected_features=self.specification.protected_features,
-            fidelity_witness=(
-                None
-                if fidelity_source is None
-                else _curve_chart_witness(
-                    mesh,
-                    geometry,
-                    fidelity_source,
-                    prepared,
-                    cell_rows,
-                    cell_parameters,
-                )
-            ),
+            fidelity_witness=fidelity_witness,
             feature_source=self.source,
         )
         stages = (
