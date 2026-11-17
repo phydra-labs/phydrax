@@ -555,6 +555,99 @@ def _square_domain() -> MeshingDomain:
     )
 
 
+def test_domain_owned_arrays_are_immutable_without_changing_identity() -> None:
+    domain = _square_domain()
+    assert domain.domain_id == (
+        "00add01a9bed07d989197c916150069460d2f3d497ec8d340123976dd96181c7"
+    )
+    for array in (domain.corner_points, domain.curve_owners, *domain.scope_entity_id_banks):
+        with pytest.raises(ValueError):
+            array.setflags(write=True)
+    np.testing.assert_array_equal(
+        np.asarray(jnp.asarray(domain.corner_points)), domain.corner_points
+    )
+    assert domain.require_current().reusable
+
+
+def test_domain_validation_detects_mutated_readonly_owning_curve_array() -> None:
+    class MutableCurve(AbstractCurve):
+        coefficients: np.ndarray
+
+        def __init__(self) -> None:
+            self.coefficients = np.asarray((1.0,), dtype=np.float64)
+            self.coefficients.setflags(write=False)
+
+        @property
+        def ambient_dimension(self) -> int:
+            return 2
+
+        def evaluate(self, parameters: Array, /) -> Array:
+            return jnp.stack(
+                (parameters * self.coefficients[0], jnp.zeros_like(parameters)), axis=-1
+            )
+
+    base = _square_domain()
+    curve = MutableCurve()
+    original = base.patches[0].loops[0]
+    uses = (PatchCurveUse(0, curve, 0.0, 1.0), *original[1:])
+    domain = MeshingDomain(
+        (MeshingSurfacePatch(base.patches[0].surface, (uses,)),),
+        base.curves,
+        base.corner_count,
+        source_id="mutable-curve-source",
+        source_revision="r1",
+        corner_points=base.corner_points,
+    )
+    validated = domain.require_current()
+    domain.require_current(validated=validated)
+    curve.coefficients.setflags(write=True)
+    curve.coefficients[0] = 2.0
+    with pytest.raises(ValueError, match="content changed"):
+        domain.require_current(validated=validated)
+
+
+def test_rebuilt_restriction_query_reprepares_its_live_root_domain() -> None:
+    from copy import copy
+
+    from phydrax.geometry._source_fidelity import certify_source_fidelity
+    from phydrax.geometry._surface_source_support import (
+        SurfaceNativeRestrictionBoundarySource,
+    )
+    from phydrax.meshing.providers import NativeMeshingProvider
+    from tools.meshing_qualification.scenarios.native_family_matrix import (
+        _CONTRACT,
+        _quarter_surface_case,
+    )
+
+    case = _quarter_surface_case(4)
+    result = (
+        NativeMeshingProvider(case.options)
+        .plan(case.source, case.specification, coordinate_contract=_CONTRACT)
+        .execute()
+    )
+    assert result.certification is not None
+    inputs = result.certification.inputs
+    source = inputs.source
+    assert isinstance(source, SurfaceNativeRestrictionBoundarySource)
+    assert inputs.fidelity_witness is not None
+    assert inputs.fidelity_tolerance is not None
+    root_domain = copy(source.root.domain)
+    assert root_domain is not source.domain
+    assert root_domain.domain_id == source.domain.domain_id
+    root = MeshingDomainBoundarySource(root_domain, source.root.patches)
+    query = SurfaceNativeRestrictionBoundarySource(root, source.support, source.mesh, source.geometry)
+    fresh = certify_source_fidelity(
+        source.mesh, source.geometry, query, tolerance=inputs.fidelity_tolerance,
+        witness=inputs.fidelity_witness,
+    )
+    carried = certify_source_fidelity(
+        source.mesh, source.geometry, query, tolerance=inputs.fidelity_tolerance,
+        witness=inputs.fidelity_witness, preparation=SourcePreparation(source.domain),
+    )
+    assert carried.status == fresh.status == "certified"
+    assert carried.certificate_id == fresh.certificate_id
+
+
 def _rational_spline_surfaces() -> tuple[BSplineSurfacePatch, TSplineSurfacePatch]:
     zero = Fraction(0)
     one = Fraction(1)

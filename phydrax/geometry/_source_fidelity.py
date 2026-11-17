@@ -481,6 +481,30 @@ def _surface_chart_witness_root(
     return None
 
 
+def _preparation_for_chart_root(
+    source: SourceBoundaryQuery,
+    root: MeshingDomainBoundarySource,
+    preparation: SourcePreparation | None,
+    /,
+) -> SourcePreparation:
+    """Reprepare an explicitly retained support domain for its distinct query root."""
+    if preparation is not None and preparation.domain is not root.domain:
+        from ..meshing._surface_boundary_sources import SurfaceChartBoundarySource
+        from ._surface_source_support import SurfaceNativeRestrictionBoundarySource
+        from .reconstruction._boundary import ReconstructedTriangleBoundarySource
+
+        if isinstance(
+            source, (SurfaceChartBoundarySource, SurfaceNativeRestrictionBoundarySource)
+        ) and preparation.domain is source.domain:
+            return SourcePreparation(root.domain)
+        if (
+            isinstance(source, ReconstructedTriangleBoundarySource)
+            and preparation.domain is source.source.meshing_domain
+        ):
+            return SourcePreparation(root.domain)
+    return SourcePreparation.of(root.domain, preparation)
+
+
 def _validate_surface_root_mesh_bindings(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -1628,7 +1652,7 @@ def _validate_source_fidelity_witness(
         findings = _partition_findings(
             domain_source,
             witness,
-            SourcePreparation.of(domain_source.domain, preparation),
+            _preparation_for_chart_root(source, domain_source, preparation),
             exact_target_charts=exact_charts,
         )
         if any(finding.status != "certified" for finding in findings):
@@ -1808,7 +1832,7 @@ def _validate_source_fidelity_witness(
         findings = _partition_findings(
             domain_source,
             witness,
-            SourcePreparation.of(domain_source.domain, preparation),
+            _preparation_for_chart_root(source, domain_source, preparation),
             checked_current=True,
             source_chart_rows=source_chart_rows,
         )
@@ -1851,7 +1875,7 @@ def _validate_source_fidelity_witness(
                 domain_source.require_current()
             source_chart_rows = _surface_source_chart_rows(domain_source, witness)
             _, charts, _ = source_chart_rows
-            preparation = SourcePreparation.of(domain_source.domain, preparation)
+            preparation = _preparation_for_chart_root(source, domain_source, preparation)
             findings = _partition_findings(
                 domain_source,
                 witness,
@@ -6192,7 +6216,7 @@ def _certify_domain_surface_chart_fidelity(
     from ._source_interpolation import certify_domain_surface_charts
 
     domain_source = _surface_query_root(source)
-    preparation = SourcePreparation.of(domain_source.domain, preparation)
+    preparation = _preparation_for_chart_root(source, domain_source, preparation)
 
     target_rows: tuple[tuple[int, int], ...] | None = None
     if (
@@ -6982,7 +7006,7 @@ def certify_source_fidelity(
                 ),
             ),
         )
-    preparation = SourcePreparation.of(domain_source.domain, preparation)
+    preparation = _preparation_for_chart_root(source, domain_source, preparation)
     coverage = domain_source.boundary_chart_cover(preparation=preparation)
     findings = list(coverage.findings)
     if not coverage.complete or coverage.semantics != "certified" or findings:

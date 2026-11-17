@@ -901,6 +901,9 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Source preparations bind their cached artifacts to one live domain; rebuilt
+  domains use a fresh preparation. Domain-owned host arrays now have immutable
+  storage, so validated-domain reuse cannot be bypassed by enabling writes.
 - The error bound that lets a filtered geometric predicate report a certain
   sign formed an integer power through the platform `pow` with no margin. It
   is built by repeated multiplication rounded upward on the host and the
