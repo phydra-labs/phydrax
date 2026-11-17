@@ -33,6 +33,26 @@ SortedFace sorted_face(const std::int32_t* vertices) {
   std::sort(result.begin(), result.end());
   return result;
 }
+FacetCoverageBounds facet_bounds(const double* a, const double* b, const double* c) {
+  FacetCoverageBounds result{};
+  for (int axis = 0; axis < 3; ++axis) {
+    result.lower[axis] = std::min({a[axis], b[axis], c[axis]});
+    result.upper[axis] = std::max({a[axis], b[axis], c[axis]});
+  }
+  for (int axis = 0; axis < 3; ++axis) {
+    const int u = (axis + 1) % 3;
+    const int v = (axis + 2) % 3;
+    const double pa[2]{a[u], a[v]};
+    const double pb[2]{b[u], b[v]};
+    const double pc[2]{c[u], c[v]};
+    if (orient2d(pa, pb, pc) != 0) {
+      result.nondegenerate = true;
+      break;
+    }
+  }
+  return result;
+}
+
 
 bool addressable_count(std::size_t count, std::size_t width) {
   return width == 0 || count <= std::numeric_limits<std::size_t>::max() / width;
@@ -507,6 +527,31 @@ int32_t TetMesh::build_state(std::span<const double> points,
       return PHX_MC_INVALID_INPUT;
     }
   }
+  // Build this once for the construction pass; retain source-bank row order
+  // so coverage and its first-refusal behavior are unchanged.
+  std::map<std::int32_t, PreparedFacetGroup> source_groups;
+  for (std::size_t row = 0; row < source_face_groups_.size(); ++row) {
+    auto& group = source_groups[source_face_groups_[row]];
+    if (group.rows.empty()) {
+      const std::int32_t source = source_face_groups_[row];
+      const bool implicit = implicit_source_ &&
+          std::binary_search(implicit_source_->groups.begin(), implicit_source_->groups.end(),
+                             source);
+      group.prepare_bounds = !implicit && !declared_groups_.contains(source);
+    }
+    group.rows.push_back(row);
+    group.primitives.push_back({source_faces_[3 * row], source_faces_[3 * row + 1],
+                                source_faces_[3 * row + 2], static_cast<std::int32_t>(row)});
+    group.indices.push_back(static_cast<std::int32_t>(group.indices.size()));
+    if (group.prepare_bounds) {
+      const auto* face = source_faces_.data() + 3 * row;
+      group.bounds.push_back(facet_bounds(
+          source_points_.data() + 3 * static_cast<std::size_t>(face[0]),
+          source_points_.data() + 3 * static_cast<std::size_t>(face[1]),
+          source_points_.data() + 3 * static_cast<std::size_t>(face[2])));
+    }
+  }
+  const PreparedFacetGroup no_source_rows;
   for (std::size_t row = 0; row < face_count; ++row) {
     const TetSnapshotFacet& face = facets_[row];
     TetEditFacet candidate;
@@ -515,7 +560,9 @@ int32_t TetMesh::build_state(std::span<const double> points,
     candidate.source = face.source;
     candidate.orientation = face.orientation;
     candidate.protected_facet = face.protected_facet;
-    if (!source_face_valid(candidate)) return PHX_MC_INVALID_INPUT;
+    const auto source_rows = source_groups.find(face.source);
+    const auto& group = source_rows == source_groups.end() ? no_source_rows : source_rows->second;
+    if (!source_face_valid(candidate, nullptr, &group)) return PHX_MC_INVALID_INPUT;
   }
   for (std::size_t row = 0; row < segment_count; ++row) {
     const TetSnapshotSegment& segment = segments_[row];

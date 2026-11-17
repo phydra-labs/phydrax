@@ -23,6 +23,7 @@
 
 #include "boundary_policy.hpp"
 #include "cavity.hpp"
+#include "facet_coverage.hpp"
 #include "plc3d.hpp"
 #include "source_construction.hpp"
 #include "zero_set_admission.hpp"
@@ -32,6 +33,7 @@ namespace detail {
 class LocalIncidence;
 }
 struct TetQualityRequest;
+using TetSegmentIndex = std::map<std::array<std::uint64_t, 2>, std::size_t>;
 
 enum class TetEditKind : std::uint8_t {
   kSplit,
@@ -612,7 +614,8 @@ class TetMesh {
       bool star_verified);
   // Called only by LocalIncidence for an interior quality reconnection or
   // collapse; validation and commit touch only the cavity and its boundary.
-  TetEditStatus replace_local_cavity(const TetEdit& operation);
+  TetEditStatus replace_local_cavity(const TetEdit& operation,
+                                    const TetSegmentIndex* segment_index);
   // Called by refinement and improvement: cones a star-shaped cavity to one
   // new interior vertex; created cell IDs are returned in cone order. The
   // cone buries exactly the cavity vertices `removed_vertices` (sorted
@@ -621,7 +624,8 @@ class TetMesh {
   TetEditStatus insert_local_cone(const TetEditVertex& vertex,
                                   std::span<const std::int32_t> cavity,
                                   std::span<const std::int32_t> removed_vertices,
-                                  std::vector<std::uint64_t>& created_cells);
+                                  std::vector<std::uint64_t>& created_cells,
+                                  const TetSegmentIndex* segment_index);
   // Called by refinement through LocalIncidence: inserts the source-witnessed
   // vertex `vertex` into a constrained facet, or into the constrained segment
   // of `segment_rows` (at most one row). `cavity` holds the finite and hull
@@ -636,7 +640,8 @@ class TetMesh {
                                             std::span<const std::int32_t> cavity,
                                             std::span<const std::size_t> facet_rows,
                                             std::span<const std::size_t> segment_rows,
-                                            std::vector<std::uint64_t>& created_cells);
+                                            std::vector<std::uint64_t>& created_cells,
+                                            const TetSegmentIndex* segment_index);
   // Called by refinement: the cavity of the constrained boundary point
   // `vertex` (carrier and source witness) whose disk faces are `disk_sides`
   // (finite cell, face slot), cells on both sides of their facets, splitting
@@ -647,11 +652,12 @@ class TetMesh {
   TetCavityStatus boundary_insertion_cavity(
       const TetEditVertex& vertex, std::span<const std::pair<std::int32_t, int>> disk_sides,
       std::array<std::int32_t, 2> split_segment, std::span<const std::int32_t> segment_star,
-      std::vector<std::int32_t>& cells) const;
+      std::vector<std::int32_t>& cells, const TetSegmentIndex* segment_index) const;
   // Called by refinement and improvement: the star-shaped cavity of `point`
   // reached by walking from cell slot `start`.
   TetCavityStatus insertion_cavity(std::int32_t start, const double* point,
-                                   bool keep_walk, TetInsertionCavity& cavity) const;
+                                   bool keep_walk, TetInsertionCavity& cavity,
+                                   const TetSegmentIndex* segment_index = nullptr) const;
   // Replaces the retained size field by `sizes` (one value per vertex of
   // `current`, in snapshot order; 0 leaves a vertex unconstrained) unless
   // `sizes` is empty, which keeps the retained field.
@@ -661,7 +667,8 @@ class TetMesh {
   // True if an edge of `removed_slots` absent from `kept_edges` (local edge
   // keys) is a constrained segment.
   bool removes_constrained_segment(std::span<const std::int32_t> removed_slots,
-                                   const std::set<std::uint64_t>& kept_edges) const;
+                                   const std::set<std::uint64_t>& kept_edges,
+                                   const TetSegmentIndex* segment_index) const;
   TetEditStatus apply_one_edit(const TetEdit& operation, TetEditResult& result);
   TetEditStatus validate_and_commit(TetMesh& staged, const TetEdit& operation,
                                     TetEditResult& result);
@@ -698,9 +705,17 @@ class TetMesh {
   bool declared_face_valid(const DeclaredGroup& group, const double* const* carriers,
                            const SourceWitness* const* witness_records,
                            std::int8_t orientation) const;
+  struct PreparedFacetGroup {
+    std::vector<std::size_t> rows;
+    std::vector<std::array<std::int32_t, 4>> primitives;
+    std::vector<std::int32_t> indices;
+    std::vector<FacetCoverageBounds> bounds;
+    bool prepare_bounds = false;
+  };
   bool source_carrier_valid(const TetEditVertex& vertex) const;
   bool source_face_valid(const TetEditFacet& facet,
-                         const RelocationOverlay* overlay = nullptr) const;
+                         const RelocationOverlay* overlay = nullptr,
+                         const PreparedFacetGroup* group = nullptr) const;
   TetEditStatus source_face_refusal_status() const noexcept {
     return implicit_source_ && implicit_source_->last_inconclusive
                ? TetEditStatus::kUncertainPredicate : TetEditStatus::kInvalidGeometry;

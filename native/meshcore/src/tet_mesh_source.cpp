@@ -866,7 +866,8 @@ bool TetMesh::declared_face_valid(const DeclaredGroup& group, const double* cons
 }
 
 bool TetMesh::source_face_valid(const TetEditFacet& facet,
-                                const RelocationOverlay* overlay) const {
+                                const RelocationOverlay* overlay,
+                                const PreparedFacetGroup* group) const {
   if (implicit_source_) implicit_source_->last_inconclusive = false;
   if (facet.source < 0 || (facet.orientation != 1 && facet.orientation != -1)) return false;
   std::array<std::int32_t, 3> slots{};
@@ -947,17 +948,21 @@ bool TetMesh::source_face_valid(const TetEditFacet& facet,
     return declared_face_valid(declared->second, carriers, witness_records, facet.orientation);
   }
 
-  std::vector<std::array<std::int32_t, 4>> primitives;
-  std::vector<std::int32_t> rows;
-  primitives.reserve(source_faces_.size() / 3);
-  rows.reserve(source_faces_.size() / 3);
-  for (std::size_t row = 0; row < source_faces_.size() / 3; ++row) {
-    if (source_face_groups_[row] != facet.source) continue;
-    // Coverage uses only the first three fields; retain the exact bank row in slot four.
-    primitives.push_back({source_faces_[3 * row], source_faces_[3 * row + 1],
-                          source_faces_[3 * row + 2], static_cast<std::int32_t>(row)});
-    rows.push_back(static_cast<std::int32_t>(primitives.size() - 1));
+  PreparedFacetGroup local;
+  const bool prepared = group != nullptr;
+  if (!prepared) {
+    local.primitives.reserve(source_faces_.size() / 3);
+    local.indices.reserve(source_faces_.size() / 3);
+    for (std::size_t row = 0; row < source_faces_.size() / 3; ++row) {
+      if (source_face_groups_[row] != facet.source) continue;
+      local.primitives.push_back({source_faces_[3 * row], source_faces_[3 * row + 1],
+                                  source_faces_[3 * row + 2], static_cast<std::int32_t>(row)});
+      local.indices.push_back(static_cast<std::int32_t>(local.indices.size()));
+    }
+    group = &local;
   }
+  const auto& primitives = group->primitives;
+  const auto& rows = group->indices;
   if (rows.empty()) return false;
 
   double subject[9];
@@ -971,8 +976,10 @@ bool TetMesh::source_face_valid(const TetEditFacet& facet,
     exact_carriers = exact_carriers && witness.deviation == 0.0;
   }
   std::vector<std::int32_t> contributors;
-  if (exact_carriers && exact_facet_coverage(subject, source_points_.data(), primitives,
-                                              rows, contributors) && !contributors.empty()) {
+  if (exact_carriers &&
+      exact_facet_coverage(subject, source_points_.data(), primitives, rows, contributors,
+                           group->bounds) &&
+      !contributors.empty()) {
     // Coverage returns local primitive rows; slot four maps each to the source bank.
     // Unrelated triangles in one authored group can have different normals.
     for (std::int32_t contributor : contributors) {
@@ -1036,7 +1043,9 @@ bool TetMesh::source_face_valid(const TetEditFacet& facet,
     }
   }
 
-  for (std::size_t row = 0; row < source_faces_.size() / 3; ++row) {
+  const std::size_t count = prepared ? group->rows.size() : source_faces_.size() / 3;
+  for (std::size_t index = 0; index < count; ++index) {
+    const std::size_t row = prepared ? group->rows[index] : index;
     if (source_face_groups_[row] != facet.source) continue;
     if (point_deviations[0] > source_face_tolerances_[row] ||
         point_deviations[1] > source_face_tolerances_[row] ||

@@ -1267,7 +1267,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       return PHX_MC_INTERNAL_ERROR;
     }
   }
-  std::map<EdgeKey, std::size_t> segment_rows_by_edge;
+  TetSegmentIndex segment_rows_by_edge;
   for (std::size_t row = 0; row < mesh.segments_.size(); ++row) {
     const TetSnapshotSegment& segment = mesh.segments_[row];
     if (!segment_rows_by_edge
@@ -1276,6 +1276,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       return PHX_MC_INTERNAL_ERROR;
     }
   }
+  incidence.bind_segment_index(segment_rows_by_edge);
   // Embedded segments: constrained segments on no constrained face (a curve
   // inside a region). No cavity boundary face carries one, so its
   // encroachment is tested on the cells around a center, its split cavity is
@@ -1854,7 +1855,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
         segment_star.assign(star.begin(), star.end());
       }
       if (mesh.boundary_insertion_cavity(inserted, disk_sides, split_slots, segment_star,
-                                         boundary_cavity) != TetCavityStatus::kFound) {
+                                         boundary_cavity, &segment_rows_by_edge) != TetCavityStatus::kFound) {
         continue;
       }
       cavity_vertices.clear();
@@ -2278,7 +2279,8 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       }
     }
 
-    const TetCavityStatus located = mesh.insertion_cavity(root_slot, center, true, cavity);
+    const TetCavityStatus located = mesh.insertion_cavity(root_slot, center, true, cavity,
+                                                          &segment_rows_by_edge);
     if (located == TetCavityStatus::kRefused) {
       unmet_causes[cell_id] = embedded_protected >= 0
                                   ? input_angle(embedded_protected)
