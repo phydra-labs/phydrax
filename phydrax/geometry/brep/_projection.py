@@ -133,6 +133,12 @@ class _ProjectionPreparation:
     edges: dict[int, _PreparedEdge] = field(default_factory=dict)
     plane_jacobians: dict[int, np.ndarray] = field(default_factory=dict)
     line_derivatives: dict[int, np.ndarray] = field(default_factory=dict)
+    circle_endpoints: dict[int, tuple[np.ndarray, np.ndarray]] = field(
+        default_factory=dict
+    )
+    circle_endpoint_derivatives: dict[tuple[int, bool], np.ndarray] = field(
+        default_factory=dict
+    )
     curve_programs: dict[int, PreparedIntervalFunction | None] = field(
         default_factory=dict
     )
@@ -1068,10 +1074,18 @@ def _line_curve_hit(
         parameter = _periodic_parameter(candidate, first, last, tau)
         if parameter is None:
             endpoints = (first, last)
-            values = [
-                np.asarray(curve.evaluate(jnp.asarray(value)), dtype=np.float64)
-                for value in endpoints
-            ]
+            values = (
+                None if preparation is None else preparation.circle_endpoints.get(edge)
+            )
+            if values is None:
+                # Endpoint comparisons choose the active trim; retain the fixed
+                # scalar realization rather than substitute interval endpoints.
+                values = tuple(
+                    np.asarray(curve.evaluate(jnp.asarray(value)), dtype=np.float64)
+                    for value in endpoints
+                )
+                if preparation is not None:
+                    preparation.circle_endpoints[edge] = (values[0], values[1])
             nearest = int(np.argmin([np.sum((value - point) ** 2) for value in values]))
             parameter = endpoints[nearest]
             closest = values[nearest]
@@ -1096,6 +1110,13 @@ def _line_curve_hit(
             if preparation is not None and isinstance(curve, (LineCurve, ExactLineCurve))
             else None
         )
+        endpoint_key = (
+            (edge, parameter == last)
+            if isinstance(curve, CircleCurve) and parameter in (first, last)
+            else None
+        )
+        if derivative is None and preparation is not None and endpoint_key is not None:
+            derivative = preparation.circle_endpoint_derivatives.get(endpoint_key)
         if (
             derivative is None
             and spline_projection is not None
@@ -1111,6 +1132,8 @@ def _line_curve_hit(
             )
             if preparation is not None and isinstance(curve, (LineCurve, ExactLineCurve)):
                 preparation.line_derivatives[edge] = derivative
+            if preparation is not None and endpoint_key is not None:
+                preparation.circle_endpoint_derivatives[endpoint_key] = derivative
         derivative_length = float(np.linalg.norm(derivative))
         tangent = derivative / derivative_length if derivative_length else _NAN3.copy()
         tangents = np.stack((tangent, _NAN3))

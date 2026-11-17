@@ -487,6 +487,76 @@ def test_circle_edge_frames_preserve_identity_across_batch_sizes() -> None:
     assert isolated.result_id == single.result_id
 
 
+def test_trimmed_circle_endpoint_projection_is_batch_independent() -> None:
+    from phydrax.geometry.brep._constructors import (
+        brep_extrusion,
+        PlanarProfile,
+        ProfileArc,
+        ProfileLoop,
+        ProfilePlane,
+    )
+    from phydrax.geometry.brep._patches import CircleCurve
+
+    profile = PlanarProfile(
+        ProfilePlane(),
+        ProfileLoop(
+            ((0.0, -4.0), (0.0, 4.0)),
+            (ProfileArc((-3.0, 0.0)), ProfileArc((3.0, 0.0))),
+        ),
+    )
+    model = brep_extrusion(profile, (0.0, 0.0, 2.0), coordinate_contract=_CONTRACT)
+    geometry = model.geometry
+    edge = next(
+        index
+        for index, carrier in enumerate(geometry.edge_curves)
+        if carrier >= 0
+        and isinstance(geometry.curves[carrier], CircleCurve)
+        and 0.0 < geometry.edge_ranges[index][1] - geometry.edge_ranges[index][0] < np.pi
+    )
+    curve = geometry.curves[geometry.edge_curves[edge]]
+    assert isinstance(curve, CircleCurve)
+    first, last = np.asarray(geometry.edge_ranges[edge], dtype=np.float64)
+    angles = np.asarray((first - 0.1, last + 0.1))
+    center = np.asarray(curve.center)
+    axis0, axis1 = np.asarray(curve.first_axis), np.asarray(curve.second_axis)
+    radius = float(curve.radius)
+    points = center + 2.0 * radius * (
+        np.cos(angles)[:, None] * axis0 + np.sin(angles)[:, None] * axis1
+    )
+    projection = phx.geometry.prepare_brep_projection(model)
+    result = _project(projection, points, _EDGE, edge)
+    repeated = _project(projection, np.tile(points, (3, 1)), _EDGE, edge)
+    np.testing.assert_array_equal(result.status, [_STATUS.SEAM, _STATUS.SEAM])
+    np.testing.assert_array_equal(np.asarray(result.parameters)[:, 0], (first, last))
+    for name in (
+        "points",
+        "parameters",
+        "status",
+        "distance_lower_bounds",
+        "residuals",
+        "normals",
+        "tangents",
+    ):
+        np.testing.assert_array_equal(
+            np.asarray(getattr(repeated, name))[:2], np.asarray(getattr(result, name))
+        )
+    for row, point in enumerate(points):
+        single = _project(projection, [point], _EDGE, edge)
+        for name in (
+            "points",
+            "parameters",
+            "status",
+            "distance_lower_bounds",
+            "residuals",
+            "normals",
+            "tangents",
+        ):
+            np.testing.assert_array_equal(
+                np.asarray(getattr(single, name))[0],
+                np.asarray(getattr(result, name))[row],
+            )
+
+
 def test_intersection_edge_frames_follow_both_cylinders_across_batches(
     monkeypatch: Any,
 ) -> None:
@@ -573,6 +643,29 @@ def test_intersection_edge_frames_follow_both_cylinders_across_batches(
     np.testing.assert_allclose(
         fallback.tangents, single.tangents, atol=1e-12, equal_nan=True
     )
+    monkeypatch.setattr(_intersection_projection, "project_intersection_curve", original)
+    monkeypatch.setattr(
+        _intersection_projection, "_chart_point_and_tangent", lambda *args: None
+    )
+    refused = _project(projection, points[:1], _EDGE, edge)
+    np.testing.assert_array_equal(refused.status, single.status)
+    np.testing.assert_allclose(refused.points, single.points, atol=1e-12)
+    np.testing.assert_allclose(refused.tangents, single.tangents, atol=1e-12, equal_nan=True)
+
+    monkeypatch.setattr(
+        _intersection_projection,
+        "_chart_point_and_tangent",
+        lambda *args: (points[0] + 1.0, np.asarray((1.0, 0.0, 0.0))),
+    )
+    wrong = _project(projection, points[:1], _EDGE, edge)
+    squared = sum(
+        (
+            (Fraction.from_float(float(a)) - Fraction.from_float(float(b))) ** 2
+            for a, b in zip(wrong.points[0], points[0], strict=True)
+        ),
+        Fraction(0),
+    )
+    assert Fraction.from_float(float(wrong.residuals[0])) ** 2 >= squared
 
 
 @pytest.mark.parametrize(
