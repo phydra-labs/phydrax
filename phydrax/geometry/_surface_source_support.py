@@ -2106,6 +2106,11 @@ def _curve_ancestry(
         if surface_domain and charts.trim_roots
         else {}
     )
+    root_patches = np.asarray(charts.root_patches)
+    boundary_occurrences = np.asarray(charts.boundary_occurrences)
+    candidates_by_patch_curve: dict[tuple[int, int], tuple[tuple[int, int], ...]] = {}
+    constants_by_use: dict[tuple[int, int, int], tuple[tuple[int, Fraction], ...]] = {}
+    parameter_maps: dict[tuple[int, int, int], tuple[Fraction, Fraction]] = {}
     for row, edge_id_value in enumerate(target_ids):
         edge_id = int(edge_id_value)
         source_key = (int(source_indices[row]), association.source_occurrence_paths[row])
@@ -2140,19 +2145,21 @@ def _curve_ancestry(
         bindings: list[_CadCurveUseBinding] = []
         for cell_id, edge_slot, first_uv, last_uv in adjacent[edge_id]:
             chart_row = rows_by_cell[cell_id]
-            patch = int(charts.root_patches[chart_row])
-            candidates = tuple(
-                (loop_index, use_index)
-                for loop_index, loop in enumerate(domain.patches[patch].loops)
-                for use_index, use in enumerate(loop)
-                if isinstance(use, PatchCurveUse) and use.curve == curve_row
-            )
+            patch = int(root_patches[chart_row])
+            candidate_key = (patch, curve_row)
+            if candidate_key not in candidates_by_patch_curve:
+                candidates_by_patch_curve[candidate_key] = tuple(
+                    (loop_index, use_index)
+                    for loop_index, loop in enumerate(domain.patches[patch].loops)
+                    for use_index, use in enumerate(loop)
+                    if isinstance(use, PatchCurveUse) and use.curve == curve_row
+                )
+            candidates = candidates_by_patch_curve[candidate_key]
             explicit = (
                 (-1, -1, -1)
-                if charts.boundary_occurrences.size == 0
+                if boundary_occurrences.size == 0
                 else tuple(
-                    int(value)
-                    for value in charts.boundary_occurrences[chart_row, edge_slot]
+                    int(value) for value in boundary_occurrences[chart_row, edge_slot]
                 )
             )
             if explicit == (-1, -1, -1):
@@ -2176,25 +2183,30 @@ def _curve_ancestry(
             if len(candidates) > 1:
                 from .brep._source_embedding import _constant_chart_line, _same, _TAU
 
-                constants: list[tuple[int, Fraction]] = []
-                if isinstance(selected.pcurve, (ExactLineCurve, LineCurve)):
-                    start, stop = _line_endpoints(selected)
-                    constants.extend(
-                        (axis, start[axis])
-                        for axis in range(2)
-                        if start[axis] == stop[axis]
-                    )
-                else:
-                    line = _constant_chart_line(selected.pcurve, 0)
-                    surface = domain.patches[patch].surface
-                    if (
-                        line is not None
-                        and surface.native_period_symbols()[0] == "two_pi"
-                    ):
-                        if _same(line[0], Fraction(0)):
-                            constants.append((0, Fraction(0)))
-                        elif _same(line[0], _TAU) and surface.periods[0] is not None:
-                            constants.append((0, Fraction.from_float(surface.periods[0])))
+                use_key = (patch, loop_index, use_index)
+                if use_key not in constants_by_use:
+                    constants: list[tuple[int, Fraction]] = []
+                    if isinstance(selected.pcurve, (ExactLineCurve, LineCurve)):
+                        start, stop = _line_endpoints(selected)
+                        constants.extend(
+                            (axis, start[axis])
+                            for axis in range(2)
+                            if start[axis] == stop[axis]
+                        )
+                    else:
+                        line = _constant_chart_line(selected.pcurve, 0)
+                        surface = domain.patches[patch].surface
+                        if (
+                            line is not None
+                            and surface.native_period_symbols()[0] == "two_pi"
+                        ):
+                            if _same(line[0], Fraction(0)):
+                                constants.append((0, Fraction(0)))
+                            elif _same(line[0], _TAU) and surface.periods[0] is not None:
+                                constants.append(
+                                    (0, Fraction.from_float(surface.periods[0]))
+                                )
+                    constants_by_use[use_key] = tuple(constants)
                 points = (
                     _cad_pole_lens_endpoint(
                         charts,
@@ -2215,7 +2227,7 @@ def _curve_ancestry(
                         endpoints_by_patch=endpoints_by_patch,
                     ),
                 )
-                for axis, value in constants:
+                for axis, value in constants_by_use[use_key]:
                     if any(point[axis] != value for point in points):
                         raise ValueError(
                             "CAD root edge changes its authored coedge occurrence."
@@ -2253,8 +2265,14 @@ def _curve_ancestry(
                 else:
                     from .brep._intersection_curve import exact_curve_parameter_point
 
-                    first = Fraction.from_float(selected.first)
-                    span = Fraction.from_float(selected.last) - first
+                    use_key = (patch, loop_index, use_index)
+                    if use_key not in parameter_maps:
+                        first = Fraction.from_float(selected.first)
+                        parameter_maps[use_key] = (
+                            first,
+                            Fraction.from_float(selected.last) - first,
+                        )
+                    first, span = parameter_maps[use_key]
                     for point, parameter in zip(points, parameters, strict=True):
                         exact = exact_curve_parameter_point(
                             selected.pcurve, first + span * parameter

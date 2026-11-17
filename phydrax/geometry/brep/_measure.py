@@ -1480,15 +1480,27 @@ def _enclose(
     # The binary64 midpoint is within half an ulp of the exact cell center.
     center_low = np.maximum(np.nextafter(middle, -np.inf), low_corner)
     center_high = np.minimum(np.nextafter(middle, np.inf), high_corner)
+    program = family.program
+    output_shape = (
+        program.output_shape
+        if isinstance(program, PreparedIntervalFunction)
+        else program.program.output_shape
+    )
+    simpson_nodes = dimension == 1 and output_shape == (3,)
+    lower_nodes = (low_corner, center_low)
+    upper_nodes = (high_corner, center_high)
+    if simpson_nodes:
+        lower_nodes += (low_corner, high_corner)
+        upper_nodes += (low_corner, high_corner)
     values_low, values_high = _evaluate(
         family.label,
         family.program,
-        np.concatenate((low_corner, center_low)),
-        np.concatenate((high_corner, center_high)),
+        np.concatenate(lower_nodes),
+        np.concatenate(upper_nodes),
     )
     size = active.size
     box_values = (values_low[:size], values_high[:size])
-    center_values = (values_low[size:, 0], values_high[size:, 0])
+    center_values = (values_low[size : 2 * size, 0], values_high[size : 2 * size, 0])
     widths = _arrays(
         interval_subtract((high_corner, high_corner), (low_corner, low_corner))
     )
@@ -1500,30 +1512,49 @@ def _enclose(
     value_range = (box_values[0][:, 0], box_values[1][:, 0])
     inside = status[active] == 1
     # A trim-crossing cell holds some unknown part of its area.
-    zeroth = interval_multiply(
-        (
-            np.where(inside, value_range[0], np.minimum(value_range[0], 0.0)),
-            np.where(inside, value_range[1], np.maximum(value_range[1], 0.0)),
-        ),
-        area,
+    products = _arrays(
+        interval_multiply(
+            (
+                np.stack(
+                    (
+                        np.where(inside, value_range[0], np.minimum(value_range[0], 0.0)),
+                        center_values[0],
+                    )
+                ),
+                np.stack(
+                    (
+                        np.where(inside, value_range[1], np.maximum(value_range[1], 0.0)),
+                        center_values[1],
+                    )
+                ),
+            ),
+            area,
+        )
     )
+    zeroth = (products[0][0], products[1][0])
     # Inside a smooth cell, Taylor's theorem about the exact center c gives
     # f(c) A + sum_i f_ii(xi) A h_i^2 / 24 + sum_{i<j} (f_ij(xi) - m) s_i s_j,
     # because the linear and the constant-Hessian cross moments vanish.
-    rounding = _arrays(interval_multiply(center_values, area))
+    rounding = (products[0][1], products[1][1])
     second = rounding
     terms = []
     for index in range(dimension):
         width = (widths[0][:, index], widths[1][:, index])
         diagonal = 1 + index * dimension + index
+        products = _arrays(
+            interval_multiply(
+                (
+                    np.stack((box_values[0][:, diagonal], width[0])),
+                    np.stack((box_values[1][:, diagonal], width[1])),
+                ),
+                (np.stack((area[0], width[0])), np.stack((area[1], width[1]))),
+            )
+        )
         term = _arrays(
             interval_divide(
                 interval_multiply(
-                    interval_multiply(
-                        (box_values[0][:, diagonal], box_values[1][:, diagonal]),
-                        area,
-                    ),
-                    interval_multiply(width, width),
+                    (products[0][0], products[1][0]),
+                    (products[0][1], products[1][1]),
                 ),
                 (np.float64(24.0), np.float64(24.0)),
             )
@@ -1557,16 +1588,12 @@ def _enclose(
             second = _arrays(interval_add(second, (-moment, moment)))
             for index in (first_axis, second_axis):
                 terms[index] = terms[index] + moment
-    if dimension == 1 and box_values[0].shape[1] == 3:
+    if simpson_nodes:
         # Simpson's rule has remainder -f''''(xi) h**5 / 2880.  All
         # nodes, derivatives, widths and arithmetic are interval-enclosed;
         # intersect with the independent midpoint enclosure above.
-        endpoint_low, endpoint_high = _evaluate(
-            family.label,
-            family.program,
-            np.concatenate((low_corner, high_corner)),
-            np.concatenate((low_corner, high_corner)),
-        )
+        endpoint_low = values_low[2 * size :]
+        endpoint_high = values_high[2 * size :]
         endpoints = (
             endpoint_low[:size, 0],
             endpoint_high[:size, 0],
@@ -1586,6 +1613,7 @@ def _enclose(
                 (np.float64(6), np.float64(6)),
             )
         )
+        rounding = simpson
         width = (widths[0][:, 0], widths[1][:, 0])
         fifth = width
         for _ in range(4):
@@ -1598,18 +1626,21 @@ def _enclose(
         )
         simpson = _arrays(interval_subtract(simpson, remainder))
         second = (np.maximum(second[0], simpson[0]), np.minimum(second[1], simpson[1]))
-        rounding = _arrays(
-            interval_divide(
-                interval_multiply(weighted, area),
-                (np.float64(6), np.float64(6)),
-            )
-        )
     enclosure = (
         np.where(inside, np.maximum(second[0], zeroth[0]), zeroth[0]),
         np.where(inside, np.minimum(second[1], zeroth[1]), zeroth[1]),
     )
-    contribution = _arrays(interval_multiply(enclosure, family.factor))
-    floor = _arrays(interval_multiply(rounding, family.factor))
+    products = _arrays(
+        interval_multiply(
+            (
+                np.stack((enclosure[0], rounding[0])),
+                np.stack((enclosure[1], rounding[1])),
+            ),
+            family.factor,
+        )
+    )
+    contribution = (products[0][0], products[1][0])
+    floor = (products[0][1], products[1][1])
     lower[active], upper[active] = contribution
     rounding_width[active] = np.where(inside, floor[1] - floor[0], 0.0)
     split = _splittable(cells)
@@ -2327,6 +2358,23 @@ def _plan_face(
         families = []
         straight = _straight_revolution(patch)
         cylinder = straight is not None and straight.slope == 0
+        strip_programs: dict[tuple[int, int | None], _IntervalProgram] = {}
+        edge_ranges = np.asarray(geometry.edge_ranges)
+
+        def strip_program(
+            curve: AbstractCurve, chart: int | None, coedge_label: str, /
+        ) -> _IntervalProgram:
+            key = (id(curve), chart)
+            program = strip_programs.get(key)
+            if program is None:
+                program = _prepare(
+                    coedge_label,
+                    lambda: _green_strip_program(
+                        patch, curve, float(bounds[0, 0]), chart=chart, cylinder=cylinder
+                    ),
+                )
+                strip_programs[key] = program
+            return program
 
         def grid(first: float, last: float, breaks: np.ndarray, /) -> np.ndarray:
             if cylinder or isinstance(patch, TorusPatch):
@@ -2344,10 +2392,7 @@ def _plan_face(
             for position, coedge in enumerate(loop):
                 pcurve = geometry.pcurves[coedge]
                 first, last = (
-                    float(value)
-                    for value in np.asarray(geometry.edge_ranges)[
-                        geometry.coedge_edges[coedge]
-                    ]
+                    float(value) for value in edge_ranges[geometry.coedge_edges[coedge]]
                 )
                 piece_breaks = _green_curve_breaks(pcurve)
                 assert piece_breaks is not None
@@ -2371,16 +2416,7 @@ def _plan_face(
                         families.append(
                             _new_family(
                                 coedge_label,
-                                _prepare(
-                                    coedge_label,
-                                    lambda: _green_strip_program(
-                                        patch,
-                                        pcurve,
-                                        float(bounds[0, 0]),
-                                        chart=chart,
-                                        cylinder=cylinder,
-                                    ),
-                                ),
+                                strip_program(pcurve, chart, coedge_label),
                                 _factor(Fraction(sign * geometry.coedge_senses[coedge])),
                                 grid(float(start), float(stop), _NO_BREAKS),
                             )
@@ -2389,12 +2425,7 @@ def _plan_face(
                     families.append(
                         _new_family(
                             coedge_label,
-                            _prepare(
-                                coedge_label,
-                                lambda: _green_strip_program(
-                                    patch, pcurve, float(bounds[0, 0]), cylinder=cylinder
-                                ),
-                            ),
+                            strip_program(pcurve, None, coedge_label),
                             _factor(Fraction(sign * geometry.coedge_senses[coedge])),
                             grid(first, last, piece_breaks),
                         )
@@ -2823,11 +2854,12 @@ def brep_shell_volume_sign(model: BRepModel, shell: int, /) -> int:
     faces = geometry.shell_faces[shell_index]
     if not faces:
         raise ValueError("A signed shell volume requires at least one source face.")
-    signs = [float(value) for value in np.asarray(model.orientation)]
+    orientation = np.asarray(model.orientation)
+    signs = [float(value) for value in orientation]
     for face, shell_orientation in zip(
         faces, geometry.shell_orientations[shell_index], strict=True
     ):
-        signs[face] = float(model.orientation[face]) * shell_orientation
+        signs[face] = float(orientation[face]) * shell_orientation
     return source_shell_volume_sign(
         geometry,
         model.patches,

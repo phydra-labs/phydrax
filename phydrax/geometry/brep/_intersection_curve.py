@@ -1366,8 +1366,8 @@ def _orthogonal_cylinder_chart_angle_data(
         return None
     theta_axis = 2 * family.small_index
     angle_axis = 2 * family.large_index
-    start = np.asarray(curve.chart_start[chart], dtype=np.float64)
-    end = np.asarray(curve.chart_end[chart], dtype=np.float64)
+    start = np.asarray(curve.chart_start, dtype=np.float64)[chart]
+    end = np.asarray(curve.chart_end, dtype=np.float64)[chart]
     theta = 0.5 * float(start[theta_axis]) + 0.5 * float(end[theta_axis])
     point = orthogonal_cylinder_graph_point(
         family, theta, branch_sign, float(start[angle_axis])
@@ -2826,6 +2826,15 @@ def _evaluate_curve_point(
     return _evaluate_curve_point_on_chart(curve, chart, parameter)
 
 
+_batched_curve_points = jax.vmap(_evaluate_curve_point, in_axes=(None, 0))
+_batched_cylinder_points_large_first = jax.vmap(
+    _evaluate_orthogonal_cylinder_curve_point_large_first, in_axes=(None, 0)
+)
+_batched_cylinder_points_large_second = jax.vmap(
+    _evaluate_orthogonal_cylinder_curve_point_large_second, in_axes=(None, 0)
+)
+
+
 class IntersectionCurve(AbstractCurve):
     """One certified branch of two source surfaces, never a fitted point cloud.
 
@@ -3296,6 +3305,11 @@ class IntersectionCurve(AbstractCurve):
         )
         lower_parameter, upper_parameter = float(first), float(last)
         family = orthogonal_cylinder_family(self.first, self.second)
+        chart_starts = np.asarray(self.chart_start, dtype=np.float64)
+        chart_ends = np.asarray(self.chart_end, dtype=np.float64)
+        node_axes = np.asarray(self.node_axes)
+        node_lower = np.asarray(self.node_lower, dtype=np.float64)
+        node_upper = np.asarray(self.node_upper, dtype=np.float64)
         if family is not None:
             branch_sign = _orthogonal_cylinder_curve_branch_sign(self, family)
             if branch_sign is None:
@@ -3306,8 +3320,8 @@ class IntersectionCurve(AbstractCurve):
             for chart in range(first_chart, last_chart + 1):
                 chart_first = max(lower_parameter, float(chart))
                 chart_last = min(upper_parameter, float(chart + 1))
-                start = np.asarray(self.chart_start[chart], dtype=np.float64)
-                end = np.asarray(self.chart_end[chart], dtype=np.float64)
+                start = chart_starts[chart]
+                end = chart_ends[chart]
                 start_axis = Fraction.from_float(float(start[theta_axis]))
                 end_axis = Fraction.from_float(float(end[theta_axis]))
                 first_fraction = Fraction.from_float(chart_first - chart)
@@ -3333,12 +3347,12 @@ class IntersectionCurve(AbstractCurve):
                     (chart, chart_first == chart),
                     (chart + 1, chart_last == chart + 1),
                 ):
-                    if touches and int(self.node_axes[node]) == large_angle_axis:
+                    if touches and int(node_axes[node]) == large_angle_axis:
                         theta_lower = min(
-                            theta_lower, float(self.node_lower[node, theta_axis])
+                            theta_lower, float(node_lower[node, theta_axis])
                         )
                         theta_upper = max(
-                            theta_upper, float(self.node_upper[node, theta_axis])
+                            theta_upper, float(node_upper[node, theta_axis])
                         )
                 bounds = orthogonal_cylinder_graph_bounds(
                     family,
@@ -3358,15 +3372,19 @@ class IntersectionCurve(AbstractCurve):
                 )
             return np.stack(boxes)
         prepared = _branch_prepared_pair(self)
+        chart_axes = np.asarray(self.chart_axes)
+        chart_lowers = np.asarray(self.chart_lower, dtype=np.float64)
+        chart_uppers = np.asarray(self.chart_upper, dtype=np.float64)
+        node_shifts = np.asarray(self.node_period_shifts, dtype=np.int64)
         boxes: list[np.ndarray] = []
         requests: list[_ChartRequest] = []
         charts: list[tuple[int, float, float, int]] = []
         for chart in range(first_chart, last_chart + 1):
             chart_first = max(lower_parameter, float(chart))
             chart_last = min(upper_parameter, float(chart + 1))
-            axis = int(self.chart_axes[chart])
-            start = np.asarray(self.chart_start[chart], dtype=np.float64)
-            end = np.asarray(self.chart_end[chart], dtype=np.float64)
+            axis = int(chart_axes[chart])
+            start = chart_starts[chart]
+            end = chart_ends[chart]
             start_axis = Fraction.from_float(float(start[axis]))
             end_axis = Fraction.from_float(float(end[axis]))
             first_fraction = Fraction.from_float(chart_first - chart)
@@ -3395,8 +3413,8 @@ class IntersectionCurve(AbstractCurve):
                     axis_lower = math.nextafter(axis_lower, -math.inf)
                 if axis_upper != float(region_box[1, axis % 2]):
                     axis_upper = math.nextafter(axis_upper, math.inf)
-            lower_box = np.asarray(self.chart_lower[chart], dtype=np.float64).copy()
-            upper_box = np.asarray(self.chart_upper[chart], dtype=np.float64).copy()
+            lower_box = chart_lowers[chart].copy()
+            upper_box = chart_uppers[chart].copy()
             lower_box[axis], upper_box[axis] = axis_lower, axis_upper
             requests.append(
                 (
@@ -3428,22 +3446,24 @@ class IntersectionCurve(AbstractCurve):
                 (chart, chart_first == chart, 1),
                 (chart + 1, chart_last == chart + 1, 0),
             ):
-                if touches and int(self.node_axes[node]) != axis:
+                if touches and int(node_axes[node]) != axis:
                     # The node box seen from this chart's sheet: a node on a
                     # periodic seam sits one deck turn away on one side.
                     shift_lower, shift_upper = self.shift_parameter_bounds(
-                        np.asarray(self.node_period_shifts[node, direction], np.int64)
+                        node_shifts[node, direction]
                     )
                     contracted_lower = np.minimum(
                         contracted_lower,
                         np.nextafter(
-                            np.asarray(self.node_lower[node]) + shift_lower, -np.inf
+                            node_lower[node] + shift_lower,
+                            -np.inf,
                         ),
                     )
                     contracted_upper = np.maximum(
                         contracted_upper,
                         np.nextafter(
-                            np.asarray(self.node_upper[node]) + shift_upper, np.inf
+                            node_upper[node] + shift_upper,
+                            np.inf,
                         ),
                     )
             boxes.append(np.stack((contracted_lower, contracted_upper)))
@@ -3519,17 +3539,11 @@ class IntersectionCurve(AbstractCurve):
         flat = jnp.reshape(values, (-1,))
         family = orthogonal_cylinder_family(self.first, self.second)
         if family is None:
-            result = jax.vmap(_evaluate_curve_point, in_axes=(None, 0))(self, flat)
+            result = _batched_curve_points(self, flat)
         elif family.large_index == 0:
-            result = jax.vmap(
-                _evaluate_orthogonal_cylinder_curve_point_large_first,
-                in_axes=(None, 0),
-            )(self, flat)
+            result = _batched_cylinder_points_large_first(self, flat)
         else:
-            result = jax.vmap(
-                _evaluate_orthogonal_cylinder_curve_point_large_second,
-                in_axes=(None, 0),
-            )(self, flat)
+            result = _batched_cylinder_points_large_second(self, flat)
         shape = values.shape
         restored = tuple(value.reshape((*shape, *value.shape[1:])) for value in result)
         if scalar:
@@ -3908,6 +3922,9 @@ class IntersectionPCurve(AbstractCurve):
 
         derivative_lower: np.ndarray | None = None
         derivative_upper: np.ndarray | None = None
+        if family is not None:
+            chart_starts = np.asarray(self.curve.chart_start, dtype=np.float64)
+            chart_ends = np.asarray(self.curve.chart_end, dtype=np.float64)
         for chart in range(first_chart, last_chart + 1):
             chart_first = max(branch_first, float(chart))
             chart_last = min(branch_last, float(chart + 1))
@@ -3924,8 +3941,8 @@ class IntersectionPCurve(AbstractCurve):
                 current_upper = upper4[columns]
             else:
                 theta_axis = 2 * family.small_index
-                chart_start = np.asarray(self.curve.chart_start[chart], dtype=np.float64)
-                chart_end = np.asarray(self.curve.chart_end[chart], dtype=np.float64)
+                chart_start = chart_starts[chart]
+                chart_end = chart_ends[chart]
                 theta_start = Fraction.from_float(float(chart_start[theta_axis]))
                 theta_end = Fraction.from_float(float(chart_end[theta_axis]))
                 exact_theta_first = theta_start + (
