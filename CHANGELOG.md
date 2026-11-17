@@ -249,6 +249,17 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Boundary proofs reuse already evaluated exact facet lattice points within
+  the bounded live proof, preserving findings and evidence identities.
+- Embedding preparation reuses each simplex block's exact reference frame,
+  avoiding repeated affine solves without changing cell charts or identities.
+- Global embedding contact passes reuse exact stratum root nets only for the
+  same live cell and exact stratum and residual; the table is discarded when
+  the proof returns. Contact decisions and witness identities are unchanged.
+- Whole-scope native fidelity features reuse their operation's live primary
+  query and witness, including across supported transitions. Strict subsets and
+  restored or distinct witnesses retain independent validation; scientific
+  identities and archive representations are unchanged.
 - Curved profile turning and analytic cylinder chart-sheet selection use
   outward angle enclosures. Mixed conic and rational-spline profiles sum
   directed turn endpoints exactly. Ambiguous turning proofs are refused, so
@@ -405,6 +416,12 @@
   prepared and coverage accepts it only for the identical live mesh, geometry,
   source and witness with equal frame and controls and every needed piece
   proof; otherwise coverage prepares its own as before.
+- A `NATIVE_METRIC_3D` collapse that may move its survivor screens the
+  candidate survivor positions of one goal together before interpolating a
+  source metric for each: a position whose spoke lengths certainly fail the
+  objective is dropped at once, and every other position takes the unchanged
+  per-position evaluation, which alone admits. Proposals, accepted meshes and
+  evidence are unchanged.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep
@@ -884,6 +901,9 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Source preparations bind their cached artifacts to one live domain; rebuilt
+  domains use a fresh preparation. Domain-owned host arrays now have immutable
+  storage, so validated-domain reuse cannot be bypassed by enabling writes.
 - The error bound that lets a filtered geometric predicate report a certain
   sign formed an integer power through the platform `pow` with no margin. It
   is built by repeated multiplication rounded upward on the host and the

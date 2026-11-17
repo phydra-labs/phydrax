@@ -509,6 +509,7 @@ def _mapped_cell_chart(
     ambient: int,
     basis: PreparedLinearCombinationBasis | None = None,
     interval_bounds: IntervalBasisBounds | None = None,
+    simplex_frame: tuple[int, tuple[int, ...]] | None = None,
     /,
 ) -> _CellChart:
     """Chart of a cell from its exact composed per-cell coordinate expressions."""
@@ -553,7 +554,17 @@ def _mapped_cell_chart(
             tuple(_evaluate(expression, point) for expression in proof_coordinates)
             for point in proof_references
         )
-        offset, matrix = _solve_affine(references, corners)
+        if simplex_frame is not None and all(
+            isinstance(value, Fraction) for point in corners for value in point
+        ):
+            origin, units = simplex_frame
+            offset = corners[origin]
+            matrix = tuple(
+                tuple(corners[unit][axis] - value for unit in units)
+                for axis, value in enumerate(offset)
+            )
+        else:
+            offset, matrix = _solve_affine(references, corners)
         if interval_bounds is not None:
             inner_bounds = interval_bounds.inner
         bounds = (
@@ -643,6 +654,7 @@ def _iter_embedding_cells(
         dimension = block.topological_dimension
         vertex_element = isinstance(element, CellVertexGeometryElement)
         frame = None
+        simplex_frame = None
         if not vertex_element:
             if not isinstance(element, ScalarCoordinateElement):
                 raise UnsupportedEmbeddingMap(
@@ -655,6 +667,19 @@ def _iter_embedding_cells(
                 frame = _straight_simplex_frame(
                     element, references, dimension, route_rows.shape[1]
                 )
+                if (
+                    len(references) == dimension + 1
+                    and frozenset(references) == _unit_simplex_corners(dimension)
+                ):
+                    simplex_frame = (
+                        references.index((_ZERO,) * dimension),
+                        tuple(
+                            references.index(
+                                tuple(Fraction(int(axis == column)) for axis in range(dimension))
+                            )
+                            for column in range(dimension)
+                        ),
+                    )
         chart_bases: dict[bytes, PreparedLinearCombinationBasis] = {}
         fixed_basis: tuple[Expression, ...] | None = None
         prepared_fixed_basis: PreparedLinearCombinationBasis | None = None
@@ -798,6 +823,7 @@ def _iter_embedding_cells(
                         ambient,
                         basis,
                         None if interval_rows is None else interval_rows[local_index],
+                        simplex_frame,
                     )
                 cell_references = references
                 cell_domain = domain

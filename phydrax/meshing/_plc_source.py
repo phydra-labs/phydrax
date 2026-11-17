@@ -24,6 +24,11 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import normalized_identifier
 from ..discretization import CellGeometrySpec
+from ..discretization._cell_geometry_validity import cell_geometry_id
+from ..discretization._surface_chart_records import (
+    SurfaceChartWitness,
+    SurfaceRootMeshCellBinding,
+)
 from ..geometry._global_embedding import GlobalEmbeddingCertificate
 from ..geometry._source_fidelity_certificate import SourceFidelityCertificate
 from ..geometry._surface_source_support import SurfaceSourceCharts
@@ -298,6 +303,46 @@ def _require_unambiguous_cad_copies(
         )
 
 
+def _live_surface_witness(
+    surface: SurfaceSourceCharts,
+    computed: _ComputedSurfaceAcceptance | None,
+    /,
+) -> SurfaceChartWitness | None:
+    """Find the operation's validated witness only for these exact chart rows."""
+    if (
+        type(computed) is not _ComputedSurfaceAcceptance
+        or computed.surface_source is not surface
+    ):
+        return None
+    witness = computed.inputs.fidelity_witness
+    if not isinstance(witness, SurfaceChartWitness) or not any(
+        token.witness is witness
+        and token.binds(surface.mesh, surface.geometry, surface.boundary_source)
+        for token in computed.validated
+    ):
+        return None
+    geometry_id = cell_geometry_id(surface.geometry)
+    return witness if (
+        witness.geometry_id == geometry_id
+        and witness.topology_id == surface.mesh.topology_id
+        and witness.domain_id == surface.domain.domain_id
+        and witness.cell_kind == surface.mesh.blocks[0].cell_kind
+        and np.array_equal(witness.cell_global_ids, surface.cell_global_ids)
+        and np.array_equal(witness.patches, surface.root_patches)
+        and np.array_equal(witness.charts, surface.root_parameters)
+        and np.array_equal(witness.source_root_cell_ids, surface.source_root_cell_ids)
+        and witness.source_piece_ids == surface.source_piece_ids
+        and witness.geometry_entity_ids == surface.source_patch_entity_ids
+        and witness.occurrence_paths == surface.source_occurrence_paths
+        and witness.chart_rational_tokens == surface.root_parameter_rational_tokens
+        and witness.root_mesh_cell_bindings
+        == tuple(
+            SurfaceRootMeshCellBinding(geometry_id, surface.mesh.topology_id, cell_id)
+            for cell_id in surface.cell_global_ids
+        )
+    ) else None
+
+
 def _certify_cad_surface(
     surface: SurfaceSourceCharts,
     fidelity_tolerance: float,
@@ -336,7 +381,12 @@ def _certify_cad_surface(
     # The witness is validated once for these exact operands; the inputs and
     # the report receive that validation instead of repeating it.
     source = surface.boundary_source
-    witness = surface.chart_witness
+    witness = _live_surface_witness(surface, computed_surface)
+    if witness is None:
+        computed_surface = None
+        witness = surface.chart_witness
+    else:
+        surface.require_current()
     validated = validate_fidelity_witnesses(
         surface.mesh,
         surface.geometry,

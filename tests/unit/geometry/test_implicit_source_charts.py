@@ -316,30 +316,6 @@ def test_batched_taylor_bounds_match_scalar_bits_and_batch_splits() -> None:
     )
 
 
-def test_narrowed_piece_gradient_cannot_certify(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _, source, _, mesh, geometry, witness = _adaptive_source()
-
-    def broken_intersection(
-        first: source_charts._IntervalLanes, second: source_charts._IntervalLanes, /
-    ) -> source_charts._IntervalLanes:
-        zero = np.zeros_like(first[0], dtype=np.float64)
-        return zero, zero
-
-    def exhausted_split(
-        triangle: source_charts.TriangleReference, /
-    ) -> source_charts.SplitTriangles | None:
-        return None
-
-    monkeypatch.setattr(source_charts, "_lane_intersection", broken_intersection)
-    monkeypatch.setattr(source_charts, "_split_triangle", exhausted_split)
-    with pytest.raises(ValueError, match="gradient norm enclosure"):
-        prepare_adaptive_implicit_root_charts(
-            mesh, geometry, source, witness, tolerance=0.5, maximum_normal_deviation=np.pi
-        )
-
-
 def _grid_corner(values: np.ndarray, /) -> GridCorner:
     return int(values[0]), int(values[1]), int(values[2])
 
@@ -1309,6 +1285,29 @@ def _near_band_sphere_face(
     )
 
 
+def test_narrowed_piece_gradient_cannot_certify() -> None:
+    _, _, surface, face, _ = _near_band_sphere_face()
+    triangle = (
+        (Fraction(0), Fraction(0)),
+        (Fraction(1), Fraction(0)),
+        (Fraction(0), Fraction(1)),
+    )
+    steps = source_charts._face_piece_steps(
+        surface, face, triangle, 1, (0, 1, 2), 0.5, np.pi
+    )
+    next(steps)
+    zero = (0.0, 0.0)
+    vector = (zero, zero, zero)
+    matrix = (vector, vector, vector)
+    with pytest.raises(StopIteration) as stopped:
+        steps.send((((zero, vector), (zero, vector)), (matrix,), (vector, zero, None)))
+    assert stopped.value.value == (
+        None,
+        "target face has no strict source-gradient norm enclosure",
+        True,
+    )
+
+
 def _corner_triangle(level: int, /) -> source_charts.TriangleReference:
     size = Fraction(1, 2**level)
     return ((Fraction(0), Fraction(0)), (size, Fraction(0)), (Fraction(0), size))
@@ -2045,9 +2044,7 @@ def test_adaptive_implicit_root_chart_requires_smooth_or_profile_regular_source(
         prepare_adaptive_implicit_root_charts(mesh, geometry, cube_source, witness)
 
 
-def test_crease_chart_refuses_a_missing_branch_decision(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_crease_chart_certifies_with_branch_decisions() -> None:
     geometry = (
         phx.geometry.Sphere((-0.2, 0.0, 0.0), 0.3)
         | phx.geometry.Sphere((0.2, 0.0, 0.0), 0.3)
@@ -2078,18 +2075,36 @@ def test_crease_chart_refuses_a_missing_branch_decision(
     assert root_map.status == "certified"
     assert any(evidence.bound == "root_witness" for evidence in root_map.chart_evidence)
 
-    def missing_decision(
-        bounds: adaptive_discovery._FieldEnclosures,
-        lower: np.ndarray,
-        upper: np.ndarray,
-        /,
-    ) -> np.ndarray:
-        return np.zeros(lower.shape[0], dtype=np.bool_)
+    from phydrax.geometry._source_fidelity import _surface_target_chart_rows
 
-    monkeypatch.setattr(adaptive_discovery, "_ledger_crease_cells", missing_decision)
+    target_rows, _, _ = _surface_target_chart_rows(
+        mesh, target, None, witness, full_source=False
+    )
+    cells = source_charts._source_cell_rows(surface)
+    keys = tuple(_source_cell_key(np.asarray(key)) for key in witness.implicit_cell_keys)
+    cells.prepare(keys)
+    row = next(
+        index
+        for index, key in enumerate(keys)
+        if (cell := cells.get(key)) is not None
+        and not np.any(
+            (surface.scaffold.cell_gradient_lower[cell] > 0.0)
+            | (surface.scaffold.cell_gradient_upper[cell] < 0.0)
+        )
+    )
+    cell = cells.get(keys[row])
+    if cell is None:
+        raise AssertionError("The crease cell must exist in the scaffold.")
+    cells.projection_axes[cell] = (False, 0)
     with pytest.raises(ValueError, match="no strictly regular gradient component"):
-        prepare_adaptive_implicit_root_charts(
-            mesh, target, source, witness, tolerance=0.5, maximum_normal_deviation=np.pi
+        source_charts._face_setup(
+            row,
+            target_rows[row],
+            source_charts._target_map_source(mesh, target),
+            witness,
+            surface,
+            source_charts._source_root_rows(surface),
+            cells,
         )
 
 
