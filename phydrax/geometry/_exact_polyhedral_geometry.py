@@ -17,6 +17,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ..discretization._exact_algebraic_geometry import ExactScalar, RadicalElement
+from ._planar_primitives import TriangleEnclosures
 
 
 type Point2 = tuple[ExactScalar, ExactScalar]
@@ -725,6 +726,7 @@ class SpatialTriangleEnclosures:
     point_ids: NDArray[np.int64]
     normals: _Interval
     nondegenerate: NDArray[np.bool_]
+    projections: tuple[TriangleEnclosures, TriangleEnclosures, TriangleEnclosures]
 
     @classmethod
     def prepare(
@@ -743,7 +745,18 @@ class SpatialTriangleEnclosures:
             )
         finite = np.all(np.isfinite(lower) & np.isfinite(upper), axis=(1, 2))
         nondegenerate = finite & np.any(_certified_sign(normals) != 0, axis=1)
-        return cls(lower, upper, point_ids, normals, nondegenerate)
+        projections = (
+            TriangleEnclosures.from_enclosures(
+                lower[:, :, 1:], upper[:, :, 1:], point_ids
+            ),
+            TriangleEnclosures.from_enclosures(
+                lower[:, :, ::2], upper[:, :, ::2], point_ids
+            ),
+            TriangleEnclosures.from_enclosures(
+                lower[:, :, :2], upper[:, :, :2], point_ids
+            ),
+        )
+        return cls(lower, upper, point_ids, normals, nondegenerate, projections)
 
     def common_hull_contacts(
         self, first: NDArray[np.intp], second: NDArray[np.intp], /
@@ -754,8 +767,11 @@ class SpatialTriangleEnclosures:
         boxes imply empty intersection. For either triangle's plane, if every
         other corner is common or lies strictly on the same side, convexity
         puts its intersection with that plane in the hull of common corners.
-        At least one strict corner is required; coplanar and straddling cases
-        remain undecided. False means undecided, not a contact claim.
+        At least one strict corner is required for the plane test. For a
+        projection with certified nonzero triangle areas, the planar test puts
+        the projected intersection in the hull of projected common 3-D corners.
+        Projection is injective on either triangle, so its intersection is in
+        the hull of those 3-D corners. False means undecided.
         """
         admitted = self.nondegenerate[first] & self.nondegenerate[second]
         equal = self.point_ids[first][:, :, None] == self.point_ids[second][:, None, :]
@@ -786,6 +802,31 @@ class SpatialTriangleEnclosures:
                 positive = np.all(shared | (signs == 1), axis=1)
                 negative = np.all(shared | (signs == -1), axis=1)
                 certified |= admitted & np.any(~shared, axis=1) & (positive | negative)
+        rows = np.flatnonzero(admitted & ~certified)
+        if rows.size:
+            normal_signs = _certified_sign(self.normals)
+            magnitudes = np.where(
+                normal_signs != 0,
+                np.minimum(np.abs(self.normals[0]), np.abs(self.normals[1])),
+                0.0,
+            )
+            preferred = np.argmax(magnitudes[first[rows]], axis=1)
+            for iteration in range(4):
+                for axis, projection in enumerate(self.projections):
+                    selected = rows[
+                        ~certified[rows]
+                        & (
+                            (preferred == axis)
+                            if iteration == 0
+                            else (iteration - 1 == axis) & (preferred != axis)
+                        )
+                        & (normal_signs[first[rows], axis] != 0)
+                        & (normal_signs[second[rows], axis] != 0)
+                    ]
+                    if selected.size:
+                        certified[selected] = projection.common_hull_contacts(
+                            first[selected], second[selected]
+                        )
         return certified
 
 

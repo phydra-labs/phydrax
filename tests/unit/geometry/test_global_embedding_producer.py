@@ -1612,6 +1612,49 @@ def test_spatial_triangle_enclosure_contact_decisions(
     assert bool(reverse[0]) is expected
 
 
+@pytest.mark.parametrize(
+    "second",
+    (
+        ((2, 0, 2), (0, 0, 0), (0, -2, -2)),
+        ((0, 0, 0), (-2, 1, -1), (-1, 2, 1)),
+    ),
+)
+def test_spatial_projection_certifies_oblique_coplanar_neighbors(
+    second: tuple[Point3, ...],
+) -> None:
+    first = tuple(
+        (Fraction(point[0]), Fraction(point[1]), Fraction(point[2]))
+        for point in ((0, 0, 0), (2, 0, 2), (0, 2, 2))
+    )
+    enclosure = outward_spatial_triangle_enclosures((first, second))
+    left, right = np.asarray([0], dtype=np.intp), np.asarray([1], dtype=np.intp)
+    assert enclosure.common_hull_contacts(left, right)[0]
+
+
+def test_spatial_projection_refuses_overlap_degeneracy_and_false_identities() -> None:
+    triangles = tuple(
+        tuple((Fraction(p[0]), Fraction(p[1]), Fraction(p[2])) for p in triangle)
+        for triangle in (
+            ((0, 0, 0), (2, 0, 0), (0, 2, 0)),
+            ((0, 0, 0), (2, 0, 0), (1, 1, 0)),
+            ((0, 0, 1), (2, 0, 1), (0, 2, 1)),
+            ((0, 0, 1), (-1, 0, 1), (0, -1, 1)),
+        )
+    )
+    enclosure = outward_spatial_triangle_enclosures(triangles)
+    left = np.asarray([0], dtype=np.intp)
+    fold = np.asarray([1], dtype=np.intp)
+    overlap = np.asarray([2], dtype=np.intp)
+    projected_corner = np.asarray([3], dtype=np.intp)
+    assert all(
+        not bank.common_hull_contacts(left, fold)[0] for bank in enclosure.projections
+    )
+    assert not enclosure.projections[2].common_hull_contacts(left, overlap)[0]
+    assert not enclosure.projections[0].common_hull_contacts(left, overlap)[0]
+    assert not enclosure.projections[2].common_hull_contacts(left, projected_corner)[0]
+    assert enclosure.common_hull_contacts(left, overlap)[0]
+
+
 def test_spatial_filter_refuses_duplicate_points_with_distinct_vertex_ids() -> None:
     mesh = CellMesh(
         np.asarray(

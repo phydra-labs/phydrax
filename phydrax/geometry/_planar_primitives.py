@@ -516,6 +516,14 @@ class TriangleEnclosures:
     def prepare(cls, triangles: Sequence[Polygon], /) -> TriangleEnclosures:
         return cls(_triangle_bank(triangles, {}))
 
+    @classmethod
+    def from_enclosures(
+        cls, lower: np.ndarray, upper: np.ndarray, point_ids: np.ndarray, /
+    ) -> TriangleEnclosures:
+        """Prepare projected corner enclosures with conservative exact identities."""
+        valid = np.all(np.isfinite(lower) & np.isfinite(upper), axis=(1, 2))
+        return cls(_TriangleBank(lower, upper, point_ids, valid))
+
     @property
     def point_ids(self) -> np.ndarray:
         return self.bank.corners
