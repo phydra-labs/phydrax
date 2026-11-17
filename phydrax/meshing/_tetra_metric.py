@@ -12,7 +12,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from fractions import Fraction
 from itertools import combinations, compress, islice
-from math import gcd, lcm
+from math import frexp, gcd, lcm, sqrt
 from typing import Any, cast, final, NamedTuple
 
 import equinox as eqx
@@ -25,12 +25,14 @@ from .._meshcore import (
     interval_program_execute,
     IntervalBoxProgram,
     metric_band_quanta,
+    metric_congruence_defects,
     metric_interpolations,
     metric_lengths,
     metric_logarithms,
     metric_midpoints,
     metric_relative_determinants,
     metric_survivor_goals,
+    metric_tensor_properties,
     metric_tetra_quality,
     PlcBoundaryPolicy,
     relocated_tet_mesh_arrays,
@@ -51,7 +53,7 @@ from ..discretization._cell_mesh import CellBlock
 from ..linalg._exact import solve_exact
 from ..typing import ConvertibleToArray
 from ._lineage import EntityLineageKind
-from ._metric import _tensor_array, _tensor_properties
+from ._metric import _tensor_array
 from ._periodic import periodic_entity_orbit_map, stage_periodic_topology_edit
 from ._result import CellMeshingResult
 from ._topology_edit import (
@@ -81,6 +83,11 @@ _VIOLATION_QUANTUM = 2.0**-10
 # this relative determinant |det E| / max_v prod |e| a cell's binary64 metric
 # determinant det(E^T E) is not certainly positive. No edit creates such a cell.
 _DETERMINANT_FLOOR = 2.0**-22
+# Coordinates lie in the exact domain, of magnitude at most 2^120, so an edge
+# vector has components of at most 2^121 and a form d^T M d sums nine products
+# of at most 2^242 times the largest entry. Entries up to this bound cannot
+# overflow it: a larger tensor has no finite length to measure.
+_METRIC_ENTRY_BOUND = 2.0**778
 # Goals and screening are batched with bounded row counts, not search limits.
 _GOAL_BLOCK = 64
 _SCREEN_BATCH = 1024
@@ -535,11 +542,15 @@ def _band_violations(lengths: np.ndarray, /) -> tuple[tuple[int, ...], tuple[int
     """Max-first quantized long and short distances ``|log(l / band edge)|``.
 
     Each violation is counted in quanta ``_VIOLATION_QUANTUM`` rounded up, so
-    any violation is at least one quantum and an in-band edge is none.
+    any violation is at least one quantum and an in-band edge is none. A
+    length that is zero, infinite or not a number has no finite count: it was
+    not measured, which is neither inside the band nor a violation of it.
     """
     above, below = metric_band_quanta(
         np.asarray(lengths, dtype=np.float64).reshape((-1,))
     )
+    if not (np.all(np.isfinite(above)) and np.all(np.isfinite(below))):
+        raise FloatingPointError("A metric edge length is not a positive finite number.")
 
     def quanta(counts: np.ndarray) -> tuple[int, ...]:
         return tuple(
@@ -1609,33 +1620,44 @@ def _validate_periodic_metric_values(
         periodic_state = _native_periodic_state(mesh, None)
     if periodic_state is None:
         raise ValueError("Periodic metric validation requires a native quotient state.")
-    epsilon = np.finfo(np.float64).eps
+    linear: list[np.ndarray] = []
+    metrics: list[np.ndarray] = []
+    references: list[np.ndarray] = []
+    missing: str | None = None
     for orbit in periodic_state.orbits:
         representative = metric_by_vertex_id.get(int(orbit.representative_vertex_id))
         if representative is None:
-            raise ValueError(
-                "Periodic metric evidence is missing an orbit representative."
-            )
+            missing = "Periodic metric evidence is missing an orbit representative."
+            break
         for member in orbit.members:
             metric = metric_by_vertex_id.get(int(member.vertex_id))
             if metric is None:
-                raise ValueError("Periodic metric evidence is missing a lifted vertex.")
-            linear = np.asarray(member.representative_to_member, dtype=np.float64)[:, :3]
-            try:
-                inverse = np.linalg.inv(linear)
-            except np.linalg.LinAlgError as error:
-                raise ValueError("Periodic metric isometry is singular.") from error
-            expected = inverse.T @ representative @ inverse
-            scale = max(
-                float(np.linalg.norm(expected, ord=np.inf)),
-                float(np.linalg.norm(metric, ord=np.inf)),
-                np.finfo(np.float64).tiny,
+                missing = "Periodic metric evidence is missing a lifted vertex."
+                break
+            linear.append(
+                np.asarray(member.representative_to_member, dtype=np.float64)[:, :3]
             )
-            error = float(np.linalg.norm(metric - expected, ord=np.inf))
-            if error > 256.0 * epsilon * scale:
-                raise ValueError(
-                    "SPD metric values must transform equivariantly across periodic vertex orbits."
-                )
+            metrics.append(metric)
+            references.append(representative)
+        if missing is not None:
+            break
+    # A metric M at the image of the isometry x -> A x + t agrees with the
+    # representative's metric R when A^T M A = R: lengths of mapped segments
+    # are equal. Every member before a missing one is judged first.
+    errors, scales = metric_congruence_defects(
+        np.asarray(linear, dtype=np.float64).reshape((-1, 3, 3)),
+        np.asarray(metrics, dtype=np.float64).reshape((-1, 3, 3)),
+        np.asarray(references, dtype=np.float64).reshape((-1, 3, 3)),
+    )
+    tolerance = (256.0 * np.finfo(np.float64).eps) * np.maximum(
+        scales, np.finfo(np.float64).tiny
+    )
+    if not np.all(errors <= tolerance):
+        raise ValueError(
+            "SPD metric values must transform equivariantly across periodic vertex orbits."
+        )
+    if missing is not None:
+        raise ValueError(missing)
 
 
 def _implicit_metric_source(source: CellMeshingResult, /) -> _ImplicitMetricSource | None:
@@ -1736,10 +1758,15 @@ def _prepare_native_state(
         raise ValueError(
             "Tetra adaptation requires a true 3x3 SPD metric at every vertex."
         )
-    properties = _tensor_properties(metric)
-    if not np.all(properties.hermitian) or not np.all(properties.positive_definite):
+    symmetric, positive_definite = metric_tensor_properties(metric)
+    if not np.all(symmetric) or not np.all(positive_definite):
         raise ValueError(
             "Tetra adaptation requires finite symmetric positive-definite metrics."
+        )
+    if np.any(np.abs(metric) > _METRIC_ENTRY_BOUND):
+        raise ValueError(
+            "Tetra adaptation requires metric entries of magnitude at most 2**778: "
+            "larger ones cannot be measured over the exact coordinate domain."
         )
 
     block_cells = []
@@ -6346,8 +6373,9 @@ def _quantized_relocation_candidates(
     # ``float(np.sum((carrier - goal) ** 2))`` for three components is the
     # sequential binary64 sum of the squares.
     goal_x, goal_y, goal_z = (float(value) for value in goal)
-    # A grid coarser than the move cannot resolve it; start where it can.
-    first = min(max(int(np.floor(np.log2(span / np.sqrt(distance)))), 1), 53)
+    # A grid coarser than the move cannot resolve it; start where it can: at
+    # the binary exponent of span / |move|, which is floor(log2) exactly.
+    first = min(max(frexp(span / sqrt(distance))[1] - 1, 1), 53)
     resolutions = iter(
         range(53, first - 1, -1)
         if fine_first and not coarse_and_fine

@@ -1413,6 +1413,49 @@ def test_protected_boundary_edge_and_invalid_metric_are_refused() -> None:
         _adapt(source, invalid)
 
 
+@pytest.mark.parametrize(
+    ("tensor", "refusal"),
+    [
+        (np.diag((1.0, 1.0, 2.0**-47)), "symmetric positive-definite"),
+        (
+            np.asarray(((1.0, 2.0**-45, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))),
+            "symmetric positive-definite",
+        ),
+        (np.eye(3) * 2.0**779, r"magnitude at most 2\*\*778"),
+    ],
+    ids=["nearly-singular", "asymmetric", "beyond-the-coordinate-domain"],
+)
+def test_metric_field_gate_refuses_tensors_outside_its_tolerances(
+    tensor: np.ndarray, refusal: str
+) -> None:
+    source = _source()
+    field = np.broadcast_to(np.eye(3), (source.mesh.vertex_global_ids.size, 3, 3)).copy()
+    field[0] = tensor
+    with pytest.raises(ValueError, match=refusal):
+        _adapt(source, field)
+
+
+def test_metric_field_gate_admits_tensors_inside_its_tolerances() -> None:
+    source = _source()
+    field = np.broadcast_to(np.eye(3), (source.mesh.vertex_global_ids.size, 3, 3)).copy()
+    # The tolerance is 64 eps of the largest eigenvalue: an asymmetry and a
+    # smallest eigenvalue on its admitted side.
+    field[0] = np.asarray(((1.0, 2.0**-47, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)))
+    field[1] = np.diag((1.0, 1.0, 2.0**-45))
+    state = _state(source, field)
+    state.native.close()
+
+
+def test_unmeasured_lengths_have_no_band_violation_count() -> None:
+    from phydrax.meshing._tetra_metric import _band_violations
+
+    # log(sqrt 2) is 354.9 quanta of 2^-10 on either side of the band.
+    assert _band_violations(np.asarray((1.0, 2.0, 0.5, 1.2))) == ((355,), (355,))
+    for unmeasured in (np.nan, 0.0, np.inf):
+        with pytest.raises(FloatingPointError, match="not a positive finite number"):
+            _band_violations(np.asarray((1.0, unmeasured)))
+
+
 def _implicit_plane_pyramid(
     height: float, tolerance: float, *, fixed_corners: bool = False
 ) -> _NativeState:

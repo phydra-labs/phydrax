@@ -921,8 +921,9 @@ PHX_MC_API int32_t phx_mc_metric_lengths(int64_t edge_count, const int64_t* edge
 /* Violation of the length band [1 / fl(sqrt 2), fl(sqrt 2)] in quanta of
  * 2^-10: above[r] is max(ceil(log(length / fl(sqrt 2)) * 2^10), 1) for a
  * length above the band and 0 otherwise; below[r] likewise for
- * log((1 / fl(sqrt 2)) / length). A NaN length violates nothing; an infinite
- * or zero length gives an infinite count. */
+ * log((1 / fl(sqrt 2)) / length). An infinite or zero length gives an
+ * infinite count. A NaN length was not measured and has no count: both
+ * outputs are NaN. */
 PHX_MC_API int32_t phx_mc_metric_band_quanta(int64_t count, const double* lengths,
                                              double* above, double* below);
 /* For each cell of four corners (twelve values): determinants[c] is
@@ -972,6 +973,26 @@ PHX_MC_API int32_t phx_mc_metric_midpoints(
 PHX_MC_API int32_t phx_mc_metric_survivor_goals(
     int64_t point_count, const double* points, const double* metrics, int32_t corner_count,
     const double* corners, double* goals, int8_t* valid);
+/* Gates of a metric field on the deterministic kernels: the same verdict for
+ * the same input on every platform.
+ *
+ * phx_mc_metric_tensor_properties: each tensor is a full row-major 3x3 array.
+ * With lambda the eigenvalues of its symmetric part (M + M^T) / 2 and
+ * tol = 64 * 2^-52 * max |lambda|, symmetric[r] is 1 when max |M - M^T| <= tol
+ * and positive_definite[r] is 1 when it is symmetric and min lambda > tol.
+ * Both are 0 for a non-finite entry or an eigenvalue beyond the binary64
+ * range. */
+PHX_MC_API int32_t phx_mc_metric_tensor_properties(int64_t count, const double* tensors,
+                                                   int8_t* symmetric,
+                                                   int8_t* positive_definite);
+/* Defect of the congruence A^T M A = R, the form in which a metric M at the
+ * image of a linear map A agrees with the metric R at its source (row-major
+ * 3x3 arrays): errors[r] is the infinity norm of A^T M A - R and scales[r]
+ * the larger of the infinity norms of A^T M A and R. Both are NaN when a
+ * value is not a number. */
+PHX_MC_API int32_t phx_mc_metric_congruence_defects(
+    int64_t count, const double* linear, const double* metrics, const double* references,
+    double* errors, double* scales);
 /* Execute an interval program as phx_mc_interval_program_execute, then record
  * per-box branch evidence: smooth[b] and continuous[b] start at 1 for every
  * box b < box_count, and each event row (kind, test, size, a, a_index, boxes;
