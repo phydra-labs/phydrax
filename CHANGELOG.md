@@ -250,6 +250,10 @@
 
 ### Changed
 
+- Global embedding contact proofs batch exact integer cone-sign checks and
+  reuse cell-local preparation within a proof. Per-pair direction proposals
+  and traversal are retained; distinct cell objects no longer share
+  residual-dependent subdivision state merely because their IDs agree.
 - Native B-Rep projection reuses the selected intersection curve's fixed-shape
   tangent, while host trim fallback and surface-box validation avoid repeated
   eager dispatch. Trim realization and projection frame bits, and therefore
