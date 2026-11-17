@@ -253,6 +253,8 @@
   the bounded live proof, preserving findings and evidence identities.
 - Embedding preparation reuses each simplex block's exact reference frame,
   avoiding repeated affine solves without changing cell charts or identities.
+- Cell validity prepares dyadic source-coordinate endpoints and point-rounding
+  bounds in blocks while retaining exact fallback and unchanged certificate bits.
 - Global embedding contact passes reuse exact stratum root nets only for the
   same live cell and exact stratum and residual; the table is discarded when
   the proof returns. Contact decisions and witness identities are unchanged.
