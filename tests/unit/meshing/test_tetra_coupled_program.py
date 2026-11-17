@@ -8,7 +8,12 @@ import jax
 import numpy as np
 import pytest
 
-from phydrax.linalg import FailurePolicy, MaterializationPolicy
+from phydrax.linalg import (
+    FailurePolicy,
+    MaterializationPolicy,
+    SolveResourcePolicy,
+    SparseFactorizationPolicy,
+)
 from phydrax.meshing._tetra_coupled import (
     _CoupledBinding,
     _solve,
@@ -246,6 +251,50 @@ def test_structures_of_one_capacity_class_share_one_compiled_solve() -> None:
         expected[list(columns)] = -weights / float(weights @ weights)
         np.testing.assert_allclose(solved.primal, expected, atol=1e-5)
     assert _live_solver_executables() == compiled
+
+
+@pytest.mark.parametrize(
+    "limit",
+    ("max_factor_nnz", "max_factor_bytes", "factorization_bytes"),
+)
+def test_capacity_class_beyond_a_declared_factor_limit_keeps_the_sparse_program(
+    limit: str,
+) -> None:
+    # Nine variables and one row fall in a class whose reduced system has 576
+    # entries (4,608 bytes); the sparse factor of the same program has 11
+    # nonzeros in under 2,000 bytes. Each limit sits between the two.
+    variables, entries, factor_bytes = 9, 128, 3000
+    factorization = SparseFactorizationPolicy(
+        "lu",
+        ordering="approximate-minimum-degree",
+        **(
+            {"max_factor_nnz": entries}
+            if limit == "max_factor_nnz"
+            else {"max_factor_bytes": factor_bytes}
+            if limit == "max_factor_bytes"
+            else {}
+        ),
+    )
+    limited = ConvexSolvePolicy(
+        NativeHomogeneousConic(newton="factorized", factorization=factorization),
+        termination=ConvexTermination(absolute=1e-7, maximum_steps=100),
+        failure=FailurePolicy("status"),
+        resources=SolveResourcePolicy(factorization_bytes=factor_bytes)
+        if limit == "factorization_bytes"
+        else SolveResourcePolicy(),
+    )
+    rows, rhs = [_row((0, 1), [-1.0, 0.0], identity=(0,))], [-1.0]
+    admitted = prepare_primary(
+        rows, rhs, [], variables, "factor-limit", _policy(), _ProgramCache()
+    )
+    refused = prepare_primary(
+        rows, rhs, [], variables, "factor-limit", limited, _ProgramCache()
+    )
+    assert admitted.layout is not None
+    assert refused.layout is None
+    expected = np.zeros(variables)
+    expected[0] = 1.0
+    np.testing.assert_allclose(solve_coupled(refused).primal, expected, atol=1e-5)
 
 
 def test_capacity_class_result_is_reported_in_original_coordinates() -> None:

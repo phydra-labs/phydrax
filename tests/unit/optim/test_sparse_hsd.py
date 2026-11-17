@@ -229,6 +229,25 @@ def test_reduced_dense_route_solves_the_program_and_ignores_vacuous_padding(
     assert float(result.kkt_residual_norm) <= 1e-7
 
 
+def test_reduced_dense_route_admits_both_retained_block_factors_together() -> None:
+    # Eight variables and eight equalities: two 8 by 8 factors of 512 bytes.
+    program = _dense_metric_program(4)
+    each = 8 * 8 * np.dtype(np.float64).itemsize
+
+    def policy(budget: int) -> ConvexSolvePolicy:
+        return ConvexSolvePolicy(
+            NativeHomogeneousConic(newton="reduced"),
+            termination=ConvexTermination(absolute=1e-7, maximum_steps=64),
+            failure=FailurePolicy("status"),
+            resources=SolveResourcePolicy(factorization_bytes=budget),
+        )
+
+    assert bool(solve_conic_program(program, policy=policy(2 * each)).successful)
+    # Either factor alone fits this budget; the pair retained together does not.
+    with pytest.raises(ValueError, match="factorization byte budget"):
+        solve_conic_program(program, policy=policy(2 * each - 1))
+
+
 def _active_box_program(pad_rows: int) -> ConicProgram:
     # min 1/2 |x|^2 - c.x with coupled upper limits that bind at the optimum,
     # so the centering path decides every interrupted iterate.

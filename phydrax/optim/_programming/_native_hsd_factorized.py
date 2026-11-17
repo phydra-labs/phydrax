@@ -493,6 +493,13 @@ def prepare_dense_reduced_newton(
         ]
         or [empty]
     )
+    # Both block factors are retained through the iteration. The factorization
+    # policy admits each on its own, so their combined storage is admitted here.
+    retained = (
+        program.num_variables * program.num_variables + zero_rows.size * zero_rows.size
+    ) * np.dtype(program.linear.dtype).itemsize
+    if retained > policy.resources.factorization_bytes:
+        raise ValueError("Reduced Newton factor exceeds the factorization byte budget.")
     return DenseReducedNewtonPlan(
         jnp.asarray(zero_rows, dtype=jnp.int32),
         jnp.asarray(orthant_rows, dtype=jnp.int32),
