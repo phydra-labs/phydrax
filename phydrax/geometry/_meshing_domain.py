@@ -226,8 +226,13 @@ def _immutable_leaf(value: object, /) -> bool:
             if base.flags.writeable:
                 return False
             base = base.base
-        return base is None or isinstance(base, (bytes, jax.Array))
+        return isinstance(base, (bytes, jax.Array))
     return isinstance(value, (str, bytes, int, float, complex, Fraction, np.generic))
+
+
+def _immutable_host_array(value: np.ndarray, /) -> np.ndarray:
+    """Preserve an array's values while making its storage permanently read-only."""
+    return np.frombuffer(value.tobytes(), dtype=value.dtype).reshape(value.shape)
 
 
 _VALIDATION_TOKEN = object()
@@ -2914,11 +2919,11 @@ class MeshingDomain(StrictModule, NonTrainableState):
         self.patches = patches_
         self.curves = curves_
         self.regions = regions_
-        self.corner_points = np.array(points, dtype=np.float64, copy=True)
+        self.corner_points = _immutable_host_array(np.asarray(points, dtype=np.float64))
         self.corner_points_authored = corner_points is not None
-        self.corner_points.setflags(write=False)
-        self.curve_owners = np.asarray(owners, dtype=np.int64).reshape((-1, 3))
-        self.curve_owners.setflags(write=False)
+        self.curve_owners = _immutable_host_array(
+            np.asarray(owners, dtype=np.int64).reshape((-1, 3))
+        )
         self.patch_regions = patch_regions
         self.curve_atlas = atlas
         self.brep_authority = brep_authority
@@ -3341,8 +3346,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
                     f"MeshingDomain dimension-{dimension} scope IDs collide in int64."
                 )
             records.sort(key=lambda record: record[0])
-            identifiers = np.asarray([record[0] for record in records], dtype=np.int64)
-            identifiers.setflags(write=False)
+            identifiers = _immutable_host_array(
+                np.asarray([record[0] for record in records], dtype=np.int64)
+            )
             keys = tuple((entity_key, path) for _, entity_key, path in records)
             id_banks.append(identifiers)
             key_banks.append(keys)

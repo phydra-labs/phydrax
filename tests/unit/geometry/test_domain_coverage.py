@@ -634,6 +634,9 @@ def test_exact_planar_cad_domain_uses_authored_source_faces() -> None:
 
 def test_source_trim_preparation_respects_live_domain_identity_and_lifetime() -> None:
     domain, _, _ = _cad_box_domain()
+    assert domain.domain_id == (
+        "02a298cb11bdc4d66eb0a85cd47a36033b9d5212d7668d6cce3b5c8a8a75083a"
+    )
     source = MeshingDomainBoundarySource(domain, (0,))
     triangles = source.boundary_parameter_triangles()[0][1]
     preparation = SourcePreparation(domain)
