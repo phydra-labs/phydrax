@@ -2128,9 +2128,9 @@ def _cell_map_findings(
             expressions.append(
                 f"cell:{cell.global_id}:projection_rows:{witness.projection_rows}:"
                 f"projection_matrix:{projection_matrix}:"
-                f"controls:{witness.principal_minor_controls}"
+                f"control_digests:{witness.principal_minor_controls}"
                 + (
-                    f":denominator_controls:{witness.denominator_controls}"
+                    f":denominator_control_digests:{witness.denominator_controls}"
                     if witness.denominator_controls
                     else ""
                 )
