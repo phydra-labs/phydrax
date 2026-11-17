@@ -509,11 +509,15 @@ int32_t TetMesh::build_state(std::span<const double> points,
   }
   // Build this once for the construction pass; retain source-bank row order
   // so coverage and its first-refusal behavior are unchanged.
-  std::map<std::int32_t, std::vector<std::size_t>> source_group_rows;
+  std::map<std::int32_t, PreparedFacetGroup> source_groups;
   for (std::size_t row = 0; row < source_face_groups_.size(); ++row) {
-    source_group_rows[source_face_groups_[row]].push_back(row);
+    auto& group = source_groups[source_face_groups_[row]];
+    group.rows.push_back(row);
+    group.primitives.push_back({source_faces_[3 * row], source_faces_[3 * row + 1],
+                                source_faces_[3 * row + 2], static_cast<std::int32_t>(row)});
+    group.indices.push_back(static_cast<std::int32_t>(group.indices.size()));
   }
-  const std::vector<std::size_t> no_source_rows;
+  const PreparedFacetGroup no_source_rows;
   for (std::size_t row = 0; row < face_count; ++row) {
     const TetSnapshotFacet& face = facets_[row];
     TetEditFacet candidate;
@@ -522,10 +526,9 @@ int32_t TetMesh::build_state(std::span<const double> points,
     candidate.source = face.source;
     candidate.orientation = face.orientation;
     candidate.protected_facet = face.protected_facet;
-    const auto source_rows = source_group_rows.find(face.source);
-    const auto& group_rows = source_rows == source_group_rows.end()
-                                 ? no_source_rows : source_rows->second;
-    if (!source_face_valid(candidate, nullptr, &group_rows)) return PHX_MC_INVALID_INPUT;
+    const auto source_rows = source_groups.find(face.source);
+    const auto& group = source_rows == source_groups.end() ? no_source_rows : source_rows->second;
+    if (!source_face_valid(candidate, nullptr, &group)) return PHX_MC_INVALID_INPUT;
   }
   for (std::size_t row = 0; row < segment_count; ++row) {
     const TetSnapshotSegment& segment = segments_[row];

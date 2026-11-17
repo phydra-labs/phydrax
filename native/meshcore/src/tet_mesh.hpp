@@ -698,10 +698,15 @@ class TetMesh {
   bool declared_face_valid(const DeclaredGroup& group, const double* const* carriers,
                            const SourceWitness* const* witness_records,
                            std::int8_t orientation) const;
+  struct PreparedFacetGroup {
+    std::vector<std::size_t> rows;
+    std::vector<std::array<std::int32_t, 4>> primitives;
+    std::vector<std::int32_t> indices;
+  };
   bool source_carrier_valid(const TetEditVertex& vertex) const;
   bool source_face_valid(const TetEditFacet& facet,
                          const RelocationOverlay* overlay = nullptr,
-                         const std::vector<std::size_t>* group_rows = nullptr) const;
+                         const PreparedFacetGroup* group = nullptr) const;
   TetEditStatus source_face_refusal_status() const noexcept {
     return implicit_source_ && implicit_source_->last_inconclusive
                ? TetEditStatus::kUncertainPredicate : TetEditStatus::kInvalidGeometry;

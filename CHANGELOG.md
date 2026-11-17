@@ -251,6 +251,8 @@
 ### Changed
 - Exact facet coverage evaluates its predicate proof directly on source banks;
   it materializes arrangement coordinates only when the proof is inconclusive.
+- Construction reuses each source group's ordered coverage primitives across
+  facets, retaining the exact predicate and fallback order.
 - Tetrahedral mesh construction indexes source faces by group for its
   validation pass, avoiding repeated scans while retaining source order and
   exact coverage decisions.
