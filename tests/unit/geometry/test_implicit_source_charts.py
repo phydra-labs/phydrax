@@ -315,7 +315,7 @@ def test_batched_taylor_bounds_match_scalar_bits_and_batch_splits() -> None:
 def test_narrowed_piece_gradient_cannot_certify(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    bounds, hessian, surface, face, _ = _near_band_sphere_face()
+    _, source, _, mesh, geometry, witness = _adaptive_source()
 
     def broken_intersection(
         first: source_charts._IntervalLanes, second: source_charts._IntervalLanes, /
@@ -323,14 +323,17 @@ def test_narrowed_piece_gradient_cannot_certify(
         zero = np.zeros_like(first[0], dtype=np.float64)
         return zero, zero
 
+    def exhausted_split(
+        triangle: source_charts.TriangleReference, /
+    ) -> source_charts.SplitTriangles | None:
+        return None
+
     monkeypatch.setattr(source_charts, "_lane_intersection", broken_intersection)
-    step = source_charts._face_piece_steps(
-        surface, face, source_charts._STANDARD_TRIANGLE, 1, (0, 1, 2), None, None
-    )
-    (outcome,), _ = source_charts._run_piece_steps(bounds, hessian, (step,))
-    proof, detail, _ = outcome
-    assert proof is None
-    assert "gradient norm enclosure" in detail
+    monkeypatch.setattr(source_charts, "_split_triangle", exhausted_split)
+    with pytest.raises(ValueError, match="gradient norm enclosure"):
+        prepare_adaptive_implicit_root_charts(
+            mesh, geometry, source, witness, tolerance=0.5, maximum_normal_deviation=np.pi
+        )
 
 
 def _grid_corner(values: np.ndarray, /) -> GridCorner:
