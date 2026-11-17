@@ -472,48 +472,68 @@ def _area2(points: tuple[tuple[Fraction, Fraction], ...], /) -> Fraction:
     return Fraction(numerator, 2 * denominator * denominator)
 
 
-def _cross2(
-    first: tuple[Fraction, Fraction],
-    second: tuple[Fraction, Fraction],
-    point: tuple[Fraction, Fraction],
-    /,
-) -> Fraction:
-    denominators = tuple(
-        math.lcm(vertex[0].denominator, vertex[1].denominator)
-        for vertex in (first, second, point)
-    )
-    vertices = tuple(
-        (
-            vertex[0].numerator * (denominator // vertex[0].denominator),
-            vertex[1].numerator * (denominator // vertex[1].denominator),
-        )
-        for vertex, denominator in zip((first, second, point), denominators, strict=True)
-    )
-    (ax, ay), (bx, by), (cx, cy) = vertices
-    da, db, dc = denominators
-    numerator = (bx * da - ax * db) * (cy * da - ay * dc) - (by * da - ay * db) * (
-        cx * da - ax * dc
-    )
-    return Fraction(numerator, da * da * db * dc)
+type _HomogeneousPoint = tuple[int, int, int]
 
 
-def _line_intersection(
-    first: tuple[Fraction, Fraction],
-    second: tuple[Fraction, Fraction],
-    line_first: tuple[Fraction, Fraction],
-    line_second: tuple[Fraction, Fraction],
+def _homogeneous_point(point: tuple[Fraction, Fraction], /) -> _HomogeneousPoint:
+    denominator = math.lcm(point[0].denominator, point[1].denominator)
+    return (
+        point[0].numerator * (denominator // point[0].denominator),
+        point[1].numerator * (denominator // point[1].denominator),
+        denominator,
+    )
+
+
+def _integer_line(
+    first: _HomogeneousPoint, second: _HomogeneousPoint, /
+) -> _HomogeneousPoint:
+    return (
+        first[1] * second[2] - first[2] * second[1],
+        first[2] * second[0] - first[0] * second[2],
+        first[0] * second[1] - first[1] * second[0],
+    )
+
+
+def _line_value(line: _HomogeneousPoint, point: _HomogeneousPoint, /) -> int:
+    return line[0] * point[0] + line[1] * point[1] + line[2] * point[2]
+
+
+def _integer_intersection(
+    first: _HomogeneousPoint,
+    second: _HomogeneousPoint,
+    first_value: int,
+    second_value: int,
     /,
-) -> tuple[Fraction, Fraction]:
-    direction = (second[0] - first[0], second[1] - first[1])
-    line = (line_second[0] - line_first[0], line_second[1] - line_first[1])
-    denominator = line[0] * direction[1] - line[1] * direction[0]
-    if denominator == 0:
+) -> _HomogeneousPoint:
+    coordinates = tuple(
+        first_value * b - second_value * a for a, b in zip(first, second, strict=True)
+    )
+    divisor = math.gcd(*coordinates)
+    if divisor == 0 or coordinates[2] == 0:
         raise SourceCoverageUnavailable(
             "Exact source-chart clipping is singular.", status="unresolved"
         )
-    offset = (line_first[0] - first[0], line_first[1] - first[1])
-    parameter = (line[0] * offset[1] - line[1] * offset[0]) / denominator
-    return (first[0] + parameter * direction[0], first[1] + parameter * direction[1])
+    if coordinates[2] < 0:
+        divisor = -divisor
+    return (
+        coordinates[0] // divisor,
+        coordinates[1] // divisor,
+        coordinates[2] // divisor,
+    )
+
+
+def _integer_polygon_area(points: tuple[_HomogeneousPoint, ...], /) -> Fraction:
+    if len(points) < 3:
+        return Fraction(0)
+    denominator = math.lcm(*(point[2] for point in points))
+    vertices = tuple(
+        (x * (denominator // scale), y * (denominator // scale)) for x, y, scale in points
+    )
+    numerator = sum(
+        first[0] * second[1] - first[1] * second[0]
+        for first, second in zip(vertices, (*vertices[1:], vertices[0]), strict=True)
+    )
+    return Fraction(numerator, 2 * denominator * denominator)
 
 
 def _intersection_area(
@@ -526,34 +546,34 @@ def _intersection_area(
         return Fraction(0)
     if clip_area < 0:
         clip = tuple(reversed(clip))
-    polygon = subject
-    for line_first, line_second in zip(clip, (*clip[1:], clip[0]), strict=True):
+    boundary = tuple(_homogeneous_point(point) for point in clip)
+    polygon = tuple(_homogeneous_point(point) for point in subject)
+    for first, second in zip(boundary, (*boundary[1:], boundary[0]), strict=True):
         if not polygon:
             return Fraction(0)
-        output: list[tuple[Fraction, Fraction]] = []
+        line = _integer_line(first, second)
+        output: list[_HomogeneousPoint] = []
         previous = polygon[-1]
-        previous_inside = _cross2(line_first, line_second, previous) >= 0
+        previous_value = _line_value(line, previous)
         for current in polygon:
-            current_inside = _cross2(line_first, line_second, current) >= 0
-            if current_inside:
-                if not previous_inside:
-                    output.append(
-                        _line_intersection(previous, current, line_first, line_second)
-                    )
-                output.append(current)
-            elif previous_inside:
+            current_value = _line_value(line, current)
+            if (previous_value >= 0) != (current_value >= 0):
                 output.append(
-                    _line_intersection(previous, current, line_first, line_second)
+                    _integer_intersection(
+                        previous, current, previous_value, current_value
+                    )
                 )
-            previous, previous_inside = current, current_inside
-        compact: list[tuple[Fraction, Fraction]] = []
+            if current_value >= 0:
+                output.append(current)
+            previous, previous_value = current, current_value
+        compact: list[_HomogeneousPoint] = []
         for point in output:
             if not compact or point != compact[-1]:
                 compact.append(point)
         if len(compact) > 1 and compact[0] == compact[-1]:
             compact.pop()
         polygon = tuple(compact)
-    return abs(_area2(polygon))
+    return abs(_integer_polygon_area(polygon))
 
 
 _Box2 = tuple[Fraction, Fraction, Fraction, Fraction]
@@ -598,6 +618,35 @@ def _possibly_overlapping_pairs(
     return [(left, right) for left, right in pairs[decisions != 1].tolist()]
 
 
+def _sweep_box_overlap_pairs(
+    first_boxes: tuple[np.ndarray, np.ndarray],
+    second_boxes: tuple[np.ndarray, np.ndarray],
+    order: np.ndarray,
+    sorted_lower: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Closed-box overlaps in lexicographic first-row, second-row order.
+
+    ``order`` sorts the second bank by its first-axis lower bound and
+    ``sorted_lower`` contains those bounds in the same order.
+    """
+    matches: list[np.ndarray] = []
+    for row in range(len(first_boxes[0])):
+        end = np.searchsorted(sorted_lower, first_boxes[1][row, 0], side="right")
+        candidates = order[:end]
+        keep = np.all(
+            (first_boxes[0][row] <= second_boxes[1][candidates])
+            & (second_boxes[0][candidates] <= first_boxes[1][row]),
+            axis=1,
+        )
+        columns = np.sort(candidates[keep])
+        if columns.size:
+            matches.append(
+                np.column_stack((np.full(columns.size, row, dtype=np.int64), columns))
+            )
+    return np.concatenate(matches) if matches else np.empty((0, 2), dtype=np.int64)
+
+
 def _blocked_overlapping_pairs(
     rows: tuple[_Triangle2, ...], others: tuple[_Triangle2, ...] | None, /
 ) -> Iterator[tuple[int, int, list[tuple[int, int]]]]:
@@ -613,15 +662,31 @@ def _blocked_overlapping_pairs(
     boxes = polygon_boxes(rows)
     second_boxes = boxes if others is None else polygon_boxes(second)
     enclosures = TriangleEnclosures.prepare(rows if others is None else rows + others)
+    order = (
+        np.argsort(second_boxes[0][:, 0], kind="stable")
+        if boxes is not None and second_boxes is not None and len(second) > 1024
+        else None
+    )
+    sorted_lower = (
+        None if order is None or second_boxes is None else second_boxes[0][order, 0]
+    )
     for start in range(0, len(rows), 64):
         stop = min(start + 64, len(rows))
-        pairs = box_overlap_pairs(
-            stop - start,
-            len(second),
-            None if boxes is None else (boxes[0][start:stop], boxes[1][start:stop]),
-            second_boxes,
-            self_pairs=False,
-        )
+        if order is None or sorted_lower is None or boxes is None or second_boxes is None:
+            pairs = box_overlap_pairs(
+                stop - start,
+                len(second),
+                None if boxes is None else (boxes[0][start:stop], boxes[1][start:stop]),
+                second_boxes,
+                self_pairs=False,
+            )
+        else:
+            pairs = _sweep_box_overlap_pairs(
+                (boxes[0][start:stop], boxes[1][start:stop]),
+                second_boxes,
+                order,
+                sorted_lower,
+            )
         first = pairs[:, 0] + start
         decisions = enclosures.separation(first, pairs[:, 1] + offset)
         keep = decisions != 1
@@ -1319,6 +1384,16 @@ def _cad_target_root_partition(
 
     root_rows = {identifier: row for row, identifier in enumerate(charts.cell_global_ids)}
     patch_ids = domain.stratum_entity_ids(2)
+    entity_ids: dict[tuple[int, int], str] = {}
+
+    def entity_id(dimension: int, index: int) -> str:
+        key = (dimension, index)
+        value = entity_ids.get(key)
+        if value is None:
+            value = domain.entity_id(dimension, index)
+            entity_ids[key] = value
+        return value
+
     roots = np.asarray(witness.cad_root_cell_ids, dtype=np.int64)
     if roots.shape != (len(patch_rows),):
         raise SourceCoverageUnavailable(
@@ -1483,8 +1558,13 @@ def _cad_target_root_partition(
                 raise SourceCoverageUnavailable(
                     "CAD plane mixes source charts.", status="violated"
                 )
+        # The retained charts may hold an equal restored domain object; their
+        # boundary source answers only a preparation of its own live domain.
         declared = charts.boundary_source._trim_partition_reference_unchecked(
-            patch, rows, SourcePreparation(domain), plane=patch in plane_patches
+            patch,
+            rows,
+            SourcePreparation(charts.boundary_source.domain),
+            plane=patch in plane_patches,
         )[0]
         source_area = sum((abs(_area2(t)) for t in declared), Fraction(0))
         if (
@@ -1598,7 +1678,11 @@ def _cad_target_root_partition(
                         if parameter == 0
                         else domain.curves[curve].end
                     )
-                    key = _cad_corner_key(domain, corner)
+                    key = (
+                        "corner",
+                        entity_id(0, corner),
+                        domain.source_occurrences[0][corner],
+                    )
                 else:
                     actual = Fraction.from_float(float(owner.first)) + parameter * (
                         Fraction.from_float(float(owner.last))
@@ -1606,7 +1690,7 @@ def _cad_target_root_partition(
                     )
                     key = (
                         "curve",
-                        domain.entity_id(1, curve),
+                        entity_id(1, curve),
                         domain.source_occurrences[1][curve],
                         actual,
                     )
@@ -1746,7 +1830,7 @@ def _cad_target_root_partition(
                     else source_parameters[::-1]
                 )
                 edge_uses[(row, sorted_edge)] = (
-                    (domain.entity_id(1, curve), domain.source_occurrences[1][curve]),
+                    (entity_id(1, curve), domain.source_occurrences[1][curve]),
                     ordered[0],
                     ordered[1],
                     use,
@@ -1782,7 +1866,7 @@ def _cad_target_root_partition(
                 continue
             interior = (
                 "patch",
-                domain.entity_id(2, patch),
+                patch_ids[patch],
                 domain.source_occurrences[2][patch],
                 point,
             )

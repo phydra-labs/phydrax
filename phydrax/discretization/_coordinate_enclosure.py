@@ -47,6 +47,7 @@ if TYPE_CHECKING:
         PerCellRestrictedCellGeometryElement,
         ScalarCoordinateElement,
     )
+    from ._exact_coordinate_bank import ExactCoordinateBank
 
 
 class _CellGeometrySourceOwner(Protocol):
@@ -1559,6 +1560,81 @@ def _coordinate_point_rounding_error(
     return fraction_sqrt_interval(squared)[1]
 
 
+def _dyadic_point_rounding_bound(
+    coordinates: ExactCoordinateBank, rounded: np.ndarray, /
+) -> tuple[Fraction, np.ndarray]:
+    """Return the exact maximum for safe dyadic rows and a mask of other rows.
+
+    Aligned nearest binary64 values have an integer error at each original
+    exponent.  Small errors and exponent spreads fit their squared row sums in
+    uint64.  Other rows retain the existing per-value exact route.
+    """
+    from ..linalg._hermitian_spectral import fraction_sqrt_interval
+
+    significands, exponents, _, _, _ = coordinates.canonical_parts()
+    if rounded.shape[1] == 0:
+        return Fraction(0), np.zeros(rounded.shape[0], dtype=np.bool_)
+    if rounded.shape[1] > 3:
+        return Fraction(0), np.ones(rounded.shape[0], dtype=np.bool_)
+    exponent = exponents.astype(np.int64)
+    in_range = (exponent >= -500) & (exponent <= 450)
+    safe_exponent = np.clip(exponent, -500, 450)
+    # Within this exponent range, conversion to binary64 followed by a power
+    # of two scaling is normal and cannot introduce a second rounding.
+    proposal = np.ldexp(significands.astype(np.float64), safe_exponent)
+    valid = np.all(in_range & (proposal == rounded), axis=1)
+
+    bits = proposal.view(np.uint64)
+    encoded_exponent = (bits >> np.uint64(52)) & np.uint64(0x7FF)
+    mantissa = (bits & np.uint64((1 << 52) - 1)) | np.uint64(1 << 52)
+    binary_exponent = encoded_exponent.astype(np.int64) - 1075
+    shift = binary_exponent - safe_exponent
+    magnitude = np.abs(significands).astype(np.uint64)
+    right = np.right_shift(mantissa, np.clip(-shift, 0, 52).astype(np.uint64))
+    left = np.left_shift(mantissa, np.clip(shift, 0, 11).astype(np.uint64))
+    represented = np.where(shift < 0, right, left)
+    represented = np.where(significands == 0, np.uint64(0), represented)
+    difference = np.maximum(magnitude, represented) - np.minimum(magnitude, represented)
+    valid &= np.all(
+        ((significands == 0) | ((shift >= -52) & (shift <= 11)))
+        & (difference <= np.uint64(1 << 20)),
+        axis=1,
+    )
+    nonzero = difference != 0
+    minimum = np.min(np.where(nonzero, safe_exponent, 32767), axis=1)
+    minimum = np.where(minimum == 32767, 0, minimum)
+    spread = np.where(nonzero, safe_exponent - minimum[:, None], 0)
+    valid &= np.all(spread <= 10, axis=1)
+    terms = np.left_shift(
+        difference * difference, np.clip(2 * spread, 0, 20).astype(np.uint64)
+    )
+    squared = np.sum(terms, axis=1, dtype=np.uint64)
+    positive = valid & (squared != 0)
+    if not np.any(positive):
+        return Fraction(0), ~valid
+
+    # Compare exact dyadics using an integer binary exponent and normalized
+    # significand, rather than rounding row sums to select the maximum.
+    # Eligible sums are below 2**62 and their nonzero scaled values are normal.
+    # An exact square root then has at most 31 significand bits and is exactly
+    # representable; every other upper square-root endpoint is the least
+    # binary64 above it.  Those upper endpoints are therefore monotone, so
+    # taking one square root after the exact maximum preserves the old result.
+    remaining = squared.copy()
+    bit_length = np.ones(squared.shape, dtype=np.int64)
+    for width in (32, 16, 8, 4, 2, 1):
+        has_bits = remaining >= np.uint64(1 << width)
+        remaining = np.where(has_bits, remaining >> np.uint64(width), remaining)
+        bit_length += np.where(has_bits, width, 0)
+    order = bit_length + 2 * minimum
+    greatest_order = np.max(order[positive])
+    candidates = positive & (order == greatest_order)
+    normalized = np.left_shift(squared, (64 - bit_length).astype(np.uint64))
+    best = np.argmax(np.where(candidates, normalized, np.uint64(0)))
+    value = Fraction(int(squared[best])) * Fraction(2) ** int(2 * minimum[best])
+    return fraction_sqrt_interval(value)[1], ~valid
+
+
 def coordinate_point_rounding_bound(
     coordinates: CoordinateSourceBank, representatives: np.ndarray, /
 ) -> Fraction:
@@ -1574,28 +1650,15 @@ def coordinate_point_rounding_bound(
         and rounded.shape == coordinates.shape
         and np.all(np.isfinite(rounded))
     ):
-        lower, upper = coordinates.interval_endpoints()
-        magnitude_mask = np.uint64((1 << 63) - 1)
-        bits = rounded.view(np.uint64)
-        lower_bits = lower.view(np.uint64)
-        upper_bits = upper.view(np.uint64)
-        # Both proved endpoints must be the representative; normalize signed
-        # zero before comparing binary64 encodings as integers.
-        bits = np.where((bits & magnitude_mask) == 0, np.uint64(0), bits)
-        lower_bits = np.where(
-            (lower_bits & magnitude_mask) == 0, np.uint64(0), lower_bits
-        )
-        upper_bits = np.where(
-            (upper_bits & magnitude_mask) == 0, np.uint64(0), upper_bits
-        )
-        exact = np.all((lower_bits == bits) & (upper_bits == bits), axis=1)
-        return max(
+        fast_bound, exceptional = _dyadic_point_rounding_bound(coordinates, rounded)
+        slow_bound = max(
             (
                 _coordinate_point_rounding_error(coordinates[row], rounded[row])
-                for row in np.flatnonzero(~exact).tolist()
+                for row in np.flatnonzero(exceptional).tolist()
             ),
             default=Fraction(0),
         )
+        return max(fast_bound, slow_bound)
 
     return max(
         (

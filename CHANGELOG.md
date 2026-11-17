@@ -249,10 +249,26 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Welded surface intersection checks group exact orientation predicates and
+  skip redundant shared-vertex edge tests without changing contact decisions.
+- Welded topology audits group vertex and edge star lookups without changing
+  manifold findings or their ordering.
+- Source-chart interpolation prepares dyadic target combinations and coordinate
+  endpoint enclosures in blocks, preserving exact cancellation and chart evidence.
+- Mapped measures skip unused coordinate materialization and combine packed
+  dyadic coordinates exactly, retaining per-row fallback for other coefficients.
 - Boundary proofs reuse already evaluated exact facet lattice points within
   the bounded live proof, preserving findings and evidence identities.
 - Embedding preparation reuses each simplex block's exact reference frame,
   avoiding repeated affine solves without changing cell charts or identities.
+- Cell validity prepares dyadic source-coordinate endpoints and point-rounding
+  bounds in blocks while retaining exact fallback and unchanged certificate bits.
+- Live proof guards dispatch common concrete leaf types directly while retaining
+  the same content framing and mutation checks.
+- Intersection-curve projection can isolate simple stationary roots with
+  outward interval bounds and exact endpoint signs, falling back to exact
+  isolation. Its root identities may change; projection result identities
+  change only through their output arrays.
 - Global embedding contact passes reuse exact stratum root nets only for the
   same live cell and exact stratum and residual; the table is discarded when
   the proof returns. Contact decisions and witness identities are unchanged.

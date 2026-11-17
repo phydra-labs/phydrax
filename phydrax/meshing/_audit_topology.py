@@ -370,16 +370,26 @@ def _star_components(
     nodes = np.unique(
         np.concatenate((entity_rows, entity_cells[:, None]), axis=1), axis=0
     )
-    first = _lookup(nodes, np.concatenate((keys, first_cells[:, None]), axis=1))
-    second = _lookup(nodes, np.concatenate((keys, second_cells[:, None]), axis=1))
+    queries = np.concatenate(
+        (
+            np.concatenate((keys, first_cells[:, None]), axis=1),
+            np.concatenate((keys, second_cells[:, None]), axis=1),
+        ),
+        axis=0,
+    )
+    positions = _lookup(nodes, queries)
+    first, second = positions[: len(first_cells)], positions[len(first_cells) :]
     graph = coo_matrix(
         (np.ones(first.size, dtype=np.int8), (first, second)),
         shape=(nodes.shape[0], nodes.shape[0]),
     )
     _, labels = connected_components(graph, directed=False)
-    entities, entity_index = np.unique(nodes[:, :-1], axis=0, return_inverse=True)
-    pairs = np.unique(np.stack((entity_index.reshape(-1), labels), axis=1), axis=0)
-    components = np.bincount(pairs[:, 0], minlength=entities.shape[0])
+    starts = np.concatenate(
+        (np.asarray((True,), dtype=np.bool_), np.any(nodes[1:, :-1] != nodes[:-1, :-1], axis=1))
+    )
+    entity_index = np.cumsum(starts, dtype=np.int64) - 1
+    pairs = np.unique(np.stack((entity_index, labels), axis=1), axis=0)
+    components = np.bincount(pairs[:, 0], minlength=int(np.count_nonzero(starts)))
     return int(np.count_nonzero(components > 1))
 
 
@@ -487,11 +497,14 @@ def _segment_crosses_triangle(
 
     a, b = segment
     p, q, r = triangle
-    side_a, certain_a = _orient3d(p, q, r, a)
-    side_b, certain_b = _orient3d(p, q, r, b)
-    first, certain_1 = _orient3d(a, b, p, q)
-    second, certain_2 = _orient3d(a, b, q, r)
-    third, certain_3 = _orient3d(a, b, r, p)
+    signs, certainties = _orient3d(
+        np.concatenate((p, p, a, a, a)),
+        np.concatenate((q, q, b, b, b)),
+        np.concatenate((r, r, p, q, r)),
+        np.concatenate((a, b, q, r, p)),
+    )
+    side_a, side_b, first, second, third = signs.reshape((5, -1))
+    certain_a, certain_b, certain_1, certain_2, certain_3 = certainties.reshape((5, -1))
     edges = np.stack((first, second, third), axis=1).astype(np.int16)
     straddles = (side_a.astype(np.int16) * side_b <= 0) & ~((side_a == 0) & (side_b == 0))
     inside = np.all(edges >= 0, axis=1) | np.all(edges <= 0, axis=1)
@@ -520,14 +533,13 @@ def _project(points: np.ndarray, axes: np.ndarray, /) -> np.ndarray:
 
 def _inside_triangle_2d(point: Any, triangle: Any, /, *, strict: bool) -> Any:
     p, q, r = triangle
-    signs = []
-    certainties = []
-    for start, stop in ((p, q), (q, r), (r, p)):
-        sign, known = _orient2d(start, stop, point)
-        signs.append(sign.astype(np.int16))
-        certainties.append(known)
-    stacked = np.stack(signs, axis=1)
-    known = np.stack(certainties, axis=1)
+    signs, certainties = _orient2d(
+        np.concatenate((p, q, r)),
+        np.concatenate((q, r, p)),
+        np.tile(point, (3, 1)),
+    )
+    stacked = signs.reshape((3, -1)).T.astype(np.int16)
+    known = certainties.reshape((3, -1)).T
     # Two certified opposite signs (or, for strict containment, one certified
     # zero) place the point outside whatever the unresolved signs are.
     outside = np.any(known & (stacked > 0), axis=1) & np.any(
@@ -580,15 +592,17 @@ def _coplanar_overlap(
             contact = status != SegmentIntersectionStatus.DISJOINT
             hit |= np.where(touching | (not adjacent), contact, beyond_shared)
             certain &= status != SegmentIntersectionStatus.UNCERTAIN
-    for index in range(3):
-        inside_two, known_two = _inside_triangle_2d(
-            one[:, index], (two[:, 0], two[:, 1], two[:, 2]), strict=True
-        )
-        inside_one, known_one = _inside_triangle_2d(
-            two[:, index], (one[:, 0], one[:, 1], one[:, 2]), strict=True
-        )
-        hit |= inside_two | inside_one
-        certain &= known_two & known_one
+    points = np.concatenate(
+        tuple(one[:, index] for index in range(3))
+        + tuple(two[:, index] for index in range(3))
+    )
+    targets = tuple(
+        np.concatenate((np.tile(two[:, axis], (3, 1)), np.tile(one[:, axis], (3, 1))))
+        for axis in range(3)
+    )
+    inside, known = _inside_triangle_2d(points, targets, strict=True)
+    hit |= np.any(inside.reshape((6, -1)), axis=0)
+    certain &= np.all(known.reshape((6, -1)), axis=0)
     return hit, certain
 
 
@@ -611,15 +625,14 @@ def _triangle_pairs_intersect(
     two = np.where((shared == 0)[:, None], second, two)
     tri_one = points[one]
     tri_two = points[two]
-    plane_signs = []
-    plane_known = np.ones(first.shape[0], dtype=np.bool_)
-    for index in range(3):
-        sign, known = _orient3d(
-            tri_one[:, 0], tri_one[:, 1], tri_one[:, 2], tri_two[:, index]
-        )
-        plane_signs.append(sign)
-        plane_known &= known
-    coplanar = np.all(np.stack(plane_signs, axis=1) == 0, axis=1)
+    plane_signs, plane_certainties = _orient3d(
+        np.tile(tri_one[:, 0], (3, 1)),
+        np.tile(tri_one[:, 1], (3, 1)),
+        np.tile(tri_one[:, 2], (3, 1)),
+        np.concatenate((tri_two[:, 0], tri_two[:, 1], tri_two[:, 2])),
+    )
+    coplanar = np.all(plane_signs.reshape((3, -1)) == 0, axis=0)
+    plane_known = np.all(plane_certainties.reshape((3, -1)), axis=0)
     certain &= plane_known
 
     edge_share = shared == 2
@@ -637,12 +650,13 @@ def _triangle_pairs_intersect(
         c = tri[free_first]
         d = other[free_second]
         axes = _projection_axes(tri)
-        side_c, known_c = _orient2d(
-            _project(a, axes), _project(b, axes), _project(c, axes)
+        side, side_known = _orient2d(
+            np.tile(_project(a, axes), (2, 1)),
+            np.tile(_project(b, axes), (2, 1)),
+            np.concatenate((_project(c, axes), _project(d, axes))),
         )
-        side_d, known_d = _orient2d(
-            _project(a, axes), _project(b, axes), _project(d, axes)
-        )
+        side_c, side_d = side.reshape((2, -1))
+        known_c, known_d = side_known.reshape((2, -1))
         folded = coplanar[rows] & (side_c == side_d) & (side_c != 0)
         hit[rows] = folded
         certain[rows] &= known_c & known_d
@@ -656,21 +670,29 @@ def _triangle_pairs_intersect(
     if crossing_rows.size:
         a = tri_one[crossing_rows]
         b = tri_two[crossing_rows]
-        start = np.where(shared[crossing_rows] == 1, 1, 0)
+        all_rows = np.arange(crossing_rows.size)
+        disjoint_rows = np.flatnonzero(shared[crossing_rows] == 0)
+        parts = tuple(
+            (source, target, index, all_rows if index == 1 else disjoint_rows)
+            for source, target in ((a, b), (b, a))
+            for index in range(3)
+        )
+        begin = np.concatenate([source[rows, index] for source, _, index, rows in parts])
+        end = np.concatenate(
+            [source[rows, (index + 1) % 3] for source, _, index, rows in parts]
+        )
+        result, certain_ = _segment_crosses_triangle(
+            (begin, end),
+            tuple(
+                np.concatenate([target[rows, axis] for _, target, _, rows in parts])
+                for axis in range(3)
+            ),
+        )
+        owners = np.concatenate([rows for _, _, _, rows in parts])
         contact = np.zeros(crossing_rows.size, dtype=np.bool_)
         known = np.ones(crossing_rows.size, dtype=np.bool_)
-        for source, target in ((a, b), (b, a)):
-            for index in range(3):
-                begin = source[:, index]
-                end = source[:, (index + 1) % 3]
-                # A shared vertex (local zero) touches the other triangle by
-                # construction; only the opposite edge carries new contact.
-                relevant = (start == 0) | (index == 1)
-                result, certain_ = _segment_crosses_triangle(
-                    (begin, end), (target[:, 0], target[:, 1], target[:, 2])
-                )
-                contact |= relevant & result
-                known &= ~relevant | certain_
+        np.logical_or.at(contact, owners, result)
+        np.logical_and.at(known, owners, certain_)
         hit[crossing_rows] = contact
         certain[crossing_rows] &= known
     unresolved = np.flatnonzero(~certain)
@@ -894,6 +916,9 @@ def _surface_triangles(
     )
 
 
+_TRIANGLE_PAIR_BATCH = 1 << 15
+
+
 def _self_intersections(
     points: np.ndarray,
     complex_: _Complex,
@@ -922,9 +947,10 @@ def _self_intersections(
         keep = first < second
         first = first[keep]
         second = second[keep]
-        if first.size:
+        for start in range(0, first.size, _TRIANGLE_PAIR_BATCH):
+            stop = min(start + _TRIANGLE_PAIR_BATCH, first.size)
             hit, certain = _triangle_pairs_intersect(
-                points, triangles[first], triangles[second]
+                points, triangles[first[start:stop]], triangles[second[start:stop]]
             )
             intersections += int(np.count_nonzero(hit & certain))
             undecided += int(np.count_nonzero(~certain))

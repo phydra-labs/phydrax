@@ -1,5 +1,6 @@
 """Adaptive sphere-chart decisions against the original exact target route."""
 
+from dataclasses import dataclass
 from fractions import Fraction
 
 import numpy as np
@@ -23,6 +24,7 @@ from phydrax.discretization._coordinate_enclosure import (
     subtract,
     sum_polynomials,
 )
+from phydrax.discretization._exact_coordinate_bank import ExactCoordinateBank
 from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
 from phydrax.geometry._meshing_domain import MeshingDomain, SourcePreparation
 from phydrax.geometry._source_boundary_records import SourceBoundaryChartWitness
@@ -41,6 +43,17 @@ from phydrax.linalg._hermitian_spectral import fraction_sqrt_interval
 _REFERENCE = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
 
 
+@dataclass
+class _ExactChartCoordinates:
+    bank: tuple[tuple[Fraction, ...], ...]
+    source_id: str = "mixed-chart-source"
+    source_revision: str = "mixed-chart-revision"
+    source_map_id: str = "mixed-chart-map"
+
+    def source_coordinates(self) -> tuple[tuple[Fraction, ...], ...]:
+        return self.bank
+
+
 def _domain() -> MeshingDomain:
     return MeshingDomain.from_brep(
         brep_sphere(
@@ -57,6 +70,7 @@ def _case(
     order: np.ndarray,
     *,
     degree: int = 2,
+    mixed_exact: bool = False,
 ) -> tuple[
     CellMesh, CellGeometrySpec, MeshingDomainBoundarySource, SourceBoundaryChartWitness
 ]:
@@ -89,11 +103,28 @@ def _case(
         # A non-affine target exercises the exact composition and residual budget.
         values[:, 2] += 0.015625 * nodes[:, 0] * nodes[:, 1]
         coordinates.extend(values)
-    geometry = CellGeometrySpec(
-        {"surface": element},
-        {"surface": np.arange(count * len(nodes)).reshape(count, len(nodes))},
-        np.asarray(coordinates),
-    )
+    if mixed_exact:
+        exact = tuple(
+            tuple(
+                Fraction(float(value))
+                + (Fraction(1, 3 * 2**64) if row == len(nodes) and axis == 0 else 0)
+                for axis, value in enumerate(point)
+            )
+            for row, point in enumerate(coordinates)
+        )
+        geometry = CellGeometrySpec(
+            {"surface": element},
+            {"surface": np.arange(count * len(nodes)).reshape(count, len(nodes))},
+            np.asarray([[float(value) for value in point] for point in exact]),
+            source_mesh=mesh,
+            source_map=_ExactChartCoordinates(exact),
+        )
+    else:
+        geometry = CellGeometrySpec(
+            {"surface": element},
+            {"surface": np.arange(count * len(nodes)).reshape(count, len(nodes))},
+            np.asarray(coordinates),
+        )
     entity = domain.entity_id(2, 0)
     witness = SourceBoundaryChartWitness(
         mesh_id=mesh.mesh_id,
@@ -304,6 +335,60 @@ def test_adaptive_chart_decisions_are_batch_independent() -> None:
         )
 
 
+def test_mixed_exact_chart_evidence_matches_parent_and_single_rows() -> None:
+    domain = _domain()
+    charts = np.asarray(
+        (
+            ((0.0, 0.0), (0.25, 0.0), (0.0, 0.25)),
+            ((0.5, 0.25), (0.625, 0.25), (0.5, 0.375)),
+            ((0.75, 0.5), (1.0, 0.5), (0.75, 0.75)),
+        ),
+        dtype=np.float64,
+    )
+    order = np.asarray((2, 0, 1))
+
+    def evidence(selected: np.ndarray) -> tuple[SourceChartFidelity, tuple[bool, ...]]:
+        mesh, geometry, source, witness = _case(
+            domain, charts, selected, mixed_exact=True
+        )
+        rows = np.asarray(witness.cell_global_ids, dtype=np.int64) - 101
+        result = certify_domain_surface_charts(
+            mesh,
+            geometry,
+            source,
+            witness,
+            np.zeros(len(rows), dtype=np.int64),
+            tuple((0, int(row)) for row in rows),
+            tolerance=0.1,
+        )
+        return result, _oracle(mesh, geometry, source, witness, rows, 0.1, result)
+
+    combined, oracle = evidence(order)
+    assert oracle == (True, True, True)
+    assert not combined.findings
+    np.testing.assert_array_equal(
+        combined.deviation_bounds.view(np.uint64),
+        np.asarray(
+            (
+                (0, 4590529966654751047),
+                (0, 4584207746732470071),
+                (0, 4587266249781924758),
+            ),
+            dtype=np.uint64,
+        ),
+    )
+    for row in order:
+        position = combined.cell_global_ids.index(101 + int(row))
+        single, single_oracle = evidence(np.asarray((row,)))
+        assert single_oracle == (oracle[position],)
+        assert single.target_corners[0] == combined.target_corners[position]
+        assert single.target_affine[0] == combined.target_affine[position]
+        np.testing.assert_array_equal(
+            single.deviation_bounds[0].view(np.uint64),
+            combined.deviation_bounds[position].view(np.uint64),
+        )
+
+
 def test_target_basis_batch_preserves_rows_and_certification() -> None:
     domain = _domain()
     charts = np.asarray(
@@ -392,3 +477,16 @@ def test_endpoint_norm_screen_encloses_exact_and_catches_inward_fault() -> None:
         )
         assert bound >= exact
         assert bound / 2 < exact
+
+
+def test_packed_endpoint_enclosure_catches_inward_coordinates() -> None:
+    target = Fraction(2**53 + 1)
+    corners = ((target, Fraction(0), Fraction(0)),) * 3
+    bank = ExactCoordinateBank.from_rows(corners)
+    source = np.asarray(((float(2**53), 0.0, 0.0),) * 3, dtype=np.float64)
+    result = _target_endpoint_upper(
+        corners, source, source, endpoints=bank.interval_endpoints()
+    )
+    assert result is not None and result >= 1
+    inward = _target_endpoint_upper(corners, source, source, endpoints=(source, source))
+    assert inward is not None and inward < 1

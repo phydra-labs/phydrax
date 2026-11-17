@@ -90,6 +90,29 @@ def test_affine_and_quadratic_validity_is_block_independent(degree: int) -> None
         return D.certify_cell_geometry_validity(geometry, policy=policy)
 
     combined = certify(local)
+    expected_ids = {
+        1: "6d89944f742a8897d6b02385be1a2ed3105ba85d67d4969154cb74752981247c",
+        2: "ff313b6e4d3f6703d75b994a776e1c64009ae26a760d32f6a3111abbc4121535",
+    }
+    assert combined.certificate_id == expected_ids[degree]
+    expected_bits = np.asarray(
+        (
+            4613937818241075200,
+            4613937818241071104,
+            13837309855095848960,
+            0,
+            4613937818241073152,
+        ),
+        dtype=np.uint64,
+    )
+    np.testing.assert_array_equal(
+        np.asarray(combined.determinant_lower, dtype=np.float64).view(np.uint64),
+        expected_bits,
+    )
+    np.testing.assert_array_equal(
+        np.asarray(combined.determinant_upper, dtype=np.float64).view(np.uint64),
+        expected_bits,
+    )
     singles = tuple(certify(local[index : index + 1]) for index in range(len(local)))
     for combined_values, single_values in (
         (combined.status, tuple(item.status for item in singles)),
@@ -870,6 +893,128 @@ def test_quadratic_tetra_block_distinguishes_exact_source_and_execution() -> Non
     assert int(positive_certificate.execution_status[0]) == Status.CERTIFIED_VALID
     assert float(positive_certificate.maximum_coefficient_rounding_error) > 0.0
     assert not any(positive_certificate.cell_map_digests)
+
+
+def test_mixed_exact_coordinate_block_preserves_certificate_bits() -> None:
+    element = D.fem.lagrange_element("tetrahedron", 2)
+    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
+    root = RadicalElement.sqrt(Fraction(2))
+    rows = []
+    for cell in range(3):
+        translation = Fraction(cell * 2) + (
+            Fraction(1, 2**60)
+            if cell == 0
+            else Fraction(1, 3)
+            if cell == 1
+            else root / 10
+        )
+        rows.extend(
+            (
+                Fraction(float(point[0])) + translation,
+                Fraction(float(point[1])),
+                Fraction(float(point[2])),
+            )
+            for point in nodes
+        )
+    exact = tuple(rows)
+    execution = np.asarray(
+        [[float(value) for value in row] for row in exact], dtype=np.float64
+    )
+    mesh = D.CellMesh(
+        execution.reshape(3, 10, 3)[:, :4, :].reshape(-1, 3),
+        (
+            D.CellBlock(
+                "cells", "tetrahedron", np.arange(12, dtype=np.int32).reshape(3, 4)
+            ),
+        ),
+    )
+    geometry = CellGeometrySpec(
+        {"cells": element},
+        {"cells": np.arange(30, dtype=np.int64).reshape(3, 10)},
+        execution,
+        source_mesh=mesh,
+        source_map=_MutableCoordinateProvider(exact),
+    )
+    certificate = D.certify_cell_geometry_validity(geometry, mesh=mesh)
+    assert (
+        certificate.certificate_id
+        == "5f212d3f9caf4181e76e719c4de9b6679415af4f4377d63573dd0a585e44173c"
+    )
+    np.testing.assert_array_equal(certificate.status, (0, 0, 0))
+    np.testing.assert_array_equal(certificate.source_status, (0, 0, 0))
+    checks = (
+        (
+            certificate.determinant_lower,
+            (4607182418800017404, 4607182418800017376, 4607182418800017408),
+        ),
+        (
+            certificate.determinant_upper,
+            (4607182418800017410, 4607182418800017424, 4607182418800017408),
+        ),
+        (
+            certificate.source_determinant_lower,
+            (4607182418800017400, 4607182418800017376, 4607182418800017344),
+        ),
+        (
+            certificate.source_determinant_upper,
+            (4607182418800017415, 4607182418800017432, 4607182418800017440),
+        ),
+    )
+    for values, bits in checks:
+        actual = np.asarray(values, dtype=np.float64)
+        np.testing.assert_array_equal(
+            actual.view(np.uint64), np.asarray(bits, dtype=np.uint64)
+        )
+    assert (
+        np.asarray(certificate.maximum_coefficient_rounding_error, dtype=np.float64)
+        .view(np.uint64)
+        .item()
+        == 4374150242063771239
+    )
+    singles = []
+    for cell in range(3):
+        points = execution[cell * 10 : (cell + 1) * 10]
+        cell_mesh = D.CellMesh(
+            points[:4],
+            (D.CellBlock("cells", "tetrahedron", np.arange(4, dtype=np.int32)[None]),),
+        )
+        cell_geometry = CellGeometrySpec(
+            {"cells": element},
+            {"cells": np.arange(10, dtype=np.int64)[None]},
+            points,
+            source_mesh=cell_mesh,
+            source_map=_MutableCoordinateProvider(exact[cell * 10 : (cell + 1) * 10]),
+        )
+        singles.append(D.certify_cell_geometry_validity(cell_geometry, mesh=cell_mesh))
+    for combined, values in (
+        (certificate.status, tuple(item.status for item in singles)),
+        (certificate.source_status, tuple(item.source_status for item in singles)),
+        (
+            certificate.determinant_lower,
+            tuple(item.determinant_lower for item in singles),
+        ),
+        (
+            certificate.determinant_upper,
+            tuple(item.determinant_upper for item in singles),
+        ),
+        (
+            certificate.source_determinant_lower,
+            tuple(item.source_determinant_lower for item in singles),
+        ),
+        (
+            certificate.source_determinant_upper,
+            tuple(item.source_determinant_upper for item in singles),
+        ),
+    ):
+        actual = np.asarray(combined)
+        separate = np.concatenate([np.asarray(value) for value in values])
+        if actual.dtype == np.float64:
+            actual = actual.view(np.uint64)
+            separate = separate.view(np.uint64)
+        np.testing.assert_array_equal(actual, separate)
+    assert float(certificate.maximum_coefficient_rounding_error) == max(
+        float(item.maximum_coefficient_rounding_error) for item in singles
+    )
 
 
 def test_rational_interval_jacobian_proves_positive_and_refuses_ambiguous() -> None:

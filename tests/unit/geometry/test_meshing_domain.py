@@ -1,4 +1,5 @@
 import gc
+import math
 import weakref
 from fractions import Fraction
 from pathlib import Path
@@ -1568,6 +1569,59 @@ def test_normal_turn_bound_refuses_singular_surface() -> None:
         dtype=np.float64,
     )
     assert np.isinf(domain.normal_turn_bounds(0, charts)[0])
+
+
+def test_interpolation_bounds_match_independent_dyadic_reference() -> None:
+    domain = MeshingDomain.from_brep(
+        brep_sphere(1.0, coordinate_contract=SpatialCoordinateContract.si())
+    )
+    preparation = SourcePreparation(domain)
+    cells = np.asarray(
+        (
+            ((0.125, -0.25), (0.75, -0.125), (0.375, 0.5)),
+            ((0.25, 0.125), (0.5, 0.125), (0.25, 0.375)),
+            ((0.125, -0.25), (0.75, -0.125), (0.375, 0.5)),
+        ),
+        dtype=np.float64,
+    )
+    lower, upper = np.min(cells, axis=1), np.max(cells, axis=1)
+    hessian_lower, hessian_upper = preparation.derivative_program(
+        domain.patches[0].surface, 2
+    ).evaluate(lower, upper)
+    expected = []
+    squared_values = []
+    for row in range(cells.shape[0]):
+        widths = tuple(
+            Fraction(float(upper[row, axis])) - Fraction(float(lower[row, axis]))
+            for axis in range(2)
+        )
+        components = [
+            sum(
+                max(
+                    abs(Fraction(float(hessian_lower[row, physical, first, second]))),
+                    abs(Fraction(float(hessian_upper[row, physical, first, second]))),
+                )
+                * widths[first]
+                * widths[second]
+                for first in range(2)
+                for second in range(2)
+            )
+            / 2
+            for physical in range(3)
+        ]
+        squared = sum(component * component for component in components)
+        endpoint = math.sqrt(float(squared))
+        while Fraction(endpoint) ** 2 < squared:
+            endpoint = math.nextafter(endpoint, math.inf)
+        while Fraction(math.nextafter(endpoint, -math.inf)) ** 2 >= squared:
+            endpoint = math.nextafter(endpoint, -math.inf)
+        expected.append(endpoint)
+        squared_values.append(squared)
+    actual = domain.interpolation_bounds(0, cells, preparation=preparation)
+    np.testing.assert_array_equal(actual, np.asarray(expected, dtype=np.float64))
+    for bound, squared in zip(actual, squared_values, strict=True):
+        assert Fraction(float(bound)) ** 2 >= squared
+        assert Fraction(math.nextafter(float(bound), -math.inf)) ** 2 < squared
 
 
 def test_sphere_adaptive_interpolation_bound_refines_wide_polar_chart() -> None:
