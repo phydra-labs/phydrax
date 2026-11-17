@@ -11,6 +11,7 @@ from phydrax.discretization._coordinate_enclosure import (
     BernsteinDomain,
     ExactScalar,
     Expression,
+    Polynomial,
 )
 from phydrax.discretization._exact_algebraic_geometry import RadicalElement
 from phydrax.geometry import _stratum_subdivision as subdivision
@@ -239,11 +240,11 @@ def test_bulk_net_mixed_exact_columns(
         pytest.skip("Meshcore is unavailable")
     from phydrax.discretization._coordinate_enclosure import _fraction_controls
 
-    polynomials: tuple[Expression, ...] = (
+    polynomials: tuple[Polynomial, ...] = (
         {},
-        {(0, 0): -7},
+        {(0, 0): Fraction(-7)},
         {(1, 0): Fraction(-(1 << 300), 3), (0, 1): Fraction(7, 5)},
-        {(0, 0): 1 << 4200},
+        {(0, 0): Fraction(1 << 4200)},
         {(0, 0): RadicalElement.sqrt(2)},
     )
     result = subdivision.integer_net_batch(
@@ -261,7 +262,7 @@ def test_bulk_simplex_conversion_with_alternating_degrees(workers: int) -> None:
         pytest.skip("Meshcore is unavailable")
     from phydrax.discretization._coordinate_enclosure import _fraction_controls
 
-    polynomial = {(0, 0): Fraction(-1, 3), (1, 0): Fraction(5, 7)}
+    polynomial: Polynomial = {(0, 0): Fraction(-1, 3), (1, 0): Fraction(5, 7)}
     degrees = ((1,), (3,), (3,), (2,), (1,))
     requests: list[
         tuple[tuple[Expression, ...], BernsteinDomain, int, tuple[int, ...]]

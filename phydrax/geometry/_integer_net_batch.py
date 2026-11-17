@@ -14,8 +14,6 @@ from fractions import Fraction
 from math import lcm
 from typing import cast
 
-import numpy as np
-
 from .._exact_kernels import (
     _control_count,
     _DOMAIN_CODES,
@@ -23,7 +21,7 @@ from .._exact_kernels import (
     _RANGE_ERROR,
     _workers,
 )
-from .._meshcore import _raise_for_call, load_meshcore, meshcore_available
+from .._meshcore import _raise_for_call, load_meshcore, MeshcoreUnavailableError
 from ..discretization._coordinate_enclosure import BernsteinDomain, Expression
 
 
@@ -66,24 +64,9 @@ class _BatchIntegerNet:
 
 
 def _pack_words(values: Sequence[int], limbs: int, /) -> bytes:
-    """Pack signed native words in little-endian order without per-value encoding."""
-    if not values:
-        return b""
-    if all(-(1 << 63) <= value < (1 << 63) for value in values):
-        signed = np.asarray(values, dtype=np.int64)
-        words = np.empty((len(values), limbs), dtype="<u8")
-        words[:, 0] = signed.view(np.uint64)
-        words[:, 1:] = np.where(
-            signed[:, None] < 0, np.uint64(0xFFFFFFFFFFFFFFFF), np.uint64(0)
-        )
-        return words.tobytes()
-
-    integers = np.asarray(values, dtype=np.object_)
-    words = np.empty((len(values), limbs), dtype="<u8")
-    mask = (1 << 64) - 1
-    for limb in range(limbs):
-        words[:, limb] = (integers >> (64 * limb)) & mask
-    return words.tobytes()
+    """Pack signed little-endian words at the already-checked limb width."""
+    width = 8 * limbs
+    return b"".join(value.to_bytes(width, "little", signed=True) for value in values)
 
 
 def integer_net_batch(
@@ -98,7 +81,9 @@ def integer_net_batch(
     results: list[list[_BatchIntegerNet | None]] = [
         [None] * len(polynomials) for polynomials, _, _, _ in requests
     ]
-    if not meshcore_available():
+    try:
+        library = load_meshcore()
+    except MeshcoreUnavailableError:
         return [tuple(row) for row in results]
     banks: dict[
         tuple[BernsteinDomain, int, int],
@@ -126,6 +111,7 @@ def integer_net_batch(
                 for value in polynomial.values()
             )
         )
+        count: int | None = None
         for column, rational_polynomial in rational:
             if any(len(exponent) != dimension for exponent in rational_polynomial):
                 raise ValueError(
@@ -143,7 +129,8 @@ def integer_net_batch(
             if limbs is None:
                 continue
             exponents = tuple(power for exponent in rational_polynomial for power in exponent)
-            count = _control_count(domain, dimension, degree)
+            if count is None:
+                count = _control_count(domain, dimension, degree)
             banks.setdefault((domain, dimension, limbs), []).append(
                 (row, column, degree, exponents, numerators, count, scale)
             )
@@ -159,7 +146,7 @@ def integer_net_batch(
         denominators = ctypes.create_string_buffer(8 * len(items))
         extremes = ctypes.create_string_buffer(16 * len(items))
         status = ctypes.create_string_buffer(4 * len(items))
-        call = load_meshcore()["phx_mc_bernstein_controls"](
+        call = library["phx_mc_bernstein_controls"](
             len(items),
             _DOMAIN_CODES[domain],
             dimension,
@@ -175,7 +162,8 @@ def integer_net_batch(
             limbs,
             workers,
         )
-        _raise_for_call(call, "bernstein_controls")
+        if call:
+            _raise_for_call(call, "bernstein_controls")
         payload = controls.raw
         den = array("q", denominators.raw)
         ext = array("q", extremes.raw)
@@ -183,7 +171,8 @@ def integer_net_batch(
         for position, (row, column, _, _, _, count, scale) in enumerate(items):
             if statuses[position] == _RANGE_ERROR:
                 continue
-            _raise_for_call(statuses[position], "bernstein_controls")
+            if statuses[position]:
+                _raise_for_call(statuses[position], "bernstein_controls")
             results[row][column] = _BatchIntegerNet(
                 payload,
                 control_offsets[position] * width,

@@ -249,8 +249,9 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
-- Batched exact Bernstein conversion validates eligible polynomial columns once
-  while preserving their shared rational scale and item-local refusals.
+- Batched exact Bernstein conversion validates polynomial columns once, packs
+  checked integer words directly, and reuses request-local control counts while
+  preserving shared rational scales and item-local refusals.
 - Native Bernstein conversion reuses simplex control-index rows within a worker
   when consecutive items have the same degree and dimension.
 - Welded surface intersection checks group exact orientation predicates and
