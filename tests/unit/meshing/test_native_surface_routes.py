@@ -2484,3 +2484,26 @@ def test_prepared_surface_boxes_preserve_owner_and_refusals() -> None:
     with pytest.raises(ValueError) as prepared:
         preparation.surface_box(surfaces[0], invalid)
     assert str(prepared.value) == str(original.value)
+
+
+def test_curved_trim_chart_points_do_not_depend_on_their_batch(tmp_path: Path) -> None:
+    """A chart point is compared exactly wherever its curve parameter recurs."""
+    from phydrax.geometry.brep._boolean_core import line_chart_coefficients
+    from phydrax.meshing.providers._native_surface import _use_chart_points
+    from tools.meshing_qualification.scenarios.native_cad_profiles import _quadric_case
+
+    model, _, _, _ = _quadric_case("iges", tmp_path)
+    domain = MeshingDomain.from_brep(model)
+    parameters = tuple(Fraction(index, 256) for index in range(1, 256))
+    curved_uses = [
+        use
+        for patch in domain.patches
+        for loop in patch.loops
+        for use in loop
+        if isinstance(use, PatchCurveUse) and line_chart_coefficients(use.pcurve) is None
+    ]
+    assert curved_uses
+    for use in curved_uses:
+        together = _use_chart_points(use, parameters)
+        alone = tuple(_use_chart_points(use, (parameter,))[0] for parameter in parameters)
+        assert together == alone
