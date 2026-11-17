@@ -1480,10 +1480,10 @@ def _reference_patch_partition(
 ) -> bool:
     """Prove the reference 2-chain fills exactly the rooted trim loops."""
     from .._approximate_source_coverage import (
-        _area2,
         _intersection_area,
         _possibly_overlapping_pairs,
         _triangle2,
+        _triangle_orientation,
     )
     from .._meshing_domain import PatchPoleUse
 
@@ -1505,7 +1505,7 @@ def _reference_patch_partition(
         else ()
     )
     triangles = (*triangles, *(sliver for _, sliver in slivers))
-    signs = tuple(1 if _area2(t) > 0 else -1 if _area2(t) < 0 else 0 for t in triangles)
+    signs = tuple(_triangle_orientation(triangle) for triangle in triangles)
     if 0 in signs or len(set(signs)) != 1:
         return False
     for first, second in _possibly_overlapping_pairs(triangles, triangles, True):
@@ -1528,12 +1528,12 @@ def _reference_patch_partition(
     )
 
     def parts(first: tuple, last: tuple) -> tuple[tuple[tuple, int], ...]:
-        dx, dy = last[0] - first[0], last[1] - first[1]
-        length = dx * dx + dy * dy
-        if not length:
+        if first == last:
             return ()
         if not slivers:
             return (edge(first, last),)
+        dx, dy = last[0] - first[0], last[1] - first[1]
+        length = dx * dx + dy * dy
         points = sorted(
             (
                 point
