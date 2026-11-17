@@ -3052,7 +3052,7 @@ def _metric_hodge(
         keep = first <= second
         rows.append(first[keep])
         columns.append(second[keep])
-        values.append(local[jnp.asarray(keep)])
+        values.append(jnp.take(local.reshape(-1), np.flatnonzero(keep)))
     row, column, data = _coalesce_entries(
         np.concatenate(rows),
         np.concatenate(columns),
