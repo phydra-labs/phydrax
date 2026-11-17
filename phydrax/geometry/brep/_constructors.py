@@ -942,6 +942,8 @@ def _isolated_profile_turn(total: Any, /) -> int | None:
 
 
 def _conic_turning_number(loop: ProfileLoop, /) -> int:
+    from mpmath.libmp import to_rational
+
     from ._intersection_curve import interval_context
 
     ctx = interval_context(100)
@@ -982,7 +984,13 @@ def _conic_turning_number(loop: ProfileLoop, /) -> int:
         )
 
     tangent_pairs: list[tuple[tuple[Any, Any], tuple[Any, Any]]] = []
-    terms: list[Any] = []
+    terms: list[tuple[Fraction, Fraction]] = []
+
+    def add_term(value: Any, /) -> None:
+        # Freeze each outward mpmath endpoint as its exact dyadic value.
+        lower, upper = value._mpi_
+        terms.append((Fraction(*to_rational(lower)), Fraction(*to_rational(upper))))
+
     signs: list[int | None] = []
     for index, segment in enumerate(loop.segments):
         start = loop.vertices[index]
@@ -997,7 +1005,7 @@ def _conic_turning_number(loop: ProfileLoop, /) -> int:
             endpoints, spline_terms = bspline_turn_terms(segment)
             tangent_pairs.append(endpoints)
             for first, last in spline_terms:
-                terms.append(exact_angle(first, last))
+                add_term(exact_angle(first, last))
                 cross = first[0] * last[1] - first[1] * last[0]
                 signs.append((cross > 0) - (cross < 0))
         elif isinstance(segment, ProfileArc):
@@ -1017,14 +1025,12 @@ def _conic_turning_number(loop: ProfileLoop, /) -> int:
             cross = rays[0][0] * rays[1][1] - rays[0][1] * rays[1][0]
             dot = rays[0][0] * rays[1][0] + rays[0][1] * rays[1][1]
             if start == end:
-                terms.append(turn * 2 * ctx.pi)
+                add_term(turn * 2 * ctx.pi)
             elif cross == 0 and dot < 0:
-                terms.append(turn * ctx.pi)
+                add_term(turn * ctx.pi)
             elif cross != 0:
                 principal = exact_angle(rays[0], rays[1])
-                terms.append(
-                    principal if turn * cross > 0 else principal + turn * 2 * ctx.pi
-                )
+                add_term(principal if turn * cross > 0 else principal + turn * 2 * ctx.pi)
             else:
                 raise UnsupportedProfileLoop(
                     "curved-loop-turning-number", "Profile arc sweep cannot be certified."
@@ -1077,19 +1083,21 @@ def _conic_turning_number(loop: ProfileLoop, /) -> int:
                         "curved-loop-turning-number",
                         "Conic tangent turn cannot be isolated.",
                     )
-                terms.append(intrinsic)
+                add_term(intrinsic)
                 signs.append(turn)
 
     for index, (_, end_tangent) in enumerate(tangent_pairs):
         start_tangent = tangent_pairs[(index + 1) % len(tangent_pairs)][0]
         corner = vector_angle(end_tangent, start_tangent)
-        terms.append(corner)
+        add_term(corner)
         if all(isinstance(value, Fraction) for value in (*end_tangent, *start_tangent)):
             cross = end_tangent[0] * start_tangent[1] - end_tangent[1] * start_tangent[0]
             signs.append((cross > 0) - (cross < 0))
         else:
             signs.append(1 if corner.a > 0 else -1 if corner.b < 0 else None)
-    total = sum(terms, ctx.mpf(0)) / (2 * ctx.pi)
+    lower = sum((term[0] for term in terms), Fraction(0))
+    upper = sum((term[1] for term in terms), Fraction(0))
+    total = ctx.mpf((scalar(lower), scalar(upper))) / (2 * ctx.pi)
     direction = _isolated_profile_turn(total)
     if direction is None:
         raise UnsupportedProfileLoop(

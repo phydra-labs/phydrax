@@ -111,6 +111,32 @@ def test_half_circle_with_exact_rooted_endpoints() -> None:
     assert profile.outer.vertices == loop.vertices
 
 
+@pytest.mark.parametrize("rational", (False, True))
+@pytest.mark.parametrize("explicit_conic", (False, True))
+def test_mixed_conic_and_spline_profile_has_one_turn(
+    rational: bool, explicit_conic: bool
+) -> None:
+    weights = (1.0, 2.0 if rational else 1.0, 1.0)
+    spline = BSplineCurve(
+        ((0.0, 1.0), (0.0, 0.5), (0.0, 0.0)),
+        weights,
+        (0.0, 0.0, 0.0, 1.0, 1.0, 1.0),
+        2,
+    )
+    conic = (
+        ProfileCurveUse(CircleCurve((0, 0), (1, 0), (0, 1), 1.0), 0.0, pi / 2)
+        if explicit_conic
+        else ProfileArc((0.0, 0.0))
+    )
+    loop = ProfileLoop(
+        ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)),
+        (ProfileLine(), conic, spline),
+    )
+    profile = PlanarProfile(ProfilePlane(), loop)
+    assert len(profile.outer.segments) == 3
+    assert any(isinstance(segment, BSplineCurve) for segment in profile.outer.segments)
+
+
 @pytest.mark.parametrize("ellipse", (False, True))
 def test_full_conic_use_keeps_its_carrier(ellipse: bool) -> None:
     if ellipse:
