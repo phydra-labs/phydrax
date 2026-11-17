@@ -254,9 +254,9 @@
   eager dispatch. Trim realization and projection frame bits, and therefore
   `BRepProjectionResult.result_id`, can change; certification gates and source
   identities remain unchanged.
-- Domain coverage prepares exact coordinate maps on demand and combines shared
-  rational coordinate bases with integer arithmetic. Exact maps and coverage
-  evidence retain their previous values.
+- Domain coverage prepares exact coordinate maps on demand. Coverage and cell
+  validity combine shared rational coordinate bases with integer arithmetic;
+  exact maps and evidence retain their previous values.
 - CAD source bounds, analytic surface derivatives, periodic offsets, and the
   quadratic tetrahedron screen execute supported interval programs in batches.
   Their directed endpoints and exact-arithmetic fallback remain unchanged.

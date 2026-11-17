@@ -114,6 +114,7 @@ from ._coordinate_enclosure import (
     normalize_pyramid_reference_expression,
     Polynomial,
     polynomial_bounds,
+    PreparedLinearCombinationBasis,
     PreparedSimplexPolynomial,
     RationalPolynomial,
     restricted_polynomial_batch_bounds,
@@ -2697,6 +2698,9 @@ def _certify_source_block(
         and not isinstance(element, PerCellRestrictedCellGeometryElement)
         else None
     )
+    prepared_plain_basis = (
+        None if plain_basis is None else PreparedLinearCombinationBasis(plain_basis)
+    )
     try:
         screened = _quadratic_tetra_block_screen(
             element, cell_kind, plain_basis, routes, point_bounds, policy
@@ -2763,7 +2767,11 @@ def _certify_source_block(
                     tuple(local[dof][axis] for dof in range(len(local)))
                     for axis in range(len(local[0]))
                 )
-                expressions = linear_combinations(basis, components)
+                expressions = (
+                    prepared_plain_basis.combine(components)
+                    if basis is plain_basis and prepared_plain_basis is not None
+                    else linear_combinations(basis, components)
+                )
         # Without a proof domain an unsupported nonaffine map is reported, so
         # only maps with a domain carry reusable records.
         digest = None if domain is None else _map_digest(cell_kind, expressions)
