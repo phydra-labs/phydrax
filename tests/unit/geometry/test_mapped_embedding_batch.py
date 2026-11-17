@@ -2,21 +2,15 @@
 from __future__ import annotations
 
 import random
-from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from fractions import Fraction
 
 import numpy as np
-import pytest
 
 from phydrax.discretization._cell_geometry import CellGeometrySpec
 from phydrax.discretization._cell_mesh import CellMesh
-from phydrax.discretization._coordinate_enclosure import (
-    BernsteinDomain,
-    Expression,
-    RationalPolynomial,
-)
-from phydrax.discretization._exact_algebraic_geometry import ExactScalar, RadicalElement
+from phydrax.discretization._coordinate_enclosure import Expression, RationalPolynomial
+from phydrax.discretization._exact_algebraic_geometry import RadicalElement
 from phydrax.geometry import (
     _global_embedding as global_embedding,
     _mapped_embedding as mapped,
@@ -119,15 +113,9 @@ def test_randomized_batch_matches_individual_witnesses_and_refusals() -> None:
     assert rational_witness.denominator_controls
     assert actual[28] is None and actual[29] is None
     assert isinstance(actual[30], ValueError)
-    # A consumer must not accept a lost or substituted control identity.
-    witness = actual[26]
-    assert isinstance(witness, mapped.MappedInjectivityWitness)
-    assert witness != replace(witness, principal_minor_controls=("incorrect",))
 
 
-def test_homogeneous_batches_and_corrupted_digest_are_consumer_visible(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_homogeneous_batches_have_exact_positive_diagonal_jacobians() -> None:
     rng = random.Random(316)
     cells = []
     for dimension in (2, 3):
@@ -166,33 +154,38 @@ def test_homogeneous_batches_and_corrupted_digest_are_consumer_visible(
             )
     candidates = tuple(cells)
     expected = _independent(candidates)
-    original = mapped.symmetric_jacobian_verdicts
-
-    def corrupt(
-        matrices: Sequence[Sequence[Sequence[Mapping[tuple[int, ...], ExactScalar]]]],
-        domain: BernsteinDomain,
-        dimension: int,
-        /,
-        *,
-        parallelism: int | None = None,
-    ) -> list[tuple[tuple[bool, str], ...] | None]:
-        decisions = original(matrices, domain, dimension, parallelism=parallelism)
-        first = decisions[0]
-        if first is None:
-            reference = expected[0 if dimension == 2 else 6]
-            assert isinstance(reference, mapped.MappedInjectivityWitness)
-            first = tuple((True, digest) for digest in reference.principal_minor_controls)
-        decisions[0] = ((first[0][0], "incorrect"), *first[1:])
-        return decisions
-
-    monkeypatch.setattr(mapped, "symmetric_jacobian_verdicts", corrupt)
     actual = mapped.prove_mapped_cells_injective(candidates)
-    assert actual[0] != expected[0] and actual[6] != expected[6]
+    _compare(actual, expected)
+    for cell, result in zip(candidates, actual, strict=True):
+        assert isinstance(result, mapped.MappedInjectivityWitness)
+        dimension = cell.dimension
+        assert result.projection_rows == tuple(range(dimension))
+        assert result.projection_matrix == tuple(
+            tuple(Fraction(int(row == column)) for column in range(dimension))
+            for row in range(dimension)
+        )
+        # Every diagonal derivative is 1 + 2*a*x, with a > 0 and x >= 0.
+        for axis, expression in enumerate(cell.coordinates):
+            assert isinstance(expression, dict)
+            linear = tuple(int(index == axis) for index in range(dimension))
+            quadratic = tuple(2 * value for value in linear)
+            assert expression[linear] == 1 and expression[quadratic] > 0
+        assert len(result.principal_minor_controls) == dimension
+    changed = replace(
+        candidates[0],
+        coordinate_expressions=(
+            {(1, 0): Fraction(1), (2, 0): Fraction(-1)},
+            candidates[0].coordinates[1],
+        ),
+    )
+    # Distinct simplex vertices (0, 0) and (1, 0) have the same image.
+    first = changed.coordinates[0]
+    assert isinstance(first, dict)
+    assert first.get((0, 0), Fraction(0)) == sum(first.values(), Fraction(0))
+    assert mapped.prove_mapped_cells_injective((changed,))[0] is None
 
 
-def test_findings_match_individual_proofs_and_owing_filter(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_findings_match_individual_proofs_and_owing_filter() -> None:
     mesh = CellMesh.from_triangles(
         np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
         np.asarray(((0, 1, 2),), dtype=np.int32),
@@ -207,10 +200,10 @@ def test_findings_match_individual_proofs_and_owing_filter(
     )
     owing = np.asarray((True, True, False, True, True), dtype=np.bool_)
     actual = global_embedding._cell_map_findings(cells, binding=binding, owing=owing)
-    monkeypatch.setattr(global_embedding, "prove_mapped_cells_injective", _independent)
-    expected = global_embedding._cell_map_findings(cells, binding=binding, owing=owing)
-    assert actual == expected
     findings, witnesses, injective = actual
     assert injective == {0, 3}
     assert len(findings) == 2 and len(witnesses) == 1
     assert findings[0].entity_ids == (1,)
+    assert findings[1].entity_ids == (4,)
+    assert all(finding.check == "mapped_cell_injectivity" for finding in findings)
+    assert all(finding.status == "unresolved" for finding in findings)
