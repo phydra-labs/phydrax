@@ -102,6 +102,16 @@ double shifted(double value, int k) noexcept {
   return value * power_of_two(k);
 }
 
+// log(1 + f) = 2 atanh(s) = 2 (s + s z P(z)), s = f / (2 + f), z = s^2, for
+// f in [sqrt(1/2) - 1, sqrt(2) - 1]; the budget is written at log.
+double log_one_plus(double f) noexcept {
+  const double s = f / (2.0 + f);
+  const double z = s * s;
+  double p = kOddReciprocal[9];
+  for (int index = 8; index >= 0; --index) p = p * z + kOddReciprocal[index];
+  return 2.0 * (s + (s * z) * p);
+}
+
 }  // namespace
 
 // exp(x) = 2^k exp(r), k the integer nearest x / ln 2, r = x - k ln 2.
@@ -188,13 +198,39 @@ double log(double x) noexcept {
   }
   const double m = std::bit_cast<double>(mantissa | (significand_exponent << 52));
   const double f = m - 1.0;
-  const double s = f / (2.0 + f);
-  const double z = s * s;
-  double p = kOddReciprocal[9];
-  for (int index = 8; index >= 0; --index) p = p * z + kOddReciprocal[index];
-  const double log_m = 2.0 * (s + (s * z) * p);
+  const double log_m = log_one_plus(f);
   const double count = static_cast<double>(exponent);
   return count * kLn2High + (count * kLn2Low + log_m);
+}
+
+// log(1 + x).
+//
+// Error budget, relative to log(1 + x), for finite x > -1:
+//   |x| < 2^-54. log(1 + x) = x - x^2 / 2 + ..., and x^2 / 2 is below a
+//   quarter ulp of x: x is the correctly rounded result.
+//   -1/4 <= x <= 3/8. The series of log with f = x, which is exact here as
+//   m - 1 is there: |s| <= 0.158 and z <= 0.025 lie inside the ranges of that
+//   budget, so the result is within 3.18 u.
+//   Otherwise. sum = fl(1 + x) and its rounding error e from Knuth's two-sum
+//   (six operations, exact for finite operands that do not overflow), so
+//   1 + x = sum + e with |e| <= u sum, and
+//   log(1 + x) = log(sum) + e / sum - (e / sum)^2 / 2 + .... log(sum) is
+//   within 5.22 u (budget of log), the quotient rounds once and the omitted
+//   terms are below u^2 / 2: together below 2 u^2 absolute. sum <= 3/4 or
+//   sum >= 11/8 gives |log(sum)| >= 0.2876, and the final sum rounds once:
+//   at most 5.22 u + 2 u^2 / 0.2876 + u < 6.3 u.
+// Total: within 7 ulp.
+double log1p(double x) noexcept {
+  if (x != x) return x;
+  if (x < -1.0) return std::bit_cast<double>(kNaNBits);
+  if (x == -1.0) return -std::numeric_limits<double>::infinity();
+  if (x == std::numeric_limits<double>::infinity()) return x;
+  if (magnitude(x) < 0x1p-54) return x;
+  if (x >= -0.25 && x <= 0.375) return log_one_plus(x);
+  const double sum = 1.0 + x;
+  const double shadow = sum - 1.0;
+  const double error = (1.0 - (sum - shadow)) + (x - shadow);
+  return log(sum) + error / sum;
 }
 
 // x^(2/3) = exp(fl(log(x) kTwoThirds)).
