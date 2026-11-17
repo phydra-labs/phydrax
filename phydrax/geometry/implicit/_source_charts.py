@@ -1196,17 +1196,6 @@ def _split_triangle(triangle: TriangleReference, /) -> SplitTriangles | None:
     return ((a, ab, ca), (ab, b, bc), (ca, bc, c), (ab, bc, ca))
 
 
-def _field_gradient_function(
-    geometry: CompiledGeometry,
-) -> Callable[[jax.Array], jax.Array]:
-    kernel, state = geometry.kernel, geometry.state
-
-    def field(point: jax.Array) -> jax.Array:
-        return kernel.boundary_field(state, point[None, :])[0]
-
-    return jax.grad(field)
-
-
 def _prepare_hessian(geometry: CompiledGeometry) -> PreparedIntervalFunction:
     kernel, state = geometry.kernel, geometry.state
 
@@ -3045,13 +3034,9 @@ def _transversal_injectivity(
 
         return row(0), row(1), row(2)
 
-    def determinant(
-        chord: IntervalDerivative3x2,
-        direction: IntervalVector3,
-        hessian: IntervalMatrix3,
-        parameters: Interval,
-        /,
-    ) -> Interval:
+    def bent_columns(
+        chord: IntervalDerivative3x2, hessian: IntervalMatrix3, /
+    ) -> tuple[IntervalVector3, IntervalVector3]:
         def hessian_times(column: IntervalVector3, /) -> IntervalVector3:
             return (
                 sum_interval(
@@ -3065,6 +3050,19 @@ def _transversal_injectivity(
                 ),
             )
 
+        return (
+            hessian_times((chord[0][0], chord[1][0], chord[2][0])),
+            hessian_times((chord[0][1], chord[1][1], chord[2][1])),
+        )
+
+    def determinant(
+        chord: IntervalDerivative3x2,
+        direction: IntervalVector3,
+        hessian: IntervalMatrix3,
+        parameters: Interval,
+        /,
+        bent: tuple[IntervalVector3, IntervalVector3] | None = None,
+    ) -> Interval:
         def triple(first: IntervalVector3, second: IntervalVector3, /) -> Interval:
             return _normal_area_interval(
                 (
@@ -3078,8 +3076,7 @@ def _transversal_injectivity(
 
         column_u: IntervalVector3 = (chord[0][0], chord[1][0], chord[2][0])
         column_v: IntervalVector3 = (chord[0][1], chord[1][1], chord[2][1])
-        bent_u = hessian_times(column_u)
-        bent_v = hessian_times(column_v)
+        bent_u, bent_v = bent_columns(chord, hessian) if bent is None else bent
         linear = _interval_add(triple(bent_u, column_v), triple(column_u, bent_v))
         value = _interval_add(
             _interval_add(
@@ -3125,6 +3122,7 @@ def _transversal_injectivity(
         best = 0.0
         if face_fields is not None:
             face_gradient, face_hessian = face_fields
+            bends = [bent_columns(chord, face_hessian) for chord in known]
             parameters = _interval_hull([piece.root_parameters for piece in pieces])
             # |(I + tH)^-1 g - g|_inf <= rho / (1 - rho) |g|_inf with
             # rho = |t| ||H||_inf bounds the direction of the inverted form
@@ -3152,24 +3150,27 @@ def _transversal_injectivity(
                 best = max(
                     best,
                     min(
-                        determinant(chord, direction, face_hessian, (0.0, 0.0))[0]
-                        for chord in known
+                        determinant(chord, direction, face_hessian, (0.0, 0.0), bent)[0]
+                        for chord, bent in zip(known, bends, strict=True)
                     ),
                 )
             # Every midpoint piece's chord mean against the whole-face gradient.
             best = max(
                 best,
                 min(
-                    determinant(chord, face_gradient, face_hessian, parameters)[0]
-                    for chord in known
+                    determinant(chord, face_gradient, face_hessian, parameters, bent)[0]
+                    for chord, bent in zip(known, bends, strict=True)
                 ),
             )
             # The face hull of the chord means against every piece's gradient.
             hull = chord_hull(known)
+            hull_bent = bent_columns(hull, face_hessian)
             best = max(
                 best,
                 min(
-                    determinant(hull, piece.source_gradient, face_hessian, parameters)[0]
+                    determinant(
+                        hull, piece.source_gradient, face_hessian, parameters, hull_bent
+                    )[0]
                     for piece in pieces
                 ),
             )
@@ -4305,7 +4306,7 @@ def _shared_edge_map_issues(
     from ...discretization._reference_cell import reference_cell_topology
 
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-    edge_maps: dict[tuple[int, int], tuple[int, int, int]] = {}
+    edge_maps: dict[tuple[int, int], Polynomial3] = {}
     root_at_vertex: dict[int, GridEdge | None] = {}
     issues: dict[int, str] = {}
     standard: TriangleReference = _STANDARD_TRIANGLE
@@ -4389,23 +4390,14 @@ def _shared_edge_map_issues(
                 break
             edge_key = (min(first_id, second_id), max(first_id, second_id))
             canonical_map: Polynomial3 = (first_map, second_map, third_map)
-            previous_edge = edge_maps.get(edge_key)
-            previous_map = None
-            if previous_edge is not None:
-                previous_row, previous_start, previous_stop = previous_edge
-                previous_map = tuple(
-                    _edge_polynomial(
-                        expression, standard[previous_start], standard[previous_stop]
-                    )
-                    for expression in faces[previous_row].face_expressions
-                )
-            if previous_edge is not None and previous_map != canonical_map:
+            previous_map = edge_maps.get(edge_key)
+            if previous_map is not None and previous_map != canonical_map:
                 issues[row] = (
                     "Adjacent high-order target charts disagree exactly on a shared "
                     "physical edge map."
                 )
                 break
-            edge_maps[edge_key] = (row, start_corner, stop_corner)
+            edge_maps[edge_key] = canonical_map
     return issues
 
 

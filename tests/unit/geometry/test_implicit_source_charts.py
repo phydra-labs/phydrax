@@ -1863,6 +1863,45 @@ def test_implicit_witness_refuses_late_duplicate_source_triangle() -> None:
         validate_source_fidelity_witness(mesh, geometry, forged, selected)
 
 
+def test_discontinuous_high_order_shared_edge_is_not_certified() -> None:
+    _, source, _, mesh, _, _ = _adaptive_source()
+    straight = _straight_geometry(mesh, 2)
+    elements, routes, coordinates = straight.resolve(mesh)
+    block = mesh.blocks[0]
+    if not isinstance(block, CellBlock):
+        raise TypeError("Implicit chart tests require standard triangular target blocks.")
+    route = np.array(routes[0], dtype=np.int32, copy=True)
+    nodes, counts = np.unique(route, return_counts=True)
+    shared_node = nodes[counts == 2][0]
+    cell_row, local_node = np.argwhere(route == shared_node)[0]
+    values = np.concatenate(
+        (
+            np.asarray(coordinates, dtype=np.float64),
+            coordinates[shared_node : shared_node + 1],
+        ),
+        axis=0,
+    )
+    values[-1, 0] += 1.0e-4
+    route[cell_row, local_node] = len(values) - 1
+    broken = CellGeometrySpec({block.name: elements[0]}, {block.name: route}, values)
+    witness = _chart_witness(mesh, broken, source)
+
+    root_map = prepare_adaptive_implicit_root_charts(
+        mesh,
+        broken,
+        source,
+        witness,
+        tolerance=0.5,
+        maximum_normal_deviation=np.pi,
+    )
+
+    assert root_map.status == "unresolved"
+    assert any(
+        "disagree exactly on a shared physical edge map" in evidence.detail
+        for evidence in root_map.chart_evidence
+    )
+
+
 def test_singular_implicit_target_map_retains_unresolved_fidelity_evidence() -> None:
     _surface, source, _contract, mesh, affine, _witness = _adaptive_source()
     elements, routes, coordinates = affine.resolve(mesh)
