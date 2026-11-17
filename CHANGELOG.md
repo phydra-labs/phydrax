@@ -249,6 +249,8 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Refinement reuses its live constrained-segment index when checking cavity
+  edits, avoiding a full segment-bank scan for each candidate edge.
 - Exact facet coverage evaluates its predicate proof directly on source banks;
   it materializes arrangement coordinates only when the proof is inconclusive.
 - Construction reuses each source group's ordered coverage primitives across

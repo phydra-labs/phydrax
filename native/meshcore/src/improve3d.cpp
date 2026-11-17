@@ -353,7 +353,7 @@ TetEditStatus LocalIncidence::replace_cavity(TetMesh& mesh, const TetEdit& opera
       if (removed_sorted != star_sorted) return TetEditStatus::kRejectedTopology;
       removed_position = local_position_key(mesh.point(removed_vertex));
     }
-    const TetEditStatus status = mesh.replace_local_cavity(operation);
+    const TetEditStatus status = mesh.replace_local_cavity(operation, segment_index_);
     if (status != TetEditStatus::kApplied) return status;
     for (std::size_t index = 0; index < removed_slots.size(); ++index) {
       if (!erase(removed_slots[index], removed_cells[index])) {
@@ -403,7 +403,7 @@ TetEditStatus LocalIncidence::insert_cone(TetMesh& mesh, const TetEditVertex& ve
       removed_positions.push_back(local_position_key(mesh.point(removed)));
     }
     const TetEditStatus status =
-        mesh.insert_local_cone(vertex, cavity, removed_vertices, created_cells);
+        mesh.insert_local_cone(vertex, cavity, removed_vertices, created_cells, segment_index_);
     if (status != TetEditStatus::kApplied) return status;
     for (std::size_t index = 0; index < removed_vertices.size(); ++index) {
       if (!erase_vertex_position(removed_vertices[index], removed_positions[index])) {
@@ -452,8 +452,8 @@ TetEditStatus LocalIncidence::insert_boundary_point(TetMesh& mesh, const TetEdit
     if (vertex_positions_.contains(local_position_key(vertex.carrier.data()))) {
       return TetEditStatus::kInvalidGeometry;
     }
-    const TetEditStatus status = mesh.insert_local_boundary_point(vertex, cavity, facet_rows,
-                                                                  segment_rows, created_cells);
+    const TetEditStatus status = mesh.insert_local_boundary_point(
+        vertex, cavity, facet_rows, segment_rows, created_cells, segment_index_);
     if (status != TetEditStatus::kApplied) return status;
     for (std::size_t index = 0; index < removed_slots.size(); ++index) {
       if (!erase(removed_slots[index], removed_cells[index])) {

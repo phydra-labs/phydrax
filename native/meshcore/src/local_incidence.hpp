@@ -83,6 +83,8 @@ class LocalIncidence {
   };
 
   bool initialize(const TetMesh& mesh, const TetMeshSnapshot& snapshot);
+  // The caller owns and updates this index after each constrained segment split.
+  void bind_segment_index(const TetSegmentIndex& index) noexcept { segment_index_ = &index; }
   void reserve(std::size_t vertex_count, std::size_t edge_count);
   bool insert_vertex_position(std::int32_t vertex, const double* point);
   bool erase_vertex_position(std::int32_t vertex,
@@ -135,6 +137,7 @@ class LocalIncidence {
   std::unordered_map<LocalEdgeKey, std::vector<std::int32_t>, LocalEdgeHash>
       edge_cells_;
   PositionMap vertex_positions_;
+  const TetSegmentIndex* segment_index_ = nullptr;
   std::uint64_t topology_revision_ = 0;
 
 };
