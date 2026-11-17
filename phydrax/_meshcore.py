@@ -1328,6 +1328,8 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_metric_band_quanta": (_I32, (_I64, _P, _P, _P)),
     "phx_mc_metric_relative_determinants": (_I32, (_I64, _P, _P, _P)),
     "phx_mc_metric_tetra_quality": (_I32, (_I64, _P, _I64, _P, _P, _P)),
+    "phx_mc_metric_midpoints": (_I32, (_I64, _P, _P, _P, _P, _P, _P)),
+    "phx_mc_metric_survivor_goals": (_I32, (_I64, _P, _P, _I32, _P, _P, _P)),
 }
 
 
@@ -9812,6 +9814,92 @@ def metric_tetra_quality(
     return quality
 
 
+def metric_midpoints(
+    first_points: np.ndarray,
+    second_points: np.ndarray,
+    first_metrics: np.ndarray,
+    second_metrics: np.ndarray,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Metric midpoints of ``n`` segments: parameters ``(n,)`` and points ``(n, 3)``.
+
+    The parameter ``t`` of the point at half the metric length of the segment
+    when the size varies geometrically between the metrics at its ends,
+    ``log1p((r - 1) / 2) / log1p(r - 1)`` with ``r`` the ratio of the end
+    lengths, and the point ``first + t (second - first)``. ``t`` is ``1/2``
+    for equal end lengths and where an end length is not positive and finite.
+    A deterministic kernel value: the same bits on every platform.
+    """
+    first = np.ascontiguousarray(first_points, dtype=np.float64)
+    second = np.ascontiguousarray(second_points, dtype=np.float64)
+    if first.ndim != 2 or first.shape[1] != 3 or second.shape != first.shape:
+        raise ValueError("first_points and second_points must both have shape (n, 3).")
+    first_tensors = _metric_tensors(first_metrics, "first_metrics")
+    second_tensors = _metric_tensors(second_metrics, "second_metrics")
+    if (
+        first_tensors.shape[0] != first.shape[0]
+        or second_tensors.shape != first_tensors.shape
+    ):
+        raise ValueError("Metrics must have one tensor per segment end.")
+    parameters = np.empty((first.shape[0],), dtype=np.float64)
+    points = np.empty_like(first)
+    status = load_meshcore()["phx_mc_metric_midpoints"](
+        first.shape[0],
+        first.ctypes.data,
+        second.ctypes.data,
+        first_tensors.ctypes.data,
+        second_tensors.ctypes.data,
+        parameters.ctypes.data,
+        points.ctypes.data,
+    )
+    _raise_for_call(status, "metric_midpoints")
+    return parameters, points
+
+
+def metric_survivor_goals(
+    points: np.ndarray, metrics: np.ndarray, corners: np.ndarray | None, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """The three goals of a collapse survivor, in the order they are tried.
+
+    ``points`` hold the survivor, the removed vertex and then the merged
+    link; ``metrics`` the ``(2, 3, 3)`` tensors of the first two. The goals
+    ``(3, 3)`` are the metric midpoint of the collapsed edge, the point
+    halfway to it, and the center of the smallest ball that holds the link in
+    the log-Euclidean mean of the two tensors (it minimizes the longest
+    survivor spoke). With ``corners`` (two or three points) each goal is
+    projected onto their affine hull, the survivor's carrier. The flags
+    ``(3,)`` are false, with a zero goal, where a goal does not exist: no link
+    vertex, a tensor that is not positive definite, or a value that is not
+    finite. Deterministic kernel values: the same bits on every platform.
+    """
+    coordinates = np.ascontiguousarray(points, dtype=np.float64)
+    if coordinates.ndim != 2 or coordinates.shape[1] != 3 or coordinates.shape[0] < 2:
+        raise ValueError("points must have shape (n, 3) with n >= 2.")
+    tensors = _metric_tensors(metrics, "metrics")
+    if tensors.shape[0] != 2:
+        raise ValueError(
+            "metrics must hold the tensors of the survivor and the removed vertex."
+        )
+    hull = None
+    if corners is not None:
+        hull = np.ascontiguousarray(corners, dtype=np.float64)
+        if hull.ndim != 2 or hull.shape[1] != 3 or hull.shape[0] not in (2, 3):
+            raise ValueError("corners must have shape (2, 3) or (3, 3).")
+    goals = np.empty((3, 3), dtype=np.float64)
+    valid = np.empty((3,), dtype=np.int8)
+    status = load_meshcore()["phx_mc_metric_survivor_goals"](
+        coordinates.shape[0],
+        coordinates.ctypes.data,
+        tensors.ctypes.data,
+        0 if hull is None else hull.shape[0],
+        None if hull is None else hull.ctypes.data,
+        goals.ctypes.data,
+        valid.ctypes.data,
+    )
+    _raise_for_call(status, "metric_survivor_goals")
+    return goals, valid.astype(np.bool_)
+
+
 __all__ = [
     "ARRANGEMENT_UNCLASSIFIED",
     "ArrangementClassification",
@@ -9899,7 +9987,9 @@ __all__ = [
     "metric_interpolations",
     "metric_lengths",
     "metric_logarithms",
+    "metric_midpoints",
     "metric_relative_determinants",
+    "metric_survivor_goals",
     "metric_tetra_quality",
     "point_triangle_locations",
     "polygon_intersection_moments",

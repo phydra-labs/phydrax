@@ -45,6 +45,9 @@ set(PHX_MC_SOURCES
   src/deterministic_float_capi.cpp
   src/metric_float.cpp
   src/metric_float_capi.cpp
+  src/deterministic_solve.cpp
+  src/metric_goal.cpp
+  src/metric_goal_capi.cpp
   src/exact_kernels.cpp
   src/feature_protection.cpp
   src/graph_partition.cpp
@@ -99,6 +102,7 @@ set(PHX_MC_HEADERS
   src/filtered.hpp
   src/deterministic_float.hpp
   src/metric_float.hpp
+  src/metric_goal.hpp
   src/floating_point_mode.hpp
   src/geometry3.hpp
   src/intersections.hpp
@@ -210,6 +214,8 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_intersections)
   phx_mc_add_test(test_deterministic_float)
   phx_mc_add_test(test_metric_float)
+  phx_mc_add_test(test_metric_goal)
+  phx_mc_add_test(test_deterministic_solve)
   phx_mc_add_test(test_interval_program)
   phx_mc_add_test(test_parallel)
   phx_mc_add_test(test_plc3d)
