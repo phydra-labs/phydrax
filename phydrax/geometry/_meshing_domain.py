@@ -60,6 +60,7 @@ from .brep._patches import (
 if TYPE_CHECKING:
     from ._curve_boundary import ParametricCurveBoundarySource
     from ._domain_boundary import _Point2, _Triangle2, CurvedTrimLens
+    from .brep._intersection_curve import _IntersectionCurveHostAtlas, IntersectionCurve
     from .multiregion_surface import MultiRegionSurfaceTopology
 
 type MeshingSourceAccuracy = Literal[
@@ -936,6 +937,7 @@ class SourcePreparation:
     __slots__ = (
         "_box_programs",
         "_curve_box_programs",
+        "_intersection_curve_atlases",
         "_curve_spans",
         "_mapped_hessians",
         "_host_jacobian_programs",
@@ -963,6 +965,9 @@ class SourcePreparation:
         ] = {}
         self._curve_spans: dict[
             int, tuple[BSplineCurve, PreparedSourceSpans[RationalBSplineCurveSpan]]
+        ] = {}
+        self._intersection_curve_atlases: dict[
+            int, tuple[IntersectionCurve, _IntersectionCurveHostAtlas]
         ] = {}
         self._programs: dict[
             tuple[int, int], tuple[AbstractSurfacePatch, PreparedIntervalFunction]
@@ -1154,8 +1159,37 @@ class SourcePreparation:
             )
         return np.asarray(surface.bounding_box(parameter_box), dtype=np.float64)
 
+    def _intersection_curve_atlas(
+        self, curve: IntersectionCurve, /
+    ) -> _IntersectionCurveHostAtlas:
+        from .brep._intersection_curve import _IntersectionCurveHostAtlas
+
+        entry = self._intersection_curve_atlases.get(id(curve))
+        if entry is None or entry[0] is not curve:
+            atlas = _IntersectionCurveHostAtlas.from_curve(curve)
+            self._intersection_curve_atlases[id(curve)] = (curve, atlas)
+            return atlas
+        return entry[1]
+
+    def _trim_intersection_atlas(
+        self, curve: AbstractCurve, /
+    ) -> _IntersectionCurveHostAtlas | None:
+        from .brep._intersection_curve import CurveTrimSegment, IntersectionPCurve
+
+        while isinstance(curve, CurveTrimSegment):
+            curve = curve.curve
+        if isinstance(curve, IntersectionPCurve):
+            return self._intersection_curve_atlas(curve.curve)
+        return None
+
     def curve_box(self, curve: AbstractCurve, first: float, last: float, /) -> np.ndarray:
         """``curve.bounding_box(first, last)`` using prepared source artifacts."""
+        from .brep._intersection_curve import CurveTrimSegment, IntersectionPCurve
+
+        if isinstance(curve, (CurveTrimSegment, IntersectionPCurve)):
+            atlas = self._trim_intersection_atlas(curve)
+            if atlas is not None:
+                return curve._bounding_box(first, last, host_atlas=atlas)
         if isinstance(curve, BSplineCurve):
             return bspline_curve_bounds(curve, self.curve_spans(curve), first, last)
         if type(curve).bounding_box is AbstractCurve.bounding_box:
@@ -1201,6 +1235,12 @@ class SourcePreparation:
         self, curve: AbstractCurve, first: float, last: float, /
     ) -> tuple[np.ndarray, np.ndarray]:
         """``curve.derivative_bounds(first, last)`` from prepared spline spans."""
+        from .brep._intersection_curve import CurveTrimSegment, IntersectionPCurve
+
+        if isinstance(curve, (CurveTrimSegment, IntersectionPCurve)):
+            atlas = self._trim_intersection_atlas(curve)
+            if atlas is not None:
+                return curve._derivative_bounds(first, last, host_atlas=atlas)
         if isinstance(curve, BSplineCurve):
             return bspline_curve_derivative_bounds(
                 curve, self.curve_spans(curve), first, last

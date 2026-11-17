@@ -265,6 +265,10 @@
   affects only in-process reuse; persisted scientific identities remain unchanged.
 - CAD witness ancestry identities reuse the digest returned by the same
   live-PLC validation guard; rebuilt or mutated PLCs are revalidated.
+- Exact univariate root isolation forms bisection points and interval-width
+  comparisons with integer arithmetic, retaining the same rational intervals.
+- Source preparations reuse immutable host copies of intersection-curve chart
+  arrays for curve bounds while revalidating the source atlas on each query.
 - Source preparation reuses exact patch and spline-span proofs only for the
   same unchanged live source. Rebuilt sources reprove their own content;
   per-target trim partitions and per-box interval bounds remain independent.

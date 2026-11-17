@@ -1256,6 +1256,8 @@ def _orthogonal_cylinder_atlas_layout(
     node_lower: np.ndarray,
     node_upper: np.ndarray,
     /,
+    *,
+    parameter_boxes: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> bool:
     """Check the chart and node layout of a closed closed-form graph atlas.
 
@@ -1278,13 +1280,29 @@ def _orthogonal_cylinder_atlas_layout(
         or int(node_axes[0]) != theta_axis
         or int(node_axes[-1]) != theta_axis
         or Fraction.from_float(float(node_values[0]))
-        != Fraction.from_float(float(np.asarray(small_region.parameter_box)[0, 0]))
+        != Fraction.from_float(
+            float(
+                (
+                    np.asarray(small_region.parameter_box)
+                    if parameter_boxes is None
+                    else parameter_boxes[family.small_index]
+                )[0, 0]
+            )
+        )
         or Fraction.from_float(float(node_values[-1]))
         - Fraction.from_float(float(node_values[0]))
         != Fraction.from_float(float(small_period))
     ):
         return False
-    seam = Fraction.from_float(float(np.asarray(large_region.parameter_box)[0, 0]))
+    seam = Fraction.from_float(
+        float(
+            (
+                np.asarray(large_region.parameter_box)
+                if parameter_boxes is None
+                else parameter_boxes[family.large_index]
+            )[0, 0]
+        )
+    )
     for node in range(charts + 1):
         thetas = [
             *((float(chart_end[node - 1, theta_axis]),) if node > 0 else ()),
@@ -1310,10 +1328,49 @@ def _orthogonal_cylinder_atlas_layout(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _IntersectionCurveHostAtlas:
+    """Host copies of chart and node arrays, without proof outcomes."""
+
+    chart_axes: np.ndarray
+    chart_start: np.ndarray
+    chart_end: np.ndarray
+    node_axes: np.ndarray
+    node_values: np.ndarray
+    node_lower: np.ndarray
+    node_upper: np.ndarray
+    first_parameter_box: np.ndarray
+    second_parameter_box: np.ndarray
+
+    @classmethod
+    def from_curve(cls, curve: IntersectionCurve, /) -> _IntersectionCurveHostAtlas:
+        def immutable_copy(value: Array, /) -> np.ndarray:
+            array = np.asarray(value)
+            return np.frombuffer(array.tobytes(), dtype=array.dtype).reshape(array.shape)
+
+        arrays = tuple(
+            immutable_copy(value)
+            for value in (
+                curve.chart_axes,
+                curve.chart_start,
+                curve.chart_end,
+                curve.node_axes,
+                curve.node_values,
+                curve.node_lower,
+                curve.node_upper,
+                curve.first.parameter_box,
+                curve.second.parameter_box,
+            )
+        )
+        return cls(*arrays)
+
+
 def _orthogonal_cylinder_curve_branch_sign(
     curve: IntersectionCurve,
     family: _OrthogonalCylinderFamily,
     /,
+    *,
+    host_atlas: _IntersectionCurveHostAtlas | None = None,
 ) -> int | None:
     """Revalidate the exact source-chart atlas before using its closed form."""
     if (
@@ -1323,17 +1380,35 @@ def _orthogonal_cylinder_curve_branch_sign(
         or curve.end_kind != "closed"
     ):
         return None
-    node_lower = np.asarray(curve.node_lower, dtype=np.float64)
-    node_upper = np.asarray(curve.node_upper, dtype=np.float64)
+    if host_atlas is None:
+        node_lower = np.asarray(curve.node_lower, dtype=np.float64)
+        node_upper = np.asarray(curve.node_upper, dtype=np.float64)
+        chart_axes = np.asarray(curve.chart_axes)
+        chart_start = np.asarray(curve.chart_start, dtype=np.float64)
+        chart_end = np.asarray(curve.chart_end, dtype=np.float64)
+        node_axes = np.asarray(curve.node_axes)
+        node_values = np.asarray(curve.node_values, dtype=np.float64)
+    else:
+        chart_axes = host_atlas.chart_axes
+        chart_start, chart_end = host_atlas.chart_start, host_atlas.chart_end
+        node_axes, node_values = host_atlas.node_axes, host_atlas.node_values
+        node_lower, node_upper = host_atlas.node_lower, host_atlas.node_upper
     if not _orthogonal_cylinder_atlas_layout(
         family,
-        np.asarray(curve.chart_axes),
-        np.asarray(curve.chart_start, dtype=np.float64),
-        np.asarray(curve.chart_end, dtype=np.float64),
-        np.asarray(curve.node_axes),
-        np.asarray(curve.node_values, dtype=np.float64),
+        chart_axes,
+        chart_start,
+        chart_end,
+        node_axes,
+        node_values,
         node_lower,
         node_upper,
+        parameter_boxes=(
+            (host_atlas.first_parameter_box, host_atlas.second_parameter_box)
+            if host_atlas is not None
+            and family.source_regions[0] is curve.first
+            and family.source_regions[1] is curve.second
+            else None
+        ),
     ):
         return None
     return _orthogonal_cylinder_branch_sign(family, node_lower, node_upper)
@@ -3336,18 +3411,36 @@ class IntersectionCurve(AbstractCurve):
         self, first: float, last: float, /, *, chart_index: int | None = None
     ) -> np.ndarray:
         """Enclose source parameters, retaining an explicitly selected chart sheet."""
+        return self._parameter_enclosures(first, last, chart_index=chart_index)
+
+    def _parameter_enclosures(
+        self,
+        first: float,
+        last: float,
+        /,
+        *,
+        chart_index: int | None = None,
+        host_atlas: _IntersectionCurveHostAtlas | None = None,
+    ) -> np.ndarray:
         first_chart, last_chart = self._chart_indices_for_interval(
             first, last, chart_index
         )
         lower_parameter, upper_parameter = float(first), float(last)
         family = orthogonal_cylinder_family(self.first, self.second)
-        chart_starts = np.asarray(self.chart_start, dtype=np.float64)
-        chart_ends = np.asarray(self.chart_end, dtype=np.float64)
-        node_axes = np.asarray(self.node_axes)
-        node_lower = np.asarray(self.node_lower, dtype=np.float64)
-        node_upper = np.asarray(self.node_upper, dtype=np.float64)
+        if host_atlas is None:
+            chart_starts = np.asarray(self.chart_start, dtype=np.float64)
+            chart_ends = np.asarray(self.chart_end, dtype=np.float64)
+            node_axes = np.asarray(self.node_axes)
+            node_lower = np.asarray(self.node_lower, dtype=np.float64)
+            node_upper = np.asarray(self.node_upper, dtype=np.float64)
+        else:
+            chart_starts, chart_ends = host_atlas.chart_start, host_atlas.chart_end
+            node_axes = host_atlas.node_axes
+            node_lower, node_upper = host_atlas.node_lower, host_atlas.node_upper
         if family is not None:
-            branch_sign = _orthogonal_cylinder_curve_branch_sign(self, family)
+            branch_sign = _orthogonal_cylinder_curve_branch_sign(
+                self, family, host_atlas=host_atlas
+            )
             if branch_sign is None:
                 raise ValueError("The exact cylinder branch has no isolated source sign.")
             theta_axis = 2 * family.small_index
@@ -3939,6 +4032,20 @@ class IntersectionPCurve(AbstractCurve):
         order: int = 1,
         chart_index: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
+        return self._derivative_bounds(
+            first, last, order=order, chart_index=chart_index
+        )
+
+    def _derivative_bounds(
+        self,
+        first: float,
+        last: float,
+        /,
+        *,
+        order: int = 1,
+        chart_index: int | None = None,
+        host_atlas: _IntersectionCurveHostAtlas | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
         AbstractCurve.is_c1_on(self, first, last)
         if isinstance(order, bool) or not isinstance(order, int) or order != 1:
             raise ValueError("Curve derivative bounds support order=1 only.")
@@ -3950,7 +4057,9 @@ class IntersectionPCurve(AbstractCurve):
         branch_sign = (
             None
             if family is None
-            else _orthogonal_cylinder_curve_branch_sign(self.curve, family)
+            else _orthogonal_cylinder_curve_branch_sign(
+                self.curve, family, host_atlas=host_atlas
+            )
         )
         if family is not None and branch_sign is None:
             raise ValueError(
@@ -3961,8 +4070,11 @@ class IntersectionPCurve(AbstractCurve):
         derivative_lower: np.ndarray | None = None
         derivative_upper: np.ndarray | None = None
         if family is not None:
-            chart_starts = np.asarray(self.curve.chart_start, dtype=np.float64)
-            chart_ends = np.asarray(self.curve.chart_end, dtype=np.float64)
+            if host_atlas is None:
+                chart_starts = np.asarray(self.curve.chart_start, dtype=np.float64)
+                chart_ends = np.asarray(self.curve.chart_end, dtype=np.float64)
+            else:
+                chart_starts, chart_ends = host_atlas.chart_start, host_atlas.chart_end
         for chart in range(first_chart, last_chart + 1):
             chart_first = max(branch_first, float(chart))
             chart_last = min(branch_last, float(chart + 1))
@@ -4034,6 +4146,17 @@ class IntersectionPCurve(AbstractCurve):
     def bounding_box(
         self, first: float, last: float, /, *, chart_index: int | None = None
     ) -> np.ndarray:
+        return self._bounding_box(first, last, chart_index=chart_index)
+
+    def _bounding_box(
+        self,
+        first: float,
+        last: float,
+        /,
+        *,
+        chart_index: int | None = None,
+        host_atlas: _IntersectionCurveHostAtlas | None = None,
+    ) -> np.ndarray:
         branch_first, branch_last = self._branch_interval(first, last)
         if (
             chart_index is None
@@ -4044,8 +4167,8 @@ class IntersectionPCurve(AbstractCurve):
             # The span's terminal node lies on its own last chart's source
             # sheet; a point query there would select the next chart.
             branch_first = max(self.first, math.nextafter(branch_last, -math.inf))
-        boxes = self.curve.parameter_enclosures(
-            branch_first, branch_last, chart_index=chart_index
+        boxes = self.curve._parameter_enclosures(
+            branch_first, branch_last, chart_index=chart_index, host_atlas=host_atlas
         )
         columns = slice(0, 2) if self.side == "first" else slice(2, 4)
         lower = np.min(boxes[:, 0, columns], axis=0)
@@ -4322,6 +4445,20 @@ class CurveTrimSegment(AbstractCurve):
         order: int = 1,
         chart_index: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
+        return self._derivative_bounds(
+            first, last, order=order, chart_index=chart_index
+        )
+
+    def _derivative_bounds(
+        self,
+        first: float,
+        last: float,
+        /,
+        *,
+        order: int = 1,
+        chart_index: int | None = None,
+        host_atlas: _IntersectionCurveHostAtlas | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
         if isinstance(order, bool) or not isinstance(order, int) or order != 1:
             raise ValueError("Curve derivative bounds support order=1 only.")
         from .._interval_enclosure import interval_multiply
@@ -4334,6 +4471,7 @@ class CurveTrimSegment(AbstractCurve):
             source_last,
             derivative=True,
             chart_index=chart_index,
+            host_atlas=host_atlas,
         )
         lower_result, upper_result = interval_multiply(
             (lower, upper),
@@ -4350,9 +4488,22 @@ class CurveTrimSegment(AbstractCurve):
     def bounding_box(
         self, first: float, last: float, /, *, chart_index: int | None = None
     ) -> np.ndarray:
+        return self._bounding_box(first, last, chart_index=chart_index)
+
+    def _bounding_box(
+        self,
+        first: float,
+        last: float,
+        /,
+        *,
+        chart_index: int | None = None,
+        host_atlas: _IntersectionCurveHostAtlas | None = None,
+    ) -> np.ndarray:
         lower, upper, _ = self._source_interval(first, last)
         box = np.stack(
-            _curve_source_bounds(self.curve, lower, upper, chart_index=chart_index)
+            _curve_source_bounds(
+                self.curve, lower, upper, chart_index=chart_index, host_atlas=host_atlas
+            )
         )
         # A trim end is a root whose representative parameter only lies in its
         # enclosure; a box reaching that end also encloses the root itself.
@@ -4388,7 +4539,11 @@ class CurveTrimSegment(AbstractCurve):
                     )
             root_box = np.stack(
                 _curve_source_bounds(
-                    self.curve, root_lower, root_upper, chart_index=chart_index
+                    self.curve,
+                    root_lower,
+                    root_upper,
+                    chart_index=chart_index,
+                    host_atlas=host_atlas,
                 )
             )
             box = np.stack(
@@ -4426,9 +4581,20 @@ def _curve_source_bounds(
     *,
     derivative: bool = False,
     chart_index: int | None = None,
+    host_atlas: _IntersectionCurveHostAtlas | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Keep fixed-chart enclosures on the same source sheet as their evaluator."""
-    if chart_index is not None:
+    if host_atlas is not None and isinstance(
+        curve, (IntersectionPCurve, CurveTrimSegment)
+    ):
+        if derivative:
+            return curve._derivative_bounds(
+                first, last, chart_index=chart_index, host_atlas=host_atlas
+            )
+        box = curve._bounding_box(
+            first, last, chart_index=chart_index, host_atlas=host_atlas
+        )
+    elif chart_index is not None:
         if not isinstance(curve, (IntersectionPCurve, CurveTrimSegment)):
             raise ValueError("A fixed chart requires a chart-bearing source curve.")
         if derivative:
