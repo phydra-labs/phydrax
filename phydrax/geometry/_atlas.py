@@ -255,6 +255,32 @@ def _evaluate_segment_point(segment: _CurveTrimSegment, parameter: ArrayLike, /)
     return segment.evaluate(jnp.asarray(parameter))
 
 
+def _compiled_trim_fallback_supported(segment: _CurveTrimSegment, /) -> bool:
+    """Only trace carriers known not to read dynamic leaves on the host."""
+    from .brep._intersection_curve import CurveTrimSegment
+    from .brep._patches import (
+        BSplineCurve,
+        CircleCurve,
+        EllipseCurve,
+        ExactLineCurve,
+        HyperbolaCurve,
+        LineCurve,
+        ParabolaCurve,
+    )
+
+    if not isinstance(segment, CurveTrimSegment) or type(segment) is not CurveTrimSegment:
+        return False
+    return type(segment.curve) in (
+        BSplineCurve,
+        CircleCurve,
+        EllipseCurve,
+        ExactLineCurve,
+        HyperbolaCurve,
+        LineCurve,
+        ParabolaCurve,
+    )
+
+
 def _segment_points(
     record: _SegmentEnclosures, parameters: Sequence[float], /
 ) -> tuple[np.ndarray | None, ...]:
@@ -273,15 +299,25 @@ def _segment_points(
             dtype=np.float64,
         )
         if record.point_program is None:
-            # Each realization has a fixed scalar shape: these values can become
-            # exact winding identities and must not depend on neighboring queries.
-            values = tuple(
-                np.asarray(
-                    _evaluate_segment_point(segment, np.asarray(value[0])),
-                    dtype=np.float64,
+            if _compiled_trim_fallback_supported(segment):
+                # A fixed scalar shape preserves exact winding representatives.
+                values = tuple(
+                    np.asarray(
+                        _evaluate_segment_point(segment, np.asarray(value[0])),
+                        dtype=np.float64,
+                    )
+                    for value in query
                 )
-                for value in query
-            )
+            else:
+                # Some carriers inspect source arrays on the host and cannot
+                # accept tracers. Preserve their original eager scalar route.
+                values = tuple(
+                    np.asarray(
+                        segment.evaluate(jnp.asarray(value[0], dtype=jnp.float64)),
+                        dtype=np.float64,
+                    )
+                    for value in query
+                )
         else:
             values = evaluate_host_program(record.point_program, query)
         for parameter, raw in zip(missing, values, strict=True):
