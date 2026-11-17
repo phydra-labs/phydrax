@@ -712,6 +712,10 @@ class TetMesh {
     std::vector<std::int32_t> indices;
     std::vector<FacetCoverageBounds> bounds;
     FacetCoverageIndex coverage_index;
+    std::vector<std::array<std::int32_t, 4>> boundary_primitives;
+    std::vector<std::int32_t> boundary_indices;
+    std::vector<FacetCoverageBounds> boundary_bounds;
+    FacetCoverageIndex boundary_index;
     mutable std::vector<std::size_t> coverage_scratch;
     bool prepare_bounds = false;
     bool prepare_declared = false;

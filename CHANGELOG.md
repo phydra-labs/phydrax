@@ -249,6 +249,8 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Declared-plane validation uses outward-rounded projected boundary-edge boxes
+  to limit exact interior-intersection checks without changing edge order.
 - Declared-plane facet validation indexes outward-rounded exact projected
   source bounds, preserving the centroid proof and source-row order.
 - Source-facet coverage indexes closed facet boxes once per construction group,

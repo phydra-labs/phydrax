@@ -864,6 +864,24 @@ bool TetMesh::prepare_declared_group(const DeclaredGroup& declared,
   }
   if (!group.coverage_index.build(group.primitives, group.indices, group.bounds)) return false;
   group.declared_projection_axis = projection_axis;
+  group.boundary_primitives.reserve(declared.boundary_edges.size());
+  group.boundary_indices.reserve(declared.boundary_edges.size());
+  group.boundary_bounds.reserve(declared.boundary_edges.size());
+  for (const auto& edge : declared.boundary_edges) {
+    const auto first = vertices.find(edge[0]);
+    const auto second = vertices.find(edge[1]);
+    if (first == vertices.end() || second == vertices.end()) return true;
+    FacetCoverageBounds box = first->second;
+    for (int coordinate = 0; coordinate < 2; ++coordinate) {
+      box.lower[coordinate] = std::min(box.lower[coordinate], second->second.lower[coordinate]);
+      box.upper[coordinate] = std::max(box.upper[coordinate], second->second.upper[coordinate]);
+    }
+    group.boundary_primitives.push_back({edge[0], edge[1], edge[0], 0});
+    group.boundary_indices.push_back(static_cast<std::int32_t>(group.boundary_indices.size()));
+    group.boundary_bounds.push_back(box);
+  }
+  group.boundary_index.build(group.boundary_primitives, group.boundary_indices,
+                             group.boundary_bounds);
   return true;
 }
 
@@ -895,14 +913,57 @@ bool TetMesh::declared_face_valid(const DeclaredGroup& group, const double* cons
   if (side == 0 || side != orientation * group.orientation) return false;
   const Expansion* triangle[3] = {corners[0], side > 0 ? corners[1] : corners[2],
                                   side > 0 ? corners[2] : corners[1]};
+  const bool indexed = prepared != nullptr && prepared->declared_projection_axis >= 0 &&
+                       prepared->coverage_index.valid();
+  Dyadic exact_normal[3];
+  if (indexed) {
+    for (int axis = 0; axis < 3; ++axis) {
+      exact_normal[axis] = metric_active_ ? physical_normal[axis] : exact::to_dyadic(normal[axis]);
+    }
+  }
   Expansion ends[2][3];
-  for (const std::array<std::int32_t, 2>& edge : group.boundary_edges) {
+  const auto crosses_boundary = [&](const std::array<std::int32_t, 2>& edge) {
     for (int end = 0; end < 2; ++end) {
-      const double* source = source_points_.data() + 3 * static_cast<std::size_t>(edge[static_cast<std::size_t>(end)]);
+      const double* source = source_points_.data() +
+          3 * static_cast<std::size_t>(edge[static_cast<std::size_t>(end)]);
       for (int axis = 0; axis < 3; ++axis) ends[end][axis] = Expansion(source[axis]);
     }
-    if (metric_active_ ? segment_meets_open_triangle(physical_normal, ends[0], ends[1], triangle)
-                       : segment_meets_open_triangle(normal, ends[0], ends[1], triangle)) return false;
+    return metric_active_ ? segment_meets_open_triangle(physical_normal, ends[0], ends[1], triangle)
+                          : segment_meets_open_triangle(normal, ends[0], ends[1], triangle);
+  };
+  // A projected segment cannot meet the open triangle if their outward
+  // closed boxes are disjoint. The hierarchy returns surviving edges in
+  // original boundary order; their exact intersection test is unchanged.
+  if (indexed && prepared->boundary_index.valid()) {
+    FacetCoverageBounds triangle_bounds{};
+    const Dyadic unit(1.0);
+    for (int corner = 0; corner < 3; ++corner) {
+      Dyadic exact_point[3];
+      for (int axis = 0; axis < 3; ++axis) {
+        exact_point[axis] = exact::to_dyadic(corners[corner][axis]);
+      }
+      const auto point_bounds = projected_bounds(exact_normal, exact_point,
+                                                  prepared->declared_projection_axis, unit);
+      if (corner == 0) {
+        triangle_bounds = point_bounds;
+      } else {
+        for (int coordinate = 0; coordinate < 2; ++coordinate) {
+          triangle_bounds.lower[coordinate] = std::min(triangle_bounds.lower[coordinate],
+                                                        point_bounds.lower[coordinate]);
+          triangle_bounds.upper[coordinate] = std::max(triangle_bounds.upper[coordinate],
+                                                        point_bounds.upper[coordinate]);
+        }
+      }
+    }
+    prepared->boundary_index.candidates(triangle_bounds.lower, triangle_bounds.upper,
+                                         prepared->coverage_scratch);
+    for (std::size_t candidate : prepared->coverage_scratch) {
+      if (crosses_boundary(group.boundary_edges[candidate])) return false;
+    }
+  } else {
+    for (const auto& edge : group.boundary_edges) {
+      if (crosses_boundary(edge)) return false;
+    }
   }
   // Three times the centroid, against each row's edges (p, q):
   // n.((q - p) x (3 centroid - 3 p)) has the sign of the centroid's side.
@@ -933,12 +994,9 @@ bool TetMesh::declared_face_valid(const DeclaredGroup& group, const double* cons
     }
     return inside;
   };
-  if (prepared != nullptr && prepared->declared_projection_axis >= 0 &&
-      prepared->coverage_index.valid()) {
-    Dyadic exact_normal[3];
+  if (indexed) {
     Dyadic exact_sum[3];
     for (int axis = 0; axis < 3; ++axis) {
-      exact_normal[axis] = metric_active_ ? physical_normal[axis] : exact::to_dyadic(normal[axis]);
       exact_sum[axis] = exact::to_dyadic(sum[axis]);
     }
     const auto centroid = projected_bounds(exact_normal, exact_sum,

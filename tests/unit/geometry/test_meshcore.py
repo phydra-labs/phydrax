@@ -669,6 +669,61 @@ def test_declared_facet_coverage_retains_plane_records_with_affine_metrics(
         np.testing.assert_array_equal(records.deviations, np.zeros((3,), dtype=np.float64))
 
 
+@pytest.mark.parametrize("crosses_boundary", (False, True))
+@pytest.mark.parametrize(
+    "metric",
+    (
+        None,
+        np.asarray(((1.0, 0.3, 0.2), (0.0, 1.0, 0.4), (0.0, 0.0, 1.0)), dtype=np.float64),
+    ),
+)
+def test_declared_facet_boundary_coverage_accepts_separation_and_refuses_crossing(
+    crosses_boundary: bool, metric: np.ndarray | None
+) -> None:
+    faces = np.asarray(((1, 3, 2), (0, 2, 3), (0, 3, 1), (0, 1, 2)), dtype=np.int32)
+    extra = (
+        ((0.25, 0.25, 0.0), (0.75, 0.25, 0.0), (0.25, 0.75, 0.0))
+        if crosses_boundary
+        else ((2.0, 2.0, 0.0), (3.0, 2.0, 0.0), (2.0, 3.0, 0.0))
+    )
+    source_points = np.concatenate((UNIT_TET, np.asarray(extra, dtype=np.float64)))
+    source_faces = faces.copy()
+    groups = np.arange(4, dtype=np.int32)
+    if crosses_boundary:
+        source_faces[3] = (4, 5, 6)
+    else:
+        source_faces = np.concatenate((source_faces, np.asarray(((4, 5, 6),), dtype=np.int32)))
+        groups = np.append(groups, np.int32(3))
+    labels = np.asarray((101, 102, 103, 104), dtype=np.int64)
+    planes = np.full((len(source_faces), 3, 3), np.nan, dtype=np.float64)
+    planes[3:] = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)), dtype=np.float64
+    )
+    segments = np.empty((0, 2), dtype=np.int32)
+    empty = np.empty((0,), dtype=np.int32)
+    source = TetMeshSourceComplex(
+        source_points, source_faces, groups, np.zeros(len(groups), dtype=np.float64),
+        segments, empty, np.empty((0,), dtype=np.float64),
+        np.zeros((4,), dtype=np.int8), np.full((4,), -1, dtype=np.int32),
+        np.zeros((4, 2), dtype=np.float64), labels, np.empty((0,), dtype=np.int64),
+        planes, np.zeros(len(groups), dtype=np.float64),
+    )
+
+    def construct() -> TetMesh3D:
+        return TetMesh3D(
+            UNIT_TET, np.asarray(((0, 1, 2, 3),), dtype=np.int32), None,
+            faces, labels, segments, empty, source=source, affine_metric=metric,
+        )
+
+    if crosses_boundary:
+        with pytest.raises(ValueError, match="invalid input"):
+            construct()
+    else:
+        with construct() as state:
+            np.testing.assert_array_equal(state.arrays().faces, faces)
+            np.testing.assert_array_equal(state.arrays().source_faces, source_faces)
+
+
 def test_tet_mesh_preserves_interleaved_source_facet_groups() -> None:
     faces = np.asarray(((1, 3, 2), (0, 2, 3), (0, 3, 1), (0, 1, 2)), dtype=np.int32)
     order = np.asarray((2, 1, 0, 3), dtype=np.int32)
