@@ -172,6 +172,8 @@ struct TetImplicitSource {
   mutable std::int64_t transversality_refusals = 0;
   mutable std::int64_t distance_refusals = 0;
   mutable bool last_inconclusive = false;
+  // Results of this source's facet admissions; a cache, not mesh state.
+  mutable remesh::AdmissionMemo admissions;
 };
 
 struct TetMeshSnapshot {

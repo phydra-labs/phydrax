@@ -906,7 +906,8 @@ bool TetMesh::source_face_valid(const TetEditFacet& facet,
     }
     remesh::ZeroSetBandAdmission admission(implicit_source_->value, implicit_source_->gradient,
                                           implicit_source_->tolerance,
-                                          implicit_source_->orientation);
+                                          implicit_source_->orientation,
+                                          &implicit_source_->admissions);
     const std::array<remesh::VertexEvidence, 3> evidence{
         admission.evaluate(vertices[0]), admission.evaluate(vertices[1]),
         admission.evaluate(vertices[2])};
