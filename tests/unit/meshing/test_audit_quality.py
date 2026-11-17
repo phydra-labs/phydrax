@@ -712,6 +712,30 @@ def test_association_audit_is_independent_of_row_partition() -> None:
     assert combined.audit.issues == separate.audit.issues
 
 
+def test_edge_association_audit_is_independent_of_row_partition() -> None:
+    mesh = phx.meshing.canonicalize_cell_mesh(_two_cells())
+    geometry = phx.discretization.CellGeometrySpec.affine(mesh)
+    edges = mesh.entity_set(1)
+    identifiers = np.asarray(edges.entity_ids, dtype=np.int64).tolist()
+    combined = phx.meshing.audit_cell_mesh(
+        mesh,
+        geometry,
+        associations=(
+            _association(mesh, identifiers, entity_set_id=edges.entity_set_id),
+        ),
+    )
+    separate = phx.meshing.audit_cell_mesh(
+        mesh,
+        geometry,
+        associations=tuple(
+            _association(mesh, [identifier], entity_set_id=edges.entity_set_id)
+            for identifier in identifiers
+        ),
+    )
+    assert combined.passed == separate.passed
+    assert combined.issues == separate.issues
+
+
 def test_adjacent_zone_patch_is_audited_against_exact_face_incidence() -> None:
     mesh = phx.meshing.canonicalize_cell_mesh(
         phx.discretization.CellMesh(
