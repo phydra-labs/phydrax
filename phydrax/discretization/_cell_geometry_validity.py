@@ -69,7 +69,12 @@ from ..geometry._interval_enclosure import (
     prepare_interval_function,
     PreparedIntervalFunction,
 )
-from ..geometry._rational import fraction_up
+from ..geometry._rational import (
+    binary64_difference_magnitude,
+    binary64_norm_lower,
+    binary64_norm_upper,
+    fraction_up,
+)
 from ..linalg import (
     ArraySpace,
     DenseLinearOperator,
@@ -779,16 +784,12 @@ _SMALLEST_SUBNORMAL = float(np.ldexp(1.0, -1074))
 
 
 def _underflow_free_norm(values: np.ndarray, /, *, axis: int) -> np.ndarray:
-    """Euclidean norm along ``axis`` whose squares cannot underflow.
-
-    Vectors below one half are scaled up by an exact power of two first, so the
-    result equals ``np.linalg.norm`` whenever none of its squares underflows.
-    """
-
+    """Directed upper Euclidean norm, scaled to avoid avoidable square underflow."""
     largest = np.max(np.abs(values), axis=axis, keepdims=True)
     shift = np.maximum(-np.frexp(largest)[1], 0)
-    scaled = np.linalg.norm(np.ldexp(values, shift), axis=axis)
-    return np.ldexp(scaled, -np.squeeze(shift, axis=axis))
+    scaled = np.moveaxis(np.ldexp(values, shift), axis, -1)
+    upper = np.ldexp(binary64_norm_upper(scaled), -np.squeeze(shift, axis=axis))
+    return np.where(largest.squeeze(axis=axis) == 0, 0.0, np.nextafter(upper, np.inf))
 
 
 # Bernstein parameter domains ------------------------------------------------
@@ -1295,7 +1296,7 @@ def _root_scale(
     _, gradients = element.tabulate(reference)
     gradients = np.asarray(gradients, dtype=np.float64)
     magnitude = ein.contract("mnk,cna->cmak", np.abs(gradients), np.abs(local))
-    column_scale = np.prod(np.linalg.norm(magnitude, axis=-2), axis=-1)
+    column_scale = np.prod(_underflow_free_norm(magnitude, axis=-2), axis=-1)
     embedded = local.shape[-1] != reference.shape[-1]
     return np.max(column_scale * column_scale if embedded else column_scale, axis=1)
 
@@ -3261,11 +3262,19 @@ def _polygon_measure(points: np.ndarray, policy: CellValidityPolicy, /) -> tuple
     offset = np.max(
         np.abs(np.sum(first * (area / guarded[:, None])[:, None], axis=-1)), axis=1
     )
-    slack = np.max(np.linalg.norm(first, axis=-1), axis=1) * (
+    slack = np.max(_underflow_free_norm(first, axis=-1), axis=1) * (
         16.0 * _EPSILON + rounding / guarded
     )
-    diameter = np.linalg.norm(np.max(points, axis=1) - np.min(points, axis=1), axis=-1)
-    allowed = policy.relative_planarity_tolerance * diameter
+    extent_lower, extent_upper = binary64_difference_magnitude(
+        np.max(points, axis=1), np.min(points, axis=1)
+    )
+    allowed_lower = np.maximum(
+        np.nextafter(policy.relative_planarity_tolerance * binary64_norm_lower(extent_lower), -np.inf),
+        0.0,
+    )
+    allowed_upper = np.nextafter(
+        policy.relative_planarity_tolerance * binary64_norm_upper(extent_upper), np.inf
+    )
     axes = np.asarray(((1, 2), (0, 2), (0, 1)))[np.argmax(np.abs(area), axis=-1)]
     # The area vector's Euclidean error is at most sqrt(3) times its componentwise
     # underflow loss; four more units cover the rounded squares and products below.
@@ -3276,8 +3285,8 @@ def _polygon_measure(points: np.ndarray, policy: CellValidityPolicy, /) -> tuple
         + area_rounding * area_rounding
         + 4.0 * _SMALLEST_SUBNORMAL,
         floor * scale * scale,
-        offset - slack > allowed,
-        offset + slack > allowed,
+        offset - slack > allowed_upper,
+        offset + slack > allowed_lower,
         np.take_along_axis(points, axes[:, None, :], axis=2),
     )
 
@@ -3302,14 +3311,32 @@ def _certify_polygon_block(points: np.ndarray, policy: CellValidityPolicy, /) ->
     centered = safe - np.mean(safe, axis=1, keepdims=True)
     following = np.roll(centered, -1, axis=1)
     edge_vectors = following - centered
-    edge_lengths = np.linalg.norm(edge_vectors, axis=-1)
-    edge_roundoff = (
-        4.0 * _EPSILON * np.linalg.norm(np.abs(centered) + np.abs(following), axis=-1)
+    edge_lengths_lower = binary64_norm_lower(edge_vectors)
+    edge_lengths_upper = binary64_norm_upper(edge_vectors)
+    edge_roundoff = np.nextafter(
+        4.0 * _EPSILON * binary64_norm_upper(
+            np.nextafter(np.abs(centered) + np.abs(following), np.inf)
+        ),
+        np.inf,
     )
-    diameter = np.linalg.norm(np.max(safe, axis=1) - np.min(safe, axis=1), axis=-1)
-    edge_floor = POLYGON_EDGE_RESOLUTION * diameter[:, None]
-    short_edge = np.any(edge_lengths + edge_roundoff < edge_floor, axis=1)
-    uncertain_edge = np.any(edge_lengths - edge_roundoff <= edge_floor, axis=1)
+    extent_lower, extent_upper = binary64_difference_magnitude(
+        np.max(safe, axis=1), np.min(safe, axis=1)
+    )
+    edge_floor_lower = np.maximum(
+        np.nextafter(POLYGON_EDGE_RESOLUTION * binary64_norm_lower(extent_lower), -np.inf),
+        0.0,
+    )[:, None]
+    edge_floor_upper = np.nextafter(
+        POLYGON_EDGE_RESOLUTION * binary64_norm_upper(extent_upper), np.inf
+    )[:, None]
+    short_edge = np.any(
+        np.nextafter(edge_lengths_upper + edge_roundoff, np.inf) < edge_floor_lower,
+        axis=1,
+    )
+    uncertain_edge = np.any(
+        np.nextafter(edge_lengths_lower - edge_roundoff, -np.inf) <= edge_floor_upper,
+        axis=1,
+    )
     determinant, margin, threshold, nonplanar, ambiguous, planar = _polygon_measure(
         safe, policy
     )
