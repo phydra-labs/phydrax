@@ -87,6 +87,12 @@ class OrientedBoundary:
     shell_degrees: tuple[int, ...]
     boundary_degree_one: bool
     findings: tuple[BoundaryFinding, ...]
+    # One connected volume complex whose exterior facets form one closed
+    # manifold shell with cancelling, exactly equal interior traces; it states
+    # nothing about whether the exterior images are embedded.
+    single_shell_topology: bool = False
+    # Rows of the cells that own an exterior facet.
+    exterior_cells: tuple[int, ...] = ()
 
 
 def _loop_relation(first: tuple[int, ...], second: tuple[int, ...]) -> int | None:
@@ -1259,6 +1265,7 @@ def build_oriented_boundary(
         )
 
     faces: list[BoundaryFace] = []
+    exterior_cells: set[int] = set()
     for key, incident in occurrences.items():
         facet_id = facet_ids.get(key)
         if facet_id is None:
@@ -1313,6 +1320,7 @@ def build_oriented_boundary(
                 )
             continue
         cell_index, vertex_ids, points = incident[0]
+        exterior_cells.add(cell_index)
         map_evidence = _face_trace_image_evidence(cells[cell_index], vertex_ids, points)
         if map_evidence is None:
             findings.append(
@@ -1401,6 +1409,14 @@ def build_oriented_boundary(
     degree_topology_available = planar_embedded_exterior and not any(
         finding.check in degree_topology_blockers for finding in findings
     )
+    single_shell_topology = (
+        volume_component_count == 1
+        and len(components) == 1
+        and not any(
+            finding.check in degree_topology_blockers - {"nonaffine_exterior_facet"}
+            for finding in findings
+        )
+    )
     shell_measures = (
         tuple(
             _shell_measure(tuple(face_tuple[index] for index in shell))
@@ -1408,10 +1424,6 @@ def build_oriented_boundary(
         )
         if degree_topology_available
         else ()
-    )
-    shell_euler = tuple(
-        _shell_euler_characteristic(tuple(face_tuple[index] for index in shell))
-        for shell in components
     )
     if degree_topology_available:
         for shell_index, measure in enumerate(shell_measures):
@@ -1502,7 +1514,6 @@ def build_oriented_boundary(
         status == "certified"
         and volume_component_count == 1
         and len(components) == 1
-        and shell_euler == (2,)
         and len(shell_measures) == 1
         and shell_measures[0] > 0
         and tuple(degrees) == (0,)
@@ -1516,6 +1527,8 @@ def build_oriented_boundary(
         tuple(degrees),
         boundary_degree_one,
         tuple(findings),
+        single_shell_topology,
+        tuple(sorted(exterior_cells)),
     )
 
 

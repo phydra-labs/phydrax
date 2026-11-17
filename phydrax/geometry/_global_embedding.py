@@ -5797,18 +5797,29 @@ def _nonperiodic_contacts(
     proof_values: list[str] | None = None,
     /,
     *,
-    skip_internal_quadrilateral_separator: bool = False,
     injective_cells: set[int] | None = None,
+    participants: NDArray[np.bool_] | None = None,
 ) -> list[MeshCertificateFinding]:
+    """Exact contact findings of every candidate cell pair.
+
+    With ``participants``, only pairs of two participating cells are proved;
+    the caller owns the theorem that makes every other pair unnecessary. Cell
+    preparation findings are reported for all cells either way.
+    """
     if not cells:
         return [
             MeshCertificateFinding(
                 "empty_embedding", "unresolved", "mesh", detail="No cells were supplied."
             )
         ]
-    lower = np.asarray([cell.image_lower for cell in cells], dtype=np.float64)
-    upper = np.asarray([cell.image_upper for cell in cells], dtype=np.float64)
-    tree = prepare_bvh(lower, upper)
+    stated = (
+        np.arange(len(cells), dtype=np.intp)
+        if participants is None
+        else np.flatnonzero(participants)
+    )
+    lower = np.asarray([cells[index].image_lower for index in stated], dtype=np.float64)
+    upper = np.asarray([cells[index].image_upper for index in stated], dtype=np.float64)
+    tree = prepare_bvh(lower, upper) if stated.size else None
     separated_roots: dict[tuple[int, int], bool] = {}
     original_cells = cells
     contact_cells: list[EmbeddingCell] = []
@@ -5818,6 +5829,15 @@ def _nonperiodic_contacts(
     # polynomial. Rebuilding from that source gives the identical residual.
     stratum_sources: dict[tuple[int, ...], int] = {}
     for index, cell in enumerate(cells):
+        if (
+            participants is not None
+            and not participants[index]
+            and cell.kind != "polyhedron"
+        ):
+            # No pair of this cell is stated and it owes no decomposition.
+            contact_cells.append(cell)
+            simplices.append(None)
+            continue
         if not cell.affine and cell.coordinates and cell.dimension == 3:
             # Whole-map injectivity and exact face images justify replacing
             # the physical image by its planar-faced solid for contacts only.
@@ -5900,7 +5920,10 @@ def _nonperiodic_contacts(
         # A BVH block may contain a million candidate cell pairs. Piece
         # filtering expands each pair into up to the product of its tetrahedra;
         # bound temporary storage without omitting or repricing any pair.
+        if tree is None:
+            return
         for left, right in bvh_overlap_pair_blocks(tree, tree, include_touching=True):
+            left, right = stated[left], stated[right]
             for start in range(0, left.size, 1024):
                 yield left[start : start + 1024], right[start : start + 1024]
 
@@ -6202,8 +6225,6 @@ def _nonperiodic_contacts(
                         )
                     continue
                 if trace is True and len(shared) in (3, 4):
-                    if skip_internal_quadrilateral_separator and len(shared) == 4:
-                        continue
                     facet_witness = _shared_curved_facet_separation(
                         first_cell, second_cell, shared
                     )
@@ -6478,31 +6499,27 @@ def _periodic_contacts(
     return findings, result.quotient_boundary
 
 
-def _global_degree_contact_premises(findings: list[MeshCertificateFinding], /) -> bool:
-    unresolved_contacts = {
-        "exact_cell_contact",
-        "exact_cell_contact_preparation",
-        "mapped_cell_contact",
-        "mapped_shared_trace",
-    }
-    return all(
-        finding.status == "unresolved" and finding.check in unresolved_contacts
-        for finding in findings
-    )
-
-
 def _boundary_findings(
     mesh: CellMesh,
     cells: tuple[EmbeddingCell, ...],
     /,
-) -> tuple[list[MeshCertificateFinding], int, int, list[str], bool]:
+) -> tuple[
+    list[MeshCertificateFinding], int, int, list[str], bool, tuple[int, ...] | None
+]:
+    """Oriented-boundary findings, inventory, proof values and degree premises.
+
+    The fifth value states the complete planar-exterior degree-one theorem. The
+    last is the rows of the exterior-facet cells when the complex has one
+    closed manifold shell whose exterior images are not all proved planar, so
+    their embedding is still owed; otherwise ``None``.
+    """
     if (
         mesh.topological_dimension != 3
         or mesh.ambient_dimension != 3
         or not cells
         or any(cell.kind == "polygon" for cell in cells)
     ):
-        return [], 0, 0, [], False
+        return [], 0, 0, [], False, None
     boundary = build_oriented_boundary(mesh, cells)
     unresolved_checks = {
         "boundary_degree_dimension",
@@ -6552,7 +6569,7 @@ def _boundary_findings(
         values.extend(
             (
                 "boundary_degree_one:single-connected-source-component",
-                "boundary_topology:one-embedded-sphere",
+                "boundary_topology:one-embedded-closed-shell",
                 f"exterior_planar_embedded_facets:{tuple(sorted(face.facet_id for face in boundary.faces))}",
                 f"embedded_exterior_triangles:{len(boundary.triangles)}",
             )
@@ -6563,6 +6580,9 @@ def _boundary_findings(
         len(boundary.shell_face_indices),
         values,
         boundary.boundary_degree_one,
+        boundary.exterior_cells
+        if boundary.single_shell_topology and not boundary.boundary_degree_one
+        else None,
     )
 
 
@@ -7200,7 +7220,7 @@ def _proof(
     shell_count = 0
     boundary_values: list[str] = []
     degree_one_boundary = False
-    global_degree_used = False
+    global_degree_route: str | None = None
     reference_chain_attempt = (
         _reference_chain_replay(mesh, geometry) if periodic is None else None
     )
@@ -7386,52 +7406,61 @@ def _proof(
             shell_count,
             boundary_values,
             degree_one_boundary,
+            exterior_cells,
         ) = _boundary_findings(mesh, cells)
         state_findings.extend(boundary)
         checks.extend(("oriented_boundary", "exterior_degree"))
-        degree_boundary_candidate = (
-            degree_one_boundary and not state_findings and not map_findings
-        )
+        # Positive local Jacobians, exactly cancelling interior traces and one
+        # embedded closed shell make the map injective: it has degree zero
+        # outside the shell, the degree changes by one across it, and each
+        # regular preimage contributes one. No interior cell pair is then owed.
+        local_premises = not state_findings and not map_findings
         contact_values: list[str] = []
-        contact_findings = _nonperiodic_contacts(
-            mesh,
-            geometry,
-            cells,
-            contact_values,
-            skip_internal_quadrilateral_separator=degree_boundary_candidate,
-            injective_cells=injective_cells,
-        )
+        participants: NDArray[np.bool_] | None = None
+        if local_premises and degree_one_boundary:
+            degree_route = "embedded_planar_exterior_boundary"
+            participants = np.zeros((len(cells),), dtype=np.bool_)
+        elif local_premises and exterior_cells is not None:
+            # A shell whose facets are not all planar is embedded when the
+            # injective cells that own its facets meet only in their declared
+            # strata: two exterior facets then meet only in their own.
+            degree_route = "embedded_exterior_boundary_by_exterior_cell_contacts"
+            participants = np.zeros((len(cells),), dtype=np.bool_)
+            participants[np.asarray(exterior_cells, dtype=np.intp)] = True
+        else:
+            degree_route = None
+        if (
+            participants is not None
+            and not np.any(participants)
+            and not any(cell.kind == "polyhedron" for cell in cells)
+        ):
+            # Only a vertex-defined polyhedron owes a local premise here.
+            contact_findings: list[MeshCertificateFinding] = []
+        else:
+            contact_findings = _nonperiodic_contacts(
+                mesh,
+                geometry,
+                cells,
+                contact_values,
+                injective_cells=injective_cells,
+                participants=participants,
+            )
         boundary_values.extend(contact_values)
-        checks.append("exact_cell_contacts")
-        # Degree one discharges unresolved contacts only, never a violation or a
-        # missing local-map, continuity, or boundary premise.
-        global_degree_used = (
-            degree_boundary_candidate
-            and _global_degree_contact_premises(contact_findings)
-        )
-        if global_degree_used:
+        if degree_route is None:
+            checks.append("exact_cell_contacts")
+        elif participants is not None and np.any(participants):
+            checks.append("exterior_cell_contacts")
+        state_findings.extend(contact_findings)
+        if degree_route is not None and not contact_findings:
+            global_degree_route = degree_route
             boundary_values.extend(
                 (
                     "global_degree_one:positive-local-jacobians-and-cancelled-interior-traces",
-                    "global_degree_argument:embedded-oriented-sphere-has-winding-one-inside",
+                    "global_degree_argument:embedded-oriented-closed-shell-has-winding-one-inside",
                     "injectivity_argument:positive-local-degree-makes-each-regular-preimage-contribute-one",
                 )
             )
             checks.append("global_degree_one_injectivity")
-            state_findings.extend(
-                finding
-                for finding in contact_findings
-                if finding.status != "unresolved"
-                or finding.check
-                not in {
-                    "exact_cell_contact",
-                    "exact_cell_contact_preparation",
-                    "mapped_cell_contact",
-                    "mapped_shared_trace",
-                }
-            )
-        else:
-            state_findings.extend(contact_findings)
     witnesses: list[MeshEmbeddingWitness] = []
     if validity.all_certified:
         witnesses.append(
@@ -7458,16 +7487,16 @@ def _proof(
                 tuple(boundary_values),
             )
         )
-    if global_degree_used:
+    if global_degree_route is not None:
         witnesses.append(
             MeshEmbeddingWitness(
                 "global_degree_one_injectivity",
                 (
                     binding.binding_id,
                     validity.certificate_id,
-                    "embedded_planar_exterior_boundary",
+                    global_degree_route,
                     "exact_internal_trace_cancellation",
-                    "single_sphere_oriented_degree_one",
+                    "single_shell_oriented_degree_one",
                 ),
                 tuple(int(value) for value in cell_ids),
                 tuple(boundary_values),

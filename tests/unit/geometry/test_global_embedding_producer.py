@@ -1823,15 +1823,13 @@ def test_global_degree_one_certifies_nonlinear_map_with_affine_exterior() -> Non
 
     assert validity.all_certified
     assert certificate.status == "certified", certificate.findings
-    degree_witness = next(
-        witness
+    # The planar exterior completes the degree theorem: no cell-pair contact
+    # proof is stated for this single curved cell.
+    assert any(
+        witness.theorem == "global_degree_one_injectivity"
         for witness in certificate.witnesses
-        if witness.theorem == "global_degree_one_injectivity"
     )
-    assert (
-        "global_degree_argument:embedded-oriented-sphere-has-winding-one-inside"
-        in degree_witness.exact_values
-    )
+    assert "exact_cell_contacts" not in certificate.evaluated_checks
 
 
 def test_global_embedding_radical_witness_identity_is_cold_process_stable() -> None:
@@ -1861,6 +1859,78 @@ def test_global_embedding_radical_witness_identity_is_cold_process_stable() -> N
         timeout=120,
     )
     assert json.loads(process.stdout) == json.loads(json.dumps(first))
+
+
+def _unit_hexahedra(
+    cells: tuple[tuple[int, int, int], ...],
+) -> tuple[CellMesh, CellGeometrySpec, CellValidityCertificate]:
+    """Unit cubes at integer lattice offsets, sharing their lattice vertices."""
+    corners = np.asarray(reference_cell_topology("hexahedron").vertices, dtype=np.int64)
+    rows: dict[tuple[int, int, int], int] = {}
+    connectivity = []
+    for offset in cells:
+        connectivity.append(
+            [
+                rows.setdefault(
+                    (
+                        offset[0] + int(corner[0]),
+                        offset[1] + int(corner[1]),
+                        offset[2] + int(corner[2]),
+                    ),
+                    len(rows),
+                )
+                for corner in corners
+            ]
+        )
+    mesh = CellMesh(
+        np.asarray(tuple(rows), dtype=np.float64),
+        (CellBlock("cubes", "hexahedron", np.asarray(connectivity, dtype=np.int32)),),
+    )
+    geometry = CellGeometrySpec.affine(mesh)
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    return mesh, geometry, validity
+
+
+def test_global_degree_certifies_a_solid_ring_without_cell_pair_proofs() -> None:
+    # Eight cubes around an open square hole: one closed shell of genus one.
+    mesh, geometry, validity = _unit_hexahedra(
+        tuple((x, y, 0) for x in range(3) for y in range(3) if (x, y) != (1, 1))
+    )
+
+    certificate = certify_global_embedding(mesh, geometry, validity)
+
+    assert validity.all_certified
+    assert certificate.status == "certified", certificate.findings
+    assert certificate.shell_count == 1
+    assert any(
+        witness.theorem == "global_degree_one_injectivity"
+        for witness in certificate.witnesses
+    )
+    assert "exact_cell_contacts" not in certificate.evaluated_checks
+
+
+def test_global_degree_leaves_a_cavity_to_complete_cell_pair_proofs() -> None:
+    # A closed cavity gives two shells: one shell's winding argument does not apply.
+    mesh, geometry, validity = _unit_hexahedra(
+        tuple(
+            (x, y, z)
+            for x in range(3)
+            for y in range(3)
+            for z in range(3)
+            if (x, y, z) != (1, 1, 1)
+        )
+    )
+
+    certificate = certify_global_embedding(mesh, geometry, validity)
+
+    assert validity.all_certified
+    assert certificate.status == "certified", certificate.findings
+    assert certificate.shell_count == 2
+    assert "exact_cell_contacts" in certificate.evaluated_checks
+    assert not any(
+        witness.theorem == "global_degree_one_injectivity"
+        for witness in certificate.witnesses
+    )
 
 
 def test_global_degree_refuses_crossing_exterior_triangles() -> None:

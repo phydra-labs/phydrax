@@ -249,6 +249,15 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Global embedding certification of a connected volume mesh with one closed
+  boundary shell now rests on the degree theorem: positive local Jacobians,
+  exactly cancelling interior traces and an embedded shell make the map
+  injective, so interior cell pairs are no longer proved one by one. A planar
+  shell needs no cell-pair proof at all; a curved shell needs exact contact
+  proofs only among the cells that own its facets. The shell may have any
+  genus. Meshes with cavities or several components keep the complete
+  cell-pair proof. Certificate checks, witnesses and identities change
+  accordingly.
 - Exact geometric decisions are screened in binary64 before exact arithmetic,
   with unchanged results. The native zero-set band admission refuses a triangle
   as soon as its largest-residual point cannot be certified and reuses identical
