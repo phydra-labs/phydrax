@@ -378,7 +378,6 @@ def _trim_chart_points(
         raise RuntimeError("Incomplete fixed-chart trim point evaluation.")
     return tuple(value for value in result if value is not None)
 
-
 def _segment_points(
     record: _SegmentEnclosures, parameters: Sequence[float], /
 ) -> tuple[np.ndarray | None, ...]:

@@ -15,7 +15,7 @@ from phydrax.discretization._coordinate_enclosure import (
 )
 from phydrax.discretization._exact_algebraic_geometry import RadicalElement
 from phydrax.geometry import _stratum_subdivision as subdivision
-from phydrax.geometry._integer_net_batch import integer_net_batch
+from phydrax.geometry._integer_net_batch import _BatchIntegerNet, integer_net_batch
 
 
 def _exact_controls(
@@ -105,12 +105,14 @@ def test_incorrect_native_control_is_detected_by_exact_comparison(
         requests: list[
             tuple[tuple[Expression, ...], BernsteinDomain, int, tuple[int, ...]]
         ],
-    ) -> list[tuple[subdivision.IntegerBernsteinNet | None, ...]]:
+    ) -> list[tuple[_BatchIntegerNet | None, ...]]:
         rows = original(requests)
         net = rows[0][0]
         if net is None:
             raise RuntimeError("expected a native rational net")
-        rows[0] = (replace(net, words=bytes(len(net.words))),)
+        payload = bytearray(net.payload)
+        payload[net.start : net.end] = bytes(net.end - net.start)
+        rows[0] = (replace(net, payload=bytes(payload)),)
         return rows
 
     monkeypatch.setattr(subdivision, "integer_net_batch", corrupt)

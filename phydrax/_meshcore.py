@@ -857,14 +857,6 @@ class _TetMeshEditRequest(ctypes.Structure):
 
 
 _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
-    "phx_mc_interval_simplex_restrict": (
-        _I32,
-        (_I32, _I32, _I64, _P, _P, _P, _P, _P, _P, _I32),
-    ),
-    "phx_mc_interval_basis_bounds": (
-        _I32,
-        (_I64, _I64, _I64, _I64, _P, _P, _P, _P, _P, _P, _P, _P, _I32),
-    ),
     "phx_mc_version": (ctypes.c_char_p, ()),
     "phx_mc_build_hash": (ctypes.c_char_p, ()),
     "phx_mc_exact_domain": (None, (_P, _P)),
@@ -992,6 +984,14 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         (_I64, _I64, _P, _P, _P, _P, _I32, _P, _P, _I32, _I32, _P),
     ),
     "phx_mc_parallel_for": (_I32, (_I64, _I64, _I32, _ParallelChunkCallback, _P)),
+    "phx_mc_interval_simplex_restrict": (
+        _I32,
+        (_I32, _I32, _I64, _P, _P, _P, _P, _P, _P, _I32),
+    ),
+    "phx_mc_interval_basis_bounds": (
+        _I32,
+        (_I64, _I64, _I64, _I64, _P, _P, _P, _P, _P, _P, _P, _P, _I32),
+    ),
     "phx_mc_interval_bernstein_restrict": (
         _I32,
         (_I64, _I32, _I64, _P, _P, _P, _P, _P, _P, _I32),

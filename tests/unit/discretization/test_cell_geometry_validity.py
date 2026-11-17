@@ -251,6 +251,13 @@ def test_cell_geometry_identity_binds_exact_bank_and_array_framing() -> None:
         elements={"cells": element},
     )
     assert validity_module.cell_geometry_id(restored) == identity
+    assert restored.exact_coordinate_bank is not None
+    significands, exponents, indices, offsets, _ = (
+        restored.exact_coordinate_bank.canonical_parts()
+    )
+    for array in (significands, exponents, indices, offsets):
+        with pytest.raises(ValueError):
+            array.setflags(write=True)
     tampered = copy(first)
     object.__setattr__(tampered, "exact_coordinate_bank", changed.exact_coordinate_bank)
     with pytest.raises(ValueError, match="exact coordinate snapshot"):

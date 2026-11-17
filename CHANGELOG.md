@@ -249,6 +249,28 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Curved profile turning and analytic cylinder chart-sheet selection use
+  outward angle enclosures. Mixed conic and rational-spline profiles sum
+  directed turn endpoints exactly. Ambiguous turning proofs are refused, so
+  profile admission and chart coordinates can change near a turning boundary.
+- Native interval execution avoids duplicate validation and batches torus
+  source boxes and curve chord evaluations within each pass. Enclosure
+  endpoints and per-item proof decisions remain unchanged.
+- Exact coordinate banks own immutable byte-backed integer arrays and reuse
+  their framed content fingerprint per live bank; rebuilt banks revalidate and
+  fingerprint independently. Scientific identities are unchanged.
+- Live proof guards bind opaque exact-coordinate leaves to their canonical
+  content as well as their live identity. On fingerprint cache misses, banks
+  also validate their derived shape, sparse row offsets, and cached hash. This
+  affects only in-process reuse; persisted scientific identities remain unchanged.
+- CAD witness ancestry identities reuse the digest returned by the same
+  live-PLC validation guard; rebuilt or mutated PLCs are revalidated.
+- Exact univariate root isolation forms bisection points and interval-width
+  comparisons with integer arithmetic, retaining the same rational intervals.
+- Source preparations reuse immutable host copies of intersection-curve chart
+  arrays for curve bounds while revalidating the source atlas on each query.
+- Exact stratum Bernstein controls use bulk integer word-bank transfer, retaining
+  the same exact controls, subdivision decisions, and proof evidence.
 - Source preparation reuses exact patch and spline-span proofs only for the
   same unchanged live source. Rebuilt sources reprove their own content;
   per-target trim partitions and per-box interval bounds remain independent.
@@ -283,6 +305,11 @@
   rational coordinate bases with integer arithmetic. Supported nodal boundary
   carriers are read from the exact bank, with face maps built only when their
   proofs need them. Exact maps and coverage evidence retain their previous values.
+- Mapped quality audits reuse exact block integrals when available, and
+  embedding cell preparation reuses exact integer coordinate-basis plans.
+  Stored measures, coordinate expressions and proof evidence are unchanged.
+- Mapped injectivity projections and restricted-cell validity reuse prepared
+  exact integer basis combinations; their witnesses and bounds are unchanged.
 - Cell validity batches exact-coordinate rounding checks, retaining exact
   scalar fallback and the same recorded maximum error.
 - Affine cell validity combines exact dyadic Jacobians and determinant bounds

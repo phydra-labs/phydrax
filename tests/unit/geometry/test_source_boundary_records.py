@@ -369,6 +369,9 @@ def test_source_chart_identity_binds_cad_ancestry() -> None:
     other_plc = NativeCadVolumeSource(
         domain, surface, maximum_deviation=0.1, boundary="conforming"
     ).plc_source.complex
+    equivalent_plc = NativeCadVolumeSource(
+        domain, surface, maximum_deviation=0.1, boundary="fixed"
+    ).plc_source.complex
     charts = plc.cad_source_charts
     assert charts is not None
     patch = int(np.asarray(charts.root_patches)[0])
@@ -424,6 +427,29 @@ def test_source_chart_identity_binds_cad_ancestry() -> None:
         )
 
     first = make(True, root, association("parent-a"))
+    assert first.witness_id == make(True, root, association("parent-a")).witness_id
+    assert first.witness_id == make(
+        True, root, association("parent-a"), equivalent_plc
+    ).witness_id
+    rebuilt_plc = copy(plc)
+    assert first.witness_id == make(
+        True, root, association("parent-a"), rebuilt_plc
+    ).witness_id
+    assert first.witness_id == make(
+        True, root, association("parent-a"), rebuilt_plc
+    ).witness_id
+    offsets = plc.polygon_offsets
+    offsets.setflags(write=True)
+    original_offset = offsets[0]
+    try:
+        offsets[0] = 1
+        with pytest.raises(ValueError, match="polygon offsets"):
+            make(True, root, association("parent-a"))
+        with pytest.raises(ValueError, match="polygon offsets"):
+            PiecewiseLinearComplex.from_stored_fields(plc)
+    finally:
+        offsets[0] = original_offset
+        offsets.setflags(write=False)
     assert first.witness_id == make(True, root, association("parent-a")).witness_id
     assert first.witness_id != make(False, root, None).witness_id
     assert first.witness_id != make(True, -1, association("parent-a")).witness_id
@@ -538,7 +564,7 @@ def test_live_cad_chart_preparation_does_not_retain_source() -> None:
     from phydrax.meshing.providers._native_cad_volume import NativeCadVolumeSource
     from tests.unit.meshing.test_native_cad_volume import _cad_surface
 
-    def construct() -> weakref.ReferenceType[object]:
+    def construct() -> tuple[weakref.ReferenceType[object], weakref.ReferenceType[object]]:
         domain, surface = _cad_surface()
         source = NativeCadVolumeSource(domain, surface, maximum_deviation=0.1, boundary="fixed")
         plc = source.plc_source.complex
@@ -575,8 +601,9 @@ def test_live_cad_chart_preparation_does_not_retain_source() -> None:
             cad_root_cell_ids=np.asarray([-1], dtype=np.int64),
         )
         assert witness.source_chart_ids == (entity,)
-        return weakref.ref(domain)
+        return weakref.ref(domain), weakref.ref(plc)
 
-    reference = construct()
+    domain_reference, plc_reference = construct()
     gc.collect()
-    assert reference() is None
+    assert domain_reference() is None
+    assert plc_reference() is None

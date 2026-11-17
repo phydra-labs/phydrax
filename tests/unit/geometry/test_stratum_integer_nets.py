@@ -8,9 +8,14 @@ import numpy as np
 import pytest
 
 from phydrax._exact_kernels import BisectedNets
-from phydrax.discretization._coordinate_enclosure import ExactScalar
+from phydrax.discretization._coordinate_enclosure import (
+    BernsteinDomain,
+    ExactScalar,
+    Expression,
+)
 from phydrax.discretization._exact_algebraic_geometry import RadicalElement
 from phydrax.geometry import _stratum_subdivision as subdivision
+from phydrax.geometry._integer_net_batch import _BatchIntegerNet
 
 
 def test_integer_bisection_range_refusal_keeps_exact_controls(
@@ -174,3 +179,192 @@ def test_bisection_matches_fraction_blossoms_for_all_triangle_edges(
                 ) / (1 << remaining)
                 assert left_values[index] == (expected_left,)
                 assert right_values[index] == (expected_right,)
+
+
+def test_bulk_net_decoding_matches_exact_signed_controls_and_subdivision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    random = Random(18271)
+    indices = subdivision._control_indices((3,), (3,))
+    columns = [
+        [-(1 << 63), (1 << 63) - 1, *[random.randrange(-100, 101) for _ in range(8)]],
+        [random.randrange(-(1 << 220), 1 << 220) for _ in indices],
+        [random.randrange(-1000, 1001) for _ in indices],
+        [-(1 << 255), (1 << 255) - 1, *[random.randrange(-50, 51) for _ in range(8)]],
+    ]
+    scales = (2, 3, 1 << 75, 5)
+    widths = (8, 32, 16, 32)
+    encoded = [
+        b"".join(value.to_bytes(width, "little", signed=True) for value in column)
+        for column, width in zip(columns, widths, strict=True)
+    ]
+    nets = tuple(
+        _BatchIntegerNet(
+            b"prefix" + words + b"suffix",
+            6,
+            6 + len(words),
+            width,
+            len(column),
+            scale,
+            0,
+            0,
+        )
+        for column, scale, width, words in zip(
+            columns, scales, widths, encoded, strict=True
+        )
+    )
+    expected = subdivision._make_controls(
+        {
+            index: tuple(
+                Fraction(column[row], scale)
+                for column, scale in zip(columns, scales, strict=True)
+            )
+            for row, index in enumerate(indices)
+        }
+    )
+
+    def reject_scalar_decoding(self: _BatchIntegerNet) -> tuple[Fraction, ...]:
+        raise AssertionError("bulk conversion must not decode scalar controls")
+
+    monkeypatch.setattr(_BatchIntegerNet, "controls", reject_scalar_decoding)
+
+    def reject_numerators(self: _BatchIntegerNet) -> tuple[int, ...]:
+        raise AssertionError("bulk conversion must not decode scalar numerators")
+
+    monkeypatch.setattr(_BatchIntegerNet, "numerators", reject_numerators)
+    actual = subdivision._controls_from_nets(({},) * len(nets), (3,), (3,), 2, nets)
+    assert actual == expected
+    assert actual is not None
+    altered = nets[1]
+    damaged = _BatchIntegerNet(
+        altered.payload[: altered.start]
+        + bytes([altered.payload[altered.start] ^ 1])
+        + altered.payload[altered.start + 1 :],
+        altered.start,
+        altered.end,
+        altered.word_bytes,
+        altered.count,
+        altered.scale,
+        altered.least,
+        altered.greatest,
+    )
+    corrupted = subdivision._controls_from_nets(
+        ({},) * len(nets), (3,), (3,), 2, (nets[0], damaged, *nets[2:])
+    )
+    assert corrupted != expected
+    monkeypatch.setattr(subdivision, "meshcore_available", lambda: False)
+    actual_level = [actual]
+    expected_level = [expected]
+    for edge in ((0, 1), (1, 2), (0, 2)):
+        actual_level = [
+            child
+            for net in actual_level
+            for child in subdivision._bisect_controls(net, *edge)
+        ]
+        expected_level = [
+            child
+            for net in expected_level
+            for child in subdivision._bisect_controls(net, *edge)
+        ]
+        assert actual_level == expected_level
+
+
+def test_bulk_net_conversion_is_independent_of_batch_split_and_workers() -> None:
+    if not subdivision.meshcore_available():
+        pytest.skip("Meshcore is unavailable")
+    random = Random(10829)
+    requests: list[
+        tuple[tuple[Expression, ...], BernsteinDomain, int, tuple[int, ...]]
+    ] = [
+        (
+            tuple(
+                {
+                    (power,): Fraction(
+                        random.randrange(-(1 << bits), 1 << bits), denominator
+                    )
+                    for power in range(4)
+                }
+                for bits, denominator in ((12, 3), (190, 7), (60, 11))
+            ),
+            "simplex",
+            1,
+            (3,),
+        )
+        for _ in range(9)
+    ]
+    expected = [
+        subdivision._controls_from_nets(
+            polynomials, (2,), degree, dimension, (None,) * len(polynomials)
+        )
+        for polynomials, _, dimension, degree in requests
+    ]
+    for workers in (1, 3):
+        for split in (1, 4, len(requests)):
+            actual = []
+            for start in range(0, len(requests), split):
+                batch = requests[start : start + split]
+                native = subdivision.integer_net_batch(batch, parallelism=workers)
+                assert all(net is not None for row in native for net in row)
+                control_requests: list[
+                    tuple[tuple[Expression, ...], tuple[int, ...], tuple[int, ...], int]
+                ] = [
+                    (polynomials, (2,), degree, dimension)
+                    for polynomials, _, dimension, degree in batch
+                ]
+                prepared = subdivision._prepare_scaled_columns(control_requests, native)
+                actual.extend(
+                    subdivision._controls_from_nets(
+                        polynomials,
+                        (2,),
+                        degree,
+                        dimension,
+                        nets,
+                        prepared=prepared.get(position),
+                    )
+                    for position, (
+                        (polynomials, _, dimension, degree),
+                        nets,
+                    ) in enumerate(zip(batch, native, strict=True))
+                )
+            assert actual == expected
+
+
+def test_bulk_control_preparation_preserves_item_local_failure_and_radicals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = RadicalElement.sqrt(2)
+    polynomials: tuple[Expression, ...] = ({(0,): Fraction(1, 3), (1,): Fraction(2, 3)},)
+    radical: tuple[Expression, ...] = ({(0,): root, (1,): Fraction(1)},)
+    requests: list[
+        tuple[tuple[Expression, ...], tuple[int, ...], tuple[int, ...], int]
+    ] = [
+        (polynomials, (2,), (1,), 1),
+        (radical, (2,), (1,), 1),
+        (polynomials, (2,), (1,), 1),
+        (polynomials, (2,), (1,), 1),
+    ]
+    words = b"".join(value.to_bytes(8, "little", signed=True) for value in (1, 3))
+    valid = _BatchIntegerNet(words, 0, len(words), 8, 2, 3, 0, 1)
+    invalid = _BatchIntegerNet(words, 0, len(words), 8, 2, 0, 0, 1)
+    native: list[tuple[_BatchIntegerNet | None, ...]] = [
+        (valid,),
+        (None,),
+        (invalid,),
+        (valid,),
+    ]
+    expected = [
+        subdivision._controls_from_nets(polynomials, (2,), (1,), 1, (None,)),
+        subdivision._controls_from_nets(radical, (2,), (1,), 1, (None,)),
+        None,
+    ]
+    expected.append(expected[0])
+
+    def batch(
+        items: list[tuple[tuple[Expression, ...], BernsteinDomain, int, tuple[int, ...]]],
+        /,
+    ) -> list[tuple[_BatchIntegerNet | None, ...]]:
+        return native
+
+    monkeypatch.setattr(subdivision, "meshcore_available", lambda: True)
+    monkeypatch.setattr(subdivision, "integer_net_batch", batch)
+    assert subdivision._controls_many(requests, tolerate_errors=True) == expected
