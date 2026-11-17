@@ -1031,9 +1031,15 @@ PHX_MC_API int32_t phx_mc_symmetric_polynomial_minors(
  * control of leading minor m is strictly positive, 0 otherwise. On either
  * verdict, digests stores 32 SHA-256 bytes per minor in item-major order.
  * RANGE_ERROR is a per-item typed refusal.
- * SHA input is UTF-8 "phydrax-exact-controls\\n", followed for every control
- * by "0\\n" for zero or "1\\n1:numerator/denominator\\n" for a reduced rational
- * with positive denominator. */
+ * For each control set, write its controls as integer numerators n[i] over a
+ * common positive denominator Q, then divide Q and every n[i] by their joint
+ * gcd. The SHA-256 input begins with 24 bytes: ASCII
+ * "phydrax-exact-controls", a zero byte, and ASCII 'R'. Next comes the
+ * control count as an unsigned 64-bit big-endian integer, then Q as a framed
+ * magnitude, then each n[i] in control order as a sign byte (0 nonnegative,
+ * 1 negative) and framed magnitude. A framed magnitude is its unsigned 64-bit
+ * big-endian byte length followed by its minimal unsigned big-endian bytes;
+ * zero has length zero and a nonnegative sign. */
 PHX_MC_API int32_t phx_mc_symmetric_polynomial_verdicts(
     int64_t count, int32_t dimension, int32_t domain, const int64_t* offsets,
     const int32_t* exponents, const uint8_t* coefficients, const uint8_t* scales,
