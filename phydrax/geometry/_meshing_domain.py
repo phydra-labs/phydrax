@@ -3956,6 +3956,41 @@ class MeshingDomain(StrictModule, NonTrainableState):
             regular[selected] = valid
         return normals, regular
 
+    @staticmethod
+    def _dyadic_interpolation_squared(
+        lower: np.ndarray,
+        upper: np.ndarray,
+        hessian_lower: np.ndarray,
+        hessian_upper: np.ndarray,
+        /,
+    ) -> Fraction:
+        """Exact squared bound using a shared power-of-two denominator per row."""
+        endpoints = [float(value).as_integer_ratio() for value in (*lower, *upper)]
+        chart_denominator = max(denominator for _, denominator in endpoints)
+        chart = [
+            numerator * (chart_denominator // denominator)
+            for numerator, denominator in endpoints
+        ]
+        widths = (chart[2] - chart[0], chart[3] - chart[1])
+        factors = tuple(
+            widths[first] * widths[second] for first in range(2) for second in range(2)
+        )
+        magnitudes = [
+            max(abs(float(low)), abs(float(high))).as_integer_ratio()
+            for low, high in zip(hessian_lower.flat, hessian_upper.flat, strict=True)
+        ]
+        hessian_denominator = max(denominator for _, denominator in magnitudes)
+        scaled = [
+            numerator * (hessian_denominator // denominator)
+            for numerator, denominator in magnitudes
+        ]
+        squared = sum(
+            sum(scaled[4 * component + index] * factors[index] for index in range(4)) ** 2
+            for component in range(hessian_lower.shape[0])
+        )
+        denominator = 2 * hessian_denominator * chart_denominator * chart_denominator
+        return Fraction(squared, denominator * denominator)
+
     def interpolation_bounds(
         self,
         patch: int,
@@ -4004,30 +4039,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
             high = hessian_upper[row]
             if not np.all(np.isfinite(low)) or not np.all(np.isfinite(high)):
                 continue
-            widths = tuple(
-                Fraction(float(upper[row, axis])) - Fraction(float(lower[row, axis]))
-                for axis in range(2)
+            squared = self._dyadic_interpolation_squared(
+                lower[row], upper[row], low, high
             )
-            components = []
-            for physical in range(low.shape[0]):
-                value = (
-                    sum(
-                        (
-                            max(
-                                abs(Fraction(float(low[physical, first, second_axis]))),
-                                abs(Fraction(float(high[physical, first, second_axis]))),
-                            )
-                            * widths[first]
-                            * widths[second_axis]
-                            for first in range(2)
-                            for second_axis in range(2)
-                        ),
-                        Fraction(0),
-                    )
-                    / 2
-                )
-                components.append(value)
-            squared = sum((value * value for value in components), Fraction(0))
             result[row] = fraction_endpoint(
                 fraction_sqrt_interval(squared)[1], upper=True, saturate=True
             )

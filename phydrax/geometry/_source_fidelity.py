@@ -4082,13 +4082,18 @@ def _face_reference_chart(
         raise ValueError("Reference facet has a singular exact chart basis.")
     left, right = coordinate_pair
     matrix = ((first[left], second[left]), (first[right], second[right]))
+    solution = solve_exact(
+        matrix,
+        (
+            tuple(point[left] - origin[left] for point in target_vertices),
+            tuple(point[right] - origin[right] for point in target_vertices),
+        ),
+    )
     mapped: list[Point2] = []
-    for point in target_vertices:
-        solution = solve_exact(
-            matrix,
-            ((point[left] - origin[left],), (point[right] - origin[right],)),
-        )
-        chart_point = (solution[0][0], solution[1][0])
+    for point, first_coordinate, second_coordinate in zip(
+        target_vertices, solution[0], solution[1], strict=True
+    ):
+        chart_point = (first_coordinate, second_coordinate)
         if any(
             origin[axis] + chart_point[0] * first[axis] + chart_point[1] * second[axis]
             != point[axis]

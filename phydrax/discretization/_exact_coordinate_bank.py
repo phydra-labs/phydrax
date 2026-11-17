@@ -508,6 +508,41 @@ class ExactCoordinateBank(_ImmutableFingerprintLeaf, Sequence[tuple["ExactScalar
         )
         exact_zero = (self._significands == 0) & (bits == 0)
         exceptional = (self._exponents == _SPARSE) | ~(exact_nonzero | exact_zero)
+        # For a nearby finite proposal, compare integer significands at the
+        # exact coefficient's exponent.  The half-ulp and even-mantissa tests
+        # prove nearest-even rounding before one outward step is taken.
+        left_shift = -shift
+        safe_left_shift = np.clip(left_shift, 1, 11).astype(np.uint64)
+        represented = np.left_shift(mantissa, safe_left_shift)
+        difference = np.maximum(magnitude, represented) - np.minimum(
+            magnitude, represented
+        )
+        half_ulp = np.left_shift(np.uint64(1), safe_left_shift - np.uint64(1))
+        # Immediately below a normal binade boundary, the predecessor spacing
+        # is half the spacing above it (except at the subnormal boundary).
+        boundary = (
+            (exponent > np.uint64(1))
+            & (mantissa == np.uint64(1 << 52))
+            & (magnitude < represented)
+        )
+        half_ulp = np.where(boundary, half_ulp >> np.uint64(1), half_ulp)
+        nearest = (
+            exceptional
+            & np.all(self._exponents != _SPARSE, axis=1)[:, None]
+            & (self._significands != 0)
+            & (exponent != np.uint64(0x7FF))
+            & (left_shift >= 1)
+            & (left_shift <= 11)
+            & same_sign
+            & ((difference < half_ulp) | ((difference == half_ulp) & (mantissa % 2 == 0)))
+        )
+        exact_above = (magnitude > represented) != (self._significands < 0)
+        down = nearest & ~exact_above
+        up = nearest & exact_above
+        with np.errstate(over="ignore"):
+            lower[down] = np.nextafter(lower[down], -np.inf)
+            upper[up] = np.nextafter(upper[up], np.inf)
+        exceptional &= ~nearest
         width = self._shape[1]
         for flat in np.flatnonzero(exceptional.reshape(-1)).tolist():
             row, axis = divmod(flat, width)

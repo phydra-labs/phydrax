@@ -227,6 +227,19 @@ def test_interval_endpoints_reject_discarded_bits_and_wrong_sign() -> None:
     np.testing.assert_array_equal(upper.view(np.uint64), expected.view(np.uint64))
 
 
+def test_interval_endpoints_reject_wrong_binade_boundary_proposals() -> None:
+    exact = Fraction((1 << 54) - 3, 1 << 54)
+    bank = ExactCoordinateBank.from_rows(((exact, -exact),))
+    proposals = np.asarray(((1.0, -1.0),), dtype=np.float64)
+    lower, upper = bank._verified_interval_endpoints(proposals)
+    previous = float.fromhex("0x1.fffffffffffffp-1")
+    earlier = float.fromhex("0x1.ffffffffffffep-1")
+    expected_lower = np.asarray(((earlier, -previous),), dtype=np.float64)
+    expected_upper = np.asarray(((previous, -earlier),), dtype=np.float64)
+    np.testing.assert_array_equal(lower.view(np.uint64), expected_lower.view(np.uint64))
+    np.testing.assert_array_equal(upper.view(np.uint64), expected_upper.view(np.uint64))
+
+
 def test_interval_endpoints_saturate_out_of_range_entries_in_mixed_bank() -> None:
     huge = Fraction(1 << 2000)
     values = (

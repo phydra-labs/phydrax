@@ -3552,29 +3552,7 @@ def certify_cell_geometry_validity(
                     and kind in ("tetrahedron", "simplex:3")
                 ):
                     try:
-                        source_lower = np.asarray(
-                            [
-                                [
-                                    coefficient_endpoint(
-                                        value, upper=False, saturate=True
-                                    )
-                                    for value in point
-                                ]
-                                for point in source_bank
-                            ],
-                            dtype=np.float64,
-                        )
-                        source_upper = np.asarray(
-                            [
-                                [
-                                    coefficient_endpoint(value, upper=True, saturate=True)
-                                    for value in point
-                                ]
-                                for point in source_bank
-                            ],
-                            dtype=np.float64,
-                        )
-                        source_point_bounds = (source_lower, source_upper)
+                        source_point_bounds = source_bank.interval_endpoints()
                     except (OverflowError, TypeError, ValueError):
                         source_point_bounds = None
                 try:

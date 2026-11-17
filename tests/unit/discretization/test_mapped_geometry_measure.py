@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from fractions import Fraction
 
 import numpy as np
@@ -13,12 +14,126 @@ from phydrax.discretization._cell_geometry import (
     PerCellRestrictedCellGeometryElement,
 )
 from phydrax.discretization._coordinate_enclosure import ExpressionInput
+from phydrax.discretization._exact_algebraic_geometry import RadicalElement
 from phydrax.discretization._mapped_geometry_measure import (
     certified_cell_measures,
     certified_cell_moments,
 )
 from phydrax.discretization.fem import lagrange_element
 from tests._support.rational_geometry import _rational_box
+
+
+@dataclass
+class _MixedMeasureCoordinates:
+    bank: tuple[tuple[Fraction | RadicalElement, ...], ...]
+    source_id: str = "mixed-measure-source"
+    source_revision: str = "mixed-measure-state"
+    source_map_id: str = "mixed-measure-map"
+
+    def source_coordinates(self) -> tuple[tuple[Fraction | RadicalElement, ...], ...]:
+        return self.bank
+
+
+def _mixed_measure_case() -> tuple[CellMesh, CellGeometrySpec]:
+    element = lagrange_element("tetrahedron", 2)
+    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
+    root = RadicalElement.sqrt(Fraction(2))
+    rows = []
+    for cell in range(3):
+        offset = Fraction(2 * cell) + (
+            Fraction(1, 2**60)
+            if cell == 0
+            else Fraction(1, 3)
+            if cell == 1
+            else root / 10
+        )
+        rows.extend(
+            (
+                Fraction(float(point[0])) + offset,
+                Fraction(float(point[1])),
+                Fraction(float(point[2])),
+            )
+            for point in nodes
+        )
+    exact = tuple(rows)
+    execution = np.asarray(
+        [[float(value) for value in row] for row in exact], dtype=np.float64
+    )
+    mesh = CellMesh(
+        execution.reshape(3, 10, 3)[:, :4].reshape(-1, 3),
+        (CellBlock("cells", "tetrahedron", np.arange(12, dtype=np.int32).reshape(3, 4)),),
+    )
+    geometry = CellGeometrySpec(
+        {"cells": element},
+        {"cells": np.arange(30, dtype=np.int64).reshape(3, 10)},
+        execution,
+        source_mesh=mesh,
+        source_map=_MixedMeasureCoordinates(exact),
+    )
+    return mesh, geometry
+
+
+def test_mixed_exact_measures_preserve_parent_bits_and_block_independence() -> None:
+    mesh, geometry = _mixed_measure_case()
+    validity = mapped_measure.certify_cell_geometry_validity(geometry, mesh=mesh)
+    assert validity.certificate_id == (
+        "6faa21fcf2dc47348d8efd3f5374f11636c9b9fd87e2f134f319fb71165d7746"
+    )
+    measures = certified_cell_measures(mesh, geometry, validity=validity)
+    moments = certified_cell_moments(
+        mesh, geometry, validity=validity, second_moments=True
+    )
+    assert measures.exact and moments.exact
+    expected_values = np.asarray((4595172819793696085,) * 3, dtype=np.uint64)
+    expected_errors = np.asarray((4359484439294640128,) * 3, dtype=np.uint64)
+    np.testing.assert_array_equal(measures.values.view(np.uint64), expected_values)
+    np.testing.assert_array_equal(
+        measures.absolute_errors.view(np.uint64), expected_errors
+    )
+    np.testing.assert_array_equal(moments.measures.view(np.uint64), expected_values)
+    np.testing.assert_array_equal(moments.measure_errors.view(np.uint64), expected_errors)
+    np.testing.assert_array_equal(
+        moments.first_moments.view(np.uint64),
+        np.asarray(
+            (
+                (4586165620538955093, 4586165620538955093, 4586165620538955093),
+                (4601427819276155108, 4586165620538955093, 4586165620538955093),
+                (4604767620739802144, 4586165620538955093, 4586165620538955093),
+            ),
+            dtype=np.uint64,
+        ),
+    )
+    assert moments.jacobian_degrees == (0, 0, 0)
+    for value, error in zip(measures.values, measures.absolute_errors, strict=True):
+        difference = abs(Fraction(float(value)) - Fraction(1, 6))
+        assert difference <= Fraction(float(error))
+        assert difference > Fraction(float(error)) / 4
+
+    element = lagrange_element("tetrahedron", 2)
+    exact = geometry.source_coordinates()
+    execution = np.asarray(geometry.coordinates, dtype=np.float64)
+    for cell in range(3):
+        points = execution[cell * 10 : (cell + 1) * 10]
+        cell_mesh = CellMesh(
+            points[:4],
+            (CellBlock("cells", "tetrahedron", np.arange(4, dtype=np.int32)[None]),),
+        )
+        cell_geometry = CellGeometrySpec(
+            {"cells": element},
+            {"cells": np.arange(10, dtype=np.int64)[None]},
+            points,
+            source_mesh=cell_mesh,
+            source_map=_MixedMeasureCoordinates(exact[cell * 10 : (cell + 1) * 10]),
+        )
+        single = certified_cell_measures(cell_mesh, cell_geometry)
+        np.testing.assert_array_equal(
+            single.values.view(np.uint64),
+            measures.values[cell : cell + 1].view(np.uint64),
+        )
+        np.testing.assert_array_equal(
+            single.absolute_errors.view(np.uint64),
+            measures.absolute_errors[cell : cell + 1].view(np.uint64),
+        )
 
 
 def test_restricted_polynomial_measures_across_distinct_charts() -> None:

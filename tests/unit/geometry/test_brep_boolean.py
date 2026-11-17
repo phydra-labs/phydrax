@@ -462,6 +462,7 @@ def test_fixed_chart_trim_classification_is_partition_independent() -> None:
             getattr(together, name), np.asarray(getattr(reversed_result, name))[::-1]
         )
 
+
 def test_seam_crossing_quadric_loop_closes_under_exact_per_chart_decks(
     tmp_path: Path,
 ) -> None:
