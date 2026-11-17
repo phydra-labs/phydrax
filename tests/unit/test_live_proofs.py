@@ -4,6 +4,7 @@ from fractions import Fraction
 import equinox as eqx
 import jax
 import numpy as np
+import pytest
 
 from phydrax._live_proofs import live_content_fingerprint, LiveProofLedger
 from phydrax.discretization._exact_coordinate_bank import ExactCoordinateBank
@@ -62,4 +63,20 @@ def test_live_guard_binds_exact_coordinate_bank_content() -> None:
         np.asarray([[3]], dtype=np.int64).tobytes(), dtype=np.int64
     ).reshape((1, 1))
     object.__setattr__(first, "_significands", replacement)
-    assert ledger.find((first,)) is None
+    with pytest.raises(ValueError, match="derived hash"):
+        ledger.find((first,))
+
+
+def test_live_guard_rejects_replaced_sparse_row_offsets() -> None:
+    bank = ExactCoordinateBank.from_rows(((Fraction(1, 3),), (Fraction(1, 5),)))
+    ledger: LiveProofLedger[str] = LiveProofLedger()
+    _record(ledger, (bank,))
+    assert ledger.find((bank,)) == "proved"
+    assert tuple(bank) == ((Fraction(1, 3),), (Fraction(1, 5),))
+    invalid_offsets = np.frombuffer(
+        np.asarray([0, 0, 2], dtype=np.int64).tobytes(), dtype=np.int64
+    )
+    object.__setattr__(bank, "_sparse_row_starts", invalid_offsets)
+    assert tuple(bank) == ((Fraction(1, 3),), (Fraction(1, 3),))
+    with pytest.raises(ValueError, match="row offsets"):
+        ledger.find((bank,))

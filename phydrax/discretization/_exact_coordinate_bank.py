@@ -42,7 +42,7 @@ type _CoefficientPayload = (
     tuple[str, int, int] | tuple[str, tuple[tuple[int, int, int], ...]]
 )
 type _BankFingerprint = tuple[
-    str, tuple[weakref.ReferenceType[NDArray[Any]], ...], tuple[_CoefficientPayload, ...]
+    str, tuple[weakref.ReferenceType[NDArray[Any]], ...], tuple[_CoefficientPayload, ...], int
 ]
 _BANK_FINGERPRINTS: LiveProofLedger[_BankFingerprint] = LiveProofLedger()
 
@@ -58,6 +58,12 @@ def _sealed_array(array: NDArray[_Integer], /) -> NDArray[_Integer]:
 def _sealed_parts(
     arrays: tuple[NDArray[Any], ...], shape: tuple[int, int], sparse_count: int, /
 ) -> bool:
+    if (
+        type(shape) is not tuple
+        or len(shape) != 2
+        or any(type(size) is not int or size < 0 for size in shape)
+    ):
+        return False
     expected = (
         (np.dtype(np.int64), shape),
         (np.dtype(np.int16), shape),
@@ -531,6 +537,54 @@ class ExactCoordinateBank(_ImmutableFingerprintLeaf, Sequence[tuple["ExactScalar
             result.append(tuple(payload))
         return tuple(result)
 
+    def _validate_derived_parts(self) -> None:
+        """Refuse inconsistent un-hashed indexing metadata and cached hash."""
+        sig, exp, index, offsets = (
+            self._significands,
+            self._exponents,
+            self._sparse_index,
+            self._sparse_row_starts,
+        )
+        shape = self._shape
+        if (
+            type(shape) is not tuple
+            or len(shape) != 2
+            or any(type(size) is not int or size < 0 for size in shape)
+            or type(sig) is not np.ndarray
+            or type(exp) is not np.ndarray
+            or type(index) is not np.ndarray
+            or type(offsets) is not np.ndarray
+            or sig.dtype != np.dtype(np.int64)
+            or exp.dtype != np.dtype(np.int16)
+            or index.dtype != np.dtype(np.int64)
+            or offsets.dtype != np.dtype(np.int64)
+            or sig.shape != shape
+            or exp.shape != shape
+            or index.shape != (len(self._sparse_values),)
+            or offsets.shape != (shape[0] + 1,)
+        ):
+            raise ValueError("Exact coordinate bank derived shapes or dtypes are invalid.")
+        expected_offsets = np.searchsorted(
+            index, np.arange(shape[0] + 1, dtype=np.int64) * shape[1]
+        )
+        if not np.array_equal(offsets, expected_offsets):
+            raise ValueError("Exact coordinate bank row offsets differ from sparse indices.")
+
+        def contents(array: np.ndarray, /) -> bytes:
+            if (
+                isinstance(array.base, bytes)
+                and array.flags.c_contiguous
+                and len(array.base) == array.nbytes
+            ):
+                return array.base
+            return array.tobytes(order="C")
+
+        expected_hash = hash(
+            (shape, contents(sig), contents(exp), contents(index), self._sparse_values)
+        )
+        if type(self._hash) is not int or self._hash != expected_hash:
+            raise ValueError("Exact coordinate bank derived hash differs from its parts.")
+
     def content_fingerprint(self) -> str:
         """Bind canonical dense dyadics and exact sparse entries with framed arrays."""
         arrays = (
@@ -547,12 +601,18 @@ class ExactCoordinateBank(_ImmutableFingerprintLeaf, Sequence[tuple["ExactScalar
         # payload are checked below before accepting this identity-only hit.
         recorded = _BANK_FINGERPRINTS._find_identity_bound(self) if sealed else None
         if recorded is not None:
-            digest, references, previous_sparse = recorded
-            if previous_sparse == sparse and all(
-                reference() is array
-                for reference, array in zip(references, arrays, strict=True)
+            digest, references, previous_sparse, previous_hash = recorded
+            if (
+                type(self._hash) is int
+                and previous_hash == self._hash
+                and previous_sparse == sparse
+                and all(
+                    reference() is array
+                    for reference, array in zip(references, arrays, strict=True)
+                )
             ):
                 return digest
+        self._validate_derived_parts()
         digest = canonical_fingerprint(
             {
                 "kind": "exact-coordinate-bank",
@@ -564,7 +624,7 @@ class ExactCoordinateBank(_ImmutableFingerprintLeaf, Sequence[tuple["ExactScalar
         )
         if sealed:
             _BANK_FINGERPRINTS._record_identity_bound(
-                self, (digest, tuple(weakref.ref(array) for array in arrays), sparse)
+                self, (digest, tuple(weakref.ref(array) for array in arrays), sparse, self._hash)
             )
         return digest
 

@@ -110,6 +110,18 @@ def test_fingerprint_tracks_shape_and_sparse_coefficients() -> None:
     assert ExactCoordinateBank.from_rows(changed).content_fingerprint() != identity
 
 
+@pytest.mark.parametrize("part", ("shape", "hash"))
+def test_fingerprint_rejects_tampered_derived_bank_metadata(part: str) -> None:
+    bank = ExactCoordinateBank.from_rows(((Fraction(1),), (Fraction(2),)))
+    bank.content_fingerprint()
+    if part == "shape":
+        object.__setattr__(bank, "_shape", (1, 2))
+    else:
+        object.__setattr__(bank, "_hash", hash(bank) + 1)
+    with pytest.raises(ValueError, match="derived"):
+        bank.content_fingerprint()
+
+
 def test_fingerprinting_does_not_retain_source_bank() -> None:
     bank = ExactCoordinateBank.from_rows(_rows())
     bank.content_fingerprint()
