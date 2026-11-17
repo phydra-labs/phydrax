@@ -15,7 +15,7 @@ from typing import NamedTuple, TypedDict
 import numpy as np
 
 from .._fingerprint import canonical_fingerprint
-from .._meshcore import TetMeshImplicitFacetRefusal
+from .._meshcore import metric_lengths, metric_tetra_quality, TetMeshImplicitFacetRefusal
 from ..discretization._periodic_exact import exact_periodic_element
 from ..linalg import MaterializationPolicy, SolveResourcePolicy, SparseFactorizationPolicy
 from ..optim import (
@@ -1055,10 +1055,10 @@ def _candidate_admissible(
     changed = sorted({cell for detail in details for cell in detail.star})
     if not tm._floor_oriented(points[search.cells[changed]]):
         return False
-    lengths = tm._metric_lengths(points, metrics, search.prepared.edge_rows)
+    lengths = metric_lengths(points, metrics, search.prepared.edge_rows)
     if not tm._band_violations(lengths[search.measured]) < search.before:
         return False
-    quality = tm._tetra_quality(points, metrics, search.cells[changed])
+    quality = metric_tetra_quality(points, metrics, search.cells[changed])
     return bool(np.all(np.isfinite(quality)) and np.all(quality > 0))
 
 
