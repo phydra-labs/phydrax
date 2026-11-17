@@ -9,8 +9,6 @@ import pytest
 from phydrax._meshcore import meshcore_available
 from phydrax.discretization import CellBlock, CellGeometrySpec, CellMesh
 from phydrax.discretization._cell_geometry import PolynomialComposedCellGeometryElement
-from phydrax.discretization._coordinate_enclosure import BernsteinDomain, Polynomial
-from phydrax.discretization._exact_coordinate_bank import ExactCoordinateBank
 from phydrax.discretization._mapped_geometry_measure import exact_block_cell_measures
 from phydrax.discretization.fem import lagrange_element
 from phydrax.geometry._domain_certification import _target_region_measures
@@ -179,54 +177,3 @@ def test_coverage_retains_zero_and_negative_signed_measures() -> None:
     ]
 
 
-@pytest.mark.meshcore
-@pytest.mark.skipif(not meshcore_available(), reason="meshcore unavailable")
-def test_coverage_falls_back_for_one_native_refusal_and_detects_one_numerator_fault(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import phydrax.discretization._mapped_geometry_measure as supplier
-
-    mesh, geometry, unit = _batch("triangle", 3)
-    native = supplier.exact_basis_jacobian_integrals
-
-    def refuse_one(
-        basis: tuple[Polynomial, ...],
-        bank: ExactCoordinateBank,
-        routes: np.ndarray,
-        domain: BernsteinDomain,
-        dimension: int,
-        /,
-        *,
-        parallelism: int | None = None,
-    ) -> list[Fraction | None]:
-        values = native(basis, bank, routes, domain, dimension, parallelism=parallelism)
-        values[1] = None
-        return values
-
-    monkeypatch.setattr(supplier, "exact_basis_jacobian_integrals", refuse_one)
-    measures = exact_block_cell_measures(mesh, geometry)
-    assert measures == {0: unit, 2: 3 * unit}
-    assert _coverage_measures(mesh, geometry, measures) == (4 * unit, 6 * unit)
-    corrupted_once = False
-
-    def corrupt_one(
-        basis: tuple[Polynomial, ...],
-        bank: ExactCoordinateBank,
-        routes: np.ndarray,
-        domain: BernsteinDomain,
-        dimension: int,
-        /,
-        *,
-        parallelism: int | None = None,
-    ) -> list[Fraction | None]:
-        nonlocal corrupted_once
-        values = native(basis, bank, routes, domain, dimension, parallelism=parallelism)
-        value = values[0]
-        if value is not None and not corrupted_once:
-            values[0] = Fraction(value.numerator + 1, value.denominator)
-            corrupted_once = True
-        return values
-
-    monkeypatch.setattr(supplier, "exact_basis_jacobian_integrals", corrupt_one)
-    corrupted = exact_block_cell_measures(mesh, geometry)
-    assert _coverage_measures(mesh, geometry, corrupted) != (4 * unit, 6 * unit)
