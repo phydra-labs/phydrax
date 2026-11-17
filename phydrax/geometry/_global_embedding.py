@@ -1207,6 +1207,48 @@ def _affine_chart_cell(
     )
 
 
+def _simplex_edge_off_chord(
+    arguments: tuple[Expression, ...],
+    references: tuple[tuple[Fraction, ...], ...],
+    corners: tuple[tuple[ExactScalar, ...], ...],
+    /,
+) -> bool:
+    """Whether a spatial simplex chart maps an edge midpoint off its corner chord.
+
+    Such an edge image is not the straight corner segment, so neither face
+    through it has its corner polygon as image and the chart has no
+    planar-faced representation. Only exact rational images decide; any other
+    chart is left to the per-face proofs.
+    """
+    if any(type(value) is not Fraction for corner in corners for value in corner):
+        return False
+    for first in range(len(references)):
+        for second in range(first + 1, len(references)):
+            midpoint = tuple(
+                (left + right) / 2
+                for left, right in zip(references[first], references[second], strict=True)
+            )
+            image = tuple(
+                evaluate_expression(expression, midpoint) for expression in arguments
+            )
+            if any(type(value) is not Fraction for value in image):
+                return False
+            chord = tuple(
+                end - start
+                for start, end in zip(corners[first], corners[second], strict=True)
+            )
+            offset = tuple(
+                value - start for start, value in zip(corners[first], image, strict=True)
+            )
+            if (
+                chord[1] * offset[2] != chord[2] * offset[1]
+                or chord[2] * offset[0] != chord[0] * offset[2]
+                or chord[0] * offset[1] != chord[1] * offset[0]
+            ):
+                return True
+    return False
+
+
 def _planar_faced_chart_cell(
     cell: EmbeddingCell,
     arguments: tuple[Expression, ...],
@@ -1231,10 +1273,18 @@ def _planar_faced_chart_cell(
     ):
         return None
     try:
-        corners = tuple(
-            tuple(evaluate_expression(expression, point) for expression in arguments)
-            for point in cell.reference_vertices
+        corners = (
+            cell.corner_images
+            if arguments is cell.coordinates
+            else tuple(
+                tuple(evaluate_expression(expression, point) for expression in arguments)
+                for point in cell.reference_vertices
+            )
         )
+        if cell.domain == "simplex" and _simplex_edge_off_chord(
+            arguments, cell.reference_vertices, corners
+        ):
+            return None
         # This inexpensive exact rejection does not replace the whole-map
         # injectivity and face-trace image proofs below.
         for face in cell.facet_routes:

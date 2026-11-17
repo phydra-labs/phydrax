@@ -16,6 +16,7 @@ import math
 from collections.abc import Iterator
 from dataclasses import dataclass
 from fractions import Fraction
+from itertools import combinations
 from typing import Literal, TYPE_CHECKING
 
 import numpy as np
@@ -590,8 +591,17 @@ def _covered_by_declared_triangles(
     return True
 
 
+# Below this many rows the fixed setup of the binary64 screen costs more than
+# the exact pair tests it saves (one target row per root chart is the common
+# case and has no pair at all); every pair is then a candidate.
+_SCREENED_SELF_PAIR_MIN_ROWS = 8
+
+
 def _overlapping_self_pairs(rows: tuple[_Triangle2, ...], /) -> Iterator[tuple[int, int]]:
     """Stream potentially intersecting row pairs in their original order."""
+    if len(rows) < _SCREENED_SELF_PAIR_MIN_ROWS:
+        yield from combinations(range(len(rows)), 2)
+        return
     for _, _, pairs in _blocked_overlapping_pairs(rows, None):
         for first, second in pairs:
             if first < second:
@@ -1244,6 +1254,7 @@ def _cad_target_root_partition(
         ) from error
 
     root_rows = {identifier: row for row, identifier in enumerate(charts.cell_global_ids)}
+    patch_ids = domain.stratum_entity_ids(2)
     roots = np.asarray(witness.cad_root_cell_ids, dtype=np.int64)
     if roots.shape != (len(patch_rows),):
         raise SourceCoverageUnavailable(
@@ -1316,7 +1327,7 @@ def _cad_target_root_partition(
             )
         targets.append((ids[0], ids[1], ids[2]))
         if (
-            witness.source_entity_ids[row] != domain.entity_id(2, patch)
+            witness.source_entity_ids[row] != patch_ids[patch]
             or witness.occurrence_paths[row] != domain.source_occurrences[2][patch]
         ):
             raise SourceCoverageUnavailable(
@@ -1349,7 +1360,7 @@ def _cad_target_root_partition(
             plane_patches.add(patch)
             continue
         if patch in affine_patches:
-            if witness.source_chart_ids[row] != domain.entity_id(2, patch):
+            if witness.source_chart_ids[row] != patch_ids[patch]:
                 raise SourceCoverageUnavailable(
                     "CAD affine plane changes source chart.", status="violated"
                 )
@@ -1358,7 +1369,7 @@ def _cad_target_root_partition(
             raise SourceCoverageUnavailable(
                 "Unrooted CAD chart is not an exact plane.", status="violated"
             )
-        if witness.source_chart_ids[row] != domain.entity_id(2, patch):
+        if witness.source_chart_ids[row] != patch_ids[patch]:
             raise SourceCoverageUnavailable(
                 "CAD target row changes root source identity.", status="violated"
             )
@@ -1774,6 +1785,7 @@ def _cad_chart_topology_degree(
         for row, identifier in enumerate(np.asarray(block.global_ids, dtype=np.int64))
     }
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    patch_ids = domain.stratum_entity_ids(2)
     # Host connectivity and exact reference corners per block, not per chart row.
     block_vertices = {
         id(block): np.asarray(block.vertices, dtype=np.int64) for block in mesh.blocks
@@ -1845,7 +1857,7 @@ def _cad_chart_topology_degree(
                     vertex,
                     (
                         "patch",
-                        domain.entity_id(2, patch),
+                        patch_ids[patch],
                         domain.source_occurrences[2][patch],
                         point,
                     ),
@@ -1882,7 +1894,7 @@ def _cad_chart_topology_degree(
                     point,
                     (
                         "patch",
-                        domain.entity_id(2, patch),
+                        patch_ids[patch],
                         domain.source_occurrences[2][patch],
                         point,
                     ),
