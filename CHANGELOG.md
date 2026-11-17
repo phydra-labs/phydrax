@@ -249,6 +249,27 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Exact geometric decisions are screened in binary64 before exact arithmetic,
+  with unchanged results. The native zero-set band admission refuses a triangle
+  as soon as its largest-residual point cannot be certified and reuses identical
+  admissions. `MeshingDomainBoundarySource.boundary_distance` evaluates exact
+  point-to-chart distances only for chart triangles that can attain its
+  certified bounds. B-Rep classification and solid location stop at a face's
+  certified carrier distance, and skip edge frames, once it exceeds the query
+  radius.
+- Native planar-facet recovery does work proportional to each planar polygon
+  rather than to the whole complex on every pass, with unchanged output: it
+  tests only faces around the polygon's own vertices, keeps a verified cover
+  until a cell through it is removed, finds replaced subfaces through the
+  source-triangle index, skips boundary edges whose closed projected boxes are
+  disjoint from a face side, and decides clear ray sides without expansions.
+- `python -m tools.meshing_qualification` accepts `--profile ID` to run selected
+  profiles of the CAD profile matrix and `--merge PATH` to combine such runs. A
+  run that does not cover every profile lists its `selected_profiles` and never
+  claims workflow completion; merged selections covering every profile equal
+  one complete run. The matrix solves its P2 diffusion system by PCG on the
+  native Cholesky factor under a declared budget instead of the default
+  unpreconditioned solve; its residual and boundary gates are unchanged.
 - Nonperiodic coupled relocation can resolve pair-only stalls with bounded
   neighbor patches selected from audited infeasibility evidence. The complete
   pair/carrier phase still runs first; source constraints, native admission,

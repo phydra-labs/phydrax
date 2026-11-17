@@ -5,7 +5,7 @@ import json
 import os
 import sys
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, TextIO
@@ -15,6 +15,15 @@ from ._runtime import runtime_identity
 
 
 SCENARIOS = (*NATIVE_SCENARIOS, *OPTIONAL_SCENARIOS, "native-corpus")
+# Scenarios whose independent profiles can run as explicit subsets, with the
+# owner function that combines the records of such runs.
+_PROFILE_MERGERS = {
+    "native-cad-profile-matrix": (
+        ".scenarios.native_cad_profiles",
+        "merge_native_cad_profile_selections",
+    ),
+}
+_PROFILE_SELECTABLE = tuple(_PROFILE_MERGERS)
 
 
 def _invoke(
@@ -23,6 +32,7 @@ def _invoke(
     /,
     *,
     checkpoint: Callable[[dict[str, object]], None] | None = None,
+    profiles: frozenset[str] | None = None,
 ) -> dict[str, object]:
     def report_profile(event: dict[str, object]) -> None:
         if checkpoint is not None:
@@ -34,10 +44,18 @@ def _invoke(
 
             module_name, function_name = NATIVE_CASE_REGISTRY[name]
             function = getattr(import_module(module_name, __package__), function_name)
-            if name in (
+            if profiles is not None and name not in _PROFILE_SELECTABLE:
+                raise ValueError(
+                    f"Qualification scenario {name!r} does not support profile selection."
+                )
+            if name in _PROFILE_SELECTABLE:
+                record = function(
+                    checkpoint=report_profile if checkpoint is not None else None,
+                    profiles=profiles,
+                )
+            elif name in (
                 "native-general-families",
                 "native-planar-feature-matrix",
-                "native-cad-profile-matrix",
                 "native-hybrid-layer-matrix",
                 "native-periodic-profile-matrix",
                 "native-constrained-solids",
@@ -111,6 +129,7 @@ def run(
     /,
     *,
     checkpoint: Callable[[dict[str, object]], None] | None = None,
+    profiles: frozenset[str] | None = None,
 ) -> dict[str, object]:
     if not scenarios:
         raise ValueError("Qualification run requires at least one explicit scenario.")
@@ -129,7 +148,7 @@ def run(
             continue
         if checkpoint is not None:
             checkpoint({"event": "scenario-start", "scenario": name})
-        record = _invoke(name, arguments, checkpoint=checkpoint)
+        record = _invoke(name, arguments, checkpoint=checkpoint, profiles=profiles)
         records[name] = record
         if checkpoint is not None:
             checkpoint({"event": "scenario-complete", "scenario": name, "record": record})
@@ -171,6 +190,44 @@ def run(
     }
 
 
+def merge_selections(name: str, paths: Sequence[Path], /) -> dict[str, object]:
+    """Combine selected-profile result files of one scenario into one result.
+
+    The files are final outputs of ``--profile`` runs under one runtime
+    identity. The result has the shape ``run`` returns for the profiles they
+    cover; the scenario owner decides coverage and completion.
+    """
+    if name not in _PROFILE_MERGERS:
+        raise ValueError(
+            f"Qualification scenario {name!r} does not support profile selection."
+        )
+    if not paths:
+        raise ValueError("Merging requires at least one selected-profile result.")
+    from importlib import import_module
+
+    module_name, function_name = _PROFILE_MERGERS[name]
+    merge = getattr(import_module(module_name, __package__), function_name)
+    selections: list[dict[str, object]] = []
+    for path in paths:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        scenarios = document.get("scenarios") if isinstance(document, dict) else None
+        selection = scenarios.get(name) if isinstance(scenarios, dict) else None
+        if not isinstance(selection, dict):
+            raise ValueError(f"{path} holds no {name!r} result.")
+        selections.append(selection)
+    runtime = selections[0].get("runtime")
+    if runtime is None or any(
+        selection.get("runtime") != runtime for selection in selections
+    ):
+        raise ValueError("Selected-profile results must share one runtime identity.")
+    record = {**merge(selections), "runtime": runtime, "scenario": name}
+    return {
+        "status": "passed" if record["status"] == "passed" else "failed",
+        "scenarios": {name: record},
+        "runtime": runtime_identity(),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Run scientific native meshing qualification or an explicit optional-provider comparison."
@@ -184,32 +241,57 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Durable scenario/profile JSONL receipts; requires a fresh file.",
     )
+    parser.add_argument(
+        "--profile",
+        action="append",
+        help="Run only this profile of a scenario that supports profile selection; repeatable.",
+    )
+    parser.add_argument(
+        "--merge",
+        action="append",
+        type=Path,
+        help="Combine this selected-profile result of the one requested scenario instead of running it; repeatable.",
+    )
     parser.add_argument("--list", action="store_true")
     arguments = parser.parse_args(argv)
     if arguments.list:
         print("\n".join(SCENARIOS))
         return 0
     selected = tuple(arguments.scenario or ("native-corpus",))
-    event_path = arguments.events
-    if event_path is None and arguments.output is not None:
-        event_path = arguments.output.with_name(arguments.output.name + ".profiles.jsonl")
-    if (
-        event_path is not None
-        and arguments.output is not None
-        and event_path.resolve() == arguments.output.resolve()
-    ):
-        raise ValueError("Event receipts and final output require distinct paths.")
-    with ExitStack() as stack:
-        stream = (
-            stack.enter_context(event_path.open("x", encoding="utf-8", newline="\n"))
-            if event_path is not None
-            else sys.stderr
-        )
+    if arguments.merge:
+        if len(selected) != 1 or arguments.profile or arguments.events is not None:
+            raise ValueError(
+                "--merge combines selections of exactly one --scenario and takes no --profile or --events."
+            )
+        record = merge_selections(selected[0], tuple(arguments.merge))
+    else:
+        event_path = arguments.events
+        if event_path is None and arguments.output is not None:
+            event_path = arguments.output.with_name(
+                arguments.output.name + ".profiles.jsonl"
+            )
+        if (
+            event_path is not None
+            and arguments.output is not None
+            and event_path.resolve() == arguments.output.resolve()
+        ):
+            raise ValueError("Event receipts and final output require distinct paths.")
+        with ExitStack() as stack:
+            stream = (
+                stack.enter_context(event_path.open("x", encoding="utf-8", newline="\n"))
+                if event_path is not None
+                else sys.stderr
+            )
 
-        def checkpoint(event: dict[str, object]) -> None:
-            _write_event(stream, event, durable=event_path is not None)
+            def checkpoint(event: dict[str, object]) -> None:
+                _write_event(stream, event, durable=event_path is not None)
 
-        record = run(selected, arguments, checkpoint=checkpoint)
+            record = run(
+                selected,
+                arguments,
+                checkpoint=checkpoint,
+                profiles=frozenset(arguments.profile) if arguments.profile else None,
+            )
     rendered = json.dumps(
         record, default=_json_default, indent=2, sort_keys=True, allow_nan=False
     )

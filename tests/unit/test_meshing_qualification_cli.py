@@ -146,6 +146,98 @@ def test_run_rejects_empty_scenario_selection() -> None:
         cli.run((), Namespace())
 
 
+def _run_cad_matrix(tmp_path: Path, name: str, *extra: str) -> tuple[int, Path]:
+    output = tmp_path / f"{name}.json"
+    status = cli.main(
+        ["--scenario", "native-cad-profile-matrix", "--output", str(output), *extra]
+    )
+    return status, output
+
+
+def test_selected_cad_profiles_merge_to_the_complete_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from tools.meshing_qualification.scenarios import native_cad_profiles
+
+    def profile_record(
+        profile_id: str, format_name: str, case: str, *, checkpoint: object
+    ) -> dict[str, object]:
+        return {"profile_id": profile_id, "status": "passed"}
+
+    monkeypatch.setattr(native_cad_profiles, "_profile_record", profile_record)
+    monkeypatch.setattr(cli, "runtime_identity", lambda: {"engine": "unit-test"})
+    declared = [row[0] for row in native_cad_profiles._PROFILE_CASES]
+    first = [declared[10], declared[4]]
+    rest = [profile for profile in declared if profile not in first]
+
+    def selection(name: str, profiles: list[str]) -> Path:
+        status, output = _run_cad_matrix(
+            tmp_path,
+            name,
+            *(part for profile in profiles for part in ("--profile", profile)),
+        )
+        assert status == 0
+        return output
+
+    first_path, rest_path = selection("first", first), selection("rest", rest)
+    record = json.loads(first_path.read_text())["scenarios"]["native-cad-profile-matrix"]
+    # A selection runs in declared order and never claims completion.
+    assert record["selected_profiles"] == [declared[4], declared[10]]
+    assert record["status"] == "passed"
+    assert record["mandatory_workflow_completion"] == "incomplete"
+
+    status, complete_path = _run_cad_matrix(tmp_path, "complete")
+    assert status == 0
+    complete = json.loads(complete_path.read_text())
+    assert (
+        complete["scenarios"]["native-cad-profile-matrix"][
+            "mandatory_workflow_completion"
+        ]
+        == "complete"
+    )
+    status, merged_path = _run_cad_matrix(
+        tmp_path, "merged", "--merge", str(rest_path), "--merge", str(first_path)
+    )
+    assert status == 0
+    assert json.loads(merged_path.read_text()) == complete
+
+    status, partial_path = _run_cad_matrix(
+        tmp_path, "partial", "--merge", str(first_path)
+    )
+    assert status == 0
+    partial = json.loads(partial_path.read_text())["scenarios"][
+        "native-cad-profile-matrix"
+    ]
+    assert partial == record
+    with pytest.raises(ValueError, match="repeat"):
+        _run_cad_matrix(
+            tmp_path, "repeated", "--merge", str(first_path), "--merge", str(first_path)
+        )
+
+
+@pytest.mark.parametrize(
+    ("scenario", "profile"),
+    [
+        pytest.param(
+            "native-cad-profile-matrix", "native-cad-lifecycle:undeclared", id="unknown"
+        ),
+        pytest.param("native-tpms", "native-cad-lifecycle:step", id="unsupported"),
+    ],
+)
+def test_profile_selection_refuses_unknown_profiles_and_unsupported_scenarios(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, scenario: str, profile: str
+) -> None:
+    monkeypatch.setattr(cli, "runtime_identity", lambda: {"engine": "unit-test"})
+    output = tmp_path / "refused.json"
+    status = cli.main(
+        ["--scenario", scenario, "--profile", profile, "--output", str(output)]
+    )
+    assert status == 1
+    record = json.loads(output.read_text())["scenarios"][scenario]
+    assert record["status"] == "failed"
+    assert record["error_type"] == "ValueError"
+
+
 def test_native_case_migration_covers_every_authored_profile() -> None:
     migration_path = (
         Path(__file__).resolve().parents[2]
