@@ -249,6 +249,10 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Whole-scope native fidelity features reuse their operation's live primary
+  query and witness, including across supported transitions. Strict subsets and
+  restored or distinct witnesses retain independent validation; scientific
+  identities and archive representations are unchanged.
 - Curved profile turning and analytic cylinder chart-sheet selection use
   outward angle enclosures. Mixed conic and rational-spline profiles sum
   directed turn endpoints exactly. Ambiguous turning proofs are refused, so
