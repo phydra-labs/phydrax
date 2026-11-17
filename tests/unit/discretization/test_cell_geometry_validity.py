@@ -34,6 +34,7 @@ from phydrax.discretization._coordinate_enclosure import (
     Polynomial,
     RationalPolynomial,
 )
+from phydrax.discretization._exact_algebraic_geometry import RadicalElement
 from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
 from tests._support.validity_reuse import assert_incremental_matches_full
 
@@ -206,6 +207,35 @@ def test_cell_geometry_identity_binds_exact_bank_and_array_framing() -> None:
             restriction_source=None,
             elements={"cells": element},
         )
+
+
+def test_cell_geometry_identity_uses_canonical_exact_scalars() -> None:
+    radical = RadicalElement.sqrt(Fraction(2))
+
+    def make(value: Fraction | RadicalElement) -> CellGeometrySpec:
+        points = np.asarray(((0.0,), (float(value),)), dtype=np.float64)
+        mesh = D.CellMesh(
+            points,
+            (D.CellBlock("cells", "interval", np.asarray(((0, 1),), dtype=np.int32)),),
+        )
+        return CellGeometrySpec(
+            {"cells": D.fem.lagrange_element("interval", 1)},
+            {"cells": np.asarray(((0, 1),), dtype=np.int32)},
+            points,
+            source_mesh=mesh,
+            source_map=_MutableCoordinateProvider(((Fraction(0),), (value,))),
+        )
+
+    rational = make(Fraction(1))
+    rational_radical = make(RadicalElement(Fraction(1)))
+    assert validity_module.cell_geometry_id(rational) == validity_module.cell_geometry_id(
+        rational_radical
+    )
+    irrational = make(radical)
+    rounded_rational = make(Fraction.from_float(float(radical)))
+    assert validity_module.cell_geometry_id(irrational) != validity_module.cell_geometry_id(
+        rounded_rational
+    )
 
 def test_exact_coordinate_bank_rejects_inconsistent_execution_coefficients() -> None:
     mesh = D.CellMesh(

@@ -15,7 +15,11 @@ from numpy.typing import DTypeLike, NDArray
 
 from .._fingerprint import canonical_fingerprint, numeric_array_fingerprint
 from ..geometry._rational import binary64_dyadic_entries, dyadic_entry
-from ._exact_algebraic_geometry import coefficient_payload, RadicalElement
+from ._exact_algebraic_geometry import (
+    canonical_exact_scalar,
+    coefficient_payload,
+    RadicalElement,
+)
 
 
 if TYPE_CHECKING:
@@ -108,7 +112,13 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
                     raise ValueError(
                         "A dense dyadic entry cannot be held in the sparse table."
                     )
-            elif not isinstance(value, RadicalElement):
+            elif isinstance(value, RadicalElement):
+                canonical = canonical_exact_scalar(value, role="Exact coordinate bank entry")
+                if isinstance(canonical, Fraction):
+                    raise ValueError(
+                        "A rational radical cannot be held in the sparse table."
+                    )
+            else:
                 raise TypeError("Exact coordinate bank entries must be ExactScalar.")
         shape = (int(sig.shape[0]), int(sig.shape[1]))
         # Sparse entries are stored in flat order, so one offset per row lets a
@@ -153,6 +163,8 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
             if len(row) != width:
                 raise ValueError("Exact coordinate rows must share one width.")
             for value in row:
+                if isinstance(value, RadicalElement):
+                    value = canonical_exact_scalar(value, role="Exact coordinate row")
                 if isinstance(value, Fraction):
                     entry = dyadic_entry(value)
                     if entry is not None and _dense(*entry):

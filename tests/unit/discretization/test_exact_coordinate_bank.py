@@ -62,6 +62,54 @@ def test_bank_equality_hash_and_immutability_are_canonical() -> None:
     assert restored == bank and tuple(restored) == rows
 
 
+@pytest.mark.parametrize(
+    "rational",
+    (Fraction(0), Fraction(1), Fraction(-3, 8), Fraction(1, 3), Fraction(1 << 80)),
+)
+def test_rational_radicals_and_fractions_share_canonical_bank(rational: Fraction) -> None:
+    direct = ExactCoordinateBank.from_rows(((rational,),))
+    radical = ExactCoordinateBank.from_rows(((RadicalElement(rational),),))
+    assert direct == radical
+    assert hash(direct) == hash(radical)
+    assert direct.content_fingerprint() == radical.content_fingerprint()
+    assert tuple(radical) == ((rational,),)
+    assert pickle.loads(pickle.dumps(radical)) == direct
+
+
+@pytest.mark.parametrize(
+    ("significand", "exponent", "indices", "values"),
+    (
+        (2, 0, (), ()),
+        (0, 1, (), ()),
+        (0, -32768, (0,), (Fraction(1, 2),)),
+        (0, -32768, (0,), (RadicalElement(0),)),
+        (0, -32768, (0,), (RadicalElement(1),)),
+        (0, -32768, (0,), (RadicalElement(Fraction(1, 3)),)),
+    ),
+)
+def test_noncanonical_bank_parts_are_rejected_on_construction_and_restore(
+    significand: int,
+    exponent: int,
+    indices: tuple[int, ...],
+    values: tuple[Fraction | RadicalElement, ...],
+) -> None:
+    parts = (
+        np.asarray(((significand,),), dtype=np.int64),
+        np.asarray(((exponent,),), dtype=np.int16),
+        np.asarray(indices, dtype=np.int64),
+        values,
+    )
+    with pytest.raises(ValueError):
+        ExactCoordinateBank(*parts)
+
+    class InvalidStoredBank:
+        def __reduce__(self) -> tuple[object, tuple[object, ...]]:
+            return ExactCoordinateBank, parts
+
+    with pytest.raises(ValueError):
+        pickle.loads(pickle.dumps(InvalidStoredBank()))
+
+
 def test_bank_take_and_replace_rows_preserve_sparse_entries() -> None:
     rows = _rows()
     bank = ExactCoordinateBank.from_rows(rows)
