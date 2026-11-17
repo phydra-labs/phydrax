@@ -3738,7 +3738,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                 _sparse_operator(
                     rows[keep],
                     columns[keep],
-                    differential.coefficients[jnp.asarray(keep)],
+                    jnp.take(differential.coefficients, np.flatnonzero(keep), axis=0),
                     spaces[degree],
                     spaces[degree + 1],
                     f"{identifier}:d:{degree}",
