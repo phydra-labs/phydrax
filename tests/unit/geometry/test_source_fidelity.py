@@ -101,8 +101,10 @@ def test_triangle_chain_boundary_handles_subdivision_and_forgeries() -> None:
 
 def test_exact_planar_integer_predicates_match_fraction_reference() -> None:
     from phydrax.geometry._planar_primitives import (
+        area2,
         cross,
         interiors_separated,
+        intersection,
         signed_area2,
     )
 
@@ -125,7 +127,7 @@ def test_exact_planar_integer_predicates_match_fraction_reference() -> None:
     ) -> Fraction:
         return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
 
-    def reference_area(row: _ChartTriangle) -> Fraction:
+    def reference_area(row: tuple[tuple[Fraction, Fraction], ...]) -> Fraction:
         return sum(
             (
                 a[0] * b[1] - a[1] * b[0]
@@ -148,11 +150,62 @@ def test_exact_planar_integer_predicates_match_fraction_reference() -> None:
                     return True
         return False
 
+    def reference_intersection_area(
+        first: _ChartTriangle, second: _ChartTriangle
+    ) -> Fraction:
+        if reference_area(first) == 0 or reference_area(second) == 0:
+            return Fraction(0)
+        if reference_area(second) < 0:
+            second = (second[2], second[1], second[0])
+        polygon: tuple[tuple[Fraction, Fraction], ...] = first
+        for a, b in zip(second, second[1:] + second[:1], strict=True):
+            if not polygon:
+                return Fraction(0)
+            result: list[tuple[Fraction, Fraction]] = []
+            previous = polygon[-1]
+            previous_side = reference_cross(a, b, previous)
+            for current in polygon:
+                current_side = reference_cross(a, b, current)
+                if (previous_side >= 0) != (current_side >= 0):
+                    parameter = previous_side / (previous_side - current_side)
+                    result.append(
+                        (
+                            previous[0] + parameter * (current[0] - previous[0]),
+                            previous[1] + parameter * (current[1] - previous[1]),
+                        )
+                    )
+                if current_side >= 0:
+                    result.append(current)
+                previous, previous_side = current, current_side
+            polygon = tuple(result)
+        return abs(reference_area(polygon))
+
+    def point(x: int, y: int) -> tuple[Fraction, Fraction]:
+        return Fraction(x), Fraction(y)
+
+    a, b, c = point(0, 0), point(2, 0), point(0, 2)
+    base = (a, b, c)
+    cases = (
+        (base, (point(1, 0), point(3, 0), point(1, 2))),
+        (base, (b, a, point(0, -2))),
+        (base, (b, point(3, 0), point(2, 1))),
+        (base, (a, b, point(1, 0))),
+        (base, base),
+        (base, (c, b, a)),
+    )
+    for first, second in cases:
+        assert area2(intersection(first, second)) == reference_intersection_area(
+            first, second
+        )
+
     for _ in range(400):
         first, second = triangle(), triangle()
         assert cross(*first) == reference_cross(*first)
         assert signed_area2(first) == reference_area(first)
         assert interiors_separated(first, second) == reference_separated(first, second)
+        assert area2(intersection(first, second)) == reference_intersection_area(
+            first, second
+        )
 
 
 def _pwl_boundary_owner() -> PiecewiseLinearDomainBoundaryOwner:
@@ -618,53 +671,61 @@ def test_validated_random_chart_partitions_report_exact_defects() -> None:
                     validate_source_fidelity_witness(mesh, geometry, source, witness)
 
 
-def test_validated_partition_reports_patch_findings_in_source_order() -> None:
+def test_validated_partition_refuses_each_patch_defect() -> None:
     domain = _polyhedral_query_domain()
     source = MeshingDomainBoundarySource(domain, (0, 1))
     points = np.asarray(domain.corner_points, dtype=np.float64)
     cells = np.asarray(((0, 1, 2), (0, 2, 3), (4, 5, 6), (4, 6, 7)), dtype=np.int64)
     mesh = _mesh(points, cells)
     geometry = CellGeometrySpec.affine(mesh)
-    charts = points[cells, :2].copy()
-    charts[0] = charts[0, ::-1]
-    charts[2] = charts[3]
     patch_rows = (0, 0, 1, 1)
     roots = tuple(int(value) for value in domain.scope_entity_ids(2))
     root_by_key = {domain.source_entity_key_for_scope(2, value): value for value in roots}
-    witness = SurfaceChartWitness(
-        geometry_id=cell_geometry_id(geometry),
-        topology_id=mesh.topology_id,
-        domain_id=domain.domain_id,
-        cell_global_ids=np.asarray(mesh.blocks[0].global_ids, dtype=np.int64),
-        patches=np.asarray(patch_rows, dtype=np.int64),
-        charts=charts,
-        source_root_cell_ids=np.asarray(
-            [
-                root_by_key[
-                    (domain.entity_id(2, patch), domain.source_occurrences[2][patch])
-                ]
-                for patch in patch_rows
-            ],
-            dtype=np.int64,
-        ),
-        source_piece_ids=tuple(
-            (patch, int(domain.source_indices[2][patch])) for patch in patch_rows
-        ),
-        geometry_entity_ids=tuple(domain.entity_id(2, patch) for patch in patch_rows),
-        occurrence_paths=tuple(
-            domain.source_occurrences[2][patch] for patch in patch_rows
-        ),
-        root_mesh_cell_bindings=(None,) * len(patch_rows),
-    )
-    findings = _partition_findings(source, witness, SourcePreparation(domain))
-    assert tuple(
-        (finding.check, finding.status, finding.entity_ids) for finding in findings
-    ) == (
-        ("source_chart_orientation", "violated", (0,)),
-        ("source_chart_coverage", "violated", (1,)),
-    )
-    with pytest.raises(ValueError, match="not a complete reference partition"):
-        validate_source_fidelity_witness(mesh, geometry, source, witness)
+
+    def witness_for(charts: np.ndarray) -> SurfaceChartWitness:
+        return SurfaceChartWitness(
+            geometry_id=cell_geometry_id(geometry),
+            topology_id=mesh.topology_id,
+            domain_id=domain.domain_id,
+            cell_global_ids=np.asarray(mesh.blocks[0].global_ids, dtype=np.int64),
+            patches=np.asarray(patch_rows, dtype=np.int64),
+            charts=charts,
+            source_root_cell_ids=np.asarray(
+                [
+                    root_by_key[
+                        (domain.entity_id(2, patch), domain.source_occurrences[2][patch])
+                    ]
+                    for patch in patch_rows
+                ],
+                dtype=np.int64,
+            ),
+            source_piece_ids=tuple(
+                (patch, int(domain.source_indices[2][patch])) for patch in patch_rows
+            ),
+            geometry_entity_ids=tuple(domain.entity_id(2, patch) for patch in patch_rows),
+            occurrence_paths=tuple(
+                domain.source_occurrences[2][patch] for patch in patch_rows
+            ),
+            root_mesh_cell_bindings=(None,) * len(patch_rows),
+        )
+
+    for reverse, overlap in ((False, False), (True, False), (False, True), (True, True)):
+        charts = points[cells, :2].copy()
+        if reverse:
+            charts[0] = charts[0, ::-1]
+        if overlap:
+            charts[2] = charts[3]
+        witness = witness_for(charts)
+        if reverse or overlap:
+            with pytest.raises(ValueError, match="not a complete reference partition"):
+                validate_source_fidelity_witness(mesh, geometry, source, witness)
+        else:
+            assert (
+                validate_source_fidelity_witness(
+                    mesh, geometry, source, witness
+                ).partition_findings
+                == ()
+            )
 
 
 def test_polyhedral_surface_chart_uses_actual_triangulated_face_vertices() -> None:
