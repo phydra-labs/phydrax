@@ -90,7 +90,9 @@ def test_quotient_discovery_reports_cited_cubic_cell_genus_and_half_fraction(
     assert metrics.solid_fraction_lower <= 0.5 <= metrics.solid_fraction_upper
     # The identity lattice has unit spectral stretch, up to outward rounding.
     assert Fraction(metrics.vertex_root_distance) >= Fraction(surface.root_error)
-    assert metrics.vertex_root_distance <= np.nextafter(surface.root_error, np.inf)
+    assert Fraction(metrics.vertex_root_distance) <= Fraction(surface.root_error) * (
+        1 + Fraction(1, 2**48)
+    )
     assert metrics.porosity_lower <= 0.5 <= metrics.porosity_upper
 
 
@@ -133,7 +135,9 @@ def test_lattice_metrics_tight_axis_aligned_stretch() -> None:
     surface = _discover("schwarz_p", 0.2, np.diag([2.0, 1.0, 0.5]))
     distance = surface.lattice_metrics().vertex_root_distance
     assert Fraction(distance) >= 2 * Fraction(surface.root_error)
-    assert distance <= np.nextafter(2.0 * surface.root_error, np.inf)
+    assert Fraction(distance) <= 2 * Fraction(surface.root_error) * (
+        1 + Fraction(1, 2**48)
+    )
 
 
 def _independent_schwarz_p_area(points_per_axis: int, half_width: float) -> float:

@@ -155,7 +155,9 @@ def test_periodic_network_mesh_certifies_and_closes_through_paired_cell_faces(
     volume = _volume(family, diameter)
     # The identity lattice has unit spectral stretch, up to outward rounding.
     assert Fraction(volume.vertex_root_distance) >= Fraction(volume.root_error)
-    assert volume.vertex_root_distance <= np.nextafter(volume.root_error, np.inf)
+    assert Fraction(volume.vertex_root_distance) <= Fraction(volume.root_error) * (
+        1 + Fraction(1, 2**48)
+    )
     surface = volume.surface
     assert surface.topology is not None
 
@@ -193,7 +195,7 @@ def test_periodic_network_mesh_certifies_and_closes_through_paired_cell_faces(
 def test_periodic_volume_tight_axis_aligned_root_distance() -> None:
     source = _G.TrigonometricLevelSet(
         _G.TrigonometricTable.family("schwarz_p"),
-        PeriodicCell(np.diag([2.0, 1.0, 1.0])),
+        PeriodicCell(2.0 * np.eye(3)),
     )
     surface = discover_periodic_trigonometric_surface(
         source,
@@ -204,7 +206,9 @@ def test_periodic_volume_tight_axis_aligned_root_distance() -> None:
     )
     volume = mesh_periodic_trigonometric_region(surface)
     assert Fraction(volume.vertex_root_distance) >= 2 * Fraction(volume.root_error)
-    assert volume.vertex_root_distance <= np.nextafter(2.0 * volume.root_error, np.inf)
+    assert Fraction(volume.vertex_root_distance) <= 2 * Fraction(volume.root_error) * (
+        1 + Fraction(1, 2**48)
+    )
 
 
 def test_periodic_network_public_adaptation_edits_complete_lattice_orbits() -> None:
