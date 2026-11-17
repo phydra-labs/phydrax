@@ -7,11 +7,13 @@ import pytest
 from jax import Array
 
 from phydrax.geometry._interval_enclosure import (
+    interval_cos,
+    interval_sin,
     prepare_interval_function,
     PreparedIntervalFunction,
 )
 from phydrax.geometry.brep import _root_bindings as roots
-from phydrax.geometry.brep._patches import PlanePatch, TorusPatch
+from phydrax.geometry.brep._patches import CylinderPatch, PlanePatch, TorusPatch
 
 
 def _trigonometry(parameters: Array) -> Array:
@@ -124,3 +126,97 @@ def test_inward_fault_is_visible_at_plane_consumer(
     monkeypatch.setattr(PreparedIntervalFunction, "evaluate", inward)
     faulty = roots._patch_box(patch, origin, origin)
     assert faulty[0, 0] > 0.0
+
+
+class _IndividualTrigonometricIntervals:
+    def evaluate(
+        self, lower: np.ndarray, upper: np.ndarray, /
+    ) -> tuple[np.ndarray, np.ndarray]:
+        cosine = interval_cos((lower, upper))
+        sine = interval_sin((lower, upper))
+        return (
+            np.stack((cosine[0], sine[0]), axis=1),
+            np.stack((cosine[1], sine[1]), axis=1),
+        )
+
+
+def test_exact_cylinder_randomized_individual_operation_parity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    patch = CylinderPatch(
+        (0, 0, 0),
+        (1, 0, 0),
+        (0, 1, 0),
+        (0, 0, 1),
+        float(Fraction(1, 3)),
+        radius_exact=Fraction(1, 3),
+    )
+    rng = np.random.default_rng(5428)
+    lower = rng.uniform(-4.0, 4.0, size=(32, 2))
+    upper = lower + rng.uniform(0.0, 0.75, size=(32, 2))
+    original = _IndividualTrigonometricIntervals()
+    program = roots._cylinder_trigonometric_program()
+    expected_trig = original.evaluate(lower[:, :1], upper[:, :1])
+    actual_trig = program.evaluate(lower[:, :1], upper[:, :1])
+    for expected, actual in zip(expected_trig, actual_trig, strict=True):
+        np.testing.assert_array_equal(expected.view(np.uint64), actual.view(np.uint64))
+    partitions = [
+        program.evaluate(lower[a:b, :1], upper[a:b, :1])
+        for a, b in ((0, 5), (5, 21), (21, 32))
+    ]
+    for endpoint in range(2):
+        split = np.concatenate([part[endpoint] for part in partitions])
+        np.testing.assert_array_equal(
+            actual_trig[endpoint].view(np.uint64), split.view(np.uint64)
+        )
+    with monkeypatch.context() as host:
+        host.setattr(roots, "_cylinder_trigonometric_program", lambda: original)
+        expected_boxes = np.stack(
+            [
+                roots._patch_box(
+                    patch,
+                    np.asarray(lo, dtype=np.float64),
+                    np.asarray(hi, dtype=np.float64),
+                )
+                for lo, hi in zip(lower, upper, strict=True)
+            ]
+        )
+    boxes = np.stack(
+        [
+            roots._patch_box(
+                patch, np.asarray(lo, dtype=np.float64), np.asarray(hi, dtype=np.float64)
+            )
+            for lo, hi in zip(lower, upper, strict=True)
+        ]
+    )
+    np.testing.assert_array_equal(boxes.view(np.uint64), expected_boxes.view(np.uint64))
+
+
+def test_inward_trigonometric_fault_is_visible_at_cylinder_consumer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    patch = CylinderPatch(
+        (0, 0, 0),
+        (1, 0, 0),
+        (0, 1, 0),
+        (0, 0, 1),
+        float(Fraction(1, 3)),
+        radius_exact=Fraction(1, 3),
+    )
+    origin = np.zeros(2, dtype=np.float64)
+    correct = roots._patch_box(patch, origin, origin)
+    assert Fraction.from_float(float(correct[0, 0])) <= Fraction(1, 3)
+    original = PreparedIntervalFunction.evaluate
+
+    def inward(
+        self: PreparedIntervalFunction, lower: np.ndarray, upper: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        lo, hi = original(self, lower, upper)
+        lo, hi = lo.copy(), hi.copy()
+        lo[:, 0, :] = np.nextafter(lo[:, 0, :], np.inf)
+        hi[:, 0, :] = np.nextafter(hi[:, 0, :], np.inf)
+        return lo, hi
+
+    monkeypatch.setattr(PreparedIntervalFunction, "evaluate", inward)
+    faulty = roots._patch_box(patch, origin, origin)
+    assert Fraction.from_float(float(faulty[0, 0])) > Fraction(1, 3)

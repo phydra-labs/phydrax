@@ -236,25 +236,36 @@ def _binary_components(value: object, /) -> bool:
     return True
 
 
+@lru_cache(maxsize=1)
+def _cylinder_trigonometric_program() -> PreparedIntervalFunction:
+    def values(parameters: Array, /) -> Array:
+        return jnp.stack((jnp.cos(parameters), jnp.sin(parameters)))
+
+    try:
+        return prepare_interval_function(values, 1, batch_capacity=1, execution="batched")
+    except IntervalExtensionError:
+        return prepare_interval_function(values, 1, batch_capacity=1)
+
+
 def _exact_cylinder_patch_box(
     patch: object, lower: np.ndarray, upper: np.ndarray, /
 ) -> np.ndarray:
-    from .._interval_enclosure import interval_cos, interval_sin
     from .._rational import fraction_down, fraction_up
     from ._patches import CylinderPatch
 
     if not isinstance(patch, CylinderPatch):
         raise TypeError("Exact cylinder bounds require a CylinderPatch source.")
-    angle = (np.asarray(lower[0]), np.asarray(upper[0]))
-    cosine_float = interval_cos(angle)
-    sine_float = interval_sin(angle)
+    trig_lower, trig_upper = _cylinder_trigonometric_program().evaluate(
+        np.asarray(lower[:1], dtype=np.float64)[None],
+        np.asarray(upper[:1], dtype=np.float64)[None],
+    )
     cosine = (
-        Fraction.from_float(float(cosine_float[0])),
-        Fraction.from_float(float(cosine_float[1])),
+        Fraction.from_float(float(trig_lower[0, 0, 0])),
+        Fraction.from_float(float(trig_upper[0, 0, 0])),
     )
     sine = (
-        Fraction.from_float(float(sine_float[0])),
-        Fraction.from_float(float(sine_float[1])),
+        Fraction.from_float(float(trig_lower[0, 1, 0])),
+        Fraction.from_float(float(trig_upper[0, 1, 0])),
     )
     height = (
         Fraction.from_float(float(lower[1])),
