@@ -1194,6 +1194,30 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (_P, ctypes.POINTER(_TetMeshEditRequest), _P, _P),
     ),
+    "phx_mc_tet_mesh_probe_relocations": (
+        _I32,
+        (
+            _P,
+            _U64,
+            _I32,
+            _P,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _I64,
+            _I64,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+        ),
+    ),
     "phx_mc_tet_mesh_implicit_facet_refusal": (
         _I32,
         (_P, ctypes.POINTER(_TetMeshImplicitFacetRefusal)),
@@ -8590,6 +8614,93 @@ class TetMesh3D:
                 "tet_mesh_plane_records",
             )
             return TetMeshPlaneRecords(vertex_ids, face_rows, parameters, deviations)
+
+    def probe_relocations(
+        self,
+        expected_generation: int,
+        vertex_offsets: object,
+        vertex_ids: object,
+        points: object,
+        cell_offsets: object,
+        cell_ids: object,
+        *,
+        source_id: str | None = None,
+        source_revision: str | None = None,
+        source_map_id: str | None = None,
+        frame_id: str | None = None,
+    ) -> tuple[TetMeshEditStatus | None, ...]:
+        """Probe independent relocations against the live mesh without editing it.
+
+        Group ``g`` moves ``vertex_ids[vertex_offsets[g]:vertex_offsets[g + 1]]``
+        to the matching rows of ``points`` and declares the star cells
+        ``cell_ids[cell_offsets[g]:cell_offsets[g + 1]]``. Entry ``g`` of the
+        result is the status with which :meth:`apply_edit` would refuse that
+        relocation alone (unchanged witnesses and protection, cleared edge
+        parameter, no ancestry), or ``None`` when it may apply or the native
+        probe does not decide it. A decided refusal advances the implicit
+        refusal counters exactly as the refused edit would. The source identity
+        is the one the edit would name: all four fields, or none for an
+        unbound mesh.
+        """
+        generation = _tet_mesh_uint64(expected_generation, "expected_generation")
+        vertex_starts = _tet_mesh_vector(
+            vertex_offsets, "vertex_offsets", np.dtype(np.int64)
+        )
+        cell_starts = _tet_mesh_vector(cell_offsets, "cell_offsets", np.dtype(np.int64))
+        moved_ids = _tet_mesh_vector(vertex_ids, "vertex_ids", np.dtype(np.uint64))
+        star_ids = _tet_mesh_vector(cell_ids, "cell_ids", np.dtype(np.uint64))
+        targets = np.ascontiguousarray(_points(points, "points", 3))
+        if vertex_starts.size == 0 or vertex_starts.size != cell_starts.size:
+            raise ValueError(
+                "vertex_offsets and cell_offsets must hold one more entry than groups."
+            )
+        for starts, size, name in (
+            (vertex_starts, moved_ids.size, "vertex_offsets"),
+            (cell_starts, star_ids.size, "cell_offsets"),
+        ):
+            if starts[0] != 0 or starts[-1] != size or np.any(np.diff(starts) < 0):
+                raise ValueError(
+                    f"{name} must start at zero, not decrease and end at the bank size."
+                )
+        if targets.shape[0] != moved_ids.size:
+            raise ValueError("points must hold one row per moved vertex.")
+        if not np.all(np.isfinite(targets)):
+            raise ValueError("Relocation points must be finite.")
+        group_count = vertex_starts.size - 1
+        decided = np.zeros((group_count,), dtype=np.int32)
+        statuses = np.zeros((group_count,), dtype=np.int32)
+        identity_bound, identity_bytes, identity_buffers = _tet_mesh_identity_payload(
+            source_id, source_revision, source_map_id, frame_id
+        )
+        with self._lock:
+            _raise_for_call(
+                self._library["phx_mc_tet_mesh_probe_relocations"](
+                    self._live(),
+                    generation,
+                    identity_bound,
+                    _tet_mesh_identity_pointer(identity_bound, identity_buffers[0]),
+                    len(identity_bytes[0]),
+                    _tet_mesh_identity_pointer(identity_bound, identity_buffers[1]),
+                    len(identity_bytes[1]),
+                    _tet_mesh_identity_pointer(identity_bound, identity_buffers[2]),
+                    len(identity_bytes[2]),
+                    _tet_mesh_identity_pointer(identity_bound, identity_buffers[3]),
+                    len(identity_bytes[3]),
+                    group_count,
+                    _tet_mesh_pointer(vertex_starts),
+                    _tet_mesh_pointer(moved_ids),
+                    _tet_mesh_pointer(targets),
+                    _tet_mesh_pointer(cell_starts),
+                    _tet_mesh_pointer(star_ids),
+                    _tet_mesh_pointer(decided),
+                    _tet_mesh_pointer(statuses),
+                ),
+                "tet_mesh_probe_relocations",
+            )
+        return tuple(
+            TetMeshEditStatus(status) if refused else None
+            for refused, status in zip(decided.tolist(), statuses.tolist(), strict=True)
+        )
 
     def apply_edit(self, edit: TetMeshEdit) -> TetMeshEditStatus:
         with self._lock:

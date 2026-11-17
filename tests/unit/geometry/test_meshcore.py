@@ -1921,3 +1921,120 @@ def test_surface_envelope_names_the_offset_domination_contract() -> None:
     ) as error:
         surface_envelope(UNIT_TET, triangles, 0.2, 0.1, 0.1)
     assert "2**-120" not in str(error.value)
+
+
+def _interior_vertex_tet_mesh() -> TetMesh3D:
+    """A tetrahedron split at one interior vertex (ID 14): four cells."""
+    return TetMesh3D(
+        np.asarray(
+            ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (0.25, 0.25, 0.25)),
+            dtype=np.float64,
+        ),
+        np.asarray(
+            ((4, 1, 2, 3), (0, 4, 2, 3), (0, 1, 4, 3), (0, 1, 2, 4)), dtype=np.int32
+        ),
+        None,
+        np.asarray(((1, 3, 2), (0, 2, 3), (0, 3, 1), (0, 1, 2)), dtype=np.int32),
+        np.arange(4, dtype=np.int64),
+        np.zeros((0, 2), dtype=np.int32),
+        np.zeros((0,), dtype=np.int64),
+        boundary_policy=PlcBoundaryPolicy.CONFORMING,
+        vertex_ids=np.asarray((10, 11, 12, 13, 14), dtype=np.uint64),
+        cell_ids=np.asarray((100, 101, 102, 103), dtype=np.uint64),
+        facet_ids=np.asarray((200, 201, 202, 203), dtype=np.uint64),
+    )
+
+
+def _interior_relocation(generation: int, point: Any, cells: Any) -> TetMeshEdit:
+    return TetMeshEdit(
+        kind=TetMeshEditKind.RELOCATE,
+        expected_generation=generation,
+        removed_cell_ids=np.asarray(cells, dtype=np.uint64),
+        changed_vertex_ids=np.asarray((14,), dtype=np.uint64),
+        changed_vertex_points=np.asarray((point,), dtype=np.float64),
+        changed_witness_strata=np.zeros((1,), dtype=np.int8),
+        changed_witness_entities=np.full((1,), -1, dtype=np.int32),
+        changed_witness_parameters=np.zeros((1, 2), dtype=np.float64),
+        changed_witness_deviations=np.zeros((1,), dtype=np.float64),
+        changed_protection_radii=np.zeros((1,), dtype=np.float64),
+        changed_protected_vertices=np.zeros((1,), dtype=np.int8),
+        changed_edge_witness_present=np.zeros((1,), dtype=np.int8),
+        changed_edge_witness_endpoints=np.zeros((1, 2), dtype=np.uint64),
+        changed_edge_parameters=np.zeros((1,), dtype=np.float64),
+    )
+
+
+def test_tet_mesh_probe_relocations_reports_each_refusal_of_the_single_edit() -> None:
+    star = (100, 101, 102, 103)
+    # Admissible, inverted, incomplete star, coincident with vertex 10.
+    cases = (
+        ((0.3, 0.25, 0.25), star),
+        ((2.0, 2.0, 2.0), star),
+        ((0.3, 0.25, 0.25), star[:3]),
+        ((0.0, 0.0, 0.0), star),
+    )
+    cell_offsets = np.cumsum([0, *(len(cells) for _, cells in cases)])
+    with _interior_vertex_tet_mesh() as mesh:
+        generation = mesh.arrays().generation
+        probed = mesh.probe_relocations(
+            generation,
+            np.arange(len(cases) + 1),
+            np.full((len(cases),), 14, dtype=np.uint64),
+            np.asarray([point for point, _ in cases], dtype=np.float64),
+            cell_offsets,
+            np.asarray([cell for _, cells in cases for cell in cells], dtype=np.uint64),
+        )
+        assert probed == (
+            None,
+            TetMeshEditStatus.INVALID_GEOMETRY,
+            TetMeshEditStatus.REJECTED_TOPOLOGY,
+            TetMeshEditStatus.INVALID_GEOMETRY,
+        )
+        # The probe edits nothing, and each refusal is the edit's own refusal.
+        assert mesh.arrays().generation == generation
+        for (point, cells), refusal in zip(cases[1:], probed[1:], strict=True):
+            assert (
+                mesh.apply_edit(_interior_relocation(generation, point, cells)) is refusal
+            )
+        assert (
+            mesh.apply_edit(_interior_relocation(generation, *cases[0]))
+            is TetMeshEditStatus.APPLIED
+        )
+        with pytest.raises(MeshcoreError, match="STALE_GENERATION"):
+            mesh.probe_relocations(
+                generation, [0, 1], [14], [cases[0][0]], [0, 4], list(star)
+            )
+        with pytest.raises(MeshcoreError, match="STALE_GENERATION"):
+            mesh.probe_relocations(
+                generation + 1,
+                [0, 1],
+                [14],
+                [cases[0][0]],
+                [0, 4],
+                list(star),
+                source_id="other",
+                source_revision="other",
+                source_map_id="other",
+                frame_id="other",
+            )
+
+
+@pytest.mark.parametrize(
+    ("vertex_offsets", "cell_offsets", "points"),
+    [
+        ([1, 1], [0, 4], [(0.3, 0.25, 0.25)]),
+        ([0, 1], [0, 3], [(0.3, 0.25, 0.25)]),
+        ([0, 1], [4, 0], [(0.3, 0.25, 0.25)]),
+        ([0, 1], [0, 4], [(0.3, 0.25, np.inf)]),
+        ([0, 1], [0, 2, 4], [(0.3, 0.25, 0.25)]),
+    ],
+    ids=["vertex-start", "cell-end", "cell-order", "nonfinite-point", "group-count"],
+)
+def test_tet_mesh_probe_relocations_refuses_malformed_groups(
+    vertex_offsets: list[int], cell_offsets: list[int], points: list[tuple[float, ...]]
+) -> None:
+    with _interior_vertex_tet_mesh() as mesh:
+        with pytest.raises(ValueError):
+            mesh.probe_relocations(
+                0, vertex_offsets, [14], points, cell_offsets, [100, 101, 102, 103]
+            )

@@ -727,6 +727,27 @@ PHX_MC_API int32_t phx_mc_tet_mesh_apply_edit(
 PHX_MC_API int32_t phx_mc_tet_mesh_probe_edit(
     phx_mc_tet_mesh* mesh, const phx_mc_tet_mesh_edit_request* request,
     int32_t* decided, int32_t* edit_status);
+/* Exact refusal probes of independent relocations, mutating no mesh state.
+ * Group g moves vertices vertex_ids[vertex_offsets[g]..vertex_offsets[g+1])
+ * to the matching rows of `points` and declares the star cells
+ * cell_ids[cell_offsets[g]..cell_offsets[g+1]). Each group is probed alone
+ * against the current state, as the relocation request that keeps every
+ * witness and protection, clears the edge parameter and supplies no
+ * ancestry. decided[g] is 1 when phx_mc_tet_mesh_apply_edit would refuse that
+ * request with edit_statuses[g], and 0 when it may apply or the probe does not
+ * decide it. Every decided refusal advances the implicit-source refusal
+ * counters exactly as that refused apply_edit would; the implicit facet
+ * refusal record afterwards is that of the last group. Offsets start at zero
+ * and do not decrease. A generation or source identity mismatch returns
+ * PHX_MC_STALE_GENERATION. The caller must synchronize against edits. */
+PHX_MC_API int32_t phx_mc_tet_mesh_probe_relocations(
+    phx_mc_tet_mesh* mesh, uint64_t expected_generation, int32_t identity_bound,
+    const char* source_id, int64_t source_id_length, const char* source_revision,
+    int64_t source_revision_length, const char* source_map_id, int64_t source_map_id_length,
+    const char* frame_id, int64_t frame_id_length, int64_t group_count,
+    const int64_t* vertex_offsets, const uint64_t* vertex_ids, const double* points,
+    const int64_t* cell_offsets, const uint64_t* cell_ids, int32_t* decided,
+    int32_t* edit_statuses);
 /* Ephemeral evidence from the latest actual implicit-facet admission refusal.
  * The record belongs to the current mesh identity and generation only. */
 typedef struct phx_mc_tet_implicit_facet_refusal {
