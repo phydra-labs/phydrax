@@ -121,9 +121,18 @@ def test_mapped_injectivity_witnesses_and_batch_order() -> None:
     assert isinstance(first, _mapped_embedding.MappedInjectivityWitness)
     assert first.projection_matrix[0][0] < 0
     # The source Jacobian is diagonal, with entries factor * (1 + u/2)
-    # and 1 + v/2. Check both principal minors independently for the
-    # rational cells at the reference triangle's vertices.
-    for index, factor in ((0, Fraction(-1)), (2, Fraction(1))):
+    # and 1 + v/2. Check both principal minors independently, including the
+    # irrational factor, at the reference triangle's vertices.
+    radical = RadicalElement.sqrt(2)
+    radical_witness = actual[1]
+    assert isinstance(radical_witness, _mapped_embedding.MappedInjectivityWitness)
+    # At the centroid the diagonal derivatives are -7√2/6 and 7/6.
+    # Their inverse is the exact projection retained in the witness.
+    assert radical_witness.projection_matrix == (
+        (-Fraction(3, 7) * radical, Fraction(0)),
+        (Fraction(0), Fraction(6, 7)),
+    )
+    for index, factor in ((0, Fraction(-1)), (1, -radical), (2, Fraction(1))):
         witness = actual[index]
         assert isinstance(witness, _mapped_embedding.MappedInjectivityWitness)
         assert witness.projection_rows == (0, 1)
