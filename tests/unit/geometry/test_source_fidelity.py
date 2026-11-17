@@ -2859,6 +2859,29 @@ def _triangular_surface_fidelity_inputs(
     return mesh, geometry, MeshingDomainBoundarySource(domain, (0,)), witness
 
 
+def test_zero_tangent_terms_certify_source_fidelity() -> None:
+    from phydrax.geometry.brep._patches import RuledSurface
+
+    surface = RuledSurface(
+        LineCurve((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+        LineCurve((0.0, 1.0, 0.0), (1.0, 0.0, 0.0)),
+    )
+    mesh, geometry, source, witness = _triangular_surface_fidelity_inputs(
+        surface, "zero-tangent-fidelity"
+    )
+    certificate = certify_source_fidelity(
+        mesh,
+        geometry,
+        source,
+        tolerance=1.0,
+        maximum_normal_deviation=0.1,
+        witness=witness,
+    )
+    assert certificate.status == "certified", certificate.findings
+    assert certificate.normal_deviation_bounds is not None
+    assert np.all(certificate.normal_deviation_bounds == 0.0)
+
+
 @pytest.mark.parametrize("bad_bounds", [(-np.inf, np.inf), (1.0, -1.0)])
 def test_surface_jacobian_falls_back_from_invalid_interval_bounds(
     monkeypatch: pytest.MonkeyPatch, bad_bounds: tuple[float, float]
@@ -2950,8 +2973,8 @@ def test_curved_trim_exact_caps_settle_wide_interval_bounds(
     preparation = SourcePreparation(source.domain)
     monkeypatch.setattr(
         fidelity,
-        "restricted_polynomial_bounds",
-        lambda expression, corners: (-10.0, 10.0),
+        "restricted_polynomial_batch_bounds",
+        lambda expression, corners: ((-10.0, 10.0),) * len(corners),
     )
     interval_caps = fidelity._curved_trim_lens_caps(
         surface, ((0, triangle),), (lens,), preparation, settle_zero=False
@@ -3208,3 +3231,81 @@ def test_rational_chart_rows_share_storage_without_skipping_realization_validati
     realization[1, 1, 0] = np.nextafter(1.0, 2.0)
     with pytest.raises(ValueError, match="differs from its binary64 realization"):
         _validated_rational_chart_tokens(tokens, realization, 3, 3, 2, "chart")
+
+
+def test_exact_lens_jacobian_batch_matches_scalar_and_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry import _source_fidelity as fidelity
+    from phydrax.geometry._domain_boundary import CurvedTrimLens
+    from phydrax.geometry.brep._patches import RuledSurface
+
+    surface = RuledSurface(
+        LineCurve((0.0, 0.0, 0.0), (1.0, 1.0, 0.0)),
+        LineCurve((0.0, 1.0, 0.0), (1.25, 0.0, 0.0)),
+    )
+    _, _, source, _ = _triangular_surface_fidelity_inputs(surface, "batch-lens")
+    preparation = SourcePreparation(source.domain)
+    q = Fraction
+    lenses = (
+        CurvedTrimLens(
+            ((q(0), q(0)), (q(1, 4), q(1, 4))), (q(0), q(0)), (q(1, 4), q(1, 4)), q(1, 16)
+        ),
+        CurvedTrimLens(
+            ((q(1, 2), q(1, 2)), (q(3, 4), q(3, 4))),
+            (q(1, 2), q(1, 2)),
+            (q(3, 4), q(3, 4)),
+            q(1, 32),
+        ),
+    )
+    charts = (
+        (7, ((q(0), q(0)), (q(1, 4), q(0)), (q(0), q(1, 4)))),
+        (3, ((q(1, 2), q(1, 2)), (q(1), q(1, 2)), (q(1, 2), q(1)))),
+    )
+    expected = fidelity._curved_trim_lens_caps(
+        surface, charts, lenses, preparation, settle_zero=False
+    )
+    for chart, lens in zip(charts, lenses, strict=True):
+        singleton = fidelity._curved_trim_lens_caps(
+            surface, (chart,), (lens,), preparation, settle_zero=False
+        )
+        assert singleton[chart[0]] == expected[chart[0]]
+    batch = fidelity.restricted_polynomial_batch_bounds
+    assert (
+        fidelity._curved_trim_lens_caps(
+            surface, charts[::-1], lenses[::-1], preparation, settle_zero=False
+        )
+        == expected
+    )
+
+    original = fidelity._exact_surface_jacobian_bounds
+
+    def invalid(prepared: Any, corners: Any) -> tuple[tuple[float, float], ...]:
+        bounds = list(batch(prepared, corners))
+        bounds[0] = (float("nan"), float("nan"))
+        return tuple(bounds)
+
+    monkeypatch.setattr(fidelity, "restricted_polynomial_batch_bounds", invalid)
+    actual = fidelity._curved_trim_lens_caps(
+        surface, charts, lenses, preparation, settle_zero=False
+    )
+    from phydrax.geometry._source_interpolation import (
+        exact_surface_coordinate_expressions,
+    )
+
+    expressions = exact_surface_coordinate_expressions(surface)
+    assert expressions is not None
+    box = fidelity._curved_trim_lens_box(surface, lenses[0])
+    assert box is not None
+    lower, upper = box
+    triangle = (lower, (upper[0], lower[1]), upper)
+    composed_bounds = original(expressions, triangle, composed=True)
+    assert composed_bounds is not None
+    magnitude = np.maximum(np.abs(composed_bounds[0]), np.abs(composed_bounds[1]))
+    assert (
+        actual[7]
+        >= fidelity.fraction_sqrt_interval(
+            sum((q.from_float(float(value)) ** 2 for value in magnitude.flat), q(0))
+        )[1]
+        * lenses[0].parameter_bound
+    )

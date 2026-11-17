@@ -373,6 +373,57 @@ class ExactCoordinateBank(Sequence[tuple["ExactScalar", ...]]):
             raise OverflowError("Exact coordinate is too large for binary64.")
         return result
 
+    def _interval_proposals(self) -> NDArray[np.float64]:
+        """Propose dense dyadics without refusing nonfinite or sparse entries."""
+        dense = self._exponents != _SPARSE
+        with np.errstate(over="ignore", under="ignore", invalid="ignore"):
+            proposals = np.ldexp(
+                self._significands.astype(np.float64),
+                np.where(dense, self._exponents.astype(np.int64), 0),
+            )
+        return np.where(dense, proposals, np.nan)
+
+    def interval_endpoints(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """Outward binary64 endpoints, lifting exceptional exact entries only."""
+        from ._exact_algebraic_geometry import coefficient_endpoint
+
+        lower = self._interval_proposals()
+        upper = lower.copy()
+        # The binary64 conversion is only a proposal. Verify its bits against
+        # the exact odd significand and exponent using integer arithmetic; a
+        # rounded, underflowed, or sparse entry takes directed exact conversion.
+        bits = lower.view(np.uint64)
+        fraction = bits & np.uint64((1 << 52) - 1)
+        exponent = (bits >> np.uint64(52)) & np.uint64(0x7FF)
+        mantissa = np.where(exponent == 0, fraction, fraction | np.uint64(1 << 52))
+        binary_exponent = np.where(exponent == 0, -1074, exponent.astype(np.int64) - 1075)
+        shift = self._exponents.astype(np.int64) - binary_exponent
+        magnitude = np.abs(self._significands).astype(np.uint64)
+        safe_shift = np.clip(shift, 0, 52).astype(np.uint64)
+        shifted_mantissa = np.right_shift(mantissa, safe_shift)
+        discarded = mantissa & (np.left_shift(np.uint64(1), safe_shift) - np.uint64(1))
+        same_sign = (bits >> np.uint64(63)) == (self._significands < 0)
+        exact_nonzero = (
+            (self._significands != 0)
+            & (exponent != np.uint64(0x7FF))
+            & (shift >= 0)
+            & (shift <= 52)
+            & (shifted_mantissa == magnitude)
+            & (discarded == 0)
+            & same_sign
+        )
+        exact_zero = (self._significands == 0) & (bits == 0)
+        exceptional = (self._exponents == _SPARSE) | ~(exact_nonzero | exact_zero)
+        width = self._shape[1]
+        for flat in np.flatnonzero(exceptional.reshape(-1)).tolist():
+            row, axis = divmod(flat, width)
+            value = self._entry(
+                flat, int(self._significands[row, axis]), int(self._exponents[row, axis])
+            )
+            lower[row, axis] = coefficient_endpoint(value, upper=False, saturate=True)
+            upper[row, axis] = coefficient_endpoint(value, upper=True, saturate=True)
+        return lower, upper
+
     def coefficient_payloads(
         self,
     ) -> tuple[

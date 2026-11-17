@@ -1472,9 +1472,9 @@ class _TargetChartBasis:
         self.degree = max((sum(power) for power in self.powers), default=0)
         self.prepared = PreparedIntervalBasis(residual, "simplex", 2)
 
-    def screen(
+    def _screen_prepare(
         self, local: tuple[tuple[ExactScalar, ...], ...], /
-    ) -> tuple[tuple[tuple[ExactScalar, ...], ...], bool, Fraction] | None:
+    ) -> tuple[tuple[tuple[ExactScalar, ...], ...], tuple[int, ...]] | None:
         if (
             len(local) != len(self.corners[0])
             or not local
@@ -1506,28 +1506,101 @@ class _TargetChartBasis:
                 )
                 if coefficient:
                     degrees[axis] = max(degrees[axis], sum(power))
-        is_affine = not any(degrees)
-        if is_affine:
-            return corners, True, Fraction(0)
-        # A lower-degree polynomial's original Bernstein hull can be wider
-        # than its elevated hull. Only use the common-degree controls where
-        # no nonzero component lost degree through exact cancellation.
-        if any(degree not in (0, self.degree) for degree in degrees):
-            return None
-        bounds = self.prepared.bounds(local)
-        if bounds is None:
-            return None
-        components = np.asarray(
-            [
-                max(abs(lower), abs(upper)) if degrees[axis] else 0.0
-                for axis, (lower, upper) in enumerate(bounds.outer)
-            ],
-            dtype=np.float64,
-        )
-        enclosure = _float_component_norm_interval(components, components)
-        if enclosure is None:
-            return None
-        return corners, False, Fraction.from_float(enclosure[1])
+        return corners, tuple(degrees)
+
+    def screen_batch(
+        self,
+        locals_: tuple[tuple[tuple[ExactScalar, ...], ...], ...],
+        /,
+        *,
+        endpoints: tuple[np.ndarray, np.ndarray] | None = None,
+    ) -> tuple[tuple[tuple[tuple[ExactScalar, ...], ...], bool, Fraction] | None, ...]:
+        results: list[
+            tuple[tuple[tuple[ExactScalar, ...], ...], bool, Fraction] | None
+        ] = [None] * len(locals_)
+        pending: list[
+            tuple[int, tuple[tuple[ExactScalar, ...], ...], tuple[int, ...]]
+        ] = []
+        lowers: list[np.ndarray] = []
+        uppers: list[np.ndarray] = []
+        for index, local in enumerate(locals_):
+            try:
+                candidate = self._screen_prepare(local)
+                if candidate is None:
+                    continue
+                corners, degrees = candidate
+                if not any(degrees):
+                    results[index] = (corners, True, Fraction(0))
+                    continue
+                # Preserve the exact cancellation gate before using elevated controls.
+                if any(degree not in (0, self.degree) for degree in degrees):
+                    continue
+                if (
+                    self.prepared.lower is None
+                    or self.prepared.upper is None
+                    or len(local) != self.prepared.lower.shape[0]
+                ):
+                    continue
+                if endpoints is None:
+                    lower = np.asarray(
+                        [
+                            [
+                                coefficient_endpoint(value, upper=False, saturate=True)
+                                for value in row
+                            ]
+                            for row in local
+                        ],
+                        dtype=np.float64,
+                    )
+                    upper = np.asarray(
+                        [
+                            [
+                                coefficient_endpoint(value, upper=True, saturate=True)
+                                for value in row
+                            ]
+                            for row in local
+                        ],
+                        dtype=np.float64,
+                    )
+                else:
+                    lower, upper = endpoints[0][index], endpoints[1][index]
+                pending.append((index, corners, degrees))
+                lowers.append(lower)
+                uppers.append(upper)
+            except (
+                ArithmeticError,
+                FloatingPointError,
+                TypeError,
+                ValueError,
+                IndexError,
+            ):
+                continue
+        if not pending:
+            return tuple(results)
+        bounds_rows = self.prepared.batch_bounds(np.stack(lowers), np.stack(uppers))
+        for (index, corners, degrees), bounds in zip(pending, bounds_rows, strict=True):
+            if bounds is None:
+                continue
+            try:
+                components = np.asarray(
+                    [
+                        max(abs(lower), abs(upper)) if degrees[axis] else 0.0
+                        for axis, (lower, upper) in enumerate(bounds.outer)
+                    ],
+                    dtype=np.float64,
+                )
+                enclosure = _float_component_norm_interval(components, components)
+                if enclosure is not None:
+                    results[index] = (corners, False, Fraction.from_float(enclosure[1]))
+            except (
+                ArithmeticError,
+                FloatingPointError,
+                TypeError,
+                ValueError,
+                IndexError,
+            ):
+                continue
+        return tuple(results)
 
 
 def _target_endpoint_upper(
@@ -1824,9 +1897,9 @@ def certify_domain_surface_charts(
     ] = {}
     target_basis: dict[tuple[object, ...], _TargetChartBasis | None] = {}
 
-    def screen_target(
-        row: int, patch: int, block_index: int, cell_row: int, /
-    ) -> tuple[tuple[tuple[ExactScalar, ...], ...], bool, Fraction] | None:
+    def prepare_target(
+        row: int, block_index: int, cell_row: int, /
+    ) -> tuple[_TargetChartBasis, tuple[tuple[ExactScalar, ...], ...]] | None:
         if polyhedral:
             return None
         element = elements[block_index]
@@ -1872,7 +1945,44 @@ def certify_domain_surface_charts(
         local = tuple(
             coefficients[int(index)] for index in host_routes[block_index][cell_row]
         )
-        screened = prepared.screen(local)
+        return prepared, local
+
+    target_groups: dict[
+        _TargetChartBasis, list[tuple[int, tuple[tuple[ExactScalar, ...], ...]]]
+    ] = {}
+    for row, (patch, (block_index, cell_row)) in enumerate(
+        zip(patch_rows, target_rows, strict=True)
+    ):
+        if int(patch) not in patch_bounds:
+            continue
+        try:
+            candidate = prepare_target(row, block_index, cell_row)
+        except (ArithmeticError, FloatingPointError, TypeError, ValueError, IndexError):
+            continue
+        if candidate is not None:
+            prepared, local = candidate
+            target_groups.setdefault(prepared, []).append((row, local))
+    target_screens = {}
+    coefficient_endpoints = coefficients.interval_endpoints() if target_groups else None
+    for prepared, rows in target_groups.items():
+        indices = np.asarray(
+            [host_routes[target_rows[row][0]][target_rows[row][1]] for row, _ in rows],
+            dtype=np.intp,
+        )
+        if coefficient_endpoints is None:
+            raise RuntimeError("Target chart groups require coordinate endpoints.")
+        endpoints = (coefficient_endpoints[0][indices], coefficient_endpoints[1][indices])
+        for (row, _), screened in zip(
+            rows,
+            prepared.screen_batch(tuple(local for _, local in rows), endpoints=endpoints),
+            strict=True,
+        ):
+            target_screens[row] = screened
+
+    def screen_target(
+        row: int, patch: int, block_index: int, cell_row: int, /
+    ) -> tuple[tuple[tuple[ExactScalar, ...], ...], bool, Fraction] | None:
+        screened = target_screens.get(row)
         if screened is None:
             return None
         corners, is_affine, target_bound = screened

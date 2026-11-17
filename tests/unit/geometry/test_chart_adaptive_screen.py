@@ -3,6 +3,7 @@
 from fractions import Fraction
 
 import numpy as np
+import pytest
 
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization import lagrange_element
@@ -29,6 +30,7 @@ from phydrax.geometry._source_fidelity import _affine_triangle_arguments, _box_g
 from phydrax.geometry._source_interpolation import (
     _exact_component_norm,
     _target_endpoint_upper,
+    _TargetChartBasis,
     certify_domain_surface_charts,
     SourceChartFidelity,
 )
@@ -300,6 +302,45 @@ def test_adaptive_chart_decisions_are_batch_independent() -> None:
             batch_evidence.deviation_bounds[position].view(np.uint64),
             one.deviation_bounds[0].view(np.uint64),
         )
+
+
+def test_target_basis_batch_preserves_rows_and_certification() -> None:
+    domain = _domain()
+    charts = np.asarray(
+        (
+            ((0.0, 0.0), (0.25, 0.0), (0.0, 0.25)),
+            ((0.5, 0.25), (0.625, 0.25), (0.5, 0.375)),
+            ((0.75, 0.5), (1.0, 0.5), (0.75, 0.75)),
+        )
+    )
+    order = np.asarray((2, 0, 1))
+    mesh, geometry, source, witness = _case(domain, charts, order)
+    elements, routes, _ = geometry.resolve(mesh)
+    assert isinstance(elements[0], ScalarCoordinateElement)
+    basis = _TargetChartBasis(
+        elements[0],
+        0,
+        _affine_triangle_arguments(
+            (
+                (Fraction(0), Fraction(0)),
+                (Fraction(1), Fraction(0)),
+                (Fraction(0), Fraction(1)),
+            )
+        ),
+    )
+    if basis.prepared.lower is None:
+        pytest.skip("Native interval basis bounds are unavailable")
+    coordinates = geometry.source_coordinates()
+    locals_ = tuple(
+        tuple(coordinates[int(index)] for index in np.asarray(routes[0])[row])
+        for row in order
+    )
+    affine = tuple((Fraction(0), Fraction(0), Fraction(0)) for _ in locals_[0])
+    mixed = (locals_[0], (), affine, locals_[1], locals_[2])
+    singles = tuple(basis.screen_batch((local,))[0] for local in mixed)
+    assert singles[1] is None
+    assert singles[2] is not None and singles[2][1]
+    assert basis.screen_batch(mixed) == singles
 
 
 def test_natural_near_threshold_sphere_chart_matches_exact_route() -> None:

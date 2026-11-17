@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import pickle
+import random
 from fractions import Fraction
 from pathlib import Path
 
@@ -12,6 +13,7 @@ import numpy as np
 import pytest
 
 from phydrax.discretization._exact_algebraic_geometry import (
+    coefficient_endpoint,
     coefficient_payload,
     RadicalElement,
 )
@@ -59,6 +61,180 @@ def test_canonical_parts_are_read_only_and_preserve_identity() -> None:
         with pytest.raises(ValueError):
             array.flat[0] = 0
     assert bank.content_fingerprint() == identity
+
+
+def test_interval_endpoints_match_directed_exact_coefficients() -> None:
+    values = (
+        (Fraction(0), Fraction(3, 8), Fraction(1, 3)),
+        (Fraction(2**53 + 1, 2**53), Fraction(1, 2**1075), Fraction(-1, 2**1075)),
+        (RadicalElement.sqrt(Fraction(2)), Fraction(-7, 8), Fraction(2**60 + 1)),
+    )
+    lower, upper = ExactCoordinateBank.from_rows(values).interval_endpoints()
+    expected_lower = np.asarray(
+        [
+            [coefficient_endpoint(value, upper=False, saturate=True) for value in row]
+            for row in values
+        ],
+        dtype=np.float64,
+    )
+    expected_upper = np.asarray(
+        [
+            [coefficient_endpoint(value, upper=True, saturate=True) for value in row]
+            for row in values
+        ],
+        dtype=np.float64,
+    )
+    np.testing.assert_array_equal(lower.view(np.uint64), expected_lower.view(np.uint64))
+    np.testing.assert_array_equal(upper.view(np.uint64), expected_upper.view(np.uint64))
+
+
+def test_interval_endpoints_reject_an_inexact_binary64_proposal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    values = ((Fraction(1), Fraction(-3, 8), Fraction(1, 2**1074)),)
+    bank = ExactCoordinateBank.from_rows(values)
+    monkeypatch.setattr(
+        ExactCoordinateBank,
+        "_interval_proposals",
+        lambda self: np.zeros(self.shape, dtype=np.float64),
+    )
+    lower, upper = bank.interval_endpoints()
+    expected = np.asarray(values, dtype=np.float64)
+    np.testing.assert_array_equal(lower.view(np.uint64), expected.view(np.uint64))
+    np.testing.assert_array_equal(upper.view(np.uint64), expected.view(np.uint64))
+
+
+def test_interval_endpoints_reject_wrapped_significand_proposals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exact = Fraction((2**62 + 2**50 + 1) * 4)
+    bank = ExactCoordinateBank.from_rows(((exact, -exact),))
+    proposal = float.fromhex("0x1.0000000000004p+52")
+    monkeypatch.setattr(
+        ExactCoordinateBank,
+        "_interval_proposals",
+        lambda self: np.asarray(((proposal, -proposal),), dtype=np.float64),
+    )
+    lower, upper = bank.interval_endpoints()
+    for axis, value in enumerate((exact, -exact)):
+        assert lower[0, axis] == coefficient_endpoint(value, upper=False, saturate=True)
+        assert upper[0, axis] == coefficient_endpoint(value, upper=True, saturate=True)
+
+
+def test_interval_endpoints_reject_invalid_shift_proposals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    values = (
+        Fraction(1),
+        Fraction(-1),
+        Fraction(1, 2**1074),
+        Fraction(-1, 2**1074),
+    )
+    bank = ExactCoordinateBank.from_rows((values,))
+    proposals = np.asarray(
+        (
+            (
+                float.fromhex("0x1p-100"),
+                -float.fromhex("0x1p+100"),
+                float.fromhex("0x1p-1000"),
+                0.0,
+            ),
+        ),
+        dtype=np.float64,
+    )
+    monkeypatch.setattr(
+        ExactCoordinateBank, "_interval_proposals", lambda self: proposals.copy()
+    )
+    lower, upper = bank.interval_endpoints()
+    expected = np.asarray((values,), dtype=np.float64)
+    np.testing.assert_array_equal(lower.view(np.uint64), expected.view(np.uint64))
+    np.testing.assert_array_equal(upper.view(np.uint64), expected.view(np.uint64))
+
+
+def test_interval_endpoints_reject_discarded_bits_and_wrong_sign(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bank = ExactCoordinateBank.from_rows(((Fraction(3), Fraction(-3)),))
+    proposal = np.asarray(((np.nextafter(3.0, np.inf), 3.0),), dtype=np.float64)
+    monkeypatch.setattr(
+        ExactCoordinateBank, "_interval_proposals", lambda self: proposal.copy()
+    )
+    lower, upper = bank.interval_endpoints()
+    expected = np.asarray(((3.0, -3.0),), dtype=np.float64)
+    np.testing.assert_array_equal(lower.view(np.uint64), expected.view(np.uint64))
+    np.testing.assert_array_equal(upper.view(np.uint64), expected.view(np.uint64))
+
+
+def test_interval_endpoints_saturate_out_of_range_entries_in_mixed_bank() -> None:
+    huge = Fraction(1 << 2000)
+    values = (
+        (Fraction(1), huge, -huge),
+        (Fraction(1, 3), Fraction(-3, 8), Fraction((1 << 2000) + 1, 3)),
+    )
+    bank = ExactCoordinateBank.from_rows(values)
+    with pytest.raises(OverflowError):
+        bank.binary64()
+    lower, upper = bank.interval_endpoints()
+    expected_lower = np.asarray(
+        [
+            [coefficient_endpoint(value, upper=False, saturate=True) for value in row]
+            for row in values
+        ],
+        dtype=np.float64,
+    )
+    expected_upper = np.asarray(
+        [
+            [coefficient_endpoint(value, upper=True, saturate=True) for value in row]
+            for row in values
+        ],
+        dtype=np.float64,
+    )
+    np.testing.assert_array_equal(lower.view(np.uint64), expected_lower.view(np.uint64))
+    np.testing.assert_array_equal(upper.view(np.uint64), expected_upper.view(np.uint64))
+
+
+def test_interval_endpoints_match_exact_wide_dyadic_extremes() -> None:
+    generator = random.Random(87461)
+    values = []
+    for _ in range(2000):
+        width = generator.choice((1, 2, 51, 52, 53, 54, 61, 62, 63))
+        magnitude = generator.randrange(1 << (width - 1), 1 << width) | 1
+        exponent = generator.choice(
+            (
+                -32767,
+                -2048,
+                -1200,
+                -1075,
+                -1074,
+                -1073,
+                -1022,
+                -100,
+                -1,
+                0,
+                1,
+                generator.randint(-1200, 1022 - (width - 1)),
+                1022 - (width - 1),
+            )
+        )
+        value = (
+            Fraction(magnitude << exponent)
+            if exponent >= 0
+            else Fraction(magnitude, 1 << -exponent)
+        )
+        values.append(value if generator.getrandbits(1) else -value)
+    values.extend((Fraction(float(np.finfo(np.float64).max)), Fraction(1, 2**1074)))
+    bank = ExactCoordinateBank.from_rows((tuple(values),))
+    lower, upper = bank.interval_endpoints()
+    expected_lower = np.asarray(
+        [[coefficient_endpoint(value, upper=False, saturate=True) for value in values]],
+        dtype=np.float64,
+    )
+    expected_upper = np.asarray(
+        [[coefficient_endpoint(value, upper=True, saturate=True) for value in values]],
+        dtype=np.float64,
+    )
+    np.testing.assert_array_equal(lower.view(np.uint64), expected_lower.view(np.uint64))
+    np.testing.assert_array_equal(upper.view(np.uint64), expected_upper.view(np.uint64))
 
 
 def test_bank_equality_hash_and_immutability_are_canonical() -> None:

@@ -1229,57 +1229,39 @@ class PreparedIntervalBasis:
             dtype=np.float64,
         )
 
-    def bounds(
-        self, local: tuple[tuple[ExactScalar, ...], ...], /
-    ) -> IntervalBasisBounds | None:
-        """Return outward component bounds, or decline an unsupported source."""
+    def batch_bounds(
+        self, lower: np.ndarray, upper: np.ndarray, /
+    ) -> tuple[IntervalBasisBounds | None, ...]:
+        """Enclose each coefficient bank independently in one native call."""
+        if lower.ndim != 3 or lower.shape != upper.shape:
+            raise ValueError(
+                "Coefficient interval banks must have matching rank-three shapes."
+            )
+        count, width, components = lower.shape
         if (
             self.lower is None
             or self.upper is None
-            or not local
-            or len(local) != self.lower.shape[0]
-            or not local[0]
-            or any(len(row) != len(local[0]) for row in local)
+            or width != self.lower.shape[0]
+            or components == 0
         ):
-            return None
-        low = np.asarray(
-            [
-                [
-                    [
-                        coefficient_endpoint(value, upper=False, saturate=True)
-                        for value in row
-                    ]
-                    for row in local
-                ]
-            ],
-            dtype=np.float64,
+            return (None,) * count
+        low, high, inner_low, inner_high = interval_basis_bounds(
+            self.lower, self.upper, lower, upper
         )
-        high = np.asarray(
-            [
-                [
-                    [
-                        coefficient_endpoint(value, upper=True, saturate=True)
-                        for value in row
-                    ]
-                    for row in local
-                ]
-            ],
-            dtype=np.float64,
-        )
-        lower, upper, inner_lower, inner_upper = interval_basis_bounds(
-            self.lower, self.upper, low, high
-        )
-        if not np.all(np.isfinite(lower)) or not np.all(np.isfinite(upper)):
-            return None
-        return IntervalBasisBounds(
-            tuple(
-                (float(first), float(second))
-                for first, second in zip(lower[0], upper[0], strict=True)
-            ),
-            tuple(
-                (float(first), float(second))
-                for first, second in zip(inner_lower[0], inner_upper[0], strict=True)
-            ),
+        finite = np.all(np.isfinite(low) & np.isfinite(high), axis=1)
+        return tuple(
+            IntervalBasisBounds(
+                tuple(
+                    (float(a), float(b)) for a, b in zip(low[row], high[row], strict=True)
+                ),
+                tuple(
+                    (float(a), float(b))
+                    for a, b in zip(inner_low[row], inner_high[row], strict=True)
+                ),
+            )
+            if finite[row]
+            else None
+            for row in range(count)
         )
 
 
@@ -1301,8 +1283,9 @@ class PreparedSimplexPolynomial:
         else:
             self.numerator = None
             self.denominator = None
-            controls = bernstein_coefficients(expression, "simplex", dimension)
-            self.degree = bernstein_degree(expression, "simplex", dimension)[0]
+            value, degree = _controls_input(expression, "simplex", dimension, None)
+            controls = bernstein_coefficients(value, "simplex", dimension, degree=degree)
+            self.degree = degree[0]
             self.lower = np.asarray(
                 [
                     coefficient_endpoint(value, upper=False, saturate=True)
@@ -1379,6 +1362,69 @@ def restricted_polynomial_bounds(
         prepared.lower, prepared.upper, corners_lower, corners_upper, prepared.degree
     )
     return float(low[0]), float(high[0])
+
+
+def restricted_polynomial_batch_bounds(
+    prepared: PreparedSimplexPolynomial,
+    corners: tuple[tuple[tuple[ExactScalar, ...], ...], ...],
+    /,
+) -> tuple[tuple[float, float], ...]:
+    """Enclose independent simplex restrictions of one prepared polynomial."""
+    dimension = prepared.dimension
+    if any(
+        len(simplex) != dimension + 1 or any(len(row) != dimension for row in simplex)
+        for simplex in corners
+    ):
+        raise ValueError("simplex corners must have shape (dimension + 1, dimension).")
+    if not corners:
+        return ()
+    if not meshcore_available():
+        return ((-math.inf, math.inf),) * len(corners)
+    if prepared.numerator is not None and prepared.denominator is not None:
+        numerator = restricted_polynomial_batch_bounds(prepared.numerator, corners)
+        denominator = restricted_polynomial_batch_bounds(prepared.denominator, corners)
+        result = []
+        for top, bottom in zip(numerator, denominator, strict=True):
+            if bottom[0] <= 0.0 <= bottom[1] or not all(
+                math.isfinite(value) for value in (*top, *bottom)
+            ):
+                result.append((-math.inf, math.inf))
+                continue
+            values = tuple(a / b for a in top for b in bottom)
+            if any(math.isnan(value) for value in values):
+                result.append((-math.inf, math.inf))
+                continue
+            result.append(
+                (
+                    float(np.nextafter(min(values), -math.inf)),
+                    float(np.nextafter(max(values), math.inf)),
+                )
+            )
+        return tuple(result)
+    lower = np.asarray(
+        [
+            [
+                [coefficient_endpoint(value, upper=False, saturate=True) for value in row]
+                for row in simplex
+            ]
+            for simplex in corners
+        ],
+        dtype=np.float64,
+    )
+    upper = np.asarray(
+        [
+            [
+                [coefficient_endpoint(value, upper=True, saturate=True) for value in row]
+                for row in simplex
+            ]
+            for simplex in corners
+        ],
+        dtype=np.float64,
+    )
+    low, high = interval_simplex_bounds(
+        prepared.lower, prepared.upper, lower, upper, prepared.degree
+    )
+    return tuple((float(a), float(b)) for a, b in zip(low, high, strict=True))
 
 
 def affine_arguments(origin: np.ndarray, matrix: np.ndarray, /) -> tuple[Polynomial, ...]:

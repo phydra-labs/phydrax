@@ -121,6 +121,7 @@ from ._coordinate_enclosure import (
     polynomial_bounds,
     PreparedSimplexPolynomial,
     RationalPolynomial,
+    restricted_polynomial_batch_bounds,
     restricted_polynomial_bounds,
     RestrictedCoordinateMapPreparation,
     scale,
@@ -1676,23 +1677,42 @@ def _certify_exact_polynomial_cell(
         parent_representations = {
             tuple(float(value) for value in point) for point in parent_points
         }
-        for child_origin, child_matrix in zip(child_origins, child_matrices, strict=True):
-            child_global_origin, child_global_matrix = _exact_child_affine(
-                origin, matrix, child_origin, child_matrix
-            )
-            child_points = tuple(
-                _exact_affine_image(child_global_origin, child_global_matrix, point)
-                for point in vertices
-            )
-            if prepared is not None:
-                child_lower, child_upper = restricted_polynomial_bounds(
-                    prepared, child_points
+        if prepared is not None:
+            child_maps = tuple(
+                _exact_child_affine(origin, matrix, child_origin, child_matrix)
+                for child_origin, child_matrix in zip(
+                    child_origins, child_matrices, strict=True
                 )
+            )
+            child_corners = tuple(
+                tuple(_exact_affine_image(start, transform, point) for point in vertices)
+                for start, transform in child_maps
+            )
+            interval_bounds = restricted_polynomial_batch_bounds(prepared, child_corners)
+        else:
+            child_maps = ()
+            child_corners = ()
+            interval_bounds = ()
+        for index, (child_origin, child_matrix) in enumerate(
+            zip(child_origins, child_matrices, strict=True)
+        ):
+            if prepared is not None:
+                child_global_origin, child_global_matrix = child_maps[index]
+                child_points = child_corners[index]
+                child_lower, child_upper = interval_bounds[index]
                 if child_lower > threshold:
                     maximum_depth = max(maximum_depth, level + 1)
                     lower = min(lower, child_lower)
                     upper = max(upper, child_upper)
                     continue
+            else:
+                child_global_origin, child_global_matrix = _exact_child_affine(
+                    origin, matrix, child_origin, child_matrix
+                )
+                child_points = tuple(
+                    _exact_affine_image(child_global_origin, child_global_matrix, point)
+                    for point in vertices
+                )
             child_polynomial = compose(
                 piece,
                 _exact_affine_arguments(child_origin, child_matrix),
