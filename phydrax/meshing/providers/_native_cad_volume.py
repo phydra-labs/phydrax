@@ -2553,6 +2553,7 @@ def _cad_surface_feature_witness(
     domain: MeshingDomain,
     feature: ProtectedFeature,
     full_witness: SourceBoundaryChartWitness,
+    primary_query: SourceBoundaryQuery,
     /,
 ) -> tuple[MeshingDomainBoundarySource, SourceBoundaryChartWitness]:
     if feature.scope.entity_dimension != 2:
@@ -2569,7 +2570,6 @@ def _cad_surface_feature_witness(
             }
         )
     )
-    query = MeshingDomainBoundarySource(domain, patch_rows)
     selected = set(keys)
     rows = np.asarray(
         [
@@ -2589,6 +2589,19 @@ def _cad_surface_feature_witness(
         raise ValueError(
             "CAD surface feature has no witnessed source-face output facets."
         )
+    if (
+        isinstance(primary_query, MeshingDomainBoundarySource)
+        and primary_query.domain is domain
+        and primary_query.patches == patch_rows
+        and primary_query.source_scope_id == full_witness.source_query_id
+        and primary_query.resolution == 48
+        and primary_query.boundary_occurrences is None
+        and primary_query.boundary_cell_ids is None
+        and primary_query.boundary_patch_ids is None
+        and rows.size == len(full_witness.source_entity_ids)
+    ):
+        return primary_query, full_witness
+    query = MeshingDomainBoundarySource(domain, patch_rows)
     witness = SourceBoundaryChartWitness(
         mesh_id=full_witness.mesh_id,
         geometry_id=full_witness.geometry_id,
@@ -3538,7 +3551,7 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
                 FeatureKind.MATERIAL_INTERFACE,
             ):
                 feature_query, feature_witness = _cad_surface_feature_witness(
-                    self.source.domain, feature, fidelity_witness
+                    self.source.domain, feature, fidelity_witness, self.source.fidelity_source
                 )
             elif feature.feature_kind is FeatureKind.CORNER:
                 feature_query = self.source.fidelity_source
