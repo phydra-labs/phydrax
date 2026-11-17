@@ -25,6 +25,7 @@ from .._meshcore import (
     interval_program_execute,
     IntervalBoxProgram,
     PlcBoundaryPolicy,
+    relocated_tet_mesh_arrays,
     TetMesh3D,
     TetMeshArrays,
     TetMeshEdit,
@@ -7706,21 +7707,68 @@ def _relocation_edit(
     )
 
 
+def _apply_relocation_in_place(
+    state: _NativeState, proposals: Sequence[Mapping[str, Any]], /
+) -> TetMeshEditStatus | None:
+    """Apply the edit of ``_relocation_edit`` in place and update the snapshot.
+
+    ``None`` means the native mesh does not decide the relocation in place;
+    nothing changed and the staged edit decides it.
+    """
+    ordered = sorted(proposals, key=lambda row: state.vertex_target_ids[row["vertex"]])
+    vertex_ids = np.asarray([proposal["vertex"] for proposal in ordered], dtype=np.uint64)
+    points = np.asarray([proposal["point"] for proposal in ordered], dtype=np.float64)
+    star_ids = sorted(
+        {int(cell_id) for proposal in ordered for cell_id in proposal["star_cell_ids"]}
+    )
+    status = state.native.apply_relocation(
+        int(state.snapshot.generation),
+        vertex_ids,
+        points,
+        np.asarray(star_ids, dtype=np.uint64),
+        source_id=state.source_identity[0],
+        source_revision=state.source_identity[1],
+        source_map_id=state.source_identity[2],
+        frame_id=state.source_identity[3],
+    )
+    if status is TetMeshEditStatus.APPLIED:
+        vertex_row = _state_topology(state).vertex_row
+        state.snapshot = relocated_tet_mesh_arrays(
+            state.snapshot,
+            vertex_ids,
+            np.asarray(
+                [vertex_row[int(proposal["vertex"])] for proposal in ordered],
+                dtype=np.int64,
+            ),
+            points,
+            state.native.implicit_refusals,
+        )
+    return status
+
+
 def _apply_relocation_batch(
     state: _NativeState, proposals: Sequence[Mapping[str, Any]], /
 ) -> TetMeshEditStatus:
-    edit = _relocation_edit(state, proposals)
-    try:
-        edit, staged = _prepare_periodic_native_edit(
-            state, edit, {"proposals": proposals}
-        )
-    except _PeriodicCandidateRejected:
-        return TetMeshEditStatus.REJECTED_TOPOLOGY
-    status = state.native.apply_edit(edit)
-    if status is not TetMeshEditStatus.APPLIED:
+    status = (
+        _apply_relocation_in_place(state, proposals)
+        if state.target_mesh.periodic_topology is None
+        else None
+    )
+    if status is None:
+        edit = _relocation_edit(state, proposals)
+        try:
+            edit, staged = _prepare_periodic_native_edit(
+                state, edit, {"proposals": proposals}
+            )
+        except _PeriodicCandidateRejected:
+            return TetMeshEditStatus.REJECTED_TOPOLOGY
+        status = state.native.apply_edit(edit)
+        if status is not TetMeshEditStatus.APPLIED:
+            return status
+        _commit_periodic_target(state, staged)
+        state.snapshot = state.native.arrays()
+    elif status is not TetMeshEditStatus.APPLIED:
         return status
-    _commit_periodic_target(state, staged)
-    state.snapshot = state.native.arrays()
     source_vertex_ids = {
         int(identifier) for identifier in state.source_vertex_ids.tolist()
     }
@@ -7754,30 +7802,60 @@ def _apply_relocation_batch(
     return status
 
 
-def _apply_relocation_partition(
+def _probe_relocation_groups(
     state: _NativeState,
     candidate_groups: list[tuple[dict[str, Any], ...]],
+    /,
+) -> tuple[TetMeshEditStatus | None, ...]:
+    """Native refusal of each orbit alone, or ``None`` where it is not refused.
+
+    Every orbit is probed against the unchanged mesh as the relocation edit
+    ``_relocation_edit`` would build for it alone.
+    """
+    vertex_offsets = [0]
+    cell_offsets = [0]
+    vertex_ids: list[int] = []
+    points: list[Any] = []
+    cell_ids: list[int] = []
+    for group in candidate_groups:
+        ordered = sorted(group, key=lambda row: state.vertex_target_ids[row["vertex"]])
+        vertex_ids.extend(int(proposal["vertex"]) for proposal in ordered)
+        points.extend(proposal["point"] for proposal in ordered)
+        cell_ids.extend(
+            sorted(
+                {
+                    int(cell_id)
+                    for proposal in ordered
+                    for cell_id in proposal["star_cell_ids"]
+                }
+            )
+        )
+        vertex_offsets.append(len(vertex_ids))
+        cell_offsets.append(len(cell_ids))
+    return state.native.probe_relocations(
+        int(state.snapshot.generation),
+        np.asarray(vertex_offsets, dtype=np.int64),
+        np.asarray(vertex_ids, dtype=np.uint64),
+        np.asarray(points, dtype=np.float64).reshape((-1, 3)),
+        np.asarray(cell_offsets, dtype=np.int64),
+        np.asarray(cell_ids, dtype=np.uint64),
+        source_id=state.source_identity[0],
+        source_revision=state.source_identity[1],
+        source_map_id=state.source_identity[2],
+        frame_id=state.source_identity[3],
+    )
+
+
+def _refuse_relocation_group(
+    state: _NativeState,
+    group: tuple[dict[str, Any], ...],
+    status: TetMeshEditStatus | None,
     counters: dict[str, int],
     cache: dict[int, _RelocationSearch | None],
     /,
-) -> list[dict[str, Any]]:
-    """Apply disjoint orbits, retaining nonperiodic searches after refusal."""
-    proposals = [proposal for group in candidate_groups for proposal in group]
-    try:
-        status: TetMeshEditStatus | None = _apply_relocation_batch(state, proposals)
-    except FloatingPointError:
-        status = None
-    if status is TetMeshEditStatus.APPLIED:
-        counters["relocations"] += len(proposals)
-        return proposals
-    if status is not None:
-        _raise_fatal_edit_status(status, "relocation")
-    if len(candidate_groups) > 1:
-        middle = len(candidate_groups) // 2
-        return _apply_relocation_partition(
-            state, candidate_groups[:middle], counters, cache
-        ) + _apply_relocation_partition(state, candidate_groups[middle:], counters, cache)
-    for proposal in candidate_groups[0]:
+) -> None:
+    """Consume a refused orbit's proposals and count the refusal."""
+    for proposal in group:
         vertex = int(proposal["vertex"])
         search = cache[vertex]
         if search is None:
@@ -7787,8 +7865,73 @@ def _apply_relocation_partition(
             cache[vertex] = None
         else:
             search.proposal = None
-    _count_rejection(status, counters, len(proposals))
-    return []
+    _count_rejection(status, counters, len(group))
+
+
+def _apply_relocation_groups(
+    state: _NativeState,
+    candidate_groups: list[tuple[dict[str, Any], ...]],
+    counters: dict[str, int],
+    /,
+) -> tuple[list[dict[str, Any]], TetMeshEditStatus | None]:
+    """One native relocation edit of the given orbits: the moves, or its refusal."""
+    proposals = [proposal for group in candidate_groups for proposal in group]
+    try:
+        status: TetMeshEditStatus | None = _apply_relocation_batch(state, proposals)
+    except FloatingPointError:
+        status = None
+    if status is TetMeshEditStatus.APPLIED:
+        counters["relocations"] += len(proposals)
+        return proposals, status
+    if status is not None:
+        _raise_fatal_edit_status(status, "relocation")
+    return [], status
+
+
+def _apply_relocation_partition(
+    state: _NativeState,
+    candidate_groups: list[tuple[dict[str, Any], ...]],
+    counters: dict[str, int],
+    cache: dict[int, _RelocationSearch | None],
+    /,
+) -> list[dict[str, Any]]:
+    """Apply disjoint orbits, retaining nonperiodic searches after refusal.
+
+    Off the periodic lift one native call first probes every orbit alone
+    against the unchanged mesh; an orbit it refuses is consumed without an
+    edit. The remaining orbits are applied in one edit. If that edit is
+    refused, they are retried one orbit at a time in the given order: their
+    cavities are disjoint, so halving the batch would only spend more native
+    attempts to isolate the same orbits.
+    """
+    if state.target_mesh.periodic_topology is None:
+        remaining = []
+        for group, refusal in zip(
+            candidate_groups,
+            _probe_relocation_groups(state, candidate_groups),
+            strict=True,
+        ):
+            if refusal is None:
+                remaining.append(group)
+            else:
+                _raise_fatal_edit_status(refusal, "relocation")
+                _refuse_relocation_group(state, group, refusal, counters, cache)
+        candidate_groups = remaining
+        if not candidate_groups:
+            return []
+    moved, status = _apply_relocation_groups(state, candidate_groups, counters)
+    if status is TetMeshEditStatus.APPLIED:
+        return moved
+    if len(candidate_groups) == 1:
+        _refuse_relocation_group(state, candidate_groups[0], status, counters, cache)
+        return []
+    for group in candidate_groups:
+        applied, status = _apply_relocation_groups(state, [group], counters)
+        if status is TetMeshEditStatus.APPLIED:
+            moved.extend(applied)
+        else:
+            _refuse_relocation_group(state, group, status, counters, cache)
+    return moved
 
 
 def _invalidate_relocation_searches(

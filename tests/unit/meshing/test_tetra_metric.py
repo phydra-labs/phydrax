@@ -1915,25 +1915,39 @@ def test_relocation_progress_survives_later_topology_edits(
     from phydrax._meshcore import TetMesh3D
 
     native_apply = TetMesh3D.apply_edit
+    native_relocate = TetMesh3D.apply_relocation
     relocated = False
     topology_after_relocation = False
 
+    def moved(owner: TetMesh3D, before: np.ndarray) -> None:
+        # A consumed proposal cannot be replayed as a no-op and counted as
+        # progress after its vertex's closed star has changed.
+        nonlocal relocated
+        assert not np.array_equal(before, owner.arrays().points)
+        relocated = True
+
     def observe(owner: TetMesh3D, edit: TetMeshEdit) -> TetMeshEditStatus:
-        nonlocal relocated, topology_after_relocation
-        before = owner.arrays().points if edit.kind is TetMeshEditKind.RELOCATE else None
+        nonlocal topology_after_relocation
+        before = owner.arrays().points
         status = native_apply(owner, edit)
         if status is TetMeshEditStatus.APPLIED:
             if edit.kind is TetMeshEditKind.RELOCATE:
-                # A consumed proposal cannot be replayed as a no-op and counted
-                # as progress after its vertex's closed star has changed.
-                assert before is not None
-                assert not np.array_equal(before, owner.arrays().points)
-                relocated = True
+                moved(owner, before)
             elif relocated:
                 topology_after_relocation = True
         return status
 
+    def observe_in_place(
+        owner: TetMesh3D, *arguments: Any, **identity: Any
+    ) -> TetMeshEditStatus | None:
+        before = owner.arrays().points
+        status = native_relocate(owner, *arguments, **identity)
+        if status is TetMeshEditStatus.APPLIED:
+            moved(owner, before)
+        return status
+
     monkeypatch.setattr(TetMesh3D, "apply_edit", observe)
+    monkeypatch.setattr(TetMesh3D, "apply_relocation", observe_in_place)
     source = _source(4, nonuniform=True)
     outcome = _adapt(source, np.eye(3, dtype=np.float64) * 4.0)
 
@@ -1942,6 +1956,42 @@ def test_relocation_progress_survives_later_topology_edits(
     assert outcome.evidence.out_of_range_edges == 0
     assert outcome.evidence.minimum_metric_quality > 0.0
     assert outcome.evidence.maximum_region_volume_error <= 1.0e-12
+
+
+def test_relocation_snapshot_equals_the_native_mesh_after_every_applied_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.meshing._tetra_metric as metric
+
+    # An applied relocation derives the held snapshot from the previous one
+    # instead of reading the mesh back; it must be the mesh, bit for bit.
+    apply_batch = metric._apply_relocation_batch
+    compared = 0
+
+    def observe(
+        state: _NativeState, proposals: list[dict[str, Any]], /
+    ) -> TetMeshEditStatus:
+        nonlocal compared
+        status = apply_batch(state, proposals)
+        if status is TetMeshEditStatus.APPLIED:
+            live = state.native.arrays()
+            for name, held, read in zip(live._fields, state.snapshot, live, strict=True):
+                if isinstance(read, np.ndarray):
+                    assert isinstance(held, np.ndarray), name
+                    assert held.dtype == read.dtype, name
+                    assert held.shape == read.shape, name
+                    assert held.tobytes() == read.tobytes(), name
+                else:
+                    assert held == read, name
+            compared += 1
+        return status
+
+    monkeypatch.setattr(metric, "_apply_relocation_batch", observe)
+    outcome = _adapt(_source(4, nonuniform=True), np.eye(3, dtype=np.float64) * 4.0)
+
+    assert compared > 0
+    assert outcome.evidence.relocations > 0
+    assert outcome.evidence.status is TetraMetricStatus.COMPLETE
 
 
 @pytest.mark.parametrize("restored", (False, True))
