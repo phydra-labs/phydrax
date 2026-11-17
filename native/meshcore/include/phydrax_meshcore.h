@@ -942,6 +942,36 @@ PHX_MC_API int32_t phx_mc_metric_relative_determinants(int64_t cell_count,
 PHX_MC_API int32_t phx_mc_metric_tetra_quality(int64_t cell_count, const int64_t* cells,
                                                int64_t point_count, const double* points,
                                                const double* metrics, double* quality);
+/* Goals of metric edits on the deterministic kernels: points an edit would
+ * like to reach, the same bits for the same input on every platform. They
+ * propose only; the caller rounds a goal to an exact source point and decides
+ * the edit with exact predicates and the measured objective.
+ *
+ * phx_mc_metric_midpoints: for each segment from first to second with the
+ * metrics at its ends, parameters[r] is t = log1p((q - 1) / 2) / log1p(q - 1)
+ * with q = sqrt(d^T M_second d / d^T M_first d), d = second - first (the
+ * point at half the metric length when the size varies geometrically), and
+ * 1/2 when q is 1, zero or not finite or a form is not positive and finite;
+ * points[3r..] is first + t d. */
+PHX_MC_API int32_t phx_mc_metric_midpoints(
+    int64_t count, const double* first_points, const double* second_points,
+    const double* first_metrics, const double* second_metrics, double* parameters,
+    double* points);
+/* The three goals of the survivor of a collapse, in the order they are tried.
+ * points holds the survivor, the removed vertex and then the merged link
+ * (point_count >= 2 rows of three values), metrics the tensors of the first
+ * two. With t the midpoint parameter of the collapsed edge, goals[0..3) and
+ * goals[3..6) are its points at t and t / 2; goals[6..9) is the center of the
+ * smallest ball holding the link in the log-Euclidean mean of the two
+ * tensors (Welzl's recursion over a fixed pseudo-random order of the link in
+ * the Cholesky frame of that tensor). With corner_count 2 or 3 (else 0) each
+ * goal is projected orthogonally onto the affine hull of those corners.
+ * valid[g] is 0, with a zero goal, when a step of goal g fails: no link
+ * vertex, a tensor that is not positive definite, or a value that is not
+ * finite. */
+PHX_MC_API int32_t phx_mc_metric_survivor_goals(
+    int64_t point_count, const double* points, const double* metrics, int32_t corner_count,
+    const double* corners, double* goals, int8_t* valid);
 /* Execute an interval program as phx_mc_interval_program_execute, then record
  * per-box branch evidence: smooth[b] and continuous[b] start at 1 for every
  * box b < box_count, and each event row (kind, test, size, a, a_index, boxes;

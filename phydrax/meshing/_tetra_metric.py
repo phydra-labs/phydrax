@@ -28,7 +28,9 @@ from .._meshcore import (
     metric_interpolations,
     metric_lengths,
     metric_logarithms,
+    metric_midpoints,
     metric_relative_determinants,
+    metric_survivor_goals,
     metric_tetra_quality,
     PlcBoundaryPolicy,
     relocated_tet_mesh_arrays,
@@ -607,22 +609,11 @@ def _metric_midpoint(
     second_metric: np.ndarray,
     /,
 ) -> tuple[float, np.ndarray]:
-    delta = second - first
-    first_squared = float(delta @ first_metric @ delta)
-    second_squared = float(delta @ second_metric @ delta)
-    if (
-        not np.isfinite(first_squared + second_squared)
-        or min(first_squared, second_squared) <= 0.0
-    ):
-        return 0.5, 0.5 * (first + second)
-    ratio = float(np.sqrt(second_squared / first_squared))
-    delta_ratio = ratio - 1.0
-    parameter = (
-        0.5
-        if ratio == 1.0
-        else float(np.log1p(0.5 * delta_ratio) / np.log1p(delta_ratio))
+    """Parameter and point of an edge at half its metric length."""
+    parameters, points = metric_midpoints(
+        first[None], second[None], first_metric[None], second_metric[None]
     )
-    return parameter, first + parameter * delta
+    return float(parameters[0]), points[0]
 
 
 def _tetra_orientation(
@@ -2326,10 +2317,16 @@ def _dyadic_split_parameters(
     parameters keep nested ancestry weights binary64. ``None`` means no dyadic
     point of the edge has a consistent realization.
     """
-    parameters = [
-        _metric_midpoint(first, second, first_metric, second_metric)[0]
-        for first, second, first_metric, second_metric, *_ in members
-    ]
+    parameters = metric_midpoints(
+        np.asarray([member[0] for member in members], dtype=np.float64).reshape((-1, 3)),
+        np.asarray([member[1] for member in members], dtype=np.float64).reshape((-1, 3)),
+        np.asarray([member[2] for member in members], dtype=np.float64).reshape(
+            (-1, 3, 3)
+        ),
+        np.asarray([member[3] for member in members], dtype=np.float64).reshape(
+            (-1, 3, 3)
+        ),
+    )[0].tolist()
     tried: set[tuple[Fraction, ...]] = set()
     for bits in range(_SPLIT_PARAMETER_BITS, 0, -1):
         scale = 1 << bits
@@ -4492,77 +4489,6 @@ def _directed_collapse(
     }
 
 
-def _metric_enclosing_center(points: np.ndarray, metric: np.ndarray, /) -> np.ndarray:
-    """Smallest-ball goal in the metric's Cholesky frame.
-
-    Welzl's finite support recursion is evaluated with an explicit stack:
-    every descent removes one point or adds a boundary point, and a ball in
-    three dimensions has at most four support points. The numerical center
-    proposes a carrier only; exact cell/source checks and the measured
-    objective, not a floating ball-membership tolerance, admit the edit.
-    """
-    factor = np.linalg.cholesky(metric).T
-    mapped = points @ factor.T
-    # Welzl's recursion has poor worst-case order on structured stars.
-    # A fixed permutation keeps proposals reproducible while avoiding the
-    # systematic geometric ordering of the mesh's stable vertex IDs.
-    mapped = mapped[np.random.default_rng(0).permutation(len(mapped))]
-    scale = max(float(np.max(np.abs(mapped))), np.finfo(np.float64).tiny)
-    slack = 32.0 * np.finfo(np.float64).eps * scale**2
-
-    # The circumcenter of an ordered support depends on its points alone;
-    # Welzl revisits the same supports under different boundaries.
-    centers: dict[tuple[int, ...], np.ndarray] = {}
-
-    def support_center(support_indices: tuple[int, ...]) -> np.ndarray:
-        center = centers.get(support_indices)
-        if center is None:
-            support = mapped[np.asarray(support_indices)]
-            center = support[0]
-            directions = support[1:] - center
-            gram = directions @ directions.T
-            rhs = np.sum(directions * directions, axis=1) * 0.5
-            coefficients = np.linalg.lstsq(gram, rhs, rcond=None)[0]
-            center = center + directions.T @ coefficients
-            centers[support_indices] = center
-        return center
-
-    def support_ball(indices: tuple[int, ...]) -> tuple[np.ndarray, float]:
-        if not indices:
-            return np.zeros(3), -1.0
-        boundary = mapped[np.asarray(indices)]
-        best_center = boundary[0]
-        best_radius = np.inf
-        # Enumerating the subsets of at most four boundary points also covers
-        # coincident, collinear and coplanar supports without singular solves.
-        for size in range(1, len(indices) + 1):
-            for selected in combinations(range(len(indices)), size):
-                center = (
-                    boundary[selected[0]]
-                    if size == 1
-                    else support_center(tuple(indices[index] for index in selected))
-                )
-                radius = float(np.max(np.sum((boundary - center) ** 2, axis=1)))
-                if radius < best_radius:
-                    best_center, best_radius = center, radius
-        return best_center, best_radius
-
-    center, radius = np.zeros(3), -1.0
-    stack: list[tuple[int, tuple[int, ...], bool]] = [(len(mapped), (), False)]
-    while stack:
-        count, boundary, returning = stack.pop()
-        if returning:
-            distance = float(np.sum((mapped[count - 1] - center) ** 2))
-            if radius < 0.0 or distance > radius + slack:
-                stack.append((count - 1, (*boundary, count - 1), False))
-        elif count == 0 or len(boundary) == 4:
-            center, radius = support_ball(boundary)
-        else:
-            stack.append((count, boundary, True))
-            stack.append((count - 1, boundary, False))
-    return np.linalg.solve(factor, center)
-
-
 def _refused_survivor_carriers(
     state: _NativeState,
     candidates: Sequence[tuple[dict[int, Fraction], np.ndarray]],
@@ -4699,31 +4625,17 @@ def _survivor_moves(
     if simplices is not None and not simplices:
         return
     endpoints = local_points[:2]
-    parameter, _ = _metric_midpoint(
-        endpoints[0], endpoints[1], local_metrics[0], local_metrics[1]
+    # The carrier simplices are coplanar (one facet) or collinear (one curve
+    # or segment): the first spans their affine hull.
+    corners = (
+        None
+        if simplices is None
+        else state.source_points[[state.source_vertex_rows[v] for v in simplices[0]]]
     )
-
-    def goals() -> Iterator[np.ndarray]:
-        for fraction in (parameter, 0.5 * parameter):
-            yield endpoints[0] + fraction * (endpoints[1] - endpoints[0])
-        mean, mean_valid = metric_interpolations(
-            np.asarray((0, 2), dtype=np.int64),
-            np.arange(2, dtype=np.int64),
-            np.full((2,), 0.5, dtype=np.float64),
-            local_metrics[:2],
-            None,
-        )
-        if not mean_valid[0]:
-            raise FloatingPointError("Log-Euclidean interpolation requires SPD metrics.")
-        yield _metric_enclosing_center(local_points[2:], mean[0])
-
-    coordinates = state.source_points
-    for goal in goals():
-        if simplices is not None:
-            corners = coordinates[[state.source_vertex_rows[v] for v in simplices[0]]]
-            span = (corners[1:] - corners[0]).T
-            coefficients = np.linalg.lstsq(span, goal - corners[0], rcond=None)[0]
-            goal = corners[0] + span @ coefficients
+    goals, goal_valid = metric_survivor_goals(local_points, local_metrics[:2], corners)
+    for goal, valid in zip(goals, goal_valid, strict=True):
+        if not valid:
+            raise FloatingPointError("A collapse survivor goal is not a finite point.")
         if implicit_only:
             candidates = _quantized_relocation_candidates(state, None, goal, endpoints[0])
         else:
