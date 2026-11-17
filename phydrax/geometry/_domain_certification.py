@@ -1013,7 +1013,6 @@ def _coverage_boundary_partition(
     validated_parent_embedding: ValidatedGlobalEmbedding | None,
 ) -> _BoundaryCoverageProof:
     """Prove exact chain equality or an explicit source-boundary homotopy."""
-    from ..discretization._coordinate_enclosure import affine_map
     from ._planar_coverage import partition_overlaps
 
     facet_overlaps: tuple[FacetOverlap, ...] = ()
@@ -1211,16 +1210,10 @@ def _coverage_boundary_partition(
             source_domain = exact_cad.chain
             cad_boundary_id = exact_cad.boundary_id
         dimension = source_domain.ambient_dimension
-        affine_cells = tuple(
-            None if expressions is None else affine_map(expressions, dimension)
-            for expressions in preparation.coordinate_maps
-        )
         if (
             isinstance(domain, MeshingDomain)
-            and any(value is None for value in affine_cells)
-            and not any(
-                expressions is None for expressions in preparation.coordinate_maps
-            )
+            and not preparation.has_vertex_defined_cells()
+            and preparation.has_nonaffine_cells(dimension)
         ):
             from ._approximate_source_coverage import approximate_source_coverage
 
@@ -1274,7 +1267,7 @@ def _coverage_boundary_partition(
                 domain, (PiecewiseLinearDomain, AffinePlcDomain)
             ):
                 source_points = _plc_source_points(
-                    mesh, domain, preparation, source_coverage_witness, findings
+                    mesh, geometry, domain, preparation, source_coverage_witness, findings
                 )
                 if source_points is None:
                     return _BoundaryCoverageProof(
@@ -1291,7 +1284,7 @@ def _coverage_boundary_partition(
             target_facets, issues = oriented_target_facets(
                 mesh,
                 preparation.cell_regions,
-                tuple(preparation.coordinate_maps),
+                preparation.coordinate_maps,
                 source_domain=source_domain,
                 geometry=geometry,
                 exact_face_images=True,
@@ -1496,6 +1489,7 @@ def _coverage_boundary_partition(
 
 def _plc_source_points(
     mesh: CellMesh,
+    geometry: CellGeometrySpec,
     domain: PiecewiseLinearDomain | AffinePlcDomain,
     preparation: DomainCoveragePreparation,
     witness: PlcSourcePointWitness,
@@ -1507,7 +1501,7 @@ def _plc_source_points(
     from ._planar_coverage import resolve_plc_source_points, SourcePointRefusal
 
     try:
-        cells = affine_cell_corners(mesh, tuple(preparation.coordinate_maps))
+        cells = affine_cell_corners(mesh, preparation.coordinate_maps, geometry=geometry)
     except (TypeError, ValueError, KeyError, ArithmeticError) as error:
         findings.append(
             _coverage_finding(
