@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <numeric>
@@ -24,6 +25,9 @@ using phx::mc::geometry::next_up;
 
 constexpr double kInfinity = std::numeric_limits<double>::infinity();
 constexpr int kNewtonSteps = 16;
+// Midpoint levels of the uncertifiable-point search: the residual maximum of
+// a triangle is located to 2^-6 of its extent before the full subdivision.
+constexpr int kWitnessLevels = 6;
 
 bool finite(const Interval& value) {
   return std::isfinite(value.lower) && std::isfinite(value.upper) && value.lower <= value.upper;
@@ -300,15 +304,63 @@ double ZeroSetBandAdmission::extrusion_distance(const Point& a, const Point& b,
 // the pieces are kept on an explicit stack in any case. Rounded midpoints leave
 // every point of T within one coordinate ulp per level of the union of the
 // pieces, so a piece at depth k adds k such slacks.
+AdmissionMemo::Entry& AdmissionMemo::slot(const Key& key) {
+  // SplitMix64 over the coordinate bit patterns.
+  std::uint64_t hash = 0x9e3779b97f4a7c15ull;
+  for (const double value : key) {
+    std::uint64_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    hash += bits + 0x9e3779b97f4a7c15ull;
+    hash = (hash ^ (hash >> 30)) * 0xbf58476d1ce4e5b9ull;
+    hash = (hash ^ (hash >> 27)) * 0x94d049bb133111ebull;
+    hash ^= hash >> 31;
+  }
+  Entry& entry = entries_[static_cast<size_t>(hash) & (kEntries - 1)];
+  if (!entry.used || std::memcmp(entry.key.data(), key.data(), sizeof(Key)) != 0) {
+    entry = Entry{};
+    entry.key = key;
+    entry.used = true;
+  }
+  return entry;
+}
+
+AdmissionMemo::Entry* ZeroSetBandAdmission::memo_entry(
+    const Point& a, const Point& b, const Point& c,
+    const std::array<VertexEvidence, 3>& evidence) const {
+  if (memo_ == nullptr) return nullptr;
+  AdmissionMemo::Key key{};
+  size_t at = 0;
+  for (const Point* p : {&a, &b, &c})
+    for (const double coordinate : *p) key[at++] = coordinate;
+  for (const VertexEvidence& value : evidence) {
+    key[at++] = value.lower;
+    key[at++] = value.upper;
+  }
+  return &memo_->slot(key);
+}
+
 double ZeroSetBandAdmission::distance_bound(
     const Point& a, const Point& b, const Point& c,
     const std::array<VertexEvidence, 3>& evidence) const {
+  AdmissionMemo::Entry* entry = memo_entry(a, b, c, evidence);
+  if (entry != nullptr && entry->has_bound) {
+    if (entry->has_sample) distance_barycentric_ = entry->sample;
+    else distance_barycentric_.reset();
+    return entry->bound;
+  }
   distance_barycentric_.reset();
   double scale = 0;
   for (const Point* p : {&a, &b, &c})
     for (double coordinate : *p) scale = std::max(scale, std::fabs(coordinate));
   const double slack = next_up(2 * std::numeric_limits<double>::epsilon() * scale);
-  return split_distance(a, b, c, evidence, slack);
+  const double bound = split_distance(a, b, c, evidence, slack);
+  if (entry != nullptr) {
+    entry->bound = bound;
+    entry->has_bound = true;
+    entry->has_sample = distance_barycentric_.has_value();
+    if (entry->has_sample) entry->sample = *distance_barycentric_;
+  }
+  return bound;
 }
 
 // No point of the piece lies within the tolerance of Z: otherwise a zero of f
@@ -334,6 +386,82 @@ bool ZeroSetBandAdmission::piece_refuted(const Point& a, const Point& b,
   }
   const double lipschitz = next_up(std::sqrt(sum));
   return mignitude(field) > next_up(lipschitz * tolerance_);
+}
+
+// The piece proofs applied to the single point p, at depth zero. Every
+// enclosure over a piece containing p contains p's own, and a deeper piece
+// only adds its rounding charge, so a point these proofs cannot certify lies
+// in no certifiable piece: the subdivision of a triangle through it ends in
+// a refusal. Refusing early is sound regardless (the admission is incomplete
+// by contract); the proofs of an admitted triangle are unchanged.
+bool ZeroSetBandAdmission::point_uncertifiable(const Point& p,
+                                               const VertexEvidence& evidence) const {
+  const std::array<VertexEvidence, 3> corners{evidence, evidence, evidence};
+  if (piece_distance(p, p, p, corners) <= tolerance_) return false;
+  const double radius = next_down(next_down(tolerance_) - next_up(0.0));
+  return !(extrusion_distance(p, p, p, radius) <= tolerance_);
+}
+
+// Follows the largest corner residual through `kWitnessLevels` midpoint
+// subdivisions of the triangle (a proposal: ties take the subdivision's own
+// piece order) and tests the best point found. Returns its barycentric
+// coordinates in the triangle when no piece proof can certify it.
+std::optional<Point> ZeroSetBandAdmission::uncertifiable_point(
+    const Point& a, const Point& b, const Point& c,
+    const std::array<VertexEvidence, 3>& evidence) const {
+  struct Corner {
+    Point position;
+    VertexEvidence evidence;
+    Point barycentric;
+    double residual;
+  };
+  const auto residual = [](const VertexEvidence& value) {
+    if (value.lower > 0) return value.lower;
+    if (value.upper < 0) return -value.upper;
+    return 0.0;
+  };
+  const auto middle = [](const Point& p, const Point& q) {
+    return Point{0.5 * (p[0] + q[0]), 0.5 * (p[1] + q[1]), 0.5 * (p[2] + q[2])};
+  };
+  std::array<Corner, 3> piece{{{a, evidence[0], {1, 0, 0}, residual(evidence[0])},
+                               {b, evidence[1], {0, 1, 0}, residual(evidence[1])},
+                               {c, evidence[2], {0, 0, 1}, residual(evidence[2])}}};
+  Corner best = piece[0];
+  for (const Corner& corner : piece)
+    if (corner.residual > best.residual) best = corner;
+  for (int level = 0; level < kWitnessLevels; ++level) {
+    std::array<Corner, 3> mid{};
+    for (int k = 0; k < 3; ++k) {
+      const Corner& p = piece[static_cast<size_t>(k)];
+      const Corner& q = piece[static_cast<size_t>((k + 1) % 3)];
+      Corner& m = mid[static_cast<size_t>(k)];  // midpoint of the edge after corner k
+      m.position = middle(p.position, q.position);
+      if (m.position == p.position || m.position == q.position) return std::nullopt;
+      m.evidence = evaluate(m.position);
+      m.barycentric = middle(p.barycentric, q.barycentric);
+      m.residual = residual(m.evidence);
+      if (m.residual > best.residual) best = m;
+    }
+    // The four sub-pieces in the subdivision's order; the first of the
+    // largest corner residual is followed.
+    const std::array<std::array<Corner, 3>, 4> children{{{piece[0], mid[0], mid[2]},
+                                                         {mid[0], piece[1], mid[1]},
+                                                         {mid[2], mid[1], piece[2]},
+                                                         {mid[1], mid[2], mid[0]}}};
+    size_t selected = 0;
+    double selected_residual = -1;
+    for (size_t child = 0; child < children.size(); ++child) {
+      double largest = 0;
+      for (const Corner& corner : children[child]) largest = std::max(largest, corner.residual);
+      if (largest > selected_residual) {
+        selected_residual = largest;
+        selected = child;
+      }
+    }
+    piece = children[selected];
+  }
+  if (!point_uncertifiable(best.position, best.evidence)) return std::nullopt;
+  return best.barycentric;
 }
 
 // Depth-first over the pieces, in the order of the four sub-pieces; the first
@@ -385,6 +513,32 @@ double ZeroSetBandAdmission::split_distance(const Point& a, const Point& b, cons
     if (translated_bound <= tolerance_) {
       worst = std::max(worst, translated_bound);
       continue;
+    }
+    // The first undecided piece is the triangle itself: look for a point no
+    // piece can certify before subdividing. A deep undecided piece has
+    // shrunk onto such a point's neighborhood; its largest corner is tested.
+    if (piece.depth == 0) {
+      if (const auto witness = uncertifiable_point(piece.a, piece.b, piece.c, piece.evidence)) {
+        distance_barycentric_ = *witness;
+        return kInfinity;
+      }
+    } else if (piece.depth >= kWitnessLevels) {
+      size_t corner = 0;
+      double largest = -1;
+      const std::array<const Point*, 3> corners{&piece.a, &piece.b, &piece.c};
+      for (size_t k = 0; k < 3; ++k) {
+        const VertexEvidence& value = piece.evidence[k];
+        const double residual =
+            value.lower > 0 ? value.lower : (value.upper < 0 ? -value.upper : 0.0);
+        if (residual > largest) {
+          largest = residual;
+          corner = k;
+        }
+      }
+      if (point_uncertifiable(*corners[corner], piece.evidence[corner])) {
+        distance_barycentric_ = piece.barycentric[corner];
+        return kInfinity;
+      }
     }
     const Point ab = middle(piece.a, piece.b), bc = middle(piece.b, piece.c),
                 ca = middle(piece.c, piece.a);
@@ -443,7 +597,18 @@ int ZeroSetBandAdmission::transversal_sign(const Point& a, const Point& b,
 
 bool ZeroSetBandAdmission::admits(const Point& a, const Point& b, const Point& c,
                                   const std::array<VertexEvidence, 3>& evidence) const {
-  if (transversal_sign(a, b, c) != orientation_) {
+  AdmissionMemo::Entry* entry = memo_entry(a, b, c, evidence);
+  int sign = 0;
+  if (entry != nullptr && entry->has_sign) {
+    sign = entry->sign;
+  } else {
+    sign = transversal_sign(a, b, c);
+    if (entry != nullptr) {
+      entry->sign = static_cast<std::int8_t>(sign);
+      entry->has_sign = true;
+    }
+  }
+  if (sign != orientation_) {
     distance_barycentric_.reset();
     ++refusals_.transversality;
     return false;
@@ -692,7 +857,8 @@ int32_t remesh_zero_set(const phx_mc_zero_set_remesh_request& request,
     orientation = sign;
   }
   if (orientation == 0) return PHX_MC_UNRESOLVED;
-  const ZeroSetBandAdmission admission(value, gradient, request.tolerance, orientation);
+  AdmissionMemo memo;
+  const ZeroSetBandAdmission admission(value, gradient, request.tolerance, orientation, &memo);
   RemeshCounters remesh{};
   if (indices_i32)
     status = remesh_surface_borrowed_i32(

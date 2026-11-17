@@ -17,7 +17,8 @@
 //    normalization bounds |d| and retains the subdivision-rounding slack.
 //    An undecided piece splits into four until certified, refuted (|f| exceeds
 //    the gradient-norm upper bound times the tolerance), or at binary64
-//    resolution, which refuses;
+//    resolution, which refuses. A point that these proofs cannot certify on
+//    its own lies in no certifiable piece, so finding one refuses at once;
 //  * transversality: the triangle normal n satisfies orientation * (n . g) > 0
 //    for every g enclosing grad f over bbox(T). This is the strict-gradient
 //    sign witness the adaptive scaffold carries per leaf cell: T is a local
@@ -29,6 +30,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -71,11 +73,39 @@ class IntervalBoxProgram {
   mutable std::vector<double> lower_, upper_;  // single-threaded scratch workspace
 };
 
+// Exact results of earlier admissions of one field and tolerance, keyed by
+// the triangle's corner coordinates and vertex evidence (bitwise). The table
+// is direct-mapped and fixed-size, and a hit returns the stored result of the
+// identical query, so no output depends on what the table holds. The owner
+// keeps one memo per bound field and tolerance.
+class AdmissionMemo {
+ public:
+  using Key = std::array<double, 15>;
+  struct Entry {
+    Key key{};
+    double bound = 0;
+    Point sample{};
+    std::int8_t sign = 0;
+    bool used = false, has_sign = false, has_bound = false, has_sample = false;
+  };
+  AdmissionMemo() : entries_(kEntries) {}
+  // The entry of `key`, reset when the slot held another key.
+  Entry& slot(const Key& key);
+
+ private:
+  static constexpr std::size_t kEntries = std::size_t{1} << 16;
+  std::vector<Entry> entries_;
+};
+
 class ZeroSetBandAdmission final : public TriangleAdmission {
  public:
   ZeroSetBandAdmission(const IntervalBoxProgram& value, const IntervalBoxProgram& gradient,
-                       double tolerance, int orientation)
-      : value_(value), gradient_(gradient), tolerance_(tolerance), orientation_(orientation) {}
+                       double tolerance, int orientation, AdmissionMemo* memo = nullptr)
+      : value_(value),
+        gradient_(gradient),
+        tolerance_(tolerance),
+        orientation_(orientation),
+        memo_(memo) {}
 
   AdmissionKind kind() const override { return AdmissionKind::kZeroSetBand; }
   // Point enclosure of f at the vertex (mean-value anchor for admits()).
@@ -105,8 +135,10 @@ class ZeroSetBandAdmission final : public TriangleAdmission {
     int64_t distance = 0;
   };
   const Refusals& refusals() const { return refusals_; }
-  // Proposal sample from the first rejecting subdivision piece, in the
-  // original triangle's vertex order; not a distance extremum or certificate.
+  // Proposal sample of a refused distance: a point of the triangle that the
+  // proofs cannot certify, else the first rejecting subdivision piece's
+  // centroid, in the original triangle's vertex order. Not a distance
+  // extremum or certificate.
   const std::optional<Point>& distance_barycentric() const { return distance_barycentric_; }
 
  private:
@@ -119,13 +151,20 @@ class ZeroSetBandAdmission final : public TriangleAdmission {
                             double radius) const;
   // Certified: no point of the piece lies within the tolerance of Z.
   bool piece_refuted(const Point& a, const Point& b, const Point& c) const;
+  // No piece proof certifies this single point (see the definition).
+  bool point_uncertifiable(const Point& p, const VertexEvidence& evidence) const;
+  std::optional<Point> uncertifiable_point(const Point& a, const Point& b, const Point& c,
+                                           const std::array<VertexEvidence, 3>& evidence) const;
   double split_distance(const Point& a, const Point& b, const Point& c,
                         const std::array<VertexEvidence, 3>& evidence, double slack) const;
+  AdmissionMemo::Entry* memo_entry(const Point& a, const Point& b, const Point& c,
+                                   const std::array<VertexEvidence, 3>& evidence) const;
 
   const IntervalBoxProgram& value_;
   const IntervalBoxProgram& gradient_;
   double tolerance_;
   int orientation_;
+  AdmissionMemo* memo_;
   mutable Refusals refusals_;  // single-threaded, like the program scratch
   mutable std::optional<Point> distance_barycentric_;
 };
