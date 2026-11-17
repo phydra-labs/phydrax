@@ -114,7 +114,10 @@ if TYPE_CHECKING:
         ImplicitChartPremise,
         ValidatedImplicitChartParent,
     )
-    from .implicit._source_charts import AdaptiveImplicitRootChartMap
+    from .implicit._source_charts import (
+        _ImplicitChartHandoff,
+        AdaptiveImplicitRootChartMap,
+    )
     from .reconstruction._boundary import ReconstructedTriangleBoundarySource
 
 
@@ -6615,6 +6618,7 @@ def certify_source_fidelity(
     maximum_normal_deviation: float | None = None,
     witness: SourceFidelityWitness | ValidatedSourceFidelityWitness | None = None,
     root_charts: AdaptiveImplicitRootChartMap | None = None,
+    _root_chart_handoff: _ImplicitChartHandoff | None = None,
     preparation: SourcePreparation | None = None,
     chart_parent: ImplicitChartPremise | None = None,
     validated_chart_parent: ValidatedImplicitChartParent | None = None,
@@ -6799,6 +6803,7 @@ def certify_source_fidelity(
                     tolerance=tolerance_,
                     maximum_normal_deviation=normal_limit,
                     root_charts=root_charts,
+                    _handoff=_root_chart_handoff,
                     chart_parent=chart_parent,
                     validated_chart_parent=validated_chart_parent,
                 )
