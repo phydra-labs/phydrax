@@ -308,7 +308,12 @@ def _certify_cad_surface(
     source = surface.boundary_source
     witness = surface.chart_witness
     validated = validate_fidelity_witnesses(
-        surface.mesh, surface.geometry, source, witness, ()
+        surface.mesh,
+        surface.geometry,
+        source,
+        witness,
+        (),
+        validated=() if computed_surface is None else computed_surface.validated,
     )
     inputs = MeshCertificationInputs(
         surface.mesh,

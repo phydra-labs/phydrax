@@ -514,7 +514,7 @@ def _same_fidelity_control(first: float | None, second: float | None, /) -> bool
 class _ComputedSurfaceAcceptance:
     """Operation-local acceptance whose proofs were actually computed here."""
 
-    __slots__ = ("inputs", "report", "reusable")
+    __slots__ = ("inputs", "report", "reusable", "validated")
 
     def __init__(
         self,
@@ -530,6 +530,9 @@ class _ComputedSurfaceAcceptance:
         computed_validity: ComputedCellValidity | None = None,
     ) -> None:
         self.inputs = inputs
+        # The witness validations made for exactly these operands; consumers of
+        # the same operand objects reuse them instead of validating again.
+        self.validated = validated
         self.reusable = validity_parent is None or (
             type(validity_parent) is tuple and len(validity_parent) == 0
         )
