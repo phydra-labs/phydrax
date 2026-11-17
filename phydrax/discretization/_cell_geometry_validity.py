@@ -47,6 +47,7 @@ from numpy.typing import NDArray
 
 import phydrax.ein as ein
 
+from .._execution_resources import MemoryBudgetError
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._geometry_predicates import (
     polygon_simplicity_2d,
@@ -979,7 +980,6 @@ def _reference_subdivision(
     )
 
 
-@cache
 def _exact_bernstein_inverse(
     degree: int, dimension: int, simplex: bool, /
 ) -> tuple[tuple[Fraction, ...], ...]:
@@ -1049,9 +1049,60 @@ def _exact_tensor_conversion(
     return conversion, fraction_up(norm), fraction_up(error_norm)
 
 
+_BERNSTEIN_PLAN_BYTES = 16 * 1024 * 1024
+_BERNSTEIN_EXACT_ROWS = 128
+_BERNSTEIN_MAX_DEGREE = 16
+_BERNSTEIN_MAX_DIMENSION = 8
+
+
+def _admit_bernstein_plan(domain: BernsteinDomain, degrees: tuple[int, ...], /) -> None:
+    """Bound retained table bytes and exact rational solve dimensions."""
+    if domain == "simplex":
+        degree, dimension = degrees
+        axis_degrees = (degree,)
+    elif domain == "prism":
+        dimension = 3
+        axis_degrees = degrees
+        if len(degrees) != 2:
+            raise ValueError("Prism Bernstein plans require two degrees.")
+    elif domain == "box":
+        dimension = len(degrees)
+        axis_degrees = degrees
+    else:
+        raise ValueError(f"Unknown Bernstein parameter domain {domain!r}.")
+    if dimension < 1 or any(degree < 0 for degree in axis_degrees):
+        raise ValueError("Bernstein degrees must be nonnegative with positive dimension.")
+    if dimension > _BERNSTEIN_MAX_DIMENSION:
+        raise MemoryBudgetError(
+            "bernstein_node_dimensions", 8 * dimension, 8 * _BERNSTEIN_MAX_DIMENSION
+        )
+    if any(degree > _BERNSTEIN_MAX_DEGREE for degree in axis_degrees):
+        raise MemoryBudgetError(
+            "bernstein_axis_matrix",
+            8 * (max(axis_degrees) + 1) ** 2,
+            8 * (_BERNSTEIN_MAX_DEGREE + 1) ** 2,
+        )
+    if domain == "simplex":
+        rows = math.comb(degrees[0] + dimension, dimension)
+        solve_rows = rows
+    elif domain == "prism":
+        solve_rows = math.comb(degrees[0] + 2, 2)
+        rows = solve_rows * (degrees[1] + 1)
+    else:
+        rows = math.prod(degree + 1 for degree in degrees)
+        solve_rows = max(degrees) + 1
+    if solve_rows > _BERNSTEIN_EXACT_ROWS:
+        raise MemoryBudgetError(
+            "bernstein_exact_inverse", 8 * solve_rows**2, 8 * _BERNSTEIN_EXACT_ROWS**2
+        )
+    required = 8 * (rows * rows + rows * dimension + 2)
+    if required > _BERNSTEIN_PLAN_BYTES:
+        raise MemoryBudgetError("bernstein_plan", required, _BERNSTEIN_PLAN_BYTES)
+
+
 @host_table_cache(
     max_entries=256,
-    max_bytes=16777216,
+    max_bytes=_BERNSTEIN_PLAN_BYTES,
     weight=lambda value: logical_table_bytes(
         (
             value.nodes,
@@ -1064,11 +1115,16 @@ def _exact_tensor_conversion(
 def _bernstein_plan(
     domain: BernsteinDomain, degrees: tuple[int, ...], /
 ) -> _BernsteinPlan:
+    _admit_bernstein_plan(domain, degrees)
     match domain:
         case "box":
             axes = tuple(_rational_nodes(degree) for degree in degrees)
             nodes = _grid(axes)
-            factors = tuple(_exact_bernstein_inverse(degree, 1, False) for degree in degrees)
+            by_degree = {
+                degree: _exact_bernstein_inverse(degree, 1, False)
+                for degree in set(degrees)
+            }
+            factors = tuple(by_degree[degree] for degree in degrees)
         case "simplex":
             degree, dimension = degrees
             nodes = _simplex_nodes(degree, dimension)

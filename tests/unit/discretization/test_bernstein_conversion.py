@@ -8,6 +8,7 @@ from random import Random
 import numpy as np
 import pytest
 
+from phydrax._execution_resources import MemoryBudgetError
 from phydrax.discretization._cell_geometry_validity import _bernstein_plan
 from phydrax.discretization._coordinate_enclosure import BernsteinDomain
 from phydrax.linalg._exact import solve_exact
@@ -101,3 +102,16 @@ def test_exact_conversion_avoids_recorded_float_solve_error() -> None:
         9361112124762313742037515367735,
     )
     assert abs(Fraction(original) - original_exact) > Fraction(float(np.spacing(original))) / 2
+
+
+def test_conversion_preparation_has_bounded_retention_and_refuses_oversize() -> None:
+    _bernstein_plan.cache_clear()
+    for degree in range(7):
+        _bernstein_plan("box", (degree, degree))
+        _bernstein_plan("simplex", (degree, 2))
+    info = _bernstein_plan.cache_info()
+    assert info.current_bytes <= info.max_bytes == 16 * 1024 * 1024
+    with pytest.raises(MemoryBudgetError, match="bernstein_exact_inverse"):
+        _bernstein_plan("simplex", (8, 3))
+    with pytest.raises(MemoryBudgetError, match="bernstein_plan"):
+        _bernstein_plan("box", (15, 15, 15))
