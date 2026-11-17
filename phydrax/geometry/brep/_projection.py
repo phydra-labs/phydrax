@@ -741,6 +741,7 @@ def _line_curve_hit(
     /,
     *,
     frame: bool = True,
+    distance_threshold: float | None = None,
 ) -> _Hit:
     geometry = model.geometry
     carrier = geometry.edge_curves[edge]
@@ -873,7 +874,8 @@ def _line_curve_hit(
         status = _SEAM if parameter == first or parameter == last else _UNIQUE
     parameter = float(parameter)
     tangents = _NAN_FRAME3.copy()
-    if frame:
+    # A hit certified beyond the caller's radius is discarded with its frame.
+    if frame and not (distance_threshold is not None and lower > distance_threshold):
         derivative = np.asarray(
             jax.jacfwd(lambda value: curve.evaluate(value))(jnp.asarray(parameter)),
             dtype=np.float64,
@@ -3256,6 +3258,21 @@ def _project_face(
         return _unresolved(2, face, path)
     if uv is None or candidate is None or carrier_distance is None:
         return _unresolved(2, face, path)
+    if distance_threshold is not None and carrier_distance[0] > distance_threshold:
+        # The whole carrier rectangle is certified beyond the caller's radius,
+        # so no trim, boundary, or frame decision can bring the face within it.
+        return _Hit(
+            2,
+            face,
+            _NAN3.copy(),
+            _NAN2.copy(),
+            carrier_distance[0],
+            np.inf,
+            _UNRESOLVED,
+            _NAN3.copy(),
+            _NAN_FRAME3.copy(),
+            path,
+        )
     bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
     periods = patch.periods
     for axis, period in enumerate(periods):
@@ -5158,7 +5175,8 @@ class NativeBRepProjection(AbstractBRepProjection):
         return np.isin(encoded, np.asarray(self.closure_codes, dtype=np.int64))
 
     def _face_orientation(self, face: int, solid: int, /) -> float:
-        orientation = float(self.model.orientation[face])
+        # A host read: this runs for every projected point.
+        orientation = float(np.asarray(self.model.orientation)[face])
         if solid < 0:
             return orientation
         faces = self.model.topology.solid_faces[solid]
@@ -5218,7 +5236,12 @@ class NativeBRepProjection(AbstractBRepProjection):
                 )
             elif dimension == BRepEntityDimension.EDGE:
                 hit = _line_curve_hit(
-                    self.model, index, local, occurrence.path, self.policy
+                    self.model,
+                    index,
+                    local,
+                    occurrence.path,
+                    self.policy,
+                    distance_threshold=distance_threshold,
                 )
             elif dimension == BRepEntityDimension.FACE:
                 hit = _project_face(
@@ -5237,7 +5260,9 @@ class NativeBRepProjection(AbstractBRepProjection):
                     angle_bounds=angle_bounds,
                     defer_frame=defer_frame and len(targets) == 1,
                 )
-                if hit.status == _UNRESOLVED:
+                if hit.status == _UNRESOLVED and not (
+                    distance_threshold is not None and hit.lower > distance_threshold
+                ):
                     source_box = (
                         np.asarray(self.entity_boxes[sum(self.entity_counts[:2]) + index])
                         if occurrence.rotation
