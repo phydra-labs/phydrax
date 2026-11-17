@@ -36,6 +36,7 @@ from phydrax.discretization._coordinate_enclosure import (
 )
 from phydrax.discretization._exact_algebraic_geometry import RadicalElement
 from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
+from phydrax.geometry._rational import binary64_norm_upper
 from tests._support.validity_reuse import assert_incremental_matches_full
 
 
@@ -1546,6 +1547,25 @@ def _embedded(points: Any, *, bend: Any = 0.0) -> Any:
 CONVEX = ((0.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 2.0), (0.0, 1.0))
 # Notched square whose vertex-zero fan leaves the cell.
 CONCAVE = ((0.0, 0.0), (3.0, 0.0), (3.0, 3.0), (1.5, 1.0), (0.0, 3.0))
+
+
+def test_embedded_polygon_norm_enclosure_handles_downward_rounding() -> None:
+    # The nearest binary64 sqrt(3) is below the exact norm of this edge.
+    old_norm = Fraction(float.fromhex("0x1.bb67ae8584caap+0"))
+    assert old_norm * old_norm < Fraction(3)
+    upper = Fraction(float(binary64_norm_upper(np.asarray((1.0, 1.0, 1.0)))))
+    assert upper * upper >= Fraction(3)
+    points = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (1.0, 1.0, 1.0),
+            (0.0, 2.0, 1.0),
+            (-1.0, 1.0, 0.0),
+            (-1.0, 0.0, -0.5),
+        ),
+        dtype=np.float64,
+    )
+    assert _polygon_status(points) == Status.CERTIFIED_VALID
 
 
 def test_cell_geometry_validity_scenario_1() -> None:
