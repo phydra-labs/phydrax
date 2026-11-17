@@ -6935,7 +6935,7 @@ def certify_adaptive_implicit_charts(
                     ),
                 ),
             )
-    if _handoff is not None:
+    if _handoff is not None and root_charts is None:
         _handoff.offer(
             root_map,
             mesh,

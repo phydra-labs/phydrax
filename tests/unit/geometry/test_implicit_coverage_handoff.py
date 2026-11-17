@@ -19,6 +19,7 @@ from phydrax.geometry._global_embedding import GlobalEmbeddingCertificate
 from phydrax.geometry._source_boundary_records import SourceBoundaryChartWitness
 from phydrax.geometry._source_fidelity import certify_source_fidelity
 from phydrax.geometry._source_fidelity_certificate import SourceFidelityCertificate
+from phydrax.geometry.implicit import _source_charts as chart_owner
 from phydrax.geometry.implicit._adaptive_discovery import (
     AdaptiveImplicitBoundarySource,
     AdaptiveImplicitSurface,
@@ -154,6 +155,24 @@ def test_live_handoff_matches_independent_coverage(coverage_case: _CoverageCase)
     assert shared.coverage_method == independent.coverage_method
 
 
+def test_fidelity_does_not_offer_an_explicit_map(coverage_case: _CoverageCase) -> None:
+    case = coverage_case
+    handoff = _ImplicitChartHandoff()
+    fidelity = certify_source_fidelity(
+        case.mesh,
+        case.geometry,
+        case.source,
+        tolerance=case.fidelity.tolerance,
+        maximum_normal_deviation=case.fidelity.maximum_normal_deviation,
+        witness=case.fidelity.witness,
+        root_charts=case.charts,
+        _root_chart_handoff=handoff,
+    )
+    assert fidelity.status == "certified"
+    assert fidelity.certificate_id == case.fidelity.certificate_id
+    assert handoff.root_charts is None
+
+
 def test_fidelity_does_not_offer_an_incomplete_map(
     coverage_case: _CoverageCase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -180,6 +199,39 @@ def test_fidelity_does_not_offer_an_incomplete_map(
     )
     assert fidelity.status == "certified"
     assert handoff.root_charts is None
+    calls: list[int] = []
+    original = chart_owner.prepare_adaptive_implicit_root_charts
+
+    def counted(
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        source: AdaptiveImplicitSourceQuery,
+        witness: SourceBoundaryChartWitness,
+        /,
+        *,
+        frame_id: str | None = None,
+        tolerance: float | None = None,
+        maximum_normal_deviation: float | None = None,
+    ) -> AdaptiveImplicitRootChartMap:
+        calls.append(1)
+        return original(
+            mesh,
+            geometry,
+            source,
+            witness,
+            frame_id=frame_id,
+            tolerance=tolerance,
+            maximum_normal_deviation=maximum_normal_deviation,
+        )
+
+    monkeypatch.setattr(chart_owner, "prepare_adaptive_implicit_root_charts", counted)
+    independent = _coverage(case, case.mesh, case.geometry, case.source, fidelity, None)
+    empty = _coverage(
+        case, case.mesh, case.geometry, case.source, fidelity, handoff.root_charts
+    )
+    assert len(calls) == 2
+    assert independent.status == empty.status == "certified"
+    assert independent.certificate_id == empty.certificate_id
 
 
 @pytest.mark.parametrize(
