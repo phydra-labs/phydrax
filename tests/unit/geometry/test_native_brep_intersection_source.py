@@ -1571,6 +1571,31 @@ def test_affine_trim_incidence_keeps_boundary_unresolved_without_false_exclusion
     np.testing.assert_array_equal(result.boundary, (False,) * 6)
 
 
+def test_curve_trim_refuses_nonfinite_point_realization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry._atlas import TrimDomain
+    from phydrax.geometry.brep import _host_program
+
+    corners = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+    segments = tuple(
+        CurveTrimSegment(
+            LineCurve(first, (last[0] - first[0], last[1] - first[1])), 0.0, 1.0
+        )
+        for first, last in zip(corners, (*corners[1:], corners[0]), strict=True)
+    )
+    domain = TrimDomain(curve_loops=(segments,))
+    query = np.asarray(((0.5, 0.5),), dtype=np.float64)
+    assert bool(domain.classify(query).resolved[0])
+
+    def wrong(program: object, points: np.ndarray) -> np.ndarray:
+        return np.full((points.shape[0], 2), np.nan, dtype=np.float64)
+
+    monkeypatch.setattr(_host_program, "evaluate_host_program", wrong)
+    result = domain.classify(query)
+    assert not bool(result.resolved[0])
+
+
 def test_coaxial_revolution_rim_is_one_closed_branch_with_chart_scale_margins() -> None:
     from phydrax._physical import SpatialCoordinateContract
     from phydrax.geometry.brep import brep_cylinder

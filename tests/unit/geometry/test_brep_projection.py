@@ -572,7 +572,9 @@ def test_straight_revolution_batched_frames_match_scalar_projection() -> None:
     for row, point in enumerate(points):
         direct = projection._project_one(2, face, point, None)
         assert int(result.status[row]) == direct.status
-        np.testing.assert_allclose(result.points[row], direct.point, equal_nan=True)
+        np.testing.assert_allclose(
+            result.points[row], direct.point, atol=1e-14, equal_nan=True
+        )
         np.testing.assert_allclose(result.normals[row], direct.normal, equal_nan=True)
         np.testing.assert_allclose(result.tangents[row], direct.tangents, equal_nan=True)
     larger = _project(projection, np.tile(points, (3, 1)), _FACE, face)
@@ -621,6 +623,51 @@ def test_affine_projection_preparation_preserves_scalar_hits(dimension: Any) -> 
             (prepared.tangents, direct.tangents),
         ):
             np.testing.assert_array_equal(actual, expected)
+
+
+def test_edge_point_batches_match_independent_segment_projection() -> None:
+    model = brep_box((0.0, 0.0, 0.0), (2.0, 2.0, 2.0), coordinate_contract=_CONTRACT)
+    projection = phx.geometry.prepare_brep_projection(model)
+    vertices = np.asarray(model.geometry.vertex_points, dtype=np.float64)
+    first, last = vertices[np.asarray(model.geometry.edge_vertices[0])]
+    direction = last - first
+    perpendicular = np.cross(direction, (1.0, 2.0, 3.0))
+    if np.linalg.norm(perpendicular) == 0:
+        perpendicular = np.cross(direction, (0.0, 1.0, 0.0))
+    parameters = np.asarray((0.2, 0.5, 0.8))
+    expected = first + parameters[:, None] * direction
+    points = expected + perpendicular
+    result = _project(projection, points, _EDGE, 0)
+    repeated = _project(projection, np.tile(points, (3, 1)), _EDGE, 0)
+    np.testing.assert_allclose(result.points, expected, rtol=0, atol=1e-12)
+    for name in ("points", "parameters", "status", "distance_lower_bounds", "residuals"):
+        np.testing.assert_array_equal(
+            np.asarray(getattr(repeated, name))[:3], np.asarray(getattr(result, name))
+        )
+    distance = np.linalg.norm(perpendicular)
+    assert np.all(np.asarray(result.distance_lower_bounds) <= distance)
+    assert np.all(np.asarray(result.residuals) >= distance)
+
+
+def test_edge_point_reference_detects_wrong_native_result(monkeypatch: Any) -> None:
+    from phydrax.geometry.brep import _projection as implementation
+
+    model = brep_box((0.0, 0.0, 0.0), (2.0, 2.0, 2.0), coordinate_contract=_CONTRACT)
+    projection = phx.geometry.prepare_brep_projection(model)
+    vertices = np.asarray(model.geometry.vertex_points, dtype=np.float64)
+    first, last = vertices[np.asarray(model.geometry.edge_vertices[0])]
+    expected = (first + last) / 2
+    original = implementation.evaluate_host_program
+
+    def wrong(program: Any, points: np.ndarray) -> np.ndarray:
+        return original(program, points) + 1.0
+
+    monkeypatch.setattr(implementation, "evaluate_host_program", wrong)
+    result = _project(projection, [expected], _EDGE, 0)
+    assert float(result.residuals[0]) >= np.linalg.norm(
+        np.asarray(result.points[0]) - expected
+    )
+    assert float(result.residuals[0]) > 1.0
 
 
 def test_straight_revolution_ray_carrier_preserves_signed_profile_rate() -> None:

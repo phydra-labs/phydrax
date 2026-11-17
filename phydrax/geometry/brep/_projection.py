@@ -31,9 +31,11 @@ from ...linalg._exact import (
 from ...linalg._hermitian_spectral import fraction_sqrt_interval
 from ...typing import checked
 from .._atlas import _curve_loops_point_state, TrimEnclosures
+from .._interval_enclosure import PreparedIntervalFunction
 from .._planar_embedding import PlanarEmbedding
 from .._rational import fraction_endpoint, rational_cross, rational_dot, rational_vector
 from .._source_boundary_records import SourceBoundaryDistance
+from ._host_program import evaluate_host_program, prepare_host_program
 from ._intersection_projection import _IntersectionPreparation, _prepare_intersection
 from ._model import BRepModel
 from ._patches import (
@@ -135,6 +137,12 @@ class _ProjectionPreparation:
     edges: dict[int, _PreparedEdge] = field(default_factory=dict)
     plane_jacobians: dict[int, np.ndarray] = field(default_factory=dict)
     line_derivatives: dict[int, np.ndarray] = field(default_factory=dict)
+    curve_programs: dict[int, PreparedIntervalFunction | None] = field(
+        default_factory=dict
+    )
+    patch_programs: dict[int, PreparedIntervalFunction | None] = field(
+        default_factory=dict
+    )
     intersections: dict[int, _IntersectionPreparation | None] = field(
         default_factory=dict
     )
@@ -178,6 +186,7 @@ class _Hit:
     piece_id: tuple[object, ...] | None = None
     root_id: tuple[object, ...] | None = None
     pending_frame: bool = False
+    pending_point: bool = False
 
 
 def _distance_bounds(first: np.ndarray, second: np.ndarray, /) -> tuple[float, float]:
@@ -905,6 +914,7 @@ def _line_curve_hit(
     frame: bool = True,
     distance_threshold: float | None = None,
     preparation: _ProjectionPreparation | None = None,
+    defer_point: bool = False,
 ) -> _Hit:
     geometry = model.geometry
     carrier = geometry.edge_curves[edge]
@@ -942,6 +952,7 @@ def _line_curve_hit(
             preparation.edges[edge] = edge_data
     first, last = edge_data.ranges
     spline_projection = None
+    pending_point = False
     if isinstance(curve, (BSplineCurve, IntersectionCurve)):
         if isinstance(curve, IntersectionCurve):
             from ._intersection_projection import project_intersection_curve
@@ -1008,7 +1019,12 @@ def _line_curve_hit(
         if squared <= np.finfo(np.float64).tiny:
             return _unresolved(1, edge, path)
         parameter = float(np.clip((point - origin) @ direction / squared, first, last))
-        closest = np.asarray(curve.evaluate(jnp.asarray(parameter)), dtype=np.float64)
+        pending_point = defer_point
+        closest = (
+            _NAN3.copy()
+            if pending_point
+            else np.asarray(curve.evaluate(jnp.asarray(parameter)), dtype=np.float64)
+        )
         segment = _segment_distance(curve, point, (first, last))
         if segment is None:
             return _unresolved(1, edge, path)
@@ -1048,7 +1064,12 @@ def _line_curve_hit(
             parameter = endpoints[nearest]
             closest = values[nearest]
         else:
-            closest = np.asarray(curve.evaluate(jnp.asarray(parameter)), dtype=np.float64)
+            pending_point = defer_point
+            closest = (
+                _NAN3.copy()
+                if pending_point
+                else np.asarray(curve.evaluate(jnp.asarray(parameter)), dtype=np.float64)
+            )
         arc = _arc_distance(curve, point, (first, last, parameter))
         if arc is None:
             return _unresolved(1, edge, path)
@@ -1088,6 +1109,7 @@ def _line_curve_hit(
         path,
         None if spline_projection is None else spline_projection.piece_id,
         None if spline_projection is None else spline_projection.root_id,
+        pending_point=pending_point,
     )
 
 
@@ -5369,6 +5391,7 @@ class NativeBRepProjection(AbstractBRepProjection):
         distance_threshold: float | None = None,
         angle_bounds: dict[int, tuple[float, float] | None] | None = None,
         defer_frame: bool = False,
+        batch_points: bool = False,
         preparation: _ProjectionPreparation | None = None,
         _occurrence: _Occurrence | None = None,
     ) -> _Hit:
@@ -5408,6 +5431,21 @@ class NativeBRepProjection(AbstractBRepProjection):
                     occurrence.path,
                 )
             elif dimension == BRepEntityDimension.EDGE:
+                defer_point = False
+                carrier = self.model.geometry.edge_curves[index]
+                if (
+                    batch_points
+                    and preparation is not None
+                    and len(targets) == 1
+                    and carrier >= 0
+                ):
+                    curve = self.model.geometry.curves[carrier]
+                    if isinstance(curve, (LineCurve, ExactLineCurve, CircleCurve)):
+                        if carrier not in preparation.curve_programs:
+                            preparation.curve_programs[carrier] = prepare_host_program(
+                                lambda value: curve.evaluate(value[0]), 1
+                            )
+                        defer_point = preparation.curve_programs[carrier] is not None
                 hit = _line_curve_hit(
                     self.model,
                     index,
@@ -5416,6 +5454,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                     self.policy,
                     distance_threshold=distance_threshold,
                     preparation=preparation,
+                    defer_point=defer_point,
                 )
             elif dimension == BRepEntityDimension.FACE:
                 prepared = None
@@ -5485,6 +5524,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                     hit.piece_id,
                     hit.root_id,
                     hit.pending_frame,
+                    hit.pending_point,
                 )
             hits.append(hit)
         if len(hits) == 1:
@@ -5671,6 +5711,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                     boxes=boxes,
                     angle_bounds=angle_bounds,
                     preparation=preparation,
+                    batch_points=True,
                     defer_frame=(
                         isinstance(
                             patch, (ConePatch, CylinderPatch, SpherePatch, TorusPatch)
@@ -5682,6 +5723,46 @@ class NativeBRepProjection(AbstractBRepProjection):
                     ),
                 )
             )
+        pending_points: dict[tuple[int, int], list[int]] = {}
+        for row, hit in enumerate(hits):
+            if hit.pending_point:
+                carrier = self.model.geometry.edge_curves[hit.index]
+                pending_points.setdefault((1, carrier), []).append(row)
+            elif hit.pending_frame:
+                face = hit.index
+                if face not in preparation.patch_programs:
+                    preparation.patch_programs[face] = prepare_host_program(
+                        self.model.patches[face].evaluate, 2
+                    )
+                if preparation.patch_programs[face] is not None:
+                    pending_points.setdefault((2, face), []).append(row)
+        for (dimension, source), selected in pending_points.items():
+            program = (
+                preparation.curve_programs[source]
+                if dimension == 1
+                else preparation.patch_programs[source]
+            )
+            if program is None:
+                raise RuntimeError("Missing prepared projection point program.")
+            parameters = np.asarray(
+                [hits[row].parameters[:dimension] for row in selected],
+                dtype=np.float64,
+            )
+            values = evaluate_host_program(program, parameters)
+            for row, value in zip(selected, values, strict=True):
+                value = np.asarray(value, dtype=np.float64)
+                hit = hits[row]
+                occurrence = self._target_occurrences(dimension, hit.index, hit.path)[0]
+                if occurrence.path:
+                    value = np.asarray(
+                        occurrence.rotation, dtype=np.float64
+                    ) @ value + np.asarray(occurrence.translation, dtype=np.float64)
+                hits[row] = replace(
+                    hit,
+                    point=value,
+                    upper=max(hit.upper, _distance_bounds(world[row], value)[1]),
+                    pending_point=False,
+                )
         # The source map and its derivative program are shared per patch;
         # evaluate bounded query batches rather than tracing one JAX derivative
         # for every requested point. Occurrence transforms remain per hit.

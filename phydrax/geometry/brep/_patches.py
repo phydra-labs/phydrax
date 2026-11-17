@@ -42,7 +42,7 @@ from ...discretization._exact_algebraic_geometry import (
     rational_coefficient,
 )
 from ...typing import ConvertibleToArray, Dim, Float64, Scalar
-from .._interval_enclosure import Interval
+from .._interval_enclosure import Interval, PreparedIntervalFunction
 
 
 type _ExactSphereRevolutionWitness = tuple[
@@ -6140,18 +6140,30 @@ def surface_differential(patch: AbstractSurfacePatch, parameters: Array, /) -> A
 
 
 def surface_differential_rows(
-    patch: AbstractSurfacePatch, parameters: np.ndarray, /
+    patch: AbstractSurfacePatch,
+    parameters: np.ndarray,
+    /,
+    *,
+    preparation: Callable[[AbstractSurfacePatch], PreparedIntervalFunction | None]
+    | None = None,
 ) -> np.ndarray:
-    """Host method: `surface_differential` at concrete UV rows, bucketed shapes.
+    """Evaluate concrete UV rows using a native interval program when supported.
 
-    Queries reach the compiled Jacobian programs only at the shapes of
-    `bucketed_query_rows`, so a computation issuing many differently sized
-    queries compiles a bounded set of executables.
+    Degenerate interval boxes provide deterministic lower-endpoint representatives.
+    Unsupported programs retain the bucketed JAX evaluation.
     """
+    from ._host_program import evaluate_host_program, prepare_host_program
+
     host = np.asarray(parameters, dtype=np.float64)
-    values = bucketed_query_rows(
-        jax.vmap(jax.jacfwd(patch.evaluate)), host.reshape((-1, 2))
+    rows = host.reshape((-1, 2))
+    derivative = jax.jacfwd(patch.evaluate)
+    program = (
+        prepare_host_program(derivative, 2) if preparation is None else preparation(patch)
     )
+    if program is None:
+        values = bucketed_query_rows(jax.vmap(derivative), rows)
+    else:
+        values = evaluate_host_program(program, rows)
     return values.reshape((*host.shape[:-1], 3, 2))
 
 

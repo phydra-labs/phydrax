@@ -1404,6 +1404,24 @@ def test_meshing_domain_boundary_cover_and_normal_turn_are_continuous() -> None:
     assert 0.0 <= turn[0] < 1.0e-10
 
 
+def test_normal_turn_bound_refuses_wrong_center_jacobian(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry.brep import _host_program
+
+    domain = _square_domain()
+    charts = np.asarray(
+        (((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)),),
+        dtype=np.float64,
+    )
+
+    def wrong(program: object, points: np.ndarray) -> np.ndarray:
+        return np.zeros((points.shape[0], 3, 2), dtype=np.float64)
+
+    monkeypatch.setattr(_host_program, "evaluate_host_program", wrong)
+    assert np.isinf(domain.normal_turn_bounds(0, charts)[0])
+
+
 def test_sphere_adaptive_interpolation_bound_refines_wide_polar_chart() -> None:
     model = brep_sphere(
         1.0,
