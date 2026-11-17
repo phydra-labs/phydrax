@@ -4438,16 +4438,7 @@ def _surface_jacobian_bounds(
         surface
     ) and not _has_analytic_source_program(surface):
         return None
-    chart_lower = tuple(min(point[axis] for point in uv_triangle) for axis in range(2))
-    chart_upper = tuple(max(point[axis] for point in uv_triangle) for axis in range(2))
-    box_lower = np.asarray(
-        tuple(fraction_endpoint(value, upper=False) for value in chart_lower),
-        dtype=np.float64,
-    )
-    box_upper = np.asarray(
-        tuple(fraction_endpoint(value, upper=True) for value in chart_upper),
-        dtype=np.float64,
-    )
+    box_lower, box_upper = _surface_jacobian_box(uv_triangle)
     if np.any(~np.isfinite(box_lower)) or np.any(~np.isfinite(box_upper)):
         return None
     jacobian = preparation.derivative_program(surface, 1)
@@ -4455,6 +4446,21 @@ def _surface_jacobian_bounds(
     if not np.all(np.isfinite(low)) or not np.all(np.isfinite(high)):
         return None
     return np.asarray(low[0], dtype=np.float64), np.asarray(high[0], dtype=np.float64)
+
+
+def _surface_jacobian_box(uv_triangle: Triangle2, /) -> tuple[np.ndarray, np.ndarray]:
+    chart_lower = tuple(min(point[axis] for point in uv_triangle) for axis in range(2))
+    chart_upper = tuple(max(point[axis] for point in uv_triangle) for axis in range(2))
+    return (
+        np.asarray(
+            tuple(fraction_endpoint(value, upper=False) for value in chart_lower),
+            dtype=np.float64,
+        ),
+        np.asarray(
+            tuple(fraction_endpoint(value, upper=True) for value in chart_upper),
+            dtype=np.float64,
+        ),
+    )
 
 
 type _PatchDerivativeSource = (
@@ -5200,15 +5206,9 @@ def _normal_deviation_for_cell(
     return lower, upper
 
 
-def _curved_trim_lens_cap(
-    surface: AbstractSurfacePatch,
-    lens: CurvedTrimLens,
-    preparation: SourcePreparation,
-    /,
-) -> tuple[Fraction, Point2, Point2]:
-    """Map a chart lens bound to physical distance using a Jacobian enclosure."""
-    if lens.parameter_bound == 0:
-        return Fraction(0), lens.lower, lens.upper
+def _curved_trim_lens_box(
+    surface: AbstractSurfacePatch, lens: CurvedTrimLens, /
+) -> tuple[Point2, Point2] | None:
     widths = tuple(
         lens.parameter_bound if lens.lower[axis] == lens.upper[axis] else 0
         for axis in range(2)
@@ -5226,13 +5226,37 @@ def _curved_trim_lens_cap(
             min(upper[1], Fraction.from_float(float(domain[1][1]))),
         )
     if lower[0] >= upper[0] or lower[1] >= upper[1]:
+        return None
+    return lower, upper
+
+
+def _curved_trim_lens_cap(
+    surface: AbstractSurfacePatch,
+    lens: CurvedTrimLens,
+    preparation: SourcePreparation,
+    /,
+    *,
+    jacobians: tuple[tuple[np.ndarray, np.ndarray] | None, ...] | None = None,
+) -> tuple[Fraction, Point2, Point2]:
+    """Map a chart lens bound to physical distance using a Jacobian enclosure."""
+    if lens.parameter_bound == 0:
+        return Fraction(0), lens.lower, lens.upper
+    box = _curved_trim_lens_box(surface, lens)
+    if box is None:
         raise ValueError("A curved trim lens leaves the source parameter domain.")
+    lower, upper = box
     norm_squared = Fraction(0)
-    for triangle in (
-        (lower, (upper[0], lower[1]), upper),
-        (lower, upper, (lower[0], upper[1])),
+    for index, triangle in enumerate(
+        (
+            (lower, (upper[0], lower[1]), upper),
+            (lower, upper, (lower[0], upper[1])),
+        )
     ):
-        bounds = _surface_jacobian_bounds(surface, triangle, preparation)
+        bounds = (
+            _surface_jacobian_bounds(surface, triangle, preparation)
+            if jacobians is None
+            else jacobians[index]
+        )
         if bounds is None:
             raise ValueError("A curved trim lens has no surface Jacobian enclosure.")
         magnitude = np.maximum(np.abs(bounds[0]), np.abs(bounds[1]))
@@ -5255,10 +5279,74 @@ def _curved_trim_lens_caps(
 ) -> dict[int, Fraction]:
     """Bound the physical distance a curved-trim lens adds to each target cell."""
     caps: dict[int, Fraction] = {}
+    from ._source_interpolation import (
+        _has_analytic_source_program,
+        _has_unexpanded_exact_surface_carrier,
+        exact_surface_coordinate_expressions,
+    )
+
+    batched: dict[int, tuple[tuple[np.ndarray, np.ndarray] | None, ...]] = {}
+    if (
+        any(lens.parameter_bound != 0 for lens in lenses)
+        and exact_surface_coordinate_expressions(surface) is None
+        and preparation.surface_spans(surface) is None
+        and (
+            not _has_unexpanded_exact_surface_carrier(surface)
+            or _has_analytic_source_program(surface)
+        )
+    ):
+        rows: list[tuple[int, np.ndarray, np.ndarray]] = []
+        for index, lens in enumerate(lenses):
+            if lens.parameter_bound == 0:
+                continue
+            box = _curved_trim_lens_box(surface, lens)
+            if box is None:
+                break
+            lower, upper = box
+            triangles = (
+                (lower, (upper[0], lower[1]), upper),
+                (lower, upper, (lower[0], upper[1])),
+            )
+            for triangle in triangles:
+                box_lower, box_upper = _surface_jacobian_box(triangle)
+                rows.append((index, box_lower, box_upper))
+        finite_rows = [
+            (index, lower, upper)
+            for index, lower, upper in rows
+            if np.all(np.isfinite(lower)) and np.all(np.isfinite(upper))
+        ]
+        results: dict[int, list[tuple[np.ndarray, np.ndarray] | None]] = {
+            index: [] for index, _, _ in rows
+        }
+        evaluated: list[tuple[np.ndarray, np.ndarray] | None] = []
+        if finite_rows:
+            low, high = preparation.derivative_program(surface, 1).evaluate(
+                np.stack([lower for _, lower, _ in finite_rows]),
+                np.stack([upper for _, _, upper in finite_rows]),
+            )
+            evaluated = [
+                (row_low, row_high)
+                if np.all(np.isfinite(row_low)) and np.all(np.isfinite(row_high))
+                else None
+                for row_low, row_high in zip(low, high, strict=True)
+            ]
+        evaluated_rows = iter(evaluated)
+        for index, lower, upper in rows:
+            result = (
+                next(evaluated_rows)
+                if np.all(np.isfinite(lower)) and np.all(np.isfinite(upper))
+                else None
+            )
+            results[index].append(result)
+        batched = {index: tuple(values) for index, values in results.items()}
     active = tuple(
         (cap, lower, upper)
-        for lens in lenses
-        for cap, lower, upper in (_curved_trim_lens_cap(surface, lens, preparation),)
+        for index, lens in enumerate(lenses)
+        for cap, lower, upper in (
+            _curved_trim_lens_cap(
+                surface, lens, preparation, jacobians=batched.get(index)
+            ),
+        )
         if cap
     )
     if not active or not chart_rows:

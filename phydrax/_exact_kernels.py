@@ -17,16 +17,17 @@ from __future__ import annotations
 import ctypes
 import os
 from array import array
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import IntEnum
 from fractions import Fraction
+from functools import cache
 from math import comb, lcm, prod
 from typing import cast, get_args, Literal
 
 import numpy as np
 
-from ._meshcore import _raise_for_call, load_meshcore, MeshcoreStatus
+from ._meshcore import _raise_for_call, load_meshcore, MeshcoreLibrary, MeshcoreStatus
 from .typing import parse
 
 
@@ -102,6 +103,35 @@ def _pointer(array: np.ndarray, /) -> int:
 
 
 # ------------------------------------------------------ interval restriction
+@cache
+def _interval_symbol(library: MeshcoreLibrary, name: str, /) -> Callable[..., int]:
+    return library[name]
+
+
+@cache
+def _interval_elementary_code(function: str, /) -> int:
+    return _ELEMENTARY_CODES[parse(function, ElementaryFunction, "function")]
+
+
+@cache
+def _interval_default_workers(configured: str, /) -> int:
+    return int(configured)
+
+
+def _interval_workers(parallelism: int | None, /) -> int:
+    if parallelism is not None:
+        return _workers(parallelism)
+    configured = os.environ.get(_PARALLELISM_ENVIRONMENT, "").strip()
+    if not configured:
+        return 1
+    if (
+        len(configured) <= 8
+        and configured.isascii()
+        and configured.isdecimal()
+        and configured.strip("0")
+    ):
+        return _interval_default_workers(configured)
+    return _workers(None)
 
 
 def float64_interval_product(
@@ -126,7 +156,7 @@ def float64_interval_product(
     )
     lower = np.empty(shape, dtype=np.float64)
     upper = np.empty(shape, dtype=np.float64)
-    status = load_meshcore()["phx_mc_interval_multiply"](
+    status = _interval_symbol(load_meshcore(), "phx_mc_interval_multiply")(
         lower.size,
         *(_pointer(value) for value in endpoints),
         _pointer(lower),
@@ -158,7 +188,7 @@ def float64_interval_sum(
     )
     lower = np.empty(shape, dtype=np.float64)
     upper = np.empty(shape, dtype=np.float64)
-    status = load_meshcore()["phx_mc_interval_sum"](
+    status = _interval_symbol(load_meshcore(), "phx_mc_interval_sum")(
         lower.size,
         *(_pointer(value) for value in endpoints),
         int(subtract),
@@ -190,13 +220,17 @@ def float64_interval_elementary(
 
     Inputs are converted to contiguous float64 buffers, as for the product.
     """
-    selected = parse(function, ElementaryFunction, "function")
-    workers = _workers(parallelism)
+    code = (
+        _interval_elementary_code(function)
+        if type(function) is str
+        else _ELEMENTARY_CODES[parse(function, ElementaryFunction, "function")]
+    )
+    workers = _interval_workers(parallelism)
     endpoints, shape = _aligned_endpoints(lower, upper)
     out_lower = np.empty(shape, dtype=np.float64)
     out_upper = np.empty(shape, dtype=np.float64)
-    status = load_meshcore()["phx_mc_interval_elementary"](
-        _ELEMENTARY_CODES[selected],
+    status = _interval_symbol(load_meshcore(), "phx_mc_interval_elementary")(
+        code,
         out_lower.size,
         *(_pointer(value) for value in endpoints),
         _pointer(out_lower),
@@ -210,12 +244,20 @@ def float64_interval_elementary(
 def _aligned_endpoints(
     *endpoints: np.ndarray | np.generic,
 ) -> tuple[list[np.ndarray], tuple[int, ...]]:
-    converted = tuple(np.asarray(value, dtype=np.float64) for value in endpoints)
+    converted = tuple(
+        value
+        if type(value) is np.ndarray and value.dtype == np.float64
+        else np.asarray(value, dtype=np.float64)
+        for value in endpoints
+    )
     shape = converted[0].shape
     if any(value.shape != shape for value in converted):
         converted = tuple(np.broadcast_arrays(*converted))
         shape = converted[0].shape
-    return [np.ascontiguousarray(value) for value in converted], shape
+    return [
+        value if value.flags.c_contiguous and value.ndim else np.ascontiguousarray(value)
+        for value in converted
+    ], shape
 
 
 def interval_bernstein_restrict(
