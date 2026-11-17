@@ -446,9 +446,9 @@ def _cross2(
     )
     (ax, ay), (bx, by), (cx, cy) = vertices
     da, db, dc = denominators
-    numerator = (bx * da - ax * db) * (cy * da - ay * dc) - (
-        by * da - ay * db
-    ) * (cx * da - ax * dc)
+    numerator = (bx * da - ax * db) * (cy * da - ay * dc) - (by * da - ay * db) * (
+        cx * da - ax * dc
+    )
     return Fraction(numerator, da * da * db * dc)
 
 

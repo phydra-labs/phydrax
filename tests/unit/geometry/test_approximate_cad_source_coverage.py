@@ -60,13 +60,16 @@ _PhysicalTriangle3 = tuple[_Point3, _Point3, _Point3]
 def _reference_area(polygon: tuple[_Point2, ...]) -> Fraction:
     if len(polygon) < 3:
         return Fraction(0)
-    return sum(
-        (
-            a[0] * b[1] - a[1] * b[0]
-            for a, b in zip(polygon, (*polygon[1:], polygon[0]), strict=True)
-        ),
-        Fraction(0),
-    ) / 2
+    return (
+        sum(
+            (
+                a[0] * b[1] - a[1] * b[0]
+                for a, b in zip(polygon, (*polygon[1:], polygon[0]), strict=True)
+            ),
+            Fraction(0),
+        )
+        / 2
+    )
 
 
 def _reference_intersection(subject: _Triangle2, clip: _Triangle2) -> Fraction:
