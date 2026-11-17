@@ -23,7 +23,7 @@ from ..discretization._cell_mesh import CellMesh
 from ..discretization._coordinate_enclosure import coordinate_map_expressions, ExactScalar
 from ..typing import Dim, HostInt64, parse
 from ._domain_coverage import PiecewiseLinearDomain
-from ._mapped_coverage import integrate_jacobian
+from ._mapped_coverage import integrate_jacobians
 from ._source_identity import source_entity_id
 
 
@@ -345,13 +345,15 @@ class MappedReferenceDomain(StrictModule, NonTrainableState):
                 raise ValueError(
                     "MappedReferenceDomain root routes must align with every cell."
                 )
-            for row_index in range(route_rows.shape[0]):
-                row = route_rows[row_index]
-                local = tuple(coefficients[int(index)] for index in row)
-                coordinates = coordinate_map_expressions(
-                    element, local, cell_row=row_index
+            maps = (
+                coordinate_map_expressions(
+                    element,
+                    tuple(coefficients[int(index)] for index in route_rows[row_index]),
+                    cell_row=row_index,
                 )
-                measure = integrate_jacobian(coordinates, block.cell_kind)
+                for row_index in range(route_rows.shape[0])
+            )
+            for measure in integrate_jacobians(maps, block.cell_kind):
                 if measure <= 0:
                     raise ValueError(
                         "MappedReferenceDomain root maps must have positive oriented exact measure."

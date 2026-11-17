@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+from collections.abc import Sequence
 from fractions import Fraction
 
 import numpy as np
@@ -12,7 +14,9 @@ from phydrax.discretization._cell_geometry import (
     PerCellRestrictedCellGeometryElement,
 )
 from phydrax.discretization._coordinate_enclosure import (
+    BernsteinDomain,
     ExpressionInput,
+    Polynomial,
 )
 from phydrax.discretization._mapped_geometry_measure import (
     certified_cell_measures,
@@ -209,3 +213,142 @@ def test_relative_measure_budget_does_not_change_polynomial_moments() -> None:
     np.testing.assert_array_equal(before.measures, after.measures)
     np.testing.assert_array_equal(before.first_moments, after.first_moments)
     np.testing.assert_array_equal(before.second_moments, after.second_moments)
+
+
+def _polynomial_measure_batch(
+    cell_kind: str, degree: int, seed: int
+) -> tuple[CellMesh, CellGeometrySpec, tuple[Fraction, ...]]:
+    source = lagrange_element(cell_kind, 1)
+    nodes = np.asarray(source.reference_nodes, dtype=np.float64)
+    dimension = nodes.shape[1]
+    random = np.random.default_rng(seed)
+    charts: list[tuple[ExpressionInput, ...]] = []
+    expected: list[Fraction] = []
+    for _ in range(4):
+        linear = Fraction(int(random.integers(4, 7)), 8)
+        nonlinear = (
+            Fraction(int(random.integers(1, 4)), 32) if degree > 1 else Fraction(0)
+        )
+        x = (1,) + (0,) * (dimension - 1)
+        power = (degree,) + (0,) * (dimension - 1)
+        first: ExpressionInput = {x: linear, **({power: nonlinear} if degree > 1 else {})}
+        chart = (first,) + tuple(
+            {tuple(int(axis == index) for axis in range(dimension)): Fraction(1)}
+            for index in range(1, dimension)
+        )
+        charts.append(chart)
+        if cell_kind in ("triangle", "tetrahedron"):
+            expected.append(
+                linear / math.factorial(dimension)
+                + nonlinear
+                * math.factorial(degree)
+                / math.factorial(degree - 1 + dimension)
+            )
+        else:
+            expected.append(linear + nonlinear)
+    ids = tuple(range(1, len(charts) + 1))
+    element = PerCellRestrictedCellGeometryElement(
+        source, cell_kind, ids, (1,) * len(charts), tuple(charts)
+    )
+    route = np.tile(np.arange(len(nodes), dtype=np.int64), (len(charts), 1))
+    mesh_route = np.arange(len(nodes) * len(charts), dtype=np.int64).reshape(
+        len(charts), len(nodes)
+    )
+    mesh = CellMesh(
+        np.tile(nodes, (len(charts), 1)),
+        (CellBlock("cells", cell_kind, mesh_route, global_ids=np.asarray(ids)),),
+    )
+    geometry = CellGeometrySpec({"cells": element}, {"cells": route}, nodes)
+    return mesh, geometry, tuple(expected)
+
+
+def _assert_exact_measure_batch(
+    measures: mapped_measure.MappedCellMeasures, expected: tuple[Fraction, ...]
+) -> None:
+    assert measures.exact
+    assert len(measures.values) == len(expected)
+    for value, error, reference in zip(
+        measures.values, measures.absolute_errors, expected, strict=True
+    ):
+        assert float(value) == float(reference)
+        assert abs(Fraction(float(value)) - reference) <= Fraction(float(error))
+
+
+@pytest.mark.parametrize(
+    "cell_kind", ("triangle", "quadrilateral", "tetrahedron", "hexahedron")
+)
+@pytest.mark.parametrize("degree", (1, 2, 3))
+def test_random_polynomial_measure_batches_against_exact_moments(
+    cell_kind: str, degree: int
+) -> None:
+    mesh, geometry, expected = _polynomial_measure_batch(cell_kind, degree, 810 + degree)
+    _assert_exact_measure_batch(certified_cell_measures(mesh, geometry), expected)
+
+
+def test_measure_reference_detects_corrupted_native_numerator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mesh, geometry, expected = _polynomial_measure_batch("triangle", 2, 819)
+    native_integrals = mapped_measure.exact_jacobian_integrals
+
+    def corrupt(
+        jacobians: Sequence[Sequence[Sequence[Polynomial]]],
+        domain: BernsteinDomain,
+        dimension: int,
+        /,
+        *,
+        parallelism: int | None = None,
+    ) -> list[Fraction | None]:
+        results = native_integrals(jacobians, domain, dimension, parallelism=parallelism)
+        exact_values = (
+            reference if value is None else value
+            for value, reference in zip(results, expected, strict=True)
+        )
+        return [
+            Fraction(value.numerator + 1, value.denominator) for value in exact_values
+        ]
+
+    monkeypatch.setattr(mapped_measure, "exact_jacobian_integrals", corrupt)
+    with pytest.raises(AssertionError):
+        _assert_exact_measure_batch(certified_cell_measures(mesh, geometry), expected)
+
+
+def test_native_measure_refusal_retains_exact_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mesh, geometry, expected = _polynomial_measure_batch("tetrahedron", 3, 822)
+
+    def refuse(
+        jacobians: Sequence[Sequence[Sequence[Polynomial]]],
+        domain: BernsteinDomain,
+        dimension: int,
+        /,
+        *,
+        parallelism: int | None = None,
+    ) -> list[Fraction | None]:
+        return [None] * len(jacobians)
+
+    monkeypatch.setattr(mapped_measure, "exact_jacobian_integrals", refuse)
+    _assert_exact_measure_batch(certified_cell_measures(mesh, geometry), expected)
+
+
+@pytest.mark.parametrize(
+    "linear", (Fraction(-1), Fraction(0)), ids=("inverted", "degenerate")
+)
+def test_invalid_polynomial_measure_is_refused(linear: Fraction) -> None:
+    source = lagrange_element("triangle", 1)
+    nodes = np.asarray(source.reference_nodes, dtype=np.float64)
+    chart: tuple[ExpressionInput, ...] = (
+        {(1, 0): linear},
+        {(0, 1): Fraction(1)},
+    )
+    element = PerCellRestrictedCellGeometryElement(
+        source, "triangle", (1,), (1,), (chart,)
+    )
+    route = np.arange(len(nodes), dtype=np.int64)[None, :]
+    mesh = CellMesh(
+        nodes, (CellBlock("cells", "triangle", route, global_ids=np.asarray((1,))),)
+    )
+    geometry = CellGeometrySpec({"cells": element}, {"cells": route}, nodes)
+    with pytest.raises(ValueError, match="certified valid"):
+        certified_cell_measures(mesh, geometry)

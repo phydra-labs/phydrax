@@ -8,6 +8,7 @@ from typing import Literal, NamedTuple, Sequence
 
 import numpy as np
 
+from .._exact_polynomial_kernels import exact_jacobian_integrals
 from .._validation import finite_real_scalar, positive_finite_float
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
 from ..typing import checked
@@ -1222,6 +1223,40 @@ def certified_cell_moments(
     )
 
 
+def _rational_polynomial_jacobian(
+    coordinates: tuple[Expression, ...], dimension: int, /
+) -> tuple[tuple[Polynomial, ...], ...] | None:
+    polynomials: list[Polynomial] = []
+    for coordinate in coordinates:
+        if isinstance(coordinate, RationalPolynomial):
+            denominator = coordinate.denominator.get((0,) * dimension)
+            if len(coordinate.denominator) != 1 or not isinstance(denominator, Fraction):
+                return None
+            if not all(
+                isinstance(value, Fraction) for value in coordinate.numerator.values()
+            ):
+                return None
+            polynomial = {
+                exponent: value / denominator
+                for exponent, value in coordinate.numerator.items()
+            }
+        else:
+            if not all(isinstance(value, Fraction) for value in coordinate.values()):
+                return None
+            polynomial = coordinate
+        polynomials.append(polynomial)
+    rows: list[tuple[Polynomial, ...]] = []
+    for polynomial in polynomials:
+        row: list[Polynomial] = []
+        for axis in range(dimension):
+            entry = derivative(polynomial, axis)
+            if isinstance(entry, RationalPolynomial):
+                raise RuntimeError("Polynomial derivative became rational.")
+            row.append(entry)
+        rows.append(tuple(row))
+    return tuple(rows)
+
+
 @checked
 def certified_cell_measures(
     mesh: CellMesh,
@@ -1270,14 +1305,51 @@ def certified_cell_measures(
             for exponent, coefficient in sorted(polynomial.items())
         )
 
+    pending: list[tuple[int, tuple[tuple[Polynomial, ...], ...], str]] = []
+    pending_domain: BernsteinDomain | None = None
+    pending_dimension = 0
+
+    def publish_pending() -> None:
+        if not pending:
+            return
+        if pending_domain is None:
+            raise RuntimeError("Missing reference domain for polynomial measures.")
+        integrals = exact_jacobian_integrals(
+            [jacobian for _, jacobian, _ in pending],
+            pending_domain,
+            pending_dimension,
+        )
+        for (row, jacobian, cell_kind), integral in zip(pending, integrals, strict=True):
+            if integral is None:
+                determinant = _determinant(jacobian, pending_dimension)
+                if isinstance(determinant, RationalPolynomial):
+                    raise RuntimeError("Polynomial Jacobian determinant became rational.")
+                integral = _polynomial_integral(determinant, cell_kind)
+            values[row], errors[row] = _publish_integral(integral)
+        pending.clear()
+
     for flattened_row, (scalar, coordinates) in enumerate(
         _coordinate_expression_rows(
             resolved_elements, resolved_routes, source_bank, cells
         )
     ):
         dimension = scalar.topological_dimension
+        ambient_dimension = len(coordinates)
+        polynomial_jacobian = (
+            _rational_polynomial_jacobian(coordinates, dimension)
+            if ambient_dimension == dimension and scalar.cell_kind != "pyramid"
+            else None
+        )
+        if polynomial_jacobian is not None:
+            domain = bernstein_reference_domain(scalar.cell_kind)
+            if pending and (domain != pending_domain or dimension != pending_dimension):
+                publish_pending()
+            pending_domain = domain
+            pending_dimension = dimension
+            pending.append((flattened_row, polynomial_jacobian, scalar.cell_kind))
+            continue
+        publish_pending()
         jacobian = _coordinate_jacobian(coordinates, dimension)
-        ambient_dimension = len(jacobian)
         if ambient_dimension == dimension:
             integral = _cancel_coordinate_factors(
                 _determinant(jacobian, dimension), coordinates, dimension
@@ -1327,6 +1399,7 @@ def certified_cell_measures(
             raise ValueError(
                 "Mapped cell measures require volume maps or embedded curve/surface maps."
             )
+    publish_pending()
     if (
         np.any(values <= errors)
         or np.any(~np.isfinite(values))
