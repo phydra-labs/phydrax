@@ -851,8 +851,15 @@
   can change in their last digits, and inputs at a threshold can change from
   certified to unresolved.
 - Simplicial locator Bernstein conversions use exact rational table
-  preparation and include table-rounding error in their boxes; locator
-  tabulation and custom degree metadata remain separate limitations.
+  preparation on nodes of one dyadic barycentric lattice and include the
+  table-rounding error in their boxes; the previous table came from a
+  floating-point solve whose error was not bounded. A conversion plan is
+  admitted before it is built and refused with `MemoryBudgetError` beyond
+  dimension 8, degree 16 on an axis, 128 rows of an exact simplex or prism
+  system (triangles above degree 14, tetrahedra above degree 7) or 16 MiB.
+  Locator tabulation error and custom degree metadata remain separate
+  limitations. The unused numerical polynomial route of cell validity, which
+  shared that table, is removed.
 - On x86-64 with FMA a `NewtonKrylov` step could be refused with
   `LINEAR_SOLVE_FAILED` although its linear solve had converged. The compiler
   evaluated the linear residual in two fused kernels and contracted only one
