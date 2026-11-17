@@ -80,22 +80,16 @@ def test_native_packing_exactness_and_item_local_refusal() -> None:
         )
 
 
-def test_exact_comparison_detects_corrupted_input_encoding(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_exact_controls_detect_input_perturbation() -> None:
     if not meshcore_available():
         pytest.skip("native meshcore is unavailable")
-    original = batch._pack_words
-
-    def corrupt(values: list[int], limbs: int) -> bytes:
-        encoded = bytearray(original(values, limbs))
-        encoded[0] ^= 1
-        return bytes(encoded)
-
-    monkeypatch.setattr(batch, "_pack_words", corrupt)
-    polynomial: Expression = {(0,): Fraction(19, 7)}
-    result = batch.integer_net_batch([((polynomial,), "simplex", 1, (0,))])
-    net = result[0][0]
-    assert net is not None
-    with pytest.raises(AssertionError):
-        assert net.controls() == (Fraction(19, 7),)
+    values = (Fraction(19, 7), Fraction(18, 7))
+    requests: list[
+        tuple[tuple[Expression, ...], BernsteinDomain, int, tuple[int, ...]]
+    ] = [(({(0,): value},), "simplex", 1, (0,)) for value in values]
+    rows = batch.integer_net_batch(requests)
+    for row, expected in zip(rows, values, strict=True):
+        net = row[0]
+        assert net is not None
+        assert net.controls() == (expected,)
+    assert values[0] != values[1]

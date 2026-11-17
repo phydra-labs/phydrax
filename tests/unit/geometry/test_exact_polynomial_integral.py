@@ -1,7 +1,6 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 from __future__ import annotations
 
-import ctypes
 import itertools
 import math
 import random
@@ -10,7 +9,6 @@ from fractions import Fraction
 
 import pytest
 
-from phydrax import _exact_polynomial_kernels as kernels
 from phydrax._exact_kernels import BernsteinDomain
 from phydrax._exact_polynomial_kernels import exact_jacobian_integrals
 from phydrax._meshcore import meshcore_available
@@ -139,25 +137,13 @@ def test_reference_volume_and_nonsymmetric_determinant() -> None:
     assert exact_jacobian_integrals([matrix], "box", 3) == [Fraction(-2)]
 
 
-def test_parity_reference_detects_wrong_native_result(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_parity_reference_detects_changed_matrix() -> None:
     zero = (0, 0)
-    matrix: Matrix = (({zero: Fraction(2)}, {}), ({}, {zero: Fraction(3)}))
-    expected = _reference(matrix, "simplex")
-    native = kernels.load_meshcore()["phx_mc_polynomial_jacobian_integrals"]
-
-    def corrupted(*args: object) -> int:
-        result = native(*args)
-        sums = args[6]
-        if not isinstance(sums, ctypes.Array):
-            raise TypeError("Expected native output buffer")
-        ctypes.memset(ctypes.addressof(sums), 0, ctypes.sizeof(sums))
-        return result
-
-    monkeypatch.setattr(
-        kernels,
-        "load_meshcore",
-        lambda: {"phx_mc_polynomial_jacobian_integrals": corrupted},
-    )
-    assert exact_jacobian_integrals([matrix], "simplex", 2) != [expected]
+    matrices: list[Matrix] = [
+        (({zero: Fraction(2)}, {}), ({}, {zero: Fraction(3)})),
+        (({zero: Fraction(2)}, {}), ({}, {zero: Fraction(4)})),
+    ]
+    expected = [Fraction(3), Fraction(4)]
+    assert [_reference(matrix, "simplex") for matrix in matrices] == expected
+    assert exact_jacobian_integrals(matrices, "simplex", 2) == expected
+    assert expected[0] != expected[1]

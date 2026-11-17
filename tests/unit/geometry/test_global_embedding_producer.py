@@ -41,6 +41,7 @@ from phydrax.discretization._coordinate_enclosure import (
     multiply,
     Polynomial,
     polynomial_bounds,
+    RationalPolynomial,
     scale,
     subtract,
 )
@@ -346,27 +347,26 @@ def _mapped_tetrahedron(
     )
 
 
-def test_simplex_image_bounds_fall_back_when_interval_is_nonfinite(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_simplex_image_bounds_fall_back_when_interval_is_nonfinite() -> None:
     import phydrax.geometry._global_embedding as embedding
 
-    u, v = axes(2)
-    coordinates = (add(u, v), subtract(u, v))
-
-    def inconclusive(
-        expression: Expression, corners: tuple[tuple[Fraction, ...], ...], /
-    ) -> tuple[float, float]:
-        return -float("inf"), float("inf")
-
-    monkeypatch.setattr(embedding, "restricted_polynomial_bounds", inconclusive)
+    _, v = axes(2)
+    maximum = Fraction.from_float(sys.float_info.max)
+    coordinates: tuple[Expression, ...] = ({(1, 0): maximum}, v)
+    corners = (
+        (Fraction(0), Fraction(0)),
+        (Fraction(1), Fraction(0)),
+        (Fraction(0), Fraction(1)),
+    )
+    assert embedding.restricted_polynomial_bounds(coordinates[0], corners) == (
+        -float("inf"),
+        float("inf"),
+    )
     root = embedding._root_reference_cell("triangle", coordinates, 1)
     assert root is not None
     chart = embedding._affine_chart_cell(root, coordinates)
     assert chart is not None
-    expected = tuple(
-        polynomial_bounds(expression, "simplex", 2) for expression in coordinates
-    )
+    expected = ((0.0, sys.float_info.max), (0.0, 1.0))
     assert tuple(zip(root.image_lower, root.image_upper, strict=True)) == expected
     assert tuple(zip(chart.image_lower, chart.image_upper, strict=True)) == expected
 
@@ -400,23 +400,77 @@ def test_strict_simplex_separation_falls_back_for_overlapping_intervals(
     assert not embedding._strict_image_separation(first, overlapping, {})
 
 
-def test_strict_simplex_separation_accepts_certified_interval(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_simplex_image_bounds_refuse_a_rational_pole() -> None:
+    import phydrax.geometry._global_embedding as embedding
+
+    u, v = axes(2)
+    pole = RationalPolynomial(
+        {(0, 0): Fraction(1)},
+        {(0, 0): -Fraction(1, 2), (1, 0): Fraction(1)},
+    )
+    root = embedding._root_reference_cell("triangle", (pole, v), 1)
+    assert root is not None
+    assert root.image_lower[0] == -float("inf")
+    assert root.image_upper[0] == float("inf")
+    assert Fraction(root.image_lower[1]) <= Fraction(0)
+    assert Fraction(root.image_upper[1]) >= Fraction(1)
+    chart = embedding._affine_chart_cell(root, (u, v))
+    assert chart is not None
+    for axis in range(2):
+        assert Fraction(chart.image_lower[axis]) <= 0
+        assert Fraction(chart.image_upper[axis]) >= 1
+
+
+def test_strict_simplex_separation_distinguishes_overlap() -> None:
     import phydrax.geometry._global_embedding as embedding
 
     u, v = axes(2)
     first = embedding._root_reference_cell("triangle", (u, v), 1)
-    second = embedding._root_reference_cell("triangle", (add(u, constant(2, 2)), v), 2)
-    assert first is not None and second is not None
+    offset = constant(Fraction(3, 4), 2)
+    separated = embedding._root_reference_cell(
+        "triangle", (add(u, offset), add(v, offset)), 2
+    )
+    overlap_offset = constant(Fraction(1, 4), 2)
+    overlapping = embedding._root_reference_cell(
+        "triangle", (add(u, overlap_offset), add(v, overlap_offset)), 3
+    )
+    assert first is not None and separated is not None and overlapping is not None
+    for axis in range(2):
+        assert first.image_lower[axis] <= separated.image_upper[axis]
+        assert separated.image_lower[axis] <= first.image_upper[axis]
+    assert max(sum(point) for point in first.corner_images) == Fraction(1)
+    assert min(sum(point) for point in separated.corner_images) == Fraction(3, 2)
+    point = (Fraction(1, 4), Fraction(1, 4))
+    assert tuple(evaluate_expression(expr, point) for expr in first.coordinates) == point
+    second_point = (Fraction(0), Fraction(0))
+    assert (
+        tuple(evaluate_expression(expr, second_point) for expr in overlapping.coordinates)
+        == point
+    )
+    assert embedding._strict_image_separation(first, separated, {})
+    assert not embedding._strict_image_separation(first, overlapping, {})
 
-    def candidate_planes(
-        first: EmbeddingCell, second: EmbeddingCell, shadows: dict[int, object], /
-    ) -> tuple[tuple[Fraction, ...], ...]:
-        return ((Fraction(1), Fraction(0)),)
 
-    monkeypatch.setattr(embedding, "strict_separation_planes", candidate_planes)
-    assert embedding._strict_image_separation(first, second, {})
+@pytest.mark.parametrize("ulps", (1, 2, 4))
+def test_strict_diagonal_separation_near_touching(ulps: int) -> None:
+    import phydrax.geometry._global_embedding as embedding
+
+    u, v = axes(2)
+    first = embedding._root_reference_cell("triangle", (u, v), 1)
+    half = constant(Fraction(1, 2), 2)
+    gap = constant(Fraction(1, 2) + Fraction(ulps, 2**52), 2)
+    separated = embedding._root_reference_cell("triangle", (add(u, half), add(v, gap)), 2)
+    touching = embedding._root_reference_cell("triangle", (add(u, half), add(v, half)), 3)
+    assert first is not None and separated is not None and touching is not None
+    for axis in range(2):
+        assert first.image_lower[axis] <= separated.image_upper[axis]
+        assert separated.image_lower[axis] <= first.image_upper[axis]
+    assert max(sum(point) for point in first.corner_images) == 1
+    assert min(sum(point) for point in separated.corner_images) == 1 + Fraction(
+        ulps, 2**52
+    )
+    assert embedding._strict_image_separation(first, separated, {})
+    assert not embedding._strict_image_separation(first, touching, {})
 
 
 def _radical_linear_tetra_geometry(
@@ -1386,49 +1440,80 @@ def test_boundary_batches_exact_shared_face_traces(
         (
             second.coordinates[1],
             second.coordinates[0],
-            add(second.coordinates[2], scale(multiply(multiply(z, z), z), off_face_cubic)),
+            add(
+                second.coordinates[2], scale(multiply(multiply(z, z), z), off_face_cubic)
+            ),
         ),
     )
     bump = scale(multiply(x, y), Fraction(1, 8))
     shifted_x = add(x, constant(3, 3))
-    other_first = _mapped_tetrahedron(
-        3, (20, 21, 22, 23), (shifted_x, y, add(z, bump))
-    )
+    other_first = _mapped_tetrahedron(3, (20, 21, 22, 23), (shifted_x, y, add(z, bump)))
     other_second = _mapped_tetrahedron(
         4,
         (20, 22, 21, 24),
-        (add(y, constant(3, 3)), x, add(add(scale(z, -1), bump), scale(multiply(multiply(z, z), z), Fraction(1, 8)))),
+        (
+            add(y, constant(3, 3)),
+            x,
+            add(
+                add(scale(z, -1), bump),
+                scale(multiply(multiply(z, z), z), Fraction(1, 8)),
+            ),
+        ),
     )
     points = np.asarray(
         (
-            (0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (0, 0, -1),
-            (3, 0, 0), (4, 0, 0), (3, 1, 0), (3, 0, 1), (3, 0, -1),
+            (0, 0, 0),
+            (1, 0, 0),
+            (0, 1, 0),
+            (0, 0, 1),
+            (0, 0, -1),
+            (3, 0, 0),
+            (4, 0, 0),
+            (3, 1, 0),
+            (3, 0, 1),
+            (3, 0, -1),
         ),
         dtype=np.float64,
     )
     mesh = CellMesh(
         points,
-        (CellBlock("cells", "tetrahedron", np.asarray(
-            ((0, 1, 2, 3), (0, 2, 1, 4), (5, 6, 7, 8), (5, 7, 6, 9)),
-            dtype=np.int32,
-        )),),
-        vertex_global_ids=np.asarray((10, 11, 12, 13, 14, 20, 21, 22, 23, 24), dtype=np.int64),
+        (
+            CellBlock(
+                "cells",
+                "tetrahedron",
+                np.asarray(
+                    ((0, 1, 2, 3), (0, 2, 1, 4), (5, 6, 7, 8), (5, 7, 6, 9)),
+                    dtype=np.int32,
+                ),
+            ),
+        ),
+        vertex_global_ids=np.asarray(
+            (10, 11, 12, 13, 14, 20, 21, 22, 23, 24), dtype=np.int64
+        ),
     )
     boundary = build_oriented_boundary(mesh, (first, second, other_first, other_second))
     findings = tuple(
-        finding for finding in boundary.findings if finding.check == "mismatched_interior_trace"
+        finding
+        for finding in boundary.findings
+        if finding.check == "mismatched_interior_trace"
     )
     assert len(findings) == int(mismatch)
     isolated_mesh = CellMesh(
         points[:5],
-        (CellBlock("cells", "tetrahedron", np.asarray(
-            ((0, 1, 2, 3), (0, 2, 1, 4)), dtype=np.int32
-        )),),
+        (
+            CellBlock(
+                "cells",
+                "tetrahedron",
+                np.asarray(((0, 1, 2, 3), (0, 2, 1, 4)), dtype=np.int32),
+            ),
+        ),
         vertex_global_ids=np.asarray((10, 11, 12, 13, 14), dtype=np.int64),
     )
     isolated = build_oriented_boundary(isolated_mesh, (first, second))
     isolated_findings = tuple(
-        finding for finding in isolated.findings if finding.check == "mismatched_interior_trace"
+        finding
+        for finding in isolated.findings
+        if finding.check == "mismatched_interior_trace"
     )
     assert findings == isolated_findings
 
@@ -1722,12 +1807,7 @@ def test_affine_simplex_preparation_retains_exact_corners_without_polynomials(
     )
 
 
-@pytest.mark.parametrize("fallback", (False, True))
-def test_curved_cell_image_boxes_retain_interior_contact(
-    fallback: bool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from phydrax.geometry import _embedding_cells
-
+def test_curved_cell_image_boxes_retain_interior_contact() -> None:
     element = lagrange_element("triangle", 2)
     nodes = lagrange_reference_node_data(element)
     vertices = reference_cell_topology("triangle").vertices
@@ -1772,12 +1852,6 @@ def test_curved_cell_image_boxes_retain_interior_contact(
         {"cells": np.arange(len(coordinates), dtype=np.int32).reshape(3, -1)},
         coordinates,
     )
-    if fallback:
-        monkeypatch.setattr(
-            _embedding_cells.PreparedIntervalBasis,
-            "batch_bounds",
-            lambda self, lower, upper: (None,) * len(lower),
-        )
     cells = prepare_embedding_cells(mesh, geometry)
     first_point = (Fraction(1, 2), Fraction(3, 32))
     second_point = (Fraction(1, 2), Fraction(0))

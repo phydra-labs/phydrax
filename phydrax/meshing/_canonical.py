@@ -27,6 +27,7 @@ from ..discretization._cell_geometry import (
 from ..discretization._cell_geometry_validity import (
     CellValidityCertificate,
     CellValidityStatus,
+    ComputedCellValidity,
     ValidatedCellValidityParent,
 )
 from ..discretization._hexahedral import HexahedralConnectivity
@@ -301,6 +302,7 @@ def _certify_cell_mesh_acceptance(
     validated_chart_parent: ValidatedImplicitChartParent | None = None,
     manifold_scope: CellMeshManifoldScope | None = None,
     validated_witnesses: tuple[ValidatedSourceFidelityWitness, ...] = (),
+    _computed_validity: ComputedCellValidity | None = None,
     validity: CellValidityCertificate | None = None,
     validity_parent: CellValidityCertificate
     | ValidatedCellValidityParent
@@ -348,9 +350,15 @@ def _certify_cell_mesh_acceptance(
             "Validated fidelity witnesses are reused only by certified acceptance."
         )
     if (
-        validity is not None or validity_parent is not None
+        validity is not None
+        or validity_parent is not None
+        or _computed_validity is not None
     ) and certification_inputs is None:
         raise ValueError("Validity proofs are reused only by certified acceptance.")
+    if _computed_validity is not None:
+        if type(_computed_validity) is not ComputedCellValidity:
+            raise TypeError("_computed_validity must be ComputedCellValidity or None.")
+        _computed_validity.require(geometry_, canonical, _computed_validity.certificate)
     if stored_fidelity is not None and certification_inputs is None:
         raise ValueError(
             "Stored fidelity proofs are adopted only by certified acceptance."
@@ -400,6 +408,7 @@ def _certify_cell_mesh_acceptance(
             validated=validated,
             validity=validity,
             validity_parent=validity_parent,
+            computed_validity=_computed_validity,
             computed_root=computed_root,
             validated_embedding=_validated_embedding,
             _validated_chart_parent_embedding=_validated_chart_parent_embedding,
@@ -480,6 +489,7 @@ def certify_cell_mesh(
     validated_chart_parent: ValidatedImplicitChartParent | None = None,
     manifold_scope: CellMeshManifoldScope | None = None,
     validated_witnesses: tuple[ValidatedSourceFidelityWitness, ...] = (),
+    _computed_validity: ComputedCellValidity | None = None,
     validity: CellValidityCertificate | None = None,
     validity_parent: CellValidityCertificate
     | ValidatedCellValidityParent
@@ -503,6 +513,8 @@ def certify_cell_mesh(
     ``validity_parent`` (earlier proofs whose identical cell maps are reused)
     serve acceptance with ``certification_inputs``; see
     ``MeshCertificationReport``.
+    ``_computed_validity`` is an operation-local proof of these same live
+    operands; acceptance validates its binding without replaying the proof.
     ``computed_root`` is an operation-local proof bound to the exact original
     layer source, request and root objects; it is never retained in the result.
     ``manifold_scope`` declares the vertex stars a resident patch of a
@@ -538,6 +550,7 @@ def certify_cell_mesh(
         validated_chart_parent=validated_chart_parent,
         manifold_scope=manifold_scope,
         validated_witnesses=validated_witnesses,
+        _computed_validity=_computed_validity,
         validity=validity,
         validity_parent=validity_parent,
     )

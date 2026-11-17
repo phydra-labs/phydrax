@@ -256,6 +256,9 @@
 - Native interval execution avoids duplicate validation and batches torus
   source boxes and curve chord evaluations within each pass. Enclosure
   endpoints and per-item proof decisions remain unchanged.
+- Curving passes its operation-local computed validity proof to certified
+  acceptance without replaying it. Externally supplied certificates remain
+  subject to revalidation; result and certificate identities are unchanged.
 - Exact coordinate banks own immutable byte-backed integer arrays and reuse
   their framed content fingerprint per live bank; rebuilt banks revalidate and
   fingerprint independently. Scientific identities are unchanged.
@@ -289,6 +292,12 @@
   eager dispatch. Trim realization and projection frame bits, and therefore
   `BRepProjectionResult.result_id`, can change; certification gates and source
   identities remain unchanged.
+- Orthogonal-cylinder intersection projections and trim queries use
+  batch-independent native interval realizations on supported fixed charts.
+  Point and frame bits, and identities containing them, can change; unsupported
+  charts retain their previous scalar route.
+- Periodic face projection retains source-coedge seam points and the original
+  carrier realization at periodic landmarks and their adjacent binary64 values.
 - B-Rep normal and dihedral ranges, blend tangency bounds, and native-curve
   turning controls use outward interval inverse trigonometry and norm bounds.
   Stored angle endpoints and hard-control outcomes can consequently change.
@@ -302,6 +311,8 @@
 - Mapped quality audits reuse exact block integrals when available, and
   embedding cell preparation reuses exact integer coordinate-basis plans.
   Stored measures, coordinate expressions and proof evidence are unchanged.
+- Mapped injectivity projections and restricted-cell validity reuse prepared
+  exact integer basis combinations; their witnesses and bounds are unchanged.
 - Cell validity batches exact-coordinate rounding checks, retaining exact
   scalar fallback and the same recorded maximum error.
 - Affine cell validity combines exact dyadic Jacobians and determinant bounds
