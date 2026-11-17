@@ -1661,6 +1661,10 @@ def interpolate_mesh_metric(values: ArrayLike, weights: ArrayLike, /) -> Array:
     with non-negative weights summing to one. The result is SPD, preserves
     determinant interpolation ``log det = sum_k w_k log det M_k``, and is
     invariant under reordering of the ``k`` samples.
+
+    The values are those of the executing device's JAX kernels and are not
+    bit-identical across devices. `NATIVE_METRIC_3D` adaptation evaluates its
+    own deterministic kernels and reads no value from this routine.
     """
     tensors = jnp.asarray(values)
     if not jnp.issubdtype(tensors.dtype, jnp.floating):
@@ -1704,6 +1708,10 @@ def metric_edge_lengths(
 
     ``l_p`` is the length of ``pq`` in the endpoint metric ``M_p``; the log-mean is
     the exact length when the size varies geometrically along the edge.
+
+    The values are those of the executing device's JAX kernels and are not
+    bit-identical across devices. `NATIVE_METRIC_3D` adaptation evaluates its
+    own deterministic kernels and reads no value from this routine.
     """
     tensors = jnp.asarray(values)
     points = jnp.asarray(coordinates, dtype=tensors.dtype)

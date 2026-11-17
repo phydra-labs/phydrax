@@ -11,6 +11,7 @@ proved independently.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from fractions import Fraction
 from typing import TYPE_CHECKING, TypeGuard
@@ -1480,10 +1481,10 @@ def _reference_patch_partition(
 ) -> bool:
     """Prove the reference 2-chain fills exactly the rooted trim loops."""
     from .._approximate_source_coverage import (
-        _area2,
         _intersection_area,
         _possibly_overlapping_pairs,
         _triangle2,
+        _triangle_orientation,
     )
     from .._meshing_domain import PatchPoleUse
 
@@ -1505,7 +1506,7 @@ def _reference_patch_partition(
         else ()
     )
     triangles = (*triangles, *(sliver for _, sliver in slivers))
-    signs = tuple(1 if _area2(t) > 0 else -1 if _area2(t) < 0 else 0 for t in triangles)
+    signs = tuple(_triangle_orientation(triangle) for triangle in triangles)
     if 0 in signs or len(set(signs)) != 1:
         return False
     for first, second in _possibly_overlapping_pairs(triangles, triangles, True):
@@ -1526,23 +1527,36 @@ def _reference_patch_partition(
         if slivers
         else set()
     )
+    scale = math.lcm(
+        *(coordinate.denominator for point in vertices for coordinate in point)
+    )
+    integer_vertices = {
+        point: (
+            point[0].numerator * (scale // point[0].denominator),
+            point[1].numerator * (scale // point[1].denominator),
+        )
+        for point in vertices
+    }
 
     def parts(first: tuple, last: tuple) -> tuple[tuple[tuple, int], ...]:
-        dx, dy = last[0] - first[0], last[1] - first[1]
-        length = dx * dx + dy * dy
-        if not length:
+        if first == last:
             return ()
         if not slivers:
             return (edge(first, last),)
-        points = sorted(
-            (
-                point
-                for point in vertices
-                if (point[0] - first[0]) * dy == (point[1] - first[1]) * dx
-                and 0 <= (point[0] - first[0]) * dx + (point[1] - first[1]) * dy <= length
-            ),
-            key=lambda point: (point[0] - first[0]) * dx + (point[1] - first[1]) * dy,
-        )
+        first_x, first_y = integer_vertices[first]
+        last_x, last_y = integer_vertices[last]
+        dx, dy = last_x - first_x, last_y - first_y
+        length = dx * dx + dy * dy
+        projected = []
+        for point, (x, y) in integer_vertices.items():
+            offset_x, offset_y = x - first_x, y - first_y
+            if offset_x * dy != offset_y * dx:
+                continue
+            position = offset_x * dx + offset_y * dy
+            if 0 <= position <= length:
+                projected.append((position, point))
+        projected.sort(key=lambda item: item[0])
+        points = tuple(point for _, point in projected)
         return tuple(edge(a, b) for a, b in zip(points, points[1:]))
 
     incidence: dict[tuple, list[int]] = {}
