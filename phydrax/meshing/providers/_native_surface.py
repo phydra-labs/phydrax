@@ -4368,7 +4368,8 @@ def _chart_vertex_points(
         key = _global_vertex_key(domain, chart, row)
         if key[0] == 1:
             parameter = key[2]
-            assert isinstance(parameter, Fraction)
+            if not isinstance(parameter, Fraction):
+                raise TypeError("A curve vertex key must carry its exact parameter.")
             grouped.setdefault(int(key[1]), []).append((row, parameter))
     source_points: dict[int, np.ndarray] = {}
     for curve, entries in grouped.items():
