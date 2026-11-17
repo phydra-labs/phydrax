@@ -1,8 +1,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 from __future__ import annotations
 
+import gc
 from pathlib import Path
 
+import jax
 import numpy as np
 import pytest
 
@@ -18,13 +20,13 @@ from phydrax.meshing._tetra_coupled_program import (
     _RowRole,
     prepare_certificate,
     prepare_primary,
+    solve_coupled,
 )
 from phydrax.optim import (
     ConvexProgramStatus,
     ConvexSolvePolicy,
     ConvexTermination,
     NativeHomogeneousConic,
-    solve_prepared_convex_program,
 )
 
 
@@ -162,7 +164,7 @@ def test_certificate_equality_dual_has_signed_box() -> None:
         cache,
     )
     certificate = prepare_certificate(primary, policy, cache)
-    result = solve_prepared_convex_program(certificate.prepared).result
+    result = solve_coupled(certificate)
     assert int(result.status) == int(ConvexProgramStatus.OPTIMAL)
     assert bool(result.successful)
     ray = np.asarray(result.primal)
@@ -202,6 +204,74 @@ def test_rebind_keeps_structural_zero_and_changes_numerical_solution() -> None:
     np.testing.assert_allclose(first.primal[:2], [1.0, 0.0], atol=1e-5)
     np.testing.assert_allclose(second.primal[:2], [0.5, 0.5], atol=1e-5)
     assert first.certificate_result is None and second.certificate_result is None
+
+
+def _live_solver_executables() -> int:
+    gc.collect()
+    client = jax.devices()[0].client
+    return sum(
+        "solve_native_conic" in executable.hlo_modules()[0].name
+        for executable in client.live_executables()
+    )
+
+
+def test_structures_of_one_capacity_class_share_one_compiled_solve() -> None:
+    # A local search visits many sparsity patterns of similar size. They must
+    # not each compile and retain a solver.
+    policy = _policy()
+    patterns: list[tuple[tuple[int, ...], list[float]]] = [
+        ((0,), [-1.0]),
+        ((1, 2), [-1.0, -1.0]),
+        ((0, 2), [-2.0, -1.0]),
+        ((0, 1, 2), [-1.0, -1.0, -1.0]),
+    ]
+    first = _solve(
+        [_row(patterns[0][0], patterns[0][1], identity=(0,))],
+        [-1.0],
+        [],
+        policy,
+        _binding((0,)),
+    )
+    assert first.primal is not None
+    compiled = _live_solver_executables()
+    assert compiled >= 1
+    for columns, values in patterns[1:]:
+        solved = _solve(
+            [_row(columns, values, identity=(0,))], [-1.0], [], policy, _binding((0,))
+        )
+        assert solved.primal is not None
+        weights = np.asarray(values)
+        # The minimum-norm point of one half-space -a.x <= -1.
+        expected = np.zeros(3)
+        expected[list(columns)] = -weights / float(weights @ weights)
+        np.testing.assert_allclose(solved.primal, expected, atol=1e-5)
+    assert _live_solver_executables() == compiled
+
+
+def test_capacity_class_result_is_reported_in_original_coordinates() -> None:
+    rows, rhs, binding, matrix = _captured("sparse_hsd_distance_constraints.npz")
+    primary = prepare_primary(
+        rows, rhs, [], matrix.shape[1], "original-coordinates", _policy(), _ProgramCache()
+    )
+    assert primary.layout is not None
+    result = solve_coupled(primary)
+    constraints, variables = matrix.shape
+    assert result.primal.shape == (variables,)
+    assert result.stationarity_residual.shape == (variables,)
+    for value in (
+        result.cone_dual,
+        result.cone_slack,
+        result.cone_primal_residual,
+        result.certificate.inequality_dual_ray,
+    ):
+        assert value.shape == (constraints,)
+    assert result.provenance.structure_id == primary.program.structure_id
+    # The restored residual is the original program's residual, row for row.
+    np.testing.assert_allclose(
+        result.cone_primal_residual,
+        matrix @ np.asarray(result.primal) + np.asarray(result.cone_slack) - rhs,
+        atol=1e-12,
+    )
 
 
 def test_certificate_admission_refusal_preserves_primary_result() -> None:
