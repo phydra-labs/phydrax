@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from fractions import Fraction
 from functools import lru_cache
+from math import lcm
 
 from ..discretization._coordinate_enclosure import (
     add,
@@ -314,20 +315,65 @@ def _rational_simplex_map(
     return degree, tuple(polynomials)
 
 
-def _polynomial_value(
-    polynomial: Polynomial, point: tuple[Fraction, ...], /
-) -> ExactScalar:
-    total: ExactScalar = Fraction(0)
-    for exponent, coefficient in polynomial.items():
-        term = coefficient
-        for coordinate, power in zip(point, exponent, strict=True):
-            if power:
-                term = term * (coordinate if power == 1 else coordinate**power)
-                if not term:
-                    break
-        if term:
-            total = total + term
-    return total
+def _integer_polynomials(
+    polynomials: tuple[Polynomial, ...], point_denominator: int, /
+) -> tuple[int, tuple[tuple[tuple[tuple[int, ...], int], ...], ...]]:
+    """Clear coefficient and point denominators once for the whole map."""
+    coefficients = tuple(
+        coefficient for polynomial in polynomials for coefficient in polynomial.values()
+    )
+    if any(not isinstance(coefficient, Fraction) for coefficient in coefficients):
+        raise ValueError("Integer lattice evaluation requires rational coefficients.")
+    coefficient_denominator = lcm(
+        *(coefficient.denominator for coefficient in coefficients if isinstance(coefficient, Fraction))
+    )
+    degree = max(
+        (sum(exponent) for polynomial in polynomials for exponent in polynomial),
+        default=0,
+    )
+    denominator_powers = tuple(point_denominator**power for power in range(degree + 1))
+    terms = tuple(
+        tuple(
+            (
+                exponent,
+                coefficient.numerator
+                * (coefficient_denominator // coefficient.denominator)
+                * denominator_powers[degree - sum(exponent)],
+            )
+            for exponent, coefficient in polynomial.items()
+            if isinstance(coefficient, Fraction)
+        )
+        for polynomial in polynomials
+    )
+    return coefficient_denominator * denominator_powers[degree], terms
+
+
+def _integer_polynomial_values(
+    terms: tuple[tuple[tuple[tuple[int, ...], int], ...], ...],
+    numerators: tuple[int, ...],
+    denominator: int,
+    /,
+) -> tuple[Fraction, ...]:
+    """Evaluate the cleared map with integer products and a single final reduction."""
+    max_powers = tuple(
+        max((exponent[axis] for polynomial in terms for exponent, _ in polynomial), default=0)
+        for axis in range(len(numerators))
+    )
+    powers = tuple(
+        tuple(numerator**power for power in range(max_power + 1))
+        for numerator, max_power in zip(numerators, max_powers, strict=True)
+    )
+    result = []
+    for polynomial in terms:
+        total = 0
+        for exponent, coefficient in polynomial:
+            term = coefficient
+            for axis, power in enumerate(exponent):
+                if power:
+                    term *= powers[axis][power]
+            total += term
+        result.append(Fraction(total, denominator))
+    return tuple(result)
 
 
 def _lattice_trace_equal(
@@ -376,27 +422,34 @@ def _simplex_trace_lattice(
     """Principal-lattice weights and exact values of a simplex map on a stratum."""
     corners = tuple(cell.vertex_ids.index(identifier) for identifier in ordered_ids)
     references = tuple(cell.reference_vertices[corner] for corner in corners)
+    reference_denominator = lcm(
+        *(coordinate.denominator for reference in references for coordinate in reference)
+    )
+    reference_numerators = tuple(
+        tuple(
+            coordinate.numerator * (reference_denominator // coordinate.denominator)
+            for coordinate in reference
+        )
+        for reference in references
+    )
+    point_denominator = order * reference_denominator
+    denominator, terms = _integer_polynomials(polynomials, point_denominator)
     for weights in _principal_lattice(len(ordered_ids), order):
         if order in weights:
             yield weights, cell.corner_images[corners[weights.index(order)]]
             continue
-        point = tuple(
+        numerators = tuple(
             sum(
-                (
-                    weight * reference[axis]
-                    for weight, reference in zip(weights, references, strict=True)
-                ),
-                Fraction(0),
+                weight * reference[axis]
+                for weight, reference in zip(weights, reference_numerators, strict=True)
             )
-            / order
             for axis in range(cell.dimension)
         )
+        point = tuple(Fraction(value, point_denominator) for value in numerators)
         key = (id(cell), point)
         found = values.get(key)
         if found is None:
-            found = tuple(
-                _polynomial_value(polynomial, point) for polynomial in polynomials
-            )
+            found = _integer_polynomial_values(terms, numerators, denominator)
             values[key] = found
         yield weights, found
 
