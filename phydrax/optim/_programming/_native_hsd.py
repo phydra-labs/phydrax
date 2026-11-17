@@ -191,8 +191,17 @@ def _embedding_residual(
 
 
 def _positive_step(value: Array, direction: Array) -> Array:
-    candidate = jnp.where(direction < 0.0, -value / direction, jnp.inf)
-    return jnp.minimum(1.0, jnp.min(candidate, initial=jnp.inf))
+    """Largest step in ``[0, 1]`` that keeps a positive scalar strictly positive.
+
+    A step that reaches the boundary is shortened by the fraction the cone
+    steps use. The full boundary step would set ``tau`` or ``kappa`` to zero
+    up to rounding, whose sign is arbitrary; a non-positive ``tau`` leaves the
+    embedding's interior and the next step is undefined.
+    """
+    boundary = jnp.min(
+        jnp.where(direction < 0.0, -value / direction, jnp.inf), initial=jnp.inf
+    )
+    return jnp.where(boundary > 1.0, 1.0, 0.995 * boundary)
 
 
 def _dual_step(cone: AbstractConvexCone, point: Array, direction: Array) -> Array:
