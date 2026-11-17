@@ -1365,6 +1365,23 @@ def _solve_curved_cad_p2_fe(
     }
 
 
+def _construction_vertex_association(
+    result: phx.meshing.CellMeshingResult, /
+) -> phx.meshing.GeometryAssociation:
+    """The complete vertex association the native CAD route recorded while meshing."""
+    target = result.mesh.entity_set(0).entity_set_id
+    recorded = tuple(
+        association
+        for association in result.associations
+        if association.target_entity_set_id == target
+    )
+    if len(recorded) != 1:
+        raise RuntimeError(
+            "The native CAD result must retain exactly one vertex association."
+        )
+    return recorded[0]
+
+
 def _curve_cad_result(
     model: phx.geometry.brep.BRepModel,
     straight: phx.meshing.CellMeshingResult,
@@ -1376,11 +1393,7 @@ def _curve_cad_result(
 ]:
     policy = phx.meshing.HighOrderCurvingPolicy(degree=2)
     projection = phx.geometry.prepare_brep_projection(model)
-    association = phx.meshing.associate_mesh_vertices(
-        straight.mesh,
-        projection,
-        policy=phx.meshing.AssociationPropagationPolicy(classification_tolerance=1.0e-8),
-    )
+    association = _construction_vertex_association(straight)
     curved = phx.meshing.curve_cell_mesh(
         straight.mesh,
         association,

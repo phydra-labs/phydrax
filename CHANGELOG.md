@@ -249,6 +249,10 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- The CAD profile matrix curves each mesh from the vertex association the
+  native CAD route records while meshing instead of classifying every vertex
+  geometrically again. A unit test holds the two routes to the same B-Rep
+  class wherever geometric classification resolves a vertex.
 - Global embedding certification of a connected volume mesh with one closed
   boundary shell now rests on the degree theorem: positive local Jacobians,
   exactly cancelling interior traces and an embedded shell make the map

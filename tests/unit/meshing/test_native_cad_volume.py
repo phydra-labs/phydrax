@@ -1823,3 +1823,61 @@ def test_cad_cylinder_volume_charts_planar_caps_in_their_exact_plane() -> None:
                 origin + float(s) * first + float(t) * second, point, atol=1.0e-12
             )
     assert plane_rows > 0
+
+
+def test_cad_volume_recorded_vertex_classes_agree_with_geometric_classification() -> None:
+    # The native route records each vertex's B-Rep class while meshing. Geometric
+    # classification of the finished mesh is an independent route to the same
+    # class: wherever it resolves a vertex, both must name the same entity.
+    contract = phx.SpatialCoordinateContract.si()
+    model = brep_cylinder(
+        0.5, 1.0, coordinate_contract=contract, source_id="cad-volume-vertex-classes"
+    )
+    boundary = MeshingScope.whole(model, 2)
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+        boundary,
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(UniformSizeControl(boundary, 0.3),),
+        maximum_deviation=0.05,
+    )
+    result = (
+        phx.meshing.NativeMeshingProvider(
+            NativeMeshingOptions(
+                "cad_tetrahedral",
+                volume_schedule=NativeVolumeSchedule(
+                    radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
+                ),
+            )
+        )
+        .plan(model, specification)
+        .execute()
+    )
+    vertex_set = result.mesh.entity_set(0).entity_set_id
+    (recorded,) = (
+        association
+        for association in result.associations
+        if association.target_entity_set_id == vertex_set
+    )
+    geometric = phx.meshing.associate_mesh_vertices(
+        result.mesh,
+        phx.geometry.prepare_brep_projection(model),
+        policy=phx.meshing.AssociationPropagationPolicy(classification_tolerance=1.0e-8),
+    )
+
+    recorded_order = np.argsort(np.asarray(recorded.target_global_ids))
+    geometric_order = np.argsort(np.asarray(geometric.target_global_ids))
+    assert np.array_equal(
+        np.asarray(recorded.target_global_ids)[recorded_order],
+        np.asarray(result.mesh.vertex_global_ids)[
+            np.argsort(np.asarray(result.mesh.vertex_global_ids))
+        ],
+    )
+    assert np.all(np.asarray(recorded.resolved))
+    resolved = np.asarray(geometric.resolved)[geometric_order]
+    assert np.any(resolved)
+    for name in ("source_dimensions", "source_indices"):
+        assert np.array_equal(
+            np.asarray(getattr(recorded, name))[recorded_order][resolved],
+            np.asarray(getattr(geometric, name))[geometric_order][resolved],
+        ), name
