@@ -2154,7 +2154,10 @@ def test_relocation_screen_matches_scalar_star_admission(band_only: bool) -> Non
         if not metric._floor_oriented(moved[cells]):
             return None
         quality = float(np.min(metric._tetra_quality(moved, moved_metrics, cells)))
-        if after_band == before_band and not quality > before_quality + metric._IMPROVEMENT:
+        if (
+            after_band == before_band
+            and not quality > before_quality + metric._IMPROVEMENT
+        ):
             return None
         return quality
 
@@ -2185,17 +2188,31 @@ def test_relocation_screen_matches_scalar_star_admission(band_only: bool) -> Non
         metrics_extra = np.broadcast_to(
             4.0 * np.eye(3, dtype=np.float64), (5, 3, 3)
         ).copy()
-        spokes_extra = np.concatenate(
-            (spokes, np.asarray(((0, 4),), dtype=np.int64))
-        )
+        spokes_extra = np.concatenate((spokes, np.asarray(((0, 4),), dtype=np.int64)))
         measured_extra = np.asarray((True, True, True, False), dtype=np.bool_)
         first = metric._RelocationScreenRequest(
-            goals, points, metrics, cells, spokes, measured, before_band,
-            before_quality, evaluate, np.zeros(goals.shape[0], dtype=np.bool_),
+            goals,
+            points,
+            metrics,
+            cells,
+            spokes,
+            measured,
+            before_band,
+            before_quality,
+            evaluate,
+            np.zeros(goals.shape[0], dtype=np.bool_),
         )
         second = metric._RelocationScreenRequest(
-            goals, points_extra, metrics_extra, cells, spokes_extra, measured_extra,
-            before_band, before_quality, evaluate, np.zeros(goals.shape[0], dtype=np.bool_),
+            goals,
+            points_extra,
+            metrics_extra,
+            cells,
+            spokes_extra,
+            measured_extra,
+            before_band,
+            before_quality,
+            evaluate,
+            np.zeros(goals.shape[0], dtype=np.bool_),
         )
         metric._screen_relocation_batch([first, second])
         np.testing.assert_array_equal(first.admitted, expected)
@@ -2241,9 +2258,7 @@ def test_relocation_seed_goals_keep_pull_and_backtrack_order() -> None:
 
 def test_relocation_backtracks_to_binary64_resolution() -> None:
     point = np.ones(3)
-    goals = np.concatenate(
-        list(_relocation_goals(point, np.asarray(((1.0, 0.0, 0.0),))))
-    )
+    goals = np.concatenate(list(_relocation_goals(point, np.asarray(((1.0, 0.0, 0.0),)))))
     assert len(goals) > 6
     np.testing.assert_array_equal(goals[12], point + np.asarray((2.0**-12, 0.0, 0.0)))
     assert not np.array_equal(goals[-1], point)
@@ -2439,10 +2454,14 @@ def test_relocation_reuses_unoriented_constant_metric_spokes(vertex: int) -> Non
         dtype=np.int64,
     )
     spokes = np.column_stack(
-        (np.zeros(len(neighbors), dtype=np.int64),
-         np.arange(1, len(neighbors) + 1, dtype=np.int64))
+        (
+            np.zeros(len(neighbors), dtype=np.int64),
+            np.arange(1, len(neighbors) + 1, dtype=np.int64),
+        )
     )
-    expected = metric._metric_lengths(prepared.points[rows], prepared.metrics[rows], spokes)
+    expected = metric._metric_lengths(
+        prepared.points[rows], prepared.metrics[rows], spokes
+    )
     np.testing.assert_array_equal(np.take(prepared.lengths, incident), expected)
     state.native.close()
 
@@ -2509,7 +2528,8 @@ def test_relocation_preparation_reuses_only_identical_incidence() -> None:
     np.testing.assert_array_equal(
         updated.qualities,
         metric._tetra_quality(
-            expected_points, expected_metrics,
+            expected_points,
+            expected_metrics,
             np.asarray(state.snapshot.tetrahedra, dtype=np.int64),
         ),
     )
