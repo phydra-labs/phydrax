@@ -26,6 +26,7 @@ from .._interpolation._bspline_extraction import (
     RationalBSplineSurfaceHessianEnclosure,
     RationalBSplineSurfaceSpan,
 )
+from .._live_proofs import live_content_fingerprint, LiveProofLedger
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
@@ -868,21 +869,68 @@ def _prepare_surface_spans(
     return None
 
 
+# Span objects lazily mutate their interval nets. Store only their immutable
+# exact data and give each preparation its own interval-net dictionaries.
+type _CurveRows = tuple[tuple[ExactScalar, ...], ...]
+type _SurfaceRows = tuple[tuple[tuple[ExactScalar, ...], ...], ...]
+type _CurveSpanData = tuple[
+    str, int, int, tuple[int, ...], tuple[ExactScalar, ExactScalar],
+    tuple[ExactScalar, ExactScalar], int | None, int | None, _CurveRows,
+    Fraction, _CurveRows, _CurveRows,
+]
+type _SurfaceSpanData = tuple[
+    str, tuple[int, int], tuple[int, int], tuple[int, ...],
+    tuple[tuple[ExactScalar, ExactScalar], tuple[ExactScalar, ExactScalar]],
+    _SurfaceRows, Fraction, _SurfaceRows, _SurfaceRows,
+    _SurfaceRows | None, _SurfaceRows | None, _SurfaceRows | None,
+]
+_LIVE_CURVE_SPANS: LiveProofLedger[tuple[str, tuple[_CurveSpanData, ...]]] = (
+    LiveProofLedger()
+)
+_LIVE_SURFACE_SPANS: LiveProofLedger[tuple[str, tuple[_SurfaceSpanData, ...]]] = (
+    LiveProofLedger()
+)
+
+
+def _curve_span_data(
+    spans: PreparedSourceSpans[RationalBSplineCurveSpan], /
+) -> tuple[str, tuple[_CurveSpanData, ...]]:
+    return spans.source_id, tuple(
+        (
+            span.source_id, span.span_index, span.degree, span.coefficient_rows,
+            span.parameter_bounds, span.source_parameter_bounds,
+            span.continuity_at_lower, span.continuity_at_upper,
+            span.homogeneous_bernstein_coefficients, span.positive_denominator_lower_bound,
+            span._first_derivative_numerators, span._second_derivative_numerators,
+        )
+        for span in spans.spans
+    )
+
+
+def _surface_span_data(
+    spans: PreparedSourceSpans[RationalBSplineSurfaceSpan], /
+) -> tuple[str, tuple[_SurfaceSpanData, ...]]:
+    return spans.source_id, tuple(
+        (
+            span.source_id, span.span_indices, span.degrees, span.coefficient_rows,
+            span.parameter_bounds, span.homogeneous_bernstein_coefficients,
+            span.positive_denominator_lower_bound, span._du_numerators,
+            span._dv_numerators, span._duu_numerators, span._duv_numerators,
+            span._dvv_numerators,
+        )
+        for span in spans.spans
+    )
+
+
 @final
 class SourcePreparation:
     """Exact source artifacts that one consumer prepares for one meshing domain.
 
-    Carriers stay pure: they extract spans or trace interval programs on every
-    request. A computation over one domain (native surface meshing, source
-    fidelity certification, boundary chart covers) creates one preparation,
-    passes it explicitly to every routine and drops it when done, so span
-    extraction, placement, interval nets, interval programs and mapped p-curve
-    Hessians are derived once per carrier for exactly that lifetime. Span
-    restrictions to query boxes are recomputed per query: on the three-section
-    loft import only 16% of 100k restrictions repeated a box, and keeping them
-    cost about 100 MB for no measurable CPU. Entries are keyed by carrier
-    identity and retain their carrier, so an entry answers only the carrier
-    object it was prepared from.
+    A computation over one domain owns interval programs, mapped p-curve
+    Hessians and span interval nets for its lifetime. Immutable exact span data
+    may also be reused across preparations for the same unchanged live carrier.
+    Span restrictions to query boxes remain per-query and are never retained.
+    Local entries retain their carriers for the duration of the preparation.
     """
 
     __slots__ = (
@@ -1025,15 +1073,34 @@ class SourcePreparation:
         entry = self._surface_spans.get(id(surface))
         if entry is not None:
             return entry[1]
-        if isinstance(surface, _PlacedSurfacePatch):
-            source_spans = self.surface_spans(surface.source)
-            spans = (
-                None
-                if source_spans is None
-                else _placed_rational_surface_spans(source_spans, surface.placement)
+        from .brep._tspline import TSplineSurfacePatch
+
+        if not isinstance(
+            surface, (_PlacedSurfacePatch, BSplineSurfacePatch, TSplineSurfacePatch)
+        ):
+            self._surface_spans[id(surface)] = (surface, None)
+            return None
+        operands = (self.domain, surface)
+        cached = _LIVE_SURFACE_SPANS.find(operands)
+        if cached is not None:
+            spans = PreparedSourceSpans(
+                cached[0], tuple(RationalBSplineSurfaceSpan(*row) for row in cached[1])
             )
         else:
-            spans = _prepare_surface_spans(surface)
+            fingerprint = live_content_fingerprint(operands)
+            if isinstance(surface, _PlacedSurfacePatch):
+                source_spans = self.surface_spans(surface.source)
+                spans = (
+                    None
+                    if source_spans is None
+                    else _placed_rational_surface_spans(source_spans, surface.placement)
+                )
+            else:
+                spans = _prepare_surface_spans(surface)
+            if spans is not None:
+                _LIVE_SURFACE_SPANS.record(
+                    operands, fingerprint, _surface_span_data(spans)
+                )
         self._surface_spans[id(surface)] = (surface, spans)
         return spans
 
@@ -1044,7 +1111,16 @@ class SourcePreparation:
         entry = self._curve_spans.get(id(curve))
         if entry is not None:
             return entry[1]
-        spans = curve.prepare_spans()
+        operands = (self.domain, curve)
+        cached = _LIVE_CURVE_SPANS.find(operands)
+        if cached is None:
+            fingerprint = live_content_fingerprint(operands)
+            spans = curve.prepare_spans()
+            _LIVE_CURVE_SPANS.record(operands, fingerprint, _curve_span_data(spans))
+        else:
+            spans = PreparedSourceSpans(
+                cached[0], tuple(RationalBSplineCurveSpan(*row) for row in cached[1])
+            )
         self._curve_spans[id(curve)] = (curve, spans)
         return spans
 
