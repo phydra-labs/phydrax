@@ -257,6 +257,17 @@
 - CAD source bounds, analytic surface derivatives, periodic offsets, and the
   quadratic tetrahedron screen execute supported interval programs in batches.
   Their directed endpoints and exact-arithmetic fallback remain unchanged.
+- `NATIVE_METRIC_3D` vertex relocation off the periodic lift asks meshcore
+  once per round which independent moves it refuses, instead of isolating
+  them by repeated trial edits, and applies an admitted move in place: the
+  native relocation check already runs on the unchanged mesh, so the commit
+  writes only the moved vertices and no longer copies and audits the whole
+  mesh or reads it back. Accepted meshes, edits and statuses are unchanged.
+  `TetraMetricEvidence.implicit_refusals` now counts one refusal per refused
+  move per round rather than one per trial edit, so the evidence identity of
+  implicit-source adaptations changes. Periodic lifts keep the staged edit.
+  Requires a meshcore build with `phx_mc_tet_mesh_probe_relocations` and
+  `phx_mc_tet_mesh_apply_relocation`.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep

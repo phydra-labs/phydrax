@@ -474,6 +474,13 @@ class TetMesh {
   // The same probe for a single-operation relocation batch (no state tables:
   // a relocation is validated on its moved vertices and their stars).
   bool probe_relocation_edit(const TetEdit& operation, TetEditStatus& status) const;
+  // Applies a single-operation relocation batch to this unbound, nonperiodic
+  // state in place: true with the status apply_edit_batch would return for it
+  // (kApplied after the moved vertices' records are written and the generation
+  // advanced; a refusal mutating nothing but the implicit-source refusal
+  // counters); false, mutating nothing, when the batch is outside the
+  // relocation probe's domain and apply_edit_batch must decide it.
+  bool apply_relocation_edit(const TetEdit& operation, TetEditStatus& status);
 
   // Retained circumradius size targets by vertex ID (see vertex_sizes_).
   const std::unordered_map<std::uint64_t, double>& vertex_sizes() const noexcept {
