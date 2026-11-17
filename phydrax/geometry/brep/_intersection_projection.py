@@ -29,7 +29,10 @@ from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import Any
 
+import jax
+import jax.numpy as jnp
 import numpy as np
+from jax import Array
 
 from ...algebraic._exact_univariate import _gcd, RealRootIsolator
 from .._interval_enclosure import PreparedIntervalFunction
@@ -37,6 +40,7 @@ from ._host_program import evaluate_host_program, prepare_host_program
 from ._intersection_curve import (
     _batched_cylinder_points_large_first,
     _batched_cylinder_points_large_second,
+    _cylinder_profile_data,
     _large_seam_frame,
     _orthogonal_cylinder_curve_branch_sign,
     _OrthogonalCylinderFamily,
@@ -182,6 +186,9 @@ class _IntersectionPreparation:
     node_lower: np.ndarray
     node_upper: np.ndarray
     point_program: PreparedIntervalFunction | None
+    chart_programs: dict[int, PreparedIntervalFunction | None] = field(
+        default_factory=dict
+    )
     seams: dict[
         Fraction,
         tuple[
@@ -220,6 +227,68 @@ def _prepare_intersection(curve: IntersectionCurve, /) -> _IntersectionPreparati
         np.asarray(curve.node_upper),
         prepare_host_program(lambda value: curve.evaluate(value[0]), 1),
     )
+
+
+def _prepare_chart_point_program(
+    curve: IntersectionCurve, source: _IntersectionPreparation, chart: int, /
+) -> PreparedIntervalFunction | None:
+    """Lower the certified spatial graph without dynamic charts or p-curve angles."""
+    family = source.family
+    large = curve.first.patch if family.large_index == 0 else curve.second.patch
+    small = curve.second.patch if family.large_index == 0 else curve.first.patch
+    start, end = source.starts[chart], source.ends[chart]
+    sign = source.sign
+
+    def point(value: Array, /) -> Array:
+        large_center, large_axis, _, _, large_radius, _ = _cylinder_profile_data(large)
+        small_center, small_axis, small_first, small_second, small_radius, _ = (
+            _cylinder_profile_data(small)
+        )
+        theta = start + (value[0] - chart) * (end - start)
+        normal = jnp.cross(large_axis, small_axis)
+        displacement = small_center - large_center
+        radial = small_radius * (
+            jnp.cos(theta) * small_first + jnp.sin(theta) * small_second
+        )
+        radial_n = jnp.sum((displacement + radial) * normal)
+        axial_large = jnp.sum((displacement + radial) * large_axis)
+        axial_small = sign * jnp.sqrt(large_radius * large_radius - radial_n * radial_n)
+        return (
+            large_center
+            + axial_small * small_axis
+            + radial_n * normal
+            + axial_large * large_axis
+        )
+
+    def point_and_derivative(value: Array, /) -> Array:
+        return jnp.stack((point(value), jax.jacfwd(point)(value)[:, 0]))
+
+    return prepare_host_program(point_and_derivative, 1)
+
+
+def _chart_point_and_tangent(
+    curve: IntersectionCurve, source: _IntersectionPreparation, parameter: float, /
+) -> tuple[np.ndarray, np.ndarray] | None:
+    chart = min(math.floor(parameter), curve.num_charts - 1)
+    if chart not in source.chart_programs:
+        source.chart_programs[chart] = _prepare_chart_point_program(curve, source, chart)
+    program = source.chart_programs[chart]
+    if program is None:
+        return None
+    arguments = np.asarray([[parameter]], dtype=np.float64)
+    lower, upper = program.evaluate(arguments, arguments)
+    point, tangent = lower[0]
+    tangent_upper = upper[0, 1]
+    tangent_length = np.linalg.norm(tangent)
+    if not (
+        np.all(np.isfinite(lower))
+        and np.all(np.isfinite(upper))
+        and np.any((tangent > 0.0) | (tangent_upper < 0.0))
+        and np.isfinite(tangent_length)
+        and tangent_length > 0.0
+    ):
+        return None
+    return point, tangent
 
 
 @dataclass(slots=True)
@@ -841,7 +910,7 @@ def _select_candidate_projection(
     query: np.ndarray,
     policy: BRepProjectionPolicy,
     candidates: list[_Candidate],
-    point_program: PreparedIntervalFunction | None,
+    source: _IntersectionPreparation,
     ctx: Any,
 ) -> CurveProjection:
     """Compare certified distance enclosures and preserve distinct roots."""
@@ -880,7 +949,10 @@ def _select_candidate_projection(
         if best.endpoint
         else BRepProjectionStatus.UNIQUE
     )
-    if point_program is None:
+    chart_value = _chart_point_and_tangent(curve, source, best.parameter)
+    if chart_value is not None:
+        point, tangent = chart_value
+    elif source.point_program is None:
         evaluate = (
             _batched_cylinder_points_large_first
             if family.large_index == 0
@@ -891,7 +963,7 @@ def _select_candidate_projection(
         tangent = np.asarray(realized[3], dtype=np.float64)[0]
     else:
         point = evaluate_host_program(
-            point_program, np.asarray([[best.parameter]], dtype=np.float64)
+            source.point_program, np.asarray([[best.parameter]], dtype=np.float64)
         )[0]
         tangent = None
     squared = sum(
@@ -1005,7 +1077,7 @@ def project_intersection_curve(
             query,
             policy,
             candidates,
-            preparation.point_program,
+            preparation,
             ctx,
         )
     if polynomial == (F(0),):
@@ -1077,6 +1149,6 @@ def project_intersection_curve(
         query,
         policy,
         candidates,
-        preparation.point_program,
+        preparation,
         ctx,
     )
