@@ -874,6 +874,13 @@
   Locator tabulation error and custom degree metadata remain separate
   limitations. The unused numerical polynomial route of cell validity, which
   shared that table, is removed.
+- The stratum subdivision cache of the embedding proof keyed its root and child
+  pieces by cell id although each piece holds one cell object's geometry and
+  residual controls, so a later distinct cell object with the same id could be
+  proved from the earlier object's exact nets. Pieces are keyed by the live
+  cell object and residual-dependent pieces are renewed for every subdivision
+  proof. Canonical cell ids are unique within one mesh; rebuilt, restored and
+  directly constructed proof objects were exposed.
 - On x86-64 with FMA a `NewtonKrylov` step could be refused with
   `LINEAR_SOLVE_FAILED` although its linear solve had converged. The compiler
   evaluated the linear residual in two fused kernels and contracted only one
