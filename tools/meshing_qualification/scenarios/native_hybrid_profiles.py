@@ -3158,6 +3158,19 @@ def _boundary_volume(mesh: Any) -> float:
     return total
 
 
+def _recorded_measurements(values: Any, /) -> list[float | None]:
+    """Layer measurements as a JSON row.
+
+    The producer reports a layer it terminated or merged away with a
+    non-finite measurement. A receipt is strict JSON, which has no such
+    number, so that layer is recorded as ``None``.
+    """
+    return [
+        value if np.isfinite(value) else None
+        for value in np.asarray(values, dtype=np.float64).tolist()
+    ]
+
+
 def _layer_record(
     wall: Any,
     control: Any,
@@ -3324,10 +3337,10 @@ def _layer_record(
         "route": control.route.value,
         "collision_policy": evidence.collision_policy.value,
         "requested_thicknesses": list(control.schedule.thicknesses),
-        "measured_thicknesses": achieved.tolist(),
-        "minimum_thicknesses": np.asarray(evidence.minimum_thicknesses).tolist(),
-        "maximum_thicknesses": np.asarray(evidence.maximum_thicknesses).tolist(),
-        "measured_growth_rates": rates.tolist(),
+        "measured_thicknesses": _recorded_measurements(achieved),
+        "minimum_thicknesses": _recorded_measurements(evidence.minimum_thicknesses),
+        "maximum_thicknesses": _recorded_measurements(evidence.maximum_thicknesses),
+        "measured_growth_rates": _recorded_measurements(rates),
         "layer_active": active.tolist(),
         "relative_thickness_error": thickness_error,
         "certified_valid_cells": int(result.validity.certified_valid_count),
