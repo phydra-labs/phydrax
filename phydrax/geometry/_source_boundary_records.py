@@ -10,13 +10,19 @@ from dataclasses import dataclass, fields
 from enum import IntEnum
 from fractions import Fraction
 from itertools import groupby
+from math import gcd
 from typing import final, Literal, Protocol, runtime_checkable, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
 from jax.typing import ArrayLike
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import (
+    array_tree_fingerprint,
+    canonical_fingerprint,
+    numeric_array_fingerprint,
+    rational_chart_bank_fingerprint,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
@@ -436,14 +442,18 @@ def _validated_rational_chart_tokens(
     /,
 ) -> SourceBoundaryRationalChartBank:
     if supplied is None:
-        exact = (
+        generated_rows: dict[
+            tuple[tuple[_RationalToken, ...], ...],
+            tuple[tuple[_RationalToken, ...], ...],
+        ] = {}
+        rows = (
             tuple(
-                tuple(Fraction.from_float(float(value)) for value in point)
+                tuple(float(value).as_integer_ratio() for value in point)
                 for point in row
             )
             for row in realization
         )
-        return rational_chart_tokens(exact)
+        return tuple(generated_rows.setdefault(row, row) for row in rows)
     if len(supplied) != count:
         raise ValueError(f"{name} must contain one exact chart row per witness row.")
     result: list[tuple[tuple[_RationalToken, ...], ...]] = []
@@ -476,18 +486,16 @@ def _validated_rational_chart_tokens(
                 numerator, denominator = (int(value) for value in token)
                 if denominator <= 0:
                     raise ValueError(f"{name} denominators must be positive.")
-                exact = Fraction(numerator, denominator)
-                canonical = (exact.numerator, exact.denominator)
                 represented = float(realization[row_index, corner_index, axis])
                 if (
-                    canonical != (numerator, denominator)
+                    gcd(numerator, denominator) != 1
                     or not np.isfinite(represented)
-                    or float(exact) != represented
+                    or numerator / denominator != represented
                 ):
                     raise ValueError(
                         f"{name} exact coordinate differs from its binary64 realization."
                     )
-                coordinates.append(canonical)
+                coordinates.append((numerator, denominator))
             points.append(tuple(coordinates))
         canonical_row = tuple(points)
         if (
@@ -1259,8 +1267,9 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                 "kind": "source-boundary-chart-witness",
                 "identities": identity_values,
                 "dimensions": (chart_dimension, reference_dimension),
-                "arrays": array_tree_fingerprint(
-                    (
+                "arrays": tuple(
+                    numeric_array_fingerprint(value)
+                    for value in (
                         self.cell_global_ids,
                         self.entity_global_ids,
                         self.local_entity_indices,
@@ -1277,8 +1286,8 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                 "entities": self.source_entity_ids,
                 "occurrences": self.occurrence_paths,
                 "exact_rational_charts": (
-                    self.target_reference_rational_tokens,
-                    self.source_parameter_rational_tokens,
+                    rational_chart_bank_fingerprint(self.target_reference_rational_tokens),
+                    rational_chart_bank_fingerprint(self.source_parameter_rational_tokens),
                 ),
                 "cad_ancestry": (
                     None

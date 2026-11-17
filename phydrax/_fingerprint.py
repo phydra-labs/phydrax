@@ -101,6 +101,51 @@ def array_bytes_digest(value: np.ndarray, /) -> str:
         digest.update(chunk)
     return digest.hexdigest()
 
+def numeric_array_fingerprint(value: np.ndarray, /) -> str:
+    """Hash a numeric array with explicit little-endian dtype and shape framing."""
+    array = np.asarray(value)
+    if array.dtype.kind not in "biufc":
+        raise TypeError("Numeric array fingerprints require a numeric dtype.")
+    dtype = array.dtype.newbyteorder("<")
+    normalized = np.asarray(array, dtype=dtype)
+    metadata = canonical_json({"dtype": dtype.str, "shape": list(array.shape)}).encode(
+        "ascii"
+    )
+    digest = hashlib.sha256(b"numeric-array\0")
+    digest.update(len(metadata).to_bytes(8, "big"))
+    digest.update(metadata)
+    for chunk in iter_array_bytes(normalized):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+def rational_chart_bank_fingerprint(
+    bank: tuple[tuple[tuple[tuple[int, int], ...], ...], ...], /
+) -> str:
+    """Hash a rational chart table from framed, signed big-endian row digests."""
+    digest = hashlib.sha256(b"rational-chart-bank\0")
+    digest.update(len(bank).to_bytes(8, "big"))
+    rows: dict[tuple[tuple[tuple[int, int], ...], ...], bytes] = {}
+    for row in bank:
+        row_hash = rows.get(row)
+        if row_hash is None:
+            encoded_row = bytearray(b"rational-chart-row\0")
+            encoded_row.extend(len(row).to_bytes(8, "big"))
+            for point in row:
+                encoded_row.extend(len(point).to_bytes(8, "big"))
+                for numerator, denominator in point:
+                    for value in (numerator, denominator):
+                        magnitude = abs(value)
+                        encoded = magnitude.to_bytes(
+                            (magnitude.bit_length() + 7) // 8, "big"
+                        )
+                        encoded_row.append(value < 0)
+                        encoded_row.extend(len(encoded).to_bytes(8, "big"))
+                        encoded_row.extend(encoded)
+            row_hash = hashlib.sha256(encoded_row).digest()
+            rows[row] = row_hash
+        digest.update(row_hash)
+    return digest.hexdigest()
+
 
 def canonical_array_hex_fingerprint(value: np.ndarray, /) -> str:
     """Fingerprint the canonical JSON string of C-order hexadecimal bytes."""
@@ -367,4 +412,6 @@ __all__ = [
     "canonical_array_list_fingerprint",
     "canonical_mapping",
     "iter_array_bytes",
+    "numeric_array_fingerprint",
+    "rational_chart_bank_fingerprint",
 ]

@@ -1,9 +1,13 @@
+from typing import Literal
+
 import numpy as np
 import pytest
 
+from phydrax.geometry._embedding_state import MeshCertificateFinding
 from phydrax.geometry._source_boundary_records import (
     _SOURCE_BOUNDARY_SAMPLES_OWNERSHIP,
     SourceBoundaryChartCover,
+    SourceBoundaryChartWitness,
     SourceBoundaryDistance,
     SourceBoundarySamples,
 )
@@ -145,3 +149,86 @@ def test_chart_cover_binds_source_revision_and_restriction_witnesses() -> None:
             "revision-7",
             restriction_ids=("same", "same"),
         )
+
+
+def test_chart_cover_identity_binds_exact_content_not_float_evidence() -> None:
+    triangle = (((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)),)
+
+    def cover(
+        source: str = "source",
+        revision: str = "revision",
+        semantics: Literal["certified", "sampled"] = "certified",
+        complete: bool = True,
+        restrictions: tuple[str, ...] = ("restriction",),
+        findings: tuple[MeshCertificateFinding, ...] = (),
+        simplices: tuple[tuple[tuple[float, float], ...], ...] = triangle,
+        bounds: tuple[float, ...] = (0.1,),
+    ) -> SourceBoundaryChartCover:
+        return SourceBoundaryChartCover(
+            simplices,
+            bounds,
+            semantics,
+            complete,
+            source,
+            revision,
+            findings=findings,
+            restriction_ids=restrictions,
+        )
+
+    identity = cover().cover_id
+    assert cover().cover_id == identity
+    assert cover(source="other").cover_id != identity
+    assert cover(revision="other").cover_id != identity
+    assert cover(semantics="sampled").cover_id != identity
+    assert cover(complete=False).cover_id != identity
+    assert (
+        cover(findings=(MeshCertificateFinding("check", "unresolved", "mesh"),)).cover_id
+        != identity
+    )
+    assert cover(restrictions=("other",)).cover_id != identity
+    assert cover(simplices=triangle * 2, bounds=(0.1, 0.1)).cover_id != identity
+    assert cover(
+        simplices=(((0.25, 0.0), (1.0, 0.0), (0.0, 1.0)),),
+        bounds=(0.2,),
+    ).cover_id == identity
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "mesh", "geometry", "topology", "source", "revision", "query",
+        "cell", "entity", "chart", "source_entity", "occurrence",
+        "target", "parameter", "orientation",
+    ),
+)
+def test_source_chart_witness_identity_binds_content(field: str) -> None:
+    def make(changed: str) -> SourceBoundaryChartWitness:
+        target = np.asarray([[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]], dtype=np.float64)
+        parameter = target.copy()
+        if changed == "target":
+            target[0, 1, 0] = 0.5
+        if changed == "parameter":
+            parameter[0, 1, 0] = 0.5
+        return SourceBoundaryChartWitness(
+            mesh_id="other" if changed == "mesh" else "mesh",
+            geometry_id="other" if changed == "geometry" else "geometry",
+            topology_id="other" if changed == "topology" else "topology",
+            source_id="other" if changed == "source" else "source",
+            source_revision="other" if changed == "revision" else "revision",
+            source_query_id="other" if changed == "query" else "query",
+            chart_dimension=2,
+            reference_dimension=2,
+            cell_global_ids=np.asarray([2 if changed == "cell" else 1], dtype=np.int64),
+            entity_global_ids=np.asarray([2 if changed == "entity" else 1], dtype=np.int64),
+            local_entity_indices=np.asarray([-1], dtype=np.int32),
+            target_reference_vertices=target,
+            source_chart_ids=("other" if changed == "chart" else "chart",),
+            source_entity_ids=("other" if changed == "source_entity" else "face",),
+            occurrence_paths=(("use",) if changed == "occurrence" else (),),
+            source_parameters=parameter,
+            orientations=np.asarray([-1 if changed == "orientation" else 1], dtype=np.int8),
+        )
+
+    identity = make("").witness_id
+    assert make("").witness_id == identity
+    assert make(field).witness_id != identity
