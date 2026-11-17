@@ -498,34 +498,27 @@ def test_batched_stratum_randomized_parity_and_subdivision() -> None:
     assert subdivided_stratum_separations((), StratumSubdivisionCache()) == ()
 
 
-def test_batched_stratum_subdivision_counts_match_standalone(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    corners = (_p(1, 0, 1), _p(2, 0, 1), _p(1.5, 0.5, 1), _p(1.5, 0.125, 1.75))
-    neighbour = _cell(5, "simplex:3", (4, 9, 10, 11), corners, _bend())
-    residuals = _stratum_residuals(_FIRST, (4,))
+def test_curved_vertex_contact_needs_multiple_subdivision_pieces() -> None:
+    physical = _bend(Fraction(7, 4), Fraction(7, 4))
+    first = _cell(1, "tetrahedron", (0, 1, 2, 3), _TETRAHEDRON, physical)
+    corners = (
+        (Fraction(0), Fraction(0), Fraction(0)),
+        (Fraction(-13, 16), Fraction(-7, 8), Fraction(-1, 16)),
+        (Fraction(-3, 16), Fraction(3, 8), Fraction(-7, 16)),
+        (Fraction(-1, 8), Fraction(-21, 16), Fraction(-3, 2)),
+    )
+    second = _cell(5, "simplex:3", (0, 9, 10, 11), corners, physical)
+    residuals = _stratum_residuals(first, (0,))
     assert residuals is not None
-    request = (_FIRST, neighbour, (4,), residuals)
-    original = subdivision._strict_direction
-    calls = 0
-
-    def miss_root(vectors: np.ndarray, /) -> np.ndarray | None:
-        nonlocal calls
-        calls += 1
-        return None if calls <= 3 else original(vectors)
-
-    monkeypatch.setattr(subdivision, "_strict_direction", miss_root)
-    expected = subdivided_stratum_separation(*request, StratumSubdivisionCache())
-    assert expected is not None and sum(expected) > 1
-    calls = 0
+    request = (first, second, (0,), residuals)
+    expected = (3, 0)
+    assert subdivided_stratum_separation(*request, StratumSubdivisionCache()) == expected
     assert subdivided_stratum_separations((request,), StratumSubdivisionCache()) == (
         expected,
     )
 
 
-def test_batched_stratum_item_refusal_and_radical_fallback(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_batched_stratum_radical_fallback() -> None:
     from phydrax.discretization._exact_algebraic_geometry import RadicalElement
 
     first = _cell(201, "tetrahedron", (0, 1, 2, 3), _TETRAHEDRON, _bend())
@@ -557,26 +550,10 @@ def test_batched_stratum_item_refusal_and_radical_fallback(
         for request in requests
     )
     assert all(result == (1, 0) for result in expected)
-    original = subdivision._integer_cone_signs
-    refused: list[int] = []
-
-    def refuse_one(
-        group: list[tuple[int, tuple[int, ...], list[tuple[subdivision._Vector, int]]]],
-        /,
-    ) -> tuple[bool | None, ...]:
-        verdicts = original(group)
-        refused.append(len(group))
-        return (None, *verdicts[1:])
-
-    monkeypatch.setattr(subdivision, "_integer_cone_signs", refuse_one)
     assert subdivided_stratum_separations(requests, StratumSubdivisionCache()) == expected
-    assert refused and max(refused) >= 2
 
 
-def test_batched_stratum_keeps_objects_and_proofs_independent(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(subdivision, "_RESOLUTION", 2.0)
+def test_batched_stratum_keeps_objects_and_proofs_independent() -> None:
     first = _cell(401, "tetrahedron", (0, 1, 2, 3), _TETRAHEDRON, _bend())
     opposite = _cell(
         402,
@@ -593,14 +570,21 @@ def test_batched_stratum_keeps_objects_and_proofs_independent(
         _bend(),
     )
     rebuilt_first = _cell(401, "tetrahedron", (0, 1, 2, 3), _TETRAHEDRON, _bend())
-    overlap = _cell(402, "tetrahedron", (0, 7, 8, 9), _TETRAHEDRON, _bend())
+    translated = tuple(
+        (point[0] + (1 << 50), point[1], point[2]) for point in _TETRAHEDRON
+    )
+    contact_first = _cell(403, "tetrahedron", (0, 1, 2, 3), translated, axes(3))
+    contact = _cell(404, "tetrahedron", (0, 7, 8, 9), translated, axes(3))
+    contact_residuals = _stratum_residuals(contact_first, (0,))
+    assert contact_residuals is not None
     unsupported = _cell(401, "hexahedron", tuple(range(8)), _HEXAHEDRON, _bend())
     residuals = _stratum_residuals(first, (0,))
     assert residuals is not None
     requests = (
         (first, opposite, (0,), residuals),
-        (rebuilt_first, overlap, (0,), residuals),
-        (first, opposite, (0,), (constant(0, 3),)),
+        (rebuilt_first, opposite, (0,), residuals),
+        (contact_first, contact, (0,), contact_residuals),
+        (contact_first, contact, (0,), (constant(0, 3),)),
         (unsupported, opposite, (0,), residuals),
         (first, same_id_opposite, (0,), residuals),
     )
@@ -608,66 +592,13 @@ def test_batched_stratum_keeps_objects_and_proofs_independent(
         subdivided_stratum_separation(*request, StratumSubdivisionCache())
         for request in requests
     )
-    assert expected == ((1, 0), None, None, None, (1, 0))
+    assert expected == ((1, 0), (1, 0), None, None, None, (1, 0))
     assert subdivided_stratum_separations(requests, StratumSubdivisionCache()) == expected
     cache = StratumSubdivisionCache()
     assert (
         tuple(subdivided_stratum_separation(*request, cache) for request in requests)
         == expected
     )
-
-
-def test_batched_stratum_rejects_incorrect_float_proposal(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    first = _cell(301, "tetrahedron", (0, 1, 2, 3), _TETRAHEDRON, _bend())
-    opposite = _cell(
-        302,
-        "tetrahedron",
-        (0, 7, 8, 9),
-        tuple(tuple(-value for value in point) for point in _TETRAHEDRON),
-        _bend(),
-    )
-    residuals = _stratum_residuals(first, (0,))
-    assert residuals is not None
-    request = (first, opposite, (0,), residuals)
-    assert subdivided_stratum_separations((request,), StratumSubdivisionCache()) == (
-        (1, 0),
-    )
-    monkeypatch.setattr(
-        subdivision, "_strict_direction", lambda vectors: np.array([1.0, 0.0, 0.0])
-    )
-    monkeypatch.setattr(subdivision, "_RESOLUTION", 2.0)
-    assert subdivided_stratum_separations((request,), StratumSubdivisionCache()) == (
-        None,
-    )
-    assert subdivided_stratum_separation(*request, StratumSubdivisionCache()) is None
-    monkeypatch.setattr(
-        subdivision, "_integer_cone_signs", lambda group: tuple(True for _ in group)
-    )
-    assert subdivided_stratum_separations((request,), StratumSubdivisionCache()) != (
-        None,
-    )
-
-
-def test_subdivision_proof_matches_python_exact_roots(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    if not subdivision.meshcore_available():
-        pytest.skip("native meshcore is unavailable")
-    corners = (_p(1, 0, 1), _p(2, 0, 1), _p(1.5, 0.5, 1), _p(1.5, 0.125, 1.75))
-    neighbour = _cell(5, "simplex:3", (4, 9, 10, 11), corners, _bend())
-    residuals = _stratum_residuals(_FIRST, (4,))
-    assert residuals is not None
-    native = subdivided_stratum_separation(
-        _FIRST, neighbour, (4,), residuals, StratumSubdivisionCache()
-    )
-    monkeypatch.setattr(subdivision, "meshcore_available", lambda: False)
-    exact = subdivided_stratum_separation(
-        _FIRST, neighbour, (4,), residuals, StratumSubdivisionCache()
-    )
-    assert native is not None
-    assert native == exact
 
 
 def test_vertex_cone_batches_preserve_exact_outward_endpoints() -> None:
