@@ -33,7 +33,11 @@ from ...discretization._periodic_cell import PeriodicCell
 from ...discretization._periodic_exact import apply_periodic
 from ...discretization._periodic_topology import PeriodicMeshTopology
 from ...typing import checked
-from .._rational import binary64_difference_magnitude, binary64_norm_upper
+from .._rational import (
+    binary64_difference_magnitude,
+    binary64_norm_upper,
+    binary64_spectral_upper,
+)
 from ..analytic._trigonometric_level_set import (
     TrigonometricLevelSet,
     TrigonometricSheetBand,
@@ -390,7 +394,7 @@ class PeriodicImplicitSurface(StrictModule, NonTrainableState):
         normals = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
         area = float(0.5 * np.sum(np.linalg.norm(normals, axis=1)))
         # A reduced displacement d moves a point by d @ vectors in space.
-        stretch = float(binary64_norm_upper(vectors.reshape(-1)))
+        stretch = binary64_spectral_upper(vectors)
         return PeriodicLatticeMetrics(
             cell_volume=float(abs(np.linalg.det(vectors))),
             solid_fraction_lower=volume.fraction_lower,

@@ -88,12 +88,9 @@ def test_quotient_discovery_reports_cited_cubic_cell_genus_and_half_fraction(
     assert table.symmetry_sign(*symmetry) == -1
     metrics = surface.lattice_metrics()
     assert metrics.solid_fraction_lower <= 0.5 <= metrics.solid_fraction_upper
-    # The reported Cartesian certificate uses the Frobenius lattice bound.
-    # For the identity lattice this is sqrt(3), not the spectral value 1.
-    assert (
-        Fraction(metrics.vertex_root_distance) ** 2
-        >= 3 * Fraction(surface.root_error) ** 2
-    )
+    # The identity lattice has unit spectral stretch, up to outward rounding.
+    assert Fraction(metrics.vertex_root_distance) >= Fraction(surface.root_error)
+    assert metrics.vertex_root_distance <= np.nextafter(surface.root_error, np.inf)
     assert metrics.porosity_lower <= 0.5 <= metrics.porosity_upper
 
 
@@ -106,6 +103,37 @@ def test_quotient_discovery_on_a_skew_cell_keeps_topology_and_exact_lifts() -> N
     _assert_exact_lift(surface)
     metrics = surface.lattice_metrics()
     assert metrics.cell_volume == pytest.approx(abs(np.linalg.det(vectors)))
+    # Exact principal-minor certificate that distance² I - error² V Vᵀ is PSD.
+    distance2 = Fraction(metrics.vertex_root_distance) ** 2
+    error2 = Fraction(surface.root_error) ** 2
+    exact = [[Fraction(float(value)) for value in row] for row in vectors]
+    matrix = [
+        [
+            (distance2 if i == j else Fraction(0))
+            - error2 * sum((exact[i][k] * exact[j][k] for k in range(3)), Fraction(0))
+            for j in range(3)
+        ]
+        for i in range(3)
+    ]
+    assert all(matrix[i][i] >= 0 for i in range(3))
+    assert all(
+        matrix[i][i] * matrix[j][j] - matrix[i][j] ** 2 >= 0
+        for i in range(3)
+        for j in range(i + 1, 3)
+    )
+    determinant = (
+        matrix[0][0] * (matrix[1][1] * matrix[2][2] - matrix[1][2] ** 2)
+        - matrix[0][1] * (matrix[0][1] * matrix[2][2] - matrix[1][2] * matrix[0][2])
+        + matrix[0][2] * (matrix[0][1] * matrix[1][2] - matrix[1][1] * matrix[0][2])
+    )
+    assert determinant >= 0
+
+
+def test_lattice_metrics_tight_axis_aligned_stretch() -> None:
+    surface = _discover("schwarz_p", 0.2, np.diag([2.0, 1.0, 0.5]))
+    distance = surface.lattice_metrics().vertex_root_distance
+    assert Fraction(distance) >= 2 * Fraction(surface.root_error)
+    assert distance <= np.nextafter(2.0 * surface.root_error, np.inf)
 
 
 def _independent_schwarz_p_area(points_per_axis: int, half_width: float) -> float:
@@ -131,7 +159,7 @@ def test_lattice_metrics_report_measured_area_against_independent_quadrature() -
     )
     low, high = metrics.measured_solid_specific_surface
     assert low <= metrics.measured_surface_area / 0.5 <= high
-    assert 0.0 < metrics.vertex_root_distance <= 2.0e-8
+    assert 0.0 < metrics.vertex_root_distance <= 1.0e-8
 
 
 def test_singular_quotient_level_is_refused_before_discovery() -> None:

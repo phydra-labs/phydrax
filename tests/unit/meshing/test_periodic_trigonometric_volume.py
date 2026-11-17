@@ -153,10 +153,9 @@ def test_periodic_network_mesh_certifies_and_closes_through_paired_cell_faces(
     family: _G.TrigonometricFamily, diameter: float
 ) -> None:
     volume = _volume(family, diameter)
-    # Identity lattice: the certified Frobenius stretch is at least sqrt(3).
-    assert (
-        Fraction(volume.vertex_root_distance) ** 2 >= 3 * Fraction(volume.root_error) ** 2
-    )
+    # The identity lattice has unit spectral stretch, up to outward rounding.
+    assert Fraction(volume.vertex_root_distance) >= Fraction(volume.root_error)
+    assert volume.vertex_root_distance <= np.nextafter(volume.root_error, np.inf)
     surface = volume.surface
     assert surface.topology is not None
 
@@ -189,6 +188,23 @@ def test_periodic_network_mesh_certifies_and_closes_through_paired_cell_faces(
     achieved = dict(volume.construction.compliance.achieved)
     assert achieved["final_quality_unmet_count"] == 0.0
     assert volume.construction.compliance.issues == ()
+
+
+def test_periodic_volume_tight_axis_aligned_root_distance() -> None:
+    source = _G.TrigonometricLevelSet(
+        _G.TrigonometricTable.family("schwarz_p"),
+        PeriodicCell(np.diag([2.0, 1.0, 1.0])),
+    )
+    surface = discover_periodic_trigonometric_surface(
+        source,
+        policy=AdaptiveImplicitSurfacePolicy(
+            relative_cell_diameter=0.2, root_tolerance=1.0e-8
+        ),
+        source_id="axis-aligned-network",
+    )
+    volume = mesh_periodic_trigonometric_region(surface)
+    assert Fraction(volume.vertex_root_distance) >= 2 * Fraction(volume.root_error)
+    assert volume.vertex_root_distance <= np.nextafter(2.0 * volume.root_error, np.inf)
 
 
 def test_periodic_network_public_adaptation_edits_complete_lattice_orbits() -> None:

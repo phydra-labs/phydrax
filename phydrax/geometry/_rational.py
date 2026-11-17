@@ -222,6 +222,40 @@ def binary64_norm_lower(components: ArrayLike, /) -> NDArray[np.float64]:
     return _directed_norm(components, False)
 
 
+def binary64_spectral_upper(matrix: ArrayLike, /) -> float:
+    """Certified spectral norm bound for a finite binary64 matrix.
+
+    Both the squared Frobenius norm and the product of the induced 1- and
+    infinity-norms bound the squared spectral norm. Compute them exactly on
+    the represented entries before rounding the smaller bound outward.
+    """
+    values = np.asarray(matrix, dtype=np.float64)
+    if values.ndim != 2 or not np.all(np.isfinite(values)):
+        raise ValueError("spectral norm bound requires a finite matrix.")
+    entries = [[abs(Fraction(float(value))) for value in row] for row in values]
+    frobenius = sum((value * value for row in entries for value in row), Fraction(0))
+    row_norm = max((sum(row, Fraction(0)) for row in entries), default=Fraction(0))
+    column_norm = max(
+        (
+            sum((row[column] for row in entries), Fraction(0))
+            for column in range(values.shape[1])
+        ),
+        default=Fraction(0),
+    )
+    squared = min(frobenius, row_norm * column_norm)
+    if not squared:
+        return 0.0
+    exponent = (squared.numerator.bit_length() - squared.denominator.bit_length()) // 2
+    scale = Fraction(2) ** (2 * exponent)
+    try:
+        rounded = math.ldexp(math.sqrt(fraction_up(squared / scale)), exponent)
+    except OverflowError:
+        return math.inf
+    if math.isfinite(rounded) and Fraction(rounded) ** 2 < squared:
+        rounded = math.nextafter(rounded, math.inf)
+    return rounded
+
+
 def binary64_dyadic_entries(
     values: np.ndarray, /
 ) -> tuple[NDArray[np.int64], NDArray[np.int64]]:
@@ -352,6 +386,7 @@ __all__ = [
     "binary64_dyadic_entries",
     "binary64_norm_lower",
     "binary64_norm_upper",
+    "binary64_spectral_upper",
     "dyadic_entry",
     "dyadic_integers",
     "exact_float",
