@@ -22,7 +22,7 @@ from ..discretization._reference_cell import reference_cell_topology
 from ._domain_boundary import MeshingDomainBoundarySource
 from ._domain_planar_boundary import _face_image_is_corner_polygon
 from ._mesh_certificates import _same_tree_content
-from ._meshing_domain import SourcePreparation
+from ._meshing_domain import SourceEvaluationSnapshot, SourcePreparation
 from ._planar_primitives import plane_key, project_polygon, projection_axes, signed_area2
 from ._source_boundary_records import SourceBoundaryFaceImageWitness
 
@@ -33,7 +33,9 @@ type _Triangle2 = tuple[_Point2, _Point2, _Point2]
 
 # Face-image proofs bound to the exact live mesh, map, source and witness that
 # earned them (see validate_source_face_image).
-_PROVEN_FACE_IMAGES: LiveProofLedger[tuple[int, ...]] = LiveProofLedger()
+_PROVEN_FACE_IMAGES: LiveProofLedger[
+    tuple[tuple[int, ...], SourceEvaluationSnapshot]
+] = LiveProofLedger()
 
 
 def validate_source_face_image(
@@ -58,16 +60,21 @@ def validate_source_face_image(
     of the source domain and does not change the outcome. Any copy, rebuild or
     changed content reproves in full.
     """
+    preparation = SourcePreparation.of(source.domain, preparation)
     operands = (mesh, geometry, source, witness)
     proven = _PROVEN_FACE_IMAGES.find(operands)
     if proven is not None:
         source.require_current()
-        return proven
+        patches, snapshot = proven
+        preparation.evaluations._merge_validation(snapshot)
+        return patches
     fingerprint = live_content_fingerprint(operands)
+    before = preparation.evaluations.snapshot()
     patches = _prove_source_face_image(
         mesh, geometry, source, witness, preparation=preparation
     )
-    _PROVEN_FACE_IMAGES.record(operands, fingerprint, patches)
+    snapshot = preparation.evaluations._validation_since(before)
+    _PROVEN_FACE_IMAGES.record(operands, fingerprint, (patches, snapshot))
     return patches
 
 

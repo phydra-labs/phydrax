@@ -1542,24 +1542,6 @@ class ValidatedSourceFidelityWitness(tuple):
         return self.mesh is mesh and self.geometry is geometry and self.source is source
 
 
-def _validation_evaluation_delta(
-    before: SourceEvaluationSnapshot, after: SourceEvaluationSnapshot, /
-) -> SourceEvaluationSnapshot:
-    """Only this validation's counts; domain construction is a separate operation."""
-    result: list[tuple[tuple[str, int], ...]] = []
-    for index, (old_rows, new_rows) in enumerate(zip(before, after, strict=True)):
-        old = dict(old_rows)
-        result.append(
-            tuple(
-                (kind, count - old.get(kind, 0))
-                for kind, count in new_rows
-                if count > old.get(kind, 0)
-                and not (index == 2 and kind == "domain-construction")
-            )
-        )
-    return result[0], result[1], result[2]
-
-
 def validate_source_fidelity_witness(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -1597,7 +1579,7 @@ def validate_source_fidelity_witness(
             target_rows_out=validated_target_rows,
         )
         target_rows = validated_target_rows[0] if validated_target_rows else None
-        snapshot = _validation_evaluation_delta(before, ledger.snapshot())
+        snapshot = ledger._validation_since(before)
         _VALIDATED_WITNESSES.record(
             operands, fingerprint, (partition_findings, target_rows, snapshot)
         )

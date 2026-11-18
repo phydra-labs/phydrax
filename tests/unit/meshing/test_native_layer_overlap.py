@@ -503,7 +503,9 @@ def test_public_audit_rejects_unbound_partial_edge_claims() -> None:
     assert "incomplete_geometry_association" in report.issues
 
 
-def _cross_strata_face_image_fixture() -> tuple[
+def _cross_strata_face_image_fixture(
+    *, spline_trim: bool = False
+) -> tuple[
     CellMesh,
     CellGeometrySpec,
     MeshingDomainBoundarySource,
@@ -525,7 +527,7 @@ def _cross_strata_face_image_fixture() -> tuple[
         SourceBoundaryFaceImageWitness,
     )
     from phydrax.geometry._source_fidelity import _volume_boundary_facet_lookup
-    from phydrax.geometry.brep._patches import LineCurve
+    from phydrax.geometry.brep._patches import BSplineCurve, LineCurve
     from phydrax.geometry.reconstruction._core import _ReconstructedTrianglePatch
 
     coordinates = np.asarray(
@@ -560,9 +562,19 @@ def _cross_strata_face_image_fixture() -> tuple[
             (6, 4),
         )
     )
+    first_curve = (
+        BSplineCurve(
+            ((0.0, 0.0), (1.0, 0.0)),
+            (1.0, 1.0),
+            (0.0, 0.0, 1.0, 1.0),
+            1,
+        )
+        if spline_trim
+        else LineCurve((0, 0), (1, 0))
+    )
     triangle_uses = (
         (
-            PatchCurveUse(0, LineCurve((0, 0), (1, 0)), 0, 1),
+            PatchCurveUse(0, first_curve, 0, 1),
             PatchCurveUse(1, LineCurve((1, 0), (-1, 1)), 0, 1),
             PatchCurveUse(2, LineCurve((0, 1), (0, -1)), 0, 1),
         ),
@@ -635,6 +647,39 @@ def _cross_strata_face_image_fixture() -> tuple[
         image_triangle_rational_tokens=rational_chart_tokens(physical),
     )
     return mesh, geometry, source, witness
+
+
+def test_face_image_live_proof_carries_validation_counts() -> None:
+    from phydrax.geometry._meshing_domain import SourceEvaluationLedger, SourcePreparation
+    from phydrax.geometry._source_face_image import validate_source_face_image
+    from phydrax.geometry._source_fidelity import validate_source_fidelity_witness
+
+    mesh, geometry, source, witness = _cross_strata_face_image_fixture(spline_trim=True)
+    first_ledger = SourceEvaluationLedger()
+    first = validate_source_face_image(
+        mesh,
+        geometry,
+        source,
+        witness,
+        preparation=SourcePreparation(source.domain, evaluations=first_ledger),
+    )
+    kind = "phydrax.geometry.brep._patches.BSplineCurve"
+    first_rows, first_calls, _ = first_ledger.snapshot()
+    assert dict(first_rows)[kind] > 0
+    assert dict(first_calls)[kind] > 0
+    second_ledger = SourceEvaluationLedger()
+    validated = validate_source_fidelity_witness(
+        mesh, geometry, source, witness, evaluations=second_ledger
+    )
+    assert dict(validated.evaluation_snapshot[0])[kind] == dict(first_rows)[kind]
+    assert dict(validated.evaluation_snapshot[1])[kind] == dict(first_calls)[kind]
+    third_ledger = SourceEvaluationLedger()
+    reused = validate_source_fidelity_witness(
+        mesh, geometry, source, witness, evaluations=third_ledger
+    )
+    assert reused.evaluation_snapshot is validated.evaluation_snapshot
+    assert third_ledger.snapshot() == validated.evaluation_snapshot
+    assert set(first) == {0, 1}
 
 
 def test_bilinear_face_image_retains_distinct_source_strata_and_rejects_forgery() -> None:

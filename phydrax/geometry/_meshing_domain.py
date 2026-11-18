@@ -1071,6 +1071,23 @@ class SourceEvaluationLedger:
             tuple(sorted(self.unknown.items())),
         )
 
+    def _validation_since(
+        self, before: SourceEvaluationSnapshot, /
+    ) -> SourceEvaluationSnapshot:
+        """Return this proof's delta, excluding separate construction provenance."""
+        result: list[tuple[tuple[str, int], ...]] = []
+        for index, (old_rows, new_rows) in enumerate(zip(before, self.snapshot(), strict=True)):
+            old = dict(old_rows)
+            result.append(
+                tuple(
+                    (kind, count - old.get(kind, 0))
+                    for kind, count in new_rows
+                    if count > old.get(kind, 0)
+                    and not (index == 2 and kind == "domain-construction")
+                )
+            )
+        return result[0], result[1], result[2]
+
     def _merge_validation(self, snapshot: SourceEvaluationSnapshot, /) -> None:
         """Add an immutable declaration earned by a live-operand-bound proof."""
         for target, entries in zip(
