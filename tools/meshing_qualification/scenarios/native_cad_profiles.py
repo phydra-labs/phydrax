@@ -11,6 +11,7 @@ from tempfile import TemporaryDirectory
 from typing import Any, Callable, Literal
 
 import jax.numpy as jnp
+import mpmath as mp
 import numpy as np
 
 import phydrax as phx
@@ -531,15 +532,7 @@ def _quadric_case(
         operands.append(restored)
         roundtrips.append(entry)
     model, boolean_record = _boolean(operands[0], operands[1], "intersection")
-    radius, major = 0.6, 1.0
-    theta, weights = _gauss_interval(256, -0.5 * math.pi, 0.5 * math.pi)
-    integrand = (
-        4.0
-        * radius**2
-        * np.cos(theta) ** 2
-        * np.sqrt(major**2 - (radius * np.sin(theta)) ** 2)
-    )
-    exact_volume = float(np.sum(weights * integrand))
+    exact_volume = _cross_cylinder_volume(0.6, 1.0)
     return (
         model,
         exact_volume,
@@ -547,7 +540,7 @@ def _quadric_case(
             "operands": roundtrips,
             "analytic_volume_m3": exact_volume,
             "manufactured_length_m": 1.0,
-            "analytic_volume_method": "independent 256-point Gauss-Legendre evaluation of the closed-form one-dimensional cross-cylinder integral",
+            "analytic_volume_method": "independent high-precision quadrature of the one-dimensional cross-cylinder integral",
             "intersection_loops": [
                 {
                     "axis_radius_m": 1.0,
@@ -614,9 +607,8 @@ def _external_case(
         "flat_inner_radius_mm": 18.93853223808158,
         "flat_outer_radius_mm": 28.56146776191842,
     }
-    washer_volume_m3 = _washer_volume(reference) * 0.001**3
+    hole = None
     boolean_record = None
-    expected_volume = washer_volume_m3
     loops: tuple[tuple[float, float, float, float], ...] = ()
     if case in ("external-routine", "external-combined"):
         admitted_limit = source_losslessness["minimum_declared_tolerance"]
@@ -694,13 +686,14 @@ def _external_case(
             "half_length_mm": 40.0,
             "axis": [1.0, 0.0, 0.0],
         }
-        hole_volume_m3 = _radial_hole_volume(reference, hole) * 0.001**3
-        expected_volume -= hole_volume_m3
+        expected_volume = _washer_volume(reference, hole)
         loops = tuple(
             (radius * 0.001, 0.0004, -0.00075, side)
             for radius in (16.0, 31.5)
             for side in (1, -1)
         )
+    else:
+        expected_volume = _washer_volume(reference)
     provenance = {
         "initial_step_import": {
             "source_digest": imported.source_digest,
@@ -720,7 +713,7 @@ def _external_case(
         "explicit_source_repair": repair_record,
         "analytic_volume_m3": expected_volume,
         "manufactured_length_m": 0.0315,
-        "analytic_volume_method": "independent Pappus revolution integral of the NIST profile; combined case subtracts the donor's independent radial-cylinder integral",
+        "analytic_volume_method": "independent high-precision quadrature of the Pappus revolution integral of the NIST profile; for the combined case, the radial cutter's inner integral is evaluated analytically before one-dimensional quadrature",
         "external_source_and_authored_hole": case == "external-combined",
         "intersection_loops": [
             {
@@ -739,65 +732,128 @@ def _external_case(
     return model, expected_volume, provenance, boolean_record
 
 
-def _gauss_interval(
-    count: int, lower: float, upper: float
-) -> tuple[np.ndarray, np.ndarray]:
-    nodes, weights = np.polynomial.legendre.leggauss(count)
-    half = 0.5 * (upper - lower)
-    return lower + half * (nodes + 1.0), half * weights
-
-
-def _washer_volume(reference: dict[str, Any]) -> float:
-    bottom = float(reference["bottom_z_mm"])
-    inner = float(reference["inner_radius_mm"])
-    outer = float(reference["outer_radius_mm"])
-    flat_inner = float(reference["flat_inner_radius_mm"])
-    flat_outer = float(reference["flat_outer_radius_mm"])
-    flat = float(reference["flat_z_mm"])
-    volume = math.pi * (outer**2 - inner**2) * (-bottom)
-    volume += math.pi * (flat_outer**2 - flat_inner**2) * flat
-    for name, start, end in (
-        ("inner_bead", inner, flat_inner),
-        ("outer_bead", flat_outer, outer),
-    ):
-        bead = reference[name]
-        center = float(bead["center_radius_mm"])
-        minor = float(bead["minor_radius_mm"])
-        first = math.acos(max(-1.0, min(1.0, (start - center) / minor)))
-        last = math.acos(max(-1.0, min(1.0, (end - center) / minor)))
-        angle, weights = _gauss_interval(128, min(first, last), max(first, last))
-        rho = center + minor * np.cos(angle)
-        height = minor * np.sin(angle)
-        volume += (
-            2.0 * math.pi * float(np.sum(weights * rho * height * minor * np.sin(angle)))
+def _rounded_reference(value: Any, error: Any) -> float:
+    """Reject a quadrature estimate that could cross a binary64 midpoint."""
+    if value == 0 and error == 0:
+        return 0.0
+    rounded = float(value)
+    lower = mp.mpf(math.nextafter(rounded, -math.inf))
+    upper = mp.mpf(math.nextafter(rounded, math.inf))
+    center = mp.mpf(rounded)
+    # Budget 100,000 rounding steps for integrand evaluation and assembly:
+    # at 50 decimal digits this reserves five digits beyond the quad estimate.
+    error = max(error, mp.power(10, 5 - mp.mp.dps) * max(1, abs(value)))
+    distance = min(value - (lower + center) / 2, (center + upper) / 2 - value)
+    if error >= distance:
+        raise ArithmeticError(
+            "Reference quadrature does not determine binary64 rounding."
         )
-    return volume
+    return rounded
+
+
+def _cross_cylinder_volume(radius: float, major: float) -> float:
+    with mp.workdps(50):
+        r, a = mp.mpf(radius), mp.mpf(major)
+        value, error = mp.quad(
+            lambda t: 8 * r**2 * mp.cos(t) ** 2 * mp.sqrt(a**2 - (r * mp.sin(t)) ** 2),
+            [0, mp.pi / 2],
+            error=True,
+        )
+        return _rounded_reference(value, error)
+
+
+def _washer_volume(
+    reference: dict[str, Any], hole: dict[str, Any] | None = None
+) -> float:
+    with mp.workdps(50):
+        bottom = mp.mpf(float(reference["bottom_z_mm"]))
+        inner = mp.mpf(float(reference["inner_radius_mm"]))
+        outer = mp.mpf(float(reference["outer_radius_mm"]))
+        flat_inner = mp.mpf(float(reference["flat_inner_radius_mm"]))
+        flat_outer = mp.mpf(float(reference["flat_outer_radius_mm"]))
+        flat = mp.mpf(float(reference["flat_z_mm"]))
+        volume = mp.pi * (
+            (outer**2 - inner**2) * -bottom + (flat_outer**2 - flat_inner**2) * flat
+        )
+        error = mp.mpf(0)
+        for name, start, end in (
+            ("inner_bead", inner, flat_inner),
+            ("outer_bead", flat_outer, outer),
+        ):
+            bead = reference[name]
+            center = mp.mpf(float(bead["center_radius_mm"]))
+            minor = mp.mpf(float(bead["minor_radius_mm"]))
+            first = mp.acos(max(-1, min(1, (start - center) / minor)))
+            last = mp.acos(max(-1, min(1, (end - center) / minor)))
+            part, part_error = mp.quad(
+                lambda t: (
+                    2 * mp.pi * (center + minor * mp.cos(t)) * minor**2 * mp.sin(t) ** 2
+                ),
+                [min(first, last), max(first, last)],
+                error=True,
+            )
+            volume += part
+            error += part_error
+        if hole is not None:
+            hole_volume, hole_error = _radial_hole_integral(reference, hole)
+            volume -= hole_volume
+            error += hole_error
+        scale = mp.mpf("1e-9")
+        return _rounded_reference(volume * scale, error * scale)
+
+
+def _radial_hole_integral(
+    reference: dict[str, Any], hole: dict[str, Any]
+) -> tuple[Any, Any]:
+    inner = mp.mpf(float(reference["inner_radius_mm"]))
+    outer = mp.mpf(float(reference["outer_radius_mm"]))
+    radius = mp.mpf(float(hole["radius_mm"]))
+    if radius < 0 or inner <= 0 or outer < inner or radius > inner:
+        raise ValueError(
+            "Radial-hole domain requires 0 <= radius <= inner <= outer and inner > 0."
+        )
+    # Integrate the circular cutter's vertical chord analytically, leaving
+    # one smooth integral after y = radius * sin(t).
+    return mp.quad(
+        lambda t: (
+            8
+            * radius**2
+            * mp.cos(t) ** 2
+            * (
+                mp.sqrt(outer**2 - radius**2 * mp.sin(t) ** 2)
+                - mp.sqrt(inner**2 - radius**2 * mp.sin(t) ** 2)
+            )
+        ),
+        [0, mp.pi / 2],
+        error=True,
+    )
 
 
 def _radial_hole_volume(reference: dict[str, Any], hole: dict[str, Any]) -> float:
-    inner = float(reference["inner_radius_mm"])
-    outer = float(reference["outer_radius_mm"])
-    radius = float(hole["radius_mm"])
-    rho, rho_weights = _gauss_interval(64, 0.0, radius)
-    phi, phi_weights = _gauss_interval(128, 0.0, 2.0 * math.pi)
-    y = rho[:, None] * np.cos(phi)[None, :]
-    chord = 2.0 * (np.sqrt(outer**2 - y**2) - np.sqrt(inner**2 - y**2))
-    return float(
-        np.sum(rho_weights[:, None] * phi_weights[None, :] * chord * rho[:, None])
-    )
+    with mp.workdps(50):
+        value, error = _radial_hole_integral(reference, hole)
+        scale = mp.mpf("1e-9")
+        return _rounded_reference(value * scale, error * scale)
 
 
 def _loop_length(axis_radius: float, transverse_radius: float) -> float:
-    theta, weights = _gauss_interval(512, 0.0, 2.0 * math.pi)
-    sine, cosine = np.sin(theta), np.cos(theta)
-    speed = np.sqrt(
-        transverse_radius**2
-        + transverse_radius**4
-        * sine**2
-        * cosine**2
-        / (axis_radius**2 - transverse_radius**2 * sine**2)
-    )
-    return float(np.sum(weights * speed))
+    with mp.workdps(50):
+        a, r = mp.mpf(axis_radius), mp.mpf(transverse_radius)
+        value, error = mp.quad(
+            lambda t: (
+                4
+                * mp.sqrt(
+                    r**2
+                    + r**4
+                    * mp.sin(t) ** 2
+                    * mp.cos(t) ** 2
+                    / (a**2 - r**2 * mp.sin(t) ** 2)
+                )
+            ),
+            [0, mp.pi / 2],
+            error=True,
+        )
+        return _rounded_reference(value, error)
 
 
 def _intersection_evidence(
