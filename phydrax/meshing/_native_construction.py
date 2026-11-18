@@ -11,8 +11,9 @@ canonical acceptance, not construction of these records, establishes validity.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import Protocol, TYPE_CHECKING
 
 
 if TYPE_CHECKING:
@@ -77,6 +78,16 @@ class NativeCertificationRequest:
     # Validity certificates the route already proved (e.g. its layer cells);
     # acceptance reuses their proofs of identical exact cell maps.
     validity_parent: tuple[CellValidityCertificate, ...] = ()
+
+
+class DeferredNativeCertification(Protocol):
+    """Resolve complete certification data for the already constructed mesh.
+
+    Resolution may perform exact work and raise scientific failures, but must
+    not change the mesh, geometry, or associations.
+    """
+
+    def resolve(self, /) -> NativeMeshConstruction: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,3 +159,7 @@ class NativeMeshConstruction:
     computed_layer_core_root: ComputedLayerCoreRoot | None = field(
         default=None, kw_only=True, repr=False, compare=False
     )
+    deferred_certification: DeferredNativeCertification | None = field(
+        default=None, kw_only=True, repr=False, compare=False
+    )
+    screens: Mapping[str, float] = field(default_factory=dict, kw_only=True)

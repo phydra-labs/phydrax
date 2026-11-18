@@ -448,6 +448,60 @@ def test_native_plan_candidate_proves_the_constructed_mesh(route: str) -> None:
     assert proved.certification.report_id == accepted.certification.report_id
 
 
+def test_deferred_certification_resolves_only_the_original_mesh() -> None:
+    from dataclasses import replace
+
+    from phydrax._meshcore import meshcore_identity
+    from phydrax.discretization import CellGeometrySpec, CellMesh
+    from phydrax.meshing._canonical import _accept_native_construction, _NATIVE_PROVIDER
+    from phydrax.meshing._native_construction import NativeMeshConstruction
+
+    class Deferred:
+        def __init__(self, construction: NativeMeshConstruction) -> None:
+            self.construction = construction
+
+        def resolve(self, /) -> NativeMeshConstruction:
+            return self.construction
+
+    source, specification = _curve_request()
+    plan = NativeMeshingProvider().plan(
+        source, specification, coordinate_contract=SpatialCoordinateContract.si()
+    )
+    construction = plan.prepared.execute(steering="screened")
+    version = meshcore_identity()
+    pending = replace(
+        construction,
+        deferred_certification=Deferred(construction),
+        screens={"error": 0.5},
+    )
+    candidate = phx.meshing.CellMeshingCandidate(
+        pending, specification, _NATIVE_PROVIDER, version, plan.plan_id, plan.route
+    )
+    assert candidate.screens == {"error": 0.5}
+    with pytest.raises(ValueError, match="pending certification"):
+        _accept_native_construction(
+            pending, specification, _NATIVE_PROVIDER, version, plan.plan_id, plan.route
+        )
+    assert candidate.prove().result_id == plan.execute(prove=True).result_id
+
+    mesh = CellMesh(
+        np.zeros_like(np.asarray(construction.mesh.coordinates)),
+        construction.mesh.blocks,
+        vertex_global_ids=construction.mesh.vertex_global_ids,
+    )
+    changed = replace(construction, mesh=mesh, geometry=CellGeometrySpec.affine(mesh))
+    candidate = phx.meshing.CellMeshingCandidate(
+        replace(pending, deferred_certification=Deferred(changed)),
+        specification,
+        _NATIVE_PROVIDER,
+        version,
+        plan.plan_id,
+        plan.route,
+    )
+    with pytest.raises(ValueError, match="changed the constructed mesh"):
+        candidate.prove()
+
+
 def test_pending_candidate_is_refused_by_accepted_result_consumer() -> None:
     from tools.meshing_qualification._runtime import accepted_result_record
 

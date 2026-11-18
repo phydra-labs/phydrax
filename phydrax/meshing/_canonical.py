@@ -757,6 +757,8 @@ def _accept_native_construction(
     computed_surface_out: list[_ComputedSurfaceAcceptance] | None = None,
 ) -> CellMeshingResult:
     """Publish only a candidate satisfying its actual source and target obligations."""
+    if construction.deferred_certification is not None:
+        raise ValueError("A construction with pending certification cannot be accepted.")
     _require_native_target(construction, specification)
     event = construction.surface_quad_field_event
     requested_field = (

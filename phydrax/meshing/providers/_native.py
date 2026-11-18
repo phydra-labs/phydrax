@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from fractions import Fraction
+from types import MappingProxyType
 from typing import (
     final,
     Literal,
@@ -1244,7 +1246,7 @@ def _prepare_route(
 
 @final
 class CellMeshingCandidate(StrictModule, NonTrainableState):
-    """A pending native mesh; nothing on a candidate is an acceptance claim."""
+    """A pending native mesh; screens are measurements that prove nothing."""
 
     _construction: NativeMeshConstruction = eqx.field(repr=False)
     specification: _Specification
@@ -1254,6 +1256,7 @@ class CellMeshingCandidate(StrictModule, NonTrainableState):
     route: NativeMeshingRoute = eqx.field(static=True)
     candidate_id: str = eqx.field(static=True)
     certified_steps: tuple[str, ...] = eqx.field(static=True)
+    screens: Mapping[str, float] = eqx.field(static=True)
 
     @checked
     def __init__(
@@ -1273,6 +1276,12 @@ class CellMeshingCandidate(StrictModule, NonTrainableState):
         self.plan_id = plan_id
         self.route = parse(route, NativeMeshingRoute, "route")
         self.certified_steps = construction.certified_steps
+        if any(
+            not isinstance(name, str) or not math.isfinite(value)
+            for name, value in construction.screens.items()
+        ):
+            raise ValueError("Screen names must be strings and values must be finite.")
+        self.screens = MappingProxyType(dict(sorted(construction.screens.items())))
         request = construction.certification
         organization = construction.organization
         self.candidate_id = canonical_fingerprint(
@@ -1381,6 +1390,7 @@ class CellMeshingCandidate(StrictModule, NonTrainableState):
                 if construction.layer_core_root_geometry is None
                 else construction.layer_core_root_geometry.root_id,
                 "certified_steps": self.certified_steps,
+                "screens": dict(self.screens),
             }
         )
 
@@ -1398,8 +1408,22 @@ class CellMeshingCandidate(StrictModule, NonTrainableState):
 
     def prove(self, /) -> CellMeshingResult:
         """Certify this mesh as produced, without constructing or repairing it."""
+        construction = self._construction
+        if construction.deferred_certification is not None:
+            resolved = construction.deferred_certification.resolve()
+            if (
+                resolved.mesh.mesh_id != construction.mesh.mesh_id
+                or cell_geometry_id(resolved.geometry)
+                != cell_geometry_id(construction.geometry)
+                or resolved.coordinate_contract.spatial_id
+                != construction.coordinate_contract.spatial_id
+            ):
+                raise ValueError(
+                    "Deferred certification changed the constructed mesh or geometry."
+                )
+            construction = resolved
         return _accept_native_construction(
-            self._construction,
+            construction,
             self.specification,
             self.provider,
             self._actual_version,
