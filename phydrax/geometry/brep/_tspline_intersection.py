@@ -35,7 +35,7 @@ from .._interval_enclosure import (
     interval_subtract,
     prepare_interval_function,
 )
-from .._rational import fraction_down, fraction_up
+from .._rational import binary64_dot, fraction_down, fraction_up
 from ._intersection import (
     ParametricIntersectionPolicy,
     SurfaceIntersectionResult,
@@ -920,12 +920,16 @@ class _LevelSet:
             delta = point - np.asarray(cylinder.origin)
             first_axis = np.asarray(cylinder.first_axis)
             second_axis = np.asarray(cylinder.second_axis)
-            angle = float(np.arctan2(delta @ second_axis, delta @ first_axis))
+            angle = float(
+                np.arctan2(
+                    binary64_dot(delta, second_axis), binary64_dot(delta, first_axis)
+                )
+            )
             angle = _periodic_value(
                 angle, other_region.lower[0], other_region.upper[0], tau
             )
             coordinates = np.asarray(
-                (angle, delta @ np.asarray(cylinder.axis)), dtype=np.float64
+                (angle, binary64_dot(delta, np.asarray(cylinder.axis))), dtype=np.float64
             )
         elif isinstance(other_region.patch, SpherePatch):
             sphere = other_region.patch
@@ -935,8 +939,14 @@ class _LevelSet:
                 np.asarray(value)
                 for value in (sphere.first_axis, sphere.second_axis, sphere.axis)
             )
-            longitude = float(np.arctan2(delta @ second_axis, delta @ first_axis))
-            latitude = float(np.arcsin(np.clip((delta @ axis) / radius, -1.0, 1.0)))
+            longitude = float(
+                np.arctan2(
+                    binary64_dot(delta, second_axis), binary64_dot(delta, first_axis)
+                )
+            )
+            latitude = float(
+                np.arcsin(np.clip(binary64_dot(delta, axis) / radius, -1.0, 1.0))
+            )
             longitude = _periodic_value(
                 longitude, other_region.lower[0], other_region.upper[0], tau
             )

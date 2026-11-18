@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from .._rational import binary64_dot
 from ..design._schema import (
     _ParameterCollector,
     DesignState,
@@ -122,8 +123,14 @@ class PlanarFilletRadiusMap(AbstractBRepParameterMap):
             face
             for face, patch in enumerate(model.patches)
             if isinstance(patch, PlanePatch)
-            and float(np.asarray(patch.first_axis) @ np.asarray(cylinder.axis)) == 0.0
-            and float(np.asarray(patch.second_axis) @ np.asarray(cylinder.axis)) != 0.0
+            and float(
+                binary64_dot(np.asarray(patch.first_axis), np.asarray(cylinder.axis))
+            )
+            == 0.0
+            and float(
+                binary64_dot(np.asarray(patch.second_axis), np.asarray(cylinder.axis))
+            )
+            != 0.0
         )
         if not side_faces:
             raise BRepBlendUnsupported(

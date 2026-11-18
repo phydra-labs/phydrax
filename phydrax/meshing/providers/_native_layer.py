@@ -54,6 +54,7 @@ from ...geometry._domain_boundary import (
 from ...geometry._mapped_reference_boundary import MappedReferenceBoundarySource
 from ...geometry._mapped_reference_domain import MappedReferenceDomain
 from ...geometry._meshing_domain import MeshingDomain
+from ...geometry._rational import binary64_dot
 from ...geometry._source_boundary_records import (
     rational_chart_tokens,
     SourceBoundaryChartWitness,
@@ -1956,7 +1957,7 @@ def _implicit_carrier_root_witness(
     gradients = np.asarray(
         jax.vmap(jax.grad(field))(np.mean(triangles, axis=1)), dtype=np.float64
     )
-    signs = np.einsum("ij,ij->i", normals, gradients)
+    signs = binary64_dot(normals, gradients)
     if not (np.all(signs > 0.0) or np.all(signs < 0.0)):
         raise ValueError(
             "An implicit carrier wall must be oriented consistently along or "

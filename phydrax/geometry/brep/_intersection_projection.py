@@ -36,6 +36,7 @@ from jax import Array
 
 from ...algebraic._exact_univariate import _gcd, RealRootIsolator
 from .._interval_enclosure import PreparedIntervalFunction
+from .._rational import binary64_norm
 from ._host_program import evaluate_host_program, prepare_host_program
 from ._intersection_curve import (
     _batched_cylinder_points_large_first,
@@ -287,7 +288,7 @@ def _chart_point_and_tangent(
     lower, upper = program.evaluate(arguments, arguments)
     point, tangent = lower[0]
     tangent_upper = upper[0, 1]
-    tangent_length = np.linalg.norm(tangent)
+    tangent_length = binary64_norm(tangent)
     if not (
         np.all(np.isfinite(lower))
         and np.all(np.isfinite(upper))

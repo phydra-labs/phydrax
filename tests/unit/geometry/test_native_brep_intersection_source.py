@@ -1756,37 +1756,6 @@ def _point_radius(value: float, /) -> tuple[float, float]:
     return midpoint, math.nextafter(radius, math.inf)
 
 
-def test_ordered_dot_differs_from_alternative_rounding() -> None:
-    first = [
-        float.fromhex(value)
-        for value in (
-            "0x1.da5dcac364928p-1",
-            "0x1.390c8604c6aa8p-2",
-            "0x1.1ff5669fe18d4p+0",
-            "0x1.4aeaf6ff72b34p-1",
-        )
-    ]
-    second = [
-        float.fromhex(value)
-        for value in (
-            "0x1.5b70f08258c26p+0",
-            "-0x1.f07aec346c9a0p-3",
-            "-0x1.613ab981b4f48p+0",
-            "-0x1.6691a38290500p+0",
-        )
-    ]
-    ordered = _ordered_dot(first, second)
-    reverse = _ordered_dot(first[::-1], second[::-1])
-    products = [Fraction(a) * Fraction(b) for a, b in zip(first, second, strict=True)]
-    fused = float(products[0])
-    for product in products[1:]:
-        fused = float(Fraction(fused) + product)
-    exact = float(sum(products, Fraction()))
-    assert ordered != reverse
-    assert ordered != fused
-    assert ordered != exact
-
-
 @pytest.mark.parametrize(
     ("first_hex", "second_hex"),
     [

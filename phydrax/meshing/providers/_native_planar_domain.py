@@ -29,6 +29,7 @@ from phydrax.meshing._sizing import (
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...geometry._rational import binary64_dot, binary64_matmul
 from ...geometry.simplicial import PlanarMeshRegion, SegmentMesh
 from ...typing import checked
 from .._controls import FeatureKind
@@ -224,10 +225,10 @@ def _segment_distances(points: np.ndarray, segments: np.ndarray, /) -> np.ndarra
     for column, segment in enumerate(segments):
         start, end = segment
         direction = end - start
-        squared = float(np.dot(direction, direction))
+        squared = float(binary64_dot(direction, direction))
         if squared == 0.0:
             raise ValueError("Planar size-field source edges must be nondegenerate.")
-        along = np.clip(((points - start) @ direction) / squared, 0.0, 1.0)
+        along = np.clip(binary64_matmul(points - start, direction) / squared, 0.0, 1.0)
         result[:, column] = np.linalg.norm(
             points - (start + along[:, None] * direction), axis=1
         )

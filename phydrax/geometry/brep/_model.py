@@ -25,7 +25,7 @@ from ...discretization._exact_algebraic_geometry import ExactScalar
 from ...discretization._surface_chart_records import SurfaceChartWitness
 from ...typing import checked, ConvertibleToArray
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas, TrimDomain
-from .._rational import binary64_norm_upper
+from .._rational import binary64_dot, binary64_matmul, binary64_norm_upper
 from .._source_fidelity_certificate import SourceFidelityCertificate
 from ._assembly import (
     BRepAffinePlacement,
@@ -3972,8 +3972,8 @@ class BRepModel(StrictModule):
                     [float(placement.matrix[row][3]) for row in range(3)],
                     dtype=np.float64,
                 )
-                evaluated = evaluated @ matrix.T + offset
-                differential = np.einsum("ij,njk->nik", matrix, differential)
+                evaluated = binary64_matmul(evaluated, matrix.T) + offset
+                differential = binary64_matmul(matrix, differential)
                 linear = placement.matrix
                 determinant = (
                     linear[0][0]
@@ -4010,7 +4010,7 @@ class BRepModel(StrictModule):
             source_normals = (
                 np.cross(differential[:, :, 0], differential[:, :, 1]) * face_sign
             )
-            alignment = np.einsum("ij,ij->i", cross, source_normals)
+            alignment = binary64_dot(cross, source_normals)
             if not np.all(np.isfinite(source_normals)) or np.any(alignment <= 0.0):
                 raise ValueError(
                     "Tessellation triangle orientation disagrees with its placed face."

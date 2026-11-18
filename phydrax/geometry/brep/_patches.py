@@ -43,6 +43,7 @@ from ...discretization._exact_algebraic_geometry import (
 )
 from ...typing import ConvertibleToArray, Dim, Float64, Scalar
 from .._interval_enclosure import Interval, PreparedIntervalFunction
+from .._rational import binary64_dot, binary64_norm
 
 
 type _AnalyticSurfaceKind = Literal["cylinder", "cone", "sphere", "torus"]
@@ -775,9 +776,9 @@ def _orthonormal_pair(
         raise ValueError(f"{name} curve frame axes must have matching dimensions.")
     tolerance = 128.0 * np.finfo(np.float64).eps
     if (
-        abs(float(np.linalg.norm(first_axis)) - 1.0) > tolerance
-        or abs(float(np.linalg.norm(second_axis)) - 1.0) > tolerance
-        or abs(float(first_axis @ second_axis)) > tolerance
+        abs(float(binary64_norm(first_axis)) - 1.0) > tolerance
+        or abs(float(binary64_norm(second_axis)) - 1.0) > tolerance
+        or abs(float(binary64_dot(first_axis, second_axis))) > tolerance
     ):
         raise ValueError(f"{name} curve frame axes must be orthonormal.")
     return first_axis, second_axis
@@ -1714,7 +1715,7 @@ class OffsetCurve(AbstractCurve):
                 raise ValueError("A space-curve offset requires an authored direction.")
             direction_value = _curve_vector(direction, "OffsetCurve.direction")
             if direction_value.shape != (3,) or (
-                abs(np.linalg.norm(direction_value) - 1.0)
+                abs(binary64_norm(direction_value) - 1.0)
                 > 128.0 * np.finfo(np.float64).eps
             ):
                 raise ValueError("OffsetCurve.direction must be a unit three-vector.")
@@ -2402,7 +2403,7 @@ class ExtrusionSurface(AbstractSurfacePatch):
         if not isinstance(curve, AbstractCurve) or curve.ambient_dimension != 3:
             raise TypeError("ExtrusionSurface.curve must be a three-dimensional curve.")
         direction_ = _curve_vector(direction, "direction")
-        if direction_.shape != (3,) or np.linalg.norm(direction_) == 0.0:
+        if direction_.shape != (3,) or binary64_norm(direction_) == 0.0:
             raise ValueError("ExtrusionSurface.direction must be a nonzero 3D vector.")
         self.curve = curve
         self.direction = jnp.asarray(direction_, dtype=jnp.float64)
@@ -2480,7 +2481,7 @@ class RevolutionSurface(AbstractSurfacePatch):
         direction = _curve_vector(axis_direction, "axis_direction")
         if origin.shape != (3,) or direction.shape != (3,):
             raise ValueError("RevolutionSurface axis vectors must be three-dimensional.")
-        length = float(np.linalg.norm(direction))
+        length = float(binary64_norm(direction))
         if abs(length - 1.0) > 128.0 * np.finfo(np.float64).eps:
             raise ValueError("RevolutionSurface.axis_direction must be a unit vector.")
         self.curve = curve

@@ -25,6 +25,7 @@ from ...meshing.providers._native_schedules import (
 )
 from ...meshing.providers._native_surface import prepare_native_surface
 from ...typing import checked
+from .._rational import binary64_matmul
 from ._assembly import BRepAffinePlacement, BRepAssemblyOccurrence
 from ._constructors import BRepTessellationPolicy
 from ._model import BRepModel, BRepTessellation
@@ -100,7 +101,7 @@ def _world_patch_points(
         dtype=np.float64,
     )
     offset = np.asarray([float(placement.matrix[row][3]) for row in range(3)])
-    return values @ matrix.T + offset
+    return binary64_matmul(values, matrix.T) + offset
 
 
 def _match_triangle_parameters(

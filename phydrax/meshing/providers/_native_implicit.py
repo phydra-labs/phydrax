@@ -36,6 +36,7 @@ from ...geometry._interval_enclosure import (
     IntervalExtensionError,
     prepare_interval_function,
 )
+from ...geometry._rational import binary64_norm
 from ...geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryDistance,
@@ -506,7 +507,7 @@ def _effective_policy(
     size targets set the resolution; the policy default applies only when the
     specification declares neither.
     """
-    diagonal = float(np.linalg.norm(domain[1] - domain[0]))
+    diagonal = float(binary64_norm(domain[1] - domain[0]))
     if not math.isfinite(diagonal) or diagonal <= 0.0:
         raise _failure(
             MeshingFailureCategory.INVALID_SOURCE,

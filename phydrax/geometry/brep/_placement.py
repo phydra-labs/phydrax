@@ -18,6 +18,7 @@ from ...geometry._cad_revision import (
     OccurrenceCorrespondenceTransaction,
 )
 from ...typing import checked
+from .._rational import binary64_matmul
 from ._assembly import (
     _determinant3,
     BRepAffinePlacement,
@@ -415,8 +416,10 @@ def materialize_brep_occurrences(
                 )
             else:
                 point = (
-                    np.asarray(geometry.vertex_points[vertex], dtype=np.float64)
-                    @ linear.T
+                    binary64_matmul(
+                        np.asarray(geometry.vertex_points[vertex], dtype=np.float64),
+                        linear.T,
+                    )
                     + translation
                 )
             source_root = geometry.vertex_roots[vertex]

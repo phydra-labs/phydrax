@@ -33,6 +33,9 @@ from .._interval_enclosure import (
     prepare_interval_function,
 )
 from .._rational import (
+    binary64_dot,
+    binary64_matmul,
+    binary64_norm,
     fraction_down,
     fraction_up,
     rational_cross,
@@ -3453,9 +3456,9 @@ def _sphere_parameters(
     second = np.asarray(sphere.second_axis, dtype=np.float64)
     axis = np.asarray(sphere.axis, dtype=np.float64)
     vector = np.asarray(direction, dtype=np.float64)
-    return math.atan2(float(vector @ second), float(vector @ first)), math.asin(
-        float(np.clip(vector @ axis, -1.0, 1.0))
-    )
+    return math.atan2(
+        float(binary64_dot(vector, second)), float(binary64_dot(vector, first))
+    ), math.asin(float(np.clip(binary64_dot(vector, axis), -1.0, 1.0)))
 
 
 def _sphere_region_parameters(
@@ -3884,7 +3887,7 @@ def intersect_trim_curves(
         seen_roots.add(root.root_id)
         point = np.asarray(a.curve.evaluate(jnp.asarray(parameters[0])))
         gap = float(
-            np.linalg.norm(
+            binary64_norm(
                 point - np.asarray(b.curve.evaluate(jnp.asarray(parameters[1])))
             )
         )
@@ -4384,7 +4387,7 @@ def _line_cylinder_region_intersections(
                 parameter_lower=np.asarray(root.parameter_lower, dtype=np.float64),
                 parameter_upper=np.asarray(root.parameter_upper, dtype=np.float64),
                 point=source_point,
-                gap_bound=float(np.linalg.norm(source_point - surface_point)),
+                gap_bound=float(binary64_norm(source_point - surface_point)),
                 condition_estimate=1.0,
                 root_id=root.root_id,
             )
@@ -4642,7 +4645,7 @@ def _line_cone_region_intersections(
                 parameter_lower=np.asarray(root.parameter_lower, dtype=np.float64),
                 parameter_upper=np.asarray(root.parameter_upper, dtype=np.float64),
                 point=source_point,
-                gap_bound=float(np.linalg.norm(source_point - surface_point)),
+                gap_bound=float(binary64_norm(source_point - surface_point)),
                 condition_estimate=1.0,
                 root_id=root.root_id,
             )
@@ -4791,7 +4794,7 @@ def _circle_plane_region_intersections(
                 parameter_lower=np.asarray(root.parameter_lower, dtype=np.float64),
                 parameter_upper=np.asarray(root.parameter_upper, dtype=np.float64),
                 point=source_point,
-                gap_bound=float(np.linalg.norm(source_point - surface_point)),
+                gap_bound=float(binary64_norm(source_point - surface_point)),
                 condition_estimate=1.0,
                 root_id=root.root_id,
             )
@@ -4876,7 +4879,7 @@ def intersect_curve_region(
                 parameter_lower=lower,
                 parameter_upper=upper,
                 point=spatial,
-                gap_bound=float(np.linalg.norm(spatial - target)),
+                gap_bound=float(binary64_norm(spatial - target)),
                 condition_estimate=1.0,
                 root_id=root.root_id,
             )
@@ -4971,12 +4974,12 @@ def _cylinder_chart_point(
     )
     radial_first = point - np.asarray(first.origin, dtype=np.float64) - z * first_axis
     angle_first = math.atan2(
-        float(radial_first @ np.asarray(first.second_axis)),
-        float(radial_first @ np.asarray(first.first_axis)),
+        float(binary64_dot(radial_first, np.asarray(first.second_axis))),
+        float(binary64_dot(radial_first, np.asarray(first.first_axis))),
     )
     angle_first += math.tau * round((first_angle_reference - angle_first) / math.tau)
     height_second = float(
-        (point - np.asarray(second.origin, dtype=np.float64)) @ second_axis
+        binary64_dot(point - np.asarray(second.origin, dtype=np.float64), second_axis)
     )
     return np.asarray((angle_first, z, parameter, height_second), dtype=np.float64)
 
@@ -5118,10 +5121,12 @@ def _orthogonal_cylinder_branch(
     second_axis = np.asarray(b.axis, dtype=np.float64)
     radial_b = np.asarray(b.first_axis, dtype=np.float64)
     radial_b_second = np.asarray(b.second_axis, dtype=np.float64)
-    phase = math.atan2(float(radial_b @ first_axis), float(radial_b @ n))
+    phase = math.atan2(
+        float(binary64_dot(radial_b, first_axis)), float(binary64_dot(radial_b, n))
+    )
     orientation = (
         1.0
-        if float(np.dot(np.cross(radial_b, radial_b_second), second_axis)) > 0.0
+        if float(binary64_dot(np.cross(radial_b, radial_b_second), second_axis)) > 0.0
         else -1.0
     )
     radius_first, radius_second = float(a.radius), float(b.radius)
@@ -5582,8 +5587,12 @@ def _orthogonal_equal_cylinder_singular(
         )
         point = np.asarray(tuple(float(value) for value in exact), dtype=np.float64)
         radial = sign * float(radius_a) * n
-        u1 = math.atan2(float(radial @ frame_a2), float(radial @ frame_a1))
-        u2 = math.atan2(float(radial @ frame_b2), float(radial @ frame_b1))
+        u1 = math.atan2(
+            float(binary64_dot(radial, frame_a2)), float(binary64_dot(radial, frame_a1))
+        )
+        u2 = math.atan2(
+            float(binary64_dot(radial, frame_b2)), float(binary64_dot(radial, frame_b1))
+        )
         uv1 = _region_periodic_angle(u1, first, 0)
         uv2 = _region_periodic_angle(u2, second, 0)
         v1, v2 = float(delta_a), float(-delta_b)
@@ -10078,7 +10087,7 @@ def _ruled_plane_cap_section(
             np.asarray(plane.second_axis, dtype=np.float64),
         )
     )
-    gram = axes.T @ axes
+    gram = binary64_matmul(axes.T, axes)
     try:
         inverse_gram = np.linalg.inv(gram)
     except np.linalg.LinAlgError:
@@ -10101,7 +10110,7 @@ def _ruled_plane_cap_section(
             ruled.evaluate(jnp.asarray((fixed, v), dtype=jnp.float64)),
             dtype=np.float64,
         )
-        uv = inverse_gram @ axes.T @ (point - origin)
+        uv = binary64_matmul(binary64_matmul(inverse_gram, axes.T), point - origin)
         return (
             np.asarray((fixed, v, *uv), dtype=np.float64)
             if ruled_first
@@ -10231,7 +10240,7 @@ def _placed_surface_result(
     points = []
     for event in result.points:
         source_point = np.asarray(event.point, dtype=np.float64)
-        point = source_point @ rotation.T + translation
+        point = binary64_matmul(source_point, rotation.T) + translation
         exact = (
             None
             if event.point_exact is None

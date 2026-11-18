@@ -33,7 +33,7 @@ from .._interval_enclosure import (
     interval_subtract,
     prepare_interval_function,
 )
-from .._rational import fraction_down, fraction_up, rational_vector
+from .._rational import binary64_dot, fraction_down, fraction_up, rational_vector
 from ..design._schema import (
     _ParameterCollector,
     DesignState,
@@ -454,8 +454,10 @@ def _side(model: BRepModel, geometry: BRepGeometry, face: int, edge: int) -> _Si
                 "unsupported parallel-cylinder blend: cap range does not share cylinder angle"
             )
     handed = float(
-        np.cross(np.asarray(patch.first_axis), np.asarray(patch.second_axis))
-        @ np.asarray(patch.axis)
+        binary64_dot(
+            np.cross(np.asarray(patch.first_axis), np.asarray(patch.second_axis)),
+            np.asarray(patch.axis),
+        )
     )
     radial = int(float(model.orientation[face])) * (1 if handed > 0.0 else -1)
     return _Side(
@@ -641,10 +643,10 @@ def _junction(model: BRepModel, edge: int, /) -> _Junction:
         return values[0], values[1], values[2]
 
     endpoints = np.asarray(geometry.vertex_points)[list(endpoint_ids)]
-    order = np.argsort(endpoints @ axis)
+    order = np.argsort(binary64_dot(endpoints, axis))
     vertices = (endpoint_ids[int(order[0])], endpoint_ids[int(order[1])])
     origin = endpoints[int(order[0])]
-    height = float((endpoints[int(order[1])] - origin) @ axis)
+    height = float(binary64_dot(endpoints[int(order[1])] - origin, axis))
 
     origin_exact = exact_vertex(vertices[0], endpoints[int(order[0])])
     endpoint_exact = exact_vertex(vertices[1], endpoints[int(order[1])])
@@ -751,8 +753,8 @@ def _angle(side: _Side, point: np.ndarray, junction: _Junction) -> float:
     world = junction.origin + point[0] * junction.first + point[1] * junction.second
     radial = world - np.asarray(side.patch.origin)
     angle = atan2(
-        float(radial @ np.asarray(side.patch.second_axis)),
-        float(radial @ np.asarray(side.patch.first_axis)),
+        float(binary64_dot(radial, np.asarray(side.patch.second_axis))),
+        float(binary64_dot(radial, np.asarray(side.patch.first_axis))),
     )
     angle += 2.0 * pi * round((side.angle - angle) / (2.0 * pi))
     return angle
@@ -849,8 +851,12 @@ def _contact_angle(
     ):
         return None
     handed = float(
-        np.cross(np.asarray(side.patch.first_axis), np.asarray(side.patch.second_axis))
-        @ junction.axis
+        binary64_dot(
+            np.cross(
+                np.asarray(side.patch.first_axis), np.asarray(side.patch.second_axis)
+            ),
+            junction.axis,
+        )
     )
     direction = (1 if side.retained_angle > side.angle else -1) * (
         1 if handed > 0.0 else -1
@@ -981,7 +987,7 @@ def _fillet(junction: _Junction, radius: float, /) -> _Blend:
             vectors = (points - center) / radius
             sweep = atan2(
                 float(vectors[0, 0] * vectors[1, 1] - vectors[0, 1] * vectors[1, 0]),
-                float(vectors[0] @ vectors[1]),
+                float(binary64_dot(vectors[0], vectors[1])),
             )
             if sweep == 0.0 or abs(sweep) >= pi:
                 continue
@@ -1034,7 +1040,14 @@ def _chamfer(junction: _Junction, setbacks: tuple[float, float]) -> _Blend:
             )
             - junction.origin
         )
-        points.append(np.asarray((world @ junction.first, world @ junction.second)))
+        points.append(
+            np.asarray(
+                (
+                    binary64_dot(world, junction.first),
+                    binary64_dot(world, junction.second),
+                )
+            )
+        )
         angles.append(angle)
         phase_shifts.append(phase_shift)
     if np.array_equal(points[0], points[1]):
@@ -2424,7 +2437,7 @@ def _stage_blend_face(
         old_normal = side0.radial_orientation * (blend.points[0] - junction.centers[0])
         tangent = blend.points[1] - blend.points[0]
         normal = np.asarray((tangent[1], -tangent[0]))
-        orientation = 1 if float(normal @ old_normal) > 0.0 else -1
+        orientation = 1 if float(binary64_dot(normal, old_normal)) > 0.0 else -1
     boxes = np.stack(
         [
             builder.pcurves[coedge].bounding_box(
@@ -3089,10 +3102,13 @@ def _radius_epoch(
         for i, side in enumerate(junction.sides):
             start = 3 + 2 * i
             handed = float(
-                np.cross(
-                    np.asarray(side.patch.first_axis), np.asarray(side.patch.second_axis)
+                binary64_dot(
+                    np.cross(
+                        np.asarray(side.patch.first_axis),
+                        np.asarray(side.patch.second_axis),
+                    ),
+                    junction.axis,
                 )
-                @ junction.axis
             )
             direction = (1 if side.retained_angle > side.angle else -1) * (
                 1 if handed > 0.0 else -1

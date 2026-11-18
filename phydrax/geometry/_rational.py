@@ -156,6 +156,76 @@ def upper_float(value: Fraction, /) -> float:
     )
 
 
+def binary64_dot(first: ArrayLike, second: ArrayLike, /) -> NDArray[np.float64]:
+    """Dot broadcast batches of last-axis vectors in binary64 round-to-nearest.
+
+    Multiply each pair separately and add the products from index zero upward,
+    rounding every multiplication and addition separately (no fused multiply-add).
+    An empty contraction is positive zero; otherwise the first product initializes
+    the sum, preserving its signed zero. NaN, infinity, overflow, and underflow
+    follow IEEE elementwise multiplication and addition.
+    """
+    a = np.asarray(first, dtype=np.float64)
+    b = np.asarray(second, dtype=np.float64)
+    if a.ndim == 0 or b.ndim == 0 or a.shape[-1] != b.shape[-1]:
+        raise ValueError("Vector product dimensions must agree.")
+    shape = np.broadcast_shapes(a.shape[:-1], b.shape[:-1])
+    if a.shape[-1] == 0:
+        return np.zeros(shape, dtype=np.float64)
+    result = np.multiply(a[..., 0], b[..., 0])
+    for index in range(1, a.shape[-1]):
+        product = np.multiply(a[..., index], b[..., index])
+        result = np.add(result, product)
+    return np.asarray(result, dtype=np.float64)
+
+
+def binary64_norm(values: ArrayLike, /) -> NDArray[np.float64]:
+    """Return the correctly rounded square root of the ordered sum of squares.
+
+    Squares and additions follow :func:`binary64_dot`. No rescaling is performed:
+    squares may overflow or underflow. Empty vectors and zero squares yield
+    positive zero; NaNs and infinities propagate through the specified operations.
+    """
+    a = np.asarray(values, dtype=np.float64)
+    return np.asarray(np.sqrt(binary64_dot(a, a)), dtype=np.float64)
+
+
+def binary64_matmul(first: ArrayLike, second: ArrayLike, /) -> NDArray[np.float64]:
+    """Multiply vectors or broadcast matrix batches with NumPy matmul shapes.
+
+    Each binary64 product is rounded separately, then added left-to-right with
+    a separate rounding at each addition; fused multiply-add is not used. Empty
+    contractions give positive zero. Otherwise the first product initializes the
+    sum, so signed zeros, NaNs, infinities, overflow and underflow follow the
+    specified IEEE multiplication and addition sequence.
+    """
+    a = np.asarray(first, dtype=np.float64)
+    b = np.asarray(second, dtype=np.float64)
+    if a.ndim == 0 or b.ndim == 0:
+        raise ValueError("Matrix product operands must have at least one dimension.")
+    left_vector = a.ndim == 1
+    right_vector = b.ndim == 1
+    if left_vector:
+        a = a[np.newaxis, :]
+    if right_vector:
+        b = b[:, np.newaxis]
+    if a.shape[-1] != b.shape[-2]:
+        raise ValueError("Matrix product dimensions must agree.")
+    shape = np.broadcast_shapes(a.shape[:-2], b.shape[:-2]) + (a.shape[-2], b.shape[-1])
+    if a.shape[-1] == 0:
+        result = np.zeros(shape, dtype=np.float64)
+    else:
+        result = np.multiply(a[..., :, 0, None], b[..., None, 0, :])
+        for index in range(1, a.shape[-1]):
+            product = np.multiply(a[..., :, index, None], b[..., None, index, :])
+            result = np.add(result, product)
+    if left_vector:
+        result = np.squeeze(result, axis=-2)
+    if right_vector:
+        result = np.squeeze(result, axis=-1)
+    return np.asarray(result, dtype=np.float64)
+
+
 def binary64_difference_magnitude(
     first: ArrayLike, second: ArrayLike, /
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
@@ -387,6 +457,9 @@ __all__ = [
     "RationalVector",
     "binary64_difference_magnitude",
     "binary64_dyadic_entries",
+    "binary64_dot",
+    "binary64_matmul",
+    "binary64_norm",
     "binary64_norm_lower",
     "binary64_norm_upper",
     "binary64_spectral_upper",
