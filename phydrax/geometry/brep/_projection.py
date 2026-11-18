@@ -108,6 +108,42 @@ class _Occurrence:
     solid: int
     rotation: tuple[tuple[float, ...], ...]
     translation: tuple[float, ...]
+    exact_matrix: tuple[tuple[Fraction, ...], ...] | None = None
+
+
+def _identity_occurrence(occurrence: _Occurrence, /) -> bool:
+    if not occurrence.path:
+        return True
+    return occurrence.exact_matrix == (
+        (1, 0, 0, 0),
+        (0, 1, 0, 0),
+        (0, 0, 1, 0),
+        (0, 0, 0, 1),
+    )
+
+
+def _local_query_error(
+    occurrence: _Occurrence, query: np.ndarray, local: np.ndarray, /
+) -> Fraction | None:
+    """Enclose inverse-query rounding for an exact rational isometry."""
+    matrix = occurrence.exact_matrix
+    if matrix is None or any(
+        sum(matrix[k][i] * matrix[k][j] for k in range(3)) != int(i == j)
+        for i in range(3)
+        for j in range(3)
+    ):
+        return None
+    relative = tuple(Fraction(float(query[i])) - matrix[i][3] for i in range(3))
+    exact = tuple(
+        sum((matrix[j][i] * relative[j] for j in range(3)), Fraction(0))
+        for i in range(3)
+    )
+    squared = sum(
+        ((Fraction(float(value)) - expected) ** 2
+         for value, expected in zip(local, exact, strict=True)),
+        Fraction(0),
+    )
+    return fraction_sqrt_interval(squared)[1]
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +176,7 @@ class _ProjectionPreparation:
     )
     lifts: dict[tuple[int, int], bool] = field(default_factory=dict)
     angle_bounds: dict[int, tuple[float, float] | None] = field(default_factory=dict)
+    exact_rectangles: dict[int, bool] = field(default_factory=dict)
     faces: dict[int, _PreparedFace] = field(default_factory=dict)
     orientations: dict[tuple[int, int], float] = field(default_factory=dict)
     edges: dict[int, _PreparedEdge] = field(default_factory=dict)
@@ -3131,6 +3168,81 @@ def _cylindrical_trim_distance(
     )
 
 
+def _rectangle_trim_exact(model: BRepModel, face: int, bounds: np.ndarray, /) -> bool:
+    """Prove that the authored line loop is the exact parameter rectangle."""
+    from ._boolean_core import line_chart_coefficients
+
+    loops = model.geometry.face_loops[face]
+    if len(loops) != 1 or len(loops[0]) != 4:
+        return False
+    u0, v0 = (Fraction(float(value)) for value in bounds[0])
+    u1, v1 = (Fraction(float(value)) for value in bounds[1])
+    corners = ((u0, v0), (u1, v0), (u1, v1), (u0, v1))
+    expected = {
+        frozenset((corners[i], corners[(i + 1) % 4])) for i in range(4)
+    }
+    actual = set()
+    for coedge in loops[0]:
+        coefficients = line_chart_coefficients(model.geometry.pcurves[coedge])
+        if coefficients is None:
+            return False
+        origin, direction = coefficients
+        if not all(isinstance(value, Fraction) for value in (*origin, *direction)):
+            return False
+        edge = model.geometry.coedge_edges[coedge]
+        ends = tuple(
+            tuple(origin[i] + Fraction(float(t)) * direction[i] for i in range(2))
+            for t in model.geometry.edge_ranges[edge]
+        )
+        actual.add(frozenset(ends))
+    return actual == expected
+
+
+def _source_point_upper(
+    patch: AbstractSurfacePatch,
+    point: np.ndarray,
+    uv: np.ndarray,
+    face: int,
+    preparation: _ProjectionPreparation | None,
+    /,
+) -> float:
+    """Bound distance to the exact source point at an authored parameter."""
+    from ._root_bindings import _patch_box, _source_coefficients_are_binary
+
+    if not isinstance(patch, (CylinderPatch, TorusPatch)) and not (
+        _source_coefficients_are_binary(patch)
+    ):
+        return np.inf
+    if preparation is None:
+        program = prepare_host_program(patch.evaluate, 2)
+    else:
+        if face not in preparation.patch_programs:
+            preparation.patch_programs[face] = prepare_host_program(patch.evaluate, 2)
+        program = preparation.patch_programs[face]
+    if program is None and not isinstance(patch, (CylinderPatch, TorusPatch)):
+        return np.inf
+    box = (
+        _patch_box(patch, uv, uv, interval_program=lambda _: program)
+        if program is not None
+        else _patch_box(patch, uv, uv)
+    )
+    if not np.all(np.isfinite(box)):
+        return np.inf
+    squared = sum(
+        (
+            max(
+                abs(Fraction(float(value)) - Fraction(float(lo))),
+                abs(Fraction(float(value)) - Fraction(float(hi))),
+            ) ** 2
+            for value, lo, hi in zip(point, box[0], box[1], strict=True)
+        ),
+        Fraction(0),
+    )
+    return fraction_endpoint(
+        fraction_sqrt_interval(squared)[1], upper=True, saturate=True
+    )
+
+
 def _project_face(
     model: BRepModel,
     face: int,
@@ -3947,6 +4059,30 @@ def _project_face(
             angle_bounds=angle_bounds,
         ) or _unresolved(2, face, path)
     lower, upper = carrier_distance
+    if isinstance(patch, (CylinderPatch, ConePatch, SpherePatch, TorusPatch)) or (
+        isinstance(patch, RevolutionSurface)
+        and isinstance(patch.curve, (LineCurve, ExactLineCurve))
+    ):
+        if preparation is not None and face in preparation.exact_rectangles:
+            rectangle = preparation.exact_rectangles[face]
+        else:
+            rectangle = _rectangle_trim_exact(model, face, bounds)
+            if preparation is not None:
+                preparation.exact_rectangles[face] = rectangle
+        domain = model.trim_domains[face]
+        certified = rectangle or (
+            domain is not None
+            and bool(domain.curve_loops)
+            and _trim_classification(model, face, uv, enclosures=enclosures) == 1
+        )
+        witness = (
+            _source_point_upper(patch, point, uv, face, preparation)
+            if certified
+            else np.inf
+        )
+        if not np.isfinite(witness):
+            return replace(_unresolved(2, face, path), lower=lower)
+        upper = max(upper, witness, _exact_point_distance_upper(point, candidate))
     if nonisolated and trim > 0:
         return _Hit(
             2,
@@ -5315,6 +5451,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                         item.solid_index,
                         rotation_values,
                         translation_values,
+                        item.placement.matrix,
                     )
                 )
         occurrence_rows = tuple(sorted(occurrences, key=lambda value: value.path))
@@ -5809,12 +5946,32 @@ class NativeBRepProjection(AbstractBRepProjection):
                     )
             else:
                 return _failed(self.ambient_dimension)
+            identity = _identity_occurrence(occurrence)
+            if not identity and hit.status != _FAILED:
+                error = _local_query_error(occurrence, query, local)
+                if error is None:
+                    hit = _unresolved(dimension, index, occurrence.path)
+                else:
+                    lower = fraction_endpoint(
+                        max(Fraction(0), Fraction(hit.lower) - error), upper=False
+                    )
+                    upper = (
+                        fraction_endpoint(
+                            Fraction(hit.upper) + error, upper=True, saturate=True
+                        )
+                        if np.isfinite(hit.upper)
+                        else np.inf
+                    )
+                    hit = replace(hit, lower=lower, upper=upper)
             if hit.status not in (_FAILED, _UNRESOLVED) and occurrence.path:
                 point = (
                     binary64_matmul(rotation, hit.point) + translation
                     if np.all(np.isfinite(hit.point))
                     else hit.point
                 )
+                upper = hit.upper
+                if not identity and np.all(np.isfinite(point)) and not hit.pending_point:
+                    upper = max(upper, _exact_point_distance_upper(query, point))
                 normal = (
                     binary64_matmul(rotation, hit.normal)
                     if np.all(np.isfinite(hit.normal))
@@ -5827,7 +5984,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                     point,
                     hit.parameters,
                     hit.lower,
-                    hit.upper,
+                    upper,
                     hit.status,
                     normal,
                     tangents,
@@ -5842,7 +5999,11 @@ class NativeBRepProjection(AbstractBRepProjection):
             hit = hits[0]
             return hit
         if any(hit.status in (_FAILED, _UNRESOLVED) for hit in hits):
-            return _unresolved(dimension, index)
+            return replace(
+                _unresolved(dimension, index),
+                lower=min(hit.lower if hit.status != _FAILED else 0.0 for hit in hits),
+                upper=min(hit.upper if hit.status != _FAILED else np.inf for hit in hits),
+            )
         best = min(hits, key=lambda value: value.upper)
         tied = [
             hit
@@ -6266,12 +6427,29 @@ class NativeBRepProjection(AbstractBRepProjection):
                     boxes=boxes,
                     angle_bounds=angle_bounds,
                 )
-                if hit.status == _UNRESOLVED:
+                if hit.status in (_UNRESOLVED, _FAILED):
                     unresolved.append(hit)
-                elif hit.status != _FAILED:
+                else:
                     projected.append(hit)
             if unresolved:
-                hits.append(unresolved[0])
+                all_hits = unresolved + projected
+                hits.append(
+                    replace(
+                        _unresolved(
+                            unresolved[0].dimension,
+                            unresolved[0].index,
+                            unresolved[0].path,
+                        ),
+                        lower=min(
+                            hit.lower if hit.status != _FAILED else 0.0
+                            for hit in all_hits
+                        ),
+                        upper=min(
+                            hit.upper if hit.status != _FAILED else np.inf
+                            for hit in all_hits
+                        ),
+                    )
+                )
                 continue
             if not projected:
                 hits.append(_failed(self.ambient_dimension))
