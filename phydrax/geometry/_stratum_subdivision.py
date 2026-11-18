@@ -58,7 +58,6 @@ from ..linalg._exact import (
     inverse_small_rational,
     matmul_exact,
     symmetric_product_factor_error,
-    symmetric_product_minors_batch_exact,
     symmetric_product_minors_exact,
 )
 from ._embedding_cells import EmbeddingCell
@@ -1145,6 +1144,89 @@ def _cone_tests(pairs: list[tuple[_Piece, _Piece]], /) -> list[tuple[bool, int |
     return results
 
 
+def _multiply_integer_polynomials(
+    first: dict[_Index, int], second: dict[_Index, int], /
+) -> dict[_Index, int]:
+    result: dict[_Index, int] = {}
+    for left_index, left_value in first.items():
+        for right_index, right_value in second.items():
+            index = tuple(
+                left + right for left, right in zip(left_index, right_index, strict=True)
+            )
+            result[index] = result.get(index, 0) + left_value * right_value
+    return {index: value for index, value in result.items() if value}
+
+
+def _compose_root_expression(
+    expression: Expression, arguments: tuple[Expression, ...], /
+) -> Expression:
+    """Compose bounded quadratic rational polynomials using integer numerators.
+
+    Other dimensions, degrees, radicals, rational expressions, and malformed
+    polynomials retain the general composition path. Each quadratic workset
+    has at most 35 result monomials and is independent of other requests.
+    """
+    operands = (expression, *arguments)
+    if len(arguments) != 3 or not all(
+        isinstance(operand, dict)
+        and operand
+        and all(
+            isinstance(index, tuple)
+            and len(index) == 3
+            and all(type(power) is int and power >= 0 for power in index)
+            and sum(index) <= 2
+            and type(coefficient) in (int, Fraction)
+            for index, coefficient in operand.items()
+        )
+        for operand in operands
+    ):
+        return compose_expression(expression, arguments)
+    polynomials = cast(tuple[dict[_Index, Fraction | int], ...], operands)
+    outer, *inner = polynomials
+    scales = [
+        lcm(*(value.denominator for value in poly.values())) for poly in polynomials
+    ]
+    outer_scale = scales[0]
+    inner_scales = scales[1:]
+    integers = [
+        {
+            index: value.numerator * (scale // value.denominator)
+            for index, value in poly.items()
+        }
+        for poly, scale in zip(inner, inner_scales, strict=True)
+    ]
+    degrees = [max(index[axis] for index in outer) for axis in range(3)]
+    denominator = outer_scale
+    for scale, degree in zip(inner_scales, degrees, strict=True):
+        denominator *= scale**degree
+    zero = (0, 0, 0)
+    powers: dict[tuple[int, int], dict[_Index, int]] = {}
+    result: dict[_Index, int] = {}
+    for exponent, coefficient in outer.items():
+        if not coefficient:
+            continue
+        numerator = coefficient.numerator * (outer_scale // coefficient.denominator)
+        for scale, degree, power in zip(inner_scales, degrees, exponent, strict=True):
+            numerator *= scale ** (degree - power)
+        term: dict[_Index, int] = {zero: numerator}
+        for axis, power in enumerate(exponent):
+            if power:
+                key = (axis, power)
+                if key not in powers:
+                    factor = integers[axis]
+                    if power == 2:
+                        factor = _multiply_integer_polynomials(factor, factor)
+                    powers[key] = _multiply_integer_polynomials({zero: 1}, factor)
+                term = _multiply_integer_polynomials(term, powers[key])
+        for index, value in term.items():
+            updated = result.get(index, 0) + value
+            if updated:
+                result[index] = updated
+            else:
+                result.pop(index, None)
+    return {index: Fraction(value, denominator) for index, value in result.items()}
+
+
 def _prepare_root_nets(
     cells: tuple[EmbeddingCell, ...],
     stratum: tuple[int, ...],
@@ -1203,7 +1285,7 @@ def _prepare_root_nets(
             )
             if residuals and not affine:
                 composed = tuple(
-                    compose_expression(residual, cell.coordinates)
+                    _compose_root_expression(residual, cell.coordinates)
                     for residual in residuals
                 )
                 residual_degree = _degree(composed, groups, cell.dimension)
@@ -1540,11 +1622,63 @@ def _edge_matrix(points: tuple[tuple[ExactScalar, ...], ...], origin: int, /) ->
     )
 
 
+def _quadratic_simplex_jacobians(
+    coordinates: tuple[dict[_Index, Fraction | int], ...], /
+) -> _JacobianControls:
+    """Degree-one Jacobian controls over one positive integer scale."""
+    scale = lcm(*(value.denominator for poly in coordinates for value in poly.values()))
+    rows: list[list[int]] = []
+    for polynomial in coordinates:
+        numerators = {
+            index: value.numerator * (scale // value.denominator)
+            for index, value in polynomial.items()
+        }
+        for axis in range(3):
+            origin = tuple(int(index == axis) for index in range(3))
+            constant = numerators.get(origin, 0)
+            row = [constant]
+            for slot in range(3):
+                exponent = tuple(
+                    int(index == axis) + int(index == slot) for index in range(3)
+                )
+                row.append(
+                    constant + numerators.get(exponent, 0) * (2 if slot == axis else 1)
+                )
+            rows.append(row)
+    values = {
+        index: tuple(row[index.index(1)] for row in rows)
+        for index in _control_indices((4,), (1,))
+    }
+    return _JacobianControls(3, _integer_controls(values, scale))
+
+
 def _jacobian_controls(cell: EmbeddingCell, /) -> _JacobianControls | None:
     """Bernstein controls of the reference Jacobian on the unit reference simplex."""
     dimension = cell.dimension
+    coordinates = cell.coordinates
+    # A quadratic tetrahedron has an affine Jacobian: its Bernstein controls
+    # are the exact derivatives at the four reference corners. The bounded
+    # integer workset contains at most 30 input and 36 output coefficients.
+    if (
+        dimension == 3
+        and len(coordinates) == 3
+        and all(
+            isinstance(expression, dict)
+            and all(
+                isinstance(index, tuple)
+                and len(index) == 3
+                and all(type(power) is int and power >= 0 for power in index)
+                and sum(index) <= 2
+                and type(coefficient) in (int, Fraction)
+                for index, coefficient in expression.items()
+            )
+            for expression in coordinates
+        )
+    ):
+        rational = cast(tuple[dict[_Index, Fraction | int], ...], coordinates)
+        return _quadratic_simplex_jacobians(rational)
     entries: list[list[dict[_Index, ExactScalar]]] = []
-    for expression in cell.coordinates:
+    for expression in coordinates:
         if not isinstance(expression, dict):
             return None
         row: list[dict[_Index, ExactScalar]] = []
@@ -1623,6 +1757,71 @@ def _cached_simplex_jacobians(
     return entry[1]
 
 
+def _integer_jacobian_positivity(
+    matrices: tuple[tuple[tuple[int, ...], ...], ...],
+    prefix: tuple[tuple[Fraction | int, ...], ...],
+    suffix: tuple[tuple[Fraction | int, ...], ...] | None,
+    /,
+) -> bool:
+    """Decide Sylvester signs over positive common integer scales."""
+    dimension = len(prefix)
+
+    def clear(
+        factor: tuple[tuple[Fraction | int, ...], ...], /
+    ) -> tuple[tuple[int, ...], ...]:
+        scale = lcm(*(value.denominator for row in factor for value in row))
+        return tuple(
+            tuple(value.numerator * (scale // value.denominator) for value in row)
+            for row in factor
+        )
+
+    def product(
+        first: tuple[tuple[int, ...], ...], second: tuple[tuple[int, ...], ...], /
+    ) -> tuple[tuple[int, ...], ...]:
+        if dimension == 3:
+            return tuple(
+                tuple(
+                    first[row][0] * second[0][column]
+                    + first[row][1] * second[1][column]
+                    + first[row][2] * second[2][column]
+                    for column in range(3)
+                )
+                for row in range(3)
+            )
+        return tuple(
+            tuple(
+                sum(
+                    first[row][inner] * second[inner][column]
+                    for inner in range(dimension)
+                )
+                for column in range(dimension)
+            )
+            for row in range(dimension)
+        )
+
+    left = clear(prefix)
+    right = None if suffix is None else clear(suffix)
+    for matrix in matrices:
+        result = product(left, matrix)
+        if right is not None:
+            result = product(result, right)
+        a = 2 * result[0][0]
+        if a <= 0:
+            return False
+        if dimension >= 2:
+            b = result[0][1] + result[1][0]
+            d = 2 * result[1][1]
+            if a * d - b * b <= 0:
+                return False
+        if dimension == 3:
+            c = result[0][2] + result[2][0]
+            e = result[1][2] + result[2][1]
+            f = 2 * result[2][2]
+            if a * (d * f - e * e) - b * (b * f - c * e) + c * (b * e - c * d) <= 0:
+                return False
+    return True
+
+
 def _jacobian_controls_positive(
     controls: _JacobianControls, metric: _Matrix, glue: _Matrix | None = None, /
 ) -> bool:
@@ -1668,13 +1867,10 @@ def _jacobian_controls_positive(
                 )
                 for matrix in matrices
             )
-        return all(
-            all(value > 0 for value in minors)
-            for minors in symmetric_product_minors_batch_exact(
-                matrices,
-                rational_factors[0],
-                None if glue is None else rational_factors[1],
-            )
+        return _integer_jacobian_positivity(
+            matrices,
+            rational_factors[0],
+            None if glue is None else rational_factors[1],
         )
     return all(
         _positive_definite_symmetric_part(metric, control)

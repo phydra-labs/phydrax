@@ -275,6 +275,18 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Contact Jacobian positivity decides Sylvester signs on scaled integer
+  products without constructing rational minors, preserving exact decisions.
+  Three alternating replays of 91,398 captured checks took 35.5–49.0 seconds
+  before and 21.9–27.6 seconds after under load.
+- Contact subdivision constructs quadratic tetrahedron Jacobian controls with
+  common-scale integers, preserving exact control nets. Three alternating
+  replays of 56,425 captured requests took 10.6–13.9 seconds before and
+  3.0–3.7 seconds after on the measured machine.
+- Contact subdivision composes quadratic rational root polynomials with
+  common-scale integers, preserving exact results and coefficient order. In
+  three alternating replays of 15,302 captured compositions, the original
+  took 33.9–45.0 seconds and the integer path 11.9–15.4 seconds under load.
 - Sphere and torus projection points, parameters, normals and tangents now use
   platform-identical representatives, changing projection `result_id`s while
   certified bounds, statuses, source identities and profile identities remain
