@@ -13,7 +13,7 @@ stratification tying every output boundary facet to original source roots.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from fractions import Fraction
 from itertools import combinations
@@ -203,6 +203,25 @@ def _triangle3(values: tuple[tuple[Fraction, ...], ...], /) -> _Triangle3:
             "A source boundary piece is not triangular.", status="unresolved"
         )
     return (_point3(values[0]), _point3(values[1]), _point3(values[2]))
+
+
+type _ChartTokens = tuple[tuple[tuple[int, int], ...], ...]
+type _DecodedChart = tuple[tuple[Fraction, ...], ...]
+
+
+def _cached_chart_row(
+    tokens: _ChartTokens,
+    row: int,
+    cache: dict[_ChartTokens, _DecodedChart],
+    decode: Callable[[int], _DecodedChart],
+    /,
+) -> _DecodedChart:
+    """Decode a chart only when its row is reached, reusing exact duplicates."""
+    chart = cache.get(tokens)
+    if chart is None:
+        chart = decode(row)
+        cache[tokens] = chart
+    return chart
 
 
 def _surface_point(
@@ -1421,6 +1440,13 @@ def _cad_target_root_partition(
         )
         for block in mesh.blocks
     }
+    corner_slots = {
+        block: {
+            point: tuple(slot for slot, corner in enumerate(corners) if corner == point)
+            for point in corners
+        }
+        for block, corners in block_corners.items()
+    }
     targets: list[tuple[int, int, int]] = []
     triangles: list[_Triangle2] = []
     grouped: dict[int, list[_Triangle2]] = {}
@@ -1433,8 +1459,17 @@ def _cad_target_root_partition(
         }
         if _exact_patch_chart(domain, patch) is not None
     }
+    source_charts: dict[_ChartTokens, _DecodedChart] = {}
+    target_charts: dict[_ChartTokens, _DecodedChart] = {}
     for row, (root_id, patch) in enumerate(zip(roots, patch_rows, strict=True)):
-        triangle = _triangle2(witness.source_parameter_chart(row))
+        triangle = _triangle2(
+            _cached_chart_row(
+                witness.source_parameter_rational_tokens[row],
+                row,
+                source_charts,
+                witness.source_parameter_chart,
+            )
+        )
         if _area2(triangle) == 0:
             raise SourceCoverageUnavailable(
                 "CAD target root chart is degenerate.", status="violated"
@@ -1453,15 +1488,18 @@ def _cad_target_root_partition(
                 "CAD target face is invalid.", status="violated"
             )
         slots = set(reference.entities[2][local_face])
-        corners = block_corners[id(block)]
+        corners = corner_slots[id(block)]
         connectivity = block_vertices[id(block)]
         ids: list[int] = []
-        for point in _triangle3(witness.target_reference_chart(row)):
-            matches = [
-                slot
-                for slot, corner in enumerate(corners)
-                if point == corner and slot in slots
-            ]
+        for point in _triangle3(
+            _cached_chart_row(
+                witness.target_reference_rational_tokens[row],
+                row,
+                target_charts,
+                witness.target_reference_chart,
+            )
+        ):
+            matches = [slot for slot in corners.get(point, ()) if slot in slots]
             if len(matches) != 1:
                 raise SourceCoverageUnavailable(
                     "CAD target corner is not a face vertex.", status="violated"
@@ -1952,10 +1990,18 @@ def _cad_chart_topology_degree(
         )
         for block in mesh.blocks
     }
+    corner_slots = {
+        block: {
+            point: tuple(slot for slot, corner in enumerate(corners) if corner == point)
+            for point in corners
+        }
+        for block, corners in block_corners.items()
+    }
     row_targets: list[tuple[int, int, int]] = []
     row_uv: list[_Triangle2] = []
     row_chart_signs: list[int] = []
-    target_charts: dict[tuple[tuple[tuple[int, int], ...], ...], _Triangle3] = {}
+    source_charts: dict[_ChartTokens, _DecodedChart] = {}
+    target_charts: dict[_ChartTokens, _DecodedChart] = {}
     row_labels: list[tuple[_VertexKey, _VertexKey, _VertexKey]] = []
     for row, (cell_raw, local_raw, patch) in enumerate(
         zip(
@@ -1977,20 +2023,19 @@ def _cad_chart_topology_degree(
                 "A CAD chart triangle names an invalid target face.", status="violated"
             )
         face_slots = {int(value) for value in faces[local_face]}
-        reference_vertices = block_corners[id(block)]
+        reference_vertices = corner_slots[id(block)]
         connectivity = block_vertices[id(block)]
         ids = []
-        tokens = witness.target_reference_rational_tokens[row]
-        target_chart = target_charts.get(tokens)
-        if target_chart is None:
-            target_chart = _triangle3(witness.target_reference_chart(row))
-            target_charts[tokens] = target_chart
-        for exact_point in target_chart:
-            matches = tuple(
-                slot
-                for slot, corner in enumerate(reference_vertices)
-                if corner == exact_point
+        target_chart = _triangle3(
+            _cached_chart_row(
+                witness.target_reference_rational_tokens[row],
+                row,
+                target_charts,
+                witness.target_reference_chart,
             )
+        )
+        for exact_point in target_chart:
+            matches = reference_vertices.get(exact_point, ())
             if len(matches) != 1 or matches[0] not in face_slots:
                 raise SourceCoverageUnavailable(
                     "CAD seam proof currently requires target chart corners at stable volume-mesh vertices.",
@@ -2002,7 +2047,14 @@ def _cad_chart_topology_degree(
                 "A CAD chart triangle changes its target face vertex ancestry.",
                 status="violated",
             )
-        uv = _triangle2(witness.source_parameter_chart(row))
+        uv = _triangle2(
+            _cached_chart_row(
+                witness.source_parameter_rational_tokens[row],
+                row,
+                source_charts,
+                witness.source_parameter_chart,
+            )
+        )
         chart_sign = _triangle_orientation(uv)
         if chart_sign == 0:
             raise SourceCoverageUnavailable(
@@ -2406,6 +2458,7 @@ def _cad_chart_partition(
     plane_by_patch: dict[int, bool] = {}
     plane_chart_ids: dict[int, str | None] = {}
     patch_rows: list[int] = []
+    source_charts: dict[_ChartTokens, _DecodedChart] = {}
     for row, (source_chart_id, source_entity_id, occurrence) in enumerate(
         zip(
             witness.source_chart_ids,
@@ -2440,7 +2493,14 @@ def _cad_chart_partition(
                 "CAD chart witness mixes charts of one source face.", status="violated"
             )
         patch_rows.append(patch)
-        triangle = _triangle2(witness.source_parameter_chart(row))
+        triangle = _triangle2(
+            _cached_chart_row(
+                witness.source_parameter_rational_tokens[row],
+                row,
+                source_charts,
+                witness.source_parameter_chart,
+            )
+        )
         targets_by_patch.setdefault(patch, []).append(triangle)
     if set(targets_by_patch) != set(source.patches):
         raise SourceCoverageUnavailable(
