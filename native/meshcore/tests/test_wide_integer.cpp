@@ -113,7 +113,8 @@ void check_add(std::uint64_t a, std::uint64_t b, std::uint64_t incoming) {
 Words twos_complement(Words value) {
   std::uint64_t carry = 1;
   for (std::uint32_t& word : value) {
-    const std::uint64_t sum = static_cast<std::uint64_t>(~word) + carry;
+    const std::uint64_t sum =
+        static_cast<std::uint64_t>(static_cast<std::uint32_t>(~word)) + carry;
     word = static_cast<std::uint32_t>(sum);
     carry = sum >> 32;
   }
