@@ -18,6 +18,7 @@
 #endif
 
 #include "exact_scalar.hpp"
+#include "angle.hpp"
 #include "geometry3.hpp"
 #include "intersections.hpp"
 #include "phydrax_meshcore.h"
@@ -697,7 +698,7 @@ class Remesher {
     const double twice_area = length(cross(difference(b, a), difference(c, a)));
     if (!(twice_area > 0) || !(lengths[0] > 0)) return 0;
     const double sine = std::min(1.0, twice_area / (lengths[1] * lengths[2]));
-    const double minimum_angle = std::asin(sine) * 180.0 / std::acos(-1.0);
+    const double minimum_angle = phx::mc::angle::arcsine(sine) * 180.0 / phx::mc::angle::kPi;
     const double shape = std::min(1.0, minimum_angle / targets.minimum_angle_degrees);
     const double size = std::min(1.0, (4.0 / 3.0) * h / lengths[2]);
     return shape * size;
@@ -789,7 +790,8 @@ class Remesher {
       const F& other_triangle = triangle(*neighbor, staged);
       const V other = normal(other_triangle);
       if (!(length(other) > 0)) continue;
-      const double turn = std::atan2(length(cross(own, other)), dot(own.data(), other.data()));
+      const double turn =
+          phx::mc::angle::between(length(cross(own, other)), dot(own.data(), other.data()));
       // The neighbor's far corner below t's plane, seen from the solid side,
       // makes the edge convex: the solid wedge there is pi - turn.
       int64_t far = other_triangle[0];
@@ -2196,8 +2198,8 @@ double cone_separation(const NormalCone& first, const NormalCone& second) {
   if (!(first.half_angle < kPi) || !(second.half_angle < kPi) || !(first_length > 0) ||
       !(second_length > 0) || !std::isfinite(first_length) || !std::isfinite(second_length))
     return kPi;
-  const double between = std::atan2(length(cross(first.axis, second.axis)),
-                                    dot(first.axis.data(), second.axis.data()));
+  const double between = phx::mc::angle::between(length(cross(first.axis, second.axis)),
+                                                 dot(first.axis.data(), second.axis.data()));
   return std::min(kPi, between + std::max(first.half_angle, 0.0) +
                            std::max(second.half_angle, 0.0));
 }
@@ -2207,8 +2209,8 @@ double forced_turn(const NormalCone& first, const NormalCone& second) {
   if (!(first.half_angle < kPi) || !(second.half_angle < kPi) || !(first_length > 0) ||
       !(second_length > 0) || !std::isfinite(first_length) || !std::isfinite(second_length))
     return 0;
-  const double between = std::atan2(length(cross(first.axis, second.axis)),
-                                    dot(first.axis.data(), second.axis.data()));
+  const double between = phx::mc::angle::between(length(cross(first.axis, second.axis)),
+                                                 dot(first.axis.data(), second.axis.data()));
   return std::max(0.0, between - std::max(first.half_angle, 0.0) -
                            std::max(second.half_angle, 0.0));
 }

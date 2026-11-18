@@ -612,6 +612,24 @@
   resolution of the volume refinement, a one-step length that is subnormal
   near zero, is computed as the step times the length of the transformed
   axis.
+- The native meshers take their angles from kernels that give one double per
+  input on every platform instead of from `std::acos`, `std::asin`,
+  `std::atan2` and `std::sin`: the dihedral angles of the volume refinement
+  and improvement, the minimum angle, turns and cone separations of the
+  surface remeshing, the surface CDT's minimum-angle threshold and the
+  radius of a protecting ball. Arcsine, arccosine and the angle between two
+  vectors are computed with binary64 additions, multiplications, divisions
+  and square roots in a fixed order (within 7, 5 and 7 units in the last
+  place; at most 2 observed), and the two rarely evaluated sines are the
+  lower endpoint of the native interval kernel's enclosure. The platform
+  functions differ between Windows, Linux and macOS in up to an eighth of
+  the meshers' own arguments. The cell size of the volume mesher's hash
+  grid is a cube root by Newton's iteration instead of `std::cbrt`, and a
+  power of two is formed with `std::ldexp` instead of `std::exp2`. A
+  reported angle can change in its last places and a decision within that
+  distance of its threshold can go the other way, once, on every platform.
+  These values measure and propose; the bounds of the surface admissions
+  come from the interval kernel.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep

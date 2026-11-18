@@ -92,6 +92,7 @@ set(PHX_MC_SOURCES
   src/improve3d.cpp
   src/zero_set_admission.cpp
   src/elementary.cpp
+  src/angle.cpp
 )
 set(PHX_MC_HEADERS
   include/phydrax_meshcore.h
@@ -139,6 +140,7 @@ set(PHX_MC_HEADERS
   src/elementary.hpp
   src/directed_norm.hpp
   src/directed_interval.hpp
+  src/angle.hpp
 )
 
 # Content identity of the library sources; CMake re-configures when any listed
@@ -238,6 +240,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_rounding)
   phx_mc_add_test(test_directed_interval)
   phx_mc_add_test(test_geometry_length)
+  phx_mc_add_test(test_angle)
   phx_mc_add_test(test_interval_program)
   phx_mc_add_test(test_interval_simplex_restrict)
   phx_mc_add_test(test_parallel)

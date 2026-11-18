@@ -3,6 +3,7 @@
 //
 // Floating dihedral and normalized-volume measures used as improvement objectives.
 #include "improve3d.hpp"
+#include "angle.hpp"
 
 #include <algorithm>
 #include <array>
@@ -148,7 +149,7 @@ double relocation_minimum_dihedral_degrees(
       maximum_cosine = std::max(maximum_cosine, cosine);
     }
   }
-  const double minimum = std::acos(maximum_cosine) * kRadiansToDegrees;
+  const double minimum = angle::arccosine(maximum_cosine) * kRadiansToDegrees;
   return std::isfinite(minimum) ? minimum : 0.0;
 }
 
@@ -212,7 +213,7 @@ double minimum_dihedral_degrees(const double* const points[4]) noexcept {
   }
   // acos is monotone decreasing over the clamped domain; the extremal angle
   // therefore needs one transcendental evaluation instead of one per face pair.
-  const double minimum = std::acos(maximum_cosine) * kRadiansToDegrees;
+  const double minimum = angle::arccosine(maximum_cosine) * kRadiansToDegrees;
   return std::isfinite(minimum) ? minimum : 0.0;
 }
 
