@@ -3,7 +3,11 @@ from pathlib import Path
 
 import numpy as np
 
-from phydrax.geometry._meshing_domain import MeshingDomain, PatchCurveUse, SourcePreparation
+from phydrax.geometry._meshing_domain import (
+    MeshingDomain,
+    PatchCurveUse,
+    SourcePreparation,
+)
 from phydrax.geometry.brep._boolean_core import PeriodicPCurve
 from phydrax.geometry.brep._intersection import intersect_surface_regions
 from phydrax.geometry.brep._intersection_curve import (
