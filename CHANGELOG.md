@@ -643,6 +643,45 @@
   zero-set admission moved to one header that both admissions use; native
   tests check the norm and angle bounds against exact arithmetic and prove
   the zero-set floor from exact squares of the area and the longest edge.
+- The native meshers measure a Euclidean length as the square root of the
+  left-to-right sum of squares (binary64 products, sums and one square root)
+  instead of `std::hypot`: the surface CDT's shell split, the radius-edge
+  ratio and metric lengths of the volume refinement and improvement, and the
+  lengths of the surface remeshing and of the surface envelope. The value is
+  the same double on every platform; the three-argument `std::hypot` is not
+  correctly rounded in about a third of the calls on Windows and Linux and a
+  sixth on macOS, on different inputs, so the three platforms disagreed on
+  the meshers' own arguments. Where `std::hypot` returned another double, a
+  length changes in its last place, so a mesh whose refinement or
+  improvement had a decision within one double of its threshold can change,
+  once, on every platform. Nothing is rescaled: components outside about
+  1e-154 to 1e154 overflow or underflow in their squares. The coordinate
+  resolution of the volume refinement, a one-step length that is subnormal
+  near zero, is computed as the step times the length of the transformed
+  axis.
+- The native meshers take their angles from kernels that give one double per
+  input on every platform instead of from `std::acos`, `std::asin`,
+  `std::atan2` and `std::sin`: the dihedral angles of the volume refinement
+  and improvement, the minimum angle, turns and cone separations of the
+  surface remeshing, the surface CDT's minimum-angle threshold and the
+  radius of a protecting ball. Arcsine, arccosine and the angle between two
+  vectors are computed with binary64 additions, multiplications, divisions
+  and square roots in a fixed order (within 7, 5 and 7 units in the last
+  place; at most 2 observed), and the two rarely evaluated sines are the
+  lower endpoint of the native interval kernel's enclosure. The platform
+  functions differ between Windows, Linux and macOS in up to an eighth of
+  the meshers' own arguments. The cell size of the volume mesher's hash
+  grid is a cube root by Newton's iteration instead of `std::cbrt`, and a
+  power of two is formed with `std::ldexp` instead of `std::exp2`. A
+  reported angle can change in its last places and a decision within that
+  distance of its threshold can go the other way, once, on every platform.
+  These values measure and propose; the bounds of the surface admissions
+  come from the interval kernel. Host code reaches the same kernels through
+  `phydrax._meshcore.angle_arcsine`, `angle_arccosine`, `angle_between`,
+  `angle_sine` and `angle_cosine` (C entries `phx_mc_angle_*`), so an angle
+  computed on the host and one computed in the library are the same double;
+  `angle_arctangent2` is the four-quadrant form of `angle_between`, with the
+  sign of its first argument and the zeros of IEEE 754.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep

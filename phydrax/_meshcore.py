@@ -1470,6 +1470,12 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (_I64, _I64, _I64, _P, _P, _P, _P, _P, _P, _P, _P),
     ),
+    "phx_mc_angle_sine": (_I32, (_I64, _P, _P)),
+    "phx_mc_angle_cosine": (_I32, (_I64, _P, _P)),
+    "phx_mc_angle_arcsine": (_I32, (_I64, _P, _P)),
+    "phx_mc_angle_arccosine": (_I32, (_I64, _P, _P)),
+    "phx_mc_angle_between": (_I32, (_I64, _P, _P, _P)),
+    "phx_mc_angle_arctangent2": (_I32, (_I64, _P, _P, _P)),
 }
 
 
@@ -10094,6 +10100,87 @@ def metric_survivor_goals(
     return goals, valid.astype(np.bool_)
 
 
+def _angle_map(entry: str, name: str, values: np.ndarray, /) -> np.ndarray:
+    arguments = _real_array(values, "values")
+    results = np.empty_like(arguments)
+    status = load_meshcore()[entry](
+        arguments.size, arguments.ctypes.data, results.ctypes.data
+    )
+    _raise_for_call(status, name)
+    return results
+
+
+def angle_arcsine(values: np.ndarray, /) -> np.ndarray:
+    """``asin`` of values in ``[-1, 1]``, the same binary64 result on every
+    platform (within 7 units in the last place); NaN outside the interval.
+
+    The value the native meshers use. It is not correctly rounded and no
+    exact decision may rest on it.
+    """
+    return _angle_map("phx_mc_angle_arcsine", "angle_arcsine", values)
+
+
+def angle_arccosine(values: np.ndarray, /) -> np.ndarray:
+    """``acos`` of values in ``[-1, 1]``, the same binary64 result on every
+    platform (within 5 units in the last place); NaN outside the interval."""
+    return _angle_map("phx_mc_angle_arccosine", "angle_arccosine", values)
+
+
+def angle_sine(values: np.ndarray, /) -> np.ndarray:
+    """``sin`` of finite values, the same binary64 result on every platform:
+    the lower endpoint of the native interval enclosure, at most the true
+    value and at most four binary64 values below it; NaN otherwise."""
+    return _angle_map("phx_mc_angle_sine", "angle_sine", values)
+
+
+def angle_cosine(values: np.ndarray, /) -> np.ndarray:
+    """``cos`` of finite values, as :func:`angle_sine`."""
+    return _angle_map("phx_mc_angle_cosine", "angle_cosine", values)
+
+
+def angle_between(across: np.ndarray, along: np.ndarray, /) -> np.ndarray:
+    """The angle in ``[0, pi]`` of each direction ``(along, across)`` with
+    ``across >= 0``: ``atan2(across, along)``, the same binary64 result on
+    every platform (within 7 units in the last place).
+
+    Between two vectors these are the length of their cross product and their
+    dot product. The quadrant follows the sign of ``along`` exactly; a
+    negative ``across`` and a value that is not finite give NaN.
+    """
+    cross = _real_array(across, "across")
+    dot = _real_array(along, "along")
+    if cross.shape != dot.shape:
+        raise ValueError("across and along must have one shape.")
+    results = np.empty_like(cross)
+    status = load_meshcore()["phx_mc_angle_between"](
+        cross.size, cross.ctypes.data, dot.ctypes.data, results.ctypes.data
+    )
+    _raise_for_call(status, "angle_between")
+    return results
+
+
+def angle_arctangent2(ordinates: np.ndarray, abscissas: np.ndarray, /) -> np.ndarray:
+    """``atan2(ordinates, abscissas)`` in ``[-pi, pi]``, the same binary64
+    result on every platform (within 7 units in the last place).
+
+    :func:`angle_between` of the magnitude of the ordinate, with the
+    ordinate's sign. Zeros follow IEEE 754: the result has the sign of the
+    ordinate, also of a negative zero, and a zero ordinate gives a zero for an
+    abscissa that is positive or ``+0`` and pi for one that is negative or
+    ``-0``. A value that is not finite gives NaN.
+    """
+    first = _real_array(ordinates, "ordinates")
+    second = _real_array(abscissas, "abscissas")
+    if first.shape != second.shape:
+        raise ValueError("ordinates and abscissas must have one shape.")
+    results = np.empty_like(first)
+    status = load_meshcore()["phx_mc_angle_arctangent2"](
+        first.size, first.ctypes.data, second.ctypes.data, results.ctypes.data
+    )
+    _raise_for_call(status, "angle_arctangent2")
+    return results
+
+
 def metric_hull_frame(corners: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     """Orthonormal basis and projector of the affine hull of 2 or 3 corners.
 
@@ -10719,6 +10806,12 @@ def planar_partition(
 
 
 __all__ = [
+    "angle_arccosine",
+    "angle_arctangent2",
+    "angle_arcsine",
+    "angle_between",
+    "angle_cosine",
+    "angle_sine",
     "planar_partition",
     "ARRANGEMENT_UNCLASSIFIED",
     "ArrangementClassification",
