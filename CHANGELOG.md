@@ -650,6 +650,15 @@
   300 and 1,500 bits and on subnormal coordinates. On the recorded sphere
   adaptation the coordinates, edits and evidence are identical and the
   adaptation takes about a tenth less time on Windows.
+- Certified surface remeshing does less bookkeeping for each edit and returns
+  the same mesh. The faces at a vertex are collected into storage that is
+  reused from one query to the next instead of a new array that grew an entry
+  at a time, and the temporary store of moved points and appended triangles
+  finds a resident page by direct index instead of through a hash table. No
+  arithmetic, admission or order of edits changes. Coarsening the 6.3 million
+  triangle carrier of the adaptive sphere profile to its 114 triangles takes
+  about a fifth less time (397 to 307 seconds in one measured pair) with
+  identical vertices, triangles, counters and distance bound.
 - The source normal cones of certified surface remeshing are outward-rounded
   bounds computed without the platform math library. For the zero-set
   admission the half-angle `asin(|r| / |g|) + asin(2 tolerance / altitude)`
