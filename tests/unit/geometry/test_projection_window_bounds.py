@@ -7,7 +7,12 @@ import numpy as np
 import pytest
 
 from phydrax.geometry.brep._assembly import BRepAffinePlacement
-from phydrax.geometry.brep._patches import CylinderPatch, LineCurve, RevolutionSurface
+from phydrax.geometry.brep._patches import (
+    CylinderPatch,
+    LineCurve,
+    RevolutionSurface,
+    TorusPatch,
+)
 from phydrax.geometry.brep._projection import (
     NativeBRepProjection,
     prepare_brep_projection,
@@ -123,6 +128,52 @@ def test_face_residual_is_identical_alone_and_in_batch(
         == (np.asarray(batch.residuals).view(np.uint64)[0])
     )
     assert int(alone.status[0]) == int(batch.status[0])
+
+
+def test_nonbinary_torus_source_point_bounds_are_batch_independent() -> None:
+    major, minor = Fraction(7, 3), Fraction(1, 5)
+    patch = TorusPatch(
+        (0, 0, 0),
+        (1, 0, 0),
+        (0, 1, 0),
+        (0, 0, 1),
+        float(major),
+        float(minor),
+        major_radius_exact=major,
+        minor_radius_exact=minor,
+    )
+    projection = prepare_brep_projection(
+        _rectangle_face_model(patch, ((-1.0, -1.0), (1.0, 1.0)))
+    )
+    points = np.asarray(((2.5, 0.25, 0.125), (2.5, 0.5, 0.125)), dtype=np.float64)
+    result = projection.project(
+        points, np.asarray((2, 2), dtype=np.int64), np.asarray((0, 0), dtype=np.int64)
+    )
+    for row in range(2):
+        alone = projection.project(
+            points[row : row + 1],
+            np.asarray((2,), dtype=np.int64),
+            np.asarray((0,), dtype=np.int64),
+        )
+        assert int(result.status[row]) == BRepProjectionStatus.UNIQUE
+        assert (
+            np.asarray(alone.residuals).view(np.uint64)[0]
+            == (np.asarray(result.residuals).view(np.uint64)[row])
+        )
+        u, v = (Fraction(float(value)) for value in result.parameters[row])
+        cu, su = _trig(u, cosine=True), _trig(u, cosine=False)
+        cv, sv = _trig(v, cosine=True), _trig(v, cosine=False)
+        query = tuple(Fraction(float(value)) for value in points[row])
+        squared = (
+            (query[0] - (major + minor * c_v) * c_u) ** 2
+            + (query[1] - (major + minor * c_v) * s_u) ** 2
+            + (query[2] - minor * s_v) ** 2
+            for c_u in cu
+            for s_u in su
+            for c_v in cv
+            for s_v in sv
+        )
+        assert Fraction(float(result.residuals[row])) ** 2 >= max(squared)
 
 
 @pytest.mark.parametrize("kind", ("cylinder", "revolution"))

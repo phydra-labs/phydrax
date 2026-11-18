@@ -178,6 +178,7 @@ class _ProjectionPreparation:
     lifts: dict[tuple[int, int], bool] = field(default_factory=dict)
     angle_bounds: dict[int, tuple[float, float] | None] = field(default_factory=dict)
     exact_rectangles: dict[int, bool] = field(default_factory=dict)
+    torus_point_plans: dict[int, _TorusPointPlan | None] = field(default_factory=dict)
     faces: dict[int, _PreparedFace] = field(default_factory=dict)
     orientations: dict[tuple[int, int], float] = field(default_factory=dict)
     edges: dict[int, _PreparedEdge] = field(default_factory=dict)
@@ -251,6 +252,13 @@ class _PreparedFace:
     natural_rectangle: bool
     full_periods: tuple[bool, bool]
     circle_frame: _CircleRevolutionFrame | None
+
+
+@dataclass(frozen=True, slots=True)
+class _TorusPointPlan:
+    program: PreparedIntervalFunction
+    lower: np.ndarray
+    upper: np.ndarray
 
 
 @dataclass(frozen=True, slots=True)
@@ -3264,6 +3272,65 @@ def _exact_trim_line_contains(model: BRepModel, face: int, uv: np.ndarray, /) ->
     return False
 
 
+def _torus_point_interval_map(values: Array, /) -> Array:
+    """TorusPatch.evaluate with its exact source coefficients as interval inputs."""
+    longitude, tube_angle = values[0], values[1]
+    radial = jnp.cos(longitude) * values[5:8] + jnp.sin(longitude) * values[8:11]
+    ring_radius = values[14] + values[15] * jnp.cos(tube_angle)
+    return (
+        values[2:5]
+        + ring_radius * radial
+        + values[15] * jnp.sin(tube_angle) * values[11:14]
+    )
+
+
+def _prepare_torus_point_plan(patch: TorusPatch, /) -> _TorusPointPlan | None:
+    program = prepare_host_program(_torus_point_interval_map, 16)
+    if program is None:
+        return None
+    coefficients = (
+        *patch.center_exact,
+        *patch.first_axis_exact,
+        *patch.second_axis_exact,
+        *patch.axis_exact,
+        patch.major_radius_exact,
+        patch.minor_radius_exact,
+    )
+    lower = np.zeros((16,), dtype=np.float64)
+    upper = np.zeros((16,), dtype=np.float64)
+    for index, value in enumerate(coefficients, start=2):
+        lo, hi = coefficient_interval(value, bits=160)
+        lower[index] = fraction_endpoint(lo, upper=False, saturate=True)
+        upper[index] = fraction_endpoint(hi, upper=True, saturate=True)
+    if not np.all(np.isfinite(lower)) or not np.all(np.isfinite(upper)):
+        return None
+    return _TorusPointPlan(program, lower, upper)
+
+
+def _torus_point_boxes(
+    patch: TorusPatch,
+    parameters: np.ndarray,
+    face: int,
+    preparation: _ProjectionPreparation | None,
+    /,
+) -> np.ndarray | None:
+    """Enclose source points using exact-coefficient inputs in one native batch."""
+    if preparation is None:
+        plan = _prepare_torus_point_plan(patch)
+    else:
+        if face not in preparation.torus_point_plans:
+            preparation.torus_point_plans[face] = _prepare_torus_point_plan(patch)
+        plan = preparation.torus_point_plans[face]
+    if plan is None:
+        return None
+    lower = np.broadcast_to(plan.lower, (len(parameters), 16)).copy()
+    upper = np.broadcast_to(plan.upper, (len(parameters), 16)).copy()
+    lower[:, :2] = parameters
+    upper[:, :2] = parameters
+    lo, hi = plan.program.evaluate(lower, upper)
+    return np.stack((lo, hi), axis=1)
+
+
 def _source_point_upper(
     patch: AbstractSurfacePatch,
     point: np.ndarray,
@@ -3274,6 +3341,11 @@ def _source_point_upper(
 ) -> float:
     """Bound distance to the exact source point at an authored parameter."""
     from ._root_bindings import _patch_box, _source_coefficients_are_binary
+
+    if isinstance(patch, TorusPatch):
+        boxes = _torus_point_boxes(patch, uv[None, :], face, preparation)
+        if boxes is not None:
+            return _point_box_upper(point, boxes[0])
 
     if not isinstance(patch, (CylinderPatch, TorusPatch)) and not (
         _source_coefficients_are_binary(patch)
@@ -3356,22 +3428,33 @@ def _finish_source_boxes(
         patch = model.patches[face]
         parameters = np.stack([hits[row].parameters for row in selected])
         binary = _source_coefficients_are_binary(patch)
-        if isinstance(patch, TorusPatch) or (
-            isinstance(patch, CylinderPatch) and not binary
-        ):
-            boxes = _patch_boxes(tuple((patch, uv, uv) for uv in parameters))
+        if isinstance(patch, TorusPatch):
+            torus_boxes = _torus_point_boxes(patch, parameters, face, preparation)
+            boxes = (
+                torus_boxes
+                if torus_boxes is not None
+                else np.asarray(
+                    _patch_boxes(tuple((patch, uv, uv) for uv in parameters)),
+                    dtype=np.float64,
+                )
+            )
+        elif isinstance(patch, CylinderPatch) and not binary:
+            boxes = np.asarray(
+                _patch_boxes(tuple((patch, uv, uv) for uv in parameters)),
+                dtype=np.float64,
+            )
         elif binary:
             if face not in preparation.patch_programs:
                 preparation.patch_programs[face] = prepare_host_program(patch.evaluate, 2)
             program = preparation.patch_programs[face]
             if program is None:
-                boxes = tuple(np.full((2, 3), np.nan) for _ in selected)
+                boxes = np.full((len(selected), 2, 3), np.nan, dtype=np.float64)
             else:
                 low, high = program.evaluate(parameters, parameters)
-                boxes = tuple(np.stack(pair) for pair in zip(low, high, strict=True))
+                boxes = np.stack((low, high), axis=1)
         else:
-            boxes = tuple(np.full((2, 3), np.nan) for _ in selected)
-        uppers = _point_box_uppers(queries[selected], np.stack(boxes))
+            boxes = np.full((len(selected), 2, 3), np.nan, dtype=np.float64)
+        uppers = _point_box_uppers(queries[selected], boxes)
         for row, upper in zip(selected, uppers, strict=True):
             hit = hits[row]
             if not np.isfinite(upper):
@@ -3409,6 +3492,13 @@ def _enlarge_face_hit(
     ) or hit.status in (_FAILED, _UNRESOLVED, _NON_ISOLATED):
         return hit
     uv = hit.parameters
+    if hit.trim_membership is True and not isinstance(patch, SpherePatch):
+        # The original classifier already proved the finite UV is in the box
+        # and strictly inside the trim; no second chart classification is needed.
+        if hit.pending_frame and _identity_occurrence(occurrence):
+            return replace(hit, pending_box=True)
+        upper = _source_point_upper(patch, point, uv, face, preparation)
+        return replace(hit, upper=max(hit.upper, upper)) if np.isfinite(upper) else hit
     if not np.all(np.isfinite(uv)):
         return hit
     bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
