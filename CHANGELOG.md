@@ -267,6 +267,10 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Contact Jacobian positivity decides Sylvester signs on scaled integer
+  products without constructing rational minors, preserving exact decisions.
+  Three alternating replays of 91,398 captured checks took 35.5–49.0 seconds
+  before and 21.9–27.6 seconds after under load.
 - Contact subdivision constructs quadratic tetrahedron Jacobian controls with
   common-scale integers, preserving exact control nets. Three alternating
   replays of 56,425 captured requests took 10.6–13.9 seconds before and

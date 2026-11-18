@@ -58,7 +58,6 @@ from ..linalg._exact import (
     inverse_small_rational,
     matmul_exact,
     symmetric_product_factor_error,
-    symmetric_product_minors_batch_exact,
     symmetric_product_minors_exact,
 )
 from ._embedding_cells import EmbeddingCell
@@ -1758,6 +1757,71 @@ def _cached_simplex_jacobians(
     return entry[1]
 
 
+def _integer_jacobian_positivity(
+    matrices: tuple[tuple[tuple[int, ...], ...], ...],
+    prefix: tuple[tuple[Fraction | int, ...], ...],
+    suffix: tuple[tuple[Fraction | int, ...], ...] | None,
+    /,
+) -> bool:
+    """Decide Sylvester signs over positive common integer scales."""
+    dimension = len(prefix)
+
+    def clear(
+        factor: tuple[tuple[Fraction | int, ...], ...], /
+    ) -> tuple[tuple[int, ...], ...]:
+        scale = lcm(*(value.denominator for row in factor for value in row))
+        return tuple(
+            tuple(value.numerator * (scale // value.denominator) for value in row)
+            for row in factor
+        )
+
+    def product(
+        first: tuple[tuple[int, ...], ...], second: tuple[tuple[int, ...], ...], /
+    ) -> tuple[tuple[int, ...], ...]:
+        if dimension == 3:
+            return tuple(
+                tuple(
+                    first[row][0] * second[0][column]
+                    + first[row][1] * second[1][column]
+                    + first[row][2] * second[2][column]
+                    for column in range(3)
+                )
+                for row in range(3)
+            )
+        return tuple(
+            tuple(
+                sum(
+                    first[row][inner] * second[inner][column]
+                    for inner in range(dimension)
+                )
+                for column in range(dimension)
+            )
+            for row in range(dimension)
+        )
+
+    left = clear(prefix)
+    right = None if suffix is None else clear(suffix)
+    for matrix in matrices:
+        result = product(left, matrix)
+        if right is not None:
+            result = product(result, right)
+        a = 2 * result[0][0]
+        if a <= 0:
+            return False
+        if dimension >= 2:
+            b = result[0][1] + result[1][0]
+            d = 2 * result[1][1]
+            if a * d - b * b <= 0:
+                return False
+        if dimension == 3:
+            c = result[0][2] + result[2][0]
+            e = result[1][2] + result[2][1]
+            f = 2 * result[2][2]
+            if a * (d * f - e * e) - b * (b * f - c * e) + c * (b * e - c * d) <= 0:
+                return False
+    return True
+
+
 def _jacobian_controls_positive(
     controls: _JacobianControls, metric: _Matrix, glue: _Matrix | None = None, /
 ) -> bool:
@@ -1803,13 +1867,10 @@ def _jacobian_controls_positive(
                 )
                 for matrix in matrices
             )
-        return all(
-            all(value > 0 for value in minors)
-            for minors in symmetric_product_minors_batch_exact(
-                matrices,
-                rational_factors[0],
-                None if glue is None else rational_factors[1],
-            )
+        return _integer_jacobian_positivity(
+            matrices,
+            rational_factors[0],
+            None if glue is None else rational_factors[1],
         )
     return all(
         _positive_definite_symmetric_part(metric, control)
