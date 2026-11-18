@@ -267,6 +267,9 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Straight high-order geometry reuses canonical nodal identity encodings while
+  preserving source-map identities. Three paired larger-profile input replays
+  saved 8.10, 8.58, and 19.81 seconds respectively on a shared machine.
 - Sphere and torus projection points, parameters, normals and tangents now use
   platform-identical representatives, changing projection `result_id`s while
   certified bounds, statuses, source identities and profile identities remain
