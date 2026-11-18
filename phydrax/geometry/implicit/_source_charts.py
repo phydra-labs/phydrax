@@ -63,6 +63,7 @@ from ...geometry._interval_enclosure import (
     PreparedIntervalFunction,
 )
 from ...geometry._mesh_certificates import MeshCertificateBinding
+from ...geometry._rational import binary64_difference_magnitude, binary64_norm_upper
 from ...geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryProjectionQuery,
@@ -744,16 +745,31 @@ def _interval_divide(numerator: Interval, denominator: Interval, /) -> Interval:
 def _interval_vector_norm_bounds(
     intervals: tuple[Interval, ...],
 ) -> Interval:
-    lower_squares = []
-    upper_squares = []
+    lower_squared = 0.0
+    upper_squared = 0.0
     for lower, upper in intervals:
         minimum = 0.0 if lower <= 0.0 <= upper else min(abs(lower), abs(upper))
         maximum = max(abs(lower), abs(upper))
-        lower_squares.append(minimum * minimum)
-        upper_squares.append(maximum * maximum)
-    lower = math.nextafter(math.sqrt(max(0.0, math.fsum(lower_squares))), 0.0)
-    upper = math.nextafter(math.sqrt(math.fsum(upper_squares)), math.inf)
-    return lower, upper
+        minimum_square = math.nextafter(minimum * minimum, 0.0)
+        maximum_square = (
+            math.nextafter(maximum * maximum, math.inf) if maximum > 0.0 else 0.0
+        )
+        lower_sum = lower_squared + minimum_square
+        upper_sum = upper_squared + maximum_square
+        lower_squared = (
+            math.nextafter(lower_sum, 0.0)
+            if lower_squared > 0.0 and minimum_square > 0.0
+            else lower_sum
+        )
+        upper_squared = (
+            math.nextafter(upper_sum, math.inf)
+            if upper_squared > 0.0 and maximum_square > 0.0
+            else upper_sum
+        )
+    return (
+        math.nextafter(math.sqrt(lower_squared), 0.0),
+        math.nextafter(math.sqrt(upper_squared), math.inf),
+    )
 
 
 def _exact_interval(value: ExactScalar) -> tuple[float, float]:
@@ -1652,7 +1668,7 @@ def _profile_covers_singularities_away_from_zero_set(
     found = False
     for boxes in _possible_zero_box_blocks(cover):
         found = True
-        if any(profile._field_singular_set_intersects_box(box) for box in boxes):
+        if profile._field_singular_set_intersects_boxes(boxes):
             return False
     return found
 
@@ -2225,7 +2241,11 @@ def _lane_mean(
 
 def _offset_square(value: Interval, /) -> Interval:
     magnitude = max(abs(value[0]), abs(value[1]))
-    lower = 0.0 if value[0] <= 0.0 <= value[1] else min(value[0] ** 2, value[1] ** 2)
+    lower = (
+        0.0
+        if value[0] <= 0.0 <= value[1]
+        else min(value[0] * value[0], value[1] * value[1])
+    )
     return (
         math.nextafter(lower, -math.inf) if lower > 0.0 else 0.0,
         math.nextafter(magnitude * magnitude, math.inf),
@@ -2478,8 +2498,9 @@ def _face_piece_steps(
     else:
         center_slope = float(
             sum(
-                (0.5 * (component[0] + component[1])) ** 2
+                midpoint * midpoint
                 for component in center_gradient
+                for midpoint in (0.5 * (component[0] + component[1]),)
             )
         )
         center_parameter = (
@@ -2508,8 +2529,8 @@ def _face_piece_steps(
     if exact_on_source:
         gradient_q = gradient_p
         directional_derivative = (
-            math.nextafter(gradient_norm[0] ** 2, 0.0),
-            math.nextafter(gradient_norm[1] ** 2, math.inf),
+            math.nextafter(gradient_norm[0] * gradient_norm[0], 0.0),
+            math.nextafter(gradient_norm[1] * gradient_norm[1], math.inf),
         )
     else:
         # A bracket that misses a strict endpoint sign widens on the failing
@@ -4095,6 +4116,9 @@ class _FaceSetup:
     # Digest of everything the face proof reads; ``None`` when a coefficient
     # has no canonical exact spelling.
     identity_key: bytes | None
+    corner_points: list[tuple[bytes, ...]] = field(
+        default_factory=list, compare=False, repr=False
+    )
 
 
 def _face_identity_key(
@@ -4213,16 +4237,20 @@ def _face_setup(
 
 
 def _face_corner_point_bytes(setup: _FaceSetup) -> tuple[bytes, ...]:
-    return tuple(
-        np.asarray(
+    if not setup.corner_points:
+        setup.corner_points.append(
             tuple(
-                float(evaluate_expression(expression, corner))
-                for expression in setup.cell_expressions
-            ),
-            dtype=np.float64,
-        ).tobytes()
-        for corner in setup.reference_corners
-    )
+                np.asarray(
+                    tuple(
+                        float(evaluate_expression(expression, corner))
+                        for expression in setup.cell_expressions
+                    ),
+                    dtype=np.float64,
+                ).tobytes()
+                for corner in setup.reference_corners
+            )
+        )
+    return setup.corner_points[0]
 
 
 def _face_root_corners(
@@ -5176,6 +5204,19 @@ def _doubling_steps(start: float, maximum_step: float, /) -> list[float]:
     return steps
 
 
+def _normal_bracket_start_steps(points: np.ndarray, /) -> np.ndarray:
+    """Choose platform-identical spacing from certified point-norm bounds."""
+    return np.spacing(np.maximum(1.0, binary64_norm_upper(points)))
+
+
+def _root_displacement_upper(
+    roots: np.ndarray, targets: np.ndarray, errors: np.ndarray, /
+) -> np.ndarray:
+    """Enclose root-to-target distances plus root errors for aligned rows."""
+    magnitudes = binary64_difference_magnitude(roots, targets)[1]
+    return np.nextafter(binary64_norm_upper(magnitudes) + errors, np.inf)
+
+
 def _lift_points(
     surface: AdaptiveImplicitSurface,
     frame_id: str,
@@ -5233,6 +5274,7 @@ def _lift_points(
     field_lower, field_upper = bounds.point_values(stacked)
     signs: list[int] = []
     step_rows: list[list[float]] = []
+    start_steps = _normal_bracket_start_steps(stacked)
     candidate_rows: list[np.ndarray] = []
     for unique, point in enumerate(points):
         low_value = float(field_lower[unique])
@@ -5247,7 +5289,7 @@ def _lift_points(
                 "Pointwise implicit field sign is unresolved at target-map resolution."
             )
         point_sign = -1 if high_value < 0.0 else 1
-        step = float(np.spacing(max(1.0, float(np.linalg.norm(point)))))
+        step = float(start_steps[unique])
         if step <= 0.0 or not math.isfinite(step):
             raise ValueError(
                 "Implicit normal root bracket reached coordinate representability."
@@ -5308,6 +5350,15 @@ def _lift_points(
         if brackets
         else ()
     )
+    displacements = (
+        _root_displacement_upper(
+            np.stack([root[0] for root in roots]),
+            np.stack([bracket[0] for bracket in brackets]),
+            np.asarray([root[1] for root in roots], dtype=np.float64),
+        )
+        if roots
+        else np.empty((0,), dtype=np.float64)
+    )
     lifted: list[ImplicitRootChartPoint] = []
     for (point, face, maximum_step), unique in zip(requests, request_rows, strict=True):
         if signs[unique] == 0:
@@ -5338,13 +5389,12 @@ def _lift_points(
             raise ValueError(
                 "Implicit root bracket exceeds its certified face-local normal tube."
             )
-        root_point, error, issue = roots[bracket_rows[unique]][:3]
+        root_row = bracket_rows[unique]
+        root_point, error, issue = roots[root_row][:3]
         if issue:
             label = AdaptiveImplicitBoxIssue(issue).name.lower()
             raise ValueError(f"Implicit normal root isolation is unresolved ({label}).")
-        displacement = np.nextafter(
-            float(np.linalg.norm(root_point - point)) + float(error), np.inf
-        )
+        displacement = displacements[root_row]
         root_copy = np.array(root_point, dtype=np.float64, copy=True)
         root_copy.setflags(write=False)
         lifted.append(
@@ -6326,6 +6376,21 @@ def _point_in_tetrahedra(point: np.ndarray, cells: np.ndarray, /) -> bool | None
     return False
 
 
+def _source_cell_extent_upper(domain: np.ndarray, level: int, /) -> float:
+    """Enclose the exact discovery-cell diagonal from represented endpoints."""
+    widths = binary64_difference_magnitude(domain[1], domain[0])[1]
+    with np.errstate(under="ignore"):
+        scaled = np.ldexp(widths, -level)
+        # Scaling a normal binary64 by a power of two is exact unless the
+        # result is subnormal; step outward there, including underflow to zero.
+        scaled = np.where(
+            (widths > 0.0) & (scaled < np.finfo(np.float64).tiny),
+            np.nextafter(scaled, np.inf),
+            scaled,
+        )
+    return float(binary64_norm_upper(scaled))
+
+
 def certify_implicit_sign_coverage(
     surface: AdaptiveImplicitSurface,
     triangles: np.ndarray,
@@ -6453,11 +6518,8 @@ def certify_implicit_sign_coverage(
     source_cell = (
         0.0
         if scaffold is None
-        else float(
-            np.linalg.norm(
-                (np.asarray(scaffold.domain[1]) - np.asarray(scaffold.domain[0]))
-                / 2.0**scaffold.target_level
-            )
+        else _source_cell_extent_upper(
+            np.asarray(scaffold.domain, dtype=np.float64), scaffold.target_level
         )
     )
     resolution = max(tolerance - mesh_to_source, source_cell)

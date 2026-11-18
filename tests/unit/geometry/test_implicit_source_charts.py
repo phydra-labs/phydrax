@@ -147,7 +147,11 @@ def _scalar_taylor_interval(
 
     def square(value: Interval, /) -> Interval:
         magnitude = max(abs(value[0]), abs(value[1]))
-        lower = 0.0 if value[0] <= 0.0 <= value[1] else min(value[0] ** 2, value[1] ** 2)
+        lower = (
+            0.0
+            if value[0] <= 0.0 <= value[1]
+            else min(value[0] * value[0], value[1] * value[1])
+        )
         return (
             math.nextafter(lower, -math.inf) if lower > 0.0 else 0.0,
             math.nextafter(magnitude * magnitude, math.inf),
