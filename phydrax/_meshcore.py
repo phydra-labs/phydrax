@@ -480,6 +480,7 @@ class _ZeroSetRemeshRequest(ctypes.Structure):
         ("counters", _P),
         ("distance", _P),
         ("admission_limited_coarsening", _I32),
+        ("decision", _I32),
     )
 
 
@@ -4317,6 +4318,7 @@ def zero_set_remesh(
     *,
     incidence: tuple[object, object] | None = None,
     admission_limited_coarsening: bool,
+    decision: ZeroSetDecision = ZeroSetDecision.CERTIFIED,
 ) -> ZeroSetRemeshResult:
     """Remesh a closed oriented carrier of ``{f = 0}`` under the zero-set band admission.
 
@@ -4329,9 +4331,16 @@ def zero_set_remesh(
     edges below 4/5 of ``edge_length`` until the admission refuses them. A
     carrier that is not closed (an edge not held by exactly two triangles, in
     opposite directions) raises ``ValueError``.
+
+    With ``decision=ZeroSetDecision.SAMPLED`` nothing of this is certified: the
+    admission, the carrier's orientation, the normal cones and the projection
+    come from point evaluations at seven points of each triangle, and
+    ``distance`` is the largest sampled ``|f| / |grad f|``, not a bound.
     """
     if not isinstance(admission_limited_coarsening, bool):
         raise TypeError("admission_limited_coarsening must be a bool.")
+    if not isinstance(decision, ZeroSetDecision):
+        raise TypeError("decision must be ZeroSetDecision.")
     points = np.ascontiguousarray(_points(vertices, "vertices", 3), dtype=np.float64)
     input_faces = _index_array(triangles, "triangles")
     compact_faces = input_faces.dtype == np.dtype(np.int32)
@@ -4395,6 +4404,7 @@ def zero_set_remesh(
         counters.ctypes.data,
         distance.ctypes.data,
         int(admission_limited_coarsening),
+        int(decision),
     )
     library = load_meshcore()
     if compact_faces:

@@ -93,13 +93,14 @@ class AdmissionMemo {
   std::vector<Entry> entries_;
 };
 
-// How an admission decides its two conditions, the side of the zero set a
-// triangle faces and its distance from it. kCertified proves both with
-// interval enclosures over the triangle. kSampled screens them at seven
-// points of the triangle (its corners, edge midpoints and centroid) from
-// point evaluations of the same two programs, with |f| / |grad f| as the
-// distance: it proves nothing, and is for construction whose result is
-// certified afterwards. The values are those of the C ABI.
+// How an admission decides. kCertified proves the side of the zero set a
+// triangle faces and its distance from it with interval enclosures over the
+// triangle, encloses the source normals in its cone, and projects by interval
+// Newton. kSampled takes all of them from point evaluations of the same two
+// programs at seven points of the triangle (its corners, edge midpoints and
+// centroid), with |f| / |grad f| as the distance: it proves nothing, and is
+// for construction whose result is certified afterwards. The values are those
+// of the C ABI.
 enum class ZeroSetDecision : int32_t { kCertified = 0, kSampled = 1 };
 
 class ZeroSetBandAdmission final : public TriangleAdmission {
@@ -120,18 +121,21 @@ class ZeroSetBandAdmission final : public TriangleAdmission {
   bool admits(const Point& a, const Point& b, const Point& c,
               const std::array<VertexEvidence, 3>& evidence) const override;
   // Interval Newton along the gradient line through `position`; returns the
-  // position unchanged when no root is isolated (a proposal only).
+  // position unchanged when no root is isolated (a proposal only). Under
+  // kSampled, Newton's iteration from point evaluations.
   Point project(const Point& position) const override;
   // Gradient-enclosure cone over bbox(T) widened by the tolerance, widened by
-  // the tilt a triangle within the tolerance of Z may have.
+  // the tilt a triangle within the tolerance of Z may have. Under kSampled,
+  // the cone of the gradients at the seven samples, widened by the tilt.
   NormalCone normal_cone(const Point& a, const Point& b, const Point& c,
                          const std::array<VertexEvidence, 3>& evidence) const override;
   // The tilt term every cone carries.
   double normal_cone_floor(const Point& a, const Point& b, const Point& c,
                            const std::array<VertexEvidence, 3>& evidence) const override;
 
-  // Certified upper bound on max_{x in T} dist(x, Z), +inf when undecided
-  // (certified under either decision).
+  // Certified upper bound on max_{x in T} dist(x, Z), +inf when undecided.
+  // Under kSampled, the largest |f| / |grad f| of the seven samples, which is
+  // not a bound.
   double distance_bound(const Point& a, const Point& b, const Point& c,
                         const std::array<VertexEvidence, 3>& evidence) const;
   // Sign of n . grad f: +1, -1, or 0 when undecided. Certified over bbox(T),
@@ -177,6 +181,8 @@ class ZeroSetBandAdmission final : public TriangleAdmission {
     std::size_t worst = 0;
   };
   Screen screen(const Point& a, const Point& b, const Point& c) const;
+  NormalCone sampled_cone(const Point& a, const Point& b, const Point& c, double tilt) const;
+  Point sampled_projection(const Point& position) const;
 
   const IntervalBoxProgram& value_;
   const IntervalBoxProgram& gradient_;

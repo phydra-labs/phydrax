@@ -53,6 +53,24 @@ bool gradient_over(const IntervalBoxProgram& program, const Point& lower, const 
   if (!program.evaluate(lower, upper, gradient.data())) return false;
   return finite(gradient[0]) && finite(gradient[1]) && finite(gradient[2]);
 }
+// Sample k of the sampled screen on the triangle (a, b, c).
+Point screen_point(const Point& a, const Point& b, const Point& c, size_t k) {
+  const Point& weight = kScreenSamples[k];
+  Point sample{};
+  for (int d = 0; d < 3; ++d) sample[d] = weight[0] * a[d] + weight[1] * b[d] + weight[2] * c[d];
+  return sample;
+}
+// The gradient at a point as floating-point values: the midpoints of the
+// program's point enclosure.
+bool point_gradient(const IntervalBoxProgram& program, const Point& at, Point& gradient) {
+  std::array<Interval, 3> enclosure{};
+  if (!gradient_over(program, at, at, enclosure)) return false;
+  for (int d = 0; d < 3; ++d) {
+    const Interval& g = enclosure[static_cast<size_t>(d)];
+    gradient[d] = g.lower + (g.upper - g.lower) / 2;
+  }
+  return true;
+}
 
 // Translation preserves these edge vectors exactly. Anchor enclosures may
 // therefore describe either the original triangle or an outward-enclosed
@@ -321,6 +339,12 @@ AdmissionMemo::Entry* ZeroSetBandAdmission::memo_entry(
 double ZeroSetBandAdmission::distance_bound(
     const Point& a, const Point& b, const Point& c,
     const std::array<VertexEvidence, 3>& evidence) const {
+  if (decision_ == ZeroSetDecision::kSampled) {
+    const Screen sampled = screen(a, b, c);
+    if (sampled.distance <= tolerance_) distance_barycentric_.reset();
+    else distance_barycentric_ = kScreenSamples[sampled.worst];
+    return sampled.distance;
+  }
   AdmissionMemo::Entry* entry = memo_entry(a, b, c, evidence);
   if (entry != nullptr && entry->has_bound) {
     if (entry->has_sample) distance_barycentric_ = entry->sample;
@@ -563,20 +587,16 @@ ZeroSetBandAdmission::Screen ZeroSetBandAdmission::screen(const Point& a, const 
   Screen result;
   bool mixed = false;
   for (size_t k = 0; k < kScreenSamples.size(); ++k) {
-    const Point& weight = kScreenSamples[k];
-    Point sample{};
-    for (int d = 0; d < 3; ++d) sample[d] = weight[0] * a[d] + weight[1] * b[d] + weight[2] * c[d];
+    const Point sample = screen_point(a, b, c, k);
     Interval value{};
-    std::array<Interval, 3> gradient{};
+    Point gradient{};
     if (!value_.evaluate(sample, sample, &value) || !finite(value) ||
-        !gradient_over(gradient_, sample, sample, gradient))
+        !point_gradient(gradient_, sample, gradient))
       return {0, kInfinity, k};
     double along = 0, squared = 0;
     for (int d = 0; d < 3; ++d) {
-      const Interval& g = gradient[static_cast<size_t>(d)];
-      const double middle = g.lower + (g.upper - g.lower) / 2;
-      along += normal[d] * middle;
-      squared += middle * middle;
+      along += normal[d] * gradient[d];
+      squared += gradient[d] * gradient[d];
     }
     const int sign = along > 0 ? 1 : along < 0 ? -1 : 0;
     if (k == 0) result.sign = sign;
@@ -673,6 +693,7 @@ NormalCone ZeroSetBandAdmission::normal_cone(const Point& a, const Point& b, con
   NormalCone cone;
   const double tilt = normal_cone_floor(a, b, c, evidence);
   if (!(tilt < kOpenCone)) return cone;
+  if (decision_ == ZeroSetDecision::kSampled) return sampled_cone(a, b, c, tilt);
   Point lower{}, upper{};
   bounding_box(a, b, c, lower, upper);
   for (int d = 0; d < 3; ++d) {
@@ -724,7 +745,78 @@ double ZeroSetBandAdmission::normal_cone_floor(const Point& a, const Point& b, c
   return tilt < 1 ? asin_upper(tilt) : kOpenCone;
 }
 
+// The cone of the sampled decision: its axis is the direction of the summed
+// unit gradients at the seven samples, toward the source's side, and its
+// half-angle the largest angle of a sample's gradient to that axis (from the
+// chord, 2 asin(|u - axis| / 2)) plus the tilt. A sample without a gradient
+// direction leaves the cone open.
+NormalCone ZeroSetBandAdmission::sampled_cone(const Point& a, const Point& b, const Point& c,
+                                              double tilt) const {
+  NormalCone cone;
+  std::array<Point, kScreenSamples.size()> units{};
+  Point sum{};
+  for (size_t k = 0; k < kScreenSamples.size(); ++k) {
+    Point gradient{};
+    if (!point_gradient(gradient_, screen_point(a, b, c, k), gradient)) return cone;
+    const double length = std::sqrt((gradient[0] * gradient[0] + gradient[1] * gradient[1]) +
+                                    gradient[2] * gradient[2]);
+    if (!(length > 0) || !std::isfinite(length)) return cone;
+    for (int d = 0; d < 3; ++d) {
+      units[k][d] = gradient[d] / length;
+      sum[d] += units[k][d];
+    }
+  }
+  const double length = std::sqrt((sum[0] * sum[0] + sum[1] * sum[1]) + sum[2] * sum[2]);
+  if (!(length > 0)) return cone;
+  Point axis{};
+  for (int d = 0; d < 3; ++d) axis[d] = sum[d] / length;
+  double widest = 0;
+  for (const Point& unit : units) {
+    double squared = 0;
+    for (int d = 0; d < 3; ++d) squared += (unit[d] - axis[d]) * (unit[d] - axis[d]);
+    widest = std::max(widest, std::sqrt(squared));
+  }
+  if (!(widest < 2)) return cone;
+  const double half = 2 * asin_upper(widest / 2) + tilt;
+  if (!(half < cone.half_angle)) return cone;
+  for (int d = 0; d < 3; ++d) cone.axis[d] = orientation_ * axis[d];
+  cone.half_angle = half;
+  return cone;
+}
+
+// Newton's iteration along the gradient from point evaluations. The start is
+// returned when an evaluation fails or an iterate leaves the reach in which
+// the certified projection looks for its root, twice the first step.
+Point ZeroSetBandAdmission::sampled_projection(const Point& position) const {
+  Point at = position;
+  double reach = 0;
+  for (int iteration = 0; iteration < kNewtonSteps; ++iteration) {
+    Interval value{};
+    Point gradient{};
+    if (!value_.evaluate(at, at, &value) || !finite(value) ||
+        !point_gradient(gradient_, at, gradient))
+      return position;
+    const double residual = value.lower + (value.upper - value.lower) / 2;
+    const double squared =
+        (gradient[0] * gradient[0] + gradient[1] * gradient[1]) + gradient[2] * gradient[2];
+    if (!(squared > 0) || !std::isfinite(squared)) return position;
+    if (iteration == 0) reach = 2 * std::fabs(residual) / std::sqrt(squared);
+    if (residual == 0) break;
+    Point next{};
+    double moved = 0;
+    for (int d = 0; d < 3; ++d) {
+      next[d] = at[d] - residual * gradient[d] / squared;
+      moved += (next[d] - position[d]) * (next[d] - position[d]);
+    }
+    if (!(std::sqrt(moved) <= reach)) return position;
+    if (next == at) break;
+    at = next;
+  }
+  return at;
+}
+
 Point ZeroSetBandAdmission::project(const Point& position) const {
+  if (decision_ == ZeroSetDecision::kSampled) return sampled_projection(position);
   std::array<Interval, 3> gradient{};
   Interval value{};
   if (!gradient_over(gradient_, position, position, gradient) ||
@@ -850,7 +942,9 @@ int32_t remesh_zero_set(const phx_mc_zero_set_remesh_request& request,
     return PHX_MC_INVALID_ARGUMENT;
   if (!(request.tolerance > 0) || !std::isfinite(request.tolerance) ||
       !(request.carrier_distance >= 0) || !std::isfinite(request.carrier_distance) ||
-      (request.admission_limited_coarsening != 0 && request.admission_limited_coarsening != 1))
+      (request.admission_limited_coarsening != 0 && request.admission_limited_coarsening != 1) ||
+      (request.decision != PHX_MC_ZERO_SET_DECISION_CERTIFIED &&
+       request.decision != PHX_MC_ZERO_SET_DECISION_SAMPLED))
     return PHX_MC_INVALID_ARGUMENT;
   // The zero set of the declared field bounds a solid: its carrier is closed.
   const RemeshTargets targets{request.edge_length, request.minimum_angle_degrees,
@@ -895,8 +989,11 @@ int32_t remesh_zero_set(const phx_mc_zero_set_remesh_request& request,
       if (!indices_i32) triangles[t][static_cast<size_t>(k)] = v;
     }
   // The carrier declares its orientation relative to grad f: every input
-  // triangle whose transversal sign is certified must agree on it.
-  const ZeroSetBandAdmission probe(value, gradient, request.tolerance, 1);
+  // triangle whose transversal sign is decided must agree on it.
+  const ZeroSetDecision decision = request.decision == PHX_MC_ZERO_SET_DECISION_SAMPLED
+                                       ? ZeroSetDecision::kSampled
+                                       : ZeroSetDecision::kCertified;
+  const ZeroSetBandAdmission probe(value, gradient, request.tolerance, 1, nullptr, decision);
   int orientation = 0;
   for (size_t row = 0; row < static_cast<size_t>(request.triangle_count); ++row) {
     const Triangle t{input_index(3 * row), input_index(3 * row + 1), input_index(3 * row + 2)};
@@ -910,7 +1007,8 @@ int32_t remesh_zero_set(const phx_mc_zero_set_remesh_request& request,
   }
   if (orientation == 0) return PHX_MC_UNRESOLVED;
   AdmissionMemo memo;
-  const ZeroSetBandAdmission admission(value, gradient, request.tolerance, orientation, &memo);
+  const ZeroSetBandAdmission admission(value, gradient, request.tolerance, orientation, &memo,
+                                       decision);
   RemeshCounters remesh{};
   if (indices_i32)
     status = remesh_surface_borrowed_i32(

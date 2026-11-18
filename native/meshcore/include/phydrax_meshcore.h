@@ -1880,11 +1880,12 @@ typedef struct phx_mc_interval_box_program {
   const int64_t* guards; /* entries whose lower bound must be >= 0 (real-power bases) */
   int64_t guard_count;
 } phx_mc_interval_box_program;
-/* How the facets of a TetMesh implicit source are admitted. CERTIFIED proves
- * the side and the distance of a facet with interval enclosures. SAMPLED
- * screens them at seven points of the facet (corners, edge midpoints,
- * centroid) from point evaluations of the same programs and proves nothing:
- * it is for construction whose result is certified afterwards. */
+/* How a zero-set admission decides, for the facets of a TetMesh implicit
+ * source and for the triangles of a zero-set remesh. CERTIFIED proves the
+ * side and the distance of a triangle with interval enclosures. SAMPLED takes
+ * them from point evaluations of the same programs at seven points of the
+ * triangle (corners, edge midpoints, centroid) and proves nothing: it is for
+ * construction whose result is certified afterwards. */
 #define PHX_MC_ZERO_SET_DECISION_CERTIFIED 0
 #define PHX_MC_ZERO_SET_DECISION_SAMPLED 1
 /* A TetMesh implicit source owns both validated programs after binding. Groups
@@ -1940,7 +1941,11 @@ PHX_MC_API int32_t phx_mc_tet_mesh_implicit_source(
  * the remesher's admission-limited coarsening pass, which centers vertices in
  * the band off the zero set and collapses edges below 4/5 of `edge_length`
  * until the admission refuses them; 0 keeps the quality/regularization passes
- * only. */
+ * only. `decision` is PHX_MC_ZERO_SET_DECISION_*: under SAMPLED the admission,
+ * the orientation of the carrier, the normal cones and the projection come
+ * from point evaluations, nothing above is certified, and `distance` is the
+ * largest sampled |f| / |grad f| of the admitted triangles (or
+ * `carrier_distance`), not a bound. */
 typedef struct phx_mc_zero_set_remesh_request {
   const double* vertices;
   int64_t vertex_count;
@@ -1956,6 +1961,7 @@ typedef struct phx_mc_zero_set_remesh_request {
   int64_t* counters;
   double* distance;
   int32_t admission_limited_coarsening;
+  int32_t decision;
 } phx_mc_zero_set_remesh_request;
 PHX_MC_API int32_t phx_mc_zero_set_remesh(const phx_mc_zero_set_remesh_request* request);
 /* As above, request->triangles contains int32 indices. Optional read-only

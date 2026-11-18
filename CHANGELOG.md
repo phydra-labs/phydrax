@@ -15,19 +15,23 @@
   pole. Programs without a tangent are lowered exactly as before. A library
   built before this change does not advertise the opcode, and lowering such a
   function against it is refused as an unsupported operation.
-- A native tetrahedral mesh can admit the facets of its implicit source by a
-  sampled screen instead of a proof: `TetMeshImplicitSource.decision`
-  (`ZeroSetDecision.CERTIFIED`, the default and the behavior so far, or
-  `ZeroSetDecision.SAMPLED`). The sampled decision evaluates the source's two
-  interval programs at seven points of a facet (its corners, edge midpoints
-  and centroid), admits the facet when the normal faces the source's side at
-  each and `|f| / |grad f|` is within the tolerance at each, and records
-  refusals as the certified decision does. It proves nothing about the facet
-  between the samples and is meant for construction whose result is certified
-  afterwards. The decision is part of the mesh's bound source: it is returned
-  with a snapshot and restored with it. The C structure
-  `phx_mc_tet_implicit_source` has a new last field, so the library and the
-  wrapper of this change must be used together.
+- The native zero-set admission can decide by a sampled screen instead of a
+  proof: `ZeroSetDecision.CERTIFIED` (the default and the behavior so far) or
+  `ZeroSetDecision.SAMPLED`, on `TetMeshImplicitSource.decision` for the
+  implicit facets of a tetrahedral mesh and as `zero_set_remesh(...,
+  decision=...)` for the surface remesher. The sampled decision evaluates the
+  source's two interval programs at seven points of a triangle (its corners,
+  edge midpoints and centroid): it admits the triangle when the normal faces
+  the source's side at each and `|f| / |grad f|` is within the tolerance at
+  each, records refusals as the certified decision does, and takes the
+  remesher's normal cones, projection and reported distance from point
+  evaluations as well. It proves nothing between the samples, the distance a
+  sampled remesh reports is not a bound, and it is meant for construction
+  whose result is certified afterwards. A mesh's decision is part of its bound
+  source: it is returned with a snapshot and restored with it. The C
+  structures `phx_mc_tet_implicit_source` and `phx_mc_zero_set_remesh_request`
+  have a new last field, so the library and the wrapper of this change must
+  be used together.
 - `MetricMeshAdaptation` accepts `accepted_minimum_length`, the smallest metric
   edge length a `NATIVE_METRIC_3D` request accepts as complete. Edit phases
   still target the unit band; only the completion criterion and the unmet-edge

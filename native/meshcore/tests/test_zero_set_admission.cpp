@@ -401,6 +401,26 @@ void sampled_decision_cases() {
   // A zero-area triangle faces no side.
   PHX_CHECK(sampled.transversal_sign(a, b, b) == 0);
   PHX_CHECK(!sampled.admits(a, b, b, evidence_of(sampled, a, b, b)));
+  // The sampled distance is the quotient that decides admission; the sampled
+  // cone of the small triangle is closed and holds the outward normal at each
+  // of its samples; the sampled projection lands on the sphere from either
+  // side.
+  PHX_CHECK(sampled.distance_bound(a, b, c, evidence_of(sampled, a, b, c)) <= tolerance);
+  PHX_CHECK(sampled.distance_bound(la, lb, lc, evidence_of(sampled, la, lb, lc)) > tolerance);
+  const auto cone = sampled.normal_cone(a, b, c, evidence_of(sampled, a, b, c));
+  PHX_CHECK(cone.half_angle < phx::mc::remesh::kOpenCone);
+  for (const Point& weights : {Point{1, 0, 0}, Point{0, 1, 0}, Point{0, 0, 1}, Point{0.5, 0.5, 0},
+                               Point{0, 0.5, 0.5}, Point{0.5, 0, 0.5}, centroid}) {
+    const Point at = combine(a, b, c, weights[1], weights[2]);
+    const double radius = std::hypot(at[0], at[1], at[2]);
+    const double cosine =
+        (cone.axis[0] * at[0] + cone.axis[1] * at[1] + cone.axis[2] * at[2]) / radius;
+    PHX_CHECK(cosine >= std::cos(cone.half_angle));
+  }
+  for (const double radius : {0.8, 1.15}) {
+    const Point start{radius * 0.48, radius * 0.6, radius * 0.64};
+    PHX_CHECK(sphere_distance(sampled.project(start)) <= 1e-12);
+  }
 
   // Random triangles near the sphere. A reversed triangle is never admitted;
   // every sample of an admitted triangle is within 2% of the tolerance of the
@@ -770,6 +790,102 @@ void remesh_sphere_carrier() {
   request.value = gradient.view();  // three outputs where one is declared
   PHX_CHECK(phx_mc_zero_set_remesh(&request) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(phx_mc_zero_set_remesh(nullptr) == PHX_MC_INVALID_ARGUMENT);
+}
+
+// The remesher under the sampled decision, on the carrier, targets and
+// tolerance of remesh_sphere_carrier. Nothing is certified there, so the
+// result is checked from outside: it is a closed outward surface without the
+// input's slivers; every sample point of every triangle is within 3% of the
+// tolerance of the sphere (the quotient of f = |x|^2 - 1 is within 3% of the
+// distance for 0.95 <= |x| <= 1.05); the reported distance is within the
+// tolerance; the compact entry gives the same result; and the decision is a
+// strict selector.
+void remesh_sampled_sphere_carrier() {
+  const Surface input = uv_sphere(8, 40);
+  const double before = minimum_angle(input.vertices, input.triangles);
+  const Program value = sphere_value(), gradient = sphere_gradient();
+  void* handle = nullptr;
+  std::array<int64_t, 8> counters{};
+  double distance = -1;
+  constexpr double tolerance = 0.05;
+  phx_mc_zero_set_remesh_request request{
+      input.vertices.data(), static_cast<int64_t>(input.vertices.size() / 3),
+      input.triangles.data(), static_cast<int64_t>(input.triangles.size() / 3),
+      value.view(),          gradient.view(),
+      tolerance,             tolerance,
+      0.3,                   30.0,
+      &handle,               counters.data(),
+      &distance,             0,
+      PHX_MC_ZERO_SET_DECISION_SAMPLED};
+  PHX_CHECK(phx_mc_zero_set_remesh(&request) == PHX_MC_OK);
+  PHX_CHECK(handle != nullptr);
+  if (handle == nullptr) return;
+  PHX_CHECK(counters[5] == 1);
+  PHX_CHECK(distance >= 0 && distance <= tolerance);
+  std::array<int64_t, 2> sizes{};
+  PHX_CHECK(phx_mc_zero_set_remesh_sizes(handle, sizes.data()) == PHX_MC_OK);
+  std::vector<double> vertices(static_cast<size_t>(3 * sizes[0]));
+  std::vector<int64_t> triangles(static_cast<size_t>(3 * sizes[1]));
+  PHX_CHECK(phx_mc_zero_set_remesh_arrays(handle, sizes[0], sizes[1], vertices.data(),
+                                          triangles.data()) == PHX_MC_OK);
+  phx_mc_zero_set_remesh_free(handle);
+  std::map<std::pair<int64_t, int64_t>, int> directed;
+  for (size_t f = 0; f < triangles.size(); f += 3)
+    for (size_t k = 0; k < 3; ++k) ++directed[{triangles[f + k], triangles[f + (k + 1) % 3]}];
+  bool manifold = true;
+  for (const auto& [edge, count] : directed)
+    manifold = manifold && count == 1 && directed.count({edge.second, edge.first}) == 1;
+  PHX_CHECK(manifold);
+  PHX_CHECK(signed_volume(vertices, triangles) > 0);
+  PHX_CHECK(counters[1] > 0 && counters[3] > 0);
+  const double after = minimum_angle(vertices, triangles);
+  std::printf("sampled sphere carrier: min angle %.2f -> %.2f deg, %lld -> %lld triangles, "
+              "unmet %lld, sampled distance %.3g\n",
+              before, after, static_cast<long long>(input.triangles.size() / 3),
+              static_cast<long long>(sizes[1]), static_cast<long long>(counters[4]), distance);
+  PHX_CHECK(after > 20.0);
+  const auto corner = [&](size_t f, size_t k) {
+    const size_t at = 3 * static_cast<size_t>(triangles[f + k]);
+    return Point{vertices[at], vertices[at + 1], vertices[at + 2]};
+  };
+  for (size_t f = 0; f < triangles.size(); f += 3) {
+    const Point a = corner(f, 0), b = corner(f, 1), c = corner(f, 2);
+    for (const Point& weights : {Point{1, 0, 0}, Point{0, 1, 0}, Point{0, 0, 1},
+                                 Point{0.5, 0.5, 0}, Point{0, 0.5, 0.5}, Point{0.5, 0, 0.5},
+                                 Point{1.0 / 3, 1.0 / 3, 1.0 / 3}})
+      PHX_CHECK(sphere_distance(combine(a, b, c, weights[1], weights[2])) <= 1.03 * tolerance);
+  }
+  // The compact entry under the same decision.
+  const std::vector<int32_t> compact = compact_indices(input.triangles);
+  void* compact_handle = nullptr;
+  std::array<int64_t, 8> compact_counters{};
+  double compact_distance = -1;
+  auto compact_request = request;
+  compact_request.triangles = reinterpret_cast<const int64_t*>(compact.data());
+  compact_request.result = &compact_handle;
+  compact_request.counters = compact_counters.data();
+  compact_request.distance = &compact_distance;
+  PHX_CHECK(phx_mc_zero_set_remesh_i32(&compact_request, nullptr, 0, nullptr, 0) == PHX_MC_OK);
+  PHX_CHECK(compact_handle != nullptr);
+  if (compact_handle != nullptr) {
+    std::array<int64_t, 2> compact_sizes{};
+    PHX_CHECK(phx_mc_zero_set_remesh_sizes(compact_handle, compact_sizes.data()) == PHX_MC_OK);
+    PHX_CHECK(compact_sizes == sizes);
+    std::vector<double> compact_vertices(static_cast<size_t>(3 * compact_sizes[0]));
+    std::vector<int64_t> compact_triangles(static_cast<size_t>(3 * compact_sizes[1]));
+    PHX_CHECK(phx_mc_zero_set_remesh_arrays(compact_handle, compact_sizes[0], compact_sizes[1],
+                                            compact_vertices.data(), compact_triangles.data()) ==
+              PHX_MC_OK);
+    PHX_CHECK(compact_vertices == vertices);
+    PHX_CHECK(compact_triangles == triangles);
+    PHX_CHECK(compact_counters == counters);
+    PHX_CHECK(compact_distance == distance);
+    phx_mc_zero_set_remesh_free(compact_handle);
+  }
+  request.decision = 2;
+  handle = nullptr;
+  PHX_CHECK(phx_mc_zero_set_remesh(&request) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(handle == nullptr);
 }
 
 // Octahedron subdivided `levels` times onto the unit sphere, every coordinate
@@ -1444,6 +1560,7 @@ int main() {
   near_band_distance_cases();
   whole_piece_bracketing_cases();
   remesh_sphere_carrier();
+  remesh_sampled_sphere_carrier();
   remesh_pinned_carrier();
   remesh_coarsening_absorbs_rosette();
   remesh_lens_crease();
