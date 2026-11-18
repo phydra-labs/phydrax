@@ -2430,6 +2430,7 @@ def test_parametric_surface_route_flips_anisotropic_chart_cells_to_physical_shap
     # diagonal before each refinement round.
     contract = SpatialCoordinateContract.si()
     domain = MeshingDomain.from_brep(brep_sphere(1.0, coordinate_contract=contract))
+    preparation = SourcePreparation(domain)
     scope = MeshingScope(
         domain.source_id,
         domain.source_revision,
@@ -2450,7 +2451,20 @@ def test_parametric_surface_route_flips_anisotropic_chart_cells_to_physical_shap
         ),
         NativeMeshingOptions("parametric_surface"),
         contract,
-    ).execute()
+        preparation=preparation,
+    ).execute(preparation=preparation)
+
+    diagnostics = construction.stages[-1].diagnostics
+    observed = tuple(
+        (diagnostic.logical_findings[0], dict(diagnostic.achieved_quantities)["count"])
+        for diagnostic in diagnostics
+        if diagnostic.provider_code == "stored_coordinate_unspecified_construction"
+    )
+    expected = tuple(
+        (kind, float(count))
+        for kind, count in sorted(preparation.unsupported_points.items())
+    ) or (("none", 0.0),)
+    assert observed == expected
 
     assert construction.compliance.passed
     coordinates = np.asarray(construction.mesh.coordinates, dtype=np.float64)
@@ -2560,7 +2574,11 @@ def test_curved_trim_chart_points_do_not_depend_on_their_batch(tmp_path: Path) -
         if isinstance(use, PatchCurveUse) and line_chart_coefficients(use.pcurve) is None
     ]
     assert curved_uses
+    preparation = SourcePreparation(domain)
     for use in curved_uses:
-        together = _use_chart_points(use, parameters)
-        alone = tuple(_use_chart_points(use, (parameter,))[0] for parameter in parameters)
+        together = _use_chart_points(use, parameters, preparation)
+        alone = tuple(
+            _use_chart_points(use, (parameter,), preparation)[0]
+            for parameter in parameters
+        )
         assert together == alone

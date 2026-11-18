@@ -556,6 +556,122 @@ def _square_domain() -> MeshingDomain:
     )
 
 
+def test_stored_points_are_independent_of_row_batching() -> None:
+    domain = _square_domain()
+    preparation = SourcePreparation(domain)
+    assert preparation.stored_patch_supported(domain.patches[0].surface) is None
+    charts = np.asarray(((0.1, 0.7), (0.3, 0.4), (0.1, 0.7)), dtype=np.float64)
+    batch = domain.evaluate(np.zeros(3, dtype=np.int64), charts, preparation=preparation)
+    np.testing.assert_array_equal(
+        batch, domain.evaluate(np.zeros(3, dtype=np.int64), charts)
+    )
+    second = SourcePreparation(domain)
+    np.testing.assert_array_equal(
+        batch, domain.evaluate(np.zeros(3, dtype=np.int64), charts, preparation=second)
+    )
+    np.testing.assert_array_equal(
+        batch, domain.evaluate(np.zeros(3, dtype=np.int64), charts, preparation=preparation)
+    )
+    with pytest.raises(ValueError, match="only the meshing domain"):
+        domain.evaluate(
+            np.zeros(3, dtype=np.int64), charts,
+            preparation=SourcePreparation(_square_domain()),
+        )
+    singles = np.concatenate(
+        [
+            domain.evaluate(np.zeros(1, dtype=np.int64), row[None], preparation=preparation)
+            for row in charts
+        ]
+    )
+    np.testing.assert_array_equal(batch, singles)
+    assert preparation.stored_patch_supported(domain.patches[0].surface) is True
+    pcurve = domain.patches[0].loops[0][0].pcurve
+    assert preparation.stored_pcurve_supported(pcurve) is None
+    parameters = np.asarray((0.1, 0.7, 0.1), dtype=np.float64)
+    points = preparation.stored_pcurve_points(pcurve, parameters, 0.0, 1.0)
+    rows = np.concatenate(
+        [
+            preparation.stored_pcurve_points(pcurve, parameter[None], 0.0, 1.0)
+            for parameter in parameters
+        ]
+    )
+    np.testing.assert_array_equal(points, rows)
+    assert preparation.stored_pcurve_supported(pcurve) is True
+    assert not preparation.unsupported_points
+
+
+def test_stored_points_report_unsupported_evaluators() -> None:
+    from phydrax.geometry.brep._patches import AbstractSurfacePatch
+
+    class UnsupportedSurface(AbstractSurfacePatch):
+        def evaluate(self, parameters: Array, /) -> Array:
+            value = jnp.linalg.svd(
+                parameters[..., :1, None], compute_uv=False
+            )[..., 0]
+            return jnp.stack((value, parameters[..., 0], parameters[..., 1]), axis=-1)
+
+    class UnsupportedCurve(AbstractCurve):
+        @property
+        def ambient_dimension(self) -> int:
+            return 2
+
+        def evaluate(self, parameter: Array, /) -> Array:
+            value = jnp.linalg.svd(jnp.reshape(parameter, (1, 1)), compute_uv=False)[0]
+            return jnp.stack((value, parameter))
+
+    preparation = SourcePreparation(_square_domain())
+    surface, curve = UnsupportedSurface(), UnsupportedCurve()
+    assert preparation.stored_patch_supported(surface) is None
+    assert preparation.stored_pcurve_supported(curve) is None
+    charts = np.asarray(((0.2, 0.4), (0.3, 0.5)), dtype=np.float64)
+    parameters = np.asarray((0.2, 0.3, 0.4), dtype=np.float64)
+    actual = preparation.stored_patch_points(surface, charts)
+    expected = np.stack([np.asarray(surface.evaluate(jnp.asarray(row))) for row in charts])
+    np.testing.assert_array_equal(actual, expected)
+    actual_curve = preparation.stored_pcurve_points(curve, parameters, 0.0, 1.0)
+    expected_curve = np.stack(
+        [np.asarray(curve.evaluate(jnp.asarray(value))) for value in parameters]
+    )
+    np.testing.assert_array_equal(actual_curve, expected_curve)
+    assert preparation.stored_patch_supported(surface) is False
+    assert preparation.stored_pcurve_supported(curve) is False
+    assert preparation.unsupported_points == {
+        f"{type(surface).__module__}.{type(surface).__qualname__}": 2,
+        f"{type(curve).__module__}.{type(curve).__qualname__}": 3,
+    }
+
+
+def test_stored_intersection_pcurve_points_lie_in_point_and_span_boxes() -> None:
+    from phydrax.geometry.brep._intersection import intersect_surface_regions
+    from phydrax.geometry.brep._intersection_curve import (
+        IntersectionPCurve,
+        SurfaceRegion,
+    )
+
+    large = CylinderPatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1.0)
+    small = CylinderPatch((0, 0, 0), (0, 1, 0), (0, 0, 1), (1, 0, 0), 0.5)
+    box = np.asarray(((0.0, -2.0), (math.tau, 2.0)), dtype=np.float64)
+    intersection = intersect_surface_regions(SurfaceRegion(large, box), SurfaceRegion(small, box))
+    assert intersection.complete and intersection.curves
+    curve = IntersectionPCurve(intersection.curves[0], "first", first=0.0, last=1.0)
+    preparation = SourcePreparation(_square_domain())
+    parameters = np.asarray((0.25, 0.5, 0.75, 0.5), dtype=np.float64)
+    points = preparation.stored_pcurve_points(curve, parameters, 0.0, 1.0)
+    assert preparation.stored_pcurve_supported(curve) is None
+    assert preparation.stored_intersection_point_supported(curve, 0.5, 0.0, 1.0) is True
+    assert preparation.stored_intersection_point_supported(curve, 0.6, 0.0, 1.0) is None
+    span = preparation.curve_box(curve, 0.0, 1.0)
+    for parameter, point in zip(parameters, points, strict=True):
+        point_box = preparation.curve_box(curve, float(parameter), float(parameter))
+        np.testing.assert_array_equal(point, np.maximum(point_box[0], span[0]))
+        assert np.all(point <= np.minimum(point_box[1], span[1]))
+    rows = np.concatenate(
+        [preparation.stored_pcurve_points(curve, p[None], 0.0, 1.0) for p in parameters]
+    )
+    np.testing.assert_array_equal(points, rows)
+    assert not preparation.unsupported_points
+
+
 def test_domain_owned_arrays_are_immutable_without_changing_identity() -> None:
     domain = _square_domain()
     assert domain.domain_id == (

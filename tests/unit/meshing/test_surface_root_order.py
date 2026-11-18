@@ -18,8 +18,8 @@ from phydrax.meshing.providers._native_surface import (
     _ChartMesh,
     _domain_curve_source_query,
     _split_chart_at_source_cells,
-    _SurfaceRootCells,
     _surface_root_charts,
+    _SurfaceRootCells,
 )
 
 

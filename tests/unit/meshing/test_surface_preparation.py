@@ -49,6 +49,7 @@ from phydrax.meshing.providers import NativeMeshingOptions, NativeMeshingProvide
 from phydrax.meshing.providers._native_surface import (
     _apply_curve_edge_bounds,
     _ChartMesh,
+    _quality_angle_degrees,
     _split_chart_at_source_cells,
     _surface_root_charts,
 )
@@ -95,6 +96,17 @@ def _vertex_stencil(
         weights,
         valid,
     )
+
+
+def test_physical_quality_angle_is_independent_of_triangle_order() -> None:
+    coordinates = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+        dtype=np.float64,
+    )
+    triangles = np.asarray(((0, 1, 2), (2, 1, 0)), dtype=np.int64)
+    angles = _quality_angle_degrees(coordinates, triangles)
+    assert angles[0] == angles[1]
+    assert abs(angles[0] - 45.0) < 1.0e-12
 
 
 def test_curve_edge_bounds_raise_all_incident_cells_without_reducing_deviation() -> None:

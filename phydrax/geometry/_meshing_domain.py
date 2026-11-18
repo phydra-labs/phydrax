@@ -937,6 +937,15 @@ class SourcePreparation:
     may also be reused across preparations for the same unchanged live carrier.
     Span restrictions to query boxes remain per-query and are never retained.
     Local entries retain their carriers for the duration of the preparation.
+
+    D1 stores the lower endpoint of the host interval realization of each surface
+    point. D2 does the same for p-curves, except implicit intersection p-curves
+    use the lower endpoint of their certified point box intersected with the
+    certified span box. Thus supported points are independent of row batching
+    for a fixed span; intersection representatives also lie in its enclosure.
+    When a realization is unavailable, the original evaluator is used and
+    ``unsupported_points`` accumulates call counts by qualified class name.
+    These counts include transient calls, not just final stored rows.
     """
 
     __slots__ = (
@@ -951,6 +960,12 @@ class SourcePreparation:
         "_trim_partitions",
         "_surface_spans",
         "_domain",
+        "_stored_surface_programs",
+        "_stored_curve_programs",
+        "_intersection_point_boxes",
+        "_intersection_point_support",
+        "_intersection_span_boxes",
+        "unsupported_points",
     )
 
     def __init__(self, domain: MeshingDomain, /) -> None:
@@ -992,6 +1007,142 @@ class SourcePreparation:
             tuple[int, bool, tuple[_Triangle2, ...]],
             tuple[tuple[_Triangle2, ...], tuple[CurvedTrimLens, ...]],
         ] = {}
+        self._stored_surface_programs: dict[
+            int, tuple[AbstractSurfacePatch, PreparedIntervalFunction | None]
+        ] = {}
+        self._stored_curve_programs: dict[
+            int, tuple[AbstractCurve, PreparedIntervalFunction | None]
+        ] = {}
+        self._intersection_point_boxes: dict[
+            tuple[int, float], tuple[AbstractCurve, np.ndarray]
+        ] = {}
+        self._intersection_point_support: dict[
+            tuple[int, float, float, float], tuple[AbstractCurve, bool]
+        ] = {}
+        self._intersection_span_boxes: dict[
+            tuple[int, float, float], tuple[AbstractCurve, np.ndarray]
+        ] = {}
+        self.unsupported_points: dict[str, int] = {}
+
+    def _record_unsupported(
+        self, evaluator: AbstractSurfacePatch | AbstractCurve, count: int, /
+    ) -> None:
+        kind = type(evaluator)
+        name = f"{kind.__module__}.{kind.__qualname__}"
+        self.unsupported_points[name] = self.unsupported_points.get(name, 0) + count
+
+    def stored_patch_supported(self, surface: AbstractSurfacePatch, /) -> bool | None:
+        """Cached D1 support, or ``None`` when this carrier has not been queried."""
+        entry = self._stored_surface_programs.get(id(surface))
+        if entry is None or entry[0] is not surface:
+            return None
+        return entry[1] is not None
+
+    def stored_pcurve_supported(self, pcurve: AbstractCurve, /) -> bool | None:
+        """Cached host-lowering support, or ``None`` if not known for this carrier.
+
+        Intersection p-curves return ``None``: their certified realization can
+        depend on the particular span and points, not just carrier identity.
+        """
+        entry = self._stored_curve_programs.get(id(pcurve))
+        if entry is None or entry[0] is not pcurve:
+            return None
+        return entry[1] is not None
+
+    def stored_intersection_point_supported(
+        self, pcurve: AbstractCurve, parameter: float, first: float, last: float, /
+    ) -> bool | None:
+        """Support observed on the most recent matching intersection point query."""
+        key = (id(pcurve), float(first), float(last), float(parameter))
+        entry = self._intersection_point_support.get(key)
+        if entry is None or entry[0] is not pcurve:
+            return None
+        return entry[1]
+
+    def stored_patch_points(
+        self, surface: AbstractSurfacePatch, rows: np.ndarray, /
+    ) -> np.ndarray:
+        """D1: batch-independent binary64 representatives of surface rows."""
+        from .brep._host_program import evaluate_host_program, prepare_host_program
+
+        points = np.asarray(rows, dtype=np.float64).reshape((-1, 2))
+        if not points.size:
+            return np.empty((0, 3), dtype=np.float64)
+        entry = self._stored_surface_programs.get(id(surface))
+        if entry is None or entry[0] is not surface:
+            program = prepare_host_program(surface.evaluate, 2)
+            self._stored_surface_programs[id(surface)] = (surface, program)
+        else:
+            program = entry[1]
+        if program is None:
+            self._record_unsupported(surface, points.shape[0])
+            return bucketed_query_rows(surface.evaluate, points)
+        return evaluate_host_program(program, points)
+
+    def stored_pcurve_points(
+        self, pcurve: AbstractCurve, parameters: np.ndarray, first: float, last: float, /
+    ) -> np.ndarray:
+        """D2: binary64 chart representatives for a certified span.
+
+        The span inclusion guarantee applies to implicit intersection p-curves;
+        other supported curves use their host-lowered point realization.
+        """
+        from .brep._host_program import evaluate_host_program, prepare_host_program
+        from .brep._intersection_curve import CurveTrimSegment, IntersectionPCurve
+
+        values = np.asarray(parameters, dtype=np.float64).reshape((-1,))
+        if not values.size:
+            return np.empty((0, 2), dtype=np.float64)
+        carrier = pcurve
+        while isinstance(carrier, CurveTrimSegment):
+            carrier = carrier.curve
+        if isinstance(carrier, IntersectionPCurve):
+            try:
+                span_key = (id(pcurve), float(first), float(last))
+                span_entry = self._intersection_span_boxes.get(span_key)
+                if span_entry is None or span_entry[0] is not pcurve:
+                    span = self.curve_box(pcurve, first, last)
+                    self._intersection_span_boxes[span_key] = (pcurve, span)
+                else:
+                    span = span_entry[1]
+                result = np.empty((values.size, 2), dtype=np.float64)
+                for index, parameter in enumerate(values):
+                    key = (id(pcurve), float(parameter))
+                    entry = self._intersection_point_boxes.get(key)
+                    if entry is None or entry[0] is not pcurve:
+                        box = self.curve_box(pcurve, float(parameter), float(parameter))
+                        self._intersection_point_boxes[key] = (pcurve, box)
+                    else:
+                        box = entry[1]
+                    lower = np.maximum(box[0], span[0])
+                    if np.any(lower > np.minimum(box[1], span[1])):
+                        raise ValueError(
+                            "Intersection point and span enclosures are disjoint."
+                        )
+                    result[index] = lower
+                supported = True
+            except (IntervalExtensionError, NotImplementedError):
+                result = _pcurve_points_per_parameter(pcurve, values)
+                self._record_unsupported(pcurve, values.size)
+                supported = False
+            for parameter in values:
+                key = (id(pcurve), float(first), float(last), float(parameter))
+                self._intersection_point_support[key] = (pcurve, supported)
+            return result
+        entry = self._stored_curve_programs.get(id(pcurve))
+        if entry is None or entry[0] is not pcurve:
+
+            def point(parameter: Array, /) -> Array:
+                return pcurve.evaluate(parameter[0])
+
+            program = prepare_host_program(point, 1)
+            self._stored_curve_programs[id(pcurve)] = (pcurve, program)
+        else:
+            program = entry[1]
+        if program is None:
+            self._record_unsupported(pcurve, values.size)
+            return _pcurve_points_per_parameter(pcurve, values)
+        return evaluate_host_program(program, values[:, None]).reshape((-1, 2))
 
     @property
     def domain(self) -> MeshingDomain:
@@ -3895,14 +4046,19 @@ class MeshingDomain(StrictModule, NonTrainableState):
             raise ValueError("MeshingDomain query references an absent patch.")
         return rows, points
 
-    def evaluate(self, patches: ArrayLike, charts: ArrayLike, /) -> np.ndarray:
+    def evaluate(
+        self, patches: ArrayLike, charts: ArrayLike, /, *,
+        preparation: SourcePreparation | None = None,
+    ) -> np.ndarray:
         """Physical points of (patch, chart) pairs.
 
-        Patches whose surface class defines ``evaluate_stacked(surfaces, owners,
-        parameters)`` (the same arithmetic as ``evaluate``, row by row, over a
-        stack of surfaces of that class) are evaluated in one call per class;
-        every other patch is evaluated on its own.
+        Analytic carriers use D1 representatives owned by ``preparation``;
+        reconstructed stacked carriers retain their stacked realization.
+        Unsupported D1 evaluators are recorded on the preparation.
+        Omitting it creates a one-call preparation and can repeat expensive
+        lowering; pass a domain-bound preparation to reuse it across calls.
         """
+        prepared = SourcePreparation.of(self, preparation)
         rows, charts_ = self._batch(patches, charts)
         result = np.empty((rows.size, 3), dtype=np.float64)
         order = np.argsort(rows, kind="stable")
@@ -3915,7 +4071,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
                 stacked.setdefault(type(surface), []).append(index)
                 continue
             selected = order[starts[index] : stops[index]]
-            result[selected] = bucketed_query_rows(surface.evaluate, charts_[selected])
+            result[selected] = prepared.stored_patch_points(surface, charts_[selected])
         for kind, members in stacked.items():
             selected = np.concatenate(
                 [order[starts[index] : stops[index]] for index in members]

@@ -4,14 +4,19 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
+from phydrax.geometry._domain_boundary import (
+    _chain_parameters,
+    MeshingDomainBoundarySource,
+)
 from phydrax.geometry._meshing_domain import (
     MeshingDomain,
     MeshingDomainCurve,
     MeshingSurfacePatch,
     PatchCurveUse,
+    SourcePreparation,
 )
 from phydrax.geometry.brep._patches import CircleCurve, LineCurve, PlanePatch
+from phydrax.meshing.providers._native_surface import _chart_cdt_scale
 
 
 type Point = tuple[Fraction, Fraction]
@@ -48,6 +53,30 @@ def sector() -> tuple[
     origin = (Fraction(0), Fraction(0))
     fan = tuple((origin, chain[row], chain[row + 1]) for row in range(4))
     return MeshingDomainBoundarySource(domain, (0,)), chain, fan
+
+
+def test_chain_parameter_ties_choose_first_candidate_deterministically(
+    sector: tuple[MeshingDomainBoundarySource, tuple[Point, ...], tuple[Triangle, ...]],
+) -> None:
+    source, _, _ = sector
+    use = source.domain.patches[0].loops[0][0]
+    preparation = SourcePreparation(source.domain)
+    first = (Fraction(0), Fraction(0))
+    last = (Fraction(1), Fraction(0))
+    chain = (first, (Fraction(0), Fraction(10**20)), last)
+    assert _chain_parameters(use, (first, last), preparation) == (0.0, 1.0)
+    assert _chain_parameters(use, chain, preparation) == (0.0, 0.0, 1.0)
+    assert _chain_parameters(use, chain, preparation) == (0.0, 0.0, 1.0)
+
+
+def test_chart_scale_is_stable_for_isotropic_plane(
+    sector: tuple[MeshingDomainBoundarySource, tuple[Point, ...], tuple[Triangle, ...]],
+) -> None:
+    source, _, _ = sector
+    points = np.asarray(((0.0, 0.0), (1.0, 1.0)), dtype=np.float64)
+    preparation = SourcePreparation(source.domain)
+    assert _chart_cdt_scale(source.domain, 0, points, preparation) == 1.0
+    assert _chart_cdt_scale(source.domain, 0, points[::-1], preparation) == 1.0
 
 
 def test_shared_edges_and_mixed_winding_preserve_curved_partition(

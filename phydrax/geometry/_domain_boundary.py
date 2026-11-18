@@ -46,7 +46,13 @@ from ._meshing_domain import (
     SourcePreparation,
     ValidatedMeshingDomain,
 )
-from ._rational import fraction_down, fraction_endpoint, fraction_up, rational_vector
+from ._rational import (
+    binary64_dot,
+    fraction_down,
+    fraction_endpoint,
+    fraction_up,
+    rational_vector,
+)
 from ._source_boundary_records import (
     SourceBoundaryChartCover,
     SourceBoundaryDistance,
@@ -177,7 +183,9 @@ def _hole_seed(
     raise ValueError("No exact interior point was found for a source trim hole.")
 
 
-def _line_endpoints(use: PatchCurveUse | PatchPoleUse, /) -> tuple[_Point2, _Point2]:
+def _line_endpoints(
+    use: PatchCurveUse | PatchPoleUse, /, preparation: SourcePreparation | None = None
+) -> tuple[_Point2, _Point2]:
     if isinstance(use.pcurve, (ExactLineCurve, LineCurve)):
         first_exact = _point2(
             tuple(use.pcurve.evaluate_exact(Fraction.from_float(float(use.first))))
@@ -210,9 +218,16 @@ def _line_endpoints(use: PatchCurveUse | PatchPoleUse, /) -> tuple[_Point2, _Poi
             if isinstance(use, PatchCurveUse) and use.closes_chart_loop()
             else use.last
         )
-        values = np.asarray(
-            use.pcurve.evaluate(jnp.asarray((use.first, last), dtype=jnp.float64)),
-            dtype=np.float64,
+        parameters = np.asarray((use.first, last), dtype=np.float64)
+        values = (
+            preparation.stored_pcurve_points(
+                use.pcurve, parameters, min(use.first, use.last), max(use.first, use.last)
+            )
+            if preparation is not None
+            else np.asarray(
+                use.pcurve.evaluate(jnp.asarray(parameters, dtype=jnp.float64)),
+                dtype=np.float64,
+            )
         )
         if values.shape != (2, 2) or np.any(~np.isfinite(values)):
             raise ValueError("Source p-curve endpoints must be finite UV points.")
@@ -522,7 +537,9 @@ def _rooted_patch_chart_junctions(
     if cached is not None:
         return cached
     fingerprint = live_content_fingerprint(operands)
-    result = _compute_rooted_patch_chart_junctions(domain, patch, None)
+    result = _compute_rooted_patch_chart_junctions(
+        domain, patch, SourcePreparation(domain)
+    )
     _ROOTED_JUNCTIONS.record(operands, fingerprint, result, parameters=(patch,))
     return result
 
@@ -539,7 +556,7 @@ def _compute_rooted_patch_chart_junctions(
     for loop_index, loop in enumerate(domain.patches[patch].loops):
         if not all(isinstance(use, (PatchCurveUse, PatchPoleUse)) for use in loop):
             raise ValueError("Source trim has no supported chart endpoint chain.")
-        endpoints = tuple(_line_endpoints(use) for use in loop)
+        endpoints = tuple(_line_endpoints(use, preparation) for use in loop)
         junctions: list[_RootedJunction] = []
         for slot, use in enumerate(loop):
             next_slot = (slot + 1) % len(loop)
@@ -671,9 +688,9 @@ def _compute_rooted_patch_chart_junctions(
 
 
 def _rooted_patch_chart_endpoints(
-    domain: MeshingDomain, patch: int, /
+    domain: MeshingDomain, patch: int, /, preparation: SourcePreparation | None = None
 ) -> tuple[tuple[tuple[_Point2, _Point2], ...], ...]:
-    junctions = _rooted_patch_chart_junctions(domain, patch)
+    junctions = _rooted_patch_chart_junctions(domain, patch, preparation)
     return tuple(
         tuple(
             (loop[slot - 1].representative, junction.representative)
@@ -695,6 +712,7 @@ def _patch_chart_polygon(
     drop_enclosed_curved_loops: bool = False,
     rooted: bool = False,
     trim_loops: tuple[tuple[PatchCurveUse | PatchPoleUse, ...], ...] | None = None,
+    preparation: SourcePreparation | None = None,
 ) -> (
     tuple[
         tuple[_Point2, ...],
@@ -713,13 +731,16 @@ def _patch_chart_polygon(
     """
     if rooted and trim_loops is not None:
         raise ValueError("Rooted chart representatives require the authored chart.")
-    rooted_endpoints = _rooted_patch_chart_endpoints(domain, patch) if rooted else None
+    preparation = SourcePreparation.of(domain, preparation)
+    rooted_endpoints = (
+        _rooted_patch_chart_endpoints(domain, patch, preparation) if rooted else None
+    )
     # Alternate exact-plane loops have their own chart junctions; authored UV
     # root uncertainty does not transfer to that independently derived chart.
     if not rooted and trim_loops is None and domain.brep_authority is not None:
         if any(
             junction.lower != junction.upper
-            for loop in _rooted_patch_chart_junctions(domain, patch)
+            for loop in _rooted_patch_chart_junctions(domain, patch, preparation)
             for junction in loop
         ):
             raise ValueError("Exact chart trim requires exact source-root junctions.")
@@ -737,7 +758,7 @@ def _patch_chart_polygon(
         previous_end: tuple[Fraction, Fraction] | None = None
         for slot, use in enumerate(loop):
             first, last = (
-                _line_endpoints(use)
+                _line_endpoints(use, preparation)
                 if rooted_endpoints is None
                 else rooted_endpoints[loop_index][slot]
             )
@@ -1078,22 +1099,24 @@ def _constant_line_coordinate(
     """Exact chart coordinate ``axis`` of a straight authored use constant in it."""
     pcurve = use.pcurve
     if not isinstance(pcurve, (ExactLineCurve, LineCurve)):
-        from .brep._boolean_core import PeriodicPCurve
+        from .brep._boolean_core import line_chart_coefficients, PeriodicPCurve
 
         if not isinstance(pcurve, PeriodicPCurve) or not isinstance(
             pcurve.source_curve, (ExactLineCurve, LineCurve)
         ):
             return None
-        values = np.asarray(use.traversal_endpoints(), dtype=np.float64)
-        source_values = np.asarray(
-            pcurve.source_curve.evaluate(jnp.asarray((use.first, use.last))),
-            dtype=np.float64,
-        )
-        if source_values[0, axis] != source_values[1, axis]:
+        coefficients = line_chart_coefficients(pcurve.source_curve)
+        if coefficients is None or coefficients[1][axis] != 0:
             return None
-        if values[0, axis] != values[1, axis]:
+        origin = coefficients[0][axis]
+        if not isinstance(origin, Fraction):
             return None
-        return Fraction.from_float(float(values[0, axis]))
+        # The period gauge has an authored binary64 execution shadow; exact
+        # line coefficients establish that this coordinate is constant.
+        value = np.float64(float(origin)) + np.asarray(
+            pcurve.offset_value, dtype=np.float64
+        )[axis]
+        return Fraction.from_float(float(value))
     first, last = _line_endpoints(use)
     if first[axis] != last[axis]:
         return None
@@ -1161,6 +1184,7 @@ def _compute_exact_plane_chart(domain: MeshingDomain, patch: int, /) -> ExactPla
     loops = domain.patches[patch].loops
     if len(loops) != 1 or len(loops[0]) != 4:
         return None
+    preparation = SourcePreparation(domain)
     rims: list[tuple[PatchCurveUse, Fraction]] = []
     seams: dict[int, list[Fraction]] = {}
     for use in loops[0]:
@@ -1176,7 +1200,7 @@ def _compute_exact_plane_chart(domain: MeshingDomain, patch: int, /) -> ExactPla
         profile_value = _constant_line_coordinate(use, 1)
         if profile_value is None:
             return None
-        first, last = _line_endpoints(use)
+        first, last = _line_endpoints(use, preparation)
         if {first[0], last[0]} != {Fraction(0), Fraction.from_float(_TURN)}:
             return None
         rims.append((use, profile_value))
@@ -1325,7 +1349,10 @@ def _use_parameter_range(use: PatchCurveUse | PatchPoleUse, /) -> tuple[float, f
 
 
 def _chain_parameters(
-    use: PatchCurveUse | PatchPoleUse, chain: tuple[_Point2, ...], /
+    use: PatchCurveUse | PatchPoleUse,
+    chain: tuple[_Point2, ...],
+    preparation: SourcePreparation,
+    /,
 ) -> tuple[float, ...]:
     """Locate interior chain points on the p-curve by nested nearest-sample search.
 
@@ -1342,30 +1369,59 @@ def _chain_parameters(
     low, high = min(start, stop), max(start, stop)
 
     def evaluate(parameters: np.ndarray, /) -> np.ndarray:
-        values = np.asarray(
-            use.pcurve.evaluate(jnp.asarray(parameters.reshape(-1), dtype=jnp.float64)),
-            dtype=np.float64,
+        values = preparation.stored_pcurve_points(
+            use.pcurve, parameters.reshape(-1), low, high
         )
         if values.shape != (parameters.size, 2) or np.any(~np.isfinite(values)):
             raise ValueError("Curved trim p-curve evaluation must remain finite.")
         return values.reshape((*parameters.shape, 2))
 
+    def squared_distance(values: np.ndarray, /) -> np.ndarray:
+        delta = values - targets[:, None]
+        return binary64_dot(delta, delta)
+
     count = 8 * len(chain)
-    grid = np.linspace(start, stop, count + 1, dtype=np.float64)
-    distance = np.sum((evaluate(grid)[None] - targets[:, None]) ** 2, axis=-1)
+    exact_start, exact_stop = Fraction(start), Fraction(stop)
+    grid = np.asarray(
+        [
+            float(exact_start + (exact_stop - exact_start) * Fraction(i, count))
+            for i in range(count + 1)
+        ],
+        dtype=np.float64,
+    )
+    # Candidate order is traversal order initially and increasing offset in
+    # refinement; argmin chooses the first candidate on an exact distance tie.
+    distance = squared_distance(evaluate(grid)[None])
     parameters = grid[np.argmin(distance, axis=1)]
-    width = (high - low) / count
-    offsets = np.linspace(-1.0, 1.0, 17, dtype=np.float64)
+    exact_low, exact_high = Fraction(low), Fraction(high)
+    width = (exact_high - exact_low) / count
     rows = np.arange(targets.shape[0])
     # Each round shrinks the candidate spacing ``width / 8`` eightfold; refinement
     # ends at binary64 resolution of the parameter, where candidates stop being
     # distinct values.
-    resolution = float(np.spacing(max(abs(low), abs(high))))
-    while width / 8.0 > resolution:
-        candidates = np.clip(parameters[:, None] + width * offsets[None], low, high)
-        distance = np.sum((evaluate(candidates) - targets[:, None]) ** 2, axis=-1)
+    resolution = Fraction(float(np.spacing(max(abs(low), abs(high)))))
+    while width / 8 > resolution:
+        candidates = np.asarray(
+            [
+                [
+                    float(
+                        min(
+                            exact_high,
+                            max(
+                                exact_low,
+                                Fraction(float(parameter)) + width * Fraction(offset, 8),
+                            ),
+                        )
+                    )
+                    for offset in range(-8, 9)
+                ]
+                for parameter in parameters
+            ],
+            dtype=np.float64,
+        )
+        distance = squared_distance(evaluate(candidates))
         parameters = candidates[rows, np.argmin(distance, axis=1)]
-        width /= 8.0
+        width /= 8
     return start, *(float(value) for value in parameters), stop
 
 
@@ -1930,22 +1986,24 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
         )
 
     def boundary_parameter_triangles(
-        self, /
+        self, /, *, preparation: SourcePreparation | None = None
     ) -> tuple[tuple[int, tuple[_Triangle2, ...]], ...]:
         """Return the exact parameter triangles of the complete source trim cover."""
         self.require_current()
         result: list[tuple[int, tuple[_Triangle2, ...]]] = []
         for patch in self.patches:
-            result.append((patch, self._boundary_parameter_triangles_unchecked(patch)))
+            result.append(
+                (patch, self._boundary_parameter_triangles_unchecked(patch, preparation))
+            )
         return tuple(result)
 
     def _boundary_parameter_triangles_unchecked(
-        self, patch: int, /
+        self, patch: int, /, preparation: SourcePreparation | None = None
     ) -> tuple[_Triangle2, ...]:
         """Triangulate one selected patch after the caller checks source currency."""
         if patch not in self.patches:
             raise ValueError("Source trim patch is outside the selected boundary scope.")
-        chart = _patch_chart_polygon(self.domain, patch)
+        chart = _patch_chart_polygon(self.domain, patch, preparation=preparation)
         if chart is None:
             raise ValueError(
                 "Source trim has no supported exact parameter triangulation."
@@ -2006,7 +2064,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
             if cached_chain is not None:
                 lenses.extend(cached_chain[1])
                 return chain[1:-1]
-            parameters = _chain_parameters(use, chain)
+            parameters = _chain_parameters(use, chain, preparation)
             endpoint_boxes: dict[float, tuple[_Point2, ...]] = {}
             chain_lenses = tuple(
                 _curved_trim_lens(
@@ -2031,7 +2089,8 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                 raise ValueError("Source patch has no exact plane chart.")
             trim_loops = plane_chart.loops
         chart = _patch_chart_polygon(
-            self.domain, patch, curved_chain, rooted=not plane, trim_loops=trim_loops
+            self.domain, patch, curved_chain, rooted=not plane, trim_loops=trim_loops,
+            preparation=preparation,
         )
         if chart is None:
             raise ValueError(
@@ -2332,7 +2391,8 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                 )
                 continue
             chart = _patch_chart_polygon(
-                self.domain, patch, drop_enclosed_curved_loops=True, rooted=True
+                self.domain, patch, drop_enclosed_curved_loops=True, rooted=True,
+                preparation=preparation,
             )
             if chart is None:
                 complete = False
@@ -2525,7 +2585,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
         requested_exact = Fraction.from_float(requested)
         self.require_current()
         try:
-            parameter_patches = self.boundary_parameter_triangles()
+            parameter_patches = self.boundary_parameter_triangles(preparation=preparation)
         except (ArithmeticError, NotImplementedError, TypeError, ValueError):
             return SourceBoundarySamples(
                 np.empty((0, 3), dtype=np.float64),
@@ -2554,7 +2614,9 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
         ) -> tuple[np.ndarray, np.ndarray, np.ndarray, Fraction]:
             chart = np.asarray([[float(value) for value in parameter]], dtype=np.float64)
             sample = np.asarray(
-                self.domain.evaluate(np.asarray([patch], dtype=np.int64), chart)[0],
+                self.domain.evaluate(
+                    np.asarray([patch], dtype=np.int64), chart, preparation=preparation
+                )[0],
                 dtype=np.float64,
             )
             lower_chart = np.asarray(

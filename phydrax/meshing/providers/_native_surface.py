@@ -9,12 +9,11 @@ from __future__ import annotations
 import math
 from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Generator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from typing import assert_never, final, Literal
 
 import equinox as eqx
-import jax.numpy as jnp
 import numpy as np
 
 import phydrax.discretization._cell_mesh as cell_mesh_owner
@@ -22,6 +21,7 @@ import phydrax.geometry._domain_boundary as domain_boundary_owner
 import phydrax.geometry._meshing_domain as domain_owner
 import phydrax.geometry._surface_source_support as surface_support_owner
 import phydrax.meshing._association as association_owner
+from phydrax._exact_kernels import float64_interval_elementary
 from phydrax.discretization._exact_algebraic_geometry import coefficient_interval
 from phydrax.geometry import ConstrainedDelaunayTriangulation
 from phydrax.geometry._curve_boundary import ParametricCurveBoundarySource
@@ -60,6 +60,7 @@ from phydrax.meshing._contracts import (
     CellMeshingTarget,
     MeshingFailure,
     MeshingFailureCategory,
+    MeshingFailureEvidence,
     SurfaceMeshingSpec,
 )
 from phydrax.meshing._controls import FeatureKind
@@ -80,6 +81,13 @@ from phydrax.meshing._surface_construction import (
     source_cell_ancestry,
     SurfaceConstruction,
     SurfaceSourceCellAtlas,
+)
+from phydrax.meshing._trace import (
+    MeshingDiagnostic,
+    MeshingDiagnosticSeverity,
+    MeshingStageKind,
+    MeshingStageReport,
+    MeshingStageStatus,
 )
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -331,6 +339,36 @@ def _failure(
         provider_code="native_surface_unresolved",
         stage="surface_meshing",
         entity_ids=entity_ids,
+    )
+
+
+def _stored_coordinate_stage(
+    preparation: domain_owner.SourcePreparation, mesh_id: str, /
+) -> MeshingStageReport:
+    """Snapshot stored-point fallbacks seen by the construction preparation.
+
+    A zero covers only calls through this preparation up to construction return;
+    it says nothing about other query preparations or later certification.
+    """
+    counts = tuple(sorted(preparation.unsupported_points.items())) or (("none", 0),)
+    diagnostics = tuple(
+        MeshingDiagnostic(
+            MeshingDiagnosticSeverity.INFO,
+            "Construction-local stored-coordinate evaluations using an unspecified realization.",
+            provider_code="stored_coordinate_unspecified_construction",
+            failure_evidence=MeshingFailureEvidence(
+                achieved_quantities={"count": float(count)},
+                logical_findings=(kind,),
+            ),
+        )
+        for kind, count in counts
+    )
+    return MeshingStageReport(
+        MeshingStageKind.SURFACE_MESHING,
+        MeshingStageStatus.PASSED,
+        input_ids=(preparation.domain.domain_id,),
+        output_ids=(mesh_id,),
+        diagnostics=diagnostics,
     )
 
 
@@ -685,6 +723,7 @@ def _use_source_parameter(
 def _use_chart_points(
     use: domain_owner.PatchCurveUse | domain_owner.PatchPoleUse,
     parameters: tuple[Fraction, ...],
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> tuple[tuple[Fraction, Fraction], ...]:
     from phydrax.geometry.brep._boolean_core import line_chart_coefficients
@@ -700,14 +739,15 @@ def _use_chart_points(
     )
     chart = line_chart_coefficients(use.pcurve)
     scalars = np.asarray([float(value) for value in native], dtype=np.float64)
-    # Exact line coordinates leave the binary64 points only as finiteness
-    # witnesses. Every other chart point is compared exactly wherever its
-    # parameter recurs, so it may not depend on the batch it was evaluated in.
+    # Fully rational line coordinates are computed exactly below; the evaluated
+    # points serve only as finiteness witnesses, not stored representatives.
     points = (
         domain_owner._pcurve_points(use.pcurve, scalars)
         if chart is not None
         and all(isinstance(coordinate, Fraction) for coordinate in chart[0])
-        else domain_owner._pcurve_points_per_parameter(use.pcurve, scalars)
+        else preparation.stored_pcurve_points(
+            use.pcurve, scalars, min(use.first, use.last), max(use.first, use.last)
+        )
     )
     result: list[tuple[Fraction, Fraction]] = []
     for native_exact, uv in zip(native, points, strict=True):
@@ -734,15 +774,18 @@ def _use_chart_points(
 def _use_chart_point(
     use: domain_owner.PatchCurveUse | domain_owner.PatchPoleUse,
     parameter: Fraction,
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> tuple[Fraction, Fraction]:
-    return _use_chart_points(use, (parameter,))[0]
+    return _use_chart_points(use, (parameter,), preparation)[0]
 
 
 def _canonical_use_endpoints(
-    use: domain_owner.PatchCurveUse | domain_owner.PatchPoleUse, /
+    use: domain_owner.PatchCurveUse | domain_owner.PatchPoleUse,
+    preparation: domain_owner.SourcePreparation,
+    /,
 ) -> tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]]:
-    points = _use_chart_points(use, (Fraction(0), Fraction(1)))
+    points = _use_chart_points(use, (Fraction(0), Fraction(1)), preparation)
     return points[0], points[1]
 
 
@@ -786,6 +829,7 @@ def _chart_inputs(
     patch: int,
     curves: dict[int, tuple[Fraction, ...]],
     pole_charts: _PoleCharts,
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> tuple[
     list[tuple[Fraction, Fraction]],
@@ -822,7 +866,9 @@ def _chart_inputs(
     segment_pole_corners: list[int | None] = []
     loop_rows: list[tuple[int, ...]] = []
     chart = domain.patches[patch]
-    rooted_endpoints = domain_boundary_owner._rooted_patch_chart_endpoints(domain, patch)
+    rooted_endpoints = domain_boundary_owner._rooted_patch_chart_endpoints(
+        domain, patch, preparation
+    )
     internal_segments: list[tuple[int, int, tuple[int, int, int]]] = []
     pole_deviation_bound = 0.0
     pole_bands: list[tuple[int, int, int, int]] = []
@@ -868,6 +914,7 @@ def _chart_inputs(
                         tuple(
                             value for value in traversal_parameters if value not in (0, 1)
                         ),
+                        preparation,
                     )
                 )
                 for parameter in traversal_parameters:
@@ -1070,6 +1117,7 @@ def _chart_inputs(
                             [[float(value) for value in points[row]] for row in used],
                             dtype=np.float64,
                         ),
+                        preparation=preparation,
                     ),
                     dtype=np.float64,
                 ),
@@ -1345,6 +1393,7 @@ def _pole_band_triangles(
     chart_points: list[tuple[Fraction, Fraction]],
     segments: np.ndarray,
     pole_bands: tuple[tuple[int, int, int, int], ...],
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Triangulate each pole band cell by physically best ears.
@@ -1413,7 +1462,8 @@ def _pole_band_triangles(
             used,
             np.asarray(
                 domain.evaluate(
-                    np.full((len(used),), patch, dtype=np.int64), floats[used]
+                    np.full((len(used),), patch, dtype=np.int64), floats[used],
+                    preparation=preparation,
                 ),
                 dtype=np.float64,
             ),
@@ -1503,31 +1553,50 @@ def _pole_band_triangles(
 
 
 def _chart_cdt_scale(
-    domain: domain_owner.MeshingDomain, patch: int, points: np.ndarray, /
+    domain: domain_owner.MeshingDomain,
+    patch: int,
+    points: np.ndarray,
+    preparation: domain_owner.SourcePreparation,
+    /,
 ) -> float:
     """Choose an exact dyadic chart scaling from a local physical metric.
 
     This changes only the CDT scheduling coordinates; source charts, retained
     constraints, and physical quality/fidelity certification remain unchanged.
+    Unsupported derivative lowering uses the original JAX route and records
+    its unspecified evaluation in the operation's evidence.
     """
-    from phydrax.geometry.brep._patches import surface_differential
+    from phydrax.geometry.brep._patches import surface_differential_rows
 
     center = np.min(points, axis=0) + 0.5 * (
         np.max(points, axis=0) - np.min(points, axis=0)
     )
-    differential = np.asarray(
-        surface_differential(domain.patches[patch].surface, jnp.asarray(center)),
-        dtype=np.float64,
-    )
+    surface = domain.patches[patch].surface
+    if preparation.host_jacobian_program(surface) is None:
+        preparation._record_unsupported(surface, 1)
+    differential = surface_differential_rows(
+        surface, center[None, :], preparation=preparation.host_jacobian_program
+    )[0]
     if differential.shape != (3, 2) or not np.all(np.isfinite(differential)):
         return 1.0
-    speeds = np.linalg.norm(differential, axis=0)
-    if not np.all(np.isfinite(speeds)) or np.any(speeds <= 0):
+    first = rational_vector(differential[:, 0])
+    second = rational_vector(differential[:, 1])
+    first_squared = rational_dot(first, first)
+    second_squared = rational_dot(second, second)
+    if first_squared == 0 or second_squared == 0:
         return 1.0
-    ratio = float(speeds[0] / speeds[1])
-    if not math.isfinite(ratio) or ratio <= 0:
-        return 1.0
-    exponent = max(-128, min(128, round(math.log2(ratio))))
+    # Compare the squared speed ratio to exact half-exponent thresholds.
+    # Equality rounds to the even exponent, as in round(log2(speed ratio)).
+    low, high = -128, 128
+    while low < high:
+        middle = (low + high) // 2
+        threshold = Fraction(2) ** (2 * middle + 1)
+        comparison = first_squared - second_squared * threshold
+        if comparison > 0 or (comparison == 0 and middle % 2 != 0):
+            low = middle + 1
+        else:
+            high = middle
+    exponent = low
     return math.ldexp(1.0, exponent)
 
 
@@ -1537,6 +1606,7 @@ def _make_chart_mesh(
     parameters_by_curve: dict[int, set[Fraction]],
     pole_charts: _PoleCharts,
     minimum_angle: float,
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> _ChartMesh:
     values = {
@@ -1556,7 +1626,7 @@ def _make_chart_mesh(
         segment_pole_corners,
         pole_deviation_bound,
         pole_bands,
-    ) = _chart_inputs(domain, patch, values, pole_charts)
+    ) = _chart_inputs(domain, patch, values, pole_charts, preparation)
     point_array = np.asarray(
         [[float(component) for component in point] for point in input_points],
         dtype=np.float64,
@@ -1583,7 +1653,7 @@ def _make_chart_mesh(
             dtype=np.float64,
         )
     )
-    scale = _chart_cdt_scale(domain, patch, point_array)
+    scale = _chart_cdt_scale(domain, patch, point_array, preparation)
     scale_vector = np.asarray((scale, 1.0), dtype=np.float64)
     scaled_points = point_array * scale_vector
     scaled_holes = None
@@ -1756,7 +1826,8 @@ def _make_chart_mesh(
         raise ValueError("Native CDT constraint incidence must align with triangles.")
     if pole_bands:
         band_triangles, band_constraints = _pole_band_triangles(
-            domain, patch, chart_points, np.asarray(segments, dtype=np.int64), pole_bands
+            domain, patch, chart_points, np.asarray(segments, dtype=np.int64), pole_bands,
+            preparation,
         )
         triangles = np.concatenate((triangles, band_triangles))
         constraint_rows = np.concatenate((constraint_rows, band_constraints))
@@ -1923,15 +1994,18 @@ def _quality_angle_degrees(
     for vertex in range(3):
         first = corners[:, (vertex + 1) % 3] - corners[:, vertex]
         second = corners[:, (vertex + 2) % 3] - corners[:, vertex]
-        first_length = np.linalg.norm(first, axis=1)
-        second_length = np.linalg.norm(second, axis=1)
+        first_length = binary64_norm(first)
+        second_length = binary64_norm(second)
         cosine = np.divide(
-            np.sum(first * second, axis=1),
+            binary64_dot(first, second),
             first_length * second_length,
             out=np.ones((triangles.shape[0],), dtype=np.float64),
             where=(first_length * second_length) > 0.0,
         )
-        values.append(np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
+        clipped = np.clip(cosine, -1.0, 1.0)
+        # Use the lower enclosure endpoint consistently for scheduling angles.
+        angle, _ = float64_interval_elementary("acos", clipped, clipped)
+        values.append(angle * (180.0 / math.pi))
     return np.min(np.stack(values, axis=1), axis=1)
 
 
@@ -2041,7 +2115,7 @@ def _chart_bounds(
                 for use in loop
                 if isinstance(use, domain_owner.PatchCurveUse)
                 for point in (
-                    *_canonical_use_endpoints(use),
+                    *_canonical_use_endpoints(use, preparation),
                     *_curved_use_box_corners(use, preparation),
                 )
             )
@@ -2071,7 +2145,7 @@ def _chart_bounds(
             for loop in domain.patches[patch].loops
             for use in loop
             if isinstance(use, domain_owner.PatchCurveUse)
-            for point in _canonical_use_endpoints(use)
+            for point in _canonical_use_endpoints(use, preparation)
         ):
             raise _failure(
                 "source trim lies outside its authored surface parameter domain",
@@ -2647,6 +2721,7 @@ def _size_field(
     specification: SurfaceMeshingSpec,
     selected: tuple[int, ...],
     scope_ids: tuple[np.ndarray, ...],
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> tuple[np.ndarray, tuple[str, ...]]:
     patch_ids = np.asarray(
@@ -2664,13 +2739,15 @@ def _size_field(
             point
             for loop in domain.patches[patch].loops
             for use in loop
-            for point in _canonical_use_endpoints(use)
+            for point in _canonical_use_endpoints(use, preparation)
         )
         chart_centers[row] = np.mean(
             np.asarray([[float(value) for value in point] for point in points]),
             axis=0,
         )
-    centers = domain.evaluate(np.asarray(selected, dtype=np.int64), chart_centers)
+    centers = domain.evaluate(
+        np.asarray(selected, dtype=np.int64), chart_centers, preparation=preparation
+    )
     controls = tuple(specification.size_controls)
     try:
         resolved, report = resolve_size_controls(
@@ -2727,12 +2804,14 @@ def _use_point(
     patch: int,
     use: domain_owner.PatchCurveUse,
     parameter: Fraction,
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> np.ndarray:
-    uv = _use_chart_point(use, parameter)
+    uv = _use_chart_point(use, parameter, preparation)
     return domain.evaluate(
         np.asarray((patch,), dtype=np.int64),
         np.asarray([[float(uv[0]), float(uv[1])]], dtype=np.float64),
+        preparation=preparation,
     )[0]
 
 
@@ -2740,15 +2819,17 @@ def _source_curve_points(
     domain: domain_owner.MeshingDomain,
     curve: int,
     parameters: tuple[Fraction, ...],
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> np.ndarray:
     patch, use = _curve_owner_use(domain, curve)
-    chart_points = _use_chart_points(use, parameters)
+    chart_points = _use_chart_points(use, parameters, preparation)
     return domain.evaluate(
         np.full(len(parameters), patch, dtype=np.int64),
         np.asarray(
             [[float(value) for value in uv] for uv in chart_points], dtype=np.float64
         ),
+        preparation=preparation,
     )
 
 
@@ -3079,7 +3160,7 @@ class _CurveChordBounds:
             if (patch, id(use), parameter) not in self.use_points
         )
         if missing:
-            points = _source_curve_points(self.domain, curve, missing)
+            points = _source_curve_points(self.domain, curve, missing, self.preparation)
             for parameter, point in zip(missing, points, strict=True):
                 self.use_points[(patch, id(use), parameter)] = point
 
@@ -3093,7 +3174,9 @@ class _CurveChordBounds:
         key = (patch, id(use), parameter)
         point = self.use_points.get(key)
         if point is None:
-            point = self.use_points[key] = _use_point(self.domain, patch, use, parameter)
+            point = self.use_points[key] = _use_point(
+                self.domain, patch, use, parameter, self.preparation
+            )
         return point
 
     def _affine_parameters(
@@ -3336,8 +3419,8 @@ def _trim_lens_bound(
 
     if isinstance(use.pcurve, (ExactLineCurve, LineCurve)):
         return Fraction(0)
-    first_uv = endpoints[0] if first == 0 else _use_chart_point(use, first)
-    last_uv = endpoints[1] if last == 1 else _use_chart_point(use, last)
+    first_uv = endpoints[0] if first == 0 else _use_chart_point(use, first, preparation)
+    last_uv = endpoints[1] if last == 1 else _use_chart_point(use, last, preparation)
     first_parameter = float(_use_source_parameter(use, first))
     last_parameter = float(_use_source_parameter(use, last))
     lens = domain_boundary_owner._curved_trim_lens(
@@ -3373,7 +3456,7 @@ def _trim_lens_bounds(
         dict.fromkeys(value for interval in intervals for value in interval)
     )
     interior = tuple(value for value in parameters if value not in (0, 1))
-    points = dict(zip(interior, _use_chart_points(use, interior), strict=True))
+    points = dict(zip(interior, _use_chart_points(use, interior, preparation), strict=True))
     points[Fraction(0)], points[Fraction(1)] = endpoints
     lenses = tuple(
         domain_boundary_owner._curved_trim_lens(
@@ -3460,7 +3543,9 @@ def _curve_parameters(
         int, tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]]
     ] = {}
     for patch in selected_patches:
-        rooted = domain_boundary_owner._rooted_patch_chart_endpoints(domain, patch)
+        rooted = domain_boundary_owner._rooted_patch_chart_endpoints(
+            domain, patch, preparation
+        )
         for loop, endpoint_loop in zip(domain.patches[patch].loops, rooted, strict=True):
             for use, endpoints in zip(loop, endpoint_loop, strict=True):
                 if isinstance(use, domain_owner.PatchCurveUse):
@@ -3737,6 +3822,7 @@ def _pole_graded_rings(
     stops: tuple[tuple[Fraction, Fraction], ...],
     inner_parameters: list[Fraction],
     edge_limit: float,
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> tuple[_PoleRing, ...]:
     """Grade rings from the cap ring toward the regular chart.
@@ -3779,6 +3865,7 @@ def _pole_graded_rings(
                     ],
                     dtype=np.float64,
                 ),
+                preparation=preparation,
             ),
             dtype=np.float64,
         )
@@ -3870,12 +3957,13 @@ def _pole_ring_stops(
     inside_fixed: float,
     alpha_limit: Fraction,
     parameters_by_curve: dict[int, set[Fraction]],
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> tuple[tuple[Fraction, Fraction], ...]:
     """Source trim stop offsets paired with their exact fixed chart coordinates."""
     use = loop[use_index]
     free_axis = 1 - fixed_axis
-    ends = {point[free_axis] for point in _canonical_use_endpoints(use)}
+    ends = {point[free_axis] for point in _canonical_use_endpoints(use, preparation)}
     pole = Fraction.from_float(pole_fixed)
     span = Fraction.from_float(inside_fixed) - pole
     stops: dict[Fraction, Fraction] = {}
@@ -3883,7 +3971,7 @@ def _pole_ring_stops(
         if not isinstance(neighbor, domain_owner.PatchCurveUse):
             continue
         parameters = parameters_by_curve.get(neighbor.curve, ())
-        for point in _use_chart_points(neighbor, tuple(parameters)):
+        for point in _use_chart_points(neighbor, tuple(parameters), preparation):
             offset = (point[fixed_axis] - pole) / span
             if point[free_axis] in ends and 0 < offset < alpha_limit:
                 stops[offset] = point[fixed_axis]
@@ -3919,7 +4007,7 @@ def _pole_sampling(
         surface = domain.patches[patch].surface
         parameter_domain = surface.parameter_domain
         rooted_endpoints = domain_boundary_owner._rooted_patch_chart_endpoints(
-            domain, patch
+            domain, patch, preparation
         )
         for loop_index, loop in enumerate(domain.patches[patch].loops):
             for use_index, use in enumerate(loop):
@@ -3989,7 +4077,7 @@ def _pole_sampling(
                         Fraction(0),
                     )
                 )[1]
-                midpoint = _use_chart_point(use, Fraction(1, 2))
+                midpoint = _use_chart_point(use, Fraction(1, 2), preparation)
                 candidate_values = []
                 if parameter_domain is not None:
                     candidate_values.extend(
@@ -4009,7 +4097,7 @@ def _pole_sampling(
                             continue
                         candidate_values.extend(
                             float(point[fixed_axis])
-                            for point in _canonical_use_endpoints(other_use)
+                            for point in _canonical_use_endpoints(other_use, preparation)
                         )
                 candidate_fixed = tuple(
                     value
@@ -4029,6 +4117,7 @@ def _pole_sampling(
                     physical = domain.evaluate(
                         np.asarray((patch,), dtype=np.int64),
                         np.asarray((chart,), dtype=np.float64),
+                        preparation=preparation,
                     )[0]
                     candidate_distances.append(
                         float(binary64_norm(np.asarray(physical) - pole_point))
@@ -4072,6 +4161,7 @@ def _pole_sampling(
                     physical = domain.evaluate(
                         np.asarray((patch,), dtype=np.int64),
                         np.asarray((chart,), dtype=np.float64),
+                        preparation=preparation,
                     )[0]
                     distance = float(
                         binary64_norm_upper(
@@ -4120,7 +4210,7 @@ def _pole_sampling(
                         return start
                     if parameter == 1:
                         return stop
-                    point = list(_use_chart_point(use, parameter))
+                    point = list(_use_chart_point(use, parameter, preparation))
                     free_axis = 1 - fixed_axis
                     span = stop[free_axis] - start[free_axis]
                     if span == 0:
@@ -4152,6 +4242,7 @@ def _pole_sampling(
                             [[float(value) for value in point] for point in probes],
                             dtype=np.float64,
                         ),
+                        preparation=preparation,
                     ),
                     dtype=np.float64,
                 )
@@ -4182,6 +4273,7 @@ def _pole_sampling(
                                 [[float(ring_first[0]), float(ring_first[1])]],
                                 dtype=np.float64,
                             ),
+                            preparation=preparation,
                         )[0]
                         physical_last = domain.evaluate(
                             np.asarray((patch,), dtype=np.int64),
@@ -4189,6 +4281,7 @@ def _pole_sampling(
                                 [[float(ring_last[0]), float(ring_last[1])]],
                                 dtype=np.float64,
                             ),
+                            preparation=preparation,
                         )[0]
                         # An interval is accepted when its ring chord meets the
                         # edge target, its cap stays within the cap limit of the
@@ -4308,9 +4401,11 @@ def _pole_sampling(
                             inside_fixed,
                             alpha_limit,
                             parameters_by_curve,
+                            preparation,
                         ),
                         ordered,
                         edge_limit,
+                        preparation,
                     ),
                 )
     return result
@@ -4321,6 +4416,7 @@ def _integrate_pole_ring_parameters(
     selected_patches: tuple[int, ...],
     pole_charts: _PoleCharts,
     parameters_by_curve: dict[int, set[Fraction]],
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> None:
     """Add ring points lying on a loop's trims to those trims' parameters.
@@ -4348,10 +4444,10 @@ def _integrate_pole_ring_parameters(
                 parameters = parameters_by_curve.get(use.curve)
                 if parameters is None:
                     continue
-                first, last = _canonical_use_endpoints(use)
+                first, last = _canonical_use_endpoints(use, preparation)
                 # A ring point already sampled on the curve keeps its parameter:
                 # its chart inverse may differ from it in the last bits.
-                known = set(_use_chart_points(use, tuple(parameters)))
+                known = set(_use_chart_points(use, tuple(parameters), preparation))
                 for pole_use_index, _pole_use in poles:
                     pole_chart = pole_charts[(patch, loop_index, pole_use_index)]
                     ring_points = (
@@ -4368,7 +4464,7 @@ def _integrate_pole_ring_parameters(
                             parameter = (point[axis] - first[axis]) / delta
                             if not 0 <= parameter <= 1:
                                 continue
-                            if _use_chart_point(use, parameter) != point:
+                            if _use_chart_point(use, parameter, preparation) != point:
                                 continue
                             parameters.add(parameter)
                             known.add(point)
@@ -4475,6 +4571,7 @@ def _add_global_vertex(
     source_dimensions: list[int],
     source_indices: list[int],
     source_parameters: list[tuple[float, float]],
+    preparation: domain_owner.SourcePreparation,
     /,
     chart_point: np.ndarray | None = None,
     source_point: np.ndarray | None = None,
@@ -4496,6 +4593,7 @@ def _add_global_vertex(
             chart_point = domain.evaluate(
                 np.asarray((chart.patch,), dtype=np.int64),
                 np.asarray([[float(uv[0]), float(uv[1])]], dtype=np.float64),
+                preparation=preparation,
             )[0]
         allowance = max(
             domain.tolerance * domain.scale,
@@ -4515,6 +4613,7 @@ def _add_global_vertex(
             point = domain.evaluate(
                 np.asarray((chart.patch,), dtype=np.int64),
                 np.asarray([[float(uv[0]), float(uv[1])]], dtype=np.float64),
+                preparation=preparation,
             )[0]
         parameter = (float(uv[0]), float(uv[1]))
     if not np.all(np.isfinite(point)):
@@ -4550,6 +4649,7 @@ def _chart_vertex_points(
     domain: domain_owner.MeshingDomain,
     chart: _ChartMesh,
     rows: list[int],
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> tuple[dict[int, np.ndarray], dict[int, np.ndarray]]:
     """Evaluate chart vertices and their canonical source-curve images in batches."""
@@ -4562,6 +4662,7 @@ def _chart_vertex_points(
             [[float(value) for value in chart.points[row]] for row in selected],
             dtype=np.float64,
         ),
+        preparation=preparation,
     )
     grouped: dict[int, list[tuple[int, Fraction]]] = {}
     for row in selected:
@@ -4573,7 +4674,9 @@ def _chart_vertex_points(
             grouped.setdefault(int(key[1]), []).append((row, parameter))
     source_points: dict[int, np.ndarray] = {}
     for curve, entries in grouped.items():
-        values = _source_curve_points(domain, curve, tuple(value for _, value in entries))
+        values = _source_curve_points(
+            domain, curve, tuple(value for _, value in entries), preparation
+        )
         source_points.update(
             (row, point) for (row, _), point in zip(entries, values, strict=True)
         )
@@ -4667,6 +4770,7 @@ def _facet_normal_violations(
     chart_parameters: np.ndarray,
     corners: np.ndarray,
     normal_aim: float | None,
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> np.ndarray:
     """Mark cells whose facet opposes or turns away from the oriented source normal.
@@ -4698,7 +4802,9 @@ def _facet_normal_violations(
         )
     )
     values = np.asarray(
-        domain.evaluate(np.tile(patches, 4 * len(probe_points)), probes),
+        domain.evaluate(
+            np.tile(patches, 4 * len(probe_points)), probes, preparation=preparation
+        ),
         dtype=np.float64,
     ).reshape((4, len(probe_points), centroids.shape[0], 3))
     normal = np.cross(values[0] - values[1], values[2] - values[3])
@@ -4806,7 +4912,7 @@ def _refine_charts(
     local_rows: list[dict[int, int]] = []
     for chart in charts:
         chart_points, source_points = _chart_vertex_points(
-            domain, chart, list(range(len(chart.points)))
+            domain, chart, list(range(len(chart.points))), preparation
         )
         local_rows.append(
             {
@@ -4819,6 +4925,7 @@ def _refine_charts(
                     source_dimensions,
                     source_indices,
                     source_parameters,
+                    preparation,
                     chart_points.get(row),
                     source_points.get(row),
                 )
@@ -4982,6 +5089,7 @@ def _refine_charts(
             chart_parameters,
             physical[triangles],
             schedule.normal_deviation_aim,
+            preparation,
         )
         bad |= normal_bad
         local_bad = bool(np.any(bad))
@@ -5096,7 +5204,7 @@ def _refine_charts(
                         use.pcurve, (ExactLineCurve, LineCurve)
                     ):
                         midpoint_uv = _use_chart_point(
-                            use, (boundary[2] + boundary[3]) / 2
+                            use, (boundary[2] + boundary[3]) / 2, preparation
                         )
                         curved_rows.add(len(chart.points))
                 represented_midpoint = (
@@ -5163,7 +5271,7 @@ def _refine_charts(
             if not requested:
                 continue
             chart_points, source_points = _chart_vertex_points(
-                domain, chart, list(requested.values())
+                domain, chart, list(requested.values()), preparation
             )
             for local_row in requested.values():
                 mapping[local_row] = _add_global_vertex(
@@ -5175,6 +5283,7 @@ def _refine_charts(
                     source_dimensions,
                     source_indices,
                     source_parameters,
+                    preparation,
                     chart_points.get(local_row),
                     source_points.get(local_row),
                 )
@@ -5440,6 +5549,7 @@ def _curve_edge_samples(
     lower: Fraction,
     upper: Fraction,
     sample_count: int,
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> float:
     chord = np.asarray(last, dtype=np.float64) - np.asarray(first, dtype=np.float64)
@@ -5453,7 +5563,7 @@ def _curve_edge_samples(
         Fraction.from_float(float(lower + fraction * (upper - lower)))
         for fraction in fractions
     )
-    points = _source_curve_points(domain, curve, parameters)
+    points = _source_curve_points(domain, curve, parameters, preparation)
     for fraction, point in zip(fractions, points, strict=True):
         along = float(fraction)
         maximum = max(
@@ -5466,6 +5576,7 @@ def _curve_edge_samples(
 def _triangle_sampled_deviations(
     domain: domain_owner.MeshingDomain,
     refined: _RefinedSurface,
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> np.ndarray:
     weights = np.asarray(
@@ -5479,7 +5590,9 @@ def _triangle_sampled_deviations(
     )
     parameters = np.einsum("qv,cvd->cqd", weights, refined.triangle_parameters)
     patches = np.repeat(refined.triangle_patches, weights.shape[0])
-    source_points = domain.evaluate(patches, parameters.reshape((-1, 2))).reshape(
+    source_points = domain.evaluate(
+        patches, parameters.reshape((-1, 2)), preparation=preparation
+    ).reshape(
         (-1, weights.shape[0], 3)
     )
     triangle_coordinates = refined.coordinates[refined.triangles]
@@ -5493,6 +5606,7 @@ def _surface_construction(
     roots: _SurfaceRootCells,
     curve_ids: tuple[int, ...],
     schedule: NativeSurfaceSchedule,
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> SurfaceConstruction:
     exact_triangle_parameters = tuple(
@@ -5538,6 +5652,7 @@ def _surface_construction(
             lower,
             upper,
             schedule.curve_schedule.fidelity_samples,
+            preparation,
         )
         allowance = 128.0 * np.finfo(np.float64).eps * max(domain.scale, 1.0)
         if witnessed > bound + allowance:
@@ -5634,7 +5749,7 @@ def _surface_construction(
         refined.triangle_parameters,
         triangle_source_cells,
         triangle_source_pieces,
-        _triangle_sampled_deviations(domain, refined),
+        _triangle_sampled_deviations(domain, refined, preparation),
         refined.triangle_deviation_bounds,
         refined.triangle_normal_bounds,
         curve_edges,
@@ -6298,7 +6413,14 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
         if set((*family.required, *family.preferred)) == {"quadrilateral"}:
             from ._native_surface_quad import execute_tensor_quads
 
-            return execute_tensor_quads(self, preparation)
+            construction = execute_tensor_quads(self, preparation)
+            return replace(
+                construction,
+                stages=(
+                    *construction.stages,
+                    _stored_coordinate_stage(preparation, construction.mesh.mesh_id),
+                ),
+            )
         curve_ids = _trim_curves(domain, self.selected_patches)
         chords = _CurveChordBounds(preparation)
         parameters_by_curve = _curve_parameters(
@@ -6325,6 +6447,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             self.selected_patches,
             pole_charts,
             parameters_by_curve,
+            preparation,
         )
         quality_angle = self.schedule.quality_angle_degrees
         if self.specification.quality_target is not None:
@@ -6362,7 +6485,8 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
                 retained = retained_charts.get(patch)
                 if retained is None or retained[0] != key:
                     chart = _make_chart_mesh(
-                        domain, patch, parameters_by_curve, pole_charts, quality_angle
+                        domain, patch, parameters_by_curve, pole_charts, quality_angle,
+                        preparation,
                     )
                     # Source-cell clipping must wait until native proposals
                     # have been coordinated: cuts descending from a losing
@@ -6413,6 +6537,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             self.roots,
             curve_ids,
             self.schedule,
+            preparation,
         )
         # Patches separating two regions make a non-manifold multiregion surface:
         # each is triangulated once, and the region-labeled topology admits its
@@ -6619,6 +6744,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             certification,
             geometry=geometry,
             organization=organization,
+            stages=(_stored_coordinate_stage(preparation, mesh.mesh_id),),
         )
 
 
@@ -6684,7 +6810,7 @@ def prepare_native_surface(
             category=MeshingFailureCategory.INVALID_SOURCE,
             entity_ids=tuple(int(patch) for patch in selected),
         )
-    size_values, _ = _size_field(domain, specification, selected, scope_ids)
+    size_values, _ = _size_field(domain, specification, selected, scope_ids, preparation)
     roots = _chart_bounds(domain, selected, scope_ids, coordinate_contract, preparation)
     return _PreparedNativeSurface(
         domain,
