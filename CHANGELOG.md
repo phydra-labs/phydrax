@@ -768,6 +768,13 @@
   adaptation takes 12% less time on Windows (357 to 316 seconds) and the
   three surface remeshes 3% less, with identical coordinates, edits and
   evidence.
+- The native wrappers no longer compare an index array against the native
+  integer range when it already has the native dtype, where every value is in
+  range by construction; arrays of any other integer dtype are checked and
+  converted as before. A conversion of a small array takes 0.35 microseconds
+  instead of 2 to 3, at every native call that passes indices or identifiers
+  (four arrays for each of the 680,000 relocation probes of the adaptive
+  sphere profile).
 - The source normal cones of certified surface remeshing are outward-rounded
   bounds computed without the platform math library. For the zero-set
   admission the half-angle `asin(|r| / |g|) + asin(2 tolerance / altitude)`

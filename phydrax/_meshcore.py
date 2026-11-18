@@ -1887,8 +1887,9 @@ def _raise_for_call(
 
 def _native_integer_array(value: object, name: str, dtype: np.dtype, /) -> np.ndarray:
     array = _index_array(value, name)
-    bounds = np.iinfo(dtype)
-    if array.size:
+    # Values already of the native dtype are in its range by construction.
+    if array.dtype != dtype and array.size:
+        bounds = np.iinfo(dtype)
         if array.dtype.kind == "u":
             if np.any(array > bounds.max):
                 raise OverflowError(f"{name} exceeds the native integer range.")
