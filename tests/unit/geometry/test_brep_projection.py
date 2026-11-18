@@ -2704,12 +2704,19 @@ def test_specified_angle_canonicalizes_zero_without_snapping_near_cut() -> None:
     from phydrax.geometry.brep._projection import _specified_atan2
 
     epsilon = np.nextafter(0.0, np.inf)
-    assert _specified_atan2(0.0, -1.0).hex() == math.pi.hex()
-    assert _specified_atan2(-0.0, -1.0).hex() == math.pi.hex()
-    assert _specified_atan2(epsilon, -1.0).hex() == math.pi.hex()
-    assert _specified_atan2(-epsilon, -1.0).hex() == (-math.pi).hex()
-    assert _specified_atan2(0.0, 1.0).hex() == "0x0.0p+0"
-    assert _specified_atan2(-0.0, 1.0).hex() == "0x0.0p+0"
+    values = np.asarray(
+        (
+            _specified_atan2(0.0, -1.0),
+            _specified_atan2(-0.0, -1.0),
+            _specified_atan2(epsilon, -1.0),
+            _specified_atan2(-epsilon, -1.0),
+            _specified_atan2(0.0, 1.0),
+            _specified_atan2(-0.0, 1.0),
+        ),
+        dtype=np.float64,
+    )
+    expected = np.asarray((math.pi, math.pi, math.pi, -math.pi, 0.0, 0.0))
+    np.testing.assert_array_equal(values.view(np.uint64), expected.view(np.uint64))
 
 
 def test_specified_sphere_pole_and_cone_apex_retain_declared_status() -> None:
