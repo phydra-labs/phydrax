@@ -398,13 +398,19 @@ class PatchCurveUse(StrictModule, NonTrainableState):
         self.sense = sense
 
     def charts(
-        self, parameters: ConvertibleToArray, /, *,
+        self,
+        parameters: ConvertibleToArray,
+        /,
+        *,
         preparation: _PointPreparation | None = None,
     ) -> np.ndarray:
         values = np.asarray(parameters, dtype=np.float64).reshape((-1,))
         return _pcurve_points(
-            self.pcurve, values, preparation=preparation,
-            first=min(self.first, self.last), last=max(self.first, self.last),
+            self.pcurve,
+            values,
+            preparation=preparation,
+            first=min(self.first, self.last),
+            last=max(self.first, self.last),
         )
 
     def traversal_endpoints(
@@ -508,9 +514,11 @@ class PatchPoleUse(StrictModule, NonTrainableState):
             (self.first, self.last) if self.sense > 0 else (self.last, self.first)
         )
         return _pcurve_points(
-            self.pcurve, np.asarray(parameters, dtype=np.float64),
+            self.pcurve,
+            np.asarray(parameters, dtype=np.float64),
             preparation=preparation,
-            first=min(self.first, self.last), last=max(self.first, self.last),
+            first=min(self.first, self.last),
+            last=max(self.first, self.last),
         )
 
 
@@ -1102,6 +1110,7 @@ class _PointPreparation:
 
         entry = self._stored_curve_programs.get(id(pcurve))
         if entry is None or entry[0] is not pcurve:
+
             def point(parameter: Array, /) -> Array:
                 return pcurve.evaluate(parameter[0])
 
@@ -1111,7 +1120,11 @@ class _PointPreparation:
         return entry[1]
 
     def stored_patch_points(
-        self, surface: AbstractSurfacePatch, rows: np.ndarray, /, *,
+        self,
+        surface: AbstractSurfacePatch,
+        rows: np.ndarray,
+        /,
+        *,
         scalar_fallback: bool = False,
     ) -> np.ndarray:
         """D1: batch-independent binary64 representatives of surface rows."""
@@ -1281,7 +1294,6 @@ class SourcePreparation(_PointPreparation):
             tuple[int, int], tuple[AbstractCurve, PreparedIntervalFunction | None]
         ] = {}
 
-
     def search_pcurve_points(
         self, pcurve: AbstractCurve, parameters: np.ndarray, first: float, last: float, /
     ) -> np.ndarray:
@@ -1300,7 +1312,9 @@ class SourcePreparation(_PointPreparation):
         if values.size and _has_plane_cylinder_section(pcurve):
             program = self._host_curve_program(pcurve)
             if program is not None:
-                proposals = evaluate_host_program(program, values[:, None]).reshape((-1, 2))
+                proposals = evaluate_host_program(program, values[:, None]).reshape(
+                    (-1, 2)
+                )
                 finite = np.all(np.isfinite(proposals), axis=1)
                 if not np.all(finite):
                     proposals[~finite] = self.stored_pcurve_points(
@@ -1314,7 +1328,9 @@ class SourcePreparation(_PointPreparation):
             charts = np.full(values.shape, chart, dtype=np.int64)
         else:
             carrier = pcurve.first + pcurve.last - values if pcurve.reversed else values
-            charts = np.minimum(np.floor(carrier).astype(np.int64), pcurve.curve.num_charts - 1)
+            charts = np.minimum(
+                np.floor(carrier).astype(np.int64), pcurve.curve.num_charts - 1
+            )
             terminal = math.ceil(pcurve.last) - 1
             if pcurve.last == terminal + 1 and pcurve.last < pcurve.curve.num_charts:
                 charts = np.where(carrier >= pcurve.last, terminal, charts)
@@ -4261,7 +4277,11 @@ class MeshingDomain(StrictModule, NonTrainableState):
         return rows, points
 
     def evaluate(
-        self, patches: ArrayLike, charts: ArrayLike, /, *,
+        self,
+        patches: ArrayLike,
+        charts: ArrayLike,
+        /,
+        *,
         preparation: SourcePreparation | None = None,
     ) -> np.ndarray:
         """Physical points of (patch, chart) pairs.

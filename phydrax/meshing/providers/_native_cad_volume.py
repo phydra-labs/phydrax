@@ -3662,7 +3662,8 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
                     stage
                     for stage in self.source.surface.trace.stages
                     if any(
-                        diagnostic.provider_code == "stored_coordinate_unspecified_construction"
+                        diagnostic.provider_code
+                        == "stored_coordinate_unspecified_construction"
                         for diagnostic in stage.diagnostics
                     )
                 ),

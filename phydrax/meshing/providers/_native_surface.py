@@ -1462,7 +1462,8 @@ def _pole_band_triangles(
             used,
             np.asarray(
                 domain.evaluate(
-                    np.full((len(used),), patch, dtype=np.int64), floats[used],
+                    np.full((len(used),), patch, dtype=np.int64),
+                    floats[used],
                     preparation=preparation,
                 ),
                 dtype=np.float64,
@@ -1826,7 +1827,11 @@ def _make_chart_mesh(
         raise ValueError("Native CDT constraint incidence must align with triangles.")
     if pole_bands:
         band_triangles, band_constraints = _pole_band_triangles(
-            domain, patch, chart_points, np.asarray(segments, dtype=np.int64), pole_bands,
+            domain,
+            patch,
+            chart_points,
+            np.asarray(segments, dtype=np.int64),
+            pole_bands,
             preparation,
         )
         triangles = np.concatenate((triangles, band_triangles))
@@ -3456,7 +3461,9 @@ def _trim_lens_bounds(
         dict.fromkeys(value for interval in intervals for value in interval)
     )
     interior = tuple(value for value in parameters if value not in (0, 1))
-    points = dict(zip(interior, _use_chart_points(use, interior, preparation), strict=True))
+    points = dict(
+        zip(interior, _use_chart_points(use, interior, preparation), strict=True)
+    )
     points[Fraction(0)], points[Fraction(1)] = endpoints
     lenses = tuple(
         domain_boundary_owner._curved_trim_lens(
@@ -5592,9 +5599,7 @@ def _triangle_sampled_deviations(
     patches = np.repeat(refined.triangle_patches, weights.shape[0])
     source_points = domain.evaluate(
         patches, parameters.reshape((-1, 2)), preparation=preparation
-    ).reshape(
-        (-1, weights.shape[0], 3)
-    )
+    ).reshape((-1, weights.shape[0], 3))
     triangle_coordinates = refined.coordinates[refined.triangles]
     chord_points = binary64_matmul(weights, triangle_coordinates)
     return np.max(binary64_norm(source_points - chord_points), axis=1)
@@ -6485,7 +6490,11 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
                 retained = retained_charts.get(patch)
                 if retained is None or retained[0] != key:
                     chart = _make_chart_mesh(
-                        domain, patch, parameters_by_curve, pole_charts, quality_angle,
+                        domain,
+                        patch,
+                        parameters_by_curve,
+                        pole_charts,
+                        quality_angle,
                         preparation,
                     )
                     # Source-cell clipping must wait until native proposals

@@ -1113,9 +1113,10 @@ def _constant_line_coordinate(
             return None
         # The period gauge has an authored binary64 execution shadow; exact
         # line coefficients establish that this coordinate is constant.
-        value = np.float64(float(origin)) + np.asarray(
-            pcurve.offset_value, dtype=np.float64
-        )[axis]
+        value = (
+            np.float64(float(origin))
+            + np.asarray(pcurve.offset_value, dtype=np.float64)[axis]
+        )
         return Fraction.from_float(float(value))
     first, last = _line_endpoints(use)
     if first[axis] != last[axis]:
@@ -2093,7 +2094,11 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                 raise ValueError("Source patch has no exact plane chart.")
             trim_loops = plane_chart.loops
         chart = _patch_chart_polygon(
-            self.domain, patch, curved_chain, rooted=not plane, trim_loops=trim_loops,
+            self.domain,
+            patch,
+            curved_chain,
+            rooted=not plane,
+            trim_loops=trim_loops,
             preparation=preparation,
         )
         if chart is None:
@@ -2395,7 +2400,10 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                 )
                 continue
             chart = _patch_chart_polygon(
-                self.domain, patch, drop_enclosed_curved_loops=True, rooted=True,
+                self.domain,
+                patch,
+                drop_enclosed_curved_loops=True,
+                rooted=True,
                 preparation=preparation,
             )
             if chart is None:

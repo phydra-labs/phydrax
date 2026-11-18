@@ -39,9 +39,7 @@ def _domain(source_id: str, /) -> MeshingDomain:
         )
         for index, (first, last) in enumerate(pairs)
     )
-    patch = MeshingSurfacePatch(
-        PlanePatch((0, 0, 0), (1, 0, 0), (0, 1, 0)), (uses,)
-    )
+    patch = MeshingSurfacePatch(PlanePatch((0, 0, 0), (1, 0, 0), (0, 1, 0)), (uses,))
     return MeshingDomain(
         (patch,), curves, 4, source_id=source_id, source_revision="revision"
     )
@@ -76,7 +74,11 @@ def _ordered_and_split(
         boundary_edges={},
     )
     _split_chart_at_source_cells(chart, ordered)
-    return tuple(root.corners for root in ordered), tuple(chart.points), tuple(chart.triangles)
+    return (
+        tuple(root.corners for root in ordered),
+        tuple(chart.points),
+        tuple(chart.triangles),
+    )
 
 
 def test_source_root_ties_do_not_depend_on_source_identity() -> None:

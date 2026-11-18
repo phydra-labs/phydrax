@@ -6392,7 +6392,8 @@ def _certify_domain_surface_chart_fidelity(
         tuple(findings),
         unspecified_evaluations=(
             _unspecified_evaluations(preparation, before)
-            if domain_coverage is None else None
+            if domain_coverage is None
+            else None
         ),
     )
 
