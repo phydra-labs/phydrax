@@ -19,6 +19,7 @@
 #include "phydrax_meshcore.h"
 #include "scratch_faces.hpp"
 #include "zero_set_admission.hpp"
+#include "elementary.hpp"
 
 namespace {
 using phx::mc::remesh::IntervalBoxProgram;
@@ -133,15 +134,22 @@ double sphere_distance(const Point& p) {
 double torus_distance(const Point& p) {
   return std::fabs(std::hypot(std::hypot(p[0], p[1]) - kMajor, p[2]) - kMinor);
 }
+// Sines and cosines of the generated surfaces from the interval kernel (its
+// lower endpoint): the test meshes are the same doubles on every platform, so
+// the remeshing results printed below can be compared between machines.
+double surface_sine(double x) { return phx::mc::elementary::sin(x, x).lower; }
+double surface_cosine(double x) { return phx::mc::elementary::cos(x, x).lower; }
 Point sphere_point(double theta, double phi) {
-  return {std::sin(theta) * std::cos(phi), std::sin(theta) * std::sin(phi), std::cos(theta)};
+  return {surface_sine(theta) * surface_cosine(phi), surface_sine(theta) * surface_sine(phi),
+          surface_cosine(theta)};
 }
 Point torus_point(double u, double v) {
-  return {(kMajor + kMinor * std::cos(v)) * std::cos(u),
-          (kMajor + kMinor * std::cos(v)) * std::sin(u), kMinor * std::sin(v)};
+  return {(kMajor + kMinor * surface_cosine(v)) * surface_cosine(u),
+          (kMajor + kMinor * surface_cosine(v)) * surface_sine(u), kMinor * surface_sine(v)};
 }
 Point outward_torus(double u, double v) {
-  return {std::cos(v) * std::cos(u), std::cos(v) * std::sin(u), std::sin(v)};
+  return {surface_cosine(v) * surface_cosine(u), surface_cosine(v) * surface_sine(u),
+          surface_sine(v)};
 }
 
 Point combine(const Point& a, const Point& b, const Point& c, double s, double t) {
@@ -697,11 +705,12 @@ Program lens_gradient() {
 }
 Point lens_point(int ring, int rings, double phi) {
   // Rings 1..rings run down the upper cap to the crease, then up the lower cap.
-  const double crease = std::acos(kLensShift);
+  const double crease = phx::mc::elementary::acos(kLensShift, kLensShift).lower;
   const bool upper = ring <= rings;
   const double theta = crease * (upper ? ring : 2 * rings - ring) / rings;
-  const double z = std::cos(theta) - kLensShift;
-  return {std::sin(theta) * std::cos(phi), std::sin(theta) * std::sin(phi), upper ? z : -z};
+  const double z = surface_cosine(theta) - kLensShift;
+  return {surface_sine(theta) * surface_cosine(phi), surface_sine(theta) * surface_sine(phi),
+          upper ? z : -z};
 }
 Surface lens_surface(int rings, int segments) {
   Surface s;
