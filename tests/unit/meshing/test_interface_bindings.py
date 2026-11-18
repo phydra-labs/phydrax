@@ -23,7 +23,7 @@ from phydrax.geometry.multiregion_surface import (
 from phydrax.geometry.surface import InterfaceSide
 from phydrax.interchange import import_occt_shape
 from phydrax.meshing import MeshInterfaceAttachment, MeshPart
-from phydrax.meshing._association import GeometryAssociationArchiveRecipe
+from phydrax.meshing._association import _compose, GeometryAssociationArchiveRecipe
 from phydrax.meshing._association_routes import incidence_pairs
 from phydrax.solver.coupling import (
     InterfaceBinding,
@@ -777,3 +777,43 @@ def test_incidence_consumer_returns_sorted_exact_vertex_closures() -> None:
     )
     np.testing.assert_array_equal(incidence_pairs(mesh, 0, 1), expected_edges)
     np.testing.assert_array_equal(incidence_pairs(mesh, 0, 2), expected_cells)
+
+
+def test_composed_incidence_preserves_pairs_across_packing_bound() -> None:
+    bound = 2**32
+    first = np.asarray(
+        (
+            (0, 0),
+            (0, 1),
+            (bound - 1, 2),
+            (bound, 3),
+            (bound + 1, 4),
+            (0, 5),
+        ),
+        dtype=np.int64,
+    )
+    second = np.asarray(
+        (
+            (0, 1),
+            (1, bound + 1),
+            (2, bound),
+            (3, bound - 1),
+            (4, bound + 1),
+            (5, 1),
+        ),
+        dtype=np.int64,
+    )
+    expected = np.asarray(
+        (
+            (0, 1),
+            (0, bound + 1),
+            (bound - 1, bound),
+            (bound, bound - 1),
+            (bound + 1, bound + 1),
+        ),
+        dtype=np.int64,
+    )
+    actual = _compose(first, second, unique=True)
+    assert actual.dtype == np.dtype(np.int64)
+    assert actual.shape == (5, 2)
+    np.testing.assert_array_equal(actual, expected)
