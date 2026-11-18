@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
-from typing import final
+from typing import assert_never, final
 
 import equinox as eqx
 import numpy as np
@@ -44,7 +44,13 @@ from .._association import (
 )
 from .._certification import _ComputedSurfaceAcceptance
 from .._certification_schedule import MeshCertificationSchedule
-from .._contracts import ConstructionSteering, VolumeMeshingSpec
+from .._contracts import (
+    ConstructionSteering,
+    MeshingFailure,
+    MeshingFailureCategory,
+    SurfaceMeshingSpec,
+    VolumeMeshingSpec,
+)
 from .._controls import (
     FeatureKind,
     HoleSeed,
@@ -62,6 +68,7 @@ from .._plc_source import _ValidatedCadSurface, PiecewiseLinearComplex, PlcBound
 from .._result import CellMeshingResult, MeshingComplianceReport
 from .._scope import MeshingEntityKind, MeshingScope
 from .._sizing import UniformSizeControl
+from .._trace import MeshingStageReport
 from .._volume_generation import (
     generate_plc_volume,
     NativeVolumeSchedule,
@@ -91,6 +98,8 @@ class CadSurfaceConstructionData:
     coordinate_contract: SpatialCoordinateContract
     associations: tuple[GeometryAssociation, ...]
     surface_source: SurfaceSourceCharts
+    fidelity_tolerance: float | None = None
+    maximum_normal_deviation: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -352,6 +361,41 @@ class _CadPlcData:
     source_triangle_parameter_exact: tuple[tuple[tuple[Fraction, Fraction], ...], ...]
 
 
+def _screen_cad_shell(
+    points: np.ndarray,
+    triangles: list[tuple[int, int, int]],
+    triangle_facets: list[int],
+    facet_regions: np.ndarray,
+    /,
+) -> None:
+    """Screen finite, nondegenerate triangles and oriented region-edge incidence."""
+    if points.ndim != 2 or points.shape[1] != 3 or not np.all(np.isfinite(points)):
+        raise ValueError("CAD surface screen requires finite three-dimensional vertices.")
+    counts: dict[tuple[int, int, int], list[int]] = {}
+    for triangle, facet in zip(triangles, triangle_facets, strict=True):
+        a, b, c = triangle
+        if (
+            len({a, b, c}) != 3
+            or min(triangle) < 0
+            or max(triangle) >= len(points)
+            or not np.any(np.cross(points[b] - points[a], points[c] - points[a]))
+        ):
+            raise ValueError("CAD surface screen found a degenerate triangle.")
+        for side, region in enumerate(facet_regions[facet]):
+            if region < 0:
+                continue
+            for first, second in ((a, b), (b, c), (c, a)):
+                key = (int(region), min(first, second), max(first, second))
+                direction = (1 if first < second else -1) * (1 if side == 1 else -1)
+                counts.setdefault(key, []).append(direction)
+    if any(
+        len(directions) != 2 or sum(directions) != 0 for directions in counts.values()
+    ):
+        raise ValueError(
+            "CAD surface screen requires closed consistently oriented region edges."
+        )
+
+
 def _cad_plc_data(
     domain: MeshingDomain,
     surface: CellMeshingResult,
@@ -376,6 +420,19 @@ def _cad_plc_data(
         surface_source,
     )
     premises = _CadSurfaceProofPremises(surface, computed_surface)
+    return _build_cad_plc_data(domain, surface_data, boundary, deviation, premises)
+
+
+def _build_cad_plc_data(
+    domain: MeshingDomain,
+    surface_data: CadSurfaceConstructionData,
+    boundary: PlcBoundaryPolicy,
+    deviation: float | None,
+    premises: _CadSurfaceProofPremises | None,
+    /,
+) -> _CadPlcData:
+    surface_source = surface_data.surface_source
+    computed_surface = None if premises is None else premises.computed
     domain.require_current(domain.source_id, domain.source_revision)
     if domain.brep_authority is None or domain.source_kinds != ("vertex", "edge", "face"):
         raise ValueError(
@@ -416,7 +473,15 @@ def _cad_plc_data(
                 "Accepted CAD surface associations must bind the same BRep revision."
             )
 
-    _, exact_points = _exact_surface_points(surface_data)
+    if premises is None:
+        points = np.asarray(surface_data.mesh.coordinates, dtype=np.float64)
+        if points.ndim != 2 or points.shape[1] != 3 or not np.all(np.isfinite(points)):
+            raise ValueError(
+                "CAD surface source coordinates must be finite three-vectors."
+            )
+        exact_points = tuple(tuple(float(value) for value in row) for row in points)
+    else:
+        _, exact_points = _exact_surface_points(surface_data)
     if not isinstance(surface_source, SurfaceSourceCharts):
         raise TypeError("CAD volume construction requires retained SurfaceSourceCharts.")
     source_chart_cell_ids = np.asarray(surface_source.cell_global_ids, dtype=np.int64)
@@ -624,6 +689,13 @@ def _cad_plc_data(
         raise ValueError(
             "Every CAD source patch must bound at least one material region."
         )
+    if premises is None:
+        _screen_cad_shell(
+            np.asarray(plc_points, dtype=np.float64),
+            triangles,
+            triangle_facets,
+            facet_regions,
+        )
 
     segments: list[tuple[int, int]] = []
     segment_ids: list[str] = []
@@ -735,33 +807,41 @@ def _cad_plc_data(
         plane = _exact_patch_plane(domain, patch)
         if plane is not None:
             facet_planes[patch] = plane
-    report = premises.surface.certification
-    if computed_surface is not None and computed_surface.report is not report:
-        raise ValueError("Computed surface acceptance binds another report.")
     validated_surface = None
-    if report is None:
-        fidelity_tolerance = 0.0 if deviation is None else deviation
-        normal_deviation = None
-        validated_surface = _ValidatedCadSurface(
-            surface_source, fidelity_tolerance, normal_deviation, None
-        )
-        embedding, fidelity = validated_surface.proofs
-    else:
-        certification_inputs = report.inputs
-        fidelity_tolerance = certification_inputs.fidelity_tolerance
+    if premises is None:
+        fidelity_tolerance = surface_data.fidelity_tolerance
         if fidelity_tolerance is None:
             fidelity_tolerance = 0.0 if deviation is None else deviation
-        normal_deviation = certification_inputs.maximum_normal_deviation
-        embedding = report.embedding
-        fidelity = report.fidelity
-        if fidelity is None:
+        normal_deviation = surface_data.maximum_normal_deviation
+        embedding = None
+        fidelity = None
+    else:
+        report = premises.surface.certification
+        if computed_surface is not None and computed_surface.report is not report:
+            raise ValueError("Computed surface acceptance binds another report.")
+        if report is None:
+            fidelity_tolerance = 0.0 if deviation is None else deviation
+            normal_deviation = None
             validated_surface = _ValidatedCadSurface(
-                surface_source,
-                fidelity_tolerance,
-                normal_deviation,
-                certification_inputs.junction_vertices,
+                surface_source, fidelity_tolerance, normal_deviation, None
             )
-            _, fidelity = validated_surface.proofs
+            embedding, fidelity = validated_surface.proofs
+        else:
+            certification_inputs = report.inputs
+            fidelity_tolerance = certification_inputs.fidelity_tolerance
+            if fidelity_tolerance is None:
+                fidelity_tolerance = 0.0 if deviation is None else deviation
+            normal_deviation = certification_inputs.maximum_normal_deviation
+            embedding = report.embedding
+            fidelity = report.fidelity
+            if fidelity is None:
+                validated_surface = _ValidatedCadSurface(
+                    surface_source,
+                    fidelity_tolerance,
+                    normal_deviation,
+                    certification_inputs.junction_vertices,
+                )
+                _, fidelity = validated_surface.proofs
     complex_ = PiecewiseLinearComplex(
         np.asarray(
             [[float(value) for value in point] for point in plc_points], dtype=np.float64
@@ -810,7 +890,7 @@ def _cad_plc_data(
 
 
 def _surface_source_authorities(
-    surface: CellMeshingResult, domain: MeshingDomain, /
+    surface: CellMeshingResult | CadSurfaceConstructionData, domain: MeshingDomain, /
 ) -> tuple[SurfaceSourceCharts, SourceBoundaryQuery]:
     surface_source = getattr(surface, "surface_source", None)
     if not isinstance(surface_source, SurfaceSourceCharts):
@@ -941,7 +1021,7 @@ class NativeCadVolumeSource(StrictModule, NonTrainableState):
     """A source-bound CAD shell plus its accepted surface mesh and PLC ancestry."""
 
     domain: MeshingDomain
-    surface: CellMeshingResult
+    surface: CellMeshingResult | CadSurfaceConstructionData
     surface_source: SurfaceSourceCharts
     fidelity_source: SourceBoundaryQuery
     plc_source: NativePlcSource
@@ -964,7 +1044,7 @@ class NativeCadVolumeSource(StrictModule, NonTrainableState):
     def __init__(
         self,
         domain: MeshingDomain | BRepModel,
-        surface: CellMeshingResult,
+        surface: CellMeshingResult | CadSurfaceConstructionData,
         /,
         *,
         fidelity_source: SourceBoundaryQuery | None = None,
@@ -1026,14 +1106,21 @@ class NativeCadVolumeSource(StrictModule, NonTrainableState):
             deviation = finite_real_scalar(float(maximum_deviation), "maximum_deviation")
             if deviation < 0.0:
                 raise ValueError("maximum_deviation must be non-negative.")
-        data = _cad_plc_data(
-            domain,
-            surface,
-            surface_source,
-            boundary,
-            deviation,
-            computed_surface=_computed_surface,
-        )
+        if isinstance(surface, CadSurfaceConstructionData):
+            if _computed_surface is not None:
+                raise ValueError(
+                    "Screened surface construction cannot carry accepted proofs."
+                )
+            data = _build_cad_plc_data(domain, surface, boundary, deviation, None)
+        else:
+            data = _cad_plc_data(
+                domain,
+                surface,
+                surface_source,
+                boundary,
+                deviation,
+                computed_surface=_computed_surface,
+            )
         plc_source = NativePlcSource(
             data.complex, domain.source_id, domain.source_revision
         )
@@ -1057,9 +1144,13 @@ class NativeCadVolumeSource(StrictModule, NonTrainableState):
         self.source_revision = domain.source_revision
         self.binding_id = canonical_fingerprint(
             {
-                "kind": "native-cad-volume-source",
+                "kind": "native-cad-volume-source"
+                if isinstance(surface, CellMeshingResult)
+                else "screened-native-cad-volume-source",
                 "domain": domain.domain_id,
-                "surface": surface.result_id,
+                "surface": surface.result_id
+                if isinstance(surface, CellMeshingResult)
+                else surface.mesh.mesh_id,
                 "surface_source_chart": surface_source.source_chart_id,
                 "plc": plc_source.binding_id,
                 "fidelity_source": (query.source_id, query.source_revision),
@@ -3444,6 +3535,194 @@ def _compliance_for_request(
     )
 
 
+def _cad_certification_request(
+    source: NativeCadVolumeSource,
+    specification: VolumeMeshingSpec,
+    construction: VolumeConstruction,
+    geometry: CellGeometrySpec,
+    curve_association: GeometryAssociation | None,
+    fidelity_tolerance: float,
+    /,
+) -> NativeCertificationRequest:
+    fidelity_witness = _cad_volume_chart_witness(
+        source, construction, geometry, curve_association
+    )
+    scoped_fidelity = []
+    for feature in specification.protected_features:
+        if not feature.hard:
+            continue
+        if feature.feature_kind in (FeatureKind.SURFACE, FeatureKind.MATERIAL_INTERFACE):
+            feature_query, feature_witness = _cad_surface_feature_witness(
+                source.domain, feature, fidelity_witness, source.fidelity_source
+            )
+        elif feature.feature_kind is FeatureKind.CORNER:
+            feature_query = source.fidelity_source
+            feature_witness = _cad_corner_feature_witness(
+                source, construction, geometry, feature
+            )
+        elif feature.feature_kind is FeatureKind.CURVE:
+            feature_query, feature_witness = _cad_curve_feature_witness(
+                source, construction, geometry, feature, fidelity_witness
+            )
+        else:
+            raise ValueError("CAD feature has no supported source chart witness route.")
+        scoped_fidelity.append(
+            (feature_query, feature_witness, feature.maximum_deviation)
+        )
+    return NativeCertificationRequest(
+        MeshCertificationSchedule("volume_cad"),
+        source.source_id,
+        source.source_revision,
+        domain=source.domain,
+        cell_regions=construction.cell_regions,
+        fidelity_source=source.fidelity_source,
+        fidelity_tolerance=fidelity_tolerance,
+        scoped_fidelity=tuple(scoped_fidelity),
+        protected_features=specification.protected_features,
+        fidelity_witness=fidelity_witness,
+        feature_source=source.domain,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class CadDeferredSurface:
+    construction: NativeMeshConstruction
+    specification: SurfaceMeshingSpec
+    plan_id: str
+
+
+def _rebind_cad_volume(
+    construction: VolumeConstruction,
+    screened: PiecewiseLinearComplex,
+    certified: PiecewiseLinearComplex,
+    /,
+) -> VolumeConstruction:
+    if construction.complex_id != screened.complex_id:
+        raise ValueError("CAD volume construction is not bound to its screened PLC.")
+    if screened.structure_id != certified.structure_id:
+        banks = (
+            ("vertices", screened.vertices, certified.vertices),
+            ("polygon_offsets", screened.polygon_offsets, certified.polygon_offsets),
+            ("polygon_vertices", screened.polygon_vertices, certified.polygon_vertices),
+            ("polygon_facets", screened.polygon_facets, certified.polygon_facets),
+            ("facet_regions", screened.facet_regions, certified.facet_regions),
+            ("segments", screened.segments, certified.segments),
+            ("cad_vertex_rows", screened.cad_vertex_rows, certified.cad_vertex_rows),
+            (
+                "cad_segment_edge_ids",
+                screened.cad_segment_edge_ids,
+                certified.cad_segment_edge_ids,
+            ),
+            (
+                "cad_polygon_cell_ids",
+                screened.cad_polygon_cell_ids,
+                certified.cad_polygon_cell_ids,
+            ),
+            ("facet_planes", screened.facet_planes, certified.facet_planes),
+            (
+                "facet_plane_tolerances",
+                screened.facet_plane_tolerances,
+                certified.facet_plane_tolerances,
+            ),
+        )
+        first = "source identity or incidence metadata"
+        for name, left, right in banks:
+            if not np.array_equal(left, right, equal_nan=True):
+                first = name
+                break
+        raise MeshingFailure(
+            MeshingFailureCategory.INVALID_SOURCE,
+            f"Screened CAD PLC differs from certified source at {first}.",
+            stage="source_inspection",
+        )
+    stages = tuple(
+        MeshingStageReport(
+            stage.stage,
+            stage.status,
+            input_ids=tuple(
+                certified.complex_id if value == screened.complex_id else value
+                for value in stage.input_ids
+            ),
+            output_ids=stage.output_ids,
+            diagnostics=stage.diagnostics,
+            created_count=stage.created_count,
+            modified_count=stage.modified_count,
+            deleted_count=stage.deleted_count,
+        )
+        if screened.complex_id in stage.input_ids
+        else stage
+        for stage in construction.stages
+    )
+    return replace(construction, complex_id=certified.complex_id, stages=stages)
+
+
+@dataclass(frozen=True, slots=True)
+class _DeferredCadVolume:
+    source: NativeCadVolumeSource
+    surface: CadDeferredSurface
+    specification: VolumeMeshingSpec
+    schedule: NativeVolumeSchedule
+    coordinate_contract: SpatialCoordinateContract
+    construction: VolumeConstruction
+    geometry: CellGeometrySpec
+    points: np.ndarray
+    organization: NativeMeshOrganization
+    curve_association: GeometryAssociation | None
+    certified_steps: tuple[str, ...]
+
+    def resolve(self) -> NativeMeshConstruction:
+        from ..._meshcore import meshcore_identity
+        from .._canonical import _accept_native_construction, _NATIVE_PROVIDER
+
+        proofs: list[_ComputedSurfaceAcceptance] = []
+        accepted = _accept_native_construction(
+            self.surface.construction,
+            self.surface.specification,
+            _NATIVE_PROVIDER,
+            meshcore_identity(),
+            self.surface.plan_id,
+            "parametric_surface",
+            computed_surface_out=proofs,
+        )
+        certified = NativeCadVolumeSource(
+            self.source.domain,
+            accepted,
+            maximum_deviation=self.source.maximum_deviation,
+            boundary=self.source.plc_source.complex.boundary,
+            _computed_surface=proofs[0],
+        )
+        rebound = _rebind_cad_volume(
+            self.construction,
+            self.source.plc_source.complex,
+            certified.plc_source.complex,
+        )
+        translated = _translate_specification(certified, self.specification)
+        native_compliance = _volume_compliance(
+            certified.plc_source, translated, self.schedule, rebound, self.points
+        )
+        compliance = _compliance_for_request(
+            self.specification, translated, native_compliance
+        )
+        request = _cad_certification_request(
+            certified,
+            self.specification,
+            rebound,
+            self.geometry,
+            self.curve_association,
+            _cad_source_tolerance(certified, self.specification),
+        )
+        return NativeMeshConstruction(
+            rebound.mesh,
+            self.coordinate_contract,
+            compliance,
+            request,
+            geometry=self.geometry,
+            organization=self.organization,
+            stages=rebound.stages,
+            certified_steps=self.certified_steps,
+        )
+
+
 @final
 class PreparedCadVolume(StrictModule, NonTrainableState):
     source: NativeCadVolumeSource
@@ -3474,8 +3753,28 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
             }
         )
 
-    def execute(self, *, steering: ConstructionSteering) -> NativeMeshConstruction:
+    def execute(
+        self,
+        *,
+        steering: ConstructionSteering,
+        surface_premises: CadDeferredSurface | None = None,
+    ) -> NativeMeshConstruction:
         steering = parse(steering, ConstructionSteering, "steering")
+        match steering:
+            case "certified":
+                if not isinstance(self.source.surface, CellMeshingResult):
+                    raise ValueError("Certified CAD volume requires an accepted surface.")
+            case "screened":
+                if not isinstance(self.source.surface, CadSurfaceConstructionData):
+                    raise ValueError(
+                        "Screened CAD volume requires surface construction data."
+                    )
+                if surface_premises is None:
+                    raise ValueError(
+                        "Screened CAD volume requires deferred surface operands."
+                    )
+            case invalid:
+                assert_never(invalid)
         self.source.domain.require_current(
             self.source.source_id, self.source.source_revision
         )
@@ -3537,16 +3836,25 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
             frame_id=self.coordinate_contract.spatial_id,
         )
         physical = physical_plc_tetrahedra(self.source.plc_source, construction)
-        native_compliance = _volume_compliance(
-            self.source.plc_source,
-            translated,
-            self.schedule,
-            construction,
-            physical.points,
-        )
-        compliance = _compliance_for_request(
-            self.specification, translated, native_compliance
-        )
+        match steering:
+            case "certified":
+                native_compliance = _volume_compliance(
+                    self.source.plc_source,
+                    translated,
+                    self.schedule,
+                    construction,
+                    physical.points,
+                )
+                compliance = _compliance_for_request(
+                    self.specification, translated, native_compliance
+                )
+            case "screened":
+                compliance = MeshingComplianceReport(
+                    self.specification.specification_id,
+                    issues=("compliance not assessed: screened construction",),
+                )
+            case invalid:
+                assert_never(invalid)
         fidelity_tolerance = _cad_source_tolerance(self.source, self.specification)
         organization = _plc_organization(
             self.source.plc_source,
@@ -3571,68 +3879,75 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
             region_boundary_evidence=organization.region_boundary_evidence,
             surface_source=self.source.surface_source,
         )
-        fidelity_witness = _cad_volume_chart_witness(
-            self.source, construction, physical.geometry, curve_association
-        )
-        scoped_fidelity = []
-        for feature in self.specification.protected_features:
-            if not feature.hard:
-                continue
-            if feature.feature_kind in (
-                FeatureKind.SURFACE,
-                FeatureKind.MATERIAL_INTERFACE,
-            ):
-                feature_query, feature_witness = _cad_surface_feature_witness(
-                    self.source.domain,
-                    feature,
-                    fidelity_witness,
-                    self.source.fidelity_source,
-                )
-            elif feature.feature_kind is FeatureKind.CORNER:
-                feature_query = self.source.fidelity_source
-                feature_witness = _cad_corner_feature_witness(
+        match steering:
+            case "certified":
+                certification = _cad_certification_request(
                     self.source,
+                    self.specification,
                     construction,
                     physical.geometry,
-                    feature,
+                    curve_association,
+                    fidelity_tolerance,
                 )
-            elif feature.feature_kind is FeatureKind.CURVE:
-                feature_query, feature_witness = _cad_curve_feature_witness(
+                return NativeMeshConstruction(
+                    construction.mesh,
+                    self.coordinate_contract,
+                    compliance,
+                    certification,
+                    geometry=physical.geometry,
+                    organization=organization,
+                    stages=construction.stages,
+                )
+            case "screened":
+                if surface_premises is None:
+                    raise ValueError(
+                        "Screened CAD volume requires deferred surface operands."
+                    )
+                steps = (
+                    "boundary_distance",
+                    "cad_plane",
+                    "curve_partition",
+                    "plc_coplanarity",
+                    "surface_construction",
+                    "surface_incidence",
+                )
+                certification = NativeCertificationRequest(
+                    MeshCertificationSchedule("volume_cad"),
+                    self.source.source_id,
+                    self.source.source_revision,
+                    domain=self.source.domain,
+                    cell_regions=construction.cell_regions,
+                    fidelity_source=self.source.fidelity_source,
+                    fidelity_tolerance=fidelity_tolerance,
+                    protected_features=self.specification.protected_features,
+                    feature_source=self.source.domain,
+                )
+                deferred = _DeferredCadVolume(
                     self.source,
+                    surface_premises,
+                    self.specification,
+                    self.schedule,
+                    self.coordinate_contract,
                     construction,
                     physical.geometry,
-                    feature,
-                    fidelity_witness,
+                    physical.points,
+                    organization,
+                    curve_association,
+                    steps,
                 )
-            else:
-                raise ValueError(
-                    "CAD feature has no supported source chart witness route."
+                return NativeMeshConstruction(
+                    construction.mesh,
+                    self.coordinate_contract,
+                    compliance,
+                    certification,
+                    geometry=physical.geometry,
+                    organization=organization,
+                    stages=construction.stages,
+                    deferred_certification=deferred,
+                    certified_steps=steps,
                 )
-            scoped_fidelity.append(
-                (feature_query, feature_witness, feature.maximum_deviation)
-            )
-        certification = NativeCertificationRequest(
-            MeshCertificationSchedule("volume_cad"),
-            self.source.source_id,
-            self.source.source_revision,
-            domain=self.source.domain,
-            cell_regions=construction.cell_regions,
-            fidelity_source=self.source.fidelity_source,
-            fidelity_tolerance=fidelity_tolerance,
-            scoped_fidelity=tuple(scoped_fidelity),
-            protected_features=self.specification.protected_features,
-            fidelity_witness=fidelity_witness,
-            feature_source=self.source.domain,
-        )
-        return NativeMeshConstruction(
-            construction.mesh,
-            self.coordinate_contract,
-            compliance,
-            certification,
-            geometry=physical.geometry,
-            organization=organization,
-            stages=construction.stages,
-        )
+            case invalid:
+                assert_never(invalid)
 
 
 def prepare_native_cad_volume(
