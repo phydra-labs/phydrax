@@ -65,6 +65,7 @@ def rational_cross_2d[T: ExactField](first: tuple[T, T], second: tuple[T, T], /)
 
 _BINARY64_MAXIMUM = float(np.finfo(np.float64).max)
 _RATIONAL_BINARY64_MAXIMUM = Fraction(_BINARY64_MAXIMUM)
+_RATIONAL_BINARY64_OVERFLOW_THRESHOLD = _RATIONAL_BINARY64_MAXIMUM + Fraction(2**970)
 
 
 def _float_overflow_endpoint(value: Fraction, /, *, upper: bool) -> float:
@@ -557,16 +558,89 @@ def translation_ranges(
     return tuple(ranges)
 
 
+def binary64_sum(values: ArrayLike, /, *, axis: int) -> NDArray[np.float64]:
+    """Sum one axis from low to high index with separate binary64 additions.
+
+    The first element initializes the sum; an empty axis gives positive zero.
+    NaNs, infinities, overflow and underflow follow the elementwise additions.
+    """
+    if np.iscomplexobj(values):
+        raise TypeError("Complex operands are not supported.")
+    array = np.moveaxis(np.asarray(values, dtype=np.float64), axis, -1)
+    if array.shape[-1] == 0:
+        return np.zeros(array.shape[:-1], dtype=np.float64)
+    result = np.array(array[..., 0], dtype=np.float64, copy=True)
+    for index in range(1, array.shape[-1]):
+        np.add(result, array[..., index], out=result)
+    return result
+
+
+def binary64_least_squares(matrix: ArrayLike, right: ArrayLike, /) -> NDArray[np.float64]:
+    """Solve a small binary64 least-squares problem over the exact rationals.
+
+    Inputs are lifted exactly. The normal equations are solved over the
+    rationals and each component is rounded once to binary64, ties to even.
+    A solution whose correctly rounded component is nonfinite raises ValueError;
+    values above the largest finite binary64 are accepted when they round to it.
+    When the matrix is rank deficient, the unique minimum-Euclidean-norm
+    least-squares solution is selected exactly before rounding.
+    """
+    from ..linalg._exact import factor_exact_sparse
+
+    if np.iscomplexobj(matrix) or np.iscomplexobj(right):
+        raise TypeError("Complex operands are not supported.")
+    a = np.asarray(matrix, dtype=np.float64)
+    b = np.asarray(right, dtype=np.float64)
+    if a.ndim != 2 or b.ndim != 1 or a.shape[0] != b.shape[0] or a.shape[1] == 0:
+        raise ValueError("Expected a matrix and a matching nonempty right-hand side.")
+    if not np.all(np.isfinite(a)) or not np.all(np.isfinite(b)):
+        raise ValueError("Least-squares inputs must be finite.")
+    rows = [rational_vector(row) for row in a]
+    rhs = rational_vector(b)
+    width = a.shape[1]
+    columns = tuple(tuple(row[index] for row in rows) for index in range(width))
+    gram = [[rational_dot(first, second) for second in columns] for first in columns]
+    target = [[rational_dot(column, rhs)] for column in columns]
+    factor = factor_exact_sparse(
+        [{index: value for index, value in enumerate(row) if value} for row in gram],
+        width,
+        ordered=True,
+    )
+    nullspace = factor.nullspace_basis()
+    if nullspace:
+        augmented = [
+            row + [vector[index] for vector in nullspace]
+            for index, row in enumerate(gram)
+        ]
+        augmented.extend(
+            [list(vector) + [Fraction(0)] * len(nullspace) for vector in nullspace]
+        )
+        target.extend([[Fraction(0)] for _ in nullspace])
+        solution = solve_exact(augmented, target)
+    else:
+        solution = solve_exact(gram, target)
+    if any(
+        abs(solution[index][0]) >= _RATIONAL_BINARY64_OVERFLOW_THRESHOLD
+        for index in range(width)
+    ):
+        raise ValueError("Least-squares solution is not finite in binary64.")
+    return np.asarray(
+        [float(solution[index][0]) for index in range(width)], dtype=np.float64
+    )
+
+
 __all__ = [
     "RationalVector",
     "binary64_difference_magnitude",
     "binary64_dyadic_entries",
     "binary64_dot",
+    "binary64_least_squares",
     "binary64_matmul",
     "binary64_norm",
     "binary64_norm_lower",
     "binary64_norm_upper",
     "binary64_spectral_upper",
+    "binary64_sum",
     "dyadic_entry",
     "dyadic_integers",
     "exact_float",

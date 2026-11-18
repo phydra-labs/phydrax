@@ -166,4 +166,46 @@ inline double point_triangle_distance(const double* p, const double* a, const do
   return std::sqrt(squared_distance(p, q));
 }
 
+// Minimum of the three computed edge distances and, when the rounded normal
+// resolves the face, its orthogonal projection. A cross-product component has
+// error at most about 3 epsilon times the sum of its two product magnitudes;
+// their vector norm is at most 3 sqrt(2) epsilon |ab| |ac|. The squared
+// threshold 128 epsilon^2 |ab|^2 |ac|^2 therefore exceeds twice that error
+// in norm. Below it, a nondegenerate face is approximated by its boundary;
+// its height is bounded, up to higher-order rounding, by
+// (sqrt(128) + 3 sqrt(2)) epsilon times an edge length. The computed result
+// never exceeds the computed edge minimum. Segment witnesses lie on their
+// edges only up to component rounding; no exact inclusion is asserted.
+// The complete score (maximum of this candidate and the ordered box distance)
+// has no proved accuracy bound. Its operation-sequence approximation can be
+// above or below the true distance, and a true zero can return a small nonzero.
+// On 75,066 in-domain rows, observed error in ulps of the largest input-coordinate
+// magnitude had maximum 41.4, median 0, and p99 2; these are not a bound.
+inline double point_triangle_candidate_distance(const double* p, const double* a,
+                                                const double* b, const double* c) noexcept {
+  double result = std::min({point_segment_distance(p, a, b), point_segment_distance(p, b, c),
+                            point_segment_distance(p, c, a)});
+  const double ab[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+  const double ac[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+  const double ap[3] = {p[0] - a[0], p[1] - a[1], p[2] - a[2]};
+  double n[3];
+  cross(ab, ac, n);
+  const double nn = dot(n, n);
+  const double threshold = (0x1p-97 * dot(ab, ab)) * dot(ac, ac);
+  if (nn > threshold) {
+    const double bc[3] = {c[0] - b[0], c[1] - b[1], c[2] - b[2]};
+    const double ca[3] = {a[0] - c[0], a[1] - c[1], a[2] - c[2]};
+    const double bp[3] = {p[0] - b[0], p[1] - b[1], p[2] - b[2]};
+    const double cp[3] = {p[0] - c[0], p[1] - c[1], p[2] - c[2]};
+    double side0[3], side1[3], side2[3];
+    cross(ab, ap, side0);
+    cross(bc, bp, side1);
+    cross(ca, cp, side2);
+    if (dot(n, side0) >= 0.0 && dot(n, side1) >= 0.0 && dot(n, side2) >= 0.0) {
+      result = std::min(result, std::fabs(dot(n, ap)) / std::sqrt(nn));
+    }
+  }
+  return result;
+}
+
 }  // namespace phx::mc::geometry

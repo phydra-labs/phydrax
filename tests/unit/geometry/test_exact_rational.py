@@ -10,10 +10,12 @@ from phydrax._meshcore import meshcore_available
 from phydrax.geometry._rational import (
     binary64_difference_magnitude,
     binary64_dot,
+    binary64_least_squares,
     binary64_matmul,
     binary64_norm,
     binary64_norm_lower,
     binary64_norm_upper,
+    binary64_sum,
     exact_float,
     fraction_endpoint,
     rational_cross,
@@ -64,6 +66,24 @@ def test_binary64_ordered_products_match_fraction_rounding_and_batches() -> None
     np.testing.assert_array_equal(
         binary64_matmul(a[:1], np.stack([b, b])), expected[:1] + np.zeros((2, 2, 2))
     )
+
+
+@pytest.mark.parametrize("winding", [(1, 1, 1), (2**53 + 1, -1, 1)])
+def test_periodic_integer_winding_product_has_ordered_binary64_rounding(
+    winding: tuple[int, int, int],
+) -> None:
+    integer_winding = np.asarray(winding, dtype=np.int64)
+    lattice = np.asarray([[1e16, 0.1], [-1e16, -0.3], [1.0, 0.7]], dtype=np.float64)
+    expected = np.asarray(
+        [
+            _ordered_fraction_dot(integer_winding, lattice[:, column])
+            for column in range(lattice.shape[1])
+        ],
+        dtype=np.float64,
+    )
+    np.testing.assert_array_equal(binary64_matmul(integer_winding, lattice), expected)
+    if winding[0] == 1:
+        assert expected[0] == 1.0
 
 
 def test_binary64_hex_rounding_trees_and_fused_counterexample() -> None:
@@ -706,3 +726,78 @@ def test_binary64_cube_root_against_integer_rounding() -> None:
     )
     unchanged = unchanged_bits.view(np.float64)
     assert np.array_equal(binary64_cube_root(unchanged).view(np.uint64), unchanged_bits)
+
+
+def test_binary64_sum_uses_index_order_on_runtime_axis() -> None:
+    values = np.asarray([[1.0e16, 1.0, -1.0e16, 2.0]], dtype=np.float64)
+    expected = 1.0e16
+    for item in (1.0, -1.0e16, 2.0):
+        expected = float(Fraction(expected) + Fraction(item))
+    np.testing.assert_array_equal(binary64_sum(values, axis=1), [expected])
+    np.testing.assert_array_equal(
+        binary64_sum(np.empty((2, 0), dtype=np.float64), axis=1), [0.0, 0.0]
+    )
+
+
+def test_binary64_least_squares_exact_and_minimum_norm() -> None:
+    matrix = np.asarray(
+        [[1.0, 1.0], [1.0, 1.0 + 2.0**-30], [0.0, 2.0**-50]], dtype=np.float64
+    )
+    right = np.asarray([0.0, 1.0, 2.0], dtype=np.float64)
+    a = [[Fraction(float(value)) for value in row] for row in matrix]
+    b = [Fraction(float(value)) for value in right]
+    g00 = sum((row[0] ** 2 for row in a), Fraction())
+    g01 = sum((row[0] * row[1] for row in a), Fraction())
+    g11 = sum((row[1] ** 2 for row in a), Fraction())
+    h0 = sum((row[0] * value for row, value in zip(a, b, strict=True)), Fraction())
+    h1 = sum((row[1] * value for row, value in zip(a, b, strict=True)), Fraction())
+    determinant = g00 * g11 - g01 * g01
+    expected = np.asarray(
+        [
+            float((g11 * h0 - g01 * h1) / determinant),
+            float((g00 * h1 - g01 * h0) / determinant),
+        ],
+        dtype=np.float64,
+    )
+    np.testing.assert_array_equal(binary64_least_squares(matrix, right), expected)
+    singular = np.asarray([[1.0, 2.0], [2.0, 4.0], [3.0, 6.0]], dtype=np.float64)
+    np.testing.assert_array_equal(
+        binary64_least_squares(singular, np.asarray([1.0, 2.0, 3.0], dtype=np.float64)),
+        np.asarray([float(Fraction(1, 5)), float(Fraction(2, 5))], dtype=np.float64),
+    )
+
+
+@pytest.mark.parametrize("sign", [1.0, -1.0])
+def test_binary64_least_squares_overflow_rounding_boundary(sign: float) -> None:
+    maximum = np.finfo(np.float64).max
+    threshold_increment = 2.0**970
+    matrix = np.asarray([[1.0, -1.0], [0.0, 1.0]], dtype=np.float64)
+
+    for increment in (0.0, np.nextafter(threshold_increment, 0.0)):
+        result = binary64_least_squares(
+            matrix, np.asarray([sign * maximum, sign * increment], dtype=np.float64)
+        )
+        np.testing.assert_array_equal(result, [sign * maximum, sign * increment])
+
+    for increment in (
+        threshold_increment,
+        np.nextafter(threshold_increment, np.inf),
+    ):
+        with pytest.raises(ValueError, match="solution is not finite"):
+            binary64_least_squares(
+                matrix, np.asarray([sign * maximum, sign * increment], dtype=np.float64)
+            )
+
+    with pytest.raises(ValueError, match="solution is not finite"):
+        binary64_least_squares(
+            np.asarray([[0.5]], dtype=np.float64),
+            np.asarray([sign * 2.0**1023], dtype=np.float64),
+        )
+
+
+def test_binary64_least_squares_rejects_subnormal_divisor_overflow() -> None:
+    with pytest.raises(ValueError, match="solution is not finite"):
+        binary64_least_squares(
+            np.asarray([[5e-324]], dtype=np.float64),
+            np.asarray([1.0], dtype=np.float64),
+        )

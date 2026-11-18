@@ -16,6 +16,25 @@
   coplanar triangles when the floating-point normal cancels.
 - Welded mesh audits accelerate vertex and edge star incidence lookups without
   changing topology findings or their order.
+- Mapped-cell location uses specified binary64 residual norms, exact-rational
+  least-squares proposals, and ordered periodic winding products. Root
+  acceptance near tolerance boundaries and stored owner-local lifted
+  coordinates and their fingerprints can change. Krawczyk preconditioner
+  solves can still affect isolation status, SVD directions can affect
+  tolerance-segment refusal witnesses, and condition diagnostics and the
+  inverse-Jacobian calculation remain platform-dependent. Floating integer
+  powers and runtime-width reference-coordinate sums and products are also not
+  specified across platforms. Current production owner-local views are already
+  lifted, so they do not exercise the unlifted winding-product path.
+- Boundary-layer directions, heights, distances, and quantities derived from
+  them now use specified binary64 operations, including a native distance
+  kernel. In captured tests the visibility solve differed from the old inexact
+  solver by up to 287 units in the last place at condition number 569; stored
+  coordinates and thicknesses moved by at most 3 units except near zero, where
+  a coordinate changed from -9.0e-19 to 6.2e-19. Layer mesh coordinates and
+  their fingerprints can consequently change. Exact least-squares solutions
+  that round to infinity are refused with a `ValueError` rather than an
+  `OverflowError`.
 - Native geometry and meshing now share a single fixed-order binary64 dot,
   matrix product, and norm definition. On platforms whose BLAS fused or
   reordered these operations, rounding can change surface-association
