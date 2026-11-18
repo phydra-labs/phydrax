@@ -116,13 +116,15 @@ inline bool gradual_nearest_arithmetic() noexcept {
 }
 
 // Establishes round-to-nearest with gradual underflow for its lifetime, and
-// `established` verifies it by arithmetic. The verification holds until the
+// `established` verifies it by arithmetic. A verification holds until the
 // thread's next mode write: the kernels write the mode only through
 // set_floating_point_mode and run no foreign code inside a scope (the
-// parallel callback entry holds none). A scope opened under a verified one
-// with no write since is nested: it neither reads the control register nor
-// repeats the check, whose subnormal operations cost a microcode assist each
-// on common processors, once for every interval program a kernel executes.
+// parallel callback entry holds none). While it holds, a scope opened under
+// the verifying one does not read the control register, and `established` of
+// either answers without repeating the check, whose subnormal operations cost
+// a microcode assist each on common processors, once for every interval
+// program a kernel executes. After a mode write every `established` verifies
+// by arithmetic again, the verifying scope's own included.
 class GradualNearestScope final {
  public:
   GradualNearestScope() noexcept
@@ -138,9 +140,9 @@ class GradualNearestScope final {
   GradualNearestScope& operator=(const GradualNearestScope&) = delete;
 
   bool established() const noexcept {
-    if (nested_ || verified_) return true;
+    if (floating_point_detail::verified_at == floating_point_detail::mode_writes) return true;
     if (!gradual_nearest_arithmetic()) return false;
-    enclosing_ = floating_point_detail::verified_at;
+    if (!verified_) enclosing_ = floating_point_detail::verified_at;
     floating_point_detail::verified_at = floating_point_detail::mode_writes;
     verified_ = true;
     return true;

@@ -1083,8 +1083,9 @@ void floating_point_modes() {
 
 // A scope opened under a verified scope relies on that verification, and a
 // program executed there gives the round-to-nearest result. A mode write in
-// between ends the reliance: the inner scope establishes the mode again and
-// restores the written one.
+// between ends the reliance: the verifying scope itself then answers by
+// arithmetic again, and an inner scope establishes the mode and restores the
+// written one.
 void nested_mode_scopes() {
   Program subnormal;
   const std::int64_t source = subnormal.values({{kSmallest, 0x1p-1060}, {0x1p-1023, 0x1p-1022}});
@@ -1104,6 +1105,7 @@ void nested_mode_scopes() {
     if (phx::mc::kFlushControl) {
       phx::mc::set_floating_point_mode(phx::mc::kFlushingMode);
       PHX_CHECK(!phx::mc::gradual_nearest_arithmetic());
+      PHX_CHECK(!outer.established());
       {
         const phx::mc::GradualNearestScope inner;
         PHX_CHECK(inner.established());
@@ -1115,7 +1117,13 @@ void nested_mode_scopes() {
       PHX_CHECK(identical(flushed.lower, nearest.lower));
       PHX_CHECK(identical(flushed.upper, nearest.upper));
       PHX_CHECK(phx::mc::floating_point_mode() == phx::mc::kFlushingMode);
+      PHX_CHECK(!outer.established());
       phx::mc::set_floating_point_mode(phx::mc::kGradualNearestMode);
+      PHX_CHECK(outer.established());
+      Program restored = subnormal;
+      PHX_CHECK(execute(restored) == PHX_MC_OK);
+      PHX_CHECK(identical(restored.lower, nearest.lower));
+      PHX_CHECK(identical(restored.upper, nearest.upper));
     }
   }
   PHX_CHECK(phx::mc::floating_point_mode() == initial_mode);
