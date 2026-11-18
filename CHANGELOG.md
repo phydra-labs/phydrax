@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- Accelerated exact planar chart pair screening while preserving outward boxes,
+  candidate order, and separation decisions.
 - Fixed the native CAD qualification intersection evidence reporting a p-curve
   residual that was zero by construction: `maximum_residuals_m.first_pcurve`
   and `.second_pcurve` now measure each patch lift against the declared analytic
