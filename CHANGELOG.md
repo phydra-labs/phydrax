@@ -1,6 +1,13 @@
 # Changelog
 
 ## Unreleased
+- Concrete cell-quality evaluations use specified host binary64 arithmetic
+  without requiring meshcore. Stored quality diagnostics and their extrema can
+  change in their last bits, including the ordering of equally poor cells.
+  JAX-traced evaluations remain differentiable and may not bind as a supplied
+  concrete audit evaluation. Metric interpolation remains device-dependent.
+  Native CAD qualification volume summaries also accumulate cell measures in
+  mesh block order, so their reported volumes and relative defects can change.
 - Native geometry and meshing now share a single fixed-order binary64 dot,
   matrix product, and norm definition. On platforms whose BLAS fused or
   reordered these operations, rounding can change surface-association

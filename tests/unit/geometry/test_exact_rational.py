@@ -565,3 +565,108 @@ def test_rational_endpoint_saturation_is_outward() -> None:
         np.finfo(np.float64).max
     )
     assert fraction_endpoint(maximum + 1, upper=True, saturate=True) == np.inf
+
+
+@pytest.mark.meshcore
+def test_portable_angles_match_native_bits_on_generated_and_special_inputs() -> None:
+    from phydrax._meshcore import angle_arctangent2, angle_between
+    from phydrax.geometry._rational import binary64_angle_between, binary64_arctangent2
+
+    rng = np.random.default_rng(20261118)
+    # Full bit patterns cover subnormals, extreme ratios and nonfinite inputs;
+    # bounded pairs also exercise the polynomial's reduction intervals densely.
+    y = rng.integers(0, 2**64, size=1_000_000, dtype=np.uint64).view(np.float64)
+    x = rng.integers(0, 2**64, size=1_000_000, dtype=np.uint64).view(np.float64)
+    special = np.array(
+        [
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            np.inf,
+            -np.inf,
+            np.nan,
+            np.nextafter(0.0, 1.0),
+            -np.nextafter(0.0, 1.0),
+            np.finfo(np.float64).max,
+            -np.finfo(np.float64).max,
+        ]
+    )
+    yy, xx = np.meshgrid(special, special)
+    y = np.concatenate((y, rng.uniform(-1.0, 1.0, 100_000), yy.ravel()))
+    x = np.concatenate((x, rng.uniform(-1.0, 1.0, 100_000), xx.ravel()))
+    for portable, native, first in (
+        (binary64_angle_between, angle_between, y),
+        (binary64_arctangent2, angle_arctangent2, y),
+    ):
+        actual = portable(first, x)
+        expected = native(first, x)
+        assert np.array_equal(actual.view(np.uint64), expected.view(np.uint64))
+    assert binary64_angle_between(
+        np.array([[1.0], [0.0]]), np.array([1.0, -1.0])
+    ).shape == (2, 2)
+
+
+def _integer_rounded_cube_root(value: float) -> float:
+    """Correctly rounded positive cube root using integer midpoint comparisons."""
+    numerator, denominator = value.as_integer_ratio()
+    exponent = (math.frexp(value)[1] - 1) // 3
+    shift = 52 - exponent
+    if shift >= 0:
+        numerator <<= 3 * shift
+    else:
+        denominator <<= -3 * shift
+    low, high = 1 << 52, 1 << 53
+    while low + 1 < high:
+        middle = (low + high) // 2
+        if middle**3 * denominator <= numerator:
+            low = middle
+        else:
+            high = middle
+    midpoint_cube = (2 * low + 1) ** 3 * denominator
+    if 8 * numerator > midpoint_cube or (8 * numerator == midpoint_cube and low & 1):
+        low += 1
+    return math.ldexp(float(low), -shift)
+
+
+def test_binary64_cube_root_against_integer_rounding() -> None:
+    from phydrax.geometry._rational import binary64_cube_root
+
+    rng = np.random.default_rng(20261118)
+    bits = rng.integers(0, 0x7FF0000000000000, size=1_000_000, dtype=np.uint64)
+    values = np.concatenate(
+        (
+            bits[10:20_006].view(np.float64),
+            np.array(
+                [
+                    np.nextafter(0.0, 1.0),
+                    np.finfo(np.float64).tiny,
+                    np.finfo(np.float64).max,
+                    1.0,
+                    8.0,
+                    27.0,
+                ]
+            ),
+        )
+    )
+    actual = binary64_cube_root(values)
+    expected = np.array([_integer_rounded_cube_root(float(x)) for x in values])
+    # The native Newton iteration is not correctly rounded.  One ULP was the
+    # maximum observed on this fixed stream, not a claimed universal bound.
+    distances = np.abs(actual.view(np.int64) - expected.view(np.int64))
+    assert int(np.max(distances)) <= 1
+
+    unchanged_bits = np.array(
+        [
+            0,
+            0x8000000000000000,
+            0xBFF0000000000000,
+            0x7FF0000000000000,
+            0xFFF0000000000000,
+            0x7FF8000000001234,
+            0xFFF8000000004321,
+        ],
+        dtype=np.uint64,
+    )
+    unchanged = unchanged_bits.view(np.float64)
+    assert np.array_equal(binary64_cube_root(unchanged).view(np.uint64), unchanged_bits)
