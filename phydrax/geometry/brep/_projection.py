@@ -138,9 +138,7 @@ class _ProjectionPreparation:
     segment_distances: dict[int, _SegmentDistancePreparation | None] = field(
         default_factory=dict
     )
-    arc_distances: dict[int, _ArcDistancePreparation | None] = field(
-        default_factory=dict
-    )
+    arc_distances: dict[int, _ArcDistancePreparation | None] = field(default_factory=dict)
     plane_jacobians: dict[int, np.ndarray] = field(default_factory=dict)
     line_derivatives: dict[int, np.ndarray] = field(default_factory=dict)
     circle_endpoints: dict[int, tuple[np.ndarray, np.ndarray]] = field(
@@ -5617,15 +5615,25 @@ class NativeBRepProjection(AbstractBRepProjection):
         batch_points: bool = False,
         preparation: _ProjectionPreparation | None = None,
         _occurrence: _Occurrence | None = None,
+        _targets: dict[tuple[int, int, tuple[str, ...] | None], tuple[_Occurrence, ...]]
+        | None = None,
     ) -> _Hit:
         count = self.entity_counts[dimension]
         if index < 0 or index >= count:
             raise ValueError("Entity index lies outside its B-Rep dimension.")
-        targets = (
-            (_occurrence,)
-            if _occurrence is not None
-            else self._target_occurrences(dimension, index, occurrence_path)
-        )
+        if _occurrence is not None:
+            targets = (_occurrence,)
+        elif _targets is not None and (
+            occurrence_path is None
+            or all(isinstance(value, str) for value in occurrence_path)
+        ):
+            key = (dimension, index, occurrence_path)
+            targets = _targets.get(key)
+            if targets is None:
+                targets = self._target_occurrences(dimension, index, occurrence_path)
+                _targets[key] = targets
+        else:
+            targets = self._target_occurrences(dimension, index, occurrence_path)
         if not targets:
             return _failed(self.ambient_dimension)
         hits: list[_Hit] = []
@@ -5918,6 +5926,9 @@ class NativeBRepProjection(AbstractBRepProjection):
         lifts = preparation.lifts
         angle_bounds = preparation.angle_bounds
         boxes = preparation.boxes
+        targets: dict[
+            tuple[int, int, tuple[str, ...] | None], tuple[_Occurrence, ...]
+        ] = {}
         for row, (dimension, index) in enumerate(zip(dims, rows, strict=True)):
             if row % 64 == 0:
                 for trim_cache in enclosures.values():
@@ -5938,6 +5949,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                     boxes=boxes,
                     angle_bounds=angle_bounds,
                     preparation=preparation,
+                    _targets=targets,
                     batch_points=True,
                     defer_frame=(
                         isinstance(
@@ -5979,7 +5991,12 @@ class NativeBRepProjection(AbstractBRepProjection):
             for row, value in zip(selected, values, strict=True):
                 value = np.asarray(value, dtype=np.float64)
                 hit = hits[row]
-                occurrence = self._target_occurrences(dimension, hit.index, hit.path)[0]
+                key = (dimension, hit.index, hit.path)
+                occurrences = targets.get(key)
+                if occurrences is None:
+                    occurrences = self._target_occurrences(*key)
+                    targets[key] = occurrences
+                occurrence = occurrences[0]
                 if occurrence.path:
                     value = np.asarray(
                         occurrence.rotation, dtype=np.float64
@@ -6017,7 +6034,12 @@ class NativeBRepProjection(AbstractBRepProjection):
             bounds = preparation.faces[face].bounds
             for row, jacobian in zip(selected, jacobians, strict=True):
                 hit = hits[row]
-                occurrence = self._target_occurrences(2, face, hit.path)[0]
+                key = (2, face, hit.path)
+                occurrences = targets.get(key)
+                if occurrences is None:
+                    occurrences = self._target_occurrences(*key)
+                    targets[key] = occurrences
+                occurrence = occurrences[0]
                 normal, tangents, regular = _face_normal_and_frame(
                     patch,
                     hit.parameters,
