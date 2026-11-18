@@ -1482,6 +1482,7 @@ def build_oriented_boundary(
     batched_traces: dict[frozenset[int], bool | None] = {}
     simplex_maps: SimplexMaps = {}
     integer_programs: IntegerPrograms = {}
+    exterior_evidence: dict[frozenset[int], tuple[str, ...] | None] = {}
     for start in range(0, len(facet_items), 256):
         group = facet_items[start : start + 256]
         requests = tuple(
@@ -1500,6 +1501,12 @@ def build_oriented_boundary(
             for (key, incident), decision in zip(group, decisions, strict=True)
             if len(incident) == 2
         )
+        for key, incident in group:
+            if len(incident) == 1:
+                cell_index, vertex_ids, points = incident[0]
+                exterior_evidence[key] = _face_trace_image_evidence(
+                    cells[cell_index], vertex_ids, points, point_values=trace_values
+                )
         if len(trace_values) > _TRACE_VALUE_POINTS:
             trace_values.clear()
     del simplex_maps, integer_programs
@@ -1563,11 +1570,7 @@ def build_oriented_boundary(
             continue
         cell_index, vertex_ids, points = incident[0]
         exterior_cells.add(cell_index)
-        if len(trace_values) > _TRACE_VALUE_POINTS:
-            trace_values.clear()
-        map_evidence = _face_trace_image_evidence(
-            cells[cell_index], vertex_ids, points, point_values=trace_values
-        )
+        map_evidence = exterior_evidence[key]
         if map_evidence is None:
             findings.append(
                 BoundaryFinding(
