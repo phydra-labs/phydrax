@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
 
+from .._external_resource import content_source_identity
 from .._host_io import open_regular_beneath
 from ..typing import checked
 from ..units._dimension import LENGTH
@@ -32,7 +33,9 @@ class CadResource:
 
     def source_identity(self, format_name: str, digest: str | None = None) -> str:
         """Identify source bytes independently of their location."""
-        return f"{format_name}-{(self.digest if digest is None else digest)[:16]}"
+        return content_source_identity(
+            format_name, self.digest if digest is None else digest
+        )
 
 
 type CadResourceDecoder = Callable[[CadResource, CadImportPolicy], CadImportResult]

@@ -1656,6 +1656,17 @@ result counts as a certified solid only when all of these pass:
 `measure` and `porosity` are measured values; the fidelity bounds are their
 evidence.
 
+### Surface and mesh import identity
+
+Surface imports without embedded Phydrax metadata use the format name and the
+first 16 hexadecimal SHA-256 digits of the exact input file as their source
+identity. Embedded source metadata remains authoritative. The input path is
+available on the import report, not in the model identity. Mesh array imports
+use the same rule and retain their path on the artifact; finite-element imports
+retain it on the report. These mesh readers admit single-file profiles only.
+The surface OBJ reader stages only the OBJ bytes; meshio ignores material-file
+references, so companion material files are not read or included in the digest.
+
 ### Lattice solid export
 
 `export_lattice_solid(path, volume, policy, file_format=None)` writes an

@@ -319,6 +319,7 @@ class MeshArrayArtifact:
     zones: tuple[MeshArraySelection, ...]
     labels: tuple[MeshArraySelection, ...]
     patches: tuple[MeshArraySelection, ...]
+    source_path: str | None
     artifact_id: str
 
     @checked
@@ -340,6 +341,7 @@ class MeshArrayArtifact:
         zones: tuple[MeshArraySelection, ...] = (),
         labels: tuple[MeshArraySelection, ...] = (),
         patches: tuple[MeshArraySelection, ...] = (),
+        source_path: str | None = None,
     ) -> None:
         if np.asarray(points).dtype.kind not in "iuf":
             raise TypeError("Mesh array points must contain real numeric coordinates.")
@@ -523,6 +525,7 @@ class MeshArrayArtifact:
             ("coordinate_contract", coordinate_contract),
             ("source_id", source),
             ("source_format", format_),
+            ("source_path", source_path),
             ("numeric_version", version),
             ("vertex_point_indices", vertices),
             ("entity_global_ids", entity_sets),

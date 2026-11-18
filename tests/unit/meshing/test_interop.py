@@ -1,8 +1,10 @@
+import hashlib
 from typing import Any
 
 import meshio
 import numpy as np
 import pytest
+from numpy.typing import ArrayLike
 
 import phydrax as phx
 from phydrax.discretization._cell_ordering import (
@@ -44,6 +46,37 @@ def _policy(*, allow_lossy: Any = False) -> Any:
     return phx.meshing.MeshInteropPolicy(
         phx.SpatialCoordinateContract.si(), allow_lossy=allow_lossy
     )
+
+
+@pytest.mark.parametrize(
+    ("extension", "writer"), (("msh", "gmsh22"), ("vtk", "vtk"), ("vtu", "vtu"))
+)
+def test_mesh_file_identity_is_location_independent(
+    tmp_path: Any, extension: str, writer: str
+) -> None:
+    left, right = tmp_path / "left", tmp_path / "right"
+    left.mkdir()
+    right.mkdir()
+    first, second = left / f"a.{extension}", right / f"b.{extension}"
+    points = np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
+    cells: dict[str, ArrayLike] = {"triangle": np.asarray(((0, 1, 2),), dtype=np.int32)}
+    meshio.write(first, meshio.Mesh(points, cells), file_format=writer)
+    second.write_bytes(first.read_bytes())
+    a, report_a = phx.meshing.read_mesh_array_artifact(first, _policy(allow_lossy=True))
+    b, report_b = phx.meshing.read_mesh_array_artifact(second, _policy(allow_lossy=True))
+    assert a.source_id == b.source_id
+    assert a.source_id == (
+        f"{'gmsh' if extension == 'msh' else extension}-"
+        f"{hashlib.sha256(first.read_bytes()).hexdigest()[:16]}"
+    )
+    assert a.artifact_id == b.artifact_id
+    assert report_a.report_id == report_b.report_id
+    assert a.source_path == str(first.absolute())
+    assert b.source_path == str(second.absolute())
+    meshio.write(second, meshio.Mesh(points * 2.0, cells), file_format=writer)
+    changed, _ = phx.meshing.read_mesh_array_artifact(second, _policy(allow_lossy=True))
+    assert changed.source_id != a.source_id
+    assert changed.artifact_id != a.artifact_id
 
 
 def test_native_artifact_export_is_not_admitted_by_reader_entity_limits() -> None:

@@ -20,7 +20,11 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from ..._array_archive import read_array_archive, write_array_archive
-from ..._external_resource import open_bounded_resource, ResourceLimits
+from ..._external_resource import (
+    content_source_identity,
+    open_bounded_resource,
+    ResourceLimits,
+)
 from ..._fingerprint import canonical_fingerprint
 from ..._mesh_file_profiles import resolve_mesh_file_profile
 from ..._publication import publish_bytes
@@ -454,7 +458,6 @@ class FiniteElementMeshImportReport(StrictModule, NonTrainableState):
                 "volumes": volumes,
                 "boundaries": boundaries,
                 "coordinate_count": int(coordinate_count),
-                "source_path": path,
                 "source_format": format_,
                 "source_metadata": metadata,
                 "losses": losses_,
@@ -586,7 +589,9 @@ def read_finite_element_mesh(
             while chunk := resource.stream.read(1024 * 1024):
                 output.write(chunk)
         source = meshio.read(staged, file_format=profile.meshio_format)
-        source_manifest_id = resource.manifest.manifest_id
+        source_id = content_source_identity(
+            profile.profile_id, resource.manifest.content_sha256
+        )
     # The shared meshio table also lists interval cells; finite-element volume
     # import admits only two- and three-dimensional cell kinds.
     volume_blocks = [
@@ -784,7 +789,7 @@ def read_finite_element_mesh(
         "point_data_names": tuple(sorted(str(value) for value in source.point_data)),
         "cell_data_names": tuple(sorted(str(value) for value in source.cell_data)),
     }
-    metadata["resource_manifest_id"] = source_manifest_id
+    metadata["source_content_id"] = source_id
     source_counts = {
         "points": points.shape[0],
         "volume_cells": source_volume_count,
