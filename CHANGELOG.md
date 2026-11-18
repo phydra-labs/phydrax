@@ -283,6 +283,8 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Mesh incidence composition uses bounded packed integer keys for sorted unique
+  pairs, preserving exact incidence order and falling back for other inputs.
 - Dynamic glued-face monotonicity checks rational Jacobian controls with exact
   integer signs before decoding, preserving findings and the alternative
   preconditioner route. Three alternating replays of 6,990 captured calls took
