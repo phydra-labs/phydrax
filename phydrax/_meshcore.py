@@ -5408,7 +5408,8 @@ def point_triangle_distances(points: object, triangles: object, /) -> np.ndarray
     distant queries, and arithmetic underflow can reduce accuracy. For finite
     inputs outside the native exact-coordinate domain (nonzero magnitudes
     between 2**-120 and 2**120), only the computed box lower bound is assured.
-    Nonfinite inputs or computed candidate/box distances are refused.
+    Nonfinite inputs or computed candidate/box distances are refused; the
+    contiguous point and triangle input buffers must not overlap.
     """
     point_array = _points(points, "points", 3)
     triangle_array = _contact_simplices(triangles, "triangles", 3)

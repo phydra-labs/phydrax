@@ -1168,7 +1168,13 @@ class PreparedMappedCellMap(StrictModule, NonTrainableState):
 
 @final
 class PreparedOwnerLocalMappedCellMap(StrictModule, NonTrainableState):
-    """Canonical mapped-cell map over one compact source-bound owner view."""
+    """Canonical mapped-cell map over one compact source-bound owner view.
+
+    Periodic winding products use the binary64 conversion of each integer
+    winding component. Magnitudes above 2**53 can round at that conversion;
+    the resulting coordinates must still match the separately retained exact
+    periodic lift when rounded to binary64.
+    """
 
     coordinate_element: ScalarCoordinateElement
     coordinate_dofs: Array
