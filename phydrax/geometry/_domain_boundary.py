@@ -1354,10 +1354,15 @@ def _chain_parameters(
     preparation: SourcePreparation,
     /,
 ) -> tuple[float, ...]:
-    """Locate interior chain points on the p-curve by nested nearest-sample search.
+    """Locate trim parameters using portable fixed-chart search proposals.
 
-    The located parameters only select which arc piece each chord is compared
-    with; every claim drawn from them is certified by p-curve enclosures.
+    Candidates are exact rational affine grids rounded once to binary64. Search
+    coordinates are lower endpoints of batched host chart programs when available,
+    otherwise certified p-curve point representatives. Distances use fixed-order
+    binary64 dot products; equal distances select the smallest parameter.
+    The refinement schedule depends only on the input span and chain length.
+    These candidates are not stored chart points: the selected parameter is
+    subsequently bounded by the source's certified curve enclosure for the lens.
     """
     start, stop = _use_parameter_range(use)
     if len(chain) == 2:
@@ -1369,7 +1374,7 @@ def _chain_parameters(
     low, high = min(start, stop), max(start, stop)
 
     def evaluate(parameters: np.ndarray, /) -> np.ndarray:
-        values = preparation.stored_pcurve_points(
+        values = preparation.search_pcurve_points(
             use.pcurve, parameters.reshape(-1), low, high
         )
         if values.shape != (parameters.size, 2) or np.any(~np.isfinite(values)):
@@ -1381,19 +1386,17 @@ def _chain_parameters(
         return binary64_dot(delta, delta)
 
     count = 8 * len(chain)
-    exact_start, exact_stop = Fraction(start), Fraction(stop)
+    exact_low, exact_high = Fraction(low), Fraction(high)
     grid = np.asarray(
         [
-            float(exact_start + (exact_stop - exact_start) * Fraction(i, count))
+            float(exact_low + (exact_high - exact_low) * Fraction(i, count))
             for i in range(count + 1)
         ],
         dtype=np.float64,
     )
-    # Candidate order is traversal order initially and increasing offset in
-    # refinement; argmin chooses the first candidate on an exact distance tie.
+    # Candidate order is increasing; argmin selects the smallest parameter on ties.
     distance = squared_distance(evaluate(grid)[None])
     parameters = grid[np.argmin(distance, axis=1)]
-    exact_low, exact_high = Fraction(low), Fraction(high)
     width = (exact_high - exact_low) / count
     rows = np.arange(targets.shape[0])
     # Each round shrinks the candidate spacing ``width / 8`` eightfold; refinement
@@ -1401,24 +1404,17 @@ def _chain_parameters(
     # distinct values.
     resolution = Fraction(float(np.spacing(max(abs(low), abs(high)))))
     while width / 8 > resolution:
-        candidates = np.asarray(
-            [
+        offsets = tuple(width * Fraction(offset, 8) for offset in range(-8, 9))
+        candidate_rows = []
+        for parameter in parameters:
+            center = Fraction(float(parameter))
+            candidate_rows.append(
                 [
-                    float(
-                        min(
-                            exact_high,
-                            max(
-                                exact_low,
-                                Fraction(float(parameter)) + width * Fraction(offset, 8),
-                            ),
-                        )
-                    )
-                    for offset in range(-8, 9)
+                    float(min(exact_high, max(exact_low, center + offset)))
+                    for offset in offsets
                 ]
-                for parameter in parameters
-            ],
-            dtype=np.float64,
-        )
+            )
+        candidates = np.asarray(candidate_rows, dtype=np.float64)
         distance = squared_distance(evaluate(candidates))
         parameters = candidates[rows, np.argmin(distance, axis=1)]
         width /= 8

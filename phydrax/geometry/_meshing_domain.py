@@ -962,6 +962,7 @@ class SourcePreparation:
         "_domain",
         "_stored_surface_programs",
         "_stored_curve_programs",
+        "_search_curve_programs",
         "_intersection_point_boxes",
         "_intersection_point_support",
         "_intersection_span_boxes",
@@ -1012,6 +1013,9 @@ class SourcePreparation:
         ] = {}
         self._stored_curve_programs: dict[
             int, tuple[AbstractCurve, PreparedIntervalFunction | None]
+        ] = {}
+        self._search_curve_programs: dict[
+            tuple[int, int], tuple[AbstractCurve, PreparedIntervalFunction | None]
         ] = {}
         self._intersection_point_boxes: dict[
             tuple[int, float], tuple[AbstractCurve, np.ndarray]
@@ -1143,6 +1147,62 @@ class SourcePreparation:
             self._record_unsupported(pcurve, values.size)
             return _pcurve_points_per_parameter(pcurve, values)
         return evaluate_host_program(program, values[:, None]).reshape((-1, 2))
+
+    def search_pcurve_points(
+        self, pcurve: AbstractCurve, parameters: np.ndarray, first: float, last: float, /
+    ) -> np.ndarray:
+        """Portable proposals for locating trim parameters, not stored chart points.
+
+        A fixed intersection chart is evaluated in batches by the lower endpoint
+        of its lowered chart program. If that program declines or its result is
+        nonfinite, the certified point/span route supplies the proposal instead.
+        Other curves use the stored pcurve route, including its declaration when
+        neither specified realization is available.
+        """
+        from .brep._host_program import evaluate_host_program, prepare_host_program
+        from .brep._intersection_curve import IntersectionPCurve
+
+        values = np.asarray(parameters, dtype=np.float64).reshape((-1,))
+        if not isinstance(pcurve, IntersectionPCurve) or not values.size:
+            return self.stored_pcurve_points(pcurve, values, first, last)
+        chart = int(pcurve.first)
+        if pcurve.last <= chart + 1.0:
+            charts = np.full(values.shape, chart, dtype=np.int64)
+        else:
+            carrier = pcurve.first + pcurve.last - values if pcurve.reversed else values
+            charts = np.minimum(np.floor(carrier).astype(np.int64), pcurve.curve.num_charts - 1)
+            terminal = math.ceil(pcurve.last) - 1
+            if pcurve.last == terminal + 1 and pcurve.last < pcurve.curve.num_charts:
+                charts = np.where(carrier >= pcurve.last, terminal, charts)
+        result = np.empty((values.size, 2), dtype=np.float64)
+        for chart_value in np.unique(charts):
+            selected = np.flatnonzero(charts == chart_value)
+            key = (id(pcurve), int(chart_value))
+            entry = self._search_curve_programs.get(key)
+            if entry is None or entry[0] is not pcurve:
+                evaluate = pcurve._chart_evaluator(int(chart_value))
+
+                def point(parameter: Array, /) -> Array:
+                    return evaluate(parameter[0])
+
+                program = prepare_host_program(point, 1)
+                self._search_curve_programs[key] = (pcurve, program)
+            else:
+                program = entry[1]
+            if program is None:
+                result[selected] = self.stored_pcurve_points(
+                    pcurve, values[selected], first, last
+                )
+                continue
+            proposals = evaluate_host_program(program, values[selected, None])
+            finite = np.all(np.isfinite(proposals), axis=1)
+            result[selected[finite]] = proposals[finite]
+            if not np.all(finite):
+                missing = selected[~finite]
+                result[missing] = self.stored_pcurve_points(
+                    pcurve, values[missing], first, last
+                )
+        return result
 
     @property
     def domain(self) -> MeshingDomain:

@@ -14,6 +14,9 @@
   change once on every platform and affected stored results must be rebuilt.
   Stored coordinates are defined by the lowered program: a JAX version that
   reorders its trace changes identity and must be announced as such.
+  Trim-lens search uses lower endpoints of batched fixed-chart host programs as
+  proposals, exact rational candidate grids, fixed-order distances, and the
+  smallest parameter on ties; certified curve boxes still prove the lens.
   Intersection qualification residuals now compare stored-route surface
   lifts rather than compiled coupled-evaluator outputs. Source root charts and
   curve queries use domain content and row order rather than source-name

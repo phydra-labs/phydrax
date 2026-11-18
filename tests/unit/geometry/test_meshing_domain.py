@@ -669,6 +669,19 @@ def test_stored_intersection_pcurve_points_lie_in_point_and_span_boxes() -> None
         [preparation.stored_pcurve_points(curve, p[None], 0.0, 1.0) for p in parameters]
     )
     np.testing.assert_array_equal(points, rows)
+    proposals = preparation.search_pcurve_points(curve, parameters, 0.0, 1.0)
+    separate = np.concatenate(
+        [preparation.search_pcurve_points(curve, p[None], 0.0, 1.0) for p in parameters]
+    )
+    np.testing.assert_array_equal(proposals, separate)
+    multi = intersection.curves[0].p_curve("first")
+    last = float(multi.last)
+    across = np.asarray((0.0, 0.5, 1.0, last - 0.25, last), dtype=np.float64)
+    batched = preparation.search_pcurve_points(multi, across, 0.0, last)
+    singles = np.concatenate(
+        [preparation.search_pcurve_points(multi, p[None], 0.0, last) for p in across]
+    )
+    np.testing.assert_array_equal(batched, singles)
     assert not preparation.unsupported_points
 
 
