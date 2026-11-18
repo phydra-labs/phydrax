@@ -157,11 +157,13 @@ def upper_float(value: Fraction, /) -> float:
 
 
 def binary64_dot(first: ArrayLike, second: ArrayLike, /) -> NDArray[np.float64]:
-    """Contract last-axis vectors in left-to-right, separately rounded binary64.
+    """Dot broadcast batches of last-axis vectors in binary64 round-to-nearest.
 
-    Empty contractions produce positive zero; otherwise the first product
-    initializes the sum, preserving its signed zero. IEEE infinities, NaNs,
-    overflow and underflow follow NumPy's elementwise arithmetic.
+    Multiply each pair separately and add the products from index zero upward,
+    rounding every multiplication and addition separately (no fused multiply-add).
+    An empty contraction is positive zero; otherwise the first product initializes
+    the sum, preserving its signed zero. NaN, infinity, overflow, and underflow
+    follow IEEE elementwise multiplication and addition.
     """
     a = np.asarray(first, dtype=np.float64)
     b = np.asarray(second, dtype=np.float64)
@@ -178,21 +180,24 @@ def binary64_dot(first: ArrayLike, second: ArrayLike, /) -> NDArray[np.float64]:
 
 
 def binary64_norm(values: ArrayLike, /) -> NDArray[np.float64]:
-    """Unscaled square root of the ordered binary64 sum of squares.
+    """Return the correctly rounded square root of the ordered sum of squares.
 
-    Overflow and underflow are not avoided. Empty vectors yield positive zero;
-    exceptional values propagate according to NumPy arithmetic.
+    Squares and additions follow :func:`binary64_dot`. No rescaling is performed:
+    squares may overflow or underflow. Empty vectors and zero squares yield
+    positive zero; NaNs and infinities propagate through the specified operations.
     """
     a = np.asarray(values, dtype=np.float64)
     return np.asarray(np.sqrt(binary64_dot(a, a)), dtype=np.float64)
 
 
 def binary64_matmul(first: ArrayLike, second: ArrayLike, /) -> NDArray[np.float64]:
-    """NumPy-shaped matrix product with an unfused left-to-right contraction.
+    """Multiply vectors or broadcast matrix batches with NumPy matmul shapes.
 
-    Empty contractions yield positive zero. Otherwise the first product
-    initializes the sum; signed zero and exceptional values follow separately
-    rounded NumPy multiplication and addition.
+    Each binary64 product is rounded separately, then added left-to-right with
+    a separate rounding at each addition; fused multiply-add is not used. Empty
+    contractions give positive zero. Otherwise the first product initializes the
+    sum, so signed zeros, NaNs, infinities, overflow and underflow follow the
+    specified IEEE multiplication and addition sequence.
     """
     a = np.asarray(first, dtype=np.float64)
     b = np.asarray(second, dtype=np.float64)
