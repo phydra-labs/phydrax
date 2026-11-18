@@ -736,6 +736,12 @@
   this change; the remesh takes about 3% less time (310 to 302 seconds, two
   alternating pairs) with identical vertices, triangles, counters and
   distance bound.
+- The blocks of that index hold four registered triangles instead of eight. A
+  search computes the box of every live triangle of a block it reaches, so
+  smaller blocks cost more block boxes and save those computations: on the
+  same carrier the remesh takes about 4% less time for about 50 MB more of
+  memory (1,300 to 1,350 MB peak commit), with identical results. Blocks of
+  two were not measurably faster and take another 100 MB.
 - Native kernels verify the floating-point mode once for each call instead of
   once for each interval program they execute. Every certified entry
   establishes round-to-nearest with gradual underflow and verifies it by

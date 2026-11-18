@@ -118,7 +118,14 @@ using phx::mc::geometry::next_up;
 using phx::mc::geometry::point_in_domain;
 
 constexpr uint32_t kScoreLevels = 1u << 20;
-constexpr size_t kBucketBlockRows = 8;
+// Rows of one block of a cell's index. A block's box prunes its rows, and a
+// query computes the box of every live row of an overlapping block, so
+// smaller blocks cost boxes and save row lookups. Measured on the 6.3 million
+// triangle carrier of the adaptive sphere profile: 4 rows take about 4% less
+// time than 8 for about 50 MB more of block boxes; 2 rows were not measurably
+// faster than 4 and take another 100 MB. The candidates a query returns do
+// not depend on it.
+constexpr size_t kBucketBlockRows = 4;
 
 constexpr double kPi = 3.141592653589793;
 constexpr double kTurnSlack = 1.0e-9;  // radians
