@@ -757,6 +757,11 @@ class _PreparedDirectBRepCadVolume(StrictModule, NonTrainableState):
                         MeshingFailureCategory.UNSUPPORTED_COMBINATION,
                         "Screened CAD volume with layer_controls is unsupported.",
                     )
+                if len(self.domain.regions) != 1:
+                    raise _failure(
+                        MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                        "Screened CAD volume with multiple regions is unsupported.",
+                    )
                 from ._native_cad_volume import (
                     CadDeferredSurface,
                     CadSurfaceConstructionData,

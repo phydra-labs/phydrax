@@ -10,6 +10,7 @@ from phydrax._meshcore import meshcore_identity
 from phydrax.geometry.brep._constructors import brep_box
 from phydrax.meshing._canonical import _accept_native_construction, _NATIVE_PROVIDER
 from phydrax.meshing.providers import NativeMeshingOptions, NativeMeshingProvider
+from phydrax.meshing.providers._native import _PreparedDirectBRepCadVolume
 from phydrax.meshing.providers._native_cad_volume import _screen_cad_shell
 
 
@@ -56,6 +57,7 @@ def _box_plan() -> phx.meshing.NativeMeshingPlan:
 
 def test_screened_cad_volume_can_be_proved_without_remeshing() -> None:
     plan = _box_plan()
+    assert isinstance(plan.prepared, _PreparedDirectBRepCadVolume)
     screened = plan.prepared.execute(steering="screened")
     certified = plan.prepared.execute(steering="certified")
     assert screened.deferred_certification is not None
@@ -124,3 +126,30 @@ def test_screen_refuses_open_or_misoriented_shell() -> None:
     reversed_face = [closed[0][::-1], *closed[1:]]
     with pytest.raises(ValueError, match="closed consistently oriented region edges"):
         _screen_cad_shell(points, reversed_face, [0] * len(reversed_face), facets)
+
+
+def test_screen_checks_each_region_at_a_three_face_junction() -> None:
+    points = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0),
+            (0.0, 0.0, -1.0),
+        ),
+        dtype=np.float64,
+    )
+    triangles = [
+        (0, 2, 1),
+        (0, 1, 3),
+        (1, 2, 3),
+        (2, 0, 3),
+        (0, 2, 4),
+        (2, 1, 4),
+        (1, 0, 4),
+    ]
+    facets = np.asarray(((1, 0), (-1, 0), (-1, 1)), dtype=np.int64)
+    owners = [0, 1, 1, 1, 2, 2, 2]
+    _screen_cad_shell(points, triangles, owners, facets)
+    with pytest.raises(ValueError, match="closed consistently oriented region edges"):
+        _screen_cad_shell(points, [triangles[0][::-1], *triangles[1:]], owners, facets)

@@ -474,6 +474,10 @@ def _build_cad_plc_data(
             )
 
     if premises is None:
+        if cell_geometry_id(surface_data.geometry) != cell_geometry_id(
+            CellGeometrySpec.affine(surface_data.mesh)
+        ):
+            raise ValueError("Screened CAD volume requires affine surface geometry.")
         points = np.asarray(surface_data.mesh.coordinates, dtype=np.float64)
         if points.ndim != 2 or points.shape[1] != 3 or not np.all(np.isfinite(points)):
             raise ValueError(
@@ -3627,9 +3631,68 @@ def _rebind_cad_volume(
         )
         first = "source identity or incidence metadata"
         for name, left, right in banks:
-            if not np.array_equal(left, right, equal_nan=True):
+            if left is None or right is None:
+                differs = left is not right
+            else:
+                differs = not np.array_equal(left, right, equal_nan=True)
+            if differs:
                 first = name
                 break
+        if first == "source identity or incidence metadata":
+            metadata = (
+                ("vertex_ids", screened.vertex_ids, certified.vertex_ids),
+                (
+                    "vertex_occurrence_paths",
+                    screened.vertex_occurrence_paths,
+                    certified.vertex_occurrence_paths,
+                ),
+                ("facet_ids", screened.facet_ids, certified.facet_ids),
+                (
+                    "facet_occurrence_paths",
+                    screened.facet_occurrence_paths,
+                    certified.facet_occurrence_paths,
+                ),
+                ("segment_ids", screened.segment_ids, certified.segment_ids),
+                (
+                    "segment_occurrence_paths",
+                    screened.segment_occurrence_paths,
+                    certified.segment_occurrence_paths,
+                ),
+                (
+                    "plc_edge_vertices",
+                    screened.plc_edge_vertices,
+                    certified.plc_edge_vertices,
+                ),
+                ("plc_edge_ids", screened.plc_edge_ids, certified.plc_edge_ids),
+                (
+                    "plc_edge_occurrence_paths",
+                    screened.plc_edge_occurrence_paths,
+                    certified.plc_edge_occurrence_paths,
+                ),
+                ("region_ids", screened.region_ids, certified.region_ids),
+                (
+                    "region_occurrence_paths",
+                    screened.region_occurrence_paths,
+                    certified.region_occurrence_paths,
+                ),
+                ("boundary", screened.boundary, certified.boundary),
+                (
+                    "cad_fidelity_tolerance",
+                    screened.cad_fidelity_tolerance,
+                    certified.cad_fidelity_tolerance,
+                ),
+                (
+                    "cad_maximum_normal_deviation",
+                    screened.cad_maximum_normal_deviation,
+                    certified.cad_maximum_normal_deviation,
+                ),
+            )
+            for name, left, right in metadata:
+                if left != right:
+                    first = name
+                    break
+            if first == "source identity or incidence metadata":
+                first = "cad_source_charts or geometry"
         raise MeshingFailure(
             MeshingFailureCategory.INVALID_SOURCE,
             f"Screened CAD PLC differs from certified source at {first}.",
@@ -3656,6 +3719,33 @@ def _rebind_cad_volume(
     return replace(construction, complex_id=certified.complex_id, stages=stages)
 
 
+def _cad_junction_vertices(source: NativeCadVolumeSource, /) -> tuple[int, ...]:
+    """Find source mesh vertices on nonmanifold PLC junction edges."""
+    complex_ = source.plc_source.complex
+    offsets = np.asarray(complex_.polygon_offsets, dtype=np.int64)
+    vertices = np.asarray(complex_.polygon_vertices, dtype=np.int64)
+    edge_counts: dict[tuple[int, int], int] = {}
+    for start, stop in zip(offsets[:-1], offsets[1:], strict=True):
+        loop = vertices[start:stop]
+        for position, first in enumerate(loop):
+            second = int(loop[(position + 1) % len(loop)])
+            key = (min(int(first), second), max(int(first), second))
+            edge_counts[key] = edge_counts.get(key, 0) + 1
+    junction_rows = {
+        vertex for edge, count in edge_counts.items() if count > 2 for vertex in edge
+    }
+    if complex_.cad_vertex_rows is None:
+        raise ValueError("CAD PLC has no surface vertex incidence.")
+    global_ids = np.asarray(source.surface.mesh.vertex_global_ids, dtype=np.int64)
+    return tuple(
+        sorted(
+            int(global_id)
+            for global_id, row in zip(global_ids, complex_.cad_vertex_rows, strict=True)
+            if int(row) in junction_rows
+        )
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _DeferredCadVolume:
     source: NativeCadVolumeSource
@@ -3668,6 +3758,7 @@ class _DeferredCadVolume:
     points: np.ndarray
     organization: NativeMeshOrganization
     curve_association: GeometryAssociation | None
+    junction_vertices: tuple[int, ...]
     certified_steps: tuple[str, ...]
 
     def resolve(self) -> NativeMeshConstruction:
@@ -3766,6 +3857,12 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
                 if not isinstance(self.source.surface, CellMeshingResult):
                     raise ValueError("Certified CAD volume requires an accepted surface.")
             case "screened":
+                if len(self.source.domain.regions) != 1:
+                    raise MeshingFailure(
+                        MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                        "Screened CAD volume with multiple regions is unsupported.",
+                        stage="source_inspection",
+                    )
                 if not isinstance(self.source.surface, CadSurfaceConstructionData):
                     raise ValueError(
                         "Screened CAD volume requires surface construction data."
@@ -3907,8 +4004,6 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
                 steps = (
                     "boundary_distance",
                     "cad_plane",
-                    "curve_partition",
-                    "plc_coplanarity",
                     "surface_construction",
                     "surface_incidence",
                 )
@@ -3934,6 +4029,7 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
                     physical.points,
                     organization,
                     curve_association,
+                    _cad_junction_vertices(self.source),
                     steps,
                 )
                 return NativeMeshConstruction(
