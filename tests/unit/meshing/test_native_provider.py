@@ -501,6 +501,17 @@ def test_deferred_certification_resolves_only_the_original_mesh() -> None:
     with pytest.raises(ValueError, match="changed the constructed mesh"):
         candidate.prove()
 
+    replaced_candidate = phx.meshing.CellMeshingCandidate(
+        replace(pending, mesh=mesh, geometry=CellGeometrySpec.affine(mesh)),
+        specification,
+        _NATIVE_PROVIDER,
+        version,
+        plan.plan_id,
+        plan.route,
+    )
+    with pytest.raises(ValueError, match="changed the constructed mesh"):
+        replaced_candidate.prove()
+
 
 def test_pending_candidate_is_refused_by_accepted_result_consumer() -> None:
     from tools.meshing_qualification._runtime import accepted_result_record

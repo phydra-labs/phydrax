@@ -32,6 +32,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import CellGeometrySpec, CellMesh
 from ...discretization._cell_geometry_validity import cell_geometry_id
+from ...discretization._nested_reference_types import reference_chart_arguments_identity
 from ...geometry._compartments import CompartmentMeshingSource
 from ...geometry._meshing_domain import MeshingDomain
 from ...geometry.brep._model import BRepModel
@@ -1290,12 +1291,31 @@ class CellMeshingCandidate(StrictModule, NonTrainableState):
                 "mesh": construction.mesh.mesh_id,
                 "geometry": cell_geometry_id(construction.geometry),
                 "coordinate_contract": construction.coordinate_contract.spatial_id,
-                "construction_compliance": construction.compliance.report_id,
                 "construction_stages": tuple(
                     stage.report_id for stage in construction.stages
                 ),
-                "reference_map_arrays": array_tree_fingerprint(
-                    construction.reference_maps
+                "reference_maps": tuple(
+                    {
+                        "arrays": array_tree_fingerprint(reference_map),
+                        "target_kind": reference_map.target_cell_kind,
+                        "source_kind": reference_map.source_cell_kind,
+                        "exact_vertices": None
+                        if reference_map.source_reference_exact_vertices is None
+                        else tuple(
+                            tuple(
+                                tuple(
+                                    (value.numerator, value.denominator)
+                                    for value in point
+                                )
+                                for point in cell
+                            )
+                            for cell in reference_map.source_reference_exact_vertices
+                        ),
+                        "chart_arguments": reference_chart_arguments_identity(
+                            reference_map.source_reference_chart_arguments
+                        ),
+                    }
+                    for reference_map in construction.reference_maps
                 ),
                 "specification": specification.specification_id,
                 "provider": provider.provider_id,
@@ -1328,18 +1348,12 @@ class CellMeshingCandidate(StrictModule, NonTrainableState):
                 else array_tree_fingerprint(request.junction_vertices),
                 "fidelity_tolerance": request.fidelity_tolerance,
                 "maximum_normal_deviation": request.maximum_normal_deviation,
-                "fidelity_witness": None
-                if request.fidelity_witness is None
-                else request.fidelity_witness.witness_id,
-                "coverage_witness": None
-                if request.source_coverage_witness is None
-                else request.source_coverage_witness.witness_id,
                 "features": None
                 if request.protected_features is None
                 else tuple(feature.feature_id for feature in request.protected_features),
                 "scoped_fidelity": tuple(
-                    (source.source_id, source.source_revision, witness.witness_id, limit)
-                    for source, witness, limit in request.scoped_fidelity
+                    (source.source_id, source.source_revision, limit)
+                    for source, _, limit in request.scoped_fidelity
                 ),
                 "patches": tuple(value.patch_id for value in organization.patches),
                 "zones": tuple(value.zone_id for value in organization.zones),
@@ -1356,9 +1370,6 @@ class CellMeshingCandidate(StrictModule, NonTrainableState):
                 "boundary": None
                 if organization.boundary is None
                 else organization.boundary.model_id,
-                "region_boundaries": tuple(
-                    value.evidence_id for value in organization.region_boundary_evidence
-                ),
                 "multiregion_surface": None
                 if organization.multiregion_surface is None
                 else organization.multiregion_surface.topology_id,
@@ -1374,18 +1385,6 @@ class CellMeshingCandidate(StrictModule, NonTrainableState):
                 "planar_embedding": None
                 if construction.planar_embedding is None
                 else construction.planar_embedding.embedding_id,
-                "layer_curving_evidence": None
-                if construction.layer_curving_evidence is None
-                else construction.layer_curving_evidence.evidence_id,
-                "layer_carrier": None
-                if construction.layer_core_carrier_witness is None
-                else construction.layer_core_carrier_witness.witness_id,
-                "layer_overlap": None
-                if construction.layer_core_overlap_stencils is None
-                else construction.layer_core_overlap_stencils.witness_id,
-                "layer_column": None
-                if construction.layer_core_column_certification is None
-                else construction.layer_core_column_certification.certification_id,
                 "layer_root": None
                 if construction.layer_core_root_geometry is None
                 else construction.layer_core_root_geometry.root_id,
@@ -1417,9 +1416,17 @@ class CellMeshingCandidate(StrictModule, NonTrainableState):
                 != cell_geometry_id(construction.geometry)
                 or resolved.coordinate_contract.spatial_id
                 != construction.coordinate_contract.spatial_id
+                or tuple(
+                    association.association_id
+                    for association in resolved.organization.associations
+                )
+                != tuple(
+                    association.association_id
+                    for association in construction.organization.associations
+                )
             ):
                 raise ValueError(
-                    "Deferred certification changed the constructed mesh or geometry."
+                    "Deferred certification changed the constructed mesh, geometry, or associations."
                 )
             construction = resolved
         return _accept_native_construction(
