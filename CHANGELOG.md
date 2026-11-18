@@ -9,6 +9,9 @@
   `_normalize_index`; its changed source is not admitted by the guard.
 - Reused operation-local interval programs across compatible orthogonal-cylinder
   measure charts without changing certified enclosure endpoints.
+- Orthogonal-cylinder branch enclosure queries reuse bounded proofs for the same
+  unchanged live curve and exact interval premises; returned bounds and identities
+  are unchanged.
 - Fixed the native CAD qualification intersection evidence reporting a p-curve
   residual that was zero by construction: `maximum_residuals_m.first_pcurve`
   and `.second_pcurve` now measure each patch lift against the declared analytic

@@ -2,7 +2,10 @@ import gc
 import hashlib
 import subprocess
 import sys
+import weakref
+from concurrent.futures import ThreadPoolExecutor
 from fractions import Fraction
+from threading import Barrier
 
 import equinox as eqx
 import jax
@@ -193,6 +196,78 @@ def test_ledger_entry_dies_with_any_operand() -> None:
     del dropped
     gc.collect()
     assert not ledger._entries
+
+
+def test_bounded_ledger_is_per_operand_and_releases_dead_operands() -> None:
+    ledger: LiveProofLedger[str] = LiveProofLedger()
+    first = _Operand(np.asarray([1.0], dtype=np.float64), "first")
+    second = _Operand(np.asarray([2.0], dtype=np.float64), "second")
+    for operand in (first, second):
+        operands = (operand,)
+        fingerprint = live_content_fingerprint(operands)
+        ledger.record(operands, fingerprint, "one", parameters=(1,), limit=1)
+        ledger.record(operands, fingerprint, "two", parameters=(2,), limit=1)
+        assert ledger.find(operands, parameters=(1,)) == "one"
+        assert ledger.find(operands, parameters=(2,)) is None
+    del operands, operand
+    reference = weakref.ref(first)
+    del first
+    gc.collect()
+    assert reference() is None
+    third = _Operand(np.asarray([3.0], dtype=np.float64), "third")
+    ledger.record((third,), live_content_fingerprint((third,)), "three", limit=1)
+    assert ledger.find((third,)) == "three"
+    assert ledger.find((second,), parameters=(1,)) == "one"
+
+
+def test_bounded_and_unbounded_records_share_the_operand_limit() -> None:
+    ledger: LiveProofLedger[str] = LiveProofLedger()
+    first = _Operand(np.asarray([1.0], dtype=np.float64), "first")
+    second = _Operand(np.asarray([2.0], dtype=np.float64), "second")
+    operands = (first, second)
+    fingerprint = live_content_fingerprint(operands)
+    ledger.record(operands, fingerprint, "unbounded", parameters=(0,))
+    ledger.record(operands, fingerprint, "bounded", parameters=(1,), limit=1)
+    assert ledger.find(operands, parameters=(1,)) is None
+    ledger.record(operands, fingerprint, "replacement", parameters=(0,), limit=1)
+    assert ledger.find(operands, parameters=(0,)) == "replacement"
+    ledger.record((first,), live_content_fingerprint((first,)), "single", limit=1)
+    assert ledger.find((first,)) == "single"
+
+
+def test_bounded_ledger_stale_slots_only_prevent_caching() -> None:
+    ledger: LiveProofLedger[str] = LiveProofLedger()
+    operand = _Operand(np.asarray([1.0], dtype=np.float64), "mutable")
+    operands = (operand,)
+    ledger.record(
+        operands, live_content_fingerprint(operands), "old", parameters=(1,), limit=1
+    )
+    operand.values[0] = 2.0
+    assert ledger.find(operands, parameters=(1,)) is None
+    ledger.record(
+        operands, live_content_fingerprint(operands), "new", parameters=(2,), limit=1
+    )
+    assert ledger.find(operands, parameters=(2,)) is None
+    ledger.record(
+        operands, live_content_fingerprint(operands), "new", parameters=(1,), limit=1
+    )
+    assert ledger.find(operands, parameters=(1,)) == "new"
+
+
+def test_bounded_ledger_record_is_atomic() -> None:
+    ledger: LiveProofLedger[str] = LiveProofLedger()
+    operand = _Operand(np.asarray([1.0], dtype=np.float64), "shared")
+    operands = (operand,)
+    fingerprint = live_content_fingerprint(operands)
+    barrier = Barrier(2)
+
+    def record(index: int) -> None:
+        barrier.wait()
+        ledger.record(operands, fingerprint, str(index), parameters=(index,), limit=1)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(record, range(2)))
+    assert sum(ledger.find(operands, parameters=(i,)) is not None for i in range(2)) == 1
 
 
 def test_live_guard_binds_exact_coordinate_bank_content() -> None:
