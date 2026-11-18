@@ -1954,10 +1954,17 @@ PHX_MC_API int32_t phx_mc_point_triangle_locations(
     int64_t count, const double* points, const double* triangles, int8_t* sides,
     int8_t* features, int32_t* item_status);
 /* Paired rows: points[count][3], triangles[count][3][3], distances[count].
+ * Their nonempty byte ranges must be pairwise disjoint; overlap returns
+ * PHX_MC_INVALID_ARGUMENT before writing. For zero rows, distances must still
+ * be nonnull, while points and triangles may be null.
  * Returns max(candidate distance, ordered point-to-triangle-box distance).
  * Inputs and computed distances must be finite; an error can leave a prefix
- * of the output written. Degenerate and poorly conditioned inputs are accepted
- * but the floating candidate is not guaranteed to be relatively accurate. */
+ * of the output written. Degenerate and poorly conditioned inputs are accepted.
+ * This operation-sequence approximation has no proved accuracy bound: it can
+ * be above or below the true distance, and a true zero can return a small
+ * nonzero value. On 75,066 in-domain rows, the observed error in ulps of the
+ * largest input-coordinate magnitude had maximum 41.4, median 0, and p99 2;
+ * these observations are not a bound. */
 PHX_MC_API int32_t phx_mc_point_triangle_distances(
     int64_t count, const double* points, const double* triangles, double* distances);
 PHX_MC_API int32_t phx_mc_arrange_triangles(

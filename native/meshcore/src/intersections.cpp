@@ -43,6 +43,15 @@
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 
+namespace {
+bool overlaps(const double* first, std::size_t first_bytes,
+              const double* second, std::size_t second_bytes) noexcept {
+  const auto a = reinterpret_cast<std::uintptr_t>(first);
+  const auto b = reinterpret_cast<std::uintptr_t>(second);
+  return a <= b ? b - a < first_bytes : a - b < second_bytes;
+}
+}  // namespace
+
 namespace phx::mc {
 namespace {
 
@@ -920,6 +929,17 @@ int32_t phx_mc_point_triangle_distances(int64_t count, const double* points,
         !phx::mc::addressable(count, 1, sizeof(double)) || distances == nullptr ||
         (count > 0 && (points == nullptr || triangles == nullptr))) {
       return PHX_MC_INVALID_ARGUMENT;
+    }
+    if (count > 0) {
+      const auto rows = static_cast<std::size_t>(count);
+      const auto point_bytes = rows * 3 * sizeof(double);
+      const auto triangle_bytes = rows * 9 * sizeof(double);
+      const auto distance_bytes = rows * sizeof(double);
+      if (overlaps(points, point_bytes, triangles, triangle_bytes) ||
+          overlaps(points, point_bytes, distances, distance_bytes) ||
+          overlaps(triangles, triangle_bytes, distances, distance_bytes)) {
+        return PHX_MC_INVALID_ARGUMENT;
+      }
     }
     for (int64_t item = 0; item < count; ++item) {
       const double* p = points + 3 * item;

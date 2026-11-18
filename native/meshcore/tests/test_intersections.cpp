@@ -602,6 +602,10 @@ void test_point_triangle_distance_cases() {
   PHX_CHECK(distance({0.25, 0.25, 2}, kBase) == 2.0);
   const Triangle repeated = {0, 0, 0, 0, 0, 0, 1, 0, 0};
   PHX_CHECK(distance({1, 1, 0}, repeated) == 1.0);
+  const Triangle edge_order = {0, 0, 0, 0, 0, 0, 1e155, 0, 0};
+  PHX_CHECK(distance({0, 0, 0}, edge_order) == 0.0);
+  const Triangle clamp = {-1e16, 0, 0, -1, 0, 0, -1, 0, 0};
+  PHX_CHECK(distance({1, 0, 0}, clamp) == 2.0);
   const Triangle coincident = {858, 922, 344, 858, 922, 344, 1647, 1896, 1256};
   PHX_CHECK(distance({1647, 1896, 1256}, coincident) == 0.0);
   const Triangle collinear_large = {
@@ -645,6 +649,29 @@ void test_point_triangle_distance_cases() {
   PHX_CHECK(phx_mc_point_triangle_distances(0, nullptr, nullptr, &out) == PHX_MC_OK);
 }
 
+void test_point_triangle_distance_aliasing() {
+  std::array<double, 13> storage{};
+  const auto original = storage;
+  double separate = 17.0;
+  PHX_CHECK(phx_mc_point_triangle_distances(1, storage.data(), storage.data() + 3,
+                                            storage.data() + 1) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(storage == original);
+  PHX_CHECK(phx_mc_point_triangle_distances(1, storage.data(), storage.data() + 3,
+                                            storage.data() + 4) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(storage == original);
+  PHX_CHECK(phx_mc_point_triangle_distances(1, storage.data(), storage.data() + 2,
+                                            &separate) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(storage == original);
+  PHX_CHECK(separate == 17.0);
+  PHX_CHECK(phx_mc_point_triangle_distances(1, storage.data(), storage.data() + 3,
+                                            storage.data() + 12) == PHX_MC_OK);
+  PHX_CHECK(storage[12] == 0.0);
+  PHX_CHECK(phx_mc_point_triangle_distances(0, storage.data(), storage.data(),
+                                            storage.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_point_triangle_distances(0, nullptr, nullptr, nullptr) ==
+            PHX_MC_INVALID_ARGUMENT);
+}
+
 }  // namespace
 
 int main() {
@@ -658,5 +685,6 @@ int main() {
   test_floating_point_hazards();
   test_point_triangle_distances();
   test_point_triangle_distance_cases();
+  test_point_triangle_distance_aliasing();
   return phx::mc::test::finish("test_intersections");
 }

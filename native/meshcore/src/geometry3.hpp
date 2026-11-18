@@ -176,6 +176,11 @@ inline double point_triangle_distance(const double* p, const double* a, const do
 // (sqrt(128) + 3 sqrt(2)) epsilon times an edge length. The computed result
 // never exceeds the computed edge minimum. Segment witnesses lie on their
 // edges only up to component rounding; no exact inclusion is asserted.
+// The complete score (maximum of this candidate and the ordered box distance)
+// has no proved accuracy bound. Its operation-sequence approximation can be
+// above or below the true distance, and a true zero can return a small nonzero.
+// On 75,066 in-domain rows, observed error in ulps of the largest input-coordinate
+// magnitude had maximum 41.4, median 0, and p99 2; these are not a bound.
 inline double point_triangle_candidate_distance(const double* p, const double* a,
                                                 const double* b, const double* c) noexcept {
   double result = std::min({point_segment_distance(p, a, b), point_segment_distance(p, b, c),
