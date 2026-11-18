@@ -113,6 +113,10 @@ warpage, and metric-space quality when a `MeshMetricField` is supplied.
 `sampled_valid` is corner evidence, not a validity proof. Audit
 `quality_scope` states whether those samples describe the full geometry
 (`vertex_geometry`) or only the straight corner cell (`corner_cells`).
+Concrete evaluations use specified host binary64 arithmetic without requiring
+meshcore. Evaluations under JAX tracing retain differentiability and can differ
+in their last bits; a traced evaluation need not bind as the concrete evaluation
+supplied to an audit. Metric interpolation remains device-dependent.
 
 Geometric validity is certified by
 `phydrax.discretization.certify_cell_geometry_validity`. Polynomial and rational

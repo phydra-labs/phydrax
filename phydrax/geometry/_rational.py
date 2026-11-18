@@ -580,3 +580,119 @@ __all__ = [
     "translation_ranges",
     "upper_float",
 ]
+
+# These constants and evaluation order mirror meshcore's angle.cpp.  In
+# particular, keep each multiply and add separate rather than using a ufunc
+# polynomial evaluator that could reassociate or fuse operations.
+_ATAN_COEFFICIENTS = tuple(
+    float.fromhex(value)
+    for value in (
+        "0x1.5555555555555p-2",
+        "-0x1.999999999999ap-3",
+        "0x1.2492492492492p-3",
+        "-0x1.c71c71c71c71cp-4",
+        "0x1.745d1745d1746p-4",
+        "-0x1.3b13b13b13b14p-4",
+        "0x1.1111111111111p-4",
+        "-0x1.e1e1e1e1e1e1ep-5",
+        "0x1.af286bca1af28p-5",
+        "-0x1.8618618618618p-5",
+        "0x1.642c8590b2164p-5",
+        "-0x1.47ae147ae147bp-5",
+        "0x1.2f684bda12f68p-5",
+        "-0x1.1a7b9611a7b96p-5",
+    )
+)
+_ANGLE_PI = float.fromhex("0x1.921fb54442d18p+1")
+_ANGLE_HALF_PI = float.fromhex("0x1.921fb54442d18p+0")
+_ANGLE_PI_LOW = float.fromhex("0x1.1a62633145c07p-53")
+_ANGLE_HALF_PI_LOW = float.fromhex("0x1.1a62633145c07p-54")
+
+
+def _binary64_arctangent_unit(u: NDArray[np.float64]) -> NDArray[np.float64]:
+    high = u >= 0.75
+    middle = (u >= 0.25) & ~high
+    v = np.where(
+        high, (u - 1.0) / (1.0 + u), np.where(middle, (u - 0.5) / (1.0 + 0.5 * u), u)
+    )
+    base = np.where(
+        high,
+        float.fromhex("0x1.921fb54442d18p-1"),
+        np.where(middle, float.fromhex("0x1.dac670561bb4fp-2"), 0.0),
+    )
+    low = np.where(
+        high,
+        float.fromhex("0x1.1a62633145c07p-55"),
+        np.where(middle, float.fromhex("0x1.a2b7f222f65e2p-56"), 0.0),
+    )
+    q = v * v
+    total = np.full_like(q, _ATAN_COEFFICIENTS[-1])
+    for coefficient in reversed(_ATAN_COEFFICIENTS[:-1]):
+        total = total * q + coefficient
+    return base + (v - (v * (q * total) - low))
+
+
+def _binary64_arctangent(t: NDArray[np.float64]) -> NDArray[np.float64]:
+    unit = t <= 1.0
+    argument = np.where(unit, t, 1.0 / t)
+    value = _binary64_arctangent_unit(argument)
+    return np.where(unit, value, _ANGLE_HALF_PI - (value - _ANGLE_HALF_PI_LOW))
+
+
+def binary64_angle_between(across: ArrayLike, along: ArrayLike, /) -> NDArray[np.float64]:
+    """Evaluate meshcore's unsigned angle kernel elementwise in binary64."""
+    a, b = np.broadcast_arrays(
+        np.asarray(across, dtype=np.float64), np.asarray(along, dtype=np.float64)
+    )
+    with np.errstate(all="ignore"):
+        angle = _binary64_arctangent(a / np.where(b < 0.0, -b, b))
+        result = np.where(
+            b > 0.0,
+            angle,
+            np.where(
+                b < 0.0,
+                _ANGLE_PI - (angle - _ANGLE_PI_LOW),
+                np.where(a > 0.0, _ANGLE_HALF_PI, 0.0),
+            ),
+        )
+        return np.asarray(
+            np.where((a >= 0.0) & np.isfinite(a) & np.isfinite(b), result, np.nan),
+            dtype=np.float64,
+        )
+
+
+def binary64_arctangent2(
+    ordinate: ArrayLike, abscissa: ArrayLike, /
+) -> NDArray[np.float64]:
+    """Evaluate meshcore's signed angle kernel, including IEEE signed zeros."""
+    y, x = np.broadcast_arrays(
+        np.asarray(ordinate, dtype=np.float64), np.asarray(abscissa, dtype=np.float64)
+    )
+    angle = binary64_angle_between(np.abs(y), x)
+    angle = np.where(
+        (y == 0.0) & (x == 0.0), np.where(np.signbit(x), _ANGLE_PI, 0.0), angle
+    )
+    return np.asarray(
+        np.where(np.isfinite(y) & np.isfinite(x), np.copysign(angle, y), np.nan),
+        dtype=np.float64,
+    )
+
+
+def binary64_cube_root(values: ArrayLike, /) -> NDArray[np.float64]:
+    """Evaluate plc3d's eight-step binary64 Newton cube root elementwise.
+
+    Nonpositive and nonfinite inputs are returned unchanged, including NaN bits.
+    """
+    value = np.asarray(values, dtype=np.float64)
+    valid = (value > 0.0) & np.isfinite(value)
+    _, exponent = np.frexp(np.where(valid, value, 1.0))
+    # C++ integer division truncates toward zero, unlike Python floor division.
+    exponent = np.where(exponent < 0, -((-exponent) // 3), exponent // 3)
+    root = np.ldexp(np.ones_like(value), exponent)
+    with np.errstate(all="ignore"):
+        for _ in range(8):
+            root = (2.0 * root + value / (root * root)) / 3.0
+    return np.asarray(np.where(valid, root, value), dtype=np.float64)
+
+
+__all__ += ["binary64_angle_between", "binary64_arctangent2", "binary64_cube_root"]

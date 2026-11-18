@@ -3125,7 +3125,7 @@ def benchmark_local_metric(resolution: int) -> dict[str, object]:
 @eqx.filter_jit
 def _boundary_layer_cell_quality(coordinates: Any, connectivity: Any) -> Any:
     return {
-        kind: _standard_block_quality(kind, coordinates[rows], None)
+        kind: _standard_block_quality(kind, coordinates[rows], None, False)
         for kind, rows in connectivity.items()
     }
 
@@ -3490,7 +3490,7 @@ def _provider_worker() -> tuple[str, str] | None:
 @eqx.filter_jit
 def _adapted_quality(coordinates: Any, connectivity: Any) -> Any:
     return {
-        kind: _standard_block_quality(kind, coordinates[rows], None)
+        kind: _standard_block_quality(kind, coordinates[rows], None, False)
         for kind, rows in connectivity.items()
     }
 
