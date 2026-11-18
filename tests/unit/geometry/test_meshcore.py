@@ -18,6 +18,7 @@ from scipy.spatial import ConvexHull
 from phydrax._meshcore import (
     arrange_tetrahedra_exact,
     clip_reference_tetrahedron_exact,
+    implicit_face_proposals,
     IntervalBoxProgram,
     meshcore_available,
     meshcore_identity,
@@ -92,6 +93,56 @@ def _signed_areas(corners: Any) -> Any:
 def _tet_moments(vertices: Any) -> Any:
     volume = abs(np.linalg.det(vertices[1:] - vertices[0])) / 6.0
     return volume, volume * np.mean(vertices, axis=0)
+
+
+def test_implicit_face_proposals_returns_aligned_writable_arrays() -> None:
+    coefficients = np.zeros((2, 3, 10), dtype=np.float64)
+    coefficients[:, 0, 1] = (1.0, 2.0)
+    coefficients[:, 1, 2] = 1.0
+    rows = np.asarray((1, 0), dtype=np.int64)
+    points = np.asarray(((0.5, 0.5, 0.0), (0.125, 0.25, 0.0)), dtype=np.float64)
+    proposals = implicit_face_proposals(coefficients, rows, points)
+    if proposals is None:
+        pytest.skip("optional implicit-face proposal entry is unavailable")
+    first, second = proposals
+    np.testing.assert_array_equal(first, np.asarray((0.25, 0.125), dtype=np.float64))
+    np.testing.assert_array_equal(second, np.asarray((0.5, 0.25), dtype=np.float64))
+    for result in proposals:
+        assert result.dtype == np.dtype(np.float64)
+        assert result.shape == (2,)
+        assert result.flags.aligned and result.flags.writeable
+
+    tiny = np.zeros((1, 3, 10), dtype=np.float64)
+    tiny[0, 0, 1] = 2.0**-400
+    tiny[0, 1, 2] = 2.0**-400
+    assert (
+        implicit_face_proposals(
+            tiny,
+            np.asarray((0,), dtype=np.int64),
+            np.zeros((1, 3), dtype=np.float64),
+        )
+        is None
+    )
+
+
+def test_implicit_face_proposals_declines_noncanonical_inputs() -> None:
+    coefficients = np.zeros((1, 3, 10), dtype=np.float64)
+    rows = np.zeros((2,), dtype=np.int64)
+    points = np.zeros((2, 3), dtype=np.float64)
+    assert implicit_face_proposals(coefficients[:, :, :9], rows, points) is None
+    assert implicit_face_proposals(coefficients, rows.astype(np.int32), points) is None
+    assert implicit_face_proposals(coefficients, rows[:1], points) is None
+    assert implicit_face_proposals(coefficients, rows, points[:, :2]) is None
+    assert implicit_face_proposals(coefficients, rows, points.astype(np.float32)) is None
+    assert implicit_face_proposals(coefficients, rows, points[::-1]) is None
+    assert (
+        implicit_face_proposals(coefficients, np.asarray((-1, 0), dtype=np.int64), points)
+        is None
+    )
+    assert (
+        implicit_face_proposals(coefficients, np.asarray((0, 1), dtype=np.int64), points)
+        is None
+    )
 
 
 def test_meshcore_scenario_1() -> None:

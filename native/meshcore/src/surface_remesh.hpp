@@ -182,10 +182,19 @@ double cone_separation(const NormalCone& first, const NormalCone& second);
 // [0, pi]; 0 when either cone is open.
 double forced_turn(const NormalCone& first, const NormalCone& second);
 
+// What the caller declares about the input's edges. A closed carrier is
+// validated before any edit (every directed edge held by exactly one triangle
+// and reversed by exactly one; PHX_MC_INVALID_INPUT otherwise) and stays
+// closed under every admitted edit, so a live edge without a neighbor is then
+// an impossible state and is raised as one. A carrier with a border is not
+// validated and its border edges take no fold factor.
+enum class InputTopology : int32_t { kClosed = 0, kWithBorder = 1 };
+
 struct RemeshTargets {
   double edge_length = 0;              // h
   double minimum_angle_degrees = 30;   // full-score minimum angle
   bool admission_limited_coarsening = false;  // size sweep, extended regularization, coarsening
+  InputTopology topology = InputTopology::kClosed;
 };
 
 struct RemeshCounters {
@@ -199,7 +208,9 @@ struct RemeshCounters {
 double certified_free_radius(const Point& a, const Point& b, const Point& c, double roundoff);
 
 // Remeshes (points, triangles) in place; the output is compacted (only vertices
-// of surviving triangles, in first-use order). Status codes are PHX_MC_*.
+// of surviving triangles, in first-use order). Status codes are PHX_MC_*; an
+// input declared closed that is not is PHX_MC_INVALID_INPUT. On any status but
+// PHX_MC_OK the vectors hold no result.
 int32_t remesh_surface(std::vector<Point>& points, std::vector<Triangle>& triangles,
                        const TriangleAdmission& admission, const RemeshTargets& targets,
                        RemeshCounters& counters);

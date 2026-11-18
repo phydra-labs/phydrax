@@ -32,7 +32,7 @@ from phydrax.geometry._approximate_source_coverage import (
 from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
 from phydrax.geometry._global_embedding import certify_global_embedding
 from phydrax.geometry._meshing_domain import MeshingDomain, PatchCurveUse
-from phydrax.geometry._planar_primitives import partition_verdict
+from phydrax.geometry._planar_primitives import partition_verdict, polygon_boxes
 from phydrax.geometry._source_boundary_records import (
     rational_chart_tokens,
     SourceBoundaryChartWitness,
@@ -183,6 +183,44 @@ def test_exact_chart_intersection_handles_clockwise_root_and_target() -> None:
                 (0, 0)
             ]
     assert _intersection_area(child, (root[0], root[0], root[1])) == 0
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        Fraction(1, 3),
+        Fraction(-1, 3),
+        Fraction(1, 2**1075),
+        Fraction(-1, 2**1075),
+        Fraction(2**1023),
+        Fraction(0),
+    ),
+    ids=("positive", "negative", "tiny", "negative-tiny", "huge", "zero"),
+)
+def test_degenerate_rational_box_has_tight_outward_bounds(value: Fraction) -> None:
+    point = (value, value)
+    boxes = polygon_boxes(((point, point, point),))
+    assert boxes is not None
+    lower, upper = boxes
+    lo = float(lower[0, 0])
+    hi = float(upper[0, 0])
+    assert Fraction(lo) <= value <= Fraction(hi)
+    assert lo == hi or (
+        Fraction(float(np.nextafter(lo, np.inf))) > value
+        and Fraction(float(np.nextafter(hi, -np.inf))) < value
+    )
+    assert lower[0, 1] == lo
+    assert upper[0, 1] == hi
+
+
+def test_pair_screen_keeps_distinct_banks_and_row_order() -> None:
+    zero, one, ten = Fraction(0), Fraction(1), Fraction(10)
+    first = (
+        ((zero, zero), (one, zero), (zero, one)),
+        ((ten, zero), (ten + one, zero), (ten, one)),
+    )
+    second = (first[1], first[0])
+    assert _possibly_overlapping_pairs(first, second, False) == [(0, 1), (1, 0)]
 
 
 def test_bounded_cad_partition_screen_preserves_exact_coverage_and_overlap() -> None:

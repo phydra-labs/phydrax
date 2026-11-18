@@ -23,6 +23,18 @@
   - Layer-wall source records can carry larger residual evidence or refuse it.
   - Boolean material separation reads the lower bound; placement and union
     corrections can change that bound.
+- Accelerated exact planar chart pair screening while preserving outward boxes,
+  candidate order, and separation decisions.
+- Restricted JAX to `>=0.12.0,<0.12.1` to match audited frontend source
+  identities: JAX 0.12.1 rewrote the index narrowing repaired by Phydrax,
+  including `_clamp_and_cast_index`, `NDIndexer.normalize_indices`, and
+  `_normalize_index`; its changed source is not admitted by the guard.
+- Reused operation-local interval programs across compatible orthogonal-cylinder
+  measure charts without changing certified enclosure endpoints.
+- Orthogonal-cylinder branch enclosure queries reuse bounded proofs for the same
+  unchanged live curve and exact interval premises; returned bounds and identities
+  are unchanged.
+- Native CAD projection avoids discarded eager revolution-surface points for eligible batched rows.
 - Fixed the native CAD qualification intersection evidence reporting a p-curve
   residual that was zero by construction: `maximum_residuals_m.first_pcurve`
   and `.second_pcurve` now measure each patch lift against the declared analytic
@@ -361,6 +373,10 @@
   32 bits, preserving lexicographic order and coefficient reduction order.
 - Mesh incidence composition uses bounded packed integer keys for sorted unique
   pairs, preserving exact incidence order and falling back for other inputs.
+- Implicit reverse-fidelity searches use an optional native fixed-order
+  face-proposal batch, falling back for unsupported or anomalous inputs.
+- Implicit reverse-fidelity searches evaluate face-point proposals from contiguous
+  monomial lanes, preserving their fixed binary64 operation order and bounds.
 - Dynamic glued-face monotonicity checks rational Jacobian controls with exact
   integer signs before decoding, preserving findings and the alternative
   preconditioner route. Three alternating replays of 6,990 captured calls took
@@ -719,6 +735,46 @@
   every carrier of the tests), so no result changes; the bound exists for a
   platform or build whose wide multiplication is wrong, where the search
   previously did not return.
+- Certified surface remeshing does less bookkeeping for each edit and returns
+  the same mesh. The faces at a vertex are collected into storage that is
+  reused from one query to the next instead of a new array that grew an entry
+  at a time, and the temporary store of moved points and appended triangles
+  finds a resident page by direct index instead of through a hash table. No
+  arithmetic, admission or order of edits changes. Coarsening the 6.3 million
+  triangle carrier of the adaptive sphere profile to its 114 triangles takes
+  about a fifth less time (397 to 307 seconds in one measured pair) with
+  identical vertices, triangles, counters and distance bound.
+- Certified surface remeshing validates that its carrier is closed. The
+  zero-set and envelope remeshes declare a closed carrier, and before the
+  first edit every edge must be held by exactly two triangles in opposite
+  directions: a carrier with a border or a repeated triangle is refused with
+  an invalid-input status instead of being remeshed. An edge of a closed
+  carrier without a neighboring triangle during the remesh, which was skipped
+  silently, is now reported as an internal error. Valid carriers return the
+  same mesh as before.
+- The spatial index of certified surface remeshing tightens itself while it
+  is searched and returns the same candidates. A search that inspects a block
+  of registered triangles computes the box of each live one, so it leaves the
+  block with the union of those boxes, empty when every triangle of the block
+  has been removed; later searches skip it. On the 6.3 million triangle
+  carrier of the adaptive sphere profile a search examined 217 registered
+  rows for 8 candidates, 60% of them removed triangles, and examines 93 with
+  this change; the remesh takes about 3% less time (310 to 302 seconds, two
+  alternating pairs) with identical vertices, triangles, counters and
+  distance bound.
+- Native kernels verify the floating-point mode once for each call instead of
+  once for each interval program they execute. Every certified entry
+  establishes round-to-nearest with gradual underflow and verifies it by
+  arithmetic; a kernel reached from it, such as an interval program of a few
+  rows, opened the same scope and repeated the verification, whose two
+  subnormal operations are slow on common processors. A scope opened under a
+  verified scope of the same thread, with no mode write in between, now relies
+  on that verification; a mode write ends the reliance. No arithmetic changes.
+  On the adaptive sphere profile, whose first adaptation has 1.19 million
+  relocation candidates refused by the certified distance bound, that
+  adaptation takes 12% less time on Windows (357 to 316 seconds) and the
+  three surface remeshes 3% less, with identical coordinates, edits and
+  evidence.
 - The source normal cones of certified surface remeshing are outward-rounded
   bounds computed without the platform math library. For the zero-set
   admission the half-angle `asin(|r| / |g|) + asin(2 tolerance / altitude)`

@@ -11,7 +11,7 @@
 #include <memory>
 #include <stdexcept>
 #include <system_error>
-#include <unordered_map>
+#include <vector>
 
 namespace phx::mc::remesh {
 
@@ -92,12 +92,12 @@ class ScratchRows {
     if (newest_ != kNone && pages_[newest_].chunk == chunk) {
       return pages_[newest_];
     }
-    auto found = locations_.find(chunk);
-    if (found != locations_.end()) {
-      Page& page = pages_[found->second];
-      if (found->second != newest_) {
-        detach(found->second);
-        attach(found->second);
+    const size_t resident = chunk < locations_.size() ? locations_[chunk] : kNone;
+    if (resident != kNone) {
+      Page& page = pages_[resident];
+      if (resident != newest_) {
+        detach(resident);
+        attach(resident);
       }
       return page;
     }
@@ -110,7 +110,7 @@ class ScratchRows {
         errno = 0;
         if (std::fwrite(page.rows.get(), sizeof(Row), kRows, file_) != kRows) fail("scratch write");
       }
-      locations_.erase(page.chunk);
+      locations_[page.chunk] = kNone;
     }
     if (!page.rows) page.rows.reset(new Row[kRows]);
     if (load) {
@@ -122,13 +122,16 @@ class ScratchRows {
     }
     page.chunk = chunk;
     page.dirty = false;
-    locations_.emplace(chunk, slot);
+    if (chunk >= locations_.size()) locations_.resize(chunk + 1, kNone);
+    locations_[chunk] = slot;
     attach(slot);
     return page;
   }
   mutable std::FILE* file_ = nullptr;
   mutable std::array<Page, kWindows> pages_{};
-  mutable std::unordered_map<size_t, size_t> locations_;
+  // Cache slot of each chunk, kNone when it is not resident: one word per
+  // 1024 rows of the file, indexed directly.
+  mutable std::vector<size_t> locations_;
   mutable size_t newest_ = kNone, oldest_ = kNone, used_ = 0;
   size_t size_ = 0;
 };

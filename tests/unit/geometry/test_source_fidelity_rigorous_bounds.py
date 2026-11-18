@@ -301,7 +301,10 @@ def test_ordered_contraction_matches_exact_sum() -> None:
     generator = np.random.default_rng(7)
     coefficients = generator.standard_normal((5, 3, 10))
     values = generator.standard_normal((5, 10))
-    result = _ordered_contraction(coefficients, values)
+    result = _ordered_contraction(
+        np.ascontiguousarray(coefficients.transpose(2, 0, 1)),
+        np.ascontiguousarray(values.T),
+    )
     for face in range(5):
         for axis in range(3):
             exact = sum(
@@ -313,3 +316,36 @@ def test_ordered_contraction_matches_exact_sum() -> None:
                 Fraction(0),
             )
             assert abs(Fraction(float(result[face, axis])) - exact) <= Fraction(1, 2**40)
+
+
+def test_ordered_contraction_preserves_scalar_order_and_row_partition() -> None:
+    generator = np.random.default_rng(71)
+    coefficients = generator.standard_normal((32, 3, 10))
+    values = generator.standard_normal((32, 10))
+    coefficients[0] = 0.0
+    coefficients[0, :, :3] = (2.0**53, 1.0, -(2.0**53))
+    values[0] = 1.0
+    coefficients[1, :, :] = -0.0
+    values[1] = 1.0
+    coefficients[2, :, :] = np.nextafter(0.0, 1.0)
+    values[2] = 1.0
+    expected = np.empty((32, 3), dtype=np.float64)
+    for row in range(32):
+        for axis in range(3):
+            total = float(coefficients[row, axis, 0]) * float(values[row, 0])
+            for index in range(1, 10):
+                total += float(coefficients[row, axis, index]) * float(values[row, index])
+            expected[row, axis] = total
+    ordered = np.ascontiguousarray(coefficients.transpose(2, 0, 1))
+    monomials = np.ascontiguousarray(values.T)
+    result = _ordered_contraction(ordered, monomials)
+    assert result.dtype == expected.dtype
+    assert result.shape == expected.shape
+    assert result.tobytes() == expected.tobytes()
+    partitions = np.concatenate(
+        [
+            _ordered_contraction(ordered[:, start:stop], monomials[:, start:stop])
+            for start, stop in ((0, 1), (1, 11), (11, 32))
+        ]
+    )
+    assert partitions.tobytes() == expected.tobytes()

@@ -943,7 +943,10 @@ int32_t remesh_envelope(EnvelopeData& data, phx::mc::remesh::RemeshCounters& cou
   const EnvelopeBandAdmission admission(data, cloud);
   std::vector<V> points = data.surface_points;
   std::vector<F> triangles = data.triangles;
-  status = phx::mc::remesh::remesh_surface(points, triangles, admission, {h, 30.0}, counters);
+  // An envelope is the boundary of the solid around its source: closed.
+  status = phx::mc::remesh::remesh_surface(
+      points, triangles, admission,
+      {h, 30.0, false, phx::mc::remesh::InputTopology::kClosed}, counters);
   if (status != PHX_MC_OK) return status;
   // Source-to-surface: every source point lies within the covering radius of
   // a cloud point, which lies within its nearest-vertex distance of the

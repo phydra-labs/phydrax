@@ -1549,6 +1549,9 @@ class MeshcoreLibrary:
         "_interval_capability_error",
         "_interval_capability_lock",
         "_interval_program_opcodes",
+        "_implicit_face_proposals",
+        "_implicit_face_proposals_checked",
+        "_implicit_face_proposals_lock",
         "_library",
         "build_hash",
         "path",
@@ -1572,9 +1575,30 @@ class MeshcoreLibrary:
         self._interval_program_opcodes: frozenset[int] | None = None
         self._interval_capability_error: str | None = None
         self._interval_capability_lock = threading.Lock()
+        self._implicit_face_proposals: Any = None
+        self._implicit_face_proposals_checked = False
+        self._implicit_face_proposals_lock = threading.Lock()
 
     def __getitem__(self, name: str, /) -> Any:
         return self._functions[name]
+
+    def implicit_face_proposals(self, /) -> Any:
+        """Resolve the optional proposal entry once for this loaded library."""
+        if self._implicit_face_proposals_checked:
+            return self._implicit_face_proposals
+        with self._implicit_face_proposals_lock:
+            if not self._implicit_face_proposals_checked:
+                # ctypes reports a missing exported symbol as AttributeError.
+                try:
+                    function = self._library["phx_mc_implicit_face_proposals"]
+                except AttributeError:
+                    function = None
+                if function is not None:
+                    function.restype = _I32
+                    function.argtypes = (_P, _I64, _P, _P, _I64, _P, _P, _P)
+                self._implicit_face_proposals = function
+                self._implicit_face_proposals_checked = True
+            return self._implicit_face_proposals
 
     def interval_program_capabilities(self, /) -> frozenset[int]:
         """Read the required interval opcode capability mask once on first use."""
@@ -1906,6 +1930,67 @@ def _interval_program_arrays(
                 "interval program inputs must not overlap output workspaces."
             )
     return instruction_array, index_array, parameter_array, lower_array, upper_array
+
+
+def implicit_face_proposals(
+    coefficients: np.ndarray, face_rows: np.ndarray, points: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Propose implicit-face parameters, or return None for native fallback.
+
+    Coefficients have shape ``(face_count, 3, 10)``, face rows shape
+    ``(count,)``, and points shape ``(count, 3)``. The returned writable
+    float64 arrays have shape ``(count,)``. Inputs must be aligned,
+    C-contiguous float64 arrays and int64 face rows. None means the inputs
+    are unsuitable, the optional entry is unavailable, or native declined
+    the entire batch; no proposal is then usable.
+    """
+    if (
+        not isinstance(coefficients, np.ndarray)
+        or coefficients.dtype != np.dtype(np.float64)
+        or coefficients.ndim != 3
+        or coefficients.shape[1:] != (3, 10)
+        or not coefficients.flags.c_contiguous
+        or not coefficients.flags.aligned
+        or not isinstance(face_rows, np.ndarray)
+        or face_rows.dtype != np.dtype(np.int64)
+        or face_rows.ndim != 1
+        or not face_rows.flags.c_contiguous
+        or not face_rows.flags.aligned
+        or not isinstance(points, np.ndarray)
+        or points.dtype != np.dtype(np.float64)
+        or points.ndim != 2
+        or points.shape[1] != 3
+        or not points.flags.c_contiguous
+        or not points.flags.aligned
+        or face_rows.shape[0] != points.shape[0]
+        or np.any(face_rows < 0)
+        or np.any(face_rows >= coefficients.shape[0])
+    ):
+        return None
+    library = _current()
+    if isinstance(library, str):
+        return None
+    function = library.implicit_face_proposals()
+    if function is None:
+        return None
+    count = points.shape[0]
+    first = np.empty((count,), dtype=np.float64)
+    second = np.empty((count,), dtype=np.float64)
+    handled = _I32(0)
+    status = function(
+        coefficients.ctypes.data,
+        coefficients.shape[0],
+        face_rows.ctypes.data,
+        points.ctypes.data,
+        count,
+        first.ctypes.data,
+        second.ctypes.data,
+        ctypes.byref(handled),
+    )
+    _raise_for_call(status, "implicit_face_proposals")
+    if not handled.value:
+        return None
+    return first, second
 
 
 def interval_program_execute(
@@ -4221,7 +4306,9 @@ def zero_set_remesh(
     distance bound, retained by untouched input triangles; ``distance`` is the
     maximum certified bound over the result. ``admission_limited_coarsening``
     additionally centers vertices in the band (off the zero set) and collapses
-    edges below 4/5 of ``edge_length`` until the admission refuses them.
+    edges below 4/5 of ``edge_length`` until the admission refuses them. A
+    carrier that is not closed (an edge not held by exactly two triangles, in
+    opposite directions) raises ``ValueError``.
     """
     if not isinstance(admission_limited_coarsening, bool):
         raise TypeError("admission_limited_coarsening must be a bool.")
@@ -11234,6 +11321,7 @@ __all__ = [
     "exact_orient2d",
     "exact_orient3d",
     "graph_partition",
+    "implicit_face_proposals",
     "parallel_for",
     "interval_program_branches",
     "interval_program_execute",

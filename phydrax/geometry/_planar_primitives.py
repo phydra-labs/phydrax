@@ -286,12 +286,22 @@ _DENSE_BOX_PAIRS = 1 << 16
 
 def _float_down(value: Fraction, /) -> float:
     result = float(value)
-    return result if Fraction(result) <= value else float(np.nextafter(result, -np.inf))
+    numerator, denominator = result.as_integer_ratio()
+    return (
+        result
+        if numerator * value.denominator <= value.numerator * denominator
+        else float(np.nextafter(result, -np.inf))
+    )
 
 
 def _float_up(value: Fraction, /) -> float:
     result = float(value)
-    return result if Fraction(result) >= value else float(np.nextafter(result, np.inf))
+    numerator, denominator = result.as_integer_ratio()
+    return (
+        result
+        if numerator * value.denominator >= value.numerator * denominator
+        else float(np.nextafter(result, np.inf))
+    )
 
 
 def partition_verdict(
@@ -440,8 +450,17 @@ def _triangle_bank(
             for corner, point in enumerate(polygon):
                 corners[row, corner] = identities.setdefault(point, len(identities))
                 for axis in range(2):
-                    lower[row, corner, axis] = _float_down(point[axis])
-                    upper[row, corner, axis] = _float_up(point[axis])
+                    value = point[axis]
+                    result = float(value)
+                    numerator, denominator = result.as_integer_ratio()
+                    rounded = numerator * value.denominator
+                    exact = value.numerator * denominator
+                    lower[row, corner, axis] = (
+                        result if rounded <= exact else np.nextafter(result, -np.inf)
+                    )
+                    upper[row, corner, axis] = (
+                        result if rounded >= exact else np.nextafter(result, np.inf)
+                    )
         except OverflowError:
             continue
         valid[row] = True

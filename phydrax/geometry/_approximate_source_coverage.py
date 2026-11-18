@@ -634,11 +634,13 @@ def _possibly_overlapping_pairs(
     Pairs with disjoint closed binary64 boxes, or whose interiors the interval
     screen of the exact edge-line test separates, meet in area zero.
     """
+    first_boxes = polygon_boxes(first)
+    second_boxes = first_boxes if first is second else polygon_boxes(second)
     pairs = box_overlap_pairs(
         len(first),
         len(second),
-        polygon_boxes(first),
-        polygon_boxes(second),
+        first_boxes,
+        second_boxes,
         self_pairs=self_pairs,
     )
     decisions = triangle_pair_separation(first, second, pairs)

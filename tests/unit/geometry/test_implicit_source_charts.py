@@ -3030,6 +3030,36 @@ def _reverse_plane_maps(
     return source_charts._face_maps((enclosure,))
 
 
+def test_reverse_nearest_proposals_keep_triangle_points_and_underflow_errors() -> None:
+    maps = _reverse_plane_maps(
+        (
+            (Fraction(0), Fraction(0), Fraction(0)),
+            (Fraction(1), Fraction(0), Fraction(0)),
+            (Fraction(0), Fraction(1), Fraction(0)),
+        )
+    )
+    rows = np.asarray([0, 0, 0], dtype=np.int64)
+    points = np.asarray(
+        ((0.25, 0.5, 0.0), (0.5, 0.25, 0.0), (1.0, 1.0, 0.0)),
+        dtype=np.float64,
+    )
+    first, second = source_charts._nearest_face_parameters(maps, rows, points)
+    assert first.tobytes() == np.asarray((0.25, 0.5, 0.5), dtype=np.float64).tobytes()
+    cap = np.nextafter(np.nextafter(0.5, 0.0), 0.0)
+    assert second.tobytes() == np.asarray((0.5, 0.25, cap), dtype=np.float64).tobytes()
+
+    tiny = np.zeros((1, 3, 10), dtype=np.float64)
+    tiny[0, 0, 1] = 2.0**-400
+    tiny[0, 1, 2] = 2.0**-400
+    underflow = replace(maps, middle=tiny)
+    with np.errstate(all="raise"), pytest.raises(FloatingPointError, match="underflow"):
+        source_charts._nearest_face_parameters(
+            underflow,
+            np.asarray([0], dtype=np.int64),
+            np.zeros((1, 3), dtype=np.float64),
+        )
+
+
 @pytest.mark.parametrize("reverse", (False, True), ids=("forward", "reversed"))
 def test_reverse_zero_constraint_encloses_rotated_sphere_distance(reverse: bool) -> None:
     distance = Fraction(1, 100)

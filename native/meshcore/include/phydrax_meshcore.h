@@ -67,6 +67,19 @@ PHX_MC_API int32_t phx_mc_implicit_contours(
     const double* points, const int64_t* root_issues, double minimum_area,
     uint8_t* handled, int8_t* counts, int64_t* triangles, int64_t* issues);
 
+/* Gauss-Newton proposals for implicit faces. coefficients is (face_count,3,10),
+ * face_rows is (count), points is (count,3), and first and second are (count).
+ * Outputs must not overlap any input or each other, including handled. Invalid
+ * arguments or face indices leave every output unchanged. On PHX_MC_OK,
+ * handled is 1 if the whole batch was computed; when it is 0, proposal outputs
+ * are unspecified and the caller must recompute the entire batch. This optional
+ * entry requires round-to-nearest and gradual underflow without changing them.
+ */
+PHX_MC_API int32_t phx_mc_implicit_face_proposals(
+    const double* coefficients, int64_t face_count, const int64_t* face_rows,
+    const double* points, int64_t count, double* first, double* second,
+    int32_t* handled);
+
 /* ---------------------------------------------------------------- predicates
  * Inputs a, b, ... are (count, 2) or (count, 3) arrays; signs is (count,) with
  * values in {-1, 0, 1}.
@@ -1901,7 +1914,9 @@ PHX_MC_API int32_t phx_mc_tet_mesh_create_with_implicit(
 PHX_MC_API int32_t phx_mc_tet_mesh_implicit_source(
     const phx_mc_tet_mesh* mesh, phx_mc_tet_implicit_source* source);
 /* Remeshes a closed, consistently oriented, embedded carrier of the zero set of f
- * toward `edge_length` and `minimum_angle_degrees`. Every created triangle is
+ * toward `edge_length` and `minimum_angle_degrees`. Closed is validated: every
+ * edge is held by exactly two triangles, in opposite directions, else
+ * PHX_MC_INVALID_INPUT. Every created triangle is
  * admitted by the kZeroSetBand predicate: its certified distance to {f = 0} is at
  * most `tolerance` (interval |f| over the triangle against a certified lower bound
  * of |grad f| over its widened box) and its normal is certified transversal to

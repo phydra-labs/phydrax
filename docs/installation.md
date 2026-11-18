@@ -1,13 +1,13 @@
 # Installation
 
-Requires Python 3.13 (the standard GIL-enabled CPython build) and JAX 0.12. Select
-CPU dependencies explicitly with:
+Requires Python 3.13 (the standard GIL-enabled CPython build) and JAX
+`>=0.12.0,<0.12.1`. Select CPU dependencies explicitly with:
 
 ```bash
 pip install "phydrax[cpu]"
 ```
 
-The `cpu` extra requests `jax[cpu]>=0.12.0,<0.13`. Plain `pip install phydrax`
+The `cpu` extra requests `jax[cpu]>=0.12.0,<0.12.1`. Plain `pip install phydrax`
 continues to install the base JAX dependency, which also supports CPU execution.
 Neither command removes existing accelerator plugins or forces CPU execution;
 set `JAX_PLATFORMS=cpu` before numerical imports to select CPU at runtime.
@@ -19,7 +19,7 @@ wheels require AVX2 and FMA (Intel Haswell or newer). The NumPy and SciPy
 requirements already exceed JAX 0.12's minimums.
 
 Phydrax installs a source-guarded correction for the premature narrowing of wide
-indexing addresses observed in JAX 0.12.0, without an additional version pin.
+indexing addresses observed in JAX 0.12.0, within the declared version range.
 Compatibility is checked against the audited upstream implementation, not its
 release number. Import Phydrax
 before initializing a JAX backend or tracing numerical functions, and restart
