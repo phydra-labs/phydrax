@@ -9,6 +9,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <tuple>
 #include <unordered_map>
 #include <utility>
@@ -792,7 +793,12 @@ class Remesher {
     double fold = 1;
     for (int k = 0; k < 3; ++k) {
       const auto neighbor = across(t[k], t[(k + 1) % 3], staged, removed);
-      if (!neighbor) continue;
+      if (!neighbor) {
+        // A closed carrier holds every live edge twice; only a border has none.
+        if (targets.topology == InputTopology::kClosed)
+          throw std::logic_error("surface remesh: a live edge of a closed carrier has no neighbor");
+        continue;
+      }
       const F& other_triangle = triangle(*neighbor, staged);
       const V other = normal(other_triangle);
       if (!(length(other) > 0)) continue;
@@ -2100,7 +2106,34 @@ class Remesher {
   }
 
 
-  void run(std::vector<V>& input_points, std::vector<F>& input_triangles,
+  // Whether every directed edge of the input is held by exactly one triangle
+  // and reversed by exactly one: at each vertex the successors and the
+  // predecessors named by its star are the same vertices, each named once.
+  bool closed_carrier() {
+    std::vector<int64_t> incident, successors, predecessors;
+    for (size_t v = 0; v < points.size(); ++v) {
+      collect_star(static_cast<int64_t>(v), incident);
+      successors.clear();
+      predecessors.clear();
+      for (int64_t id : incident) {
+        const F t = triangles[static_cast<size_t>(id)];
+        for (int k = 0; k < 3; ++k) {
+          if (t[k] != static_cast<int64_t>(v)) continue;
+          successors.push_back(t[(k + 1) % 3]);
+          predecessors.push_back(t[(k + 2) % 3]);
+        }
+      }
+      std::sort(successors.begin(), successors.end());
+      std::sort(predecessors.begin(), predecessors.end());
+      if (successors != predecessors ||
+          std::adjacent_find(successors.begin(), successors.end()) != successors.end())
+        return false;
+    }
+    return true;
+  }
+
+  // False when the input is declared closed and is not; nothing is edited then.
+  bool run(std::vector<V>& input_points, std::vector<F>& input_triangles,
            const int32_t* borrowed = nullptr, size_t borrowed_count = 0,
            const double* borrowed_points = nullptr, size_t point_count = 0,
            const int32_t* borrowed_offsets = nullptr, const int32_t* borrowed_rows = nullptr) {
@@ -2170,6 +2203,7 @@ class Remesher {
       }
     }
     prepare_buckets();
+    if (targets.topology == InputTopology::kClosed && !closed_carrier()) return false;
     for (size_t id = 0; id < triangles.size(); ++id) {
       rescore(static_cast<int64_t>(id));
     }
@@ -2185,9 +2219,10 @@ class Remesher {
     improve_worst_first();
     regularize();
     improve_worst_first();
-    if (!targets.admission_limited_coarsening) return;
+    if (!targets.admission_limited_coarsening) return true;
     coarsen_uniformly();
     improve_worst_first();
+    return true;
   }
 
   int64_t unmet() const {
@@ -2325,7 +2360,7 @@ int32_t remesh_surface(std::vector<Point>& points, std::vector<Triangle>& triang
     for (int64_t v : t)
       if (v < 0 || v >= static_cast<int64_t>(points.size())) return PHX_MC_INVALID_ARGUMENT;
   Remesher remesher(admission, targets);
-  remesher.run(points, triangles);
+  if (!remesher.run(points, triangles)) return PHX_MC_INVALID_INPUT;
   counters.splits = remesher.splits;
   counters.collapses = remesher.collapses;
   counters.flips = remesher.flips;
@@ -2354,8 +2389,9 @@ int32_t remesh_surface_borrowed_i32(std::vector<Point>& points, const double* in
         return PHX_MC_INVALID_ARGUMENT;
   {
     Remesher remesher(admission, targets);
-    remesher.run(points, output, triangles, triangle_count, input_points, point_count,
-                 vertex_face_offsets, vertex_faces);
+    if (!remesher.run(points, output, triangles, triangle_count, input_points, point_count,
+                      vertex_face_offsets, vertex_faces))
+      return PHX_MC_INVALID_INPUT;
     counters.splits = remesher.splits;
     counters.collapses = remesher.collapses;
     counters.flips = remesher.flips;

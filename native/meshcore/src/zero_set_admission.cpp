@@ -786,8 +786,10 @@ int32_t remesh_zero_set(const phx_mc_zero_set_remesh_request& request,
       !(request.carrier_distance >= 0) || !std::isfinite(request.carrier_distance) ||
       (request.admission_limited_coarsening != 0 && request.admission_limited_coarsening != 1))
     return PHX_MC_INVALID_ARGUMENT;
+  // The zero set of the declared field bounds a solid: its carrier is closed.
   const RemeshTargets targets{request.edge_length, request.minimum_angle_degrees,
-                              request.admission_limited_coarsening == 1};
+                              request.admission_limited_coarsening == 1,
+                              phx::mc::remesh::InputTopology::kClosed};
   IntervalBoxProgram value, gradient;
   const auto bind = [](IntervalBoxProgram& program, const phx_mc_interval_box_program& source,
                        int64_t outputs) -> int32_t {
