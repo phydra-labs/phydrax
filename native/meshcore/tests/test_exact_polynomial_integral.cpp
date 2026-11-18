@@ -48,5 +48,5 @@ int main() {
   huge.store(input.data());
   PHX_CHECK(call(4) == PHX_MC_OK);
   PHX_CHECK(statuses[0] == PHX_MC_RANGE_ERROR && statuses[1] == PHX_MC_OK);
-  return 0;
+  return phx::mc::test::finish("test_exact_polynomial_integral");
 }

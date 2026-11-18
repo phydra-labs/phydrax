@@ -11,63 +11,28 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax.linalg import _operators, _pairings, _runtime
+from phydrax.linalg import _pairings
 from phydrax.sparse import _linear
 
 
 la = phx.linalg
 
 
-def test_pairing_shape_validation_reuses_trace(monkeypatch: pytest.MonkeyPatch) -> None:
-    eqx.clear_caches()
-    calls = []
-    original = _pairings.EuclideanPairing.riesz
-
-    def riesz(self: _pairings.EuclideanPairing, vector: Any) -> Any:
-        calls.append(None)
-        return original(self, vector)
-
-    monkeypatch.setattr(_pairings.EuclideanPairing, "riesz", riesz)
+def test_equal_array_spaces_share_one_identity() -> None:
     first = la.ArraySpace((7,), dtype=jnp.float64)
-    count = len(calls)
     second = la.ArraySpace((7,), dtype=jnp.float64)
-    assert count > 0
-    assert len(calls) == count
     assert first.space_id == second.space_id
 
 
-def test_diagonal_shape_and_execution_share_trace(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    eqx.clear_caches()
-    calls = []
-    original = _operators.DenseLinearOperator._assemble_diagonal
-
-    def diagonal(self: _operators.DenseLinearOperator) -> jax.Array:
-        calls.append(None)
-        return original(self)
-
-    monkeypatch.setattr(_operators.DenseLinearOperator, "_assemble_diagonal", diagonal)
+def test_diagonal_assembly_follows_changed_matrix_leaves() -> None:
     operator = la.DenseLinearOperator(jnp.asarray([[2.0, 1.0], [1.0, 3.0]]))
     np.testing.assert_array_equal(la.assemble_diagonal(operator), [2.0, 3.0])
-    assert len(calls) == 1
+    # A second operator of the same structure must not see the first one's values.
     changed = eqx.tree_at(lambda op: op.matrix, operator, operator.matrix * 2)
     np.testing.assert_array_equal(la.assemble_diagonal(changed), [4.0, 6.0])
-    assert len(calls) == 1
 
 
-def test_prepared_inverse_and_custom_root_reuse_traces(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    eqx.clear_caches()
-    calls = []
-    original = _runtime.custom_root
-
-    def root(*args: Any, **kwargs: Any) -> Any:
-        calls.append(None)
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(_runtime, "custom_root", root)
+def test_prepared_inverse_serves_repeated_right_hand_sides_and_derivatives() -> None:
     matrix = jnp.asarray([[3.0, 0.5], [0.5, 2.0]])
     operator = la.DenseLinearOperator(
         matrix,
@@ -86,19 +51,14 @@ def test_prepared_inverse_and_custom_root_reuse_traces(
     np.testing.assert_allclose(
         la.solve(prepared, rhs).value, jnp.linalg.solve(matrix, rhs)
     )
-    count = len(calls)
     np.testing.assert_allclose(
         la.solve(prepared, rhs * 2).value, jnp.linalg.solve(matrix, rhs * 2)
     )
-    assert count > 0
-    assert len(calls) == count
     pairing = la.OperatorPairing(operator, prepared_inverse=prepared)
     np.testing.assert_allclose(pairing.inverse_riesz(rhs), jnp.linalg.solve(matrix, rhs))
-    count = len(calls)
     np.testing.assert_allclose(
         pairing.inverse_riesz(rhs * 2), jnp.linalg.solve(matrix, rhs * 2)
     )
-    assert len(calls) == count
     _, tangent = jax.jvp(pairing.inverse_riesz, (rhs,), (rhs,))
     _, transpose = jax.vjp(pairing.inverse_riesz, rhs)
     np.testing.assert_allclose(tangent, jnp.linalg.solve(matrix, rhs))

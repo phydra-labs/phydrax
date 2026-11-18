@@ -398,6 +398,7 @@ def _surface_source_chart_rows(
     patch_rows = np.empty((len(witness.source_entity_ids),), dtype=np.int64)
     plane_by_patch: dict[int, bool] = {}
     plane_chart_ids: dict[int, str | None] = {}
+    resolved_charts: dict[tuple[str, str, tuple[str, ...]], tuple[int, bool]] = {}
     for row, (chart_id, entity_id, occurrence) in enumerate(
         zip(
             witness.source_chart_ids,
@@ -406,28 +407,34 @@ def _surface_source_chart_rows(
             strict=True,
         )
     ):
-        patch = domain.resolve_entity_id(2, entity_id, occurrence_path=occurrence)
-        if (
-            patch not in source.patches
-            or domain.entity_id(2, patch) != entity_id
-            or domain.source_occurrences[2][patch] != occurrence
-        ):
-            raise ValueError(
-                "Source surface witness changes its authored chart or occurrence."
-            )
-        if chart_id == entity_id:
-            plane = False
-        else:
-            if patch not in plane_chart_ids:
-                plane_chart = exact_plane_chart(domain, patch)
-                plane_chart_ids[patch] = (
-                    None if plane_chart is None else plane_chart.chart_id
-                )
-            if chart_id != plane_chart_ids[patch]:
+        key = (chart_id, entity_id, occurrence)
+        resolved = resolved_charts.get(key)
+        if resolved is None:
+            patch = domain.resolve_entity_id(2, entity_id, occurrence_path=occurrence)
+            if (
+                patch not in source.patches
+                or domain.entity_id(2, patch) != entity_id
+                or domain.source_occurrences[2][patch] != occurrence
+            ):
                 raise ValueError(
                     "Source surface witness changes its authored chart or occurrence."
                 )
-            plane = True
+            if chart_id == entity_id:
+                plane = False
+            else:
+                if patch not in plane_chart_ids:
+                    plane_chart = exact_plane_chart(domain, patch)
+                    plane_chart_ids[patch] = (
+                        None if plane_chart is None else plane_chart.chart_id
+                    )
+                if chart_id != plane_chart_ids[patch]:
+                    raise ValueError(
+                        "Source surface witness changes its authored chart or occurrence."
+                    )
+                plane = True
+            resolved_charts[key] = (patch, plane)
+        else:
+            patch, plane = resolved
         if plane_by_patch.setdefault(patch, plane) != plane:
             raise ValueError("Source surface witness mixes charts of one source patch.")
         patch_rows[row] = patch
@@ -653,8 +660,10 @@ def _partition_findings(
             if len(chart) != 4:
                 raise ValueError("Quadrilateral source chart must contain four points.")
             triangles = ((chart[0], chart[1], chart[2]), (chart[0], chart[2], chart[3]))
-        else:
+        elif isinstance(witness, SurfaceChartWitness):
             triangles = (_exact_triangle2(chart),)
+        else:
+            triangles = (cast(Triangle2, chart),)
         target_triangles.setdefault(int(patch), []).extend(triangles)
     findings: list[MeshCertificateFinding] = []
     if isinstance(witness, SurfaceChartWitness) and set(target_triangles) <= set(
@@ -7312,6 +7321,7 @@ def certify_source_fidelity(
         from ._source_interpolation import (
             _exact_rational_surface_point_bounds,
             _exact_surface_interpolation_bound,
+            _exact_surface_map_is_rational_affine,
             _fraction_float_interval,
             exact_surface_coordinate_expressions,
         )
@@ -7348,12 +7358,17 @@ def certify_source_fidelity(
             # Generic carriers are bounded after the endpoint errors fix each row's budget.
             interpolation: np.ndarray | None = None
             if exact_surface_map is not None:
-                interpolation = np.asarray(
-                    [
-                        _exact_surface_interpolation_bound(exact_surface_map, chart)
-                        for _, chart in chart_rows
-                    ],
-                    dtype=np.float64,
+                # The exact affine interpolant has identically zero residual.
+                interpolation = (
+                    np.zeros(len(chart_rows), dtype=np.float64)
+                    if _exact_surface_map_is_rational_affine(exact_surface_map)
+                    else np.asarray(
+                        [
+                            _exact_surface_interpolation_bound(exact_surface_map, chart)
+                            for _, chart in chart_rows
+                        ],
+                        dtype=np.float64,
+                    )
                 )
             elif spans is not None:
                 from ._meshing_domain import (

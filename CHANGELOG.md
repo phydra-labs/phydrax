@@ -38,6 +38,8 @@
   curve-edge residuals, Boolean intersection gap and chart data, projection
   results, placed geometry, and identities and meshes derived from them.
   Regenerate affected stored results.
+  These reductions reject complex inputs instead of discarding imaginary parts.
+  Small scalar reduction paths do not report floating-point underflow.
 - Certified native Boolean intersection curves now use platform-identical
   interval matrix products. On platforms whose BLAS fused or reordered those
   products, rounding changes stored `IntersectionCurve.contractions` and can
@@ -304,6 +306,28 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Contact Jacobian positivity decides Sylvester signs on scaled integer
+  products without constructing rational minors, preserving exact decisions.
+  Three alternating replays of 91,398 captured checks took 35.5–49.0 seconds
+  before and 21.9–27.6 seconds after under load.
+- Contact subdivision constructs quadratic tetrahedron Jacobian controls with
+  common-scale integers, preserving exact control nets. Three alternating
+  replays of 56,425 captured requests took 10.6–13.9 seconds before and
+  3.0–3.7 seconds after on the measured machine.
+- Contact subdivision composes quadratic rational root polynomials with
+  common-scale integers, preserving exact results and coefficient order. In
+  three alternating replays of 15,302 captured compositions, the original
+  took 33.9–45.0 seconds and the integer path 11.9–15.4 seconds under load.
+- Oriented boundary proofs reuse exact integer-scaled quadratic tetrahedron
+  edge values for trace equality and face-image evidence, preserving findings
+  and their order. On captured 147,231-cell qualification inputs, the median
+  combined time of three alternating proof replays fell from 99.24 to 62.90
+  seconds.
+- Source-fidelity interpolation recognizes exact rational affine surface maps
+  and uses their identically zero residual without constructing per-chart
+  rational polynomials. Bounds and findings are unchanged. On one captured
+  13,443-row chart batch, three alternating general and affine-bound runs took
+  8.19/0.044, 9.16/0.043, and 9.40/0.059 seconds, respectively.
 - Sphere and torus projection points, parameters, normals and tangents now use
   platform-identical representatives, changing projection `result_id`s while
   certified bounds, statuses, source identities and profile identities remain
@@ -602,6 +626,37 @@
   On Windows, where both were library calls, the recorded sphere adaptation
   takes about a tenth less time with identical coordinates, edits and
   evidence.
+- The native exact carrier search runs on integers of at most 1,024 bits held
+  inline. An operation whose result does not fit is detected and the query is
+  repeated on the unbounded integers the search used before, so no value is
+  truncated and the carriers are the same on either route. Barycentric
+  weights are kept as integer numerators over one denominator, each partial
+  sum is divided once for all 53 resolutions, and images are rounded from an
+  integer quotient; the results are those of the definition, which the
+  reference tests now also check on sources with common denominators of about
+  300 and 1,500 bits and on subnormal coordinates. On the recorded sphere
+  adaptation the coordinates, edits and evidence are identical and the
+  adaptation takes about a tenth less time on Windows.
+- The source normal cones of certified surface remeshing are outward-rounded
+  bounds computed without the platform math library. For the zero-set
+  admission the half-angle `asin(|r| / |g|) + asin(2 tolerance / altitude)`
+  uses an upper bound of the gradient spread and of the longest edge, a lower
+  bound of the gradient midpoint's length and of twice the area, quotients
+  rounded up and the upper endpoint of the native elementary arcsine, plus
+  2^-51 radians for the rounding of the stored axis. For the surface envelope
+  the angle between the axis and each candidate direction and the spread
+  `asin((R + c) / |v - p|)` are bounded from above the same way, and the
+  floor of its cone, which must not exceed the half-angle, is rounded down.
+  Before, lengths came from `std::hypot`, quotients were rounded to nearest
+  and `std::asin` and `std::atan2` carried no error term, so a cone could be
+  narrower than its statement by a few units in the last place and differ
+  between platforms. A cone can now be wider by that much: adaptive implicit
+  and envelope surface remeshing may refuse or accept an edit differently
+  than before, once, on every platform. The envelope's candidate filters
+  still measure lengths with `std::hypot`. The interval operations of the
+  zero-set admission moved to one header that both admissions use; native
+  tests check the norm and angle bounds against exact arithmetic and prove
+  the zero-set floor from exact squares of the area and the longest edge.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep

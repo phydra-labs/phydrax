@@ -147,4 +147,5 @@ int main() {
                                              &lo, &hi, 1) == PHX_MC_OK);
   PHX_CHECK(std::fegetround() == FE_UPWARD);
   PHX_CHECK(std::fesetround(original_round) == 0);
+  return phx::mc::test::finish("test_interval_simplex_restrict");
 }

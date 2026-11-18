@@ -588,6 +588,14 @@ def _exact_surface_map_is_affine(expressions: tuple[Polynomial, ...], /) -> bool
     )
 
 
+def _exact_surface_map_is_rational_affine(expressions: tuple[Polynomial, ...], /) -> bool:
+    return all(
+        type(coefficient) is Fraction
+        for expression in expressions
+        for coefficient in expression.values()
+    ) and _exact_surface_map_is_affine(expressions)
+
+
 def exact_affine_boundary_source(query: MeshingDomainBoundarySource, /) -> bool:
     """Prove that every selected exact-represented source chart is affine."""
     if not isinstance(query, MeshingDomainBoundarySource):
@@ -1906,10 +1914,15 @@ def certify_domain_surface_charts(
             upper = np.empty_like(lower)
             source_values: list[tuple[ExactScalar, ...]] = []
             try:
+                # An exact rational affine map equals its affine interpolant
+                # on every chart, so its Bernstein residual is +0.0.
+                affine = _exact_surface_map_is_rational_affine(exact_surface)
                 for local_row, row in enumerate(rows):
                     chart = charts[row]
-                    interpolation[local_row] = _exact_surface_interpolation_bound(
-                        exact_surface, chart
+                    interpolation[local_row] = (
+                        0.0
+                        if affine
+                        else _exact_surface_interpolation_bound(exact_surface, chart)
                     )
                     values = tuple(
                         tuple(

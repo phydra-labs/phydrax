@@ -100,27 +100,20 @@ class CarrierSource {
                                 CarrierOrder order, std::int64_t limit) const;
 
  private:
-  struct Located {
-    std::array<std::int64_t, 4> rows{};
-    std::array<Dyadic, 4> weights;  // numerators over `denominator`, located order
-    Dyadic denominator;             // positive
-    int size = 0;
-    bool declared = false;
-  };
-
-  const Dyadic& numerator(std::int64_t row, int axis) const {
-    return numerators_[static_cast<std::size_t>(3 * row + axis)];
-  }
-  bool locate_cell(const double* target, std::int64_t only, Located& located) const;
-  bool locate_simplex(const double* target, const CarrierSimplex& simplex,
-                      Located& located) const;
-
   std::vector<double> points_;
   std::vector<Dyadic> numerators_;
   Dyadic denominator_;
   std::vector<std::int64_t> cells_;
   std::vector<double> lower_;  // closed binary64 box of each cell
   std::vector<double> upper_;
+  // The numerators and then the denominator as 64-bit limbs, integer i in
+  // limbs [offsets[i], offsets[i + 1]), when each fits the inline integers
+  // of the search; a query that leaves their capacity runs on the unbounded
+  // ones above.
+  bool inline_ = false;
+  std::vector<std::uint64_t> inline_limbs_;
+  std::vector<std::uint32_t> inline_offsets_;
+  std::vector<std::uint8_t> inline_negative_;
 };
 
 }  // namespace phx::mc::metric
