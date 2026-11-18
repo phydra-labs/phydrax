@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- Reused operation-local interval programs across compatible orthogonal-cylinder
+  measure charts without changing certified enclosure endpoints.
 - Fixed the native CAD qualification intersection evidence reporting a p-curve
   residual that was zero by construction: `maximum_residuals_m.first_pcurve`
   and `.second_pcurve` now measure each patch lift against the declared analytic
