@@ -260,6 +260,34 @@
   projection operation without changing evidence or result identities.
 - Native B-rep projection reuses a query-independent coarse trim chord plan
   only where it selects the original subdivision, preserving projection identity.
+- Batched exact Bernstein conversion validates polynomial columns once, packs
+  checked integer words directly, and reuses request-local control counts while
+  preserving shared rational scales and item-local refusals.
+- Native Bernstein conversion reuses simplex control-index rows within a worker
+  when consecutive items have the same degree and dimension.
+- Tetrahedral construction consumes represented edges when admitting segments,
+  rejecting duplicates without a quadratic scan of prior segments.
+- Tetrahedral construction indexes source-segment rows by group while
+  retaining their exact witness-check order.
+- Declared-plane validation uses outward-rounded projected boundary-edge boxes
+  to limit exact interior-intersection checks without changing edge order.
+- Declared-plane facet validation indexes outward-rounded exact projected
+  source bounds, preserving the centroid proof and source-row order.
+- Source-facet coverage indexes closed facet boxes once per construction group,
+  preserving bank order and retaining every degenerate facet in its proof.
+- Exact facet coverage reuses already sorted source-row spans, preserving the
+  duplicate and chronology checks without sorting and copying them.
+- Source-facet coverage skips provably disjoint nondegenerate triangles in its
+  fast proof, retaining degenerate partners and the full arrangement fallback.
+- Refinement reuses its live constrained-segment index when checking cavity
+  edits, avoiding a full segment-bank scan for each candidate edge.
+- Exact facet coverage evaluates its predicate proof directly on source banks;
+  it materializes arrangement coordinates only when the proof is inconclusive.
+- Construction reuses each source group's ordered coverage primitives across
+  facets, retaining the exact predicate and fallback order.
+- Tetrahedral mesh construction indexes source faces by group for its
+  validation pass, avoiding repeated scans while retaining source order and
+  exact coverage decisions.
 - Welded surface intersection checks group exact orientation predicates and
   skip redundant shared-vertex edge tests without changing contact decisions.
 - Welded topology audits group vertex and edge star lookups without changing
