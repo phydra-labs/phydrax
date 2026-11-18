@@ -1845,6 +1845,8 @@ def _curving_source_result(
     prior_transition: CellMeshTransition | None,
     /,
 ) -> CellMeshingResult | None:
+    if source_result is not None and not isinstance(source_result, CellMeshingResult):
+        raise TypeError("source_result must be CellMeshingResult or None.")
     if prior_transition is None:
         return source_result
     if not isinstance(prior_transition, CellMeshTransition):

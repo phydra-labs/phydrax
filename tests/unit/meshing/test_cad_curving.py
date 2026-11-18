@@ -93,6 +93,23 @@ def test_curving_evidence_reuses_only_matching_embedding_inputs() -> None:
     )
     association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
     policy = phx.meshing.HighOrderCurvingPolicy(degree=2)
+    with pytest.raises(TypeError, match="source_result must be CellMeshingResult"):
+        phx.meshing.curve_cell_mesh(
+            mesh,
+            association,
+            projection,
+            policy=policy,
+            source_result=mesh,  # ty: ignore[invalid-argument-type]
+        )
+    with pytest.raises(TypeError, match="source_result must be CellMeshingResult"):
+        phx.meshing.verify_curved_geometry(
+            _straight_geometry(mesh, policy.degree),
+            mesh,
+            association,
+            projection,
+            policy=policy,
+            source_result=mesh,  # ty: ignore[invalid-argument-type]
+        )
     geometry = _straight_geometry(mesh, policy.degree)
     classes = _node_classes(mesh, geometry, association, projection)
     blocks = _distortion_blocks(mesh, geometry, policy.degree)
