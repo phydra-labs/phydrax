@@ -1121,6 +1121,36 @@ PHX_MC_API int32_t phx_mc_metric_source_survivor_moves(
     const int8_t* declared, int32_t every_resolution, int64_t capacity, int32_t* goals,
     int64_t* rows, int64_t* weights, int32_t* bits, double* carrier_points,
     double* carrier_metrics, double* qualities, double* lengths, int64_t* count, int32_t* end);
+/* Angles with one binary64 result per input on every platform: the values
+ * the native meshers use, for host code that must agree with them. Rows are
+ * independent and evaluated in order.
+ *
+ * phx_mc_angle_arcsine and phx_mc_angle_arccosine: asin and acos of a value
+ * in [-1, 1] by binary64 operations in a fixed order, within 7 and 5 units in
+ * the last place; NaN outside the interval and for NaN. asin keeps the sign
+ * of a zero and acos(1) is +0.
+ *
+ * phx_mc_angle_between: the angle in [0, pi] of the direction
+ * (along[r], across[r]) for across[r] >= 0, atan2(across, along), within 7
+ * units in the last place: between two vectors, from the length of their
+ * cross product and their dot product. The quadrant follows the sign of
+ * along exactly; (0, 0) gives 0; a negative across and a value that is not
+ * finite give NaN.
+ *
+ * phx_mc_angle_sine and phx_mc_angle_cosine: sin and cos of a finite value
+ * as the lower endpoint of phx_mc_interval_elementary's enclosure, at most
+ * the true value and at most four binary64 values below it; NaN for a value
+ * that is not finite. Slower than the three kernels above.
+ *
+ * None is correctly rounded and no exact decision may rest on them; a bound
+ * comes from phx_mc_interval_elementary. */
+PHX_MC_API int32_t phx_mc_angle_sine(int64_t count, const double* values, double* results);
+PHX_MC_API int32_t phx_mc_angle_cosine(int64_t count, const double* values, double* results);
+PHX_MC_API int32_t phx_mc_angle_arcsine(int64_t count, const double* values, double* results);
+PHX_MC_API int32_t phx_mc_angle_arccosine(int64_t count, const double* values,
+                                          double* results);
+PHX_MC_API int32_t phx_mc_angle_between(int64_t count, const double* across,
+                                        const double* along, double* results);
 /* Gates of a metric field on the deterministic kernels: the same verdict for
  * the same input on every platform.
  *

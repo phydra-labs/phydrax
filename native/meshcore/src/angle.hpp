@@ -38,13 +38,17 @@ double arccosine(double x) noexcept;
 // value that is not finite give NaN.
 double between(double across, double along) noexcept;
 
-// sin(x) for finite x, NaN otherwise: the lower endpoint of the interval
-// kernel's enclosure, at most the true value and at most four binary64
-// values below it. Several times the cost of the kernels above; for
-// thresholds and radii computed once.
+// sin(x) and cos(x) for finite x, NaN otherwise: the lower endpoint of the
+// interval kernel's enclosure, at most the true value and at most four
+// binary64 values below it. Several times the cost of the kernels above; for
+// thresholds, radii and generated geometry.
 inline double sine(double x) noexcept {
   if (!std::isfinite(x)) return std::numeric_limits<double>::quiet_NaN();
   return elementary::sin(x, x).lower;
+}
+inline double cosine(double x) noexcept {
+  if (!std::isfinite(x)) return std::numeric_limits<double>::quiet_NaN();
+  return elementary::cos(x, x).lower;
 }
 
 }  // namespace phx::mc::angle

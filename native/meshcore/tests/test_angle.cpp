@@ -21,6 +21,9 @@
 #include "angle.hpp"
 #include "check.hpp"
 #include "floating_point_mode.hpp"
+#include "phydrax_meshcore.h"
+
+#include <vector>
 #include "rounding.hpp"
 
 namespace {
@@ -239,6 +242,42 @@ void vectors() {
   PHX_CHECK(row == std::size(kVectors));
 }
 
+// The C entries return the kernels' values row by row and refuse null arrays.
+void entries() {
+  std::vector<double> first, second;
+  std::vector<int> functions;
+  for_each_input([&](int function, double a, double b) {
+    functions.push_back(function);
+    first.push_back(a);
+    second.push_back(b);
+  });
+  const int64_t count = static_cast<int64_t>(first.size());
+  std::vector<double> sine(first.size()), cosine(first.size()), arcsine(first.size()),
+      arccosine(first.size()), between(first.size());
+  PHX_CHECK(phx_mc_angle_sine(count, first.data(), sine.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_angle_cosine(count, first.data(), cosine.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_angle_arcsine(count, first.data(), arcsine.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_angle_arccosine(count, first.data(), arccosine.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_angle_between(count, first.data(), second.data(), between.data()) ==
+            PHX_MC_OK);
+  for (std::size_t row = 0; row < first.size(); ++row) {
+    // NaN results compare by their bits as well: every NaN here is the quiet one.
+    PHX_CHECK(bits(sine[row]) == bits(angle::sine(first[row])));
+    PHX_CHECK(bits(cosine[row]) == bits(angle::cosine(first[row])));
+    PHX_CHECK(bits(arcsine[row]) == bits(angle::arcsine(first[row])));
+    PHX_CHECK(bits(arccosine[row]) == bits(angle::arccosine(first[row])));
+    PHX_CHECK(bits(between[row]) == bits(angle::between(first[row], second[row])));
+  }
+  PHX_CHECK(angle::cosine(0.0) == 1.0 && std::isnan(angle::cosine(kInfinity)));
+  PHX_CHECK(phx_mc_angle_sine(0, nullptr, nullptr) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_angle_sine(1, nullptr, sine.data()) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_angle_arccosine(1, first.data(), nullptr) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_angle_between(1, first.data(), nullptr, between.data()) ==
+            PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_angle_between(-1, first.data(), second.data(), between.data()) ==
+            PHX_MC_INVALID_ARGUMENT);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -251,5 +290,6 @@ int main(int argc, char** argv) {
   quadrants();
   accuracy();
   vectors();
+  entries();
   return phx::mc::test::finish("test_angle");
 }

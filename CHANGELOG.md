@@ -629,7 +629,10 @@
   reported angle can change in its last places and a decision within that
   distance of its threshold can go the other way, once, on every platform.
   These values measure and propose; the bounds of the surface admissions
-  come from the interval kernel.
+  come from the interval kernel. Host code reaches the same kernels through
+  `phydrax._meshcore.angle_arcsine`, `angle_arccosine`, `angle_between`,
+  `angle_sine` and `angle_cosine` (C entries `phx_mc_angle_*`), so an angle
+  computed on the host and one computed in the library are the same double.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep

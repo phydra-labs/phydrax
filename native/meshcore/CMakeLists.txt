@@ -93,6 +93,7 @@ set(PHX_MC_SOURCES
   src/zero_set_admission.cpp
   src/elementary.cpp
   src/angle.cpp
+  src/angle_capi.cpp
 )
 set(PHX_MC_HEADERS
   include/phydrax_meshcore.h
