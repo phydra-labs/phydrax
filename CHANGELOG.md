@@ -267,6 +267,10 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- CAD plane-chart partition proofs batch exact area, coverage, and overlap
+  decisions in meshcore, preserving the ordered findings. On two captured
+  qualification patches, three alternating replays took 6.03–6.54 seconds
+  before and 2.81–3.30 seconds after, including host packing.
 - Sphere and torus projection points, parameters, normals and tangents now use
   platform-identical representatives, changing projection `result_id`s while
   certified bounds, statuses, source identities and profile identities remain

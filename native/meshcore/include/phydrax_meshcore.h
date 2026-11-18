@@ -2163,6 +2163,17 @@ enum phx_mc_intersection_class {
   PHX_MC_COPLANAR_OVERLAP = 5,
   PHX_MC_COINCIDENT = 6
 };
+// Exact planar partition. Coordinates are six signed integers per triangle
+// followed by one positive common denominator, all in little-endian 32-bit
+// limbs indexed by offsets. Target triangles precede declared triangles.
+// Enclosing boxes are closed; verdict 0 succeeds, 1 reports area mismatch,
+// 2 incomplete coverage, 3 overlapping targets, and 4 singular clipping.
+PHX_MC_API int32_t phx_mc_planar_partition(
+    int64_t target_count, int64_t declared_count, int64_t word_count,
+    const uint32_t* words, const int64_t* offsets, const int8_t* signs,
+    const double* lower, const double* upper, int32_t* verdict,
+    int64_t* first, int64_t* second);
+
 #ifdef __cplusplus
 }
 #endif

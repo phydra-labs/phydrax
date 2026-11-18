@@ -1466,6 +1466,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
             ctypes.POINTER(_I32),
         ),
     ),
+    "phx_mc_planar_partition": (
+        _I32,
+        (_I64, _I64, _I64, _P, _P, _P, _P, _P, _P, _P, _P),
+    ),
 }
 
 
@@ -10667,7 +10671,55 @@ class MetricSource:
                 pass
 
 
+def planar_partition(
+    target_count: int,
+    declared_count: int,
+    words: np.ndarray,
+    offsets: np.ndarray,
+    signs: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    /,
+) -> tuple[int, int, int]:
+    """Decide one exact planar partition from common-denominator integer limbs."""
+    words = np.ascontiguousarray(words, dtype=np.uint32)
+    offsets = np.ascontiguousarray(offsets, dtype=np.int64)
+    signs = np.ascontiguousarray(signs, dtype=np.int8)
+    lower = np.ascontiguousarray(lower, dtype=np.float64)
+    upper = np.ascontiguousarray(upper, dtype=np.float64)
+    count = target_count + declared_count
+    if (
+        target_count < 0
+        or declared_count < 0
+        or words.ndim != 1
+        or offsets.shape != (6 * count + 2,)
+        or signs.shape != (6 * count,)
+        or lower.shape != (count, 2)
+        or upper.shape != (count, 2)
+    ):
+        raise ValueError("Planar partition arrays have incompatible shapes.")
+    verdict = _I32()
+    first = _I64()
+    second = _I64()
+    status = load_meshcore()["phx_mc_planar_partition"](
+        target_count,
+        declared_count,
+        words.size,
+        words.ctypes.data,
+        offsets.ctypes.data,
+        signs.ctypes.data,
+        lower.ctypes.data,
+        upper.ctypes.data,
+        ctypes.byref(verdict),
+        ctypes.byref(first),
+        ctypes.byref(second),
+    )
+    _raise_for_call(status, "planar_partition")
+    return verdict.value, first.value, second.value
+
+
 __all__ = [
+    "planar_partition",
     "ARRANGEMENT_UNCLASSIFIED",
     "ArrangementClassification",
     "ArrangementFailure",
