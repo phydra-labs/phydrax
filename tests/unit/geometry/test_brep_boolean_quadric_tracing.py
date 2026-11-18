@@ -10,12 +10,15 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from typing import Literal
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from phydrax._physical import SpatialCoordinateContract
+from phydrax.geometry._meshing_domain import MeshingDomain, SourcePreparation
+from phydrax.geometry._rational import binary64_norm
 from phydrax.geometry.brep import brep_cone, brep_cylinder
 from phydrax.geometry.brep._boolean import boolean_brep
 from phydrax.geometry.brep._intersection_curve import IntersectionCurve
@@ -137,3 +140,73 @@ def test_iges_convex_cylinder_intersection_has_spherical_boundary(tmp_path: Path
     assert source["expected_boundary_euler_characteristic"] == 2
     assert _topology_oracle(model, "quadric-routine")["passed"] is True
     assert _topology_oracle(model, "quadric-larger")["passed"] is True
+
+
+def test_qualification_intersection_evidence_measures_stored_lifts(tmp_path: Path) -> None:
+    from tools.meshing_qualification.scenarios.native_cad_profiles import (
+        _intersection_evidence,
+        _intersection_loop_oracles,
+        _quadric_case,
+    )
+
+    model, _, source, _ = _quadric_case("iges", tmp_path)
+    evidence = _intersection_evidence(model, _intersection_loop_oracles(source))
+    assert evidence["passed"] is True
+    residuals = evidence["maximum_residuals_m"]
+    assert isinstance(residuals, dict)
+    assert residuals["first_pcurve"] == 0.0
+    assert isinstance(residuals["second_pcurve"], float)
+    geometry = model.geometry
+    assert geometry is not None
+    preparation = SourcePreparation(MeshingDomain.from_brep(model))
+    checked_edges = 0
+    for edge, curve_index in enumerate(geometry.edge_curves):
+        if curve_index < 0:
+            continue
+        curve = geometry.curves[curve_index]
+        if not isinstance(curve, IntersectionCurve):
+            continue
+        checked_edges += 1
+        first, last = np.asarray(geometry.edge_ranges[edge], dtype=np.float64)
+        parameters = np.linspace(first, last, 2049)[[400, 1024, 1600]]
+        compiled = curve.evaluate_coupled(parameters)
+        lifts = []
+        sides: tuple[Literal["first", "second"], ...] = ("first", "second")
+        for side, patch in zip(sides, (curve.first.patch, curve.second.patch), strict=True):
+            pcurve = curve.p_curve(side)
+            charts = preparation.stored_pcurve_points(
+                pcurve, parameters, float(first), float(last)
+            )
+            lifts.append(preparation.stored_patch_points(patch, charts))
+        assert not preparation.unsupported_points
+        stored_gap = binary64_norm(lifts[1] - lifts[0])
+        assert float(np.max(stored_gap)) <= residuals["second_pcurve"]
+        compiled_lifts = (
+            np.asarray(compiled.point, dtype=np.float64),
+            np.asarray(curve.second.patch.evaluate(compiled.second_parameters)),
+        )
+        compiled_gap = binary64_norm(compiled_lifts[1] - compiled_lifts[0])
+        for index, parameter in enumerate(parameters):
+            chart_box = curve.parameter_enclosures(float(parameter), float(parameter))[0]
+            widths = []
+            scale = 1.0
+            for offset, patch in ((0, curve.first.patch), (2, curve.second.patch)):
+                box = np.asarray(
+                    patch.bounding_box(chart_box[:, offset : offset + 2]),
+                    dtype=np.float64,
+                )
+                widths.append(float(binary64_norm(box[1] - box[0])))
+                scale = max(scale, float(np.max(np.abs(box))))
+            # Each lift evaluates two trigonometric terms, their products with
+            # the frame, and component additions; 32 binary64 epsilons per
+            # lift allow their rounding in addition to the certified box width.
+            patch_rounding = 2 * 32 * np.finfo(np.float64).eps * scale
+            for lift_index in range(2):
+                deviation = binary64_norm(
+                    compiled_lifts[lift_index][index] - lifts[lift_index][index]
+                )
+                assert deviation <= widths[lift_index] + patch_rounding / 2
+            assert abs(float(compiled_gap[index] - stored_gap[index])) <= (
+                sum(widths) + patch_rounding
+            )
+    assert checked_edges > 0

@@ -23,7 +23,8 @@ from phydrax.discretization import (
     lagrange_element,
     reference_cell_topology,
 )
-from phydrax.geometry._meshing_domain import MeshingDomain
+from phydrax.geometry._meshing_domain import MeshingDomain, SourcePreparation
+from phydrax.geometry._rational import binary64_norm
 from phydrax.geometry.brep._intersection_curve import IntersectionCurve
 from phydrax.geometry.brep._measure import brep_mass_properties
 from phydrax.meshing._association import GeometryAssociationArchiveRecipe
@@ -879,6 +880,7 @@ def _intersection_evidence(
 
     scale = max(loop[0] for loop in loops)
     tolerance = 1.0e-9 * scale
+    preparation = SourcePreparation(MeshingDomain.from_brep(model))
     edge_ranges = np.asarray(geometry.edge_ranges, dtype=np.float64)
     lengths = [0.0 for _ in loops]
     endpoints: list[list[int]] = [[] for _ in loops]
@@ -892,11 +894,26 @@ def _intersection_evidence(
         branch_ids.add(curve.branch_id)
         first, last = edge_ranges[edge]
         parameters = np.linspace(first, last, 2049)
-        evaluated = curve.evaluate_coupled(parameters)
-        points = np.asarray(evaluated.point, dtype=np.float64)
+        lifts = []
+        sides: tuple[Literal["first", "second"], ...] = ("first", "second")
+        for side, patch in zip(sides, (curve.first.patch, curve.second.patch), strict=True):
+            pcurve = curve.p_curve(side)
+            charts = preparation.stored_pcurve_points(
+                pcurve, parameters, float(first), float(last)
+            )
+            lifts.append(preparation.stored_patch_points(patch, charts))
+        # This qualification matrix requires portable evidence; general stored
+        # source consumers may instead use the reported unsupported fallback.
+        if preparation.unsupported_points:
+            raise RuntimeError(
+                "Intersection evidence requires certified stored source points: "
+                f"{preparation.unsupported_points!r}."
+            )
+        # As in evaluate_coupled, the first surface realizes the spatial branch.
+        points = lifts[0]
         x, y, z = points[:, 0], points[:, 1], points[:, 2]
         side = int(np.sign(np.median(x)))
-        radial = np.hypot(x, y)
+        radial = binary64_norm(points[:, :2])
         matches = [
             index
             for index, loop in enumerate(loops)
@@ -908,24 +925,19 @@ def _intersection_evidence(
             )
         loop_index = matches[0]
         major, minor, center, _ = loops[loop_index]
+        transverse = np.stack((y, z - center), axis=1)
         residual = np.maximum(
-            np.abs(radial - major), np.abs(np.hypot(y, z - center) - minor)
+            np.abs(radial - major), np.abs(binary64_norm(transverse) - minor)
         )
         worst["three_dimensional"] = max(
             worst["three_dimensional"], float(np.max(residual))
         )
-        for name, parameters_uv, patch in (
-            ("first_pcurve", evaluated.first_parameters, curve.first.patch),
-            ("second_pcurve", evaluated.second_parameters, curve.second.patch),
-        ):
-            lifted = np.asarray(patch.evaluate(parameters_uv), dtype=np.float64)
+        for name, lifted in zip(("first_pcurve", "second_pcurve"), lifts, strict=True):
             worst[name] = max(
                 worst[name],
-                float(np.max(np.linalg.norm(lifted - points, axis=1))),
+                float(np.max(binary64_norm(lifted - points))),
             )
-        lengths[loop_index] += float(
-            np.sum(np.linalg.norm(np.diff(points, axis=0), axis=1))
-        )
+        lengths[loop_index] += math.fsum(binary64_norm(np.diff(points, axis=0)))
         endpoints[loop_index].extend(
             int(vertex) for vertex in geometry.edge_vertices[edge]
         )
