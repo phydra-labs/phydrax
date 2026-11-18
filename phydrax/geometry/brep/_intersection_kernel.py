@@ -114,6 +114,26 @@ def round_interval(
     return np.nextafter(lower, -np.inf), np.nextafter(upper, np.inf)
 
 
+def _ordered_product(first: np.ndarray, second: np.ndarray, /) -> np.ndarray:
+    """Multiply matrices with a fixed binary64 reduction order."""
+    vector = second.ndim == 1
+    if vector:
+        second = second[:, None]
+    if first.shape[-1] != second.shape[-2]:
+        raise ValueError("Matrix product dimensions must agree.")
+    if first.shape[-1] == 0:
+        shape = np.broadcast_shapes(first.shape[:-2], second.shape[:-2]) + (
+            first.shape[-2],
+            second.shape[-1],
+        )
+        result = np.zeros(shape, dtype=np.float64)
+    else:
+        result = first[..., :, 0, None] * second[..., None, 0, :]
+        for index in range(1, first.shape[-1]):
+            result = result + first[..., :, index, None] * second[..., None, index, :]
+    return result[..., 0] if vector else result
+
+
 def point_times_interval(
     matrix: np.ndarray, lower: np.ndarray, upper: np.ndarray, /
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -121,11 +141,15 @@ def point_times_interval(
     middle, radius = _midpoint_radius(lower, upper)
     absolute = np.abs(matrix)
     with np.errstate(invalid="ignore", over="ignore"):
-        center = matrix @ middle
-        width = absolute @ radius
+        center = _ordered_product(matrix, middle)
+        width = _ordered_product(absolute, radius)
         length = matrix.shape[-1] + 1
+        # This a-priori gamma bound covers the fixed multiply/add order.
         gamma = length * _UNIT / (1.0 - length * _UNIT)
-        width = np.nextafter(width + gamma * (absolute @ np.abs(middle) + width), np.inf)
+        width = np.nextafter(
+            width + gamma * (_ordered_product(absolute, np.abs(middle)) + width),
+            np.inf,
+        )
         return round_interval(center - width, center + width)
 
 
@@ -140,16 +164,19 @@ def interval_times_interval(
     first_mid, first_rad = _midpoint_radius(first_lower, first_upper)
     second_mid, second_rad = _midpoint_radius(second_lower, second_upper)
     with np.errstate(invalid="ignore", over="ignore"):
-        center = first_mid @ second_mid
+        center = _ordered_product(first_mid, second_mid)
         width = (
-            np.abs(first_mid) @ second_rad
-            + first_rad @ np.abs(second_mid)
-            + first_rad @ second_rad
+            _ordered_product(np.abs(first_mid), second_rad)
+            + _ordered_product(first_rad, np.abs(second_mid))
+            + _ordered_product(first_rad, second_rad)
         )
         length = first_mid.shape[-1] + 1
+        # This a-priori gamma bound covers the fixed multiply/add order.
         gamma = length * _UNIT / (1.0 - length * _UNIT)
         width = np.nextafter(
-            width + gamma * (np.abs(first_mid) @ np.abs(second_mid) + width), np.inf
+            width
+            + gamma * (_ordered_product(np.abs(first_mid), np.abs(second_mid)) + width),
+            np.inf,
         )
         return round_interval(center - width, center + width)
 

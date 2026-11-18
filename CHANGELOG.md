@@ -1,6 +1,14 @@
 # Changelog
 
 ## Unreleased
+- Certified native Boolean intersection curves now use platform-identical
+  interval matrix products. On platforms whose BLAS fused or reordered those
+  products, rounding changes stored `IntersectionCurve.contractions` and can
+  change affected models' `geometry_id`, `model_id`, and `source_id`,
+  association-graph revisions, and downstream results including meshes.
+  Regenerate affected stored results. Trigonometric level-set critical-level
+  certificates also use these products: their stored root and unresolved boxes
+  and value bounds, and identities derived from them, can change.
 - Imported CAD, surface, and mesh sources now use a format prefix and the first
   16 hexadecimal digits of the source bytes' SHA-256 digest, not the file path.
   Imported model identities and identities derived from them change; stored
