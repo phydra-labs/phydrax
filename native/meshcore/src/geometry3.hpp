@@ -39,7 +39,11 @@ inline double squared_distance(const double* a, const double* b) noexcept {
 // per input on every platform (std::hypot is not: its three-argument form is
 // not correctly rounded and differs between C libraries). Nothing is
 // rescaled: a square beyond the binary64 range overflows, and one below it
-// underflows, for components outside about 1e-154 to 1e154.
+// underflows, for components outside about 1e-154 to 1e154. Coordinates of
+// the exact domain (magnitudes in [2^-120, 2^120]), their differences and
+// cross products cannot reach either; a vector under an affine metric
+// transform can, where the length is a quality or a proposal value and never
+// stands in for an exact orientation or admission check.
 inline double length(const double* v) noexcept { return std::sqrt(dot(v, v)); }
 inline double length(const std::array<double, 3>& v) noexcept { return length(v.data()); }
 inline double length(double x, double y) noexcept { return std::sqrt(x * x + y * y); }
