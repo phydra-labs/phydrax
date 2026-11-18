@@ -212,9 +212,7 @@ def _surface_endpoint_images(
         entry[1].append(index)
     for surface, members in ordinary.values():
         selected = np.asarray(members, dtype=np.int64)
-        values = preparation.stored_patch_points(
-            surface, charts[selected], scalar_fallback=True
-        )
+        values = preparation.stored_endpoint_patch_points(surface, charts[selected])
         for position, index in enumerate(members):
             points[index] = values[position]
     for kind, members in stacked.items():
@@ -1133,37 +1131,52 @@ class _PointPreparation:
             return program
         return entry[1]
 
-    def stored_patch_points(
-        self,
-        surface: AbstractSurfacePatch,
-        rows: np.ndarray,
-        /,
-        *,
-        scalar_fallback: bool = False,
-    ) -> np.ndarray:
-        """D1: batch-independent binary64 representatives of surface rows."""
-        from .brep._host_program import evaluate_host_program, prepare_host_program
+    def _host_surface_program(
+        self, surface: AbstractSurfacePatch, /
+    ) -> PreparedIntervalFunction | None:
+        from .brep._host_program import prepare_host_program
 
-        points = np.asarray(rows, dtype=np.float64).reshape((-1, 2))
-        if not points.size:
-            return np.empty((0, 3), dtype=np.float64)
         entry = self._stored_surface_programs.get(id(surface))
         if entry is None or entry[0] is not surface:
             program = prepare_host_program(surface.evaluate, 2)
             self._stored_surface_programs[id(surface)] = (surface, program)
-        else:
-            program = entry[1]
+            return program
+        return entry[1]
+
+    def stored_patch_points(
+        self, surface: AbstractSurfacePatch, rows: np.ndarray, /
+    ) -> np.ndarray:
+        """D1 representatives, with the existing batched unsupported route."""
+        from .brep._host_program import evaluate_host_program
+
+        points = np.asarray(rows, dtype=np.float64).reshape((-1, 2))
+        if not points.size:
+            return np.empty((0, 3), dtype=np.float64)
+        program = self._host_surface_program(surface)
         if program is None:
             self._record_unsupported(surface, points.shape[0])
-            if scalar_fallback:
-                return np.asarray(
-                    [
-                        np.asarray(surface.evaluate(jnp.asarray(point)), dtype=np.float64)
-                        for point in points
-                    ],
-                    dtype=np.float64,
-                )
             return bucketed_query_rows(surface.evaluate, points)
+        return evaluate_host_program(program, points)
+
+    def stored_endpoint_patch_points(
+        self, surface: AbstractSurfacePatch, rows: np.ndarray, /
+    ) -> np.ndarray:
+        """Constructor endpoints retain their prior scalar unsupported route."""
+        from .brep._host_program import evaluate_host_program
+
+        points = np.asarray(rows, dtype=np.float64).reshape((-1, 2))
+        if not points.size:
+            return np.empty((0, 3), dtype=np.float64)
+        program = self._host_surface_program(surface)
+        if program is None:
+            self._record_unsupported(surface, points.shape[0])
+            return np.asarray(
+                [
+                    np.asarray(surface.evaluate(jnp.asarray(point)), dtype=np.float64)
+                    for point in points
+                ],
+                dtype=np.float64,
+            )
         return evaluate_host_program(program, points)
 
     def stored_pcurve_points(
@@ -1189,6 +1202,7 @@ class _PointPreparation:
         while isinstance(carrier, CurveTrimSegment):
             carrier = carrier.curve
         if isinstance(carrier, IntersectionPCurve) or _has_plane_cylinder_section(pcurve):
+            # Box evaluation reports unsupported primitives only by exception.
             try:
                 span_key = (id(pcurve), float(first), float(last))
                 span_entry = self._intersection_span_boxes.get(span_key)
