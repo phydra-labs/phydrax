@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "cavity.hpp"
+#include "angle.hpp"
 #include "geometry3.hpp"
 #include "local_incidence.hpp"
 #include "predicates.hpp"
@@ -57,7 +58,7 @@ std::array<double, 3> metric_point(const TetMesh& mesh, const double* p) {
 double metric_distance(const TetMesh& mesh, const double* a, const double* b) {
   if (!mesh.metric_active()) return std::sqrt(geometry::squared_distance(a, b));
   const auto d = mesh.metric_transform({a[0] - b[0], a[1] - b[1], a[2] - b[2]});
-  return std::hypot(std::hypot(d[0], d[1]), d[2]);
+  return geometry::length(d);
 }
 
 double metric_segment_distance(const TetMesh& mesh, const double* p, const double* a,
@@ -462,11 +463,11 @@ double coordinate_resolution(const TetMesh& mesh, const double* p) {
     const double magnitude = std::abs(p[axis]);
     const double step = std::nextafter(magnitude, std::numeric_limits<double>::infinity()) -
                         magnitude;
-    std::array<double, 3> delta{};
-    delta[static_cast<std::size_t>(axis)] = step;
-    const auto transformed = mesh.metric_transform(delta);
-    resolution =
-        std::max(resolution, std::hypot(std::hypot(transformed[0], transformed[1]), transformed[2]));
+    // The step is a power of two, so the transform of the step along an axis
+    // is the step times the transform of that axis.
+    std::array<double, 3> unit{};
+    unit[static_cast<std::size_t>(axis)] = 1.0;
+    resolution = std::max(resolution, step * geometry::length(mesh.metric_transform(unit)));
   }
   return resolution;
 }
@@ -934,7 +935,8 @@ double cosine3(const double* u, const double* v) {
 }
 
 double degrees(double cosine) {
-  return std::acos(std::clamp(cosine, -1.0, 1.0)) * (180.0 / std::numbers::pi);
+  return phx::mc::angle::arccosine(std::clamp(cosine, -1.0, 1.0)) *
+         (180.0 / std::numbers::pi);
 }
 
 // The smallest angle in degrees between the ray along `ray` and the planar
@@ -988,7 +990,7 @@ struct AcuteFeature {
 // feature_size / sin(angle) of it. Boundary splits there encroach each
 // other ever closer to the apex.
 double protected_radius(double feature_size, double angle) {
-  return feature_size / std::sin(angle * (std::numbers::pi / 180.0));
+  return feature_size / phx::mc::angle::sine(angle * (std::numbers::pi / 180.0));
 }
 
 // The acute features of the constrained complex (`facets`, `segments`) of
@@ -2425,8 +2427,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     const double* second = mesh.point(second_slot);
     const double length = mesh.metric_active()
                               ? metric_distance(mesh, first, second)
-                              : std::hypot(std::hypot(second[0] - first[0], second[1] - first[1]),
-                                           second[2] - first[2]);
+                              : std::sqrt(geometry::squared_distance(second, first));
     const double ratio = length / edge_target;
     if (!(ratio > 1.0)) continue;
     for (std::int32_t cell : star) {

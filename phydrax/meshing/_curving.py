@@ -32,6 +32,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from fractions import Fraction
+from hashlib import sha256
 from itertools import product
 from typing import cast, final, NamedTuple, Protocol, runtime_checkable, TYPE_CHECKING
 
@@ -42,7 +43,7 @@ from jax import Array, lax
 from jax.typing import ArrayLike
 
 from .._collection_scope import collection_scope
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint, canonical_json
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import positive_finite_float
@@ -847,7 +848,8 @@ def _straight_geometry(
     elements: dict[str, CellGeometryElement] = {}
     routes: dict[str, np.ndarray] = {}
     local_keys: dict[str, tuple[tuple[tuple[object, ...], ...], ...]] = {}
-    exact_nodes: dict[tuple[object, ...], tuple[ExactScalar, ...]] = {}
+    exact_nodes: dict[tuple[object, ...], tuple[tuple[ExactScalar, ...], str]] = {}
+    orientation_tokens: dict[tuple[int, ...], str] = {}
     vertex_node_rows: dict[tuple[object, ...], int] = {}
     vertex_coordinates: list[tuple[ExactScalar, ...] | None] = [
         None for _ in range(mesh_coordinates.shape[0])
@@ -855,6 +857,7 @@ def _straight_geometry(
     node_identity_payload: list[str] = []
 
     for block in mesh.blocks:
+        block_token = canonical_json(block.name)
         element = lagrange_element(block.cell_kind, degree)
         nodal_data = lagrange_reference_node_data(element)
         if len(nodal_data) != element.local_dof_count or any(
@@ -919,11 +922,16 @@ def _straight_geometry(
                     raise ValueError(
                         "Straight source-map evaluation did not return exact scalar coordinates."
                     )
-                previous = exact_nodes.setdefault(identity, exact_image)
-                if previous != exact_image:
-                    raise ValueError(
-                        "Adjacent cell maps disagree on an exact canonical nodal identity."
-                    )
+                previous = exact_nodes.get(identity)
+                if previous is None:
+                    identity_token = canonical_json(identity)
+                    exact_nodes[identity] = exact_image, identity_token
+                else:
+                    previous_image, identity_token = previous
+                    if previous_image != exact_image:
+                        raise ValueError(
+                            "Adjacent cell maps disagree on an exact canonical nodal identity."
+                        )
                 if node.entity_dimension == 0:
                     if len(node.entity_vertices) != 1:
                         raise ValueError(
@@ -949,17 +957,18 @@ def _straight_geometry(
                         )
                     vertex_coordinates[vertex_row] = exact_image
                 identity_row.append(identity)
-                node_identity_payload.append(
-                    canonical_fingerprint(
-                        {
-                            "block": block.name,
-                            "cell_id": int(cell_ids[cell_row]),
-                            "local_dof": local_dof,
-                            "identity": identity,
-                            "orientation": orientation,
-                        }
-                    )
+                orientation_token = orientation_tokens.get(orientation)
+                if orientation_token is None:
+                    orientation_token = canonical_json(orientation)
+                    orientation_tokens[orientation] = orientation_token
+                # These nodal identities contain JSON scalars and tuples only.
+                # The key order and encoding match canonical_fingerprint.
+                token = (
+                    f'{{"block":{block_token},"cell_id":{int(cell_ids[cell_row])},'
+                    f'"identity":{identity_token},"local_dof":{local_dof},'
+                    f'"orientation":{orientation_token}}}'
                 )
+                node_identity_payload.append(sha256(token.encode("ascii")).hexdigest())
             rows_for_cells.append(tuple(identity_row))
         elements[block.name] = element
         routes[block.name] = route
@@ -995,7 +1004,7 @@ def _straight_geometry(
     }
     exact_coordinates = (
         *exact_vertices,
-        *(exact_nodes[key] for key in high_order_keys),
+        *(exact_nodes[key][0] for key in high_order_keys),
     )
     for block in mesh.blocks:
         block_routes = routes[block.name]

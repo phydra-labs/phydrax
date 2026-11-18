@@ -19,7 +19,6 @@ from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.geometry._approximate_source_coverage import (
     _area2,
     _cad_chart_partition,
-    _covered_by_declared_triangles,
     _face_distance_lower,
     _intersection_area,
     _overlapping_self_pairs,
@@ -33,6 +32,7 @@ from phydrax.geometry._approximate_source_coverage import (
 from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
 from phydrax.geometry._global_embedding import certify_global_embedding
 from phydrax.geometry._meshing_domain import MeshingDomain, PatchCurveUse
+from phydrax.geometry._planar_primitives import partition_verdict
 from phydrax.geometry._source_boundary_records import (
     rational_chart_tokens,
     SourceBoundaryChartWitness,
@@ -197,8 +197,8 @@ def test_bounded_cad_partition_screen_preserves_exact_coverage_and_overlap() -> 
         declared[1],
     )
     outside = (((one, zero), (one + half, zero), (one, half)),)
-    assert _covered_by_declared_triangles(valid, declared)
-    assert not _covered_by_declared_triangles(outside, declared)
+    assert partition_verdict(valid, declared) == (0, -1, -1)
+    assert partition_verdict(outside, declared)[0] != 0
     assert all(
         _intersection_area(valid[a], valid[b]) == 0
         for a, b in _overlapping_self_pairs(valid)

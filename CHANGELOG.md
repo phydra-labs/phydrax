@@ -60,6 +60,14 @@
 
 
 ### Added
+- The native interval program evaluates the tangent (opcode 28, after the
+  elementwise power), so a function that contains `tan` lowers to it instead
+  of being refused by the native and batched routes. A tangent row encloses
+  each input interval with the kernel of the elementwise interval entry, the
+  same doubles, and returns the whole line for an interval that reaches a
+  pole. Programs without a tangent are lowered exactly as before. A library
+  built before this change does not advertise the opcode, and lowering such a
+  function against it is refused as an unsupported operation.
 - `MetricMeshAdaptation` accepts `accepted_minimum_length`, the smallest metric
   edge length a `NATIVE_METRIC_3D` request accepts as complete. Edit phases
   still target the unit band; only the completion criterion and the unmet-edge
@@ -306,6 +314,10 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Dynamic glued-face monotonicity checks rational Jacobian controls with exact
+  integer signs before decoding, preserving findings and the alternative
+  preconditioner route. Three alternating replays of 6,990 captured calls took
+  11.6–15.6 seconds before and 6.6–8.8 seconds after on the measured machine.
 - Contact Jacobian positivity decides Sylvester signs on scaled integer
   products without constructing rational minors, preserving exact decisions.
   Three alternating replays of 91,398 captured checks took 35.5–49.0 seconds
@@ -323,11 +335,28 @@
   and their order. On captured 147,231-cell qualification inputs, the median
   combined time of three alternating proof replays fell from 99.24 to 62.90
   seconds.
+- Source-boundary chart witnesses validate reduced rational token pairs and
+  chart degeneracy with integer arithmetic, preserving findings and identities.
+  On one captured 60,992-row bank, three alternating exact-loop runs used
+  1.275/0.153, 1.291/0.156, and 1.269/0.150 CPU seconds before/after.
 - Source-fidelity interpolation recognizes exact rational affine surface maps
   and uses their identically zero residual without constructing per-chart
   rational polynomials. Bounds and findings are unchanged. On one captured
   13,443-row chart batch, three alternating general and affine-bound runs took
   8.19/0.044, 9.16/0.043, and 9.40/0.059 seconds, respectively.
+- Straight high-order geometry reuses canonical nodal identity encodings while
+  preserving source-map identities. Three paired larger-profile input replays
+  saved 8.10, 8.58, and 19.81 seconds respectively on a shared machine.
+- CAD plane-chart partition proofs batch exact area, coverage, and overlap
+  decisions in meshcore, preserving the ordered findings. On two captured
+  qualification patches, three alternating replays took 6.03–6.54 seconds
+  before and 2.81–3.30 seconds after, including host packing.
+  Reusing exact edge equations and checked inline separation predicates
+  reduced the native portions of those patches in another three alternating
+  replays from 2.41–2.55 to 0.81–1.29 seconds and from 1.71–2.20 to
+  0.92–1.41 seconds, respectively; overflow still uses unbounded arithmetic.
+  The native boundary also checks supplied screening boxes against every exact
+  corner, rejecting non-enclosing boxes rather than accepting an unsound proof.
 - Sphere and torus projection points, parameters, normals and tangents now use
   platform-identical representatives, changing projection `result_id`s while
   certified bounds, statuses, source identities and profile identities remain
@@ -657,6 +686,65 @@
   zero-set admission moved to one header that both admissions use; native
   tests check the norm and angle bounds against exact arithmetic and prove
   the zero-set floor from exact squares of the area and the longest edge.
+- The native meshers measure a Euclidean length as the square root of the
+  left-to-right sum of squares (binary64 products, sums and one square root)
+  instead of `std::hypot`: the surface CDT's shell split, the radius-edge
+  ratio and metric lengths of the volume refinement and improvement, and the
+  lengths of the surface remeshing and of the surface envelope. The value is
+  the same double on every platform; the three-argument `std::hypot` is not
+  correctly rounded in about a third of the calls on Windows and Linux and a
+  sixth on macOS, on different inputs, so the three platforms disagreed on
+  the meshers' own arguments. Where `std::hypot` returned another double, a
+  length changes in its last place, so a mesh whose refinement or
+  improvement had a decision within one double of its threshold can change,
+  once, on every platform. Nothing is rescaled: components outside about
+  1e-154 to 1e154 overflow or underflow in their squares. The coordinate
+  resolution of the volume refinement, a one-step length that is subnormal
+  near zero, is computed as the step times the length of the transformed
+  axis.
+- The native meshers take their angles from kernels that give one double per
+  input on every platform instead of from `std::acos`, `std::asin`,
+  `std::atan2` and `std::sin`: the dihedral angles of the volume refinement
+  and improvement, the minimum angle, turns and cone separations of the
+  surface remeshing, the surface CDT's minimum-angle threshold and the
+  radius of a protecting ball. Arcsine, arccosine and the angle between two
+  vectors are computed with binary64 additions, multiplications, divisions
+  and square roots in a fixed order (within 7, 5 and 7 units in the last
+  place; at most 2 observed), and the two rarely evaluated sines are the
+  lower endpoint of the native interval kernel's enclosure. The platform
+  functions differ between Windows, Linux and macOS in up to an eighth of
+  the meshers' own arguments. The cell size of the volume mesher's hash
+  grid is a cube root by Newton's iteration instead of `std::cbrt`, and a
+  power of two is formed with `std::ldexp` instead of `std::exp2`. A
+  reported angle can change in its last places and a decision within that
+  distance of its threshold can go the other way, once, on every platform.
+  These values measure and propose; the bounds of the surface admissions
+  come from the interval kernel. Host code reaches the same kernels through
+  `phydrax._meshcore.angle_arcsine`, `angle_arccosine`, `angle_between`,
+  `angle_sine` and `angle_cosine` (C entries `phx_mc_angle_*`), so an angle
+  computed on the host and one computed in the library are the same double;
+  `angle_arctangent2` is the four-quadrant form of `angle_between`, with the
+  sign of its first argument and the zeros of IEEE 754.
+- `NATIVE_METRIC_3D` searches the candidate positions of a relocated vertex
+  in the native library. The host still builds the star of the vertex and
+  its pulls; one native sequence per vertex then generates the goals with
+  their dyadic backtracking, projects them onto the carrier hull, passes
+  over repeated goals, screens them, takes the exact carriers of the mode,
+  passes over repeated stencils, interpolates the tensor of a stencil and
+  evaluates each carrier (band violations, determinants with their floor,
+  cell quality). Each call returns the candidates of the next goal that has
+  any, so a search still resumes across rounds until its star changes, and
+  the sequence is the one the host generators produced: on the recorded
+  sphere witness the proposals of the plain, deep and refining searches are
+  bit-identical. For a periodic star the native candidates are filtered on
+  the host by the exact locator of the current star, as before: there the
+  native sequence holds candidates that are not proposed. The host goal
+  generator, the batched float screen and their bounded-work batching are
+  removed. One visible difference in failure: a goal whose screen meets a
+  spoke without a finite metric length raises `FloatingPointError` when the
+  search reaches that goal; before, it raised when the batch holding the
+  goal was screened, which could be earlier than proposals of goals before
+  it.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep

@@ -37,6 +37,7 @@
 #include <utility>
 #include <vector>
 
+#include "angle.hpp"
 #include "capi_guard.hpp"
 #include "expansion.hpp"
 #include "filtered.hpp"
@@ -134,7 +135,8 @@ class ConstrainedMesher {
         input_count_(input_count),
         max_area_(max_area),
         angle_enabled_(min_angle_degrees > 0.0),
-        sin_min_angle_(std::sin(min_angle_degrees * (3.14159265358979323846 / 180.0))) {
+        sin_min_angle_(
+            angle::sine(min_angle_degrees * (3.14159265358979323846 / 180.0))) {
     constraint_sources_.assign(static_cast<std::size_t>(input_count), -1);
     constraint_parents_.assign(2 * static_cast<std::size_t>(input_count), -1);
     constraint_ratios_.assign(static_cast<std::size_t>(input_count), 0.0);
@@ -880,7 +882,8 @@ class ConstrainedMesher {
       const double* pq = shell_a ? pb : pa;
       const double dx = pq[0] - po[0];
       const double dy = pq[1] - po[1];
-      const double length = std::hypot(dx, dy);
+      // Products, one sum and one square root: the same double everywhere.
+      const double length = std::sqrt(dx * dx + dy * dy);
       int exponent = 0;
       const double fraction = std::frexp(0.5 * length, &exponent);
       const double piece = std::ldexp(1.0, fraction < 0.75 ? exponent - 1 : exponent);
