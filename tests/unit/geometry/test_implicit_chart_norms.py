@@ -8,6 +8,7 @@ import numpy as np
 
 from phydrax.geometry._rational import binary64_norm_upper
 from phydrax.geometry.implicit._source_charts import (
+    _interval_vector_norm_bounds,
     _normal_bracket_start_steps,
     _source_cell_extent_upper,
 )
@@ -59,3 +60,31 @@ def test_source_cell_extent_encloses_exact_endpoint_difference() -> None:
             Fraction(0),
         ) / (1 << (2 * level))
         assert Fraction.from_float(upper) ** 2 >= squared
+
+
+def test_interval_vector_norm_refuses_inward_square_rounding() -> None:
+    components = tuple(
+        float.fromhex(value)
+        for value in (
+            "0x1.6bfbbf7d8ed35p+0",
+            "0x1.5030474f27fcep-1",
+            "0x1.0b91f0133360ap-2",
+        )
+    )
+    exact_squared = sum(
+        (Fraction.from_float(value) ** 2 for value in components), Fraction(0)
+    )
+    old_upper = float.fromhex("0x1.96772b896d262p+0")
+    assert Fraction.from_float(old_upper) ** 2 < exact_squared
+    lower, upper = _interval_vector_norm_bounds(
+        tuple((value, value) for value in components)
+    )
+    assert Fraction.from_float(lower) ** 2 <= exact_squared
+    assert Fraction.from_float(upper) ** 2 >= exact_squared
+
+
+def test_interval_vector_norm_encloses_box_extrema() -> None:
+    intervals = ((-3.0, -2.0), (-1.0, 1.0), (4.0, 5.0))
+    lower, upper = _interval_vector_norm_bounds(intervals)
+    assert Fraction.from_float(lower) ** 2 <= 20
+    assert Fraction.from_float(upper) ** 2 >= 35

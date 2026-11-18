@@ -745,16 +745,31 @@ def _interval_divide(numerator: Interval, denominator: Interval, /) -> Interval:
 def _interval_vector_norm_bounds(
     intervals: tuple[Interval, ...],
 ) -> Interval:
-    lower_squares = []
-    upper_squares = []
+    lower_squared = 0.0
+    upper_squared = 0.0
     for lower, upper in intervals:
         minimum = 0.0 if lower <= 0.0 <= upper else min(abs(lower), abs(upper))
         maximum = max(abs(lower), abs(upper))
-        lower_squares.append(minimum * minimum)
-        upper_squares.append(maximum * maximum)
-    lower = math.nextafter(math.sqrt(max(0.0, math.fsum(lower_squares))), 0.0)
-    upper = math.nextafter(math.sqrt(math.fsum(upper_squares)), math.inf)
-    return lower, upper
+        minimum_square = math.nextafter(minimum * minimum, 0.0)
+        maximum_square = (
+            math.nextafter(maximum * maximum, math.inf) if maximum > 0.0 else 0.0
+        )
+        lower_sum = lower_squared + minimum_square
+        upper_sum = upper_squared + maximum_square
+        lower_squared = (
+            math.nextafter(lower_sum, 0.0)
+            if lower_squared > 0.0 and minimum_square > 0.0
+            else lower_sum
+        )
+        upper_squared = (
+            math.nextafter(upper_sum, math.inf)
+            if upper_squared > 0.0 and maximum_square > 0.0
+            else upper_sum
+        )
+    return (
+        math.nextafter(math.sqrt(lower_squared), 0.0),
+        math.nextafter(math.sqrt(upper_squared), math.inf),
+    )
 
 
 def _exact_interval(value: ExactScalar) -> tuple[float, float]:
