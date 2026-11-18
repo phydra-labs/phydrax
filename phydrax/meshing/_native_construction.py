@@ -12,7 +12,7 @@ canonical acceptance, not construction of these records, establishes validity.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol, TYPE_CHECKING
 
 
 if TYPE_CHECKING:

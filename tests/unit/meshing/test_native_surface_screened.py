@@ -2,8 +2,6 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from dataclasses import replace
-
 import numpy as np
 import pytest
 
@@ -35,11 +33,16 @@ def test_deferred_surface_request_accepts_the_same_mesh() -> None:
     )
     certified = prepared.execute(steering="certified")
     screened = prepared.execute(steering="screened")
-    assert screened.certified_steps == ("pole_sampling", "refinement")
+    assert screened.certified_steps == ("pole_sampling",)
     assert screened.certification.fidelity_witness is None
     deferred = screened.deferred_certification
     assert deferred is not None
-    request = deferred.resolve()
+    assert not screened.compliance.passed
+    assert screened.compliance.issues == ("compliance not assessed: screened construction",)
+    resolved = deferred.resolve()
+    assert resolved.deferred_certification is None
+    assert resolved.certified_steps == screened.certified_steps
+    request = resolved.certification
     expected = certified.certification
     assert _same_tree_content(
         (
@@ -69,9 +72,7 @@ def test_deferred_surface_request_accepts_the_same_mesh() -> None:
     assert request.fidelity_witness.witness_id == certified.certification.fidelity_witness.witness_id
     args = (specification, _NATIVE_PROVIDER, meshcore_identity(), "surface-test", "parametric_surface")
     accepted = _accept_native_construction(certified, *args)
-    replayed = _accept_native_construction(
-        replace(screened, certification=request, deferred_certification=None), *args
-    )
+    replayed = _accept_native_construction(resolved, *args)
     np.testing.assert_array_equal(accepted.mesh.coordinates, replayed.mesh.coordinates)
     np.testing.assert_array_equal(accepted.mesh.blocks[0].vertices, replayed.mesh.blocks[0].vertices)
     assert tuple(value.association_id for value in accepted.associations) == tuple(
