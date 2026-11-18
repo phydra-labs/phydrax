@@ -34,6 +34,16 @@ inline double squared_distance(const double* a, const double* b) noexcept {
   return dot(delta, delta);
 }
 
+// |v| as the square root of the left-to-right sum of squares: binary64
+// products, sums and one square root, each correctly rounded, so one double
+// per input on every platform (std::hypot is not: its three-argument form is
+// not correctly rounded and differs between C libraries). Nothing is
+// rescaled: a square beyond the binary64 range overflows, and one below it
+// underflows, for components outside about 1e-154 to 1e154.
+inline double length(const double* v) noexcept { return std::sqrt(dot(v, v)); }
+inline double length(const std::array<double, 3>& v) noexcept { return length(v.data()); }
+inline double length(double x, double y) noexcept { return std::sqrt(x * x + y * y); }
+
 inline bool point_in_domain(const double* point) noexcept {
   return coordinate_in_domain(point[0]) && coordinate_in_domain(point[1]) &&
          coordinate_in_domain(point[2]);

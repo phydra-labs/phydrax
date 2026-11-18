@@ -1870,10 +1870,9 @@ static double triangle_radius_edge_ratio(const double* a, const double* b,
   const double bc[3] = {c[0] - b[0], c[1] - b[1], c[2] - b[2]};
   const double normal[3] = {ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2],
                             ab[0] * ac[1] - ab[1] * ac[0]};
-  const double twice_area = std::hypot(normal[0], normal[1], normal[2]);
-  std::array<double, 3> lengths{std::hypot(ab[0], ab[1], ab[2]),
-                                std::hypot(ac[0], ac[1], ac[2]),
-                                std::hypot(bc[0], bc[1], bc[2])};
+  const double twice_area = geometry::length(normal);
+  std::array<double, 3> lengths{geometry::length(ab), geometry::length(ac),
+                                geometry::length(bc)};
   std::sort(lengths.begin(), lengths.end());
   if (!(twice_area > 0.0)) return std::numeric_limits<double>::infinity();
   return lengths[1] * lengths[2] / (2.0 * twice_area);
