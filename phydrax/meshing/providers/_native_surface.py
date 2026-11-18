@@ -5588,7 +5588,7 @@ def _triangle_sampled_deviations(
         ),
         dtype=np.float64,
     )
-    parameters = np.einsum("qv,cvd->cqd", weights, refined.triangle_parameters)
+    parameters = binary64_matmul(weights, refined.triangle_parameters)
     patches = np.repeat(refined.triangle_patches, weights.shape[0])
     source_points = domain.evaluate(
         patches, parameters.reshape((-1, 2)), preparation=preparation
@@ -5597,7 +5597,7 @@ def _triangle_sampled_deviations(
     )
     triangle_coordinates = refined.coordinates[refined.triangles]
     chord_points = binary64_matmul(weights, triangle_coordinates)
-    return np.max(np.linalg.norm(source_points - chord_points, axis=2), axis=1)
+    return np.max(binary64_norm(source_points - chord_points), axis=1)
 
 
 def _surface_construction(

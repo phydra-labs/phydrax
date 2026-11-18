@@ -24,6 +24,8 @@
   lifts rather than compiled coupled-evaluator outputs. Source root charts and
   curve queries use domain content and row order rather than source-name
   hashes to break geometric ties.
+  Sampled triangle deviations use fixed-order chart interpolation and norms;
+  sampled deviation evidence can change in its last bits.
 - Native geometry and meshing now share a single fixed-order binary64 dot,
   matrix product, and norm definition. On platforms whose BLAS fused or
   reordered these operations, rounding can change surface-association
