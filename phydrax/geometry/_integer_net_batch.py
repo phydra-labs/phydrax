@@ -128,7 +128,9 @@ def integer_net_batch(
             )
             if limbs is None:
                 continue
-            exponents = tuple(power for exponent in rational_polynomial for power in exponent)
+            exponents = tuple(
+                power for exponent in rational_polynomial for power in exponent
+            )
             if count is None:
                 count = _control_count(domain, dimension, degree)
             banks.setdefault((domain, dimension, limbs), []).append(

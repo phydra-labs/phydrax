@@ -650,7 +650,9 @@ def _declared_unit_tet(
     (
         None,
         np.asarray(((1.0, 0.3, 0.2), (0.0, 1.0, 0.4), (0.0, 0.0, 1.0)), dtype=np.float64),
-        np.asarray(((-1.0, 0.25, 0.0), (0.0, 2.0, 0.1), (0.0, 0.0, 1.0)), dtype=np.float64),
+        np.asarray(
+            ((-1.0, 0.25, 0.0), (0.0, 2.0, 0.1), (0.0, 0.0, 1.0)), dtype=np.float64
+        ),
     ),
 )
 def test_declared_facet_coverage_retains_plane_records_with_affine_metrics(
@@ -666,7 +668,9 @@ def test_declared_facet_coverage_retains_plane_records_with_affine_metrics(
             np.sort(records.vertex_ids), np.asarray((0, 1, 2), dtype=np.uint64)
         )
         np.testing.assert_array_equal(records.face_rows, np.full((3,), 3, dtype=np.int32))
-        np.testing.assert_array_equal(records.deviations, np.zeros((3,), dtype=np.float64))
+        np.testing.assert_array_equal(
+            records.deviations, np.zeros((3,), dtype=np.float64)
+        )
 
 
 @pytest.mark.parametrize("location", ("shared_edge", "shared_vertex", "outside"))
@@ -674,9 +678,7 @@ def test_declared_facet_coverage_retains_plane_records_with_affine_metrics(
     "metric",
     (
         None,
-        np.asarray(
-            ((1.0, 0.3, 0.2), (0.0, 1.0, 0.4), (0.0, 0.0, 1.0)), dtype=np.float64
-        ),
+        np.asarray(((1.0, 0.3, 0.2), (0.0, 1.0, 0.4), (0.0, 0.0, 1.0)), dtype=np.float64),
     ),
     ids=("euclidean", "affine"),
 )
@@ -712,8 +714,12 @@ def _assert_declared_centroid_case(
 
     if location == "outside":
         source_xy = (
-            (-3.0, -3.0), (-2.0, -3.0), (-3.0, -2.0),
-            (3.0, 3.0), (4.0, 3.0), (3.0, 4.0),
+            (-3.0, -3.0),
+            (-2.0, -3.0),
+            (-3.0, -2.0),
+            (3.0, 3.0),
+            (4.0, 3.0),
+            (3.0, 4.0),
         )
         source_triangles = ((0, 1, 2), (3, 4, 5))
     else:
@@ -817,7 +823,9 @@ def _assert_declared_centroid_case(
             np.testing.assert_array_equal(
                 np.sort(records.vertex_ids), np.asarray((0, 1, 2), dtype=np.uint64)
             )
-            np.testing.assert_array_equal(records.face_rows, np.full((3,), 3, dtype=np.int32))
+            np.testing.assert_array_equal(
+                records.face_rows, np.full((3,), 3, dtype=np.int32)
+            )
 
 
 @pytest.mark.parametrize("crosses_boundary", (False, True))
@@ -843,7 +851,9 @@ def test_declared_facet_boundary_coverage_accepts_separation_and_refuses_crossin
     if crosses_boundary:
         source_faces[3] = (4, 5, 6)
     else:
-        source_faces = np.concatenate((source_faces, np.asarray(((4, 5, 6),), dtype=np.int32)))
+        source_faces = np.concatenate(
+            (source_faces, np.asarray(((4, 5, 6),), dtype=np.int32))
+        )
         groups = np.append(groups, np.int32(3))
     labels = np.asarray((101, 102, 103, 104), dtype=np.int64)
     planes = np.full((len(source_faces), 3, 3), np.nan, dtype=np.float64)
@@ -853,17 +863,33 @@ def test_declared_facet_boundary_coverage_accepts_separation_and_refuses_crossin
     segments = np.empty((0, 2), dtype=np.int32)
     empty = np.empty((0,), dtype=np.int32)
     source = TetMeshSourceComplex(
-        source_points, source_faces, groups, np.zeros(len(groups), dtype=np.float64),
-        segments, empty, np.empty((0,), dtype=np.float64),
-        np.zeros((4,), dtype=np.int8), np.full((4,), -1, dtype=np.int32),
-        np.zeros((4, 2), dtype=np.float64), labels, np.empty((0,), dtype=np.int64),
-        planes, np.zeros(len(groups), dtype=np.float64),
+        source_points,
+        source_faces,
+        groups,
+        np.zeros(len(groups), dtype=np.float64),
+        segments,
+        empty,
+        np.empty((0,), dtype=np.float64),
+        np.zeros((4,), dtype=np.int8),
+        np.full((4,), -1, dtype=np.int32),
+        np.zeros((4, 2), dtype=np.float64),
+        labels,
+        np.empty((0,), dtype=np.int64),
+        planes,
+        np.zeros(len(groups), dtype=np.float64),
     )
 
     def construct() -> TetMesh3D:
         return TetMesh3D(
-            UNIT_TET, np.asarray(((0, 1, 2, 3),), dtype=np.int32), None,
-            faces, labels, segments, empty, source=source, affine_metric=metric,
+            UNIT_TET,
+            np.asarray(((0, 1, 2, 3),), dtype=np.int32),
+            None,
+            faces,
+            labels,
+            segments,
+            empty,
+            source=source,
+            affine_metric=metric,
         )
 
     if crosses_boundary:
@@ -923,16 +949,30 @@ def test_tet_mesh_preserves_interleaved_source_segment_groups() -> None:
     groups = np.asarray((0, 1, 0), dtype=np.int32)
     labels = np.asarray((201, 202), dtype=np.int64)
     source = TetMeshSourceComplex(
-        UNIT_TET.copy(), faces.copy(), np.arange(4, dtype=np.int32),
-        np.zeros((4,), dtype=np.float64), segments[order], groups[order],
-        np.zeros((3,), dtype=np.float64), np.zeros((4,), dtype=np.int8),
-        np.full((4,), -1, dtype=np.int32), np.zeros((4, 2), dtype=np.float64),
-        face_labels, labels, np.full((4, 3, 3), np.nan, dtype=np.float64),
+        UNIT_TET.copy(),
+        faces.copy(),
+        np.arange(4, dtype=np.int32),
+        np.zeros((4,), dtype=np.float64),
+        segments[order],
+        groups[order],
+        np.zeros((3,), dtype=np.float64),
+        np.zeros((4,), dtype=np.int8),
+        np.full((4,), -1, dtype=np.int32),
+        np.zeros((4, 2), dtype=np.float64),
+        face_labels,
+        labels,
+        np.full((4, 3, 3), np.nan, dtype=np.float64),
         np.zeros((4,), dtype=np.float64),
     )
     with TetMesh3D(
-        UNIT_TET, np.asarray(((0, 1, 2, 3),), dtype=np.int32), None,
-        faces, face_labels, segments, labels[groups], source=source,
+        UNIT_TET,
+        np.asarray(((0, 1, 2, 3),), dtype=np.int32),
+        None,
+        faces,
+        face_labels,
+        segments,
+        labels[groups],
+        source=source,
     ) as state:
         arrays = state.arrays()
         np.testing.assert_array_equal(arrays.segments, segments)
@@ -1342,7 +1382,9 @@ def test_split_segment_halves_restore_in_order_and_duplicate_half_is_refused() -
     # have already been accepted, so that third row is the first duplicate.
     repeated = arrays._replace(
         segments=np.concatenate((arrays.segments, arrays.segments[:1, ::-1])),
-        segment_sources=np.concatenate((arrays.segment_sources, arrays.segment_sources[:1])),
+        segment_sources=np.concatenate(
+            (arrays.segment_sources, arrays.segment_sources[:1])
+        ),
         segment_ids=np.concatenate(
             (
                 arrays.segment_ids,

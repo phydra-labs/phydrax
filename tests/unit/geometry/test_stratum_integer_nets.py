@@ -273,7 +273,6 @@ def test_bulk_simplex_conversion_with_alternating_degrees(workers: int) -> None:
         assert net.controls() == _fraction_controls(polynomial, "simplex", 2, degree)
 
 
-
 def test_bulk_net_conversion_is_independent_of_batch_split_and_workers() -> None:
     if not subdivision.meshcore_available():
         pytest.skip("Meshcore is unavailable")
