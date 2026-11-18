@@ -361,14 +361,17 @@ def _merge_evaluation_snapshots(
 
 
 def _stored_coordinate_stage(
-    preparation: domain_owner.SourcePreparation, mesh_id: str, /
+    preparation: domain_owner.SourcePreparation,
+    mesh_id: str,
+    initial: domain_owner.SourceEvaluationSnapshot,
+    before: domain_owner.SourceEvaluationSnapshot,
+    /,
 ) -> MeshingStageReport:
-    """Snapshot stored-point fallbacks seen by the construction preparation.
-
-    A zero covers only calls through this preparation up to construction return;
-    it says nothing about other query preparations or later certification.
-    """
-    counts = tuple(sorted(preparation.unsupported_points.items())) or (("none", 0),)
+    """Snapshot witnessed construction and execution evaluation provenance."""
+    rows, calls, unknown = _merge_evaluation_snapshots(
+        initial, before, preparation.evaluations.snapshot()
+    )
+    counts = rows or (("none", 0),)
     diagnostics = tuple(
         MeshingDiagnostic(
             MeshingDiagnosticSeverity.INFO,
@@ -381,6 +384,22 @@ def _stored_coordinate_stage(
         )
         for kind, count in counts
     )
+    for code, values in (
+        ("stored_coordinate_unspecified_construction_calls", calls),
+        ("stored_coordinate_unspecified_construction_unknown", unknown),
+    ):
+        diagnostics += tuple(
+            MeshingDiagnostic(
+                MeshingDiagnosticSeverity.INFO,
+                "Construction-local source evaluation declaration.",
+                provider_code=code,
+                failure_evidence=MeshingFailureEvidence(
+                    achieved_quantities={"count": float(count)},
+                    logical_findings=(kind,),
+                ),
+            )
+            for kind, count in (values or (("none", 0),))
+        )
     return MeshingStageReport(
         MeshingStageKind.SURFACE_MESHING,
         MeshingStageStatus.PASSED,
@@ -6441,6 +6460,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
         domain.require_current(domain.source_id, domain.source_revision)
         self.boundary_source.require_current()
         preparation = domain_owner.SourcePreparation.of(domain, preparation)
+        before = preparation.evaluations.snapshot()
         family = self.specification.target.cell_families
         if set((*family.required, *family.preferred)) == {"quadrilateral"}:
             from ._native_surface_quad import execute_tensor_quads
@@ -6450,7 +6470,12 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
                 construction,
                 stages=(
                     *construction.stages,
-                    _stored_coordinate_stage(preparation, construction.mesh.mesh_id),
+                    _stored_coordinate_stage(
+                        preparation,
+                        construction.mesh.mesh_id,
+                        self.preparation_evaluations,
+                        before,
+                    ),
                 ),
             )
         curve_ids = _trim_curves(domain, self.selected_patches)
@@ -6780,7 +6805,11 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             certification,
             geometry=geometry,
             organization=organization,
-            stages=(_stored_coordinate_stage(preparation, mesh.mesh_id),),
+            stages=(
+                _stored_coordinate_stage(
+                    preparation, mesh.mesh_id, self.preparation_evaluations, before
+                ),
+            ),
         )
 
 

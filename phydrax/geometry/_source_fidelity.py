@@ -6088,16 +6088,23 @@ def _certify_analytic_profile_distance_fidelity(
 
 
 def _unspecified_evaluations(
-    preparation: SourcePreparation, before: dict[str, int], /
+    preparation: SourcePreparation,
+    before: dict[str, int],
+    before_unknown: dict[str, int],
+    /,
 ) -> tuple[tuple[str, int], ...]:
     """Count this operation's unsupported evaluations, excluding prior uses."""
-    return tuple(
-        sorted(
-            (name, count - before.get(name, 0))
-            for name, count in preparation.unsupported_points.items()
-            if count > before.get(name, 0)
-        )
+    counts = [
+        (name, count - before.get(name, 0))
+        for name, count in preparation.unsupported_points.items()
+        if count > before.get(name, 0)
+    ]
+    counts.extend(
+        (f"unknown:{reason}", count - before_unknown.get(reason, 0))
+        for reason, count in preparation.evaluations.unknown.items()
+        if reason != "domain-construction" and count > before_unknown.get(reason, 0)
     )
+    return tuple(sorted(counts))
 
 
 def _unresolved_fidelity(
@@ -6255,6 +6262,7 @@ def _certify_domain_surface_chart_fidelity(
     domain_source = _surface_query_root(source)
     preparation = _preparation_for_chart_root(source, domain_source, preparation)
     before = dict(preparation.unsupported_points)
+    before_unknown = dict(preparation.evaluations.unknown)
 
     target_rows: tuple[tuple[int, int], ...] | None = None
     if (
@@ -6418,7 +6426,7 @@ def _certify_domain_surface_chart_fidelity(
         coverage,
         tuple(findings),
         unspecified_evaluations=(
-            _unspecified_evaluations(preparation, before)
+            _unspecified_evaluations(preparation, before, before_unknown)
             if domain_coverage is None
             else None
         ),
@@ -7056,6 +7064,7 @@ def certify_source_fidelity(
         )
     preparation = _preparation_for_chart_root(source, domain_source, preparation)
     before = dict(preparation.unsupported_points)
+    before_unknown = dict(preparation.evaluations.unknown)
     coverage = domain_source.boundary_chart_cover(preparation=preparation)
     findings = list(coverage.findings)
     if not coverage.complete or coverage.semantics != "certified" or findings:
@@ -7099,7 +7108,9 @@ def certify_source_fidelity(
             witness=witness,
             coverage=coverage,
             findings=tuple(findings),
-            unspecified_evaluations=_unspecified_evaluations(preparation, before),
+            unspecified_evaluations=_unspecified_evaluations(
+                preparation, before, before_unknown
+            ),
         )
     if mesh.topological_dimension != 2 or mesh.ambient_dimension != 3:
         findings.append(
@@ -7182,7 +7193,9 @@ def certify_source_fidelity(
                 witness=witness,
                 coverage=coverage,
                 findings=tuple(findings),
-                unspecified_evaluations=_unspecified_evaluations(preparation, before),
+                unspecified_evaluations=_unspecified_evaluations(
+                    preparation, before, before_unknown
+                ),
             )
         binding = MeshCertificateBinding(
             mesh,
@@ -7210,7 +7223,9 @@ def certify_source_fidelity(
             witness,
             coverage,
             (),
-            unspecified_evaluations=_unspecified_evaluations(preparation, before),
+            unspecified_evaluations=_unspecified_evaluations(
+                preparation, before, before_unknown
+            ),
         )
     elements, routes, _ = geometry.resolve(mesh)
     coefficients = tuple(geometry.source_coordinates())
@@ -7783,5 +7798,7 @@ def certify_source_fidelity(
         witness,
         coverage,
         tuple(findings),
-        unspecified_evaluations=_unspecified_evaluations(preparation, before),
+        unspecified_evaluations=_unspecified_evaluations(
+            preparation, before, before_unknown
+        ),
     )

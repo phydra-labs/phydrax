@@ -26,6 +26,10 @@
   the diagnostic, stage and trace identities change, while `CellMeshingResult.result_id`
   and association identities do not. Existing archives retain their original
   trace stages and restore without a recipe change.
+  Construction trace diagnostics now include witnessed preparation counts and
+  unknown construction provenance. Fidelity certificates separately declare
+  unknown evaluations of their own certification; a nonzero unknown changes
+  `certificate_id` and identities derived from it, while zero leaves it unchanged.
   Stored coordinates are defined by the lowered program: a JAX version that
   reorders its trace changes identity and must be announced as such.
   Trim-lens search uses lower endpoints of batched host programs for fixed

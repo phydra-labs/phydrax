@@ -115,7 +115,10 @@ def _surface_fidelity_evaluation_stage(
                 unknown += 1
                 continue
             for kind, count in declaration:
-                counts[kind] = counts.get(kind, 0) + count
+                if kind.startswith("unknown:"):
+                    unknown += count
+                else:
+                    counts[kind] = counts.get(kind, 0) + count
     values = tuple(sorted(counts.items()))
     if not values:
         values = (("none", 0),)

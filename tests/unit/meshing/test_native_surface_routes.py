@@ -2507,6 +2507,13 @@ def test_parametric_surface_route_flips_anisotropic_chart_cells_to_physical_shap
     ).execute(preparation=preparation)
 
     diagnostics = construction.stages[-1].diagnostics
+    construction_unknown = {
+        diagnostic.logical_findings[0]: dict(diagnostic.achieved_quantities)["count"]
+        for diagnostic in diagnostics
+        if diagnostic.provider_code
+        == "stored_coordinate_unspecified_construction_unknown"
+    }
+    assert construction_unknown["domain-construction"] > 0
     observed = tuple(
         (diagnostic.logical_findings[0], dict(diagnostic.achieved_quantities)["count"])
         for diagnostic in diagnostics

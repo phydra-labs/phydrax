@@ -188,7 +188,10 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
     """Continuous bounds and optional counts of unspecified point evaluations.
 
     ``unspecified_evaluations`` contains sorted operation-local class/count
-    pairs, or ``None`` when contributing preparations are not all reported.
+    pairs; names beginning ``unknown:`` count unavailable certification
+    evidence, while ``None`` means its entire declaration is unavailable.
+    This declares the evaluations of this certification; the provenance of the
+    domain it was given is declared by the operation that constructed or received it.
     Counts include evaluations used during proof, not only final stored points.
     """
 

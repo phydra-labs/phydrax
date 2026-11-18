@@ -74,6 +74,8 @@ def accepted_result_record(result: phx.meshing.CellMeshingResult, /) -> dict[str
     if result.provider.name != "phydrax-native":
         raise RuntimeError(f"Unexpected meshing backend: {result.provider.name!r}.")
     unspecified: dict[str, int] = {}
+    construction_calls: dict[str, int] = {}
+    construction_unknown: dict[str, int] = {}
     reported = False
     surface_fidelity_counts: dict[str, int] = {}
     surface_fidelity_unknown = 0
@@ -102,6 +104,8 @@ def accepted_result_record(result: phx.meshing.CellMeshingResult, /) -> dict[str
                 continue
             if code not in (
                 "stored_coordinate_unspecified_construction",
+                "stored_coordinate_unspecified_construction_calls",
+                "stored_coordinate_unspecified_construction_unknown",
                 "stored_coordinate_unspecified_surface_fidelity",
                 "stored_coordinate_unspecified_surface_fidelity_unknown",
             ):
@@ -125,7 +129,13 @@ def accepted_result_record(result: phx.meshing.CellMeshingResult, /) -> dict[str
                     "Stored-coordinate declaration lacks an evaluator kind."
                 )
             kind = diagnostic.logical_findings[0]
-            if code == "stored_coordinate_unspecified_construction":
+            if code == "stored_coordinate_unspecified_construction_calls":
+                reported = True
+                target = construction_calls
+            elif code == "stored_coordinate_unspecified_construction_unknown":
+                reported = True
+                target = construction_unknown
+            elif code == "stored_coordinate_unspecified_construction":
                 reported = True
                 target = unspecified
             else:
@@ -149,7 +159,10 @@ def accepted_result_record(result: phx.meshing.CellMeshingResult, /) -> dict[str
             unknown_certificates += 1
             continue
         for kind, count in counts:
-            certificate_counts[kind] = certificate_counts.get(kind, 0) + count
+            if kind.startswith("unknown:"):
+                unknown_certificates += count
+            else:
+                certificate_counts[kind] = certificate_counts.get(kind, 0) + count
     return {
         **(
             {
@@ -163,7 +176,18 @@ def accepted_result_record(result: phx.meshing.CellMeshingResult, /) -> dict[str
             else {}
         ),
         **(
-            {"construction_unspecified_evaluations": dict(sorted(unspecified.items()))}
+            {
+                "construction_unspecified_evaluations": dict(sorted(unspecified.items())),
+                "construction_unspecified_evaluation_calls": dict(
+                    sorted(construction_calls.items())
+                ),
+                "construction_unspecified_evidence_unknown": sum(
+                    construction_unknown.values()
+                ),
+                "construction_unspecified_unknown_reasons": dict(
+                    sorted(construction_unknown.items())
+                ),
+            }
             if reported
             else {}
         ),

@@ -2052,6 +2052,14 @@ def test_source_fidelity_reports_nonzero_parallel_offset() -> None:
     )
     assert bounded.unspecified_evaluations == ()
     assert bounded.adopt_reproof(bounded).unspecified_evaluations == ()
+    validated = validate_source_fidelity_witness(mesh, geometry, source, witness)
+    reused = certify_source_fidelity(
+        mesh, geometry, source, tolerance=0.25, witness=validated
+    )
+    assert reused.unspecified_evaluations == (("unknown:fidelity-validation-cache", 1),)
+    assert reused.certificate_id != bounded.certificate_id
+    assert reused.mesh_to_source_upper == bounded.mesh_to_source_upper
+    assert reused.source_to_mesh_upper == bounded.source_to_mesh_upper
     assert bounded.status == "certified"
     assert bounded.mesh_to_source_upper >= offset
     assert bounded.source_to_mesh_upper >= offset
