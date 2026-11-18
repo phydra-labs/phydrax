@@ -30,6 +30,8 @@
   unknown construction provenance. Fidelity certificates separately declare
   unknown evaluations of their own certification; a nonzero unknown changes
   `certificate_id` and identities derived from it, while zero leaves it unchanged.
+  Reused fidelity validations carry their immutable evaluation declaration only
+  for the identical live operands that earned the proof.
   Stored coordinates are defined by the lowered program: a JAX version that
   reorders its trace changes identity and must be announced as such.
   Trim-lens search uses lower endpoints of batched host programs for fixed

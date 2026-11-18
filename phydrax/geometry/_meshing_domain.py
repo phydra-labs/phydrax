@@ -1071,6 +1071,14 @@ class SourceEvaluationLedger:
             tuple(sorted(self.unknown.items())),
         )
 
+    def _merge_validation(self, snapshot: SourceEvaluationSnapshot, /) -> None:
+        """Add an immutable declaration earned by a live-operand-bound proof."""
+        for target, entries in zip(
+            (self.counts, self.calls, self.unknown), snapshot, strict=True
+        ):
+            for kind, count in entries:
+                target[kind] = target.get(kind, 0) + count
+
 
 class _PointPreparation:
     """Operation-local D1/D2 programs and certified p-curve point boxes."""

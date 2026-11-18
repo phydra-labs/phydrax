@@ -58,7 +58,12 @@ from ._interval_enclosure import (
 from ._mesh_certificates import (
     MeshCertificateBinding,
 )
-from ._meshing_domain import MeshingDomain, SourcePreparation
+from ._meshing_domain import (
+    MeshingDomain,
+    SourceEvaluationLedger,
+    SourceEvaluationSnapshot,
+    SourcePreparation,
+)
 from ._planar_primitives import (
     area2 as _polygon_area2,
     box_overlap_pairs,
@@ -490,6 +495,8 @@ def _preparation_for_chart_root(
     root: MeshingDomainBoundarySource,
     preparation: SourcePreparation | None,
     /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
 ) -> SourcePreparation:
     """Reprepare an explicitly retained support domain for its distinct query root."""
     if preparation is not None and preparation.domain is not root.domain:
@@ -506,6 +513,8 @@ def _preparation_for_chart_root(
             and preparation.domain is source.source.meshing_domain
         ):
             return SourcePreparation(root.domain, evaluations=preparation.evaluations)
+    if preparation is None:
+        return SourcePreparation(root.domain, evaluations=evaluations)
     return SourcePreparation.of(root.domain, preparation)
 
 
@@ -727,7 +736,10 @@ def _partition_findings(
         if not plane:
             # Collapsed pole slivers are part of their owner cells' chart preimages.
             slivers = tuple(
-                sliver for _, sliver in source.collapsed_pole_slivers(patch, target)
+                sliver
+                for _, sliver in source.collapsed_pole_slivers(
+                    patch, target, preparation=preparation
+                )
             )
             target = (*target, *slivers)
             target_signed_areas += tuple(_area2(triangle) for triangle in slivers)
@@ -1078,7 +1090,9 @@ def reprove_actual_planar_chart_rows(charts: object, /) -> tuple[Triangle2, ...]
                 if row_patch == patch
             )
             patch_charts = tuple(chart for _, chart in patch_rows)
-            if source.collapsed_pole_slivers(patch, patch_charts):
+            if source.collapsed_pole_slivers(
+                patch, patch_charts, preparation=preparation
+            ):
                 return None
             _, lenses = source._trim_partition_reference_unchecked(
                 patch, patch_charts, preparation
@@ -1436,9 +1450,13 @@ def _validate_piecewise_linear_chart_witness(
 
 _VALIDATION_TOKEN = object()
 
-# Outcomes hold only immutable findings and target row indices, never operands.
+# Outcomes contain immutable proof data, not operand or mutable-ledger references.
 _VALIDATED_WITNESSES: LiveProofLedger[
-    tuple[tuple[MeshCertificateFinding, ...] | None, tuple[tuple[int, int], ...] | None]
+    tuple[
+        tuple[MeshCertificateFinding, ...] | None,
+        tuple[tuple[int, int], ...] | None,
+        SourceEvaluationSnapshot,
+    ]
 ] = LiveProofLedger()
 
 
@@ -1464,6 +1482,7 @@ class ValidatedSourceFidelityWitness(tuple):
         *,
         partition_findings: tuple[MeshCertificateFinding, ...] | None,
         target_rows: tuple[tuple[int, int], ...] | None,
+        evaluation_snapshot: SourceEvaluationSnapshot,
         token: object,
     ) -> ValidatedSourceFidelityWitness:
         if token is not _VALIDATION_TOKEN:
@@ -1471,7 +1490,16 @@ class ValidatedSourceFidelityWitness(tuple):
                 "Validated witnesses are created only by validate_source_fidelity_witness."
             )
         return tuple.__new__(
-            cls, (mesh, geometry, source, witness, partition_findings, target_rows)
+            cls,
+            (
+                mesh,
+                geometry,
+                source,
+                witness,
+                partition_findings,
+                target_rows,
+                evaluation_snapshot,
+            ),
         )
 
     @property
@@ -1498,6 +1526,11 @@ class ValidatedSourceFidelityWitness(tuple):
     def target_rows(self) -> tuple[tuple[int, int], ...] | None:
         return self[5]
 
+    @property
+    def evaluation_snapshot(self) -> SourceEvaluationSnapshot:
+        """Immutable evaluation declaration earned by this validation."""
+        return self[6]
+
     def binds(
         self,
         mesh: CellMesh,
@@ -1509,12 +1542,32 @@ class ValidatedSourceFidelityWitness(tuple):
         return self.mesh is mesh and self.geometry is geometry and self.source is source
 
 
+def _validation_evaluation_delta(
+    before: SourceEvaluationSnapshot, after: SourceEvaluationSnapshot, /
+) -> SourceEvaluationSnapshot:
+    """Only this validation's counts; domain construction is a separate operation."""
+    result: list[tuple[tuple[str, int], ...]] = []
+    for index, (old_rows, new_rows) in enumerate(zip(before, after, strict=True)):
+        old = dict(old_rows)
+        result.append(
+            tuple(
+                (kind, count - old.get(kind, 0))
+                for kind, count in new_rows
+                if count > old.get(kind, 0)
+                and not (index == 2 and kind == "domain-construction")
+            )
+        )
+    return result[0], result[1], result[2]
+
+
 def validate_source_fidelity_witness(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     source: SourceBoundaryQuery,
     witness: SourceFidelityWitness | ValidatedSourceFidelityWitness,
     /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
 ) -> ValidatedSourceFidelityWitness:
     """Revalidate witness identity and its actual source/target mathematical premises.
 
@@ -1523,28 +1576,41 @@ def validate_source_fidelity_witness(
     validation this process completed on these same live, unchanged operands
     is not repeated.
     """
+    existing = None
     if isinstance(witness, ValidatedSourceFidelityWitness):
         if witness.binds(mesh, geometry, source):
-            return witness
+            existing = witness
         witness = witness.witness
     operands = (mesh, geometry, source, witness)
+    ledger = SourceEvaluationLedger() if evaluations is None else evaluations
     validated = _VALIDATED_WITNESSES.find(operands)
     if validated is None:
         fingerprint = live_content_fingerprint(operands)
+        before = ledger.snapshot()
         validated_target_rows: list[tuple[tuple[int, int], ...]] = []
         partition_findings = _validate_source_fidelity_witness(
             mesh,
             geometry,
             source,
             witness,
+            evaluations=ledger,
             target_rows_out=validated_target_rows,
         )
         target_rows = validated_target_rows[0] if validated_target_rows else None
+        snapshot = _validation_evaluation_delta(before, ledger.snapshot())
         _VALIDATED_WITNESSES.record(
-            operands, fingerprint, (partition_findings, target_rows)
+            operands, fingerprint, (partition_findings, target_rows, snapshot)
         )
     else:
-        partition_findings, target_rows = validated
+        partition_findings, target_rows, snapshot = validated
+        ledger._merge_validation(snapshot)
+        if (
+            existing is not None
+            and existing.partition_findings is partition_findings
+            and existing.target_rows is target_rows
+            and existing.evaluation_snapshot is snapshot
+        ):
+            return existing
     return ValidatedSourceFidelityWitness(
         mesh,
         geometry,
@@ -1552,6 +1618,7 @@ def validate_source_fidelity_witness(
         witness,
         partition_findings=partition_findings,
         target_rows=target_rows,
+        evaluation_snapshot=snapshot,
         token=_VALIDATION_TOKEN,
     )
 
@@ -1565,11 +1632,18 @@ def _validate_source_fidelity_witness(
     *,
     domain_coverage: SourceBoundaryChartCover | None = None,
     preparation: SourcePreparation | None = None,
+    evaluations: SourceEvaluationLedger | None = None,
     target_rows_out: list[tuple[tuple[int, int], ...]] | None = None,
 ) -> tuple[MeshCertificateFinding, ...] | None:
     # `domain_coverage`: the domain source's chart cover, already computed by a
     # caller that holds it (a reconstructed query's prepared domain cover).
     # `preparation`: the caller's `SourcePreparation` of the domain source.
+    if preparation is not None:
+        if evaluations is not None and evaluations is not preparation.evaluations:
+            raise ValueError("Validation preparation and evaluation ledger differ.")
+        evaluations = preparation.evaluations
+    elif evaluations is None:
+        evaluations = SourceEvaluationLedger()
     if not isinstance(source, SourceBoundaryQuery):
         raise TypeError("source must implement SourceBoundaryQuery.")
     if not isinstance(witness, get_args(SourceFidelityWitness.__value__)):
@@ -1598,6 +1672,9 @@ def _validate_source_fidelity_witness(
                 "Face-image witness requires its MeshingDomain boundary source."
             )
         from ._source_face_image import validate_source_face_image
+
+        if preparation is None:
+            preparation = SourcePreparation(source.domain, evaluations=evaluations)
 
         validate_source_face_image(
             mesh, geometry, source, witness, preparation=preparation
@@ -1658,7 +1735,9 @@ def _validate_source_fidelity_witness(
         findings = _partition_findings(
             domain_source,
             witness,
-            _preparation_for_chart_root(source, domain_source, preparation),
+            _preparation_for_chart_root(
+                source, domain_source, preparation, evaluations=evaluations
+            ),
             exact_target_charts=exact_charts,
         )
         if any(finding.status != "certified" for finding in findings):
@@ -1833,7 +1912,9 @@ def _validate_source_fidelity_witness(
             raise ValueError(
                 "Reconstructed chart witness changes its persistent source scope."
             )
-        preparation = _preparation_for_chart_root(source, domain_source, preparation)
+        preparation = _preparation_for_chart_root(
+            source, domain_source, preparation, evaluations=evaluations
+        )
         source_chart_rows = _surface_source_chart_rows(
             domain_source, witness, preparation=preparation
         )
@@ -1882,7 +1963,9 @@ def _validate_source_fidelity_witness(
                 source.require_current()
             else:
                 domain_source.require_current()
-            preparation = _preparation_for_chart_root(source, domain_source, preparation)
+            preparation = _preparation_for_chart_root(
+                source, domain_source, preparation, evaluations=evaluations
+            )
             source_chart_rows = _surface_source_chart_rows(
                 domain_source, witness, preparation=preparation
             )
@@ -6270,7 +6353,7 @@ def _certify_domain_surface_chart_fidelity(
         and validated.binds(mesh, geometry, source)
         and validated.witness is witness
     ):
-        preparation.evaluations.record_unknown("fidelity-validation-cache", 1)
+        preparation.evaluations._merge_validation(validated.evaluation_snapshot)
         target_rows = validated.target_rows
     else:
         validated_target_rows: list[tuple[tuple[int, int], ...]] = []
@@ -6834,7 +6917,7 @@ def certify_source_fidelity(
     """
     validated = None
     if isinstance(witness, ValidatedSourceFidelityWitness):
-        validated = witness
+        validated = validate_source_fidelity_witness(mesh, geometry, source, witness)
         witness = validated.witness
     if root_charts is not None:
         from .implicit._adaptive_discovery import AdaptiveImplicitBoundarySource
@@ -7083,7 +7166,7 @@ def certify_source_fidelity(
             and validated.witness is witness
             and validated.partition_findings is not None
         ):
-            preparation.evaluations.record_unknown("fidelity-validation-cache", 1)
+            preparation.evaluations._merge_validation(validated.evaluation_snapshot)
             findings.extend(validated.partition_findings)
         else:
             findings.extend(_partition_findings(domain_source, witness, preparation))
@@ -7474,7 +7557,9 @@ def certify_source_fidelity(
             # pole corner, whose target image is bounded by the endpoint error.
             sliver_caps: dict[int, Fraction] = {}
             target_charts = tuple(chart for _, chart in chart_rows)
-            slivers = domain_source.collapsed_pole_slivers(patch, target_charts)
+            slivers = domain_source.collapsed_pole_slivers(
+                patch, target_charts, preparation=preparation
+            )
             for owner_row, sliver in slivers:
                 owner = chart_rows[owner_row][0]
                 sliver_caps[owner] = max(

@@ -333,7 +333,7 @@ def _prove_source_face_image(
             raise ValueError("Face image changes its oriented source occurrence.")
     for patch, rows in by_patch.items():
         target = tuple(inverse[row] for row in rows)
-        if source.collapsed_pole_slivers(patch, target):
+        if source.collapsed_pole_slivers(patch, target, preparation=preparation):
             raise ValueError(
                 "Face-image proof cannot omit a collapsed source-pole region."
             )

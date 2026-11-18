@@ -2156,7 +2156,12 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
         return result
 
     def collapsed_pole_slivers(
-        self, patch: int, triangles: tuple[_Triangle2, ...], /
+        self,
+        patch: int,
+        triangles: tuple[_Triangle2, ...],
+        /,
+        *,
+        preparation: SourcePreparation | None = None,
     ) -> tuple[tuple[int, _Triangle2], ...]:
         """Chart slivers that a target pole fan collapses onto one source corner.
 
@@ -2169,7 +2174,9 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
         affine triangle together with the sliver.
         """
         self.require_current()
-        chart = _patch_chart_polygon(self.domain, patch, rooted=True)
+        chart = _patch_chart_polygon(
+            self.domain, patch, rooted=True, preparation=preparation
+        )
         if chart is None:
             return ()
         _, _, loops = chart

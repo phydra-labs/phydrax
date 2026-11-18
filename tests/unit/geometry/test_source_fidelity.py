@@ -32,6 +32,7 @@ from phydrax.geometry._meshing_domain import (
     MeshingSurfacePatch,
     PatchCurveUse,
     PatchPoleUse,
+    SourceEvaluationLedger,
     SourcePreparation,
 )
 from phydrax.geometry._piecewise_linear_boundary import (
@@ -64,6 +65,7 @@ from phydrax.geometry._source_fidelity import (
 from phydrax.geometry.brep import brep_cylinder, brep_sphere, BRepAffinePlacement
 from phydrax.geometry.brep._patches import (
     AbstractSurfacePatch,
+    BSplineCurve,
     BSplineSurfacePatch,
     CircleCurve,
     LineCurve,
@@ -2053,16 +2055,90 @@ def test_source_fidelity_reports_nonzero_parallel_offset() -> None:
     assert bounded.unspecified_evaluations == ()
     assert bounded.adopt_reproof(bounded).unspecified_evaluations == ()
     validated = validate_source_fidelity_witness(mesh, geometry, source, witness)
+    assert validated.evaluation_snapshot == ((), (), ())
     reused = certify_source_fidelity(
         mesh, geometry, source, tolerance=0.25, witness=validated
     )
-    assert reused.unspecified_evaluations == (("unknown:fidelity-validation-cache", 1),)
-    assert reused.certificate_id != bounded.certificate_id
+    assert reused.unspecified_evaluations == ()
+    assert reused.certificate_id == bounded.certificate_id
     assert reused.mesh_to_source_upper == bounded.mesh_to_source_upper
     assert reused.source_to_mesh_upper == bounded.source_to_mesh_upper
     assert bounded.status == "certified"
     assert bounded.mesh_to_source_upper >= offset
     assert bounded.source_to_mesh_upper >= offset
+
+
+def test_live_validation_reuse_carries_bspline_evaluation_counts() -> None:
+    template = _domain()
+    original = template.patches[0].loops[0]
+    spline = BSplineCurve(
+        ((0.0, 0.0), (1.0, 0.0)),
+        (1.0, 1.0),
+        (0.0, 0.0, 1.0, 1.0),
+        1,
+    )
+    uses = (PatchCurveUse(0, spline, 0.0, 1.0), *original[1:])
+    domain = MeshingDomain(
+        (MeshingSurfacePatch(template.patches[0].surface, (uses,)),),
+        template.curves,
+        4,
+        source_id="validation-bspline-trim",
+        source_revision="r1",
+        corner_points=np.asarray(template.corner_points),
+    )
+    points = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0), (0.0, 1.0, 0.0))
+    )
+    triangles = np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int64)
+    mesh = _mesh(points, triangles)
+    geometry = CellGeometrySpec.affine(mesh)
+    source = MeshingDomainBoundarySource(domain, (0,))
+    charts = points[triangles, :2]
+    witness = _witness(mesh, geometry, domain, charts)
+    first_ledger = SourceEvaluationLedger()
+    SourcePreparation(domain, evaluations=first_ledger).stored_pcurve_points(
+        spline, np.asarray((0.5,)), 0.0, 1.0
+    )
+    prior_rows, prior_calls, _ = first_ledger.snapshot()
+    first = validate_source_fidelity_witness(
+        mesh, geometry, source, witness, evaluations=first_ledger
+    )
+    kind = f"{type(spline).__module__}.{type(spline).__qualname__}"
+    first_rows, first_calls, first_unknown = first.evaluation_snapshot
+    assert dict(first_rows)[kind] > 0
+    assert dict(first_calls)[kind] > 0
+    assert not first_unknown
+    assert (
+        dict(first_ledger.counts)[kind] == dict(prior_rows)[kind] + dict(first_rows)[kind]
+    )
+    assert (
+        dict(first_ledger.calls)[kind]
+        == dict(prior_calls)[kind] + dict(first_calls)[kind]
+    )
+    second_ledger = SourceEvaluationLedger()
+    reused = validate_source_fidelity_witness(
+        mesh, geometry, source, witness, evaluations=second_ledger
+    )
+    assert reused.evaluation_snapshot is first.evaluation_snapshot
+    assert second_ledger.snapshot() == first.evaluation_snapshot
+    certificate = certify_source_fidelity(
+        mesh, geometry, source, tolerance=0.0, witness=reused
+    )
+    assert certificate.unspecified_evaluations is not None
+    assert dict(certificate.unspecified_evaluations)[kind] >= dict(first_rows)[kind]
+    assert not any(
+        name.startswith("unknown:") for name, _ in certificate.unspecified_evaluations
+    )
+    rebuilt = _mesh(points.copy(), triangles.copy())
+    rebuilt_geometry = CellGeometrySpec.affine(rebuilt)
+    assert rebuilt is not mesh and rebuilt.topology_id == mesh.topology_id
+    third_ledger = SourceEvaluationLedger()
+    fresh = validate_source_fidelity_witness(
+        rebuilt, rebuilt_geometry, source, witness, evaluations=third_ledger
+    )
+    assert fresh.mesh is rebuilt
+    assert fresh.evaluation_snapshot is not first.evaluation_snapshot
+    assert dict(fresh.evaluation_snapshot[0])[kind] > 0
 
 
 def test_source_fidelity_rejects_a_thin_missing_chart_strip() -> None:
