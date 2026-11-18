@@ -740,8 +740,8 @@ def _rounded_reference(value: Any, error: Any) -> float:
     lower = mp.mpf(math.nextafter(rounded, -math.inf))
     upper = mp.mpf(math.nextafter(rounded, math.inf))
     center = mp.mpf(rounded)
-    # At 50 decimal digits, reserve five digits for accumulated arithmetic
-    # in the integrands and assembly, in addition to the quadrature estimate.
+    # Budget 100,000 rounding steps for integrand evaluation and assembly:
+    # at 50 decimal digits this reserves five digits beyond the quad estimate.
     error = max(error, mp.power(10, 5 - mp.mp.dps) * max(1, abs(value)))
     distance = min(value - (lower + center) / 2, (center + upper) / 2 - value)
     if error >= distance:
