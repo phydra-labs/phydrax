@@ -65,6 +65,7 @@ def rational_cross_2d[T: ExactField](first: tuple[T, T], second: tuple[T, T], /)
 
 _BINARY64_MAXIMUM = float(np.finfo(np.float64).max)
 _RATIONAL_BINARY64_MAXIMUM = Fraction(_BINARY64_MAXIMUM)
+_RATIONAL_BINARY64_OVERFLOW_THRESHOLD = _RATIONAL_BINARY64_MAXIMUM + Fraction(2**970)
 
 
 def _float_overflow_endpoint(value: Fraction, /, *, upper: bool) -> float:
@@ -579,6 +580,8 @@ def binary64_least_squares(matrix: ArrayLike, right: ArrayLike, /) -> NDArray[np
 
     Inputs are lifted exactly. The normal equations are solved over the
     rationals and each component is rounded once to binary64, ties to even.
+    A solution whose correctly rounded component is nonfinite raises ValueError;
+    values above the largest finite binary64 are accepted when they round to it.
     When the matrix is rank deficient, the unique minimum-Euclidean-norm
     least-squares solution is selected exactly before rounding.
     """
@@ -616,6 +619,11 @@ def binary64_least_squares(matrix: ArrayLike, right: ArrayLike, /) -> NDArray[np
         solution = solve_exact(augmented, target)
     else:
         solution = solve_exact(gram, target)
+    if any(
+        abs(solution[index][0]) >= _RATIONAL_BINARY64_OVERFLOW_THRESHOLD
+        for index in range(width)
+    ):
+        raise ValueError("Least-squares solution is not finite in binary64.")
     return np.asarray(
         [float(solution[index][0]) for index in range(width)], dtype=np.float64
     )

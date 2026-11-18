@@ -624,3 +624,33 @@ def test_binary64_least_squares_exact_and_minimum_norm() -> None:
         binary64_least_squares(singular, np.asarray([1.0, 2.0, 3.0], dtype=np.float64)),
         np.asarray([float(Fraction(1, 5)), float(Fraction(2, 5))], dtype=np.float64),
     )
+
+
+@pytest.mark.parametrize("sign", [1.0, -1.0])
+def test_binary64_least_squares_overflow_rounding_boundary(sign: float) -> None:
+    maximum = np.finfo(np.float64).max
+    threshold_increment = 2.0**970
+    matrix = np.asarray([[1.0, -1.0], [0.0, 1.0]], dtype=np.float64)
+
+    for increment in (0.0, np.nextafter(threshold_increment, 0.0)):
+        result = binary64_least_squares(
+            matrix, np.asarray([sign * maximum, sign * increment], dtype=np.float64)
+        )
+        np.testing.assert_array_equal(result, [sign * maximum, sign * increment])
+
+    for increment in (
+        threshold_increment,
+        np.nextafter(threshold_increment, np.inf),
+    ):
+        with pytest.raises(ValueError, match="solution is not finite"):
+            binary64_least_squares(
+                matrix, np.asarray([sign * maximum, sign * increment], dtype=np.float64)
+            )
+
+    with pytest.raises(ValueError, match="solution is not finite"):
+        binary64_least_squares([[0.5]], [sign * 2.0**1023])
+
+
+def test_binary64_least_squares_rejects_subnormal_divisor_overflow() -> None:
+    with pytest.raises(ValueError, match="solution is not finite"):
+        binary64_least_squares([[5e-324]], [1.0])
