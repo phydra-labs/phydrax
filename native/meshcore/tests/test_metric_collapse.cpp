@@ -316,7 +316,7 @@ Search composed(const Source& source, const Star& star,
     double points[3 * 53];
     std::int8_t exact[53];
     PHX_CHECK(phx_mc_metric_source_carriers(
-                  source.handle, goals + 3 * goal, star.points.data(),
+                  source.handle, goals + 3 * goal, star.points.data(), -1,
                   static_cast<std::int64_t>(declared.size()), simplices.data(), declared.data(),
                   0, limit, rows, weights, bits, points, exact, &count) == PHX_MC_OK);
     for (std::int64_t index = 0; index < count; ++index) {

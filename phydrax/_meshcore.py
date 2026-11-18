@@ -1413,7 +1413,23 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_metric_source_free": (None, (_P,)),
     "phx_mc_metric_source_carriers": (
         _I32,
-        (_P, _P, _P, _I64, _P, _P, _I32, _I64, _P, _P, _P, _P, _P, ctypes.POINTER(_I64)),
+        (
+            _P,
+            _P,
+            _P,
+            _I64,
+            _I64,
+            _P,
+            _P,
+            _I32,
+            _I64,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            ctypes.POINTER(_I64),
+        ),
     ),
     "phx_mc_metric_collapse_positions": (
         _I32,
@@ -10482,17 +10498,20 @@ class MetricSource:
         order: MetricCarrierOrder,
         limit: int,
         /,
+        *,
+        cell: int | None = None,
     ) -> tuple[MetricCarrier, ...]:
         """Carriers of ``target`` closer to it than ``current``, at most ``limit``.
 
         With ``simplices`` ``None`` the target is located in the first cell
-        that holds it and is its own goal. Otherwise each simplex is an edge
-        or a triangle (point rows) with whether it is a declared exact face;
-        the goal is the rounded orthogonal projection on the first simplex
-        that holds it, and a carrier there must be exact unless the simplex is
-        declared. At ``2**-bits`` the partial sums of the barycentric weights
-        are rounded half to even; ``order`` walks the resolutions from the
-        coarsest that can resolve the move to 53 bits, or back.
+        that holds it (in ``cell`` alone when given) and is its own goal.
+        Otherwise each simplex is an edge or a triangle (point rows) with
+        whether it is a declared exact face; the goal is the rounded
+        orthogonal projection on the first simplex that holds it, and a
+        carrier there must be exact unless the simplex is declared. At
+        ``2**-bits`` the partial sums of the barycentric weights are rounded
+        half to even; ``order`` walks the resolutions from the coarsest that
+        can resolve the move to 53 bits, or back.
         """
         if not self._handle.value:
             raise RuntimeError("The metric source is closed.")
@@ -10521,6 +10540,7 @@ class MetricSource:
             self._handle,
             goal.ctypes.data,
             start.ctypes.data,
+            -1 if cell is None or simplices is not None else cell,
             simplex_rows.shape[0],
             simplex_rows.ctypes.data,
             declared.ctypes.data,

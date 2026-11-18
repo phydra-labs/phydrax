@@ -155,19 +155,20 @@ int32_t phx_mc_metric_source_create(int64_t point_count, const double* points,
 void phx_mc_metric_source_free(phx_mc_metric_source* source) { delete source; }
 
 int32_t phx_mc_metric_source_carriers(const phx_mc_metric_source* source, const double* target,
-                                      const double* current, int64_t simplex_count,
-                                      const int64_t* simplex_rows, const int8_t* declared,
-                                      int32_t order, int64_t limit, int64_t* rows,
-                                      int64_t* weights, int32_t* bits, double* points,
-                                      int8_t* exact, int64_t* count) {
+                                      const double* current, int64_t cell,
+                                      int64_t simplex_count, const int64_t* simplex_rows,
+                                      const int8_t* declared, int32_t order, int64_t limit,
+                                      int64_t* rows, int64_t* weights, int32_t* bits,
+                                      double* points, int8_t* exact, int64_t* count) {
   if (source == nullptr || target == nullptr || current == nullptr || count == nullptr ||
       !addressable(simplex_count, 3, sizeof(int64_t)) || !addressable(limit, 4, sizeof(int64_t)) ||
-      (simplex_count > 0 && (simplex_rows == nullptr || declared == nullptr)) ||
+      (simplex_count > 0 && (simplex_rows == nullptr || declared == nullptr || cell >= 0)) ||
       (limit > 0 && (rows == nullptr || weights == nullptr || bits == nullptr ||
                      points == nullptr || exact == nullptr)) ||
       order < 0 || order > 2) {
     return PHX_MC_INVALID_ARGUMENT;
   }
+  if (cell >= source->source.cell_count()) return PHX_MC_INVALID_INPUT;
   if (!finite3(target) || !finite3(current)) return PHX_MC_NONFINITE_INPUT;
   return phx::mc::guarded([&]() -> int32_t {
     std::vector<CarrierSimplex> simplices;
@@ -177,7 +178,8 @@ int32_t phx_mc_metric_source_carriers(const phx_mc_metric_source* source, const 
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     const std::vector<Carrier> found = source->source.carriers(
-        target, current, simplices, static_cast<phx::mc::metric::CarrierOrder>(order), limit);
+        target, current, simplices, cell < 0 ? -1 : cell,
+        static_cast<phx::mc::metric::CarrierOrder>(order), limit);
     for (std::size_t index = 0; index < found.size(); ++index) {
       write_carrier(found[index], index, rows, weights, bits, points);
       exact[index] = found[index].exact ? 1 : 0;

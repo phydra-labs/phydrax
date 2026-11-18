@@ -55,7 +55,7 @@ struct Found {
 
 Found search(const Source& source, const double* target, const double* current,
              const std::vector<std::int64_t>& simplex_rows, const std::vector<std::int8_t>& declared,
-             std::int32_t order, std::int64_t limit) {
+             std::int32_t order, std::int64_t limit, std::int64_t cell = -1) {
   Found found;
   const std::size_t room = static_cast<std::size_t>(limit);
   found.rows.resize(4 * room);
@@ -63,7 +63,7 @@ Found search(const Source& source, const double* target, const double* current,
   found.bits.resize(room);
   found.points.resize(3 * room);
   found.exact.resize(room);
-  PHX_CHECK(phx_mc_metric_source_carriers(source.handle, target, current,
+  PHX_CHECK(phx_mc_metric_source_carriers(source.handle, target, current, cell,
                                           static_cast<std::int64_t>(declared.size()),
                                           simplex_rows.data(), declared.data(), order, limit,
                                           found.rows.data(), found.weights.data(),
@@ -167,6 +167,21 @@ void two_cells() {
   PHX_CHECK(found.bits[0] == 2);
   PHX_CHECK(found.rows[0] == 1 && found.rows[1] == 2 && found.rows[2] == 3 && found.rows[3] == -1);
   PHX_CHECK(found.weights[0] == 2 && found.weights[1] == 1 && found.weights[2] == 1);
+
+  // Restricted to one cell, only that cell is tried. A goal inside the
+  // second cell has no carrier in the first and the same carriers in the
+  // second as in the search of both.
+  const double inner[3] = {0.25, 0.25, 0.25};
+  const double origin[3] = {0.0, 0.0, 0.0};
+  const Found both = search(source, inner, origin, {}, {}, 0, 53);
+  const Found second = search(source, inner, origin, {}, {}, 0, 53, 1);
+  PHX_CHECK(both.count > 0 && second.count == both.count);
+  PHX_CHECK(second.rows == both.rows && second.weights == both.weights);
+  PHX_CHECK(second.points == both.points);
+  PHX_CHECK(search(source, inner, origin, {}, {}, 0, 53, 0).count == 0);
+  // The goal on the shared face is held by either cell.
+  const Found shared = search(source, target, current, {}, {}, 0, 1, 1);
+  PHX_CHECK(shared.count == 1 && shared.rows == found.rows && shared.weights == found.weights);
 }
 
 void simplices() {
@@ -225,21 +240,29 @@ void guards_arguments() {
   const std::int64_t absent[3] = {0, 9, -1};
   const std::int8_t flag = 0;
   const double not_finite[3] = {0.25, 0.25, std::numeric_limits<double>::infinity()};
-  PHX_CHECK(phx_mc_metric_source_carriers(nullptr, target, current, 0, nullptr, nullptr, 0, 1,
-                                          rows, weights, &bits, points, &exact, &count) ==
-            PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_metric_source_carriers(source.handle, target, current, 0, nullptr, nullptr, 3,
+  PHX_CHECK(phx_mc_metric_source_carriers(nullptr, target, current, -1, 0, nullptr, nullptr, 0,
                                           1, rows, weights, &bits, points, &exact, &count) ==
             PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_metric_source_carriers(source.handle, target, current, 0, nullptr, nullptr, 0,
-                                          1, nullptr, weights, &bits, points, &exact, &count) ==
-            PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_metric_source_carriers(source.handle, target, current, 1, absent, &flag, 0, 1,
-                                          rows, weights, &bits, points, &exact, &count) ==
-            PHX_MC_INVALID_INPUT);
-  PHX_CHECK(phx_mc_metric_source_carriers(source.handle, not_finite, current, 0, nullptr, nullptr,
+  PHX_CHECK(phx_mc_metric_source_carriers(source.handle, target, current, -1, 0, nullptr,
+                                          nullptr, 3, 1, rows, weights, &bits, points, &exact,
+                                          &count) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_metric_source_carriers(source.handle, target, current, -1, 0, nullptr,
+                                          nullptr, 0, 1, nullptr, weights, &bits, points, &exact,
+                                          &count) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_metric_source_carriers(source.handle, target, current, -1, 1, absent, &flag,
                                           0, 1, rows, weights, &bits, points, &exact, &count) ==
-            PHX_MC_NONFINITE_INPUT);
+            PHX_MC_INVALID_INPUT);
+  PHX_CHECK(phx_mc_metric_source_carriers(source.handle, not_finite, current, -1, 0, nullptr,
+                                          nullptr, 0, 1, rows, weights, &bits, points, &exact,
+                                          &count) == PHX_MC_NONFINITE_INPUT);
+  // A cell that does not exist, and a cell together with simplices.
+  const std::int64_t edge[3] = {0, 1, -1};
+  PHX_CHECK(phx_mc_metric_source_carriers(source.handle, target, current, 1, 0, nullptr, nullptr,
+                                          0, 1, rows, weights, &bits, points, &exact, &count) ==
+            PHX_MC_INVALID_INPUT);
+  PHX_CHECK(phx_mc_metric_source_carriers(source.handle, target, current, 0, 1, edge, &flag, 0,
+                                          1, rows, weights, &bits, points, &exact, &count) ==
+            PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(count == 7 && bits == 7 && exact == 7);
 
   // A cell naming an absent point and a zero denominator are refused.

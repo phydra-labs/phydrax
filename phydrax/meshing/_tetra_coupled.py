@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import replace
 from fractions import Fraction
 from itertools import product
 from typing import NamedTuple, TypedDict
@@ -989,19 +988,19 @@ def _quantize_orbit(
 ) -> list[_Proposal] | None:
     state = search.state
     detail, record = details[representative], selected[representative]
-    local_state = replace(state, source_records=tm._source_records((record,)))
     simplices = (
         None
         if detail.simplices is None
         else (search.carriers[representative, record[0]],)
     )
+    # An interior goal is quantized in the selected source cell alone.
     for stencil, carrier in tm._quantized_relocation_candidates(
-        local_state,
+        state,
         simplices,
         goal,
         search.prepared.points[detail.row],
-        frames=state.source_supports,
         fine_first=True,
+        cell=record[0],
     ):
         if search.orbits:
             proposals = _lift_orbit(

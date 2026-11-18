@@ -163,7 +163,7 @@ SearchEnd survivor_search(const CarrierSource& source, const double* source_metr
   for (int goal = 0; goal < 3; ++goal) {
     if (!valid[goal]) return SearchEnd::kGoalNotFinite;
     const std::vector<Carrier> carriers = source.carriers(
-        goals + 3 * goal, survivor, simplices, CarrierOrder::kCoarseFirst, limit);
+        goals + 3 * goal, survivor, simplices, -1, CarrierOrder::kCoarseFirst, limit);
     for (const Carrier& carrier : carriers) {
       const double* point = carrier.point.data();
       if (same_point(point, survivor) || same_point(point, removed)) continue;

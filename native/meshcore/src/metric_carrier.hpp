@@ -69,13 +69,17 @@ class CarrierSource {
   const double* point(std::int64_t row) const noexcept {
     return points_.data() + 3 * static_cast<std::size_t>(row);
   }
+  std::int64_t cell_count() const noexcept {
+    return static_cast<std::int64_t>(cells_.size() / 4);
+  }
 
   // Carriers of `target` closer to it than `current`, at most `limit`, in the
   // order of `order`.
   //
   // Location. With no simplex: the first cell whose closed binary64 box holds
   // the target and in which its exact barycentric weights are all
-  // nonnegative; the goal is the target. With simplices: the first edge or
+  // nonnegative, among all cells or, with `cell` not negative, that cell
+  // alone; the goal is the target. With simplices: the first edge or
   // triangle with independent edges on which the orthogonal projection of the
   // target has nonnegative weights; the goal is the correctly rounded exact
   // projection. No location, a goal at `current` or a support of zero extent
@@ -92,7 +96,7 @@ class CarrierSource {
   // `current` is (squared binary64 distances, summed x, y, z) and, on a
   // simplex, when the image is exact or the simplex is declared.
   std::vector<Carrier> carriers(const double* target, const double* current,
-                                const std::vector<CarrierSimplex>& simplices,
+                                const std::vector<CarrierSimplex>& simplices, std::int64_t cell,
                                 CarrierOrder order, std::int64_t limit) const;
 
  private:
@@ -107,7 +111,7 @@ class CarrierSource {
   const Dyadic& numerator(std::int64_t row, int axis) const {
     return numerators_[static_cast<std::size_t>(3 * row + axis)];
   }
-  bool locate_cell(const double* target, Located& located) const;
+  bool locate_cell(const double* target, std::int64_t only, Located& located) const;
   bool locate_simplex(const double* target, const CarrierSimplex& simplex,
                       Located& located) const;
 
