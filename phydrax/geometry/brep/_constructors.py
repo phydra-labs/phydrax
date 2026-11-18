@@ -27,7 +27,7 @@ from ...discretization._exact_algebraic_geometry import (
 from ...linalg._hermitian_spectral import fraction_sqrt_interval
 from ...typing import ConvertibleToArray
 from .._atlas import TrimDomain
-from .._rational import fraction_down, fraction_up
+from .._rational import binary64_dot, binary64_norm, fraction_down, fraction_up
 from ._assembly import BRepAffinePlacement, BRepAssemblyGraph
 from ._intersection import (
     ConicParameterEndpoint,
@@ -138,7 +138,7 @@ def _point3(value: ConvertibleToArray, name: str, /) -> np.ndarray:
 
 def _unit(value: ConvertibleToArray, name: str, /) -> np.ndarray:
     vector = _point3(value, name)
-    length = float(np.linalg.norm(vector))
+    length = float(binary64_norm(vector))
     if not length > 0.0:
         raise ValueError(f"{name} must be nonzero.")
     return vector / length
@@ -259,9 +259,9 @@ class ProfilePlane:
         y_axis = _point3(self.y_axis, "y_axis")
         tolerance = 128.0 * np.finfo(np.float64).eps
         if (
-            abs(float(np.linalg.norm(x_axis)) - 1.0) > tolerance
-            or abs(float(np.linalg.norm(y_axis)) - 1.0) > tolerance
-            or abs(float(x_axis @ y_axis)) > tolerance
+            abs(float(binary64_norm(x_axis)) - 1.0) > tolerance
+            or abs(float(binary64_norm(y_axis)) - 1.0) > tolerance
+            or abs(float(binary64_dot(x_axis, y_axis))) > tolerance
         ):
             raise ValueError("ProfilePlane axes must be orthonormal.")
         object.__setattr__(self, "origin", tuple(float(value) for value in origin))
@@ -1241,8 +1241,8 @@ def _segment_curve(
         return segment, first, last
     if isinstance(segment, ProfileArc):
         first, last = _arc_range(start, end, segment.center, segment.counterclockwise)
-        start_radius = float(np.linalg.norm(np.subtract(start, segment.center)))
-        end_radius = float(np.linalg.norm(np.subtract(end, segment.center)))
+        start_radius = float(binary64_norm(np.subtract(start, segment.center)))
+        end_radius = float(binary64_norm(np.subtract(end, segment.center)))
         scale = max(start_radius, end_radius)
         if scale == 0.0 or abs(start_radius - end_radius) > (
             128.0 * np.finfo(np.float64).eps * scale
@@ -1624,7 +1624,7 @@ def _profile_edge(
         )
     if isinstance(segment, ProfileArc):
         first, last = _arc_range(start, end, segment.center, segment.counterclockwise)
-        radius = float(np.linalg.norm(np.subtract(start, segment.center)))
+        radius = float(binary64_norm(np.subtract(start, segment.center)))
         return _ProfileEdge(
             CircleCurve(segment.center, (1.0, 0.0), (0.0, 1.0), radius),
             first,
@@ -2506,7 +2506,7 @@ def _profile_bounds(profile: PlanarProfile, /) -> np.ndarray:
                 # ``center -/+ radius`` round outward.
                 radius = Fraction(
                     float(
-                        np.linalg.norm(np.subtract(loop.vertices[index], segment.center))
+                        binary64_norm(np.subtract(loop.vertices[index], segment.center))
                     )
                 )
                 center = tuple(Fraction(float(value)) for value in segment.center)
@@ -2610,7 +2610,7 @@ def brep_extrusion(
 ) -> BRepModel:
     """Construct an oriented solid by translating a line/conic planar profile."""
     vector_ = _point3(vector, "vector")
-    normal_component = float(vector_ @ profile.plane.normal)
+    normal_component = float(binary64_dot(vector_, profile.plane.normal))
     if normal_component == 0.0:
         raise ValueError("An extrusion vector must leave the source profile plane.")
     from .._rational import rational_vector
@@ -3349,7 +3349,7 @@ def brep_extrusion(
 def _axis_frame(axis: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     basis = np.eye(3, dtype=np.float64)[int(np.argmin(np.abs(axis)))]
     first = np.cross(axis, basis)
-    first /= np.linalg.norm(first)
+    first /= binary64_norm(first)
     second = np.cross(axis, first)
     return first, second
 
@@ -3478,10 +3478,10 @@ def _rotational_edge(
     /,
 ) -> int:
     relative = point - axis_origin
-    axial = float(relative @ axis_direction)
+    axial = float(binary64_dot(relative, axis_direction))
     center = axis_origin + axial * axis_direction
     radial = relative - axial * axis_direction
-    radius = float(np.linalg.norm(radial))
+    radius = float(binary64_norm(radial))
     if radius == 0.0:
         return builder.degenerate(vertex, 0.0, _TWO_PI)
     first = radial / radius
@@ -3504,16 +3504,16 @@ def _revolution_orientation(
     )
     axis = np.asarray(patch.axis_direction)
     axis_origin = np.asarray(patch.axis_origin)
-    radial = point - axis_origin - float((point - axis_origin) @ axis) * axis
+    radial = point - axis_origin - float(binary64_dot(point - axis_origin, axis)) * axis
     angular = np.cross(axis, radial)
     candidate = np.cross(angular, tangent)
     planar_tangent = np.asarray(profile_plane.x_axis) * float(
-        tangent @ np.asarray(profile_plane.x_axis)
+        binary64_dot(tangent, np.asarray(profile_plane.x_axis))
     ) + np.asarray(profile_plane.y_axis) * float(
-        tangent @ np.asarray(profile_plane.y_axis)
+        binary64_dot(tangent, np.asarray(profile_plane.y_axis))
     )
     outward = np.cross(planar_tangent, profile_plane.normal)
-    return 1 if float(candidate @ outward) > 0.0 else -1
+    return 1 if float(binary64_dot(candidate, outward)) > 0.0 else -1
 
 
 def brep_revolution(
@@ -3541,7 +3541,7 @@ def brep_revolution(
     direction2 = np.asarray(axis_direction, dtype=np.float64)
     if direction2.shape != (2,) or not np.all(np.isfinite(direction2)):
         raise ValueError("axis_direction must be a finite 2D vector.")
-    length = float(np.linalg.norm(direction2))
+    length = float(binary64_norm(direction2))
     if length == 0.0:
         raise ValueError("axis_direction must be nonzero.")
     authored_direction = (float(direction2[0]), float(direction2[1]))

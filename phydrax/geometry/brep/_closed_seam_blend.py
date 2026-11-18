@@ -31,7 +31,7 @@ from ...discretization._exact_algebraic_geometry import (
     rational_coefficient,
 )
 from .._interval_enclosure import prepare_interval_function
-from .._rational import fraction_down, fraction_up, rational_vector
+from .._rational import binary64_dot, fraction_down, fraction_up, rational_vector
 from ..design._schema import (
     _ParameterCollector,
     DesignState,
@@ -657,7 +657,7 @@ def _seam(model: BRepModel, edge: int, /) -> _Seam:
         curved_source.evaluate(jnp.asarray((0.0, parameter), dtype=jnp.float64)),
         dtype=np.float64,
     )
-    radial = float((point - center) @ np.asarray(curved.first_axis))
+    radial = float(binary64_dot(point - center, np.asarray(curved.first_axis)))
     plane_interval = None
     if plane_witness is not None:
         witness_interval = plane_witness.profile_parameter_interval
