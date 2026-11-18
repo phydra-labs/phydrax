@@ -2308,7 +2308,9 @@ def test_pole_ring_point_joins_a_straight_trim_only_at_its_exact_chart_point() -
     pole_charts = {(0, 0, 0): _PoleChart((), rings)}
     parameters_by_curve = {0: {Fraction(0)}}
 
-    _integrate_pole_ring_parameters(domain, (0,), pole_charts, parameters_by_curve)
+    _integrate_pole_ring_parameters(
+        domain, (0,), pole_charts, parameters_by_curve, SourcePreparation(domain)
+    )
 
     assert parameters_by_curve == {0: {Fraction(0), Fraction(1)}}
     assert pole_charts[(0, 0, 0)].rings == rings

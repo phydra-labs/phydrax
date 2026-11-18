@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 
 from phydrax.geometry import ConstrainedDelaunayTriangulation
-from phydrax.geometry._meshing_domain import MeshingDomain
+from phydrax.geometry._meshing_domain import MeshingDomain, SourcePreparation
 from phydrax.meshing.providers._native_surface import (
     _accepted_source_splits,
     _chart_cdt_scale,
@@ -25,7 +25,7 @@ def test_repaired_cylinder_chart_uses_exact_dyadic_physical_scaling(
     domain = MeshingDomain.from_brep(model)
     patch = int(np.flatnonzero(np.asarray(domain.source_indices[2]) == 0)[0])
     points = np.asarray(model.parameter_bounds[0], dtype=np.float64)
-    scale = _chart_cdt_scale(domain, patch, points)
+    scale = _chart_cdt_scale(domain, patch, points, SourcePreparation(domain))
     assert scale == 1.0 / 64.0
     scaled = points * np.asarray((scale, 1.0), dtype=np.float64)
     restored = scaled / np.asarray((scale, 1.0), dtype=np.float64)

@@ -2776,10 +2776,11 @@ def test_collapsed_pole_slivers_complete_the_partition_within_their_cap_bound() 
 def test_curved_trim_reference_follows_target_chords_within_certified_lenses() -> None:
     arc = CircleCurve((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), 1.0)
     angle = 1.0
-    end = np.asarray(arc.evaluate(jnp.asarray((0.0, angle))), dtype=np.float64)[1]
+    arc_use = PatchCurveUse(1, arc, 0.0, angle)
+    start, end = arc_use.charts((0.0, angle))
     uses = (
-        PatchCurveUse(0, LineCurve((0.0, 0.0), (1.0, 0.0)), 0.0, 1.0),
-        PatchCurveUse(1, arc, 0.0, angle),
+        PatchCurveUse(0, LineCurve((0.0, 0.0), start), 0.0, 1.0),
+        arc_use,
         PatchCurveUse(2, LineCurve(end, -end), 0.0, 1.0),
     )
     domain = MeshingDomain(
@@ -2797,7 +2798,7 @@ def test_curved_trim_reference_follows_target_chords_within_certified_lenses() -
     )
     source = MeshingDomainBoundarySource(domain, (0,))
     parameters = np.linspace(0.0, angle, 5, dtype=np.float64)
-    chain_points = np.asarray(arc.evaluate(jnp.asarray(parameters)), dtype=np.float64)
+    chain_points = arc_use.charts(parameters, preparation=SourcePreparation(domain))
     chain = tuple((Fraction(float(u)), Fraction(float(v))) for u, v in chain_points)
     origin = (Fraction(0), Fraction(0))
     fan = tuple((origin, chain[row], chain[row + 1]) for row in range(4))
@@ -2871,7 +2872,7 @@ def _triangular_surface_fidelity_inputs(
     source_id: str,
 ) -> tuple[CellMesh, CellGeometrySpec, MeshingDomainBoundarySource, SurfaceChartWitness]:
     uv = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)), dtype=np.float64)
-    corners = np.asarray(surface.evaluate(jnp.asarray(uv)), dtype=np.float64)
+    # The domain infers its corners using the same specified D1 point route.
     uses = (
         PatchCurveUse(0, LineCurve((0.0, 0.0), (1.0, 0.0)), 0.0, 1.0),
         PatchCurveUse(1, LineCurve((1.0, 0.0), (-1.0, 1.0)), 0.0, 1.0),
@@ -2883,8 +2884,8 @@ def _triangular_surface_fidelity_inputs(
         3,
         source_id=source_id,
         source_revision=f"{source_id}:revision",
-        corner_points=corners,
     )
+    corners = np.asarray(domain.corner_points, dtype=np.float64)
     mesh = _mesh(corners, np.asarray(((0, 1, 2),), dtype=np.int64))
     geometry = CellGeometrySpec.affine(mesh)
     witness = _witness(mesh, geometry, domain, uv[None, ...])

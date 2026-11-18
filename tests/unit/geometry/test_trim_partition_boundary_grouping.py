@@ -1,6 +1,5 @@
 from fractions import Fraction
 
-import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -29,10 +28,11 @@ def sector() -> tuple[
 ]:
     arc = CircleCurve((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), 1.0)
     angle = 1.0
-    end = np.asarray(arc.evaluate(jnp.asarray((0.0, angle))), dtype=np.float64)[1]
+    arc_use = PatchCurveUse(1, arc, 0.0, angle)
+    start, end = arc_use.charts((0.0, angle))
     uses = (
-        PatchCurveUse(0, LineCurve((0.0, 0.0), (1.0, 0.0)), 0.0, 1.0),
-        PatchCurveUse(1, arc, 0.0, angle),
+        PatchCurveUse(0, LineCurve((0.0, 0.0), start), 0.0, 1.0),
+        arc_use,
         PatchCurveUse(2, LineCurve(end, -end), 0.0, 1.0),
     )
     domain = MeshingDomain(
@@ -48,7 +48,7 @@ def sector() -> tuple[
         source_revision="source-revision-1",
         tolerance=1.0e-12,
     )
-    points = np.asarray(arc.evaluate(jnp.linspace(0.0, angle, 5)), dtype=np.float64)
+    points = arc_use.charts(np.linspace(0.0, angle, 5), preparation=SourcePreparation(domain))
     chain = tuple((Fraction(float(u)), Fraction(float(v))) for u, v in points)
     origin = (Fraction(0), Fraction(0))
     fan = tuple((origin, chain[row], chain[row + 1]) for row in range(4))
