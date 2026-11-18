@@ -2256,8 +2256,9 @@ def test_adaptive_implicit_discovery_reanchors_a_lattice_vertex_on_a_crossing() 
     # The superquadric's y tip lies on a vertex of the declared lattice; the
     # field changes sign around it, so the vertex root is a lattice coincidence.
     geometry = phx.geometry.Superquadric((0.0, 0.0, 0.0), (0.45, 0.50, 0.55)).compile()
+    relative_diameter = 0.12
     policy = AdaptiveImplicitSurfacePolicy(
-        relative_cell_diameter=0.12, root_tolerance=1.0e-8
+        relative_cell_diameter=relative_diameter, root_tolerance=1.0e-8
     )
     surface = discover_adaptive_implicit_surface(
         geometry, domain=_UNIT_DOMAIN, policy=policy, source_id="reanchored-tip"
@@ -2274,7 +2275,7 @@ def test_adaptive_implicit_discovery_reanchors_a_lattice_vertex_on_a_crossing() 
     cell_diagonal = float(
         np.linalg.norm((anchored[1] - anchored[0]) / 2.0**surface.scaffold.target_level)
     )
-    assert cell_diagonal <= policy.relative_cell_diameter * float(
+    assert cell_diagonal <= relative_diameter * float(
         np.linalg.norm(_UNIT_DOMAIN[1] - _UNIT_DOMAIN[0])
     )
 

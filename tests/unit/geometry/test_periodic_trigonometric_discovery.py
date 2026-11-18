@@ -12,6 +12,8 @@ from phydrax.discretization import PeriodicCell
 from phydrax.discretization._periodic_exact import apply_periodic
 from phydrax.geometry.implicit import (
     AdaptiveImplicitSurfacePolicy,
+    discover_adaptive_implicit_surface,
+    discover_clipped_implicit_surface,
     discover_periodic_trigonometric_surface,
     PeriodicImplicitSurface,
 )
@@ -21,6 +23,69 @@ _G = phx.geometry
 _HALF = Fraction(1, 2)
 _IDENTITY = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
 _INVERSION = ((-1, 0, 0), (0, -1, 0), (0, 0, -1))
+
+
+@pytest.mark.parametrize("route", ("direct", "periodic", "clipped"))
+@pytest.mark.parametrize("explicit_policy", (False, True))
+def test_discovery_without_specification_keeps_legacy_resolution(
+    route: str, explicit_policy: bool
+) -> None:
+    options = {"policy": AdaptiveImplicitSurfacePolicy()} if explicit_policy else {}
+    if route == "periodic":
+        source = _G.TrigonometricLevelSet(
+            _G.TrigonometricTable.family("schwarz_p"),
+            PeriodicCell(np.eye(3)),
+            level=2.99999,
+        )
+        result = discover_periodic_trigonometric_surface(
+            source, source_id="default-periodic", **options
+        )
+        reference = discover_periodic_trigonometric_surface(
+            source,
+            source_id="default-periodic",
+            policy=AdaptiveImplicitSurfacePolicy(relative_cell_diameter=0.001),
+        )
+        level = result.target_level
+    else:
+        geometry = _G.Sphere((0.13, 0.19, 0.27), 0.001).compile()
+        domain = np.asarray(((-1.0, -1.0, -1.0), (1.0, 1.0, 1.0)))
+        if route == "direct":
+            result = discover_adaptive_implicit_surface(
+                geometry, domain=domain, source_id="default-direct", **options
+            )
+            reference = discover_adaptive_implicit_surface(
+                geometry,
+                domain=domain,
+                source_id="default-direct",
+                policy=AdaptiveImplicitSurfacePolicy(relative_cell_diameter=0.001),
+            )
+            level = result.scaffold.target_level
+        else:
+            result = discover_clipped_implicit_surface(
+                geometry, domain=domain, source_id="default-clipped", **options
+            )
+            reference = discover_clipped_implicit_surface(
+                geometry,
+                domain=domain,
+                source_id="default-clipped",
+                policy=AdaptiveImplicitSurfacePolicy(relative_cell_diameter=0.001),
+            )
+            level = result.target_level
+    assert result.policy == reference.policy
+    assert level >= 10
+    if isinstance(result, PeriodicImplicitSurface):
+        assert isinstance(reference, PeriodicImplicitSurface)
+        np.testing.assert_array_equal(result.reduced_points, reference.reduced_points)
+        np.testing.assert_array_equal(result.faces, reference.faces)
+    else:
+        assert not isinstance(reference, PeriodicImplicitSurface)
+        assert result.scaffold is not None and reference.scaffold is not None
+        np.testing.assert_array_equal(
+            result.scaffold.cell_indices, reference.scaffold.cell_indices
+        )
+        np.testing.assert_array_equal(
+            result.scaffold.root_points, reference.scaffold.root_points
+        )
 
 
 def _discover(

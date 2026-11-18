@@ -57,6 +57,7 @@ from ...geometry.implicit import (
     ImplicitVolumeClass,
 )
 from ...geometry.implicit._adaptive_discovery import AdaptiveImplicitBoundarySource
+from ...geometry.implicit._policy import _DEFAULT_RELATIVE_CELL_DIAMETER
 from ...geometry.surface import SurfaceMetadata, SurfaceModel
 from ...typing import checked
 from .._association import (
@@ -502,10 +503,10 @@ def _effective_policy(
 ) -> AdaptiveImplicitSurfacePolicy:
     """Discovery policy for ``specification`` on the declared ``domain``.
 
-    An explicit policy is only tightened by the specification's deviation and
-    hard size allowances. Without one, the specification's deviation and uniform
-    size targets set the resolution; the policy default applies only when the
-    specification declares neither.
+    A supplied resolution is only tightened by the specification's deviation
+    and hard size allowances. Without one, the specification's deviation and
+    eligible uniform size targets set the resolution; the default applies only
+    when the specification declares neither.
     """
     diagonal = float(binary64_norm(domain[1] - domain[0]))
     if not math.isfinite(diagonal) or diagonal <= 0.0:
@@ -516,7 +517,11 @@ def _effective_policy(
             stage="source_inspection",
         )
     selected = AdaptiveImplicitSurfacePolicy() if policy is None else policy
-    resolutions: list[float] = [] if policy is None else [policy.relative_cell_diameter]
+    resolutions: list[float] = (
+        []
+        if selected.relative_cell_diameter is None
+        else [selected.relative_cell_diameter]
+    )
     root_tolerance = selected.root_tolerance
     maximum_deviation = specification.maximum_deviation
     if maximum_deviation is not None:
@@ -546,11 +551,11 @@ def _effective_policy(
                     * control.maximum_size,
                 )
             resolutions.append(allowance / diagonal)
-        elif policy is None:
+        elif selected.relative_cell_diameter is None:
             resolutions.append(control.target_size / diagonal)
     return replace(
         selected,
-        relative_cell_diameter=min(resolutions, default=selected.relative_cell_diameter),
+        relative_cell_diameter=min(resolutions, default=_DEFAULT_RELATIVE_CELL_DIAMETER),
         root_tolerance=root_tolerance,
     )
 

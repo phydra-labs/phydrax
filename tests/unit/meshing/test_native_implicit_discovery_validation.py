@@ -20,18 +20,158 @@ from phydrax.meshing._contracts import (
     CellFamilyPolicy,
     CellMeshingTarget,
     MeshingFailure,
+    SurfaceMeshingSpec,
     VolumeFillStrategy,
     VolumeMeshingSpec,
 )
 from phydrax.meshing._controls import FeatureKind, ProtectedFeature
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
+from phydrax.meshing._sizing import (
+    SizeCompliancePolicy,
+    SizeControlStrength,
+    UniformSizeControl,
+)
 from phydrax.meshing.providers._native_implicit import (
     _direct_discovery_cover_matches,
     _discovery_roots_match,
+    _effective_policy,
     _nearest_scaffold_rows,
     _validate_discovery,
+    normalize_analytic_implicit_source,
 )
 from phydrax.meshing.providers._native_sources import NativeImplicitSource
+
+
+@pytest.mark.parametrize("value", [0.0, -1.0, np.inf, -np.inf, np.nan])
+def test_explicit_discovery_resolution_must_be_positive_and_finite(value: float) -> None:
+    with pytest.raises(
+        ValueError, match="relative_cell_diameter must be finite and positive"
+    ):
+        AdaptiveImplicitSurfacePolicy(relative_cell_diameter=value)
+
+
+def test_unset_discovery_resolution_is_valid() -> None:
+    assert AdaptiveImplicitSurfacePolicy().relative_cell_diameter is None
+
+
+@pytest.mark.parametrize("cap", [None, 0.06])
+def test_analytic_source_discovery_observes_requested_resolution(
+    cap: float | None,
+) -> None:
+    contract = SpatialCoordinateContract.si()
+    profile = AnalyticImplicitProfile(
+        Sphere((0.0, 0.0, 0.0), 0.371).compile(),
+        contract,
+        source_id="resolution-contract",
+    )
+    scope = MeshingScope.whole(profile, 2)
+    specification = SurfaceMeshingSpec(
+        CellMeshingTarget(2, 3, CellFamilyPolicy(required=("triangle",))),
+        scope,
+        size_controls=(
+            UniformSizeControl(scope, 0.6, strength=SizeControlStrength.HARD),
+        ),
+        maximum_deviation=0.4,
+    )
+    source = normalize_analytic_implicit_source(
+        profile,
+        AdaptiveImplicitSurfacePolicy(relative_cell_diameter=cap),
+        contract,
+        specification=specification,
+    )
+    assert source.discovery is not None
+    bounds = np.asarray(profile.boundary_bounds, dtype=np.float64)
+    padding = np.max(bounds[1] - bounds[0]) / 8.0
+    lower = np.nextafter(bounds[0] - padding, -np.inf)
+    upper = np.nextafter(bounds[1] + padding, np.inf)
+    diagonal = float(np.sqrt(np.sum((upper - lower) ** 2)))
+    expected = 0.2 / diagonal
+    if cap is not None:
+        expected = min(expected, cap)
+    assert source.discovery.policy.relative_cell_diameter == pytest.approx(expected)
+    assert source.discovery.evidence.unresolved_count == 0
+
+
+@pytest.mark.parametrize("supplied", [False, True])
+def test_unspecified_discovery_resolution_uses_specification_candidates(
+    supplied: bool,
+) -> None:
+    scope = MeshingScope(
+        "source",
+        "revision",
+        MeshingEntityKind.GEOMETRY,
+        2,
+        "faces",
+        np.asarray([0], dtype=np.int64),
+    )
+    specification = SurfaceMeshingSpec(
+        CellMeshingTarget(2, 3, CellFamilyPolicy(required=("triangle",))),
+        scope,
+        size_controls=(
+            UniformSizeControl(scope, 1.0, strength=SizeControlStrength.HARD),
+            UniformSizeControl(scope, 0.4, strength=SizeControlStrength.SOFT),
+        ),
+        size_compliance=SizeCompliancePolicy(
+            absolute_tolerance=0.1, relative_tolerance=0.1
+        ),
+        maximum_deviation=1.0,
+    )
+    # The 3-4-12 box has diagonal 13. The candidates are 0.5/13,
+    # 1.2/13 and 0.4/13; neither the legacy 0.001 nor their maximum wins.
+    domain = np.asarray(((0.0, 0.0, 0.0), (3.0, 4.0, 12.0)))
+    policy = AdaptiveImplicitSurfacePolicy() if supplied else None
+    resolved = _effective_policy(policy, specification, domain)
+    assert resolved.relative_cell_diameter == pytest.approx(0.4 / 13.0)
+
+
+def test_explicit_discovery_resolution_is_a_cap() -> None:
+    scope = MeshingScope(
+        "source",
+        "revision",
+        MeshingEntityKind.GEOMETRY,
+        2,
+        "faces",
+        np.asarray([0], dtype=np.int64),
+    )
+    specification = SurfaceMeshingSpec(
+        CellMeshingTarget(2, 3, CellFamilyPolicy(required=("triangle",))),
+        scope,
+        size_controls=(UniformSizeControl(scope, 1.0),),
+        maximum_deviation=1.0,
+    )
+    domain = np.asarray(((0.0, 0.0, 0.0), (3.0, 4.0, 12.0)))
+    policy = AdaptiveImplicitSurfacePolicy(relative_cell_diameter=0.01)
+    assert _effective_policy(policy, specification, domain).relative_cell_diameter == 0.01
+
+    tighter = AdaptiveImplicitSurfacePolicy(relative_cell_diameter=0.1)
+    assert _effective_policy(tighter, specification, domain).relative_cell_diameter == (
+        pytest.approx(0.5 / 13.0)
+    )
+
+
+def test_unspecified_discovery_resolution_without_candidates_uses_legacy_default() -> (
+    None
+):
+    scope = MeshingScope(
+        "source",
+        "revision",
+        MeshingEntityKind.GEOMETRY,
+        2,
+        "faces",
+        np.asarray([0], dtype=np.int64),
+    )
+    specification = SurfaceMeshingSpec(
+        CellMeshingTarget(2, 3, CellFamilyPolicy(required=("triangle",))),
+        scope,
+        size_controls=(),
+    )
+    domain = np.asarray(((0.0, 0.0, 0.0), (3.0, 4.0, 12.0)))
+    assert (
+        _effective_policy(
+            AdaptiveImplicitSurfacePolicy(), specification, domain
+        ).relative_cell_diameter
+        == 0.001
+    )
 
 
 def test_root_membership_preserves_bytes_duplicates_and_error_equality() -> None:
