@@ -146,8 +146,9 @@ void folded_cluster() {
   PHX_CHECK(maximum_turn(input, triangles) > 170);
   // The cluster is a patch: its outer edges have one triangle each. Declared
   // closed it is refused before any edit; declared with its border it is
-  // remeshed, the border edges taking no fold factor.
-  const RemeshTargets patch{0.04, 30, false, InputTopology::kWithBorder};
+  // remeshed, the border edges taking no fold factor. Every candidate query
+  // of these runs is compared with an exhaustive scan.
+  const RemeshTargets patch{0.04, 30, false, InputTopology::kWithBorder, true};
   {
     const SourceCone admission(NormalCone{});
     std::vector<Point> points = input;
@@ -195,10 +196,12 @@ void folded_cluster() {
 }
 
 // Admits a triangle whose corners lie within `width` of the unit sphere and
-// projects onto the sphere; open cones (no fold penalty).
+// projects onto the sphere. Its cones are open (no fold penalty), or have the
+// given half-angle about the radial direction at the triangle's centroid.
 class SphereBand final : public TriangleAdmission {
  public:
-  explicit SphereBand(double band) : width(band) {}
+  explicit SphereBand(double band, double cone_half_angle = NormalCone{}.half_angle)
+      : width(band), half(cone_half_angle) {}
   AdmissionKind kind() const override { return AdmissionKind::kOffsetBand; }
   VertexEvidence evaluate(const Point& p) const override {
     const double radius = std::hypot(p[0], p[1], p[2]);
@@ -214,15 +217,20 @@ class SphereBand final : public TriangleAdmission {
     const double radius = std::hypot(p[0], p[1], p[2]);
     return {p[0] / radius, p[1] / radius, p[2] / radius};
   }
-  NormalCone normal_cone(const Point&, const Point&, const Point&,
+  NormalCone normal_cone(const Point& a, const Point& b, const Point& c,
                          const std::array<VertexEvidence, 3>&) const override {
-    return NormalCone{};
+    if (half == NormalCone{}.half_angle) return NormalCone{};
+    const Point middle{(a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3,
+                       (a[2] + b[2] + c[2]) / 3};
+    const double radius = std::hypot(middle[0], middle[1], middle[2]);
+    return NormalCone{{middle[0] / radius, middle[1] / radius, middle[2] / radius}, half};
   }
   double normal_cone_floor(const Point&, const Point&, const Point&,
                            const std::array<VertexEvidence, 3>&) const override {
-    return NormalCone{}.half_angle;
+    return half;
   }
   double width;
+  double half;
 };
 
 double minimum_angle(const std::vector<Point>& points, const std::vector<Triangle>& triangles) {
@@ -295,11 +303,33 @@ void sphere_band_quality() {
     jittered_sphere(3, 0.01, seed, points, triangles);
     const SphereBand admission(0.02);
     RemeshCounters counters;
-    PHX_CHECK(phx::mc::remesh::remesh_surface(points, triangles, admission, {0.25, 44},
+    PHX_CHECK(phx::mc::remesh::remesh_surface(points, triangles, admission,
+                                             {0.25, 44, false, InputTopology::kClosed, true},
                                              counters) == PHX_MC_OK);
     PHX_CHECK(counters.unmet == 0);
     PHX_CHECK(minimum_angle(points, triangles) > 43.99);
     for (const Point& p : points) PHX_CHECK(std::abs(std::hypot(p[0], p[1], p[2]) - 1) <= 0.02);
+  }
+}
+
+// The spatial index under refused edits. With source cones many edits pass
+// the candidate query and are refused afterwards by their full scores; the
+// triangles such an edit had set aside stay on the surface, and every later
+// query must still return them. Each query of these runs is compared with an
+// exhaustive scan of the live triangles, and a difference ends the run with
+// PHX_MC_INTERNAL_ERROR.
+void index_keeps_faces_of_refused_edits() {
+  for (uint64_t seed = 1; seed <= 3; ++seed) {
+    std::vector<Point> points;
+    std::vector<Triangle> triangles;
+    jittered_sphere(3, 0.03, seed, points, triangles);
+    const SphereBand admission(0.06, 0.2);
+    RemeshCounters counters;
+    PHX_CHECK(phx::mc::remesh::remesh_surface(points, triangles, admission,
+                                             {0.25, 44, false, InputTopology::kClosed, true},
+                                             counters) == PHX_MC_OK);
+    PHX_CHECK(!triangles.empty());
+    for (const Point& p : points) PHX_CHECK(std::abs(std::hypot(p[0], p[1], p[2]) - 1) <= 0.06);
   }
 }
 
@@ -387,7 +417,8 @@ void knife_edge_lens() {
     std::vector<Point> points = input;
     std::vector<Triangle> remeshed = triangles;
     RemeshCounters counters;
-    PHX_CHECK(phx::mc::remesh::remesh_surface(points, remeshed, admission, {1.2, 30},
+    PHX_CHECK(phx::mc::remesh::remesh_surface(points, remeshed, admission,
+                                             {1.2, 30, false, InputTopology::kClosed, true},
                                              counters) == PHX_MC_OK);
     PHX_CHECK(counters.unmet == 0);
     PHX_CHECK(minimum_convex_wedge(points, remeshed) >= 30);
@@ -397,8 +428,9 @@ void knife_edge_lens() {
   std::vector<Point> points = input;
   std::vector<Triangle> remeshed = triangles;
   RemeshCounters counters;
-  PHX_CHECK(phx::mc::remesh::remesh_surface(points, remeshed, admission, {1.2, 30}, counters) ==
-            PHX_MC_OK);
+  PHX_CHECK(phx::mc::remesh::remesh_surface(points, remeshed, admission,
+                                           {1.2, 30, false, InputTopology::kClosed, true},
+                                           counters) == PHX_MC_OK);
   PHX_CHECK(counters.unmet == 0);
   PHX_CHECK(counters.relocations == 0 && counters.splits == 0 && counters.flips == 0 &&
             counters.collapses == 0);
@@ -590,11 +622,81 @@ void certified_free_radius_is_exact() {
   PHX_CHECK(escaped == 0);
 }
 
+// The spatial index with zero-area triangles. A degenerate triangle is a
+// candidate of every query that reaches one of its cells, whatever its box,
+// and it stays one while it lives. The carrier is the octahedron
+// |x| + |y| + |z| = 1 subdivided twice in its faces (every coordinate dyadic,
+// so the midpoints below are exactly collinear with their edges); on the
+// first edge of every seventh triangle a sliver (a, m, b) with m the edge's
+// midpoint is inserted and the neighbor across that edge is divided at m.
+// Each query of the run is compared with an exhaustive scan.
+void index_returns_degenerate_faces() {
+  std::vector<Point> points = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
+                               {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+  std::vector<Triangle> triangles = {{0, 2, 4}, {2, 1, 4}, {1, 3, 4}, {3, 0, 4},
+                                     {2, 0, 5}, {1, 2, 5}, {3, 1, 5}, {0, 3, 5}};
+  const auto midpoint = [&](int64_t a, int64_t b) {
+    const Point& p = points[static_cast<size_t>(a)];
+    const Point& q = points[static_cast<size_t>(b)];
+    points.push_back({(p[0] + q[0]) / 2, (p[1] + q[1]) / 2, (p[2] + q[2]) / 2});
+    return static_cast<int64_t>(points.size()) - 1;
+  };
+  for (int level = 0; level < 2; ++level) {
+    std::map<std::pair<int64_t, int64_t>, int64_t> middle;
+    const auto split = [&](int64_t a, int64_t b) {
+      const auto key = std::minmax(a, b);
+      const auto found = middle.find(key);
+      if (found != middle.end()) return found->second;
+      return middle[key] = midpoint(a, b);
+    };
+    std::vector<Triangle> refined;
+    for (const Triangle& t : triangles) {
+      const int64_t ab = split(t[0], t[1]), bc = split(t[1], t[2]), ca = split(t[2], t[0]);
+      refined.push_back({t[0], ab, ca});
+      refined.push_back({ab, t[1], bc});
+      refined.push_back({ca, bc, t[2]});
+      refined.push_back({ab, bc, ca});
+    }
+    triangles = refined;
+  }
+  std::map<std::pair<int64_t, int64_t>, size_t> holder;
+  for (size_t row = 0; row < triangles.size(); ++row)
+    for (size_t k = 0; k < 3; ++k) holder[{triangles[row][k], triangles[row][(k + 1) % 3]}] = row;
+  std::vector<bool> used(triangles.size(), false);
+  const size_t original = triangles.size();
+  size_t slivers = 0;
+  for (size_t row = 0; row < original; row += 7) {
+    const int64_t a = triangles[row][0], b = triangles[row][1];
+    const size_t across = holder[{b, a}];
+    if (used[row] || used[across]) continue;
+    used[row] = used[across] = true;
+    const Triangle neighbor = triangles[across];
+    size_t at = 0;
+    while (neighbor[at] != b) ++at;
+    const int64_t apex = neighbor[(at + 2) % 3];
+    const int64_t m = midpoint(a, b);
+    triangles[across] = {b, m, apex};
+    triangles.push_back({m, a, apex});
+    triangles.push_back({a, m, b});
+    ++slivers;
+  }
+  PHX_CHECK(slivers == 18);
+  const BallBand admission(0.01, false);
+  RemeshCounters counters;
+  PHX_CHECK(phx::mc::remesh::remesh_surface(points, triangles, admission,
+                                           {0.3, 30, false, InputTopology::kClosed, true},
+                                           counters) == PHX_MC_OK);
+  PHX_CHECK(!triangles.empty());
+  PHX_CHECK(counters.collapses + counters.flips + counters.relocations > 0);
+}
+
 }  // namespace
 
 int main() {
   folded_cluster();
   sphere_band_quality();
+  index_keeps_faces_of_refused_edits();
+  index_returns_degenerate_faces();
   knife_edge_lens();
   exact_contact_parity();
   certified_free_radius_is_exact();

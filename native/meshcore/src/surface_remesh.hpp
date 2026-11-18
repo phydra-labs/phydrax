@@ -195,6 +195,10 @@ struct RemeshTargets {
   double minimum_angle_degrees = 30;   // full-score minimum angle
   bool admission_limited_coarsening = false;  // size sweep, extended regularization, coarsening
   InputTopology topology = InputTopology::kClosed;
+  // Compares every candidate query of the spatial index with an exhaustive
+  // scan of the live faces; a difference is PHX_MC_INTERNAL_ERROR. Each query
+  // then costs one pass over the surface, so this is for tests of the index.
+  bool audit_candidates = false;
 };
 
 struct RemeshCounters {
@@ -209,8 +213,9 @@ double certified_free_radius(const Point& a, const Point& b, const Point& c, dou
 
 // Remeshes (points, triangles) in place; the output is compacted (only vertices
 // of surviving triangles, in first-use order). Status codes are PHX_MC_*; an
-// input declared closed that is not is PHX_MC_INVALID_INPUT. On any status but
-// PHX_MC_OK the vectors hold no result.
+// input declared closed that is not is PHX_MC_INVALID_INPUT, and no exception
+// leaves (an impossible internal state is PHX_MC_INTERNAL_ERROR). On any
+// status but PHX_MC_OK the vectors hold no result.
 int32_t remesh_surface(std::vector<Point>& points, std::vector<Triangle>& triangles,
                        const TriangleAdmission& admission, const RemeshTargets& targets,
                        RemeshCounters& counters);

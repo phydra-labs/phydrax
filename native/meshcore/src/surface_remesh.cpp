@@ -20,6 +20,7 @@
 
 #include "exact_scalar.hpp"
 #include "angle.hpp"
+#include "capi_guard.hpp"
 #include "geometry3.hpp"
 #include "intersections.hpp"
 #include "phydrax_meshcore.h"
@@ -1091,6 +1092,32 @@ class Remesher {
         }
     std::sort(out.begin(), out.end());
     out.erase(std::unique(out.begin(), out.end()), out.end());
+    if (targets.audit_candidates) audit_candidates(t, removed, out);
+  }
+  // What a query must return, by exhaustive scan: every live face not set
+  // aside whose box meets the query's, and every degenerate one registered in
+  // a cell of the query's range (its block is inspected whatever its box).
+  void audit_candidates(const F& t, const std::vector<int64_t>& removed,
+                        const std::vector<int64_t>& found) const {
+    const auto range = bucket_range(t);
+    const auto [lo, hi] = face_box(t);
+    std::vector<int64_t> expected;
+    for (size_t row = 0; row < triangles.size(); ++row) {
+      const int64_t id = static_cast<int64_t>(row);
+      if (!state.alive(row) || std::binary_search(removed.begin(), removed.end(), id)) continue;
+      const F candidate = triangles[row];
+      const auto [candidate_lo, candidate_hi] = face_box(candidate);
+      bool expect = !disjoint(lo, hi, candidate_lo, candidate_hi);
+      if (!expect && degenerate(candidate)) {
+        const auto cells = bucket_range(candidate);
+        expect = true;
+        for (int d = 0; d < 3; ++d)
+          expect = expect && cells[d] <= range[3 + d] && range[d] <= cells[3 + d];
+      }
+      if (expect) expected.push_back(id);
+    }
+    if (expected != found)
+      throw std::logic_error("surface remesh: the candidate index differs from the exhaustive scan");
   }
   // Registers a triangle in the buckets and stars; its score depends on its
   // edge neighbors, so callers rescore once the edit's triangles are all in.
@@ -2379,23 +2406,25 @@ double certified_free_radius(const Point& a, const Point& b, const Point& c,
 int32_t remesh_surface(std::vector<Point>& points, std::vector<Triangle>& triangles,
                        const TriangleAdmission& admission, const RemeshTargets& targets,
                        RemeshCounters& counters) {
-  if (!(targets.edge_length > 0) || !std::isfinite(targets.edge_length) ||
-      !(targets.minimum_angle_degrees > 0) || !(targets.minimum_angle_degrees < 60))
-    return PHX_MC_INVALID_ARGUMENT;
-  if (triangles.empty()) return PHX_MC_INVALID_ARGUMENT;
-  for (const Triangle& t : triangles)
-    for (int64_t v : t)
-      if (v < 0 || v >= static_cast<int64_t>(points.size())) return PHX_MC_INVALID_ARGUMENT;
-  Remesher remesher(admission, targets);
-  if (!remesher.run(points, triangles)) return PHX_MC_INVALID_INPUT;
-  counters.splits = remesher.splits;
-  counters.collapses = remesher.collapses;
-  counters.flips = remesher.flips;
-  counters.relocations = remesher.relocations;
-  counters.unmet = remesher.unmet();
-  remesher.compact(points, triangles);
-  if (triangles.empty()) return PHX_MC_INTERNAL_ERROR;
-  return PHX_MC_OK;
+  return guarded([&]() -> int32_t {
+    if (!(targets.edge_length > 0) || !std::isfinite(targets.edge_length) ||
+        !(targets.minimum_angle_degrees > 0) || !(targets.minimum_angle_degrees < 60))
+      return PHX_MC_INVALID_ARGUMENT;
+    if (triangles.empty()) return PHX_MC_INVALID_ARGUMENT;
+    for (const Triangle& t : triangles)
+      for (int64_t v : t)
+        if (v < 0 || v >= static_cast<int64_t>(points.size())) return PHX_MC_INVALID_ARGUMENT;
+    Remesher remesher(admission, targets);
+    if (!remesher.run(points, triangles)) return PHX_MC_INVALID_INPUT;
+    counters.splits = remesher.splits;
+    counters.collapses = remesher.collapses;
+    counters.flips = remesher.flips;
+    counters.relocations = remesher.relocations;
+    counters.unmet = remesher.unmet();
+    remesher.compact(points, triangles);
+    if (triangles.empty()) return PHX_MC_INTERNAL_ERROR;
+    return PHX_MC_OK;
+  });
 }
 
 int32_t remesh_surface_borrowed_i32(std::vector<Point>& points, const double* input_points,
@@ -2404,29 +2433,31 @@ int32_t remesh_surface_borrowed_i32(std::vector<Point>& points, const double* in
                                     const int32_t* vertex_faces, std::vector<Triangle>& output,
                                     const TriangleAdmission& admission,
                                     const RemeshTargets& targets, RemeshCounters& counters) {
-  if (!(targets.edge_length > 0) || !std::isfinite(targets.edge_length) ||
-      !(targets.minimum_angle_degrees > 0) || !(targets.minimum_angle_degrees < 60) ||
-      input_points == nullptr || triangles == nullptr || triangle_count == 0 ||
-      ((vertex_face_offsets == nullptr) != (vertex_faces == nullptr)))
-    return PHX_MC_INVALID_ARGUMENT;
-  for (size_t row = 0; row < triangle_count; ++row)
-    for (int k = 0; k < 3; ++k)
-      if (triangles[3 * row + k] < 0 ||
-          static_cast<size_t>(triangles[3 * row + k]) >= point_count)
-        return PHX_MC_INVALID_ARGUMENT;
-  {
-    Remesher remesher(admission, targets);
-    if (!remesher.run(points, output, triangles, triangle_count, input_points, point_count,
-                      vertex_face_offsets, vertex_faces))
-      return PHX_MC_INVALID_INPUT;
-    counters.splits = remesher.splits;
-    counters.collapses = remesher.collapses;
-    counters.flips = remesher.flips;
-    counters.relocations = remesher.relocations;
-    counters.unmet = remesher.unmet();
-    remesher.compact(points, output);
-  }
-  return output.empty() ? PHX_MC_INTERNAL_ERROR : PHX_MC_OK;
+  return guarded([&]() -> int32_t {
+    if (!(targets.edge_length > 0) || !std::isfinite(targets.edge_length) ||
+        !(targets.minimum_angle_degrees > 0) || !(targets.minimum_angle_degrees < 60) ||
+        input_points == nullptr || triangles == nullptr || triangle_count == 0 ||
+        ((vertex_face_offsets == nullptr) != (vertex_faces == nullptr)))
+      return PHX_MC_INVALID_ARGUMENT;
+    for (size_t row = 0; row < triangle_count; ++row)
+      for (int k = 0; k < 3; ++k)
+        if (triangles[3 * row + k] < 0 ||
+            static_cast<size_t>(triangles[3 * row + k]) >= point_count)
+          return PHX_MC_INVALID_ARGUMENT;
+    {
+      Remesher remesher(admission, targets);
+      if (!remesher.run(points, output, triangles, triangle_count, input_points, point_count,
+                        vertex_face_offsets, vertex_faces))
+        return PHX_MC_INVALID_INPUT;
+      counters.splits = remesher.splits;
+      counters.collapses = remesher.collapses;
+      counters.flips = remesher.flips;
+      counters.relocations = remesher.relocations;
+      counters.unmet = remesher.unmet();
+      remesher.compact(points, output);
+    }
+    return output.empty() ? PHX_MC_INTERNAL_ERROR : PHX_MC_OK;
+  });
 }
 
 }  // namespace phx::mc::remesh

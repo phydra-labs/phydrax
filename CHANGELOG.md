@@ -742,6 +742,15 @@
   same carrier the remesh takes about 4% less time for about 50 MB more of
   memory (1,300 to 1,350 MB peak commit), with identical results. Blocks of
   two were not measurably faster and take another 100 MB.
+- The spatial index of the surface remesher can be audited: with
+  `RemeshTargets::audit_candidates`, every candidate query is compared with
+  an exhaustive scan of the live triangles and a difference is
+  `PHX_MC_INTERNAL_ERROR`. The native remesh tests run with it, so a block
+  box that no longer bounds its live triangles fails them; before, such a
+  fault passed every test because a missed candidate rarely changes a result
+  on a smooth surface. The remesher's two native entries now return
+  `PHX_MC_INTERNAL_ERROR` for an impossible internal state instead of letting
+  the exception leave; their C callers already reported that status.
 - Native kernels verify the floating-point mode once for each call instead of
   once for each interval program they execute. Every certified entry
   establishes round-to-nearest with gradual underflow and verifies it by
