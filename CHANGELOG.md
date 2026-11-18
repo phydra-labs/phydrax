@@ -555,6 +555,22 @@
   native search (the coupled route in its selected source cell); the host
   quantization and its caches are removed. A goal that is not finite is now
   reported by the native search as invalid input.
+- The native meshers measure a Euclidean length as the square root of the
+  left-to-right sum of squares (binary64 products, sums and one square root)
+  instead of `std::hypot`: the surface CDT's shell split, the radius-edge
+  ratio and metric lengths of the volume refinement and improvement, and the
+  lengths of the surface remeshing and of the surface envelope. The value is
+  the same double on every platform; the three-argument `std::hypot` is not
+  correctly rounded in about a third of the calls on Windows and Linux and a
+  sixth on macOS, on different inputs, so the three platforms disagreed on
+  the meshers' own arguments. Where `std::hypot` returned another double, a
+  length changes in its last place, so a mesh whose refinement or
+  improvement had a decision within one double of its threshold can change,
+  once, on every platform. Nothing is rescaled: components outside about
+  1e-154 to 1e154 overflow or underflow in their squares. The coordinate
+  resolution of the volume refinement, a one-step length that is subnormal
+  near zero, is computed as the step times the length of the transformed
+  axis.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep

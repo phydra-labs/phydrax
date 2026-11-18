@@ -111,6 +111,7 @@ bool operator==(const SpatialPageAllocator<T>&, const SpatialPageAllocator<U>&) 
 using phx::mc::geometry::cross;
 using phx::mc::geometry::difference;
 using phx::mc::geometry::dot;
+using phx::mc::geometry::length;
 using phx::mc::geometry::next_up;
 using phx::mc::geometry::point_in_domain;
 
@@ -122,7 +123,6 @@ constexpr double kTurnSlack = 1.0e-9;  // radians
 
 V add(const V& a, const V& b) { return {a[0] + b[0], a[1] + b[1], a[2] + b[2]}; }
 V mul(const V& a, double t) { return {a[0] * t, a[1] * t, a[2] * t}; }
-double length(const V& a) { return std::hypot(a[0], a[1], a[2]); }
 
 uint64_t cell_key(int64_t i, int64_t j, int64_t k) {
   constexpr int64_t bias = int64_t{1} << 20;
