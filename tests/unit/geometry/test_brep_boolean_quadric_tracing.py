@@ -156,7 +156,7 @@ def test_qualification_intersection_evidence_measures_stored_lifts(
     assert evidence["passed"] is True
     residuals = evidence["maximum_residuals_m"]
     assert isinstance(residuals, dict)
-    assert residuals["first_pcurve"] == 0.0
+    assert residuals["first_pcurve"] > 0.0
     assert isinstance(residuals["second_pcurve"], float)
     geometry = model.geometry
     assert geometry is not None
@@ -184,7 +184,21 @@ def test_qualification_intersection_evidence_measures_stored_lifts(
             lifts.append(preparation.stored_patch_points(patch, charts))
         assert not preparation.unsupported_points
         stored_gap = binary64_norm(lifts[1] - lifts[0])
-        assert float(np.max(stored_gap)) <= residuals["second_pcurve"]
+        assert float(np.max(stored_gap)) <= np.nextafter(
+            residuals["first_pcurve"] + residuals["second_pcurve"], np.inf
+        )
+        first_pcurve = curve.p_curve("first")
+        branch_boxes = np.asarray(
+            [
+                preparation.curve_box(first_pcurve, float(value), float(value))
+                for value in parameters
+            ]
+        )
+        branch_program = preparation._host_surface_program(curve.first.patch)
+        assert branch_program is not None
+        branch_lower, _ = branch_program.evaluate(branch_boxes[:, 0], branch_boxes[:, 1])
+        for name, lift in zip(("first_pcurve", "second_pcurve"), lifts, strict=True):
+            assert float(np.max(binary64_norm(lift - branch_lower))) <= residuals[name]
         compiled_lifts = (
             np.asarray(compiled.point, dtype=np.float64),
             np.asarray(curve.second.patch.evaluate(compiled.second_parameters)),

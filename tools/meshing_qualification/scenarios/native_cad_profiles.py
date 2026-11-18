@@ -911,6 +911,20 @@ def _intersection_evidence(
                 "Intersection evidence requires certified stored source points: "
                 f"{preparation.unsupported_points!r}."
             )
+        first_pcurve = curve.p_curve("first")
+        chart_boxes = np.asarray(
+            [
+                preparation.curve_box(first_pcurve, float(value), float(value))
+                for value in parameters
+            ],
+            dtype=np.float64,
+        )
+        branch_program = preparation._host_surface_program(curve.first.patch)
+        if branch_program is None:
+            raise RuntimeError(
+                "Intersection evidence requires a specified branch surface enclosure."
+            )
+        branch_lower, _ = branch_program.evaluate(chart_boxes[:, 0], chart_boxes[:, 1])
         # As in evaluate_coupled, the first surface realizes the spatial branch.
         points = lifts[0]
         x, y, z = points[:, 0], points[:, 1], points[:, 2]
@@ -937,7 +951,7 @@ def _intersection_evidence(
         for name, lifted in zip(("first_pcurve", "second_pcurve"), lifts, strict=True):
             worst[name] = max(
                 worst[name],
-                float(np.max(binary64_norm(lifted - points))),
+                float(np.max(binary64_norm(lifted - branch_lower))),
             )
         lengths[loop_index] += math.fsum(binary64_norm(np.diff(points, axis=0)))
         endpoints[loop_index].extend(

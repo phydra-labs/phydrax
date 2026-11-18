@@ -314,6 +314,11 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native CAD profile `intersection_evidence.maximum_residuals_m.first_pcurve`
+  and `second_pcurve` now measure each stored lift against the lower endpoint
+  of the certified spatial branch point enclosure, rather than using the first
+  lift as the reference. The existing result leaf names are unchanged, but
+  their values and cross-platform qualification references can change.
 - Dynamic glued-face monotonicity checks rational Jacobian controls with exact
   integer signs before decoding, preserving findings and the alternative
   preconditioner route. Three alternating replays of 6,990 captured calls took
