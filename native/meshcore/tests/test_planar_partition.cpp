@@ -292,6 +292,29 @@ void test_overflowed_predicate_sign() {
       PHX_MC_OK);
   PHX_CHECK(verdict == 3 && first == 0 && second == 1);
 }
+void test_each_screen_bound() {
+  const std::array<uint32_t, 13> words{0, 0, 2, 0, 0, 2, 0, 0, 2, 0, 0, 2, 1};
+  std::array<int64_t, 14> offsets{};
+  std::iota(offsets.begin(), offsets.end(), int64_t{0});
+  std::array<int8_t, 12> signs{};
+  signs.fill(1);
+  for (int row = 0; row < 2; ++row) {
+    for (int axis = 0; axis < 2; ++axis) {
+      for (bool lower_bound : {false, true}) {
+        std::array<double, 4> lower{0, 0, 0, 0};
+        std::array<double, 4> upper{2, 2, 2, 2};
+        (lower_bound ? lower : upper)[row * 2 + axis] = 1;
+        int32_t verdict = -1;
+        int64_t first = -1, second = -1;
+        const int32_t status = phx_mc_planar_partition(
+            1, 1, static_cast<int64_t>(words.size()), words.data(), offsets.data(),
+            signs.data(), lower.data(), upper.data(), &verdict, &first, &second);
+        PHX_CHECK(status == PHX_MC_INVALID_ARGUMENT);
+      }
+    }
+  }
+}
+
 }  // namespace
 int main() {
   test_touching_and_overlap();
@@ -299,5 +322,6 @@ int main() {
   test_distinct_banks();
   test_high_offset_low_sign_bits();
   test_overflowed_predicate_sign();
+  test_each_screen_bound();
   return phx::mc::test::finish("test_planar_partition");
 }

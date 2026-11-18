@@ -159,3 +159,19 @@ def test_native_partition_rejects_non_enclosing_boxes() -> None:
     )
     with pytest.raises(ValueError, match="INVALID_ARGUMENT"):
         planar_partition(2, 2, words, offsets, signs, lower, upper)
+
+
+@pytest.mark.parametrize("row", (0, 1), ids=("target", "declared"))
+@pytest.mark.parametrize("axis", (0, 1), ids=("x", "y"))
+@pytest.mark.parametrize("lower_bound", (False, True), ids=("upper", "lower"))
+def test_native_partition_rejects_each_inward_box_bound(
+    row: int, axis: int, lower_bound: bool
+) -> None:
+    words = np.asarray((0, 0, 2, 0, 0, 2, 0, 0, 2, 0, 0, 2, 1), dtype=np.uint32)
+    offsets = np.arange(14, dtype=np.int64)
+    signs = np.ones((12,), dtype=np.int8)
+    lower = np.zeros((2, 2), dtype=np.float64)
+    upper = np.full((2, 2), 2, dtype=np.float64)
+    (lower if lower_bound else upper)[row, axis] = 1
+    with pytest.raises(ValueError, match="INVALID_ARGUMENT"):
+        planar_partition(1, 1, words, offsets, signs, lower, upper)
