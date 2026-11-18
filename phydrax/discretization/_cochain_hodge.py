@@ -300,9 +300,12 @@ class SparseHodge(StrictModule):
         plan = self._admission_plan
         if plan is None:
             return jnp.asarray(True)
-        mirror = jnp.asarray(self._mirror, dtype=jnp.int32)
-        order = jnp.asarray(self._admission_order, dtype=jnp.int32)
-        values = jnp.concatenate((self.upper_values, self.upper_values[mirror]))[order]
+        mirror = np.asarray(self._mirror, dtype=np.int32)
+        order = np.asarray(self._admission_order, dtype=np.int32)
+        positions = np.concatenate(
+            (np.arange(self.upper_values.shape[0], dtype=np.int32), mirror)
+        )[order]
+        values = jnp.take(self.upper_values, positions)
         # One compiled factorization per admission plan: run eagerly, its
         # elimination loop would compile and retain a new executable per call.
         succeeded = run_owned_program(
@@ -325,7 +328,7 @@ class SparseHodge(StrictModule):
         return SparseHodge(
             row[keep],
             column[keep],
-            self.upper_values[keep],
+            jnp.take(self.upper_values, keep),
             indices.shape[0],
             policy=self.policy,
             admission_policy=self.admission_policy,

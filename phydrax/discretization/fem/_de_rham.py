@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from fractions import Fraction
 from math import prod
 from types import MappingProxyType
@@ -48,7 +49,12 @@ from ...linalg._complexes import (
     hodge_laplacian,
     HodgeLaplacianPart,
 )
-from ...linalg._exact import matmul_exact, solve_exact
+from ...linalg._exact import (
+    ExactLinearFactorization,
+    factor_exact,
+    matmul_exact,
+    solve_exact,
+)
 from ...sparse import EdgeRelation, RowRelation, SparseCoordinateOperator
 from ...typing import checked, ConvertibleToArray, parse
 from .._cell_de_rham import AbstractCellDeRhamComplex
@@ -727,6 +733,13 @@ def _exact_matrix_subspace(
     return tuple(tuple(matrix[row][column] for column in indices) for row in indices)
 
 
+@dataclass(frozen=True, eq=False, slots=True)
+class _ExactMatrix:
+    """An operation-local exact matrix with stable identity."""
+
+    rows: tuple[tuple[Fraction, ...], ...]
+
+
 def _exact_form_cell_transform(
     mesh: CellMesh,
     block: CellBlock | PolyhedralBlock,
@@ -735,12 +748,12 @@ def _exact_form_cell_transform(
     vertex_ids: np.ndarray,
     cache: dict[
         tuple[str, tuple[int, ...], int],
-        tuple[tuple[Fraction, ...], ...],
+        _ExactMatrix,
     ]
     | None = None,
     reference_gradient_cache: dict[str, np.ndarray] | None = None,
     /,
-) -> tuple[tuple[Fraction, ...], ...]:
+) -> _ExactMatrix:
     basis = element.form_basis
     if basis is None:
         raise ValueError("Exact cell transforms require canonical form-basis metadata.")
@@ -781,9 +794,10 @@ def _exact_form_cell_transform(
         transform = tuple(
             tuple(sign * coefficient for coefficient in row) for row in transform
         )
+    result = _ExactMatrix(transform)
     if cache is not None:
-        cache[key] = transform
-    return transform
+        cache[key] = result
+    return result
 
 
 def _relative_transfer_with_evidence(
@@ -1426,20 +1440,33 @@ def _periodic_entity_coordinate_maps(
         for entity_degree in range(complex.dimension + 1)
     ]
     basis_cache: dict[tuple[int, int, int, str, str], FormBasis] = {}
-    cell_transform_cache: dict[tuple[int, int], tuple[tuple[Fraction, ...], ...]] = {}
+    cell_transform_cache: dict[tuple[int, int], _ExactMatrix] = {}
     cell_sign_cache: dict[tuple[int, int], int] = {}
-    prism_normalizations: dict[str, tuple[tuple[Fraction, ...], ...]] = {}
+    prism_factors: dict[str, ExactLinearFactorization[Fraction]] = {}
+    normalized_transforms: dict[tuple[str, _ExactMatrix], _ExactMatrix] = {}
+    matrix_pool: dict[tuple[tuple[Fraction, ...], ...], _ExactMatrix] = {}
+    entity_subspaces: dict[tuple[_ExactMatrix, tuple[int, ...]], _ExactMatrix] = {}
+    entity_factors: dict[_ExactMatrix, ExactLinearFactorization[Fraction]] = {}
+    entity_solutions: dict[
+        tuple[_ExactMatrix, _ExactMatrix, _ExactMatrix],
+        tuple[tuple[tuple[Fraction, ...], ...], np.ndarray],
+    ] = {}
+    entity_permutations: dict[
+        tuple[tuple[int, int, int, str, str], tuple[int, ...], int],
+        _ExactMatrix,
+    ] = {}
+    signed_actions: dict[tuple[_ExactMatrix, int], _ExactMatrix] = {}
+    identity_actions: dict[int, _ExactMatrix] = {}
     orientation_transform_cache: dict[
         tuple[str, tuple[int, ...], int],
-        tuple[tuple[Fraction, ...], ...],
+        _ExactMatrix,
     ] = {}
     reference_gradient_cache: dict[str, np.ndarray] = {}
 
-    def exact_cell_transform(
-        block_index: int, cell_row: int, /
-    ) -> tuple[tuple[Fraction, ...], ...]:
+    def exact_cell_transform(block_index: int, cell_row: int, /) -> _ExactMatrix:
         nonlocal cell_transform_cache, orientation_transform_cache
-        nonlocal reference_gradient_cache, prism_normalizations
+        nonlocal reference_gradient_cache
+        nonlocal prism_factors, normalized_transforms
         key = (block_index, cell_row)
         cached = cell_transform_cache.get(key)
         if cached is not None:
@@ -1459,12 +1486,39 @@ def _periodic_entity_coordinate_maps(
             element_.form_basis is not None
             and element_.form_basis.family == "prism-trimmed"
         ):
-            normalization = prism_normalizations.get(element_.element_id)
-            if normalization is None:
-                normalization = _prism_canonical_form_coordinates(element_)[0]
-                prism_normalizations[element_.element_id] = normalization
-            result = tuple(tuple(row) for row in solve_exact(normalization, result))
+            normalized_key = (element_.element_id, result)
+            normalized = normalized_transforms.get(normalized_key)
+            if normalized is None:
+                factor = prism_factors.get(element_.element_id)
+                if factor is None:
+                    normalization = _prism_canonical_form_coordinates(element_)[0]
+                    factor = factor_exact(normalization)
+                    prism_factors[element_.element_id] = factor
+                normalized = _ExactMatrix(
+                    tuple(tuple(row) for row in factor.solve(result.rows))
+                )
+                normalized_transforms[normalized_key] = normalized
+            result = normalized
         cell_transform_cache[key] = result
+        return result
+
+    def intern(rows: tuple[tuple[Fraction, ...], ...], /) -> _ExactMatrix:
+        nonlocal matrix_pool
+        result = matrix_pool.get(rows)
+        if result is None:
+            result = _ExactMatrix(rows)
+            matrix_pool[rows] = result
+        return result
+
+    def entity_subspace(
+        matrix: _ExactMatrix, indices: tuple[int, ...], /
+    ) -> _ExactMatrix:
+        nonlocal entity_subspaces, intern
+        key = (matrix, indices)
+        result = entity_subspaces.get(key)
+        if result is None:
+            result = intern(_exact_matrix_subspace(matrix.rows, indices))
+            entity_subspaces[key] = result
         return result
 
     def cell_coorientation(block_index: int, cell_row: int, /) -> int:
@@ -1612,18 +1666,23 @@ def _periodic_entity_coordinate_maps(
                     )
                     local_dofs_tuple = tuple(local_dofs)
                     local_dofs_array = np.asarray(local_dofs_tuple, dtype=np.int64)
-                    transform = _exact_matrix_subspace(
+                    transform = entity_subspace(
                         exact_cell_transform(block_index, cell_row),
                         local_dofs_tuple,
                     )
                     if entity_degree == 0:
-                        local_action_exact = tuple(
-                            tuple(
-                                Fraction(int(row == column))
-                                for column in range(local_dofs_array.size)
+                        local_action_exact = identity_actions.get(local_dofs_array.size)
+                        if local_action_exact is None:
+                            local_action_exact = intern(
+                                tuple(
+                                    tuple(
+                                        Fraction(int(row == column))
+                                        for column in range(local_dofs_array.size)
+                                    )
+                                    for row in range(local_dofs_array.size)
+                                )
                             )
-                            for row in range(local_dofs_array.size)
-                        )
+                            identity_actions[local_dofs_array.size] = local_action_exact
                     else:
                         entity_family = (
                             (
@@ -1662,16 +1721,22 @@ def _periodic_entity_coordinate_maps(
                                 entity_twist,
                             )
                             basis_cache[basis_key] = entity_basis
-                        full_action = entity_basis.exact_permutation_matrix(
-                            local_q_vertices
-                        )
-                        vertex_count = len(face)
-                        interior = tuple(
-                            _interior_dof_indices(entity_basis.dof_labels, vertex_count)
-                        )
-                        local_action_exact = _exact_matrix_subspace(full_action, interior)
-                    if len(local_action_exact) != local_dofs_array.size or any(
-                        len(row) != local_dofs_array.size for row in local_action_exact
+                        permutation_key = (basis_key, local_q_vertices, len(face))
+                        local_action_exact = entity_permutations.get(permutation_key)
+                        if local_action_exact is None:
+                            full_action = entity_basis.exact_permutation_matrix(
+                                local_q_vertices
+                            )
+                            interior = tuple(
+                                _interior_dof_indices(entity_basis.dof_labels, len(face))
+                            )
+                            local_action_exact = intern(
+                                _exact_matrix_subspace(full_action, interior)
+                            )
+                            entity_permutations[permutation_key] = local_action_exact
+                    if len(local_action_exact.rows) != local_dofs_array.size or any(
+                        len(row) != local_dofs_array.size
+                        for row in local_action_exact.rows
                     ):
                         raise ValueError(
                             "Periodic entity action does not match its moment space."
@@ -1691,33 +1756,52 @@ def _periodic_entity_coordinate_maps(
                         representative_cell_sign = cell_coorientation(
                             representative_block, representative_cell
                         )
-                        local_action_exact = tuple(
-                            tuple(
-                                local_sign * representative_cell_sign * value
-                                for value in row
+                        sign = local_sign * representative_cell_sign
+                        signed_key = (local_action_exact, sign)
+                        signed = signed_actions.get(signed_key)
+                        if signed is None:
+                            signed = intern(
+                                tuple(
+                                    tuple(sign * value for value in row)
+                                    for row in local_action_exact.rows
+                                )
                             )
-                            for row in local_action_exact
-                        )
-                    representative_transform = _exact_matrix_subspace(
+                            signed_actions[signed_key] = signed
+                        local_action_exact = signed
+                    representative_transform = entity_subspace(
                         exact_cell_transform(representative_block, representative_cell),
                         representative_local_dofs_tuple,
                     )
-                    if len(representative_transform) != len(local_action_exact):
+                    if len(representative_transform.rows) != len(local_action_exact.rows):
                         raise ValueError(
                             "Periodic representative orientation map has the wrong shape."
                         )
-                    global_action_exact = tuple(
-                        tuple(row)
-                        for row in solve_exact(
-                            transform,
-                            _exact_matrix_product(
-                                local_action_exact, representative_transform
-                            ),
-                        )
+                    solution_key = (
+                        transform,
+                        local_action_exact,
+                        representative_transform,
                     )
-                    global_action = np.asarray(global_action_exact, dtype=np.float64)
-                    if not np.all(np.isfinite(global_action)):
-                        raise ValueError("Periodic entity action is not finite.")
+                    solution = entity_solutions.get(solution_key)
+                    if solution is None:
+                        factor = entity_factors.get(transform)
+                        if factor is None:
+                            factor = factor_exact(transform.rows)
+                            entity_factors[transform] = factor
+                        global_action_exact = tuple(
+                            tuple(row)
+                            for row in factor.solve(
+                                _exact_matrix_product(
+                                    local_action_exact.rows, representative_transform.rows
+                                )
+                            )
+                        )
+                        global_action = np.asarray(global_action_exact, dtype=np.float64)
+                        if not np.all(np.isfinite(global_action)):
+                            raise ValueError("Periodic entity action is not finite.")
+                        global_action.setflags(write=False)
+                        solution = (global_action_exact, global_action)
+                        entity_solutions[solution_key] = solution
+                    global_action_exact, global_action = solution
                     orientation_sign = int(orbit_signs[entity_degree][entity_row])
                     representative_sign = int(
                         orbit_signs[entity_degree][representative_row]
@@ -1766,11 +1850,13 @@ def _periodic_entity_coordinate_maps(
                             "Incident cells disagree on a periodic entity moment action."
                         )
 
-    del exact_cell_transform, cell_coorientation
+    del exact_cell_transform, cell_coorientation, entity_subspace, intern
     del entity_charts, entity_chart_owners, cell_transform_cache, cell_sign_cache
+    del prism_factors, normalized_transforms, entity_subspaces, entity_factors
+    del entity_solutions, entity_permutations, signed_actions, identity_actions
+    del matrix_pool
     del (
         basis_cache,
-        prism_normalizations,
         orientation_transform_cache,
         reference_gradient_cache,
     )
@@ -2993,7 +3079,7 @@ def _metric_hodge(
         keep = first <= second
         rows.append(first[keep])
         columns.append(second[keep])
-        values.append(local[jnp.asarray(keep)])
+        values.append(jnp.take(local.reshape(-1), np.flatnonzero(keep)))
     row, column, data = _coalesce_entries(
         np.concatenate(rows),
         np.concatenate(columns),
@@ -3026,7 +3112,7 @@ def _local_derivatives(
     vertex_ids = np.asarray(discretization.mesh.vertex_global_ids, dtype=np.int64)
     transform_cache: dict[
         tuple[str, tuple[int, ...], int],
-        tuple[tuple[Fraction, ...], ...],
+        _ExactMatrix,
     ] = {}
     reference_gradient_cache: dict[str, np.ndarray] = {}
     local_cache: dict[
@@ -3061,7 +3147,7 @@ def _local_derivatives(
                 vertex_ids,
                 transform_cache,
                 reference_gradient_cache,
-            )
+            ).rows
             target_transform = _exact_form_cell_transform(
                 discretization.mesh,
                 block,
@@ -3070,7 +3156,7 @@ def _local_derivatives(
                 vertex_ids,
                 transform_cache,
                 reference_gradient_cache,
-            )
+            ).rows
             cache_key = (
                 first_basis.basis_id,
                 second_basis.basis_id,
@@ -3652,7 +3738,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                 _sparse_operator(
                     rows[keep],
                     columns[keep],
-                    differential.coefficients[jnp.asarray(keep)],
+                    jnp.take(differential.coefficients, np.flatnonzero(keep), axis=0),
                     spaces[degree],
                     spaces[degree + 1],
                     f"{identifier}:d:{degree}",
@@ -4931,7 +5017,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         target_vertex_id_bank = np.asarray(target.mesh.vertex_global_ids, dtype=np.int64)
         cell_transform_cache: dict[
             tuple[str, tuple[int, ...], int],
-            tuple[tuple[Fraction, ...], ...],
+            _ExactMatrix,
         ] = {}
         reference_gradient_cache: dict[str, np.ndarray] = {}
         moment_cache = _ReferenceMomentCache()
@@ -4971,7 +5057,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                         target_vertex_id_bank,
                         cell_transform_cache,
                         reference_gradient_cache,
-                    )
+                    ).rows
                     pending_rows = tuple(
                         local
                         for local, global_row in enumerate(target_global_rows)
@@ -5006,7 +5092,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                             source_vertex_id_bank,
                             cell_transform_cache,
                             reference_gradient_cache,
-                        )
+                        ).rows
                         moments = moment_cache.partitioned(
                             source_element,
                             element,
@@ -5091,7 +5177,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                     source_vertex_id_bank,
                     cell_transform_cache,
                     reference_gradient_cache,
-                )
+                ).rows
                 target_transform = _exact_form_cell_transform(
                     target.mesh,
                     block,
@@ -5100,7 +5186,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                     target_vertex_id_bank,
                     cell_transform_cache,
                     reference_gradient_cache,
-                )
+                ).rows
                 moments = moment_cache.nested(
                     source_element,
                     element,
@@ -5590,12 +5676,8 @@ def _reference_chart_form_action(
         raise ValueError("Chart form pieces must cover every target cell.")
     source_vertex_ids = np.asarray(source.mesh.vertex_global_ids, dtype=np.int64)
     target_vertex_ids = np.asarray(target.mesh.vertex_global_ids, dtype=np.int64)
-    source_transform_cache: dict[
-        tuple[str, tuple[int, ...], int], tuple[tuple[Fraction, ...], ...]
-    ] = {}
-    target_transform_cache: dict[
-        tuple[str, tuple[int, ...], int], tuple[tuple[Fraction, ...], ...]
-    ] = {}
+    source_transform_cache: dict[tuple[str, tuple[int, ...], int], _ExactMatrix] = {}
+    target_transform_cache: dict[tuple[str, tuple[int, ...], int], _ExactMatrix] = {}
     reference_gradient_cache: dict[str, np.ndarray] = {}
     source_routes_by_row: dict[int, np.ndarray] = {}
     source_cell_by_row: dict[int, tuple[int, int]] = {}
@@ -5691,7 +5773,7 @@ def _reference_chart_form_action(
                     source_vertex_ids,
                     source_transform_cache,
                     reference_gradient_cache,
-                )
+                ).rows
                 source_transform = np.asarray(source_transform_exact, dtype=np.float64)
                 source_routes = source_routes_by_row[piece.source_row]
                 route_positions = np.asarray(
@@ -5748,7 +5830,7 @@ def _reference_chart_form_action(
                 target_vertex_ids,
                 target_transform_cache,
                 reference_gradient_cache,
-            )
+            ).rows
             target_transform_inverse = np.asarray(
                 solve_exact(
                     target_transform_exact,

@@ -7,6 +7,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -445,7 +446,9 @@ def test_mixed_form_entity_routing_matches_triangular_trace(
             mesh, block, elements[index], 0, np.asarray(mesh.vertex_global_ids)
         )
         execution = np.asarray(dofs.cell_transforms[index][0])
-        np.testing.assert_array_equal(np.asarray(exact, dtype=execution.dtype), execution)
+        np.testing.assert_array_equal(
+            np.asarray(exact.rows, dtype=execution.dtype), execution
+        )
     coefficients = np.arange(dofs.global_dof_count, dtype=np.float64) / 17.0
     prism_points = jnp.asarray(((0.2, 0.2, 1.0), (0.6, 0.1, 1.0)))
     tetra_points = jnp.asarray(((0.6, 0.2, 0.2), (0.3, 0.1, 0.6)))
@@ -1168,7 +1171,68 @@ def test_operation_local_reference_gradients_preserve_actual_form_orientation(
             cached = _exact_form_cell_transform(
                 mesh, block, element, row, vertex_ids, transform_cache, gradient_cache
             )
-            assert cached == uncached
+            assert cached.rows == uncached.rows
     assert set(gradient_cache) == (
         {block.cell_kind for block in mesh.blocks} if twist == "twisted" else set()
     )
+
+
+def _mixed_form_elements() -> tuple[Any, Any]:
+    return (
+        phx.discretization.form_element("prism", 1, 2, family="prism-trimmed"),
+        phx.discretization.form_element("tetrahedron", 1, 2, family="trimmed"),
+    )
+
+
+def test_form_layout_reuses_same_live_elements() -> None:
+    from phydrax.discretization.fem._generic import _canonical_form_dof_layout
+
+    mesh = _mixed_mesh()
+    elements = _mixed_form_elements()
+    first = _canonical_form_dof_layout(mesh, elements)
+    assert _canonical_form_dof_layout(mesh, (elements[0], elements[1])) is first
+
+
+def test_form_layout_reproves_rebuilt_equal_elements() -> None:
+    from phydrax.discretization.fem._generic import _canonical_form_dof_layout
+
+    mesh = _mixed_mesh()
+    elements = _mixed_form_elements()
+    first = _canonical_form_dof_layout(mesh, elements)
+    rebuilt = jax.tree_util.tree_map(
+        lambda leaf: jnp.array(leaf, copy=True) if isinstance(leaf, jax.Array) else leaf,
+        elements,
+    )
+    assert all(left is not right for left, right in zip(elements, rebuilt, strict=True))
+    second = _canonical_form_dof_layout(mesh, rebuilt)
+    assert second is not first
+    assert second.global_count == first.global_count
+    assert second.entity_dof_counts == first.entity_dof_counts
+    assert first.canonical_routes is not None
+    assert second.canonical_routes is not None
+    assert first.canonical_transforms is not None
+    assert second.canonical_transforms is not None
+    for actual, expected in zip(
+        second.canonical_routes, first.canonical_routes, strict=True
+    ):
+        np.testing.assert_array_equal(actual, expected)
+    for actual, expected in zip(
+        second.canonical_transforms, first.canonical_transforms, strict=True
+    ):
+        np.testing.assert_array_equal(actual, expected)
+    np.testing.assert_array_equal(second.canonical_boundary, first.canonical_boundary)
+
+
+def test_form_layout_reproves_replaced_element() -> None:
+    from phydrax.discretization.fem._generic import _canonical_form_dof_layout
+
+    mesh = _mixed_mesh()
+    elements = _mixed_form_elements()
+    first = _canonical_form_dof_layout(mesh, elements)
+    replacement = eqx.tree_at(
+        lambda element: element.reference_nodes,
+        elements[0],
+        elements[0].reference_nodes.at[0, 0].add(0.25),
+    )
+    second = _canonical_form_dof_layout(mesh, (replacement, elements[1]))
+    assert second is not first
