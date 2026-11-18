@@ -105,8 +105,14 @@ def test_quotient_discovery_on_a_skew_cell_keeps_topology_and_exact_lifts() -> N
     _assert_exact_lift(surface)
     metrics = surface.lattice_metrics()
     assert metrics.cell_volume == pytest.approx(abs(np.linalg.det(vectors)))
+    _assert_stretch_certificate(surface, vectors, metrics.vertex_root_distance)
+
+
+def _assert_stretch_certificate(
+    surface: PeriodicImplicitSurface, vectors: np.ndarray, distance: float
+) -> None:
     # Exact principal-minor certificate that distance² I - error² V Vᵀ is PSD.
-    distance2 = Fraction(metrics.vertex_root_distance) ** 2
+    distance2 = Fraction(distance) ** 2
     error2 = Fraction(surface.root_error) ** 2
     exact = [[Fraction(float(value)) for value in row] for row in vectors]
     matrix = [
@@ -129,6 +135,25 @@ def test_quotient_discovery_on_a_skew_cell_keeps_topology_and_exact_lifts() -> N
         + matrix[0][2] * (matrix[0][1] * matrix[1][2] - matrix[1][1] * matrix[0][2])
     )
     assert determinant >= 0
+
+
+def test_lattice_metrics_stretch_ignores_underestimated_numpy_norm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vectors = np.asarray(((1.3, 0.0, 0.0), (0.4, 0.9, 0.0), (-0.2, 0.3, 1.7)))
+    surface = _discover("schwarz_p", 0.2, vectors)
+    norm = np.linalg.norm
+    monkeypatch.setattr(
+        np.linalg,
+        "norm",
+        lambda x, ord=None, axis=None, keepdims=False: norm(
+            x, ord=ord, axis=axis, keepdims=keepdims
+        )
+        * (0.5 if ord == 2 else 1.0),
+    )
+
+    distance = surface.lattice_metrics().vertex_root_distance
+    _assert_stretch_certificate(surface, vectors, distance)
 
 
 def test_lattice_metrics_tight_axis_aligned_stretch() -> None:
