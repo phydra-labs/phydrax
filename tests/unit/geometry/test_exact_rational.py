@@ -6,6 +6,7 @@ from typing import Literal
 import numpy as np
 import pytest
 
+from phydrax._meshcore import meshcore_available
 from phydrax.geometry._rational import (
     binary64_difference_magnitude,
     binary64_dot,
@@ -568,6 +569,9 @@ def test_rational_endpoint_saturation_is_outward() -> None:
 
 
 @pytest.mark.meshcore
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native phydrax-meshcore library is not available"
+)
 def test_portable_angles_match_native_bits_on_generated_and_special_inputs() -> None:
     from phydrax._meshcore import angle_arctangent2, angle_between
     from phydrax.geometry._rational import binary64_angle_between, binary64_arctangent2

@@ -1,12 +1,15 @@
 import numpy as np
 import pytest
 
-from phydrax._meshcore import angle_arctangent2
+from phydrax._meshcore import angle_arctangent2, meshcore_available
 from phydrax.discretization import CellBlock, CellMesh
 from phydrax.meshing import evaluate_cell_quality
 
 
 @pytest.mark.meshcore
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native phydrax-meshcore library is not available"
+)
 def test_triangle_minimum_angle_matches_native_bits() -> None:
     # At the origin, the incident edges are (1, 0) and (x, y).
     x = float.fromhex("0x1.76878f544fe21p-1")
