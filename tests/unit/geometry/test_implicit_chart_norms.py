@@ -15,9 +15,7 @@ from phydrax.geometry.implicit._source_charts import (
 
 
 def _exact_squared(values: np.ndarray) -> Fraction:
-    return sum(
-        (Fraction.from_float(float(value)) ** 2 for value in values), Fraction(0)
-    )
+    return sum((Fraction.from_float(float(value)) ** 2 for value in values), Fraction(0))
 
 
 def test_normal_bracket_spacing_uses_certified_point_norm() -> None:
@@ -53,8 +51,7 @@ def test_source_cell_extent_encloses_exact_endpoint_difference() -> None:
         upper = _source_cell_extent_upper(domain, level)
         squared = sum(
             (
-                (Fraction.from_float(float(high)) - Fraction.from_float(float(low)))
-                ** 2
+                (Fraction.from_float(float(high)) - Fraction.from_float(float(low))) ** 2
                 for low, high in zip(domain[0], domain[1], strict=True)
             ),
             Fraction(0),
