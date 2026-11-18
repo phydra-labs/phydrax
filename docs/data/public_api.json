@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "7370c5de071213029551712212f21f895b1588c2173333cdd284fbb92c47261a",
+  "manifest_id": "c541bc629fa3a5acdb2840f2768e831ac1615e365b0e20b3f97bc14c42d8786a",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -23813,6 +23813,7 @@
       "phydrax.geometry.sew_brep",
       "phydrax.geometry.simplicial",
       "phydrax.geometry.solve_csg_continuation",
+      "phydrax.geometry.source_entity_id",
       "phydrax.geometry.sphere_boundary_atlas",
       "phydrax.geometry.stable_tetra_pair_id",
       "phydrax.geometry.surface_boolean",
@@ -25332,6 +25333,7 @@
       "phydrax.interchange.import_packed_kinetic_boundary",
       "phydrax.interchange.inspect_hdf5_resource",
       "phydrax.interchange.load_brep_archive",
+      "phydrax.interchange.load_composition_archive",
       "phydrax.interchange.map_black_hole_artifact",
       "phydrax.interchange.map_field_artifact",
       "phydrax.interchange.map_image_artifact",
@@ -25388,6 +25390,7 @@
       "phydrax.interchange.run_pinned_command",
       "phydrax.interchange.run_radiance_command",
       "phydrax.interchange.save_brep_archive",
+      "phydrax.interchange.save_composition_archive",
       "phydrax.interchange.shape_digest",
       "phydrax.interchange.shape_index",
       "phydrax.interchange.write_brep_text",

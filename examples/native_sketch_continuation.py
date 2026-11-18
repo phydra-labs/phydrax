@@ -18,12 +18,8 @@ from phydrax.geometry.design import (
     SketchBranchWitness,
     SketchContinuationReference,
 )
+from phydrax.interchange import load_composition_archive, save_composition_archive
 from phydrax.lifecycle import Composition, CompositionEntry
-from phydrax.meshing._model_codec import (
-    read_model_artifact,
-    restore_model_archive_value,
-    write_model_artifact,
-)
 
 
 def main() -> None:
@@ -63,15 +59,8 @@ def main() -> None:
         boundary_id="sketch-workflow",
     )
     with TemporaryDirectory() as directory:
-        path = write_model_artifact(
-            Path(directory) / "sketch.phx", composition, limits=None
-        )
-        restored = read_model_artifact(
-            path,
-            expected_type=Composition,
-            restore=restore_model_archive_value,
-            limits=None,
-        ).value("sketch")
+        path = save_composition_archive(composition, Path(directory) / "sketch.phx")
+        restored = load_composition_archive(path).value("sketch")
         restored.solution.preparation.verify(
             restored.sketch,
             restored.solution.dimensions,

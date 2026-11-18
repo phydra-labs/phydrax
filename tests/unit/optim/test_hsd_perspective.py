@@ -9,6 +9,7 @@ from jax import Array
 from jax.typing import ArrayLike
 from numpy.typing import NDArray
 
+from phydrax import config
 from phydrax.linalg import ArraySpace, OperatorProperties
 from phydrax.optim import cone_barrier_oracle, ConicProgram, NonnegativeCone
 from phydrax.optim._programming._native_hsd import _embedding_residual
@@ -118,7 +119,7 @@ def test_embedding_gap_and_compiled_derivatives(kind: str, scale: float) -> None
     quadratic = _quadratic(kind)
     # Constructor dtype canonicalization uses its native promotion policy;
     # the residual and every derivative below execute under strict_jax.
-    with jax.numpy_dtype_promotion("standard"):
+    with config.context(config.NumericsConfig(dtype_promotion="standard")):
         program = ConicProgram(
             quadratic,
             jnp.zeros((2,), dtype=jnp.float64),
@@ -178,7 +179,7 @@ def test_zero_x_at_positive_tau(kind: str) -> None:
 
 @pytest.mark.parametrize("kind", ["dense", "sparse", "none"])
 def test_infinite_tau_does_not_produce_finite_embedding_residual(kind: str) -> None:
-    with jax.numpy_dtype_promotion("standard"):
+    with config.context(config.NumericsConfig(dtype_promotion="standard")):
         program = ConicProgram(
             _quadratic(kind),
             jnp.zeros((2,), dtype=jnp.float64),

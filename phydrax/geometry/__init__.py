@@ -58,6 +58,7 @@ _DEFERRED_EXPORTS = {
     "SourceBoundaryProjectionQuery": "._source_boundary_records",
     "SourceBoundaryProjectionResult": "._source_boundary_records",
     "SourceProjectionStatus": "._source_boundary_records",
+    "source_entity_id": "._source_identity",
     "GlobalEmbeddingCertificate": "._global_embedding",
     "certify_global_embedding": "._global_embedding",
     "PiecewiseLinearDomain": "._domain_coverage",
@@ -654,6 +655,7 @@ if TYPE_CHECKING:
         SourceBoundaryQuery,
         SourceProjectionStatus,
     )
+    from ._source_identity import source_entity_id
     from ._supermesh import (
         CommonRefinementCoverage,
         CommonRefinementEvidence,
@@ -1018,6 +1020,7 @@ __all__ = [
     "SourceBoundaryProjectionResult",
     "SourceBoundaryQuery",
     "SourceProjectionStatus",
+    "source_entity_id",
     "GlobalEmbeddingCertificate",
     "certify_global_embedding",
     "PiecewiseLinearDomain",

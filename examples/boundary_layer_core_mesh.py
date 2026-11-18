@@ -30,7 +30,7 @@ import json
 import numpy as np
 
 import phydrax as phx
-from phydrax.geometry._source_identity import source_entity_id
+from phydrax.geometry import source_entity_id
 from phydrax.meshing.providers import NativeLayerCoreSource
 
 

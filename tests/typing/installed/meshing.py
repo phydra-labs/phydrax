@@ -9,7 +9,13 @@ from phydrax.discretization import CellMesh, SparseHodge
 from phydrax.discretization.fem import FiniteElementDeRhamComplex
 from phydrax.execution import ExecutionGroup
 from phydrax.geometry.brep import BRepModel
-from phydrax.interchange import load_brep_archive, save_brep_archive
+from phydrax.interchange import (
+    load_brep_archive,
+    load_composition_archive,
+    save_brep_archive,
+    save_composition_archive,
+)
+from phydrax.lifecycle import Composition
 from phydrax.linalg import SparseFactorizationPolicy
 from phydrax.meshing import (
     CellMeshingResult,
@@ -65,6 +71,11 @@ def exact_archive(model: BRepModel, path: Path) -> None:
     assert_type(written, Path)
     restored = load_brep_archive(written)
     assert_type(restored, BRepModel)
+
+
+def composition_archive(composition: Composition, path: Path) -> None:
+    assert_type(save_composition_archive(composition, path), Path)
+    assert_type(load_composition_archive(path), Composition)
 
 
 def explicit_hodge_admission(

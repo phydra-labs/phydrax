@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import Any
 
 import jax
@@ -11,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config
 from phydrax._bvh import (
     _build_median_bvh,
     _MedianBVHLayout,
@@ -24,6 +26,7 @@ from phydrax._bvh import (
     ray_select_leaf_items,
     refit_packed_bvh_bounds,
 )
+from phydrax.execution import default_device
 
 
 _KINDS = tuple(BVHBuildKind)
@@ -63,7 +66,7 @@ def test_packed_bvh_private_index_transfer_preserves_placement_and_inputs(
     lower, upper = _random_boxes(194, 37)
     expected_lower, expected_upper = lower.copy(), upper.copy()
     device = jax.devices("cpu")[0] if forced_cpu else None
-    with jax.default_device(device):
+    with default_device(device) if device is not None else nullcontext():
         bvh = prepare_bvh(lower, upper, dtype=jnp.float64)
         indices = (bvh.left, bvh.right, bvh.leaf_id, bvh.leaf_items, bvh.leaf_node)
         saved = tuple(np.asarray(value).copy() for value in indices)
@@ -86,7 +89,7 @@ def test_packed_bvh_private_indices_follow_nonzero_default_cpu() -> None:
     if len(devices) < 2:
         pytest.skip("Requires two CPU devices.")
     lower, upper = _random_boxes(196, 37)
-    with jax.default_device(devices[1]):
+    with default_device(devices[1]):
         bvh = prepare_bvh(lower, upper, dtype=jnp.float64)
         for value in (bvh.left, bvh.right, bvh.leaf_id, bvh.leaf_items, bvh.leaf_node):
             assert value.device == devices[1]
@@ -96,7 +99,7 @@ def test_packed_bvh_private_indices_follow_nonzero_default_cpu() -> None:
 
 def test_packed_bvh_keeps_x64_disabled_float_warning() -> None:
     lower, upper = _random_boxes(195, 8)
-    with jax.enable_x64(False):
+    with config.context(config.NumericsConfig(enable_x64=False)):
         with pytest.warns(UserWarning, match="float64"):
             bvh = prepare_bvh(lower, upper, dtype=jnp.float64)
         assert bvh.bbox_min.dtype == jnp.float32
