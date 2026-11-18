@@ -231,6 +231,7 @@ class _Hit:
     root_id: tuple[object, ...] | None = None
     pending_frame: bool = False
     pending_point: bool = False
+    unrealized_candidate: bool = False
 
 
 def _distance_bounds(first: np.ndarray, second: np.ndarray, /) -> tuple[float, float]:
@@ -4088,6 +4089,7 @@ def _project_face(
             and status != _SEAM
             and not _periodic_landmark(uv, bounds, periods)
         ),
+        unrealized_candidate=deferred_candidate_uv is not None and status != _SEAM,
     )
 
 
@@ -5909,6 +5911,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                     hit.root_id,
                     hit.pending_frame,
                     hit.pending_point,
+                    hit.unrealized_candidate,
                 )
             hits.append(hit)
         if len(hits) == 1:
@@ -6169,7 +6172,11 @@ class NativeBRepProjection(AbstractBRepProjection):
                     point=value,
                     upper=max(hit.upper, _exact_point_distance_upper(world[row], value)),
                     pending_point=False,
+                    unrealized_candidate=False,
                 )
+        for row, hit in enumerate(hits):
+            if hit.unrealized_candidate:
+                raise RuntimeError(f"Unrealized projection candidate at row {row}.")
         # Frame values enter result identities and regularity decisions. Native
         # interval representatives are batch-independent; unsupported patches
         # retain one fixed-shape JAX evaluation per item.
