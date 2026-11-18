@@ -35,15 +35,11 @@
 #include <optional>
 #include <vector>
 
+#include "directed_interval.hpp"
 #include "interval_program.hpp"
 #include "surface_remesh.hpp"
 
 namespace phx::mc::remesh {
-
-struct Interval {
-  double lower = 0;
-  double upper = 0;
-};
 
 // One validated interval program over a single 3-d input box. The workspace
 // template carries the program's constant seeds; entries [0, 3) receive the

@@ -565,6 +565,26 @@
   On Windows, where both were library calls, the recorded sphere adaptation
   takes about a tenth less time with identical coordinates, edits and
   evidence.
+- The source normal cones of certified surface remeshing are outward-rounded
+  bounds computed without the platform math library. For the zero-set
+  admission the half-angle `asin(|r| / |g|) + asin(2 tolerance / altitude)`
+  uses an upper bound of the gradient spread and of the longest edge, a lower
+  bound of the gradient midpoint's length and of twice the area, quotients
+  rounded up and the upper endpoint of the native elementary arcsine, plus
+  2^-51 radians for the rounding of the stored axis. For the surface envelope
+  the angle between the axis and each candidate direction and the spread
+  `asin((R + c) / |v - p|)` are bounded from above the same way, and the
+  floor of its cone, which must not exceed the half-angle, is rounded down.
+  Before, lengths came from `std::hypot`, quotients were rounded to nearest
+  and `std::asin` and `std::atan2` carried no error term, so a cone could be
+  narrower than its statement by a few units in the last place and differ
+  between platforms. A cone can now be wider by that much: adaptive implicit
+  and envelope surface remeshing may refuse or accept an edit differently
+  than before, once, on every platform. The envelope's candidate filters
+  still measure lengths with `std::hypot`. The interval operations of the
+  zero-set admission moved to one header that both admissions use; native
+  tests check the norm and angle bounds against exact arithmetic and prove
+  the zero-set floor from exact squares of the area and the longest edge.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep

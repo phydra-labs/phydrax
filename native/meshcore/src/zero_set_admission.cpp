@@ -29,55 +29,10 @@ constexpr int kNewtonSteps = 16;
 // a triangle is located to 2^-6 of its extent before the full subdivision.
 constexpr int kWitnessLevels = 6;
 
-bool finite(const Interval& value) {
-  return std::isfinite(value.lower) && std::isfinite(value.upper) && value.lower <= value.upper;
-}
-Interval point(double value) { return {value, value}; }
-// The first smallest (largest) of the values in order, the element std::min
-// (std::max) of a list selects. Spelled out: the list overloads are
-// out-of-line library calls on some toolchains, and these run per interval
-// product.
-template <class... Rest>
-double least(double first, Rest... rest) {
-  double result = first;
-  ((result = rest < result ? rest : result), ...);
-  return result;
-}
-template <class... Rest>
-double greatest(double first, Rest... rest) {
-  double result = first;
-  ((result = result < rest ? rest : result), ...);
-  return result;
-}
-Interval add(const Interval& a, const Interval& b) {
-  return {next_down(a.lower + b.lower), next_up(a.upper + b.upper)};
-}
-Interval subtract(const Interval& a, const Interval& b) {
-  return {next_down(a.lower - b.upper), next_up(a.upper - b.lower)};
-}
-Interval multiply(const Interval& a, const Interval& b) {
-  const double p[4] = {a.lower * b.lower, a.lower * b.upper, a.upper * b.lower,
-                       a.upper * b.upper};
-  return {next_down(least(p[0], p[1], p[2], p[3])), next_up(greatest(p[0], p[1], p[2], p[3]))};
-}
-// Smallest magnitude in the interval (0 when it contains zero).
-double mignitude(const Interval& value) {
-  if (value.lower > 0) return value.lower;
-  if (value.upper < 0) return -value.upper;
-  return 0;
-}
-double magnitude(const Interval& value) {
-  return std::max(std::fabs(value.lower), std::fabs(value.upper));
-}
-// Certified lower bound of |g| over the gradient enclosure.
-double norm_lower(const std::array<Interval, 3>& gradient) {
-  double sum = 0;
-  for (const Interval& component : gradient) {
-    const double m = mignitude(component);
-    sum = next_down(sum + next_down(m * m));
-  }
-  return sum > 0 ? next_down(std::sqrt(sum)) : 0.0;
-}
+// The three quotients of the axis are each rounded once, which turns a unit
+// vector by at most sqrt(3) 2^-53 radians; a common error of the length does
+// not turn it.
+constexpr double kAxisRounding = 0x1p-51;
 void bounding_box(const Point& a, const Point& b, const Point& c, Point& lower, Point& upper) {
   for (int d = 0; d < 3; ++d) {
     lower[d] = least(a[d], b[d], c[d]);
@@ -641,9 +596,12 @@ bool ZeroSetBandAdmission::admits(const Point& a, const Point& b, const Point& c
 // (|r| < |g|), every enclosed direction lies within asin(|r| / |g|) of g. An
 // admitted triangle's points lie within the tolerance of Z, so across its
 // smallest altitude it tilts from the local tangent plane by up to
-// asin(2 tolerance / altitude), which widens the cone. An undecided or
-// zero-straddling enclosure constrains nothing (a crease enclosure holds
-// both sides' gradients, so the crease is kept).
+// asin(2 tolerance / altitude), which widens the cone. Both terms are upper
+// bounds: every norm, quotient and arcsine is rounded toward the wider cone
+// with binary64 operations and the elementary interval kernel, so the
+// half-angle is the same double on every platform and never too small. An
+// undecided or zero-straddling enclosure constrains nothing (a crease
+// enclosure holds both sides' gradients, so the crease is kept).
 NormalCone ZeroSetBandAdmission::normal_cone(const Point& a, const Point& b, const Point& c,
                                              const std::array<VertexEvidence, 3>& evidence) const {
   NormalCone cone;
@@ -663,30 +621,41 @@ NormalCone ZeroSetBandAdmission::normal_cone(const Point& a, const Point& b, con
     middle[d] = g.lower + 0.5 * (g.upper - g.lower);
     spread[d] = next_up(std::max(g.upper - middle[d], middle[d] - g.lower));
   }
-  const double middle_norm = std::hypot(middle[0], middle[1], middle[2]);
-  const double spread_norm = next_up(std::hypot(spread[0], spread[1], spread[2]));
+  // |r| from above and |g| from below, their quotient and its arcsine rounded
+  // up: the half-angle holds every enclosed direction about the midpoint.
+  const double least_parts[3] = {std::fabs(middle[0]), std::fabs(middle[1]),
+                                 std::fabs(middle[2])};
+  const double middle_norm = geometry::norm_lower(least_parts);
+  const double spread_norm = geometry::norm_upper(spread.data());
   if (!(spread_norm < middle_norm) || !std::isfinite(middle_norm)) return cone;
-  const double half = std::asin(spread_norm / middle_norm) + tilt;
+  const double half =
+      next_up(next_up(asin_upper(next_up(spread_norm / middle_norm)) + tilt) + kAxisRounding);
   if (!(half < cone.half_angle)) return cone;
-  for (int d = 0; d < 3; ++d) cone.axis[d] = orientation_ * middle[d] / middle_norm;
+  // The axis is the midpoint's direction with its length rounded to nearest in
+  // a fixed order; kAxisRounding above covers how far that rounding turns it.
+  const double length =
+      std::sqrt((middle[0] * middle[0] + middle[1] * middle[1]) + middle[2] * middle[2]);
+  if (!(length > 0) || !std::isfinite(length)) return cone;
+  for (int d = 0; d < 3; ++d) cone.axis[d] = orientation_ * middle[d] / length;
   cone.half_angle = half;
   return cone;
 }
 
+// asin(2 tolerance / altitude) from above. The smallest altitude is twice the
+// area over the longest edge: the edges are enclosed componentwise, the area
+// is bounded from below and the longest edge from above, and every product
+// and quotient on the way is rounded up.
 double ZeroSetBandAdmission::normal_cone_floor(const Point& a, const Point& b, const Point& c,
                                                const std::array<VertexEvidence, 3>&) const {
-  Point u{}, w{};
-  for (int d = 0; d < 3; ++d) {
-    u[d] = b[d] - a[d];
-    w[d] = c[d] - a[d];
-  }
-  const double twice_area = std::hypot(u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2],
-                                       u[0] * w[1] - u[1] * w[0]);
-  const double longest = greatest(std::hypot(u[0], u[1], u[2]), std::hypot(w[0], w[1], w[2]),
-                                  std::hypot(c[0] - b[0], c[1] - b[1], c[2] - b[2]));
+  const IntervalVector u = enclosed_difference(b, a);
+  const IntervalVector w = enclosed_difference(c, a);
+  const IntervalVector e = enclosed_difference(c, b);
+  const double twice_area = norm_lower(cross(u, w));
+  const double longest = greatest(norm_upper(u), norm_upper(w), norm_upper(e));
   if (!(twice_area > 0) || !(longest > 0)) return kOpenCone;
-  const double tilt = 2 * tolerance_ * longest / twice_area;  // 2 tolerance / altitude
-  return tilt < 1 ? std::asin(tilt) : kOpenCone;
+  // 2 tolerance is exact.
+  const double tilt = next_up(next_up(2 * tolerance_ * longest) / twice_area);
+  return tilt < 1 ? asin_upper(tilt) : kOpenCone;
 }
 
 Point ZeroSetBandAdmission::project(const Point& position) const {
