@@ -12,7 +12,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from fractions import Fraction
 from itertools import combinations, compress, islice
-from math import gcd, lcm
+from math import frexp, gcd, lcm, sqrt
 from typing import Any, cast, final, NamedTuple
 
 import equinox as eqx
@@ -25,10 +25,17 @@ from .._meshcore import (
     interval_program_execute,
     IntervalBoxProgram,
     metric_band_quanta,
+    metric_congruence_defects,
+    metric_hull_frame,
     metric_interpolations,
     metric_lengths,
     metric_logarithms,
+    metric_midpoints,
+    metric_project_goals,
     metric_relative_determinants,
+    metric_relocation_pulls,
+    metric_survivor_goals,
+    metric_tensor_properties,
     metric_tetra_quality,
     PlcBoundaryPolicy,
     relocated_tet_mesh_arrays,
@@ -49,7 +56,7 @@ from ..discretization._cell_mesh import CellBlock
 from ..linalg._exact import solve_exact
 from ..typing import ConvertibleToArray
 from ._lineage import EntityLineageKind
-from ._metric import _tensor_array, _tensor_properties
+from ._metric import _tensor_array
 from ._periodic import periodic_entity_orbit_map, stage_periodic_topology_edit
 from ._result import CellMeshingResult
 from ._topology_edit import (
@@ -79,6 +86,11 @@ _VIOLATION_QUANTUM = 2.0**-10
 # this relative determinant |det E| / max_v prod |e| a cell's binary64 metric
 # determinant det(E^T E) is not certainly positive. No edit creates such a cell.
 _DETERMINANT_FLOOR = 2.0**-22
+# Coordinates lie in the exact domain, of magnitude at most 2^120, so an edge
+# vector has components of at most 2^121 and a form d^T M d sums nine products
+# of at most 2^242 times the largest entry. Entries up to this bound cannot
+# overflow it: a larger tensor has no finite length to measure.
+_METRIC_ENTRY_BOUND = 2.0**778
 # Goals and screening are batched with bounded row counts, not search limits.
 _GOAL_BLOCK = 64
 _SCREEN_BATCH = 1024
@@ -99,6 +111,9 @@ _SEED_STEPS = np.arange(_SPLIT_PARAMETER_BITS + 1, dtype=np.int64)
 _GOAL_STEPS = np.arange(_GOAL_BLOCK, dtype=np.int64)
 _SEED_STEPS.setflags(write=False)
 _GOAL_STEPS.setflags(write=False)
+# An interior vertex moves along the coordinate axes.
+_AXES = np.eye(3, dtype=np.float64)
+_AXES.setflags(write=False)
 # The 24 bytes of one binary64 goal: goals are equal exactly when these are.
 _GOAL_KEY = np.dtype((np.void, 24))
 _TETRA_EDGE_CORNERS = tuple(combinations(range(4), 2))
@@ -485,10 +500,11 @@ class _NativeState:
     # by their ordered source vertex IDs (``_quantized_relocation_candidates``):
     # a pure function of the immutable source, built once per adaptation.
     source_supports: dict[tuple[int, ...], _SourceSupport] = field(default_factory=dict)
-    # Floating projection frames depend only on the same immutable source.
-    source_projections: dict[tuple[int, ...], tuple[np.ndarray, np.ndarray]] = field(
-        default_factory=dict
-    )
+    # Corners, projector and orthonormal basis of a carrier's affine hull:
+    # kernel values that depend only on the same immutable source.
+    source_projections: dict[
+        tuple[int, ...], tuple[np.ndarray, np.ndarray, np.ndarray]
+    ] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -533,11 +549,15 @@ def _band_violations(lengths: np.ndarray, /) -> tuple[tuple[int, ...], tuple[int
     """Max-first quantized long and short distances ``|log(l / band edge)|``.
 
     Each violation is counted in quanta ``_VIOLATION_QUANTUM`` rounded up, so
-    any violation is at least one quantum and an in-band edge is none.
+    any violation is at least one quantum and an in-band edge is none. A
+    length that is zero, infinite or not a number has no finite count: it was
+    not measured, which is neither inside the band nor a violation of it.
     """
     above, below = metric_band_quanta(
         np.asarray(lengths, dtype=np.float64).reshape((-1,))
     )
+    if not (np.all(np.isfinite(above)) and np.all(np.isfinite(below))):
+        raise FloatingPointError("A metric edge length is not a positive finite number.")
 
     def quanta(counts: np.ndarray) -> tuple[int, ...]:
         return tuple(
@@ -607,22 +627,11 @@ def _metric_midpoint(
     second_metric: np.ndarray,
     /,
 ) -> tuple[float, np.ndarray]:
-    delta = second - first
-    first_squared = float(delta @ first_metric @ delta)
-    second_squared = float(delta @ second_metric @ delta)
-    if (
-        not np.isfinite(first_squared + second_squared)
-        or min(first_squared, second_squared) <= 0.0
-    ):
-        return 0.5, 0.5 * (first + second)
-    ratio = float(np.sqrt(second_squared / first_squared))
-    delta_ratio = ratio - 1.0
-    parameter = (
-        0.5
-        if ratio == 1.0
-        else float(np.log1p(0.5 * delta_ratio) / np.log1p(delta_ratio))
+    """Parameter and point of an edge at half its metric length."""
+    parameters, points = metric_midpoints(
+        first[None], second[None], first_metric[None], second_metric[None]
     )
-    return parameter, first + parameter * delta
+    return float(parameters[0]), points[0]
 
 
 def _tetra_orientation(
@@ -1618,33 +1627,48 @@ def _validate_periodic_metric_values(
         periodic_state = _native_periodic_state(mesh, None)
     if periodic_state is None:
         raise ValueError("Periodic metric validation requires a native quotient state.")
-    epsilon = np.finfo(np.float64).eps
+    linear: list[np.ndarray] = []
+    metrics: list[np.ndarray] = []
+    references: list[np.ndarray] = []
+    missing: str | None = None
     for orbit in periodic_state.orbits:
         representative = metric_by_vertex_id.get(int(orbit.representative_vertex_id))
         if representative is None:
-            raise ValueError(
-                "Periodic metric evidence is missing an orbit representative."
-            )
+            missing = "Periodic metric evidence is missing an orbit representative."
+            break
         for member in orbit.members:
             metric = metric_by_vertex_id.get(int(member.vertex_id))
             if metric is None:
-                raise ValueError("Periodic metric evidence is missing a lifted vertex.")
-            linear = np.asarray(member.representative_to_member, dtype=np.float64)[:, :3]
-            try:
-                inverse = np.linalg.inv(linear)
-            except np.linalg.LinAlgError as error:
-                raise ValueError("Periodic metric isometry is singular.") from error
-            expected = inverse.T @ representative @ inverse
-            scale = max(
-                float(np.linalg.norm(expected, ord=np.inf)),
-                float(np.linalg.norm(metric, ord=np.inf)),
-                np.finfo(np.float64).tiny,
+                missing = "Periodic metric evidence is missing a lifted vertex."
+                break
+            linear.append(
+                np.asarray(member.representative_to_member, dtype=np.float64)[:, :3]
             )
-            error = float(np.linalg.norm(metric - expected, ord=np.inf))
-            if error > 256.0 * epsilon * scale:
-                raise ValueError(
-                    "SPD metric values must transform equivariantly across periodic vertex orbits."
-                )
+            metrics.append(metric)
+            references.append(representative)
+        if missing is not None:
+            break
+    # A metric M at the image of the isometry x -> A x + t agrees with the
+    # representative's metric R when M = A R A^T: lengths of mapped segments
+    # are equal, and the transpose of an isometry is its inverse. The defect
+    # is measured at the member, M - A R A^T, the quantity the allowance is
+    # stated for: its norm does not change with the frame of the
+    # representative. Every member before a missing one is judged first.
+    isometries = np.asarray(linear, dtype=np.float64).reshape((-1, 3, 3))
+    errors, scales = metric_congruence_defects(
+        np.ascontiguousarray(np.swapaxes(isometries, 1, 2)),
+        np.asarray(references, dtype=np.float64).reshape((-1, 3, 3)),
+        np.asarray(metrics, dtype=np.float64).reshape((-1, 3, 3)),
+    )
+    tolerance = (256.0 * np.finfo(np.float64).eps) * np.maximum(
+        scales, np.finfo(np.float64).tiny
+    )
+    if not np.all(errors <= tolerance):
+        raise ValueError(
+            "SPD metric values must transform equivariantly across periodic vertex orbits."
+        )
+    if missing is not None:
+        raise ValueError(missing)
 
 
 def _implicit_metric_source(source: CellMeshingResult, /) -> _ImplicitMetricSource | None:
@@ -1745,10 +1769,15 @@ def _prepare_native_state(
         raise ValueError(
             "Tetra adaptation requires a true 3x3 SPD metric at every vertex."
         )
-    properties = _tensor_properties(metric)
-    if not np.all(properties.hermitian) or not np.all(properties.positive_definite):
+    symmetric, positive_definite = metric_tensor_properties(metric)
+    if not np.all(symmetric) or not np.all(positive_definite):
         raise ValueError(
             "Tetra adaptation requires finite symmetric positive-definite metrics."
+        )
+    if np.any(np.abs(metric) > _METRIC_ENTRY_BOUND):
+        raise ValueError(
+            "Tetra adaptation requires metric entries of magnitude at most 2**778: "
+            "larger ones cannot be measured over the exact coordinate domain."
         )
 
     block_cells = []
@@ -2326,10 +2355,16 @@ def _dyadic_split_parameters(
     parameters keep nested ancestry weights binary64. ``None`` means no dyadic
     point of the edge has a consistent realization.
     """
-    parameters = [
-        _metric_midpoint(first, second, first_metric, second_metric)[0]
-        for first, second, first_metric, second_metric, *_ in members
-    ]
+    parameters = metric_midpoints(
+        np.asarray([member[0] for member in members], dtype=np.float64).reshape((-1, 3)),
+        np.asarray([member[1] for member in members], dtype=np.float64).reshape((-1, 3)),
+        np.asarray([member[2] for member in members], dtype=np.float64).reshape(
+            (-1, 3, 3)
+        ),
+        np.asarray([member[3] for member in members], dtype=np.float64).reshape(
+            (-1, 3, 3)
+        ),
+    )[0].tolist()
     tried: set[tuple[Fraction, ...]] = set()
     for bits in range(_SPLIT_PARAMETER_BITS, 0, -1):
         scale = 1 << bits
@@ -4492,77 +4527,6 @@ def _directed_collapse(
     }
 
 
-def _metric_enclosing_center(points: np.ndarray, metric: np.ndarray, /) -> np.ndarray:
-    """Smallest-ball goal in the metric's Cholesky frame.
-
-    Welzl's finite support recursion is evaluated with an explicit stack:
-    every descent removes one point or adds a boundary point, and a ball in
-    three dimensions has at most four support points. The numerical center
-    proposes a carrier only; exact cell/source checks and the measured
-    objective, not a floating ball-membership tolerance, admit the edit.
-    """
-    factor = np.linalg.cholesky(metric).T
-    mapped = points @ factor.T
-    # Welzl's recursion has poor worst-case order on structured stars.
-    # A fixed permutation keeps proposals reproducible while avoiding the
-    # systematic geometric ordering of the mesh's stable vertex IDs.
-    mapped = mapped[np.random.default_rng(0).permutation(len(mapped))]
-    scale = max(float(np.max(np.abs(mapped))), np.finfo(np.float64).tiny)
-    slack = 32.0 * np.finfo(np.float64).eps * scale**2
-
-    # The circumcenter of an ordered support depends on its points alone;
-    # Welzl revisits the same supports under different boundaries.
-    centers: dict[tuple[int, ...], np.ndarray] = {}
-
-    def support_center(support_indices: tuple[int, ...]) -> np.ndarray:
-        center = centers.get(support_indices)
-        if center is None:
-            support = mapped[np.asarray(support_indices)]
-            center = support[0]
-            directions = support[1:] - center
-            gram = directions @ directions.T
-            rhs = np.sum(directions * directions, axis=1) * 0.5
-            coefficients = np.linalg.lstsq(gram, rhs, rcond=None)[0]
-            center = center + directions.T @ coefficients
-            centers[support_indices] = center
-        return center
-
-    def support_ball(indices: tuple[int, ...]) -> tuple[np.ndarray, float]:
-        if not indices:
-            return np.zeros(3), -1.0
-        boundary = mapped[np.asarray(indices)]
-        best_center = boundary[0]
-        best_radius = np.inf
-        # Enumerating the subsets of at most four boundary points also covers
-        # coincident, collinear and coplanar supports without singular solves.
-        for size in range(1, len(indices) + 1):
-            for selected in combinations(range(len(indices)), size):
-                center = (
-                    boundary[selected[0]]
-                    if size == 1
-                    else support_center(tuple(indices[index] for index in selected))
-                )
-                radius = float(np.max(np.sum((boundary - center) ** 2, axis=1)))
-                if radius < best_radius:
-                    best_center, best_radius = center, radius
-        return best_center, best_radius
-
-    center, radius = np.zeros(3), -1.0
-    stack: list[tuple[int, tuple[int, ...], bool]] = [(len(mapped), (), False)]
-    while stack:
-        count, boundary, returning = stack.pop()
-        if returning:
-            distance = float(np.sum((mapped[count - 1] - center) ** 2))
-            if radius < 0.0 or distance > radius + slack:
-                stack.append((count - 1, (*boundary, count - 1), False))
-        elif count == 0 or len(boundary) == 4:
-            center, radius = support_ball(boundary)
-        else:
-            stack.append((count, boundary, True))
-            stack.append((count - 1, boundary, False))
-    return np.linalg.solve(factor, center)
-
-
 def _refused_survivor_carriers(
     state: _NativeState,
     candidates: Sequence[tuple[dict[int, Fraction], np.ndarray]],
@@ -4699,31 +4663,17 @@ def _survivor_moves(
     if simplices is not None and not simplices:
         return
     endpoints = local_points[:2]
-    parameter, _ = _metric_midpoint(
-        endpoints[0], endpoints[1], local_metrics[0], local_metrics[1]
+    # The carrier simplices are coplanar (one facet) or collinear (one curve
+    # or segment): the first spans their affine hull.
+    corners = (
+        None
+        if simplices is None
+        else state.source_points[[state.source_vertex_rows[v] for v in simplices[0]]]
     )
-
-    def goals() -> Iterator[np.ndarray]:
-        for fraction in (parameter, 0.5 * parameter):
-            yield endpoints[0] + fraction * (endpoints[1] - endpoints[0])
-        mean, mean_valid = metric_interpolations(
-            np.asarray((0, 2), dtype=np.int64),
-            np.arange(2, dtype=np.int64),
-            np.full((2,), 0.5, dtype=np.float64),
-            local_metrics[:2],
-            None,
-        )
-        if not mean_valid[0]:
-            raise FloatingPointError("Log-Euclidean interpolation requires SPD metrics.")
-        yield _metric_enclosing_center(local_points[2:], mean[0])
-
-    coordinates = state.source_points
-    for goal in goals():
-        if simplices is not None:
-            corners = coordinates[[state.source_vertex_rows[v] for v in simplices[0]]]
-            span = (corners[1:] - corners[0]).T
-            coefficients = np.linalg.lstsq(span, goal - corners[0], rcond=None)[0]
-            goal = corners[0] + span @ coefficients
+    goals, goal_valid = metric_survivor_goals(local_points, local_metrics[:2], corners)
+    for goal, valid in zip(goals, goal_valid, strict=True):
+        if not valid:
+            raise FloatingPointError("A collapse survivor goal is not a finite point.")
         if implicit_only:
             candidates = _quantized_relocation_candidates(state, None, goal, endpoints[0])
         else:
@@ -6434,8 +6384,9 @@ def _quantized_relocation_candidates(
     # ``float(np.sum((carrier - goal) ** 2))`` for three components is the
     # sequential binary64 sum of the squares.
     goal_x, goal_y, goal_z = (float(value) for value in goal)
-    # A grid coarser than the move cannot resolve it; start where it can.
-    first = min(max(int(np.floor(np.log2(span / np.sqrt(distance)))), 1), 53)
+    # A grid coarser than the move cannot resolve it; start where it can: at
+    # the binary exponent of span / |move|, which is floor(log2) exactly.
+    first = min(max(frexp(span / sqrt(distance))[1] - 1, 1), 53)
     resolutions = iter(
         range(53, first - 1, -1)
         if fine_first and not coarse_and_fine
@@ -6561,10 +6512,14 @@ def _implicit_tangent_pulls(
         return pulls[:0]
     # Scaling before the midpoint avoids overflow and preserves tiny gradients.
     normal = 0.5 * (gradient_lower / scale) + 0.5 * (gradient_upper / scale)
-    norm_squared = float(normal @ normal)
+    # Three-term sums in coordinate order: each a binary64 value of its own.
+    norm_squared = float(
+        normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]
+    )
     if norm_squared == 0.0:
         return pulls[:0]
-    return pulls - ((pulls @ normal) / norm_squared)[:, None] * normal
+    along = pulls[:, 0] * normal[0] + pulls[:, 1] * normal[1] + pulls[:, 2] * normal[2]
+    return pulls - (along / norm_squared)[:, None] * normal
 
 
 def _relocation_goals(
@@ -7049,52 +7004,6 @@ def _screen_relocation_batch_group(
         offset = end
 
 
-def _band_tangents(
-    directions: np.ndarray, normals: np.ndarray, lengths: np.ndarray, pairs: bool, /
-) -> np.ndarray:
-    """Deep relocation tangents, per pull in ``directions`` order.
-
-    For each pull: ``pull - (pull.n / n.n) n`` for every band constraint
-    normal ``n`` (in order) the pull pushes across the band, then, with
-    ``pairs`` (interior vertices), ``(pull.t / t.t) t`` for every nonzero
-    cross product ``t`` of two normals (in ``combinations`` order). Each dot
-    product is a stacked binary64 matrix product, the per-pair kernel of the
-    one-vector ``@``.
-    """
-
-    def dots(first: np.ndarray, second: np.ndarray) -> np.ndarray:
-        return np.matmul(first[:, None, None, :], second[None, :, :, None])[:, :, 0, 0]
-
-    def squares(vectors: np.ndarray) -> np.ndarray:
-        return np.matmul(vectors[:, None, :], vectors[:, :, None])[:, 0, 0]
-
-    squared = squares(normals)
-    components = dots(directions, normals)
-    # The normal points toward the neighbor: positive motion shortens its
-    # spoke, negative motion lengthens it.
-    crosses_band = ((lengths < 1.0) & (components > 0.0)) | (
-        (lengths > 1.0) & (components < 0.0)
-    )
-    candidates = [
-        directions[:, None, :]
-        - (components / np.where(squared > 0.0, squared, 1.0))[:, :, None] * normals[None]
-    ]
-    admitted = [crosses_band & (squared > 0.0)]
-    if pairs:
-        left, right = np.triu_indices(normals.shape[0], k=1)
-        crossed = np.cross(normals[left], normals[right])
-        crossed_squared = squares(crossed)
-        positive = crossed_squared > 0.0
-        candidates.append(
-            (dots(directions, crossed) / np.where(positive, crossed_squared, 1.0))[
-                :, :, None
-            ]
-            * crossed[None]
-        )
-        admitted.append(np.broadcast_to(positive, (directions.shape[0], positive.size)))
-    return np.concatenate(candidates, axis=1)[np.concatenate(admitted, axis=1)]
-
-
 def _relocation_proposals(
     state: _NativeState,
     cache: dict[int, _RelocationSearch | None],
@@ -7259,19 +7168,12 @@ def _relocation_proposals(
             else metric_lengths(local_points, local_metrics, spokes)
         )
         before_band = _band_violations(lengths[measured])
-        forces = (1.0 - 1.0 / lengths)[:, None] * (local_points[1:] - local_points[0])
         outside = measured & ((lengths < _LOWER) | (lengths > _UPPER))
-        # A mean spring can cancel at a non-unit equilibrium. Individual
-        # offending spokes provide descent directions even there; acceptance
-        # still checks the entire star and the same global potential.
-        mean_pull = np.mean(forces, axis=0)[None, :]
-        pulls = np.concatenate(
-            (forces[outside], mean_pull) if deep else (mean_pull, forces[outside])
-        )
         before = prepared.qualities[star_rows]
         # The carrier simplices are coplanar (one facet) or collinear (one
         # curve or segment): the first spans their affine hull.
         corners = projection = None
+        basis = _AXES
         if simplices is not None:
             simplex = simplices[0]
             frame = state.source_projections.get(simplex)
@@ -7279,32 +7181,24 @@ def _relocation_proposals(
                 corners = source_coordinates[
                     [state.source_vertex_rows[v] for v in simplex]
                 ]
-                span = (corners[1:] - corners[0]).T
-                projection = (
-                    span
-                    @ np.linalg.lstsq(span, np.eye(3, dtype=np.float64), rcond=None)[0]
-                )
-                corners.setflags(write=False)
-                projection.setflags(write=False)
-                frame = corners, projection
+                basis, projection = metric_hull_frame(corners)
+                for array in (corners, projection, basis):
+                    array.setflags(write=False)
+                frame = corners, projection, basis
                 state.source_projections[simplex] = frame
-            corners, projection = frame
+            corners, projection, basis = frame
         frames = state.source_supports
         images: _CarrierCache = {}
+        jacobian = None
         if deep and np.any(outside) and not constant_metric:
             # A varying tensor changes with the vertex. Finite differences
-            # propose directions only; exact ancestry and the full objective
-            # below still decide whether a move is admissible.
-            basis = (
-                np.eye(3)
-                if corners is None
-                else np.linalg.qr((corners[1:] - corners[0]).T, mode="reduced")[0]
-            )
+            # along the carrier's basis propose directions only; exact ancestry
+            # and the full objective below still decide whether a move is
+            # admissible.
             scale = max(float(np.max(np.abs(local_points))), 1.0)
-            step = np.sqrt(np.finfo(np.float64).eps) * scale
+            step = sqrt(np.finfo(np.float64).eps) * scale
             derivatives = []
-            for axis in range(basis.shape[1]):
-                direction = basis[:, axis]
+            for direction in basis:
                 derivative = None
                 for sign in (1.0, -1.0):
                     trial = points[row] + sign * step * direction
@@ -7314,7 +7208,12 @@ def _relocation_proposals(
                     if located is None:
                         continue
                     trial_stencil, carrier = located
-                    displacement = float((carrier - points[row]) @ direction)
+                    moved = carrier - points[row]
+                    displacement = float(
+                        moved[0] * direction[0]
+                        + moved[1] * direction[1]
+                        + moved[2] * direction[2]
+                    )
                     if displacement == 0.0:
                         continue
                     trial_metric = _source_metric_from_stencil(
@@ -7332,60 +7231,27 @@ def _relocation_proposals(
                     ) / displacement
                     break
                 derivatives.append(derivative)
-            if all(derivative is not None for derivative in derivatives):
+            if derivatives and all(derivative is not None for derivative in derivatives):
                 jacobian = np.stack(
                     [value for value in derivatives if value is not None], axis=0
                 )
-                # Move the entire star coherently toward the band, rather
-                # than following only one violating spoke. In-band spokes
-                # target their present lengths; the exact carrier and full
-                # star objective still decide whether this proposal is valid.
-                residual = np.clip(lengths[measured], _LOWER, _UPPER) - lengths[measured]
-                displacement = np.linalg.lstsq(
-                    jacobian[:, measured].T, residual, rcond=None
-                )[0]
-                joint_pull = basis @ displacement
-                gradient_pulls = (
-                    [joint_pull]
-                    if np.all(np.isfinite(joint_pull)) and np.any(joint_pull)
-                    else []
-                )
-                for index in np.flatnonzero(outside):
-                    direction = basis @ jacobian[:, index]
-                    norm = float(np.linalg.norm(direction))
-                    if norm > 0.0 and np.isfinite(norm):
-                        direction *= float(np.linalg.norm(forces[index])) / norm
-                        gradient_pulls.append(
-                            direction if lengths[index] < _LOWER else -direction
-                        )
-                if gradient_pulls:
-                    pulls = np.concatenate((np.asarray(gradient_pulls), pulls), axis=0)
-        if deep and np.any(outside):
-            # Work in the carrier's affine hull: a normal projected only
-            # after generating a tangent can point back into a long spoke.
-            normals = (local_points[1:] - local_points[0]) @ local_metrics[0]
-            directions = forces[outside]
-            if projection is not None:
-                projector = projection
-                normals = normals @ projector
-                directions = directions @ projector
-            active_rows = np.flatnonzero(measured)
-            # The closest band constraint is most likely to block the pull.
-            # This orders the complete set of tangent candidates; it does not
-            # discard more distant spokes.
-            margins = np.minimum(
-                np.abs(lengths[active_rows] - _LOWER),
-                np.abs(lengths[active_rows] - _UPPER),
-            )
-            active_rows = active_rows[np.argsort(margins, kind="stable")]
-            tangents = _band_tangents(
-                directions,
-                normals[active_rows],
-                lengths[active_rows],
-                corners is None,
-            )
-            if tangents.shape[0]:
-                pulls = np.concatenate((pulls, tangents), axis=0)
+        # Spring forces of the offending spokes and their mean (a mean spring
+        # can cancel at a non-unit equilibrium; the individual spokes still
+        # give descent directions), the coherent step and gradients of the
+        # measured lengths when the tensor varies, and for a deep search the
+        # tangents along the band constraints in the carrier's hull. They
+        # propose only: acceptance checks the entire star.
+        pulls = metric_relocation_pulls(
+            local_points,
+            local_metrics[0],
+            lengths,
+            measured,
+            deep=deep,
+            interior=corners is None,
+            basis=basis,
+            projector=projection,
+            jacobian=jacobian,
+        )
         if implicit_only and not periodic:
             tangent_pulls = _implicit_tangent_pulls(state, local_points[0], pulls)
             if tangent_pulls.shape[0]:
@@ -7436,12 +7302,7 @@ def _relocation_proposals(
             size = 0
             for goals in raw_goals:
                 if corners is not None and projection is not None:
-                    # A stacked matrix-vector product per row: the binary64
-                    # result of ``projection @ (goal - corners[0])``.
-                    goals = (
-                        corners[0]
-                        + np.matmul(projection, (goals - corners[0])[:, :, None])[:, :, 0]
-                    )
+                    goals = metric_project_goals(goals, corners[0], projection)
                 goals = np.ascontiguousarray(goals)
                 # Byte keys in first-occurrence order; a key is the exact
                 # binary64 goal, so new goals are rebuilt from their keys.

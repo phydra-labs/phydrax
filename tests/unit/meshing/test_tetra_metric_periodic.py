@@ -446,6 +446,54 @@ def test_native_tetra_metric_rejects_non_equivariant_periodic_spd_data() -> None
         _execute(source, metric)
 
 
+def test_periodic_metric_allowance_does_not_depend_on_the_rotation() -> None:
+    from phydrax._meshcore import TetMeshPeriodicMember, TetMeshPeriodicOrbit
+    from phydrax.meshing._tetra_metric import (
+        _native_periodic_state,
+        _validate_periodic_metric_values,
+    )
+
+    mesh = _periodic_tetra_source().mesh
+    state = _native_periodic_state(mesh, None)
+    assert state is not None
+    representative, member = (int(value) for value in mesh.vertex_global_ids[:2])
+    # A member under a rotation by 45 degrees about the z axis. Its metric
+    # differs from the rotated unit metric of the representative by a
+    # symmetric defect of infinity norm 240 eps (241 eps with the rounding of
+    # the rotation), inside the allowance of 256 eps of the metric's norm; the
+    # same defect seen from the representative, A^T M A - R, has norm
+    # 409 eps. The allowance is for the defect at the member.
+    cosine = float(np.sqrt(0.5))
+    rotation = np.asarray(
+        (
+            (cosine, -cosine, 0.0, 0.0),
+            (cosine, cosine, 0.0, 0.0),
+            (0.0, 0.0, 1.0, 0.0),
+        )
+    )
+    defect = np.asarray(((-1.0, 0.0, 0.0), (0.0, 0.0, -1.0), (0.0, -1.0, 0.0)))
+    epsilon = float(np.finfo(np.float64).eps)
+
+    def judged(size: float) -> None:
+        orbit = TetMeshPeriodicOrbit(
+            0,
+            representative,
+            (TetMeshPeriodicMember(member, np.zeros((3,), dtype=np.int64), rotation),),
+        )
+        _validate_periodic_metric_values(
+            mesh,
+            {
+                representative: np.eye(3, dtype=np.float64),
+                member: np.eye(3, dtype=np.float64) + size * epsilon * defect,
+            },
+            state._replace(orbits=(orbit,)),
+        )
+
+    judged(240.0)
+    with pytest.raises(ValueError, match="equivariantly"):
+        judged(300.0)
+
+
 def test_periodic_tet_provider_accepts_simplex_3_cell_mesh() -> None:
     source_mesh = _periodic_tetra_source().mesh
     source_topology = source_mesh.periodic_topology

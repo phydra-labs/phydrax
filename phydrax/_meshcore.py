@@ -1379,6 +1379,31 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_metric_band_quanta": (_I32, (_I64, _P, _P, _P)),
     "phx_mc_metric_relative_determinants": (_I32, (_I64, _P, _P, _P)),
     "phx_mc_metric_tetra_quality": (_I32, (_I64, _P, _I64, _P, _P, _P)),
+    "phx_mc_metric_midpoints": (_I32, (_I64, _P, _P, _P, _P, _P, _P)),
+    "phx_mc_metric_survivor_goals": (_I32, (_I64, _P, _P, _I32, _P, _P, _P)),
+    "phx_mc_metric_tensor_properties": (_I32, (_I64, _P, _P, _P)),
+    "phx_mc_metric_congruence_defects": (_I32, (_I64, _P, _P, _P, _P, _P)),
+    "phx_mc_metric_hull_frame": (_I32, (_I32, _P, _P, _P, ctypes.POINTER(_I32))),
+    "phx_mc_metric_project_goals": (_I32, (_I64, _P, _P, _P, _P)),
+    "phx_mc_metric_relocation_pulls": (
+        _I32,
+        (
+            _I64,
+            _P,
+            _P,
+            _P,
+            _P,
+            _I32,
+            _I32,
+            _I32,
+            _P,
+            _P,
+            _P,
+            _I64,
+            _P,
+            ctypes.POINTER(_I64),
+        ),
+    ),
 }
 
 
@@ -9803,7 +9828,8 @@ def metric_band_quanta(lengths: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     ``(above, below)`` as float arrays of the shape of ``lengths``: the
     violation ``|log(length / band edge)|`` in quanta of ``2**-10`` rounded
     up, at least one for a length outside the band and zero inside it. A zero
-    or infinite length has an infinite count; NaN violates nothing.
+    or infinite length has an infinite count. A NaN length was not measured
+    and has no count: both are NaN.
     """
     values = np.ascontiguousarray(lengths, dtype=np.float64)
     above = np.empty_like(values)
@@ -9861,6 +9887,295 @@ def metric_tetra_quality(
     )
     _raise_for_call(status, "metric_tetra_quality")
     return quality
+
+
+def metric_tensor_properties(tensors: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+    """Whether ``(n, 3, 3)`` tensors are symmetric and positive definite.
+
+    The gate of a metric field. With ``lambda`` the eigenvalues of the
+    symmetric part ``(M + M^T) / 2`` and ``tol = 64 eps max |lambda|``, a
+    tensor is symmetric when ``max |M - M^T| <= tol`` and positive definite
+    when it is symmetric and ``min lambda > tol``. Neither holds for a
+    non-finite entry. A deterministic kernel verdict: the same on every
+    platform.
+    """
+    values = _metric_tensors(tensors, "tensors")
+    symmetric = np.empty((values.shape[0],), dtype=np.int8)
+    positive_definite = np.empty((values.shape[0],), dtype=np.int8)
+    status = load_meshcore()["phx_mc_metric_tensor_properties"](
+        values.shape[0],
+        values.ctypes.data,
+        symmetric.ctypes.data,
+        positive_definite.ctypes.data,
+    )
+    _raise_for_call(status, "metric_tensor_properties")
+    return symmetric.astype(np.bool_), positive_definite.astype(np.bool_)
+
+
+def metric_congruence_defects(
+    linear: np.ndarray, metrics: np.ndarray, references: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Defects of the congruences ``A^T M A = R`` of ``(n, 3, 3)`` arrays.
+
+    The form in which a metric ``M`` at the image of a linear map ``A`` agrees
+    with the metric ``R`` at its source. Returns the infinity norms of
+    ``A^T M A - R`` and, as their scale, the larger of the infinity norms of
+    ``A^T M A`` and ``R``. Deterministic kernel values: the same bits on
+    every platform.
+    """
+    maps = _metric_tensors(linear, "linear")
+    tensors = _metric_tensors(metrics, "metrics")
+    sources = _metric_tensors(references, "references")
+    if tensors.shape != maps.shape or sources.shape != maps.shape:
+        raise ValueError("linear, metrics and references must have the same shape.")
+    errors = np.empty((maps.shape[0],), dtype=np.float64)
+    scales = np.empty((maps.shape[0],), dtype=np.float64)
+    status = load_meshcore()["phx_mc_metric_congruence_defects"](
+        maps.shape[0],
+        maps.ctypes.data,
+        tensors.ctypes.data,
+        sources.ctypes.data,
+        errors.ctypes.data,
+        scales.ctypes.data,
+    )
+    _raise_for_call(status, "metric_congruence_defects")
+    return errors, scales
+
+
+def metric_midpoints(
+    first_points: np.ndarray,
+    second_points: np.ndarray,
+    first_metrics: np.ndarray,
+    second_metrics: np.ndarray,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Metric midpoints of ``n`` segments: parameters ``(n,)`` and points ``(n, 3)``.
+
+    The parameter ``t`` of the point at half the metric length of the segment
+    when the size varies geometrically between the metrics at its ends,
+    ``log1p((r - 1) / 2) / log1p(r - 1)`` with ``r`` the ratio of the end
+    lengths, and the point ``first + t (second - first)``. ``t`` is ``1/2``
+    for equal end lengths and where an end length is not positive and finite.
+    A deterministic kernel value: the same bits on every platform.
+    """
+    first = np.ascontiguousarray(first_points, dtype=np.float64)
+    second = np.ascontiguousarray(second_points, dtype=np.float64)
+    if first.ndim != 2 or first.shape[1] != 3 or second.shape != first.shape:
+        raise ValueError("first_points and second_points must both have shape (n, 3).")
+    first_tensors = _metric_tensors(first_metrics, "first_metrics")
+    second_tensors = _metric_tensors(second_metrics, "second_metrics")
+    if (
+        first_tensors.shape[0] != first.shape[0]
+        or second_tensors.shape != first_tensors.shape
+    ):
+        raise ValueError("Metrics must have one tensor per segment end.")
+    parameters = np.empty((first.shape[0],), dtype=np.float64)
+    points = np.empty_like(first)
+    status = load_meshcore()["phx_mc_metric_midpoints"](
+        first.shape[0],
+        first.ctypes.data,
+        second.ctypes.data,
+        first_tensors.ctypes.data,
+        second_tensors.ctypes.data,
+        parameters.ctypes.data,
+        points.ctypes.data,
+    )
+    _raise_for_call(status, "metric_midpoints")
+    return parameters, points
+
+
+def metric_survivor_goals(
+    points: np.ndarray, metrics: np.ndarray, corners: np.ndarray | None, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """The three goals of a collapse survivor, in the order they are tried.
+
+    ``points`` hold the survivor, the removed vertex and then the merged
+    link; ``metrics`` the ``(2, 3, 3)`` tensors of the first two. The goals
+    ``(3, 3)`` are the metric midpoint of the collapsed edge, the point
+    halfway to it, and the center of the smallest ball that holds the link in
+    the log-Euclidean mean of the two tensors (it minimizes the longest
+    survivor spoke). With ``corners`` (two or three points) each goal is
+    projected onto their affine hull, the survivor's carrier. The flags
+    ``(3,)`` are false, with a zero goal, where a goal does not exist: no link
+    vertex, a tensor that is not positive definite, or a value that is not
+    finite. Deterministic kernel values: the same bits on every platform.
+    """
+    coordinates = np.ascontiguousarray(points, dtype=np.float64)
+    if coordinates.ndim != 2 or coordinates.shape[1] != 3 or coordinates.shape[0] < 2:
+        raise ValueError("points must have shape (n, 3) with n >= 2.")
+    tensors = _metric_tensors(metrics, "metrics")
+    if tensors.shape[0] != 2:
+        raise ValueError(
+            "metrics must hold the tensors of the survivor and the removed vertex."
+        )
+    hull = None
+    if corners is not None:
+        hull = np.ascontiguousarray(corners, dtype=np.float64)
+        if hull.ndim != 2 or hull.shape[1] != 3 or hull.shape[0] not in (2, 3):
+            raise ValueError("corners must have shape (2, 3) or (3, 3).")
+    goals = np.empty((3, 3), dtype=np.float64)
+    valid = np.empty((3,), dtype=np.int8)
+    status = load_meshcore()["phx_mc_metric_survivor_goals"](
+        coordinates.shape[0],
+        coordinates.ctypes.data,
+        tensors.ctypes.data,
+        0 if hull is None else hull.shape[0],
+        None if hull is None else hull.ctypes.data,
+        goals.ctypes.data,
+        valid.ctypes.data,
+    )
+    _raise_for_call(status, "metric_survivor_goals")
+    return goals, valid.astype(np.bool_)
+
+
+def metric_hull_frame(corners: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+    """Orthonormal basis and projector of the affine hull of 2 or 3 corners.
+
+    The basis ``(rank, 3)`` spans the edges from the first corner
+    (Gram-Schmidt in corner order; dependent edges add no row) and the
+    ``(3, 3)`` projector is the orthogonal projector onto it. Deterministic
+    kernel values: the same bits on every platform.
+    """
+    hull = np.ascontiguousarray(corners, dtype=np.float64)
+    if hull.ndim != 2 or hull.shape[1] != 3 or hull.shape[0] not in (2, 3):
+        raise ValueError("corners must have shape (2, 3) or (3, 3).")
+    basis = np.empty((2, 3), dtype=np.float64)
+    projector = np.empty((3, 3), dtype=np.float64)
+    rank = _I32(0)
+    status = load_meshcore()["phx_mc_metric_hull_frame"](
+        hull.shape[0],
+        hull.ctypes.data,
+        basis.ctypes.data,
+        projector.ctypes.data,
+        ctypes.byref(rank),
+    )
+    _raise_for_call(status, "metric_hull_frame")
+    return basis[: rank.value].copy(), projector
+
+
+def metric_project_goals(
+    goals: np.ndarray, origin: np.ndarray, projector: np.ndarray, /
+) -> np.ndarray:
+    """``origin + projector (goal - origin)`` for ``(n, 3)`` goals.
+
+    Each coordinate is a fixed-order sum of three products: the same bits on
+    every platform.
+    """
+    rows = np.ascontiguousarray(goals, dtype=np.float64)
+    start = np.ascontiguousarray(origin, dtype=np.float64)
+    matrix = np.ascontiguousarray(projector, dtype=np.float64)
+    if (
+        rows.ndim != 2
+        or rows.shape[1] != 3
+        or start.shape != (3,)
+        or matrix.shape != (3, 3)
+    ):
+        raise ValueError(
+            "goals, origin and projector must have shapes (n, 3), (3,), (3, 3)."
+        )
+    projected = np.empty_like(rows)
+    status = load_meshcore()["phx_mc_metric_project_goals"](
+        rows.shape[0],
+        rows.ctypes.data,
+        start.ctypes.data,
+        matrix.ctypes.data,
+        projected.ctypes.data,
+    )
+    _raise_for_call(status, "metric_project_goals")
+    return projected
+
+
+def metric_relocation_pulls(
+    points: np.ndarray,
+    metric: np.ndarray,
+    lengths: np.ndarray,
+    measured: np.ndarray,
+    /,
+    *,
+    deep: bool,
+    interior: bool,
+    basis: np.ndarray,
+    projector: np.ndarray | None,
+    jacobian: np.ndarray | None,
+) -> np.ndarray:
+    """Pulls ``(p, 3)`` of a relocation: displacements of the first point.
+
+    ``points`` hold a vertex and then its ``n`` neighbors, ``metric`` the
+    tensor at the vertex, ``lengths`` the metric lengths of its spokes and
+    ``measured`` which of them count. A spoke is outside when it is measured
+    and its length is outside the band. The pulls, in order:
+
+    - with ``jacobian`` (derivatives of the spoke lengths along the rows of
+      ``basis``, shape ``(len(basis), n)``), for a deep search with an outside
+      spoke: the least-squares step that moves every measured spoke to the
+      band, then the gradient direction of each outside spoke;
+    - the spring forces of the outside spokes and their mean over all spokes
+      (forces first for a deep search, the mean first otherwise);
+    - for a deep search with an outside spoke: each outside force without its
+      part along every band normal it pushes across the band, then, for an
+      ``interior`` vertex, its part along each cross product of two normals.
+      Forces and normals are projected by ``projector`` when it is given.
+
+    A pull that is not finite is left out. Deterministic kernel values: the
+    same bits on every platform.
+    """
+    coordinates = np.ascontiguousarray(points, dtype=np.float64)
+    tensor = np.ascontiguousarray(metric, dtype=np.float64)
+    spokes = np.ascontiguousarray(lengths, dtype=np.float64)
+    counted = np.ascontiguousarray(measured, dtype=np.int8)
+    count = spokes.shape[0]
+    if (
+        coordinates.shape != (count + 1, 3)
+        or count < 1
+        or tensor.shape != (3, 3)
+        or spokes.ndim != 1
+        or counted.shape != (count,)
+    ):
+        raise ValueError(
+            "points, metric, lengths and measured must have shapes (n + 1, 3), "
+            "(3, 3), (n,), (n,) with n >= 1."
+        )
+    frame = np.ascontiguousarray(basis, dtype=np.float64)
+    if frame.ndim != 2 or frame.shape[1] != 3 or frame.shape[0] > 3:
+        raise ValueError("basis must have shape (k, 3) with k <= 3.")
+    matrix = None
+    if projector is not None:
+        matrix = np.ascontiguousarray(projector, dtype=np.float64)
+        if matrix.shape != (3, 3):
+            raise ValueError("projector must have shape (3, 3).")
+    derivatives = None
+    if jacobian is not None:
+        derivatives = np.ascontiguousarray(jacobian, dtype=np.float64)
+        if derivatives.shape != (frame.shape[0], count) or frame.shape[0] == 0:
+            raise ValueError("jacobian must have shape (len(basis), n) with a basis.")
+    # Rows the kernel can write if every measured spoke is outside the band:
+    # gradient pulls, forces and mean, tangents.
+    active = int(np.count_nonzero(counted))
+    capacity = active + 1
+    if derivatives is not None:
+        capacity += active + 1
+    if deep:
+        capacity += active * (active + (active * (active - 1) // 2 if interior else 0))
+    pulls = np.empty((capacity, 3), dtype=np.float64)
+    written = _I64(0)
+    status = load_meshcore()["phx_mc_metric_relocation_pulls"](
+        count,
+        coordinates.ctypes.data,
+        tensor.ctypes.data,
+        spokes.ctypes.data,
+        counted.ctypes.data,
+        int(deep),
+        int(interior),
+        frame.shape[0],
+        frame.ctypes.data,
+        None if matrix is None else matrix.ctypes.data,
+        None if derivatives is None else derivatives.ctypes.data,
+        capacity,
+        pulls.ctypes.data,
+        ctypes.byref(written),
+    )
+    _raise_for_call(status, "metric_relocation_pulls")
+    return pulls[: written.value].copy()
 
 
 __all__ = [
@@ -9947,10 +10262,17 @@ __all__ = [
     "meshcore_exact_domain",
     "meshcore_identity",
     "metric_band_quanta",
+    "metric_congruence_defects",
     "metric_interpolations",
     "metric_lengths",
+    "metric_hull_frame",
     "metric_logarithms",
+    "metric_midpoints",
+    "metric_project_goals",
     "metric_relative_determinants",
+    "metric_relocation_pulls",
+    "metric_survivor_goals",
+    "metric_tensor_properties",
     "metric_tetra_quality",
     "point_triangle_locations",
     "polygon_intersection_moments",

@@ -15,6 +15,7 @@ import phydrax as phx
 from phydrax._geometry_predicates import PredicateMode
 from phydrax._meshcore import (
     metric_lengths,
+    metric_survivor_goals,
     metric_tetra_quality,
     TetMeshEdit,
     TetMeshEditKind,
@@ -37,7 +38,6 @@ from phydrax.meshing._tetra_metric import (
     _entity_weights,
     _facet_group_map,
     _locate_source_weights,
-    _metric_enclosing_center,
     _metric_logarithms,
     _NativeState,
     _prepare_native_state,
@@ -1411,6 +1411,49 @@ def test_protected_boundary_edge_and_invalid_metric_are_refused() -> None:
     invalid[0, 0, 1] = 1.0
     with pytest.raises(ValueError, match="symmetric positive-definite"):
         _adapt(source, invalid)
+
+
+@pytest.mark.parametrize(
+    ("tensor", "refusal"),
+    [
+        (np.diag((1.0, 1.0, 2.0**-47)), "symmetric positive-definite"),
+        (
+            np.asarray(((1.0, 2.0**-45, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))),
+            "symmetric positive-definite",
+        ),
+        (np.eye(3) * 2.0**779, r"magnitude at most 2\*\*778"),
+    ],
+    ids=["nearly-singular", "asymmetric", "beyond-the-coordinate-domain"],
+)
+def test_metric_field_gate_refuses_tensors_outside_its_tolerances(
+    tensor: np.ndarray, refusal: str
+) -> None:
+    source = _source()
+    field = np.broadcast_to(np.eye(3), (source.mesh.vertex_global_ids.size, 3, 3)).copy()
+    field[0] = tensor
+    with pytest.raises(ValueError, match=refusal):
+        _adapt(source, field)
+
+
+def test_metric_field_gate_admits_tensors_inside_its_tolerances() -> None:
+    source = _source()
+    field = np.broadcast_to(np.eye(3), (source.mesh.vertex_global_ids.size, 3, 3)).copy()
+    # The tolerance is 64 eps of the largest eigenvalue: an asymmetry and a
+    # smallest eigenvalue on its admitted side.
+    field[0] = np.asarray(((1.0, 2.0**-47, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)))
+    field[1] = np.diag((1.0, 1.0, 2.0**-45))
+    state = _state(source, field)
+    state.native.close()
+
+
+def test_unmeasured_lengths_have_no_band_violation_count() -> None:
+    from phydrax.meshing._tetra_metric import _band_violations
+
+    # log(sqrt 2) is 354.9 quanta of 2^-10 on either side of the band.
+    assert _band_violations(np.asarray((1.0, 2.0, 0.5, 1.2))) == ((355,), (355,))
+    for unmeasured in (np.nan, 0.0, np.inf):
+        with pytest.raises(FloatingPointError, match="not a positive finite number"):
+            _band_violations(np.asarray((1.0, unmeasured)))
 
 
 def _implicit_plane_pyramid(
@@ -3030,24 +3073,29 @@ def test_multi_pair_collapse_edit_commits_through_the_native_wrapper(
 
 
 @pytest.mark.parametrize("dimension", (1, 2, 3))
-def test_collapse_enclosing_center_handles_degenerate_metric_supports(
+def test_collapse_center_goal_handles_degenerate_metric_supports(
     dimension: int,
 ) -> None:
     metric = np.diag((4.0, 1.0, 0.25))
     axes = np.diag((0.5, 1.0, 2.0))[:dimension]
     offset = np.asarray((0.25, -0.5, 0.75))
-    # More points than Python's recursion depth: support size, not a work
-    # allowance or the call stack, bounds the mathematical recursion.
+    # Far more link vertices than a recursion could nest: the support size,
+    # not a work allowance or a call stack, bounds the search.
     interior = (
         np.linspace(-0.5, 0.5, 1025)[:, None]
         * np.sum(axes, axis=0)[None, :]
         / np.sqrt(dimension)
     )
-    points = np.concatenate((axes, -axes, interior)) + offset
-    for cloud in (points, points[::-1]):
-        np.testing.assert_allclose(
-            _metric_enclosing_center(cloud, metric), offset, rtol=0.0, atol=1e-14
+    link = np.concatenate((axes, -axes, interior)) + offset
+    # The survivor and the removed vertex carry the same tensor, so the link
+    # is enclosed in that metric; the third goal is the center of its ball.
+    edge = np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)), dtype=np.float64)
+    for cloud in (link, link[::-1]):
+        goals, valid = metric_survivor_goals(
+            np.concatenate((edge, cloud)), np.stack((metric, metric)), None
         )
+        assert valid.all()
+        np.testing.assert_allclose(goals[2], offset, rtol=0.0, atol=1e-14)
 
 
 def test_exact_entity_frames_project_rational_edge_and_triangle() -> None:
