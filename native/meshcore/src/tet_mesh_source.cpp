@@ -356,7 +356,8 @@ int32_t TetMesh::bind_implicit_source(std::shared_ptr<TetImplicitSource> source)
   for (const auto& [key, group_count] : exterior) {
     if (group_count.second != 1) return PHX_MC_INVALID_INPUT;
   }
-  remesh::ZeroSetBandAdmission probe(source->value, source->gradient, source->tolerance, 1);
+  remesh::ZeroSetBandAdmission probe(source->value, source->gradient, source->tolerance, 1,
+                                     nullptr, source->decision);
   int orientation = source->orientation;
   for (const auto& facet : facets_) {
     if (!std::binary_search(source->groups.begin(), source->groups.end(), facet.source)) continue;
@@ -371,7 +372,7 @@ int32_t TetMesh::bind_implicit_source(std::shared_ptr<TetImplicitSource> source)
     if (orientation == 0) orientation = sign;
     if (sign != orientation) return PHX_MC_INVALID_INPUT;
     remesh::ZeroSetBandAdmission admission(source->value, source->gradient, source->tolerance,
-                                           orientation);
+                                           orientation, nullptr, source->decision);
     const std::array<remesh::VertexEvidence, 3> evidence{
         admission.evaluate(vertices[0]), admission.evaluate(vertices[1]),
         admission.evaluate(vertices[2])};
@@ -1057,7 +1058,8 @@ bool TetMesh::source_face_valid(const TetEditFacet& facet,
     remesh::ZeroSetBandAdmission admission(implicit_source_->value, implicit_source_->gradient,
                                           implicit_source_->tolerance,
                                           implicit_source_->orientation,
-                                          &implicit_source_->admissions);
+                                          &implicit_source_->admissions,
+                                          implicit_source_->decision);
     const std::array<remesh::VertexEvidence, 3> evidence{
         admission.evaluate(vertices[0]), admission.evaluate(vertices[1]),
         admission.evaluate(vertices[2])};

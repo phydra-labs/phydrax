@@ -460,6 +460,7 @@ class _TetImplicitSource(ctypes.Structure):
         ("frame_id_length", _I64),
         ("transversality_refusals", _I64),
         ("distance_refusals", _I64),
+        ("decision", _I32),
     )
 
 
@@ -4089,6 +4090,19 @@ class IntervalBoxProgram(NamedTuple):
     """Workspace entries (real-power bases) whose lower bound must be >= 0."""
 
 
+class ZeroSetDecision(IntEnum):
+    """How the facets of an implicit source are admitted.
+
+    ``CERTIFIED`` proves a facet's side and distance with interval enclosures.
+    ``SAMPLED`` screens them at the facet's corners, edge midpoints and
+    centroid from point evaluations of the same programs. It proves nothing
+    and is for construction whose result is certified afterwards.
+    """
+
+    CERTIFIED = 0
+    SAMPLED = 1
+
+
 class TetMeshImplicitSource(NamedTuple):
     """Source-bound native interval programs and exterior facet group rows."""
 
@@ -4101,6 +4115,7 @@ class TetMeshImplicitSource(NamedTuple):
     source_revision: str
     binding_id: str
     frame_id: str
+    decision: ZeroSetDecision = ZeroSetDecision.CERTIFIED
 
 
 class TetMeshImplicitSnapshot(NamedTuple):
@@ -4192,6 +4207,8 @@ def _tet_implicit_source_payload(
     orientation = _int32_argument(source.orientation, "implicit_source.orientation")
     if not np.isfinite(tolerance) or tolerance <= 0 or orientation not in (-1, 0, 1):
         raise ValueError("Implicit source tolerance or orientation is invalid.")
+    if not isinstance(source.decision, ZeroSetDecision):
+        raise TypeError("implicit_source.decision must be ZeroSetDecision.")
     bound, encoded, buffers = _tet_mesh_identity_payload(
         source.source_id, source.source_revision, source.binding_id, source.frame_id
     )
@@ -4214,6 +4231,7 @@ def _tet_implicit_source_payload(
         len(encoded[3]),
         0,
         0,
+        int(source.decision),
     )
     return view, (*value_banks, *gradient_banks, groups, *buffers)
 
@@ -4279,6 +4297,7 @@ def _tet_implicit_source_snapshot(
         text(view.source_revision, view.source_revision_length),
         text(view.binding_id, view.binding_id_length),
         text(view.frame_id, view.frame_id_length),
+        ZeroSetDecision(int(view.decision)),
     )
     return TetMeshImplicitSnapshot(
         source, int(view.transversality_refusals), int(view.distance_refusals)
@@ -11373,6 +11392,7 @@ __all__ = [
     "SurfaceEnvelopeResult",
     "surface_envelope",
     "IntervalBoxProgram",
+    "ZeroSetDecision",
     "ZeroSetRemeshResult",
     "zero_set_remesh",
 ]

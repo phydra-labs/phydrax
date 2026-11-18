@@ -33,6 +33,15 @@ constexpr int kWitnessLevels = 6;
 // vector by at most sqrt(3) 2^-53 radians; a common error of the length does
 // not turn it.
 constexpr double kAxisRounding = 0x1p-51;
+// The points of the sampled screen in barycentric coordinates: the corners,
+// the edge midpoints and the centroid.
+constexpr std::array<Point, 7> kScreenSamples{{{1, 0, 0},
+                                               {0, 1, 0},
+                                               {0, 0, 1},
+                                               {0.5, 0.5, 0},
+                                               {0, 0.5, 0.5},
+                                               {0.5, 0, 0.5},
+                                               {1.0 / 3, 1.0 / 3, 1.0 / 3}}};
 void bounding_box(const Point& a, const Point& b, const Point& c, Point& lower, Point& upper) {
   for (int d = 0; d < 3; ++d) {
     lower[d] = least(a[d], b[d], c[d]);
@@ -541,8 +550,51 @@ double ZeroSetBandAdmission::split_distance(const Point& a, const Point& b, cons
   return worst;
 }
 
+// Floating-point values at each sample: the midpoints of the two programs'
+// point enclosures. A sample that cannot be evaluated leaves the triangle
+// undecided (sign 0, infinite distance).
+ZeroSetBandAdmission::Screen ZeroSetBandAdmission::screen(const Point& a, const Point& b,
+                                                          const Point& c) const {
+  Point normal{};
+  for (int d = 0; d < 3; ++d) {
+    const int i = (d + 1) % 3, j = (d + 2) % 3;
+    normal[d] = (b[i] - a[i]) * (c[j] - a[j]) - (b[j] - a[j]) * (c[i] - a[i]);
+  }
+  Screen result;
+  bool mixed = false;
+  for (size_t k = 0; k < kScreenSamples.size(); ++k) {
+    const Point& weight = kScreenSamples[k];
+    Point sample{};
+    for (int d = 0; d < 3; ++d) sample[d] = weight[0] * a[d] + weight[1] * b[d] + weight[2] * c[d];
+    Interval value{};
+    std::array<Interval, 3> gradient{};
+    if (!value_.evaluate(sample, sample, &value) || !finite(value) ||
+        !gradient_over(gradient_, sample, sample, gradient))
+      return {0, kInfinity, k};
+    double along = 0, squared = 0;
+    for (int d = 0; d < 3; ++d) {
+      const Interval& g = gradient[static_cast<size_t>(d)];
+      const double middle = g.lower + (g.upper - g.lower) / 2;
+      along += normal[d] * middle;
+      squared += middle * middle;
+    }
+    const int sign = along > 0 ? 1 : along < 0 ? -1 : 0;
+    if (k == 0) result.sign = sign;
+    mixed = mixed || sign != result.sign;
+    const double residual = std::abs(value.lower + (value.upper - value.lower) / 2);
+    const double distance = squared > 0 ? residual / std::sqrt(squared) : kInfinity;
+    if (!(distance <= result.distance)) {
+      result.distance = distance;
+      result.worst = k;
+    }
+  }
+  if (mixed) result.sign = 0;
+  return result;
+}
+
 int ZeroSetBandAdmission::transversal_sign(const Point& a, const Point& b,
                                            const Point& c) const {
+  if (decision_ == ZeroSetDecision::kSampled) return screen(a, b, c).sign;
   Point lower{}, upper{};
   bounding_box(a, b, c, lower, upper);
   std::array<Interval, 3> gradient{};
@@ -567,6 +619,20 @@ int ZeroSetBandAdmission::transversal_sign(const Point& a, const Point& b,
 
 bool ZeroSetBandAdmission::admits(const Point& a, const Point& b, const Point& c,
                                   const std::array<VertexEvidence, 3>& evidence) const {
+  if (decision_ == ZeroSetDecision::kSampled) {
+    const Screen sampled = screen(a, b, c);
+    distance_barycentric_.reset();
+    if (sampled.sign != orientation_) {
+      ++refusals_.transversality;
+      return false;
+    }
+    if (!(sampled.distance <= tolerance_)) {
+      distance_barycentric_ = kScreenSamples[sampled.worst];
+      ++refusals_.distance;
+      return false;
+    }
+    return true;
+  }
   AdmissionMemo::Entry* entry = memo_entry(a, b, c, evidence);
   int sign = 0;
   if (entry != nullptr && entry->has_sign) {

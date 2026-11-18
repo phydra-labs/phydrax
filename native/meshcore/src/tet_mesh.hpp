@@ -167,6 +167,8 @@ struct TetImplicitSource {
   std::vector<std::int8_t> group_orientations;
   double tolerance = 0.0;
   std::int32_t orientation = 0;
+  // How every admission of this source's facets decides (bind, probe, commit).
+  remesh::ZeroSetDecision decision = remesh::ZeroSetDecision::kCertified;
   std::string source_id;
   std::string source_revision;
   std::string binding_id;

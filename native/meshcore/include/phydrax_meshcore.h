@@ -1880,12 +1880,19 @@ typedef struct phx_mc_interval_box_program {
   const int64_t* guards; /* entries whose lower bound must be >= 0 (real-power bases) */
   int64_t guard_count;
 } phx_mc_interval_box_program;
+/* How the facets of a TetMesh implicit source are admitted. CERTIFIED proves
+ * the side and the distance of a facet with interval enclosures. SAMPLED
+ * screens them at seven points of the facet (corners, edge midpoints,
+ * centroid) from point evaluations of the same programs and proves nothing:
+ * it is for construction whose result is certified afterwards. */
+#define PHX_MC_ZERO_SET_DECISION_CERTIFIED 0
+#define PHX_MC_ZERO_SET_DECISION_SAMPLED 1
 /* A TetMesh implicit source owns both validated programs after binding. Groups
- * name actual exterior facet-source rows, all proved against the programs on
- * bind. Zero orientation asks the owner to derive the common certified sign;
- * a nonzero sign must agree. A view returned by `implicit_source` borrows
- * immutable banks until the mesh is freed. Refusal counts are diagnostic and
- * restart at zero on a new binding. */
+ * name actual exterior facet-source rows, all admitted against the programs on
+ * bind under `decision`. Zero orientation asks the owner to derive the common
+ * sign; a nonzero sign must agree. A view returned by `implicit_source`
+ * borrows immutable banks until the mesh is freed. Refusal counts are
+ * diagnostic and restart at zero on a new binding. */
 typedef struct phx_mc_tet_implicit_source {
   phx_mc_interval_box_program value;
   phx_mc_interval_box_program gradient;
@@ -1903,6 +1910,7 @@ typedef struct phx_mc_tet_implicit_source {
   int64_t frame_id_length;
   int64_t transversality_refusals;
   int64_t distance_refusals;
+  int32_t decision; /* PHX_MC_ZERO_SET_DECISION_* */
 } phx_mc_tet_implicit_source;
 PHX_MC_API int32_t phx_mc_tet_mesh_bind_implicit(
     phx_mc_tet_mesh* mesh, const phx_mc_tet_implicit_source* source);
