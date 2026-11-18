@@ -754,7 +754,9 @@ class _SeamRefinementRounds:
                 if owners is None:
                     continue
                 midpoint = (lower + upper) / 2
-                point = _canonical_curve_point(prepared, curve, midpoint, self.preparation)
+                point = _canonical_curve_point(
+                    prepared, curve, midpoint, self.preparation
+                )
                 self.canonical_points.setdefault(curve, {})[midpoint] = point
                 for owner in owners:
                     if owner != self.rank:
@@ -797,7 +799,9 @@ class _SeamRefinementRounds:
                             ),
                         )
                     if not _coordinates_match(
-                        _canonical_curve_point(prepared, curve, midpoint, self.preparation),
+                        _canonical_curve_point(
+                            prepared, curve, midpoint, self.preparation
+                        ),
                         point,
                     ):
                         raise native_surface_owner._failure(
