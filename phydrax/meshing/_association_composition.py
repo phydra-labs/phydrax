@@ -16,6 +16,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellMesh
 from ..discretization._cell_geometry_transition_types import CellGeometryTransition
+from ..geometry._meshing_domain import SourceEvaluationLedger
 from ..geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryFaceImageWitness,
@@ -176,6 +177,7 @@ class ComposedAssociationTransfer(StrictModule, NonTrainableState):
         | None,
         target_scoped_fidelity: tuple[ScopedFidelityInput, ...],
         validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
+        evaluations: SourceEvaluationLedger | None = None,
     ) -> tuple[GeometryAssociation, ...]:
         self.validate_source(source)
         if not isinstance(lineage, MeshLineage) or not isinstance(target, CellMesh):
@@ -192,6 +194,7 @@ class ComposedAssociationTransfer(StrictModule, NonTrainableState):
                 target_fidelity_witness=target_fidelity_witness,
                 target_scoped_fidelity=target_scoped_fidelity,
                 validated_fidelity=validated_fidelity,
+                evaluations=evaluations,
             )
         )
         return tuple(

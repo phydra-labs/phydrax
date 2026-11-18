@@ -254,7 +254,14 @@ def restore_mixed_adaptation_result(
     expected_result_id: str,
     computed_layer_root: ComputedLayerCoreRoot | None = None,
 ) -> MeshAdaptationResult:
-    """Reconstruct actual retained owners and reprove their mathematical relations."""
+    """Reconstruct retained owners and reprove their mathematical relations.
+
+    Repropagation compares semantic association rows, including parameters and
+    residuals, by value. A nonzero archived unspecified-evaluation declaration
+    can therefore cause another platform's reproof to refuse; zero is required
+    for a portable evaluation declaration. Reproof uses a fresh ledger and
+    publishes nothing into the stored operation's trace.
+    """
     from ._adaptation import (
         _compliance,
         _RouteOutcome,
@@ -414,7 +421,10 @@ def restore_mixed_adaptation_result(
         raise ValueError("Mixed target material markers differ from source lineage.")
     association_transfer = policy_copy.association_transfer
     if association_transfer is not None and source.associations:
+        from ..geometry._meshing_domain import SourceEvaluationLedger
         from ._layer_core_association_transfer import _semantic_rows
+
+        restore_evaluations = SourceEvaluationLedger()
 
         certification = target.certification
         if certification is None:
@@ -441,6 +451,7 @@ def restore_mixed_adaptation_result(
                 target_fidelity_witness=target_witness,
                 target_scoped_fidelity=inputs.scoped_fidelity,
                 validated_fidelity=validated,
+                evaluations=restore_evaluations,
             )
         else:
             from ._layer_core_association_transfer import (
@@ -461,6 +472,7 @@ def restore_mixed_adaptation_result(
                 target_scoped_fidelity=inputs.scoped_fidelity,
                 validated_fidelity=validated,
                 computed_root=computed_layer_root,
+                evaluations=restore_evaluations,
             )
         if _semantic_rows(target.mesh, associations) != _semantic_rows(
             target.mesh, target.associations

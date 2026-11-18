@@ -37,6 +37,7 @@ from typing import Any, final, NamedTuple, TYPE_CHECKING
 if TYPE_CHECKING:
     from .._execution_runtime import ExecutionGroup
     from ..discretization._view_support import OwnerLocalCellGeometry
+    from ..geometry._meshing_domain import SourceEvaluationLedger
     from ..graph._partition import GraphPartitionPlan
     from ._contracts import SurfaceMeshingSpec, VolumeMeshingSpec
     from ._periodic import OwnerLocalPeriodicCandidate
@@ -821,7 +822,13 @@ def _committed(prepared: PreparedAdaptiveSimplex, host: _HostEpoch, /) -> Any:
     )
 
 
-def _outcome(prepared: PreparedAdaptiveSimplex, host: _HostEpoch, /) -> Any:
+def _outcome(
+    prepared: PreparedAdaptiveSimplex,
+    host: _HostEpoch,
+    /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
+) -> Any:
     require_committed_status(
         host.flags,
         host.coordinates,
@@ -847,7 +854,11 @@ def _outcome(prepared: PreparedAdaptiveSimplex, host: _HostEpoch, /) -> Any:
         case _:
             kind = MeshTransitionKind.REMESH
     native = _finalize_native(
-        adaptation, committed.edit, kind, conservative=not committed.coarsened
+        adaptation,
+        committed.edit,
+        kind,
+        conservative=not committed.coarsened,
+        evaluations=evaluations,
     )
     status = (
         MeshAdaptationStatus.PARTIAL
@@ -915,7 +926,12 @@ def commit_adaptive_simplex(
     return _adaptation_result(prepared.adaptation, outcome, started)
 
 
-def _execute_device_bisection_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_device_bisection_route(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
+) -> _RouteOutcome:
     """One refine-then-coarsen device epoch of a marked request, then commit."""
 
     request = prepared.request
@@ -941,7 +957,7 @@ def _execute_device_bisection_route(prepared: PreparedMeshAdaptation, /) -> _Rou
         refined.state,
         coarsen_marks,
     )
-    return _outcome(simplex, _host_epoch(coarsened.state))
+    return _outcome(simplex, _host_epoch(coarsened.state), evaluations=evaluations)
 
 
 @final

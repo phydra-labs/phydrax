@@ -18,6 +18,7 @@ from ..discretization import CellMesh
 from ..discretization._cell_complex import TetrahedralConnectivity
 from ..discretization._cell_geometry_transition_types import CellGeometryTransition
 from ..discretization._cell_mesh import SimplicialConnectivity
+from ..geometry._meshing_domain import SourceEvaluationLedger
 from ..geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryFaceImageWitness,
@@ -447,7 +448,10 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
         | None,
         target_scoped_fidelity: tuple[ScopedFidelityInput, ...],
         validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
+        evaluations: SourceEvaluationLedger | None = None,
     ) -> tuple[GeometryAssociation, ...]:
+        if evaluations is not None:
+            evaluations.record_unknown("implicit-transfer-evaluations", 1)
         self.validate_source(source)
         if not isinstance(lineage, MeshLineage) or not isinstance(target, CellMesh):
             raise TypeError("lineage and target must be MeshLineage and CellMesh values.")

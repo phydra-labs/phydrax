@@ -62,6 +62,7 @@ from ..discretization import CellMesh, EntitySet
 from ..discretization._cell_complex import PolygonalConnectivity, TetrahedralConnectivity
 from ..discretization._cell_geometry_transition_types import CellGeometryTransition
 from ..discretization._cell_mesh import SimplicialConnectivity
+from ..geometry._meshing_domain import SourceEvaluationLedger
 from ..geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryFaceImageWitness,
@@ -945,6 +946,7 @@ class AssociationTransfer(Protocol):
         | None,
         target_scoped_fidelity: tuple[ScopedFidelityInput, ...],
         validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
+        evaluations: SourceEvaluationLedger | None = None,
     ) -> tuple[GeometryAssociation, ...]: ...
 
 
@@ -2586,10 +2588,17 @@ def _candidate_residuals(
     indices: np.ndarray,
     occurrence_paths: tuple[tuple[str, ...], ...],
     /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
 ) -> np.ndarray:
     """Distance of each point to its candidate entity (solids: 0 inside, else inf)."""
     residuals = np.full((points.shape[0],), np.inf)
     lower = np.flatnonzero(dimensions <= 2)
+    if evaluations is not None:
+        eligible = int(np.count_nonzero(dimensions[lower] >= 1))
+        eligible += int(np.count_nonzero(dimensions == 3))
+        if eligible:
+            evaluations.record_unknown("projection:intersection-curve", eligible)
     if lower.size:
         result = projection.project(
             points[lower],
@@ -2632,6 +2641,8 @@ def _lowest_containers(
     within: np.ndarray | None,
     centroids: np.ndarray,
     /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
 ) -> _Classes:
     """Lowest-dimensional B-Rep entity containing every member class of each owner.
 
@@ -2726,6 +2737,7 @@ def _lowest_containers(
                 at_dims[tied],
                 at_indices[tied],
                 tuple(paths[row] for row in owners[tied].tolist()),
+                evaluations=evaluations,
             )
         order = np.lexsort((at_indices, residual, owners))
         owners, at_dims, at_indices, residual = (
@@ -2758,6 +2770,8 @@ def _classify_mesh(
     vertex_classes: _Classes,
     projection: AbstractBRepProjection,
     /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
 ) -> tuple[_Classes, ...]:
     """B-Rep classes of every mesh entity dimension ``0..D`` (module rules)."""
     top = mesh.topological_dimension
@@ -2773,10 +2787,16 @@ def _classify_mesh(
         np.full((count,), top),
         None,
         _centroids(mesh, members, count),
+        evaluations=evaluations,
     )
     for dimension in range(top - 1, 0, -1):
         classes[dimension] = _classify_level(
-            mesh, projection, vertex_classes, classes[dimension + 1], dimension
+            mesh,
+            projection,
+            vertex_classes,
+            classes[dimension + 1],
+            dimension,
+            evaluations=evaluations,
         )
     return tuple(classes)
 
@@ -2788,6 +2808,8 @@ def _classify_level(
     upper: _Classes,
     dimension: int,
     /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
 ) -> _Classes:
     """Classify entities of ``dimension`` from their classified cofaces.
 
@@ -2837,6 +2859,7 @@ def _classify_level(
         np.minimum(lowest, 4) - 1,
         adjacent,
         _centroids(mesh, members, count),
+        evaluations=evaluations,
     )
     code = np.full((count,), -1, dtype=np.int64)
     code[adjacent[:, 0]] = adjacent[:, 1]
@@ -2898,6 +2921,7 @@ def _brep_association(
     *,
     provenance: GeometryAssociationProvenance,
     parent_association_id: str | None,
+    evaluations: SourceEvaluationLedger | None = None,
     parent_dimensions: np.ndarray | None = None,
     parent_ids: np.ndarray | None = None,
 ) -> GeometryAssociation:
@@ -2914,6 +2938,10 @@ def _brep_association(
     projection_status = np.full(count, BRepProjectionStatus.FAILED, dtype=np.int8)
     projection_status[classes.dimensions == 3] = BRepProjectionStatus.UNIQUE
     if lower.size:
+        if evaluations is not None:
+            eligible = int(np.count_nonzero(classes.dimensions[lower] >= 1))
+            if eligible:
+                evaluations.record_unknown("projection:intersection-curve", eligible)
         projected = projection.project(
             points[lower],
             classes.dimensions[lower],
@@ -3014,6 +3042,8 @@ def _mesh_entity_classes(
     association: GeometryAssociation,
     projection: AbstractBRepProjection,
     /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
 ) -> tuple[_Classes, ...]:
     """Host B-Rep classes ``(dimensions, indices, status)`` of mesh dimensions ``0..D``.
 
@@ -3022,7 +3052,9 @@ def _mesh_entity_classes(
     project entities by the module rules.
     """
     _require_brep(association, projection, mesh, 0)
-    return _classify_mesh(mesh, _vertex_classes(mesh, association), projection)
+    return _classify_mesh(
+        mesh, _vertex_classes(mesh, association), projection, evaluations=evaluations
+    )
 
 
 def associate_mesh_entities(
@@ -3033,6 +3065,7 @@ def associate_mesh_entities(
     /,
     *,
     policy: AssociationPropagationPolicy,
+    evaluations: SourceEvaluationLedger | None = None,
 ) -> GeometryAssociation:
     """Derive the B-Rep association of mesh entities of ``dimension`` (1..D).
 
@@ -3044,7 +3077,9 @@ def associate_mesh_entities(
     target = int(dimension)
     if not 1 <= target <= mesh.topological_dimension:
         raise ValueError("dimension must lie in 1..D; vertex associations are direct.")
-    classes = _mesh_entity_classes(mesh, association, projection)[target]
+    classes = _mesh_entity_classes(
+        mesh, association, projection, evaluations=evaluations
+    )[target]
     members = _incidence_pairs(mesh, 0, target)[:, ::-1]
     count = mesh.entity_set(target).count
     return _brep_association(
@@ -3056,6 +3091,7 @@ def associate_mesh_entities(
         policy_,
         provenance=GeometryAssociationProvenance.CLASSIFICATION,
         parent_association_id=association.association_id,
+        evaluations=evaluations,
     )
 
 
@@ -3273,6 +3309,7 @@ def propagate_association(
     *,
     policy: AssociationPropagationPolicy,
     vertex_stencil: VertexInterpolationStencil | None,
+    evaluations: SourceEvaluationLedger | None = None,
 ) -> GeometryAssociation:
     """Carry B-Rep classes through lineage and exact interpolation support.
 
@@ -3339,7 +3376,9 @@ def propagate_association(
         )
         found = entity_dims >= 0
         if np.any(found):
-            source_levels = _classify_mesh(source_mesh, source_classes, projection)
+            source_levels = _classify_mesh(
+                source_mesh, source_classes, projection, evaluations=evaluations
+            )
             for level in np.unique(entity_dims[found]).tolist():
                 selected = np.flatnonzero(entity_dims == level)
                 level_classes = source_levels[level]
@@ -3373,6 +3412,7 @@ def propagate_association(
         parent_association_id=association.association_id,
         parent_dimensions=parent_dims,
         parent_ids=parent_ids,
+        evaluations=evaluations,
     )
 
 
@@ -3821,10 +3861,17 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
         dimensions: tuple[int, ...],
         mesh: CellMesh,
         /,
+        *,
+        evaluations: SourceEvaluationLedger | None = None,
     ) -> tuple[GeometryAssociation, ...]:
         return (vertex,) + tuple(
             associate_mesh_entities(
-                mesh, vertex, self.projection, dimension, policy=self.policy
+                mesh,
+                vertex,
+                self.projection,
+                dimension,
+                policy=self.policy,
+                evaluations=evaluations,
             )
             for dimension in dimensions
         )
@@ -3843,8 +3890,14 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
         | None,
         target_scoped_fidelity: tuple[ScopedFidelityInput, ...],
         validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
+        evaluations: SourceEvaluationLedger | None = None,
     ) -> tuple[GeometryAssociation, ...]:
         """Propagate B-Rep associations with the accepted vertex stencil."""
+        if evaluations is not None and any(
+            value.association_kind is GeometryAssociationKind.CURVE
+            for value in source.associations
+        ):
+            evaluations.record_unknown("cad-source-curve-ancestry", 1)
         vertex, dimensions = self.source_associations(source)
         propagated = propagate_association(
             vertex,
@@ -3854,8 +3907,9 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
             self.projection,
             policy=self.policy,
             vertex_stencil=vertex_stencil,
+            evaluations=evaluations,
         )
-        output = self._derived(propagated, dimensions, target)
+        output = self._derived(propagated, dimensions, target, evaluations=evaluations)
         curves = tuple(
             item
             for item in source.associations

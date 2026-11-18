@@ -401,6 +401,44 @@ def test_bisection_adaptation_round_trips_with_hierarchy(tmp_path: Path) -> None
     _refuses_tamper(path, MeshAdaptationResult, ("hierarchy", "hierarchy_id"), _flip_hex)
 
 
+def test_pre_transfer_stage_adaptation_trace_round_trips(tmp_path: Path) -> None:
+    """The old trace shape remains readable without adding a stage on restore."""
+    import equinox as eqx
+
+    from phydrax.meshing._trace import MeshingTrace
+
+    source = _certified(_triangle_grid(2, 2))
+    cell_ids = np.asarray(source.mesh.blocks[0].global_ids, dtype=np.int64)
+    original = execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            source,
+            MarkedMeshAdaptation(cell_ids[:1], np.zeros((0,), dtype=np.int64)),
+            policy=MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_BISECTION),
+        )
+    )
+    assert original.transition is not None
+    assert original.target.trace.stages[-1].diagnostics[0].provider_code == (
+        "stored_coordinate_unspecified_transfer"
+    )
+    old_trace = MeshingTrace(original.target.trace.stages[:-1])
+    old_target = eqx.tree_at(lambda value: value.trace, original.target, old_trace)
+    old_transition = eqx.tree_at(
+        lambda value: value.target, original.transition, old_target
+    )
+    old_result = eqx.tree_at(
+        lambda value: (value.target, value.transition),
+        original,
+        (old_target, old_transition),
+    )
+    restored = _round_trip(tmp_path / "old-trace.phx", old_result, MeshAdaptationResult)
+    assert restored.result_id == old_result.result_id
+    assert restored.target.result_id == old_target.result_id
+    assert restored.target.trace.trace_id == old_trace.trace_id
+    assert tuple(stage.report_id for stage in restored.target.trace.stages) == tuple(
+        stage.report_id for stage in old_trace.stages
+    )
+
+
 def test_distributed_bisection_restores_its_distribution_transition(
     tmp_path: Path,
 ) -> None:

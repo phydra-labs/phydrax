@@ -21,8 +21,11 @@
   Operation-local source evaluation ledgers report fallback rows, calls, and
   unknown construction provenance for the identical live domains they witness;
   distributed surface results expose an immutable declaration. Surface association
-  transfer accepts a caller ledger, but adaptation currently calls it without one:
-  its associations make no claim about how their stored values were evaluated.
+  transfer accepts a caller ledger; a holder of only the association has unknown provenance.
+  Adaptation archives now retain transfer declarations in a trace stage;
+  the diagnostic, stage and trace identities change, while `CellMeshingResult.result_id`
+  and association identities do not. Existing archives retain their original
+  trace stages and restore without a recipe change.
   Stored coordinates are defined by the lowered program: a JAX version that
   reorders its trace changes identity and must be announced as such.
   Trim-lens search uses lower endpoints of batched host programs for fixed

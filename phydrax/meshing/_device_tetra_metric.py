@@ -49,6 +49,7 @@ from ._tetra_metric import (
 
 
 if TYPE_CHECKING:
+    from ..geometry._meshing_domain import SourceEvaluationLedger
     from ._adaptation import _RouteOutcome, PreparedMeshAdaptation
 
 
@@ -354,7 +355,10 @@ class _DeviceSplitBatches:
 
 
 def _execute_device_tetra_metric_route(
-    prepared: PreparedMeshAdaptation, /
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
 ) -> _RouteOutcome:
     """Run compiled edge evaluation, host predicate batches, and native tetra edits."""
     from ._adaptation import (
@@ -430,6 +434,7 @@ def _execute_device_tetra_metric_route(
         outcome.edit,
         MeshTransitionKind.REMESH,
         conservative=False,
+        evaluations=evaluations,
         exact_source_vertices=outcome.exact_source_vertices,
     )
     return _RouteOutcome(

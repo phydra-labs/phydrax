@@ -495,6 +495,7 @@ def certify_cell_mesh(
     | ValidatedCellValidityParent
     | tuple[CellValidityCertificate | ValidatedCellValidityParent, ...]
     | None = None,
+    _additional_stages: tuple[MeshingStageReport, ...] = (),
 ) -> CellMeshingResult:
     """Canonicalize and certify one existing CellMesh through native substrates.
 
@@ -607,6 +608,7 @@ def certify_cell_mesh(
             input_ids=(canonical.mesh_id,),
             output_ids=(compliance.report_id,),
         ),
+        *_additional_stages,
     )
     trace = MeshingTrace(stages)
     provenance = SemanticProvenance(

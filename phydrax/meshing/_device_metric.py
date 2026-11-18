@@ -97,6 +97,7 @@ from ._metric import _constant_preserving_metric_mean, metric_edge_lengths
 
 
 if TYPE_CHECKING:
+    from ..geometry._meshing_domain import SourceEvaluationLedger
     from ._adaptation import (
         _RouteOutcome,
         MeshAdaptationPolicy,
@@ -5266,7 +5267,11 @@ def _evidence(
 
 
 def _outcome(
-    prepared: PreparedDeviceMetricAdaptation, host: DeviceMetricState, /
+    prepared: PreparedDeviceMetricAdaptation,
+    host: DeviceMetricState,
+    /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
 ) -> _RouteOutcome:
     # Lazy: the adaptation transaction imports this module's evidence type.
     from ._adaptation import (
@@ -5296,7 +5301,11 @@ def _outcome(
         return _unchanged(adaptation, evidence, None, status=status)
     edit, metric = _assemble(state, prepared.anchor.source, mode)
     native = _finalize_native(
-        adaptation, edit, MeshTransitionKind.REMESH, conservative=False
+        adaptation,
+        edit,
+        MeshTransitionKind.REMESH,
+        conservative=False,
+        evaluations=evaluations,
     )
     return _RouteOutcome(
         status,
@@ -5331,7 +5340,12 @@ def commit_device_metric_adaptation(
     return _adaptation_result(prepared.adaptation, _outcome(committed, host), started)
 
 
-def _execute_device_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_device_metric_route(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
+) -> _RouteOutcome:
     """Run compiled metric epochs, growing static workspaces before retry."""
 
     metric = _prepared_metric(prepared)
@@ -5343,7 +5357,7 @@ def _execute_device_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteO
         metric.anchor,
         periodic_mesh_id=update.state.periodic_mesh_id,
     )
-    return _outcome(committed, jax.device_get(update.state))
+    return _outcome(committed, jax.device_get(update.state), evaluations=evaluations)
 
 
 __all__ = [

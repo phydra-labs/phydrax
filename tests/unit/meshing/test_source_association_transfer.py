@@ -477,7 +477,9 @@ def _curve_rows(result: CellMeshingResult) -> dict[int, tuple[object, ...]]:
     }
 
 
-def test_trimmed_sheet_association_transfer_retains_patches_and_curve_intervals() -> None:
+def test_trimmed_sheet_association_transfer_retains_patches_and_curve_intervals(
+    tmp_path: Path,
+) -> None:
     domain = _square_domain()
     specification = _surface_specification(domain)
     options = NativeMeshingOptions(
@@ -510,6 +512,62 @@ def test_trimmed_sheet_association_transfer_retains_patches_and_curve_intervals(
             policy=policy,
         )
     )
+    from phydrax.meshing._adaptation import (
+        _transfer_evaluation_stage,
+        _with_transfer_evaluation_trace,
+    )
+    from phydrax.meshing._model_codec import (
+        MODEL_ARCHIVE_LIMITS,
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+    from phydrax.meshing._trace import MeshingTrace
+    from tools.meshing_qualification._runtime import accepted_result_record
+
+    stage = refined.target.trace.stages[-1]
+    declared = {
+        item.logical_findings[0]: tuple(int(value) for value in item.logical_findings[1:])
+        for item in stage.diagnostics
+        if item.provider_code == "stored_coordinate_unspecified_transfer"
+    }
+    spline = "phydrax.geometry.brep._patches.BSplineSurfacePatch"
+    assert declared[spline] == (2532, 26)
+    empty_stage = _transfer_evaluation_stage(
+        SourceEvaluationLedger(), source.mesh.mesh_id, refined.target.mesh.mesh_id
+    )
+    assert stage.report_id != empty_stage.report_id
+    assert stage.diagnostics[0].diagnostic_id != empty_stage.diagnostics[0].diagnostic_id
+    prior_trace = MeshingTrace((*refined.target.trace.stages[:-1], empty_stage))
+    without_snapshot = eqx.tree_at(
+        lambda result: result.trace, refined.target, prior_trace
+    )
+    assert without_snapshot.result_id == refined.target.result_id
+    with_snapshot = _with_transfer_evaluation_trace(
+        without_snapshot, source.mesh.mesh_id, SourceEvaluationLedger()
+    )
+    assert with_snapshot.mesh is without_snapshot.mesh
+    assert with_snapshot.geometry is without_snapshot.geometry
+    assert with_snapshot.result_id == without_snapshot.result_id
+    result_record = accepted_result_record(refined.target)
+    transfer_record = result_record["transfer_unspecified_evaluations"]
+    assert isinstance(transfer_record, dict)
+    assert transfer_record["rows"][spline] == 2532
+    assert transfer_record["calls"][spline] == 26
+    assert tuple(
+        value.association_id for value in without_snapshot.associations
+    ) == tuple(value.association_id for value in refined.target.associations)
+    assert without_snapshot.trace.trace_id != refined.target.trace.trace_id
+    archive_path = tmp_path / "transfer-declaration.phx"
+    write_model_artifact(archive_path, refined, limits=MODEL_ARCHIVE_LIMITS)
+    restored = read_model_artifact(
+        archive_path,
+        expected_type=type(refined),
+        restore=restore_model_archive_value,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    assert restored.target.trace.trace_id == refined.target.trace.trace_id
+    assert restored.target.trace.stages[-1].report_id == stage.report_id
     assert refined.lineage is not None
     assert refined.stencil is not None
     evaluations = SourceEvaluationLedger()

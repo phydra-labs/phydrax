@@ -78,9 +78,28 @@ def accepted_result_record(result: phx.meshing.CellMeshingResult, /) -> dict[str
     surface_fidelity_counts: dict[str, int] = {}
     surface_fidelity_unknown = 0
     surface_fidelity_reported = False
+    transfer_rows: dict[str, int] = {}
+    transfer_calls: dict[str, int] = {}
+    transfer_unknown: dict[str, int] = {}
+    transfer_reported = False
     for stage in result.trace.stages:
         for diagnostic in stage.diagnostics:
             code = diagnostic.provider_code
+            if code == "stored_coordinate_unspecified_transfer":
+                kind, rows, calls = diagnostic.logical_findings
+                if kind != "none":
+                    transfer_rows[kind] = transfer_rows.get(kind, 0) + int(rows)
+                    transfer_calls[kind] = transfer_calls.get(kind, 0) + int(calls)
+                transfer_reported = True
+                continue
+            if code == "stored_coordinate_unspecified_transfer_unknown":
+                reason, count = diagnostic.logical_findings
+                if reason != "none":
+                    transfer_unknown[reason] = transfer_unknown.get(reason, 0) + int(
+                        count
+                    )
+                transfer_reported = True
+                continue
             if code not in (
                 "stored_coordinate_unspecified_construction",
                 "stored_coordinate_unspecified_surface_fidelity",
@@ -132,6 +151,17 @@ def accepted_result_record(result: phx.meshing.CellMeshingResult, /) -> dict[str
         for kind, count in counts:
             certificate_counts[kind] = certificate_counts.get(kind, 0) + count
     return {
+        **(
+            {
+                "transfer_unspecified_evaluations": {
+                    "rows": dict(sorted(transfer_rows.items())),
+                    "calls": dict(sorted(transfer_calls.items())),
+                    "unknown": dict(sorted(transfer_unknown.items())),
+                }
+            }
+            if transfer_reported
+            else {}
+        ),
         **(
             {"construction_unspecified_evaluations": dict(sorted(unspecified.items()))}
             if reported

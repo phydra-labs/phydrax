@@ -17,6 +17,7 @@ import dataclasses
 import time
 from collections import Counter
 from collections.abc import Sequence
+from copy import copy
 from enum import StrEnum
 from fractions import Fraction
 from functools import partial
@@ -104,6 +105,7 @@ from ..discretization.finite_volume._unstructured_remap import (
 )
 from ..geometry._affine_plc_domain import AffinePlcDomain
 from ..geometry._domain_coverage import PiecewiseLinearDomain
+from ..geometry._meshing_domain import SourceEvaluationLedger
 from ..geometry._nested_restriction_embedding import NestedRestrictionPremise
 from ..geometry._planar_coverage import PlcSourcePointWitness
 from ..geometry._source_boundary_records import (
@@ -155,6 +157,7 @@ from ._certification_inputs import (
     ScopedFidelityInput,
     validate_fidelity_witnesses,
 )
+from ._contracts import MeshingFailureEvidence
 from ._device_metric import DeviceMetricEvidence
 from ._device_tetra_metric import DeviceTetraMetricEvidence
 from ._distribution import (
@@ -242,6 +245,14 @@ from ._topology_edit import (
     key_rows,
     nested_reference_witnesses_from_edit,
     reference_cell_maps_from_edit,
+)
+from ._trace import (
+    MeshingDiagnostic,
+    MeshingDiagnosticSeverity,
+    MeshingStageKind,
+    MeshingStageReport,
+    MeshingStageStatus,
+    MeshingTrace,
 )
 from .providers._mmg import MmgAdaptationResult, MmgOptions, MmgProvider
 from .providers._omega_h import OmegaHAdaptationResult, OmegaHOptions, OmegaHProvider
@@ -6450,6 +6461,59 @@ def _layer_core_transfer_owner(
     return None if not owners else owners[0]
 
 
+def _transfer_evaluation_stage(
+    evaluations: SourceEvaluationLedger, source_id: str, target_id: str, /
+) -> MeshingStageReport:
+    """Snapshot transfer evaluation rows, calls, and unknown provenance."""
+    rows, calls, unknown = evaluations.snapshot()
+    row_counts, call_counts = dict(rows), dict(calls)
+    kinds = tuple(sorted(row_counts.keys() | call_counts.keys())) or ("none",)
+    diagnostics = tuple(
+        MeshingDiagnostic(
+            MeshingDiagnosticSeverity.INFO,
+            "Association transfer evaluations using an unspecified realization.",
+            provider_code="stored_coordinate_unspecified_transfer",
+            failure_evidence=MeshingFailureEvidence(
+                logical_findings=(
+                    kind,
+                    str(row_counts.get(kind, 0)),
+                    str(call_counts.get(kind, 0)),
+                )
+            ),
+        )
+        for kind in kinds
+    )
+    diagnostics += tuple(
+        MeshingDiagnostic(
+            MeshingDiagnosticSeverity.INFO,
+            "Association transfer evaluation provenance is unknown.",
+            provider_code="stored_coordinate_unspecified_transfer_unknown",
+            failure_evidence=MeshingFailureEvidence(
+                logical_findings=(reason, str(count))
+            ),
+        )
+        for reason, count in (unknown or (("none", 0),))
+    )
+    return MeshingStageReport(
+        MeshingStageKind.GEOMETRY_ASSOCIATION,
+        MeshingStageStatus.PASSED,
+        input_ids=(source_id,),
+        output_ids=(target_id,),
+        diagnostics=diagnostics,
+    )
+
+
+def _with_transfer_evaluation_trace(
+    target: CellMeshingResult, source_id: str, evaluations: SourceEvaluationLedger, /
+) -> CellMeshingResult:
+    """Attach a validated trace while retaining the same live certified owners."""
+    stage = _transfer_evaluation_stage(evaluations, source_id, target.mesh.mesh_id)
+    trace = MeshingTrace((*target.trace.stages, stage))
+    result = copy(target)
+    object.__setattr__(result, "trace", trace)
+    return result
+
+
 def _finalize_native(
     prepared: PreparedMeshAdaptation,
     edit: CellTopologyEdit,
@@ -6467,8 +6531,16 @@ def _finalize_native(
     coverage_renewal: PolyhedralCoverageRenewal | None = None,
     exact_source_vertices: tuple[tuple[Fraction, ...], ...] | None = None,
     validated_chart_parent: ValidatedImplicitChartParent | None = None,
+    evaluations: SourceEvaluationLedger | None = None,
 ) -> _NativeTarget:
     """Assemble, inherit organization and associations, certify, and bind transfer."""
+    if evaluations is None:
+        evaluations = SourceEvaluationLedger()
+        if prepared.source.associations and isinstance(
+            prepared.policy.association_transfer,
+            (BRepAssociationTransfer, ComposedAssociationTransfer),
+        ):
+            evaluations.record_unknown("adaptation-preparation-projection", 1)
 
     source = prepared.source
     source_certification = source.certification
@@ -6822,6 +6894,7 @@ def _finalize_native(
                 else certification_inputs.scoped_fidelity
             ),
             validated_fidelity=validated_witnesses,
+            evaluations=evaluations,
         )
         if propagate_associations is not None and source.associations
         else ()
@@ -6967,6 +7040,9 @@ def _finalize_native(
         layer_core_root_geometry=source.layer_core_root_geometry,
         computed_root=computed_root,
         validity_parent=validated_validity_parent,
+        _additional_stages=(
+            _transfer_evaluation_stage(evaluations, source.mesh.mesh_id, mesh.mesh_id),
+        ),
     )
     return _finish_certified_native_target(
         prepared,
@@ -7104,7 +7180,12 @@ def _discard_exception_tracebacks(error: BaseException, /) -> None:
             pending.extend(current.exceptions)
 
 
-def _execute_bisection_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_bisection_route(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
+) -> _RouteOutcome:
     request = prepared.request
     if not isinstance(request, MarkedMeshAdaptation):
         raise TypeError("Native bisection requires MarkedMeshAdaptation.")
@@ -7166,6 +7247,7 @@ def _execute_bisection_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutco
         outcome.edit,
         kind,
         conservative=not coarsened,
+        evaluations=evaluations,
         validated_chart_parent=validated_chart_parent,
         periodic_edge_lock=request.periodic_edge_lock,
         refinement_parent_cell_ids=outcome.refinement_parent_cell_global_ids,
@@ -7340,7 +7422,12 @@ def _resume_certified_mixed_outcome(
     )
 
 
-def _execute_mixed_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_mixed_route(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
+) -> _RouteOutcome:
     request = prepared.request
     if not isinstance(request, MarkedMeshAdaptation):
         raise TypeError("NATIVE_MIXED requires MarkedMeshAdaptation.")
@@ -7402,6 +7489,7 @@ def _execute_mixed_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
         outcome.edit,
         kind,
         conservative=False,
+        evaluations=evaluations,
         mixed_outcome=outcome,
     )
     return _mixed_route_outcome(outcome, native, partial)
@@ -7441,7 +7529,12 @@ def _metric_status(
     return MeshAdaptationStatus.NUMERICAL_STOP
 
 
-def _execute_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_metric_route(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
+) -> _RouteOutcome:
     request = prepared.request
     policy = prepared.policy
     constraints = prepared.constraints
@@ -7475,6 +7568,7 @@ def _execute_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
         outcome.edit,
         MeshTransitionKind.REMESH,
         conservative=False,
+        evaluations=evaluations,
         exact_source_vertices=exact_source_vertices,
     )
     return _RouteOutcome(
@@ -7491,7 +7585,12 @@ def _execute_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
     )
 
 
-def _execute_tetra_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_tetra_metric_route(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
+) -> _RouteOutcome:
     request = prepared.request
     if not isinstance(request, MetricMeshAdaptation):
         raise TypeError("The 3D tetra metric route requires MetricMeshAdaptation.")
@@ -7533,6 +7632,7 @@ def _execute_tetra_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOu
         outcome.edit,
         MeshTransitionKind.REMESH,
         conservative=False,
+        evaluations=evaluations,
         exact_source_vertices=outcome.exact_source_vertices,
     )
     return _RouteOutcome(
@@ -7548,7 +7648,12 @@ def _execute_tetra_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOu
     )
 
 
-def _execute_surface_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_surface_metric_route(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
+) -> _RouteOutcome:
     request = prepared.request
     if not isinstance(request, (MetricMeshAdaptation, RelocationMeshAdaptation)):
         raise TypeError("NATIVE_METRIC_SURFACE requires a metric or relocation request.")
@@ -7591,6 +7696,7 @@ def _execute_surface_metric_route(prepared: PreparedMeshAdaptation, /) -> _Route
         outcome.edit,
         MeshTransitionKind.REMESH,
         conservative=False,
+        evaluations=evaluations,
         surface_metric_outcome=outcome,
     )
     surface_chart_witness = native.surface_chart_witness
@@ -7642,8 +7748,13 @@ def _provider_outcome(
     metric: MeshMetricField | None,
     evidence: MmgAdaptationResult | OmegaHAdaptationResult,
     /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
 ) -> _RouteOutcome:
     source = prepared.source
+    if evaluations is not None:
+        evaluations.record_unknown("provider-association-transfer", 1)
+        target = _with_transfer_evaluation_trace(target, source.mesh.mesh_id, evaluations)
     lineage = _unknown_lineage(source.mesh, target.mesh)
     transition = CellMeshTransition(
         source.mesh.mesh_id,
@@ -7673,7 +7784,12 @@ def _provider_association_transfer(
     raise TypeError("Provider routes require BRepAssociationTransfer.")
 
 
-def _execute_polyhedral_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_polyhedral_route(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
+) -> _RouteOutcome:
     request = prepared.request
     if not isinstance(request, PolyhedralAdaptationRequest):
         raise TypeError("NATIVE_POLYHEDRAL requires PolyhedralAdaptationRequest.")
@@ -7778,6 +7894,11 @@ def _execute_polyhedral_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutc
             ),
             plan.route,
         )
+        if evaluations is not None:
+            evaluations.record_unknown("polyhedral-regeneration-transfer", 1)
+            target = _with_transfer_evaluation_trace(
+                target, source.mesh.mesh_id, evaluations
+            )
         native = _finish_certified_native_target(
             prepared,
             outcome.target_mesh,
@@ -7798,6 +7919,7 @@ def _execute_polyhedral_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutc
             outcome.edit,
             MeshTransitionKind.REMESH,
             conservative=False,
+            evaluations=evaluations,
             polyhedral_outcome=outcome,
             coverage_renewal=outcome.coverage_renewal,
         )
@@ -7816,7 +7938,12 @@ def _execute_polyhedral_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutc
     )
 
 
-def _execute_mmg_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_mmg_route(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
+) -> _RouteOutcome:
     policy = prepared.policy
     provider = policy.provider
     # ty: ignore[unresolved-attribute]
@@ -7833,10 +7960,17 @@ def _execute_mmg_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
     # ty: ignore[invalid-argument-type, missing-argument, unresolved-attribute]
     result = provider.execute(plan)
     # ty: ignore[unresolved-attribute]
-    return _provider_outcome(prepared, result.mesh, result.metric, result)
+    return _provider_outcome(
+        prepared, result.mesh, result.metric, result, evaluations=evaluations
+    )
 
 
-def _execute_omega_h_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_omega_h_route(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
+) -> _RouteOutcome:
     policy = prepared.policy
     # ty: ignore[unresolved-attribute]
     result = policy.provider.execute(
@@ -7853,7 +7987,9 @@ def _execute_omega_h_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome
     if result.target is None:
         raise ValueError("A serial Omega_h adaptation must return its target.")
     # ty: ignore[unresolved-attribute]
-    return _provider_outcome(prepared, result.target, result.metric, result)
+    return _provider_outcome(
+        prepared, result.target, result.metric, result, evaluations=evaluations
+    )
 
 
 def project_hp_lineage(
@@ -8033,7 +8169,12 @@ def _prepare_hp_adaptation_epoch(
     return epoch
 
 
-def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_hp_route(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
+) -> _RouteOutcome:
     request = prepared.request
     if not isinstance(request, MarkedMeshAdaptation) or not isinstance(
         request.hierarchy, FiniteElementHPEpoch
@@ -8157,6 +8298,7 @@ def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
                 else certification_inputs.scoped_fidelity
             ),
             validated_fidelity=validated_witnesses,
+            evaluations=evaluations,
         )
         if association_transfer is not None and source.associations
         else ()
@@ -8182,6 +8324,15 @@ def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
         planar_embedding=source.planar_embedding,
         layer_curving_evidence=layer_curving_evidence,
         validity_parent=None if certification_inputs is None else source.audit.validity,
+        _additional_stages=(
+            ()
+            if evaluations is None
+            else (
+                _transfer_evaluation_stage(
+                    evaluations, source.mesh.mesh_id, mesh.mesh_id
+                ),
+            )
+        ),
     )
     if target.mesh.topology_id != mesh.topology_id:
         raise ValueError("Certification reordered the hp target topology.")
@@ -8256,48 +8407,61 @@ def _adaptation_result(
     )
 
 
-def execute_mesh_adaptation(prepared: PreparedMeshAdaptation, /) -> MeshAdaptationResult:
+def execute_mesh_adaptation(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
+) -> MeshAdaptationResult:
     """Execute exactly the prepared route and certify its target.
 
-    Adaptation calls association transfer without an evaluation ledger, so its
-    associations make no claim about how their stored values were evaluated.
+    Association transfer evaluations are recorded in the target's archived
+    trace. A supplied ledger also receives the operation's declarations.
     """
 
     if not isinstance(prepared, PreparedMeshAdaptation):
         raise TypeError("prepared must be PreparedMeshAdaptation.")
     started = time.monotonic()
+    evaluations = SourceEvaluationLedger() if evaluations is None else evaluations
+    if prepared.source.associations and isinstance(
+        prepared.policy.association_transfer,
+        (BRepAssociationTransfer, ComposedAssociationTransfer),
+    ):
+        evaluations.record_unknown("adaptation-preparation-projection", 1)
     match prepared.policy.route:
         case MeshAdaptationRoute.NATIVE_BISECTION:
-            outcome = _execute_bisection_route(prepared)
+            outcome = _execute_bisection_route(prepared, evaluations=evaluations)
         case MeshAdaptationRoute.NATIVE_MIXED:
-            outcome = _execute_mixed_route(prepared)
+            outcome = _execute_mixed_route(prepared, evaluations=evaluations)
         case MeshAdaptationRoute.NATIVE_POLYHEDRAL:
-            outcome = _execute_polyhedral_route(prepared)
+            outcome = _execute_polyhedral_route(prepared, evaluations=evaluations)
         case MeshAdaptationRoute.NATIVE_METRIC_2D:
-            outcome = _execute_metric_route(prepared)
+            outcome = _execute_metric_route(prepared, evaluations=evaluations)
         case MeshAdaptationRoute.NATIVE_METRIC_SURFACE:
-            outcome = _execute_surface_metric_route(prepared)
+            outcome = _execute_surface_metric_route(prepared, evaluations=evaluations)
         case MeshAdaptationRoute.NATIVE_METRIC_3D:
-            outcome = _execute_tetra_metric_route(prepared)
+            outcome = _execute_tetra_metric_route(prepared, evaluations=evaluations)
         case MeshAdaptationRoute.DEVICE_BISECTION:
             # Lazy: the device epoch module builds on this module's result types.
             from ._device_adaptation import _execute_device_bisection_route
 
-            outcome = _execute_device_bisection_route(prepared)
+            outcome = _execute_device_bisection_route(prepared, evaluations=evaluations)
         case MeshAdaptationRoute.DEVICE_METRIC_2D:
             from ._device_metric import _execute_device_metric_route
 
-            outcome = _execute_device_metric_route(prepared)
+            outcome = _execute_device_metric_route(prepared, evaluations=evaluations)
         case MeshAdaptationRoute.DEVICE_METRIC_3D:
             from ._device_tetra_metric import _execute_device_tetra_metric_route
 
-            outcome = _execute_device_tetra_metric_route(prepared)
+            outcome = _execute_device_tetra_metric_route(
+                prepared, evaluations=evaluations
+            )
         case MeshAdaptationRoute.MMG:
-            outcome = _execute_mmg_route(prepared)
+            outcome = _execute_mmg_route(prepared, evaluations=evaluations)
         case MeshAdaptationRoute.OMEGA_H:
-            outcome = _execute_omega_h_route(prepared)
+            outcome = _execute_omega_h_route(prepared, evaluations=evaluations)
         case MeshAdaptationRoute.HP:
-            outcome = _execute_hp_route(prepared)
+            outcome = _execute_hp_route(prepared, evaluations=evaluations)
         case _:
             raise TypeError("route must be MeshAdaptationRoute.")
     return _adaptation_result(prepared, outcome, started)

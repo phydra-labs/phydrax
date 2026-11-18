@@ -23,6 +23,7 @@ from ..discretization import CellMesh
 from ..discretization._cell_geometry_transition_types import CellGeometryTransition
 from ..geometry._affine_plc_domain import AffinePlcDomain
 from ..geometry._domain_coverage import PiecewiseLinearDomain
+from ..geometry._meshing_domain import SourceEvaluationLedger
 from ..geometry._planar_coverage import _sqrt_upper, PlcSourcePointWitness
 from ..geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
@@ -1005,7 +1006,10 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
         | None,
         target_scoped_fidelity: tuple[ScopedFidelityInput, ...],
         validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
+        evaluations: SourceEvaluationLedger | None = None,
     ) -> tuple[GeometryAssociation, ...]:
+        if evaluations is not None:
+            evaluations.record_unknown("plc-transfer-evaluations", 1)
         del geometry_transition, target_fidelity_witness
         del target_scoped_fidelity, validated_fidelity
         tables, strata, classified = self._source_state(source)

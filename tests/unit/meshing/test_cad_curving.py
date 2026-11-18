@@ -402,6 +402,12 @@ def test_cad_curving_scenario_1() -> None:
             ),
         )
     )
+    unknown = {
+        item.logical_findings[0]: int(item.logical_findings[1])
+        for item in adapted.target.trace.stages[-1].diagnostics
+        if item.provider_code == "stored_coordinate_unspecified_transfer_unknown"
+    }
+    assert unknown["projection:intersection-curve"] > 0
     target = adapted.target.associations[0]
     target_mesh = adapted.target.mesh
     source_classes, _ = _classes(association, mesh)

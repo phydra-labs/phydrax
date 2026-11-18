@@ -21,6 +21,7 @@ from ..discretization import CellGeometrySpec, CellMesh
 from ..discretization._cell_geometry_transition_types import CellGeometryTransition
 from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..geometry._mapped_reference_boundary import MappedReferenceBoundarySource
+from ..geometry._meshing_domain import SourceEvaluationLedger
 from ..geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryFaceImageWitness,
@@ -1160,6 +1161,7 @@ class NativeLayerCoreAssociationTransfer(StrictModule, NonTrainableState):
         | None,
         target_scoped_fidelity: tuple[ScopedFidelityInput, ...],
         validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
+        evaluations: SourceEvaluationLedger | None = None,
     ) -> tuple[GeometryAssociation, ...]:
         return self._propagate_computed(
             source,
@@ -1171,6 +1173,7 @@ class NativeLayerCoreAssociationTransfer(StrictModule, NonTrainableState):
             target_scoped_fidelity=target_scoped_fidelity,
             validated_fidelity=validated_fidelity,
             computed_root=None,
+            evaluations=evaluations,
         )
 
     def _propagate_computed(
@@ -1188,7 +1191,10 @@ class NativeLayerCoreAssociationTransfer(StrictModule, NonTrainableState):
         target_scoped_fidelity: tuple[ScopedFidelityInput, ...],
         validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
         computed_root: ComputedLayerCoreRoot | None,
+        evaluations: SourceEvaluationLedger | None = None,
     ) -> tuple[GeometryAssociation, ...]:
+        if evaluations is not None:
+            evaluations.record_unknown("layer-transfer-evaluations", 1)
         root = source.layer_core_root_geometry
         if root is not None:
             if computed_root is None:

@@ -18,6 +18,7 @@ from ..discretization import CellGeometrySpec, CellMesh
 from ..discretization._cell_geometry_transition_types import CellGeometryTransition
 from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..geometry._mapped_reference_domain import MappedReferenceDomain
+from ..geometry._meshing_domain import SourceEvaluationLedger
 from ..geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryFaceImageWitness,
@@ -300,7 +301,9 @@ class MappedReferenceAssociationTransfer(StrictModule, NonTrainableState):
         | None,
         target_scoped_fidelity: tuple[ScopedFidelityInput, ...],
         validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
+        evaluations: SourceEvaluationLedger | None = None,
     ) -> tuple[GeometryAssociation, ...]:
+        del evaluations
         self.validate_source(source)
         if not isinstance(lineage, MeshLineage) or not isinstance(target, CellMesh):
             raise TypeError("lineage and target must be MeshLineage and CellMesh values.")

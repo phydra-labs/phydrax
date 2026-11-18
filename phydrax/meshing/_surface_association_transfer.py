@@ -509,8 +509,7 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
     ) -> tuple[GeometryAssociation, ...]:
         """Transfer associations and optionally declare operation-local evaluations.
 
-        Without a caller's ledger, the returned associations make no claim
-        about how their stored values were evaluated.
+        Without a caller's ledger, a holder of only the association has unknown provenance.
         """
         self.validate_source(source)
         if not isinstance(lineage, MeshLineage) or not isinstance(target, CellMesh):
