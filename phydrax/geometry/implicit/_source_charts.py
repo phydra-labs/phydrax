@@ -5189,6 +5189,11 @@ def _doubling_steps(start: float, maximum_step: float, /) -> list[float]:
     return steps
 
 
+def _normal_bracket_start_steps(points: np.ndarray, /) -> np.ndarray:
+    """Choose platform-identical spacing from certified point-norm bounds."""
+    return np.spacing(np.maximum(1.0, binary64_norm_upper(points)))
+
+
 def _root_displacement_upper(
     roots: np.ndarray, targets: np.ndarray, errors: np.ndarray, /
 ) -> np.ndarray:
@@ -5254,6 +5259,7 @@ def _lift_points(
     field_lower, field_upper = bounds.point_values(stacked)
     signs: list[int] = []
     step_rows: list[list[float]] = []
+    start_steps = _normal_bracket_start_steps(stacked)
     candidate_rows: list[np.ndarray] = []
     for unique, point in enumerate(points):
         low_value = float(field_lower[unique])
@@ -5268,7 +5274,7 @@ def _lift_points(
                 "Pointwise implicit field sign is unresolved at target-map resolution."
             )
         point_sign = -1 if high_value < 0.0 else 1
-        step = float(np.spacing(max(1.0, float(np.linalg.norm(point)))))
+        step = float(start_steps[unique])
         if step <= 0.0 or not math.isfinite(step):
             raise ValueError(
                 "Implicit normal root bracket reached coordinate representability."
@@ -6355,6 +6361,21 @@ def _point_in_tetrahedra(point: np.ndarray, cells: np.ndarray, /) -> bool | None
     return False
 
 
+def _source_cell_extent_upper(domain: np.ndarray, level: int, /) -> float:
+    """Enclose the exact discovery-cell diagonal from represented endpoints."""
+    widths = binary64_difference_magnitude(domain[1], domain[0])[1]
+    with np.errstate(under="ignore"):
+        scaled = np.ldexp(widths, -level)
+        # Scaling a normal binary64 by a power of two is exact unless the
+        # result is subnormal; step outward there, including underflow to zero.
+        scaled = np.where(
+            (widths > 0.0) & (scaled < np.finfo(np.float64).tiny),
+            np.nextafter(scaled, np.inf),
+            scaled,
+        )
+    return float(binary64_norm_upper(scaled))
+
+
 def certify_implicit_sign_coverage(
     surface: AdaptiveImplicitSurface,
     triangles: np.ndarray,
@@ -6482,11 +6503,8 @@ def certify_implicit_sign_coverage(
     source_cell = (
         0.0
         if scaffold is None
-        else float(
-            np.linalg.norm(
-                (np.asarray(scaffold.domain[1]) - np.asarray(scaffold.domain[0]))
-                / 2.0**scaffold.target_level
-            )
+        else _source_cell_extent_upper(
+            np.asarray(scaffold.domain, dtype=np.float64), scaffold.target_level
         )
     )
     resolution = max(tolerance - mesh_to_source, source_cell)
