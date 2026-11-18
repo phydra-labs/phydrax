@@ -621,6 +621,12 @@ and `prepare()` require those exact devices to remain visible to the current JAX
 process; neither numeric device IDs alone nor simulated devices establish
 availability.
 
+The default `SpectralMeshTopology.one_device()` uses the execution substrate's
+single-device `device` mesh axis, so its fields compose with arrays placed on the
+default execution group. This changes the topology and dependent plan identities
+relative to the former `spectral` axis. Explicit caller-provided meshes retain their
+declared axes and must match the coupled operation's prepared placement.
+
 `DistributedSpectralExecutionPlan` is an owner-bound, JAX-native, full-complex C2C
 execution plan. It prepares one of three fixed schedules:
 

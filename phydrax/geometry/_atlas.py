@@ -24,6 +24,7 @@ from ..linalg import orthonormal_frame
 
 if TYPE_CHECKING:
     from ._interval_enclosure import PreparedIntervalFunction
+    from .brep._intersection_curve import _IntersectionCurveHostAtlas, IntersectionCurve
 
 
 class _CurveTrimSegment(Protocol):
@@ -177,10 +178,17 @@ class _SegmentEnclosures:
         "point_program",
         "point_program_ready",
         "chart_programs",
+        "intersection_atlases",
     )
 
-    def __init__(self, segment: _CurveTrimSegment, /) -> None:
+    def __init__(
+        self,
+        segment: _CurveTrimSegment,
+        intersection_atlases: dict[int, tuple[IntersectionCurve, _IntersectionCurveHostAtlas]],
+        /,
+    ) -> None:
         self.segment = segment
+        self.intersection_atlases = intersection_atlases
         self.boxes: dict[tuple[float, float], np.ndarray | None] = {}
         self.points: dict[float, np.ndarray | None] = {}
         self.point_program = None
@@ -203,8 +211,12 @@ class TrimEnclosures:
     __slots__ = ("loops",)
 
     def __init__(self, loops: tuple[tuple[_CurveTrimSegment, ...], ...], /) -> None:
+        intersection_atlases: dict[
+            int, tuple[IntersectionCurve, _IntersectionCurveHostAtlas]
+        ] = {}
         self.loops: _LoopEnclosures = tuple(
-            tuple(_SegmentEnclosures(segment) for segment in loop) for loop in loops
+            tuple(_SegmentEnclosures(segment, intersection_atlases) for segment in loop)
+            for loop in loops
         )
 
     def retain_coarse(self) -> None:
@@ -440,8 +452,25 @@ def _curve_segment_box(
 def _compute_segment_box(
     record: _SegmentEnclosures, first: float, last: float, /
 ) -> np.ndarray | None:
+    from .brep._intersection_curve import (
+        _IntersectionCurveHostAtlas,
+        CurveTrimSegment,
+        IntersectionPCurve,
+    )
+
     try:
-        box = np.asarray(record.segment.bounding_box(first, last), dtype=np.float64)
+        segment = record.segment
+        if type(segment) is CurveTrimSegment and type(segment.curve) is IntersectionPCurve:
+            curve = segment.curve.curve
+            entry = record.intersection_atlases.get(id(curve))
+            if entry is None:
+                atlas = _IntersectionCurveHostAtlas.from_curve(curve, prepare_cylinder=True)
+                record.intersection_atlases[id(curve)] = (curve, atlas)
+            else:
+                atlas = entry[1]
+            box = np.asarray(segment._bounding_box(first, last, host_atlas=atlas), dtype=np.float64)
+        else:
+            box = np.asarray(segment.bounding_box(first, last), dtype=np.float64)
     except (AttributeError, NotImplementedError, TypeError, ValueError, RuntimeError):
         return None
     start, end = _segment_points(record, (first, last))

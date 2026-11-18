@@ -14,7 +14,11 @@ import meshio
 import numpy as np
 from numpy.typing import ArrayLike
 
-from .._external_resource import open_bounded_resource, ResourceLimits
+from .._external_resource import (
+    content_source_identity,
+    open_bounded_resource,
+    ResourceLimits,
+)
 from .._mesh_file_profiles import resolve_mesh_file_profile
 from .._physical import SpatialCoordinateContract
 from .._publication import publish_bytes
@@ -266,7 +270,9 @@ def read_mesh_array_artifact(
             while chunk := resource.stream.read(1024 * 1024):
                 output.write(chunk)
         source = meshio.read(staged, file_format=profile.meshio_format)
-        source_manifest_id = resource.manifest.manifest_id
+        source_id = content_source_identity(
+            profile.profile_id, resource.manifest.content_sha256
+        )
     if _decoded_bytes(source) > policy.maximum_data_bytes:
         raise ValueError("Decoded mesh artifact exceeds maximum_data_bytes.")
     points = np.asarray(source.points)
@@ -365,7 +371,8 @@ def read_mesh_array_artifact(
         point_ids,
         tuple(blocks),
         policy.coordinate_contract,
-        source_id=source_manifest_id,
+        source_id=source_id,
+        source_path=str(source_path),
         source_format=profile.profile_id,
         fields=tuple(fields),
     )
@@ -373,7 +380,7 @@ def read_mesh_array_artifact(
     report = _report(
         artifact.source_format,
         "phydrax-mesh-arrays",
-        source_manifest_id,
+        source_id,
         artifact.artifact_id,
         losses,
         policy,

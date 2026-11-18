@@ -3,12 +3,14 @@
 #
 
 
+import hashlib
 from typing import Any
 
 import jax.numpy as jnp
 import meshio
 import numpy as np
 import pytest
+from numpy.typing import ArrayLike
 
 from phydrax.discretization._cell_ordering import meshio_reference_nodes
 from phydrax.discretization._conservation_boundary import ExtrapolationBoundary
@@ -25,6 +27,34 @@ from phydrax.equations._hyperbolic_systems import EulerSystem
 from phydrax.equations.fem._nodal_conservation import (
     NodalDGConservationMethodPlan,
 )
+
+
+@pytest.mark.parametrize(
+    ("extension", "writer"), (("msh", "gmsh22"), ("vtk", "vtk"), ("vtu", "vtu"))
+)
+def test_finite_element_file_report_identity_is_location_independent(
+    tmp_path: Any, extension: str, writer: str
+) -> None:
+    left, right = tmp_path / "left", tmp_path / "right"
+    left.mkdir()
+    right.mkdir()
+    first, second = left / f"a.{extension}", right / f"b.{extension}"
+    points = np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
+    cells: dict[str, ArrayLike] = {"triangle": np.asarray(((0, 1, 2),), dtype=np.int32)}
+    meshio.write(first, meshio.Mesh(points, cells), file_format=writer)
+    second.write_bytes(first.read_bytes())
+    a, b = read_finite_element_mesh(first), read_finite_element_mesh(second)
+    assert a.mesh.mesh_id == b.mesh.mesh_id
+    assert a.report.report_id == b.report.report_id
+    assert dict(a.report.source_metadata)["source_content_id"].strip('"') == (
+        f"{'gmsh' if extension == 'msh' else extension}-"
+        f"{hashlib.sha256(first.read_bytes()).hexdigest()[:16]}"
+    )
+    assert a.report.source_path == str(first.absolute())
+    assert b.report.source_path == str(second.absolute())
+    meshio.write(second, meshio.Mesh(points * 2.0, cells), file_format=writer)
+    changed = read_finite_element_mesh(second)
+    assert changed.report.report_id != a.report.report_id
 
 
 def test_meshio_quadratic_triangle_preserves_coordinate_dofs(tmp_path: Any) -> None:

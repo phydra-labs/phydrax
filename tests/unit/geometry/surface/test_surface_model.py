@@ -228,7 +228,10 @@ def test_bounded_surface_interop_preserves_source_identity_and_noop_repair(
         ),
     )
 
-    assert imported.model.metadata.source_id == str(source.absolute())
+    assert imported.model.metadata.source_id == (
+        f"vtu-{hashlib.sha256(source.read_bytes()).hexdigest()[:16]}"
+    )
+    assert imported.report.source_path == str(source.absolute())
     assert not imported.report.orientation_changed
     assert imported.model.orientation_repair is not None
 
@@ -244,12 +247,52 @@ def test_bounded_surface_interop_preserves_source_identity_and_noop_repair(
         file_format=SurfaceFileFormat.VTU,
     )
     assert destination.is_file()
+    restored = import_surface(destination, SurfaceImportPolicy(METER, allow_lossy=True))
+    assert restored.model.metadata.source_id == imported.model.metadata.source_id
     assert (
         exported.report.artifact_digest
         == hashlib.sha256(destination.read_bytes()).hexdigest()
     )
     with pytest.raises(ValueError, match="maximum_file_bytes"):
         SurfaceExportPolicy(METER, maximum_file_bytes=0)
+
+
+@pytest.mark.parametrize(
+    ("extension", "writer", "prefix"),
+    (
+        ("msh", "gmsh22", "gmsh"),
+        ("vtk", "vtk", "vtk"),
+        ("vtu", "vtu", "vtu"),
+        ("stl", "stl", "stl"),
+        ("obj", "obj", "obj"),
+    ),
+)
+def test_surface_file_identity_is_location_independent(
+    tmp_path: Any, extension: str, writer: str, prefix: str
+) -> None:
+    left = tmp_path / "left"
+    right = tmp_path / "right"
+    left.mkdir()
+    right.mkdir()
+    a = left / f"first.{extension}"
+    b = right / f"second.{extension}"
+    points, faces = _tetrahedron()
+    meshio.write(a, meshio.Mesh(points, [("triangle", faces)]), file_format=writer)
+    b.write_bytes(a.read_bytes())
+    policy = SurfaceImportPolicy(METER, allow_lossy=True)
+    first = import_surface(a, policy)
+    second = import_surface(b, policy)
+    assert first.model.metadata.source_id == (
+        f"{prefix}-{hashlib.sha256(a.read_bytes()).hexdigest()[:16]}"
+    )
+    assert first.model.metadata.source_id == second.model.metadata.source_id
+    assert first.model.model_id == second.model.model_id
+    assert first.report.source_path == str(a.absolute())
+    assert second.report.source_path == str(b.absolute())
+    meshio.write(b, meshio.Mesh(points * 2.0, [("triangle", faces)]), file_format=writer)
+    changed = import_surface(b, policy)
+    assert changed.model.metadata.source_id != first.model.metadata.source_id
+    assert changed.model.model_id != first.model.model_id
 
 
 def test_triangle_surface_cad_export_refuses(tmp_path: Any) -> None:

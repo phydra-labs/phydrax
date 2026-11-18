@@ -909,7 +909,7 @@ def _canonical_source_tolerances(
 
 @dataclass(frozen=True, slots=True)
 class CadImportResult:
-    """Return native B-Rep geometry, source identity and codec evidence."""
+    """Return native B-Rep geometry and evidence; source-path provenance is nonidentity."""
 
     model: BRepModel
     format: str
@@ -1021,7 +1021,9 @@ class CadImportResult:
                         "degenerate_edges": self.coverage.degenerate_edges,
                         "natural_boundaries": self.coverage.natural_boundaries,
                     },
-                    "provenance": [list(pair) for pair in self.provenance],
+                    "provenance": [
+                        list(pair) for pair in self.provenance if pair[0] != "source-path"
+                    ],
                     **(
                         {}
                         if self.entity_metadata is None

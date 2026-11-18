@@ -828,6 +828,37 @@ def _spectral_run(
     )
 
 
+def test_spectral_pic_initialization_with_execution_group_inputs(
+    tables: dict[tuple[str, str], QEDTable],
+) -> None:
+    run = _spectral_run(tables, None, 4)
+    position = jnp.full((4, 3), 4.0)
+    velocity = jnp.zeros((4, 3))
+    active = jnp.asarray([True, True, False, False])
+    mass = jnp.where(active, 1.0e-9 * _MASS, 0.0)
+    inputs = (position, velocity, active, mass)
+
+    def initialize(values: tuple[jax.Array, ...]) -> Any:
+        positions, velocities, masks, masses = values
+        return run.initialize(
+            (positions, positions),
+            (velocities, -velocities),
+            0.005,
+            active_masks=(masks, masks),
+            masses=(masses, masses),
+        )
+
+    reference = initialize(inputs)
+    runtime = phx.execution.ExecutionRuntime.current()
+    group = runtime.child_groups(len(jax.local_devices()))[0]
+    placed = jax.device_put(inputs, group.named_sharding(()))
+    actual = initialize(placed)
+    for expected, observed in zip(
+        jax.tree.leaves(reference), jax.tree.leaves(actual), strict=True
+    ):
+        np.testing.assert_array_equal(observed, expected)
+
+
 def test_galilean_grid_qed_emission_equals_the_lab_grid(
     tables: dict[tuple[str, str], QEDTable],
 ) -> None:

@@ -2772,7 +2772,7 @@ def _decode(
         )
     units = decoder._context_units(decoder._items_context(representations[0].id))
     digest = resource.digest
-    identity = resource.source_path or f"step-{digest[:16]}"
+    identity = resource.source_identity("step")
     try:
         model = stage.publish(
             coordinate_contract=policy.coordinate_contract,
@@ -3173,7 +3173,12 @@ def decode_step_resource(
         source_angle_unit_radians=units.angle_radians,
         report=report,
         coverage=stage.coverage(decoder.used),
-        provenance=tuple(stage.provenance),
+        provenance=tuple(stage.provenance)
+        + (
+            ()
+            if resource.source_path is None
+            else (("source-path", resource.source_path),)
+        ),
         entity_metadata=metadata,
         source_tolerance=max(decoder.source_uncertainties.values(), default=None),
         source_tolerances=tuple(sorted(decoder.raw_source_uncertainties.items())),
