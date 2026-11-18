@@ -72,9 +72,9 @@ def test_binary64_hex_rounding_trees_and_fused_counterexample() -> None:
         + Fraction(float(Fraction(float(first[1])) + Fraction(float(first[2]))))
     )
     # Two distinct results occur among these two association trees.
-    assert len({ordered.hex(), right_associated.hex()}) == 2
-    assert float(binary64_dot(first, second)).hex() == ordered.hex()
-    assert float(binary64_matmul(first[None, :], second)[0]).hex() == ordered.hex()
+    assert len({float(ordered).hex(), float(right_associated).hex()}) == 2
+    assert float(binary64_dot(first, second)).hex() == float(ordered).hex()
+    assert float(binary64_matmul(first[None, :], second)[0]).hex() == float(ordered).hex()
     squared = _ordered_fraction_dot(first, first)
     assert float(binary64_norm(first)).hex() == math.sqrt(squared).hex()
 
@@ -85,9 +85,9 @@ def test_binary64_hex_rounding_trees_and_fused_counterexample() -> None:
     b = np.asarray([1.0, 1.0 - delta])
     unfused = _ordered_fraction_dot(a, b)
     fused = float(Fraction(-1) + Fraction(float(a[1])) * Fraction(float(b[1])))
-    assert len({unfused.hex(), fused.hex()}) == 2
-    assert float(binary64_dot(a, b)).hex() == unfused.hex()
-    assert float(binary64_matmul(a, b)).hex() == unfused.hex()
+    assert len({float(unfused).hex(), float(fused).hex()}) == 2
+    assert float(binary64_dot(a, b)).hex() == float(unfused).hex()
+    assert float(binary64_matmul(a, b)).hex() == float(unfused).hex()
 
 
 def test_ordered_dot_differs_from_alternative_rounding() -> None:
@@ -119,41 +119,48 @@ def test_ordered_dot_differs_from_alternative_rounding() -> None:
     assert ordered != reverse
     assert ordered != fused
     assert ordered != exact
-    assert float(binary64_dot(first, second)).hex() == ordered.hex()
-    assert float(binary64_matmul(first, second)).hex() == ordered.hex()
+    assert (
+        float(binary64_dot(np.asarray(first), np.asarray(second))).hex()
+        == float(ordered).hex()
+    )
+    assert (
+        float(binary64_matmul(np.asarray(first), np.asarray(second))).hex()
+        == float(ordered).hex()
+    )
 
 
 @pytest.mark.parametrize("values", [(3.0, 4.0), (0.1, 0.2, 0.3), (1.0, 1.0)])
 def test_binary64_norm_and_directed_bounds(values: tuple[float, ...]) -> None:
     exact_squared = sum((Fraction(value) ** 2 for value in values), Fraction())
-    lower = float(binary64_norm_lower(values))
-    norm = float(binary64_norm(values))
-    upper = float(binary64_norm_upper(values))
+    array = np.asarray(values, dtype=np.float64)
+    lower = float(binary64_norm_lower(array))
+    norm = float(binary64_norm(array))
+    upper = float(binary64_norm_upper(array))
     assert lower <= norm <= upper
     assert Fraction(lower) ** 2 <= exact_squared <= Fraction(upper) ** 2
     rounded_squared = _ordered_fraction_dot(np.asarray(values), np.asarray(values))
-    assert norm.hex() == math.sqrt(rounded_squared).hex()
+    assert float(norm).hex() == math.sqrt(rounded_squared).hex()
 
 
 def test_binary64_ordered_products_zero_exceptional_and_shapes() -> None:
     negative_zero = np.asarray([-0.0])
-    assert np.signbit(binary64_dot(negative_zero, [1.0]))
-    assert np.signbit(binary64_matmul(negative_zero, [1.0]))
-    assert not np.signbit(binary64_dot([], []))
-    assert not np.signbit(binary64_norm([]))
+    assert np.signbit(binary64_dot(negative_zero, np.asarray([1.0])))
+    assert np.signbit(binary64_matmul(negative_zero, np.asarray([1.0])))
+    assert not np.signbit(binary64_dot(np.empty(0), np.empty(0)))
+    assert not np.signbit(binary64_norm(np.empty(0)))
     empty = binary64_matmul(np.empty((2, 3, 0)), np.empty((1, 0, 4)))
     assert empty.shape == (2, 3, 4)
     assert np.all(empty == 0) and not np.any(np.signbit(empty))
     with np.errstate(invalid="ignore", over="ignore", under="ignore"):
-        assert np.isnan(binary64_dot([np.inf], [0.0]))
-        assert np.isinf(binary64_norm([1e308]))
-        assert binary64_norm([1e-300]) == 0.0
+        assert np.isnan(binary64_dot(np.asarray([np.inf]), np.asarray([0.0])))
+        assert np.isinf(binary64_norm(np.asarray([1e308])))
+        assert binary64_norm(np.asarray([1e-300])) == 0.0
     with pytest.raises(ValueError):
-        binary64_dot([1.0], [1.0, 2.0])
+        binary64_dot(np.asarray([1.0]), np.asarray([1.0, 2.0]))
     with pytest.raises(ValueError):
-        binary64_matmul([1.0], [1.0, 2.0])
+        binary64_matmul(np.asarray([1.0]), np.asarray([1.0, 2.0]))
     with pytest.raises(ValueError):
-        binary64_matmul(1.0, [1.0])
+        binary64_matmul(1.0, np.asarray([1.0]))
 
 
 def _squared_norm(components: tuple[float, ...], /) -> Fraction:
