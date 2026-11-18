@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- Tetrahedral simplex mesh construction now derives entity levels and routes
+  with batched integer operations while preserving mesh identities and ordering.
 - Native geometry and meshing now share a single fixed-order binary64 dot,
   matrix product, and norm definition. On platforms whose BLAS fused or
   reordered these operations, rounding can change surface-association

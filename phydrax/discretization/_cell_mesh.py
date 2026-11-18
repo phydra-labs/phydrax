@@ -760,12 +760,21 @@ def _simplex_mesh_levels(
         raise ValueError("Simplex mesh blocks cannot contain duplicate cells.")
     levels: list[np.ndarray] = [np.arange(vertex_count, dtype=np.int32)[:, None]]
     for degree in range(1, dimension):
-        faces = {
-            tuple(sorted(int(cell[index]) for index in indices))
-            for cell in cells
-            for indices in combinations(range(dimension + 1), degree + 1)
-        }
-        levels.append(np.asarray(sorted(faces), dtype=np.int32))
+        if dimension == 3 and cells.shape[0] and cells.dtype == np.dtype(np.int32):
+            indices = np.asarray(
+                tuple(combinations(range(dimension + 1), degree + 1)), dtype=np.int32
+            )
+            faces = np.sort(cells[:, indices].reshape((-1, degree + 1)), axis=1)
+            # Both unique and the general set/sorted route use lexicographic
+            # integer order and discard equal rows, independently of occurrence.
+            levels.append(np.unique(faces, axis=0))
+        else:
+            faces = {
+                tuple(sorted(int(cell[index]) for index in indices))
+                for cell in cells
+                for indices in combinations(range(dimension + 1), degree + 1)
+            }
+            levels.append(np.asarray(sorted(faces), dtype=np.int32))
     levels.append(top)
     return tuple(levels)
 
@@ -801,10 +810,72 @@ def _simplex_mesh_boundary(
     return tuple(masks)
 
 
+_TETRAHEDRON_PACK_WIDTHS = tuple(64 // components for components in (2, 3))
+
+
+def _pack_tetrahedron_entities(rows: np.ndarray, /) -> np.ndarray:
+    """Pack prevalidated nonnegative rows with the first component most significant."""
+    values = rows.astype(np.uint64)
+    width = np.uint64(_TETRAHEDRON_PACK_WIDTHS[rows.shape[-1] - 2])
+    packed = values[..., 0]
+    for column in range(1, rows.shape[-1]):
+        packed = (packed << width) | values[..., column]
+    return packed
+
+
+def _packed_tetrahedron_routes(
+    cells: np.ndarray, levels: tuple[np.ndarray, ...], /
+) -> tuple[tuple[np.ndarray, ...], tuple[np.ndarray, ...]]:
+    """Route validated tetrahedra using lexicographically ordered integer fields."""
+    routes: list[np.ndarray] = []
+    signs: list[np.ndarray] = []
+    for degree, entities in enumerate(levels):
+        local = tuple(combinations(range(4), degree + 1))
+        selected = cells[:, np.asarray(local, dtype=np.int32)]
+        if degree == 0:
+            route = selected.reshape(cells.shape).copy()
+        elif degree == 3:
+            route = np.arange(cells.shape[0], dtype=np.int32)[:, None]
+        else:
+            keys = _pack_tetrahedron_entities(entities)
+            queries = _pack_tetrahedron_entities(np.sort(selected, axis=-1))
+            route = np.searchsorted(keys, queries).astype(np.int32)
+        coefficient = _simplex_orientation(selected.reshape((-1, degree + 1))).reshape(
+            route.shape
+        )
+        if degree == 3:
+            coefficient = np.ones_like(coefficient, dtype=np.float64)
+        routes.append(route)
+        signs.append(coefficient)
+    return tuple(routes), tuple(signs)
+
+
 def _simplex_cell_routes(
     cells: np.ndarray, levels: tuple[np.ndarray, ...], /
 ) -> tuple[tuple[np.ndarray, ...], tuple[np.ndarray, ...]]:
     dimension = len(levels) - 1
+    # Levels are generated immediately above this route: vertices enumerate
+    # rows, intermediate levels are sorted unique, and top rows follow cells.
+    # Two- and three-component fields use 32 and 21 bits respectively.
+    # Validate every operand before conversion so negatives and sentinels cannot wrap.
+    if (
+        dimension == 3
+        and cells.dtype == np.dtype(np.int32)
+        and cells.ndim == 2
+        and cells.shape[1] == 4
+        and all(
+            level.dtype == np.dtype(np.int32)
+            and level.ndim == 2
+            and level.shape[1] == degree + 1
+            for degree, level in enumerate(levels)
+        )
+        and all(
+            np.min(values, initial=0) >= 0
+            and np.max(values, initial=0) <= (1 << _TETRAHEDRON_PACK_WIDTHS[1]) - 1
+            for values in (cells, *levels)
+        )
+    ):
+        return _packed_tetrahedron_routes(cells, levels)
     routes: list[np.ndarray] = []
     signs: list[np.ndarray] = []
     for degree, entities in enumerate(levels):
