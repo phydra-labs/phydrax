@@ -5,12 +5,13 @@
 from dataclasses import replace
 
 import numpy as np
+import pytest
 
 from phydrax._meshcore import meshcore_identity
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry._mesh_certificates import _same_tree_content
 from phydrax.geometry._meshing_domain import MeshingDomain
-from phydrax.geometry.brep import brep_box
+from phydrax.geometry.brep import brep_box, brep_cylinder
 from phydrax.meshing._canonical import _accept_native_construction, _NATIVE_PROVIDER
 from phydrax.meshing._contracts import CellFamilyPolicy, CellMeshingTarget, SurfaceMeshingSpec
 from phydrax.meshing._scope import MeshingScope
@@ -34,7 +35,7 @@ def test_deferred_surface_request_accepts_the_same_mesh() -> None:
     )
     certified = prepared.execute(steering="certified")
     screened = prepared.execute(steering="screened")
-    assert screened.certified_steps == ("curve_parameters", "pole_sampling", "refinement")
+    assert screened.certified_steps == ("pole_sampling", "refinement")
     assert screened.certification.fidelity_witness is None
     deferred = screened.deferred_certification
     assert deferred is not None
@@ -76,3 +77,33 @@ def test_deferred_surface_request_accepts_the_same_mesh() -> None:
     assert tuple(value.association_id for value in accepted.associations) == tuple(
         value.association_id for value in replayed.associations
     )
+
+
+@pytest.mark.parametrize("shape", ("box", "cylinder"))
+def test_screened_surface_has_closed_oriented_edge_incidence(shape: str) -> None:
+    contract = SpatialCoordinateContract.si()
+    if shape == "box":
+        model = brep_box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), coordinate_contract=contract)
+    else:
+        model = brep_cylinder(1.0, 1.0, coordinate_contract=contract)
+    scope = MeshingScope.whole(model, 2)
+    specification = SurfaceMeshingSpec(
+        CellMeshingTarget(2, 3, CellFamilyPolicy(required=("triangle",))),
+        scope,
+        size_controls=(UniformSizeControl(scope, 0.8, strength=SizeControlStrength.SOFT),),
+        maximum_deviation=0.08,
+    )
+    prepared = prepare_native_surface(
+        MeshingDomain.from_brep(model), specification,
+        NativeMeshingOptions("parametric_surface"), contract,
+    )
+    result = prepared.execute(steering="screened")
+    triangles = np.asarray(result.mesh.blocks[0].vertices, dtype=np.int64)
+    edges = np.concatenate(
+        (triangles[:, (0, 1)], triangles[:, (1, 2)], triangles[:, (2, 0)])
+    )
+    unordered = np.sort(edges, axis=1)
+    _, inverse, counts = np.unique(unordered, axis=0, return_inverse=True, return_counts=True)
+    np.testing.assert_array_equal(counts, np.full(counts.shape, 2, dtype=np.int64))
+    signs = np.where(edges[:, 0] < edges[:, 1], 1, -1)
+    np.testing.assert_array_equal(np.bincount(inverse, weights=signs), np.zeros(len(counts)))
