@@ -17,6 +17,8 @@
 
 #include "check.hpp"
 #include "phydrax_meshcore.h"
+#include "dyadic.hpp"
+#include "elementary.hpp"
 #include "scratch_faces.hpp"
 #include "zero_set_admission.hpp"
 
@@ -236,6 +238,87 @@ void sphere_cases() {
   admission_soundness(
       value, gradient, [](double u, double v) { return sphere_point(0.5 * v, u); },
       [](double u, double v) { return sphere_point(0.5 * v, u); }, sphere_distance, 7u);
+}
+
+// Triangles near the unit sphere, on a generated stream without a platform
+// function. Where the cone is closed, the outward normal x / |x| of every
+// sampled triangle point lies in it and the floor is not above its
+// half-angle. The floor itself is proved to be at least
+// asin(2 tolerance / altitude) in exact arithmetic: with the exact squares of
+// twice the area and of the longest edge, and a lower bound of sin(floor)
+// from the elementary kernel,
+//   sin(floor)^2 (twice area)^2 >= (2 tolerance)^2 longest^2.
+void normal_cone_cases() {
+  using phx::mc::Dyadic;
+  IntervalBoxProgram value, gradient;
+  PHX_CHECK(sphere_value().bind(value));
+  PHX_CHECK(sphere_gradient().bind(gradient));
+  const double tolerance = 0x1p-10;
+  const ZeroSetBandAdmission admission(value, gradient, tolerance, 1);
+  std::uint64_t state = 20261118;
+  const auto unit = [&state]() {
+    state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+    return static_cast<double>(state >> 11) * 0x1p-53;
+  };
+  // The sphere point of the stereographic parameters (s, t).
+  const auto at = [](double s, double t) -> Point {
+    const double q = 1.0 + s * s + t * t;
+    return {2.0 * s / q, 2.0 * t / q, (1.0 - s * s - t * t) / q};
+  };
+  const auto square = [](const Dyadic& x) { return x * x; };
+  int closed = 0, floors = 0, open = 0;
+  for (int index = 0; index < 600; ++index) {
+    const double first = unit();
+    const double second = unit();
+    const double third = unit();
+    const double s = 1.6 * first - 0.8, t = 1.6 * second - 0.8;
+    // Small sizes leave altitudes below twice the tolerance: an open floor.
+    const double size = 0.001 + 0.12 * third * third;
+    const Point a = at(s, t), b = at(s + size, t), c = at(s, t + size);
+    const auto evidence = evidence_of(admission, a, b, c);
+    const double floor = admission.normal_cone_floor(a, b, c, evidence);
+    const phx::mc::remesh::NormalCone cone = admission.normal_cone(a, b, c, evidence);
+    if (!(floor < phx::mc::remesh::kOpenCone)) {
+      ++open;
+      PHX_CHECK(!(cone.half_angle < phx::mc::remesh::kOpenCone));
+      continue;
+    }
+    ++floors;
+    // Exact edges, area and longest edge.
+    Dyadic u[3], w[3], e[3];
+    for (int d = 0; d < 3; ++d) {
+      u[d] = Dyadic(b[d]) - Dyadic(a[d]);
+      w[d] = Dyadic(c[d]) - Dyadic(a[d]);
+      e[d] = Dyadic(c[d]) - Dyadic(b[d]);
+    }
+    const Dyadic area2 = (square(u[1] * w[2] - u[2] * w[1]) + square(u[2] * w[0] - u[0] * w[2])) +
+                         square(u[0] * w[1] - u[1] * w[0]);
+    Dyadic longest2 = (square(u[0]) + square(u[1])) + square(u[2]);
+    for (const Dyadic* edge : {w, e}) {
+      const Dyadic length2 = (square(edge[0]) + square(edge[1])) + square(edge[2]);
+      if ((length2 - longest2).sign() > 0) longest2 = length2;
+    }
+    const double sine = phx::mc::elementary::sin(floor, floor).lower;
+    PHX_CHECK(sine > 0.0);
+    PHX_CHECK((square(Dyadic(sine)) * area2 - square(Dyadic(2.0 * tolerance)) * longest2).sign() >=
+              0);
+    if (!(cone.half_angle < phx::mc::remesh::kOpenCone)) continue;
+    ++closed;
+    PHX_CHECK(floor <= cone.half_angle);
+    for (int i = 0; i <= 6; ++i) {
+      for (int j = 0; i + j <= 6; ++j) {
+        const Point x = combine(a, b, c, i / 6.0, j / 6.0);
+        const double nx = cone.axis[1] * x[2] - cone.axis[2] * x[1];
+        const double ny = cone.axis[2] * x[0] - cone.axis[0] * x[2];
+        const double nz = cone.axis[0] * x[1] - cone.axis[1] * x[0];
+        const double along = cone.axis[0] * x[0] + cone.axis[1] * x[1] + cone.axis[2] * x[2];
+        const double angle = std::atan2(std::sqrt(nx * nx + ny * ny + nz * nz), along);
+        PHX_CHECK(angle <= cone.half_angle + 1.0e-12);
+      }
+    }
+  }
+  std::printf("normal cones: %d floors proved, %d cones closed, %d open\n", floors, closed, open);
+  PHX_CHECK(closed > 200 && floors > 300 && open > 20);
 }
 
 void torus_cases() {
@@ -1051,6 +1134,7 @@ void scratch_faces_eviction() {
 
 int main() {
   sphere_cases();
+  normal_cone_cases();
   torus_cases();
   near_band_distance_cases();
   whole_piece_bracketing_cases();

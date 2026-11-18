@@ -17,6 +17,7 @@
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 #include "surface_remesh.hpp"
+#include "directed_interval.hpp"
 #include "intersections.hpp"
 #include "topology_keys.hpp"
 
@@ -872,6 +873,10 @@ class EnvelopeBandAdmission final : public phx::mc::remesh::TriangleAdmission {
     const double axis_length = length(axis);
     if (!(axis_length > 0)) return cone;
     axis = mul(axis, 1 / axis_length);
+    const phx::mc::remesh::IntervalVector exact_axis = {
+        phx::mc::remesh::point(axis[0]), phx::mc::remesh::point(axis[1]),
+        phx::mc::remesh::point(axis[2])};
+    const double margin = next_up(radius + covering);
     double half = 0;
     bool open = false;
     for (int k = 0; k < 3 && !open; ++k) {
@@ -885,14 +890,19 @@ class EnvelopeBandAdmission final : public phx::mc::remesh::TriangleAdmission {
         const double allowance = 2 * radius * length(difference(p, nearest[k])) +
                                  2 * covering * (d + radius) + covering * covering;
         if (squared - d * d > allowance + (allowance + d * d) * 1.0e-9) return;
-        const double norm = std::sqrt(squared);
-        if (!(norm > radius + covering)) {
+        // The angle between the axis and v - p and the spread
+        // asin((R + c) / |v - p|), both from above: v - p is enclosed
+        // componentwise and its length bounded from below.
+        const phx::mc::remesh::IntervalVector exact_offset =
+            phx::mc::remesh::enclosed_difference(v, p);
+        const double shortest = phx::mc::remesh::norm_lower(exact_offset);
+        if (!(shortest > margin)) {
           open = true;
           return;
         }
-        const double between =
-            std::atan2(length(cross(axis, offset)), dot(axis.data(), offset.data()));
-        half = std::max(half, between + std::asin((radius + covering) / norm));
+        const double between = phx::mc::remesh::angle_upper(exact_axis, exact_offset);
+        const double spread = phx::mc::remesh::asin_upper(next_up(margin / shortest));
+        half = std::max(half, next_up(between + spread));
       });
     }
     if (open || !(half < cone.half_angle)) return cone;
@@ -902,6 +912,8 @@ class EnvelopeBandAdmission final : public phx::mc::remesh::TriangleAdmission {
   }
   // Every cone holds the nearest cloud point p* of each corner as a candidate,
   // whose term is at least asin((R + c) / |v - p*|) >= asin((R + c) / U_v).
+  // A lower bound of the cone's half-angle: sum, quotient and arcsine are
+  // rounded down.
   double normal_cone_floor(
       const V& a, const V& b, const V& c,
       const std::array<phx::mc::remesh::VertexEvidence, 3>& evidence) const override {
@@ -910,7 +922,9 @@ class EnvelopeBandAdmission final : public phx::mc::remesh::TriangleAdmission {
     for (const auto& vertex : evidence) nearest_upper = std::min(nearest_upper, vertex.upper);
     const double margin = radius + data.covering_radius;
     if (!std::isfinite(radius) || !(nearest_upper > margin)) return phx::mc::remesh::kOpenCone;
-    return std::asin(margin / nearest_upper);
+    const double floor =
+        phx::mc::remesh::asin_lower(next_down(next_down(margin) / nearest_upper));
+    return floor > 0 ? floor : 0.0;
   }
 
  private:
