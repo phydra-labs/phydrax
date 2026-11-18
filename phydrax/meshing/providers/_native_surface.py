@@ -58,6 +58,7 @@ from phydrax.linalg._hermitian_spectral import fraction_sqrt_interval
 from phydrax.meshing._certification_schedule import MeshCertificationSchedule
 from phydrax.meshing._contracts import (
     CellMeshingTarget,
+    ConstructionSteering,
     MeshingFailure,
     MeshingFailureCategory,
     SurfaceMeshingSpec,
@@ -86,6 +87,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ...discretization import CellGeometrySpec
 from ...discretization._cell_geometry_validity import cell_geometry_id
 from ...discretization._reference_cell import reference_cell_topology
@@ -6230,6 +6232,116 @@ def _surface_point_witness(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _DeferredSurfaceCertification:
+    prepared: _PreparedNativeSurface
+    preparation: domain_owner.SourcePreparation
+    mesh: cell_mesh_owner.CellMesh
+    geometry: CellGeometrySpec
+    construction: SurfaceConstruction
+    refined: _RefinedSurface
+    surface_source: surface_support_owner.SurfaceSourceCharts
+    curve_ids: tuple[int, ...]
+
+    def resolve(self) -> NativeCertificationRequest:
+        prepared = self.prepared
+        domain = prepared.domain
+        boundary_cover = prepared.boundary_source.boundary_chart_cover(
+            preparation=self.preparation
+        )
+        if not boundary_cover.complete:
+            raise _failure(
+                "source boundary query could not certify complete trimmed-chart coverage",
+                category=MeshingFailureCategory.INVALID_SOURCE,
+                entity_ids=tuple(int(patch) for patch in prepared.selected_patches),
+            )
+        junctions: dict[int, set[int]] = {}
+        for curve in self.curve_ids:
+            source_curve = domain.curves[curve]
+            junctions.setdefault(source_curve.start, set()).add(curve)
+            junctions.setdefault(source_curve.end, set()).add(curve)
+        junction_rows = {
+            row
+            for row, (dimension, index) in enumerate(
+                zip(
+                    self.refined.vertex_source_dimensions.tolist(),
+                    self.refined.vertex_source_indices.tolist(),
+                    strict=True,
+                )
+            )
+            if dimension == 0 and len(junctions.get(index, ())) > 1
+        }
+        junction_ids = np.asarray(self.mesh.vertex_global_ids, dtype=np.int64)[
+            np.asarray(sorted(junction_rows), dtype=np.int64)
+        ]
+        surface_witness = self.surface_source.chart_witness
+        scoped_fidelity = []
+        for feature in prepared.specification.protected_features:
+            if not feature.hard:
+                continue
+            feature_ids = np.asarray(feature.scope.entity_ids, dtype=np.int64)
+            match feature.feature_kind:
+                case FeatureKind.CURVE:
+                    feature_query = _domain_curve_source_query(domain, feature_ids)
+                    feature_witness = _surface_curve_chart_witness(
+                        self.mesh, self.geometry, domain, feature_query, self.construction
+                    )
+                case FeatureKind.CORNER:
+                    feature_query = prepared.boundary_source
+                    feature_witness = _surface_point_witness(
+                        self.mesh, self.geometry, domain, feature_query, feature_ids,
+                        self.refined,
+                    )
+                case FeatureKind.SURFACE:
+                    patch_lookup = _scope_rows(prepared.scope_ids, 2)
+                    feature_patches = tuple(
+                        sorted(patch_lookup[int(identifier)] for identifier in feature_ids)
+                    )
+                    if (
+                        prepared.boundary_source.domain is domain
+                        and self.surface_source.boundary_source is prepared.boundary_source
+                        and feature_patches == prepared.boundary_source.patches
+                        and set(np.asarray(surface_witness.patches).tolist())
+                        == set(feature_patches)
+                    ):
+                        feature_query = prepared.boundary_source
+                        feature_witness = surface_witness
+                    else:
+                        feature_query = domain_boundary_owner.MeshingDomainBoundarySource(
+                            domain, feature_patches
+                        )
+                        feature_witness = self.surface_source.chart_witness
+                case FeatureKind.MATERIAL_INTERFACE:
+                    raise _failure(
+                        "material-interface feature constraints are not admitted",
+                        category=MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                    )
+                case _:
+                    assert_never(feature.feature_kind)
+            scoped_fidelity.append(
+                (feature_query, feature_witness, feature.maximum_deviation)
+            )
+        proof_tolerance = self.refined.fidelity_tolerance
+        if proof_tolerance is None:
+            from ...geometry._source_interpolation import exact_affine_boundary_source
+
+            if exact_affine_boundary_source(prepared.boundary_source):
+                proof_tolerance = 0.0
+        return NativeCertificationRequest(
+            MeshCertificationSchedule("surface"),
+            domain.source_id,
+            domain.source_revision,
+            fidelity_source=prepared.boundary_source,
+            fidelity_tolerance=proof_tolerance,
+            junction_vertices=junction_ids if junction_ids.size else None,
+            protected_features=prepared.specification.protected_features,
+            maximum_normal_deviation=prepared.specification.maximum_normal_deviation,
+            fidelity_witness=surface_witness,
+            scoped_fidelity=tuple(scoped_fidelity),
+            feature_source=domain,
+        )
+
+
 @final
 class _PreparedNativeSurface(StrictModule, NonTrainableState):
     domain: domain_owner.MeshingDomain
@@ -6277,19 +6389,28 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
         )
 
     def execute(
-        self, /, *, preparation: domain_owner.SourcePreparation | None = None
+        self, /, *, preparation: domain_owner.SourcePreparation | None = None,
+        steering: ConstructionSteering = "certified",
     ) -> NativeMeshConstruction:
         """Generate and certify the surface mesh.
 
         ``preparation`` is the caller's `SourcePreparation` of this domain;
         without one the domain is prepared for this execution alone.
         """
+        steering = parse(steering, ConstructionSteering, "steering")
         domain = self.domain
         domain.require_current(domain.source_id, domain.source_revision)
         self.boundary_source.require_current()
         preparation = domain_owner.SourcePreparation.of(domain, preparation)
         family = self.specification.target.cell_families
         if set((*family.required, *family.preferred)) == {"quadrilateral"}:
+            match steering:
+                case "screened":
+                    raise _failure("screened parametric quadrilateral surface is unsupported")
+                case "certified":
+                    pass
+                case _:
+                    assert_never(steering)
             from ._native_surface_quad import execute_tensor_quads
 
             return execute_tensor_quads(self, preparation)
@@ -6426,15 +6547,21 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
         )
         geometry = CellGeometrySpec.affine(mesh)
         association_values = surface_associations(domain, mesh, construction)
-        boundary_cover = self.boundary_source.boundary_chart_cover(
-            preparation=preparation
-        )
-        if not boundary_cover.complete:
-            raise _failure(
-                "source boundary query could not certify complete trimmed-chart coverage",
-                category=MeshingFailureCategory.INVALID_SOURCE,
-                entity_ids=tuple(int(patch) for patch in self.selected_patches),
-            )
+        match steering:
+            case "certified":
+                boundary_cover = self.boundary_source.boundary_chart_cover(
+                    preparation=preparation
+                )
+                if not boundary_cover.complete:
+                    raise _failure(
+                        "source boundary query could not certify complete trimmed-chart coverage",
+                        category=MeshingFailureCategory.INVALID_SOURCE,
+                        entity_ids=tuple(int(patch) for patch in self.selected_patches),
+                    )
+            case "screened":
+                pass
+            case _:
+                assert_never(steering)
         root_parameter_exact = tuple(
             tuple(chart.points[point] for point in triangle)
             for chart in refined.charts
@@ -6511,6 +6638,35 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             self.size_values,
             self.selected_patches,
         )
+        match steering:
+            case "screened":
+                request = NativeCertificationRequest(
+                    MeshCertificationSchedule("surface"),
+                    domain.source_id,
+                    domain.source_revision,
+                    fidelity_source=self.boundary_source,
+                    fidelity_tolerance=refined.fidelity_tolerance,
+                    protected_features=self.specification.protected_features,
+                    maximum_normal_deviation=self.specification.maximum_normal_deviation,
+                    feature_source=domain,
+                )
+                return NativeMeshConstruction(
+                    mesh,
+                    self.coordinate_contract,
+                    compliance,
+                    request,
+                    geometry=geometry,
+                    organization=organization,
+                    deferred_certification=_DeferredSurfaceCertification(
+                        self, preparation, mesh, geometry, construction, refined,
+                        surface_source, curve_ids,
+                    ),
+                    certified_steps=("curve_parameters", "pole_sampling", "refinement"),
+                )
+            case "certified":
+                pass
+            case _:
+                assert_never(steering)
         junctions: dict[int, set[int]] = {}
         for curve in curve_ids:
             source_curve = domain.curves[curve]
