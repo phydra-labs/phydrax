@@ -123,4 +123,10 @@ SearchEnd survivor_search(const CarrierSource& source, const double* source_metr
                           const std::vector<CarrierSimplex>& simplices, bool every_resolution,
                           std::vector<SurvivorMove>& moves, std::vector<double>& lengths);
 
+// The nonzero band quanta (metric_float.hpp) of `count` lengths, largest
+// first, above the band in `above` and below it in `below`. False when a
+// length has no finite quantum: it was not measured.
+bool band_violations(std::int64_t count, const double* lengths, std::vector<double>& above,
+                     std::vector<double>& below);
+
 }  // namespace phx::mc::metric

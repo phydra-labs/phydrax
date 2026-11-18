@@ -29,6 +29,7 @@ import importlib
 import importlib.metadata
 import importlib.util
 import threading
+import weakref
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import IntEnum
@@ -1476,6 +1477,48 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_angle_arccosine": (_I32, (_I64, _P, _P)),
     "phx_mc_angle_between": (_I32, (_I64, _P, _P, _P)),
     "phx_mc_angle_arctangent2": (_I32, (_I64, _P, _P, _P)),
+    "phx_mc_metric_relocation_create": (
+        _I32,
+        (
+            _P,
+            _I64,
+            _P,
+            _P,
+            _P,
+            _P,
+            _F64,
+            _I64,
+            _P,
+            _F64,
+            _F64,
+            _I64,
+            _P,
+            _P,
+            _P,
+            _I64,
+            _P,
+            _P,
+            _I32,
+            ctypes.POINTER(_P),
+        ),
+    ),
+    "phx_mc_metric_relocation_free": (None, (_P,)),
+    "phx_mc_metric_relocation_next": (
+        _I32,
+        (
+            _P,
+            _I64,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            ctypes.POINTER(_I64),
+            ctypes.POINTER(_I32),
+        ),
+    ),
 }
 
 
@@ -10512,7 +10555,7 @@ class MetricSource:
     points, so its result is the same on every platform.
     """
 
-    __slots__ = ("_handle", "_library")
+    __slots__ = ("_handle", "_library", "_searches")
 
     def __init__(
         self,
@@ -10529,6 +10572,7 @@ class MetricSource:
         and their logarithms."""
         self._handle = ctypes.c_void_p()
         self._library = load_meshcore()
+        self._searches: weakref.WeakSet[MetricRelocationSearch] = weakref.WeakSet()
         coordinates = np.ascontiguousarray(points, dtype=np.float64)
         if coordinates.ndim != 2 or coordinates.shape[1] != 3:
             raise ValueError("points must have shape (n, 3).")
@@ -10741,7 +10785,47 @@ class MetricSource:
             )
         return tuple(moves), MetricSearchEnd(end.value)
 
+    def relocation_search(
+        self,
+        star: MetricRelocationStar,
+        pulls: np.ndarray,
+        frame: tuple[np.ndarray, np.ndarray] | None,
+        simplices: Sequence[tuple[tuple[int, ...], bool]] | None,
+        /,
+        *,
+        deep: bool,
+        refine: bool,
+        band_only: bool,
+        constant_field: bool,
+    ) -> MetricRelocationSearch:
+        """The candidate positions of one relocated vertex, as a sequence.
+
+        ``pulls`` are ``(p, 3)`` displacements; ``frame`` the origin and the
+        ``(3, 3)`` projector of the vertex's carrier hull, or ``None``;
+        ``simplices`` the carrier's edges or triangles as for
+        :meth:`carriers`, or ``None`` for a vertex that moves in the source
+        cells. See :class:`MetricRelocationSearch`.
+        """
+        if not self._handle.value:
+            raise RuntimeError("The metric source is closed.")
+        search = MetricRelocationSearch(
+            self,
+            star,
+            pulls,
+            frame,
+            simplices,
+            deep=deep,
+            refine=refine,
+            band_only=band_only,
+            constant_field=constant_field,
+        )
+        self._searches.add(search)
+        return search
+
     def close(self) -> None:
+        # A search reads this source: it ends first.
+        for search in tuple(self._searches):
+            search.close()
         if self._handle.value:
             self._library["phx_mc_metric_source_free"](self._handle)
             self._handle = ctypes.c_void_p()
@@ -10805,6 +10889,223 @@ def planar_partition(
     return verdict.value, first.value, second.value
 
 
+class MetricRelocationEnd(IntEnum):
+    """What a call of :meth:`MetricRelocationSearch.next` returned."""
+
+    GROUP = 0
+    """The candidates of one goal, at least one."""
+    EXHAUSTED = 1
+    """No goal is left."""
+    UNMEASURED_GOAL = 2
+    """A goal whose screen met a spoke without a finite length."""
+    UNMEASURED_CARRIER = 3
+    """A carrier whose evaluation met one."""
+    NO_TENSOR = 4
+    """A carrier whose tensor could not be interpolated."""
+
+
+class MetricRelocationStar(NamedTuple):
+    """The star of a relocated vertex.
+
+    Row 0 of ``points`` and ``metrics`` is the vertex and rows 1.. are its
+    neighbors; spoke ``j`` runs from row 0 to row ``j + 1``.
+    """
+
+    points: np.ndarray
+    metrics: np.ndarray
+    measured: np.ndarray
+    """Per spoke, whether its length counts toward the band violations."""
+    before_lengths: np.ndarray
+    """Per spoke, its metric length now."""
+    before_quality: float
+    """Smallest cell quality now."""
+    cells: np.ndarray
+    """``(k, 4)`` star rows of the cells."""
+    determinant_floor: float
+    improvement: float
+
+
+class MetricRelocationCandidate(NamedTuple):
+    """A carrier of the source a relocated vertex may move to."""
+
+    rows: tuple[int, ...]
+    """Distinct source point rows, ascending; empty for a reported goal."""
+    weights: tuple[int, ...]
+    """Positive integers that sum to ``2**bits``."""
+    bits: int
+    point: np.ndarray
+    metric: np.ndarray
+    """``(3, 3)`` log-Euclidean mean of the source tensors over ``rows``."""
+    quality: float
+    """Smallest cell quality of the star with the vertex at the carrier."""
+    lengths: np.ndarray
+    """Metric lengths of the vertex's spokes at the carrier."""
+
+
+# The carriers of one goal: at most the 53 resolutions and one more.
+_RELOCATION_GROUP_CAPACITY = 54
+
+
+@final
+class MetricRelocationSearch:
+    """Candidate positions of one relocated vertex (owned native handle).
+
+    Each pull ``p`` gives the goals ``x + 2**-s p`` for ``s = 0, 1, ...``
+    until the goal is the vertex ``x`` itself (``s <= 5`` unless the search
+    is deep). A goal is projected onto the carrier hull when the vertex has a
+    frame; one seen before is passed over. A goal is screened in binary64
+    (in a constant field by the full evaluation with the vertex's own tensor,
+    otherwise by the determinants of the star) and, when kept, replaced by
+    exact carriers of the source: the coarsest; for a deep search the
+    coarsest and the finest; for a refining search the finest and, after
+    every goal, the remaining resolutions of the kept goals in order. A
+    carrier is a candidate when no neighbor lies at it, the band violations
+    of its measured spokes do not increase (and decrease when the search is
+    band-only), every cell keeps a positive determinant above the floor and,
+    with unchanged violations, the smallest cell quality improves by more
+    than the improvement.
+
+    :meth:`next` returns the candidates of the next goal that has any, in the
+    order of its carriers. The sequence does not depend on how the calls are
+    spaced and is the same on every platform. The search reads its source,
+    which closes it when it closes.
+    """
+
+    __slots__ = ("__weakref__", "_handle", "_library", "_source", "_spokes")
+
+    def __init__(
+        self,
+        source: MetricSource,
+        star: MetricRelocationStar,
+        pulls: np.ndarray,
+        frame: tuple[np.ndarray, np.ndarray] | None,
+        simplices: Sequence[tuple[tuple[int, ...], bool]] | None,
+        /,
+        *,
+        deep: bool,
+        refine: bool,
+        band_only: bool,
+        constant_field: bool,
+    ) -> None:
+        self._handle = ctypes.c_void_p()
+        self._library = source._library
+        self._source = source
+        points = np.ascontiguousarray(star.points, dtype=np.float64)
+        if points.ndim != 2 or points.shape[1] != 3 or points.shape[0] < 2:
+            raise ValueError("star points must have shape (n, 3) with n >= 2.")
+        metrics = _metric_tensors(star.metrics, "star metrics")
+        if metrics.shape[0] != points.shape[0]:
+            raise ValueError("star metrics must hold one tensor per point.")
+        self._spokes = points.shape[0] - 1
+        measured = np.ascontiguousarray(star.measured, dtype=np.int8)
+        before = np.ascontiguousarray(star.before_lengths, dtype=np.float64)
+        if measured.shape != (self._spokes,) or before.shape != (self._spokes,):
+            raise ValueError("A relocation star holds one flag and one length per spoke.")
+        cells = _metric_rows(star.cells, "star cells", 4)
+        if cells.shape[0] == 0:
+            raise ValueError("A relocation star has at least one cell.")
+        directions = np.ascontiguousarray(pulls, dtype=np.float64)
+        if directions.ndim != 2 or directions.shape[1] != 3:
+            raise ValueError("pulls must have shape (p, 3).")
+        origin = projector = None
+        if frame is not None:
+            origin = np.ascontiguousarray(frame[0], dtype=np.float64)
+            projector = np.ascontiguousarray(frame[1], dtype=np.float64)
+            if origin.shape != (3,) or projector.shape != (3, 3):
+                raise ValueError("A frame is an origin (3,) and a projector (3, 3).")
+        simplex_rows, declared = _simplex_arrays(() if simplices is None else simplices)
+        status = self._library["phx_mc_metric_relocation_create"](
+            source._handle,
+            points.shape[0],
+            points.ctypes.data,
+            metrics.ctypes.data,
+            measured.ctypes.data,
+            before.ctypes.data,
+            star.before_quality,
+            cells.shape[0],
+            cells.ctypes.data,
+            star.determinant_floor,
+            star.improvement,
+            directions.shape[0],
+            directions.ctypes.data,
+            None if origin is None else origin.ctypes.data,
+            None if projector is None else projector.ctypes.data,
+            simplex_rows.shape[0],
+            simplex_rows.ctypes.data,
+            declared.ctypes.data,
+            int(deep) | int(refine) << 1 | int(band_only) << 2 | int(constant_field) << 3,
+            ctypes.byref(self._handle),
+        )
+        _raise_for_call(status, "MetricRelocationSearch")
+
+    def next(
+        self,
+    ) -> tuple[tuple[MetricRelocationCandidate, ...], MetricRelocationEnd]:
+        """The candidates of the next goal that has any, and how the call ended.
+
+        For the three failures of :class:`MetricRelocationEnd` the one entry
+        is the goal or the carrier that cannot be decided, for the caller to
+        report.
+        """
+        if not self._handle.value:
+            raise RuntimeError("The relocation search is closed.")
+        room = _RELOCATION_GROUP_CAPACITY
+        rows = np.empty((room, 4), dtype=np.int64)
+        weights = np.empty((room, 4), dtype=np.int64)
+        bits = np.empty((room,), dtype=np.int32)
+        points = np.empty((room, 3), dtype=np.float64)
+        metrics = np.empty((room, 3, 3), dtype=np.float64)
+        qualities = np.empty((room,), dtype=np.float64)
+        lengths = np.zeros((room, self._spokes), dtype=np.float64)
+        found = _I64(0)
+        end = _I32(0)
+        status = self._library["phx_mc_metric_relocation_next"](
+            self._handle,
+            room,
+            rows.ctypes.data,
+            weights.ctypes.data,
+            bits.ctypes.data,
+            points.ctypes.data,
+            metrics.ctypes.data,
+            qualities.ctypes.data,
+            lengths.ctypes.data,
+            ctypes.byref(found),
+            ctypes.byref(end),
+        )
+        _raise_for_call(status, "MetricRelocationSearch.next")
+        group = []
+        for index in range(found.value):
+            used = int(np.count_nonzero(rows[index] >= 0))
+            group.append(
+                MetricRelocationCandidate(
+                    tuple(rows[index, :used].tolist()),
+                    tuple(weights[index, :used].tolist()),
+                    int(bits[index]),
+                    points[index].copy(),
+                    metrics[index].copy(),
+                    float(qualities[index]),
+                    lengths[index].copy(),
+                )
+            )
+        return tuple(group), MetricRelocationEnd(end.value)
+
+    def close(self) -> None:
+        if self._handle.value:
+            self._library["phx_mc_metric_relocation_free"](self._handle)
+            self._handle = ctypes.c_void_p()
+
+    def __del__(self) -> None:
+        # A constructor that raised before the handle existed leaves nothing
+        # to free; interpreter shutdown may already have unloaded the library.
+        handle = getattr(self, "_handle", None)
+        library = getattr(self, "_library", None)
+        if library is not None and handle is not None and handle.value:
+            try:
+                library["phx_mc_metric_relocation_free"](handle)
+            except BaseException:
+                pass
+
+
 __all__ = [
     "angle_arccosine",
     "angle_arctangent2",
@@ -10825,6 +11126,10 @@ __all__ = [
     "MetricCarrierOrder",
     "MetricCollapseStar",
     "MetricPositionVerdict",
+    "MetricRelocationCandidate",
+    "MetricRelocationEnd",
+    "MetricRelocationSearch",
+    "MetricRelocationStar",
     "MetricSearchEnd",
     "MetricSource",
     "MetricSurvivorMove",
