@@ -1,6 +1,12 @@
 # Changelog
 
 ## Unreleased
+- CAD volume meshing orders PLC boundary edges and incident facets by
+  model-owned indices and uses content-ordered native source groups instead of
+  source identity hashes. CAD meshes, `complex_id`, and identities derived
+  from them change; regenerate stored results. A remaining source-identity
+  tie-break in surface root-chart ordering can still affect models with charts
+  sharing the first three bounding extrema.
 - Certified native Boolean intersection curves now use platform-identical
   interval matrix products. On platforms whose BLAS fused or reordered those
   products, rounding changes stored `IntersectionCurve.contractions` and can
