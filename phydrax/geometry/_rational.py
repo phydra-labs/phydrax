@@ -18,71 +18,6 @@ from ..linalg._exact import ExactField, solve_exact
 type RationalVector = tuple[Fraction, ...]
 
 
-def binary64_dot(first: ArrayLike, second: ArrayLike, /) -> NDArray[np.float64]:
-    """Contract last-axis vectors in left-to-right, separately rounded binary64.
-
-    Empty contractions produce positive zero; otherwise the first product
-    initializes the sum, preserving its signed zero. IEEE infinities, NaNs,
-    overflow and underflow follow NumPy's elementwise arithmetic.
-    """
-    a = np.asarray(first, dtype=np.float64)
-    b = np.asarray(second, dtype=np.float64)
-    if a.ndim == 0 or b.ndim == 0 or a.shape[-1] != b.shape[-1]:
-        raise ValueError("Vector product dimensions must agree.")
-    shape = np.broadcast_shapes(a.shape[:-1], b.shape[:-1])
-    if a.shape[-1] == 0:
-        return np.zeros(shape, dtype=np.float64)
-    result = np.multiply(a[..., 0], b[..., 0])
-    for index in range(1, a.shape[-1]):
-        product = np.multiply(a[..., index], b[..., index])
-        result = np.add(result, product)
-    return np.asarray(result, dtype=np.float64)
-
-
-def binary64_norm(values: ArrayLike, /) -> NDArray[np.float64]:
-    """Unscaled square root of the ordered binary64 sum of squares.
-
-    Overflow and underflow are not avoided. Empty vectors yield positive zero;
-    exceptional values propagate according to NumPy arithmetic.
-    """
-    a = np.asarray(values, dtype=np.float64)
-    return np.asarray(np.sqrt(binary64_dot(a, a)), dtype=np.float64)
-
-
-def binary64_matmul(first: ArrayLike, second: ArrayLike, /) -> NDArray[np.float64]:
-    """NumPy-shaped matrix product with an unfused left-to-right contraction.
-
-    Empty contractions yield positive zero. Otherwise the first product
-    initializes the sum; signed zero and exceptional values follow separately
-    rounded NumPy multiplication and addition.
-    """
-    a = np.asarray(first, dtype=np.float64)
-    b = np.asarray(second, dtype=np.float64)
-    if a.ndim == 0 or b.ndim == 0:
-        raise ValueError("Matrix product operands must have at least one dimension.")
-    left_vector = a.ndim == 1
-    right_vector = b.ndim == 1
-    if left_vector:
-        a = a[np.newaxis, :]
-    if right_vector:
-        b = b[:, np.newaxis]
-    if a.shape[-1] != b.shape[-2]:
-        raise ValueError("Matrix product dimensions must agree.")
-    shape = np.broadcast_shapes(a.shape[:-2], b.shape[:-2]) + (a.shape[-2], b.shape[-1])
-    if a.shape[-1] == 0:
-        result = np.zeros(shape, dtype=np.float64)
-    else:
-        result = np.multiply(a[..., :, 0, None], b[..., None, 0, :])
-        for index in range(1, a.shape[-1]):
-            product = np.multiply(a[..., :, index, None], b[..., None, index, :])
-            result = np.add(result, product)
-    if left_vector:
-        result = np.squeeze(result, axis=-2)
-    if right_vector:
-        result = np.squeeze(result, axis=-1)
-    return np.asarray(result, dtype=np.float64)
-
-
 @overload
 def rational_vector(values: tuple[float, float], /) -> tuple[Fraction, Fraction]: ...
 
@@ -219,6 +154,71 @@ def upper_float(value: Fraction, /) -> float:
     return (
         math.nextafter(result, math.inf) if _rounding_sign(result, value) < 0 else result
     )
+
+
+def binary64_dot(first: ArrayLike, second: ArrayLike, /) -> NDArray[np.float64]:
+    """Contract last-axis vectors in left-to-right, separately rounded binary64.
+
+    Empty contractions produce positive zero; otherwise the first product
+    initializes the sum, preserving its signed zero. IEEE infinities, NaNs,
+    overflow and underflow follow NumPy's elementwise arithmetic.
+    """
+    a = np.asarray(first, dtype=np.float64)
+    b = np.asarray(second, dtype=np.float64)
+    if a.ndim == 0 or b.ndim == 0 or a.shape[-1] != b.shape[-1]:
+        raise ValueError("Vector product dimensions must agree.")
+    shape = np.broadcast_shapes(a.shape[:-1], b.shape[:-1])
+    if a.shape[-1] == 0:
+        return np.zeros(shape, dtype=np.float64)
+    result = np.multiply(a[..., 0], b[..., 0])
+    for index in range(1, a.shape[-1]):
+        product = np.multiply(a[..., index], b[..., index])
+        result = np.add(result, product)
+    return np.asarray(result, dtype=np.float64)
+
+
+def binary64_norm(values: ArrayLike, /) -> NDArray[np.float64]:
+    """Unscaled square root of the ordered binary64 sum of squares.
+
+    Overflow and underflow are not avoided. Empty vectors yield positive zero;
+    exceptional values propagate according to NumPy arithmetic.
+    """
+    a = np.asarray(values, dtype=np.float64)
+    return np.asarray(np.sqrt(binary64_dot(a, a)), dtype=np.float64)
+
+
+def binary64_matmul(first: ArrayLike, second: ArrayLike, /) -> NDArray[np.float64]:
+    """NumPy-shaped matrix product with an unfused left-to-right contraction.
+
+    Empty contractions yield positive zero. Otherwise the first product
+    initializes the sum; signed zero and exceptional values follow separately
+    rounded NumPy multiplication and addition.
+    """
+    a = np.asarray(first, dtype=np.float64)
+    b = np.asarray(second, dtype=np.float64)
+    if a.ndim == 0 or b.ndim == 0:
+        raise ValueError("Matrix product operands must have at least one dimension.")
+    left_vector = a.ndim == 1
+    right_vector = b.ndim == 1
+    if left_vector:
+        a = a[np.newaxis, :]
+    if right_vector:
+        b = b[:, np.newaxis]
+    if a.shape[-1] != b.shape[-2]:
+        raise ValueError("Matrix product dimensions must agree.")
+    shape = np.broadcast_shapes(a.shape[:-2], b.shape[:-2]) + (a.shape[-2], b.shape[-1])
+    if a.shape[-1] == 0:
+        result = np.zeros(shape, dtype=np.float64)
+    else:
+        result = np.multiply(a[..., :, 0, None], b[..., None, 0, :])
+        for index in range(1, a.shape[-1]):
+            product = np.multiply(a[..., :, index, None], b[..., None, index, :])
+            result = np.add(result, product)
+    if left_vector:
+        result = np.squeeze(result, axis=-2)
+    if right_vector:
+        result = np.squeeze(result, axis=-1)
+    return np.asarray(result, dtype=np.float64)
 
 
 def binary64_difference_magnitude(
