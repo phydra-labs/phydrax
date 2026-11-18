@@ -82,12 +82,14 @@ class NativeCertificationRequest:
 class DeferredNativeCertification(Protocol):
     """Construction operands a screened route retained instead of proof inputs.
 
-    ``resolve`` builds, for the mesh already constructed, the certification
-    request the certified route would have returned.  It may run exact work and
-    may raise the route's scientific failure; it never changes the mesh.
+    ``resolve`` builds, for the mesh already constructed, the complete
+    construction the certified route would have returned for that mesh: its
+    compliance report, certification request and evidence fields.  It may run
+    exact work and may raise the route's scientific failure; it never changes
+    the mesh, its geometry or its associations.
     """
 
-    def resolve(self) -> NativeCertificationRequest: ...
+    def resolve(self) -> NativeMeshConstruction: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,9 +157,10 @@ class NativeMeshConstruction:
     computed_layer_core_root: ComputedLayerCoreRoot | None = field(
         default=None, kw_only=True, repr=False, compare=False
     )
-    # Screened construction: operands that resolve to the full request at proof
-    # time.  While present, ``certification`` holds obligations only (no
-    # witnesses) and the construction must not be accepted before resolution.
+    # Screened construction: operands that resolve to the complete certified-form
+    # construction at proof time. While present, ``compliance`` and
+    # ``certification`` are the screened placeholders described by the route and
+    # the construction must not be accepted before resolution.
     deferred_certification: DeferredNativeCertification | None = field(
         default=None, kw_only=True, repr=False, compare=False
     )
