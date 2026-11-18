@@ -7,6 +7,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from collections.abc import Callable, Sequence
 from fractions import Fraction
+from math import lcm
 from typing import NamedTuple, Protocol, TYPE_CHECKING
 
 import equinox as eqx
@@ -80,27 +81,48 @@ class TrimClassification(StrictModule):
         self.inside, self.boundary, self.resolved = inside_, boundary_, resolved_
 
 
+class _IntegerPolygon(NamedTuple):
+    scale: int
+    vertices: tuple[tuple[int, int], ...]
+
+
+def _prepare_polygon(
+    vertices: tuple[tuple[Fraction, Fraction], ...], /
+) -> _IntegerPolygon:
+    scale = lcm(*(coordinate.denominator for vertex in vertices for coordinate in vertex))
+    return _IntegerPolygon(
+        scale,
+        tuple(
+            (
+                x.numerator * (scale // x.denominator),
+                y.numerator * (scale // y.denominator),
+            )
+            for x, y in vertices
+        ),
+    )
+
+
 def _polygon_point_state(
-    point: tuple[Fraction, Fraction],
-    vertices: tuple[tuple[Fraction, Fraction], ...],
-    /,
+    point: tuple[Fraction, Fraction], polygon: _IntegerPolygon, /
 ) -> tuple[bool, bool]:
-    inside = False
     px, py = point
+    denominator = lcm(px.denominator, py.denominator)
+    x = px.numerator * (denominator // px.denominator) * polygon.scale
+    y = py.numerator * (denominator // py.denominator) * polygon.scale
+    vertices = polygon.vertices
+    inside = False
     for start, end in zip(vertices, (*vertices[1:], vertices[0]), strict=True):
-        x0, y0 = start
-        x1, y1 = end
-        cross = (x1 - x0) * (py - y0) - (y1 - y0) * (px - x0)
+        x0, y0 = (coordinate * denominator for coordinate in start)
+        x1, y1 = (coordinate * denominator for coordinate in end)
+        cross = (x1 - x0) * (y - y0) - (y1 - y0) * (x - x0)
         if (
             cross == 0
-            and min(x0, x1) <= px <= max(x0, x1)
-            and min(y0, y1) <= py <= max(y0, y1)
+            and min(x0, x1) <= x <= max(x0, x1)
+            and min(y0, y1) <= y <= max(y0, y1)
         ):
             return False, True
-        if (y0 > py) != (y1 > py):
-            crossing = x0 + (py - y0) * (x1 - x0) / (y1 - y0)
-            if px < crossing:
-                inside = not inside
+        if (y0 > y) != (y1 > y) and (cross > 0) == (y1 > y0):
+            inside = not inside
     return inside, False
 
 
@@ -640,7 +662,7 @@ def _curve_loop_chords(
 
 class _CoarseChordPlan(NamedTuple):
     guards: tuple[np.ndarray, ...]
-    polygon: tuple[tuple[Fraction, Fraction], ...]
+    polygon: _IntegerPolygon
 
 
 def _coarse_chord_plan(
@@ -683,7 +705,7 @@ def _coarse_chord_plan(
         (Fraction.from_float(float(point[0])), Fraction.from_float(float(point[1])))
         for point in points
     )
-    return _CoarseChordPlan(tuple(guards), polygon)
+    return _CoarseChordPlan(tuple(guards), _prepare_polygon(polygon))
 
 
 def _curve_loops_point_state(
@@ -703,11 +725,12 @@ def _curve_loops_point_state(
         ):
             polygon = plan.polygon
         else:
-            polygon = _curve_loop_chords(loop, query_box)
-            if polygon is not None and coarse is not None and key not in coarse:
+            chords = _curve_loop_chords(loop, query_box)
+            if chords is None:
+                return False, False, False
+            polygon = _prepare_polygon(chords)
+            if coarse is not None and key not in coarse:
                 coarse[key] = _coarse_chord_plan(loop)
-        if polygon is None:
-            return False, False, False
         inside, boundary = _polygon_point_state(
             (
                 Fraction.from_float(float(point[0])),
@@ -942,12 +965,14 @@ class TrimDomain(StrictModule):
             assert self.outer is not None
             polygon_loops = (self.outer, *self.holes)
             rational_loops = tuple(
-                tuple(
-                    (
-                        Fraction.from_float(float(row[0])),
-                        Fraction.from_float(float(row[1])),
+                _prepare_polygon(
+                    tuple(
+                        (
+                            Fraction.from_float(float(row[0])),
+                            Fraction.from_float(float(row[1])),
+                        )
+                        for row in np.asarray(loop, dtype=np.float64)
                     )
-                    for row in np.asarray(loop, dtype=np.float64)
                 )
                 for loop in polygon_loops
             )
