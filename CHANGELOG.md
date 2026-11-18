@@ -5,11 +5,10 @@
   its lowered host interval program, and an intersection or plane-cylinder
   section chart point as the lower endpoint of its certified point enclosure
   intersected with the certified source span. Exact rational line charts remain
-  exact. Supported lowered planes, cylinders, spheres, tori, revolutions, and
-  placements use this convention. Cones decline native lowering because the
-  interval program lacks a tangent opcode; a tested degree-one B-spline patch
-  declines on `is_finite`. These and other evaluators that decline it retain
-  their prior numerical route and are declared
+  exact. Supported lowered planes, cylinders, cones, spheres, tori, revolutions,
+  and placements use this convention. A tested degree-one B-spline patch declines
+  on `is_finite`; that and other evaluators that decline retain their prior
+  numerical route and are declared
   by evaluation kind and count where their operation carries declaration
   evidence. Counts describe evaluations, not final coordinate rows; uncovered
   query evidence is not represented as a global zero. CAD surface and volume

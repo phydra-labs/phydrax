@@ -79,6 +79,16 @@ def _exact_coordinates(kind: str, u: Fraction, v: Fraction, /) -> tuple[Interval
             _add(one, _multiply(sine, cosine_v)),
             _add(one, sine_v),
         )
+    if kind == "cone":
+        sine_a = _trigonometric(Fraction(1, 4), cosine=False)
+        cosine_a = _trigonometric(Fraction(1, 4), cosine=True)
+        tangent = (sine_a[0] / cosine_a[1], sine_a[1] / cosine_a[0])
+        radius = _add(one, _multiply((v, v), tangent))
+        return (
+            _add(one, _multiply(cosine, radius)),
+            _add(one, _multiply(sine, radius)),
+            (1 + v, 1 + v),
+        )
     if kind == "torus":
         radius = _add(two, cosine_v)
         return (
@@ -102,6 +112,7 @@ def _surfaces() -> dict[str, AbstractSurfacePatch]:
     return {
         "plane": PlanePatch(origin, first, second),
         "cylinder": CylinderPatch((-1, 0, 0), first, second, axis, 1),
+        "cone": ConePatch(origin, first, second, axis, 1, 0.25),
         "sphere": SpherePatch(origin, first, second, axis, 1),
         "torus": TorusPatch(origin, first, second, axis, 2, 1),
         "revolution": RevolutionSurface(LineCurve((0, 0, 0), axis), (1, 0, 0), axis),
@@ -144,6 +155,12 @@ _GOLDEN = {
         ((3, 2), "-0x1.1f2840c263ca0p-6 0x1.7dc102fbaf2b5p-3 0x1.0000000000000p-3"),
         ((3, 3), "-0x1.1f2840c263ca0p-6 0x1.7dc102fbaf2b5p-3 0x1.8000000000000p-3"),
         ((3, 4), "-0x1.1f2840c263ca0p-6 0x1.7dc102fbaf2b5p-3 0x1.0000000000000p-2"),
+    ),
+    "cone": (
+        ((2, 6), "0x1.0b297e67584d3p+1 0x1.22f90d752a4a0p+0 0x1.6000000000000p+0"),
+        ((2, 10), "0x1.1344ef259a369p+1 0x1.2502a1ceec874p+0 0x1.a000000000000p+0"),
+        ((2, 14), "0x1.1b605fe3dc1ffp+1 0x1.270c3628aec48p+0 0x1.e000000000000p+0"),
+        ((3, 1), "0x1.ff86ebb563387p+0 0x1.307b1500055a2p+0 0x1.1000000000000p+0"),
     ),
     "sphere": (
         ((1, 3), "0x1.fb05a7c7ed29bp+0 0x1.0fb5975daf9e5p+0 0x1.2fb8205f75e56p+0"),
@@ -214,23 +231,17 @@ def test_stored_surface_golden_exact_enclosure_and_fault_adequacy(kind: str) -> 
     assert not preparation.unsupported_points
 
 
-@pytest.mark.parametrize("kind", ("cone", "bspline"))
-def test_declined_surface_kind_is_declared_and_uses_prior_jax_values(kind: str) -> None:
-    if kind == "cone":
-        surface: AbstractSurfacePatch = ConePatch(
-            (1, 1, 1), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1, 0
-        )
-    else:
-        surface = BSplineSurfacePatch(
-            np.asarray(
-                (((0.0, 0.0, 0.0), (0.0, 1.0, 0.0)), ((1.0, 0.0, 0.0), (1.0, 1.0, 0.0)))
-            ),
-            np.ones((2, 2)),
-            np.asarray((0.0, 0.0, 1.0, 1.0)),
-            np.asarray((0.0, 0.0, 1.0, 1.0)),
-            1,
-            1,
-        )
+def test_declined_bspline_surface_is_declared_and_uses_prior_jax_values() -> None:
+    surface = BSplineSurfacePatch(
+        np.asarray(
+            (((0.0, 0.0, 0.0), (0.0, 1.0, 0.0)), ((1.0, 0.0, 0.0), (1.0, 1.0, 0.0)))
+        ),
+        np.ones((2, 2)),
+        np.asarray((0.0, 0.0, 1.0, 1.0)),
+        np.asarray((0.0, 0.0, 1.0, 1.0)),
+        1,
+        1,
+    )
     assert prepare_host_program(surface.evaluate, 2) is None
     domain = _domain(surface)
     preparation = SourcePreparation(domain)
