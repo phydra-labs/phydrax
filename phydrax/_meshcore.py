@@ -10097,7 +10097,7 @@ def metric_survivor_goals(
 
 
 def _angle_map(entry: str, name: str, values: np.ndarray, /) -> np.ndarray:
-    arguments = np.ascontiguousarray(values, dtype=np.float64)
+    arguments = _real_array(values, "values")
     results = np.empty_like(arguments)
     status = load_meshcore()[entry](
         arguments.size, arguments.ctypes.data, results.ctypes.data
@@ -10143,8 +10143,8 @@ def angle_between(across: np.ndarray, along: np.ndarray, /) -> np.ndarray:
     dot product. The quadrant follows the sign of ``along`` exactly; a
     negative ``across`` and a value that is not finite give NaN.
     """
-    cross = np.ascontiguousarray(across, dtype=np.float64)
-    dot = np.ascontiguousarray(along, dtype=np.float64)
+    cross = _real_array(across, "across")
+    dot = _real_array(along, "along")
     if cross.shape != dot.shape:
         raise ValueError("across and along must have one shape.")
     results = np.empty_like(cross)
@@ -10165,8 +10165,8 @@ def angle_arctangent2(ordinates: np.ndarray, abscissas: np.ndarray, /) -> np.nda
     abscissa that is positive or ``+0`` and pi for one that is negative or
     ``-0``. A value that is not finite gives NaN.
     """
-    first = np.ascontiguousarray(ordinates, dtype=np.float64)
-    second = np.ascontiguousarray(abscissas, dtype=np.float64)
+    first = _real_array(ordinates, "ordinates")
+    second = _real_array(abscissas, "abscissas")
     if first.shape != second.shape:
         raise ValueError("ordinates and abscissas must have one shape.")
     results = np.empty_like(first)

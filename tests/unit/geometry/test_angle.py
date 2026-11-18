@@ -9,6 +9,8 @@ native bit vectors of ``test_angle``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 import pytest
 
@@ -121,6 +123,60 @@ def test_arctangent2_takes_the_sign_of_its_ordinate_and_ieee_zeros() -> None:
     )
     with pytest.raises(ValueError, match="one shape"):
         angle_arctangent2(np.zeros((3,)), np.zeros((2,)))
+
+
+_VALID = np.asarray((0.5,))
+_ARGUMENTS = (
+    pytest.param(angle_sine, 1, 0, id="sine"),
+    pytest.param(angle_cosine, 1, 0, id="cosine"),
+    pytest.param(angle_arcsine, 1, 0, id="arcsine"),
+    pytest.param(angle_arccosine, 1, 0, id="arccosine"),
+    pytest.param(angle_between, 2, 0, id="between-across"),
+    pytest.param(angle_between, 2, 1, id="between-along"),
+    pytest.param(angle_arctangent2, 2, 0, id="arctangent2-ordinates"),
+    pytest.param(angle_arctangent2, 2, 1, id="arctangent2-abscissas"),
+)
+_WRONG_KIND = (
+    pytest.param(np.asarray((1.0 + 2.0j,)), id="complex"),
+    pytest.param(np.asarray((True,)), id="bool"),
+    pytest.param(np.asarray(("1.0",)), id="text"),
+    pytest.param(np.asarray((None,), dtype=np.object_), id="object"),
+)
+
+
+def _with_argument(
+    function: Callable[..., np.ndarray], arity: int, position: int, values: np.ndarray, /
+) -> np.ndarray:
+    arguments = [_VALID] * arity
+    arguments[position] = values
+    return function(*arguments)
+
+
+@pytest.mark.parametrize(("function", "arity", "position"), _ARGUMENTS)
+@pytest.mark.parametrize("values", _WRONG_KIND)
+def test_an_argument_of_the_wrong_kind_is_refused(
+    function: Callable[..., np.ndarray], arity: int, position: int, values: np.ndarray
+) -> None:
+    with pytest.raises(TypeError, match="real floating or integer"):
+        _with_argument(function, arity, position, values)
+
+
+@pytest.mark.parametrize(("function", "arity", "position"), _ARGUMENTS)
+def test_an_integer_argument_is_taken_exactly_or_refused(
+    function: Callable[..., np.ndarray], arity: int, position: int
+) -> None:
+    # An integer that binary64 holds is its value; one beyond 2**53 is not
+    # rounded silently.
+    exact = _with_argument(function, arity, position, np.asarray((1,), dtype=np.int64))
+    assert np.array_equal(
+        exact,
+        _with_argument(function, arity, position, np.asarray((1.0,))),
+        equal_nan=True,
+    )
+    with pytest.raises(ValueError, match="exactly representable"):
+        _with_argument(
+            function, arity, position, np.asarray((2**53 + 1,), dtype=np.uint64)
+        )
 
 
 def test_angles_agree_with_numpy_to_a_few_values_and_keep_their_shape() -> None:
