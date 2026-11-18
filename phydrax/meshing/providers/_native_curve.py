@@ -61,6 +61,8 @@ from ...geometry._interval_enclosure import (
 )
 from ...geometry._rational import (
     binary64_difference_magnitude,
+    binary64_dot,
+    binary64_matmul,
     binary64_norm_lower,
     binary64_norm_upper,
     upper_float,
@@ -1283,7 +1285,7 @@ def _panel_integral(
         values = _integrand(
             prepared, row, lower + half * (rule.nodes + 1.0), density=density
         )
-        total = float(np.dot(rule.weights, values))
+        total = float(binary64_dot(rule.weights, values))
         value = half * total
         if not math.isfinite(value):
             raise MeshingFailure(
@@ -1675,11 +1677,11 @@ def _sampled_deviation(
     fractions = np.arange(1, samples + 1, dtype=np.float64) / (samples + 1)
     points = prepared.points(row, lower + fractions * (upper - lower))
     chord = last - first
-    squared = float(np.dot(chord, chord))
+    squared = float(binary64_dot(chord, chord))
     along = (
         np.zeros((points.shape[0],), dtype=np.float64)
         if squared == 0.0
-        else np.clip(((points - first) @ chord) / squared, 0.0, 1.0)
+        else np.clip(binary64_matmul(points - first, chord) / squared, 0.0, 1.0)
     )
     distance = np.linalg.norm(points - (first + along[:, None] * chord), axis=1)
     return float(np.max(distance, initial=0.0))

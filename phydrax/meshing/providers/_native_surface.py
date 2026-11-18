@@ -31,6 +31,9 @@ from phydrax.geometry._interval_enclosure import (
 )
 from phydrax.geometry._rational import (
     binary64_difference_magnitude,
+    binary64_dot,
+    binary64_matmul,
+    binary64_norm,
     binary64_norm_upper,
     fraction_endpoint,
     rational_dot,
@@ -1075,7 +1078,7 @@ def _chart_inputs(
         )
 
         def length(first: int, last: int, /) -> float:
-            return float(np.linalg.norm(physical[first] - physical[last]))
+            return float(binary64_norm(physical[first] - physical[last]))
 
         def explicit(band: tuple[int, int, int, int], /) -> bool:
             spacing = min(
@@ -1425,9 +1428,11 @@ def _pole_band_triangles(
     def shape(first: int, second: int, third: int, /) -> float:
         a, b, c = physical[first], physical[second], physical[third]
         squares = float(
-            np.sum((b - a) ** 2) + np.sum((c - b) ** 2) + np.sum((a - c) ** 2)
+            binary64_dot(b - a, b - a)
+            + binary64_dot(c - b, c - b)
+            + binary64_dot(a - c, a - c)
         )
-        area = float(np.linalg.norm(np.cross(b - a, c - a)))
+        area = float(binary64_norm(np.cross(b - a, c - a)))
         return 0.0 if squares == 0.0 else area / squares
 
     triangles: list[tuple[int, int, int]] = []
@@ -3833,7 +3838,7 @@ def _pole_graded_rings(
             midpoints = [
                 (first + last) / 2
                 for first, last in zip(ordered[:-1], ordered[1:], strict=True)
-                if np.linalg.norm(physical[last] - physical[first]) > chord_limit
+                if binary64_norm(physical[last] - physical[first]) > chord_limit
             ]
             if not midpoints:
                 break
@@ -3842,7 +3847,7 @@ def _pole_graded_rings(
             tuple((parameter, ring_point(parameter, fixed)) for parameter in ordered)
         )
         along = min(
-            float(np.linalg.norm(physical[last] - physical[first]))
+            float(binary64_norm(physical[last] - physical[first]))
             / abs(float(free_value(last) - free_value(first)))
             for first, last in zip(ordered[:-1], ordered[1:], strict=True)
             if free_value(last) != free_value(first)
@@ -4023,7 +4028,7 @@ def _pole_sampling(
                         np.asarray((chart,), dtype=np.float64),
                     )[0]
                     candidate_distances.append(
-                        float(np.linalg.norm(np.asarray(physical) - pole_point))
+                        float(binary64_norm(np.asarray(physical) - pole_point))
                     )
                 inside_fixed = candidate_fixed[int(np.argmax(candidate_distances))]
                 if inside_fixed == pole_fixed or not math.isfinite(inside_fixed):
@@ -4198,7 +4203,7 @@ def _pole_sampling(
                             dtype=np.float64,
                         )
                         accepted = (
-                            float(np.linalg.norm(physical_last - physical_first))
+                            float(binary64_norm(physical_last - physical_first))
                             <= edge_limit
                             and (
                                 fidelity_tolerance is None
@@ -4529,7 +4534,7 @@ def _add_global_vertex(
             domain.tolerance * domain.scale,
             64.0 * np.finfo(np.float64).eps * max(domain.scale, 1.0),
         )
-        if np.linalg.norm(previous - point) > allowance:
+        if binary64_norm(previous - point) > allowance:
             raise _failure(
                 "shared source chart uses disagree at one source corner or curve parameter",
                 category=MeshingFailureCategory.INVALID_SOURCE,
@@ -5450,7 +5455,7 @@ def _curve_edge_samples(
         along = float(fraction)
         maximum = max(
             maximum,
-            float(np.linalg.norm(point - (np.asarray(first) + along * chord))),
+            float(binary64_norm(point - (np.asarray(first) + along * chord))),
         )
     return maximum
 
@@ -5475,7 +5480,7 @@ def _triangle_sampled_deviations(
         (-1, weights.shape[0], 3)
     )
     triangle_coordinates = refined.coordinates[refined.triangles]
-    chord_points = np.einsum("qv,cvd->cqd", weights, triangle_coordinates)
+    chord_points = binary64_matmul(weights, triangle_coordinates)
     return np.max(np.linalg.norm(source_points - chord_points, axis=2), axis=1)
 
 

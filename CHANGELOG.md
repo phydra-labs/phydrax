@@ -1,6 +1,12 @@
 # Changelog
 
 ## Unreleased
+- Native geometry and meshing now share a single fixed-order binary64 dot,
+  matrix product, and norm definition. On platforms whose BLAS fused or
+  reordered these operations, rounding can change surface-association
+  curve-edge residuals, Boolean intersection gap and chart data, projection
+  results, placed geometry, and identities and meshes derived from them.
+  Regenerate affected stored results.
 - Certified native Boolean intersection curves now use platform-identical
   interval matrix products. On platforms whose BLAS fused or reordered those
   products, rounding changes stored `IntersectionCurve.contractions` and can

@@ -29,6 +29,7 @@ from ...geometry._piecewise_linear_boundary import (
     PiecewiseLinearBoundarySource,
     PiecewiseLinearDomainBoundaryOwner,
 )
+from ...geometry._rational import binary64_dot, binary64_matmul
 from ...geometry._source_boundary_records import (
     rational_chart_tokens,
     SourceBoundaryChartWitness,
@@ -1995,10 +1996,14 @@ def _quadrature_edge_length(
         parameter = lower + (nodes + 1.0) * (upper - lower) * 0.5
         points = start[None, :] + parameter[:, None] * direction[None, :]
         _values, gradients = element.tabulate(points)
-        jacobian = np.einsum("qjd,jk->qkd", np.asarray(gradients), dofs)
-        tangent = np.einsum("qkd,d->qk", jacobian, direction)
+        jacobian = np.swapaxes(
+            binary64_matmul(np.swapaxes(np.asarray(gradients), -1, -2), dofs),
+            -1,
+            -2,
+        )
+        tangent = binary64_matmul(jacobian, direction)
         speed = np.linalg.norm(tangent, axis=-1)
-        return float(np.dot(weights, speed) * (upper - lower) * 0.5)
+        return float(binary64_dot(weights, speed) * (upper - lower) * 0.5)
 
     total = 0.0
     error_total = 0.0
