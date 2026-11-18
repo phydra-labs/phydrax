@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from dataclasses import replace
 from fractions import Fraction
 
 import numpy as np
@@ -9,9 +10,10 @@ import pytest
 
 from phydrax._meshcore import meshcore_identity
 from phydrax._physical import SpatialCoordinateContract
+from phydrax.discretization import CellGeometrySpec, CellMesh
 from phydrax.geometry._mesh_certificates import _same_tree_content
 from phydrax.geometry._meshing_domain import MeshingDomain
-from phydrax.geometry.brep import brep_box, brep_cylinder
+from phydrax.geometry.brep import brep_box, brep_cylinder, brep_sphere
 from phydrax.meshing._canonical import _accept_native_construction, _NATIVE_PROVIDER
 from phydrax.meshing._contracts import (
     CellFamilyPolicy,
@@ -21,6 +23,7 @@ from phydrax.meshing._contracts import (
 )
 from phydrax.meshing._scope import MeshingScope
 from phydrax.meshing._sizing import SizeControlStrength, UniformSizeControl
+from phydrax.meshing.providers._native import CellMeshingCandidate, NativeMeshingProvider
 from phydrax.meshing.providers._native_options import NativeMeshingOptions
 from phydrax.meshing.providers._native_surface import (
     _curve_interval_midpoint,
@@ -47,7 +50,7 @@ def test_deferred_surface_request_accepts_the_same_mesh() -> None:
     )
     certified = prepared.execute(steering="certified")
     screened = prepared.execute(steering="screened")
-    assert screened.certified_steps == ("pole_sampling",)
+    assert screened.certified_steps == ()
     assert screened.certification.fidelity_witness is None
     deferred = screened.deferred_certification
     assert deferred is not None
@@ -123,13 +126,15 @@ def test_deferred_surface_request_accepts_the_same_mesh() -> None:
     )
 
 
-@pytest.mark.parametrize("shape", ("box", "cylinder"))
+@pytest.mark.parametrize("shape", ("box", "cylinder", "sphere"))
 def test_screened_surface_has_closed_oriented_edge_incidence(shape: str) -> None:
     contract = SpatialCoordinateContract.si()
     if shape == "box":
         model = brep_box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), coordinate_contract=contract)
-    else:
+    elif shape == "cylinder":
         model = brep_cylinder(1.0, 1.0, coordinate_contract=contract)
+    else:
+        model = brep_sphere(1.0, coordinate_contract=contract)
     scope = MeshingScope.whole(model, 2)
     specification = SurfaceMeshingSpec(
         CellMeshingTarget(2, 3, CellFamilyPolicy(required=("triangle",))),
@@ -146,6 +151,8 @@ def test_screened_surface_has_closed_oriented_edge_incidence(shape: str) -> None
         contract,
     )
     result = prepared.execute(steering="screened")
+    if shape == "sphere":
+        assert result.certified_steps == ("pole_sampling",)
     triangles = np.asarray(result.mesh.blocks[0].vertices, dtype=np.int64)
     edges = np.concatenate(
         (triangles[:, (0, 1)], triangles[:, (1, 2)], triangles[:, (2, 0)])
@@ -166,3 +173,80 @@ def test_unrepresentable_curve_interval_fails() -> None:
     upper = Fraction.from_float(float(np.nextafter(1.0, 2.0)))
     with pytest.raises(MeshingFailure, match="parameter representability"):
         _curve_interval_midpoint(lower, upper, 0)
+
+
+@pytest.mark.parametrize("shape", ("box", "cylinder"))
+def test_public_surface_candidate_proves_or_reports_findings(shape: str) -> None:
+    contract = SpatialCoordinateContract.si()
+    if shape == "box":
+        model = brep_box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), coordinate_contract=contract)
+    else:
+        model = brep_cylinder(1.0, 1.0, coordinate_contract=contract)
+    scope = MeshingScope.whole(model, 2)
+    specification = SurfaceMeshingSpec(
+        CellMeshingTarget(2, 3, CellFamilyPolicy(required=("triangle",))),
+        scope,
+        size_controls=(
+            UniformSizeControl(scope, 0.8, strength=SizeControlStrength.SOFT),
+        ),
+        maximum_deviation=0.08,
+    )
+    plan = NativeMeshingProvider(NativeMeshingOptions("parametric_surface")).plan(
+        model, specification, coordinate_contract=contract
+    )
+    candidate = plan.execute(prove=False)
+    assert isinstance(candidate, CellMeshingCandidate)
+    expected_steps = () if shape == "box" else ("pole_sampling",)
+    assert candidate.certified_steps == expected_steps
+    assert set(candidate.screens) == {
+        "sampled_curve_deviation",
+        "sampled_triangle_deviation",
+        "fidelity_tolerance",
+    }
+    assert candidate.screens["fidelity_tolerance"] == specification.maximum_deviation
+    mesh_id = candidate.mesh.mesh_id
+    coordinates = np.asarray(candidate.mesh.coordinates).copy()
+    try:
+        accepted = candidate.prove()
+    except MeshingFailure as error:
+        if shape == "box":
+            raise
+        assert str(error)
+    else:
+        assert accepted.mesh.mesh_id == mesh_id
+    assert candidate.mesh.mesh_id == mesh_id
+    np.testing.assert_array_equal(candidate.mesh.coordinates, coordinates)
+
+
+def test_broken_public_surface_candidate_is_refused() -> None:
+    contract = SpatialCoordinateContract.si()
+    model = brep_box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), coordinate_contract=contract)
+    scope = MeshingScope.whole(model, 2)
+    specification = SurfaceMeshingSpec(
+        CellMeshingTarget(2, 3, CellFamilyPolicy(required=("triangle",))),
+        scope,
+        size_controls=(
+            UniformSizeControl(scope, 0.8, strength=SizeControlStrength.SOFT),
+        ),
+    )
+    plan = NativeMeshingProvider(NativeMeshingOptions("parametric_surface")).plan(
+        model, specification, coordinate_contract=contract
+    )
+    candidate = plan.execute(prove=False)
+    mesh = CellMesh(
+        np.zeros_like(np.asarray(candidate.mesh.coordinates)),
+        candidate.mesh.blocks,
+        vertex_global_ids=candidate.mesh.vertex_global_ids,
+    )
+    broken = CellMeshingCandidate(
+        replace(
+            candidate._construction, mesh=mesh, geometry=CellGeometrySpec.affine(mesh)
+        ),
+        specification,
+        candidate.provider,
+        meshcore_identity(),
+        candidate.plan_id,
+        candidate.route,
+    )
+    with pytest.raises(ValueError, match="changed the constructed mesh"):
+        broken.prove()
