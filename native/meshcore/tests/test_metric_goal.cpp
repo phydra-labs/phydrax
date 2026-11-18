@@ -260,7 +260,11 @@ void survivor_rows(std::vector<BitRow>& rows) {
   stars.push_back({0, none, metrics_of(kIdentity, indefinite), octahedron});
   IntegerGenerator generator{0x510e527f9b05688cULL};
   for (int row = 0; row < 30; ++row) {
-    Star star{0, none, metrics_of(generated_metric(generator), generated_metric(generator)), {}};
+    // Two draws in one call have no specified order: the removed vertex's
+    // tensor is drawn first, then the survivor's.
+    const std::array<double, 9> removed_metric = generated_metric(generator);
+    const std::array<double, 9> survivor_metric = generated_metric(generator);
+    Star star{0, none, metrics_of(survivor_metric, removed_metric), {}};
     star.corner_count = row % 3 == 0 ? 0 : 1 + row % 3;
     for (int corner = 0; corner < star.corner_count; ++corner) {
       const Point point = generated_point(generator);
