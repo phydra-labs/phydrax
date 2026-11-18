@@ -135,17 +135,16 @@ def _local_query_error(
         return None
     relative = tuple(Fraction(float(query[i])) - matrix[i][3] for i in range(3))
     exact = tuple(
-        sum((matrix[j][i] * relative[j] for j in range(3)), Fraction(0))
-        for i in range(3)
+        sum((matrix[j][i] * relative[j] for j in range(3)), Fraction(0)) for i in range(3)
     )
     squared = sum(
-        ((Fraction(float(value)) - expected) ** 2
-         for value, expected in zip(local, exact, strict=True)),
+        (
+            (Fraction(float(value)) - expected) ** 2
+            for value, expected in zip(local, exact, strict=True)
+        ),
         Fraction(0),
     )
     return fraction_sqrt_interval(squared)[1]
-
-
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,6 +269,7 @@ class _Hit:
     root_id: tuple[object, ...] | None = None
     pending_frame: bool = False
     pending_point: bool = False
+    trim_membership: bool | None = None
     pending_box: bool = False
 
 
@@ -3181,9 +3181,7 @@ def _rectangle_trim_exact(model: BRepModel, face: int, bounds: np.ndarray, /) ->
     u0, v0 = (Fraction(float(value)) for value in bounds[0])
     u1, v1 = (Fraction(float(value)) for value in bounds[1])
     corners = ((u0, v0), (u1, v0), (u1, v1), (u0, v1))
-    expected = {
-        frozenset((corners[i], corners[(i + 1) % 4])) for i in range(4)
-    }
+    expected = {frozenset((corners[i], corners[(i + 1) % 4])) for i in range(4)}
     actual = set()
     for coedge in loops[0]:
         coefficients = line_chart_coefficients(model.geometry.pcurves[coedge])
@@ -3191,8 +3189,10 @@ def _rectangle_trim_exact(model: BRepModel, face: int, bounds: np.ndarray, /) ->
             return False
         first = _coedge_axis_values(model.geometry, coedge, 0)
         second = _coedge_axis_values(model.geometry, coedge, 1)
-        if first is None or second is None or not all(
-            isinstance(value, Fraction) for value in (*first, *second)
+        if (
+            first is None
+            or second is None
+            or not all(isinstance(value, Fraction) for value in (*first, *second))
         ):
             return False
         ends = ((first[0], second[0]), (first[1], second[1]))
@@ -3251,7 +3251,11 @@ def _exact_trim_line_contains(model: BRepModel, face: int, uv: np.ndarray, /) ->
                 intervals = sorted(
                     root.parameter_enclosure() for root in endpoints if root is not None
                 )
-                if not Fraction(float(intervals[0][1])) < parameter < Fraction(float(intervals[1][0])):
+                if (
+                    not Fraction(float(intervals[0][1]))
+                    < parameter
+                    < Fraction(float(intervals[1][0]))
+                ):
                     continue
             elif any(root is not None for root in endpoints):
                 continue
@@ -3282,7 +3286,10 @@ def _source_point_upper(
         program = preparation.patch_programs[face]
     if program is None and not (
         isinstance(patch, TorusPatch)
-        or (isinstance(patch, CylinderPatch) and not _source_coefficients_are_binary(patch))
+        or (
+            isinstance(patch, CylinderPatch)
+            and not _source_coefficients_are_binary(patch)
+        )
     ):
         return np.inf
     box = (
@@ -3293,22 +3300,41 @@ def _source_point_upper(
     return _point_box_upper(point, box)
 
 
+def _point_box_uppers(points: np.ndarray, boxes: np.ndarray, /) -> np.ndarray:
+    """Outward bounds to boxes, with identical scalar and batch operation order.
+
+    Absolute subtraction magnitudes, squares, left-to-right sums, and square
+    roots each move one binary64 step upward. IEEE rounding then encloses the
+    exact operation; exact zero is retained only when its inputs prove zero.
+    Overflow yields infinity, which declines enlargement at the caller.
+    """
+    with np.errstate(over="ignore", under="ignore", invalid="ignore"):
+        low, high = boxes[:, 0, :], boxes[:, 1, :]
+        first = np.nextafter(np.abs(points - low), np.inf)
+        second = np.nextafter(np.abs(points - high), np.inf)
+        distance = np.maximum(first, second)
+        distance = np.where((points == low) & (points == high), 0.0, distance)
+        squares = np.where(
+            distance == 0.0, 0.0, np.nextafter(distance * distance, np.inf)
+        )
+        first_sum = squares[:, 0] + squares[:, 1]
+        first_sum = np.where(
+            (squares[:, 0] == 0.0) & (squares[:, 1] == 0.0),
+            0.0,
+            np.nextafter(first_sum, np.inf),
+        )
+        total = first_sum + squares[:, 2]
+        total = np.where(
+            (first_sum == 0.0) & (squares[:, 2] == 0.0),
+            0.0,
+            np.nextafter(total, np.inf),
+        )
+        upper = np.where(total == 0.0, 0.0, np.nextafter(np.sqrt(total), np.inf))
+    return np.where(np.all(np.isfinite(boxes), axis=(1, 2)), upper, np.inf)
+
+
 def _point_box_upper(point: np.ndarray, box: np.ndarray, /) -> float:
-    if not np.all(np.isfinite(box)):
-        return np.inf
-    squared = sum(
-        (
-            max(
-                abs(Fraction(float(value)) - Fraction(float(lo))),
-                abs(Fraction(float(value)) - Fraction(float(hi))),
-            ) ** 2
-            for value, lo, hi in zip(point, box[0], box[1], strict=True)
-        ),
-        Fraction(0),
-    )
-    return fraction_endpoint(
-        fraction_sqrt_interval(squared)[1], upper=True, saturate=True
-    )
+    return float(_point_box_uppers(point[None, :], box[None, :, :])[0])
 
 
 def _finish_source_boxes(
@@ -3329,10 +3355,10 @@ def _finish_source_boxes(
         patch = model.patches[face]
         parameters = np.stack([hits[row].parameters for row in selected])
         binary = _source_coefficients_are_binary(patch)
-        if isinstance(patch, TorusPatch) or (isinstance(patch, CylinderPatch) and not binary):
-            boxes = _patch_boxes(
-                tuple((patch, uv, uv) for uv in parameters)
-            )
+        if isinstance(patch, TorusPatch) or (
+            isinstance(patch, CylinderPatch) and not binary
+        ):
+            boxes = _patch_boxes(tuple((patch, uv, uv) for uv in parameters))
         elif binary:
             if face not in preparation.patch_programs:
                 preparation.patch_programs[face] = prepare_host_program(patch.evaluate, 2)
@@ -3344,9 +3370,9 @@ def _finish_source_boxes(
                 boxes = tuple(np.stack(pair) for pair in zip(low, high, strict=True))
         else:
             boxes = tuple(np.full((2, 3), np.nan) for _ in selected)
-        for row, box in zip(selected, boxes, strict=True):
+        uppers = _point_box_uppers(queries[selected], np.stack(boxes))
+        for row, upper in zip(selected, uppers, strict=True):
             hit = hits[row]
-            upper = _point_box_upper(queries[row], box)
             if not np.isfinite(upper):
                 hits[row] = replace(hit, pending_box=False)
             else:
@@ -3395,13 +3421,12 @@ def _enlarge_face_hit(
             preparation.exact_rectangles[face] = rectangle
     domain = model.trim_domains[face]
     pole = _authored_sphere_pole(model, face, uv, bounds)
+    inside = hit.trim_membership
+    if inside is None and domain is not None and domain.curve_loops:
+        inside = _trim_classification(model, face, uv, enclosures=enclosures) == 1
     certified = (
         rectangle
-        or (
-            domain is not None
-            and bool(domain.curve_loops)
-            and _trim_classification(model, face, uv, enclosures=enclosures) == 1
-        )
+        or inside is True
         or _exact_trim_line_contains(model, face, uv)
         or pole is not None
     )
@@ -3412,12 +3437,18 @@ def _enlarge_face_hit(
     if pole is None:
         upper = _source_point_upper(patch, point, uv, face, preparation)
     else:
-        squared = sum(
-            ((Fraction(float(value)) - exact) ** 2
-             for value, exact in zip(point, pole, strict=True)),
-            Fraction(0),
+        pole_box = np.asarray(
+            (
+                tuple(
+                    fraction_endpoint(value, upper=False, saturate=True) for value in pole
+                ),
+                tuple(
+                    fraction_endpoint(value, upper=True, saturate=True) for value in pole
+                ),
+            ),
+            dtype=np.float64,
         )
-        upper = fraction_endpoint(fraction_sqrt_interval(squared)[1], upper=True)
+        upper = _point_box_upper(point, pole_box)
     return replace(hit, upper=max(hit.upper, upper)) if np.isfinite(upper) else hit
 
 
@@ -3448,6 +3479,7 @@ def _project_face(
     candidate: np.ndarray | None = None
     uv: np.ndarray | None = None
     exact_uv: tuple[ExactScalar, ExactScalar] | None = None
+    trim_membership = None
     nonisolated = False
     affine_spline = False
     # Straight-ruled revolutions and cylinders: the candidate is the closest
@@ -4061,17 +4093,21 @@ def _project_face(
         # face-closest point even where it lies on a seam or rim edge.
         trim = 1
     else:
-        trim = (
-            0
-            if outside_bounds
-            else _trim_classification(
+        if outside_bounds:
+            trim = 0
+            trim_membership = False
+        else:
+            trim = _trim_classification(
                 model,
                 face,
                 uv,
                 enclosures=enclosures,
                 coarse_chords=None if preparation is None else preparation.coarse_chords,
             )
-        )
+            domain = model.trim_domains[face]
+            trim_membership = bool(
+                domain is not None and domain.curve_loops and trim == 1
+            )
     if trim is None or trim == 0:
         # A carrier minimum whose periodic representative lies on a chart seam
         # bound (e.g. a rounded angle just across the seam) leaves trim
@@ -4311,6 +4347,7 @@ def _project_face(
             and status != _SEAM
             and not _periodic_landmark(uv, bounds, periods)
         ),
+        trim_membership=trim_membership,
     )
 
 
@@ -6016,7 +6053,9 @@ class NativeBRepProjection(AbstractBRepProjection):
                 hits.append(_unresolved(dimension, index, occurrence.path))
                 continue
             identity = _identity_occurrence(occurrence)
-            error = Fraction(0) if identity else _local_query_error(occurrence, query, local)
+            error = (
+                Fraction(0) if identity else _local_query_error(occurrence, query, local)
+            )
             if dimension == BRepEntityDimension.VERTEX:
                 point = np.asarray(
                     self.model.geometry.vertex_points[index], dtype=np.float64
@@ -6111,7 +6150,9 @@ class NativeBRepProjection(AbstractBRepProjection):
                     max(Fraction(0), Fraction(hit.lower) - error), upper=False
                 )
                 upper = (
-                    fraction_endpoint(Fraction(hit.upper) + error, upper=True, saturate=True)
+                    fraction_endpoint(
+                        Fraction(hit.upper) + error, upper=True, saturate=True
+                    )
                     if np.isfinite(hit.upper)
                     else np.inf
                 )
@@ -6123,7 +6164,12 @@ class NativeBRepProjection(AbstractBRepProjection):
                     else hit.point
                 )
                 upper = hit.upper
-                if not identity and error is not None and np.all(np.isfinite(point)) and not hit.pending_point:
+                if (
+                    not identity
+                    and error is not None
+                    and np.all(np.isfinite(point))
+                    and not hit.pending_point
+                ):
                     upper = max(upper, _exact_point_distance_upper(query, point))
                 normal = (
                     binary64_matmul(rotation, hit.normal)
@@ -6131,22 +6177,13 @@ class NativeBRepProjection(AbstractBRepProjection):
                     else hit.normal
                 )
                 tangents = _map_frame(hit.tangents, rotation.T)
-                hit = _Hit(
-                    hit.dimension,
-                    hit.index,
-                    point,
-                    hit.parameters,
-                    hit.lower,
-                    upper,
-                    hit.status,
-                    normal,
-                    tangents,
-                    occurrence.path,
-                    hit.piece_id,
-                    hit.root_id,
-                    hit.pending_frame,
-                    hit.pending_point,
-                    hit.pending_box,
+                hit = replace(
+                    hit,
+                    point=point,
+                    upper=upper,
+                    normal=normal,
+                    tangents=tangents,
+                    path=occurrence.path,
                 )
             hits.append(hit)
         if len(hits) == 1:
@@ -6595,13 +6632,17 @@ class NativeBRepProjection(AbstractBRepProjection):
                 hits.append(
                     replace(
                         _unresolved(
-                            unresolved[0].dimension, unresolved[0].index, unresolved[0].path
+                            unresolved[0].dimension,
+                            unresolved[0].index,
+                            unresolved[0].path,
                         ),
                         lower=min(
-                            hit.lower if hit.status != _FAILED else 0.0 for hit in all_hits
+                            hit.lower if hit.status != _FAILED else 0.0
+                            for hit in all_hits
                         ),
                         upper=min(
-                            hit.upper if hit.status != _FAILED else np.inf for hit in all_hits
+                            hit.upper if hit.status != _FAILED else np.inf
+                            for hit in all_hits
                         ),
                     )
                 )
