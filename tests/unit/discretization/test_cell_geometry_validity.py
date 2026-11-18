@@ -217,11 +217,7 @@ def test_exact_evaluation_shared_nodes_and_non_dyadic_values(radical: bool) -> N
     coordinates = np.asarray(tuple((float(row[0]),) for row in exact), dtype=np.float64)
     mesh = D.CellMesh(
         coordinates,
-        (
-            D.CellBlock(
-                "cells", "interval", np.asarray(((0, 1), (1, 2)), dtype=np.int64)
-            ),
-        ),
+        (D.CellBlock("cells", "interval", np.asarray(((0, 1), (1, 2)), dtype=np.int64)),),
     )
     geometry = CellGeometrySpec(
         {"cells": D.fem.lagrange_element("interval", 1)},

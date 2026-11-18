@@ -3896,12 +3896,12 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
                         if plan is None:
                             weights = cast(
                                 tuple[Fraction, ...],
-                                tuple(evaluate(basis, exact_point) for basis in plain_basis),
+                                tuple(
+                                    evaluate(basis, exact_point) for basis in plain_basis
+                                ),
                             )
                             active = tuple(
-                                dof
-                                for dof, weight in enumerate(weights)
-                                if weight != 0
+                                dof for dof, weight in enumerate(weights) if weight != 0
                             )
                             denominator = lcm(
                                 *(weights[dof].denominator for dof in active)
@@ -3930,7 +3930,8 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
                                 and integer_weights[0] == weight_denominator
                             ):
                                 value = tuple(
-                                    Fraction(item) for item in rational_coefficients[active[0]]
+                                    Fraction(item)
+                                    for item in rational_coefficients[active[0]]
                                 )
                             elif not active:
                                 value = tuple(Fraction(0) for _ in coefficients[0])
@@ -3946,7 +3947,10 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
                                     integer_coefficients = tuple(
                                         tuple(
                                             item.numerator
-                                            * (coefficient_denominator // item.denominator)
+                                            * (
+                                                coefficient_denominator
+                                                // item.denominator
+                                            )
                                             for item in row
                                         )
                                         for row in rational_coefficients
