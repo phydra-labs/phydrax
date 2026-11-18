@@ -206,6 +206,5 @@ int main() {
   tetra_face_preserving_partition();
   tetra_red_partition();
   capacity_rollback();
-  std::puts("Mixed same-family template coverage and bounded rollback checks passed.");
-  return 0;
+  return phx::mc::test::finish("test_mixed_refinement");
 }

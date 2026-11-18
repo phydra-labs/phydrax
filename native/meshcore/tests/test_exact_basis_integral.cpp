@@ -49,5 +49,5 @@ int main() {
   PHX_CHECK(statuses[0] == PHX_MC_OK && statuses[2] == PHX_MC_RANGE_ERROR);
   PHX_CHECK(W::load(scales.data()).limb == W::from_int64(3).limb);
   PHX_CHECK(W::load(sums.data()).limb == W::from_int64(9).limb);
-  return 0;
+  return phx::mc::test::finish("test_exact_basis_integral");
 }

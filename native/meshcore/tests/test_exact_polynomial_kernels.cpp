@@ -98,5 +98,5 @@ int main() {
   W::from_int64(2).store(input.data() + 2 * W::kBytes);
   PHX_CHECK(verdict_call(1) == PHX_MC_OK);
   PHX_CHECK(verdict_status[0] == PHX_MC_OK && verdicts[0] == 1 && verdicts[1] == 0);
-  return 0;
+  return phx::mc::test::finish("test_exact_polynomial_kernels");
 }
