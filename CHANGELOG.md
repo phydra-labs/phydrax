@@ -292,6 +292,11 @@
   and their order. On captured 147,231-cell qualification inputs, the median
   combined time of three alternating proof replays fell from 99.24 to 62.90
   seconds.
+- Source-fidelity interpolation recognizes exact rational affine surface maps
+  and uses their identically zero residual without constructing per-chart
+  rational polynomials. Bounds and findings are unchanged. On one captured
+  13,443-row chart batch, three alternating general and affine-bound runs took
+  8.19/0.044, 9.16/0.043, and 9.40/0.059 seconds, respectively.
 - Sphere and torus projection points, parameters, normals and tangents now use
   platform-identical representatives, changing projection `result_id`s while
   certified bounds, statuses, source identities and profile identities remain
