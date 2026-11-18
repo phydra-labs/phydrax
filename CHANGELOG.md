@@ -940,6 +940,18 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Implicit root charts form certified vector-norm bounds with outward-rounded
+  squares and sums, and use directed norms for bracket starting steps and
+  sign-coverage resolution. Chart evidence and coverage outcomes can change
+  near a rounding threshold. Stored `LayerCurvingImplicitRootTrace.displacement_upper`
+  values now enclose the exact represented root displacement plus root error;
+  this correction changes `trace_id` and the enclosing source-evidence identity,
+  but does not itself change root points, root errors, root-map identity or
+  fidelity identity. Directed bracket starts can change root points and errors
+  separately. Correctly rounded multiplication in place of floating-point
+  squares can change live piece bracket and derivative bounds, which are not
+  archived or directly hashed. Exact singular-circle contact now falls through
+  to the exact comparison when interval endpoints tie.
 - Source preparations bind their cached artifacts to one live domain; rebuilt
   domains use a fresh preparation. Domain-owned host arrays now have immutable
   storage, so validated-domain reuse cannot be bypassed by enabling writes.
