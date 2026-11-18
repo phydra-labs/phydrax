@@ -4688,6 +4688,7 @@ def _retarget_source_boundary_chart_witness(
     source_parameter_tokens = witness.source_parameter_rational_tokens
     source_orientations: dict[tuple[object, ...], int] = {}
     target_orientations: dict[tuple[object, ...], int] = {}
+    refined_target_orientations: dict[tuple[object, ...], int] = {}
     chart_weight_cache: dict[tuple[object, ...], tuple[Fraction, ...] | None] = {}
     mixed_transform_tokens = {
         child: reference_tokens((*matrix, offset))
@@ -5042,20 +5043,36 @@ def _retarget_source_boundary_chart_witness(
                             parameter_charts[parameter_key] = parameters_exact
                         if _chart_orientation(parameters_exact, chart_dimension) == 0:
                             continue
-                        if chart_dimension == 1:
-                            target_orientation = 1
-                        elif top_dimension == 2:
-                            target_orientation = _chart_orientation(target_reference, 2)
-                        else:
-                            from ..geometry._source_fidelity import _face_reference_chart
+                        orientation_key = (
+                            block.cell_kind,
+                            local_entity,
+                            target_reference,
+                        )
+                        target_orientation = refined_target_orientations.get(
+                            orientation_key
+                        )
+                        if target_orientation is None:
+                            if chart_dimension == 1:
+                                target_orientation = 1
+                            elif top_dimension == 2:
+                                target_orientation = _chart_orientation(
+                                    target_reference, 2
+                                )
+                            else:
+                                from ..geometry._source_fidelity import (
+                                    _face_reference_chart,
+                                )
 
-                            target_chart, _ = _face_reference_chart(
-                                block.cell_kind,
-                                local_entity,
-                                target_reference,
-                            )
-                            target_orientation = _chart_orientation(
-                                np.asarray(target_chart[0], dtype=np.float64), 2
+                                target_chart, _ = _face_reference_chart(
+                                    block.cell_kind,
+                                    local_entity,
+                                    target_reference,
+                                )
+                                target_orientation = _chart_orientation(
+                                    np.asarray(target_chart[0], dtype=np.float64), 2
+                                )
+                            refined_target_orientations[orientation_key] = (
+                                target_orientation
                             )
                         if target_orientation == 0:
                             continue
