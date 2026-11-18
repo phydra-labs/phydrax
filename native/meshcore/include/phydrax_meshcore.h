@@ -1901,7 +1901,9 @@ PHX_MC_API int32_t phx_mc_tet_mesh_create_with_implicit(
 PHX_MC_API int32_t phx_mc_tet_mesh_implicit_source(
     const phx_mc_tet_mesh* mesh, phx_mc_tet_implicit_source* source);
 /* Remeshes a closed, consistently oriented, embedded carrier of the zero set of f
- * toward `edge_length` and `minimum_angle_degrees`. Every created triangle is
+ * toward `edge_length` and `minimum_angle_degrees`. Closed is validated: every
+ * edge is held by exactly two triangles, in opposite directions, else
+ * PHX_MC_INVALID_INPUT. Every created triangle is
  * admitted by the kZeroSetBand predicate: its certified distance to {f = 0} is at
  * most `tolerance` (interval |f| over the triangle against a certified lower bound
  * of |grad f| over its widened box) and its normal is certified transversal to

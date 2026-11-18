@@ -659,6 +659,14 @@
   triangle carrier of the adaptive sphere profile to its 114 triangles takes
   about a fifth less time (397 to 307 seconds in one measured pair) with
   identical vertices, triangles, counters and distance bound.
+- Certified surface remeshing validates that its carrier is closed. The
+  zero-set and envelope remeshes declare a closed carrier, and before the
+  first edit every edge must be held by exactly two triangles in opposite
+  directions: a carrier with a border or a repeated triangle is refused with
+  an invalid-input status instead of being remeshed. An edge of a closed
+  carrier without a neighboring triangle during the remesh, which was skipped
+  silently, is now reported as an internal error. Valid carriers return the
+  same mesh as before.
 - The source normal cones of certified surface remeshing are outward-rounded
   bounds computed without the platform math library. For the zero-set
   admission the half-angle `asin(|r| / |g|) + asin(2 tolerance / altitude)`
