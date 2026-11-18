@@ -109,7 +109,7 @@ def test_soft_size_is_not_a_hard_fidelity_tolerance(fixed_case: tuple[Any, ...])
         discovery,
         plan.prepared.surface_plan,
     )
-    construction = prepared.execute()
+    construction = prepared.execute(steering="certified")
     tolerance = construction.certification.fidelity_tolerance
     assert tolerance is not None
     assert tolerance != pytest.approx(control.target_size)

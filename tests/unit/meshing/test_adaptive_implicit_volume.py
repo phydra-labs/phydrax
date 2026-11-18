@@ -301,7 +301,7 @@ def test_union_seam_faces_take_the_root_witness_bound() -> None:
         specification,
         NativeMeshingOptions("implicit_surface", implicit_policy=_policy()),
         _CONTRACT,
-    ).execute()
+    ).execute(steering="certified")
     query = construction.certification.fidelity_source
     witness = construction.certification.fidelity_witness
     assert isinstance(query, _NativeImplicitBoundaryQuery)

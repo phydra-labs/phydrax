@@ -237,7 +237,7 @@ def _closed_brep_surface(
             surface_schedule=NativeSurfaceSchedule(spacing_fraction=0.65),
         ),
         contract,
-    ).execute()
+    ).execute(steering="certified")
     source_charts = construction.organization.surface_source
     if source_charts is None:
         raise AssertionError("Closed BRep construction lost its exact source charts.")

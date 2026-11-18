@@ -34,6 +34,7 @@ from ...discretization._cell_mesh import CellMesh, SimplicialConnectivity
 from ...discretization._periodic_topology import PeriodicMeshTopology
 from ...meshing._certification_schedule import MeshCertificationSchedule
 from ...meshing._contracts import (
+    ConstructionSteering,
     MeshingFailure,
     MeshingFailureCategory,
     MeshingFailureEvidence,
@@ -60,7 +61,7 @@ from ...meshing._scope import MeshingEntityKind, MeshingScope
 from ...meshing._sizing import UniformSizeControl
 from ...meshing._tetra_metric import execute_tetra_metric_adaptation
 from ...meshing._topology_edit import CellTopologyEdit
-from ...typing import checked
+from ...typing import checked, parse
 from .._canonical import canonicalize_cell_mesh, certify_cell_mesh
 from .._distribution import _owner_local_multiset_identity
 from .._periodic import (
@@ -10955,13 +10956,14 @@ class PreparedNativePeriodic(StrictModule, NonTrainableState):
         )
 
     @overload
-    def execute(self, /) -> NativeMeshConstruction: ...
+    def execute(self, /, *, steering: ConstructionSteering) -> NativeMeshConstruction: ...
 
     @overload
     def execute(
         self,
         /,
         *,
+        steering: ConstructionSteering,
         execution_group: ExecutionGroup,
         graph_partition_plan: GraphPartitionPlan | None = None,
     ) -> MeshAssembly: ...
@@ -10970,11 +10972,14 @@ class PreparedNativePeriodic(StrictModule, NonTrainableState):
         self,
         /,
         *,
+        steering: ConstructionSteering,
         execution_group: ExecutionGroup | None = None,
         graph_partition_plan: GraphPartitionPlan | None = None,
     ) -> NativeMeshConstruction | MeshAssembly:
         from ..._execution_runtime import ExecutionGroup
         from ...graph._partition import GraphPartitionPlan
+
+        parse(steering, ConstructionSteering, "steering")
 
         if execution_group is not None and not isinstance(
             execution_group, ExecutionGroup
@@ -12153,6 +12158,7 @@ def rebuild_owner_local_periodic_assembly_from_shards(
         coordinate_contract,
     )
     assembly = prepared.execute(
+        steering="certified",
         execution_group=execution_group,
         graph_partition_plan=graph_partition_plan,
     )

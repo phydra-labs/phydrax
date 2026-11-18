@@ -484,7 +484,7 @@ def test_mapped_whole_surface_feature_preserves_fidelity_certificate(
     )
     construction = prepare(
         source, specification, NativeMeshingOptions(route), SpatialCoordinateContract.si()
-    ).execute()
+    ).execute(steering="certified")
     request = construction.certification
     query, witness = request.fidelity_source, request.fidelity_witness
     assert isinstance(query, MappedReferenceBoundarySource)
@@ -577,7 +577,7 @@ def test_mapped_grid_hex_routes_execute_with_root_map_and_source_evidence(
         _request(source, fill_strategy=fill_strategy),
         NativeMeshingOptions(route),
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
 
     assert isinstance(construction, NativeMeshConstruction)
     assert all(block.cell_kind == "hexahedron" for block in construction.mesh.blocks)
@@ -650,7 +650,7 @@ def test_mapped_grid_hex_routes_execute_nonuniform_affine_multiple_roots(
         _request(source, seed_point=seed),
         NativeMeshingOptions(route),
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
     assert isinstance(construction, NativeMeshConstruction)
     assert isinstance(construction.mesh.connectivity, PolyhedralConnectivity)
     np.testing.assert_allclose(
@@ -694,7 +694,7 @@ def test_mapped_grid_hex_routes_restrict_curved_source_maps(
         _request(source, seed_point=seed, geometry_order=2),
         NativeMeshingOptions(route),
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
 
     assert isinstance(construction, NativeMeshConstruction)
     np.testing.assert_allclose(
@@ -726,7 +726,7 @@ def test_mapped_grid_hex_certifies_exact_restriction_without_requested_deviation
         NativeMeshingOptions("mapped_balanced_grid_hex"),
         SpatialCoordinateContract.si(),
     )
-    assert prepared.execute().certification.fidelity_tolerance == 0.0
+    assert prepared.execute(steering="certified").certification.fidelity_tolerance == 0.0
 
     result = (
         NativeMeshingProvider(NativeMeshingOptions("mapped_balanced_grid_hex"))
@@ -814,7 +814,7 @@ def test_mapped_grid_hex_retains_root_region_and_patch_controls() -> None:
         specification,
         NativeMeshingOptions("mapped_balanced_grid_hex"),
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
 
     assert len(construction.organization.zones) == 1
     zone = construction.organization.zones[0]
@@ -1543,7 +1543,7 @@ def test_mapped_plc_tetra_volume_publishes_exact_reference_maps(
         specification,
         NativeMeshingOptions("plc_tetrahedral", volume_schedule=schedule),
         domain.coordinate_contract,
-    ).execute()
+    ).execute(steering="certified")
 
     assert construction.source_mesh is domain.reference_mesh
     assert construction.source_geometry is domain.source_geometry

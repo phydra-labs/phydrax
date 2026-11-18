@@ -602,7 +602,7 @@ def tessellate_brep_model(
             options,
             model.coordinate_contract,
             preparation=preparation,
-        ).execute(preparation=preparation)
+        ).execute(preparation=preparation, steering="certified")
         arrays = _construction_arrays(model, domain, construction)
         (
             vertices,

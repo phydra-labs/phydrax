@@ -383,7 +383,7 @@ def test_native_analytic_implicit_profile_normalizes_inside_plan_preparation() -
         specification,
         options,
         contract,
-    ).execute()
+    ).execute(steering="certified")
 
     _assert_consumer_metadata(profile, specification, construction, contract)
 
@@ -410,7 +410,7 @@ def test_carrier_forward_bound_covers_analytic_triangle_samples(
         ),
     )
     prepared = prepare_native_implicit(profile, specification, options, contract)
-    construction = prepared.execute()
+    construction = prepared.execute(steering="certified")
     bound = dict(construction.compliance.achieved)["source_fidelity_bound"]
     mesh = construction.mesh
     points = np.asarray(mesh.coordinates)[np.asarray(mesh.blocks[0].vertices)]
@@ -527,7 +527,7 @@ def test_carrier_bound_includes_nonzero_root_residual() -> None:
     )
     construction = prepare_native_implicit(
         profile, specification, options, contract
-    ).execute()
+    ).execute(steering="certified")
     bound = dict(construction.compliance.achieved)["source_fidelity_bound"]
     distances = np.abs(
         np.linalg.norm(np.asarray(construction.mesh.coordinates), axis=1) - 1.0
@@ -547,7 +547,7 @@ def test_carrier_bound_for_non_distance_sphere_field(scaled: bool) -> None:
     specification, options, contract = _request(source, maximum_deviation=0.2)
     construction = prepare_native_implicit(
         source, specification, options, contract
-    ).execute()
+    ).execute(steering="certified")
     bound = dict(construction.compliance.achieved)["source_fidelity_bound"]
     mesh = construction.mesh
     triangles = np.asarray(mesh.coordinates)[np.asarray(mesh.blocks[0].vertices)]
@@ -657,7 +657,7 @@ def test_native_route_retains_first_order_when_native_program_is_refused() -> No
     prepared = prepare_native_implicit(source, specification, options, contract)
     if not isinstance(prepared, _PreparedImplicitRoute):
         raise AssertionError("Expected the adaptive implicit surface route.")
-    construction = prepared.execute()
+    construction = prepared.execute(steering="certified")
     first = np.nextafter(
         prepared.discovery.evidence.maximum_surface_box_diagonal
         + prepared.discovery.policy.root_tolerance,
@@ -886,7 +886,7 @@ def test_ladder_continues_after_coarse_discovery_refusal(
     if resolution is None:
         raise AssertionError("The effective discovery policy must have a resolution.")
     assert resolution <= 0.1
-    assert prepared.execute().compliance.passed
+    assert prepared.execute(steering="certified").compliance.passed
 
 
 def test_native_implicit_grid_source_builds_certified_surface_construction() -> None:
@@ -910,7 +910,7 @@ def test_native_implicit_grid_source_builds_certified_surface_construction() -> 
         specification,
         options,
         contract,
-    ).execute()
+    ).execute(steering="certified")
 
     assert construction.mesh.topological_dimension == 2
     assert construction.mesh.ambient_dimension == 3
@@ -950,7 +950,7 @@ def test_native_implicit_retained_discovery_preserves_zero_set_identity() -> Non
         specification,
         options,
         contract,
-    ).execute()
+    ).execute(steering="certified")
 
     assert discovery.mesh is not None
     np.testing.assert_array_equal(
@@ -1057,7 +1057,7 @@ def test_native_implicit_volume_route_builds_region_mesh(
         specification,
         options,
         contract,
-    ).execute()
+    ).execute(steering="certified")
 
     assert construction.mesh.topological_dimension == 3
     assert construction.mesh.ambient_dimension == 3
@@ -1326,7 +1326,7 @@ def _adaptive_volume_construction(
     )
     construction = prepare_native_implicit(
         source, specification, options, SpatialCoordinateContract.si()
-    ).execute()
+    ).execute(steering="certified")
     return construction, discovery
 
 
@@ -1918,7 +1918,7 @@ def test_native_restricted_torus_projection_degree_accepts_complete_volume() -> 
             volume_schedule=NativeVolumeSchedule(),
         ),
         contract,
-    ).execute()
+    ).execute(steering="certified")
     distance_witness = construction.certification.fidelity_witness
     coverage_witness = construction.certification.source_coverage_witness
     assert isinstance(distance_witness, SourceBoundaryDistanceWitness)

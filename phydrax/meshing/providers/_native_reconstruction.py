@@ -28,7 +28,7 @@ from ...geometry.reconstruction._boundary import (
 from ...geometry.reconstruction._core import ReconstructedGeometrySource
 from ...geometry.simplicial._regions import MeshRegion
 from ...geometry.surface import SurfaceMetadata, SurfaceModel
-from ...typing import checked
+from ...typing import checked, parse
 from .._association import (
     GeometryAssociation,
     GeometryAssociationKind,
@@ -36,6 +36,7 @@ from .._association import (
 )
 from .._certification_schedule import MeshCertificationSchedule
 from .._contracts import (
+    ConstructionSteering,
     MeshingFailure,
     MeshingFailureCategory,
     SurfaceMeshingSpec,
@@ -944,7 +945,8 @@ class _PreparedReconstructionRoute(StrictModule, NonTrainableState):
         self.query = query
         self.domain_query = domain_query
 
-    def execute(self, /) -> NativeMeshConstruction:
+    def execute(self, /, *, steering: ConstructionSteering) -> NativeMeshConstruction:
+        steering = parse(steering, ConstructionSteering, "steering")
         source, region, specification = self.source, self.region, self.specification
         vertices, faces, parents, source_parameters, compliance = _refine_to_size(
             region, specification

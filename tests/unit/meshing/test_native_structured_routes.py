@@ -706,7 +706,7 @@ def test_native_structured_provider_returns_canonical_construction_data() -> Non
     prepared = prepare_native_structured(
         source, specification, options, coordinate_contract
     )
-    construction = prepared.execute()
+    construction = prepared.execute(steering="certified")
     assert construction.mesh.blocks[0].cell_kind == "quadrilateral"
     elements, _, _ = construction.geometry.resolve(construction.mesh)
     assert isinstance(elements[0], FiniteElementSpec)
@@ -776,7 +776,7 @@ def test_embedded_structured_surface_preserves_its_surface_query() -> None:
             "structured_transfinite", structured_schedule=NativeStructuredSchedule()
         ),
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
     assert construction.mesh.ambient_dimension == 3
     assert construction.mesh.blocks[0].cell_kind == "quadrilateral"
     assert construction.compliance.passed

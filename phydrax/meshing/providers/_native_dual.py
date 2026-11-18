@@ -70,6 +70,7 @@ from ...meshing._certification_schedule import MeshCertificationSchedule
 from ...meshing._contracts import (
     CellFamilyPolicy,
     CellMeshingTarget,
+    ConstructionSteering,
     SurfaceMeshingSpec,
     VolumeFillStrategy,
     VolumeMeshingSpec,
@@ -139,7 +140,7 @@ from ...meshing.providers._native_volume import (
     PreparedPlcVolume,
     volume_support_issues,
 )
-from ...typing import checked
+from ...typing import checked, parse
 from .._dual_extraction import DualExtraction, QuadLayoutObstruction
 
 
@@ -2557,8 +2558,9 @@ class _PreparedNativeDualHex(StrictModule, NonTrainableState):
         self.coordinate_contract = coordinate_contract
         self.tetrahedral_route = tetrahedral_route
 
-    def execute(self, /) -> NativeMeshConstruction:
-        scaffold = self.tetrahedral_route.execute()
+    def execute(self, /, *, steering: ConstructionSteering) -> NativeMeshConstruction:
+        steering = parse(steering, ConstructionSteering, "steering")
+        scaffold = self.tetrahedral_route.execute(steering=steering)
         if scaffold.certification.cell_regions is None:
             raise ValueError(
                 "Native PLC tetrahedral scaffold must retain source cell regions."
@@ -2654,9 +2656,10 @@ class _PreparedNativeDualQuad(StrictModule, NonTrainableState):
         self.coordinate_contract = coordinate_contract
         self.planar_route = planar_route
 
-    def execute(self, /) -> NativeMeshConstruction:
+    def execute(self, /, *, steering: ConstructionSteering) -> NativeMeshConstruction:
+        steering = parse(steering, ConstructionSteering, "steering")
         source, specification = self.source, self.specification
-        scaffold = self.planar_route.execute()
+        scaffold = self.planar_route.execute(steering=steering)
         feature_edges = _feature_scaffold_edges(source, specification, scaffold)
         field = specification.cross_field
         if field is None:
@@ -2920,8 +2923,9 @@ class _PreparedNativeHexDominant(StrictModule, NonTrainableState):
         self.coordinate_contract = coordinate_contract
         self.tetrahedral_route = tetrahedral_route
 
-    def execute(self, /) -> NativeMeshConstruction:
-        scaffold = self.tetrahedral_route.execute()
+    def execute(self, /, *, steering: ConstructionSteering) -> NativeMeshConstruction:
+        steering = parse(steering, ConstructionSteering, "steering")
+        scaffold = self.tetrahedral_route.execute(steering=steering)
         if scaffold.certification.cell_regions is None:
             raise ValueError(
                 "Native PLC tetrahedral scaffold must retain source cell regions."
@@ -3089,8 +3093,9 @@ class _PreparedNativeBalancedGridHex(StrictModule, NonTrainableState):
         self.coordinate_contract = coordinate_contract
         self.tetrahedral_route = tetrahedral_route
 
-    def execute(self, /) -> NativeMeshConstruction:
-        scaffold = self.tetrahedral_route.execute()
+    def execute(self, /, *, steering: ConstructionSteering) -> NativeMeshConstruction:
+        steering = parse(steering, ConstructionSteering, "steering")
+        scaffold = self.tetrahedral_route.execute(steering=steering)
         if scaffold.certification.cell_regions is None:
             raise ValueError(
                 "Native PLC tetrahedral scaffold must retain source cell regions."
@@ -3265,8 +3270,9 @@ class _PreparedNativeFrameGridHex(StrictModule, NonTrainableState):
         self.coordinate_contract = coordinate_contract
         self.tetrahedral_route = tetrahedral_route
 
-    def execute(self, /) -> NativeMeshConstruction:
-        scaffold = self.tetrahedral_route.execute()
+    def execute(self, /, *, steering: ConstructionSteering) -> NativeMeshConstruction:
+        steering = parse(steering, ConstructionSteering, "steering")
+        scaffold = self.tetrahedral_route.execute(steering=steering)
         if scaffold.certification.cell_regions is None:
             raise ValueError(
                 "Native PLC tetrahedral scaffold must retain source cell regions."
@@ -4827,7 +4833,8 @@ class _PreparedNativeMappedGridHex(StrictModule, NonTrainableState):
         self.frame = frame
         self.connection = connection
 
-    def execute(self, /) -> NativeMeshConstruction:
+    def execute(self, /, *, steering: ConstructionSteering) -> NativeMeshConstruction:
+        steering = parse(steering, ConstructionSteering, "steering")
         schedule = self.options.grid_schedule
         if schedule is None:
             raise RuntimeError(

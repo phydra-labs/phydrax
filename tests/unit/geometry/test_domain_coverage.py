@@ -888,7 +888,7 @@ def test_adaptive_implicit_volume_coverage_revalidates_stratified_roots() -> Non
     )
     construction = prepare_native_implicit(
         source, specification, options, coordinate_contract
-    ).execute()
+    ).execute(steering="certified")
     request = construction.certification
     assert request.cell_regions is not None
     assert request.fidelity_source is not None

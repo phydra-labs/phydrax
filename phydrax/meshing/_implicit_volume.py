@@ -55,7 +55,7 @@ from ..geometry.implicit._restricted_delaunay_coverage import (
 )
 from ..geometry.simplicial._topology import TriangleTopology
 from ..geometry.surface import SurfaceMetadata, SurfaceModel
-from ..typing import checked
+from ..typing import checked, parse
 from ._association import (
     GeometryAssociation,
     GeometryAssociationKind,
@@ -63,6 +63,7 @@ from ._association import (
 )
 from ._certification_schedule import MeshCertificationSchedule
 from ._contracts import (
+    ConstructionSteering,
     MeshingFailure,
     MeshingFailureCategory,
     VolumeFillStrategy,
@@ -2604,7 +2605,8 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
         self.spacing = float(spacing)
         self.prepared_id = prepared_id
 
-    def execute(self, /) -> NativeMeshConstruction:
+    def execute(self, /, *, steering: ConstructionSteering) -> NativeMeshConstruction:
+        parse(steering, ConstructionSteering, "steering")
         profile = self.profile
         specification = self.specification
         profile.require_bound(profile.geometry, self.coordinate_contract)

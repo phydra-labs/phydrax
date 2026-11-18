@@ -216,7 +216,7 @@ def test_surface_envelope_route_retains_original_and_derived_region_authority() 
         specification,
         options,
         contract,
-    ).execute()
+    ).execute(steering="certified")
 
     mesh = construction.mesh
     assert mesh.topological_dimension == 3
@@ -371,7 +371,7 @@ def test_envelope_associations_preserve_many_to_one_facet_ancestry() -> None:
     )
     construction = prepare_native_surface_envelope(
         source, specification, options, contract
-    ).execute()
+    ).execute(steering="certified")
     groups = _association_target_groups(
         source,
         construction,
@@ -402,7 +402,7 @@ def test_envelope_refinement_retains_all_target_facet_charts(tmp_path: Any) -> N
     )
     construction = prepare_native_surface_envelope(
         source, specification, options, contract
-    ).execute()
+    ).execute(steering="certified")
     mesh = construction.mesh
     request = construction.certification
     chart = request.fidelity_witness
@@ -477,7 +477,7 @@ specification = VolumeMeshingSpec(
     region_controls=original.region_controls,
     maximum_deviation=original.maximum_deviation,
 )
-construction = prepare_native_surface_envelope(source, specification, options, contract).execute()
+construction = prepare_native_surface_envelope(source, specification, options, contract).execute(steering="certified")
 witness = read_model_artifact(
     sys.argv[1], expected_type=SurfaceEnvelopeDistanceWitness,
     restore=_rebuild_continuation_value, limits=MODEL_ARCHIVE_LIMITS,
@@ -505,7 +505,7 @@ def test_surface_envelope_hard_point_curve_and_face_features_keep_exact_witnesse
     )
     construction = prepare_native_surface_envelope(
         source, specification, options, contract
-    ).execute()
+    ).execute(steering="certified")
     certification = construction.certification
     assert certification.feature_source is source
     assert len(certification.scoped_fidelity) == 4
@@ -548,7 +548,7 @@ def test_surface_envelope_soft_features_are_measured_not_mandatory_scopes() -> N
     )
     construction = prepare_native_surface_envelope(
         source, specification, options, contract
-    ).execute()
+    ).execute(steering="certified")
     certification = construction.certification
     assert certification.feature_source is source
     assert len(certification.scoped_fidelity) == 1
@@ -569,7 +569,7 @@ def test_envelope_chart_query_rejects_a_witness_with_an_omitted_source_facet() -
     )
     construction = prepare_native_surface_envelope(
         source, specification, options, contract
-    ).execute()
+    ).execute(steering="certified")
     query, witness, _ = construction.certification.scoped_fidelity[1]
     assert isinstance(query, PiecewiseLinearBoundarySource)
     assert query.entity_dimension == 2
@@ -586,7 +586,7 @@ def test_envelope_point_query_rejects_a_witness_with_an_omitted_source_vertex() 
     _, source, specification, options, contract = _request()
     construction = prepare_native_surface_envelope(
         source, specification, options, contract
-    ).execute()
+    ).execute(steering="certified")
     point_ids = np.asarray(source.scope_entity_ids(0), dtype=np.int64)[:2]
     assert point_ids.size == 2
     query = PiecewiseLinearBoundarySource(source, 0, entity_ids=point_ids)
@@ -704,7 +704,7 @@ def test_envelope_witness_trusts_only_a_reproduction_record_of_its_own_content(
     _, source, specification, options, contract = _request()
     construction = prepare_native_surface_envelope(
         source, specification, options, contract
-    ).execute()
+    ).execute(steering="certified")
     mesh, geometry = construction.mesh, construction.geometry
     query, witness, _ = construction.certification.scoped_fidelity[0]
     assert isinstance(witness, SurfaceEnvelopeDistanceWitness)
@@ -782,7 +782,7 @@ def test_kernel_envelope_keeps_the_marching_carrier_as_its_volume() -> None:
 
     construction = prepare_native_surface_envelope(
         source, specification, options, contract
-    ).execute()
+    ).execute(steering="certified")
     mesh = construction.mesh
     interior = ~np.asarray(mesh.boundary_masks[0], dtype=np.bool_)
     assert np.any(interior)
@@ -808,7 +808,7 @@ def test_kernel_envelope_binds_its_mode_and_its_carrier() -> None:
     _, source, specification, options, contract = _request(envelope_mode="kernel")
     construction = prepare_native_surface_envelope(
         source, specification, options, contract
-    ).execute()
+    ).execute(steering="certified")
     mesh, geometry = construction.mesh, construction.geometry
     query, witness, _ = construction.certification.scoped_fidelity[0]
     assert isinstance(witness, SurfaceEnvelopeDistanceWitness)
@@ -916,7 +916,7 @@ def test_kernel_envelope_and_its_construction_witnesses_cold_restore(
         specification, options = _specification(source, ())
     construction = prepare_native_surface_envelope(
         source, specification, options, contract
-    ).execute()
+    ).execute(steering="certified")
     query, witness, _ = construction.certification.scoped_fidelity[0]
     pwl_query = construction.certification.fidelity_source
     assert isinstance(pwl_query, PiecewiseLinearBoundarySource)
@@ -1169,7 +1169,7 @@ def test_surface_envelope_wraps_an_authored_imperfect_open_sheet() -> None:
     specification, options = _specification(source, ())
     construction = prepare_native_surface_envelope(
         source, specification, options, contract
-    ).execute()
+    ).execute(steering="certified")
     assert tuple(block.cell_kind for block in construction.mesh.blocks) == ("simplex:3",)
     assert construction.mesh.blocks[0].cell_count > 0
     assert construction.compliance.passed

@@ -108,6 +108,10 @@ class NativeMeshConstruction:
         default_factory=NativeMeshOrganization, kw_only=True
     )
     stages: tuple[MeshingStageReport, ...] = field(default=(), kw_only=True)
+    # Until a route supplies screened steps, its whole construction remains certified.
+    certified_steps: tuple[str, ...] = field(
+        default=("entire_certified_route",), kw_only=True
+    )
     validated_global_embedding: ValidatedGlobalEmbedding | None = field(
         default=None, kw_only=True, repr=False, compare=False
     )

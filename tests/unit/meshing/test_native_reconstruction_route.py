@@ -223,7 +223,7 @@ def test_reconstructed_native_route_preserves_source_identity_and_metadata() -> 
         specification,
         NativeMeshingOptions("reconstructed_surface"),
         contract,
-    ).execute()
+    ).execute(steering="certified")
 
     assert construction.mesh.topological_dimension == 2
     assert construction.mesh.ambient_dimension == 3
@@ -290,7 +290,7 @@ def test_reconstruction_chart_witness_revalidates_persistent_triangle_keys() -> 
         _specification(source),
         NativeMeshingOptions("reconstructed_surface"),
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
 
     fidelity_source = construction.certification.fidelity_source
     witness = construction.certification.fidelity_witness
@@ -465,7 +465,7 @@ def test_reconstructed_route_red_refines_without_leaving_source_triangles() -> N
         specification,
         NativeMeshingOptions("reconstructed_surface"),
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
 
     assert construction.mesh.entity_set(2).count == 16
     assert construction.compliance.passed

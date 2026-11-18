@@ -8609,7 +8609,7 @@ def _source_coverage_archive_fixture() -> tuple[
             volume_schedule=NativeVolumeSchedule(),
         ),
         coordinate_contract,
-    ).execute()
+    ).execute(steering="certified")
     request = construction.certification
     if request.source_coverage_witness is None:
         raise ValueError("Restricted coverage fixture omitted its native witness.")
@@ -12465,7 +12465,7 @@ def _surface_result_for_brep(model: BRepModel, /) -> CellMeshingResult:
         _surface_specification(domain, maximum_deviation=None),
         NativeMeshingOptions("parametric_surface"),
         model.coordinate_contract,
-    ).execute()
+    ).execute(steering="certified")
     surface_source = construction.organization.surface_source
     if not isinstance(surface_source, SurfaceSourceCharts):
         raise TypeError(

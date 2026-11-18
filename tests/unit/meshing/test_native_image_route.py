@@ -183,7 +183,7 @@ def test_native_image_route_constructs_labeled_tetrahedra_and_region() -> None:
             ),
         ),
         contract,
-    ).execute()
+    ).execute(steering="certified")
 
     assert construction.mesh.blocks[0].cell_kind == "simplex:3"
     assert construction.mesh.blocks[0].arity == 4
@@ -303,7 +303,7 @@ def test_native_label_surface_route_preserves_multimaterial_plc_identity() -> No
             ),
         ),
         contract,
-    ).execute()
+    ).execute(steering="certified")
 
     assert construction.certification.source_id == source.source_id
     assert construction.certification.source_revision == source.source_revision

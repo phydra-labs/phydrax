@@ -276,7 +276,7 @@ def test_native_periodic_route_adapts_skew_winding_orbits_to_size(
             specification,
             NativeMeshingOptions("periodic_delaunay"),
             phx.SpatialCoordinateContract.si(),
-        ).execute(),
+        ).execute(steering="certified"),
     )
     target = _assert_honest_stall(
         failure,
@@ -373,7 +373,7 @@ def test_native_periodic_route_binds_constraints_and_materials_by_quotient_ids(
         specification,
         NativeMeshingOptions("periodic_delaunay"),
         phx.SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
     assert len(calls) == 1
     adapted_mesh, outcome = calls[0]
     evidence = outcome.evidence
@@ -546,6 +546,7 @@ def test_owner_local_skew_periodic_partition_uses_integer_work() -> None:
         NativeMeshingOptions("periodic_delaunay"),
         phx.SpatialCoordinateContract.si(),
     ).execute(
+        steering="certified",
         execution_group=group,
         graph_partition_plan=graph_plan,
     )
@@ -721,7 +722,7 @@ def periodic_transfer_geometry() -> tuple[OwnerLocalCellGeometry, OwnerLocalCell
         fine_spec,
         NativeMeshingOptions("periodic_delaunay"),
         phx.SpatialCoordinateContract.si(),
-    ).execute(execution_group=group)
+    ).execute(steering="certified", execution_group=group)
     coarse = _adapt_owner_local_periodic_assembly(fine, coarse_spec, group)
     fine_view, coarse_view = fine.parts[0].carrier, coarse.parts[0].carrier
     assert isinstance(fine_view, OwnerLocalCellGeometry)

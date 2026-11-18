@@ -246,7 +246,7 @@ def _planar_hole_worker() -> dict[str, Any]:
             specification,
             options,
             coordinate_contract,
-        ).execute()
+        ).execute(steering="certified")
         serial_mesh = serial_construction.mesh
         serial_triangles = np.concatenate(
             tuple(
@@ -776,7 +776,7 @@ def test_three_process_surface_generation_reconciles_sphere_seams() -> None:
     domain, specification, options, contract = _sphere_request()
     serial_construction = prepare_native_surface(
         domain, specification, options, contract
-    ).execute()
+    ).execute(steering="certified")
     serial_triangles = np.concatenate(
         tuple(
             np.asarray(block.vertices, dtype=np.int64)

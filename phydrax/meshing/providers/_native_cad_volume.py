@@ -44,7 +44,7 @@ from .._association import (
 )
 from .._certification import _ComputedSurfaceAcceptance
 from .._certification_schedule import MeshCertificationSchedule
-from .._contracts import VolumeMeshingSpec
+from .._contracts import ConstructionSteering, VolumeMeshingSpec
 from .._controls import (
     FeatureKind,
     HoleSeed,
@@ -3445,7 +3445,8 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
             }
         )
 
-    def execute(self) -> NativeMeshConstruction:
+    def execute(self, *, steering: ConstructionSteering) -> NativeMeshConstruction:
+        steering = parse(steering, ConstructionSteering, "steering")
         self.source.domain.require_current(
             self.source.source_id, self.source.source_revision
         )

@@ -27,14 +27,14 @@ from ...geometry._domain_coverage import PiecewiseLinearDomain
 from ...geometry._mapped_reference_boundary import MappedReferenceBoundarySource
 from ...geometry._planar_coverage import PlcSourcePointWitness
 from ...geometry._source_boundary_records import SourceBoundaryChartWitness
-from ...typing import checked
+from ...typing import checked, parse
 from .._association import (
     GeometryAssociation,
     GeometryAssociationKind,
     GeometrySourceEntityRole,
 )
 from .._certification_schedule import MeshCertificationSchedule
-from .._contracts import VolumeFillStrategy, VolumeMeshingSpec
+from .._contracts import ConstructionSteering, VolumeFillStrategy, VolumeMeshingSpec
 from .._controls import FeatureKind, RegionControl, RegionSeed
 from .._input_forced_quality import (
     input_forced_dihedral_exemptions,
@@ -1305,7 +1305,8 @@ class PreparedPlcVolume(StrictModule, NonTrainableState):
             preparation["kept_carrier"] = array_tree_fingerprint(carrier)
         self.prepared_id = canonical_fingerprint(preparation)
 
-    def execute(self) -> NativeMeshConstruction:
+    def execute(self, *, steering: ConstructionSteering) -> NativeMeshConstruction:
+        steering = parse(steering, ConstructionSteering, "steering")
         mapped_geometry = (
             None
             if self.source.mapped_domain is None

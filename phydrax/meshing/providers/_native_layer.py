@@ -62,11 +62,12 @@ from ...geometry._source_boundary_records import (
     SourceBoundaryQuery,
 )
 from ...geometry._source_identity import source_entity_id
-from ...typing import checked
+from ...typing import checked, parse
 from .._certification_schedule import MeshCertificationSchedule
 from .._contracts import (
     CellFamilyPolicy,
     CellMeshingTarget,
+    ConstructionSteering,
     MeshingFailure,
     MeshingFailureCategory,
     MeshingFailureEvidence,
@@ -4247,7 +4248,10 @@ class PreparedNativeLayer(StrictModule, NonTrainableState):
         self.coordinate_contract = coordinate_contract
         self.core_specification = core_specification
 
-    def execute(self) -> construction_owner.NativeMeshConstruction:
+    def execute(
+        self, *, steering: ConstructionSteering
+    ) -> construction_owner.NativeMeshConstruction:
+        steering = parse(steering, ConstructionSteering, "steering")
         schedule = self.options.volume_schedule
         if schedule is None:
             raise ValueError("Prepared layer/core route lost its volume schedule.")

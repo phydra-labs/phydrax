@@ -25,6 +25,7 @@ from phydrax.geometry._source_boundary_records import (
     SourceBoundaryPointWitness,
 )
 from phydrax.meshing._contracts import (
+    ConstructionSteering,
     MeshingFailure,
     MeshingFailureCategory,
     SurfaceMeshingSpec,
@@ -38,7 +39,7 @@ from ..._trainable import NonTrainableState
 from ...discretization import CellGeometrySpec
 from ...discretization._cell_geometry_validity import cell_geometry_id
 from ...discretization._reference_cell import reference_cell_topology
-from ...typing import checked
+from ...typing import checked, parse
 from .._certification_schedule import MeshCertificationSchedule
 from .._controls import FeatureKind
 from .._native_construction import (
@@ -1161,7 +1162,8 @@ class _PreparedPlanarRoute(StrictModule, NonTrainableState):
         self.prepared = prepared
         self.coordinate_contract = coordinate_contract
 
-    def execute(self, /) -> NativeMeshConstruction:
+    def execute(self, /, *, steering: ConstructionSteering) -> NativeMeshConstruction:
+        steering = parse(steering, ConstructionSteering, "steering")
         source, specification, prepared = self.source, self.specification, self.prepared
         triangulation = _refine(prepared, specification)
         triangles = np.asarray(triangulation.triangles, dtype=np.int64)

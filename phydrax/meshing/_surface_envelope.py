@@ -45,10 +45,11 @@ from ..geometry.reconstruction._envelope import (
 from ..geometry.reconstruction._sheet import AuthoredTriangleSheet
 from ..geometry.simplicial._regions import MeshRegion
 from ..geometry.surface import SurfaceMetadata, SurfaceModel
-from ..typing import checked
+from ..typing import checked, parse
 from ._association import GeometrySourceEntityRole
 from ._certification_schedule import MeshCertificationSchedule
 from ._contracts import (
+    ConstructionSteering,
     MeshingFailure,
     MeshingFailureCategory,
     VolumeMeshingSpec,
@@ -1817,7 +1818,8 @@ class _PreparedSurfaceEnvelopeRoute(StrictModule, NonTrainableState):
             }
         )
 
-    def execute(self) -> NativeMeshConstruction:
+    def execute(self, /, *, steering: ConstructionSteering) -> NativeMeshConstruction:
+        steering = parse(steering, ConstructionSteering, "steering")
         source = self.source
         source_query = PiecewiseLinearBoundarySource(source, 2)
         if source.coordinate_contract.spatial_id != self.coordinate_contract.spatial_id:
@@ -1826,7 +1828,7 @@ class _PreparedSurfaceEnvelopeRoute(StrictModule, NonTrainableState):
                 category=MeshingFailureCategory.INVALID_SOURCE,
                 stage="source_validation",
             )
-        construction = self.volume_route.execute()
+        construction = self.volume_route.execute(steering=steering)
         mesh = construction.mesh
         geometry = construction.geometry
         if geometry is None or construction.organization is None:

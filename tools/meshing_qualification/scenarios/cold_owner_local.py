@@ -558,10 +558,11 @@ def _source_and_specification(
         phx.SpatialCoordinateContract.si(),
     )
     assembly = (
-        plan.execute(execution_group=group)
+        plan.execute(execution_group=group, steering="certified")
         if graph_partition_plan is None
         else plan.execute(
             execution_group=group,
+            steering="certified",
             graph_partition_plan=graph_partition_plan,
         )
     )
@@ -2987,6 +2988,7 @@ def _serial_live_family_reference(profile: str, /) -> dict[str, Any]:
         phx.SpatialCoordinateContract.si(),
     ).execute(
         execution_group=group,
+        steering="certified",
         graph_partition_plan=GraphPartitionPlan(
             1, maximum_imbalance=1.0, require_nonempty=False, refinement_passes=4
         ),

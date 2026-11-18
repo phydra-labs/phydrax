@@ -58,6 +58,7 @@ from phydrax.linalg._hermitian_spectral import fraction_sqrt_interval
 from phydrax.meshing._certification_schedule import MeshCertificationSchedule
 from phydrax.meshing._contracts import (
     CellMeshingTarget,
+    ConstructionSteering,
     MeshingFailure,
     MeshingFailureCategory,
     SurfaceMeshingSpec,
@@ -81,6 +82,7 @@ from phydrax.meshing._surface_construction import (
     SurfaceConstruction,
     SurfaceSourceCellAtlas,
 )
+from phydrax.typing import parse
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
@@ -6277,13 +6279,18 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
         )
 
     def execute(
-        self, /, *, preparation: domain_owner.SourcePreparation | None = None
+        self,
+        /,
+        *,
+        steering: ConstructionSteering,
+        preparation: domain_owner.SourcePreparation | None = None,
     ) -> NativeMeshConstruction:
         """Generate and certify the surface mesh.
 
         ``preparation`` is the caller's `SourcePreparation` of this domain;
         without one the domain is prepared for this execution alone.
         """
+        steering = parse(steering, ConstructionSteering, "steering")
         domain = self.domain
         domain.require_current(domain.source_id, domain.source_revision)
         self.boundary_source.require_current()

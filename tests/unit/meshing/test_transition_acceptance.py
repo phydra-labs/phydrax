@@ -977,7 +977,7 @@ def tiny_chart_source() -> tuple[MeshingDomain, CellMeshingResult]:
             ),
         ),
         phx.SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
     request = construction.certification
     inputs = MeshCertificationInputs(
         construction.mesh,

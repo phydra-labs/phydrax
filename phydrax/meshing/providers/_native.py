@@ -30,12 +30,13 @@ from ...geometry.multiregion_surface._label_extraction import (
 from ...geometry.reconstruction._core import ReconstructedGeometrySource
 from ...geometry.surface._model import SurfaceModel
 from ...graph import GraphPartitionPlan
-from ...typing import checked
+from ...typing import checked, parse
 from .._canonical import _accept_native_construction, _NATIVE_PROVIDER
 from .._certification import _ComputedSurfaceAcceptance
 from .._contracts import (
     CellFamilyPolicy,
     CellMeshingTarget,
+    ConstructionSteering,
     CurveMeshingSpec,
     MeshingFailure,
     MeshingFailureCategory,
@@ -75,7 +76,7 @@ _Specification = CurveMeshingSpec | SurfaceMeshingSpec | VolumeMeshingSpec
 
 @runtime_checkable
 class _PreparedConstruction(Protocol):
-    def execute(self, /) -> NativeMeshConstruction: ...
+    def execute(self, /, *, steering: ConstructionSteering) -> NativeMeshConstruction: ...
 
 
 def _failure(
@@ -735,8 +736,9 @@ class _PreparedDirectBRepCadVolume(StrictModule, NonTrainableState):
             }
         )
 
-    def execute(self, /) -> NativeMeshConstruction:
-        boundary_construction = self.boundary_preparation.execute()
+    def execute(self, /, *, steering: ConstructionSteering) -> NativeMeshConstruction:
+        steering = parse(steering, ConstructionSteering, "steering")
+        boundary_construction = self.boundary_preparation.execute(steering=steering)
         surface_proofs: list[_ComputedSurfaceAcceptance] = []
         boundary_result = _accept_native_construction(
             boundary_construction,
@@ -770,7 +772,7 @@ class _PreparedDirectBRepCadVolume(StrictModule, NonTrainableState):
                 self.specification,
                 _options_for_route(self.options, "layer_core", force=True),
                 self.coordinate_contract,
-            ).execute()
+            ).execute(steering=steering)
         from ._native_cad_volume import NativeCadVolumeSource, prepare_native_cad_volume
 
         cad_source = NativeCadVolumeSource(
@@ -787,7 +789,7 @@ class _PreparedDirectBRepCadVolume(StrictModule, NonTrainableState):
             self.options,
             self.coordinate_contract,
         )
-        return prepared_volume.execute()
+        return prepared_volume.execute(steering=steering)
 
 
 def _prepare_brep_volume(
@@ -1308,13 +1310,14 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
                     "the prepared route does not support owner-local execution",
                 )
             assembly = self.prepared.execute(
+                steering="certified",
                 execution_group=execution_group,
                 graph_partition_plan=graph_partition_plan,
             )
             if not isinstance(assembly, MeshAssembly):
                 raise TypeError("An owner-local native route must return MeshAssembly.")
             return assembly
-        construction = self.prepared.execute()
+        construction = self.prepared.execute(steering="certified")
         if not isinstance(construction, NativeMeshConstruction):
             raise TypeError("A native prepared route must return NativeMeshConstruction.")
         return _accept_native_construction(

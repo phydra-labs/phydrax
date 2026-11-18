@@ -34,6 +34,7 @@ from phydrax.meshing._association import (
 )
 from phydrax.meshing._certification_schedule import MeshCertificationSchedule
 from phydrax.meshing._contracts import (
+    ConstructionSteering,
     MeshingFailure,
     MeshingFailureCategory,
     VolumeFillStrategy,
@@ -72,7 +73,7 @@ from phydrax.meshing.providers._native_sources import (
     NativePlcSource,
     NativePolyhedralSource,
 )
-from phydrax.typing import checked
+from phydrax.typing import checked, parse
 
 
 def _periodic_control_issues(
@@ -1514,7 +1515,8 @@ class _PreparedNativePolyhedral(StrictModule, NonTrainableState):
         self.coordinate_contract = coordinate_contract
         self.schedule = schedule
 
-    def execute(self, /) -> NativeMeshConstruction:
+    def execute(self, /, *, steering: ConstructionSteering) -> NativeMeshConstruction:
+        steering = parse(steering, ConstructionSteering, "steering")
         construction = generate_polyhedral_volume(
             self.source,
             self.specification,

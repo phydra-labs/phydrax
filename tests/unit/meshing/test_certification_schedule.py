@@ -465,7 +465,7 @@ def test_scoped_fidelity_retains_its_own_request_binding(
         specification,
         NativeMeshingOptions("curve_arc_length"),
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
     request = construction.certification
     query, witness = request.fidelity_source, request.fidelity_witness
     assert query is not None and witness is not None
@@ -524,7 +524,11 @@ def test_live_surface_proof_retains_exact_control_identity() -> None:
         size_controls=(UniformSizeControl(scope, 1.0),),
         maximum_deviation=0.05,
     )
-    construction = NativeMeshingProvider().plan(model, specification).prepared.execute()
+    construction = (
+        NativeMeshingProvider()
+        .plan(model, specification)
+        .prepared.execute(steering="certified")
+    )
     request = construction.certification
     witness = request.fidelity_witness
     assert witness is not None

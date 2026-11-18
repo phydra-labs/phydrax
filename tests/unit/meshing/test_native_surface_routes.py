@@ -724,7 +724,7 @@ def test_surface_size_is_not_an_inferred_fidelity_request() -> None:
         specification,
         NativeMeshingOptions("parametric_surface"),
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
 
     assert construction.certification.fidelity_tolerance is None
     assert not any(
@@ -848,7 +848,7 @@ def test_parametric_surface_route_maps_source_charts_and_trim_curves() -> None:
         specification,
         options,
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
     assert isinstance(construction, NativeMeshConstruction)
 
     mesh = construction.mesh
@@ -1046,7 +1046,7 @@ def test_parametric_surface_route_certifies_hard_curve_and_corner_features() -> 
             surface_schedule=NativeSurfaceSchedule(spacing_fraction=0.45),
         ),
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
     scoped = construction.certification.scoped_fidelity
     assert len(scoped) == 2
     curve_query, curve_witness, curve_tolerance = next(
@@ -1091,7 +1091,7 @@ def test_parametric_surface_feature_preserves_requested_fidelity(hard: bool) -> 
         specification,
         NativeMeshingOptions("parametric_surface"),
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
     key = f"feature:{feature.feature_id}:maximum_deviation"
     assert dict(construction.compliance.requested)[key] == tolerance
     observed = dict(construction.compliance.achieved)[key]
@@ -1240,7 +1240,7 @@ def test_surface_feature_scope_does_not_tighten_an_unselected_curved_patch() -> 
         specification,
         NativeMeshingOptions("parametric_surface"),
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
     query, witness, tolerance = construction.certification.scoped_fidelity[0]
     assert isinstance(query, MeshingDomainBoundarySource)
     assert isinstance(witness, SurfaceChartWitness)
@@ -1300,7 +1300,7 @@ def test_parametric_surface_route_retains_bounded_source_accuracy() -> None:
             surface_schedule=NativeSurfaceSchedule(spacing_fraction=0.45),
         ),
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
 
     source_charts = construction.organization.surface_source
     assert source_charts is not None
@@ -1351,7 +1351,7 @@ def test_parametric_surface_route_adapts_exact_reconstructed_meshregion() -> Non
             surface_schedule=NativeSurfaceSchedule(spacing_fraction=0.6),
         ),
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
 
     assert construction.mesh.topological_dimension == 2
     assert construction.organization.surface_source is not None
@@ -1475,7 +1475,7 @@ def test_parametric_surface_route_meshes_shared_curved_nurbs_trims() -> None:
             ),
         ),
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
 
     assert construction.compliance.passed
     source_charts = construction.organization.surface_source
@@ -1606,7 +1606,7 @@ def test_parametric_surface_route_meshes_collapsed_poles(shape: str) -> None:
             ),
         ),
         contract,
-    ).execute()
+    ).execute(steering="certified")
 
     assert construction.compliance.passed
     _assert_vertices_on_domain(domain, construction)
@@ -1665,7 +1665,7 @@ def test_parametric_surface_route_grades_planar_disk_poles_without_thin_bands() 
         _surface_specification(domain, maximum_deviation=0.05),
         NativeMeshingOptions("parametric_surface"),
         contract,
-    ).execute()
+    ).execute(steering="certified")
     from phydrax.geometry._surface_source_support import (
         _cad_root_edges,
         validate_cad_curve_ancestry,
@@ -1749,7 +1749,7 @@ def test_cad_surface_curve_ancestry_replays_root_edge_chains() -> None:
     )
     construction = prepare_native_surface(
         domain, specification, NativeMeshingOptions("parametric_surface"), contract
-    ).execute()
+    ).execute(steering="certified")
     charts = construction.organization.surface_source
     assert isinstance(charts, SurfaceSourceCharts)
     bindings = validate_cad_curve_ancestry(charts, 0.1)
@@ -1790,7 +1790,7 @@ def test_surface_curve_ancestry_replays_chart_and_coedge_authority() -> None:
         _surface_specification(domain),
         NativeMeshingOptions("parametric_surface"),
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
     charts = construction.organization.surface_source
     assert isinstance(charts, SurfaceSourceCharts)
     bindings = validate_surface_curve_ancestry(charts, 0.05)
@@ -2015,7 +2015,7 @@ def test_non_affine_surface_trim_replays_exact_root_lineage(tmp_path: Path) -> N
             ),
         ),
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
     charts = construction.organization.surface_source
     assert charts is not None and charts.trim_roots
     assert any(
@@ -2149,7 +2149,7 @@ def test_non_brep_surface_pole_ancestry_replays_exact_collapse() -> None:
         _surface_specification(domain, maximum_deviation=0.05),
         NativeMeshingOptions("parametric_surface"),
         contract,
-    ).execute()
+    ).execute(steering="certified")
     charts = construction.organization.surface_source
     assert charts is not None
     bindings = validate_surface_curve_ancestry(charts, 0.05)
@@ -2321,7 +2321,7 @@ def _mesh_straight_seam_cylinder(middle: float, /) -> NativeMeshConstruction:
         _surface_specification(domain, maximum_deviation=0.05),
         NativeMeshingOptions("parametric_surface"),
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
 
 
 def test_pole_rings_on_an_affine_straight_seam_mesh_conformingly() -> None:
@@ -2450,7 +2450,7 @@ def test_parametric_surface_route_flips_anisotropic_chart_cells_to_physical_shap
         ),
         NativeMeshingOptions("parametric_surface"),
         contract,
-    ).execute()
+    ).execute(steering="certified")
 
     assert construction.compliance.passed
     coordinates = np.asarray(construction.mesh.coordinates, dtype=np.float64)
@@ -2488,7 +2488,7 @@ def test_parametric_surface_route_samples_seams_at_the_curvature_rate() -> None:
         _surface_specification(domain, maximum_deviation=0.005),
         NativeMeshingOptions("parametric_surface"),
         contract,
-    ).execute()
+    ).execute(steering="certified")
 
     assert construction.compliance.passed
     coordinates = np.asarray(construction.mesh.coordinates, dtype=np.float64)

@@ -34,7 +34,7 @@ from ...geometry._source_boundary_records import (
     rational_chart_tokens,
     SourceBoundaryChartWitness,
 )
-from ...typing import checked
+from ...typing import checked, parse
 from .._association import (
     GeometryAssociation,
     GeometryAssociationKind,
@@ -44,6 +44,7 @@ from .._association import (
 )
 from .._certification_schedule import MeshCertificationSchedule
 from .._contracts import (
+    ConstructionSteering,
     MeshingFailure,
     MeshingFailureCategory,
     SurfaceMeshingSpec,
@@ -2525,7 +2526,8 @@ class PreparedStructured(StrictModule):
             }
         )
 
-    def execute(self, /) -> NativeMeshConstruction:
+    def execute(self, /, *, steering: ConstructionSteering) -> NativeMeshConstruction:
+        steering = parse(steering, ConstructionSteering, "steering")
         source, specification = self.source, self.specification
         constructions = tuple(
             generate_structured_block(
@@ -2635,7 +2637,8 @@ class PreparedSweep(StrictModule):
             }
         )
 
-    def execute(self, /) -> NativeMeshConstruction:
+    def execute(self, /, *, steering: ConstructionSteering) -> NativeMeshConstruction:
+        steering = parse(steering, ConstructionSteering, "steering")
         source, specification = self.source, self.specification
         construction = generate_sweep(
             source.profile,

@@ -1128,7 +1128,7 @@ def _prepare(
         specification,
         options,
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
 
 
 def test_plc_ids_and_occurrences_are_authored_and_not_coordinate_derived() -> None:

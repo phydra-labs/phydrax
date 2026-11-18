@@ -187,7 +187,7 @@ def _native_periodic_surface(
         specification,
         NativeMeshingOptions("periodic_delaunay"),
         phx.SpatialCoordinateContract.si(),
-    ).execute(execution_group=group)
+    ).execute(steering="certified", execution_group=group)
     return assembly, specification
 
 

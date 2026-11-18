@@ -203,7 +203,7 @@ def test_curve_route_places_a_nonuniform_chart_by_physical_arc_length() -> None:
         specification,
         NativeMeshingOptions("curve_arc_length"),
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
     certification = construction.certification
     fidelity_source = certification.fidelity_source
     fidelity_witness = certification.fidelity_witness
@@ -282,7 +282,7 @@ def _straight_arm_mesh(
 
     with monkeypatch.context() as patch:
         patch.setattr(_native_curve, "_integrand", budgeted)
-        result = construction.execute()
+        result = construction.execute(steering="certified")
     assert result.compliance.passed
     return (
         np.asarray(result.mesh.coordinates, dtype=np.float64),
@@ -528,7 +528,7 @@ def test_curve_route_places_by_density_and_preserves_source_junction() -> None:
         specification,
         options,
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
     association = next(
         value
         for value in construction.organization.associations
@@ -652,7 +652,7 @@ def test_whole_curve_feature_preserves_primary_fidelity_certificate() -> None:
     )
     construction = prepare_native_curve(
         source, specification, options, SpatialCoordinateContract.si()
-    ).execute()
+    ).execute(steering="certified")
     request = construction.certification
     query = request.fidelity_source
     witness = request.fidelity_witness
@@ -709,7 +709,7 @@ def test_segment_curve_query_is_an_exact_affine_chart_on_its_declared_range() ->
         specification,
         NativeMeshingOptions("curve_arc_length"),
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
     assert construction.compliance.passed
     query = construction.certification.fidelity_source
     witness = construction.certification.fidelity_witness
@@ -839,7 +839,7 @@ def test_planar_motion_requires_authored_successor_and_preserves_scopes() -> Non
     authored, specification, options = _planar_request()
     construction = prepare_native_planar(
         authored, specification, options, SpatialCoordinateContract.si()
-    ).execute()
+    ).execute(steering="certified")
     source = _accept_native_construction(
         construction, specification, _NATIVE_PROVIDER, "test", "test", "test"
     )
@@ -945,7 +945,7 @@ def test_planar_motion_composition_cold_replay_and_tampering(tmp_path: Path) -> 
     authored, specification, options = _planar_request()
     construction = prepare_native_planar(
         authored, specification, options, SpatialCoordinateContract.si()
-    ).execute()
+    ).execute(steering="certified")
     source = _accept_native_construction(
         construction, specification, _NATIVE_PROVIDER, "test", "test", "test"
     )
@@ -1097,7 +1097,7 @@ def test_planar_cdt_preserves_holes_embedded_constraint_and_exact_ancestry() -> 
         specification,
         options,
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
     domain = construction.certification.domain
     assert domain is not None
     assert isinstance(domain, PiecewiseLinearDomain)
@@ -1249,7 +1249,7 @@ def test_curve_route_rejects_conflicting_hard_size_controls() -> None:
             conflict,
             options,
             SpatialCoordinateContract.si(),
-        ).execute()
+        ).execute(steering="certified")
 
 
 def test_planar_route_rejects_conflicting_hard_size_controls() -> None:
@@ -1277,7 +1277,7 @@ def test_planar_route_rejects_conflicting_hard_size_controls() -> None:
             conflict,
             options,
             SpatialCoordinateContract.si(),
-        ).execute()
+        ).execute(steering="certified")
 
 
 @pytest.mark.parametrize("corruption", ("parameter", "occurrence", "missing-proof"))
@@ -1289,7 +1289,7 @@ def test_curve_junction_audit_requires_each_source_closure(corruption: str) -> N
     source, specification, options = _curve_request()
     construction = prepare_native_curve(
         source, specification, options, SpatialCoordinateContract.si()
-    ).execute()
+    ).execute(steering="certified")
     mesh, geometry = construction.mesh, construction.geometry
     request = construction.certification
     if request.fidelity_source is None or request.fidelity_witness is None:

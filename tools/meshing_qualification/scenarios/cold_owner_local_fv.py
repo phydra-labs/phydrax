@@ -77,7 +77,7 @@ def _owner_local_periodic_assembly(
         specification,
         NativeMeshingOptions("periodic_delaunay"),
         phx.SpatialCoordinateContract.si(),
-    ).execute(execution_group=execution_group)
+    ).execute(execution_group=execution_group, steering="certified")
 
 
 def _finite_volume_cell_state_bank_revision(bank_spec: Any, values: Any, /) -> str:

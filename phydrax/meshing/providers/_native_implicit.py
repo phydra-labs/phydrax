@@ -63,7 +63,7 @@ from ...geometry.implicit._adaptive_discovery import (
 )
 from ...geometry.implicit._policy import _DEFAULT_RELATIVE_CELL_DIAMETER
 from ...geometry.surface import SurfaceMetadata, SurfaceModel
-from ...typing import checked
+from ...typing import checked, parse
 from .._association import (
     GeometryAssociation,
     GeometryAssociationKind,
@@ -71,6 +71,7 @@ from .._association import (
 )
 from .._certification_schedule import MeshCertificationSchedule
 from .._contracts import (
+    ConstructionSteering,
     MeshingFailure,
     MeshingFailureCategory,
     SurfaceMeshingSpec,
@@ -3226,7 +3227,8 @@ class _PreparedFixedImplicitRoute(StrictModule, NonTrainableState):
             raise ValueError("Fixed implicit discovery authority is no longer current.")
         return discovery
 
-    def execute(self, /) -> NativeMeshConstruction:
+    def execute(self, /, *, steering: ConstructionSteering) -> NativeMeshConstruction:
+        steering = parse(steering, ConstructionSteering, "steering")
         from ._native_layer import _implicit_carrier_root_witness
 
         discovery = self.require_current()
@@ -3361,7 +3363,8 @@ class _PreparedImplicitRoute(StrictModule, NonTrainableState):
         self.discovery = discovery
         self.carrier_bound = carrier_bound
 
-    def execute(self, /) -> NativeMeshConstruction:
+    def execute(self, /, *, steering: ConstructionSteering) -> NativeMeshConstruction:
+        steering = parse(steering, ConstructionSteering, "steering")
         source, specification, discovery = self.source, self.specification, self.discovery
         extracted = discovery.mesh
         if extracted is None:
@@ -4006,7 +4009,8 @@ class _PreparedImplicitVolumeRoute(StrictModule, NonTrainableState):
         self.carrier_distance = carrier.distance
         self.carrier_evidence = carrier.evidence
 
-    def execute(self, /) -> NativeMeshConstruction:
+    def execute(self, /, *, steering: ConstructionSteering) -> NativeMeshConstruction:
+        steering = parse(steering, ConstructionSteering, "steering")
         mapped_geometry = (
             None
             if self.carrier.mapped_domain is None

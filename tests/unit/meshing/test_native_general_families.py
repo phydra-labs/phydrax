@@ -784,7 +784,7 @@ def test_curved_cut_hexes_certify_through_the_two_level_fill_chain() -> None:
             ),
         ),
         _COORDINATES,
-    ).execute()
+    ).execute(steering="certified")
     geometry = construction.geometry
     assert geometry is not None
     restriction = geometry.restriction_source

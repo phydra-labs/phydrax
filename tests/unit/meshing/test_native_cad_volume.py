@@ -1238,7 +1238,7 @@ def test_native_cad_volume_keeps_original_brep_query_and_explicit_tolerance(
         ),
         contract,
     )
-    construction = prepared.execute()
+    construction = prepared.execute(steering="certified")
 
     (region_evidence,) = construction.organization.region_boundary_evidence
     assert region_evidence.control_id is None
@@ -1508,7 +1508,7 @@ def test_cad_scoped_fidelity_preserves_parent_identities_and_curving(
     )
     construction = prepare_native_cad_volume(
         source, specification, options, phx.SpatialCoordinateContract.si()
-    ).execute()
+    ).execute(steering="certified")
     result = _accept_native_construction(
         construction,
         specification,
@@ -1735,7 +1735,7 @@ def test_native_cad_region_control_identity_is_preserved_in_boundary_evidence() 
         contract,
     )
 
-    construction = prepared.execute()
+    construction = prepared.execute(steering="certified")
 
     (evidence,) = construction.organization.region_boundary_evidence
     assert evidence.control_id == control.control_id
@@ -1807,7 +1807,7 @@ def test_conforming_cad_box_splits_declared_patch_planes_with_exact_chart_witnes
             ),
         ),
         contract,
-    ).execute()
+    ).execute(steering="certified")
     witness = construction.certification.fidelity_witness
     assert isinstance(witness, SourceBoundaryChartWitness)
     assert construction.geometry is not None
@@ -1965,7 +1965,7 @@ def test_rooted_plane_partition_rejects_overlap_across_blocks() -> None:
             ),
         ),
         contract,
-    ).execute()
+    ).execute(steering="certified")
     witness = construction.certification.fidelity_witness
     assert isinstance(witness, SourceBoundaryChartWitness)
     patch_rows = [

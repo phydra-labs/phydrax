@@ -24,6 +24,7 @@ import phydrax.meshing._association as association_owner
 from phydrax.geometry import BoundaryAtlas
 from phydrax.geometry.simplicial import SegmentMesh
 from phydrax.meshing._contracts import (
+    ConstructionSteering,
     CurveMeshingSpec,
     MeshingFailure,
     MeshingFailureCategory,
@@ -72,7 +73,7 @@ from ...geometry._source_boundary_records import (
     SourceBoundaryPointWitness,
 )
 from ...geometry.brep._patches import AbstractCurve
-from ...typing import checked
+from ...typing import checked, parse
 from .._certification_schedule import MeshCertificationSchedule
 from .._controls import FeatureKind
 from .._native_construction import (
@@ -2604,7 +2605,8 @@ class _PreparedCurveRoute(StrictModule, NonTrainableState):
         self.coordinate_contract = coordinate_contract
         self.prepared = prepared
 
-    def execute(self, /) -> NativeMeshConstruction:
+    def execute(self, /, *, steering: ConstructionSteering) -> NativeMeshConstruction:
+        steering = parse(steering, ConstructionSteering, "steering")
         prepared = self.prepared
         rows, parameters, integration_errors, limits = _discretize(prepared)
         (

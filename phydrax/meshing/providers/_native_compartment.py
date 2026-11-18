@@ -27,9 +27,14 @@ from ...geometry.multiregion_surface import (
     PreparedMultiRegionSurface,
 )
 from ...geometry.surface import SurfaceMetadata, SurfaceModel
-from ...typing import checked
+from ...typing import checked, parse
 from .._compartments import CompartmentPlcPreparation, prepare_compartment_plc
-from .._contracts import MeshingFailure, MeshingFailureCategory, VolumeMeshingSpec
+from .._contracts import (
+    ConstructionSteering,
+    MeshingFailure,
+    MeshingFailureCategory,
+    VolumeMeshingSpec,
+)
 from .._native_construction import NativeMeshConstruction
 from .._organization import RegionBoundaryEvidence
 from .._plc_source import PiecewiseLinearComplex
@@ -370,8 +375,9 @@ class _PreparedCompartmentRoute(StrictModule, NonTrainableState):
         self.label_field = label_field
         self.volume = volume
 
-    def execute(self, /) -> NativeMeshConstruction:
-        construction = self.volume.execute()
+    def execute(self, /, *, steering: ConstructionSteering) -> NativeMeshConstruction:
+        steering = parse(steering, ConstructionSteering, "steering")
+        construction = self.volume.execute(steering=steering)
         if self.label_field is not None:
             facet_source_region_ids = dict(
                 zip(

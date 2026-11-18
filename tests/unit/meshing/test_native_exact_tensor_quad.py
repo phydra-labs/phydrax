@@ -155,7 +155,7 @@ def test_quad_cells_retain_injective_common_root_charts() -> None:
     prepared = prepare_native_surface(
         case.source, case.specification, case.options, _CONTRACT
     )
-    construction = prepared.execute()
+    construction = prepared.execute(steering="certified")
     cells = prepare_embedding_cells(construction.mesh, construction.geometry)
     roots = _retained_root_charts(construction.mesh, construction.geometry, cells)
     retained = tuple(root for root in roots if root is not None)
@@ -267,7 +267,7 @@ def test_tensor_quad_refuses_partial_rectangle_trim() -> None:
     )
     prepared = prepare_native_surface(domain, specification, case.options, _CONTRACT)
     with pytest.raises(MeshingFailure) as error:
-        prepared.execute()
+        prepared.execute(steering="certified")
     assert error.value.category is MeshingFailureCategory.UNSUPPORTED_COMBINATION
 
 
@@ -293,7 +293,7 @@ def test_hard_scoped_minimum_size_is_enforced() -> None:
     )
     construction = prepare_native_surface(
         case.source, specification, case.options, _CONTRACT
-    ).execute()
+    ).execute(steering="certified")
     assert f"{control.control_id}:minimum_size" in construction.compliance.issues
     assert not construction.compliance.passed
     assert f"{control.control_id}:maximum_size" not in construction.compliance.issues

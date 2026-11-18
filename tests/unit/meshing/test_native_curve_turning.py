@@ -95,7 +95,7 @@ def _turn_report(
         specification,
         NativeMeshingOptions("curve_arc_length"),
         SpatialCoordinateContract.si(),
-    ).execute()
+    ).execute(steering="certified")
     key = f"size:{control.control_id}:maximum_chord_turning"
     return (
         dict(result.compliance.achieved)[key],
@@ -219,7 +219,7 @@ def test_surface_mesh_is_deterministic_for_curved_trim() -> None:
             specification,
             NativeMeshingOptions("parametric_surface"),
             SpatialCoordinateContract.si(),
-        ).execute()
+        ).execute(steering="certified")
 
     expected = mesh()
     actual = mesh()

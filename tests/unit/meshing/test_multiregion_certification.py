@@ -530,7 +530,7 @@ def test_native_surface_proofs_revalidate_scientific_content(
         maximum_deviation=0.05,
     )
     plan = phx.meshing.NativeMeshingProvider().plan(model, specification)
-    construction = plan.prepared.execute()
+    construction = plan.prepared.execute(steering="certified")
     assert isinstance(construction, NativeMeshConstruction)
     computed: list[_ComputedSurfaceAcceptance] = []
     result = _accept_native_construction(
