@@ -9,10 +9,8 @@ import pytest
 
 import phydrax as phx
 from phydrax._physical import SpatialCoordinateContract
-from phydrax.geometry.implicit import _source_charts
 from phydrax.geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from phydrax.units import METER
-from tests.unit.geometry.test_implicit_source_charts import _adaptive_source
 
 
 def _exact_intersection(profile: AnalyticImplicitProfile, box: np.ndarray) -> bool:
@@ -85,45 +83,53 @@ def test_block_scan_matches_exact_rational_reference(family: str) -> None:
             ) is any(expected[start : start + 17])
 
 
-def test_touching_torus_circle_requires_exact_fallback(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("family", "lower", "upper", "expected"),
+    [
+        ("sphere", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), True),
+        ("sphere", (0.0, -0.25, -0.25), (0.25, 0.25, 0.25), True),
+        ("sphere", (0.0, 0.0, 0.625), (0.0, 0.0, 0.625), False),
+        ("torus", (0.0, 0.0, 2.0), (0.0, 0.0, 2.0), True),
+        ("torus", (0.625, 0.0, 0.0), (0.625, 0.0, 0.0), True),
+        ("torus", (0.625, -0.125, 0.0), (0.75, 0.125, 0.0), True),
+        ("torus", (0.375, 0.5, 0.0), (0.5, 0.625, 0.0), True),
+        (
+            "torus",
+            (np.nextafter(0.625, 0.0), 0.0, 0.0),
+            (np.nextafter(0.625, 0.0), 0.0, 0.0),
+            False,
+        ),
+        (
+            "torus",
+            (np.nextafter(0.625, np.inf), 0.0, 0.0),
+            (np.nextafter(0.625, np.inf), 0.0, 0.0),
+            False,
+        ),
+        (
+            "torus",
+            (np.nextafter(0.625, 0.0), 0.0, 0.0),
+            (np.nextafter(0.625, np.inf), 0.0, 0.0),
+            True,
+        ),
+    ],
+)
+def test_singularity_contact_and_straddling(
+    family: str,
+    lower: tuple[float, float, float],
+    upper: tuple[float, float, float],
+    expected: bool,
 ) -> None:
-    from phydrax.geometry.implicit import _analytic_profile
-
-    k = 1.0 + 2.0**-50
-    profile = AnalyticImplicitProfile(
-        phx.geometry.Torus((0.0, 0.0, 0.0), 4.0 * k, 6.0 * k).compile(),
-        SpatialCoordinateContract(METER),
-    )
-    point = np.asarray((3.0 * k, 4.0 * k, 0.0))
-    box = np.stack((point, point))[None]
-    assert _exact_intersection(profile, box[0])
-    original = _analytic_profile.interval_multiply
-
-    def widened(
-        first: tuple[np.ndarray, np.ndarray], second: tuple[np.ndarray, np.ndarray]
-    ) -> tuple[np.ndarray, np.ndarray]:
-        lo, hi = original(first, second)
-        return np.full_like(lo, -np.inf), np.full_like(hi, np.inf)
-
-    monkeypatch.setattr(_analytic_profile, "interval_multiply", widened)
-    assert profile._field_singular_set_intersects_boxes(box)
-
-
-def test_singularity_contact_refuses_cover_proof(monkeypatch: pytest.MonkeyPatch) -> None:
-    surface, source, contract, _, _, _ = _adaptive_source(
-        smooth=False, authoring_profile=True
-    )
-    assert _source_charts._profile_covers_singularities_away_from_zero_set(
-        source, surface, contract.spatial_id
-    )
-    touching = np.zeros((1, 2, 3), dtype=np.float64)
-    monkeypatch.setattr(
-        _source_charts, "_possible_zero_box_blocks", lambda _: iter((touching,))
-    )
-    assert not _source_charts._profile_covers_singularities_away_from_zero_set(
-        source, surface, contract.spatial_id
-    )
+    geometry = (
+        phx.geometry.Sphere((0.0, 0.0, 0.0), 0.625)
+        if family == "sphere"
+        else phx.geometry.Torus((0.0, 0.0, 0.0), 0.5, 0.75)
+    ).compile()
+    profile = AnalyticImplicitProfile(geometry, SpatialCoordinateContract(METER))
+    if family == "torus":
+        assert profile.major_radius == 0.625
+    box = np.asarray((lower, upper), dtype=np.float64)
+    assert _exact_intersection(profile, box) is expected
+    assert profile._field_singular_set_intersects_boxes(box[None]) is expected
 
 
 @pytest.mark.parametrize(

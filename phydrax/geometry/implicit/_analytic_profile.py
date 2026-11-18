@@ -798,7 +798,7 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
                 maximum_low, maximum_high = (np.asarray(value) for value in maximum)
                 radius_low, radius_high = (np.asarray(value) for value in radius_squared)
                 outside = (radius_high < minimum_low) | (radius_low > maximum_high)
-                inside = (minimum_high <= radius_low) & (radius_high <= maximum_low)
+                inside = (minimum_high < radius_low) & (radius_high < maximum_low)
                 if np.any(inside):
                     return True
                 exact_center = tuple(
