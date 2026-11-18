@@ -160,7 +160,9 @@ class NativeIntervalProgram:
     def __post_init__(self) -> None:
         if self.output.locations is None:
             start = self.output.offset
-            locations: slice | NDArray[np.int64] = slice(start, start + _size(self.output.shape))
+            locations: slice | NDArray[np.int64] = slice(
+                start, start + _size(self.output.shape)
+            )
         else:
             locations = self.output.locations.reshape((-1,))
         object.__setattr__(self, "_batch_output", locations)
