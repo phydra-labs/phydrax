@@ -635,6 +635,12 @@
   300 and 1,500 bits and on subnormal coordinates. On the recorded sphere
   adaptation the coordinates, edits and evidence are identical and the
   adaptation takes about a tenth less time on Windows.
+- The integer quotients of the native exact carrier search stop after eight
+  correction steps and report an internal error instead of correcting without
+  end. With correct integer arithmetic a quotient needs at most four (two on
+  every carrier of the tests), so no result changes; the bound exists for a
+  platform or build whose wide multiplication is wrong, where the search
+  previously did not return.
 - The source normal cones of certified surface remeshing are outward-rounded
   bounds computed without the platform math library. For the zero-set
   admission the half-angle `asin(|r| / |g|) + asin(2 tolerance / altitude)`

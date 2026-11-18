@@ -250,15 +250,18 @@ Search search(const Source& source, const Star& star, const std::vector<std::int
       lengths(room * spokes);
   std::int64_t count = -1;
   Search out;
-  PHX_CHECK(phx_mc_metric_source_survivor_moves(
-                source.handle, star.point_count(), star.points.data(), star.metrics.data(),
-                star.spoke_count(), star.spokes.data(),
-                static_cast<std::int64_t>(star.before.size()), star.before.data(),
-                static_cast<std::int64_t>(star.cells.size() / 4), star.cells.data(), star.floor,
-                static_cast<std::int64_t>(declared.size()), simplices.data(), declared.data(),
-                every_resolution ? 1 : 0, kCapacity, goals.data(), rows.data(), weights.data(),
-                bits.data(), points.data(), metrics.data(), qualities.data(), lengths.data(),
-                &count, &out.end) == PHX_MC_OK);
+  const std::int32_t status = phx_mc_metric_source_survivor_moves(
+      source.handle, star.point_count(), star.points.data(), star.metrics.data(),
+      star.spoke_count(), star.spokes.data(), static_cast<std::int64_t>(star.before.size()),
+      star.before.data(), static_cast<std::int64_t>(star.cells.size() / 4), star.cells.data(),
+      star.floor, static_cast<std::int64_t>(declared.size()), simplices.data(), declared.data(),
+      every_resolution ? 1 : 0, kCapacity, goals.data(), rows.data(), weights.data(),
+      bits.data(), points.data(), metrics.data(), qualities.data(), lengths.data(), &count,
+      &out.end);
+  PHX_CHECK(status == PHX_MC_OK);
+  // A refused search wrote no entries: nothing to read, and the comparisons of
+  // the caller fail on the missing ones.
+  if (status != PHX_MC_OK || count < 0) return out;
   for (std::size_t index = 0; index < static_cast<std::size_t>(count); ++index) {
     Entry entry;
     entry.goal = goals[index];
