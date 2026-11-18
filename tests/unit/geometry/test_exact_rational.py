@@ -9,10 +9,12 @@ import pytest
 from phydrax.geometry._rational import (
     binary64_difference_magnitude,
     binary64_dot,
+    binary64_least_squares,
     binary64_matmul,
     binary64_norm,
     binary64_norm_lower,
     binary64_norm_upper,
+    binary64_sum,
     exact_float,
     fraction_endpoint,
     rational_cross,
@@ -565,3 +567,42 @@ def test_rational_endpoint_saturation_is_outward() -> None:
         np.finfo(np.float64).max
     )
     assert fraction_endpoint(maximum + 1, upper=True, saturate=True) == np.inf
+
+
+def test_binary64_sum_uses_index_order_on_runtime_axis() -> None:
+    values = np.asarray([[1.0e16, 1.0, -1.0e16, 2.0]], dtype=np.float64)
+    expected = 1.0e16
+    for item in (1.0, -1.0e16, 2.0):
+        expected = float(Fraction(expected) + Fraction(item))
+    np.testing.assert_array_equal(binary64_sum(values, axis=1), [expected])
+    np.testing.assert_array_equal(
+        binary64_sum(np.empty((2, 0), dtype=np.float64), axis=1), [0.0, 0.0]
+    )
+
+
+def test_binary64_least_squares_exact_and_minimum_norm() -> None:
+    matrix = np.asarray(
+        [[1.0, 1.0], [1.0, 1.0 + 2.0**-30], [0.0, 2.0**-50]], dtype=np.float64
+    )
+    right = np.asarray([0.0, 1.0, 2.0], dtype=np.float64)
+    a = [[Fraction(float(value)) for value in row] for row in matrix]
+    b = [Fraction(float(value)) for value in right]
+    g00 = sum((row[0] ** 2 for row in a), Fraction())
+    g01 = sum((row[0] * row[1] for row in a), Fraction())
+    g11 = sum((row[1] ** 2 for row in a), Fraction())
+    h0 = sum((row[0] * value for row, value in zip(a, b, strict=True)), Fraction())
+    h1 = sum((row[1] * value for row, value in zip(a, b, strict=True)), Fraction())
+    determinant = g00 * g11 - g01 * g01
+    expected = np.asarray(
+        [
+            float((g11 * h0 - g01 * h1) / determinant),
+            float((g00 * h1 - g01 * h0) / determinant),
+        ],
+        dtype=np.float64,
+    )
+    np.testing.assert_array_equal(binary64_least_squares(matrix, right), expected)
+    singular = np.asarray([[1.0, 2.0], [2.0, 4.0], [3.0, 6.0]], dtype=np.float64)
+    np.testing.assert_array_equal(
+        binary64_least_squares(singular, np.asarray([1.0, 2.0, 3.0], dtype=np.float64)),
+        np.asarray([float(Fraction(1, 5)), float(Fraction(2, 5))], dtype=np.float64),
+    )

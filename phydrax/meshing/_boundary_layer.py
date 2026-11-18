@@ -35,7 +35,7 @@ from scipy.sparse.csgraph import connected_components
 
 from .._bvh import bvh_nearest_items, bvh_overlap_pair_blocks, prepare_bvh
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._meshcore import load_meshcore
+from .._meshcore import angle_arccosine, angle_cosine, angle_sine, load_meshcore
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar
@@ -54,6 +54,13 @@ from ..discretization._periodic_exact import (
     identification_orders,
 )
 from ..discretization._periodic_topology import _entity_vertex_rows, PeriodicMeshTopology
+from ..geometry._rational import (
+    binary64_dot,
+    binary64_least_squares,
+    binary64_matmul,
+    binary64_norm,
+    binary64_sum,
+)
 from ..geometry._source_identity import source_entity_id
 from ..typing import checked
 from ._association import _incidence_pairs, GeometryAssociation
@@ -594,7 +601,7 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
         has_parents = np.diff(parent_offsets) > 0
         parent_sums = np.asarray(
             [
-                np.sum(parent_weights[start:stop])
+                binary64_sum(parent_weights[start:stop], axis=0)
                 for start, stop in zip(
                     parent_offsets[:-1], parent_offsets[1:], strict=True
                 )
@@ -766,7 +773,7 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
             raise ValueError("Every generated layer vertex must name its source columns.")
         vertex_parent_sums = np.asarray(
             [
-                np.sum(vertex_parent_weights[start:stop])
+                binary64_sum(vertex_parent_weights[start:stop], axis=0)
                 for start, stop in zip(
                     vertex_parent_offsets[:-1], vertex_parent_offsets[1:], strict=True
                 )
@@ -1011,7 +1018,7 @@ def _split_polygons(
 
 
 def _unit(vectors: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
-    norms = np.linalg.norm(vectors, axis=-1)
+    norms = binary64_norm(vectors)
     safe = np.where(norms > 0.0, norms, 1.0)
     return vectors / safe[..., None], norms
 
@@ -1048,11 +1055,11 @@ def _minimum_norm_point(points: np.ndarray, /) -> tuple[list[int], np.ndarray]:
     support = [0]
     weights = np.ones((1,))
     for _ in range(8 * points.shape[0] + 8):
-        current = weights @ points[support]
-        squared = float(current @ current)
+        current = binary64_matmul(weights, points[support])
+        squared = float(binary64_dot(current, current))
         if squared <= 1.0e-24:
             break
-        products = points @ current
+        products = binary64_matmul(points, current)
         candidate = int(np.argmin(products))
         if products[candidate] >= squared - 1.0e-15 or candidate in support:
             break
@@ -1061,11 +1068,9 @@ def _minimum_norm_point(points: np.ndarray, /) -> tuple[list[int], np.ndarray]:
         while True:
             corral = points[support]
             size = len(support)
-            # Affine minimum-norm point corral[0] + edges^T c by least squares on
-            # the edges themselves (not their Gram), which keeps clustered
-            # normals well conditioned.
+            # Exact least squares on the binary64 corral edges.
             edges = corral[1:] - corral[0]
-            offsets = np.linalg.lstsq(edges.T, -corral[0], rcond=None)[0]
+            offsets = binary64_least_squares(edges.T, -corral[0])
             affine = np.concatenate(((1.0 - np.sum(offsets),), offsets))
             if np.all(affine > 0.0):
                 weights = affine
@@ -1113,10 +1118,12 @@ def _visibility_optimum(
     for column in range(count):
         distinct, slots = np.unique(normals[column], axis=0, return_index=True)
         support, convex = _minimum_norm_point(distinct)
-        point = convex @ distinct[support]
-        norm = float(np.linalg.norm(point))
+        point = binary64_matmul(convex, distinct[support])
+        norm = float(binary64_norm(point))
         directions = distinct if norm == 0.0 else np.vstack((point / norm, distinct))
-        lower[column] = float(np.max(np.min(directions @ distinct.T, axis=1)))
+        lower[column] = float(
+            np.max(np.min(binary64_matmul(directions, distinct.T), axis=1))
+        )
         upper[column] = norm
         weights[column, slots[support]] = convex
     return weights, lower, np.maximum(upper - lower, 0.0)
@@ -1217,7 +1224,7 @@ def _analyze_wall(
     bend = np.zeros((edges.shape[0],), dtype=np.float64)
     f, g = edge_faces[interior].T
     centroids = _polygon_centroids(points, faces)
-    theta[interior] = np.arccos(
+    theta[interior] = angle_arccosine(
         np.clip(np.sum(normals[f] * normals[g], axis=1), -1.0, 1.0)
     )
     # Positive bend: the neighbor rises toward the growth side (fronts converge).
@@ -1377,13 +1384,16 @@ def _periodic_sectors(
                     continue
                 for vertex in wall.edges[edge]:
                     sector = int(sectors.at(np.asarray(vertex), np.asarray(face)))
-                    normal = wall.normals[face] @ rotations[vertex]
+                    normal = binary64_matmul(wall.normals[face], rotations[vertex])
                     members.setdefault(int(vertex_roots[vertex]), []).append(
                         (sector, normal)
                     )
         for incidences in members.values():
             normals = np.asarray([normal for _, normal in incidences])
-            if np.any(normals @ normals.T < np.cos(feature_angle)):
+            if np.any(
+                binary64_matmul(normals, normals.T)
+                < angle_cosine(np.asarray([feature_angle], dtype=np.float64))[0]
+            ):
                 continue
             old = np.asarray([root(sector) for sector, _ in incidences], dtype=np.int64)
             roots[old] = np.min(old)
@@ -1394,11 +1404,11 @@ def _periodic_sectors(
 def _synchronize_periodic_directions(
     wall: _Wall, directions: _Directions, sectors: _Sectors, rotations: np.ndarray, /
 ) -> _Directions:
-    canonical = (directions.direction[:, None, :] @ rotations)[:, 0, :]
+    canonical = binary64_matmul(directions.direction[:, None, :], rotations)[:, 0, :]
     total = np.zeros_like(canonical)
     np.add.at(total, sectors.orbits, canonical)
     canonical, _ = _unit(total[sectors.orbits])
-    direction = (rotations @ canonical[..., None])[..., 0]
+    direction = binary64_matmul(rotations, canonical[..., None])[..., 0]
     visibility = np.min(
         np.sum(directions.normals * direction[:, None, :], axis=-1), axis=1
     )
@@ -1546,7 +1556,7 @@ def _sector_directions(
             sectors.sector_vertex[uncertified],
             wall.points,
         )
-    hull = np.sum(weights[..., None] * normals, axis=1)
+    hull = binary64_sum(weights[..., None] * normals, axis=1)
     direction, _ = _unit(hull)
     constraints = _constraint_normals(wall, sectors, count)
     if np.any(constraints.count > 2):
@@ -1606,10 +1616,9 @@ def _smooth_directions(
 ) -> Any:
     """Weighted Laplacian smoothing that never loses more than 5% visibility."""
     first, second = _sector_graph(wall, sectors)
-    lengths = np.linalg.norm(
+    lengths = binary64_norm(
         wall.points[sectors.sector_vertex[first]]
-        - wall.points[sectors.sector_vertex[second]],
-        axis=1,
+        - wall.points[sectors.sector_vertex[second]]
     )
     weight = 1.0 / np.maximum(lengths, np.finfo(np.float64).tiny)
     count = direction.shape[0]
@@ -1633,11 +1642,11 @@ def _smooth_directions(
 
 def _slerp(first: np.ndarray, second: np.ndarray, fraction: np.ndarray, /) -> np.ndarray:
     cosine = np.clip(np.sum(first * second, axis=-1), -1.0, 1.0)
-    angle = np.arccos(cosine)
+    angle = angle_arccosine(cosine)
     small = angle < 1.0e-9
-    sine = np.where(small, 1.0, np.sin(angle))
-    left = np.where(small, 1.0 - fraction, np.sin((1.0 - fraction) * angle) / sine)
-    right = np.where(small, fraction, np.sin(fraction * angle) / sine)
+    sine = np.where(small, 1.0, angle_sine(angle))
+    left = np.where(small, 1.0 - fraction, angle_sine((1.0 - fraction) * angle) / sine)
+    right = np.where(small, fraction, angle_sine(fraction * angle) / sine)
     value, _ = _unit(left[..., None] * first + right[..., None] * second)
     return value
 
@@ -1645,14 +1654,14 @@ def _slerp(first: np.ndarray, second: np.ndarray, fraction: np.ndarray, /) -> np
 def _slerp_weights(
     first: np.ndarray, second: np.ndarray, fraction: float, /
 ) -> tuple[float, float]:
-    cosine = float(np.clip(np.dot(first, second), -1.0, 1.0))
-    angle = float(np.arccos(cosine))
+    cosine = float(np.clip(binary64_dot(first, second), -1.0, 1.0))
+    angle = float(angle_arccosine(np.asarray([cosine], dtype=np.float64))[0])
     if angle < 1.0e-9:
         left, right = 1.0 - fraction, fraction
     else:
-        sine = np.sin(angle)
-        left = np.sin((1.0 - fraction) * angle) / sine
-        right = np.sin(fraction * angle) / sine
+        sine = angle_sine(np.asarray([angle], dtype=np.float64))[0]
+        left = angle_sine(np.asarray([(1.0 - fraction) * angle], dtype=np.float64))[0] / sine
+        right = angle_sine(np.asarray([fraction * angle], dtype=np.float64))[0] / sine
     total = left + right
     return float(left / total), float(right / total)
 
@@ -1751,7 +1760,7 @@ def _fan_lists(
             ends[np.any(sector_a == sector_b, axis=1)].reshape(-1),
             wall.points,
         )
-    angle = np.arccos(
+    angle = angle_arccosine(
         np.clip(np.sum(direction[sector_a] * direction[sector_b], axis=-1), -1.0, 1.0)
     )
     if np.any(angle >= np.pi - 1.0e-6):
@@ -1881,7 +1890,7 @@ def _build_front(
     for vertex, cycle in corners:
         center = next_column
         next_column += 1
-        value, _ = _unit(np.sum(column_direction_[cycle], axis=0))
+        value, _ = _unit(binary64_sum(column_direction_[cycle], axis=0))
         extra_vertex.append(vertex)
         extra_direction.append(value)
         parent_local.append(tuple(int(column) for column in cycle))
@@ -1893,7 +1902,9 @@ def _build_front(
         first = column_direction_[ring]
         second = column_direction_[np.roll(ring, -1)]
         # Corner fans face away from the vertex: normals along the center direction.
-        if np.sum(np.cross(first - value, second - value) @ value) < 0.0:
+        if binary64_sum(
+            binary64_matmul(np.cross(first - value, second - value), value), axis=0
+        ) < 0.0:
             rows = rows[:, (0, 2, 1)]
         corner_rows.append(rows)
         corner_source_vertices.extend((vertex,) * len(cycle))
@@ -2419,8 +2430,8 @@ def _probe_stretch(wall: _Wall, front: _Front, /) -> np.ndarray:
     column keeps the float kernel's value.
     """
     grow_triangles, rows, items = _incident_grown_triangles(wall, front.column_vertex)
-    lengths = np.linalg.norm(
-        wall.points[wall.edges[:, 0]] - wall.points[wall.edges[:, 1]], axis=1
+    lengths = binary64_norm(
+        wall.points[wall.edges[:, 0]] - wall.points[wall.edges[:, 1]]
     )
     shortest = np.full((wall.points.shape[0],), np.inf)
     np.minimum.at(shortest, wall.edges.reshape(-1), np.repeat(lengths, 2))
@@ -2473,9 +2484,9 @@ def _curvature_limits(wall: _Wall, policy: BoundaryLayerPolicy, /) -> np.ndarray
     edges = wall.edges[smooth_concave]
     centroids = _polygon_centroids(wall.points, wall.faces)
     first, second = wall.edge_faces[smooth_concave].T
-    spacing = np.linalg.norm(centroids[first] - centroids[second], axis=1)
+    spacing = binary64_norm(centroids[first] - centroids[second])
     # Circle through adjacent face centroids turning by theta: d / (2 sin(theta / 2)).
-    radii = spacing / (2.0 * np.sin(0.5 * wall.theta[smooth_concave]))
+    radii = spacing / (2.0 * angle_sine(0.5 * wall.theta[smooth_concave]))
     radius = np.full((wall.points.shape[0],), np.inf)
     np.minimum.at(radius, edges.reshape(-1), np.repeat(radii, 2))
     return policy.curvature_fraction * radius
@@ -2534,7 +2545,9 @@ def _parallel_attached_wall_mask(
     normals = np.cross(
         triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]
     )
-    candidates = np.flatnonzero(~wall.grow[owners] & ((normals @ direction) == 0.0))
+    candidates = np.flatnonzero(
+        ~wall.grow[owners] & (binary64_matmul(normals, direction) == 0.0)
+    )
     groups: dict[tuple[int, int, int, int], list[int]] = {}
     exact_direction = tuple(Fraction.from_float(float(value)) for value in direction)
     for row in candidates:
@@ -2632,7 +2645,7 @@ def _attached_vertex(wall: _Wall, /) -> np.ndarray:
 
 def _vertex_graph(wall: _Wall, /) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     edges = wall.edges[wall.interior | wall.rim]
-    lengths = np.linalg.norm(wall.points[edges[:, 0]] - wall.points[edges[:, 1]], axis=1)
+    lengths = binary64_norm(wall.points[edges[:, 0]] - wall.points[edges[:, 1]])
     return edges[:, 0], edges[:, 1], 1.0 / np.maximum(lengths, np.finfo(np.float64).tiny)
 
 
@@ -3348,7 +3361,7 @@ def _merge_pairs(
     back[vertices] = partner
     offset = wall.points[partner] - origin
     gap = np.sum(offset * direction, axis=1)
-    lateral = np.linalg.norm(offset - gap[:, None] * direction, axis=1)
+    lateral = binary64_norm(offset - gap[:, None] * direction)
     opposing = np.sum(
         direction * front.column_direction[sector_of_vertex[partner]], axis=1
     )
@@ -3728,7 +3741,7 @@ def _cap_pyramids(
         return points, empty, cap, arity, ()
     corners = points[quads]
     normal, _ = _newell_normals(points, quads, np.full((quads.shape[0],), 4))
-    edge = np.linalg.norm(corners - np.roll(corners, -1, axis=1), axis=2)
+    edge = binary64_norm(corners - np.roll(corners, -1, axis=1))
     height = 0.5 * np.mean(edge, axis=1)
     centroid = np.mean(corners, axis=1)
     apex_ids = points.shape[0] + np.arange(quads.shape[0])
@@ -3799,7 +3812,7 @@ def _measured_thicknesses(
     for layer in range(layers):
         if active[layer]:
             values = increments[layer, carried[layer]]
-            mean[layer] = np.mean(values)
+            mean[layer] = binary64_sum(values, axis=0) / values.size
             minimum[layer] = np.min(values)
             maximum[layer] = np.max(values)
     return mean, minimum, maximum, active
@@ -4195,7 +4208,7 @@ def _reprove_retained_boundary_layers(
         corners = points[quads]
         normals, _ = _newell_normals(points, quads, np.full(quads.shape[0], 4))
         heights = 0.5 * np.mean(
-            np.linalg.norm(corners - np.roll(corners, -1, axis=1), axis=2), axis=1
+            binary64_norm(corners - np.roll(corners, -1, axis=1)), axis=1
         )
         centroids = np.mean(corners, axis=1)
         for index, apex in enumerate(points[apex_ids]):
@@ -4206,7 +4219,7 @@ def _reprove_retained_boundary_layers(
                 next_height = 0.5 * height
                 if (
                     next_height == height
-                    or np.linalg.norm(apex - centroids[index]) > height * 2.0
+                    or binary64_norm(apex - centroids[index]) > height * 2.0
                 ):
                     break
                 height = next_height

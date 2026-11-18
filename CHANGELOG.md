@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- Boundary-layer directions, heights, and quantities derived from them now use
+  specified binary64 operations. Their last bits change once across platforms;
+  layer mesh coordinates and their fingerprints can consequently change.
 - Native geometry and meshing now share a single fixed-order binary64 dot,
   matrix product, and norm definition. On platforms whose BLAS fused or
   reordered these operations, rounding can change surface-association
