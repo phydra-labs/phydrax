@@ -1020,3 +1020,25 @@ def test_singular_control_hull_leaves_feasible_controls_to_the_search() -> None:
     assert not _singular_control_hull(controls, _floats(controls))
     found = monotone_preconditioner(controls)
     assert found is not None
+
+
+@pytest.mark.parametrize(
+    ("vectors", "raises"),
+    (
+        (((-1, 0, 0, 1), (1,)), False),
+        (((1,), (1, 0, 0, 1)), True),
+        (((1, 0, 0, 1), (1,)), True),
+    ),
+)
+def test_jacobian_control_failure_precedes_later_malformed_controls(
+    vectors: tuple[tuple[int, ...], ...], raises: bool
+) -> None:
+    controls = subdivision._JacobianControls(
+        2, subdivision._Controls({(i, 0): vector for i, vector in enumerate(vectors)}, 1)
+    )
+    metric = ((Fraction(1), Fraction(0)), (Fraction(0), Fraction(1)))
+    if raises:
+        with pytest.raises(ValueError, match="factors must have equal square shapes"):
+            subdivision._jacobian_controls_positive(controls, metric)
+    else:
+        assert not subdivision._jacobian_controls_positive(controls, metric)
