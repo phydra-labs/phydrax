@@ -431,12 +431,30 @@ class PatchCurveUse(StrictModule, NonTrainableState):
     def closes_chart_loop(self) -> bool:
         """Whether this use returns exactly to its start chart point.
 
-        One whole native turn does by construction; a nonperiodic closed
-        p-curve does when its binary64 end evaluations coincide. Either way the
-        end shares the start's chart point and records the start parameter.
+        A full intersection branch closes in this chart only when its
+        certified source deck has no shift on this side. This does not compare
+        independently rounded endpoint representatives.
         """
         if self.closes_native_turn():
             return True
+        from .brep._boolean_core import PeriodicPCurve
+        from .brep._intersection_curve import IntersectionPCurve
+
+        curve = self.pcurve
+        while isinstance(curve, PeriodicPCurve):
+            curve = curve.source_curve
+        if isinstance(curve, IntersectionPCurve):
+            if not (
+                curve.curve.closed
+                and curve.first == 0.0
+                and curve.last == curve.curve.num_charts
+                and min(self.first, self.last) == curve.first
+                and max(self.first, self.last) == curve.last
+            ):
+                return False
+            shifts = curve.curve.closure_period_shifts()
+            side = shifts[:2] if curve.side == "first" else shifts[2:]
+            return bool(np.all(side == 0))
         ends = self.charts((self.first, self.last))
         return bool(np.array_equal(ends[0], ends[1]))
 

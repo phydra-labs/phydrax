@@ -84,12 +84,23 @@ def test_rooted_quadric_trim_joins_require_source_authority(tmp_path: Path) -> N
     )
     from phydrax.geometry._source_fidelity import _curved_trim_lens_caps
     from phydrax.geometry.brep._boolean_core import PeriodicPCurve
+    from phydrax.geometry.brep._intersection_curve import IntersectionPCurve
     from phydrax.linalg._hermitian_spectral import fraction_sqrt_interval
     from phydrax.meshing.providers._native_surface import _trim_lens_bound
     from tools.meshing_qualification.scenarios.native_cad_profiles import _quadric_case
 
     model, _, _, _ = _quadric_case("iges", tmp_path)
     domain = MeshingDomain.from_brep(model)
+    seam = next(
+        use
+        for loop in domain.patches[1].loops
+        for use in loop
+        if isinstance(use, PatchCurveUse) and use.curve == 1
+    )
+    assert isinstance(seam.pcurve, IntersectionPCurve)
+    assert seam.pcurve.curve.closed
+    assert np.all(seam.pcurve.curve.closure_period_shifts()[:2] == 0)
+    assert seam.closes_chart_loop()
     patch = 2
     smallest = float(np.nextafter(0.0, 1.0))
     box = np.asarray(((-smallest, 0.5), (smallest, 0.5)), dtype=np.float64)
