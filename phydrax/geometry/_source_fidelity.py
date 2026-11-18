@@ -4384,10 +4384,14 @@ def _surface_target_chart_rows(
         else:
             for triangles in by_cell.values():
                 _require_reference_chart_partition(tuple(triangles), (standard,))
+        orientations = {
+            triangle: 1 if _area2(triangle) > 0 else -1
+            for triangle in dict.fromkeys(reference_triangles)
+        }
         return (
             tuple(zip(block_rows.tolist(), local_rows.tolist(), strict=True)),
             reference_triangles,
-            tuple(1 if _area2(triangle) > 0 else -1 for triangle in reference_triangles),
+            tuple(orientations[triangle] for triangle in reference_triangles),
         )
 
     if mesh.topological_dimension != 3:
