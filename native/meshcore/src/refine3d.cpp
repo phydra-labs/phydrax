@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "cavity.hpp"
+#include "angle.hpp"
 #include "geometry3.hpp"
 #include "local_incidence.hpp"
 #include "predicates.hpp"
@@ -934,7 +935,8 @@ double cosine3(const double* u, const double* v) {
 }
 
 double degrees(double cosine) {
-  return std::acos(std::clamp(cosine, -1.0, 1.0)) * (180.0 / std::numbers::pi);
+  return phx::mc::angle::arccosine(std::clamp(cosine, -1.0, 1.0)) *
+         (180.0 / std::numbers::pi);
 }
 
 // The smallest angle in degrees between the ray along `ray` and the planar
@@ -988,7 +990,7 @@ struct AcuteFeature {
 // feature_size / sin(angle) of it. Boundary splits there encroach each
 // other ever closer to the apex.
 double protected_radius(double feature_size, double angle) {
-  return feature_size / std::sin(angle * (std::numbers::pi / 180.0));
+  return feature_size / phx::mc::angle::sine(angle * (std::numbers::pi / 180.0));
 }
 
 // The acute features of the constrained complex (`facets`, `segments`) of
