@@ -18,6 +18,9 @@ exact-predicate intersection of its cell faces against earlier layers, the wall,
 and the obstacles before it is accepted; collisions resolve only through the
 control's explicit collision policy, and every rejection carries the offending
 wall vertices and locations.
+
+NumPy's ``add.at``, weighted ``bincount``, and ``cumsum`` accumulations here
+are relied on to add contributions sequentially in their input index order.
 """
 
 from __future__ import annotations
@@ -1078,7 +1081,7 @@ def _minimum_norm_point(points: np.ndarray, /) -> tuple[list[int], np.ndarray]:
             # Exact least squares on the binary64 corral edges.
             edges = corral[1:] - corral[0]
             offsets = binary64_least_squares(edges.T, -corral[0])
-            affine = np.concatenate(((1.0 - np.sum(offsets),), offsets))
+            affine = np.concatenate(((1.0 - binary64_sum(offsets, axis=0),), offsets))
             if np.all(affine > 0.0):
                 weights = affine
                 break
@@ -1094,7 +1097,7 @@ def _minimum_norm_point(points: np.ndarray, /) -> tuple[list[int], np.ndarray]:
             if not np.any(keep):
                 keep[int(np.argmax(weights))] = True
             support = [row for row, kept in zip(support, keep, strict=True) if kept]
-            weights = weights[keep] / np.sum(weights[keep])
+            weights = weights[keep] / binary64_sum(weights[keep], axis=0)
             if len(support) <= 1:
                 break
     return support, weights
@@ -2410,6 +2413,8 @@ def _nearby_pairs(
     binary64 radius. An additional outward step after forming each box corner
     therefore contains the triangle box on that axis. Closed overlap includes
     every item whose computed box distance is at most the original radius.
+    For example, at query -1 a box at 2**-54 has rounded gap 1, but forming
+    -1 + 1 and expanding only that corner would still miss the box.
     """
     if not np.all(np.isfinite(radius)):
         raise ValueError("Boundary-layer query radii must be finite.")
