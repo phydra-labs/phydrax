@@ -750,6 +750,96 @@ def test_stored_intersection_pcurve_points_lie_in_point_and_span_boxes() -> None
     assert not preparation.unsupported_points
 
 
+def test_stored_plane_cylinder_section_uses_certified_boxes() -> None:
+    from phydrax.geometry.brep._boolean_core import PeriodicPCurve
+    from phydrax.geometry.brep._host_program import prepare_host_program
+    from phydrax.geometry.brep._patches import PlaneCylinderSectionPCurve
+
+    curve = PlaneCylinderSectionPCurve(
+        (Fraction(1, 3), Fraction(-1, 2)),
+        (Fraction(1), Fraction(0)),
+        (Fraction(0), Fraction(1, 2)),
+        (Fraction(0), Fraction(1, 3)),
+        parameter_range=(0.0, 1.0),
+    )
+    preparation = SourcePreparation(_square_domain())
+    parameters = np.asarray((-0.0, 0.0, 0.125, 0.5, 1.0, 0.5), dtype=np.float64)
+    points = preparation.stored_pcurve_points(curve, parameters, 0.0, 1.0)
+    span = preparation.curve_box(curve, 0.0, 1.0)
+    for parameter, point in zip(parameters, points, strict=True):
+        box = preparation.curve_box(curve, float(parameter), float(parameter))
+        np.testing.assert_array_equal(point, np.maximum(box[0], span[0]))
+        assert np.all(point <= np.minimum(box[1], span[1]))
+    separate = np.concatenate(
+        [preparation.stored_pcurve_points(curve, p[None], 0.0, 1.0) for p in parameters]
+    )
+    np.testing.assert_array_equal(points, separate)
+    fresh = SourcePreparation(_square_domain())
+    reversed_points = fresh.stored_pcurve_points(curve, parameters[::-1], 0.0, 1.0)[::-1]
+    np.testing.assert_array_equal(points.view(np.uint64), reversed_points.view(np.uint64))
+    assert prepare_host_program(lambda value: curve.evaluate(value[0]), 1) is not None
+    proposals = preparation.search_pcurve_points(curve, parameters, 0.0, 1.0)
+    assert preparation.stored_pcurve_supported(curve) is None
+    singles = np.concatenate(
+        [preparation.search_pcurve_points(curve, p[None], 0.0, 1.0) for p in parameters]
+    )
+    np.testing.assert_array_equal(proposals, singles)
+    cylinder = CylinderPatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1.0)
+    periodic = PeriodicPCurve(curve, cylinder, (1, 0))
+    periodic_points = preparation.stored_pcurve_points(periodic, parameters, 0.0, 1.0)
+    periodic_span = preparation.curve_box(periodic, 0.0, 1.0)
+    for parameter, point in zip(parameters, periodic_points, strict=True):
+        box = preparation.curve_box(periodic, float(parameter), float(parameter))
+        np.testing.assert_array_equal(point, np.maximum(box[0], periodic_span[0]))
+        assert np.all(point <= np.minimum(box[1], periodic_span[1]))
+    periodic_proposals = preparation.search_pcurve_points(periodic, parameters, 0.0, 1.0)
+    periodic_singles = np.concatenate(
+        [
+            preparation.search_pcurve_points(periodic, p[None], 0.0, 1.0)
+            for p in parameters
+        ]
+    )
+    np.testing.assert_array_equal(periodic_proposals, periodic_singles)
+    assert not preparation.unsupported_points
+
+
+def test_plane_cylinder_section_component_update_preserves_bits_and_gradient() -> None:
+    import jax
+
+    from phydrax.geometry.brep._patches import PlaneCylinderSectionPCurve
+
+    curve = PlaneCylinderSectionPCurve(
+        (Fraction(1, 3), Fraction(-1, 2)),
+        (Fraction(1), Fraction(0)),
+        (Fraction(0), Fraction(1, 2)),
+        (Fraction(0), Fraction(1, 3)),
+        parameter_range=(0.0, 1.0),
+    )
+
+    def old_evaluate(values: Array, /) -> Array:
+        harmonics = (
+            curve.offset
+            + values[..., None] * curve.linear
+            + jnp.cos(values)[..., None] * curve.cosine
+            + jnp.sin(values)[..., None] * curve.sine
+        )
+        return harmonics.at[..., 0].add(curve.angle_offset)
+
+    values = jnp.asarray((-0.0, 0.0, 0.125, 0.5, 1.0), dtype=jnp.float64)
+    old = np.asarray(old_evaluate(values))
+    new = np.asarray(curve.evaluate(values))
+    np.testing.assert_array_equal(old.view(np.uint64), new.view(np.uint64))
+    np.testing.assert_array_equal(
+        np.asarray(jax.jacfwd(old_evaluate)(values)),
+        np.asarray(jax.jacfwd(curve.evaluate)(values)),
+    )
+    signed = jnp.asarray(((0.0, -0.0), (-0.0, -0.0)), dtype=jnp.float64)
+    old_signed = np.asarray(signed.at[..., 0].add(0.0))
+    new_signed = np.asarray(jnp.stack((signed[..., 0] + 0.0, signed[..., 1]), axis=-1))
+    np.testing.assert_array_equal(old_signed.view(np.uint64), new_signed.view(np.uint64))
+    assert np.signbit(new_signed[:, 1]).all()
+
+
 def test_domain_owned_arrays_are_immutable_without_changing_identity() -> None:
     domain = _square_domain()
     assert domain.domain_id == (

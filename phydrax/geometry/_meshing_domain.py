@@ -982,8 +982,19 @@ def _surface_span_data(
     )
 
 
+def _has_plane_cylinder_section(curve: AbstractCurve, /) -> bool:
+    """Whether an exact trim or period wrapper contains a section p-curve."""
+    from .brep._boolean_core import PeriodicPCurve
+    from .brep._intersection_curve import CurveTrimSegment
+    from .brep._patches import PlaneCylinderSectionPCurve
+
+    while isinstance(curve, (CurveTrimSegment, PeriodicPCurve)):
+        curve = curve.curve if isinstance(curve, CurveTrimSegment) else curve.source_curve
+    return isinstance(curve, PlaneCylinderSectionPCurve)
+
+
 class _PointPreparation:
-    """Operation-local D1/D2 programs and certified intersection point boxes."""
+    """Operation-local D1/D2 programs and certified p-curve point boxes."""
 
     __slots__ = (
         "_stored_surface_programs",
@@ -1019,7 +1030,7 @@ class _PointPreparation:
         self.unsupported_points: dict[str, int] = {}
 
     def curve_box(self, curve: AbstractCurve, first: float, last: float, /) -> np.ndarray:
-        """Certified intersection p-curve box without a domain owner."""
+        """Certified p-curve box without a domain owner."""
         from .brep._intersection_curve import (
             _IntersectionCurveHostAtlas,
             CurveTrimSegment,
@@ -1029,6 +1040,8 @@ class _PointPreparation:
         carrier = curve
         while isinstance(carrier, CurveTrimSegment):
             carrier = carrier.curve
+        if _has_plane_cylinder_section(curve):
+            return np.asarray(curve.bounding_box(first, last), dtype=np.float64)
         if not isinstance(carrier, IntersectionPCurve):
             raise TypeError("A point enclosure requires an intersection p-curve.")
         root = carrier.curve
@@ -1059,11 +1072,13 @@ class _PointPreparation:
     def stored_pcurve_supported(self, pcurve: AbstractCurve, /) -> bool | None:
         """Cached host-lowering support, or ``None`` if not known for this carrier.
 
-        Intersection p-curves return ``None``: their certified realization can
-        depend on the particular span and points, not just carrier identity.
+        Certified intersection and plane-cylinder section p-curves can depend
+        on the particular span and points, not just carrier identity.
         """
         if self._exact_curve_points.get(id(pcurve)) is pcurve:
             return True
+        if _has_plane_cylinder_section(pcurve):
+            return None
         entry = self._stored_curve_programs.get(id(pcurve))
         if entry is None or entry[0] is not pcurve:
             return None
@@ -1077,6 +1092,22 @@ class _PointPreparation:
         entry = self._intersection_point_support.get(key)
         if entry is None or entry[0] is not pcurve:
             return None
+        return entry[1]
+
+    def _host_curve_program(
+        self, pcurve: AbstractCurve, /
+    ) -> PreparedIntervalFunction | None:
+        """Prepare one live curve's scalar host program for this operation."""
+        from .brep._host_program import prepare_host_program
+
+        entry = self._stored_curve_programs.get(id(pcurve))
+        if entry is None or entry[0] is not pcurve:
+            def point(parameter: Array, /) -> Array:
+                return pcurve.evaluate(parameter[0])
+
+            program = prepare_host_program(point, 1)
+            self._stored_curve_programs[id(pcurve)] = (pcurve, program)
+            return program
         return entry[1]
 
     def stored_patch_points(
@@ -1113,10 +1144,11 @@ class _PointPreparation:
     ) -> np.ndarray:
         """D2: binary64 chart representatives for a certified span.
 
-        The span inclusion guarantee applies to implicit intersection p-curves;
-        other supported curves use their host-lowered point realization.
+        Intersection and plane-cylinder section p-curves use the lower endpoint
+        of their certified point/span intersection; other supported curves use
+        their host-lowered point realization.
         """
-        from .brep._host_program import evaluate_host_program, prepare_host_program
+        from .brep._host_program import evaluate_host_program
         from .brep._intersection_curve import CurveTrimSegment, IntersectionPCurve
         from .brep._patches import LineCurve
 
@@ -1129,7 +1161,7 @@ class _PointPreparation:
         carrier = pcurve
         while isinstance(carrier, CurveTrimSegment):
             carrier = carrier.curve
-        if isinstance(carrier, IntersectionPCurve):
+        if isinstance(carrier, IntersectionPCurve) or _has_plane_cylinder_section(pcurve):
             try:
                 span_key = (id(pcurve), float(first), float(last))
                 span_entry = self._intersection_span_boxes.get(span_key)
@@ -1150,7 +1182,7 @@ class _PointPreparation:
                     lower = np.maximum(box[0], span[0])
                     if np.any(lower > np.minimum(box[1], span[1])):
                         raise ValueError(
-                            "Intersection point and span enclosures are disjoint."
+                            "Certified p-curve point and span enclosures are disjoint."
                         )
                     result[index] = lower
                 supported = True
@@ -1162,16 +1194,7 @@ class _PointPreparation:
                 key = (id(pcurve), float(first), float(last), float(parameter))
                 self._intersection_point_support[key] = (pcurve, supported)
             return result
-        entry = self._stored_curve_programs.get(id(pcurve))
-        if entry is None or entry[0] is not pcurve:
-
-            def point(parameter: Array, /) -> Array:
-                return pcurve.evaluate(parameter[0])
-
-            program = prepare_host_program(point, 1)
-            self._stored_curve_programs[id(pcurve)] = (pcurve, program)
-        else:
-            program = entry[1]
+        program = self._host_curve_program(pcurve)
         if program is None:
             self._record_unsupported(pcurve, values.size)
             return _pcurve_points_per_parameter(pcurve, values)
@@ -1264,16 +1287,26 @@ class SourcePreparation(_PointPreparation):
     ) -> np.ndarray:
         """Portable proposals for locating trim parameters, not stored chart points.
 
-        A fixed intersection chart is evaluated in batches by the lower endpoint
-        of its lowered chart program. If that program declines or its result is
-        nonfinite, the certified point/span route supplies the proposal instead.
-        Other curves use the stored pcurve route, including its declaration when
-        neither specified realization is available.
+        Intersection chart and plane-cylinder section evaluators run in batches
+        through host programs. If lowering declines or a proposal is nonfinite,
+        the certified point/span route supplies it instead. Other curves use the
+        stored pcurve route, including its declaration when neither specified
+        realization is available.
         """
         from .brep._host_program import evaluate_host_program, prepare_host_program
         from .brep._intersection_curve import IntersectionPCurve
 
         values = np.asarray(parameters, dtype=np.float64).reshape((-1,))
+        if values.size and _has_plane_cylinder_section(pcurve):
+            program = self._host_curve_program(pcurve)
+            if program is not None:
+                proposals = evaluate_host_program(program, values[:, None]).reshape((-1, 2))
+                finite = np.all(np.isfinite(proposals), axis=1)
+                if not np.all(finite):
+                    proposals[~finite] = self.stored_pcurve_points(
+                        pcurve, values[~finite], first, last
+                    )
+                return proposals
         if not isinstance(pcurve, IntersectionPCurve) or not values.size:
             return self.stored_pcurve_points(pcurve, values, first, last)
         chart = int(pcurve.first)

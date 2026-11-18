@@ -4938,7 +4938,11 @@ class PlaneCylinderSectionPCurve(AbstractCurve):
             + jnp.cos(values)[..., None] * self.cosine
             + jnp.sin(values)[..., None] * self.sine
         )
-        return harmonics.at[..., 0].add(self.angle_offset)
+        # Express the coordinate update without scatter so the same point map
+        # can be lowered to the native interval program.
+        return jnp.stack(
+            (harmonics[..., 0] + self.angle_offset, harmonics[..., 1]), axis=-1
+        )
 
     def is_c1_on(self, first: float, last: float, /) -> bool:
         if not np.isfinite(first) or not np.isfinite(last) or first > last:

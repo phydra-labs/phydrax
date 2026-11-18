@@ -2,23 +2,24 @@
 
 ## Unreleased
 - Native CAD meshing stores an analytic surface point as the lower endpoint of
-  its lowered host interval program, and an intersection chart point as the
-  lower endpoint of its certified point enclosure intersected with the
-  certified source span. Exact rational line charts remain exact. Supported
-  lowered planes, cylinders, cones, spheres, tori, revolutions, and placements
-  use this convention; evaluators that decline it retain their prior numerical
-  route and are declared by evaluation kind and count where their operation
-  carries declaration evidence. Counts describe evaluations, not final
-  coordinate rows; uncovered query evidence is not represented as a global
-  zero. CAD surface and volume meshes and every identity derived from them
+  its lowered host interval program, and an intersection or plane-cylinder
+  section chart point as the lower endpoint of its certified point enclosure
+  intersected with the certified source span. Exact rational line charts remain
+  exact. Supported lowered planes, cylinders, cones, spheres, tori, revolutions,
+  and placements use this convention; evaluators that decline it retain their
+  prior numerical route and are declared by evaluation kind and count where
+  their operation carries declaration evidence. Counts describe evaluations,
+  not final coordinate rows; uncovered query evidence is not represented as a
+  global zero. CAD surface and volume meshes and every identity derived from them
   change once on every platform and affected stored results must be rebuilt.
   Domains with inferred (rather than authored) corners also store D1 endpoint
   images in `corner_points`; their `domain_id` and derived identities can change.
   Stored coordinates are defined by the lowered program: a JAX version that
   reorders its trace changes identity and must be announced as such.
-  Trim-lens search uses lower endpoints of batched fixed-chart host programs as
-  proposals, exact rational candidate grids, fixed-order distances, and the
-  smallest parameter on ties; certified curve boxes still prove the lens.
+  Trim-lens search uses lower endpoints of batched host programs for fixed
+  intersection charts and plane-cylinder sections as proposals, exact rational
+  candidate grids, fixed-order distances, and the smallest parameter on ties;
+  certified curve boxes still prove the lens.
   Intersection qualification residuals now compare stored-route surface
   lifts rather than compiled coupled-evaluator outputs. Source root charts and
   curve queries use domain content and row order rather than source-name
