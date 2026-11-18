@@ -724,6 +724,19 @@
   this change; the remesh takes about 3% less time (310 to 302 seconds, two
   alternating pairs) with identical vertices, triangles, counters and
   distance bound.
+- Native kernels verify the floating-point mode once for each call instead of
+  once for each interval program they execute. Every certified entry
+  establishes round-to-nearest with gradual underflow and verifies it by
+  arithmetic; a kernel reached from it, such as an interval program of a few
+  rows, opened the same scope and repeated the verification, whose two
+  subnormal operations are slow on common processors. A scope opened under a
+  verified scope of the same thread, with no mode write in between, now relies
+  on that verification; a mode write ends the reliance. No arithmetic changes.
+  On the adaptive sphere profile, whose first adaptation has 1.19 million
+  relocation candidates refused by the certified distance bound, that
+  adaptation takes 12% less time on Windows (357 to 316 seconds) and the
+  three surface remeshes 3% less, with identical coordinates, edits and
+  evidence.
 - The source normal cones of certified surface remeshing are outward-rounded
   bounds computed without the platform math library. For the zero-set
   admission the half-angle `asin(|r| / |g|) + asin(2 tolerance / altitude)`
