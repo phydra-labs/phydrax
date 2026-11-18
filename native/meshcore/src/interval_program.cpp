@@ -79,6 +79,7 @@ constexpr std::int64_t kAttain = 24;
 constexpr std::int64_t kDivideElementwise = 25;
 constexpr std::int64_t kAtan = 26;
 constexpr std::int64_t kPowerElementwise = 27;
+constexpr std::int64_t kTan = 28;
 
 constexpr std::uint64_t kIntervalOpcodeCapabilities =
     (std::uint64_t{1} << kGather) | (std::uint64_t{1} << kAdd) |
@@ -94,7 +95,7 @@ constexpr std::uint64_t kIntervalOpcodeCapabilities =
     (std::uint64_t{1} << kExtremumPair) | (std::uint64_t{1} << kExtremumReduce) |
     (std::uint64_t{1} << kDecide) | (std::uint64_t{1} << kAttain) |
     (std::uint64_t{1} << kDivideElementwise) | (std::uint64_t{1} << kAtan) |
-    (std::uint64_t{1} << kPowerElementwise);
+    (std::uint64_t{1} << kPowerElementwise) | (std::uint64_t{1} << kTan);
 
 // Branch-evidence event rows: kind, test, size, a, a_index, boxes. Element k
 // is the workspace entry a + (a_index < 0 ? k : indices[a_index + k]); where
@@ -195,7 +196,7 @@ bool representatives_valid(const std::int64_t* indices, std::int64_t index_count
 bool row_valid(const Row& row, std::int64_t previous_end, const std::int64_t* indices,
                std::int64_t index_count, const double* parameters, std::int64_t parameter_count,
                std::int64_t workspace_size) noexcept {
-  if (row.opcode < kGather || row.opcode > kPowerElementwise) return false;
+  if (row.opcode < kGather || row.opcode > kTan) return false;
   if (row.size < 0 || row.out < previous_end || row.out > workspace_size) return false;
   const std::int64_t room = workspace_size - row.out;
   switch (row.opcode) {
@@ -553,12 +554,14 @@ void execute_row(const Row& row, std::int64_t begin, std::int64_t end,
     case kExp:
     case kLog:
     case kAtan:
+    case kTan:
       for (std::int64_t k = begin; k < end; ++k) {
         const std::int64_t input = address(indices, row.a, row.a_index, k);
         const phx::mc::elementary::Enclosure result =
             row.opcode == kExp ? phx::mc::elementary::exp(lower[input], upper[input])
             : row.opcode == kLog ? phx::mc::elementary::log(lower[input], upper[input])
-                                 : phx::mc::elementary::atan(lower[input], upper[input]);
+            : row.opcode == kAtan ? phx::mc::elementary::atan(lower[input], upper[input])
+                                  : phx::mc::elementary::tan(lower[input], upper[input]);
         lower[out + k] = result.lower;
         upper[out + k] = result.upper;
       }
@@ -917,6 +920,7 @@ int32_t phx_mc_interval_program_batch(const int64_t* instructions, int64_t instr
         (std::uint64_t{1} << kDecide) | (std::uint64_t{1} << kAttain) |
         (std::uint64_t{1} << kExp) | (std::uint64_t{1} << kLog) |
         (std::uint64_t{1} << kDivideElementwise) | (std::uint64_t{1} << kAtan) |
+        (std::uint64_t{1} << kTan) |
         (std::uint64_t{1} << kPowerElementwise);
     for (int64_t row = 0; row < instruction_count; ++row)
       if (!(supported & (std::uint64_t{1} << row_at(instructions, row).opcode)))

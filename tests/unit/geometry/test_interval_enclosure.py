@@ -1389,6 +1389,45 @@ def test_host_and_native_elementary_routes_agree_bit_for_bit() -> None:
             )
 
 
+@pytest.mark.meshcore
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native phydrax-meshcore library is not available"
+)
+@pytest.mark.parametrize(
+    "execution", ("host", "batched", "native"), ids=("host", "batched", "native")
+)
+def test_tangent_lowering_matches_elementwise_and_encloses_samples(
+    execution: Literal["host", "batched", "native"],
+) -> None:
+    rng = np.random.default_rng(20261118)
+    smooth_lower = -1.2 + 2.4 * rng.random(64)
+    smooth_upper = smooth_lower + (1.3 - smooth_lower) * rng.random(64)
+    lower = np.concatenate((smooth_lower, np.asarray((-0.0, 0.0, -2.0, 1.5, -np.inf))))[
+        :, None
+    ]
+    upper = np.concatenate((smooth_upper, np.asarray((-0.0, 0.0, -1.0, 1.7, np.inf))))[
+        :, None
+    ]
+
+    def tangent(point: jax.Array) -> jax.Array:
+        return jnp.tan(point)
+
+    prepared = prepare_interval_function(
+        tangent, 1, execution=execution, batch_capacity=1
+    )
+    bounds = prepared.evaluate(lower, upper)
+    expected = float64_interval_elementary("tan", lower[:, 0], upper[:, 0])
+    for actual, reference in zip(bounds, expected, strict=True):
+        np.testing.assert_array_equal(_bits(actual[:, 0]), _bits(reference))
+
+    samples = smooth_lower[:, None] + (smooth_upper - smooth_lower)[:, None] * rng.random(
+        (smooth_lower.size, 128)
+    )
+    values = np.tan(samples)
+    assert np.all(bounds[0][: smooth_lower.size, 0, None] <= values)
+    assert np.all(values <= bounds[1][: smooth_lower.size, 0, None])
+
+
 @pytest.mark.parametrize(
     "function",
     (jnp.exp, jnp.log, jnp.sin, jnp.cos, jnp.tan, jnp.arctan, jnp.tanh),

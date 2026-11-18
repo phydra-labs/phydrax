@@ -66,6 +66,7 @@ _ATTAIN = 24
 _DIVIDE_ELEMENTWISE = 25
 _ATAN = 26
 _POWER_ELEMENTWISE = 27
+_TANGENT = 28
 
 # Branch-evidence event kinds and tests (phx_mc_interval_program_branches).
 _KINK = 0
@@ -914,13 +915,14 @@ class _Builder:
             denominator = self._mapped(values[1], output_shape)
             reciprocal = self._emit_unary(_RECIPROCAL, denominator, output_shape)
             return (self._emit_binary(_MULTIPLY, values[0], reciprocal, output_shape),)
-        if name in ("neg", "abs", "square", "sqrt", "sin", "cos", "atan"):
+        if name in ("neg", "abs", "square", "sqrt", "sin", "cos", "tan", "atan"):
             opcode = {
                 "neg": _NEGATE,
                 "square": _SQUARE,
                 "sqrt": _SQRT,
                 "sin": _SINE,
                 "cos": _COSINE,
+                "tan": _TANGENT,
                 "atan": _ATAN,
                 "abs": _ABSOLUTE,
             }[name]
@@ -1252,6 +1254,7 @@ class _Builder:
             "abs",
             "sin",
             "cos",
+            "tan",
             "atan",
             "integer_pow",
             "pow",
@@ -1833,6 +1836,7 @@ def lower_interval_jaxpr(
                 _DECIDE,
                 _ATTAIN,
                 _ATAN,
+                _TANGENT,
                 _POWER_ELEMENTWISE,
                 _SQUARE,
                 _ABSOLUTE,
