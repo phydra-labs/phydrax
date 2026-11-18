@@ -1285,7 +1285,7 @@ def _panel_integral(
         values = _integrand(
             prepared, row, lower + half * (rule.nodes + 1.0), density=density
         )
-        total = float(binary64_dot(rule.weights, values))
+        total = float(np.dot(rule.weights, values))
         value = half * total
         if not math.isfinite(value):
             raise MeshingFailure(
