@@ -60,6 +60,7 @@ set(PHX_MC_SOURCES
   src/graph_partition.cpp
   src/hex_topology.cpp
   src/implicit_polygon.cpp
+  src/implicit_face_proposals.cpp
   src/quad_topology.cpp
   src/interval_program.cpp
   src/interval_simplex_restrict.cpp
@@ -246,6 +247,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_geometry_length)
   phx_mc_add_test(test_angle)
   phx_mc_add_test(test_metric_relocation)
+  phx_mc_add_test(test_implicit_face_proposals)
   phx_mc_add_test(test_interval_program)
   phx_mc_add_test(test_interval_simplex_restrict)
   phx_mc_add_test(test_parallel)

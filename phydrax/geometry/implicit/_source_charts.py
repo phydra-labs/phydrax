@@ -21,6 +21,7 @@ from jax.typing import ArrayLike
 
 from ..._bvh import bvh_overlap_pair_blocks, PackedBVH, prepare_bvh
 from ..._fingerprint import canonical_fingerprint
+from ..._meshcore import implicit_face_proposals
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import canonical_identifier
@@ -5724,6 +5725,9 @@ def _nearest_face_parameters(
     Only the choice of the enclosed face point depends on these; their accuracy
     never enters a bound.
     """
+    native = implicit_face_proposals(maps.middle, faces, points)
+    if native is not None:
+        return native
     coefficients = np.ascontiguousarray(maps.middle[faces].transpose(2, 0, 1))
     first = np.full((faces.shape[0],), 1.0 / 3.0)
     second = np.full((faces.shape[0],), 1.0 / 3.0)

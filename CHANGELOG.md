@@ -283,6 +283,8 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Implicit reverse-fidelity searches use an optional native fixed-order
+  face-proposal batch, falling back for unsupported or anomalous inputs.
 - Implicit reverse-fidelity searches evaluate face-point proposals from contiguous
   monomial lanes, preserving their fixed binary64 operation order and bounds.
 - Dynamic glued-face monotonicity checks rational Jacobian controls with exact
