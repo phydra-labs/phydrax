@@ -738,6 +738,9 @@ def _rounded_reference(value: Any, error: Any) -> float:
     lower = mp.mpf(math.nextafter(rounded, -math.inf))
     upper = mp.mpf(math.nextafter(rounded, math.inf))
     center = mp.mpf(rounded)
+    # The quadrature estimate excludes the finite-precision arithmetic used to
+    # evaluate the integrand and assemble the reference.
+    error = max(error, mp.mpf("1e-45") * max(1, abs(value)))
     distance = min(value - (lower + center) / 2, (center + upper) / 2 - value)
     if error >= distance:
         raise ArithmeticError(
