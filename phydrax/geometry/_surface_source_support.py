@@ -105,6 +105,24 @@ _PROVEN_RESTRICTIONS: LiveProofLedger[SurfaceRestrictionRows] = LiveProofLedger(
 _CAD_CURVE_ANCESTRY: LiveProofLedger[dict[int, tuple[_CadCurveUseBinding, ...]]] = (
     LiveProofLedger()
 )
+_CHART_BANK_FINGERPRINTS: LiveProofLedger[tuple[_SurfaceChartRationalBank, str]] = (
+    LiveProofLedger()
+)
+
+
+def _immutable_chart_bank(bank: _SurfaceChartRationalBank, /) -> bool:
+    return type(bank) is tuple and all(
+        type(row) is tuple
+        and all(
+            type(point) is tuple
+            and all(
+                type(pair) is tuple and all(type(value) is int for value in pair)
+                for pair in point
+            )
+            for point in row
+        )
+        for row in bank
+    )
 
 
 def _fraction_coordinate(value: object, name: str, /) -> Fraction:
@@ -856,6 +874,16 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
             chart_rational_tokens=self.root_parameter_rational_tokens,
         )
 
+    def _chart_bank_fingerprint(self) -> str:
+        bank = self.root_parameter_rational_tokens
+        recorded = _CHART_BANK_FINGERPRINTS._find_identity_bound(self)
+        if recorded is not None and recorded[0] is bank:
+            return recorded[1]
+        digest = rational_chart_bank_fingerprint(bank)
+        if _immutable_chart_bank(bank):
+            _CHART_BANK_FINGERPRINTS._record_identity_bound(self, (bank, digest))
+        return digest
+
     def _identity(self) -> str:
         return canonical_fingerprint(
             {
@@ -868,9 +896,7 @@ class SurfaceSourceCharts(StrictModule, NonTrainableState):
                 "coordinate_contract": self.coordinate_contract.spatial_id,
                 "cells": self.cell_global_ids,
                 "parameters": array_tree_fingerprint(self.root_parameters),
-                "exact_parameters": rational_chart_bank_fingerprint(
-                    self.root_parameter_rational_tokens
-                ),
+                "exact_parameters": self._chart_bank_fingerprint(),
                 "patches": array_tree_fingerprint(self.root_patches),
                 "source_root_cells": array_tree_fingerprint(self.source_root_cell_ids),
                 "boundary_occurrences": array_tree_fingerprint(self.boundary_occurrences),
