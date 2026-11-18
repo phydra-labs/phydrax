@@ -1403,17 +1403,25 @@ def _chain_parameters(
     # ends at binary64 resolution of the parameter, where candidates stop being
     # distinct values.
     resolution = Fraction(float(np.spacing(max(abs(low), abs(high)))))
+    may_overflow = max(abs(low), abs(high)) > np.finfo(np.float64).max / 2
     while width / 8 > resolution:
         offsets = tuple(width * Fraction(offset, 8) for offset in range(-8, 9))
         candidate_rows = []
         for parameter in parameters:
             center = Fraction(float(parameter))
-            candidate_rows.append(
-                [
-                    float(min(exact_high, max(exact_low, center + offset)))
-                    for offset in offsets
-                ]
-            )
+            if may_overflow:
+                candidate_rows.append(
+                    [
+                        float(min(exact_high, max(exact_low, center + offset)))
+                        for offset in offsets
+                    ]
+                )
+            else:
+                # Rounding is monotone and both bounds are binary64, so this
+                # clamp equals rounding after exact clipping when finite.
+                candidate_rows.append(
+                    [min(high, max(low, float(center + offset))) for offset in offsets]
+                )
         candidates = np.asarray(candidate_rows, dtype=np.float64)
         distance = squared_distance(evaluate(candidates))
         parameters = candidates[rows, np.argmin(distance, axis=1)]
