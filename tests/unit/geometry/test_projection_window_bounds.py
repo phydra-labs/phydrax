@@ -9,7 +9,11 @@ import pytest
 from phydrax.geometry.brep._assembly import BRepAffinePlacement
 from phydrax.geometry.brep._patches import CylinderPatch, LineCurve, RevolutionSurface
 from phydrax.geometry.brep._projection import NativeBRepProjection, prepare_brep_projection
-from phydrax.geometry.brep._projection_contracts import BRepProjectionStatus, brep_entity_id
+from phydrax.geometry.brep._projection_contracts import (
+    BRepProjectionPolicy,
+    BRepProjectionStatus,
+    brep_entity_id,
+)
 from tests.unit.geometry.test_brep_projection import _instanced_box, _rectangle_face_model
 from tests.unit.geometry.test_native_source_projection import _nearby_stationary_root_surface_model
 
@@ -146,6 +150,39 @@ def test_boundary_union_includes_unresolved_and_resolved_bounds() -> None:
         assert float(result.residuals[0]) == min(
             float(face_result.residuals[0]), float(edge_result.residuals[0])
         )
+
+
+def test_widened_placed_bound_makes_boundary_winner_ambiguous() -> None:
+    placement = BRepAffinePlacement.from_matrix(
+        (
+            (Fraction(3, 5), Fraction(-4, 5), 0, Fraction(1, 3)),
+            (Fraction(4, 5), Fraction(3, 5), 0, 0),
+            (0, 0, 1, 0),
+            (0, 0, 0, 1),
+        )
+    )
+    model = _instanced_box(placement)
+    projection = prepare_brep_projection(
+        model, policy=BRepProjectionPolicy(ambiguity_tolerance=2.0**-60)
+    )
+    query = np.asarray(
+        ((float.fromhex("0x1.0000000000001p-3"), 0.3, 0.125),), dtype=np.float64
+    )
+    left = brep_entity_id(
+        model.source_id, model.source_revision, 2, 5, occurrence_path=("pair", "left")
+    )
+    right = brep_entity_id(
+        model.source_id, model.source_revision, 2, 0, occurrence_path=("pair", "right")
+    )
+    side = projection.project_boundary(query, entity_ids=(left,))
+    bottom = projection.project_boundary(query, entity_ids=(right,))
+    result = projection.project_boundary(query, entity_ids=(left, right))
+    # The clean 6e73f0d3c base returned UNIQUE with upper exactly 1/8.
+    assert int(side.status[0]) == BRepProjectionStatus.UNIQUE
+    assert int(bottom.status[0]) == BRepProjectionStatus.UNIQUE
+    assert float(bottom.residuals[0]) > 0.125
+    assert float(side.distance_lower_bounds[0]) <= float(bottom.residuals[0])
+    assert int(result.status[0]) == BRepProjectionStatus.AMBIGUOUS
 
 
 def test_uncertified_polygon_membership_keeps_base_projection() -> None:
