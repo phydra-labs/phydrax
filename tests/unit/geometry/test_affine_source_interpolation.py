@@ -167,8 +167,8 @@ def test_affine_and_bilinear_certificate(height: float, certificate_upper: str) 
     assert certificate.deviation_bounds.dtype == np.float64
     assert float(certificate.deviation_bounds[0, 0]).hex() == "0x0.0p+0"
     assert float(certificate.deviation_bounds[0, 1]).hex() == certificate_upper
-    assert certificate.mesh_to_source_upper.hex() == certificate_upper
-    assert certificate.source_to_mesh_upper.hex() == certificate_upper
+    assert float(certificate.mesh_to_source_upper).hex() == certificate_upper
+    assert float(certificate.source_to_mesh_upper).hex() == certificate_upper
 
 
 @pytest.mark.parametrize(
@@ -194,5 +194,5 @@ def test_affine_and_bilinear_chart_bounds(height: float, chart_upper: str) -> No
     assert chart.deviation_bounds.dtype == np.float64
     assert float(chart.deviation_bounds[0, 0]).hex() == "0x0.0p+0"
     assert float(chart.deviation_bounds[0, 1]).hex() == chart_upper
-    assert chart.mesh_to_source_upper.hex() == chart_upper
-    assert chart.source_to_mesh_upper.hex() == chart_upper
+    assert float(chart.mesh_to_source_upper).hex() == chart_upper
+    assert float(chart.source_to_mesh_upper).hex() == chart_upper
