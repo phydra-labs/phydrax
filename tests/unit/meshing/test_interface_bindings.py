@@ -23,7 +23,8 @@ from phydrax.geometry.multiregion_surface import (
 from phydrax.geometry.surface import InterfaceSide
 from phydrax.interchange import import_occt_shape
 from phydrax.meshing import MeshInterfaceAttachment, MeshPart
-from phydrax.meshing._association import GeometryAssociationArchiveRecipe
+from phydrax.meshing._association import _compose, GeometryAssociationArchiveRecipe
+from phydrax.meshing._association_routes import incidence_pairs
 from phydrax.solver.coupling import (
     InterfaceBinding,
     InterfaceEndpoint,
@@ -713,3 +714,106 @@ def test_law_sides_must_lie_on_the_attached_mesh_wall(plate: Plate) -> None:
         endpoint.require_side(
             owners, sites[:1], outward[:1], facets=(edges.entity_set_id, rows[:1])
         )
+
+
+def test_plate_entity_associations_match_independent_centroid_classification() -> None:
+    projection = _plate_projection(1.0)
+    mesh = _grid_mesh(-1.0, 0.0, 4)
+    vertices = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
+    relation = mesh.topology.incidences[0].relation
+    valid = np.asarray(relation.valid, dtype=np.bool_).reshape(-1)
+    vertex_rows = np.asarray(relation.source_indices, dtype=np.int64).reshape(-1)[valid]
+    edge_rows = np.asarray(relation.target_indices, dtype=np.int64).reshape(-1)[valid]
+    edge_points = np.zeros((mesh.entity_set(1).count, 2), dtype=np.float64)
+    counts = np.bincount(edge_rows, minlength=edge_points.shape[0])
+    np.add.at(edge_points, edge_rows, points[vertex_rows])
+    edge_points /= counts[:, None]
+    cell_points = np.mean(
+        points[np.asarray(mesh.blocks[0].vertices, dtype=np.int64)], axis=1
+    )
+    source = phx.meshing.certify_cell_mesh(mesh, _CONTRACT, associations=(vertices,))
+    levels = phx.meshing.BRepAssociationTransfer(projection, policy=_POLICY).classes(
+        source
+    )
+
+    for dimension, centroids in ((1, edge_points), (2, cell_points)):
+        actual = phx.meshing.associate_mesh_entities(
+            mesh, vertices, projection, dimension, policy=_POLICY
+        )
+        expected = projection.classify(
+            centroids, tolerance=_POLICY.classification_tolerance
+        )
+        np.testing.assert_array_equal(
+            np.asarray(actual.target_global_ids),
+            np.asarray(mesh.entity_set(dimension).entity_ids),
+        )
+        np.testing.assert_array_equal(actual.source_dimensions, expected.dimensions)
+        np.testing.assert_array_equal(actual.source_indices, expected.indices)
+        np.testing.assert_array_equal(levels[dimension].dimensions, expected.dimensions)
+        np.testing.assert_array_equal(levels[dimension].indices, expected.indices)
+        assert np.all(levels[dimension].resolved)
+        assert np.all(np.asarray(actual.resolved))
+
+
+def test_incidence_consumer_returns_sorted_exact_vertex_closures() -> None:
+    mesh = _grid_mesh(-1.0, 0.0, 4)
+    relation = mesh.topology.incidences[0].relation
+    valid = np.asarray(relation.valid, dtype=np.bool_).reshape(-1)
+    vertices = np.asarray(relation.source_indices, dtype=np.int64).reshape(-1)[valid]
+    edges = np.asarray(relation.target_indices, dtype=np.int64).reshape(-1)[valid]
+    expected_edges = np.asarray(
+        sorted(set(zip(vertices.tolist(), edges.tolist()))), dtype=np.int64
+    )
+    expected_cells = np.asarray(
+        sorted(
+            {
+                (vertex, cell)
+                for cell, row in enumerate(np.asarray(mesh.blocks[0].vertices))
+                for vertex in row.tolist()
+            }
+        ),
+        dtype=np.int64,
+    )
+    np.testing.assert_array_equal(incidence_pairs(mesh, 0, 1), expected_edges)
+    np.testing.assert_array_equal(incidence_pairs(mesh, 0, 2), expected_cells)
+
+
+def test_composed_incidence_preserves_pairs_across_packing_bound() -> None:
+    bound = 2**32
+    first = np.asarray(
+        (
+            (0, 0),
+            (0, 1),
+            (bound - 1, 2),
+            (bound, 3),
+            (bound + 1, 4),
+            (0, 5),
+        ),
+        dtype=np.int64,
+    )
+    second = np.asarray(
+        (
+            (0, 1),
+            (1, bound + 1),
+            (2, bound),
+            (3, bound - 1),
+            (4, bound + 1),
+            (5, 1),
+        ),
+        dtype=np.int64,
+    )
+    expected = np.asarray(
+        (
+            (0, 1),
+            (0, bound + 1),
+            (bound - 1, bound),
+            (bound, bound - 1),
+            (bound + 1, bound + 1),
+        ),
+        dtype=np.int64,
+    )
+    actual = _compose(first, second, unique=True)
+    assert actual.dtype == np.dtype(np.int64)
+    assert actual.shape == (5, 2)
+    np.testing.assert_array_equal(actual, expected)

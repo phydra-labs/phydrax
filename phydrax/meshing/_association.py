@@ -2390,6 +2390,30 @@ class AssociationPropagationError(ValueError):
 # -- mesh topology helpers -------------------------------------------------------
 
 
+def _unique_incidence_pairs(pairs: np.ndarray, /) -> np.ndarray:
+    if (
+        pairs.ndim == 2
+        and pairs.shape[1] == 2
+        and pairs.size
+        and np.issubdtype(pairs.dtype, np.integer)
+        and np.min(pairs) >= 0
+        and np.max(pairs) < 2**32
+    ):
+        # The first field is more significant, so key order is lexicographic.
+        keys = (pairs[:, 0].astype(np.uint64) << np.uint64(32)) | pairs[:, 1].astype(
+            np.uint64
+        )
+        keys = np.unique(keys)
+        return np.stack(
+            (
+                (keys >> np.uint64(32)).astype(pairs.dtype),
+                (keys & np.uint64(0xFFFFFFFF)).astype(pairs.dtype),
+            ),
+            axis=1,
+        )
+    return np.unique(pairs, axis=0).reshape(-1, 2)
+
+
 def _compose(
     first: np.ndarray, second: np.ndarray, /, *, unique: bool = True
 ) -> np.ndarray:
@@ -2408,7 +2432,7 @@ def _compose(
     offsets = np.cumsum(counts) - counts
     position = np.repeat(start - offsets, counts) + np.arange(owner.size)
     pairs = np.stack((first[owner, 0], second[order[position], 1]), axis=1)
-    return np.unique(pairs, axis=0).reshape(-1, 2) if unique else pairs
+    return _unique_incidence_pairs(pairs) if unique else pairs
 
 
 def _incidence_pairs(mesh: CellMesh, low: int, high: int, /) -> np.ndarray:
@@ -2428,8 +2452,10 @@ def _incidence_pairs(mesh: CellMesh, low: int, high: int, /) -> np.ndarray:
             axis=1,
         )
         pairs = step if pairs is None else _compose(pairs, step)
-    # ty: ignore[no-matching-overload]
-    return np.unique(pairs, axis=0).reshape(-1, 2)
+    if pairs is None:
+        # ty: ignore[no-matching-overload]
+        return np.unique(pairs, axis=0).reshape(-1, 2)
+    return _unique_incidence_pairs(pairs)
 
 
 def _boundary_mask(mesh: CellMesh, dimension: int, /) -> np.ndarray:
