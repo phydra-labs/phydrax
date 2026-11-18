@@ -15,7 +15,7 @@ from phydrax.geometry.implicit import (
 from phydrax.geometry.implicit._periodic_discovery import QuotientZeroSet
 
 
-def test_projection_refuses_candidate_just_outside_reach() -> None:
+def test_projection_decides_exact_reach_boundary() -> None:
     source = phx.geometry.TrigonometricLevelSet(
         phx.geometry.TrigonometricTable.family("schwarz_p"), PeriodicCell(np.eye(3))
     )
@@ -41,6 +41,7 @@ def test_projection_refuses_candidate_just_outside_reach() -> None:
         dtype=np.float64,
     )
     reach = float.fromhex("0x1.2625d56e29a61p-4")
+    inside_reach = float.fromhex("0x1.2625d56e29a62p-4")
     axis = np.asarray([-1], dtype=np.int64)
     point, root_error, _, accepted = zero_set.project(start, axis, 10.0)
     assert accepted[0] and np.isfinite(root_error[0])
@@ -48,7 +49,14 @@ def test_projection_refuses_candidate_just_outside_reach() -> None:
         (Fraction(float(point[0, i])) - Fraction(float(start[0, i]))) ** 2
         for i in range(3)
     )
-    assert exact_squared > Fraction(reach) ** 2
+    # The adjacent thresholds squared are exactly these rational values.
+    assert Fraction(reach) ** 2 == Fraction(
+        26777547101564269689882063722689, 5192296858534827628530496329220096
+    )
+    assert Fraction(inside_reach) ** 2 == Fraction(
+        6694386775391070009821820912481, 1298074214633706907132624082305024
+    )
+    assert Fraction(reach) ** 2 < exact_squared <= Fraction(inside_reach) ** 2
 
     # The first bracket has opposite certified signs even at zero reach, so
     # the refusal is caused by distance admission, not bracket discovery.
@@ -61,3 +69,6 @@ def test_projection_refuses_candidate_just_outside_reach() -> None:
     _, refused_error, _, refused = zero_set.project(start, axis, reach)
     assert not refused[0]
     assert np.isinf(refused_error[0])
+    inside_point, inside_error, _, inside = zero_set.project(start, axis, inside_reach)
+    assert inside[0] and np.isfinite(inside_error[0])
+    np.testing.assert_array_equal(inside_point, point)
