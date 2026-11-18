@@ -57,6 +57,7 @@ from ..discretization._exact_algebraic_geometry import coefficient_payload, Radi
 from ..linalg._exact import (
     inverse_small_rational,
     matmul_exact,
+    symmetric_product_factor_error,
     symmetric_product_minors_batch_exact,
     symmetric_product_minors_exact,
 )
@@ -1650,19 +1651,9 @@ def _jacobian_controls_positive(
         )
         # The scalar route owns exception ordering for malformed inputs. In
         # particular, a negative control must stop before a later malformed one.
-        if (
-            dimension not in (1, 2, 3)
-            or any(
-                len(factor) != dimension
-                or any(len(row) != dimension for row in factor)
-                or any(isinstance(value, bool) for row in factor for value in row)
-                for factor in rational_factors
-            )
-            or any(
-                any(len(row) != dimension for row in matrix)
-                or any(isinstance(value, bool) for row in matrix for value in row)
-                for matrix in matrices
-            )
+        if any(
+            symmetric_product_factor_error(factor, len(rational_factors[0])) is not None
+            for factor in (*rational_factors, *matrices)
         ):
             return all(
                 all(

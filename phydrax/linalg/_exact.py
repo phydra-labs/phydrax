@@ -196,27 +196,38 @@ def inverse_small_rational(
     )
 
 
+def symmetric_product_factor_error(
+    matrix: Sequence[Sequence[Fraction | int]], size: int, /
+) -> tuple[type[ValueError] | type[TypeError], str] | None:
+    """Classify a factor without raising, preserving scalar validation order."""
+    if size not in (1, 2, 3):
+        return ValueError, "Exact symmetric products require order one through three."
+    if len(matrix) != size or any(len(row) != size for row in matrix):
+        return (
+            ValueError,
+            "Exact symmetric product factors must have equal square shapes.",
+        )
+    if any(
+        isinstance(value, bool) or not isinstance(value, Fraction | int)
+        for row in matrix
+        for value in row
+    ):
+        return TypeError, "Exact symmetric products require integers or Fractions."
+    return None
+
+
 def _integer_symmetric_product(
     factors: tuple[Sequence[Sequence[Fraction | int]], ...], /
 ) -> tuple[tuple[tuple[int, ...], ...], int]:
     if not factors:
         raise ValueError("An exact symmetric product requires at least one factor.")
     size = len(factors[0])
-    if size not in (1, 2, 3):
-        raise ValueError("Exact symmetric products require order one through three.")
     product: tuple[tuple[int, ...], ...] = ()
     denominator = 1
     for index, factor in enumerate(factors):
-        if len(factor) != size or any(len(row) != size for row in factor):
-            raise ValueError(
-                "Exact symmetric product factors must have equal square shapes."
-            )
-        if any(
-            isinstance(value, bool) or not isinstance(value, Fraction | int)
-            for row in factor
-            for value in row
-        ):
-            raise TypeError("Exact symmetric products require integers or Fractions.")
+        error = symmetric_product_factor_error(factor, size)
+        if error is not None:
+            raise error[0](error[1])
         scale = lcm(*(value.denominator for row in factor for value in row))
         integers = tuple(
             tuple(value.numerator * (scale // value.denominator) for value in row)
@@ -283,22 +294,13 @@ def symmetric_product_minors_batch_exact(
     scale, so neither its values nor its evidence depend on its batch peers.
     """
     size = len(prefix)
-    if size not in (1, 2, 3):
-        raise ValueError("Exact symmetric products require order one through three.")
 
     def clear(
         matrix: Sequence[Sequence[Fraction | int]],
     ) -> tuple[np.ndarray[tuple[int, ...], np.dtype[np.object_]], int]:
-        if len(matrix) != size or any(len(row) != size for row in matrix):
-            raise ValueError(
-                "Exact symmetric product factors must have equal square shapes."
-            )
-        if any(
-            isinstance(value, bool) or not isinstance(value, Fraction | int)
-            for row in matrix
-            for value in row
-        ):
-            raise TypeError("Exact symmetric products require integers or Fractions.")
+        error = symmetric_product_factor_error(matrix, size)
+        if error is not None:
+            raise error[0](error[1])
         scale = lcm(*(value.denominator for row in matrix for value in row))
         return np.asarray(
             [
