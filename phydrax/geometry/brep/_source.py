@@ -36,6 +36,7 @@ from .._contracts import (
     GeometryKind,
     GeometrySource,
 )
+from .._rational import binary64_norm
 from .._sampling import (
     RejectionSamplingPlan,
     sample_boundary_atlas,
@@ -232,7 +233,7 @@ def _face_area(model: BRepModel, face: int, /) -> float:
         area_vector += 0.5 * np.sum(
             np.cross(polygon, np.roll(polygon, -1, axis=0)), axis=0
         )
-    return float(np.linalg.norm(area_vector))
+    return float(binary64_norm(area_vector))
 
 
 def _source_bounds(model: BRepModel, /) -> np.ndarray:

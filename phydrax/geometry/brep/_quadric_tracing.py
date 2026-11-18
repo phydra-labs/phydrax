@@ -24,7 +24,7 @@ from typing import Any, cast
 import jax.numpy as jnp
 import numpy as np
 
-from .._rational import rational_dot
+from .._rational import binary64_norm, rational_dot
 from ._intersection import (
     _angular_surface_branch,
     _straight_revolution,
@@ -1085,7 +1085,7 @@ def circle_revolution_roots(
                 parameter_lower=np.asarray(root.parameter_lower, dtype=np.float64),
                 parameter_upper=np.asarray(root.parameter_upper, dtype=np.float64),
                 point=source_point,
-                gap_bound=float(np.linalg.norm(source_point - surface_point)),
+                gap_bound=float(binary64_norm(source_point - surface_point)),
                 condition_estimate=1.0,
                 root_id=root.root_id,
             )
@@ -1236,7 +1236,7 @@ def line_sphere_roots(
                 parameter_lower=np.asarray(root.parameter_lower, dtype=np.float64),
                 parameter_upper=np.asarray(root.parameter_upper, dtype=np.float64),
                 point=source_point,
-                gap_bound=float(np.linalg.norm(source_point - surface_point)),
+                gap_bound=float(binary64_norm(source_point - surface_point)),
                 condition_estimate=1.0,
                 root_id=root.root_id,
             )
