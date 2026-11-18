@@ -3436,6 +3436,50 @@ def _trim_lens_bounds(
     ]
 
 
+def _sampled_curve_intervals(
+    domain: domain_owner.MeshingDomain,
+    curve: int,
+    uses: tuple[tuple[int, domain_owner.PatchCurveUse], ...],
+    intervals: list[tuple[Fraction, Fraction]],
+    fidelity_limit: float,
+    edge_limit: float,
+    /,
+) -> set[tuple[Fraction, Fraction]]:
+    weights = (Fraction(0), Fraction(1, 4), Fraction(1, 2), Fraction(3, 4), Fraction(1))
+    parameters = tuple(
+        first + weight * (last - first)
+        for first, last in intervals
+        for weight in weights
+    )
+    points = _source_curve_points(domain, curve, parameters).reshape((-1, 5, 3))
+    if not np.all(np.isfinite(points)):
+        raise _failure(
+            "source curve sampling produced nonfinite coordinates",
+            category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+            entity_ids=(curve,),
+        )
+    weights_array = np.asarray((0.25, 0.5, 0.75), dtype=np.float64)[None, :, None]
+
+    def deviations(values: np.ndarray) -> np.ndarray:
+        chord = values[:, :1] + weights_array * (values[:, 4:5] - values[:, :1])
+        return np.max(np.linalg.norm(values[:, 1:4] - chord, axis=2), axis=1)
+
+    keep = (np.linalg.norm(points[:, 4] - points[:, 0], axis=1) <= edge_limit) & (
+        deviations(points) <= fidelity_limit
+    )
+    for patch, use in uses:
+        uv = np.asarray(_use_chart_points(use, parameters), dtype=np.float64)
+        images = domain.evaluate(np.full(len(parameters), patch, dtype=np.int64), uv)
+        if not np.all(np.isfinite(images)):
+            raise _failure(
+                "source trim sampling produced nonfinite coordinates",
+                category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                entity_ids=(curve,),
+            )
+        keep &= deviations(images.reshape((-1, 5, 3))) <= fidelity_limit / 2.0
+    return {interval for interval, accepted in zip(intervals, keep, strict=True) if accepted}
+
+
 def _curve_parameters(
     domain: domain_owner.MeshingDomain,
     curve_ids: tuple[int, ...],
@@ -3447,6 +3491,7 @@ def _curve_parameters(
     /,
     *,
     chords: _CurveChordBounds | None = None,
+    steering: ConstructionSteering = "certified",
 ) -> dict[int, set[Fraction]]:
     sizes = {
         patch: float(size)
@@ -3507,31 +3552,39 @@ def _curve_parameters(
         intervals = list(zip(ordered[:-1], ordered[1:], strict=True))
         lens_limit = Fraction.from_float(fidelity_limit) / 2
         while intervals:
-            chords.prepare_points(
-                curve, tuple(value for interval in intervals for value in interval)
-            )
-            chords.prepare_intervals(
-                tuple((curve, lower, upper) for lower, upper in intervals)
-            )
-            candidates = [
-                interval
-                for interval in intervals
-                for deviation, length in (chords.interval(curve, *interval),)
-                if deviation <= fidelity_limit and length <= edge_limit
-            ]
-            accepted = set(candidates)
-            for patch, use in selected_uses:
-                if not candidates:
-                    break
-                bounds = _trim_lens_bounds(
-                    domain, patch, use, use_endpoints[id(use)], candidates, preparation
-                )
-                accepted.difference_update(
-                    interval
-                    for interval, bound in zip(candidates, bounds, strict=True)
-                    if bound > lens_limit
-                )
-                candidates = [interval for interval in candidates if interval in accepted]
+            match steering:
+                case "certified":
+                    chords.prepare_points(
+                        curve, tuple(value for interval in intervals for value in interval)
+                    )
+                    chords.prepare_intervals(
+                        tuple((curve, lower, upper) for lower, upper in intervals)
+                    )
+                    candidates = [
+                        interval
+                        for interval in intervals
+                        for deviation, length in (chords.interval(curve, *interval),)
+                        if deviation <= fidelity_limit and length <= edge_limit
+                    ]
+                    accepted = set(candidates)
+                    for patch, use in selected_uses:
+                        if not candidates:
+                            break
+                        bounds = _trim_lens_bounds(
+                            domain, patch, use, use_endpoints[id(use)], candidates, preparation
+                        )
+                        accepted.difference_update(
+                            interval
+                            for interval, bound in zip(candidates, bounds, strict=True)
+                            if bound > lens_limit
+                        )
+                        candidates = [interval for interval in candidates if interval in accepted]
+                case "screened":
+                    accepted = _sampled_curve_intervals(
+                        domain, curve, selected_uses, intervals, fidelity_limit, edge_limit
+                    )
+                case _:
+                    assert_never(steering)
             following = []
             for lower, upper in intervals:
                 if (lower, upper) in accepted:
@@ -6428,6 +6481,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             self.specification,
             self.schedule,
             preparation,
+            steering=steering,
             chords=chords,
         )
         pole_charts = _pole_sampling(
@@ -6665,7 +6719,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
                         self, preparation, mesh, geometry, construction, refined,
                         surface_source, curve_ids,
                     ),
-                    certified_steps=("curve_parameters", "pole_sampling", "refinement"),
+                    certified_steps=("pole_sampling", "refinement"),
                 )
             case "certified":
                 pass
