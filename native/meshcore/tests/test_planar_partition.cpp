@@ -96,6 +96,8 @@ void test_touching_and_overlap() {
   const std::array<int64_t, 3> good{0, -1, -1}, bad{3, 0, 1};
   PHX_CHECK(run({a, b}, {a, b}) == good);
   PHX_CHECK(run({a, c}, {a, b}) == bad);
+  PHX_CHECK(run({a, c}, {a, b}, 120) == bad);
+  PHX_CHECK(run({a, c}, {a, b}, 127) == bad);
   PHX_CHECK(run({a, c}, {a, b}, 1152) == bad);
 }
 }  // namespace

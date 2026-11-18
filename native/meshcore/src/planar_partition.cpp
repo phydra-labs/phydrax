@@ -10,17 +10,29 @@
 #include "capi_guard.hpp"
 #include "dyadic.hpp"
 #include "phydrax_meshcore.h"
+#include "wide_integer.hpp"
 
-// The BVHs retain O(n) boxes and indices. A candidate list retains at most
-// n indices. For input integers of at most B bits, each clipped triangle has
-// at most six vertices and intermediate integer sizes are O(B); a target's
-// unreduced area sum has O(k B) bits for k declared candidates. The arithmetic
-// is unbounded, including for wider-than-inline inputs.
+// All state is operation-local. The BVHs and candidate lists use O(n) rows;
+// cached exact vertices and edges use O(n B) bits for B-bit input integers.
+// Each clipped triangle has at most six vertices and intermediates have O(B)
+// bits; a k-term unreduced area sum has O(k B) bits. Checked inline predicates
+// fall back per pair to unbounded integers without changing their result.
 namespace {
 using phx::mc::Dyadic;
+using Fast = phx::mc::Int256;
+
+struct FastPoint { Fast x, y; };
+struct FastLine { Fast a, b, c; };
 
 struct Point { Dyadic x, y, w; };
-struct Triangle { std::array<Point, 3> p; };
+struct Triangle {
+  std::array<Point, 3> p;
+  std::array<Point, 3> lines;
+  Dyadic oriented_area;
+  std::array<FastPoint, 3> fast_points;
+  std::array<FastLine, 3> fast_lines;
+  bool fast_valid = false;
+};
 struct Rational { Dyadic n, d; };
 struct Box { double lo[2], hi[2]; };
 
@@ -45,7 +57,61 @@ Point cross(const Point& a, const Point& b) {
 Dyadic dot(const Point& a, const Point& b) {
   return a.x * b.x + a.y * b.y + a.w * b.w;
 }
-Dyadic orientation(const Triangle& t) { return dot(cross(t.p[0], t.p[1]), t.p[2]); }
+// The common coordinate denominator is positive, so the sign of each
+// affine edge predicate is the sign of its integer numerator. Checked inline
+// arithmetic is only a representation choice: any overflow retries this
+// pair with the unbounded homogeneous predicate below.
+bool fast_sub(const Fast& a, const Fast& b, Fast& out) {
+  const Fast negated = phx::mc::wrapping_negate(b);
+  if (b.negative() && negated.negative()) return false;
+  return phx::mc::checked_add(a, negated, out);
+}
+
+bool fast_load(const uint32_t* words, int64_t start, int64_t stop, int sign, Fast& out) {
+  if (stop - start > 8) return false;
+  Fast value;
+  for (int64_t j = start; j < stop; ++j) {
+    const auto index = static_cast<std::size_t>(j - start);
+    value.limb[index / 2] |= static_cast<uint64_t>(words[j]) << (32 * (index % 2));
+  }
+  if (value.negative()) return false;
+  out = sign < 0 ? phx::mc::wrapping_negate(value) : value;
+  return true;
+}
+
+bool fast_line(const FastPoint& p, const FastPoint& q, FastLine& line) {
+  Fast first, second;
+  return fast_sub(p.y, q.y, line.a) && fast_sub(q.x, p.x, line.b) &&
+         phx::mc::checked_multiply(p.x, q.y, first) &&
+         phx::mc::checked_multiply(q.x, p.y, second) && fast_sub(first, second, line.c);
+}
+
+bool fast_value(const FastLine& line, const FastPoint& point, int& sign) {
+  Fast first, second, sum, value;
+  if (!phx::mc::checked_multiply(line.a, point.x, first) ||
+      !phx::mc::checked_multiply(line.b, point.y, second) ||
+      !phx::mc::checked_add(first, second, sum) ||
+      !phx::mc::checked_add(sum, line.c, value)) return false;
+  sign = value.zero() ? 0 : value.negative() ? -1 : 1;
+  return true;
+}
+
+bool fast_directed(const Triangle& a, const Triangle& b, bool& result) {
+  const int orientation_sign = a.oriented_area.sign();
+  if (orientation_sign == 0) { result = true; return true; }
+  for (int edge = 0; edge < 3; ++edge) {
+    bool all_outside = true;
+    for (const FastPoint& point : b.fast_points) {
+      int sign = 0;
+      if (!fast_value(a.fast_lines[edge], point, sign)) return false;
+      if (sign * orientation_sign > 0) { all_outside = false; break; }
+    }
+    if (all_outside) { result = true; return true; }
+  }
+  result = false;
+  return true;
+}
+const Dyadic& orientation(const Triangle& t) { return t.oriented_area; }
 bool same_point(const Point& a, const Point& b) {
   return (a.x * b.w - b.x * a.w).is_zero() &&
          (a.y * b.w - b.y * a.w).is_zero();
@@ -59,7 +125,7 @@ bool separated_directed(const Triangle& a, const Triangle& b) {
   const int orientation_sign = orientation(a).sign();
   if (orientation_sign == 0) return true;
   for (int edge = 0; edge < 3; ++edge) {
-    Point line = cross(a.p[edge], a.p[(edge + 1) % 3]);
+    const Point& line = a.lines[edge];
     bool all_outside = true;
     for (const Point& point : b.p) {
       if (dot(line, point).sign() * orientation_sign > 0) { all_outside = false; break; }
@@ -69,6 +135,11 @@ bool separated_directed(const Triangle& a, const Triangle& b) {
   return false;
 }
 bool separated(const Triangle& a, const Triangle& b) {
+  if (a.fast_valid && b.fast_valid) {
+    bool first = false, second = false;
+    if (fast_directed(a, b, first) &&
+        (first || fast_directed(b, a, second))) return first || second;
+  }
   return separated_directed(a, b) || separated_directed(b, a);
 }
 Rational polygon_area(const std::vector<Point>& points) {
@@ -86,7 +157,7 @@ Rational intersection_area(const Triangle& subject, const Triangle& clip, bool& 
   const int sign = orientation(clip).sign();
   if (sign == 0) return {Dyadic(), integer_one()};
   for (int edge = 0; edge < 3 && !polygon.empty(); ++edge) {
-    Point line = cross(clip.p[edge], clip.p[(edge + 1) % 3]);
+    Point line = clip.lines[edge];
     if (sign < 0) { line.x.negate(); line.y.negate(); line.w.negate(); }
     std::vector<Point> output;
     Point previous = polygon.back();
@@ -206,6 +277,24 @@ extern "C" int32_t phx_mc_planar_partition(
             (signs[index + 1] != -1 && signs[index + 1] != 1)) return PHX_MC_INVALID_ARGUMENT;
         triangle.p[corner] = {value(index, signs[index]), value(index + 1, signs[index + 1]),
                               denominator};
+      }
+      for (int edge = 0; edge < 3; ++edge) {
+        triangle.lines[edge] = cross(triangle.p[edge], triangle.p[(edge + 1) % 3]);
+      }
+      triangle.oriented_area = dot(triangle.lines[0], triangle.p[2]);
+      triangle.fast_valid = true;
+      for (int corner = 0; corner < 3; ++corner) {
+        const int64_t index = row * 6 + corner * 2;
+        triangle.fast_valid = triangle.fast_valid &&
+            fast_load(words, offsets[index], offsets[index + 1], signs[index],
+                      triangle.fast_points[corner].x) &&
+            fast_load(words, offsets[index + 1], offsets[index + 2], signs[index + 1],
+                      triangle.fast_points[corner].y);
+      }
+      for (int edge = 0; edge < 3 && triangle.fast_valid; ++edge) {
+        triangle.fast_valid = fast_line(triangle.fast_points[edge],
+                                       triangle.fast_points[(edge + 1) % 3],
+                                       triangle.fast_lines[edge]);
       }
       triangles.push_back(std::move(triangle));
       Box box{{lower[row * 2], lower[row * 2 + 1]},
