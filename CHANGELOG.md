@@ -714,6 +714,16 @@
   carrier without a neighboring triangle during the remesh, which was skipped
   silently, is now reported as an internal error. Valid carriers return the
   same mesh as before.
+- The spatial index of certified surface remeshing tightens itself while it
+  is searched and returns the same candidates. A search that inspects a block
+  of registered triangles computes the box of each live one, so it leaves the
+  block with the union of those boxes, empty when every triangle of the block
+  has been removed; later searches skip it. On the 6.3 million triangle
+  carrier of the adaptive sphere profile a search examined 217 registered
+  rows for 8 candidates, 60% of them removed triangles, and examines 93 with
+  this change; the remesh takes about 3% less time (310 to 302 seconds, two
+  alternating pairs) with identical vertices, triangles, counters and
+  distance bound.
 - The source normal cones of certified surface remeshing are outward-rounded
   bounds computed without the platform math library. For the zero-set
   admission the half-angle `asin(|r| / |g|) + asin(2 tolerance / altitude)`
