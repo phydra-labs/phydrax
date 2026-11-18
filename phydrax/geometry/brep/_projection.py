@@ -1037,6 +1037,45 @@ def _torus_window_exact(
         return a > 0 and b < 0
     return second.mode == 2 and (a > 0 or b < 0)
 
+def _cone_axial_interior(
+    patch: ConePatch,
+    frame: _WindowFrame,
+    relative: tuple[Fraction, ...],
+    x: Fraction,
+    y: Fraction,
+    low: Fraction,
+    high: Fraction,
+    /,
+) -> bool:
+    """Prove the positive-nappe minimum's axial parameter is interior."""
+    if (
+        rational_dot(frame.first, frame.first) != 1
+        or rational_dot(frame.axis, frame.axis) != 1
+    ):
+        return False
+    angle = np.asarray((float(patch.semi_angle),), dtype=np.float64)
+    tangent_low, tangent_high = float64_interval_elementary("tan", angle, angle)
+    if not np.isfinite(tangent_low[0]) or not np.isfinite(tangent_high[0]):
+        return False
+    tangent = (Fraction(float(tangent_low[0])), Fraction(float(tangent_high[0])))
+    radius = Fraction(float(patch.reference_radius))
+    if min(radius + t * v for t in tangent for v in (low, high)) <= 0:
+        return False
+    rho = fraction_sqrt_interval(x * x + y * y)
+    z = rational_dot(relative, frame.axis)
+    numerators = tuple(z + t * (r - radius) for t in tangent for r in rho)
+    tangent_squared = tuple(t * t for t in tangent)
+    denominator_low = 1 + (
+        Fraction(0) if tangent[0] <= 0 <= tangent[1] else min(tangent_squared)
+    )
+    denominator_high = 1 + max(tangent_squared)
+    values = tuple(
+        n / d for n in (min(numerators), max(numerators))
+        for d in (denominator_low, denominator_high)
+    )
+    return low < min(values) and max(values) < high
+
+
 
 def _closed_form_foot_interior(
     patch: AbstractSurfacePatch,
@@ -1094,9 +1133,34 @@ def _closed_form_foot_interior(
     x, y = rational_dot(relative, frame.first), rational_dot(relative, frame.second)
     if flipped:
         x, y = -x, -y
-    if not _window_contains_direction(window, x, y):
+    on_axis = x == 0 and y == 0
+    if on_axis and isinstance(patch, ConePatch):
+        if (
+            window.mode == 3
+            and not any(relative)
+            and float(patch.reference_radius) == 0.0
+            and Fraction(float(bounds[0, 1])) <= 0 <= Fraction(float(bounds[1, 1]))
+        ):
+            return True
+    if on_axis and isinstance(patch, SpherePatch) and window.mode == 3:
+        from ._correspondence import exact_sphere_pole
+
+        axial = rational_dot(relative, frame.axis)
+        latitude = bounds[1, 1] if axial > 0 else bounds[0, 1]
+        if (
+            axial != 0
+            and rational_dot(frame.first, frame.first) == 1
+            and rational_dot(frame.axis, frame.axis) == 1
+            and exact_sphere_pole(patch, Fraction(float(latitude))) is not None
+        ):
+            return True
+    if not (
+        on_axis and window.mode == 3 and isinstance(patch, RevolutionSurface)
+    ) and not _window_contains_direction(window, x, y):
         return False
     low, high = Fraction(float(bounds[0, 1])), Fraction(float(bounds[1, 1]))
+    if isinstance(patch, ConePatch):
+        return _cone_axial_interior(patch, frame, relative, x, y, low, high)
     if isinstance(patch, CylinderPatch):
         axial = rational_dot(relative, frame.axis) / rational_dot(frame.axis, frame.axis)
         return low < axial < high
@@ -1108,18 +1172,52 @@ def _closed_form_foot_interior(
             value - axial_rate * axis
             for value, axis in zip(frame.profile_direction, frame.axis, strict=True)
         )
-        if any(radial_rate) or axial_rate == 0:
+        if any(rational_cross(radial_rate, frame.first)):
             return False
         start = tuple(
             value - origin
             for value, origin in zip(frame.profile_origin, frame.origin, strict=True)
         )
-        parameter = (
-            rational_dot(relative, frame.axis) - rational_dot(start, frame.axis)
-        ) / axial_rate
-        return low < parameter < high
+        axis_start = rational_dot(start, frame.axis)
+        radial_start = tuple(
+            value - axis_start * axis
+            for value, axis in zip(start, frame.axis, strict=True)
+        )
+        first_squared = rational_dot(frame.first, frame.first)
+        radial_offset = rational_dot(radial_start, frame.first) / first_squared
+        radial_slope = rational_dot(radial_rate, frame.first) / first_squared
+        denominator = radial_slope * radial_slope * first_squared + axial_rate * axial_rate
+        if denominator == 0:
+            return False
+        side = -1 if flipped else 1
+        base = (
+            axial_rate * (rational_dot(relative, frame.axis) - axis_start)
+            - radial_slope * radial_offset * first_squared
+        )
+        radical = radial_slope * side
+        squared = x * x + y * y
+        lower_sign = _radical_difference_sign(base - low * denominator, -radical, squared)
+        upper_sign = _radical_difference_sign(base - high * denominator, -radical, squared)
+        nappe_sign = _radical_difference_sign(
+            radial_offset * denominator + radial_slope * base,
+            -radial_slope * radical,
+            squared,
+        )
+        return lower_sign > 0 and upper_sign < 0 and nappe_sign == side
     if isinstance(patch, SpherePatch):
-        return low <= -window.pi_upper / 2 and high >= window.pi_upper / 2
+        if rational_dot(frame.first, frame.first) != rational_dot(frame.axis, frame.axis):
+            return False
+        if low <= -window.pi_upper / 2 and high >= window.pi_upper / 2:
+            return True
+        if low < -window.pi_upper / 2 or high > window.pi_upper / 2:
+            return False
+        second = _angular_window(bounds, 1, False)
+        squared = x * x + y * y
+        z = rational_dot(relative, frame.axis)
+        return (
+            _torus_edge_sign(squared, Fraction(0), z, second.cosine[0], second.sine[0]) > 0
+            and _torus_edge_sign(squared, Fraction(0), z, second.cosine[1], second.sine[1]) < 0
+        )
     # A cone's slant-coordinate window may clip its true minimizing point.
     return False
 
