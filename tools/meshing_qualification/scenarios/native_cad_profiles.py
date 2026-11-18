@@ -607,9 +607,8 @@ def _external_case(
         "flat_inner_radius_mm": 18.93853223808158,
         "flat_outer_radius_mm": 28.56146776191842,
     }
-    washer_volume_m3 = _washer_volume(reference) * 0.001**3
+    hole = None
     boolean_record = None
-    expected_volume = washer_volume_m3
     loops: tuple[tuple[float, float, float, float], ...] = ()
     if case in ("external-routine", "external-combined"):
         admitted_limit = source_losslessness["minimum_declared_tolerance"]
@@ -687,13 +686,14 @@ def _external_case(
             "half_length_mm": 40.0,
             "axis": [1.0, 0.0, 0.0],
         }
-        hole_volume_m3 = _radial_hole_volume(reference, hole) * 0.001**3
-        expected_volume -= hole_volume_m3
+        expected_volume = _washer_volume(reference, hole)
         loops = tuple(
             (radius * 0.001, 0.0004, -0.00075, side)
             for radius in (16.0, 31.5)
             for side in (1, -1)
         )
+    else:
+        expected_volume = _washer_volume(reference)
     provenance = {
         "initial_step_import": {
             "source_digest": imported.source_digest,
@@ -713,7 +713,7 @@ def _external_case(
         "explicit_source_repair": repair_record,
         "analytic_volume_m3": expected_volume,
         "manufactured_length_m": 0.0315,
-        "analytic_volume_method": "independent Pappus revolution integral of the NIST profile; combined case subtracts the donor's independent radial-cylinder integral",
+        "analytic_volume_method": "independent high-precision quadrature of the Pappus revolution integral of the NIST profile; for the combined case, the radial cutter's inner integral is evaluated analytically before one-dimensional quadrature",
         "external_source_and_authored_hole": case == "external-combined",
         "intersection_loops": [
             {
@@ -734,13 +734,15 @@ def _external_case(
 
 def _rounded_reference(value: Any, error: Any) -> float:
     """Reject a quadrature estimate that could cross a binary64 midpoint."""
+    if value == 0 and error == 0:
+        return 0.0
     rounded = float(value)
     lower = mp.mpf(math.nextafter(rounded, -math.inf))
     upper = mp.mpf(math.nextafter(rounded, math.inf))
     center = mp.mpf(rounded)
-    # The quadrature estimate excludes the finite-precision arithmetic used to
-    # evaluate the integrand and assemble the reference.
-    error = max(error, mp.mpf("1e-45") * max(1, abs(value)))
+    # At 50 decimal digits, reserve five digits for accumulated arithmetic
+    # in the integrands and assembly, in addition to the quadrature estimate.
+    error = max(error, mp.power(10, 5 - mp.mp.dps) * max(1, abs(value)))
     distance = min(value - (lower + center) / 2, (center + upper) / 2 - value)
     if error >= distance:
         raise ArithmeticError(
@@ -760,7 +762,9 @@ def _cross_cylinder_volume(radius: float, major: float) -> float:
         return _rounded_reference(value, error)
 
 
-def _washer_volume(reference: dict[str, Any]) -> float:
+def _washer_volume(
+    reference: dict[str, Any], hole: dict[str, Any] | None = None
+) -> float:
     with mp.workdps(50):
         bottom = mp.mpf(float(reference["bottom_z_mm"]))
         inner = mp.mpf(float(reference["inner_radius_mm"]))
@@ -790,30 +794,46 @@ def _washer_volume(reference: dict[str, Any]) -> float:
             )
             volume += part
             error += part_error
-        return _rounded_reference(volume, error)
+        if hole is not None:
+            hole_volume, hole_error = _radial_hole_integral(reference, hole)
+            volume -= hole_volume
+            error += hole_error
+        scale = mp.mpf("1e-9")
+        return _rounded_reference(volume * scale, error * scale)
+
+
+def _radial_hole_integral(
+    reference: dict[str, Any], hole: dict[str, Any]
+) -> tuple[Any, Any]:
+    inner = mp.mpf(float(reference["inner_radius_mm"]))
+    outer = mp.mpf(float(reference["outer_radius_mm"]))
+    radius = mp.mpf(float(hole["radius_mm"]))
+    if radius < 0 or inner <= 0 or outer < inner or radius > inner:
+        raise ValueError(
+            "Radial-hole domain requires 0 <= radius <= inner <= outer and inner > 0."
+        )
+    # Integrate the circular cutter's vertical chord analytically, leaving
+    # one smooth integral after y = radius * sin(t).
+    return mp.quad(
+        lambda t: (
+            8
+            * radius**2
+            * mp.cos(t) ** 2
+            * (
+                mp.sqrt(outer**2 - radius**2 * mp.sin(t) ** 2)
+                - mp.sqrt(inner**2 - radius**2 * mp.sin(t) ** 2)
+            )
+        ),
+        [0, mp.pi / 2],
+        error=True,
+    )
 
 
 def _radial_hole_volume(reference: dict[str, Any], hole: dict[str, Any]) -> float:
     with mp.workdps(50):
-        inner = mp.mpf(float(reference["inner_radius_mm"]))
-        outer = mp.mpf(float(reference["outer_radius_mm"]))
-        radius = mp.mpf(float(hole["radius_mm"]))
-        # Integrate the circular cutter's vertical chord analytically, leaving
-        # one smooth integral after y = radius * sin(t).
-        value, error = mp.quad(
-            lambda t: (
-                8
-                * radius**2
-                * mp.cos(t) ** 2
-                * (
-                    mp.sqrt(outer**2 - radius**2 * mp.sin(t) ** 2)
-                    - mp.sqrt(inner**2 - radius**2 * mp.sin(t) ** 2)
-                )
-            ),
-            [0, mp.pi / 2],
-            error=True,
-        )
-        return _rounded_reference(value, error)
+        value, error = _radial_hole_integral(reference, hole)
+        scale = mp.mpf("1e-9")
+        return _rounded_reference(value * scale, error * scale)
 
 
 def _loop_length(axis_radius: float, transverse_radius: float) -> float:
