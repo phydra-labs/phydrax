@@ -67,6 +67,24 @@ def test_binary64_ordered_products_match_fraction_rounding_and_batches() -> None
     )
 
 
+@pytest.mark.parametrize("winding", [(1, 1, 1), (2**53 + 1, -1, 1)])
+def test_periodic_integer_winding_product_has_ordered_binary64_rounding(
+    winding: tuple[int, int, int],
+) -> None:
+    integer_winding = np.asarray(winding, dtype=np.int64)
+    lattice = np.asarray([[1e16, 0.1], [-1e16, -0.3], [1.0, 0.7]], dtype=np.float64)
+    expected = np.asarray(
+        [
+            _ordered_fraction_dot(integer_winding, lattice[:, column])
+            for column in range(lattice.shape[1])
+        ],
+        dtype=np.float64,
+    )
+    np.testing.assert_array_equal(binary64_matmul(integer_winding, lattice), expected)
+    if winding[0] == 1:
+        assert expected[0] == 1.0
+
+
 def test_binary64_hex_rounding_trees_and_fused_counterexample() -> None:
     first = np.asarray([1e16, -1e16, 1.0])
     second = np.ones(3)

@@ -1,6 +1,10 @@
 # Changelog
 
 ## Unreleased
+- Mapped-cell location uses specified binary64 residual norms, exact-rational
+  least-squares proposals, and ordered periodic winding products. Root
+  acceptance near tolerance boundaries and stored owner-local lifted
+  coordinates and their fingerprints can change in the last places.
 - Boundary-layer directions, heights, distances, and quantities derived from
   them now use specified binary64 operations, including a native distance
   kernel. Their last bits change once across platforms; layer mesh coordinates
