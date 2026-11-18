@@ -29,6 +29,7 @@ from ._global_embedding import GlobalEmbeddingCertificate
 from ._meshing_domain import MeshingDomain
 from ._planar_primitives import (
     box_overlap_pairs,
+    partition_verdict,
     polygon_boxes,
     triangle_pair_separation,
     TriangleEnclosures,
@@ -674,73 +675,42 @@ def _sweep_box_overlap_pairs(
 
 
 def _blocked_overlapping_pairs(
-    rows: tuple[_Triangle2, ...], others: tuple[_Triangle2, ...] | None, /
+    rows: tuple[_Triangle2, ...], /
 ) -> Iterator[tuple[int, int, list[tuple[int, int]]]]:
-    """Per bounded block of ``rows``: ``(start, stop, pairs)`` that may overlap.
-
-    ``pairs`` holds ``(row, other row)`` with exact overlap possibly positive;
-    ``others`` of None pairs ``rows`` with itself. Boxes and corner enclosures
-    are prepared once for both banks, never once per block, and only one
-    block's pair bank is retained at a time.
-    """
-    second = rows if others is None else others
-    offset = 0 if others is None else len(rows)
+    """Stream bounded blocks of potentially overlapping row pairs."""
     boxes = polygon_boxes(rows)
-    second_boxes = boxes if others is None else polygon_boxes(second)
-    enclosures = TriangleEnclosures.prepare(rows if others is None else rows + others)
+    enclosures = TriangleEnclosures.prepare(rows)
     order = (
-        np.argsort(second_boxes[0][:, 0], kind="stable")
-        if boxes is not None and second_boxes is not None and len(second) > 1024
+        np.argsort(boxes[0][:, 0], kind="stable")
+        if boxes is not None and len(rows) > 1024
         else None
     )
-    sorted_lower = (
-        None if order is None or second_boxes is None else second_boxes[0][order, 0]
-    )
+    sorted_lower = None if order is None or boxes is None else boxes[0][order, 0]
     for start in range(0, len(rows), 64):
         stop = min(start + 64, len(rows))
-        if order is None or sorted_lower is None or boxes is None or second_boxes is None:
+        if order is None or sorted_lower is None or boxes is None:
             pairs = box_overlap_pairs(
                 stop - start,
-                len(second),
+                len(rows),
                 None if boxes is None else (boxes[0][start:stop], boxes[1][start:stop]),
-                second_boxes,
+                boxes,
                 self_pairs=False,
             )
         else:
             pairs = _sweep_box_overlap_pairs(
                 (boxes[0][start:stop], boxes[1][start:stop]),
-                second_boxes,
+                boxes,
                 order,
                 sorted_lower,
             )
         first = pairs[:, 0] + start
-        decisions = enclosures.separation(first, pairs[:, 1] + offset)
+        decisions = enclosures.separation(first, pairs[:, 1])
         keep = decisions != 1
         yield (
             start,
             stop,
             list(zip(first[keep].tolist(), pairs[keep, 1].tolist(), strict=True)),
         )
-
-
-def _covered_by_declared_triangles(
-    rows: tuple[_Triangle2, ...], declared: tuple[_Triangle2, ...], /
-) -> bool:
-    """Prove each target's exact area lies in the declared triangle bank.
-
-    The outward box and interval screens discard only zero-area intersections.
-    """
-    for start, stop, pairs in _blocked_overlapping_pairs(rows, declared):
-        candidates: list[list[int]] = [[] for _ in range(start, stop)]
-        for row, index in pairs:
-            candidates[row - start].append(index)
-        for triangle, indices in zip(rows[start:stop], candidates, strict=True):
-            if sum(
-                (_intersection_area(triangle, declared[index]) for index in indices),
-                Fraction(0),
-            ) != abs(_area2(triangle)):
-                return False
-    return True
 
 
 # Below this many rows the fixed setup of the binary64 screen costs more than
@@ -754,7 +724,7 @@ def _overlapping_self_pairs(rows: tuple[_Triangle2, ...], /) -> Iterator[tuple[i
     if len(rows) < _SCREENED_SELF_PAIR_MIN_ROWS:
         yield from combinations(range(len(rows)), 2)
         return
-    for _, _, pairs in _blocked_overlapping_pairs(rows, None):
+    for _, _, pairs in _blocked_overlapping_pairs(rows):
         for first, second in pairs:
             if first < second:
                 yield first, second
@@ -1611,16 +1581,12 @@ def _cad_target_root_partition(
             SourcePreparation(charts.boundary_source.domain),
             plane=patch in plane_patches,
         )[0]
-        source_area = sum((abs(_area2(t)) for t in declared), Fraction(0))
-        if (
-            not declared
-            or sum((abs(_area2(t)) for t in rows), Fraction(0)) != source_area
-            or not _covered_by_declared_triangles(rows, declared)
-            or any(
-                _intersection_area(rows[first], rows[second])
-                for first, second in _overlapping_self_pairs(rows)
+        verdict, _, _ = partition_verdict(rows, declared)
+        if verdict == 4:
+            raise SourceCoverageUnavailable(
+                "Exact source-chart clipping is singular.", status="unresolved"
             )
-        ):
+        if verdict != 0:
             raise SourceCoverageUnavailable(
                 "CAD plane rows do not partition the exact plane reference.",
                 status="violated",

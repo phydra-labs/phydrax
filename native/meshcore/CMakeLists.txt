@@ -92,6 +92,7 @@ set(PHX_MC_SOURCES
   src/improve3d.cpp
   src/zero_set_admission.cpp
   src/elementary.cpp
+  src/planar_partition.cpp
 )
 set(PHX_MC_HEADERS
   include/phydrax_meshcore.h
@@ -258,4 +259,5 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_surface_remesh)
   phx_mc_add_test(test_zero_set_admission)
   phx_mc_add_test(test_elementary)
+  phx_mc_add_test(test_planar_partition)
 endif()
