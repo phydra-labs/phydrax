@@ -283,7 +283,9 @@ def symmetric_product_minors_batch_exact(
     if size not in (1, 2, 3):
         raise ValueError("Exact symmetric products require order one through three.")
 
-    def clear(matrix: Sequence[Sequence[Fraction | int]]) -> tuple[tuple[int, ...], int]:
+    def clear(
+        matrix: Sequence[Sequence[Fraction | int]],
+    ) -> tuple[np.ndarray[tuple[int, ...], np.dtype[np.object_]], int]:
         if len(matrix) != size or any(len(row) != size for row in matrix):
             raise ValueError("Exact symmetric product factors must have equal square shapes.")
         if any(
@@ -293,10 +295,12 @@ def symmetric_product_minors_batch_exact(
         ):
             raise TypeError("Exact symmetric products require integers or Fractions.")
         scale = lcm(*(value.denominator for row in matrix for value in row))
-        return tuple(
-            value.numerator * (scale // value.denominator)
-            for row in matrix
-            for value in row
+        return np.asarray(
+            [
+                [value.numerator * (scale // value.denominator) for value in row]
+                for row in matrix
+            ],
+            dtype=np.object_,
         ), scale
 
     left, left_scale = clear(prefix)
@@ -304,28 +308,20 @@ def symmetric_product_minors_batch_exact(
     results: list[tuple[Fraction, ...]] = []
     for matrix in matrices:
         middle, middle_scale = clear(matrix)
-        product = tuple(
-            sum(left[row * size + k] * middle[k * size + col] for k in range(size))
-            for row in range(size)
-            for col in range(size)
-        )
+        product = left @ middle
         if right is not None:
-            product = tuple(
-                sum(product[row * size + k] * right[k * size + col] for k in range(size))
-                for row in range(size)
-                for col in range(size)
-            )
+            product = product @ right
         denominator = 2 * left_scale * middle_scale * right_scale
-        a = 2 * product[0]
+        a = 2 * product[0, 0]
         minors = [Fraction(a, denominator)]
         if size >= 2:
-            b = product[1] + product[size]
-            d = 2 * product[size + 1]
+            b = product[0, 1] + product[1, 0]
+            d = 2 * product[1, 1]
             minors.append(Fraction(a * d - b * b, denominator**2))
         if size == 3:
-            c = product[2] + product[6]
-            e = product[5] + product[7]
-            f = 2 * product[8]
+            c = product[0, 2] + product[2, 0]
+            e = product[1, 2] + product[2, 1]
+            f = 2 * product[2, 2]
             minors.append(
                 Fraction(
                     a * (d * f - e * e) - b * (b * f - c * e) + c * (b * e - c * d),
