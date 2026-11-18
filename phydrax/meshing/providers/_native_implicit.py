@@ -35,6 +35,7 @@ from ...geometry._contracts import CompiledGeometry
 from ...geometry._interval_enclosure import (
     IntervalExtensionError,
     prepare_interval_function,
+    PreparedIntervalFunction,
 )
 from ...geometry._rational import binary64_norm
 from ...geometry._source_boundary_records import (
@@ -56,7 +57,10 @@ from ...geometry.implicit import (
     ImplicitSurfacePolicy,
     ImplicitVolumeClass,
 )
-from ...geometry.implicit._adaptive_discovery import AdaptiveImplicitBoundarySource
+from ...geometry.implicit._adaptive_discovery import (
+    _target_level,
+    AdaptiveImplicitBoundarySource,
+)
 from ...geometry.implicit._policy import _DEFAULT_RELATIVE_CELL_DIAMETER
 from ...geometry.surface import SurfaceMetadata, SurfaceModel
 from ...typing import checked
@@ -109,6 +113,14 @@ from ._native_volume import (
     _boundary_face_entities,
     _faces_connected,
 )
+
+
+type _CarrierPrograms = tuple[
+    PreparedIntervalFunction,
+    PreparedIntervalFunction,
+    PreparedIntervalFunction,
+    PreparedIntervalFunction,
+]
 
 
 # Full-score minimum angle of the carrier zero-set remesh; a face at this angle
@@ -355,15 +367,15 @@ def implicit_volume_support_issues(
     return list(dict.fromkeys(unsupported))
 
 
-@checked
-def normalize_analytic_implicit_source(
+def _normalize_analytic_implicit_source(
     profile: AnalyticImplicitProfile,
     policy: AdaptiveImplicitSurfacePolicy | None,
     coordinate_contract: SpatialCoordinateContract,
     /,
     *,
     specification: SurfaceMeshingSpec | VolumeMeshingSpec | None = None,
-) -> NativeImplicitSource:
+    programs: _CarrierPrograms | None,
+) -> tuple[NativeImplicitSource, float | None]:
     """Bind an exact analytic profile to the existing adaptive implicit route.
 
     The profile is the source of identity and coordinate semantics. Its signed
@@ -422,18 +434,24 @@ def normalize_analytic_implicit_source(
             provider_code="native_implicit_profile",
             stage="source_inspection",
         )
-    selected_policy = (
-        (AdaptiveImplicitSurfacePolicy() if policy is None else policy)
-        if specification is None
-        else _effective_policy(policy, specification, domain)
-    )
+    carrier_bound = None
     try:
-        discovery = discover_adaptive_implicit_surface(
-            profile.geometry,
-            domain=domain,
-            policy=selected_policy,
-            source_id=profile.source_id,
-        )
+        if specification is None:
+            discovery = discover_adaptive_implicit_surface(
+                profile.geometry,
+                domain=domain,
+                policy=AdaptiveImplicitSurfacePolicy() if policy is None else policy,
+                source_id=profile.source_id,
+            )
+        else:
+            discovery, carrier_bound = _discover_with_carrier_bound(
+                profile.geometry,
+                profile.source_id,
+                domain,
+                policy,
+                specification,
+                programs,
+            )
         source = NativeImplicitSource(
             profile.geometry,
             profile.source_id,
@@ -449,6 +467,29 @@ def normalize_analytic_implicit_source(
             stage="surface_meshing",
         ) from error
     _validate_discovery(source, discovery)
+    return source, carrier_bound
+
+
+@checked
+def normalize_analytic_implicit_source(
+    profile: AnalyticImplicitProfile,
+    policy: AdaptiveImplicitSurfacePolicy | None,
+    coordinate_contract: SpatialCoordinateContract,
+    /,
+    *,
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec | None = None,
+) -> NativeImplicitSource:
+    """Bind an analytic profile and discover its source-owned implicit carrier."""
+    programs = (
+        None if specification is None else _carrier_interval_programs(profile.geometry)
+    )
+    source, _ = _normalize_analytic_implicit_source(
+        profile,
+        policy,
+        coordinate_contract,
+        specification=specification,
+        programs=programs,
+    )
     return source
 
 
@@ -495,11 +536,144 @@ def _grid_domain(source: NativeImplicitSource, /) -> np.ndarray:
     return np.stack((lower, upper))
 
 
+def _carrier_interval_programs(geometry: CompiledGeometry, /) -> _CarrierPrograms | None:
+    kernel, state = geometry.kernel, geometry.state
+
+    def value(point: Array) -> Array:
+        return kernel.boundary_field(state, point[None, :])[0]
+
+    try:
+        programs = (
+            prepare_interval_function(value, 3, batch_capacity=1, execution="batched"),
+            prepare_interval_function(
+                jax.grad(value), 3, batch_capacity=1, execution="batched"
+            ),
+            prepare_interval_function(
+                jax.hessian(value), 3, batch_capacity=1, execution="batched"
+            ),
+            prepare_interval_function(value, 3, batch_capacity=1024, execution="native"),
+        )
+        point = np.zeros((1, 3), dtype=np.float64)
+        programs[3].evaluate_branches(point, point)
+        return programs
+    except IntervalExtensionError:
+        return None
+
+
+def _carrier_face_bounds(
+    points: np.ndarray,
+    programs: _CarrierPrograms,
+    radius: float,
+    domain: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Certify each triangle's distance to a zero in the domain, or return infinity.
+
+    For p = sum(lambda_i v_i), Taylor expansion and barycentric cancellation give
+    |f(p)| <= F + (H/2) sum_(i<j) lambda_i lambda_j |v_i - v_j|^2
+           <= F + H e^2 / 6.
+    F encloses the vertex residuals, H bounds the Hessian Frobenius norm on
+    the triangle box, and e bounds its longest edge. On that box widened by r,
+    a smooth field with gradient norm at least m > 0 reaches a zero by normalized
+    gradient flow within (F + H e^2 / 6) / m. The widened box must lie in the
+    declared source domain and the distance must not exceed r. Arithmetic
+    enclosures are outward-rounded; an infinity denotes an inconclusive proof.
+    """
+    if not math.isfinite(radius) or radius <= 0.0:
+        return np.full(len(points), np.inf, dtype=np.float64)
+    value, gradient, hessian, smoothness = programs
+    up = np.inf
+    lower, upper = np.min(points, axis=1), np.max(points, axis=1)
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore", under="ignore"):
+        try:
+            hl, hu = hessian.evaluate(lower, upper)
+            vl, vu = value.evaluate(points.reshape(-1, 3), points.reshape(-1, 3))
+            wide_lower = np.nextafter(lower - radius, -up)
+            wide_upper = np.nextafter(upper + radius, up)
+            bl, bu, smooth, _ = smoothness.evaluate_branches(wide_lower, wide_upper)
+            gl, gu = gradient.evaluate(wide_lower, wide_upper)
+        except IntervalExtensionError:
+            return np.full(len(points), np.inf, dtype=np.float64)
+        hab = np.maximum(np.abs(hl), np.abs(hu))
+        hs = np.zeros(len(points), dtype=np.float64)
+        for i in range(3):
+            for j in range(3):
+                hs = np.nextafter(hs + np.nextafter(hab[:, i, j] ** 2, up), up)
+        h = np.nextafter(np.sqrt(hs), up)
+        residual = np.max(np.maximum(np.abs(vl), np.abs(vu)).reshape(-1, 3), axis=1)
+        component = np.maximum(np.maximum(gl, -gu), 0.0)
+        ms = np.zeros(len(points), dtype=np.float64)
+        for axis in range(3):
+            square = np.nextafter(component[:, axis] ** 2, 0.0)
+            ms = np.maximum(0.0, np.nextafter(ms + square, 0.0))
+        m = np.nextafter(np.sqrt(ms), 0.0)
+        edge_squared = np.zeros(len(points), dtype=np.float64)
+        for i, j in ((0, 1), (1, 2), (2, 0)):
+            edge = np.nextafter(np.abs(points[:, i] - points[:, j]), up)
+            squared = np.zeros(len(points), dtype=np.float64)
+            for axis in range(3):
+                squared = np.nextafter(squared + np.nextafter(edge[:, axis] ** 2, up), up)
+            edge_squared = np.maximum(edge_squared, squared)
+        numerator = np.nextafter(
+            residual + np.nextafter(np.nextafter(h * edge_squared, up) / 6.0, up),
+            up,
+        )
+        candidate = np.nextafter(numerator / m, up)
+        finite = (
+            np.all(np.isfinite(hl) & np.isfinite(hu), axis=(1, 2))
+            & np.all((np.isfinite(vl) & np.isfinite(vu)).reshape(-1, 3), axis=1)
+            & np.all(np.isfinite(gl) & np.isfinite(gu), axis=1)
+            & np.isfinite(bl)
+            & np.isfinite(bu)
+        )
+        inside_domain = np.all(
+            (wide_lower >= domain[0]) & (wide_upper <= domain[1]), axis=1
+        )
+        accepted = (
+            smooth
+            & finite
+            & inside_domain
+            & (m > 0.0)
+            & np.isfinite(m)
+            & np.isfinite(candidate)
+            & (candidate <= radius)
+        )
+        return np.where(accepted, candidate, np.inf)
+
+
+def _carrier_forward_bound(
+    discovery: AdaptiveImplicitSurface,
+    programs: _CarrierPrograms | None,
+    radius: float,
+    /,
+) -> float:
+    """Bound carrier-to-source distance, retaining the first-order box fallback."""
+    first = math.nextafter(
+        discovery.evidence.maximum_surface_box_diagonal + discovery.policy.root_tolerance,
+        math.inf,
+    )
+    mesh = discovery.mesh
+    if programs is None or mesh is None or not math.isfinite(radius) or radius <= 0.0:
+        return first
+    vertices = np.asarray(mesh.vertices, dtype=np.float64)
+    faces = np.asarray(mesh.faces, dtype=np.int64)
+    maximum = 0.0
+    for start in range(0, len(faces), _DISCOVERY_VALIDATION_BATCH):
+        points = vertices[faces[start : start + _DISCOVERY_VALIDATION_BATCH]]
+        bounds = _carrier_face_bounds(
+            points, programs, radius, discovery.evidence.declared_domain
+        )
+        maximum = max(maximum, float(np.max(np.minimum(first, bounds), initial=0.0)))
+    return maximum if len(faces) else first
+
+
 def _effective_policy(
     policy: AdaptiveImplicitSurfacePolicy | None,
     specification: SurfaceMeshingSpec | VolumeMeshingSpec,
     domain: np.ndarray,
     /,
+    *,
+    include_fidelity_resolution: bool = True,
 ) -> AdaptiveImplicitSurfacePolicy:
     """Discovery policy for ``specification`` on the declared ``domain``.
 
@@ -533,7 +707,8 @@ def _effective_policy(
                 stage="source_inspection",
             )
         root_tolerance = min(root_tolerance, maximum_deviation * 0.25)
-        resolutions.append(0.5 * maximum_deviation / diagonal)
+        if include_fidelity_resolution:
+            resolutions.append(0.5 * maximum_deviation / diagonal)
     for control in specification.size_controls:
         if not isinstance(control, UniformSizeControl):
             continue
@@ -558,6 +733,72 @@ def _effective_policy(
         relative_cell_diameter=min(resolutions, default=_DEFAULT_RELATIVE_CELL_DIAMETER),
         root_tolerance=root_tolerance,
     )
+
+
+def _discover_with_carrier_bound(
+    geometry: CompiledGeometry,
+    source_id: str,
+    domain: np.ndarray,
+    policy: AdaptiveImplicitSurfacePolicy | None,
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec,
+    programs: _CarrierPrograms | None,
+    /,
+) -> tuple[AdaptiveImplicitSurface, float]:
+    """Try dyadic levels in order; unresolved coarse contours require refinement."""
+    fine = _effective_policy(policy, specification, domain)
+    tolerance = specification.maximum_deviation
+    fine_resolution = fine.relative_cell_diameter
+    if fine_resolution is None:
+        raise RuntimeError("Effective implicit policy has no resolution.")
+    if tolerance is None or programs is None:
+        surface = discover_adaptive_implicit_surface(
+            geometry, domain=domain, policy=fine, source_id=source_id
+        )
+        radius = (
+            surface.evidence.maximum_surface_box_diagonal + surface.policy.root_tolerance
+        )
+        return surface, _carrier_forward_bound(surface, programs, radius)
+    coarse = _effective_policy(
+        policy, specification, domain, include_fidelity_resolution=False
+    )
+    has_size = any(
+        isinstance(control, UniformSizeControl) for control in specification.size_controls
+    )
+    has_explicit = policy is not None and policy.relative_cell_diameter is not None
+    cap = coarse.relative_cell_diameter if has_size or has_explicit else 2.0
+    if cap is None:
+        raise RuntimeError("Effective implicit policy has no resolution.")
+    first_level = _target_level(domain, cap)
+    last_level = _target_level(domain, fine_resolution)
+    share = tolerance * 0.5
+    for level in range(first_level, last_level):
+        trial_policy = replace(
+            fine, relative_cell_diameter=min(cap, math.ldexp(1.01, -level))
+        )
+        try:
+            trial = discover_adaptive_implicit_surface(
+                geometry, domain=domain, policy=trial_policy, source_id=source_id
+            )
+        except (TypeError, ValueError, OverflowError):
+            # A coarse contour refusal does not decide the finer discovery.
+            continue
+        if (
+            trial.evidence.status_flags != AdaptiveImplicitSurfaceStatus.SUCCESS
+            or trial.evidence.unresolved_count
+            or trial.mesh is None
+            or not trial.mesh.topology.watertight
+            or trial.cover is None
+            or not trial.cover.complete
+            or not trial.cover.certified
+        ):
+            continue
+        bound = _carrier_forward_bound(trial, programs, share)
+        if bound <= share:
+            return trial, bound
+    surface = discover_adaptive_implicit_surface(
+        geometry, domain=domain, policy=fine, source_id=source_id
+    )
+    return surface, _carrier_forward_bound(surface, programs, share)
 
 
 _DISCOVERY_VALIDATION_BATCH = 16384
@@ -804,6 +1045,15 @@ def _validate_discovery(
         )
 
 
+def _discovery_failure(error: Exception, /) -> MeshingFailure:
+    return _failure(
+        MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+        f"Geometry-owned adaptive implicit discovery failed: {error}",
+        provider_code="native_implicit_discovery",
+        stage="surface_meshing",
+    )
+
+
 def _discover(
     source: NativeImplicitSource,
     domain: np.ndarray,
@@ -818,12 +1068,7 @@ def _discover(
             source_id=source.source_id,
         )
     except (TypeError, ValueError, OverflowError) as error:
-        raise _failure(
-            MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-            f"Geometry-owned adaptive implicit discovery failed: {error}",
-            provider_code="native_implicit_discovery",
-            stage="surface_meshing",
-        ) from error
+        raise _discovery_failure(error) from error
     _validate_discovery(source, surface)
     return surface
 
@@ -852,6 +1097,38 @@ def _resolve_discovery(
     if source.discovery is not None and source.discovery.policy == effective_policy:
         return source.discovery
     return _discover(source, domain, effective_policy)
+
+
+def _resolve_discovery_with_bound(
+    source: NativeImplicitSource,
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec,
+    policy: AdaptiveImplicitSurfacePolicy | None,
+    programs: _CarrierPrograms | None,
+    /,
+) -> tuple[AdaptiveImplicitSurface, float]:
+    if source.discovery is not None:
+        _validate_discovery(source, source.discovery)
+        domain = np.asarray(source.discovery.evidence.declared_domain, dtype=np.float64)
+        if source.discovery.policy == _effective_policy(policy, specification, domain):
+            radius = (
+                source.discovery.evidence.maximum_surface_box_diagonal
+                + source.discovery.policy.root_tolerance
+                if specification.maximum_deviation is None
+                else 0.5 * specification.maximum_deviation
+            )
+            return source.discovery, _carrier_forward_bound(
+                source.discovery, programs, radius
+            )
+    else:
+        domain = _grid_domain(source)
+    try:
+        discovery, bound = _discover_with_carrier_bound(
+            source.geometry, source.source_id, domain, policy, specification, programs
+        )
+    except (TypeError, ValueError, OverflowError) as error:
+        raise _discovery_failure(error) from error
+    _validate_discovery(source, discovery)
+    return discovery, bound
 
 
 @dataclass(slots=True, eq=False, init=False)
@@ -2060,6 +2337,7 @@ def _implicit_plc_carrier(
     discovery: AdaptiveImplicitSurface,
     specification: VolumeMeshingSpec,
     schedule: NativeVolumeSchedule,
+    scaffold_distance: float,
     /,
 ) -> _ImplicitCarrier:
     _domain_id, region_ids, _region_key = _implicit_region_authority(source, discovery)
@@ -2089,9 +2367,6 @@ def _implicit_plc_carrier(
             provider_code="native_implicit_carrier",
             stage="source_inspection",
         )
-    scaffold_distance = (
-        discovery.evidence.maximum_surface_box_diagonal + discovery.policy.root_tolerance
-    )
     before = _carrier_quality(vertices, triangles, "before")
     if np.isfinite(before[0][1]) and (
         schedule.radius_edge_bound is None or before[0][1] <= schedule.radius_edge_bound
@@ -3069,6 +3344,7 @@ class _PreparedImplicitRoute(StrictModule, NonTrainableState):
     specification: SurfaceMeshingSpec
     coordinate_contract: SpatialCoordinateContract
     discovery: AdaptiveImplicitSurface
+    carrier_bound: float = eqx.field(static=True)
 
     def __init__(
         self,
@@ -3076,12 +3352,14 @@ class _PreparedImplicitRoute(StrictModule, NonTrainableState):
         specification: SurfaceMeshingSpec,
         coordinate_contract: SpatialCoordinateContract,
         discovery: AdaptiveImplicitSurface,
+        carrier_bound: float,
         /,
     ) -> None:
         self.source = source
         self.specification = specification
         self.coordinate_contract = coordinate_contract
         self.discovery = discovery
+        self.carrier_bound = carrier_bound
 
     def execute(self, /) -> NativeMeshConstruction:
         source, specification, discovery = self.source, self.specification, self.discovery
@@ -3110,11 +3388,7 @@ class _PreparedImplicitRoute(StrictModule, NonTrainableState):
                 provider_code="native_implicit_discovery_incomplete",
                 stage="surface_meshing",
             )
-        fidelity_bound = math.nextafter(
-            discovery.evidence.maximum_surface_box_diagonal
-            + discovery.policy.root_tolerance,
-            math.inf,
-        )
+        fidelity_bound = self.carrier_bound
         if not math.isfinite(fidelity_bound) or fidelity_bound <= 0.0:
             raise _failure(
                 MeshingFailureCategory.INVALID_SOURCE,
@@ -3944,6 +4218,9 @@ def prepare_native_implicit(
     | PreparedRestrictedImplicitVolume
 ):
     """Prepare adaptive surface/volume or direct restricted analytic volume data."""
+    normalized = False
+    programs = None
+    normalized_bound = None
     if isinstance(source, AnalyticImplicitProfile):
         if isinstance(specification, VolumeMeshingSpec) and options.route in (
             None,
@@ -4000,9 +4277,15 @@ def prepare_native_implicit(
                 provider_code="native_implicit_preflight",
                 stage="source_inspection",
             )
-        source = normalize_analytic_implicit_source(
-            source, adaptive_policy, coordinate_contract, specification=specification
+        programs = _carrier_interval_programs(source.geometry)
+        source, normalized_bound = _normalize_analytic_implicit_source(
+            source,
+            adaptive_policy,
+            coordinate_contract,
+            specification=specification,
+            programs=programs,
         )
+        normalized = True
     if isinstance(specification, SurfaceMeshingSpec):
         unsupported = implicit_support_issues(source, specification, options)
         if unsupported:
@@ -4027,12 +4310,24 @@ def prepare_native_implicit(
             return _PreparedFixedImplicitRoute(
                 source, specification, coordinate_contract, discovery, surface_plan
             )
-        discovery = _resolve_discovery(source, specification, options.implicit_policy)
+        if normalized:
+            discovery = source.discovery
+            if discovery is None:
+                raise RuntimeError("Normalized analytic source has no discovery.")
+            if normalized_bound is None:
+                raise RuntimeError("Normalized analytic source has no carrier bound.")
+            carrier_bound = normalized_bound
+        else:
+            programs = _carrier_interval_programs(source.geometry)
+            discovery, carrier_bound = _resolve_discovery_with_bound(
+                source, specification, options.implicit_policy, programs
+            )
         return _PreparedImplicitRoute(
             source,
             specification,
             coordinate_contract,
             discovery,
+            carrier_bound,
         )
     if isinstance(specification, VolumeMeshingSpec):
         unsupported = implicit_volume_support_issues(source, specification, options)
@@ -4055,7 +4350,18 @@ def prepare_native_implicit(
                 provider_code="native_implicit_volume_preflight",
                 stage="source_inspection",
             )
-        discovery = _resolve_discovery(source, specification, policy)
+        if normalized:
+            discovery = source.discovery
+            if discovery is None:
+                raise RuntimeError("Normalized analytic source has no discovery.")
+            if normalized_bound is None:
+                raise RuntimeError("Normalized analytic source has no carrier bound.")
+            carrier_bound = normalized_bound
+        else:
+            programs = _carrier_interval_programs(source.geometry)
+            discovery, carrier_bound = _resolve_discovery_with_bound(
+                source, specification, policy, programs
+            )
         schedule = (
             NativeVolumeSchedule()
             if options.volume_schedule is None
@@ -4074,7 +4380,9 @@ def prepare_native_implicit(
             coordinate_contract,
             discovery,
             schedule,
-            _implicit_plc_carrier(source, discovery, specification, schedule),
+            _implicit_plc_carrier(
+                source, discovery, specification, schedule, carrier_bound
+            ),
         )
     raise TypeError("specification must be SurfaceMeshingSpec or VolumeMeshingSpec.")
 

@@ -261,6 +261,20 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native implicit requests with a tolerance-derived resolution now select a
+  carrier using a certified second-order forward distance bound when the
+  interval field is smooth, its gradient is nonzero in the certified tube, and
+  the tube lies inside the declared domain. Carriers, meshes and identities
+  can change; regenerate stored results. A surface result that retains the same
+  discovery and first-order bound retains its previous fallback and identities. The
+  volume route now rounds the first-order carrier bound outward instead of
+  adding in round-to-nearest; this can increase it by one unit in the last
+  place and change volume fingerprints and identities even on fallback.
+  `source_fidelity_bound` is the forward association bound; the final
+  two-directed source-fidelity certificate remains independently computed.
+  On the qualification torus at tolerance 0.02, one preparation used 27,536
+  scaffold triangles and 5.29 CPU seconds, versus the previously measured
+  approximately 600 CPU seconds for the first-order preparation.
 - Welded mesh audits accelerate vertex and edge star incidence lookups without
   changing topology findings or their order.
 - Mapped-cell location uses specified binary64 residual norms, exact-rational

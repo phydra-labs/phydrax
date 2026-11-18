@@ -80,15 +80,20 @@ def test_analytic_source_discovery_observes_requested_resolution(
         specification=specification,
     )
     assert source.discovery is not None
+    resolution = source.discovery.policy.relative_cell_diameter
+    assert resolution is not None
+    assert resolution > 0.0
     bounds = np.asarray(profile.boundary_bounds, dtype=np.float64)
     padding = np.max(bounds[1] - bounds[0]) / 8.0
     lower = np.nextafter(bounds[0] - padding, -np.inf)
     upper = np.nextafter(bounds[1] + padding, np.inf)
-    diagonal = float(np.sqrt(np.sum((upper - lower) ** 2)))
-    expected = 0.2 / diagonal
-    if cap is not None:
-        expected = min(expected, cap)
-    assert source.discovery.policy.relative_cell_diameter == pytest.approx(expected)
+    old_resolution = 0.2 / float(np.linalg.norm(upper - lower))
+    if cap is None:
+        assert resolution >= old_resolution
+    else:
+        assert resolution >= min(old_resolution, cap)
+        assert resolution <= cap
+    assert source.discovery.policy.root_tolerance <= 0.1
     assert source.discovery.evidence.unresolved_count == 0
 
 

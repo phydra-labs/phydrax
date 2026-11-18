@@ -4,17 +4,22 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from fractions import Fraction
 from itertools import product
+from typing import NoReturn
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import mpmath
 import numpy as np
 import pytest
 from jax import Array
+from scipy.spatial import cKDTree
 
+import phydrax.meshing.providers._native_implicit as implicit_provider
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization import TensorGridPlan, UniformAxisSpec
 from phydrax.discretization._cell_geometry import CellGeometrySpec
@@ -31,14 +36,31 @@ from phydrax.geometry._approximate_source_coverage import (
     _single_sheet_preimages,
     SourceCoverageUnavailable,
 )
-from phydrax.geometry._contracts import CompiledGeometry
+from phydrax.geometry._capabilities import GeometryCapability
+from phydrax.geometry._certificate import (
+    DistanceSemantics,
+    FieldCertificate,
+    FieldRegularity,
+    SignReliability,
+    ZeroSetAccuracy,
+)
+from phydrax.geometry._contracts import CompiledGeometry, GeometryKernel, GeometryKind
+from phydrax.geometry._interval_enclosure import (
+    prepare_interval_function,
+    PreparedIntervalFunction,
+)
+from phydrax.geometry._sampling import RejectionSamplingPlan
 from phydrax.geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryDistanceWitness,
 )
+from phydrax.geometry._validity import GeometryValidityEvidence, unrestricted_validity
+from phydrax.geometry.analytic._primitives import _BallKernel
+from phydrax.geometry.design._schema import DesignState
 from phydrax.geometry.implicit import (
     AdaptiveImplicitSurface,
     AdaptiveImplicitSurfacePolicy,
+    AdaptiveImplicitSurfaceStatus,
     AnalyticImplicitProfile,
     discover_adaptive_implicit_surface,
 )
@@ -76,7 +98,12 @@ from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
 from phydrax.meshing._volume_generation import NativeVolumeSchedule
 from phydrax.meshing.providers._native import NativeMeshingProvider
 from phydrax.meshing.providers._native_implicit import (
+    _carrier_face_bounds,
+    _carrier_forward_bound,
+    _carrier_interval_programs,
     _NativeImplicitBoundaryQuery,
+    _PreparedImplicitRoute,
+    normalize_analytic_implicit_source,
     prepare_native_implicit,
 )
 from phydrax.meshing.providers._native_options import (
@@ -85,10 +112,104 @@ from phydrax.meshing.providers._native_options import (
 )
 from phydrax.meshing.providers._native_plc_geometry import volume_cell_entity_rows
 from phydrax.meshing.providers._native_sources import NativeImplicitSource
+from phydrax.typing import PRNGKey
 
 
 type _Point3 = tuple[Fraction, Fraction, Fraction]
 type _Triangle3 = tuple[_Point3, _Point3, _Point3]
+
+
+class _PolynomialBallKernel(GeometryKernel):
+    ball: _BallKernel
+    mode: str = eqx.field(static=True)
+
+    def __init__(self, ball: _BallKernel, mode: str, /) -> None:
+        self.ball = ball
+        self.mode = mode
+
+    @property
+    def ambient_dimension(self) -> int:
+        return 3
+
+    @property
+    def intrinsic_dimension(self) -> int:
+        return 3
+
+    @property
+    def kind(self) -> GeometryKind:
+        return GeometryKind.REGION
+
+    @property
+    def capabilities(self) -> frozenset[GeometryCapability]:
+        return frozenset({GeometryCapability.REGION_QUERY})
+
+    @property
+    def field_certificate(self) -> FieldCertificate:
+        return FieldCertificate(
+            zero_set_accuracy=ZeroSetAccuracy.EXACT,
+            sign_reliability=SignReliability.RELIABLE,
+            distance_semantics=DistanceSemantics.LEVEL_SET,
+            regularity=FieldRegularity.SMOOTH,
+            safe_step_factor=None,
+            validity_region="all_space",
+            parameter_differentiable=True,
+            provenance=("polynomial_ball_test",),
+        )
+
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
+        del state
+        return unrestricted_validity(contract_id="polynomial-ball")
+
+    def boundary_field(self, state: DesignState, points: Array, /) -> Array:
+        center, radius = self.ball._parameters(state)
+        if self.mode == "ellipsoid":
+            axes = radius * jnp.asarray((1.0, 0.8, 0.6), dtype=jnp.float64)
+            return jnp.sum(((points - center) / axes) ** 2, axis=-1) - 1.0
+        if self.mode == "scaled_distance":
+            distance = jnp.linalg.norm(points - center, axis=-1) - radius
+            return distance * (2.0 + 0.1 * points[..., 0] ** 2)
+        value = jnp.sum((points - center) ** 2, axis=-1) - radius**2
+        if self.mode == "scaled":
+            return value * (2.0 + 0.1 * points[..., 0] ** 2)
+        if self.mode == "tanh":
+            return value * (2.0 + 0.1 * jnp.tanh(points[..., 0]))
+        if self.mode == "singular":
+            return value**3
+        return value
+
+    def contains(self, state: DesignState, points: Array, /) -> Array:
+        return self.boundary_field(state, points) <= 0.0
+
+    def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
+        return self.ball.boundary_normal(state, points)
+
+    def bounds(self, state: DesignState, /) -> Array:
+        return self.ball.bounds(state)
+
+    def measure(self, state: DesignState, /) -> Array:
+        return self.ball.measure(state)
+
+    def boundary_measure(self, state: DesignState, /) -> Array:
+        return self.ball.boundary_measure(state)
+
+    def sample_interior(
+        self,
+        state: DesignState,
+        num_points: int,
+        /,
+        *,
+        key: PRNGKey,
+        plan: RejectionSamplingPlan | None = None,
+    ) -> NoReturn:
+        raise NotImplementedError
+
+    def sample_boundary(
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
+    ) -> NoReturn:
+        raise NotImplementedError
+
+    def boundary_atlas(self, state: DesignState, /) -> NoReturn:
+        raise NotImplementedError
 
 
 def _geometry_and_grid() -> tuple[CompiledGeometry, PreparedTensorGrid]:
@@ -265,6 +386,507 @@ def test_native_analytic_implicit_profile_normalizes_inside_plan_preparation() -
     ).execute()
 
     _assert_consumer_metadata(profile, specification, construction, contract)
+
+
+@pytest.mark.parametrize("shape", ["sphere", "torus"])
+@pytest.mark.parametrize("cap", [0.125, 0.0625])
+def test_carrier_forward_bound_covers_analytic_triangle_samples(
+    shape: str, cap: float
+) -> None:
+    contract = SpatialCoordinateContract.si()
+    model = (
+        Sphere((0.0, 0.0, 0.0), 1.0)
+        if shape == "sphere"
+        else Torus((0.0, 0.0, 0.0), 0.5, 1.5)
+    )
+    profile = AnalyticImplicitProfile(
+        model.compile(), contract, source_id=f"bound-{shape}"
+    )
+    specification, _, _ = _request(profile, maximum_deviation=0.2)
+    options = NativeMeshingOptions(
+        "implicit_surface",
+        implicit_policy=AdaptiveImplicitSurfacePolicy(
+            relative_cell_diameter=cap, root_tolerance=1.0e-8
+        ),
+    )
+    prepared = prepare_native_implicit(profile, specification, options, contract)
+    construction = prepared.execute()
+    bound = dict(construction.compliance.achieved)["source_fidelity_bound"]
+    mesh = construction.mesh
+    points = np.asarray(mesh.coordinates)[np.asarray(mesh.blocks[0].vertices)]
+    weights = np.asarray(
+        [(i / 6.0, j / 6.0, (6 - i - j) / 6.0) for i in range(7) for j in range(7 - i)],
+        dtype=np.float64,
+    )
+    samples = np.einsum("ij,njk->nik", weights, points)
+    if shape == "sphere":
+        distances = np.abs(np.linalg.norm(samples, axis=-1) - 1.0)
+    else:
+        radial = np.linalg.norm(samples[..., :2], axis=-1)
+        distances = np.abs(np.hypot(radial - 1.0, samples[..., 2]) - 0.5)
+    assert float(np.max(distances)) <= bound
+    theta = np.linspace(0.0, 2.0 * np.pi, 48, endpoint=False)
+    phi = np.linspace(
+        0.0, np.pi if shape == "sphere" else 2.0 * np.pi, 48, endpoint=False
+    )
+    t, p = np.meshgrid(theta, phi)
+    if shape == "sphere":
+        roots = np.stack(
+            (np.sin(p) * np.cos(t), np.sin(p) * np.sin(t), np.cos(p)), axis=-1
+        )
+    else:
+        roots = np.stack(
+            (
+                (1.0 + 0.5 * np.cos(p)) * np.cos(t),
+                (1.0 + 0.5 * np.cos(p)) * np.sin(t),
+                0.5 * np.sin(p),
+            ),
+            axis=-1,
+        )
+    roots = roots.reshape(-1, 3)
+    candidate_rows = cKDTree(np.mean(points, axis=1)).query(roots, k=8)[1]
+    candidate = points[candidate_rows]
+    query = roots[:, None, :]
+    a, b, c = candidate[:, :, 0], candidate[:, :, 1], candidate[:, :, 2]
+    ab, ac = b - a, c - a
+    normal = np.cross(ab, ac)
+    normal_squared = np.sum(normal * normal, axis=-1)
+    signed = np.sum((query - a) * normal, axis=-1) / normal_squared
+    projected = query - signed[..., None] * normal
+    ap = projected - a
+    d00 = np.sum(ab * ab, axis=-1)
+    d01 = np.sum(ab * ac, axis=-1)
+    d11 = np.sum(ac * ac, axis=-1)
+    d20 = np.sum(ap * ab, axis=-1)
+    d21 = np.sum(ap * ac, axis=-1)
+    denominator = d00 * d11 - d01 * d01
+    v = (d11 * d20 - d01 * d21) / denominator
+    w = (d00 * d21 - d01 * d20) / denominator
+    inside = (v >= 0.0) & (w >= 0.0) & (v + w <= 1.0)
+    distance_squared = np.where(inside, signed * signed * normal_squared, np.inf)
+    for first, second in ((a, b), (b, c), (c, a)):
+        edge = second - first
+        fraction = np.clip(
+            np.sum((query - first) * edge, axis=-1) / np.sum(edge * edge, axis=-1),
+            0.0,
+            1.0,
+        )
+        delta = query - (first + fraction[..., None] * edge)
+        distance_squared = np.minimum(distance_squared, np.sum(delta * delta, axis=-1))
+    assert float(np.max(np.sqrt(np.min(distance_squared, axis=1)))) <= bound
+
+
+def test_implicit_resolution_is_coarsest_certified_level() -> None:
+    contract = SpatialCoordinateContract.si()
+    profile = AnalyticImplicitProfile(
+        Sphere((0.013, -0.017, 0.019), 1.0).compile(),
+        contract,
+        source_id="coarsest-certified-ball",
+    )
+    specification, _, _ = _request(profile, maximum_deviation=0.2)
+    policy = AdaptiveImplicitSurfacePolicy(root_tolerance=1.0e-8)
+    source = normalize_analytic_implicit_source(
+        profile, policy, contract, specification=specification
+    )
+    selected = source.discovery
+    assert selected is not None
+    programs = _carrier_interval_programs(profile.geometry)
+    assert programs is not None
+    assert _carrier_forward_bound(selected, programs, 0.1) <= 0.1
+    for level in range(selected.scaffold.target_level):
+        trial = discover_adaptive_implicit_surface(
+            profile.geometry,
+            domain=selected.evidence.declared_domain,
+            policy=AdaptiveImplicitSurfacePolicy(
+                relative_cell_diameter=1.01 * 2.0**-level,
+                root_tolerance=1.0e-8,
+            ),
+            source_id=profile.source_id,
+        )
+        if (
+            trial.evidence.status_flags == AdaptiveImplicitSurfaceStatus.SUCCESS
+            and trial.mesh is not None
+            and trial.scaffold.target_level < selected.scaffold.target_level
+        ):
+            assert _carrier_forward_bound(trial, programs, 0.1) > 0.1
+
+
+def test_carrier_bound_includes_nonzero_root_residual() -> None:
+    contract = SpatialCoordinateContract.si()
+    profile = AnalyticImplicitProfile(
+        Sphere((0.0, 0.0, 0.0), 1.0).compile(),
+        contract,
+        source_id="root-residual-ball",
+    )
+    specification, _, _ = _request(profile, maximum_deviation=0.8)
+    options = NativeMeshingOptions(
+        "implicit_surface",
+        implicit_policy=AdaptiveImplicitSurfacePolicy(
+            relative_cell_diameter=0.125, root_tolerance=1.0e-8
+        ),
+    )
+    construction = prepare_native_implicit(
+        profile, specification, options, contract
+    ).execute()
+    bound = dict(construction.compliance.achieved)["source_fidelity_bound"]
+    distances = np.abs(
+        np.linalg.norm(np.asarray(construction.mesh.coordinates), axis=1) - 1.0
+    )
+    assert 0.0 < float(np.max(distances)) <= bound
+
+
+@pytest.mark.parametrize("scaled", [False, True])
+def test_carrier_bound_for_non_distance_sphere_field(scaled: bool) -> None:
+    original, grid = _geometry_and_grid()
+    ball = original.kernel
+    if not isinstance(ball, _BallKernel):
+        raise AssertionError("The analytic sphere must compile to a ball kernel.")
+    kernel = _PolynomialBallKernel(ball, "scaled" if scaled else "polynomial")
+    geometry = CompiledGeometry(kernel, original.state)
+    source = NativeImplicitSource(geometry, f"polynomial-ball-{scaled}", "r1", grid=grid)
+    specification, options, contract = _request(source, maximum_deviation=0.2)
+    construction = prepare_native_implicit(
+        source, specification, options, contract
+    ).execute()
+    bound = dict(construction.compliance.achieved)["source_fidelity_bound"]
+    mesh = construction.mesh
+    triangles = np.asarray(mesh.coordinates)[np.asarray(mesh.blocks[0].vertices)]
+    samples = np.mean(triangles, axis=1)
+    true_distances = np.abs(np.linalg.norm(samples, axis=1) - 0.75)
+    assert float(np.max(true_distances)) <= bound
+
+
+def _ellipsoid_distances(points: np.ndarray, axes: np.ndarray) -> np.ndarray:
+    """Independent Lagrange-multiplier closest-point solve, including pole cases."""
+    squared = axes * axes
+    inside = np.sum((points / axes) ** 2, axis=1) < 1.0
+    low = np.where(inside, np.nextafter(-squared[-1], 0.0), 0.0)
+    high = np.where(inside, 0.0, np.maximum(1.0, np.linalg.norm(points, axis=1)))
+    # At a zero shortest-axis component the multiplier can equal the pole;
+    # then the missing coordinate follows from the ellipsoid constraint.
+    pole_coordinates = squared[:2] * points[:, :2] / (squared[:2] - squared[-1])
+    pole_remainder = 1.0 - np.sum((pole_coordinates / axes[:2]) ** 2, axis=1)
+    pole = inside & (np.abs(points[:, 2]) < 1.0e-14) & (pole_remainder >= 0.0)
+    for _ in range(80):
+        mid = 0.5 * (low + high)
+        level = np.sum(squared * points**2 / (squared + mid[:, None]) ** 2, axis=1)
+        low = np.where(level > 1.0, mid, low)
+        high = np.where(level > 1.0, high, mid)
+    multiplier = 0.5 * (low + high)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        closest = squared * points / (squared + multiplier[:, None])
+    closest[pole, :2] = pole_coordinates[pole]
+    closest[pole, 2] = axes[2] * np.sqrt(pole_remainder[pole])
+    return np.linalg.norm(points - closest, axis=1)
+
+
+@pytest.mark.parametrize("mode", ["ellipsoid", "scaled_distance"])
+@pytest.mark.parametrize("cap", [0.125, 0.08])
+def test_carrier_bound_against_dense_independent_closest_points(
+    mode: str, cap: float
+) -> None:
+    original, grid = _geometry_and_grid()
+    ball = original.kernel
+    if not isinstance(ball, _BallKernel):
+        raise AssertionError("The analytic sphere must compile to a ball kernel.")
+    geometry = CompiledGeometry(_PolynomialBallKernel(ball, mode), original.state)
+    discovery = discover_adaptive_implicit_surface(
+        geometry,
+        domain=_grid_domain(grid),
+        policy=AdaptiveImplicitSurfacePolicy(
+            relative_cell_diameter=cap, root_tolerance=1.0e-8
+        ),
+        source_id=f"dense-{mode}-{cap}",
+    )
+    if discovery.mesh is None:
+        raise AssertionError("The reference geometry must have a discovery carrier.")
+    programs = _carrier_interval_programs(geometry)
+    if programs is None:
+        raise AssertionError("The reference field must admit interval programs.")
+    bound = _carrier_forward_bound(discovery, programs, 0.1)
+    triangles = np.asarray(discovery.mesh.vertices)[np.asarray(discovery.mesh.faces)]
+    weights = np.asarray(
+        [(i / 6.0, j / 6.0, (6 - i - j) / 6.0) for i in range(7) for j in range(7 - i)],
+        dtype=np.float64,
+    )
+    samples = np.einsum("ij,njk->nik", weights, triangles).reshape(-1, 3)
+    if mode == "ellipsoid":
+        distances = _ellipsoid_distances(
+            samples, np.asarray((0.75, 0.6, 0.45), dtype=np.float64)
+        )
+    else:
+        distances = np.abs(np.linalg.norm(samples, axis=1) - 0.75)
+    assert np.all(np.isfinite(distances))
+    assert float(np.max(distances)) <= bound
+
+
+def test_singular_gradient_retains_first_order_carrier_bound() -> None:
+    original, grid = _geometry_and_grid()
+    ball = original.kernel
+    if not isinstance(ball, _BallKernel):
+        raise AssertionError("The analytic sphere must compile to a ball kernel.")
+    discovery = discover_adaptive_implicit_surface(
+        original,
+        domain=_grid_domain(grid),
+        policy=AdaptiveImplicitSurfacePolicy(relative_cell_diameter=0.08),
+        source_id="singular-polynomial-ball",
+    )
+    kernel = _PolynomialBallKernel(ball, "singular")
+    programs = _carrier_interval_programs(CompiledGeometry(kernel, original.state))
+    assert programs is not None
+    bound = _carrier_forward_bound(discovery, programs, 0.2)
+    first_order = float(
+        np.nextafter(
+            discovery.evidence.maximum_surface_box_diagonal
+            + discovery.policy.root_tolerance,
+            np.inf,
+        )
+    )
+    assert bound == first_order
+
+
+def test_native_route_retains_first_order_when_native_program_is_refused() -> None:
+    original, grid = _geometry_and_grid()
+    ball = original.kernel
+    if not isinstance(ball, _BallKernel):
+        raise AssertionError("The analytic sphere must compile to a ball kernel.")
+    geometry = CompiledGeometry(_PolynomialBallKernel(ball, "tanh"), original.state)
+    assert _carrier_interval_programs(geometry) is None
+    source = NativeImplicitSource(geometry, "tanh-ball", "r1", grid=grid)
+    specification, options, contract = _request(source, maximum_deviation=0.8)
+    prepared = prepare_native_implicit(source, specification, options, contract)
+    if not isinstance(prepared, _PreparedImplicitRoute):
+        raise AssertionError("Expected the adaptive implicit surface route.")
+    construction = prepared.execute()
+    first = np.nextafter(
+        prepared.discovery.evidence.maximum_surface_box_diagonal
+        + prepared.discovery.policy.root_tolerance,
+        np.inf,
+    )
+    assert dict(construction.compliance.achieved)["source_fidelity_bound"] == first
+
+
+def _face_programs(
+    field: Callable[[Array], Array],
+) -> tuple[
+    PreparedIntervalFunction,
+    PreparedIntervalFunction,
+    PreparedIntervalFunction,
+    PreparedIntervalFunction,
+]:
+    return (
+        prepare_interval_function(field, 3, batch_capacity=1, execution="batched"),
+        prepare_interval_function(
+            jax.grad(field), 3, batch_capacity=1, execution="batched"
+        ),
+        prepare_interval_function(
+            jax.hessian(field), 3, batch_capacity=1, execution="batched"
+        ),
+        prepare_interval_function(field, 3, batch_capacity=1024, execution="native"),
+    )
+
+
+def _test_face_bound(
+    field: Callable[[Array], Array], triangle: np.ndarray, radius: float
+) -> float:
+    domain = np.asarray(((-3.0, -3.0, -3.0), (3.0, 3.0, 3.0)), dtype=np.float64)
+    return float(
+        _carrier_face_bounds(triangle[None], _face_programs(field), radius, domain)[0]
+    )
+
+
+def test_face_bound_includes_vertex_residual() -> None:
+    def field(point: Array) -> Array:
+        return jnp.sum(point * point) - 1.0
+
+    r = 0.001
+    x = np.sqrt(1.01**2 - r**2)
+    triangle = np.asarray(
+        ((x, r, 0.0), (x, -r / 2, r), (x, -r / 2, -r)), dtype=np.float64
+    )
+    assert _test_face_bound(field, triangle, 0.03) >= 0.01
+
+
+@pytest.mark.parametrize(
+    ("length", "residual", "radius"), [(1.0, 0.3, 0.5), (0.4, 0.25, 0.1)]
+)
+def test_face_bound_refuses_flow_beyond_tube(
+    length: float, residual: float, radius: float
+) -> None:
+    def field(point: Array) -> Array:
+        z = point[2]
+        return residual - (z - z * z / (2.0 * length))
+
+    triangle = np.asarray(
+        ((0.0, 0.0, 0.0), (0.001, 0.0, 0.0), (0.0, 0.001, 0.0)), dtype=np.float64
+    )
+    assert np.isinf(_test_face_bound(field, triangle, radius))
+
+
+def test_face_bound_covers_equilateral_sphere_sagitta() -> None:
+    def field(point: Array) -> Array:
+        return jnp.sum(point * point) - 1.0
+
+    edge = 0.15
+    r = edge / np.sqrt(3.0)
+    x = np.sqrt(1.0 - r * r)
+    triangle = np.asarray(
+        ((x, r, 0.0), (x, -r / 2.0, edge / 2.0), (x, -r / 2.0, -edge / 2.0)),
+        dtype=np.float64,
+    )
+    assert _test_face_bound(field, triangle, 0.01) >= 1.0 - x
+
+
+def test_face_bound_refuses_crease() -> None:
+    def field(point: Array) -> Array:
+        return point[2] - jnp.abs(point[0])
+
+    triangle = np.asarray(
+        ((-0.05, 0.0, 0.05), (0.05, 0.0, 0.05), (0.05, 0.1, 0.05)),
+        dtype=np.float64,
+    )
+    assert _test_face_bound(field, triangle, 0.1) >= 0.05 / np.sqrt(2.0)
+
+
+def test_face_bound_restricts_only_faces_near_domain_boundary() -> None:
+    def field(point: Array) -> Array:
+        return point[2]
+
+    triangles = np.asarray(
+        (
+            ((0.0, 0.0, 0.01), (0.01, 0.0, 0.01), (0.0, 0.01, 0.01)),
+            ((0.95, 0.0, 0.01), (0.96, 0.0, 0.01), (0.95, 0.01, 0.01)),
+        ),
+        dtype=np.float64,
+    )
+    domain = np.asarray(((-1.0, -1.0, -1.0), (1.0, 1.0, 1.0)), dtype=np.float64)
+    bounds = _carrier_face_bounds(triangles, _face_programs(field), 0.1, domain)
+    assert 0.01 <= bounds[0] < np.inf
+    assert np.isinf(bounds[1])
+
+
+@pytest.mark.parametrize("refused_program", [0, 1, 2])
+def test_carrier_interval_evaluation_refusal_retains_first_order(
+    refused_program: int,
+) -> None:
+    geometry, grid = _geometry_and_grid()
+    discovery = discover_adaptive_implicit_surface(
+        geometry,
+        domain=_grid_domain(grid),
+        policy=AdaptiveImplicitSurfacePolicy(relative_cell_diameter=0.08),
+        source_id="interval-evaluation-refusal",
+    )
+    programs = _carrier_interval_programs(geometry)
+    assert programs is not None
+
+    def negative_base(point: Array) -> Array:
+        return (point[0] - 10.0) ** 0.5
+
+    refused = prepare_interval_function(
+        negative_base, 3, batch_capacity=1, execution="batched"
+    )
+    selected = list(programs)
+    selected[refused_program] = refused
+    bound = _carrier_forward_bound(
+        discovery, (selected[0], selected[1], selected[2], selected[3]), 0.2
+    )
+    first = np.nextafter(
+        discovery.evidence.maximum_surface_box_diagonal + discovery.policy.root_tolerance,
+        np.inf,
+    )
+    assert bound == first
+
+
+def test_carrier_does_not_follow_flow_outside_declared_domain() -> None:
+    geometry, grid = _geometry_and_grid()
+    discovery = discover_adaptive_implicit_surface(
+        geometry,
+        domain=_grid_domain(grid),
+        policy=AdaptiveImplicitSurfacePolicy(relative_cell_diameter=0.08),
+        source_id="domain-restricted-flow",
+    )
+    programs = _carrier_interval_programs(geometry)
+    assert programs is not None
+    first = np.nextafter(
+        discovery.evidence.maximum_surface_box_diagonal + discovery.policy.root_tolerance,
+        np.inf,
+    )
+    assert _carrier_forward_bound(discovery, programs, 0.8) == first
+
+
+def test_ladder_preserves_discovery_failure_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    geometry, grid = _geometry_and_grid()
+    source = NativeImplicitSource(geometry, "failing-discovery", "r1", grid=grid)
+    specification, options, contract = _request(source, maximum_deviation=0.8)
+    policy = options.implicit_policy
+    if not isinstance(policy, AdaptiveImplicitSurfacePolicy):
+        raise AssertionError("The request must have an adaptive implicit policy.")
+
+    def refuse(
+        geometry: CompiledGeometry,
+        *,
+        domain: np.ndarray,
+        policy: AdaptiveImplicitSurfacePolicy,
+        source_id: str,
+    ) -> NoReturn:
+        raise ValueError("discovery refusal")
+
+    monkeypatch.setattr(implicit_provider, "discover_adaptive_implicit_surface", refuse)
+    with pytest.raises(MeshingFailure) as old:
+        implicit_provider._discover(source, _grid_domain(grid), policy)
+    with pytest.raises(MeshingFailure) as new:
+        prepare_native_implicit(source, specification, options, contract)
+    assert (
+        new.value.category,
+        new.value.provider_code,
+        new.value.stage,
+        str(new.value),
+    ) == (
+        old.value.category,
+        old.value.provider_code,
+        old.value.stage,
+        str(old.value),
+    )
+
+
+def test_ladder_continues_after_coarse_discovery_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    geometry, grid = _geometry_and_grid()
+    source = NativeImplicitSource(geometry, "coarse-refusal", "r1", grid=grid)
+    specification, _, contract = _request(source, maximum_deviation=0.8)
+    policy = AdaptiveImplicitSurfacePolicy(root_tolerance=1.0e-8)
+    options = NativeMeshingOptions("implicit_surface", implicit_policy=policy)
+    original = implicit_provider.discover_adaptive_implicit_surface
+    refused: list[float] = []
+
+    def refuse_coarse(
+        geometry: CompiledGeometry,
+        *,
+        domain: np.ndarray,
+        policy: AdaptiveImplicitSurfacePolicy,
+        source_id: str,
+    ) -> AdaptiveImplicitSurface:
+        resolution = policy.relative_cell_diameter
+        if resolution is not None and resolution > 0.1:
+            refused.append(resolution)
+            raise ValueError("coarse discovery refusal")
+        return original(geometry, domain=domain, policy=policy, source_id=source_id)
+
+    monkeypatch.setattr(
+        implicit_provider, "discover_adaptive_implicit_surface", refuse_coarse
+    )
+    prepared = prepare_native_implicit(source, specification, options, contract)
+    if not isinstance(prepared, _PreparedImplicitRoute):
+        raise AssertionError("Expected the adaptive implicit surface route.")
+    assert refused
+    resolution = prepared.discovery.policy.relative_cell_diameter
+    if resolution is None:
+        raise AssertionError("The effective discovery policy must have a resolution.")
+    assert resolution <= 0.1
+    assert prepared.execute().compliance.passed
 
 
 def test_native_implicit_grid_source_builds_certified_surface_construction() -> None:

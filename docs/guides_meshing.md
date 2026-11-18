@@ -1107,15 +1107,27 @@ joins the fill stage identity.
 
 `AdaptiveImplicitSurfacePolicy.relative_cell_diameter` defaults to `None`, so a
 policy can customize other controls without imposing a discovery resolution.
-For an omitted or `None` diameter, a native implicit route resolves the
-diameter from the request: the smallest of half the `maximum_deviation`, every
-hard `UniformSizeControl` allowance and every soft uniform size target, each
-relative to the discovery-domain diagonal. If there are no such candidates, it
-uses `0.001`. The root tolerance is at most a quarter of `maximum_deviation`.
-An explicitly specified diameter is only tightened by the deviation and hard
-size allowances. Direct discovery without a meshing specification resolves an
-unspecified diameter to `0.001`. An analytic profile given to an adaptive route
-is discovered once at the resolved resolution and the route reuses the discovery.
+For an omitted or `None` diameter and a positive `maximum_deviation`, the
+native implicit route tries dyadic resolutions from coarse to fine and chooses
+the first whose certified carrier-to-zero-set distance is at most half the
+deviation. The other uniform size controls still cap the cell diameter. Each
+carrier triangle uses an outward interval Taylor bound when the field is smooth
+and its gradient is nonzero in the proved tube and that tube lies inside the
+declared domain. Otherwise it retains the surface-box bound. Unsupported or
+nonfinite interval evaluations also retain the surface-box bound; if no
+coarser carrier meets the target, the original resolution is used.
+An explicit diameter remains a cap, and the root tolerance is at most a quarter
+of `maximum_deviation`. Without a deviation
+or size candidate, the default diameter is `0.001`. Direct discovery without a
+meshing specification also resolves an unspecified diameter to `0.001`.
+`source_fidelity_bound` reports the forward association distance; the final
+source-fidelity certificate independently proves both directions.
+
+For a uniformly resolved smooth surface, each successive coarser level has
+approximately one quarter as many surface cells, so the ladder's additional
+discovery work is a geometric series; actual times also include resolution and
+contour-certification overhead.
+
 Discovery re-anchors its
 lattice only when a lattice vertex lies on a sign crossing (its point enclosure
 contains zero while its neighbour stencil takes both certified signs): it
