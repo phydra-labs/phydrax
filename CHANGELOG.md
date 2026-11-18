@@ -317,6 +317,8 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Sparse storage planning uses stable packed route keys when coordinates fit
+  32 bits, preserving lexicographic order and coefficient reduction order.
 - Dynamic glued-face monotonicity checks rational Jacobian controls with exact
   integer signs before decoding, preserving findings and the alternative
   preconditioner route. Three alternating replays of 6,990 captured calls took
