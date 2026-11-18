@@ -137,20 +137,16 @@ def _assert_stretch_certificate(
     assert determinant >= 0
 
 
-def test_lattice_metrics_stretch_ignores_underestimated_numpy_norm(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    vectors = np.asarray(((1.3, 0.0, 0.0), (0.4, 0.9, 0.0), (-0.2, 0.3, 1.7)))
-    surface = _discover("schwarz_p", 0.2, vectors)
-    norm = np.linalg.norm
-    monkeypatch.setattr(
-        np.linalg,
-        "norm",
-        lambda x, ord=None, axis=None, keepdims=False: norm(
-            x, ord=ord, axis=axis, keepdims=keepdims
+def test_lattice_metrics_stretch_for_underestimated_spectral_norm() -> None:
+    """Some LAPACK implementations underestimate this lattice's spectral norm."""
+    vectors = np.asarray(
+        (
+            (1.375, 2.84375, 0.84375),
+            (2.125, -1.5, 0.96875),
+            (-2.0, 0.6875, -1.5625),
         )
-        * (0.5 if ord == 2 else 1.0),
     )
+    surface = _discover("schwarz_p", 0.2, vectors)
 
     distance = surface.lattice_metrics().vertex_root_distance
     _assert_stretch_certificate(surface, vectors, distance)
