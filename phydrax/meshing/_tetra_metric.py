@@ -11,8 +11,8 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from fractions import Fraction
-from itertools import combinations, islice
-from math import frexp, gcd, lcm, sqrt
+from itertools import combinations
+from math import lcm, sqrt
 from typing import Any, assert_never, cast, final, NamedTuple, NoReturn
 
 import equinox as eqx
@@ -37,6 +37,7 @@ from .._meshcore import (
     metric_relocation_pulls,
     metric_tensor_properties,
     metric_tetra_quality,
+    MetricCarrierOrder,
     MetricCollapseStar,
     MetricPositionVerdict,
     MetricSearchEnd,
@@ -493,10 +494,10 @@ class _NativeState:
     unrepresentable_edges: set[tuple[int, int]]
     # Host tables derived from exactly ``snapshot`` (see ``_snapshot_tables``).
     tables: _SnapshotTables | None = None
-    # Exact integer data of located source cells and carrier simplices, keyed
-    # by their ordered source vertex IDs (``_quantized_relocation_candidates``):
-    # a pure function of the immutable source, built once per adaptation.
-    source_supports: dict[tuple[int, ...], _SourceSupport] = field(default_factory=dict)
+    # Exact affine frames of carrier simplices, keyed by their ordered source
+    # vertex IDs (``_source_carrier_frame``): a pure function of the immutable
+    # source, built once per adaptation.
+    source_frames: dict[tuple[int, ...], _EntityFrame] = field(default_factory=dict)
     # Corners, projector and orthonormal basis of a carrier's affine hull:
     # kernel values that depend only on the same immutable source.
     source_projections: dict[
@@ -1353,97 +1354,6 @@ def _entity_frame(corners: tuple[tuple[Fraction, ...], ...], /) -> _EntityFrame:
             ),
         )
     return origin, gradients
-
-
-type _Ratio = tuple[int, int]
-"""An exact rational ``numerator / denominator`` with a positive denominator."""
-type _IntegerFrame = tuple[tuple[_Ratio, ...], tuple[tuple[_Ratio, ...], ...]]
-
-
-def _integer_frame(frame: _EntityFrame, /) -> _IntegerFrame | None:
-    """``_EntityFrame`` as integer ratios (``None``: degenerate entity)."""
-    origin, gradients = frame
-    if gradients is None:
-        return None
-    return (
-        tuple((value.numerator, value.denominator) for value in origin),
-        tuple(
-            tuple((value.numerator, value.denominator) for value in gradient)
-            for gradient in gradients
-        ),
-    )
-
-
-def _entity_weight_ratios(
-    frame: _IntegerFrame, point: tuple[_Ratio, _Ratio, _Ratio], /
-) -> tuple[_Ratio, ...] | None:
-    """Reduced exact barycentric weights ``(remaining, *tail)`` of a source
-    edge or triangle projection; ``None`` outside the entity.
-
-    Each weight ``sum_k g_k (p_k - o_k)`` is accumulated as an unreduced
-    integer ratio (positive denominators) and reduced once.
-    """
-    origin, gradients = frame
-    offsets = [
-        (
-            point_numerator * origin_denominator - origin_numerator * point_denominator,
-            point_denominator * origin_denominator,
-        )
-        for (point_numerator, point_denominator), (
-            origin_numerator,
-            origin_denominator,
-        ) in zip(point, origin, strict=True)
-    ]
-    tail: list[_Ratio] = []
-    remaining_numerator, remaining_denominator = 1, 1
-    for gradient in gradients:
-        numerator, denominator = 0, 1
-        for (factor_numerator, factor_denominator), (
-            offset_numerator,
-            offset_denominator,
-        ) in zip(gradient, offsets, strict=True):
-            term_denominator = factor_denominator * offset_denominator
-            numerator = (
-                numerator * term_denominator
-                + factor_numerator * offset_numerator * denominator
-            )
-            denominator *= term_denominator
-        if (
-            numerator < 0
-            or numerator * remaining_denominator > remaining_numerator * denominator
-        ):
-            return None
-        common = gcd(numerator, denominator)
-        numerator, denominator = numerator // common, denominator // common
-        tail.append((numerator, denominator))
-        remaining_numerator = (
-            remaining_numerator * denominator - numerator * remaining_denominator
-        )
-        remaining_denominator *= denominator
-        common = gcd(remaining_numerator, remaining_denominator)
-        remaining_numerator //= common
-        remaining_denominator //= common
-    return ((remaining_numerator, remaining_denominator), *tail)
-
-
-def _entity_weights(
-    frame: _EntityFrame, point: tuple[Fraction, Fraction, Fraction], /
-) -> tuple[Fraction, ...] | None:
-    """Exact barycentric weights of a source edge or triangle projection."""
-    integer_frame = _integer_frame(frame)
-    if integer_frame is None:
-        return None
-    ratios = _entity_weight_ratios(
-        integer_frame,
-        (
-            (point[0].numerator, point[0].denominator),
-            (point[1].numerator, point[1].denominator),
-            (point[2].numerator, point[2].denominator),
-        ),
-    )
-    if ratios is None:
-        return None
-    return tuple(Fraction(numerator, denominator) for numerator, denominator in ratios)
 
 
 def _fresh_ids(first: int, count: int, name: str, /) -> np.ndarray:
@@ -4479,6 +4389,8 @@ class _SourceBank(NamedTuple):
     """Source vertex ID of each bank row."""
     rows: dict[int, int]
     """Bank row of each source vertex ID."""
+    cells: dict[int, int]
+    """Bank cell row of each source cell ID."""
 
 
 def _source_bank(state: _NativeState, /) -> _SourceBank:
@@ -4503,6 +4415,10 @@ def _source_bank(state: _NativeState, /) -> _SourceBank:
             ),
             identifiers,
             rows,
+            {
+                int(record[0]): row
+                for row, record in enumerate(state.source_records.records)
+            },
         )
         state.source_bank = bank
     return bank
@@ -4615,17 +4531,7 @@ def _survivor_moves(
     # The carrier simplices are coplanar (one facet) or collinear (one curve
     # or segment): the first spans their affine hull.
     entries, end = bank.source.survivor_moves(
-        star,
-        None
-        if simplices is None
-        else tuple(
-            (
-                tuple(bank.rows[vertex] for vertex in simplex),
-                len(simplex) != 2 and frozenset(simplex) in state.declared_source_faces,
-            )
-            for simplex in simplices
-        ),
-        implicit_only,
+        star, _bank_simplices(state, bank, simplices), implicit_only
     )
     referred = end in (MetricSearchEnd.UNMEASURED, MetricSearchEnd.OUTSIDE_DOMAIN)
     for index, entry in enumerate(entries):
@@ -6106,78 +6012,20 @@ def _replacement_phase(
             blocked.clear()
 
 
-type _CarrierCache = dict[
-    tuple[tuple[int, ...], tuple[int, ...], int],
-    tuple[np.ndarray, bool, tuple[float, float, float]],
-]
-"""Dyadic carriers by stencil: (support IDs, reduced numerators, reduced
-denominator) to the binary64 carrier and whether it is exact."""
-
-
-class _SourceSupport(NamedTuple):
-    """Exact integer data of one located source simplex or cell."""
-
-    frame: _IntegerFrame | None
-    support: tuple[int, ...]
-    """Sorted distinct source vertex IDs."""
-    numerators: tuple[tuple[int, ...], ...]
-    """Exact source points of ``support`` times ``denominator``."""
-    denominator: int
-    columns: tuple[int, ...]
-    """Row in ``support`` of each located vertex, in located order."""
-    span: float
-    """Largest coordinate extent of the support's binary64 points."""
-
-
-def _source_support(
-    state: _NativeState,
-    vertices: tuple[int, ...],
-    frames: dict[tuple[int, ...], _SourceSupport] | None,
-    /,
-) -> _SourceSupport:
-    cached = frames.get(vertices) if frames is not None else None
-    if cached is None:
-        rows = state.source_vertex_rows
-        support = tuple(sorted({int(vertex) for vertex in vertices}))
-        points = [state.source_exact_points[rows[vertex]] for vertex in support]
-        denominator = lcm(*(value.denominator for point in points for value in point))
-        cached = _SourceSupport(
-            _integer_frame(
-                _entity_frame(tuple(state.source_exact_points[rows[v]] for v in vertices))
-            )
-            if len(vertices) in (2, 3)
-            else None,
-            support,
-            tuple(
-                tuple(
-                    value.numerator * (denominator // value.denominator)
-                    for value in point
-                )
-                for point in points
-            ),
-            denominator,
-            tuple(support.index(int(vertex)) for vertex in vertices),
-            float(
-                np.max(np.ptp(state.source_points[[rows[v] for v in support]], axis=0))
-            ),
-        )
-        if frames is not None:
-            frames[vertices] = cached
-    return cached
-
-
 def _source_carrier_frame(
     state: _NativeState, vertices: tuple[int, ...], /
 ) -> _EntityFrame:
     """Exact affine frame of an edge or face in the immutable source."""
-    frame = _source_support(state, vertices, state.source_supports).frame
+    frame = state.source_frames.get(vertices)
     if frame is None:
-        return state.source_exact_points[state.source_vertex_rows[vertices[0]]], None
-    origin, gradients = frame
-    return (
-        tuple(Fraction(*value) for value in origin),
-        tuple(tuple(Fraction(*value) for value in gradient) for gradient in gradients),
-    )
+        corners = tuple(
+            state.source_exact_points[state.source_vertex_rows[vertex]]
+            for vertex in vertices
+        )
+        # Only an edge or a triangle spans a frame.
+        frame = _entity_frame(corners) if len(corners) in (2, 3) else (corners[0], None)
+        state.source_frames[vertices] = frame
+    return frame
 
 
 def _source_cell_carrier(
@@ -6218,6 +6066,59 @@ def _source_cell_carrier(
     return tuple(sorted(members)) if len(members) == len(simplex) else None
 
 
+# The 53 resolutions of a carrier and the coarsest one repeated by a
+# coarse-and-fine search.
+_ALL_CARRIERS = 54
+
+
+def _bank_simplices(
+    state: _NativeState,
+    bank: _SourceBank,
+    simplices: tuple[tuple[int, ...], ...] | None,
+    /,
+) -> tuple[tuple[tuple[int, ...], bool], ...] | None:
+    """Carrier simplices as bank rows, each with whether it is a declared face."""
+    if simplices is None:
+        return None
+    return tuple(
+        (
+            tuple(bank.rows[vertex] for vertex in simplex),
+            len(simplex) != 2 and frozenset(simplex) in state.declared_source_faces,
+        )
+        for simplex in simplices
+    )
+
+
+def _source_carriers(
+    state: _NativeState,
+    simplices: tuple[tuple[int, ...], ...] | None,
+    target: np.ndarray,
+    current: np.ndarray,
+    order: MetricCarrierOrder,
+    limit: int,
+    cell: int | None,
+    /,
+) -> tuple[tuple[dict[int, Fraction], np.ndarray], ...]:
+    bank = _source_bank(state)
+    return tuple(
+        (
+            {
+                bank.identifiers[row]: Fraction(weight, 1 << carrier.bits)
+                for row, weight in zip(carrier.rows, carrier.weights, strict=True)
+            },
+            carrier.point,
+        )
+        for carrier in bank.source.carriers(
+            target,
+            current,
+            _bank_simplices(state, bank, simplices),
+            order,
+            limit,
+            cell=None if cell is None else bank.cells[cell],
+        )
+    )
+
+
 def _quantized_relocation_candidates(
     state: _NativeState,
     simplices: tuple[tuple[int, ...], ...] | None,
@@ -6225,12 +6126,12 @@ def _quantized_relocation_candidates(
     current: np.ndarray,
     /,
     *,
-    frames: dict[tuple[int, ...], _SourceSupport] | None = None,
-    images: _CarrierCache | None = None,
     fine_first: bool = False,
     coarse_and_fine: bool = False,
-) -> Iterator[tuple[dict[int, Fraction], np.ndarray]]:
-    """Enumerate exact dyadic source carriers for one relocation target.
+    limit: int = _ALL_CARRIERS,
+    cell: int | None = None,
+) -> tuple[tuple[dict[int, Fraction], np.ndarray], ...]:
+    """Exact dyadic source carriers for one relocation target, at most ``limit``.
 
     Each carrier is closer to the target than the current point. Boundary
     images retain the exact or declared-plane admission required by the
@@ -6238,168 +6139,24 @@ def _quantized_relocation_candidates(
     through 53 bits, in fine-to-coarse or coarse-to-fine order.
     With ``coarse_and_fine``, the first two results are the coarsest and
     finest admissible carriers, sharing the same exact source location.
+    An interior target is located in the first source cell that holds it, or
+    in source cell ``cell`` alone.
 
     Each support weight is rounded to the grid ``2**-bits`` through its
     partial sums (half to even, monotone, the last exactly one), so the
     quantized weights are nonnegative, sum to one and are binary64 values;
     the point stays in the entity spanned by the support. The rounding and
-    the image ``sum_i w_i X_i`` are evaluated in integers over common
-    denominators, so stencils, carriers and admissions are exact.
+    the image ``sum_i w_i X_i`` are evaluated in integers over the exact
+    source points by the native source (``MetricSource.carriers``), so
+    stencils, carriers and admissions are exact.
     """
-    query = tuple(float(value).as_integer_ratio() for value in target)
-    located: tuple[_SourceSupport, tuple[_Ratio, ...]] | None = None
-    if simplices is None:
-        cell = _locate_source_weights(
-            (Fraction(*query[0]), Fraction(*query[1]), Fraction(*query[2])),
-            state.source_records,
-        )
-        if cell is not None:
-            located = (
-                _source_support(state, tuple(int(vertex) for vertex in cell[1]), frames),
-                tuple((weight.numerator, weight.denominator) for weight in cell[2]),
-            )
+    if coarse_and_fine:
+        order = MetricCarrierOrder.COARSE_THEN_FINE
+    elif fine_first:
+        order = MetricCarrierOrder.FINE_FIRST
     else:
-        for simplex in simplices:
-            entity = _source_support(state, simplex, frames)
-            if entity.frame is None:
-                continue
-            simplex_weights = _entity_weight_ratios(
-                entity.frame, (query[0], query[1], query[2])
-            )
-            if simplex_weights is not None:
-                located = entity, simplex_weights
-                break
-    if located is None:
-        return
-    entity, weights = located
-    support, support_numerators, denominator, columns = (
-        entity.support,
-        entity.numerators,
-        entity.denominator,
-        entity.columns,
-    )
-    if simplices is None:
-        # Exact barycentric inversion reproduces the target itself.
-        goal = target
-    else:
-        # ``float`` of the exact image ``sum_i w_i X_i``: one correctly
-        # rounded quotient per axis.
-        weight_denominator = lcm(
-            *(weight_denominator for _, weight_denominator in weights)
-        )
-        merged_weights = [0] * len(support)
-        for column, (weight_numerator, weight_denominator_i) in zip(
-            columns, weights, strict=True
-        ):
-            merged_weights[column] += weight_numerator * (
-                weight_denominator // weight_denominator_i
-            )
-        goal = np.asarray(
-            [
-                sum(
-                    merged_weights[index] * support_numerators[index][axis]
-                    for index in range(len(support))
-                )
-                / (weight_denominator * denominator)
-                for axis in range(3)
-            ]
-        )
-    distance = float(np.sum((goal - current) ** 2))
-    span = entity.span
-    if not distance > 0.0 or not span > 0.0:
-        return
-    # Exact partial weight sums.
-    partials: list[_Ratio] = []
-    running_numerator, running_denominator = 0, 1
-    for weight_numerator, weight_denominator_i in weights[:-1]:
-        running_numerator = (
-            running_numerator * weight_denominator_i
-            + weight_numerator * running_denominator
-        )
-        running_denominator *= weight_denominator_i
-        common = gcd(running_numerator, running_denominator)
-        running_numerator //= common
-        running_denominator //= common
-        partials.append((running_numerator, running_denominator))
-    vertices = tuple(support[column] for column in columns)
-    declared = len(vertices) != 2 and frozenset(vertices) in state.declared_source_faces
-    # ``float(np.sum((carrier - goal) ** 2))`` for three components is the
-    # sequential binary64 sum of the squares.
-    goal_x, goal_y, goal_z = (float(value) for value in goal)
-    # A grid coarser than the move cannot resolve it; start where it can: at
-    # the binary exponent of span / |move|, which is floor(log2) exactly.
-    first = min(max(frexp(span / sqrt(distance))[1] - 1, 1), 53)
-    resolutions = iter(
-        range(53, first - 1, -1)
-        if fine_first and not coarse_and_fine
-        else range(first, 54)
-    )
-    searching_coarse = coarse_and_fine
-    while (bits := next(resolutions, None)) is not None:
-        scale = 1 << bits
-        merged = [0] * len(support)
-        previous = 0
-        for column, (numerator, partial_denominator) in zip(
-            columns, partials, strict=False
-        ):
-            # ``round`` of the exact partial sum times ``scale`` (half to even).
-            quotient, remainder = divmod(numerator << bits, partial_denominator)
-            twice = 2 * remainder
-            if twice > partial_denominator or (
-                twice == partial_denominator and quotient & 1
-            ):
-                quotient += 1
-            quotient = min(max(quotient, previous), scale)
-            merged[column] += quotient - previous
-            previous = quotient
-        merged[columns[-1]] += scale - previous
-        present = [index for index, value in enumerate(merged) if value]
-        common = gcd(scale, *(merged[index] for index in present))
-        key = (
-            tuple(support[index] for index in present),
-            tuple(merged[index] // common for index in present),
-            scale // common,
-        )
-        cached = images.get(key) if images is not None else None
-        if cached is None:
-            image_denominator = scale * denominator
-            values = [
-                sum(merged[index] * support_numerators[index][axis] for index in present)
-                for axis in range(3)
-            ]
-            # Correctly rounded quotients: ``float`` of the exact image.
-            components = (
-                values[0] / image_denominator,
-                values[1] / image_denominator,
-                values[2] / image_denominator,
-            )
-            carrier = np.asarray(components, dtype=np.float64)
-            exact = True
-            for value, rounded in zip(values, components, strict=True):
-                rounded_numerator, rounded_denominator = rounded.as_integer_ratio()
-                if value * rounded_denominator != rounded_numerator * image_denominator:
-                    exact = False
-                    break
-            cached = carrier, exact, components
-            if images is not None:
-                images[key] = cached
-        carrier, exact, (carrier_x, carrier_y, carrier_z) = cached
-        delta_x, delta_y, delta_z = (
-            carrier_x - goal_x,
-            carrier_y - goal_y,
-            carrier_z - goal_z,
-        )
-        if not delta_x * delta_x + delta_y * delta_y + delta_z * delta_z < distance:
-            continue
-        if simplices is not None and not exact and not declared:
-            continue
-        yield (
-            {support[index]: Fraction(merged[index], scale) for index in present},
-            carrier,
-        )
-        if searching_coarse:
-            resolutions = iter(range(53, first - 1, -1))
-            searching_coarse = False
+        order = MetricCarrierOrder.COARSE_FIRST
+    return _source_carriers(state, simplices, target, current, order, limit, cell)
 
 
 def _quantized_relocation(
@@ -6408,17 +6165,12 @@ def _quantized_relocation(
     target: np.ndarray,
     current: np.ndarray,
     /,
-    *,
-    frames: dict[tuple[int, ...], _SourceSupport] | None = None,
-    images: _CarrierCache | None = None,
 ) -> tuple[dict[int, Fraction], np.ndarray] | None:
     """Return the coarsest admissible exact source carrier, if one exists."""
-    return next(
-        _quantized_relocation_candidates(
-            state, simplices, target, current, frames=frames, images=images
-        ),
-        None,
+    found = _source_carriers(
+        state, simplices, target, current, MetricCarrierOrder.COARSE_FIRST, 1, None
     )
+    return found[0] if found else None
 
 
 def _implicit_tangent_pulls(
@@ -7129,8 +6881,6 @@ def _relocation_proposals(
                 frame = corners, projection, basis
                 state.source_projections[simplex] = frame
             corners, projection, basis = frame
-        frames = state.source_supports
-        images: _CarrierCache = {}
         jacobian = None
         if deep and np.any(outside) and not constant_metric:
             # A varying tensor changes with the vertex. Finite differences
@@ -7144,9 +6894,7 @@ def _relocation_proposals(
                 derivative = None
                 for sign in (1.0, -1.0):
                     trial = points[row] + sign * step * direction
-                    located = _quantized_relocation(
-                        state, simplices, trial, points[row], frames=frames, images=images
-                    )
+                    located = _quantized_relocation(state, simplices, trial, points[row])
                     if located is None:
                         continue
                     trial_stencil, carrier = located
@@ -7339,37 +7087,22 @@ def _relocation_proposals(
                         simplices,
                         goal,
                         local_points[0],
-                        frames=frames,
-                        images=images,
                         fine_first=True,
+                        limit=_ALL_CARRIERS if remaining else 1,
                     )
-                    first = next(choices, None)
-                    candidates = (
-                        choices if remaining else (() if first is None else (first,))
-                    )
+                    candidates = choices[1:] if remaining else choices
                 elif deep:
-                    candidates = tuple(
-                        islice(
-                            _quantized_relocation_candidates(
-                                state,
-                                simplices,
-                                goal,
-                                local_points[0],
-                                frames=frames,
-                                images=images,
-                                coarse_and_fine=True,
-                            ),
-                            2,
-                        )
-                    )
-                else:
-                    quantized = _quantized_relocation(
+                    candidates = _quantized_relocation_candidates(
                         state,
                         simplices,
                         goal,
                         local_points[0],
-                        frames=frames,
-                        images=images,
+                        coarse_and_fine=True,
+                        limit=2,
+                    )
+                else:
+                    quantized = _quantized_relocation(
+                        state, simplices, goal, local_points[0]
                     )
                     candidates = () if quantized is None else (quantized,)
                 admitted: list[tuple[Any, dict[str, Any]]] = []

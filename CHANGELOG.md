@@ -489,7 +489,11 @@
   of the moves are those of the host search it replaces, which evaluated one
   carrier at a time; on the recorded sphere witness the proposals, including
   the survivors' tensors and quality gains, are bit-identical and the
-  directed collapses take about a quarter of the time.
+  directed collapses take about a quarter of the time. Relocation proposals
+  and the coupled route take the exact carriers of their goals from the same
+  native search (the coupled route in its selected source cell); the host
+  quantization and its caches are removed. A goal that is not finite is now
+  reported by the native search as invalid input.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep

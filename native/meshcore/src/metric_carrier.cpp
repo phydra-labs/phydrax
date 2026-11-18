@@ -83,11 +83,12 @@ CarrierSource::CarrierSource(std::vector<double> points, std::vector<Dyadic> num
   }
 }
 
-bool CarrierSource::locate_cell(const double* target, Located& located) const {
-  const std::size_t cell_count = cells_.size() / 4;
+bool CarrierSource::locate_cell(const double* target, std::int64_t only, Located& located) const {
+  const std::size_t begin = only < 0 ? 0 : static_cast<std::size_t>(only);
+  const std::size_t end = only < 0 ? cells_.size() / 4 : begin + 1;
   bool scaled = false;
   Vector exact_target;
-  for (std::size_t cell = 0; cell < cell_count; ++cell) {
+  for (std::size_t cell = begin; cell < end; ++cell) {
     // Rounding is monotone and the box corners are binary64 source points, so
     // a cell that holds the exact target passes this comparison.
     bool inside = true;
@@ -185,7 +186,8 @@ bool CarrierSource::locate_simplex(const double* target, const CarrierSimplex& s
 
 std::vector<Carrier> CarrierSource::carriers(const double* target, const double* current,
                                              const std::vector<CarrierSimplex>& simplices,
-                                             CarrierOrder order, std::int64_t limit) const {
+                                             std::int64_t cell, CarrierOrder order,
+                                             std::int64_t limit) const {
   std::vector<Carrier> found;
   if (limit <= 0) return found;
   Located located;
@@ -200,7 +202,7 @@ std::vector<Carrier> CarrierSource::carriers(const double* target, const double*
       }
     }
   } else {
-    has_location = locate_cell(target, located);
+    has_location = locate_cell(target, cell, located);
   }
   if (!has_location) return found;
 

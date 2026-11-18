@@ -1040,12 +1040,13 @@ PHX_MC_API void phx_mc_metric_source_free(phx_mc_metric_source* source);
  *
  * Location: with simplex_count 0, the first cell whose closed binary64 box
  * holds the target and in which its exact barycentric weights are all
- * nonnegative; the goal is the target. Otherwise the first simplex
- * (simplex_rows holds three point rows per simplex, the third negative for an
- * edge) with independent edges on which the orthogonal projection of the
- * target has nonnegative weights; the goal is the correctly rounded
- * projection. Without a location, with a goal at current or a support of
- * zero extent there is no carrier.
+ * nonnegative, among all cells (cell negative) or cell alone; the goal is the
+ * target. Otherwise (cell negative) the first simplex (simplex_rows holds
+ * three point rows per simplex, the third negative for an edge) with
+ * independent edges on which the orthogonal projection of the target has
+ * nonnegative weights; the goal is the correctly rounded projection. Without
+ * a location, with a goal at current or a support of zero extent there is no
+ * carrier.
  *
  * Resolutions: at 2^-bits the partial sums of the weights in located order
  * are rounded half to even, made monotone and capped at one; each weight is
@@ -1062,9 +1063,9 @@ PHX_MC_API void phx_mc_metric_source_free(phx_mc_metric_source* source);
  * written. */
 PHX_MC_API int32_t phx_mc_metric_source_carriers(
     const phx_mc_metric_source* source, const double* target, const double* current,
-    int64_t simplex_count, const int64_t* simplex_rows, const int8_t* declared, int32_t order,
-    int64_t limit, int64_t* rows, int64_t* weights, int32_t* bits, double* points,
-    int8_t* exact, int64_t* count);
+    int64_t cell, int64_t simplex_count, const int64_t* simplex_rows, const int8_t* declared,
+    int32_t order, int64_t limit, int64_t* rows, int64_t* weights, int32_t* bits,
+    double* points, int8_t* exact, int64_t* count);
 /* Positions of the survivor of an edge collapse.
  *
  * The star: points (three values each) and metrics (nine each) with the
