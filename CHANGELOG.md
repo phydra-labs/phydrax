@@ -301,6 +301,9 @@
   rational polynomials. Bounds and findings are unchanged. On one captured
   13,443-row chart batch, three alternating general and affine-bound runs took
   8.19/0.044, 9.16/0.043, and 9.40/0.059 seconds, respectively.
+- Straight high-order geometry reuses canonical nodal identity encodings while
+  preserving source-map identities. Three paired larger-profile input replays
+  saved 8.10, 8.58, and 19.81 seconds respectively on a shared machine.
 - Sphere and torus projection points, parameters, normals and tangents now use
   platform-identical representatives, changing projection `result_id`s while
   certified bounds, statuses, source identities and profile identities remain
