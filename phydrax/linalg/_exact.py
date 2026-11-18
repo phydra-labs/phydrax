@@ -163,6 +163,37 @@ def matmul_exact(
     return tuple(result)
 
 
+def inverse_small_rational(
+    matrix: Sequence[Sequence[Fraction]], /
+) -> tuple[tuple[Fraction, ...], ...] | None:
+    """Invert a two- or three-dimensional rational matrix via integer cofactors."""
+    size = len(matrix)
+    if size not in (2, 3) or any(len(row) != size for row in matrix):
+        raise ValueError("A small rational inverse requires a square matrix of order two or three.")
+    scale = lcm(*(value.denominator for row in matrix for value in row))
+    rows = tuple(
+        tuple(value.numerator * (scale // value.denominator) for value in row)
+        for row in matrix
+    )
+    if size == 2:
+        (a, b), (c, d) = rows
+        determinant = a * d - b * c
+        adjugate = ((d, -b), (-c, a))
+    else:
+        (a, b, c), (d, e, f), (g, h, i) = rows
+        adjugate = (
+            (e * i - f * h, c * h - b * i, b * f - c * e),
+            (f * g - d * i, a * i - c * g, c * d - a * f),
+            (d * h - e * g, b * g - a * h, a * e - b * d),
+        )
+        determinant = a * adjugate[0][0] + b * adjugate[1][0] + c * adjugate[2][0]
+    if not determinant:
+        return None
+    return tuple(
+        tuple(Fraction(value * scale, determinant) for value in row) for row in adjugate
+    )
+
+
 def _integer_symmetric_product(
     factors: tuple[Sequence[Sequence[Fraction | int]], ...], /
 ) -> tuple[tuple[tuple[int, ...], ...], int]:
@@ -236,6 +267,73 @@ def symmetric_product_minors_exact(
         )
         for order in range(1, len(numerator) + 1)
     )
+
+def symmetric_product_minors_batch_exact(
+    matrices: Sequence[Sequence[Sequence[Fraction | int]]],
+    prefix: Sequence[Sequence[Fraction | int]],
+    suffix: Sequence[Sequence[Fraction | int]] | None = None,
+    /,
+) -> tuple[tuple[Fraction, ...], ...]:
+    """Exact leading symmetric-product minors for independent small matrices.
+
+    The fixed factors are cleared once; each matrix retains its own positive
+    scale, so neither its values nor its evidence depend on its batch peers.
+    """
+    size = len(prefix)
+    if size not in (1, 2, 3):
+        raise ValueError("Exact symmetric products require order one through three.")
+
+    def clear(matrix: Sequence[Sequence[Fraction | int]]) -> tuple[tuple[int, ...], int]:
+        if len(matrix) != size or any(len(row) != size for row in matrix):
+            raise ValueError("Exact symmetric product factors must have equal square shapes.")
+        if any(
+            isinstance(value, bool) or not isinstance(value, Fraction | int)
+            for row in matrix
+            for value in row
+        ):
+            raise TypeError("Exact symmetric products require integers or Fractions.")
+        scale = lcm(*(value.denominator for row in matrix for value in row))
+        return tuple(
+            value.numerator * (scale // value.denominator)
+            for row in matrix
+            for value in row
+        ), scale
+
+    left, left_scale = clear(prefix)
+    right, right_scale = (None, 1) if suffix is None else clear(suffix)
+    results: list[tuple[Fraction, ...]] = []
+    for matrix in matrices:
+        middle, middle_scale = clear(matrix)
+        product = tuple(
+            sum(left[row * size + k] * middle[k * size + col] for k in range(size))
+            for row in range(size)
+            for col in range(size)
+        )
+        if right is not None:
+            product = tuple(
+                sum(product[row * size + k] * right[k * size + col] for k in range(size))
+                for row in range(size)
+                for col in range(size)
+            )
+        denominator = 2 * left_scale * middle_scale * right_scale
+        a = 2 * product[0]
+        minors = [Fraction(a, denominator)]
+        if size >= 2:
+            b = product[1] + product[size]
+            d = 2 * product[size + 1]
+            minors.append(Fraction(a * d - b * b, denominator**2))
+        if size == 3:
+            c = product[2] + product[6]
+            e = product[5] + product[7]
+            f = 2 * product[8]
+            minors.append(
+                Fraction(
+                    a * (d * f - e * e) - b * (b * f - c * e) + c * (b * e - c * d),
+                    denominator**3,
+                )
+            )
+        results.append(tuple(minors))
+    return tuple(results)
 
 
 # Below this many rows Fraction elimination is cheaper than lifting.
