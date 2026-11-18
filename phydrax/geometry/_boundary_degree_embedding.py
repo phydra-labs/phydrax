@@ -32,7 +32,11 @@ from ..discretization._coordinate_enclosure import (
 )
 from ..discretization._exact_algebraic_geometry import ExactScalar, RadicalElement
 from ..discretization._reference_cell import reference_cell_topology
-from ._batch_boundary_traces import batch_simplex_face_equal
+from ._batch_boundary_traces import (
+    batch_simplex_face_equal,
+    IntegerPrograms,
+    SimplexMaps,
+)
 from ._embedding_cells import EmbeddingCell
 from ._exact_polyhedral_geometry import (
     _cross3,
@@ -765,7 +769,9 @@ def _batched_tetrahedron_links(
             for position, (cell, faces) in enumerate(zip(group, faces_group, strict=True))
             if len(cell.vertex_ids) == 4
             and len(set(cell.vertex_ids)) == 4
-            and all(-(1 << 63) <= identifier < (1 << 63) for identifier in cell.vertex_ids)
+            and all(
+                -(1 << 63) <= identifier < (1 << 63) for identifier in cell.vertex_ids
+            )
             and len(faces) == 4
             and all(len(face) == 3 and len(set(face)) == 3 for face in faces)
             and len({frozenset(face) for face in faces}) == 4
@@ -773,7 +779,9 @@ def _batched_tetrahedron_links(
         )
         prepared: dict[int, tuple[tuple[int, ...], ...]] = {}
         if eligible:
-            vertices = np.asarray([group[index].vertex_ids for index in eligible], dtype=np.int64)
+            vertices = np.asarray(
+                [group[index].vertex_ids for index in eligible], dtype=np.int64
+            )
             rows = np.asarray([faces_group[index] for index in eligible], dtype=np.int64)
             previous = np.roll(rows, 1, axis=2).reshape(len(eligible), -1)
             following = np.roll(rows, -1, axis=2).reshape(len(eligible), -1)
@@ -792,8 +800,10 @@ def _batched_tetrahedron_links(
                 before = previous[positions, first_edge]
                 after = following[positions, first_edge]
                 second = np.where(before == first, after, before)
-                remaining = other_vertices & (vertices != first[:, None]) & (
-                    vertices != second[:, None]
+                remaining = (
+                    other_vertices
+                    & (vertices != first[:, None])
+                    & (vertices != second[:, None])
                 )
                 third = np.min(np.where(remaining, vertices, maximum), axis=1)
                 cycles[:, corner] = np.stack((first, second, third), axis=1)
@@ -1312,11 +1322,15 @@ def _integer_triangle_contact_finding(
     /,
 ) -> BoundaryFinding | None:
     shared = set(first.vertex_ids).intersection(second.vertex_ids)
-    if first_integer is None or second_integer is None or any(
-        not isinstance(value, Fraction)
-        for identifier in shared
-        if identifier in vertex_images
-        for value in vertex_images[identifier]
+    if (
+        first_integer is None
+        or second_integer is None
+        or any(
+            not isinstance(value, Fraction)
+            for identifier in shared
+            if identifier in vertex_images
+            for value in vertex_images[identifier]
+        )
     ):
         return _exact_triangle_contact_finding(faces, first, second, vertex_images)
     degenerate, contacts, scale = integer_triangle_contacts(first_integer, second_integer)
@@ -1341,13 +1355,20 @@ def _integer_triangle_contact_finding(
     if allowed and len(shared) == 1:
         identifier = next(iter(shared))
         allowed = identifier in vertex_images and all(
-            contact_at_point(point, scale, vertex_images[identifier]) for point in contacts
+            contact_at_point(point, scale, vertex_images[identifier])
+            for point in contacts
         )
     elif allowed and len(shared) == 2:
         left, right = sorted(shared)
-        allowed = left in vertex_images and right in vertex_images and all(
-            contact_on_segment(point, scale, vertex_images[left], vertex_images[right])
-            for point in contacts
+        allowed = (
+            left in vertex_images
+            and right in vertex_images
+            and all(
+                contact_on_segment(
+                    point, scale, vertex_images[left], vertex_images[right]
+                )
+                for point in contacts
+            )
         )
     else:
         allowed = False
@@ -1459,6 +1480,8 @@ def build_oriented_boundary(
         if len(incident) in (1, 2) and key in facet_ids
     )
     batched_traces: dict[frozenset[int], bool | None] = {}
+    simplex_maps: SimplexMaps = {}
+    integer_programs: IntegerPrograms = {}
     for start in range(0, len(facet_items), 256):
         group = facet_items[start : start + 256]
         requests = tuple(
@@ -1469,7 +1492,9 @@ def build_oriented_boundary(
             )
             for key, incident in group
         )
-        decisions = batch_simplex_face_equal(requests, trace_values)
+        decisions = batch_simplex_face_equal(
+            requests, trace_values, simplex_maps, integer_programs
+        )
         batched_traces.update(
             (key, decision)
             for (key, incident), decision in zip(group, decisions, strict=True)
@@ -1477,6 +1502,7 @@ def build_oriented_boundary(
         )
         if len(trace_values) > _TRACE_VALUE_POINTS:
             trace_values.clear()
+    del simplex_maps, integer_programs
     for key, incident in occurrences.items():
         facet_id = facet_ids.get(key)
         if facet_id is None:

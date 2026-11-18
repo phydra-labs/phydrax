@@ -20,28 +20,34 @@ from ._restricted_embedding import (
 
 
 type FaceRequest = tuple[EmbeddingCell, EmbeddingCell, tuple[int, ...]]
+type SimplexMaps = dict[int, tuple[int, tuple[Polynomial, ...]] | None]
+type IntegerPrograms = dict[
+    tuple[int, int],
+    tuple[
+        int,
+        tuple[tuple[tuple[tuple[int, ...], int], ...], ...],
+        tuple[int, ...],
+    ],
+]
 
 
 def batch_simplex_face_equal(
-    requests: tuple[FaceRequest, ...], values: TracePointValues, /
+    requests: tuple[FaceRequest, ...],
+    values: TracePointValues,
+    maps: SimplexMaps,
+    programs: IntegerPrograms,
+    /,
 ) -> tuple[bool | None, ...]:
     """Compare eligible face maps with arbitrary-precision integer batches.
 
     ``None`` leaves non-simplex, non-rational and other unsupported maps to the
     original exact restriction route. Every denominator and numerator belongs
     to one cell; no arithmetic or identity depends on the other batch members.
+    The caller keeps all cells alive for the lifetime of the operation-local
+    map and program caches.
     """
     results: list[bool | None] = [None] * len(requests)
     lattices: dict[int, tuple[tuple[int, ...], ...]] = {}
-    maps: dict[int, tuple[int, tuple[Polynomial, ...]] | None] = {}
-    programs: dict[
-        tuple[int, int],
-        tuple[
-            int,
-            tuple[tuple[tuple[tuple[int, ...], int], ...], ...],
-            tuple[int, ...],
-        ],
-    ] = {}
 
     def cell_map(cell: EmbeddingCell, /) -> tuple[int, tuple[Polynomial, ...]] | None:
         key = id(cell)
@@ -79,8 +85,10 @@ def batch_simplex_face_equal(
         # Bound object-array workspace; larger lattices retain the scalar route.
         if order > 20:
             continue
-        sides = ((first, left, corners[0]),) if first is second else (
-            (first, left, corners[0]), (second, right, corners[1])
+        sides = (
+            ((first, left, corners[0]),)
+            if first is second
+            else ((first, left, corners[0]), (second, right, corners[1]))
         )
         if order not in lattices:
             lattices[order] = tuple(
@@ -105,7 +113,11 @@ def batch_simplex_face_equal(
                 denominator, terms = _integer_polynomials(mapping[1], point_scale)
                 max_powers = tuple(
                     max(
-                        (exponent[axis] for polynomial in terms for exponent, _ in polynomial),
+                        (
+                            exponent[axis]
+                            for polynomial in terms
+                            for exponent, _ in polynomial
+                        ),
                         default=0,
                     )
                     for axis in range(cell.dimension)
@@ -127,7 +139,9 @@ def batch_simplex_face_equal(
                 if found is None:
                     powers = tuple(
                         tuple(numerator**power for power in range(max_power + 1))
-                        for numerator, max_power in zip(numerators, max_powers, strict=True)
+                        for numerator, max_power in zip(
+                            numerators, max_powers, strict=True
+                        )
                     )
                     result = []
                     for polynomial in integer_terms:
