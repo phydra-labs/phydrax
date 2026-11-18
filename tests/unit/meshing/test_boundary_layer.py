@@ -842,6 +842,8 @@ def test_fan_column_coordinates_use_ordered_visibility_hull() -> None:
             (-z[0], z[3], 1.0),
         )
     )
+    # This pins the ordered combination of stored weights, stretch and scale;
+    # it does not independently derive those operands.
     roots = np.asarray(result.column_vertex_sources)
     source = np.flatnonzero(roots == np.asarray(wall.vertex_global_ids)[0])[0]
     offsets = np.asarray(result.column_source_face_offsets)

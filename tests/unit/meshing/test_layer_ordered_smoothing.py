@@ -203,16 +203,44 @@ def test_direction_add_at_is_index_ordered() -> None:
         -0.007190145117348459,
         -0.028140590099320774,
     ]
-    mesh, wall, _, control, weights = _fan(heights)
-    split = layer._split_ridges(wall, control.corner)
-    sectors = layer._sectors(wall, split)
-    unsmoothed_control = phx.meshing.BoundaryLayerControl(
-        control.wall_scope,
-        control.schedule,
-        route=control.route,
-        smoothing_iterations=0,
-    )
-    direction = layer._sector_directions(wall, sectors, unsmoothed_control).direction
+    mesh, _, _, control, weights = _fan(heights)
+    result = phx.meshing.prepare_boundary_layers(mesh, control)
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
+    faces = np.asarray(mesh.blocks[0].vertices, dtype=np.int64)
+    normals = []
+    for face in faces:
+        first = [float(value) for value in points[face[1]]]
+        second = [float(value) for value in points[face[2]]]
+        cross = [
+            _add(
+                _mul(first[(axis + 1) % 3], second[(axis + 2) % 3]),
+                -_mul(first[(axis + 2) % 3], second[(axis + 1) % 3]),
+            )
+            for axis in range(3)
+        ]
+        normals.append(_unit(cross))
+    roots = np.asarray(result.column_vertex_sources, dtype=np.int64)
+    source_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    offsets = np.asarray(result.column_source_face_offsets, dtype=np.int64)
+    face_ids = np.asarray(result.column_source_face_ids, dtype=np.int64)
+    face_weights = np.asarray(result.column_source_face_weights, dtype=np.float64)
+    directions = []
+    # The rational operations pin the combination of stored face weights and
+    # stretch; those operands are not independently derived by this test.
+    for vertex in source_ids:
+        column = np.flatnonzero(roots == vertex)[0]
+        start, stop = offsets[column : column + 2]
+        hull = [
+            _sum(
+                [
+                    _mul(float(face_weights[index]), normals[face_ids[index]][axis])
+                    for index in range(start, stop)
+                ]
+            )
+            for axis in range(3)
+        ]
+        directions.append(_unit(_unit(hull)))
+    direction = np.asarray(directions, dtype=np.float64)
     total = _sum(weights)
     products = [
         [_mul(weight, float(direction[i + 1, k])) for k in range(3)]
@@ -232,7 +260,7 @@ def test_direction_add_at_is_index_ordered() -> None:
 
     forward = expected(products)
     reverse = expected(products[::-1])
-    result = phx.meshing.prepare_boundary_layers(mesh, control)
+    # The result was prepared before building the independent reference.
     stretch = float(np.asarray(result.column_stretch)[0])
     height = _mul(stretch, float(control.schedule.thicknesses[0]))
     forward_coordinates = [_mul(height, value) for value in forward]
