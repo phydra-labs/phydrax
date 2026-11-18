@@ -35,6 +35,8 @@ from ..discretization._reference_cell import reference_cell_topology
 from ._batch_boundary_traces import (
     batch_simplex_face_equal,
     IntegerPrograms,
+    quadratic_face_class,
+    QuadraticBanks,
     SimplexMaps,
 )
 from ._embedding_cells import EmbeddingCell
@@ -70,6 +72,8 @@ type BoundaryStatus = Literal["certified", "violated", "unresolved"]
 
 # Trace lattice points one boundary proof retains (three exact scalars each).
 _TRACE_VALUE_POINTS = 1 << 17
+# At most this many per-cell banks, plus the current 256-facet group.
+_QUADRATIC_BANKS = 30000
 
 
 @dataclass(frozen=True, slots=True)
@@ -449,11 +453,24 @@ def _face_trace_image_evidence(
     /,
     *,
     point_values: TracePointValues | None = None,
+    simplex_maps: SimplexMaps | None = None,
+    quadratic_banks: QuadraticBanks | None = None,
 ) -> tuple[str, ...] | None:
     """Prove a face image is its exact planar corner polygon.
 
     ``point_values`` shares exact lattice values of live cells between calls.
     """
+    quadratic_class = quadratic_face_class(
+        cell,
+        vertex_ids,
+        points,
+        {} if simplex_maps is None else simplex_maps,
+        {} if quadratic_banks is None else quadratic_banks,
+    )
+    if quadratic_class == "affine":
+        return ("exact-affine-face-image",)
+    if quadratic_class in ("nonplanar", "degenerate"):
+        return None
     match _simplex_face_trace_class(cell, vertex_ids, points, point_values):
         case "affine":
             # An affine trace is its corner triangle when that is nondegenerate.
@@ -1482,6 +1499,7 @@ def build_oriented_boundary(
     batched_traces: dict[frozenset[int], bool | None] = {}
     simplex_maps: SimplexMaps = {}
     integer_programs: IntegerPrograms = {}
+    quadratic_banks: QuadraticBanks = {}
     exterior_evidence: dict[frozenset[int], tuple[str, ...] | None] = {}
     for start in range(0, len(facet_items), 256):
         group = facet_items[start : start + 256]
@@ -1494,7 +1512,7 @@ def build_oriented_boundary(
             for key, incident in group
         )
         decisions = batch_simplex_face_equal(
-            requests, trace_values, simplex_maps, integer_programs
+            requests, trace_values, simplex_maps, integer_programs, quadratic_banks
         )
         batched_traces.update(
             (key, decision)
@@ -1505,11 +1523,18 @@ def build_oriented_boundary(
             if len(incident) == 1:
                 cell_index, vertex_ids, points = incident[0]
                 exterior_evidence[key] = _face_trace_image_evidence(
-                    cells[cell_index], vertex_ids, points, point_values=trace_values
+                    cells[cell_index],
+                    vertex_ids,
+                    points,
+                    point_values=trace_values,
+                    simplex_maps=simplex_maps,
+                    quadratic_banks=quadratic_banks,
                 )
         if len(trace_values) > _TRACE_VALUE_POINTS:
             trace_values.clear()
-    del simplex_maps, integer_programs
+        if len(quadratic_banks) > _QUADRATIC_BANKS:
+            quadratic_banks.clear()
+    del simplex_maps, integer_programs, quadratic_banks
     for key, incident in occurrences.items():
         facet_id = facet_ids.get(key)
         if facet_id is None:
