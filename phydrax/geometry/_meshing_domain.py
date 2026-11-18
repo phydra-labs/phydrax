@@ -444,18 +444,32 @@ class PatchCurveUse(StrictModule, NonTrainableState):
         if self.closes_native_turn():
             return True
         from .brep._boolean_core import PeriodicPCurve
-        from .brep._intersection_curve import IntersectionPCurve
+        from .brep._intersection_curve import CurveTrimSegment, IntersectionPCurve
 
         curve = self.pcurve
-        while isinstance(curve, PeriodicPCurve):
-            curve = curve.source_curve
+        first, last = Fraction(self.first), Fraction(self.last)
+        within_trim = True
+        while isinstance(curve, (PeriodicPCurve, CurveTrimSegment)):
+            if isinstance(curve, PeriodicPCurve):
+                curve = curve.source_curve
+            else:
+                within_trim = within_trim and 0 <= first <= 1 and 0 <= last <= 1
+                start, stop = Fraction(curve.first), Fraction(curve.last)
+                if curve.reversed:
+                    first, last = 1 - first, 1 - last
+                first, last = (
+                    start + first * (stop - start),
+                    start + last * (stop - start),
+                )
+                curve = curve.curve
         if isinstance(curve, IntersectionPCurve):
             if not (
-                curve.curve.closed
+                within_trim
+                and curve.curve.closed
                 and curve.first == 0.0
                 and curve.last == curve.curve.num_charts
-                and min(self.first, self.last) == curve.first
-                and max(self.first, self.last) == curve.last
+                and min(first, last) == Fraction(curve.first)
+                and max(first, last) == Fraction(curve.last)
             ):
                 return False
             shifts = curve.curve.closure_period_shifts()

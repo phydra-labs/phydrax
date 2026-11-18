@@ -1224,6 +1224,10 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Full closed intersection p-curves retain their certified chart-closure
+  classification through nested trim and constant-period wrappers; partial
+  trims and nonzero closure-deck shifts do not close. Native constructions
+  can change where a wrapped seam was previously treated as open.
 - Implicit root charts form certified vector-norm bounds with outward-rounded
   squares and sums, and use directed norms for bracket starting steps and
   sign-coverage resolution. Chart evidence and coverage outcomes can change
