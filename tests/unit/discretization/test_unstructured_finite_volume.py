@@ -29,7 +29,7 @@ def test_triangle_areas_are_independent_of_local_batch_length() -> None:
 
     from phydrax.discretization.finite_volume._unstructured import _triangle_measures
 
-    with jax.enable_x64():
+    with phx.config.context(phx.config.NumericsConfig(enable_x64=True)):
         points = jnp.asarray(
             (
                 (0.631, 0.30300000000000005),

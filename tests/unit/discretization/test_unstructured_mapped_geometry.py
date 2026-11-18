@@ -2,12 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import jax
 import numpy as np
 import pytest
 from jax import Array
 
-from phydrax import _meshcore
+from phydrax import _meshcore, config
 from phydrax.discretization import CellBlock, CellMesh, lagrange_element
 from phydrax.discretization._cell_complex import polyhedral_connectivity
 from phydrax.discretization._cell_geometry import CellGeometrySpec
@@ -37,7 +36,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_native_restriction_prepares_mapped_fv_geometry() -> None:
-    with jax.enable_x64():
+    with config.context(config.NumericsConfig(enable_x64=True)):
         fixture = nested_material_geometry()
         transition = fixture.transition
         source_plan = UnstructuredFiniteVolumePlan.from_cell_mesh(
@@ -119,7 +118,7 @@ def test_mapped_fv_refuses_carrier_motion_and_field_support() -> None:
     def identity_motion(vertices: Array, time: Array, args: object) -> Array:
         return vertices
 
-    with jax.enable_x64():
+    with config.context(config.NumericsConfig(enable_x64=True)):
         fixture = nested_material_geometry()
         transition = fixture.transition
         plan = UnstructuredFiniteVolumePlan.from_cell_mesh(
@@ -139,7 +138,7 @@ def test_mapped_fv_refuses_carrier_motion_and_field_support() -> None:
 
 
 def test_mapped_fv_rejects_distinct_neighbor_face_maps() -> None:
-    with jax.enable_x64():
+    with config.context(config.NumericsConfig(enable_x64=True)):
         transition = nested_material_geometry().transition
         original = transition.source_geometry
         elements = dict(zip(original.block_names, original.elements, strict=True))
@@ -166,7 +165,7 @@ def test_mapped_fv_rejects_distinct_neighbor_face_maps() -> None:
 
 
 def test_quadrature_exactness_uses_certified_jacobian_degrees() -> None:
-    with jax.enable_x64():
+    with config.context(config.NumericsConfig(enable_x64=True)):
         transition = nested_material_geometry().transition
         mesh = transition.source_mesh
         moments = certified_cell_moments(mesh, transition.source_geometry)
@@ -184,7 +183,7 @@ def test_quadrature_exactness_uses_certified_jacobian_degrees() -> None:
 
 
 def test_curved_coordinate_map_changes_physical_fv_centroid_and_face_measure() -> None:
-    with jax.enable_x64():
+    with config.context(config.NumericsConfig(enable_x64=True)):
         reference = reference_cell_topology("hexahedron")
         cells = np.arange(8, dtype=np.int32)[None, :]
         mesh = CellMesh(
@@ -240,7 +239,7 @@ def test_mapped_remap_admits_actual_prepared_measure_accuracy(accuracy: float) -
     from phydrax.geometry import CommonRefinementPolicy, CommonRefinementStatus
     from tests._support.rational_geometry import _rational_box
 
-    with jax.enable_x64():
+    with config.context(config.NumericsConfig(enable_x64=True)):
         original, geometry = _rational_box(scale=2.0**-20)
         cells = np.arange(8, dtype=np.int32)[None, :]
         mesh = CellMesh(

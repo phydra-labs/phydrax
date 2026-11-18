@@ -22,7 +22,7 @@ def test_eager_small_solve_keeps_validation_and_repeated_x64_warnings() -> None:
     with pytest.raises(ValueError, match="right-hand side shape is incompatible"):
         solve_small_linear(plan, np.eye(2), np.ones((3, 1)))
     captured = []
-    with jax.enable_x64(False):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=False)):
         for _ in range(2):
             with warnings.catch_warnings(record=True) as observed:
                 warnings.simplefilter("always")

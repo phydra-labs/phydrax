@@ -175,7 +175,7 @@ def test_published_measure_error_includes_float32_rounding() -> None:
 
     exact = np.asarray((0.1, 1.0 / 3.0), dtype=np.float64)
     source_errors = np.asarray((1.0e-18, 1.0e-19), dtype=np.float64)
-    with jax.enable_x64(False):
+    with phx.config.context(phx.config.NumericsConfig(enable_x64=False)):
         values = jnp.asarray(exact, dtype=jnp.float32)
         published_errors = _published_measure_errors(exact, source_errors, values)
     expected = source_errors + np.abs(np.asarray(values, dtype=np.float64) - exact)
@@ -194,7 +194,7 @@ def test_static_polyhedral_stage_uses_its_producer_closure_certificate() -> None
     corners = np.asarray(reference_cell.vertices)
     matrix = np.asarray(((1.1, 1.1, 1.1), (1.1, 1.1001, 1.1), (1.1, 1.1, 1.1001)))
     faces = reference_cell.entities[2]
-    with jax.enable_x64():
+    with phx.config.context(phx.config.NumericsConfig(enable_x64=True)):
         points = 1000.0 * (corners @ matrix.T)
         mesh = phx.discretization.CellMesh.from_polyhedra(points, (faces,))
         producer = prepare_polyhedral_finite_volume_geometry(mesh)
