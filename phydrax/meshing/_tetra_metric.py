@@ -32,7 +32,6 @@ from .._meshcore import (
     metric_lengths,
     metric_logarithms,
     metric_midpoints,
-    metric_project_goals,
     metric_relative_determinants,
     metric_relocation_pulls,
     metric_tensor_properties,
@@ -40,6 +39,9 @@ from .._meshcore import (
     MetricCarrierOrder,
     MetricCollapseStar,
     MetricPositionVerdict,
+    MetricRelocationCandidate,
+    MetricRelocationEnd,
+    MetricRelocationStar,
     MetricSearchEnd,
     MetricSource,
     PlcBoundaryPolicy,
@@ -96,24 +98,9 @@ _DETERMINANT_FLOOR = 2.0**-22
 # of at most 2^242 times the largest entry. Entries up to this bound cannot
 # overflow it: a larger tensor has no finite length to measure.
 _METRIC_ENTRY_BOUND = 2.0**778
-# Goals and screening are batched with bounded row counts, not search limits.
-_GOAL_BLOCK = 64
-_SCREEN_BATCH = 1024
-_GOAL_PULL_BATCH = 16
-_SCREEN_VERTEX_BATCH = 16
-_SCREEN_WORK_BYTES = 32 * 1024**2
-_SCREEN_GOAL_BYTES = 2048
-_SCREEN_NEIGHBOR_BYTES = 512
-_SCREEN_CELL_BYTES = 2048
-_SEED_STEPS = np.arange(_SPLIT_PARAMETER_BITS + 1, dtype=np.int64)
-_GOAL_STEPS = np.arange(_GOAL_BLOCK, dtype=np.int64)
-_SEED_STEPS.setflags(write=False)
-_GOAL_STEPS.setflags(write=False)
 # An interior vertex moves along the coordinate axes.
 _AXES = np.eye(3, dtype=np.float64)
 _AXES.setflags(write=False)
-# The 24 bytes of one binary64 goal: goals are equal exactly when these are.
-_GOAL_KEY = np.dtype((np.void, 24))
 _TETRA_EDGE_CORNERS = tuple(combinations(range(4), 2))
 _TETRA_FACE_CORNERS = ((1, 3, 2), (0, 2, 3), (0, 3, 1), (0, 1, 2))
 _TETRA_EDGES = np.asarray(_TETRA_EDGE_CORNERS, dtype=np.int32)
@@ -6220,49 +6207,6 @@ def _implicit_tangent_pulls(
     return pulls - (along / norm_squared)[:, None] * normal
 
 
-def _relocation_goals(
-    point: np.ndarray, pulls: np.ndarray, /, *, seed_only: bool = False
-) -> Iterator[np.ndarray]:
-    """Try inexpensive seeds first in bounded blocks, then backtrack fully.
-
-    Each pull yields blocks of ``point + ldexp(pull, -step)`` for
-    ``step = 0, 1, ...`` until the goal rounds to ``point`` (seeds stop
-    after step ``_SPLIT_PARAMETER_BITS``). ``ldexp`` and the sum are exact
-    or correctly rounded per element, so every row is the stepwise goal.
-    """
-    if seed_only:
-        steps = _SEED_STEPS
-        pull_batch = _SCREEN_BATCH // steps.size
-        for start in range(0, pulls.shape[0], pull_batch):
-            goals = point + np.ldexp(
-                pulls[start : start + pull_batch, None, :], -steps[None, :, None]
-            )
-            reached = np.all(goals == point, axis=2)
-            yield goals[np.cumsum(reached, axis=1) == 0]
-        return
-    steps = _GOAL_STEPS
-    cursor = 0
-    while cursor < pulls.shape[0]:
-        block = pulls[cursor : cursor + _GOAL_PULL_BATCH]
-        goals = point + np.ldexp(block[:, None, :], -steps[None, :, None])
-        reached = np.all(goals == point, axis=2)
-        unresolved = np.flatnonzero(~np.any(reached, axis=1))
-        count = unresolved[0] + 1 if unresolved.size else block.shape[0]
-        yield goals[:count][np.cumsum(reached[:count], axis=1) == 0]
-        cursor += count
-        if unresolved.size:
-            pull = block[count - 1]
-            start = _GOAL_BLOCK
-            while True:
-                next_steps = np.arange(start, start + _GOAL_BLOCK, dtype=np.int64)
-                remaining = point + np.ldexp(pull, -next_steps[:, None])
-                end = np.flatnonzero(np.all(remaining == point, axis=1))
-                yield remaining[: end[0] if end.size else _GOAL_BLOCK]
-                if end.size:
-                    break
-                start += _GOAL_BLOCK
-
-
 class _RelocationStar(NamedTuple):
     rows: np.ndarray
     cell_ids: tuple[int, ...]
@@ -6448,258 +6392,32 @@ def _band_violation_rows(lengths: np.ndarray, /) -> tuple[np.ndarray, np.ndarray
     return -np.sort(-above, axis=1), -np.sort(-below, axis=1)
 
 
-def _lexicographic_signs(rows: np.ndarray, reference: np.ndarray, /) -> np.ndarray:
-    """Sign of the lexicographic comparison of each row with ``reference``."""
-    if rows.shape[1] == 0:
-        return np.zeros((rows.shape[0],), dtype=np.int64)
-    differs = rows != reference
-    first = np.argmax(differs, axis=1)
-    picked = rows[np.arange(rows.shape[0]), first]
-    return np.where(
-        np.any(differs, axis=1), np.where(picked > reference[first], 1, -1), 0
-    )
-
-
-def _screen_relocation_goals(
-    goals: np.ndarray,
-    local_points: np.ndarray,
-    local_metrics: np.ndarray,
-    local_cells: np.ndarray,
-    spokes: np.ndarray,
+def _report_relocation_candidate(
+    state: _NativeState,
+    bank: _SourceBank,
+    candidate: MetricRelocationCandidate,
     measured: np.ndarray,
-    before_band: tuple[tuple[int, ...], tuple[int, ...]],
-    before_quality: float,
-    band_only: bool,
-    constant_metric: bool,
-    evaluate: Callable[[np.ndarray, np.ndarray], object],
+    end: MetricRelocationEnd,
     /,
-) -> np.ndarray:
-    """Per-goal screen of ``_relocation_proposals`` for ``(g, 3)`` goals.
+) -> NoReturn:
+    """Raise the error of a goal or carrier the native search could not decide.
 
-    A graded field admits a goal whose moved star is ``_floor_oriented``; a
-    constant field one that ``evaluate(goal, local_metrics[0])`` admits (no
-    coincident neighbor, no larger band violation, floor orientation, and a
-    quality gain on a band tie). All goals are evaluated together by the
-    same row-independent kernels (metric lengths, band quanta, determinants,
-    quality) on stacked stars, so every verdict is the per-goal one. A goal
-    with a zero or non-finite measured spoke takes ``evaluate`` itself.
+    The owners of the two conditions raise: the band violations for a spoke
+    without a finite length, the source tensor for a stencil without one.
     """
-    count, size = goals.shape[0], local_points.shape[0]
-    stacked = np.repeat(local_points[None], count, axis=0)
-    stacked[:, 0] = goals
-
-    def oriented(rows: np.ndarray) -> np.ndarray:
-        determinants, relative = metric_relative_determinants(
-            stacked[rows][:, local_cells].reshape((-1, 4, 3))
+    if end is MetricRelocationEnd.NO_TENSOR:
+        _source_metric_from_stencil(
+            state.source_metric,
+            state.source_vertex_rows,
+            {
+                bank.identifiers[row]: Fraction(weight, 1 << candidate.bits)
+                for row, weight in zip(candidate.rows, candidate.weights, strict=True)
+            },
+            source_metric_log=state.source_metric_log,
         )
-        shape = (rows.size, local_cells.shape[0])
-        return np.all((determinants > 0.0).reshape(shape), axis=1) & np.all(
-            (relative > _DETERMINANT_FLOOR).reshape(shape), axis=1
-        )
-
-    if not constant_metric:
-        return oriented(np.arange(count))
-    admitted = np.zeros((count,), dtype=np.bool_)
-    rows = np.flatnonzero(
-        ~np.any(np.all(local_points[None, 1:] == goals[:, None], axis=2), axis=1)
-    )
-    if rows.size == 0:
-        return admitted
-
-    def star_metrics(stars: int) -> np.ndarray:
-        return np.broadcast_to(local_metrics, (stars, *local_metrics.shape)).reshape(
-            (-1, 3, 3)
-        )
-
-    offsets = size * np.arange(rows.size, dtype=np.int64)
-    lengths = metric_lengths(
-        stacked[rows].reshape((-1, 3)),
-        star_metrics(rows.size),
-        (spokes[None] + offsets[:, None, None]).reshape((-1, 2)),
-    ).reshape((rows.size, -1))[:, measured]
-    regular = np.all(np.isfinite(lengths) & (lengths > 0.0), axis=1)
-    for row in rows[~regular].tolist():
-        admitted[row] = evaluate(goals[row], local_metrics[0]) is not None
-    rows, lengths = rows[regular], lengths[regular]
-    width = lengths.shape[1]
-    long_rows, short_rows = _band_violation_rows(lengths)
-    references = []
-    for violations in before_band:
-        reference = np.zeros((width,), dtype=np.float64)
-        reference[: len(violations)] = violations
-        references.append(reference)
-    signs = _lexicographic_signs(long_rows, references[0])
-    signs = np.where(signs != 0, signs, _lexicographic_signs(short_rows, references[1]))
-    selected = signs < 0 if band_only else signs <= 0
-    rows, signs = rows[selected], signs[selected]
-    if rows.size:
-        floor = oriented(rows)
-        rows, signs = rows[floor], signs[floor]
-    admitted[rows[signs < 0]] = True
-    tied = rows[signs == 0]
-    if tied.size:
-        offsets = size * np.arange(tied.size, dtype=np.int64)
-        quality = metric_tetra_quality(
-            stacked[tied].reshape((-1, 3)),
-            star_metrics(tied.size),
-            (local_cells[None] + offsets[:, None, None]).reshape((-1, 4)),
-        ).reshape((tied.size, -1))
-        admitted[tied[np.min(quality, axis=1) > before_quality + _IMPROVEMENT]] = True
-    return admitted
-
-
-class _RelocationScreenRequest(NamedTuple):
-    goals: np.ndarray
-    points: np.ndarray
-    metrics: np.ndarray
-    cells: np.ndarray
-    spokes: np.ndarray
-    measured: np.ndarray
-    before_band: tuple[tuple[int, ...], tuple[int, ...]]
-    before_quality: float
-    evaluate: Callable[[np.ndarray, np.ndarray], object]
-    admitted: np.ndarray
-
-
-def _screen_relocation_batch(requests: list[_RelocationScreenRequest], /) -> None:
-    """Screen independent constant-field, band-only stars in bounded groups."""
-    start = 0
-    while start < len(requests):
-        end = start
-        rows = neighbors = cells = 0
-        while end < len(requests):
-            request = requests[end]
-            next_rows = rows + request.goals.shape[0]
-            next_neighbors = max(neighbors, request.spokes.shape[0])
-            next_cells = max(cells, request.cells.shape[0])
-            # Budget goal rows, edge temporaries and cell/corner work, including
-            # both the pairwise displacement tensor and its norm temporaries.
-            # Source snapshots and retained search inputs are not included.
-            estimated = next_rows * (
-                _SCREEN_GOAL_BYTES
-                + _SCREEN_NEIGHBOR_BYTES * next_neighbors
-                + _SCREEN_CELL_BYTES * next_cells
-            )
-            if estimated > _SCREEN_WORK_BYTES:
-                break
-            rows, neighbors, cells = next_rows, next_neighbors, next_cells
-            end += 1
-        if end == start:
-            request = requests[start]
-            per_goal = (
-                _SCREEN_GOAL_BYTES
-                + _SCREEN_NEIGHBOR_BYTES * request.spokes.shape[0]
-                + _SCREEN_CELL_BYTES * request.cells.shape[0]
-            )
-            # A single star is indivisible even if its own footprint exceeds
-            # the budget; larger goal batches are split before screening.
-            limit = max(1, _SCREEN_WORK_BYTES // max(per_goal, 1))
-            for begin in range(0, request.goals.shape[0], limit):
-                end_goal = min(begin + limit, request.goals.shape[0])
-                request.admitted[begin:end_goal] = _screen_relocation_goals(
-                    request.goals[begin:end_goal],
-                    request.points,
-                    request.metrics,
-                    request.cells,
-                    request.spokes,
-                    request.measured,
-                    request.before_band,
-                    request.before_quality,
-                    True,
-                    True,
-                    request.evaluate,
-                )
-            start += 1
-            continue
-        _screen_relocation_batch_group(requests[start:end], neighbors, cells)
-        start = end
-
-
-def _screen_relocation_batch_group(
-    requests: list[_RelocationScreenRequest], neighbors: int, cells: int, /
-) -> None:
-    count = len(requests)
-    sizes = np.asarray([request.goals.shape[0] for request in requests], dtype=np.int64)
-    owner = np.repeat(np.arange(count, dtype=np.int64), sizes)
-    goals = np.concatenate([request.goals for request in requests])
-    points = np.zeros((count, neighbors, 3), dtype=np.float64)
-    present = np.zeros((count, neighbors), dtype=np.bool_)
-    measured = np.zeros((count, neighbors), dtype=np.bool_)
-    metrics = np.empty((count, 3, 3), dtype=np.float64)
-    corners = np.zeros((count, cells, 4, 3), dtype=np.float64)
-    moving = np.zeros((count, cells, 4), dtype=np.bool_)
-    cell_present = np.zeros((count, cells), dtype=np.bool_)
-    long_ref = np.zeros((count, neighbors), dtype=np.float64)
-    short_ref = np.zeros((count, neighbors), dtype=np.float64)
-    for index, request in enumerate(requests):
-        width = request.spokes.shape[0]
-        points[index, :width] = request.points[request.spokes[:, 1]]
-        present[index, :width] = True
-        measured[index, :width] = request.measured
-        metrics[index] = request.metrics[0]
-        cell_count = request.cells.shape[0]
-        corners[index, :cell_count] = request.points[request.cells]
-        moving[index, :cell_count] = request.cells == 0
-        cell_present[index, :cell_count] = True
-        long, short = request.before_band
-        long_ref[index, : len(long)] = long
-        short_ref[index, : len(short)] = short
-    coincident = np.any(
-        np.all(points[owner] == goals[:, None, :], axis=2) & present[owner], axis=1
-    )
-    # Every spoke runs from its goal to a neighbor of the goal's star, under
-    # the star's one tensor at both ends: the rows the per-goal screen measures.
-    goal_rows = np.arange(owner.size, dtype=np.int64)
-    neighbor_rows = (
-        owner.size
-        + owner[:, None] * neighbors
-        + np.arange(neighbors, dtype=np.int64)[None]
-    )
-    lengths = metric_lengths(
-        np.concatenate((goals, points.reshape((-1, 3)))),
-        np.concatenate((metrics[owner], np.repeat(metrics, neighbors, axis=0))),
-        np.stack((np.repeat(goal_rows, neighbors), neighbor_rows.reshape((-1,))), axis=1),
-    ).reshape((owner.size, neighbors))
-    regular = np.all(~measured[owner] | (np.isfinite(lengths) & (lengths > 0.0)), axis=1)
-    lengths = np.where(measured[owner] & regular[:, None], lengths, _UPPER)
-    long_rows, short_rows = _band_violation_rows(lengths)
-
-    def signs(values: np.ndarray, reference: np.ndarray) -> np.ndarray:
-        differences = values != reference
-        first_index = np.argmax(differences, axis=1)
-        row_index = np.arange(values.shape[0], dtype=np.int64)
-        comparison = np.where(
-            values[row_index, first_index] > reference[row_index, first_index], 1, -1
-        )
-        return np.where(np.any(differences, axis=1), comparison, 0)
-
-    long_sign = signs(long_rows, long_ref[owner])
-    short_sign = signs(short_rows, short_ref[owner])
-    selected = (
-        ~coincident & regular & ((long_sign < 0) | ((long_sign == 0) & (short_sign < 0)))
-    )
-    indices = np.flatnonzero(selected)
-    admitted = np.zeros((owner.size,), dtype=np.bool_)
-    if indices.size:
-        selected_owner = owner[indices]
-        values = np.where(
-            moving[selected_owner, :, :, None],
-            goals[indices, None, None, :],
-            corners[selected_owner],
-        ).reshape((-1, 4, 3))
-        determinants, relative = metric_relative_determinants(values)
-        valid = (determinants > 0.0) & (relative > _DETERMINANT_FLOOR)
-        valid = valid.reshape((indices.size, cells)) | ~cell_present[selected_owner]
-        admitted[indices] = np.all(valid, axis=1)
-    offset = 0
-    for request in requests:
-        end = offset + request.goals.shape[0]
-        request.admitted[:] = admitted[offset:end]
-        for row in np.flatnonzero(~regular[offset:end] & ~coincident[offset:end]):
-            request.admitted[row] = (
-                request.evaluate(request.goals[row], request.metrics[0]) is not None
-            )
-        offset = end
+    else:
+        _band_violations(candidate.lengths[measured])
+    raise RuntimeError("A relocation candidate without a verdict raised no error.")
 
 
 def _relocation_proposals(
@@ -6765,8 +6483,6 @@ def _relocation_proposals(
     current_cell_ids = np.asarray(snapshot.cell_ids, dtype=np.int64)
     source_coordinates = state.source_points
     constant_metric = bool(np.all(state.source_metric == state.source_metric[0]))
-    prefetch_screens = not deep and band_only and constant_metric
-    pending_screens: list[_RelocationScreenRequest] = []
 
     def propose(vertex: int) -> _RelocationSearch | None:
         row = topology.vertex_row[vertex]
@@ -6865,7 +6581,9 @@ def _relocation_proposals(
             if local_constant
             else metric_lengths(local_points, local_metrics, spokes)
         )
-        before_band = _band_violations(lengths[measured])
+        # Raises for a measured spoke without a finite length, before a search
+        # is made of the star.
+        _band_violations(lengths[measured])
         outside = measured & ((lengths < _LOWER) | (lengths > _UPPER))
         before = prepared.qualities[star_rows]
         # The carrier simplices are coplanar (one facet) or collinear (one
@@ -6954,185 +6672,58 @@ def _relocation_proposals(
                 # native zero-set checks remain unchanged.
                 pulls = np.concatenate((pulls, tangent_pulls), axis=0)
 
-        def evaluate(
-            point: np.ndarray, metric: np.ndarray
-        ) -> tuple[np.ndarray, tuple[tuple[int, ...], tuple[int, ...]]] | None:
-            # Star quality is the last objective component, not a separate
-            # monotonicity constraint: a strict band improvement may lower
-            # quality, provided every cell still clears the determinant floor.
-            moved_points = local_points.copy()
-            moved_points[0] = point
-            if np.any(np.all(local_points[1:] == point, axis=1)):
-                return None
-            moved_metrics = local_metrics.copy()
-            moved_metrics[0] = metric
-            moved_lengths = metric_lengths(moved_points, moved_metrics, spokes)
-            after_band = _band_violations(moved_lengths[measured])
-            if band_only and after_band == before_band:
-                return None
-            if after_band > before_band or not _floor_oriented(moved_points[local_cells]):
-                return None
-            after = metric_tetra_quality(moved_points, moved_metrics, local_cells)
-            if after_band == before_band and not (
-                float(np.min(after)) > float(np.min(before)) + _IMPROVEMENT
-            ):
-                return None
-            return after, after_band
-
-        # Frames above are local to this vertex's source carrier.
-        # Distinct pulls and backtracking steps can round to the very same
-        # projected binary64 goal. The star, source carrier and metric field
-        # are fixed during this proposal, so retrying an identical goal cannot
-        # change its exact quantization or admission result.
-        seen_goals: set[bytes] = set()
-        examined_stencils: set[tuple[tuple[int, Fraction], ...]] = set()
+        # The candidate chain (goals, their screen, exact carriers, tensors
+        # and evaluation) is one native sequence on the star-local arrays
+        # above; the star, source carrier and metric field are fixed until
+        # the caller evicts this search.
         before_quality = float(np.min(before))
-
-        def fresh_goals() -> Iterator[np.ndarray]:
-            """Projected goals not seen before, in generation order, in
-            batches of at least ``_SCREEN_BATCH`` rows (but the last)."""
-            raw_goals = _relocation_goals(local_points[0], pulls, seed_only=not deep)
-            batch: list[np.ndarray] = []
-            size = 0
-            for goals in raw_goals:
-                if corners is not None and projection is not None:
-                    goals = metric_project_goals(goals, corners[0], projection)
-                goals = np.ascontiguousarray(goals)
-                # Byte keys in first-occurrence order; a key is the exact
-                # binary64 goal, so new goals are rebuilt from their keys.
-                fresh = [
-                    key
-                    for key in dict.fromkeys(goals.view(_GOAL_KEY)[:, 0].tolist())
-                    if key not in seen_goals
-                ]
-                seen_goals.update(fresh)
-                batch.append(
-                    np.frombuffer(b"".join(fresh), dtype=np.float64).reshape((-1, 3))
-                )
-                size += len(fresh)
-                if size >= _SCREEN_BATCH:
-                    yield np.concatenate(batch)
-                    batch, size = [], 0
-            if size:
-                yield np.concatenate(batch)
-
-        goal_batches = fresh_goals()
-        first_screen: _RelocationScreenRequest | None = None
-        if prefetch_screens and local_constant:
-            first_goals = next(goal_batches, None)
-            if first_goals is not None:
-                first_screen = _RelocationScreenRequest(
-                    first_goals,
-                    local_points,
-                    local_metrics,
-                    local_cells,
-                    spokes,
-                    measured,
-                    before_band,
-                    before_quality,
-                    evaluate,
-                    np.zeros((first_goals.shape[0],), dtype=np.bool_),
-                )
-                pending_screens.append(first_screen)
-
-        def screened_goals() -> Iterator[np.ndarray]:
-            if first_screen is not None:
-                yield first_screen.goals[first_screen.admitted]
-            per_goal = (
-                _SCREEN_GOAL_BYTES
-                + _SCREEN_NEIGHBOR_BYTES * spokes.shape[0]
-                + _SCREEN_CELL_BYTES * local_cells.shape[0]
-            )
-            limit = max(1, _SCREEN_WORK_BYTES // max(per_goal, 1))
-            for goals in goal_batches:
-                for start in range(0, goals.shape[0], limit):
-                    block = goals[start : start + limit]
-                    yield block[
-                        _screen_relocation_goals(
-                            block,
-                            local_points,
-                            local_metrics,
-                            local_cells,
-                            spokes,
-                            measured,
-                            before_band,
-                            before_quality,
-                            band_only,
-                            constant_metric,
-                            evaluate,
-                        )
-                    ]
-
-        def candidate_goals() -> Iterator[tuple[np.ndarray, bool]]:
-            prepared: list[np.ndarray] = []
-            for admitted in screened_goals():
-                if refine:
-                    prepared.extend(admitted)
-                for goal in admitted:
-                    yield goal, False
-            if refine:
-                # Only after every finest carrier has been considered, revisit
-                # the same prepared goals at all remaining dyadic resolutions.
-                for goal in prepared:
-                    yield goal, True
+        bank = _source_bank(state)
+        search = bank.source.relocation_search(
+            MetricRelocationStar(
+                local_points,
+                local_metrics,
+                measured,
+                lengths,
+                before_quality,
+                local_cells,
+                _DETERMINANT_FLOOR,
+                _IMPROVEMENT,
+            ),
+            pulls,
+            None if corners is None or projection is None else (corners[0], projection),
+            _bank_simplices(state, bank, simplices),
+            deep=deep,
+            refine=refine,
+            band_only=band_only,
+            constant_field=constant_metric,
+        )
 
         def candidate_search() -> Iterator[dict[str, Any]]:
-            # Retain star-local arrays only, not an old whole-mesh snapshot.
-            # Preparation above keeps the existing numerical operation order;
-            # this continuation owns quantization and admission ordering.
             # The current periodic star is fixed for this search. Build its
             # exact locator only if a carrier reaches this admission, then
             # retain it across subsequent carriers and generator resumptions.
             star_records: _SourceRecords | None = None
-            for goal, remaining in candidate_goals():
-                if refine:
-                    choices = _quantized_relocation_candidates(
-                        state,
-                        simplices,
-                        goal,
-                        local_points[0],
-                        fine_first=True,
-                        limit=_ALL_CARRIERS if remaining else 1,
-                    )
-                    candidates = choices[1:] if remaining else choices
-                elif deep:
-                    candidates = _quantized_relocation_candidates(
-                        state,
-                        simplices,
-                        goal,
-                        local_points[0],
-                        coarse_and_fine=True,
-                        limit=2,
-                    )
-                else:
-                    quantized = _quantized_relocation(
-                        state, simplices, goal, local_points[0]
-                    )
-                    candidates = () if quantized is None else (quantized,)
+            while True:
+                group, end = search.next()
+                if end is MetricRelocationEnd.EXHAUSTED:
+                    return
+                if end is not MetricRelocationEnd.GROUP:
+                    _report_relocation_candidate(state, bank, group[0], measured, end)
                 admitted: list[tuple[Any, dict[str, Any]]] = []
-                for stencil, carrier in candidates:
-                    if np.array_equal(carrier, local_points[0]) or np.any(
-                        np.all(local_points[1:] == carrier, axis=1)
-                    ):
-                        continue
-                    # The source, metric and star stay fixed until eviction.
-                    stencil_key = tuple(stencil.items())
-                    if stencil_key in examined_stencils:
-                        continue
-                    examined_stencils.add(stencil_key)
-                    moved_metric = _source_metric_from_stencil(
-                        state.source_metric,
-                        state.source_vertex_rows,
-                        stencil,
-                        source_metric_log=state.source_metric_log,
-                    )
-                    evaluated = evaluate(carrier, moved_metric)
-                    if evaluated is None:
-                        continue
-                    after, after_band = evaluated
-                    after_quality = float(np.min(after))
+                for candidate in group:
+                    carrier = candidate.point
+                    stencil = {
+                        bank.identifiers[row]: Fraction(weight, 1 << candidate.bits)
+                        for row, weight in zip(
+                            candidate.rows, candidate.weights, strict=True
+                        )
+                    }
+                    after_band = _band_violations(candidate.lengths[measured])
+                    after_quality = candidate.quality
                     current_stencil = None
                     if periodic_star is not None:
+                        # A host step of the sequence: the native candidates
+                        # of a periodic star are filtered here.
                         if star_records is None:
                             star_records = _source_tetra_inverse(
                                 local_points,
@@ -7152,7 +6743,7 @@ def _relocation_proposals(
                     proposal = {
                         "vertex": int(vertex),
                         "point": carrier,
-                        "metric": moved_metric,
+                        "metric": candidate.metric,
                         "stencil": stencil,
                         "current_stencil": current_stencil,
                         "star_cell_ids": star_ids,
@@ -7163,8 +6754,7 @@ def _relocation_proposals(
                         "block": next(iter(star_blocks)),
                         "region": next(iter(star_regions)),
                     }
-                    key = (after_band, -after_quality)
-                    admitted.append((key, proposal))
+                    admitted.append(((after_band, -after_quality), proposal))
                 # At most the finite binary64 dyadic resolutions for one goal.
                 # Stable sorting preserves the previous first-best proposal.
                 for _, proposal in sorted(admitted, key=lambda item: item[0]):
@@ -7174,16 +6764,6 @@ def _relocation_proposals(
 
     candidates: list[dict[str, Any]] = []
     occupied_cells: set[int] = set()
-    if prefetch_screens:
-        # No native edit occurs until every proposal has been collected.
-        # Screen only a bounded group before constructing the next group.
-        for start in range(0, len(order), _SCREEN_VERTEX_BATCH):
-            for vertex in order[start : start + _SCREEN_VERTEX_BATCH]:
-                if vertex not in cache:
-                    cache[vertex] = propose(vertex)
-            if pending_screens:
-                _screen_relocation_batch(pending_screens)
-                pending_screens.clear()
     for vertex in order:
         # A deep search can be costly; don't construct another proposal whose
         # star cannot be batched with one already found. Deferred stars are

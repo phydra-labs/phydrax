@@ -596,6 +596,26 @@
   zero-set admission moved to one header that both admissions use; native
   tests check the norm and angle bounds against exact arithmetic and prove
   the zero-set floor from exact squares of the area and the longest edge.
+- `NATIVE_METRIC_3D` searches the candidate positions of a relocated vertex
+  in the native library. The host still builds the star of the vertex and
+  its pulls; one native sequence per vertex then generates the goals with
+  their dyadic backtracking, projects them onto the carrier hull, passes
+  over repeated goals, screens them, takes the exact carriers of the mode,
+  passes over repeated stencils, interpolates the tensor of a stencil and
+  evaluates each carrier (band violations, determinants with their floor,
+  cell quality). Each call returns the candidates of the next goal that has
+  any, so a search still resumes across rounds until its star changes, and
+  the sequence is the one the host generators produced: on the recorded
+  sphere witness the proposals of the plain, deep and refining searches are
+  bit-identical. For a periodic star the native candidates are filtered on
+  the host by the exact locator of the current star, as before: there the
+  native sequence holds candidates that are not proposed. The host goal
+  generator, the batched float screen and their bounded-work batching are
+  removed. One visible difference in failure: a goal whose screen meets a
+  spoke without a finite metric length raises `FloatingPointError` when the
+  search reaches that goal; before, it raised when the batch holding the
+  goal was screened, which could be earlier than proposals of goals before
+  it.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep

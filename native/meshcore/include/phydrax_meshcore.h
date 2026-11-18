@@ -1121,6 +1121,64 @@ PHX_MC_API int32_t phx_mc_metric_source_survivor_moves(
     const int8_t* declared, int32_t every_resolution, int64_t capacity, int32_t* goals,
     int64_t* rows, int64_t* weights, int32_t* bits, double* carrier_points,
     double* carrier_metrics, double* qualities, double* lengths, int64_t* count, int32_t* end);
+/* Candidate positions of one relocated vertex, as a sequence.
+ *
+ * The star: row 0 of points and metrics is the vertex, rows 1.. its
+ * neighbors; spoke j runs from row 0 to row j + 1 (point_count - 1 spokes).
+ * measured[j] says whether spoke j counts toward the band violations and
+ * before_lengths[j] is its metric length now; before_quality is the smallest
+ * cell quality now; cells holds four star rows per cell.
+ *
+ * Each pull p (three values) gives the goals x + 2^-s p, s = 0, 1, ..., until
+ * the goal is x (s <= 5 unless flag 1 is set). A goal is projected with
+ * phx_mc_metric_project_goals(origin, projector) when both are given, and a
+ * projected goal seen before in this search is passed over. With flag 8 (a
+ * constant field) a goal is kept when its position with the vertex's own
+ * tensor is admitted as below; without it when every cell of the star has a
+ * positive determinant and a relative determinant above determinant_floor.
+ * A kept goal is replaced by the carriers of
+ * phx_mc_metric_source_carriers from the vertex, on the simplices or, with
+ * simplex_count 0, in the source cells: order 0 and the first carrier; with
+ * flag 1 order 2 and the first two; with flag 2 order 1 and the first, and
+ * once every goal has been treated the kept goals again in order with the
+ * carriers after the first. A carrier at the vertex or at a neighbor is
+ * skipped, and so is one whose support and weights were examined before.
+ * Its tensor is the log-Euclidean mean of the source tensors over its rows.
+ *
+ * A position is admitted when no neighbor lies at it; the band violations
+ * of its measured spokes are not larger than before, and smaller with flag
+ * 4; every cell has a positive determinant and a relative determinant above
+ * determinant_floor; and, when the violations are unchanged, its smallest
+ * cell quality exceeds before_quality + improvement.
+ *
+ * flags: 1 deep, 2 refine, 4 band-only, 8 constant field. The search copies
+ * its arrays; the source must outlive it. PHX_MC_INVALID_INPUT when a
+ * measured spoke has no finite length now.
+ *
+ * phx_mc_metric_relocation_next writes the candidates of the next goal that
+ * has any, in the order of its carriers: the carrier as in
+ * phx_mc_metric_source_carriers, its tensor, the smallest cell quality and
+ * the spoke lengths (point_count - 1 values per candidate). *end: 0 a group
+ * of *count candidates; 1 no goal is left. Otherwise the search cannot go
+ * on and one entry is written for the caller to report: 2 a goal (rows -1,
+ * the vertex's tensor, lengths written) whose screen met a spoke without a
+ * finite quantum; 3 a carrier whose evaluation met one (lengths written);
+ * 4 a carrier whose tensor does not exist. capacity is the number of
+ * entries the arrays hold, at least 54. The sequence does not depend on how
+ * the calls are spaced, and it is the same on every platform. */
+typedef struct phx_mc_metric_relocation phx_mc_metric_relocation;
+PHX_MC_API int32_t phx_mc_metric_relocation_create(
+    const phx_mc_metric_source* source, int64_t point_count, const double* points,
+    const double* metrics, const int8_t* measured, const double* before_lengths,
+    double before_quality, int64_t cell_count, const int64_t* cells, double determinant_floor,
+    double improvement, int64_t pull_count, const double* pulls, const double* origin,
+    const double* projector, int64_t simplex_count, const int64_t* simplex_rows,
+    const int8_t* declared, int32_t flags, phx_mc_metric_relocation** search);
+PHX_MC_API void phx_mc_metric_relocation_free(phx_mc_metric_relocation* search);
+PHX_MC_API int32_t phx_mc_metric_relocation_next(
+    phx_mc_metric_relocation* search, int64_t capacity, int64_t* rows, int64_t* weights,
+    int32_t* bits, double* carrier_points, double* carrier_metrics, double* qualities,
+    double* lengths, int64_t* count, int32_t* end);
 /* Gates of a metric field on the deterministic kernels: the same verdict for
  * the same input on every platform.
  *
