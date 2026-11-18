@@ -129,13 +129,14 @@ class LiveProofLedger(Generic[_T]):
     strings) that select among outcomes for the same operands.
     """
 
-    __slots__ = ("_entries", "_lock", "__weakref__")
+    __slots__ = ("_entries", "_counts", "_lock", "__weakref__")
 
     def __init__(self) -> None:
         self._entries: dict[
             tuple[tuple[int, ...], tuple[tuple[str, str], ...]],
             tuple[tuple[weakref.ref[Any] | None, ...], tuple[object, str] | None, _T],
         ] = {}
+        self._counts: dict[tuple[int, ...], int] = {}
         self._lock = threading.Lock()
 
     def find(
@@ -187,8 +188,12 @@ class LiveProofLedger(Generic[_T]):
             return
         key = ((id(operand),), ())
         with self._lock:
+            new = key not in self._entries
             self._entries[key] = ((reference,), None, outcome)
-        weakref.finalize(operand, self._forget, key)
+            if new:
+                self._counts[key[0]] = self._counts.get(key[0], 0) + 1
+        if new:
+            weakref.finalize(operand, self._forget, key)
 
     def record(
         self,
@@ -198,8 +203,13 @@ class LiveProofLedger(Generic[_T]):
         /,
         *,
         parameters: tuple[object, ...] = (),
+        limit: int | None = None,
     ) -> None:
-        """Bind ``outcome`` to these operands and their pre-proof ``fingerprint``."""
+        """Bind an outcome, optionally limiting entries per live operand tuple.
+
+        Stale entries retain their slots until the operands die; once full,
+        new premises are simply not recorded and callers can compute normally.
+        """
         key = (tuple(id(operand) for operand in operands), _parameter_key(parameters))
         try:
             references = tuple(
@@ -208,13 +218,25 @@ class LiveProofLedger(Generic[_T]):
         except TypeError:
             return
         with self._lock:
+            new = key not in self._entries
+            count = self._counts.get(key[0], 0)
+            if new and limit is not None and count >= limit:
+                return
             self._entries[key] = (references, fingerprint, outcome)
-        for operand in operands:
-            if operand is not None:
-                weakref.finalize(operand, self._forget, key)
+            if new:
+                self._counts[key[0]] = count + 1
+        if new:
+            for operand in operands:
+                if operand is not None:
+                    weakref.finalize(operand, self._forget, key)
 
     def _forget(
         self, key: tuple[tuple[int, ...], tuple[tuple[str, str], ...]], /
     ) -> None:
         with self._lock:
-            self._entries.pop(key, None)
+            if self._entries.pop(key, None) is not None:
+                count = self._counts[key[0]] - 1
+                if count:
+                    self._counts[key[0]] = count
+                else:
+                    del self._counts[key[0]]
