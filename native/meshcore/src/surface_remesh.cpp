@@ -1015,8 +1015,12 @@ class Remesher {
     bucket_index_ready = true;
     for (auto& [key, bucket] : buckets) rebuild_bucket(bucket);
   }
-  // Blocks conservatively bound registered faces. Reindexing drops dead rows;
-  // until then gathering ignores them.
+  // Blocks conservatively bound their live registered faces. A query that
+  // inspects a block computes the box of each live row, so it leaves the block
+  // with their union, empty when no row is left: a killed face never returns,
+  // and a registered face keeps its corners. A block holding a degenerate
+  // face, or a row the query sets aside as removed, keeps its bound. The
+  // candidates returned are the same; reindexing drops the dead rows.
   void gather_candidates(const F& t, const std::vector<int64_t>& removed,
                          std::vector<int64_t>& out) {
     out.clear();
@@ -1027,21 +1031,37 @@ class Remesher {
         for (int64_t k = range[2]; k <= range[5]; ++k) {
           const auto found = buckets.find(cell_key(i, j, k));
           if (found == buckets.end()) continue;
-          const auto& cell = found->second;
+          auto& cell = found->second;
           const auto inspect = [&](size_t block_index) {
-            const BucketBlock& block = cell.blocks[block_index];
+            BucketBlock& block = cell.blocks[block_index];
             if (!block.invalid && disjoint(lo, hi, block.lower, block.upper)) return;
             const size_t begin = block_index * kBucketBlockRows;
             const size_t end = begin + std::min(kBucketBlockRows, cell.size() - begin);
+            constexpr double unbounded = std::numeric_limits<double>::infinity();
+            V live_lower{unbounded, unbounded, unbounded};
+            V live_upper{-unbounded, -unbounded, -unbounded};
+            bool every_live_row_boxed = true;
             for (size_t at = begin; at < end; ++at) {
               const int64_t id = cell.get(at);
               if (!state.alive(static_cast<size_t>(id))) continue;
-              if (std::binary_search(removed.begin(), removed.end(), id)) continue;
+              if (std::binary_search(removed.begin(), removed.end(), id)) {
+                every_live_row_boxed = false;
+                continue;
+              }
               const F candidate = triangles[static_cast<size_t>(id)];
               const auto [candidate_lo, candidate_hi] = face_box(candidate);
+              for (int d = 0; d < 3; ++d) {
+                live_lower[d] = std::min(live_lower[d], candidate_lo[d]);
+                live_upper[d] = std::max(live_upper[d], candidate_hi[d]);
+              }
               if (disjoint(lo, hi, candidate_lo, candidate_hi) &&
                   (!block.invalid || !degenerate(candidate))) continue;
               out.push_back(id);
+            }
+            if (every_live_row_boxed && (!block.invalid || live_lower[0] == unbounded)) {
+              block.lower = live_lower;
+              block.upper = live_upper;
+              block.invalid = false;
             }
           };
           const auto visit = [&](auto&& self, const auto& levels, size_t level, size_t index,
