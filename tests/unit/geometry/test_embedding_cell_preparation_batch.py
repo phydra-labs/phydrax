@@ -167,3 +167,42 @@ def test_p2_tetrahedra_match_exact_fraction_reference() -> None:
                 inner_lo, inner_hi = cell.image_inner_bounds[axis]
                 assert Fraction(inner_lo) >= lo
                 assert Fraction(inner_hi) <= hi
+
+
+def test_curved_chart_is_independent_of_other_cells() -> None:
+    element = lagrange_element("tetrahedron", 2)
+    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
+    edge = next(
+        i for i in range(nodes.shape[0])
+        if tuple(float(nodes[i, axis]) for axis in range(3)) == (0.5, 0.0, 0.0)
+    )
+    curved = nodes.copy()
+    curved[edge, 2] += 0.125
+    other = nodes.copy()
+    other[:, 0] += 4.0
+    reference = np.asarray(
+        ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype=np.float64
+    )
+
+    def prepare(include_other: bool) -> EmbeddingCell:
+        vertices = np.concatenate((reference, reference + (4.0, 0.0, 0.0))) if include_other else reference
+        count = 2 if include_other else 1
+        mesh = CellMesh(
+            vertices,
+            (CellBlock("cells", "tetrahedron", np.arange(4 * count, dtype=np.int32).reshape(count, 4)),),
+            vertex_global_ids=np.arange(4 * count, dtype=np.int64),
+        )
+        bank = np.concatenate((curved, other)) if include_other else curved
+        geometry = CellGeometrySpec(
+            {"cells": element},
+            {"cells": np.arange(10 * count, dtype=np.int64).reshape(count, 10)},
+            bank,
+        )
+        return prepare_embedding_cells(mesh, geometry)[0]
+
+    single, batched = prepare(False), prepare(True)
+    assert replace(
+        single,
+        owning_mesh_id=batched.owning_mesh_id,
+        owning_geometry_id=batched.owning_geometry_id,
+    ) == batched

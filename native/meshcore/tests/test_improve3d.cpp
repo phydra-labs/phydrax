@@ -2474,7 +2474,7 @@ TetEditStatus apply_public_edit(TetMesh& mesh, const TetMeshSnapshot& state,
 // split when a circumcenter encroaches it, into exactly witnessed halves on
 // its source. Before, AB stayed one edge, every cell around it was refused,
 // and the unmet cells remained.
-void embedded_segment_is_split_by_refinement() {
+void embedded_segment_is_split_by_refinement(bool reverse) {
   const std::vector<double> points{0.0, 0.0, -1.0, 0.0,  0.0, 1.0,  1.5, 0.0, 0.0,
                                    0.0, 1.5, 0.0,  -1.5, 0.0, 0.0, 0.0, -1.5, 0.0};
   std::vector<std::array<std::int32_t, 4>> cells;
@@ -2510,7 +2510,8 @@ void embedded_segment_is_split_by_refinement() {
   }
   const std::vector<std::int8_t> orientations(face_count, 1);
   const std::vector<double> face_tolerances(face_count, 0.0);
-  const std::vector<std::int32_t> segments{0, 1};
+  const std::vector<std::int32_t> segments = reverse
+      ? std::vector<std::int32_t>{1, 0} : std::vector<std::int32_t>{0, 1};
   const std::vector<std::int32_t> segment_sources{0};
   const std::vector<std::int64_t> segment_ids{500};
   const std::vector<double> segment_tolerances{0.0};
@@ -3345,7 +3346,8 @@ int main() {
   relocation_clears_stale_carrier_ancestry();
   unresolved_radius_target_reports_residuals_without_losing_constraints();
   unrepresentable_positive_sliver_is_measured_not_refused();
-  embedded_segment_is_split_by_refinement();
+  embedded_segment_is_split_by_refinement(false);
+  embedded_segment_is_split_by_refinement(true);
   fixed_mapped_cube_slivers_are_improved_transactionally();
   dihedral_extremum_matches_pairwise_reference();
   relocation_metric_cache_is_bitwise_exact();

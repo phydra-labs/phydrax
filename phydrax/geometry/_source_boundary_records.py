@@ -519,6 +519,25 @@ def _fractions_from_chart_tokens(
     )
 
 
+def _fraction_charts_from_tokens(
+    bank: SourceBoundaryRationalChartBank, /
+) -> tuple[tuple[tuple[Fraction, ...], ...], ...]:
+    distinct: dict[
+        tuple[tuple[_RationalToken, ...], ...], tuple[tuple[Fraction, ...], ...]
+    ] = {}
+    rows = []
+    for chart in bank:
+        exact = distinct.get(chart)
+        if exact is None:
+            exact = tuple(
+                tuple(Fraction(numerator, denominator) for numerator, denominator in point)
+                for point in chart
+            )
+            distinct[chart] = exact
+        rows.append(exact)
+    return tuple(rows)
+
+
 class SourceBoundaryFaceImageWitness(StrictModule, NonTrainableState):
     """Exact physical overlap pieces with implicit full-target-face pullbacks.
 
@@ -1360,6 +1379,14 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
         if not 0 <= row < len(self.source_chart_ids):
             raise IndexError("source-bound source chart row is out of range.")
         return _fractions_from_chart_tokens(self.source_parameter_rational_tokens, row)
+
+    def target_reference_charts(self) -> tuple[tuple[tuple[Fraction, ...], ...], ...]:
+        """Decode all target reference charts for one operation."""
+        return _fraction_charts_from_tokens(self.target_reference_rational_tokens)
+
+    def source_parameter_charts(self) -> tuple[tuple[tuple[Fraction, ...], ...], ...]:
+        """Decode all source parameter charts for one operation."""
+        return _fraction_charts_from_tokens(self.source_parameter_rational_tokens)
 
     def require_current(
         self,
