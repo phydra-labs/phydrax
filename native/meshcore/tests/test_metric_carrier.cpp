@@ -6,6 +6,8 @@
 // (positive integer weights that sum to 2^bits, an image closer to the goal
 // than the current point), the three resolution orders and the argument
 // guards. The search is integer arithmetic, so these expectations are exact.
+#include <bit>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <vector>
@@ -20,9 +22,26 @@ struct Source {
   ~Source() { phx_mc_metric_source_free(handle); }
 };
 
-// A source whose exact points are small integers over `denominator`.
+// The 32-bit limbs of value * 3^power, least significant first; none for zero.
+std::vector<std::uint32_t> limbs_of(std::uint64_t value, int power) {
+  std::vector<std::uint32_t> limbs;
+  for (; value != 0; value >>= 32) limbs.push_back(static_cast<std::uint32_t>(value));
+  for (int step = 0; step < power && !limbs.empty(); ++step) {
+    std::uint64_t carry = 0;
+    for (std::uint32_t& limb : limbs) {
+      const std::uint64_t product = 3 * static_cast<std::uint64_t>(limb) + carry;
+      limb = static_cast<std::uint32_t>(product);
+      carry = product >> 32;
+    }
+    if (carry != 0) limbs.push_back(static_cast<std::uint32_t>(carry));
+  }
+  return limbs;
+}
+
+// A source whose exact points are small integers over `denominator`, written
+// with numerators and denominator both multiplied by 3^power.
 void create(Source& source, const std::vector<std::int64_t>& numerators, std::uint32_t denominator,
-            const std::vector<std::int64_t>& cells) {
+            const std::vector<std::int64_t>& cells, int power = 0) {
   const std::int64_t point_count = static_cast<std::int64_t>(numerators.size() / 3);
   std::vector<double> points;
   std::vector<std::uint32_t> words;
@@ -31,10 +50,13 @@ void create(Source& source, const std::vector<std::int64_t>& numerators, std::ui
   for (const std::int64_t value : numerators) {
     points.push_back(static_cast<double>(value) / static_cast<double>(denominator));
     signs.push_back(value < 0 ? -1 : 1);
-    if (value != 0) words.push_back(static_cast<std::uint32_t>(value < 0 ? -value : value));
+    const std::vector<std::uint32_t> limbs =
+        limbs_of(static_cast<std::uint64_t>(value < 0 ? -value : value), power);
+    words.insert(words.end(), limbs.begin(), limbs.end());
     offsets.push_back(static_cast<std::int64_t>(words.size()));
   }
-  words.push_back(denominator);
+  const std::vector<std::uint32_t> common = limbs_of(denominator, power);
+  words.insert(words.end(), common.begin(), common.end());
   offsets.push_back(static_cast<std::int64_t>(words.size()));
   // The carriers do not read the tensors of the source.
   const std::vector<double> tensors(static_cast<std::size_t>(9 * point_count), 0.0);
@@ -288,6 +310,71 @@ void guards_arguments() {
   phx_mc_metric_source_free(nullptr);
 }
 
+// The exact points do not change when numerators and denominator share a
+// factor, so neither does any carrier, however long the integers are: about
+// 240 and about 1,110 bits of common factor here.
+void common_factor() {
+  const std::vector<std::int64_t> numerators = {0, 0, 0, 9, 0, 0, 0, 10, 0, 0, 0, 11, 8, 9, 10};
+  const std::vector<std::int64_t> cells = {4, 1, 2, 3, 0, 1, 2, 3};
+  const double points[5][3] = {{0.0, 0.0, 0.0},
+                               {9.0 / 7.0, 0.0, 0.0},
+                               {0.0, 10.0 / 7.0, 0.0},
+                               {0.0, 0.0, 11.0 / 7.0},
+                               {8.0 / 7.0, 9.0 / 7.0, 10.0 / 7.0}};
+  Source plain;
+  create(plain, numerators, 7, cells);
+  std::uint64_t state = 20261118;
+  const auto unit = [&state]() {
+    state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+    return static_cast<double>(state >> 11) * 0x1p-53;
+  };
+  std::int64_t compared = 0;
+  for (const int power : {150, 700}) {
+    Source scaled;
+    create(scaled, numerators, 7, cells, power);
+    for (int query = 0; query < 40; ++query) {
+      // A point of one cell, and a current point somewhere else.
+      const std::int64_t* corners = cells.data() + 4 * (query % 2);
+      double weights[4];
+      double total = 0.0;
+      for (double& weight : weights) {
+        weight = unit();
+        total += weight;
+      }
+      double target[3] = {0.0, 0.0, 0.0};
+      double current[3];
+      for (int axis = 0; axis < 3; ++axis) {
+        for (int corner = 0; corner < 4; ++corner) {
+          target[axis] += weights[corner] / total * points[corners[corner]][axis];
+        }
+        const double step = unit();
+        current[axis] = target[axis] + (step - 0.5);
+      }
+      const std::vector<std::vector<std::int64_t>> simplex_rows = {{}, {1, 2, 3}, {0, 3, -1}};
+      const std::vector<std::vector<std::int8_t>> declared = {{}, {1}, {0}};
+      for (std::size_t kind = 0; kind < 3; ++kind) {
+        for (std::int32_t order = 0; order < 3; ++order) {
+          const Found expected =
+              search(plain, target, current, simplex_rows[kind], declared[kind], order, 54);
+          const Found found =
+              search(scaled, target, current, simplex_rows[kind], declared[kind], order, 54);
+          PHX_CHECK(found.count == expected.count);
+          PHX_CHECK(found.rows == expected.rows);
+          PHX_CHECK(found.weights == expected.weights);
+          PHX_CHECK(found.bits == expected.bits);
+          PHX_CHECK(found.exact == expected.exact);
+          for (std::size_t index = 0; index < found.points.size(); ++index) {
+            PHX_CHECK(std::bit_cast<std::uint64_t>(found.points[index]) ==
+                      std::bit_cast<std::uint64_t>(expected.points[index]));
+          }
+          compared += expected.count;
+        }
+      }
+    }
+  }
+  PHX_CHECK(compared > 1000);
+}
+
 }  // namespace
 
 int main() {
@@ -297,5 +384,6 @@ int main() {
   simplices();
   declared_faces();
   guards_arguments();
+  common_factor();
   return phx::mc::test::finish("test_metric_carrier");
 }

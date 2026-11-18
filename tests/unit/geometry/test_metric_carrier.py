@@ -217,15 +217,39 @@ def _same(
     ] == expected
 
 
+# Denominators of about 60 and about 300 bits, pairwise coprime: the common
+# denominator of the five points has about 300 and about 1,500 bits.
+_LONG = (3**38, 5**26, 7**21, 11**17, 13**16)
+_VERY_LONG = (3**190, 5**130, 7**107, 11**87, 13**81)
+
+_SOURCES = (
+    pytest.param(8, None, id="dyadic-points"),
+    pytest.param(7, None, id="rational-points"),
+    pytest.param(8, _LONG, id="long-rational-points"),
+    pytest.param(8, _VERY_LONG, id="very-long-rational-points"),
+)
+
+
 def _bank(
-    denominator: int, /
+    denominator: int, shifts: tuple[int, ...] | None = None, flatten: int = 1, /
 ) -> tuple[tuple[_Point, ...], np.ndarray, np.ndarray, MetricSource]:
     # Two cells on both sides of the face (1, 2, 3); with a denominator that
-    # is not a power of two the exact points are not binary64 values.
+    # is not a power of two the exact points are not binary64 values. Point i
+    # is moved by 1 / shifts[i] on every axis; the third coordinate is then
+    # divided by `flatten`.
     integers = ((0, 0, 0), (9, 0, 0), (0, 10, 0), (0, 0, 11), (8, 9, 10))
+    moves = (
+        (Fraction(0),) * 5
+        if shifts is None
+        else tuple(Fraction(1, shift) for shift in shifts)
+    )
     exact = tuple(
-        (Fraction(x, denominator), Fraction(y, denominator), Fraction(z, denominator))
-        for x, y, z in integers
+        (
+            Fraction(x, denominator) + move,
+            Fraction(y, denominator) + move,
+            (Fraction(z, denominator) + move) / flatten,
+        )
+        for (x, y, z), move in zip(integers, moves, strict=True)
     )
     points = np.asarray([[float(value) for value in point] for point in exact])
     cells = np.asarray(((4, 1, 2, 3), (0, 1, 2, 3)), dtype=np.int64)
@@ -238,9 +262,11 @@ def _bank(
     )
 
 
-@pytest.mark.parametrize("denominator", [8, 7], ids=["dyadic-points", "rational-points"])
-def test_carriers_in_cells_follow_their_definition(denominator: int) -> None:
-    exact, points, cells, source = _bank(denominator)
+@pytest.mark.parametrize(("denominator", "shifts"), _SOURCES)
+def test_carriers_in_cells_follow_their_definition(
+    denominator: int, shifts: tuple[int, ...] | None
+) -> None:
+    exact, points, cells, source = _bank(denominator, shifts)
     generator = np.random.default_rng(20261117)
     located = 0
     try:
@@ -286,9 +312,38 @@ def test_carriers_in_cells_follow_their_definition(denominator: int) -> None:
     assert located > 100
 
 
-@pytest.mark.parametrize("denominator", [8, 7], ids=["dyadic-points", "rational-points"])
-def test_carriers_on_simplices_follow_their_definition(denominator: int) -> None:
-    exact, points, cells, source = _bank(denominator)
+def test_carrier_images_are_correctly_rounded_below_the_normal_range() -> None:
+    # Every third coordinate of the source is a subnormal binary64 value, and
+    # so is that of every image: rounding to 53 bits is not the binary64
+    # rounding there.
+    exact, points, cells, source = _bank(8, None, 2**1040)
+    generator = np.random.default_rng(20261119)
+    subnormal = 0
+    try:
+        for _ in range(20):
+            weights = generator.dirichlet(np.ones(4))
+            target = weights @ points[cells[int(generator.integers(2))]]
+            current = target + generator.normal(scale=0.2, size=3)
+            for order in MetricCarrierOrder:
+                expected = _reference(
+                    exact, points, cells, target, current, None, order, 54, None
+                )
+                found = source.carriers(target, current, None, order, 54)
+                _same(found, expected)
+                subnormal += sum(
+                    0.0 < abs(float(carrier.point[2])) < np.finfo(np.float64).tiny
+                    for carrier in found
+                )
+    finally:
+        source.close()
+    assert subnormal > 100
+
+
+@pytest.mark.parametrize(("denominator", "shifts"), _SOURCES)
+def test_carriers_on_simplices_follow_their_definition(
+    denominator: int, shifts: tuple[int, ...] | None
+) -> None:
+    exact, points, cells, source = _bank(denominator, shifts)
     generator = np.random.default_rng(20261118)
     faces = ((1, 2, 3), (0, 1, 2), (0, 2, 3), (4, 1, 2))
     edges = ((1, 2), (0, 3), (4, 3))
