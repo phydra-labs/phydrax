@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- Native B-Rep projection batches safely regular deferred surface frames while
+  preserving the specified binary64 results and scalar fallback behavior.
 - Native geometry and meshing now share a single fixed-order binary64 dot,
   matrix product, and norm definition. On platforms whose BLAS fused or
   reordered these operations, rounding can change surface-association

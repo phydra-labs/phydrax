@@ -623,6 +623,54 @@ def _face_normal_and_frame(
     )
 
 
+def _regular_face_frames(
+    jacobians: np.ndarray, orientation: float, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+    """Batch regular frames whose operations cannot overflow or underflow."""
+    if (
+        jacobians.ndim != 3
+        or jacobians.shape[1:] != (3, 2)
+        or orientation not in (-1.0, 1.0)
+        or not np.all(np.isfinite(jacobians))
+    ):
+        return None
+    # A nonzero binary64 input in [2**-128, 2**128] is a multiple of
+    # 2**-180. Cross-product components are therefore zero or at least
+    # 2**-360; their squares are normal and cannot overflow. With regular
+    # lengths, the normalized components' products and differences are zero
+    # or above 2**-932, so the ordered scalar operations have no underflow.
+    magnitude = np.abs(jacobians)
+    eligible = np.all(
+        (magnitude <= 2.0**128) & ((magnitude >= 2.0**-128) | (jacobians == 0.0)),
+        axis=(1, 2),
+    )
+    selected = np.flatnonzero(eligible)
+    if not selected.size:
+        return None
+    values = jacobians[selected]
+    normal = np.cross(values[:, :, 0], values[:, :, 1])
+    squared = normal * normal
+    length = np.sqrt((squared[:, 0] + squared[:, 1]) + squared[:, 2])
+    first = values[:, :, 0]
+    first_squared = first * first
+    first_length = np.sqrt(
+        (first_squared[:, 0] + first_squared[:, 1]) + first_squared[:, 2]
+    )
+    tolerance = 128.0 * np.finfo(np.float64).eps
+    regular = (length > tolerance) & (first_length > tolerance)
+    eligible[selected[~regular]] = False
+    selected = selected[regular]
+    if not selected.size:
+        return None
+    normal = orientation * normal[regular] / length[regular, None]
+    first = first[regular] / first_length[regular, None]
+    normals = np.empty((len(jacobians), 3), dtype=np.float64)
+    tangents = np.empty((len(jacobians), 2, 3), dtype=np.float64)
+    normals[selected] = normal
+    tangents[selected] = np.stack((first, np.cross(normal, first)), axis=1)
+    return eligible, normals, tangents
+
+
 def _periodic_parameter(
     value: float, first: float, last: float, period: float, /
 ) -> float | None:
@@ -6059,7 +6107,25 @@ class NativeBRepProjection(AbstractBRepProjection):
             else:
                 jacobians = evaluate_host_program(program, parameters)
             bounds = preparation.faces[face].bounds
-            for row, jacobian in zip(selected, jacobians, strict=True):
+            frames = None
+            first_path = hits[selected[0]].path
+            if program is not None and all(
+                hits[row].path == first_path for row in selected
+            ):
+                key = (2, face, first_path)
+                occurrences = targets.get(key)
+                if occurrences is None:
+                    occurrences = self._target_occurrences(*key)
+                    targets[key] = occurrences
+                orientation = self._face_orientation(
+                    face, occurrences[0].solid, preparation=preparation
+                )
+                frames = _regular_face_frames(
+                    np.asarray(jacobians, dtype=np.float64), orientation
+                )
+            for position, (row, jacobian) in enumerate(
+                zip(selected, jacobians, strict=True)
+            ):
                 hit = hits[row]
                 key = (2, face, hit.path)
                 occurrences = targets.get(key)
@@ -6067,16 +6133,23 @@ class NativeBRepProjection(AbstractBRepProjection):
                     occurrences = self._target_occurrences(*key)
                     targets[key] = occurrences
                 occurrence = occurrences[0]
-                normal, tangents, regular = _face_normal_and_frame(
-                    patch,
-                    hit.parameters,
-                    self._face_orientation(
-                        face, occurrence.solid, preparation=preparation
-                    ),
-                    embedding=None,
-                    profile_interval=(float(bounds[0, 1]), float(bounds[1, 1])),
-                    jacobian=np.asarray(jacobian, dtype=np.float64),
-                )
+                if frames is not None and frames[0][position]:
+                    normal, tangents, regular = (
+                        frames[1][position],
+                        frames[2][position],
+                        True,
+                    )
+                else:
+                    normal, tangents, regular = _face_normal_and_frame(
+                        patch,
+                        hit.parameters,
+                        self._face_orientation(
+                            face, occurrence.solid, preparation=preparation
+                        ),
+                        embedding=None,
+                        profile_interval=(float(bounds[0, 1]), float(bounds[1, 1])),
+                        jacobian=np.asarray(jacobian, dtype=np.float64),
+                    )
                 if occurrence.path:
                     rotation = np.asarray(occurrence.rotation, dtype=np.float64)
                     normal = (
