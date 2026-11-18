@@ -16,6 +16,13 @@ from phydrax.geometry.implicit._periodic_discovery import QuotientZeroSet
 
 
 def test_projection_decides_exact_reach_boundary() -> None:
+    """On this fixture, exact squared distance is
+    418399173461941767479947330913/81129638414606681695789005144064.
+
+    The outside and inside reach squares are respectively
+    26777547101564269689882063722689/5192296858534827628530496329220096
+    and 6694386775391070009821820912481/1298074214633706907132624082305024.
+    """
     source = phx.geometry.TrigonometricLevelSet(
         phx.geometry.TrigonometricTable.family("schwarz_p"), PeriodicCell(np.eye(3))
     )
