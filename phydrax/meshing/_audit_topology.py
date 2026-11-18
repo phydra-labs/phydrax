@@ -33,6 +33,12 @@ from .._geometry_predicates import (
     segment_intersections_2d,
     SegmentIntersectionStatus,
 )
+from .._meshcore import (
+    IntersectionClass,
+    meshcore_available,
+    MeshcoreStatus,
+    triangle_intersection_classes,
+)
 from ..discretization import CellMesh, PolyhedralConnectivity
 from ..discretization._cell_geometry_validity import polyhedral_star_tables
 from ..discretization._reference_cell import reference_cell_topology
@@ -396,6 +402,32 @@ def _star_components(
 def _lookup(table: np.ndarray, rows: np.ndarray, /) -> np.ndarray:
     """Row positions of ``rows`` inside the lexicographically sorted ``table``."""
 
+    # Nodes are lexicographically sorted (and normally unique). Pack each
+    # nonnegative tuple into equal-width big-endian fields so unsigned integer
+    # order is tuple order. The bound prevents collisions and shift overflow;
+    # negative padding and larger identifiers retain the general lookup.
+    width = table.shape[1]
+    if (
+        width in (2, 3)
+        and table.dtype == np.dtype(np.int64)
+        and rows.dtype == np.dtype(np.int64)
+        and table.size
+        and rows.size
+        and np.min(table) >= 0
+        and np.min(rows) >= 0
+        and np.max(table) < (1 << (64 // width))
+        and np.max(rows) < (1 << (64 // width))
+    ):
+        bits = np.uint64(64 // width)
+        keys = np.zeros(table.shape[0], dtype=np.uint64)
+        query_keys = np.zeros(rows.shape[0], dtype=np.uint64)
+        for column in range(width):
+            keys = (keys << bits) | table[:, column].astype(np.uint64)
+            query_keys = (query_keys << bits) | rows[:, column].astype(np.uint64)
+        position = np.searchsorted(keys, query_keys, side="left")
+        if np.all(position < table.shape[0]) and np.array_equal(table[position], rows):
+            return position
+
     view = (
         np.ascontiguousarray(table)
         .view(np.dtype((np.void, table.dtype.itemsize * table.shape[1])))
@@ -519,12 +551,34 @@ def _segment_crosses_triangle(
 
 
 def _projection_axes(triangles: np.ndarray, /) -> np.ndarray:
+    """Choose the existing projection unless its exact orientation is zero."""
+
     normal = np.cross(
         triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]
     )
     dropped = np.argmax(np.abs(normal), axis=1)
-    axes = np.asarray(((1, 2), (0, 2), (0, 1)))
-    return axes[dropped]
+    axes = np.asarray(((1, 2), (0, 2), (0, 1)), dtype=np.int64)
+    selected = axes[dropped]
+    sign, known = _orient2d(
+        _project(triangles[:, 0], selected),
+        _project(triangles[:, 1], selected),
+        _project(triangles[:, 2], selected),
+    )
+    remaining = known & (sign == 0)
+    for candidate in axes:
+        rows = np.flatnonzero(remaining)
+        if rows.size == 0:
+            break
+        projection = np.broadcast_to(candidate, (rows.size, 2))
+        sign, known = _orient2d(
+            _project(triangles[rows, 0], projection),
+            _project(triangles[rows, 1], projection),
+            _project(triangles[rows, 2], projection),
+        )
+        valid = known & (sign != 0)
+        selected[rows[valid]] = candidate
+        remaining[rows[valid]] = False
+    return selected
 
 
 def _project(points: np.ndarray, axes: np.ndarray, /) -> np.ndarray:
@@ -707,6 +761,25 @@ def _triangle_pairs_intersect(
         )
         hit[unresolved[disjoint]] = False
         certain[unresolved[disjoint]] = True
+    return hit, certain
+
+
+def _native_triangle_pairs_intersect(
+    points: np.ndarray, first: np.ndarray, second: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Classify contacts in input order, retaining the host route for failed rows."""
+    classes, status = triangle_intersection_classes(
+        points[first], points[second], first_ids=first, second_ids=second
+    )
+    shared = np.sum(first[:, :, None] == second[:, None, :], axis=(1, 2))
+    # The host audit excludes coincident triangles with all three IDs shared.
+    hit = (classes > IntersectionClass.SHARED_EDGE) & (shared != 3)
+    certain = status == MeshcoreStatus.OK
+    failed = np.flatnonzero(~certain)
+    if failed.size:
+        hit[failed], certain[failed] = _triangle_pairs_intersect(
+            points, first[failed], second[failed]
+        )
     return hit, certain
 
 
@@ -943,13 +1016,18 @@ def _self_intersections(
     corners = points[triangles]
     bvh = prepare_bvh(np.min(corners, axis=1), np.max(corners, axis=1), dtype=np.float64)
     intersections = loops
+    intersect_pairs = (
+        _native_triangle_pairs_intersect
+        if meshcore_available()
+        else _triangle_pairs_intersect
+    )
     for first, second in bvh_overlap_pair_blocks(bvh, bvh, include_touching=True):
         keep = first < second
         first = first[keep]
         second = second[keep]
         for start in range(0, first.size, _TRIANGLE_PAIR_BATCH):
             stop = min(start + _TRIANGLE_PAIR_BATCH, first.size)
-            hit, certain = _triangle_pairs_intersect(
+            hit, certain = intersect_pairs(
                 points, triangles[first[start:stop]], triangles[second[start:stop]]
             )
             intersections += int(np.count_nonzero(hit & certain))

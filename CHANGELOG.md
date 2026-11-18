@@ -10,6 +10,12 @@
   concrete audit evaluation. Metric interpolation remains device-dependent.
   Native CAD qualification volume summaries also accumulate cell measures in
   mesh block order, so their reported volumes and relative defects can change.
+- Welded mesh audits use native batched exact triangle contacts when available,
+  retaining the host route for unsupported contact rows and installations.
+- Fixed welded mesh audits reporting certain self-intersections for disjoint
+  coplanar triangles when the floating-point normal cancels.
+- Welded mesh audits accelerate vertex and edge star incidence lookups without
+  changing topology findings or their order.
 - Native geometry and meshing now share a single fixed-order binary64 dot,
   matrix product, and norm definition. On platforms whose BLAS fused or
   reordered these operations, rounding can change surface-association
