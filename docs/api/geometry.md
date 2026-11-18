@@ -660,6 +660,12 @@ when its per-occurrence rotation and translation errors, scaled by that local
 solid's extent, fit the requested target-length bound. The resulting
 `BRepAssemblyOccurrence.placement_evidence` retains the certificate. BRep-text
 input also requires its declared source length unit.
+The source identity is `step-`, `iges-`, or `brep-text-` followed by the
+first 16 hexadecimal digits of the SHA-256 digest of the source bytes.
+Location does not affect source, entity, or import identities; the import
+result retains the read path in its `source-path` provenance entry. Import
+policies remain part of the resulting model identity.
+
 
 In-memory `TopoDS_Shape` conversion is a separate optional operation through
 `phydrax.interchange.import_occt_shape`; OCP is loaded only when

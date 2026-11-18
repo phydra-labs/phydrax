@@ -30,6 +30,10 @@ class CadResource:
     digest: str
     source_path: str | None = None
 
+    def source_identity(self, format_name: str, digest: str | None = None) -> str:
+        """Identify source bytes independently of their location."""
+        return f"{format_name}-{(self.digest if digest is None else digest)[:16]}"
+
 
 type CadResourceDecoder = Callable[[CadResource, CadImportPolicy], CadImportResult]
 
@@ -102,6 +106,8 @@ def read_cad(
 
     BRep text requires an explicit length unit; embedded STEP and IGES units
     cannot be overridden.
+    The format-prefixed source identity is derived from the source bytes'
+    SHA-256 digest. The read path is retained only as result provenance.
     """
     if source_length_unit is not None and source_length_unit.dimension != LENGTH:
         raise ValueError(

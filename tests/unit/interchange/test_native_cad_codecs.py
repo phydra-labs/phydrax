@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+import hashlib
 import re
 from collections.abc import Mapping, Sequence
 from fractions import Fraction
@@ -731,6 +732,77 @@ def _forbid_optional_occt(monkeypatch: pytest.MonkeyPatch) -> None:
         return original_import(name, globals, locals, fromlist, level)
 
     monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+
+@pytest.mark.parametrize("format_name", ("step", "iges", "brep"))
+def test_import_identity_depends_on_bytes_not_location(
+    tmp_path: Path, format_name: str
+) -> None:
+    model = decode_step_bytes(_STEP_SQUARE, _POLICY).model
+    left = tmp_path / "left"
+    right = tmp_path / "right"
+    left.mkdir()
+    right.mkdir()
+    first = left / f"model.{format_name}"
+    second = right / f"copy.{format_name}"
+    match format_name:
+        case "step":
+            write_step(model, first)
+        case "iges":
+            write_iges(model, first)
+        case _:
+            write_brep_text(model, first)
+    payload = first.read_bytes()
+    second.write_bytes(payload)
+
+    def load(path: Path, policy: CadImportPolicy) -> phx.interchange.CadImportResult:
+        match format_name:
+            case "step":
+                return read_step(path, policy, trusted_root=tmp_path)
+            case "iges":
+                return read_iges(path, policy, trusted_root=tmp_path)
+            case _:
+                return read_brep_text(
+                    path, policy, trusted_root=tmp_path, source_length_unit=METER
+                )
+
+    a = load(first, _POLICY)
+    b = load(second, _POLICY)
+    dispatched = phx.interchange.read_cad(
+        second.name,
+        _POLICY,
+        trusted_root=right,
+        source_length_unit=METER if format_name == "brep" else None,
+    )
+    assert dispatched.result_id == a.result_id
+    assert ("source-path", second.name) in dispatched.provenance
+    prefix = "brep-text" if format_name == "brep" else format_name
+    assert a.model.source_id == f"{prefix}-{hashlib.sha256(payload).hexdigest()[:16]}"
+    assert a.model.source_id == b.model.source_id
+    assert a.model.source_revision == b.model.source_revision
+    assert a.model.model_id == b.model.model_id
+    assert a.report.report_id == b.report.report_id
+    assert a.result_id == b.result_id
+    assert ("source-path", str(first)) in a.provenance
+    assert ("source-path", str(second)) in b.provenance
+    assert phx.geometry.BRepEntityId(
+        a.model.source_id, a.model.source_revision, "face", 0
+    ) == (
+        phx.geometry.BRepEntityId(b.model.source_id, b.model.source_revision, "face", 0)
+    )
+    changed_policy = load(
+        first, CadImportPolicy(_COORDINATES, relative_geometric_tolerance=2e-8)
+    )
+    assert changed_policy.model.source_id == a.model.source_id
+    assert changed_policy.result_id != a.result_id
+    changed_payload = (b"X" + payload[1:]) if format_name == "iges" else payload + b"\n"
+    second.write_bytes(changed_payload)
+    changed = load(second, _POLICY)
+    assert changed.model.source_id != a.model.source_id
+    assert phx.geometry.BRepEntityId(
+        changed.model.source_id, changed.model.source_revision, "face", 0
+    ) != phx.geometry.BRepEntityId(a.model.source_id, a.model.source_revision, "face", 0)
+    assert changed.result_id != a.result_id
 
 
 def test_independent_step_and_iges_fixtures_use_native_codecs(
