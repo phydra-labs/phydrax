@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from fractions import Fraction
 from functools import cache
 from itertools import permutations
 
@@ -152,6 +153,11 @@ def test_periodic_network_mesh_certifies_and_closes_through_paired_cell_faces(
     family: _G.TrigonometricFamily, diameter: float
 ) -> None:
     volume = _volume(family, diameter)
+    # The identity lattice has unit spectral stretch, up to outward rounding.
+    assert Fraction(volume.vertex_root_distance) >= Fraction(volume.root_error)
+    assert Fraction(volume.vertex_root_distance) <= Fraction(volume.root_error) * (
+        1 + Fraction(1, 2**48)
+    )
     surface = volume.surface
     assert surface.topology is not None
 
@@ -184,6 +190,25 @@ def test_periodic_network_mesh_certifies_and_closes_through_paired_cell_faces(
     achieved = dict(volume.construction.compliance.achieved)
     assert achieved["final_quality_unmet_count"] == 0.0
     assert volume.construction.compliance.issues == ()
+
+
+def test_periodic_volume_tight_axis_aligned_root_distance() -> None:
+    source = _G.TrigonometricLevelSet(
+        _G.TrigonometricTable.family("schwarz_p"),
+        PeriodicCell(2.0 * np.eye(3)),
+    )
+    surface = discover_periodic_trigonometric_surface(
+        source,
+        policy=AdaptiveImplicitSurfacePolicy(
+            relative_cell_diameter=0.2, root_tolerance=1.0e-8
+        ),
+        source_id="axis-aligned-network",
+    )
+    volume = mesh_periodic_trigonometric_region(surface)
+    assert Fraction(volume.vertex_root_distance) >= 2 * Fraction(volume.root_error)
+    assert Fraction(volume.vertex_root_distance) <= 2 * Fraction(volume.root_error) * (
+        1 + Fraction(1, 2**48)
+    )
 
 
 def test_periodic_network_public_adaptation_edits_complete_lattice_orbits() -> None:

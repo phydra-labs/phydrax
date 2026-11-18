@@ -222,6 +222,43 @@ def binary64_norm_lower(components: ArrayLike, /) -> NDArray[np.float64]:
     return _directed_norm(components, False)
 
 
+def binary64_spectral_upper(matrix: ArrayLike, /) -> float:
+    """Certified spectral norm bound for a finite binary64 matrix.
+
+    The Frobenius norm and ``sqrt(||A||_1 * ||A||_inf)`` are both upper
+    bounds. Every nontrivial addition, multiplication and square root in the
+    latter is directed upward.
+    """
+    values = np.asarray(matrix, dtype=np.float64)
+    if values.ndim != 2 or not np.all(np.isfinite(values)):
+        raise ValueError("spectral norm bound requires a finite matrix.")
+    frobenius = float(binary64_norm_upper(values.reshape(-1)))
+    rows, columns = values.shape
+    row_norm = 0.0
+    column_norm = 0.0
+    for row in range(rows):
+        total = 0.0
+        for column in range(columns):
+            term = abs(float(values[row, column]))
+            total = (
+                math.nextafter(total + term, math.inf) if total and term else total + term
+            )
+        row_norm = max(row_norm, total)
+    for column in range(columns):
+        total = 0.0
+        for row in range(rows):
+            term = abs(float(values[row, column]))
+            total = (
+                math.nextafter(total + term, math.inf) if total and term else total + term
+            )
+        column_norm = max(column_norm, total)
+    if row_norm == 0.0 or column_norm == 0.0:
+        return 0.0
+    product = math.nextafter(row_norm * column_norm, math.inf)
+    induced = math.nextafter(math.sqrt(product), math.inf)
+    return min(frobenius, induced)
+
+
 def binary64_dyadic_entries(
     values: np.ndarray, /
 ) -> tuple[NDArray[np.int64], NDArray[np.int64]]:
@@ -352,6 +389,7 @@ __all__ = [
     "binary64_dyadic_entries",
     "binary64_norm_lower",
     "binary64_norm_upper",
+    "binary64_spectral_upper",
     "dyadic_entry",
     "dyadic_integers",
     "exact_float",

@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
+from ..._exact_kernels import float64_interval_elementary
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
@@ -113,6 +114,31 @@ def _decided_trigonometric(angles: np.ndarray, /) -> tuple[np.ndarray, np.ndarra
         interval_center(interval_cos((values, values))),
         interval_center(interval_sin((values, values))),
     )
+
+
+def _decided_norm(values: tuple[float, ...], /) -> float:
+    """Choose a reproducible norm without overflow in the sum of squares."""
+    scale = max(abs(value) for value in values)
+    if scale == 0.0:
+        return 0.0
+    scaled = tuple(value / scale for value in values)
+    squared = np.float64(sum(value * value for value in scaled))
+    return scale * float(interval_center(interval_sqrt((squared, squared))))
+
+
+def _decided_atan2(y: float, x: float, /) -> float:
+    """Choose a reproducible angle while keeping the atan argument bounded."""
+    if x == 0.0:
+        if y == 0.0:
+            return math.copysign(math.pi if math.copysign(1.0, x) < 0.0 else 0.0, y)
+        return math.copysign(math.pi / 2.0, y)
+    ratio = np.float64(min(abs(y), abs(x)) / max(abs(y), abs(x)))
+    angle = float(interval_center(float64_interval_elementary("atan", ratio, ratio)))
+    if abs(y) > abs(x):
+        angle = math.pi / 2.0 - angle
+    if x < 0.0:
+        angle = math.pi - angle
+    return math.copysign(angle, y)
 
 
 def _sphere_cube_cover(
@@ -921,69 +947,79 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
         for row, query in enumerate(values):
             relative = query - center
             if self.family == "sphere":
-                length = math.hypot(*(float(value) for value in relative))
+                length = _decided_norm(tuple(float(value) for value in relative))
                 if length == 0.0:
                     status[row] = SourceProjectionStatus.NON_ISOLATED
                     continue
                 normal = relative / length
-                longitude = math.atan2(float(relative[1]), float(relative[0]))
+                longitude = _decided_atan2(float(relative[1]), float(relative[0]))
                 if longitude < 0.0:
                     longitude += math.tau
-                latitude = math.atan2(
-                    float(relative[2]), math.hypot(float(relative[0]), float(relative[1]))
+                latitude = _decided_atan2(
+                    float(relative[2]),
+                    _decided_norm((float(relative[0]), float(relative[1]))),
                 )
                 polar = math.pi / 2.0 - latitude
                 point = center + self.radius * normal
+                cosines, sines = _decided_trigonometric(
+                    np.asarray((longitude, latitude), dtype=np.float64)
+                )
+                cos_longitude, cos_latitude = cosines
+                sin_longitude, sin_latitude = sines
                 longitude_tangent = np.asarray(
-                    (-math.sin(longitude), math.cos(longitude), 0.0),
+                    (-sin_longitude, cos_longitude, 0.0),
                     dtype=np.float64,
                 )
                 latitude_tangent = np.asarray(
                     (
-                        -math.sin(latitude) * math.cos(longitude),
-                        -math.sin(latitude) * math.sin(longitude),
-                        math.cos(latitude),
+                        -sin_latitude * cos_longitude,
+                        -sin_latitude * sin_longitude,
+                        cos_latitude,
                     ),
                     dtype=np.float64,
                 )
                 first_tangent, second_tangent = -latitude_tangent, longitude_tangent
             else:
                 x, y, z = (float(value) for value in relative)
-                radial = math.hypot(x, y)
+                radial = _decided_norm((x, y))
                 tube_x, tube_y = radial - self.major_radius, z
-                tube_length = math.hypot(tube_x, tube_y)
+                tube_length = _decided_norm((tube_x, tube_y))
                 if radial == 0.0 or tube_length == 0.0:
                     status[row] = SourceProjectionStatus.NON_ISOLATED
                     continue
-                longitude = math.atan2(y, x)
-                latitude = math.atan2(tube_y, tube_x)
+                longitude = _decided_atan2(y, x)
+                latitude = _decided_atan2(tube_y, tube_x)
                 if longitude < 0.0:
                     longitude += math.tau
                 if latitude < 0.0:
                     latitude += math.tau
-                ring_radius = self.major_radius + self.radius * math.cos(latitude)
-                height = self.radius * math.sin(latitude)
-                radial_direction = np.asarray(
-                    (math.cos(longitude), math.sin(longitude), 0.0),
-                    dtype=np.float64,
+                cosines, sines = _decided_trigonometric(
+                    np.asarray((longitude, latitude), dtype=np.float64)
                 )
-                normal = math.cos(latitude) * radial_direction + math.sin(
-                    latitude
-                ) * np.asarray((0.0, 0.0, 1.0))
+                cos_longitude, cos_latitude = cosines
+                sin_longitude, sin_latitude = sines
+                ring_radius = self.major_radius + self.radius * cos_latitude
+                height = self.radius * sin_latitude
+                radial_direction = np.asarray(
+                    (cos_longitude, sin_longitude, 0.0), dtype=np.float64
+                )
+                normal = cos_latitude * radial_direction + sin_latitude * np.asarray(
+                    (0.0, 0.0, 1.0)
+                )
                 point = (
                     center
                     + ring_radius * radial_direction
                     + np.asarray((0.0, 0.0, height))
                 )
                 first_tangent = np.asarray(
-                    (-math.sin(longitude), math.cos(longitude), 0.0),
+                    (-sin_longitude, cos_longitude, 0.0),
                     dtype=np.float64,
                 )
                 second_tangent = np.asarray(
                     (
-                        -math.sin(latitude) * math.cos(longitude),
-                        -math.sin(latitude) * math.sin(longitude),
-                        math.cos(latitude),
+                        -sin_latitude * cos_longitude,
+                        -sin_latitude * sin_longitude,
+                        cos_latitude,
                     ),
                     dtype=np.float64,
                 )

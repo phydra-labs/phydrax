@@ -113,7 +113,6 @@ from ..geometry._source_boundary_records import (
     SourceBoundaryFaceImageWitness,
     SourceBoundaryPointWitness,
     SourceBoundaryQuery,
-    SourceBoundaryRationalChartBank,
     SurfaceEnvelopeDistanceWitness,
 )
 from ..geometry._source_fidelity import ValidatedSourceFidelityWitness
@@ -4586,27 +4585,8 @@ def _retarget_source_boundary_chart_witness(
     witnessed_source_entities = set(int(value) for value in source_entity_ids)
     witnessed_source_cells = set(int(value) for value in source_cell_ids)
 
-    def exact_charts(
-        tokens: SourceBoundaryRationalChartBank, /
-    ) -> tuple[tuple[tuple[Fraction, ...], ...], ...]:
-        distinct = {}
-        rows = []
-        for chart in tokens:
-            exact = distinct.get(chart)
-            if exact is None:
-                exact = tuple(
-                    tuple(
-                        Fraction(numerator, denominator)
-                        for numerator, denominator in point
-                    )
-                    for point in chart
-                )
-                distinct[chart] = exact
-            rows.append(exact)
-        return tuple(rows)
-
-    old_reference_exact = exact_charts(witness.target_reference_rational_tokens)
-    old_parameters_exact = exact_charts(witness.source_parameter_rational_tokens)
+    old_reference_exact = witness.target_reference_charts()
+    old_parameters_exact = witness.source_parameter_charts()
     parameter_points = {point for row in old_parameters_exact for point in row}
     parameter_vertex_ids = {
         point: row for row, point in enumerate(sorted(parameter_points))

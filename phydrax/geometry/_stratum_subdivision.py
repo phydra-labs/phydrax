@@ -54,7 +54,13 @@ from ..discretization._coordinate_enclosure import (
     RationalPolynomial,
 )
 from ..discretization._exact_algebraic_geometry import coefficient_payload, RadicalElement
-from ..linalg._exact import matmul_exact, symmetric_product_minors_exact
+from ..linalg._exact import (
+    inverse_small_rational,
+    matmul_exact,
+    symmetric_product_factor_error,
+    symmetric_product_minors_batch_exact,
+    symmetric_product_minors_exact,
+)
 from ._embedding_cells import EmbeddingCell
 from ._integer_net_batch import _BatchIntegerNet, integer_net_batch
 from ._mapped_embedding import (
@@ -1454,6 +1460,8 @@ def _determinant(matrix: _Matrix, /) -> ExactScalar:
 
 
 def _inverse(matrix: _Matrix, /) -> _Matrix | None:
+    if all(isinstance(value, Fraction) for row in matrix for value in row):
+        return inverse_small_rational(cast(tuple[tuple[Fraction, ...], ...], matrix))
     determinant = _determinant(matrix)
     if not _sign(determinant):
         return None
@@ -1634,20 +1642,40 @@ def _jacobian_controls_positive(
             tuple[tuple[tuple[Fraction | int, ...], ...], ...], factors
         )
         dimension = controls.dimension
-        for vector in controls.controls.values.values():
-            integer_vector = cast(tuple[int, ...], vector)
-            matrix = tuple(
-                integer_vector[row * dimension : (row + 1) * dimension]
+        matrices = tuple(
+            tuple(
+                cast(tuple[int, ...], vector)[row * dimension : (row + 1) * dimension]
                 for row in range(dimension)
             )
-            product = (
-                (rational_factors[0], matrix)
-                if glue is None
-                else (rational_factors[0], matrix, rational_factors[1])
+            for vector in controls.controls.values.values()
+        )
+        # The scalar route owns exception ordering for malformed inputs. In
+        # particular, a negative control must stop before a later malformed one.
+        if any(
+            symmetric_product_factor_error(factor, len(rational_factors[0])) is not None
+            for factor in (*rational_factors, *matrices)
+        ):
+            return all(
+                all(
+                    value > 0
+                    for value in symmetric_product_minors_exact(
+                        *(
+                            (rational_factors[0], matrix)
+                            if glue is None
+                            else (rational_factors[0], matrix, rational_factors[1])
+                        )
+                    )
+                )
+                for matrix in matrices
             )
-            if any(value <= 0 for value in symmetric_product_minors_exact(*product)):
-                return False
-        return True
+        return all(
+            all(value > 0 for value in minors)
+            for minors in symmetric_product_minors_batch_exact(
+                matrices,
+                rational_factors[0],
+                None if glue is None else rational_factors[1],
+            )
+        )
     return all(
         _positive_definite_symmetric_part(metric, control)
         if glue is None

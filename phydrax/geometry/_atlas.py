@@ -7,6 +7,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from collections.abc import Callable, Sequence
 from fractions import Fraction
+from math import lcm
 from typing import NamedTuple, Protocol, TYPE_CHECKING
 
 import equinox as eqx
@@ -24,6 +25,7 @@ from ..linalg import orthonormal_frame
 
 if TYPE_CHECKING:
     from ._interval_enclosure import PreparedIntervalFunction
+    from .brep._intersection_curve import _IntersectionCurveHostAtlas, IntersectionCurve
 
 
 class _CurveTrimSegment(Protocol):
@@ -79,27 +81,48 @@ class TrimClassification(StrictModule):
         self.inside, self.boundary, self.resolved = inside_, boundary_, resolved_
 
 
+class _IntegerPolygon(NamedTuple):
+    scale: int
+    vertices: tuple[tuple[int, int], ...]
+
+
+def _prepare_polygon(
+    vertices: tuple[tuple[Fraction, Fraction], ...], /
+) -> _IntegerPolygon:
+    scale = lcm(*(coordinate.denominator for vertex in vertices for coordinate in vertex))
+    return _IntegerPolygon(
+        scale,
+        tuple(
+            (
+                x.numerator * (scale // x.denominator),
+                y.numerator * (scale // y.denominator),
+            )
+            for x, y in vertices
+        ),
+    )
+
+
 def _polygon_point_state(
-    point: tuple[Fraction, Fraction],
-    vertices: tuple[tuple[Fraction, Fraction], ...],
-    /,
+    point: tuple[Fraction, Fraction], polygon: _IntegerPolygon, /
 ) -> tuple[bool, bool]:
-    inside = False
     px, py = point
+    denominator = lcm(px.denominator, py.denominator)
+    x = px.numerator * (denominator // px.denominator) * polygon.scale
+    y = py.numerator * (denominator // py.denominator) * polygon.scale
+    vertices = polygon.vertices
+    inside = False
     for start, end in zip(vertices, (*vertices[1:], vertices[0]), strict=True):
-        x0, y0 = start
-        x1, y1 = end
-        cross = (x1 - x0) * (py - y0) - (y1 - y0) * (px - x0)
+        x0, y0 = (coordinate * denominator for coordinate in start)
+        x1, y1 = (coordinate * denominator for coordinate in end)
+        cross = (x1 - x0) * (y - y0) - (y1 - y0) * (x - x0)
         if (
             cross == 0
-            and min(x0, x1) <= px <= max(x0, x1)
-            and min(y0, y1) <= py <= max(y0, y1)
+            and min(x0, x1) <= x <= max(x0, x1)
+            and min(y0, y1) <= y <= max(y0, y1)
         ):
             return False, True
-        if (y0 > py) != (y1 > py):
-            crossing = x0 + (py - y0) * (x1 - x0) / (y1 - y0)
-            if px < crossing:
-                inside = not inside
+        if (y0 > y) != (y1 > y) and (cross > 0) == (y1 > y0):
+            inside = not inside
     return inside, False
 
 
@@ -177,10 +200,17 @@ class _SegmentEnclosures:
         "point_program",
         "point_program_ready",
         "chart_programs",
+        "intersection_atlases",
     )
 
-    def __init__(self, segment: _CurveTrimSegment, /) -> None:
+    def __init__(
+        self,
+        segment: _CurveTrimSegment,
+        intersection_atlases: dict[int, tuple[IntersectionCurve, _IntersectionCurveHostAtlas]],
+        /,
+    ) -> None:
         self.segment = segment
+        self.intersection_atlases = intersection_atlases
         self.boxes: dict[tuple[float, float], np.ndarray | None] = {}
         self.points: dict[float, np.ndarray | None] = {}
         self.point_program = None
@@ -203,8 +233,12 @@ class TrimEnclosures:
     __slots__ = ("loops",)
 
     def __init__(self, loops: tuple[tuple[_CurveTrimSegment, ...], ...], /) -> None:
+        intersection_atlases: dict[
+            int, tuple[IntersectionCurve, _IntersectionCurveHostAtlas]
+        ] = {}
         self.loops: _LoopEnclosures = tuple(
-            tuple(_SegmentEnclosures(segment) for segment in loop) for loop in loops
+            tuple(_SegmentEnclosures(segment, intersection_atlases) for segment in loop)
+            for loop in loops
         )
 
     def retain_coarse(self) -> None:
@@ -440,8 +474,25 @@ def _curve_segment_box(
 def _compute_segment_box(
     record: _SegmentEnclosures, first: float, last: float, /
 ) -> np.ndarray | None:
+    from .brep._intersection_curve import (
+        _IntersectionCurveHostAtlas,
+        CurveTrimSegment,
+        IntersectionPCurve,
+    )
+
     try:
-        box = np.asarray(record.segment.bounding_box(first, last), dtype=np.float64)
+        segment = record.segment
+        if type(segment) is CurveTrimSegment and type(segment.curve) is IntersectionPCurve:
+            curve = segment.curve.curve
+            entry = record.intersection_atlases.get(id(curve))
+            if entry is None:
+                atlas = _IntersectionCurveHostAtlas.from_curve(curve, prepare_cylinder=True)
+                record.intersection_atlases[id(curve)] = (curve, atlas)
+            else:
+                atlas = entry[1]
+            box = np.asarray(segment._bounding_box(first, last, host_atlas=atlas), dtype=np.float64)
+        else:
+            box = np.asarray(segment.bounding_box(first, last), dtype=np.float64)
     except (AttributeError, NotImplementedError, TypeError, ValueError, RuntimeError):
         return None
     start, end = _segment_points(record, (first, last))
@@ -611,7 +662,7 @@ def _curve_loop_chords(
 
 class _CoarseChordPlan(NamedTuple):
     guards: tuple[np.ndarray, ...]
-    polygon: tuple[tuple[Fraction, Fraction], ...]
+    polygon: _IntegerPolygon
 
 
 def _coarse_chord_plan(
@@ -654,7 +705,7 @@ def _coarse_chord_plan(
         (Fraction.from_float(float(point[0])), Fraction.from_float(float(point[1])))
         for point in points
     )
-    return _CoarseChordPlan(tuple(guards), polygon)
+    return _CoarseChordPlan(tuple(guards), _prepare_polygon(polygon))
 
 
 def _curve_loops_point_state(
@@ -674,11 +725,12 @@ def _curve_loops_point_state(
         ):
             polygon = plan.polygon
         else:
-            polygon = _curve_loop_chords(loop, query_box)
-            if polygon is not None and coarse is not None and key not in coarse:
+            chords = _curve_loop_chords(loop, query_box)
+            if chords is None:
+                return False, False, False
+            polygon = _prepare_polygon(chords)
+            if coarse is not None and key not in coarse:
                 coarse[key] = _coarse_chord_plan(loop)
-        if polygon is None:
-            return False, False, False
         inside, boundary = _polygon_point_state(
             (
                 Fraction.from_float(float(point[0])),
@@ -913,12 +965,14 @@ class TrimDomain(StrictModule):
             assert self.outer is not None
             polygon_loops = (self.outer, *self.holes)
             rational_loops = tuple(
-                tuple(
-                    (
-                        Fraction.from_float(float(row[0])),
-                        Fraction.from_float(float(row[1])),
+                _prepare_polygon(
+                    tuple(
+                        (
+                            Fraction.from_float(float(row[0])),
+                            Fraction.from_float(float(row[1])),
+                        )
+                        for row in np.asarray(loop, dtype=np.float64)
                     )
-                    for row in np.asarray(loop, dtype=np.float64)
                 )
                 for loop in polygon_loops
             )

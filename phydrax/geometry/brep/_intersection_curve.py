@@ -758,6 +758,45 @@ def interval_context(decimal_digits: int, /) -> Any:
     return context
 
 
+@dataclass(slots=True)
+class _CylinderGraphPreparation:
+    """Interval constants and enclosures owned by one live curve operation."""
+
+    family: _OrthogonalCylinderFamily
+    constants: tuple[Any, ...]
+    angles: tuple[Any, ...]
+    bounds: dict[tuple[str, str, int, str], tuple[np.ndarray, np.ndarray] | None]
+    derivatives: dict[tuple[str, str, int], tuple[np.ndarray, np.ndarray] | None]
+
+    @classmethod
+    def create(cls, family: _OrthogonalCylinderFamily, /) -> _CylinderGraphPreparation:
+        context = interval_context(80)
+        values = (
+            family.large_radius, family.small_radius, family.delta_n,
+            family.delta_large_axis, family.delta_small_axis,
+            *family.small_normal_coefficients, *family.small_large_axis_coefficients,
+            family.source_slopes[family.large_index],
+            family.source_slopes[family.small_index],
+        )
+        constants = tuple(
+            context.mpf(value.numerator) / context.mpf(value.denominator)
+            for value in values
+        )
+        large_first = cast(tuple[Fraction, ...], family.large.first_axis_exact)
+        large_second = cast(tuple[Fraction, ...], family.large.second_axis_exact)
+        small_axis = cast(tuple[Fraction, ...], family.small.axis_exact)
+        angle_values = tuple(
+            sum((a * b for a, b in zip(axis, frame, strict=True)), Fraction(0))
+            for frame in (large_first, large_second)
+            for axis in (small_axis, family.normal)
+        )
+        angles = tuple(
+            context.mpf(value.numerator) / context.mpf(value.denominator)
+            for value in angle_values
+        )
+        return cls(family, constants, angles, {}, {})
+
+
 def orthogonal_cylinder_graph_bounds(
     family: _OrthogonalCylinderFamily,
     theta_lower: float,
@@ -765,6 +804,8 @@ def orthogonal_cylinder_graph_bounds(
     branch_sign: int,
     first_angle_reference: float,
     /,
+    *,
+    prepared: _CylinderGraphPreparation | None = None,
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """Outward-enclose the closed-form source p-curve over a source-angle interval."""
 
@@ -779,29 +820,30 @@ def orthogonal_cylinder_graph_bounds(
     large, small = family.large, family.small
     if not isinstance(large, CylinderPatch) or not isinstance(small, CylinderPatch):
         return None
-    large_first = cast(tuple[Fraction, ...], large.first_axis_exact)
-    large_second = cast(tuple[Fraction, ...], large.second_axis_exact)
-    small_axis = cast(tuple[Fraction, ...], small.axis_exact)
-    cosine_angle = (
-        sum(
-            (a * b for a, b in zip(small_axis, large_first, strict=True)),
-            Fraction(0),
-        ),
-        sum(
-            (a * b for a, b in zip(family.normal, large_first, strict=True)),
-            Fraction(0),
-        ),
-    )
-    sine_angle = (
-        sum(
-            (a * b for a, b in zip(small_axis, large_second, strict=True)),
-            Fraction(0),
-        ),
-        sum(
-            (a * b for a, b in zip(family.normal, large_second, strict=True)),
-            Fraction(0),
-        ),
-    )
+    if prepared is None:
+        large_first = cast(tuple[Fraction, ...], large.first_axis_exact)
+        large_second = cast(tuple[Fraction, ...], large.second_axis_exact)
+        small_axis = cast(tuple[Fraction, ...], small.axis_exact)
+        cosine_angle = (
+            sum(
+                (a * b for a, b in zip(small_axis, large_first, strict=True)),
+                Fraction(0),
+            ),
+            sum(
+                (a * b for a, b in zip(family.normal, large_first, strict=True)),
+                Fraction(0),
+            ),
+        )
+        sine_angle = (
+            sum(
+                (a * b for a, b in zip(small_axis, large_second, strict=True)),
+                Fraction(0),
+            ),
+            sum(
+                (a * b for a, b in zip(family.normal, large_second, strict=True)),
+                Fraction(0),
+            ),
+        )
     context = interval_context(80)
 
     def scalar(value: Fraction) -> Any:
@@ -814,17 +856,23 @@ def orthogonal_cylinder_graph_bounds(
     last_parameter = Fraction.from_float(float(theta_upper))
     theta = interval(first_parameter, last_parameter)
     cosine, sine = context.cos(theta), context.sin(theta)
-    radius_large = scalar(family.large_radius)
-    radius_small = scalar(family.small_radius)
-    delta_n = scalar(family.delta_n)
-    delta_a = scalar(family.delta_large_axis)
-    delta_b = scalar(family.delta_small_axis)
-    normal_cosine, normal_sine = (
-        scalar(value) for value in family.small_normal_coefficients
-    )
-    axial_cosine, axial_sine = (
-        scalar(value) for value in family.small_large_axis_coefficients
-    )
+    if prepared is None:
+        radius_large = scalar(family.large_radius)
+        radius_small = scalar(family.small_radius)
+        delta_n = scalar(family.delta_n)
+        delta_a = scalar(family.delta_large_axis)
+        delta_b = scalar(family.delta_small_axis)
+        normal_cosine, normal_sine = (
+            scalar(value) for value in family.small_normal_coefficients
+        )
+        axial_cosine, axial_sine = (
+            scalar(value) for value in family.small_large_axis_coefficients
+        )
+    else:
+        (
+            radius_large, radius_small, delta_n, delta_a, delta_b,
+            normal_cosine, normal_sine, axial_cosine, axial_sine, _, _,
+        ) = prepared.constants
     radial_n = delta_n + radius_small * (normal_cosine * cosine + normal_sine * sine)
     axial = delta_a + radius_small * (axial_cosine * cosine + axial_sine * sine)
     radicand = radius_large**2 - radial_n**2
@@ -848,12 +896,13 @@ def orthogonal_cylinder_graph_bounds(
     midpoint_x = context.sqrt(midpoint_radicand)
     if branch_sign < 0:
         midpoint_x = -midpoint_x
-    cosine_phi = (
-        scalar(cosine_angle[0]) * midpoint_x + scalar(cosine_angle[1]) * midpoint_n
-    ) / radius_large
-    sine_phi = (
-        scalar(sine_angle[0]) * midpoint_x + scalar(sine_angle[1]) * midpoint_n
-    ) / radius_large
+    if prepared is None:
+        c0, c1 = scalar(cosine_angle[0]), scalar(cosine_angle[1])
+        s0, s1 = scalar(sine_angle[0]), scalar(sine_angle[1])
+    else:
+        c0, c1, s0, s1 = prepared.angles
+    cosine_phi = (c0 * midpoint_x + c1 * midpoint_n) / radius_large
+    sine_phi = (s0 * midpoint_x + s1 * midpoint_n) / radius_large
     phi_midpoint = context.atan2(sine_phi, cosine_phi)
     phi_numeric = 0.5 * (float(phi_midpoint.a) + float(phi_midpoint.b))
     turns = round((first_angle_reference - phi_numeric) / math.tau)
@@ -862,8 +911,11 @@ def orthogonal_cylinder_graph_bounds(
     radial_n_derivative = radius_small * (-normal_cosine * sine + normal_sine * cosine)
     phi_derivative = radial_n_derivative / radial_large
     phi = phi_midpoint + phi_derivative * (theta - theta_midpoint)
-    large_slope = scalar(family.source_slopes[family.large_index])
-    small_slope = scalar(family.source_slopes[family.small_index])
+    if prepared is None:
+        large_slope = scalar(family.source_slopes[family.large_index])
+        small_slope = scalar(family.source_slopes[family.small_index])
+    else:
+        large_slope, small_slope = prepared.constants[-2:]
     large_profile = axial / large_slope
     small_profile = small_height / small_slope
     source_intervals = (
@@ -1121,6 +1173,8 @@ def orthogonal_cylinder_graph_derivative_bounds(
     theta_upper: float,
     branch_sign: int,
     /,
+    *,
+    prepared: _CylinderGraphPreparation | None = None,
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """Outward-enclose source p-curve derivatives with respect to small angle."""
     if (
@@ -1142,15 +1196,21 @@ def orthogonal_cylinder_graph_derivative_bounds(
     last_parameter = Fraction.from_float(float(theta_upper))
     theta = interval(first_parameter, last_parameter)
     cosine, sine = context.cos(theta), context.sin(theta)
-    radius_large = scalar(family.large_radius)
-    radius_small = scalar(family.small_radius)
-    delta_n = scalar(family.delta_n)
-    normal_cosine, normal_sine = (
-        scalar(value) for value in family.small_normal_coefficients
-    )
-    axial_cosine, axial_sine = (
-        scalar(value) for value in family.small_large_axis_coefficients
-    )
+    if prepared is None:
+        radius_large = scalar(family.large_radius)
+        radius_small = scalar(family.small_radius)
+        delta_n = scalar(family.delta_n)
+        normal_cosine, normal_sine = (
+            scalar(value) for value in family.small_normal_coefficients
+        )
+        axial_cosine, axial_sine = (
+            scalar(value) for value in family.small_large_axis_coefficients
+        )
+    else:
+        (
+            radius_large, radius_small, delta_n, _, _,
+            normal_cosine, normal_sine, axial_cosine, axial_sine, _, _,
+        ) = prepared.constants
     radial_n = delta_n + radius_small * (normal_cosine * cosine + normal_sine * sine)
     radial_n_derivative = radius_small * (-normal_cosine * sine + normal_sine * cosine)
     radicand = radius_large**2 - radial_n**2
@@ -1160,8 +1220,11 @@ def orthogonal_cylinder_graph_derivative_bounds(
     if branch_sign < 0:
         radial_large = -radial_large
     axial_derivative = radius_small * (-axial_cosine * sine + axial_sine * cosine)
-    large_slope = scalar(family.source_slopes[family.large_index])
-    small_slope = scalar(family.source_slopes[family.small_index])
+    if prepared is None:
+        large_slope = scalar(family.source_slopes[family.large_index])
+        small_slope = scalar(family.source_slopes[family.small_index])
+    else:
+        large_slope, small_slope = prepared.constants[-2:]
     derivatives = (
         radial_n_derivative / radial_large,
         axial_derivative / large_slope,
@@ -1330,7 +1393,7 @@ def _orthogonal_cylinder_atlas_layout(
 
 @dataclass(frozen=True, slots=True)
 class _IntersectionCurveHostAtlas:
-    """Host copies of chart and node arrays, without proof outcomes."""
+    """Host chart and node arrays, optionally with operation-local enclosures."""
 
     chart_axes: np.ndarray
     chart_start: np.ndarray
@@ -1341,9 +1404,12 @@ class _IntersectionCurveHostAtlas:
     node_upper: np.ndarray
     first_parameter_box: np.ndarray
     second_parameter_box: np.ndarray
+    cylinder: _CylinderGraphPreparation | None = None
 
     @classmethod
-    def from_curve(cls, curve: IntersectionCurve, /) -> _IntersectionCurveHostAtlas:
+    def from_curve(
+        cls, curve: IntersectionCurve, /, *, prepare_cylinder: bool = False
+    ) -> _IntersectionCurveHostAtlas:
         def immutable_copy(value: Array, /) -> np.ndarray:
             array = np.asarray(value)
             return np.frombuffer(array.tobytes(), dtype=array.dtype).reshape(array.shape)
@@ -1362,7 +1428,13 @@ class _IntersectionCurveHostAtlas:
                 curve.second.parameter_box,
             )
         )
-        return cls(*arrays)
+        family = (
+            orthogonal_cylinder_family(curve.first, curve.second)
+            if prepare_cylinder
+            else None
+        )
+        cylinder = None if family is None else _CylinderGraphPreparation.create(family)
+        return cls(*arrays, cylinder=cylinder)
 
 
 def _orthogonal_cylinder_curve_branch_sign(
@@ -3426,7 +3498,12 @@ class IntersectionCurve(AbstractCurve):
             first, last, chart_index
         )
         lower_parameter, upper_parameter = float(first), float(last)
-        family = orthogonal_cylinder_family(self.first, self.second)
+        prepared = None if host_atlas is None else host_atlas.cylinder
+        family = (
+            orthogonal_cylinder_family(self.first, self.second)
+            if prepared is None
+            else prepared.family
+        )
         if host_atlas is None:
             chart_starts = np.asarray(self.chart_start, dtype=np.float64)
             chart_ends = np.asarray(self.chart_end, dtype=np.float64)
@@ -3483,13 +3560,20 @@ class IntersectionCurve(AbstractCurve):
                         theta_upper = max(
                             theta_upper, float(node_upper[node, theta_axis])
                         )
-                bounds = orthogonal_cylinder_graph_bounds(
-                    family,
-                    theta_lower,
-                    theta_upper,
-                    branch_sign,
-                    float(start[large_angle_axis]),
+                reference = float(start[large_angle_axis])
+                key = (
+                    float(theta_lower).hex(), float(theta_upper).hex(),
+                    branch_sign, reference.hex(),
                 )
+                if prepared is not None and key in prepared.bounds:
+                    bounds = prepared.bounds[key]
+                else:
+                    bounds = orthogonal_cylinder_graph_bounds(
+                        family, theta_lower, theta_upper, branch_sign, reference,
+                        prepared=prepared,
+                    )
+                    if prepared is not None:
+                        prepared.bounds[key] = bounds
                 if bounds is None:
                     raise ValueError(
                         "The exact cylinder branch interval has no outward source enclosure."
@@ -4053,7 +4137,12 @@ class IntersectionPCurve(AbstractCurve):
         first_chart, last_chart = self.curve._chart_indices_for_interval(
             branch_first, branch_last, chart_index
         )
-        family = orthogonal_cylinder_family(self.curve.first, self.curve.second)
+        prepared = None if host_atlas is None else host_atlas.cylinder
+        family = (
+            orthogonal_cylinder_family(self.curve.first, self.curve.second)
+            if prepared is None
+            else prepared.family
+        )
         branch_sign = (
             None
             if family is None
@@ -4104,12 +4193,15 @@ class IntersectionPCurve(AbstractCurve):
                 theta_lower = fraction_down(min(exact_theta_first, exact_theta_last))
                 theta_upper = fraction_up(max(exact_theta_first, exact_theta_last))
                 assert branch_sign is not None
-                bounds = orthogonal_cylinder_graph_derivative_bounds(
-                    family,
-                    theta_lower,
-                    theta_upper,
-                    branch_sign,
-                )
+                key = (float(theta_lower).hex(), float(theta_upper).hex(), branch_sign)
+                if prepared is not None and key in prepared.derivatives:
+                    bounds = prepared.derivatives[key]
+                else:
+                    bounds = orthogonal_cylinder_graph_derivative_bounds(
+                        family, theta_lower, theta_upper, branch_sign, prepared=prepared
+                    )
+                    if prepared is not None:
+                        prepared.derivatives[key] = bounds
                 if bounds is None:
                     raise ValueError(
                         "IntersectionPCurve cylinder derivative interval is unresolved."

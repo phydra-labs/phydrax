@@ -1,6 +1,12 @@
 # Changelog
 
 ## Unreleased
+- Imported CAD, surface, and mesh sources now use a format prefix and the first
+  16 hexadecimal digits of the source bytes' SHA-256 digest, not the file path.
+  Imported model identities and identities derived from them change; stored
+  results of imported models must be regenerated. Embedded Phydrax surface
+  identities remain authoritative.
+
 
 ### Added
 - `MetricMeshAdaptation` accepts `accepted_minimum_length`, the smallest metric
@@ -249,11 +255,48 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Sphere and torus projection points, parameters, normals and tangents now use
+  platform-identical representatives, changing projection `result_id`s while
+  certified bounds, statuses, source identities and profile identities remain
+  unchanged. Periodic projection accepts or refuses by certified distance
+  bounds and decides boundary cases exactly. Adaptive discovery uses
+  platform-identical cell diameters and initial levels. Exported periodic
+  surfaces record a platform-identical certified root-distance upper bound;
+  its last digits can change, causing a one-time change to `metadata_id` and
+  `model_id`, without changing geometry or source identities.
 - B-Rep edge projection prepares exact line and circle distance data and arc endpoint enclosures once per edge, preserving results and certified bounds.
 - Torus projection prepares face-constant exact distance bounds once per
   projection operation without changing evidence or result identities.
 - Native B-rep projection reuses a query-independent coarse trim chord plan
   only where it selects the original subdivision, preserving projection identity.
+- Batched exact Bernstein conversion validates polynomial columns once, packs
+  checked integer words directly, and reuses request-local control counts while
+  preserving shared rational scales and item-local refusals.
+- Native Bernstein conversion reuses simplex control-index rows within a worker
+  when consecutive items have the same degree and dimension.
+- Tetrahedral construction consumes represented edges when admitting segments,
+  rejecting duplicates without a quadratic scan of prior segments.
+- Tetrahedral construction indexes source-segment rows by group while
+  retaining their exact witness-check order.
+- Declared-plane validation uses outward-rounded projected boundary-edge boxes
+  to limit exact interior-intersection checks without changing edge order.
+- Declared-plane facet validation indexes outward-rounded exact projected
+  source bounds, preserving the centroid proof and source-row order.
+- Source-facet coverage indexes closed facet boxes once per construction group,
+  preserving bank order and retaining every degenerate facet in its proof.
+- Exact facet coverage reuses already sorted source-row spans, preserving the
+  duplicate and chronology checks without sorting and copying them.
+- Source-facet coverage skips provably disjoint nondegenerate triangles in its
+  fast proof, retaining degenerate partners and the full arrangement fallback.
+- Refinement reuses its live constrained-segment index when checking cavity
+  edits, avoiding a full segment-bank scan for each candidate edge.
+- Exact facet coverage evaluates its predicate proof directly on source banks;
+  it materializes arrangement coordinates only when the proof is inconclusive.
+- Construction reuses each source group's ordered coverage primitives across
+  facets, retaining the exact predicate and fallback order.
+- Tetrahedral mesh construction indexes source faces by group for its
+  validation pass, avoiding repeated scans while retaining source order and
+  exact coverage decisions.
 - Welded surface intersection checks group exact orientation predicates and
   skip redundant shared-vertex edge tests without changing contact decisions.
 - Welded topology audits group vertex and edge star lookups without changing
@@ -461,6 +504,31 @@
   adaptation change. The JAX metric routines (`metric_edge_lengths`,
   `interpolate_mesh_metric`) keep their own arithmetic, whose values are not
   bit-identical across devices; the native adaptation reads none of them.
+- `NATIVE_METRIC_3D` generates the floating-point goals of its edits with
+  deterministic kernels of the native library as well: metric midpoints of
+  split edges, the three goals of a collapse survivor (midpoint, half of it,
+  and the center of the smallest metric ball of the merged link, by Welzl's
+  recursion over a fixed integer permutation), the frame and projection of a
+  boundary carrier, and the pulls of a relocation (spring forces, the
+  least-squares step and gradients of the measured lengths, band tangents).
+  They rest on a `log1p` kernel (within 7 ulp), a Cholesky factor, a
+  minimum-norm solve of small symmetric systems on the Jacobi iteration and
+  Gram-Schmidt, each in a written operation order; LAPACK, BLAS products and
+  NumPy's `log1p`/`log2` no longer appear in the adaptation. Goals propose
+  only: exact source points, exact predicates and the measured objective
+  decide as before, but an edit may now pick a different carrier than before
+  where the last bits of a goal mattered.
+- The metric field gate of `NATIVE_METRIC_3D` is a deterministic native
+  verdict with the tolerance it had (64 eps of the largest eigenvalue for the
+  symmetry defect and the smallest eigenvalue), so a field at that tolerance
+  is accepted or refused alike on every platform. A tensor with an entry
+  above `2**778` is refused: its lengths could overflow over the exact
+  coordinate domain. Periodic equivariance is checked as `M = A R A^T` of a
+  member's metric with its representative's under the member's isometry `A`
+  (whose transpose is its inverse), in a fixed operation order and without a
+  matrix inverse. A metric length that is zero, infinite or not a number is no
+  longer read as inside the band: an evaluation that meets one raises
+  `FloatingPointError`.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep
@@ -952,6 +1020,14 @@
   squares can change live piece bracket and derivative bounds, which are not
   archived or directly hashed. Exact singular-circle contact now falls through
   to the exact comparison when interval endpoints tie.
+- The default spectral topology and execution substrate used differently named
+  single-device meshes, so arrays placed by both could not meet in one compiled
+  call. The default spectral topology now uses the execution substrate's
+  `device` axis; explicitly supplied topologies are unchanged. Default-topology
+  spectral topology, physical and modal layout, execution, transform plan and
+  preparation report, Maxwell plan, and prepared solver identities change;
+  numerical and owner identities remain unchanged. Stored plans with the old
+  default identity must be regenerated.
 - Source preparations bind their cached artifacts to one live domain; rebuilt
   domains use a fresh preparation. Domain-owned host arrays now have immutable
   storage, so validated-domain reuse cannot be bypassed by enabling writes.

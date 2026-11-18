@@ -1,5 +1,7 @@
 from fractions import Fraction
+from itertools import permutations
 from math import lcm
+from random import Random
 
 import numpy as np
 import pytest
@@ -12,9 +14,11 @@ from phydrax.linalg._exact import (
     factor_exact,
     factor_exact_rational_algebraic,
     factor_exact_sparse,
+    inverse_small_rational,
     matmul_exact,
     solve_exact,
     solve_exact_sparse,
+    symmetric_product_minors_batch_exact,
     symmetric_product_minors_exact,
 )
 
@@ -501,3 +505,130 @@ def test_exact_symmetric_product_refuses_inexact_scalar_kinds(
 ) -> None:
     with pytest.raises(TypeError):
         symmetric_product_minors_exact(((value,),))  # ty: ignore[invalid-argument-type]
+
+
+@pytest.mark.parametrize("size", (2, 3))
+def test_batched_symmetric_product_minors_match_independent_rational_reference(
+    size: int,
+) -> None:
+    rng = Random(91093 + size)
+
+    def matrix() -> tuple[tuple[Fraction, ...], ...]:
+        return tuple(
+            tuple(Fraction(rng.randint(-7, 7), rng.randint(1, 8)) for _ in range(size))
+            for _ in range(size)
+        )
+
+    def multiply(
+        left: tuple[tuple[Fraction, ...], ...],
+        right: tuple[tuple[Fraction, ...], ...],
+    ) -> tuple[tuple[Fraction, ...], ...]:
+        return tuple(
+            tuple(
+                sum((left[i][k] * right[k][j] for k in range(size)), Fraction(0))
+                for j in range(size)
+            )
+            for i in range(size)
+        )
+
+    def reference(
+        factors: tuple[tuple[tuple[Fraction, ...], ...], ...],
+    ) -> tuple[Fraction, ...]:
+        product = factors[0]
+        for factor in factors[1:]:
+            product = multiply(product, factor)
+        symmetric = tuple(
+            tuple((product[i][j] + product[j][i]) / 2 for j in range(size))
+            for i in range(size)
+        )
+        result = []
+        for order in range(1, size + 1):
+            determinant = Fraction(0)
+            for permutation in permutations(range(order)):
+                inversions = sum(
+                    permutation[i] > permutation[j]
+                    for i in range(order)
+                    for j in range(i + 1, order)
+                )
+                term = Fraction((-1) ** inversions)
+                for i, j in enumerate(permutation):
+                    term *= symmetric[i][j]
+                determinant += term
+            result.append(determinant)
+        return tuple(result)
+
+    left, right = matrix(), matrix()
+    matrices = []
+    for index in range(1500):
+        values = matrix()
+        if index % 3 == 0:
+            values = tuple(
+                tuple(values[min(i, j)][max(i, j)] for j in range(size))
+                for i in range(size)
+            )
+        elif index % 3 == 1:
+            values = (values[0], values[0], *values[2:])
+        matrices.append(values)
+    for suffix in (None, right):
+        actual = symmetric_product_minors_batch_exact(matrices, left, suffix)
+        for values, result in zip(matrices, actual, strict=True):
+            factors = (left, values) if suffix is None else (left, values, suffix)
+            assert (
+                result == reference(factors) == symmetric_product_minors_exact(*factors)
+            )
+        assert (
+            symmetric_product_minors_batch_exact(matrices[:1], left, suffix)[0]
+            == actual[0]
+        )
+        integers = [
+            tuple(tuple(value.numerator for value in row) for row in values)
+            for values in matrices
+        ]
+        integer_results = symmetric_product_minors_batch_exact(integers, left, suffix)
+        for values, result in zip(integers, integer_results, strict=True):
+            rational_values = tuple(
+                tuple(Fraction(value) for value in row) for row in values
+            )
+            factors = (
+                (left, rational_values)
+                if suffix is None
+                else (left, rational_values, suffix)
+            )
+            assert (
+                result == reference(factors) == symmetric_product_minors_exact(*factors)
+            )
+
+
+@pytest.mark.parametrize("size", (2, 3))
+def test_small_rational_inverse_exactly_inverts_random_matrices(size: int) -> None:
+    rng = Random(867 + size)
+    singular = 0
+    for index in range(1000):
+        rows = tuple(
+            tuple(Fraction(rng.randint(-9, 9), rng.randint(1, 9)) for _ in range(size))
+            for _ in range(size)
+        )
+        if index % 5 == 0:
+            rows = (rows[0], rows[0], *rows[2:])
+        inverse = inverse_small_rational(rows)
+        if inverse is None:
+            determinant = Fraction(0)
+            for permutation in permutations(range(size)):
+                inversions = sum(
+                    permutation[i] > permutation[j]
+                    for i in range(size)
+                    for j in range(i + 1, size)
+                )
+                term = Fraction((-1) ** inversions)
+                for i, j in enumerate(permutation):
+                    term *= rows[i][j]
+                determinant += term
+            assert determinant == 0
+            singular += 1
+        else:
+            for i in range(size):
+                for j in range(size):
+                    assert sum(
+                        (rows[i][k] * inverse[k][j] for k in range(size)), Fraction(0)
+                    ) == int(i == j)
+    assert singular >= 200

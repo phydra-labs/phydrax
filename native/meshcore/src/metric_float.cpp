@@ -20,6 +20,9 @@ namespace {
 constexpr std::uint64_t kNaNBits = 0x7ff8000000000000ULL;
 // Lengths at the two ends of an edge count as equal within this ratio.
 constexpr double kNearlyEqual = 0x1.0c6f7a0b5ed8dp-20;
+// Symmetry defect and smallest eigenvalue of a field tensor are judged
+// against this multiple (64 * 2^-52) of its largest eigenvalue magnitude.
+constexpr double kPropertyTolerance = 0x1p-46;
 
 double nan() noexcept { return std::bit_cast<double>(kNaNBits); }
 double canonical(double value) noexcept { return value == value ? value : nan(); }
@@ -138,6 +141,13 @@ double length(const double* p, const double* q, const double* metric_p,
 }
 
 void band_quanta(double length, double& above, double& below) noexcept {
+  // A length that is not a number was not measured: it is neither inside the
+  // band nor a violation of it.
+  if (length != length) {
+    above = nan();
+    below = nan();
+    return;
+  }
   above = 0.0;
   below = 0.0;
   if (length > kUpperLength) {
@@ -206,6 +216,80 @@ double tetra_quality(const double* corners, const double* metrics) noexcept {
   const double metric_volume = volume * deterministic::exp(0.5 * log_determinant);
   if (!(metric_volume > 0.0 && squares > 0.0)) return 0.0;
   return canonical(12.0 * deterministic::pow_two_thirds(3.0 * metric_volume) / squares);
+}
+
+void tensor_properties(const double* tensor, bool& symmetric,
+                       bool& positive_definite) noexcept {
+  symmetric = false;
+  positive_definite = false;
+  double defect = 0.0;
+  double part[9];
+  for (std::size_t row = 0; row < 3; ++row) {
+    for (std::size_t column = 0; column < 3; ++column) {
+      const double entry = tensor[3 * row + column];
+      const double mirror = tensor[3 * column + row];
+      if (!finite(entry)) return;
+      const double difference = magnitude(entry - mirror);
+      if (difference > defect) defect = difference;
+      part[3 * row + column] = 0.5 * (entry + mirror);
+    }
+  }
+  deterministic::SymmetricEigen3 eigen;
+  if (!deterministic::symmetric_eigen3(part, eigen)) return;
+  const double largest = magnitude(eigen.values[0]) > magnitude(eigen.values[2])
+                             ? magnitude(eigen.values[0])
+                             : magnitude(eigen.values[2]);
+  const double tolerance = kPropertyTolerance * largest;
+  symmetric = defect <= tolerance;
+  positive_definite = symmetric && eigen.values[0] > tolerance;
+}
+
+void congruence_defect(const double* linear, const double* metric, const double* reference,
+                       double& error, double& scale) noexcept {
+  // B = M A by rows, then C = A^T B by rows: every entry is a fixed-order sum
+  // of three products.
+  double product[9];
+  double image[9];
+  for (std::size_t row = 0; row < 3; ++row) {
+    for (std::size_t column = 0; column < 3; ++column) {
+      product[3 * row + column] =
+          (metric[3 * row] * linear[column] + metric[3 * row + 1] * linear[3 + column]) +
+          metric[3 * row + 2] * linear[6 + column];
+    }
+  }
+  for (std::size_t row = 0; row < 3; ++row) {
+    for (std::size_t column = 0; column < 3; ++column) {
+      image[3 * row + column] =
+          (linear[row] * product[column] + linear[3 + row] * product[3 + column]) +
+          linear[6 + row] * product[6 + column];
+    }
+  }
+  double largest_error = 0.0;
+  double largest_image = 0.0;
+  double largest_reference = 0.0;
+  bool defined = true;
+  for (std::size_t row = 0; row < 3; ++row) {
+    double error_sum = 0.0;
+    double image_sum = 0.0;
+    double reference_sum = 0.0;
+    for (std::size_t column = 0; column < 3; ++column) {
+      const double difference = magnitude(image[3 * row + column] - reference[3 * row + column]);
+      const double image_size = magnitude(image[3 * row + column]);
+      const double reference_size = magnitude(reference[3 * row + column]);
+      error_sum = column == 0 ? difference : error_sum + difference;
+      image_sum = column == 0 ? image_size : image_sum + image_size;
+      reference_sum = column == 0 ? reference_size : reference_sum + reference_size;
+    }
+    if (!(error_sum == error_sum && image_sum == image_sum && reference_sum == reference_sum)) {
+      defined = false;
+    }
+    if (error_sum > largest_error) largest_error = error_sum;
+    if (image_sum > largest_image) largest_image = image_sum;
+    if (reference_sum > largest_reference) largest_reference = reference_sum;
+  }
+  error = defined ? largest_error : nan();
+  scale = defined ? (largest_image > largest_reference ? largest_image : largest_reference)
+                  : nan();
 }
 
 }  // namespace phx::mc::metric

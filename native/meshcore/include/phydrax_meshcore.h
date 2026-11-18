@@ -921,8 +921,9 @@ PHX_MC_API int32_t phx_mc_metric_lengths(int64_t edge_count, const int64_t* edge
 /* Violation of the length band [1 / fl(sqrt 2), fl(sqrt 2)] in quanta of
  * 2^-10: above[r] is max(ceil(log(length / fl(sqrt 2)) * 2^10), 1) for a
  * length above the band and 0 otherwise; below[r] likewise for
- * log((1 / fl(sqrt 2)) / length). A NaN length violates nothing; an infinite
- * or zero length gives an infinite count. */
+ * log((1 / fl(sqrt 2)) / length). An infinite or zero length gives an
+ * infinite count. A NaN length was not measured and has no count: both
+ * outputs are NaN. */
 PHX_MC_API int32_t phx_mc_metric_band_quanta(int64_t count, const double* lengths,
                                              double* above, double* below);
 /* For each cell of four corners (twelve values): determinants[c] is
@@ -942,6 +943,95 @@ PHX_MC_API int32_t phx_mc_metric_relative_determinants(int64_t cell_count,
 PHX_MC_API int32_t phx_mc_metric_tetra_quality(int64_t cell_count, const int64_t* cells,
                                                int64_t point_count, const double* points,
                                                const double* metrics, double* quality);
+/* Goals of metric edits on the deterministic kernels: points an edit would
+ * like to reach, the same bits for the same input on every platform. They
+ * propose only; the caller rounds a goal to an exact source point and decides
+ * the edit with exact predicates and the measured objective.
+ *
+ * phx_mc_metric_midpoints: for each segment from first to second with the
+ * metrics at its ends, parameters[r] is t = log1p((q - 1) / 2) / log1p(q - 1)
+ * with q = sqrt(d^T M_second d / d^T M_first d), d = second - first (the
+ * point at half the metric length when the size varies geometrically), and
+ * 1/2 when q is 1, zero or not finite or a form is not positive and finite;
+ * points[3r..] is first + t d. */
+PHX_MC_API int32_t phx_mc_metric_midpoints(
+    int64_t count, const double* first_points, const double* second_points,
+    const double* first_metrics, const double* second_metrics, double* parameters,
+    double* points);
+/* The three goals of the survivor of a collapse, in the order they are tried.
+ * points holds the survivor, the removed vertex and then the merged link
+ * (point_count >= 2 rows of three values), metrics the tensors of the first
+ * two. With t the midpoint parameter of the collapsed edge, goals[0..3) and
+ * goals[3..6) are its points at t and t / 2; goals[6..9) is the center of the
+ * smallest ball holding the link in the log-Euclidean mean of the two
+ * tensors (Welzl's recursion over a fixed pseudo-random order of the link in
+ * the Cholesky frame of that tensor). With corner_count 2 or 3 (else 0) each
+ * goal is projected orthogonally onto the affine hull of those corners.
+ * valid[g] is 0, with a zero goal, when a step of goal g fails: no link
+ * vertex, a tensor that is not positive definite, or a value that is not
+ * finite. */
+PHX_MC_API int32_t phx_mc_metric_survivor_goals(
+    int64_t point_count, const double* points, const double* metrics, int32_t corner_count,
+    const double* corners, double* goals, int8_t* valid);
+/* Frame of the affine hull of two or three corners (three values each):
+ * basis holds *rank orthonormal vectors (two rows of three values; unused
+ * rows are zero) spanning the edges from corner 0, by Gram-Schmidt in corner
+ * order, and projector (row-major 3x3, exactly symmetric) the orthogonal
+ * projector onto them. */
+PHX_MC_API int32_t phx_mc_metric_hull_frame(int32_t corner_count, const double* corners,
+                                            double* basis, double* projector, int32_t* rank);
+/* projected[r] = origin + projector (goals[r] - origin) for count goals. */
+PHX_MC_API int32_t phx_mc_metric_project_goals(int64_t count, const double* goals,
+                                               const double* origin, const double* projector,
+                                               double* projected);
+/* Pulls of a relocation of vertex 0 of a star: displacements that would bring
+ * its spokes toward the length band. points holds the vertex and then its
+ * neighbor_count neighbors, metric the tensor at the vertex, lengths the
+ * metric lengths of the spokes and measured which of them count; a spoke is
+ * outside when it is measured and its length is outside the band. Written in
+ * this order, three values each:
+ *   - with jacobian (derivatives of the spoke lengths along the basis_count
+ *     vectors of basis, row-major basis_count x neighbor_count), for a deep
+ *     search with an outside spoke: the minimum-norm least-squares step that
+ *     moves every measured spoke to the band, if it is not zero; then for each
+ *     outside spoke the gradient direction of its length, scaled to the size
+ *     of its force and pointing to shorten a long spoke, lengthen a short one;
+ *   - the spring forces (1 - 1/l) (p_j - p_0) of the outside spokes and their
+ *     mean over all spokes: the forces first for a deep search, else the mean;
+ *   - for a deep search with an outside spoke, for each outside force
+ *     (projected by projector when it is not null): its part orthogonal to
+ *     each band normal (p_j - p_0)^T M (projected likewise) it pushes across
+ *     the band, measured spokes ordered by their distance to the band edges;
+ *     then, for an interior vertex, its part along each nonzero cross product
+ *     of two such normals.
+ * A pull with a component that is not finite is left out. *count is the
+ * number written; PHX_MC_CAPACITY_EXCEEDED when capacity pulls do not hold
+ * them (pulls is then unspecified). */
+PHX_MC_API int32_t phx_mc_metric_relocation_pulls(
+    int64_t neighbor_count, const double* points, const double* metric, const double* lengths,
+    const int8_t* measured, int32_t deep, int32_t interior, int32_t basis_count,
+    const double* basis, const double* projector, const double* jacobian, int64_t capacity,
+    double* pulls, int64_t* count);
+/* Gates of a metric field on the deterministic kernels: the same verdict for
+ * the same input on every platform.
+ *
+ * phx_mc_metric_tensor_properties: each tensor is a full row-major 3x3 array.
+ * With lambda the eigenvalues of its symmetric part (M + M^T) / 2 and
+ * tol = 64 * 2^-52 * max |lambda|, symmetric[r] is 1 when max |M - M^T| <= tol
+ * and positive_definite[r] is 1 when it is symmetric and min lambda > tol.
+ * Both are 0 for a non-finite entry or an eigenvalue beyond the binary64
+ * range. */
+PHX_MC_API int32_t phx_mc_metric_tensor_properties(int64_t count, const double* tensors,
+                                                   int8_t* symmetric,
+                                                   int8_t* positive_definite);
+/* Defect of the congruence A^T M A = R, the form in which a metric M at the
+ * image of a linear map A agrees with the metric R at its source (row-major
+ * 3x3 arrays): errors[r] is the infinity norm of A^T M A - R and scales[r]
+ * the larger of the infinity norms of A^T M A and R. Both are NaN when a
+ * value is not a number. */
+PHX_MC_API int32_t phx_mc_metric_congruence_defects(
+    int64_t count, const double* linear, const double* metrics, const double* references,
+    double* errors, double* scales);
 /* Execute an interval program as phx_mc_interval_program_execute, then record
  * per-box branch evidence: smooth[b] and continuous[b] start at 1 for every
  * box b < box_count, and each event row (kind, test, size, a, a_index, boxes;

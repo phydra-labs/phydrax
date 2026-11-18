@@ -49,6 +49,10 @@ double exp(double x) noexcept;
 // +infinity gives +infinity.
 double log(double x) noexcept;
 
+// log(1 + x) within 7 ulp for finite x > -1. log1p(-1) is -infinity, x < -1
+// and NaN give NaN, +infinity gives +infinity.
+double log1p(double x) noexcept;
+
 // x^(2/3) as exp((2/3) log x): relative error at most 2^-43 for x in
 // [2^-128, 2^128]. +0 gives +0, +infinity gives +infinity, a negative x and
 // NaN give NaN.
@@ -87,6 +91,38 @@ bool symmetric_eigen3(const double* matrix, SymmetricEigen3& out) noexcept;
 // 0x7ff8000000000000 where they cancel.
 std::array<double, 9> symmetric_function3(const SymmetricEigen3& eigen,
                                           const std::array<double, 3>& mapped) noexcept;
+
+// Upper Cholesky factor U of the symmetric matrix given by the upper triangle
+// of a row-major 3x3 array, M = U^T U, as a row-major 3x3 array with zeros
+// below the diagonal. False, with `factor` untouched, unless every pivot is
+// positive and every entry of U finite.
+bool cholesky3(const double* matrix, double* factor) noexcept;
+
+// U v by rows, and the x with U x = b by back substitution, for an upper
+// triangular row-major 3x3 U (the factor of cholesky3).
+void multiply_upper3(const double* factor, const double* vector, double* product) noexcept;
+void solve_upper3(const double* factor, const double* rhs, double* solution) noexcept;
+
+// Minimum-norm least-squares solution of N x = b for a symmetric positive
+// semidefinite N of order 1, 2 or 3 (the upper triangle of a row-major
+// order x order array): the sum, in ascending eigenvalue order, of
+// v (v . b) / lambda over the eigenpairs of the Jacobi iteration with
+// lambda > 2^-40 lambda_max. Smaller eigenvalues are read as zero: of a
+// matrix of scalar products they are rounding noise of a dependent direction.
+// Returns the number of eigenpairs used; 0, with x = 0, when no eigenvalue is
+// positive; -1, with x untouched, for a non-finite entry, an iteration that
+// does not end or a non-finite solution.
+int symmetric_pseudo_solve(int order, const double* matrix, const double* rhs,
+                           double* solution) noexcept;
+
+// Orthonormal basis of the span of `count` <= 3 vectors of R^3 (the rows of
+// `vectors`) by modified Gram-Schmidt in the given order: a vector has its
+// components along the earlier basis vectors removed one after the other and
+// is divided by its length. A vector whose remainder has a squared length at
+// most 2^-40 times its own, or whose squared length is zero or not finite,
+// adds no basis vector. Returns the number of basis vectors, written as the
+// leading rows of `basis` (3 values each).
+int orthonormal_basis3(int count, const double* vectors, double* basis) noexcept;
 
 // What the self test found: the first assumption that does not hold on this
 // thread, or that a fixed kernel result does not have its expected bits.

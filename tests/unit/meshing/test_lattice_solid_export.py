@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import zipfile
+from fractions import Fraction
 from functools import cache
 from pathlib import Path
 from xml.etree import ElementTree
@@ -112,6 +113,14 @@ def test_periodic_cell_3mf_round_trips_bit_for_bit_and_deterministically(
 ) -> None:
     volume = _schwarz_p_cell()
     model, fidelity = lattice_solid_surface(volume)
+    # The identity lattice has exact spectral stretch one.
+    stored = next(
+        entry.removeprefix("fidelity:vertex_root_distance=")
+        for entry in model.metadata.provenance
+        if entry.startswith("fidelity:vertex_root_distance=")
+    )
+    assert float(stored) == volume.vertex_root_distance
+    assert Fraction(float(stored)) >= Fraction(volume.root_error)
     policy = SurfaceExportPolicy(METER)
 
     first = export_lattice_solid(tmp_path / "cell.3mf", volume, policy)

@@ -2324,7 +2324,7 @@ def _import(resource: CadResource, policy: CadImportPolicy, /) -> CadImportResul
                 )
             dropped[entry.entity_type] = dropped.get(entry.entity_type, 0) + 1
     digest = resource.digest
-    identity = resource.source_path or f"iges-{digest[:16]}"
+    identity = resource.source_identity("iges")
     resolver.compact_placed_topology()
     model = resolver.stage.publish(
         coordinate_contract=policy.coordinate_contract,
@@ -2401,7 +2401,12 @@ def _import(resource: CadResource, policy: CadImportPolicy, /) -> CadImportResul
         source_angle_unit_radians=1.0,
         report=report,
         coverage=stage.coverage(dict(resolver.counts)),
-        provenance=tuple(stage.provenance),
+        provenance=tuple(stage.provenance)
+        + (
+            ()
+            if resource.source_path is None
+            else (("source-path", resource.source_path),)
+        ),
         entity_metadata=None,
         # IGES declares no gap tolerance (G19 is coordinate discernibility), so
         # the evidence is the model's certified gaps against its own limit.

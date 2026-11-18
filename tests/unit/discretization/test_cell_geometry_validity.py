@@ -210,6 +210,40 @@ class _MutableCoordinateProvider:
         return self.bank
 
 
+@pytest.mark.parametrize("radical", (False, True))
+def test_exact_evaluation_shared_nodes_and_non_dyadic_values(radical: bool) -> None:
+    middle = RadicalElement.sqrt(Fraction(2)) if radical else Fraction(5, 3)
+    exact = ((Fraction(-1, 7),), (middle,), (Fraction(11, 5),))
+    coordinates = np.asarray(tuple((float(row[0]),) for row in exact), dtype=np.float64)
+    mesh = D.CellMesh(
+        coordinates,
+        (D.CellBlock("cells", "interval", np.asarray(((0, 1), (1, 2)), dtype=np.int64)),),
+    )
+    geometry = CellGeometrySpec(
+        {"cells": D.fem.lagrange_element("interval", 1)},
+        {"cells": np.asarray(((0, 1), (1, 2)), dtype=np.int64)},
+        coordinates,
+        source_mesh=mesh,
+        source_map=_MutableCoordinateProvider(exact),
+    )
+    points = ((Fraction(0),), (Fraction(1, 3),), (Fraction(1),))
+    ids = np.asarray(mesh.blocks[0].global_ids, dtype=np.int64)
+    actual = geometry.evaluate_exact(mesh, ids, (points, points))
+    expected = tuple(
+        tuple(
+            ((1 - point[0]) * exact[cell][0] + point[0] * exact[cell + 1][0],)
+            for point in points
+        )
+        for cell in range(2)
+    )
+    assert actual == expected
+    assert actual[0][-1] == actual[1][0]
+    if not radical:
+        assert all(
+            type(value) is Fraction for cell in actual for row in cell for value in row
+        )
+
+
 def test_exact_coordinate_bank_is_an_immutable_snapshot() -> None:
     mesh = D.CellMesh(
         np.asarray(((0.0,), (1.0,)), dtype=np.float64),

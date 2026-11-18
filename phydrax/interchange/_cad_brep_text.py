@@ -2251,6 +2251,7 @@ def _import(
     *,
     source_format: str = _FORMAT,
     source_digest: str | None = None,
+    source_id: str | None = None,
 ) -> CadImportResult:
     unit_meters = Fraction(unit.scale_to_reference)
     factor = length_factor(unit_meters, policy.coordinate_contract)
@@ -2272,7 +2273,9 @@ def _import(
     resolver.walk(decoded.root, RigidPlacement.identity(), ())
     resolver.assembly_graph()
     digest = resource.digest if source_digest is None else source_digest
-    identity = resource.source_path or f"brep-text-{digest[:16]}"
+    identity = (
+        resource.source_identity("brep-text", digest) if source_id is None else source_id
+    )
     model = resolver.stage.publish(
         coordinate_contract=policy.coordinate_contract,
         source_id=identity,
@@ -2355,6 +2358,11 @@ def _import(
                     f"{decoded.root.orientation}{decoded.root.number} {decoded.root.location}",
                 ),
             )
+        )
+        + (
+            ()
+            if resource.source_path is None
+            else (("source-path", resource.source_path),)
         ),
     )
 
@@ -2368,6 +2376,7 @@ def decode_brep_text_resource(
     source_length_unit: UnitDefinition,
     source_format: str = _FORMAT,
     source_digest: str | None = None,
+    source_id: str | None = None,
 ) -> CadImportResult:
     """Decode one mapped or caller-owned BRep text resource.
 
@@ -2382,6 +2391,7 @@ def decode_brep_text_resource(
             source_length_unit,
             source_format=source_format,
             source_digest=source_digest,
+            source_id=source_id,
         )
     except CadInterchangeError:
         raise

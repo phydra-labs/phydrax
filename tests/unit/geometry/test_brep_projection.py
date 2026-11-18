@@ -622,6 +622,44 @@ def test_trimmed_circle_endpoint_projection_is_batch_independent() -> None:
             )
 
 
+def test_intersection_trim_projection_is_independent_of_batch_order() -> None:
+    from phydrax.geometry.brep._intersection_curve import (
+        CurveTrimSegment,
+        IntersectionPCurve,
+    )
+    from tests.unit.interchange._native_cad_archive_worker import (
+        _orthogonal_quadric_boolean_model,
+    )
+
+    model = _orthogonal_quadric_boolean_model()
+    face, segment = next(
+        (index, segment)
+        for index, domain in enumerate(model.trim_domains)
+        if domain is not None
+        for loop in domain.curve_loops
+        for segment in loop
+        if isinstance(segment, CurveTrimSegment)
+        and isinstance(segment.curve, IntersectionPCurve)
+    )
+    assert isinstance(segment.curve, IntersectionPCurve)
+    curve = segment.curve.curve
+    point = np.asarray(curve.evaluate_coupled(0.37).point, dtype=np.float64)
+    points = np.stack((point + (0.08, 0.02, 0.03), point + (-0.03, 0.05, 0.01)))
+    projection = phx.geometry.prepare_brep_projection(model)
+    singles = [_project(projection, [value], _FACE, face) for value in points]
+    for order in ((0, 1, 0), (1, 0)):
+        batch = _project(projection, points[list(order)], _FACE, face)
+        for row, index in enumerate(order):
+            for name in (
+                "points", "parameters", "residuals", "status", "normals", "tangents",
+                "distance_lower_bounds",
+            ):
+                np.testing.assert_array_equal(
+                    np.asarray(getattr(batch, name))[row],
+                    np.asarray(getattr(singles[index], name))[0],
+                )
+
+
 def test_intersection_edge_frames_follow_both_cylinders_across_batches() -> None:
     from phydrax.geometry.brep._intersection_curve import IntersectionCurve
     from tests.unit.interchange._native_cad_archive_worker import (
@@ -2450,3 +2488,52 @@ def test_far_edge_distance_encloses_exact_distance(curve: str) -> None:
         return (difference > 0) - (difference < 0)
 
     assert excess(lower) <= 0 <= excess(upper)
+
+
+def test_trim_polygon_exact_boundary_and_batch_independence() -> None:
+    from phydrax.geometry._atlas import TrimDomain
+
+    vertices = np.asarray(
+        ((-2.0, -1.0), (2.0, -1.0), (2.0, 1.0), (0.0, 0.0), (-2.0, 1.0)),
+        dtype=np.float64,
+    )
+    anchors = np.asarray(
+        [*vertices, (0.0, -1.0), (1.0, 0.5), (-1.0, 0.5), (2.0, 0.0)],
+        dtype=np.float64,
+    )
+    neighbors = [anchors]
+    for axis in range(2):
+        for direction in (-np.inf, np.inf):
+            shifted = anchors.copy()
+            shifted[:, axis] = np.nextafter(shifted[:, axis], direction)
+            neighbors.append(shifted)
+    rng = np.random.default_rng(216)
+    queries = np.concatenate((rng.uniform(-3.0, 3.0, (20000, 2)), *neighbors))
+    rational = [tuple(Fraction(float(value)) for value in row) for row in vertices]
+
+    def expected(row: np.ndarray) -> tuple[bool, bool]:
+        x, y = (Fraction(float(value)) for value in row)
+        winding = 0
+        for (x0, y0), (x1, y1) in zip(rational, rational[1:] + rational[:1], strict=True):
+            area = (x1 - x0) * (y - y0) - (y1 - y0) * (x - x0)
+            if area == 0 and min(x0, x1) <= x <= max(x0, x1) and min(y0, y1) <= y <= max(y0, y1):
+                return False, True
+            if y0 <= y < y1 and area > 0:
+                winding += 1
+            elif y1 <= y < y0 and area < 0:
+                winding -= 1
+        return winding != 0, False
+
+    oracle = np.asarray([expected(row) for row in queries], dtype=np.bool_)
+    domain = TrimDomain(outer=vertices)
+    result = domain.classify(queries)
+    np.testing.assert_array_equal(result.inside, oracle[:, 0])
+    np.testing.assert_array_equal(result.boundary, oracle[:, 1])
+    np.testing.assert_array_equal(result.resolved, np.ones(len(queries), dtype=np.bool_))
+    for index in range(len(queries) - len(anchors) * 5, len(queries)):
+        single = domain.classify(queries[index : index + 1])
+        assert bool(single.inside[0]) == bool(oracle[index, 0])
+        assert bool(single.boundary[0]) == bool(oracle[index, 1])
+    reversed_result = domain.classify(queries[::-1])
+    np.testing.assert_array_equal(reversed_result.inside, oracle[::-1, 0])
+    np.testing.assert_array_equal(reversed_result.boundary, oracle[::-1, 1])

@@ -117,31 +117,45 @@ def symmetric_jacobian_verdicts(
         raise ValueError("Unsupported Bernstein domain or dimension.")
     workers = _workers(parallelism)
     results: list[tuple[tuple[bool, str], ...] | None] = [None] * len(jacobians)
-    prepared: list[tuple[int, list[Mapping[tuple[int, ...], Fraction | int]], int]] = []
+    prepared: list[
+        tuple[int, list[Mapping[tuple[int, ...], Fraction | int]], int, list[int], int]
+    ] = []
     for row, matrix in enumerate(jacobians):
         if len(matrix) != dimension or any(len(line) != dimension for line in matrix):
             raise ValueError("Jacobian must be square with the reference dimension.")
         entries = [entry for line in matrix for entry in line]
-        if any(
-            not isinstance(v, (Fraction, int)) or isinstance(v, bool)
-            for entry in entries
-            for v in entry.values()
-        ):
+        pairs = []
+        rational = True
+        for entry in entries:
+            for value in entry.values():
+                if not isinstance(value, (Fraction, int)) or isinstance(value, bool):
+                    rational = False
+                    break
+                pairs.append((value.numerator, value.denominator))
+            if not rational:
+                break
+        if not rational:
             continue
         rational_entries = cast(list[Mapping[tuple[int, ...], Fraction | int]], entries)
+        oversized = False
         for entry in entries:
-            if any(
-                len(index) != dimension
-                or any(not isinstance(k, int) or k < 0 for k in index)
-                for index in entry
-            ):
-                raise ValueError("Invalid polynomial exponents.")
-        if any(k > 715827882 for entry in entries for index in entry for k in index):
+            for index in entry:
+                if len(index) != dimension:
+                    raise ValueError("Invalid polynomial exponents.")
+                for exponent in index:
+                    if not isinstance(exponent, int) or exponent < 0:
+                        raise ValueError("Invalid polynomial exponents.")
+                    oversized |= exponent > 715827882
+        if oversized:
             continue
-        scale = lcm(
-            *(v.denominator for entry in rational_entries for v in entry.values())
-        )
-        prepared.append((row, rational_entries, scale))
+        scale = lcm(*(denominator for _, denominator in pairs))
+        if scale.bit_length() > 64 * _WORD_LIMBS[-1] - 1:
+            continue
+        numerators = [
+            numerator * (scale // denominator) for numerator, denominator in pairs
+        ]
+        bits = max((abs(value).bit_length() for value in numerators), default=0)
+        prepared.append((row, rational_entries, scale, numerators, bits))
     if not prepared or not meshcore_available():
         return results
     pending = prepared
@@ -149,12 +163,8 @@ def symmetric_jacobian_verdicts(
         eligible = []
         deferred = []
         for item in pending:
-            _, entries, scale = item
-            if scale.bit_length() <= 64 * limbs - 1 and all(
-                abs(v.numerator * (scale // v.denominator)).bit_length() <= 64 * limbs - 1
-                for entry in entries
-                for v in entry.values()
-            ):
+            _, _, scale, _, bits = item
+            if scale.bit_length() <= 64 * limbs - 1 and bits <= 64 * limbs - 1:
                 eligible.append(item)
             else:
                 deferred.append(item)
@@ -163,12 +173,14 @@ def symmetric_jacobian_verdicts(
         offsets = [0]
         exponents: list[int] = []
         coefficients: list[int] = []
-        for _, entries, scale in eligible:
+        for _, entries, _, numerators, _ in eligible:
+            coefficients.extend(numerators)
+            end = len(coefficients) - len(numerators)
             for entry in entries:
-                for index, value in entry.items():
+                for index in entry:
                     exponents.extend(index)
-                    coefficients.append(value.numerator * (scale // value.denominator))
-                offsets.append(len(coefficients))
+                end += len(entry)
+                offsets.append(end)
         count = len(eligible)
         digests = ctypes.create_string_buffer(count * dimension * 32)
         verdicts = ctypes.create_string_buffer(count * dimension * 4)

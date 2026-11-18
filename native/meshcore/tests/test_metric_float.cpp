@@ -15,6 +15,7 @@
 #include <cstring>
 #include <vector>
 
+#include "bit_vectors.hpp"
 #include "check.hpp"
 #include "phydrax_meshcore.h"
 
@@ -30,65 +31,25 @@ enum Kind : std::size_t {
   k_band = 3,
   k_relative = 4,
   k_quality = 5,
-  k_kinds = 6
+  k_properties = 6,
+  k_congruence = 7,
+  k_kinds = 8
 };
-constexpr const char* kKindNames[k_kinds] = {"PHX_MF_LOG",      "PHX_MF_INTERPOLATE",
-                                             "PHX_MF_LENGTH",   "PHX_MF_BAND",
-                                             "PHX_MF_RELATIVE", "PHX_MF_QUALITY"};
+constexpr const char* kKindNames[k_kinds] = {
+    "PHX_MF_LOG",      "PHX_MF_INTERPOLATE", "PHX_MF_LENGTH",     "PHX_MF_BAND",
+    "PHX_MF_RELATIVE", "PHX_MF_QUALITY",     "PHX_MF_PROPERTIES", "PHX_MF_CONGRUENCE"};
 
-#define PHX_MF_NONE(...)
-#define PHX_MF_ROW(...) {__VA_ARGS__},
-
-#define PHX_MF_LOG PHX_MF_ROW
-#define PHX_MF_INTERPOLATE PHX_MF_NONE
-#define PHX_MF_LENGTH PHX_MF_NONE
-#define PHX_MF_BAND PHX_MF_NONE
-#define PHX_MF_RELATIVE PHX_MF_NONE
-#define PHX_MF_QUALITY PHX_MF_NONE
-const Rows kLog = {
+#define PHX_MF_LOG(...) {"PHX_MF_LOG", {__VA_ARGS__}},
+#define PHX_MF_INTERPOLATE(...) {"PHX_MF_INTERPOLATE", {__VA_ARGS__}},
+#define PHX_MF_LENGTH(...) {"PHX_MF_LENGTH", {__VA_ARGS__}},
+#define PHX_MF_BAND(...) {"PHX_MF_BAND", {__VA_ARGS__}},
+#define PHX_MF_RELATIVE(...) {"PHX_MF_RELATIVE", {__VA_ARGS__}},
+#define PHX_MF_QUALITY(...) {"PHX_MF_QUALITY", {__VA_ARGS__}},
+#define PHX_MF_PROPERTIES(...) {"PHX_MF_PROPERTIES", {__VA_ARGS__}},
+#define PHX_MF_CONGRUENCE(...) {"PHX_MF_CONGRUENCE", {__VA_ARGS__}},
+const std::vector<phx::mc::test::BitRow> kRecorded = {
 #include "metric_float_vectors.inc"
 };
-#undef PHX_MF_LOG
-#undef PHX_MF_INTERPOLATE
-#define PHX_MF_LOG PHX_MF_NONE
-#define PHX_MF_INTERPOLATE PHX_MF_ROW
-const Rows kInterpolate = {
-#include "metric_float_vectors.inc"
-};
-#undef PHX_MF_INTERPOLATE
-#undef PHX_MF_LENGTH
-#define PHX_MF_INTERPOLATE PHX_MF_NONE
-#define PHX_MF_LENGTH PHX_MF_ROW
-const Rows kLength = {
-#include "metric_float_vectors.inc"
-};
-#undef PHX_MF_LENGTH
-#undef PHX_MF_BAND
-#define PHX_MF_LENGTH PHX_MF_NONE
-#define PHX_MF_BAND PHX_MF_ROW
-const Rows kBand = {
-#include "metric_float_vectors.inc"
-};
-#undef PHX_MF_BAND
-#undef PHX_MF_RELATIVE
-#define PHX_MF_BAND PHX_MF_NONE
-#define PHX_MF_RELATIVE PHX_MF_ROW
-const Rows kRelative = {
-#include "metric_float_vectors.inc"
-};
-#undef PHX_MF_RELATIVE
-#undef PHX_MF_QUALITY
-#define PHX_MF_RELATIVE PHX_MF_NONE
-#define PHX_MF_QUALITY PHX_MF_ROW
-const Rows kQuality = {
-#include "metric_float_vectors.inc"
-};
-#undef PHX_MF_LOG
-#undef PHX_MF_INTERPOLATE
-#undef PHX_MF_LENGTH
-#undef PHX_MF_BAND
-#undef PHX_MF_RELATIVE
-#undef PHX_MF_QUALITY
 
 std::uint64_t bits_of(double value) { return std::bit_cast<std::uint64_t>(value); }
 double value_of(std::uint64_t bits) { return std::bit_cast<double>(bits); }
@@ -463,7 +424,121 @@ std::array<Rows, k_kinds> evaluate() {
                                           &alone) == PHX_MC_OK);
     PHX_CHECK(bits_of(alone) == bits_of(quality[row]));
   }
+  // Field gates: the bank, then tensors at the two tolerances of the gate
+  // (64 * 2^-52 of the largest eigenvalue magnitude) and beyond the range.
+  std::vector<double> tensors = bank;
+  const double gate_cases[][9] = {
+      // An asymmetry of half the tolerance, of about the tolerance (which
+      // grows with the largest eigenvalue, here just above 1) and of twice it.
+      {1.0, 0x1p-47, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0},
+      {1.0, 0x1p-46, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0},
+      {1.0, 0x1p-45, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0},
+      {1.0, 0.5, 0.0, 0.25, 1.0, 0.0, 0.0, 0.0, 1.0},
+      // Smallest eigenvalue above, at and below the tolerance; singular; negative.
+      {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0x1p-45},
+      {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0x1p-46},
+      {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0x1p-47},
+      {1.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0},
+      {-1.0, 0.0, 0.0, 0.0, -2.0, 0.0, 0.0, 0.0, -3.0},
+      // Not finite, and an eigenvalue beyond the binary64 range.
+      {1.0, 0.0, 0.0, 0.0, 1.0, value_of(kInfinity), 0.0, value_of(kInfinity), 1.0},
+      {0x1.fffffffffffffp+1023, 0x1.fffffffffffffp+1023, 0x1.fffffffffffffp+1023,
+       0x1.fffffffffffffp+1023, 0x1.fffffffffffffp+1023, 0x1.fffffffffffffp+1023,
+       0x1.fffffffffffffp+1023, 0x1.fffffffffffffp+1023, 0x1.fffffffffffffp+1023}};
+  for (const auto& tensor : gate_cases) tensors.insert(tensors.end(), tensor, tensor + 9);
+  const std::size_t tensor_count = tensors.size() / 9;
+  std::vector<int8_t> symmetric(tensor_count), definite(tensor_count);
+  PHX_CHECK(phx_mc_metric_tensor_properties(static_cast<int64_t>(tensor_count), tensors.data(),
+                                            symmetric.data(), definite.data()) == PHX_MC_OK);
+  for (std::size_t row = 0; row < tensor_count; ++row) {
+    Row record;
+    append_bits(record, tensors.data() + 9 * row, 9);
+    record.push_back(static_cast<std::uint64_t>(symmetric[row]));
+    record.push_back(static_cast<std::uint64_t>(definite[row]));
+    rows[k_properties].push_back(record);
+    int8_t alone_symmetric = -1;
+    int8_t alone_definite = -1;
+    PHX_CHECK(phx_mc_metric_tensor_properties(1, tensors.data() + 9 * row, &alone_symmetric,
+                                              &alone_definite) == PHX_MC_OK);
+    PHX_CHECK(alone_symmetric == symmetric[row] && alone_definite == definite[row]);
+  }
+
+  // Congruences A^T M A = R. A is a signed permutation (an isometry of the
+  // axes), so the exact image of a bank metric is a signed rearrangement of
+  // its entries; every second row then moves one entry of R by a small step.
+  std::vector<double> maps, images, sources;
+  Generator congruences{0x1f83d9abfb41bd6bULL};
+  for (int row = 0; row < 36; ++row) {
+    std::int64_t order[3] = {0, 1, 2};
+    for (int last = 2; last > 0; --last) {
+      const std::int64_t other = congruences.integer(0, last);
+      const std::int64_t swap = order[last];
+      order[last] = order[other];
+      order[other] = swap;
+    }
+    double sign[3];
+    for (double& value : sign) value = congruences.integer(0, 1) == 0 ? 1.0 : -1.0;
+    // A e_i = sign_i e_{order_i}.
+    double linear[9] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    for (int column = 0; column < 3; ++column) linear[3 * order[column] + column] = sign[column];
+    const double* metric = bank.data() + 9 * (8 + row % 32);
+    double source[9];
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) {
+        source[3 * i + j] = (sign[i] * sign[j]) * metric[3 * order[i] + order[j]];
+      }
+    }
+    if (row % 2 == 1) {
+      const std::int64_t entry = congruences.integer(0, 8);
+      source[entry] =
+          source[entry] * (1.0 + power_of_two(-static_cast<int>(congruences.integer(8, 50))));
+    }
+    maps.insert(maps.end(), linear, linear + 9);
+    images.insert(images.end(), metric, metric + 9);
+    sources.insert(sources.end(), source, source + 9);
+  }
+  // A map that is not an isometry, a singular one and values that are not numbers.
+  const double extra_maps[3][9] = {{2.0, 0.0, 0.0, 0.0, 1.0, 0.5, 0.0, 0.0, 1.0},
+                                   {1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0},
+                                   {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0}};
+  const std::size_t extra_images[3] = {4, 4, 6};
+  for (int row = 0; row < 3; ++row) {
+    maps.insert(maps.end(), extra_maps[row], extra_maps[row] + 9);
+    const double* image = bank.data() + 9 * extra_images[row];
+    images.insert(images.end(), image, image + 9);
+    sources.insert(sources.end(), bank.data() + 36, bank.data() + 45);
+  }
+  const std::size_t congruence_count = maps.size() / 9;
+  std::vector<double> errors(congruence_count), scales(congruence_count);
+  PHX_CHECK(phx_mc_metric_congruence_defects(static_cast<int64_t>(congruence_count), maps.data(),
+                                             images.data(), sources.data(), errors.data(),
+                                             scales.data()) == PHX_MC_OK);
+  for (std::size_t row = 0; row < congruence_count; ++row) {
+    Row record;
+    append_bits(record, maps.data() + 9 * row, 9);
+    append_bits(record, images.data() + 9 * row, 9);
+    append_bits(record, sources.data() + 9 * row, 9);
+    record.push_back(bits_of(errors[row]));
+    record.push_back(bits_of(scales[row]));
+    rows[k_congruence].push_back(record);
+    double alone_error = -1.0;
+    double alone_scale = -1.0;
+    PHX_CHECK(phx_mc_metric_congruence_defects(1, maps.data() + 9 * row, images.data() + 9 * row,
+                                               sources.data() + 9 * row, &alone_error,
+                                               &alone_scale) == PHX_MC_OK);
+    PHX_CHECK(bits_of(alone_error) == bits_of(errors[row]));
+    PHX_CHECK(bits_of(alone_scale) == bits_of(scales[row]));
+  }
   return rows;
+}
+
+// The rows in the order of the recorded file: kind by kind.
+std::vector<phx::mc::test::BitRow> in_file_order(const std::array<Rows, k_kinds>& rows) {
+  std::vector<phx::mc::test::BitRow> ordered;
+  for (std::size_t kind = 0; kind < k_kinds; ++kind) {
+    for (const Row& row : rows[kind]) ordered.push_back({kKindNames[kind], row});
+  }
+  return ordered;
 }
 
 void emit(const std::array<Rows, k_kinds>& rows) {
@@ -478,40 +553,15 @@ void emit(const std::array<Rows, k_kinds>& rows) {
       "// PHX_MF_LENGTH(p, q, bank row at p, bank row at q, length)\n"
       "// PHX_MF_BAND(length, quanta above the band, quanta below the band)\n"
       "// PHX_MF_RELATIVE(twelve corner values, determinant, relative determinant)\n"
-      "// PHX_MF_QUALITY(twelve corner values, four bank rows, quality)\n");
-  for (std::size_t kind = 0; kind < k_kinds; ++kind) {
-    for (const Row& row : rows[kind]) {
-      std::printf("%s(", kKindNames[kind]);
-      for (std::size_t field = 0; field < row.size(); ++field) {
-        std::printf("%s0x%016" PRIx64, field == 0 ? "" : ", ", row[field]);
-      }
-      std::printf(")\n");
-    }
-  }
+      "// PHX_MF_QUALITY(twelve corner values, four bank rows, quality)\n"
+      "// PHX_MF_PROPERTIES(nine tensor values, symmetric, positive definite)\n"
+      "// PHX_MF_CONGRUENCE(nine values each of A, M and R, the infinity norm of\n"
+      "//                   A^T M A - R, the larger norm of A^T M A and R)\n");
+  phx::mc::test::emit_rows(in_file_order(rows));
 }
 
 void compare(const std::array<Rows, k_kinds>& rows) {
-  const std::array<const Rows*, k_kinds> recorded = {&kLog,  &kInterpolate, &kLength,
-                                                     &kBand, &kRelative,    &kQuality};
-  int reported = 0;
-  for (std::size_t kind = 0; kind < k_kinds; ++kind) {
-    PHX_CHECK(rows[kind].size() == recorded[kind]->size());
-    for (std::size_t row = 0; row < rows[kind].size() && row < recorded[kind]->size(); ++row) {
-      const Row& got = rows[kind][row];
-      const Row& expected = (*recorded[kind])[row];
-      PHX_CHECK(got == expected);
-      if (got != expected && reported++ < 8) {
-        std::fprintf(stderr, "  %s row %zu:", kKindNames[kind], row);
-        for (std::size_t field = 0; field < got.size() && field < expected.size(); ++field) {
-          if (got[field] != expected[field]) {
-            std::fprintf(stderr, " field %zu 0x%016" PRIx64 " (recorded 0x%016" PRIx64 ")",
-                         field, got[field], expected[field]);
-          }
-        }
-        std::fprintf(stderr, "\n");
-      }
-    }
-  }
+  phx::mc::test::compare_rows(in_file_order(rows), kRecorded);
 }
 
 void guards_arguments() {

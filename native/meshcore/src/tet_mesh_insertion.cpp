@@ -726,7 +726,8 @@ TetEditStatus TetMesh::relocate_impl(
 // edge removed by the edit must not be a constrained segment. All allocation
 // precedes the first topology write; staged ID records are rolled back if the
 // commit cannot start.
-TetEditStatus TetMesh::replace_local_cavity(const TetEdit& operation) {
+TetEditStatus TetMesh::replace_local_cavity(const TetEdit& operation,
+                                             const TetSegmentIndex* segment_index) {
   clear_implicit_facet_refusal();
   try {
     const bool collapse = operation.kind == TetEditKind::kCollapse;
@@ -833,7 +834,7 @@ TetEditStatus TetMesh::replace_local_cavity(const TetEdit& operation) {
         }
       }
     }
-    if (removes_constrained_segment(removed_slots, replacement_edges)) {
+    if (removes_constrained_segment(removed_slots, replacement_edges, segment_index)) {
       return TetEditStatus::kRejectedProtected;
     }
     if (generation_ == std::numeric_limits<std::uint64_t>::max()) {
@@ -935,7 +936,8 @@ TetEditStatus TetMesh::replace_local_cavity(const TetEdit& operation) {
 }
 
 bool TetMesh::removes_constrained_segment(std::span<const std::int32_t> removed_slots,
-                                          const std::set<std::uint64_t>& kept_edges) const {
+                                          const std::set<std::uint64_t>& kept_edges,
+                                          const TetSegmentIndex* segment_index) const {
   // Segment endpoints carry dimension at most one, so only such edges need
   // the segment bank.
   for (std::int32_t slot : removed_slots) {
@@ -950,11 +952,14 @@ bool TetMesh::removes_constrained_segment(std::span<const std::int32_t> removed_
         }
         const std::uint64_t id_a = vertex_id(a);
         const std::uint64_t id_b = vertex_id(b);
-        if (std::any_of(segments_.begin(), segments_.end(),
-                        [&](const TetSnapshotSegment& segment) {
-                          return (segment.vertices[0] == id_a && segment.vertices[1] == id_b) ||
-                                 (segment.vertices[0] == id_b && segment.vertices[1] == id_a);
-                        })) {
+        const bool constrained = segment_index != nullptr
+            ? segment_index->contains({std::min(id_a, id_b), std::max(id_a, id_b)})
+            : std::any_of(segments_.begin(), segments_.end(),
+                          [&](const TetSnapshotSegment& segment) {
+                            return (segment.vertices[0] == id_a && segment.vertices[1] == id_b) ||
+                                   (segment.vertices[0] == id_b && segment.vertices[1] == id_a);
+                          });
+        if (constrained) {
           return true;
         }
       }
@@ -974,7 +979,8 @@ bool TetMesh::removes_constrained_segment(std::span<const std::int32_t> removed_
 TetEditStatus TetMesh::insert_local_cone(const TetEditVertex& vertex,
                                          std::span<const std::int32_t> cavity,
                                          std::span<const std::int32_t> removed_vertices,
-                                         std::vector<std::uint64_t>& created_cells) {
+                                         std::vector<std::uint64_t>& created_cells,
+                                         const TetSegmentIndex* segment_index) {
   clear_implicit_facet_refusal();
   created_cells.clear();
   try {
@@ -1040,7 +1046,7 @@ TetEditStatus TetMesh::insert_local_cone(const TetEditVertex& vertex,
       }
     }
     std::sort(ancestors.begin(), ancestors.end());
-    if (removes_constrained_segment(cavity, kept_edges)) {
+    if (removes_constrained_segment(cavity, kept_edges, segment_index)) {
       return TetEditStatus::kRejectedProtected;
     }
     if (!removed_vertices.empty()) {
@@ -1229,7 +1235,8 @@ TetEditStatus TetMesh::insert_local_boundary_point(const TetEditVertex& vertex,
                                                    std::span<const std::int32_t> cavity,
                                                    std::span<const std::size_t> facet_rows,
                                                    std::span<const std::size_t> segment_rows,
-                                                   std::vector<std::uint64_t>& created_cells) {
+                                                   std::vector<std::uint64_t>& created_cells,
+                                                   const TetSegmentIndex* segment_index) {
   clear_implicit_facet_refusal();
   created_cells.clear();
   try {
@@ -1392,7 +1399,9 @@ TetEditStatus TetMesh::insert_local_boundary_point(const TetEditVertex& vertex,
     // Only the split segment may leave the mesh.
     std::set<std::uint64_t> allowed_edges = kept_edges;
     if (split[0] >= 0) allowed_edges.insert(split_key);
-    if (removes_constrained_segment(finite, allowed_edges)) return TetEditStatus::kRejectedProtected;
+    if (removes_constrained_segment(finite, allowed_edges, segment_index)) {
+      return TetEditStatus::kRejectedProtected;
+    }
     std::sort(ancestors.begin(), ancestors.end());
     const std::uint64_t max_id = std::numeric_limits<std::uint64_t>::max();
     if (boundary.size() > max_id - next_cell_id_ || polygon.size() > max_id - next_facet_id_ ||
@@ -1643,7 +1652,8 @@ TetEditStatus TetMesh::insert_local_boundary_point(const TetEditVertex& vertex,
 // in which case the cavity is refused.
 TetCavityStatus TetMesh::insertion_cavity(std::int32_t start, const double* point,
                                           bool keep_walk,
-                                          TetInsertionCavity& cavity) const {
+                                          TetInsertionCavity& cavity,
+                                          const TetSegmentIndex* segment_index) const {
   cavity.cells.clear();
   cavity.members.clear();
   cavity.root = -1;
@@ -1746,7 +1756,7 @@ TetCavityStatus TetMesh::insertion_cavity(std::int32_t start, const double* poin
             tet(cell).v, tet(cell).v + 4,
             [&](std::int32_t vertex) { return !boundary_vertices.contains(vertex); });
         const std::int32_t single[1]{cell};
-        if (loses_vertex || removes_constrained_segment(single, kept_edges)) {
+        if (loses_vertex || removes_constrained_segment(single, kept_edges, segment_index)) {
           drop = cell;
           break;
         }
@@ -1796,7 +1806,7 @@ TetCavityStatus TetMesh::insertion_cavity(std::int32_t start, const double* poin
 TetCavityStatus TetMesh::boundary_insertion_cavity(
     const TetEditVertex& vertex, std::span<const std::pair<std::int32_t, int>> disk_sides,
     std::array<std::int32_t, 2> split_segment, std::span<const std::int32_t> segment_star,
-    std::vector<std::int32_t>& cells) const {
+    std::vector<std::int32_t>& cells, const TetSegmentIndex* segment_index) const {
   const double* point = vertex.carrier.data();
   cells.clear();
   std::unordered_set<std::int32_t> members;
@@ -1890,7 +1900,8 @@ TetCavityStatus TetMesh::boundary_insertion_cavity(
               return vertex >= 0 && !boundary_vertices.contains(vertex);
             });
         const std::int32_t single[1]{cell};
-        if (drop < 0 && (loses_vertex || removes_constrained_segment(single, kept_edges))) {
+        if (drop < 0 && (loses_vertex ||
+                         removes_constrained_segment(single, kept_edges, segment_index))) {
           drop = cell;
         }
       }

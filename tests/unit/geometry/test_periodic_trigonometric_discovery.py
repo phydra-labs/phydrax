@@ -88,6 +88,11 @@ def test_quotient_discovery_reports_cited_cubic_cell_genus_and_half_fraction(
     assert table.symmetry_sign(*symmetry) == -1
     metrics = surface.lattice_metrics()
     assert metrics.solid_fraction_lower <= 0.5 <= metrics.solid_fraction_upper
+    # The identity lattice has unit spectral stretch, up to outward rounding.
+    assert Fraction(metrics.vertex_root_distance) >= Fraction(surface.root_error)
+    assert Fraction(metrics.vertex_root_distance) <= Fraction(surface.root_error) * (
+        1 + Fraction(1, 2**48)
+    )
     assert metrics.porosity_lower <= 0.5 <= metrics.porosity_upper
 
 
@@ -100,6 +105,137 @@ def test_quotient_discovery_on_a_skew_cell_keeps_topology_and_exact_lifts() -> N
     _assert_exact_lift(surface)
     metrics = surface.lattice_metrics()
     assert metrics.cell_volume == pytest.approx(abs(np.linalg.det(vectors)))
+    _assert_stretch_certificate(surface, vectors, metrics.vertex_root_distance)
+
+
+def _assert_stretch_certificate(
+    surface: PeriodicImplicitSurface, vectors: np.ndarray, distance: float
+) -> None:
+    # Exact principal-minor certificate that distance² I - error² V Vᵀ is PSD.
+    distance2 = Fraction(distance) ** 2
+    error2 = Fraction(surface.root_error) ** 2
+    exact = [[Fraction(float(value)) for value in row] for row in vectors]
+    matrix = [
+        [
+            (distance2 if i == j else Fraction(0))
+            - error2 * sum((exact[i][k] * exact[j][k] for k in range(3)), Fraction(0))
+            for j in range(3)
+        ]
+        for i in range(3)
+    ]
+    assert all(matrix[i][i] >= 0 for i in range(3))
+    assert all(
+        matrix[i][i] * matrix[j][j] - matrix[i][j] ** 2 >= 0
+        for i in range(3)
+        for j in range(i + 1, 3)
+    )
+    determinant = (
+        matrix[0][0] * (matrix[1][1] * matrix[2][2] - matrix[1][2] ** 2)
+        - matrix[0][1] * (matrix[0][1] * matrix[2][2] - matrix[1][2] * matrix[0][2])
+        + matrix[0][2] * (matrix[0][1] * matrix[1][2] - matrix[1][1] * matrix[0][2])
+    )
+    assert determinant >= 0
+
+
+def test_lattice_metrics_stretch_for_underestimated_spectral_norm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bracket the spectral norm with exact principal minors in binary64.
+
+    Bisection finds adjacent binary64 numbers around the exact largest singular
+    value. The patched NumPy spectral norm returns the lower number, independent
+    of LAPACK; the old one-step metric is proved too small by exact arithmetic.
+    """
+    vectors = np.asarray(
+        (
+            (-2.21875, -1.8125, -1.6875),
+            (-0.78125, 0.1875, 1.21875),
+            (-2.6875, -2.3125, 2.21875),
+        ),
+        dtype=np.float64,
+    )
+    discovered = _discover("schwarz_p", 0.2, vectors)
+    # Widening the certified error is valid and makes the rounding case fixed.
+    error = float.fromhex("0x1.0000000000002p+0")
+    assert discovered.root_error <= error
+    surface = PeriodicImplicitSurface(
+        discovered.source,
+        discovered.mesh,
+        discovered.topology,
+        discovered.cover,
+        discovered.evidence,
+        discovered.reduced_domain,
+        None,
+        {
+            "corner_ids": discovered.scaffold_corner_ids,
+            "corner_signs": discovered.scaffold_corner_signs,
+            "root_edge_ids": discovered.scaffold_root_edge_ids,
+            "triangle_root_edge_rows": discovered.scaffold_triangle_root_edge_rows,
+        },
+        discovered.vertex_root_rows,
+        target_level=discovered.target_level,
+        root_error=error,
+        policy=discovered.policy,
+        source_id=discovered.source_id,
+    )
+    exact = [[Fraction(float(value)) for value in row] for row in vectors]
+
+    def upper_bound(value: Fraction) -> bool:
+        matrix = [
+            [
+                (value**2 if i == j else Fraction(0))
+                - sum((exact[i][k] * exact[j][k] for k in range(3)), Fraction(0))
+                for j in range(3)
+            ]
+            for i in range(3)
+        ]
+        determinant = (
+            matrix[0][0] * (matrix[1][1] * matrix[2][2] - matrix[1][2] ** 2)
+            - matrix[0][1] * (matrix[0][1] * matrix[2][2] - matrix[1][2] * matrix[0][2])
+            + matrix[0][2] * (matrix[0][1] * matrix[1][2] - matrix[1][1] * matrix[0][2])
+        )
+        return (
+            all(matrix[i][i] >= 0 for i in range(3))
+            and all(
+                matrix[i][i] * matrix[j][j] - matrix[i][j] ** 2 >= 0
+                for i in range(3)
+                for j in range(i + 1, 3)
+            )
+            and determinant >= 0
+        )
+
+    lower, upper = 4.0, 5.0
+    assert not upper_bound(Fraction(lower)) and upper_bound(Fraction(upper))
+    while np.nextafter(lower, np.inf) < upper:
+        middle = (lower + upper) / 2.0
+        if upper_bound(Fraction(middle)):
+            upper = middle
+        else:
+            lower = middle
+    assert not upper_bound(Fraction(lower)) and upper_bound(Fraction(upper))
+    old_distance = float(np.nextafter(lower * error, np.inf))
+    assert not upper_bound(Fraction(old_distance) / Fraction(error))
+    original_norm = np.linalg.norm
+    monkeypatch.setattr(
+        np.linalg,
+        "norm",
+        lambda values, *args, **kwargs: (
+            lower
+            if kwargs.get("ord") == 2 and values.shape == (3, 3)
+            else original_norm(values, *args, **kwargs)
+        ),
+    )
+    distance = surface.lattice_metrics().vertex_root_distance
+    _assert_stretch_certificate(surface, vectors, distance)
+
+
+def test_lattice_metrics_tight_axis_aligned_stretch() -> None:
+    surface = _discover("schwarz_p", 0.2, np.diag([2.0, 1.0, 0.5]))
+    distance = surface.lattice_metrics().vertex_root_distance
+    assert Fraction(distance) >= 2 * Fraction(surface.root_error)
+    assert Fraction(distance) <= 2 * Fraction(surface.root_error) * (
+        1 + Fraction(1, 2**48)
+    )
 
 
 def _independent_schwarz_p_area(points_per_axis: int, half_width: float) -> float:

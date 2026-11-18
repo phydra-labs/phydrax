@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
+from fractions import Fraction
 from typing import final
 
 import equinox as eqx
@@ -33,6 +34,12 @@ from ...discretization._periodic_cell import PeriodicCell
 from ...discretization._periodic_exact import apply_periodic
 from ...discretization._periodic_topology import PeriodicMeshTopology
 from ...typing import checked
+from .._rational import (
+    binary64_difference_magnitude,
+    binary64_norm_lower,
+    binary64_norm_upper,
+    binary64_spectral_upper,
+)
 from ..analytic._trigonometric_level_set import (
     TrigonometricLevelSet,
     TrigonometricSheetBand,
@@ -389,7 +396,7 @@ class PeriodicImplicitSurface(StrictModule, NonTrainableState):
         normals = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
         area = float(0.5 * np.sum(np.linalg.norm(normals, axis=1)))
         # A reduced displacement d moves a point by d @ vectors in space.
-        stretch = float(np.linalg.norm(vectors, ord=2))
+        stretch = binary64_spectral_upper(vectors)
         return PeriodicLatticeMetrics(
             cell_volume=float(abs(np.linalg.det(vectors))),
             solid_fraction_lower=volume.fraction_lower,
@@ -769,7 +776,17 @@ class QuotientZeroSet:
             )
             for row, record in zip(rows.tolist(), records, strict=True):
                 point, error, issue = record[0], record[1], record[2]
-                if issue == 0 and np.linalg.norm(point - origins[row]) <= reach:
+                if issue != 0 or not reach >= 0.0:
+                    continue
+                lower, upper = binary64_difference_magnitude(point, origins[row])
+                within_reach = binary64_norm_upper(upper) <= reach
+                if not within_reach and binary64_norm_lower(lower) <= reach:
+                    squared = sum(
+                        (Fraction(float(a)) - Fraction(float(b))) ** 2
+                        for a, b in zip(point, origins[row], strict=True)
+                    )
+                    within_reach = squared <= Fraction(reach) ** 2
+                if within_reach:
                     result[row] = point
                     errors[row] = error
         certified = np.isfinite(errors)

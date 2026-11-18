@@ -798,14 +798,22 @@ def _mesh_evidence_issues(
             association.validate_target(binding[1])
         except ValueError:
             issues.append("association_target_ids")
+        target_ids = np.asarray(association.target_global_ids)
+        source_ids = association.source_entity_ids
+        resolved_rows = np.asarray(association.resolved)
+        association_kind = association.association_kind
+        source_id = association.source_id
+        source_revision = association.source_revision
+        target_entity_set_id = association.target_entity_set_id
+        source_occurrence_paths = association.source_occurrence_paths
+        target_reference_pieces = association.target_reference_pieces
+        source_boundary_witness_id = association.source_boundary_witness_id
+        target_parameter_intervals = association.target_parameter_intervals
+        source_parameter_intervals = association.source_parameter_intervals
+        source_roles = association.source_roles
         target_kinds: tuple[bool, bool] | None = None
         for row, (identifier, source, resolved) in enumerate(
-            zip(
-                np.asarray(association.target_global_ids),
-                association.source_entity_ids,
-                np.asarray(association.resolved),
-                strict=True,
-            )
+            zip(target_ids, source_ids, resolved_rows, strict=True)
         ):
             if not resolved:
                 continue
@@ -813,38 +821,36 @@ def _mesh_evidence_issues(
                 dimension = mesh.topological_dimension
                 target_kinds = (
                     dimension >= 1
-                    and association.target_entity_set_id
-                    == mesh.entity_set(1).entity_set_id,
+                    and target_entity_set_id == mesh.entity_set(1).entity_set_id,
                     dimension >= 2
-                    and association.target_entity_set_id
-                    == mesh.entity_set(2).entity_set_id,
+                    and target_entity_set_id == mesh.entity_set(2).entity_set_id,
                 )
             key = (
-                association.association_kind,
-                association.source_id,
-                association.source_revision,
-                association.target_entity_set_id,
+                association_kind,
+                source_id,
+                source_revision,
+                target_entity_set_id,
                 int(identifier),
             )
-            identity = (source, association.source_occurrence_paths[row])
+            identity = (source, source_occurrence_paths[row])
             piece_witness = (
-                association.source_boundary_witness_id
-                if association.target_reference_pieces[row] is not None
+                source_boundary_witness_id
+                if target_reference_pieces[row] is not None
                 else None
             )
-            interval = association.target_parameter_intervals[row]
-            source_interval = association.source_parameter_intervals[row]
+            interval = target_parameter_intervals[row]
+            source_interval = source_parameter_intervals[row]
             facet_edge = (
                 target_kinds[0]
-                and association.source_roles[row] is GeometrySourceEntityRole.FACET
+                and source_roles[row] is GeometrySourceEntityRole.FACET
             )
             edge_face = (
                 target_kinds[1]
-                and association.source_roles[row] is GeometrySourceEntityRole.EDGE
+                and source_roles[row] is GeometrySourceEntityRole.EDGE
                 and piece_witness is not None
             )
             previous_rows = resolved_sources.setdefault(key, [])
-            role = association.source_roles[row]
+            role = source_roles[row]
             curve_vertex = is_curve_vertex_closure(mesh, association, row)
             for (
                 previous_identity,
