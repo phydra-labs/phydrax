@@ -880,7 +880,8 @@ class ConstrainedMesher {
       const double* pq = shell_a ? pb : pa;
       const double dx = pq[0] - po[0];
       const double dy = pq[1] - po[1];
-      const double length = std::hypot(dx, dy);
+      // Products, one sum and one square root: the same double everywhere.
+      const double length = std::sqrt(dx * dx + dy * dy);
       int exponent = 0;
       const double fraction = std::frexp(0.5 * length, &exponent);
       const double piece = std::ldexp(1.0, fraction < 0.75 ? exponent - 1 : exponent);
