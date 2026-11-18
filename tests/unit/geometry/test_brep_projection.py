@@ -2091,6 +2091,110 @@ def _rectangle_face_model(patch: Any, bounds: tuple[tuple[float, float], ...]) -
     )
 
 
+@pytest.mark.parametrize("scale", [1.0, 2.0**130])
+@pytest.mark.parametrize("orientation", [1.0, -1.0])
+def test_analytic_torus_frames_match_exact_ordered_reference(
+    scale: float, orientation: float
+) -> None:
+    from phydrax.geometry.brep._host_program import (
+        evaluate_host_program,
+        prepare_host_program,
+    )
+    from phydrax.geometry.brep._patches import TorusPatch
+
+    def product(a: float, b: float) -> float:
+        exact = Fraction(a) * Fraction(b)
+        return float(exact) if exact else a * b
+
+    def add(a: float, b: float) -> float:
+        exact = Fraction(a) + Fraction(b)
+        return float(exact) if exact else a + b
+
+    def subtract(a: float, b: float) -> float:
+        exact = Fraction(a) - Fraction(b)
+        return float(exact) if exact else a - b
+
+    def divide(a: float, b: float) -> float:
+        return float(Fraction(a) / Fraction(b)) if a else a / b
+
+    def cross(a: list[float], b: list[float]) -> list[float]:
+        return [
+            subtract(product(a[1], b[2]), product(a[2], b[1])),
+            subtract(product(a[2], b[0]), product(a[0], b[2])),
+            subtract(product(a[0], b[1]), product(a[1], b[0])),
+        ]
+
+    def norm(a: list[float]) -> float:
+        squares = [product(value, value) for value in a]
+        return float(np.sqrt(add(add(squares[0], squares[1]), squares[2])))
+
+    patch = TorusPatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 2 * scale, 0.5 * scale)
+    model = _rectangle_face_model(patch, ((0.0, 0.0), (2 * np.pi, 2 * np.pi)))
+    model = eqx.tree_at(
+        lambda value: value.orientation,
+        model,
+        jnp.asarray([orientation], dtype=jnp.float64),
+    )
+    projection = phx.geometry.prepare_brep_projection(model)
+    angles = np.linspace(0.2, 6.0, 80, dtype=np.float64)[::-1]
+    points = scale * np.stack(
+        (2.3 * np.cos(angles), 2.3 * np.sin(angles), 0.3 + 0.1 * np.sin(3 * angles)),
+        axis=1,
+    )
+    result = _project(projection, points, _FACE, 0)
+    assert np.all(np.asarray(result.status) == _STATUS.UNIQUE)
+    program = prepare_host_program(jax.jacfwd(patch.evaluate), 2)
+    assert program is not None
+    jacobians = evaluate_host_program(program, np.asarray(result.parameters)).reshape(
+        (len(points), 3, 2)
+    )
+    reassociation_sensitive = 0
+    for row, jacobian in enumerate(jacobians):
+        first = [float(value) for value in jacobian[:, 0]]
+        second = [float(value) for value in jacobian[:, 1]]
+        normal = cross(first, second)
+        squares = [product(value, value) for value in normal]
+        reassociation_sensitive += add(add(squares[0], squares[1]), squares[2]) != add(
+            squares[0], add(squares[1], squares[2])
+        )
+        length = norm(normal)
+        normal = [divide(product(orientation, value), length) for value in normal]
+        first_length = norm(first)
+        first = [divide(value, first_length) for value in first]
+        tangents = np.asarray((first, cross(normal, first)), dtype=np.float64)
+        assert (
+            np.asarray(result.normals[row]).tobytes()
+            == np.asarray(normal, dtype=np.float64).tobytes()
+        )
+        assert np.asarray(result.tangents[row]).tobytes() == tangents.tobytes()
+    assert reassociation_sensitive > 0
+
+
+def test_subnormal_frame_fallback_preserves_scalar_underflow_behavior() -> None:
+    from phydrax.geometry.brep._patches import TorusPatch
+    from phydrax.geometry.brep._projection import (
+        _face_normal_and_frame,
+        _regular_face_frames,
+    )
+
+    # A 1e-200-minor-radius public torus was unresolved before reaching frames;
+    # exercise the Jacobian boundary directly to check its error-mode contract.
+    patch = TorusPatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 2.0, 0.5)
+    jacobian = np.asarray([[[1e-200, 0.0], [0.0, 0.0], [0.0, 0.0]]], dtype=np.float64)
+    with np.errstate(under="raise"):
+        normal, tangents, regular = _face_normal_and_frame(
+            patch,
+            np.asarray([0.2, 0.3], dtype=np.float64),
+            1.0,
+            embedding=None,
+            jacobian=jacobian[0],
+        )
+        assert _regular_face_frames(jacobian, 1.0) is None
+    assert not regular
+    assert np.isnan(normal).all()
+    assert np.isnan(tangents).all()
+
+
 @pytest.mark.parametrize(
     ("surface", "periodic_axis"),
     (("cylinder", 0), ("cone", 0), ("sphere", 0), ("torus", 0), ("torus", 1)),
