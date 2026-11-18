@@ -853,7 +853,10 @@ PHX_MC_API int32_t phx_mc_interval_program_execute(
  * Opcode 25 divides intervals using the elementwise host-kernel convention;
  * reduction opcode 7 uses a_index -2 to accumulate from positive zero and
  * -1 to begin from the first term. Opcode 27 evaluates power per element;
- * its second size output entries are -1 for invalid real domains, else 0. */
+ * its second size output entries are -1 for invalid real domains, else 0.
+ * Opcode 28 is the tangent: one operand, like the sine and cosine rows, with
+ * the enclosure of phx_mc_interval_elementary's tangent, which is the whole
+ * line for an interval that reaches a pole. */
 PHX_MC_API int32_t phx_mc_interval_program_batch(
     const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
     int64_t index_count, const double* parameters, int64_t parameter_count, double* lower,

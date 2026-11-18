@@ -29,6 +29,14 @@
 
 
 ### Added
+- The native interval program evaluates the tangent (opcode 28, after the
+  elementwise power), so a function that contains `tan` lowers to it instead
+  of being refused by the native and batched routes. A tangent row encloses
+  each input interval with the kernel of the elementwise interval entry, the
+  same doubles, and returns the whole line for an interval that reaches a
+  pole. Programs without a tangent are lowered exactly as before. A library
+  built before this change does not advertise the opcode, and lowering such a
+  function against it is refused as an unsupported operation.
 - `MetricMeshAdaptation` accepts `accepted_minimum_length`, the smallest metric
   edge length a `NATIVE_METRIC_3D` request accepts as complete. Edit phases
   still target the unit band; only the completion criterion and the unmet-edge
