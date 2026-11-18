@@ -1,5 +1,7 @@
 import math
+from collections.abc import Callable
 from fractions import Fraction
+from typing import Literal
 
 import numpy as np
 import pytest
@@ -161,6 +163,289 @@ def test_binary64_ordered_products_zero_exceptional_and_shapes() -> None:
         binary64_matmul(np.asarray([1.0]), np.asarray([1.0, 2.0]))
     with pytest.raises(ValueError):
         binary64_matmul(1.0, np.asarray([1.0]))
+
+
+@pytest.mark.parametrize("size", [2, 3])
+def test_short_reductions_match_ordered_bits(size: int) -> None:
+    rng = np.random.default_rng(481)
+    special = np.asarray(
+        [0.0, -0.0, np.inf, -np.inf, np.nan, np.nextafter(0.0, 1.0), 1e308],
+        dtype=np.float64,
+    )
+    special = np.concatenate(
+        (
+            special,
+            np.asarray([0x7FF8000000000123, 0xFFF0000000000123], dtype=np.uint64).view(
+                np.float64
+            ),
+        )
+    )
+    for _ in range(500):
+        first = (
+            rng.choice(special, size=size)
+            if rng.integers(2)
+            else rng.standard_normal(size)
+        )
+        second = (
+            rng.choice(special, size=size)
+            if rng.integers(2)
+            else rng.standard_normal(size)
+        )
+        with np.errstate(all="ignore"):
+            expected = np.multiply(first[..., 0], second[..., 0])
+            squared = np.multiply(first[..., 0], first[..., 0])
+            for index in range(1, size):
+                expected = np.add(
+                    expected, np.multiply(first[..., index], second[..., index])
+                )
+                squared = np.add(
+                    squared, np.multiply(first[..., index], first[..., index])
+                )
+            actual = binary64_dot(first, second)
+            norm = binary64_norm(first)
+            assert actual.shape == norm.shape == ()
+            assert actual.dtype == norm.dtype == np.dtype(np.float64)
+            assert actual.view(np.uint64) == np.asarray(expected).view(np.uint64)
+            assert norm.view(np.uint64) == np.asarray(np.sqrt(squared)).view(np.uint64)
+            if (
+                np.all(np.isfinite(first))
+                and np.all(np.isfinite(second))
+                and np.all(np.abs(first) < 1e100)
+                and np.all(np.abs(second) < 1e100)
+            ):
+                assert float(actual) == _ordered_fraction_dot(first, second)
+                assert float(norm) == math.sqrt(_ordered_fraction_dot(first, first))
+
+
+@pytest.mark.parametrize("rows", [0, 2, 3, 300])
+def test_matrix_vector_fast_path_matches_ordered_bits(rows: int) -> None:
+    rng = np.random.default_rng(57)
+    special = np.asarray([0.0, -0.0, np.inf, -np.inf, np.nan, 1e308, 1e-310])
+    special = np.concatenate(
+        (
+            special,
+            np.asarray([0x7FF8000000000123, 0xFFF0000000000123], dtype=np.uint64).view(
+                np.float64
+            ),
+        )
+    )
+    for _ in range(100):
+        first = rng.choice(special, size=(rows, 3))
+        second = rng.choice(special, size=3)
+        right = second[:, None]
+        with np.errstate(all="ignore"):
+            expected = np.multiply(first[..., :, 0, None], right[..., None, 0, :])
+            for index in (1, 2):
+                expected = np.add(
+                    expected,
+                    np.multiply(first[..., :, index, None], right[..., None, index, :]),
+                )
+            actual = binary64_matmul(first, second)
+        np.testing.assert_array_equal(
+            actual.view(np.uint64), np.squeeze(expected, axis=-1).view(np.uint64)
+        )
+    first = rng.standard_normal((rows, 3))
+    second = rng.standard_normal(3)
+    actual = binary64_matmul(first, second)
+    for index in range(rows):
+        assert float(actual[index]) == _ordered_fraction_dot(first[index], second)
+
+
+@pytest.mark.parametrize(
+    "left_shape,right_shape",
+    [
+        ((3,), (3, 2)),
+        ((3,), (3, 3)),
+        ((2, 3), (3, 2)),
+        ((2, 3), (3, 3)),
+        ((3, 3), (3, 2)),
+        ((3, 3), (3, 3)),
+    ],
+)
+def test_small_matrix_products_match_ordered_bits(
+    left_shape: tuple[int, ...], right_shape: tuple[int, ...]
+) -> None:
+    rng = np.random.default_rng(218)
+    special = np.asarray(
+        [0.0, -0.0, np.inf, -np.inf, np.nan, 1e308, 1e-310], dtype=np.float64
+    )
+    for index in range(200):
+        if index % 2:
+            first = rng.standard_normal(left_shape)
+            second = rng.standard_normal(right_shape)
+        else:
+            first = rng.choice(special, size=left_shape)
+            second = rng.choice(special, size=right_shape)
+        left = first[None, :] if first.ndim == 1 else first
+        with np.errstate(all="ignore"):
+            expected = np.multiply(left[..., :, 0, None], second[..., None, 0, :])
+            for term in (1, 2):
+                expected = np.add(
+                    expected,
+                    np.multiply(left[..., :, term, None], second[..., None, term, :]),
+                )
+            if first.ndim == 1:
+                expected = np.squeeze(expected, axis=-2)
+            actual = binary64_matmul(first, second)
+        np.testing.assert_array_equal(actual.view(np.uint64), expected.view(np.uint64))
+        if index % 2:
+            for row in range(left.shape[0]):
+                for column in range(second.shape[1]):
+                    result = actual[column] if first.ndim == 1 else actual[row, column]
+                    assert float(result) == _ordered_fraction_dot(
+                        left[row], second[:, column]
+                    )
+
+
+@pytest.mark.parametrize("operation", [binary64_dot, binary64_matmul])
+@pytest.mark.parametrize("mode", ["ignore", "warn", "raise"])
+@pytest.mark.parametrize(
+    "first,second,category",
+    [
+        ([1e308, 1.0], [1e308, 1.0], "overflow"),
+        ([np.inf, 1.0], [0.0, 1.0], "invalid"),
+    ],
+)
+def test_ordered_reduction_float_errors(
+    operation: Callable[[np.ndarray, np.ndarray], np.ndarray],
+    mode: Literal["ignore", "warn", "raise"],
+    first: list[float],
+    second: list[float],
+    category: str,
+) -> None:
+    a = np.asarray(first, dtype=np.float64)
+    b = np.asarray(second, dtype=np.float64)
+    with np.errstate(all=mode):
+        if mode == "raise":
+            with pytest.raises(FloatingPointError, match=category):
+                operation(a, b)
+        elif mode == "warn":
+            with pytest.warns(RuntimeWarning, match=category):
+                operation(a, b)
+        else:
+            operation(a, b)
+
+
+@pytest.mark.parametrize("mode", ["ignore", "warn", "raise"])
+@pytest.mark.parametrize("matrix", [False, True])
+def test_norm_and_matrix_fast_path_overflow(
+    mode: Literal["ignore", "warn", "raise"], matrix: bool
+) -> None:
+    values = np.asarray([1e308, 1.0, 1.0], dtype=np.float64)
+
+    def operation() -> np.ndarray:
+        return (
+            binary64_matmul(np.tile(values, (3, 1)), values)
+            if matrix
+            else binary64_norm(values)
+        )
+
+    with np.errstate(all=mode):
+        if mode == "raise":
+            with pytest.raises(FloatingPointError, match="overflow"):
+                operation()
+        elif mode == "warn":
+            with pytest.warns(RuntimeWarning, match="overflow"):
+                operation()
+        else:
+            operation()
+
+
+@pytest.mark.parametrize("mode", ["ignore", "warn", "raise"])
+def test_small_matrix_invalid_warning(mode: Literal["ignore", "warn", "raise"]) -> None:
+    matrix = np.asarray([[np.inf, 1.0, 1.0]] * 3, dtype=np.float64)
+    vector = np.asarray([0.0, 1.0, 1.0], dtype=np.float64)
+    with np.errstate(invalid=mode):
+        if mode == "raise":
+            with pytest.raises(FloatingPointError, match="invalid"):
+                binary64_matmul(matrix, vector)
+        elif mode == "warn":
+            with pytest.warns(RuntimeWarning, match="invalid"):
+                binary64_matmul(matrix, vector)
+        else:
+            binary64_matmul(matrix, vector)
+
+
+def test_short_scalar_paths_do_not_report_underflow() -> None:
+    vector = np.asarray([1e-200, 1.0, 1.0], dtype=np.float64)
+    matrix = np.tile(vector, (3, 1))
+    with np.errstate(under="ignore"):
+        expected_dot = binary64_dot(vector[None, :], vector)[0]
+        expected_norm = binary64_norm(vector[None, :])[0]
+        expected_matrix = binary64_matmul(matrix[None, :, :], vector)[0]
+    with np.errstate(under="raise"):
+        assert binary64_dot(vector, vector).view(np.uint64) == expected_dot.view(
+            np.uint64
+        )
+        assert binary64_norm(vector).view(np.uint64) == expected_norm.view(np.uint64)
+        np.testing.assert_array_equal(
+            binary64_matmul(matrix, vector).view(np.uint64),
+            expected_matrix.view(np.uint64),
+        )
+        with pytest.raises(FloatingPointError, match="underflow"):
+            binary64_dot(vector[None, :], vector)
+        with pytest.raises(FloatingPointError, match="underflow"):
+            binary64_norm(vector[None, :])
+        with pytest.raises(FloatingPointError, match="underflow"):
+            binary64_matmul(matrix[None, :, :], vector)
+
+
+def test_ordered_reductions_reject_complex() -> None:
+    value = np.asarray([1 + 2j, 3])
+    with pytest.raises(TypeError):
+        binary64_dot(value, value)
+    with pytest.raises(TypeError):
+        binary64_norm(value)
+    with pytest.raises(TypeError):
+        binary64_matmul(value, value)
+    values = [1 + 2j, 3]
+    with pytest.raises(TypeError):
+        binary64_dot(values, values)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError):
+        binary64_norm(values)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError):
+        binary64_matmul(values, values)  # ty: ignore[invalid-argument-type]
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        [1, 0, 1],
+        np.asarray([1, 0, 1], dtype=np.int64),
+        np.asarray([1, 0, 1], dtype=np.float32),
+        np.asarray([True, False, True], dtype=np.bool_),
+    ],
+)
+def test_ordered_reductions_convert_real_inputs(values: np.ndarray | list[int]) -> None:
+    converted = np.asarray(values, dtype=np.float64)
+    assert binary64_dot(values, converted) == binary64_dot(converted, converted)  # ty: ignore[invalid-argument-type]
+    assert binary64_matmul(values, converted) == binary64_matmul(converted, converted)  # ty: ignore[invalid-argument-type]
+    assert binary64_norm(values) == binary64_norm(converted)  # ty: ignore[invalid-argument-type]
+
+
+def test_ordered_norm_rejects_pairwise_summation() -> None:
+    encoded = (
+        "0x1.8c43f79a2db24p-1 0x1.c16959869e47ep-2 "
+        "0x1.b79a2584ddb42p-1 0x1.650d6c1c2c011p-1 "
+        "0x1.81c01b5339380p-4 0x1.f384c5db0d8eap-1 "
+        "0x1.85b41a5f78b48p-1 0x1.927705476f592p-1 "
+        "0x1.066070b41b168p-3 0x1.cd31f8a75be6ep-2 "
+        "0x1.7bb27a2e005c4p-2 0x1.da80f0cc5d772p-1 "
+        "0x1.49a8b06390299p-1 0x1.a541029ace094p-1 "
+        "0x1.c60e5f2a2e84ep-2 0x1.d16288f39a8a8p-3 "
+        "0x1.1bf289862f2c7p-1 0x1.05653e3e34cb8p-4 "
+        "0x1.a7bf45e1b771fp-1 0x1.436984208db37p-1 "
+        "0x1.842413865498ep-1 0x1.6b08dafacd55ep-2 "
+        "0x1.f0ff54da22c66p-1 0x1.c9472beee4312p-1 "
+        "0x1.8e88481f5b183p-1 0x1.8e9ebd2614460p-3 "
+        "0x1.ddec1c5d74a3cp-2 0x1.66d727afede80p-5 "
+        "0x1.3bfc21145f5fcp-3 0x1.5db897a77c9bcp-1 "
+        "0x1.7d51771dd8559p-1 0x1.ef5d6f86bbb89p-1"
+    )
+    values = np.asarray(
+        [float.fromhex(value) for value in encoded.split()], dtype=np.float64
+    )
+    assert float(binary64_norm(values)).hex() == "0x1.d4b6e144fc507p+1"
 
 
 def _squared_norm(components: tuple[float, ...], /) -> Fraction:

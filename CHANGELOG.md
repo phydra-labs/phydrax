@@ -7,6 +7,8 @@
   curve-edge residuals, Boolean intersection gap and chart data, projection
   results, placed geometry, and identities and meshes derived from them.
   Regenerate affected stored results.
+  These reductions reject complex inputs instead of discarding imaginary parts.
+  Small scalar reduction paths do not report floating-point underflow.
 - Certified native Boolean intersection curves now use platform-identical
   interval matrix products. On platforms whose BLAS fused or reordered those
   products, rounding changes stored `IntersectionCurve.contractions` and can

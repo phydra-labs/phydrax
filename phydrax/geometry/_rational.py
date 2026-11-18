@@ -164,12 +164,37 @@ def binary64_dot(first: ArrayLike, second: ArrayLike, /) -> NDArray[np.float64]:
     An empty contraction is positive zero; otherwise the first product initializes
     the sum, preserving its signed zero. NaN, infinity, overflow, and underflow
     follow IEEE elementwise multiplication and addition.
+    Scalar paths with contraction length two or three do not report underflow;
+    overflow and invalid operations are reported as by the array route.
     """
+    if (
+        type(first) is np.ndarray
+        and type(second) is np.ndarray
+        and first.dtype == np.float64
+        and second.dtype == np.float64
+        and first.ndim == second.ndim == 1
+        and first.shape == second.shape
+        and first.size in (2, 3)
+    ):
+        a = first.tolist()
+        b = a if first is second else second.tolist()
+        scalar = a[0] * b[0]
+        scalar = scalar + a[1] * b[1]
+        if len(a) == 3:
+            scalar = scalar + a[2] * b[2]
+        if math.isfinite(scalar):
+            return np.asarray(scalar, dtype=np.float64)
+    if np.iscomplexobj(first) or np.iscomplexobj(second):
+        raise TypeError("Complex operands are not supported.")
     a = np.asarray(first, dtype=np.float64)
     b = np.asarray(second, dtype=np.float64)
     if a.ndim == 0 or b.ndim == 0 or a.shape[-1] != b.shape[-1]:
         raise ValueError("Vector product dimensions must agree.")
-    shape = np.broadcast_shapes(a.shape[:-1], b.shape[:-1])
+    shape = (
+        a.shape[:-1]
+        if a.shape[:-1] == b.shape[:-1]
+        else np.broadcast_shapes(a.shape[:-1], b.shape[:-1])
+    )
     if a.shape[-1] == 0:
         return np.zeros(shape, dtype=np.float64)
     result = np.multiply(a[..., 0], b[..., 0])
@@ -185,7 +210,18 @@ def binary64_norm(values: ArrayLike, /) -> NDArray[np.float64]:
     Squares and additions follow :func:`binary64_dot`. No rescaling is performed:
     squares may overflow or underflow. Empty vectors and zero squares yield
     positive zero; NaNs and infinities propagate through the specified operations.
+    Scalar paths with contraction length two or three do not report underflow;
+    overflow and invalid operations are reported as by the array route.
     """
+    if (
+        type(values) is np.ndarray
+        and values.dtype == np.float64
+        and values.ndim == 1
+        and values.size in (2, 3)
+    ):
+        return np.asarray(np.sqrt(binary64_dot(values, values)), dtype=np.float64)
+    if np.iscomplexobj(values):
+        raise TypeError("Complex operands are not supported.")
     a = np.asarray(values, dtype=np.float64)
     return np.asarray(np.sqrt(binary64_dot(a, a)), dtype=np.float64)
 
@@ -198,9 +234,72 @@ def binary64_matmul(first: ArrayLike, second: ArrayLike, /) -> NDArray[np.float6
     contractions give positive zero. Otherwise the first product initializes the
     sum, so signed zeros, NaNs, infinities, overflow and underflow follow the
     specified IEEE multiplication and addition sequence.
+    Scalar paths with contraction length two or three do not report underflow;
+    overflow and invalid operations are reported as by the array route.
     """
-    a = np.asarray(first, dtype=np.float64)
-    b = np.asarray(second, dtype=np.float64)
+    if (
+        type(first) is np.ndarray
+        and type(second) is np.ndarray
+        and first.dtype == np.float64
+        and second.dtype == np.float64
+        and first.ndim == 2
+        and second.ndim == 1
+        and first.shape[0] in (2, 3)
+        and first.shape[1] == second.shape[0] == 3
+    ):
+        rows = first.tolist()
+        vector = second.tolist()
+        values = [
+            (row[0] * vector[0] + row[1] * vector[1]) + row[2] * vector[2] for row in rows
+        ]
+        if all(math.isfinite(value) for value in values):
+            return np.asarray(values, dtype=np.float64)
+    if (
+        type(first) is np.ndarray
+        and type(second) is np.ndarray
+        and first.dtype == np.float64
+        and second.dtype == np.float64
+        and second.ndim == 2
+        and second.shape in ((3, 2), (3, 3))
+        and (
+            (first.ndim == 1 and first.shape == (3,))
+            or (first.ndim == 2 and first.shape in ((2, 3), (3, 3)))
+        )
+    ):
+        left = first.tolist()
+        right = second.tolist()
+        if first.ndim == 1:
+            row = left
+            values = [
+                (row[0] * right[0][column] + row[1] * right[1][column])
+                + row[2] * right[2][column]
+                for column in range(second.shape[1])
+            ]
+            if all(math.isfinite(value) for value in values):
+                return np.asarray(values, dtype=np.float64)
+        else:
+            matrix = [
+                [
+                    (row[0] * right[0][column] + row[1] * right[1][column])
+                    + row[2] * right[2][column]
+                    for column in range(second.shape[1])
+                ]
+                for row in left
+            ]
+            if all(math.isfinite(value) for row in matrix for value in row):
+                return np.asarray(matrix, dtype=np.float64)
+    if (
+        type(first) is np.ndarray
+        and type(second) is np.ndarray
+        and first.dtype == np.float64
+        and second.dtype == np.float64
+    ):
+        a, b = first, second
+    else:
+        if np.iscomplexobj(first) or np.iscomplexobj(second):
+            raise TypeError("Complex operands are not supported.")
+        a = np.asarray(first, dtype=np.float64)
+        b = np.asarray(second, dtype=np.float64)
     if a.ndim == 0 or b.ndim == 0:
         raise ValueError("Matrix product operands must have at least one dimension.")
     left_vector = a.ndim == 1
@@ -211,7 +310,12 @@ def binary64_matmul(first: ArrayLike, second: ArrayLike, /) -> NDArray[np.float6
         b = b[:, np.newaxis]
     if a.shape[-1] != b.shape[-2]:
         raise ValueError("Matrix product dimensions must agree.")
-    shape = np.broadcast_shapes(a.shape[:-2], b.shape[:-2]) + (a.shape[-2], b.shape[-1])
+    batch_shape = (
+        a.shape[:-2]
+        if a.shape[:-2] == b.shape[:-2]
+        else np.broadcast_shapes(a.shape[:-2], b.shape[:-2])
+    )
+    shape = batch_shape + (a.shape[-2], b.shape[-1])
     if a.shape[-1] == 0:
         result = np.zeros(shape, dtype=np.float64)
     else:
