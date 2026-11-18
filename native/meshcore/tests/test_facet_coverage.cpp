@@ -82,6 +82,41 @@ void test_noncontiguous_rows_and_disjoint_degenerate_partner() {
   }
 }
 
+void test_indexed_coverage_preserves_disjoint_and_degenerate_rows() {
+  for (const bool with_degenerate : {false, true}) {
+    std::vector<double> points;
+    std::vector<std::array<int32_t, 4>> faces;
+    std::vector<int32_t> rows;
+    std::vector<FacetCoverageBounds> bounds;
+    for (int32_t row = 0; row < 64; ++row) {
+      const double x = 3.0 * row;
+      const bool regular = !(with_degenerate && row == 63);
+      const int32_t first = static_cast<int32_t>(points.size() / 3);
+      points.insert(points.end(), {x, 0, 0, x + 1, 0, 0,
+                                   regular ? x : x + 2, regular ? 1.0 : 0.0, 0});
+      faces.push_back({first, first + 1, first + 2, row});
+      rows.push_back(row);
+      bounds.push_back({{x, 0, 0}, {x + (regular ? 1.0 : 2.0), regular ? 1.0 : 0.0, 0},
+                        regular});
+    }
+    FacetCoverageIndex index;
+    PHX_CHECK(index.build(faces, rows, bounds));
+    std::vector<std::size_t> scratch;
+    for (const int row : {0, 3, 17, 61, 63, 400}) {
+      for (const double z : {0.0, 1.0}) {
+        const double x = 3.0 * row;
+        const double subject[]{x, 0, z, x + 1, 0, z, x, 1, z};
+        std::vector<int32_t> reference, indexed;
+        const bool expected = exact_facet_coverage(subject, points.data(), faces, rows, reference);
+        const bool actual = exact_facet_coverage_prepared(subject, points.data(), faces, index,
+                                                         scratch, indexed);
+        PHX_CHECK(actual == expected);
+        PHX_CHECK(indexed == reference);
+      }
+    }
+  }
+}
+
 void test_history_supersedes_only_older_covered_fragments() {
   const double points[] = {0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
                            0.0, 1.0, 0.0, 0.5, 0.5, 0.0};
@@ -105,6 +140,7 @@ void test_history_supersedes_only_older_covered_fragments() {
 int main() {
   test_exact_partition_and_arrangement_reference_agree();
   test_noncontiguous_rows_and_disjoint_degenerate_partner();
+  test_indexed_coverage_preserves_disjoint_and_degenerate_rows();
   test_history_supersedes_only_older_covered_fragments();
   return phx::mc::test::finish("test_facet_coverage");
 }

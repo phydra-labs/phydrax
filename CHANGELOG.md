@@ -259,6 +259,16 @@
   preserving shared rational scales and item-local refusals.
 - Native Bernstein conversion reuses simplex control-index rows within a worker
   when consecutive items have the same degree and dimension.
+- Tetrahedral construction consumes represented edges when admitting segments,
+  rejecting duplicates without a quadratic scan of prior segments.
+- Tetrahedral construction indexes source-segment rows by group while
+  retaining their exact witness-check order.
+- Declared-plane validation uses outward-rounded projected boundary-edge boxes
+  to limit exact interior-intersection checks without changing edge order.
+- Declared-plane facet validation indexes outward-rounded exact projected
+  source bounds, preserving the centroid proof and source-row order.
+- Source-facet coverage indexes closed facet boxes once per construction group,
+  preserving bank order and retaining every degenerate facet in its proof.
 - Exact facet coverage reuses already sorted source-row spans, preserving the
   duplicate and chronology checks without sorting and copying them.
 - Source-facet coverage skips provably disjoint nondegenerate triangles in its

@@ -432,12 +432,9 @@ int32_t TetMesh::build_state(std::span<const double> points,
   for (std::size_t row = 0; row < segment_count; ++row) {
     const std::int32_t a = segments[2 * row];
     const std::int32_t b = segments[2 * row + 1];
-    if (!represented_edges.contains(edge_key(a, b))) return PHX_MC_INVALID_INPUT;
-    for (std::size_t previous = 0; previous < row; ++previous) {
-      if (edge_key(a, b) == edge_key(segments[2 * previous], segments[2 * previous + 1])) {
-        return PHX_MC_INVALID_INPUT;
-      }
-    }
+    // A represented edge is consumed once, so the same lookup also rejects
+    // a duplicate segment without rescanning all earlier rows.
+    if (represented_edges.erase(edge_key(a, b)) == 0) return PHX_MC_INVALID_INPUT;
     TetSnapshotSegment segment;
     segment.id = next_segment_id_++;
     segment.vertices = {static_cast<std::uint64_t>(a), static_cast<std::uint64_t>(b)};
@@ -537,7 +534,8 @@ int32_t TetMesh::build_state(std::span<const double> points,
       const bool implicit = implicit_source_ &&
           std::binary_search(implicit_source_->groups.begin(), implicit_source_->groups.end(),
                              source);
-      group.prepare_bounds = !implicit && !declared_groups_.contains(source);
+      group.prepare_declared = !implicit && declared_groups_.contains(source);
+      group.prepare_bounds = !implicit && !group.prepare_declared;
     }
     group.rows.push_back(row);
     group.primitives.push_back({source_faces_[3 * row], source_faces_[3 * row + 1],
@@ -549,6 +547,14 @@ int32_t TetMesh::build_state(std::span<const double> points,
           source_points_.data() + 3 * static_cast<std::size_t>(face[0]),
           source_points_.data() + 3 * static_cast<std::size_t>(face[1]),
           source_points_.data() + 3 * static_cast<std::size_t>(face[2])));
+    }
+  }
+  for (auto& [source, group] : source_groups) {
+    if (group.prepare_declared) {
+      const auto declared = declared_groups_.find(source);
+      if (declared != declared_groups_.end()) prepare_declared_group(declared->second, group);
+    } else if (group.prepare_bounds) {
+      group.coverage_index.build(group.primitives, group.indices, group.bounds);
     }
   }
   const PreparedFacetGroup no_source_rows;
@@ -564,6 +570,12 @@ int32_t TetMesh::build_state(std::span<const double> points,
     const auto& group = source_rows == source_groups.end() ? no_source_rows : source_rows->second;
     if (!source_face_valid(candidate, nullptr, &group)) return PHX_MC_INVALID_INPUT;
   }
+  // Source segment row order determines the first successful exact witness.
+  std::map<std::int32_t, std::vector<std::size_t>> source_segment_rows;
+  for (std::size_t row = 0; row < source_segment_groups_.size(); ++row) {
+    source_segment_rows[source_segment_groups_[row]].push_back(row);
+  }
+  const std::vector<std::size_t> no_segment_rows;
   for (std::size_t row = 0; row < segment_count; ++row) {
     const TetSnapshotSegment& segment = segments_[row];
     TetEditSegment candidate;
@@ -571,7 +583,9 @@ int32_t TetMesh::build_state(std::span<const double> points,
     candidate.vertices = segment.vertices;
     candidate.source = segment.source;
     candidate.protected_segment = segment.protected_segment;
-    if (!source_segment_valid(candidate)) return PHX_MC_INVALID_INPUT;
+    const auto found = source_segment_rows.find(segment.source);
+    const auto& rows = found == source_segment_rows.end() ? no_segment_rows : found->second;
+    if (!source_segment_valid(candidate, nullptr, &rows)) return PHX_MC_INVALID_INPUT;
   }
   for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
     if (vertex_dimension_[vertex] < 0) return PHX_MC_INVALID_INPUT;
