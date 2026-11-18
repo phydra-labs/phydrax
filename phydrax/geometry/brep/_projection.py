@@ -5615,23 +5615,15 @@ class NativeBRepProjection(AbstractBRepProjection):
         batch_points: bool = False,
         preparation: _ProjectionPreparation | None = None,
         _occurrence: _Occurrence | None = None,
-        _targets: dict[tuple[int, int, tuple[str, ...] | None], tuple[_Occurrence, ...]]
-        | None = None,
+        _targets: tuple[_Occurrence, ...] | None = None,
     ) -> _Hit:
         count = self.entity_counts[dimension]
         if index < 0 or index >= count:
             raise ValueError("Entity index lies outside its B-Rep dimension.")
         if _occurrence is not None:
             targets = (_occurrence,)
-        elif _targets is not None and (
-            occurrence_path is None
-            or all(isinstance(value, str) for value in occurrence_path)
-        ):
-            key = (dimension, index, occurrence_path)
-            targets = _targets.get(key)
-            if targets is None:
-                targets = self._target_occurrences(dimension, index, occurrence_path)
-                _targets[key] = targets
+        elif _targets is not None:
+            targets = _targets
         else:
             targets = self._target_occurrences(dimension, index, occurrence_path)
         if not targets:
@@ -5938,6 +5930,16 @@ class NativeBRepProjection(AbstractBRepProjection):
                 if int(dimension) == 2 and 0 <= int(index) < len(self.model.patches)
                 else None
             )
+            selected_targets = None
+            if (
+                occurrence_paths is None
+                and 0 <= int(index) < self.entity_counts[int(dimension)]
+            ):
+                key = (int(dimension), int(index), None)
+                selected_targets = targets.get(key)
+                if selected_targets is None:
+                    selected_targets = self._target_occurrences(*key)
+                    targets[key] = selected_targets
             hits.append(
                 self._project_one(
                     int(dimension),
@@ -5949,7 +5951,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                     boxes=boxes,
                     angle_bounds=angle_bounds,
                     preparation=preparation,
-                    _targets=targets,
+                    _targets=selected_targets,
                     batch_points=True,
                     defer_frame=(
                         isinstance(
