@@ -1,6 +1,10 @@
 # Changelog
 
 ## Unreleased
+- Fixed the native CAD qualification intersection evidence reporting a p-curve
+  residual that was zero by construction: `maximum_residuals_m.first_pcurve`
+  and `.second_pcurve` now measure each patch lift against the declared analytic
+  loop, as `.three_dimensional` does. Both reported values change.
 - Tetrahedral simplex mesh construction now derives entity levels and routes
   with batched integer operations while preserving mesh identities and ordering.
 - Concrete cell-quality evaluations use specified host binary64 arithmetic
