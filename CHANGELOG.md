@@ -267,6 +267,10 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Dynamic glued-face monotonicity checks rational Jacobian controls with exact
+  integer signs before decoding, preserving findings and the alternative
+  preconditioner route. Three alternating replays of 6,990 captured calls took
+  11.6–15.6 seconds before and 6.6–8.8 seconds after on the measured machine.
 - Contact Jacobian positivity decides Sylvester signs on scaled integer
   products without constructing rational minors, preserving exact decisions.
   Three alternating replays of 91,398 captured checks took 35.5–49.0 seconds

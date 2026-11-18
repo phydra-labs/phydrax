@@ -2029,11 +2029,52 @@ def _glued_monotone(
     second_controls = _cached_simplex_jacobians(second, cache)
     if first_controls is None or second_controls is None:
         return False
+    integer_controls = (
+        dimension in (2, 3)
+        and all(
+            controls.dimension == dimension
+            and controls.controls.scale > 0
+            and all(
+                len(vector) == dimension * dimension
+                and all(type(value) is int for value in vector)
+                for vector in controls.controls.values.values()
+            )
+            for controls in (first_controls, second_controls)
+        )
+        and all(
+            len(factor) == dimension
+            and all(
+                len(row) == dimension
+                and all(type(value) in (int, Fraction) for value in row)
+                for row in factor
+            )
+            for factor in (metric, glue)
+        )
+    )
+    if integer_controls:
+        first_matrices, second_matrices = (
+            tuple(
+                tuple(
+                    cast(tuple[int, ...], vector)[row * dimension : (row + 1) * dimension]
+                    for row in range(dimension)
+                )
+                for vector in controls.controls.values.values()
+            )
+            for controls in (first_controls, second_controls)
+        )
+        rational_metric = cast(tuple[tuple[Fraction | int, ...], ...], metric)
+        rational_glue = cast(tuple[tuple[Fraction | int, ...], ...], glue)
+        if _integer_jacobian_positivity(
+            first_matrices, rational_metric, None
+        ) and _integer_jacobian_positivity(
+            second_matrices, rational_metric, rational_glue
+        ):
+            return True
     glued_controls = (
         *first_controls.decoded(),
         *(_product(control, glue) for control in second_controls.decoded()),
     )
-    if all(
+    if not integer_controls and all(
         _positive_definite_symmetric_part(metric, control) for control in glued_controls
     ):
         return True
