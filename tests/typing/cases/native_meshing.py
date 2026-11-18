@@ -69,9 +69,7 @@ def native_cad_archive(model: phx.geometry.brep.BRepModel, path: Path) -> None:
 
 def composition_archive(composition: phx.lifecycle.Composition, path: Path) -> None:
     assert_type(phx.interchange.save_composition_archive(composition, path), Path)
-    assert_type(
-        phx.interchange.load_composition_archive(path), phx.lifecycle.Composition
-    )
+    assert_type(phx.interchange.load_composition_archive(path), phx.lifecycle.Composition)
 
 
 def source_entity_key() -> None:

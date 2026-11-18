@@ -1528,9 +1528,10 @@ def test_public_source_entity_id_uses_canonical_key() -> None:
         b'"kind":"geometry-source-entity","occurrence":[],"revision":"r1",'
         b'"source":"sphere"}'
     )
-    assert geometry.source_entity_id(
-        "sphere", "r1", "implicit-surface", "zero-set"
-    ) == hashlib.sha256(canonical_json).hexdigest()
+    assert (
+        geometry.source_entity_id("sphere", "r1", "implicit-surface", "zero-set")
+        == hashlib.sha256(canonical_json).hexdigest()
+    )
 
 
 def test_meshing_domain_entity_lookup_requires_occurrence_disambiguation() -> None:
