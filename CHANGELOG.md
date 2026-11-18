@@ -1,6 +1,19 @@
 # Changelog
 
 ## Unreleased
+- Fixed certified B-Rep face projection bounds for partial periodic windows and
+  placed occurrences; unresolved membership no longer inherits an unproved
+  carrier-foot certificate.
+  - Surface association can report unresolved instead of resolved, or reject a
+    widened residual at its tolerance.
+  - Curving can refuse an unproved local projection or a widened residual.
+  - Certified source-boundary distance retains carrier lower bounds and uses
+    an actual face-point upper bound when available.
+  - Nearest-face selection can change or refuse when closest identity is
+    unresolved or upper bounds widen.
+  - Layer-wall source records can refuse an unproved projection or record a
+    wider residual.
+  - Boolean material separation continues to use the certified lower bound.
 - Tetrahedral simplex mesh construction now derives entity levels and routes
   with batched integer operations while preserving mesh identities and ordering.
 - Concrete cell-quality evaluations use specified host binary64 arithmetic
