@@ -21,7 +21,11 @@ from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry._compartments import CompartmentMeshingSource
-from ...geometry._meshing_domain import MeshingDomain
+from ...geometry._meshing_domain import (
+    MeshingDomain,
+    SourceEvaluationLedger,
+    SourcePreparation,
+)
 from ...geometry.brep._model import BRepModel
 from ...geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from ...geometry.multiregion_surface._label_extraction import (
@@ -798,7 +802,12 @@ def _prepare_brep_volume(
     coordinate_contract: SpatialCoordinateContract,
     /,
 ) -> _PreparedDirectBRepCadVolume:
-    domain = MeshingDomain.from_brep(source) if isinstance(source, BRepModel) else source
+    evaluations = SourceEvaluationLedger()
+    domain = (
+        MeshingDomain.from_brep(source, evaluations=evaluations)
+        if isinstance(source, BRepModel)
+        else source
+    )
     if not _is_brep_domain(domain):
         _unsupported(
             "cad_tetrahedral",
@@ -829,6 +838,7 @@ def _prepare_brep_volume(
         boundary_specification,
         boundary_options,
         coordinate_contract,
+        preparation=SourcePreparation(domain, evaluations=evaluations),
     )
     boundary_plan_id = canonical_fingerprint(
         {
@@ -954,8 +964,11 @@ def _prepare_route(
                 _unsupported(
                     route, source, specification, "a SurfaceMeshingSpec is required"
                 )
+            preparation = None
             if isinstance(source, BRepModel):
-                domain = MeshingDomain.from_brep(source)
+                evaluations = SourceEvaluationLedger()
+                domain = MeshingDomain.from_brep(source, evaluations=evaluations)
+                preparation = SourcePreparation(domain, evaluations=evaluations)
             elif isinstance(source, (MeshingDomain, ReconstructedGeometrySource)):
                 domain = source
             else:
@@ -968,7 +981,7 @@ def _prepare_route(
             from ._native_surface import prepare_native_surface
 
             return prepare_native_surface(
-                domain, specification, options, coordinate_contract
+                domain, specification, options, coordinate_contract, preparation=preparation
             )
         case "reconstructed_surface":
             if not isinstance(source, ReconstructedGeometrySource):

@@ -23,7 +23,11 @@ from phydrax.discretization import (
     lagrange_element,
     reference_cell_topology,
 )
-from phydrax.geometry._meshing_domain import MeshingDomain, SourcePreparation
+from phydrax.geometry._meshing_domain import (
+    MeshingDomain,
+    SourceEvaluationLedger,
+    SourcePreparation,
+)
 from phydrax.geometry._rational import binary64_norm
 from phydrax.geometry.brep._intersection_curve import IntersectionCurve
 from phydrax.geometry.brep._measure import brep_mass_properties
@@ -876,11 +880,19 @@ def _intersection_evidence(
             raise RuntimeError(
                 f"Unexpected exact intersection branches in a case without a quadric Boolean: {sorted(edges)}."
             )
-        return {"branches": 0, "edges": 0, "loops": [], "passed": True}
+        return {
+            "branches": 0,
+            "edges": 0,
+            "loops": [],
+            "stored_evaluation_declaration": {"rows": {}, "calls": {}, "unknown": {}},
+            "passed": True,
+        }
 
     scale = max(loop[0] for loop in loops)
     tolerance = 1.0e-9 * scale
-    preparation = SourcePreparation(MeshingDomain.from_brep(model))
+    evaluations = SourceEvaluationLedger()
+    domain = MeshingDomain.from_brep(model, evaluations=evaluations)
+    preparation = SourcePreparation(domain, evaluations=evaluations)
     edge_ranges = np.asarray(geometry.edge_ranges, dtype=np.float64)
     lengths = [0.0 for _ in loops]
     endpoints: list[list[int]] = [[] for _ in loops]
@@ -983,12 +995,18 @@ def _intersection_evidence(
         raise RuntimeError(
             f"Intersection branch or either exact p-curve violates the analytic residual tolerance {tolerance:g} m: {worst!r}."
         )
+    evaluation_rows, evaluation_calls, evaluation_unknown = evaluations.snapshot()
     return {
         "branches": len(branch_ids),
         "edges": len(edges),
         "branch_ids": sorted(branch_ids),
         "maximum_residuals_m": worst,
         "residual_tolerance_m": tolerance,
+        "stored_evaluation_declaration": {
+            "rows": dict(evaluation_rows),
+            "calls": dict(evaluation_calls),
+            "unknown": dict(evaluation_unknown),
+        },
         "loops": loop_records,
         "passed": True,
     }

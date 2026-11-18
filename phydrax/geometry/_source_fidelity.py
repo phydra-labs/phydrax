@@ -379,6 +379,8 @@ def _surface_source_chart_rows(
     source: MeshingDomainBoundarySource,
     witness: SourceBoundaryChartWitness,
     /,
+    *,
+    preparation: SourcePreparation | None = None,
 ) -> tuple[np.ndarray, tuple[Triangle2, ...], frozenset[int]]:
     """Patch rows, exact chart triangles, and the patches charted in their plane.
 
@@ -423,7 +425,7 @@ def _surface_source_chart_rows(
                 plane = False
             else:
                 if patch not in plane_chart_ids:
-                    plane_chart = exact_plane_chart(domain, patch)
+                    plane_chart = exact_plane_chart(domain, patch, preparation=preparation)
                     plane_chart_ids[patch] = (
                         None if plane_chart is None else plane_chart.chart_id
                     )
@@ -496,12 +498,12 @@ def _preparation_for_chart_root(
         if isinstance(
             source, (SurfaceChartBoundarySource, SurfaceNativeRestrictionBoundarySource)
         ) and preparation.domain is source.domain:
-            return SourcePreparation(root.domain)
+            return SourcePreparation(root.domain, evaluations=preparation.evaluations)
         if (
             isinstance(source, ReconstructedTriangleBoundarySource)
             and preparation.domain is source.source.meshing_domain
         ):
-            return SourcePreparation(root.domain)
+            return SourcePreparation(root.domain, evaluations=preparation.evaluations)
     return SourcePreparation.of(root.domain, preparation)
 
 
@@ -645,7 +647,7 @@ def _partition_findings(
         plane_patches: frozenset[int] = frozenset()
     else:
         patches, charts, plane_patches = (
-            _surface_source_chart_rows(source, witness)
+            _surface_source_chart_rows(source, witness, preparation=preparation)
             if source_chart_rows is None
             else source_chart_rows
         )
@@ -1829,12 +1831,15 @@ def _validate_source_fidelity_witness(
             raise ValueError(
                 "Reconstructed chart witness changes its persistent source scope."
             )
-        source_chart_rows = _surface_source_chart_rows(domain_source, witness)
+        preparation = _preparation_for_chart_root(source, domain_source, preparation)
+        source_chart_rows = _surface_source_chart_rows(
+            domain_source, witness, preparation=preparation
+        )
         _, charts, _ = source_chart_rows
         findings = _partition_findings(
             domain_source,
             witness,
-            _preparation_for_chart_root(source, domain_source, preparation),
+            preparation,
             checked_current=True,
             source_chart_rows=source_chart_rows,
         )
@@ -1875,9 +1880,11 @@ def _validate_source_fidelity_witness(
                 source.require_current()
             else:
                 domain_source.require_current()
-            source_chart_rows = _surface_source_chart_rows(domain_source, witness)
-            _, charts, _ = source_chart_rows
             preparation = _preparation_for_chart_root(source, domain_source, preparation)
+            source_chart_rows = _surface_source_chart_rows(
+                domain_source, witness, preparation=preparation
+            )
+            _, charts, _ = source_chart_rows
             findings = _partition_findings(
                 domain_source,
                 witness,
@@ -6253,6 +6260,7 @@ def _certify_domain_surface_chart_fidelity(
         and validated.binds(mesh, geometry, source)
         and validated.witness is witness
     ):
+        preparation.evaluations.record_unknown("fidelity-validation-cache", 1)
         target_rows = validated.target_rows
     else:
         validated_target_rows: list[tuple[tuple[int, int], ...]] = []
@@ -6267,7 +6275,9 @@ def _certify_domain_surface_chart_fidelity(
         )
         if validated_target_rows:
             target_rows = validated_target_rows[0]
-    patch_rows, charts, plane_patches = _surface_source_chart_rows(domain_source, witness)
+    patch_rows, charts, plane_patches = _surface_source_chart_rows(
+        domain_source, witness, preparation=preparation
+    )
     if target_rows is None:
         target_rows, _, _ = _surface_target_chart_rows(
             mesh, geometry, domain_source, witness
@@ -6321,7 +6331,9 @@ def _certify_domain_surface_chart_fidelity(
             target_cross = _triangle_physical_normal(evidence.target_corners[row])
             try:
                 if int(patch) in plane_patches:
-                    plane_chart = exact_plane_chart(domain_source.domain, int(patch))
+                    plane_chart = exact_plane_chart(
+                        domain_source.domain, int(patch), preparation=preparation
+                    )
                     if plane_chart is None:
                         raise ValueError("Source patch lost its exact plane chart.")
                     normal_evidence = _plane_axes_normal_deviation(
@@ -7060,6 +7072,7 @@ def certify_source_fidelity(
             and validated.witness is witness
             and validated.partition_findings is not None
         ):
+            preparation.evaluations.record_unknown("fidelity-validation-cache", 1)
             findings.extend(validated.partition_findings)
         else:
             findings.extend(_partition_findings(domain_source, witness, preparation))

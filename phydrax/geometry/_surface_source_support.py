@@ -1269,6 +1269,7 @@ def _cad_pole_lens_endpoint(
     /,
     *,
     endpoints_by_patch: dict[int, _PatchEndpoints] | None = None,
+    preparation: SourcePreparation | None = None,
 ) -> tuple[Fraction, Fraction]:
     """Represent an authenticated collapsed pole by its coedge junction.
 
@@ -1293,11 +1294,11 @@ def _cad_pole_lens_endpoint(
     if not isinstance(use, PatchCurveUse):
         return point
     if endpoints_by_patch is None:
-        patch_endpoints = _rooted_patch_chart_endpoints(charts.domain, patch)
+        patch_endpoints = _rooted_patch_chart_endpoints(charts.domain, patch, preparation)
     else:
         if patch not in endpoints_by_patch:
             endpoints_by_patch[patch] = _rooted_patch_chart_endpoints(
-                charts.domain, patch
+                charts.domain, patch, preparation
             )
         patch_endpoints = endpoints_by_patch[patch]
     endpoints = patch_endpoints[loop]
@@ -1322,7 +1323,7 @@ def _cad_pole_lens_endpoint(
     ):
         return point
     start, stop = endpoints[neighbor]
-    if (start, stop) != _line_endpoints(pole):
+    if (start, stop) != _line_endpoints(pole, preparation):
         return point
     if junction not in (start, stop):
         return point
@@ -1372,6 +1373,7 @@ def _cad_curve_use_lens(
         first_uv,
         parameters[0],
         endpoints_by_patch=endpoints_by_patch,
+        preparation=preparation,
     )
     last_uv = _cad_pole_lens_endpoint(
         charts,
@@ -1381,6 +1383,7 @@ def _cad_curve_use_lens(
         last_uv,
         parameters[1],
         endpoints_by_patch=endpoints_by_patch,
+        preparation=preparation,
     )
     lens = _curved_trim_lens(
         use, first_uv, last_uv, source_first, source_last, preparation

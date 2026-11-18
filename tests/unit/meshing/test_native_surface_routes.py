@@ -32,6 +32,7 @@ from phydrax.geometry._meshing_domain import (
     MeshingSourceAccuracy,
     MeshingSurfacePatch,
     PatchCurveUse,
+    SourceEvaluationLedger,
     SourcePreparation,
 )
 from phydrax.geometry._source_boundary_records import (
@@ -363,6 +364,7 @@ def _square_domain(
     accuracy: MeshingSourceAccuracy = "exact_represented",
     tolerance: float = 0.0,
     authored_corners: bool = False,
+    evaluations: SourceEvaluationLedger | None = None,
 ) -> MeshingDomain:
     chart_points = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
     pairs = ((0, 1), (1, 2), (2, 3), (3, 0))
@@ -394,6 +396,7 @@ def _square_domain(
         regions=(MeshingDomainRegion("body", ((0, 1),)),),
         tolerance=tolerance,
         accuracy=accuracy,
+        evaluations=evaluations,
         corner_points=(
             np.asarray(
                 ((0.0, 0.0, 0.0), (1.0, 0.0, 0.25), (1.0, 1.0, 0.5), (0.0, 1.0, 0.15)),
@@ -540,15 +543,28 @@ def test_single_owner_distributed_surface_uses_prepared_source() -> None:
         ),
         (device,),
     )
-    domain = _square_domain()
+    evaluations = SourceEvaluationLedger()
+    domain = _square_domain(evaluations=evaluations)
+    probe = domain.evaluate(
+        np.asarray((0,)),
+        np.asarray(((0.5, 0.5),)),
+        preparation=SourcePreparation(domain, evaluations=evaluations),
+    )
+    assert np.all(np.isfinite(probe))
     prepared = prepare_distributed_surface_generation(
         domain,
         _surface_specification(domain),
         NativeMeshingOptions("parametric_surface"),
         SpatialCoordinateContract.si(),
         group,
+        evaluations=evaluations,
     )
-    construction = execute_distributed_surface_initial(prepared).construction
+    generated = execute_distributed_surface_initial(prepared, evaluations=evaluations)
+    counts, calls, unknown = generated.unspecified_evaluations
+    kind = f"{BSplineSurfacePatch.__module__}.{BSplineSurfacePatch.__qualname__}"
+    assert (dict(calls)[kind], dict(counts)[kind]) == (74, 2711)
+    assert not unknown
+    construction = generated.construction
     assert construction is not None
     assert construction.vertices.shape[0] > 0
     assert construction.triangles.shape[0] > 0

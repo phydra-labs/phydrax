@@ -14,6 +14,7 @@ import pytest
 from phydrax import SpatialCoordinateContract
 from phydrax.discretization import CellBlock, CellGeometrySpec, CellMesh
 from phydrax.geometry import Sphere
+from phydrax.geometry._meshing_domain import SourceEvaluationLedger
 from phydrax.geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryFaceImageWitness,
@@ -508,6 +509,37 @@ def test_trimmed_sheet_association_transfer_retains_patches_and_curve_intervals(
             ),
             policy=policy,
         )
+    )
+    assert refined.lineage is not None
+    assert refined.stencil is not None
+    evaluations = SourceEvaluationLedger()
+    transferred = transfer.propagate(
+        source,
+        refined.lineage,
+        refined.target.mesh,
+        vertex_stencil=refined.stencil,
+        geometry_transition=None,
+        target_fidelity_witness=None,
+        target_scoped_fidelity=(),
+        validated_fidelity=(),
+        evaluations=evaluations,
+    )
+    rows, calls, unknown = evaluations.snapshot()
+    spline = "phydrax.geometry.brep._patches.BSplineSurfacePatch"
+    # The 25 calls / 804 rows in vertex transfer are followed by one
+    # cell-centroid projection, which adds 1,728 more B-spline rows.
+    assert (dict(calls)[spline], dict(rows)[spline]) == (26, 2532)
+    assert (
+        dict(calls)[spline] - 1,
+        dict(rows)[spline] - refined.target.mesh.entity_set(2).count,
+    ) == (25, 804)
+    assert (dict(calls)["domain-projection:newton"], dict(rows)["domain-projection:newton"]) == (
+        2,
+        2508,
+    )
+    assert dict(unknown)["domain-construction"] > 0
+    assert tuple(value.association_id for value in transferred) == tuple(
+        value.association_id for value in refined.target.associations
     )
     faces = next(
         value

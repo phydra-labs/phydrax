@@ -18,7 +18,12 @@ from .._trainable import NonTrainableState
 from ..discretization import CellBlock, CellMesh
 from ..discretization._cell_geometry_transition_types import CellGeometryTransition
 from ..discretization._exact_algebraic_geometry import rational_coefficient
-from ..geometry._meshing_domain import MeshingDomain, PatchCurveUse, SourcePreparation
+from ..geometry._meshing_domain import (
+    MeshingDomain,
+    PatchCurveUse,
+    SourceEvaluationLedger,
+    SourcePreparation,
+)
 from ..geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryFaceImageWitness,
@@ -500,7 +505,13 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
         | None,
         target_scoped_fidelity: tuple[ScopedFidelityInput, ...],
         validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
+        evaluations: SourceEvaluationLedger | None = None,
     ) -> tuple[GeometryAssociation, ...]:
+        """Transfer associations and optionally declare operation-local evaluations.
+
+        Without a caller's ledger, the returned associations make no claim
+        about how their stored values were evaluated.
+        """
         self.validate_source(source)
         if not isinstance(lineage, MeshLineage) or not isinstance(target, CellMesh):
             raise TypeError("lineage and target must be MeshLineage and CellMesh values.")
@@ -527,8 +538,15 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
                 kinds=(GeometryAssociationKind.SURFACE, GeometryAssociationKind.CURVE),
             )
         }
-        output = [self._surface_vertices(source, lineage, target, vertex_stencil, tables)]
-        output.append(self._surface_cells(source, lineage, target, tables[2]))
+        preparation = SourcePreparation(self.domain, evaluations=evaluations)
+        output = [
+            self._surface_vertices(
+                source, lineage, target, vertex_stencil, tables, preparation=preparation
+            )
+        ]
+        output.append(
+            self._surface_cells(source, lineage, target, tables[2], preparation=preparation)
+        )
         if 1 in tables:
             curve_edges = self._curve_edges(
                 source, lineage, target, vertex_stencil, tables[1]
@@ -634,8 +652,9 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
         stencil: VertexInterpolationStencil,
         tables: dict[int, GeometryAssociation],
         /,
+        *,
+        preparation: SourcePreparation,
     ) -> GeometryAssociation:
-        preparation = SourcePreparation(self.domain)
         old = tables[0]
         source_mesh, target_mesh = source.mesh, target
         source_vertex_ids = np.asarray(source_mesh.vertex_global_ids, dtype=np.int64)
@@ -853,6 +872,7 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
                 np.asarray(target_mesh.coordinates, dtype=np.float64)[rows],
                 np.asarray(projected_patches, dtype=np.int32),
                 np.asarray(projected_seeds, dtype=np.float64),
+                preparation=preparation,
             )
             if not np.all(np.asarray(projected.converged, dtype=np.bool_)):
                 raise AssociationPropagationError(
@@ -902,6 +922,8 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
         target: CellMesh,
         parent: GeometryAssociation,
         /,
+        *,
+        preparation: SourcePreparation,
     ) -> GeometryAssociation:
         rows = lineage_association_rows(parent, source.mesh, lineage, target, 2)
         if rows.target_ids.size != target.entity_set(2).count:
@@ -943,7 +965,9 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
             dtype=np.int32,
         )
         seeds = np.asarray(parent.parameters, dtype=np.float64)[source_rows]
-        projected = self.domain.project(centroid, patch_rows, seeds)
+        projected = self.domain.project(
+            centroid, patch_rows, seeds, preparation=preparation
+        )
         if not np.all(np.asarray(projected.converged, dtype=np.bool_)):
             raise AssociationPropagationError(
                 "Trimmed surface cell projection could not verify inherited patch classes.",

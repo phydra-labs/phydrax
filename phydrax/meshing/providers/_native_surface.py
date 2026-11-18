@@ -342,6 +342,24 @@ def _failure(
     )
 
 
+def _merge_evaluation_snapshots(
+    initial: domain_owner.SourceEvaluationSnapshot,
+    before: domain_owner.SourceEvaluationSnapshot,
+    after: domain_owner.SourceEvaluationSnapshot,
+    /,
+) -> domain_owner.SourceEvaluationSnapshot:
+    merged: list[tuple[tuple[str, int], ...]] = []
+    for initial_rows, before_rows, after_rows in zip(initial, before, after, strict=True):
+        values = dict(initial_rows)
+        previous = dict(before_rows)
+        for kind, count in after_rows:
+            values[kind] = values.get(kind, 0) + count - previous.get(kind, 0)
+        merged.append(
+            tuple(sorted((kind, count) for kind, count in values.items() if count))
+        )
+    return merged[0], merged[1], merged[2]
+
+
 def _stored_coordinate_stage(
     preparation: domain_owner.SourcePreparation, mesh_id: str, /
 ) -> MeshingStageReport:
@@ -730,7 +748,9 @@ def _use_chart_points(
 
     if not parameters:
         return ()
-    closes = isinstance(use, domain_owner.PatchCurveUse) and use.closes_chart_loop()
+    closes = isinstance(use, domain_owner.PatchCurveUse) and use.closes_chart_loop(
+        preparation=preparation
+    )
     native = tuple(
         _use_source_parameter(
             use, Fraction(0) if closes and parameter == 1 else parameter
@@ -742,7 +762,7 @@ def _use_chart_points(
     # Fully rational line coordinates are computed exactly below; the evaluated
     # points serve only as finiteness witnesses, not stored representatives.
     points = (
-        domain_owner._pcurve_points(use.pcurve, scalars)
+        domain_owner._pcurve_points(use.pcurve, scalars, preparation=preparation)
         if chart is not None
         and all(isinstance(coordinate, Fraction) for coordinate in chart[0])
         else preparation.stored_pcurve_points(
@@ -931,7 +951,7 @@ def _chart_inputs(
                     # shared row records the start parameter.
                     recorded = (
                         Fraction(0)
-                        if parameter == 1 and use.closes_chart_loop()
+                        if parameter == 1 and use.closes_chart_loop(preparation=preparation)
                         else parameter
                     )
                     previous_parameter = point_curve_parameters.get((row, use.curve))
@@ -1942,7 +1962,8 @@ def _make_chart_mesh(
         use.curve
         for loop in domain.patches[patch].loops
         for use in loop
-        if isinstance(use, domain_owner.PatchCurveUse) and use.closes_chart_loop()
+        if isinstance(use, domain_owner.PatchCurveUse)
+        and use.closes_chart_loop(preparation=preparation)
     }
     return _ChartMesh(
         patch,
@@ -6368,6 +6389,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
     roots: _SurfaceRootCells
     boundary_source: domain_boundary_owner.MeshingDomainBoundarySource
     prepared_id: str = eqx.field(static=True)
+    preparation_evaluations: domain_owner.SourceEvaluationSnapshot = eqx.field(static=True)
 
     def __init__(
         self,
@@ -6380,6 +6402,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
         size_values: np.ndarray,
         roots: _SurfaceRootCells,
         boundary_source: domain_boundary_owner.MeshingDomainBoundarySource,
+        preparation_evaluations: domain_owner.SourceEvaluationSnapshot,
         /,
     ) -> None:
         self.domain = domain
@@ -6391,6 +6414,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
         self.size_values = size_values
         self.roots = roots
         self.boundary_source = boundary_source
+        self.preparation_evaluations = preparation_evaluations
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-native-parametric-surface",
@@ -6831,6 +6855,7 @@ def prepare_native_surface(
         size_values,
         roots,
         boundary_source,
+        preparation.evaluations.snapshot(),
     )
 
 

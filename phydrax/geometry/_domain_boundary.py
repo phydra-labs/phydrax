@@ -215,7 +215,8 @@ def _line_endpoints(
         # A closed chart loop returns to its start chart point exactly.
         last = (
             use.first
-            if isinstance(use, PatchCurveUse) and use.closes_chart_loop()
+            if isinstance(use, PatchCurveUse)
+            and use.closes_chart_loop(preparation=preparation)
             else use.last
         )
         parameters = np.asarray((use.first, last), dtype=np.float64)
@@ -1127,8 +1128,16 @@ def _constant_line_coordinate(
 _EXACT_PLANE_CHARTS: LiveProofLedger[tuple[ExactPlaneChart | None]] = LiveProofLedger()
 
 
-def exact_plane_chart(domain: MeshingDomain, patch: int, /) -> ExactPlaneChart | None:
+def exact_plane_chart(
+    domain: MeshingDomain,
+    patch: int,
+    /,
+    *,
+    preparation: SourcePreparation | None = None,
+) -> ExactPlaneChart | None:
     """Prove the exact plane chart for this live source patch, if one exists."""
+    if preparation is not None:
+        return _compute_exact_plane_chart(domain, patch, preparation=preparation)
     operands, parameters = (domain,), (patch,)
     cached = _EXACT_PLANE_CHARTS.find(operands, parameters=parameters)
     if cached is None:
@@ -1138,7 +1147,13 @@ def exact_plane_chart(domain: MeshingDomain, patch: int, /) -> ExactPlaneChart |
     return cached[0]
 
 
-def _compute_exact_plane_chart(domain: MeshingDomain, patch: int, /) -> ExactPlaneChart | None:
+def _compute_exact_plane_chart(
+    domain: MeshingDomain,
+    patch: int,
+    /,
+    *,
+    preparation: SourcePreparation | None = None,
+) -> ExactPlaneChart | None:
     """Exact plane chart of a patch proved planar by its carrier, if any.
 
     A surface of revolution of an exact profile line ``P(v) = P0 + v d`` about
@@ -1185,7 +1200,7 @@ def _compute_exact_plane_chart(domain: MeshingDomain, patch: int, /) -> ExactPla
     loops = domain.patches[patch].loops
     if len(loops) != 1 or len(loops[0]) != 4:
         return None
-    preparation = SourcePreparation(domain)
+    preparation = SourcePreparation.of(domain, preparation)
     rims: list[tuple[PatchCurveUse, Fraction]] = []
     seams: dict[int, list[Fraction]] = {}
     for use in loops[0]:
@@ -2089,7 +2104,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
 
         trim_loops = None
         if plane:
-            plane_chart = exact_plane_chart(self.domain, patch)
+            plane_chart = exact_plane_chart(self.domain, patch, preparation=preparation)
             if plane_chart is None:
                 raise ValueError("Source patch has no exact plane chart.")
             trim_loops = plane_chart.loops

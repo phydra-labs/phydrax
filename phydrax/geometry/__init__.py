@@ -32,6 +32,7 @@ def _facade_dir() -> list[str]:
 # whole package and its import cycles.
 _DEFERRED_EXPORTS = {
     "MeshingDomain": "._meshing_domain",
+    "SourceEvaluationLedger": "._meshing_domain",
     "ParametricCurveBoundarySource": "._curve_boundary",
     "EulerianVolumeOverlapChain": "._volume_material_map",
     "EulerianVolumeOverlapMap": "._volume_material_map",
@@ -631,7 +632,7 @@ if TYPE_CHECKING:
         regularized_heaviside_values,
     )
     from ._mapped_reference_domain import MappedReferenceDomain as MappedReferenceDomain
-    from ._meshing_domain import MeshingDomain
+    from ._meshing_domain import MeshingDomain, SourceEvaluationLedger
     from ._partition import BoundaryAtlasPartition, GeometryMeasurePartition
     from ._ray_intersection import (
         intersect_ray_plane,
@@ -992,6 +993,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "MeshingDomain",
+    "SourceEvaluationLedger",
     "ParametricCurveBoundarySource",
     "CommonRootVolumeWitness",
     "CurvedOverlapIntegrationEvidence",

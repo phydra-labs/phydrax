@@ -16,6 +16,13 @@
   change once on every platform and affected stored results must be rebuilt.
   Domains with inferred (rather than authored) corners also store D1 endpoint
   images in `corner_points`; their `domain_id` and derived identities can change.
+  Stacked reconstructed-triangle evaluation is specified by its fixed binary64
+  operation sequence, not by the interval lower endpoint.
+  Operation-local source evaluation ledgers report fallback rows, calls, and
+  unknown construction provenance for the identical live domains they witness;
+  distributed surface results expose an immutable declaration. Surface association
+  transfer accepts a caller ledger, but adaptation currently calls it without one:
+  its associations make no claim about how their stored values were evaluated.
   Stored coordinates are defined by the lowered program: a JAX version that
   reorders its trace changes identity and must be announced as such.
   Trim-lens search uses lower endpoints of batched host programs for fixed

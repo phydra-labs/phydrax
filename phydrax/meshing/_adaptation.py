@@ -8257,7 +8257,11 @@ def _adaptation_result(
 
 
 def execute_mesh_adaptation(prepared: PreparedMeshAdaptation, /) -> MeshAdaptationResult:
-    """Execute exactly the prepared route and certify its target."""
+    """Execute exactly the prepared route and certify its target.
+
+    Adaptation calls association transfer without an evaluation ledger, so its
+    associations make no claim about how their stored values were evaluated.
+    """
 
     if not isinstance(prepared, PreparedMeshAdaptation):
         raise TypeError("prepared must be PreparedMeshAdaptation.")

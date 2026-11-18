@@ -16,6 +16,7 @@ from phydrax.geometry._meshing_domain import (
     MeshingDomainCurve,
     MeshingSurfacePatch,
     PatchCurveUse,
+    SourceEvaluationLedger,
     SourcePreparation,
 )
 from phydrax.geometry.brep._assembly import BRepAffinePlacement
@@ -32,6 +33,7 @@ from phydrax.geometry.brep._patches import (
     SpherePatch,
     TorusPatch,
 )
+from phydrax.geometry.reconstruction._core import _ReconstructedTrianglePatch
 
 
 type Interval = tuple[Fraction, Fraction]
@@ -120,7 +122,9 @@ def _surfaces() -> dict[str, AbstractSurfacePatch]:
     }
 
 
-def _domain(surface: AbstractSurfacePatch, /) -> MeshingDomain:
+def _domain(
+    surface: AbstractSurfacePatch, /, *, evaluations: SourceEvaluationLedger | None = None
+) -> MeshingDomain:
     corners = ((0, 0), (1, 0), (1, 1), (0, 1))
     edges = ((0, 1), (1, 2), (2, 3), (3, 0))
     uses = tuple(
@@ -139,6 +143,7 @@ def _domain(surface: AbstractSurfacePatch, /) -> MeshingDomain:
         source_id="stored-golden-points",
         source_revision="exact-dyadic-fixture",
         tolerance=1.0e-9,
+        evaluations=evaluations,
     )
 
 
@@ -254,3 +259,134 @@ def test_declined_bspline_surface_is_declared_and_uses_prior_jax_values() -> Non
     assert preparation.unsupported_points == {
         f"{type(surface).__module__}.{type(surface).__qualname__}": len(rows)
     }
+
+
+def test_one_preparation_keeps_distinct_patch_programs() -> None:
+    surfaces = _surfaces()
+    corners = ((0, 0), (1, 0), (1, 1), (0, 1))
+    edges = ((0, 1), (1, 2), (2, 3), (3, 0))
+    patches = []
+    curves = []
+    for patch_index, kind in enumerate(("plane", "cylinder")):
+        uses = tuple(
+            PatchCurveUse(
+                patch_index * 4 + index,
+                LineCurve(corners[first], np.subtract(corners[last], corners[first])),
+                0.0,
+                1.0,
+            )
+            for index, (first, last) in enumerate(edges)
+        )
+        patches.append(MeshingSurfacePatch(surfaces[kind], (uses,)))
+        curves.extend(
+            MeshingDomainCurve(patch_index * 4 + first, patch_index * 4 + last)
+            for first, last in edges
+        )
+    domain = MeshingDomain(
+        tuple(patches),
+        tuple(curves),
+        8,
+        source_id="two-stored-patches",
+        source_revision="exact-dyadic-fixture",
+    )
+    preparation = SourcePreparation(domain)
+    rows = np.asarray(((1 / 16, 1 / 16), (3 / 16, 1 / 16)))
+    actual = domain.evaluate(np.asarray((0, 1)), rows, preparation=preparation)
+    for index, kind in enumerate(("plane", "cylinder")):
+        golden = np.asarray(
+            [float.fromhex(value) for value in _GOLDEN[kind][0][1].split()]
+        )
+        np.testing.assert_array_equal(
+            actual[index].view(np.uint64), golden.view(np.uint64)
+        )
+        for value, (lower, upper) in zip(
+            actual[index],
+            _exact_coordinates(
+                kind, Fraction(float(rows[index, 0])), Fraction(float(rows[index, 1]))
+            ),
+            strict=True,
+        ):
+            assert Fraction(float(value)) <= lower <= upper
+
+
+def test_reconstructed_stacked_points_use_fixed_binary64_sequence() -> None:
+    corners = np.asarray(
+        (
+            ((0.1, 1.3, -0.7), (1.1, -0.2, 0.9), (-0.3, 0.4, 1.7)),
+            ((1.7, 0.2, -0.1), (0.3, 1.1, 1.9), (0.7, -0.8, 0.6)),
+        )
+    )
+    parameters = np.asarray(((0.2, 0.3), (0.125, 0.625)))
+    surfaces = tuple(_ReconstructedTrianglePatch(row) for row in corners)
+    actual = _ReconstructedTrianglePatch.evaluate_stacked(
+        surfaces, np.asarray((0, 1)), parameters
+    )
+    golden = np.asarray(
+        [
+            [float.fromhex(x) for x in row.split()]
+            for row in (
+                "0x1.70a3d70a3d70bp-3 0x1.75c28f5c28f5cp-1 0x1.5c28f5c28f5c4p-2",
+                "0x1.cccccccccccccp-1 -0x1.4000000000000p-2 0x1.2cccccccccccdp-1",
+            )
+        ]
+    )
+    np.testing.assert_array_equal(actual.view(np.uint64), golden.view(np.uint64))
+    for row, (u, v) in enumerate(parameters):
+        first_weight = float(Fraction(1) - Fraction(float(u)))
+        first_weight = float(Fraction(first_weight) - Fraction(float(v)))
+        for axis in range(3):
+            first = float(Fraction(first_weight) * Fraction(float(corners[row, 0, axis])))
+            second = float(Fraction(float(u)) * Fraction(float(corners[row, 1, axis])))
+            third = float(Fraction(float(v)) * Fraction(float(corners[row, 2, axis])))
+            partial = float(Fraction(first) + Fraction(second))
+            reference = float(Fraction(partial) + Fraction(third))
+            assert actual[row, axis].hex() == reference.hex()
+
+
+def test_construction_declaration_binds_only_the_live_domain() -> None:
+    surface = BSplineSurfacePatch(
+        np.asarray(
+            (((0.0, 0.0, 0.0), (0.0, 1.0, 0.0)), ((1.0, 0.0, 0.0), (1.0, 1.0, 0.0)))
+        ),
+        np.ones((2, 2)),
+        np.asarray((0.0, 0.0, 1.0, 1.0)),
+        np.asarray((0.0, 0.0, 1.0, 1.0)),
+        1,
+        1,
+    )
+    ledger = SourceEvaluationLedger()
+    witnessed = _domain(surface, evaluations=ledger)
+    counts, calls, unknown = ledger.snapshot()
+    assert dict(counts)[f"{type(surface).__module__}.{type(surface).__qualname__}"] > 0
+    assert dict(calls)[f"{type(surface).__module__}.{type(surface).__qualname__}"] > 0
+    assert not unknown
+    SourcePreparation(witnessed, evaluations=ledger)
+    assert not ledger.snapshot()[2]
+    rebuilt = _domain(surface)
+    assert rebuilt is not witnessed
+    assert rebuilt.content_domain_id() == witnessed.content_domain_id()
+    SourcePreparation(rebuilt, evaluations=ledger)
+    assert dict(ledger.snapshot()[2])["domain-construction"] > 0
+
+
+def test_domain_projection_declares_newton_parameters_and_live_preparation() -> None:
+    ledger = SourceEvaluationLedger()
+    domain = _domain(_surfaces()["plane"], evaluations=ledger)
+    preparation = SourcePreparation(domain, evaluations=ledger)
+    result = domain.project(
+        np.asarray(((1.25, 1.5, 2.0),)),
+        np.asarray((0,)),
+        np.asarray(((0.25, 0.5),)),
+        preparation=preparation,
+    )
+    counts, calls, unknown = result.unspecified_evaluations
+    assert dict(counts)["domain-projection:newton"] == 1
+    assert dict(calls)["domain-projection:newton"] == 1
+    assert not unknown
+    assert bool(np.asarray(result.converged)[0])
+    unowned = domain.project(
+        np.asarray(((1.25, 1.5, 2.0),)),
+        np.asarray((0,)),
+        np.asarray(((0.25, 0.5),)),
+    )
+    assert dict(unowned.unspecified_evaluations[2])["domain-construction"] > 0

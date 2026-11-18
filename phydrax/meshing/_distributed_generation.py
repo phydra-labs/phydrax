@@ -128,6 +128,7 @@ class DistributedSurfaceConstruction(StrictModule, NonTrainableState):
     source_revision: str = eqx.field(static=True)
     specification_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
+    unspecified_evaluations: domain_owner.SourceEvaluationSnapshot = eqx.field(static=True)
 
     def __init__(
         self,
@@ -144,6 +145,12 @@ class DistributedSurfaceConstruction(StrictModule, NonTrainableState):
         specification_id: str,
         prepared_id: str,
         /,
+        *,
+        unspecified_evaluations: domain_owner.SourceEvaluationSnapshot = (
+            (),
+            (),
+            (("unattached", 1),),
+        ),
     ) -> None:
         self.construction = construction
         self.vertex_ids = vertex_ids
@@ -157,6 +164,7 @@ class DistributedSurfaceConstruction(StrictModule, NonTrainableState):
         self.source_revision = source_revision
         self.specification_id = specification_id
         self.prepared_id = prepared_id
+        self.unspecified_evaluations = unspecified_evaluations
 
 
 def _collective_error(
@@ -287,6 +295,7 @@ def prepare_distributed_surface_generation(
     *,
     partition_plan: GraphPartitionPlan | None = None,
     axis_name: str = "distributed_surface",
+    evaluations: domain_owner.SourceEvaluationLedger | None = None,
 ) -> PreparedDistributedSurfaceGeneration:
     """Partition authored patches and prepare owner-local native surface work.
 
@@ -314,6 +323,11 @@ def prepare_distributed_surface_generation(
             specification,
             options,
             coordinate_contract,
+            preparation=(
+                None
+                if evaluations is None
+                else domain_owner.SourcePreparation(source, evaluations=evaluations)
+            ),
         )
         plan = partition_plan
         if plan is None:
@@ -1126,6 +1140,8 @@ def _local_owner_arrays(
 def execute_distributed_surface_initial(
     prepared: PreparedDistributedSurfaceGeneration,
     /,
+    *,
+    evaluations: domain_owner.SourceEvaluationLedger | None = None,
 ) -> DistributedSurfaceConstruction:
     """Generate owner-local patch charts and close every shared seam iteratively.
 
@@ -1138,7 +1154,8 @@ def execute_distributed_surface_initial(
     """
     rank = _execution_rank(prepared.execution_group)
     domain = prepared.surface.domain
-    preparation = domain_owner.SourcePreparation(domain)
+    preparation = domain_owner.SourcePreparation(domain, evaluations=evaluations)
+    before = preparation.evaluations.snapshot()
     local_patch_rows: tuple[int, ...] = ()
     local_parameters: dict[int, set[Fraction]] = {}
     pole_charts: native_surface_owner._PoleCharts = {}
@@ -1344,6 +1361,11 @@ def execute_distributed_surface_initial(
         domain.source_revision,
         prepared.surface.specification.specification_id,
         prepared.prepared_id,
+        unspecified_evaluations=native_surface_owner._merge_evaluation_snapshots(
+            prepared.surface.preparation_evaluations,
+            before,
+            preparation.evaluations.snapshot(),
+        ),
     )
 
 

@@ -432,7 +432,7 @@ class PatchCurveUse(StrictModule, NonTrainableState):
             and self.last == self.first + period
         )
 
-    def closes_chart_loop(self) -> bool:
+    def closes_chart_loop(self, *, preparation: _PointPreparation | None = None) -> bool:
         """Whether this use returns exactly to its start chart point.
 
         A full intersection branch closes in this chart only when its
@@ -473,7 +473,7 @@ class PatchCurveUse(StrictModule, NonTrainableState):
             shifts = curve.curve.closure_period_shifts()
             side = shifts[:2] if curve.side == "first" else shifts[2:]
             return bool(np.all(side == 0))
-        ends = self.charts((self.first, self.last))
+        ends = self.charts((self.first, self.last), preparation=preparation)
         return bool(np.array_equal(ends[0], ends[1]))
 
 
@@ -541,7 +541,11 @@ def use_endpoints(
 
 
 def _lift_native_period_loop(
-    surface: AbstractSurfacePatch, uses: tuple[PatchBoundaryUse, ...], /
+    surface: AbstractSurfacePatch,
+    uses: tuple[PatchBoundaryUse, ...],
+    /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
 ) -> tuple[PatchBoundaryUse, ...]:
     """Choose a continuous native-period gauge for an authored BRep loop."""
     from .brep._boolean_core import PeriodicPCurve
@@ -551,7 +555,7 @@ def _lift_native_period_loop(
         return uses
     lifted: list[PatchBoundaryUse] = [uses[0]]
     period_shadow = Fraction.from_float(math.tau)
-    preparation = _PointPreparation()
+    preparation = _PointPreparation(evaluations=evaluations)
     for use in uses[1:]:
         previous = use_endpoints(lifted[-1], preparation=preparation)[1]
         start = use_endpoints(use, preparation=preparation)[0]
@@ -662,6 +666,7 @@ class MeshingDomainProjection(StrictModule, NonTrainableState):
     parameters: Array
     distances: Array
     converged: Array
+    unspecified_evaluations: SourceEvaluationSnapshot = eqx.field(static=True)
 
     def __init__(
         self,
@@ -670,11 +675,14 @@ class MeshingDomainProjection(StrictModule, NonTrainableState):
         distances: ArrayLike,
         converged: ArrayLike,
         /,
+        *,
+        unspecified_evaluations: SourceEvaluationSnapshot = ((), (), (("unattached", 1),)),
     ) -> None:
         self.points = jnp.asarray(points, dtype=jnp.float64)
         self.parameters = jnp.asarray(parameters, dtype=jnp.float64)
         self.distances = jnp.asarray(distances, dtype=jnp.float64)
         self.converged = jnp.asarray(converged, dtype=jnp.bool_)
+        self.unspecified_evaluations = unspecified_evaluations
 
 
 class DomainCurveMap(AbstractBoundaryMap):
@@ -1013,6 +1021,53 @@ def _has_plane_cylinder_section(curve: AbstractCurve, /) -> bool:
     return isinstance(curve, PlaneCylinderSectionPCurve)
 
 
+type SourceEvaluationSnapshot = tuple[
+    tuple[tuple[str, int], ...],
+    tuple[tuple[str, int], ...],
+    tuple[tuple[str, int], ...],
+]
+
+
+@final
+class SourceEvaluationLedger:
+    """Mutable declaration for one operation, never retained by a domain."""
+
+    __slots__ = ("counts", "calls", "unknown", "_constructed_domains")
+
+    def __init__(self) -> None:
+        self.counts: dict[str, int] = {}
+        self.calls: dict[str, int] = {}
+        self.unknown: dict[str, int] = {}
+        self._constructed_domains: list[MeshingDomain] = []
+
+    def bind_construction(self, domain: MeshingDomain, /) -> None:
+        """Bind only the live object whose construction used this ledger."""
+        if not any(value is domain for value in self._constructed_domains):
+            self._constructed_domains.append(domain)
+
+    def require_construction(self, domain: MeshingDomain, /) -> None:
+        """Mark construction provenance unknown unless this exact object was witnessed."""
+        if not any(value is domain for value in self._constructed_domains):
+            self.record_unknown("domain-construction", 1)
+
+    def record(self, kind: str, count: int, /) -> None:
+        """Record one unsupported evaluation call and its number of rows."""
+        self.counts[kind] = self.counts.get(kind, 0) + count
+        self.calls[kind] = self.calls.get(kind, 0) + 1
+
+    def record_unknown(self, reason: str, count: int, /) -> None:
+        """Record a named upper bound or an unknown-provenance marker."""
+        self.unknown[reason] = self.unknown.get(reason, 0) + count
+
+    def snapshot(self) -> SourceEvaluationSnapshot:
+        """Return immutable row counts, call counts, and unknown reasons."""
+        return (
+            tuple(sorted(self.counts.items())),
+            tuple(sorted(self.calls.items())),
+            tuple(sorted(self.unknown.items())),
+        )
+
+
 class _PointPreparation:
     """Operation-local D1/D2 programs and certified p-curve point boxes."""
 
@@ -1024,10 +1079,12 @@ class _PointPreparation:
         "_intersection_point_support",
         "_intersection_span_boxes",
         "_point_intersection_atlases",
+        "evaluations",
         "unsupported_points",
     )
 
-    def __init__(self) -> None:
+    def __init__(self, *, evaluations: SourceEvaluationLedger | None = None) -> None:
+        self.evaluations = SourceEvaluationLedger() if evaluations is None else evaluations
         self._stored_surface_programs: dict[
             int, tuple[AbstractSurfacePatch, PreparedIntervalFunction | None]
         ] = {}
@@ -1047,7 +1104,7 @@ class _PointPreparation:
         self._point_intersection_atlases: dict[
             int, tuple[IntersectionCurve, _IntersectionCurveHostAtlas]
         ] = {}
-        self.unsupported_points: dict[str, int] = {}
+        self.unsupported_points = self.evaluations.counts
 
     def curve_box(self, curve: AbstractCurve, first: float, last: float, /) -> np.ndarray:
         """Certified p-curve box without a domain owner."""
@@ -1080,7 +1137,7 @@ class _PointPreparation:
     ) -> None:
         kind = type(evaluator)
         name = f"{kind.__module__}.{kind.__qualname__}"
-        self.unsupported_points[name] = self.unsupported_points.get(name, 0) + count
+        self.evaluations.record(name, count)
 
     def stored_patch_supported(self, surface: AbstractSurfacePatch, /) -> bool | None:
         """Cached D1 support, or ``None`` when this carrier has not been queried."""
@@ -1258,9 +1315,11 @@ class SourcePreparation(_PointPreparation):
     certified point box intersected with the certified span box. Supported points
     are independent of row batching for a fixed span; intersection representatives
     also lie in its enclosure.
-    When a realization is unavailable, the original evaluator is used and
-    ``unsupported_points`` accumulates call counts by qualified class name.
-    These counts include transient calls, not just final stored rows.
+    Stacked reconstructed-triangle points instead use their specified fixed
+    binary64 operation sequence. When a realization is unavailable, the
+    original evaluator is used and ``unsupported_points`` counts evaluated rows
+    by qualified class name. The ledger also counts calls, including transient
+    evaluations, and marks construction not witnessed on the identical live domain.
     """
 
     __slots__ = (
@@ -1278,8 +1337,11 @@ class SourcePreparation(_PointPreparation):
         "_search_curve_programs",
     )
 
-    def __init__(self, domain: MeshingDomain, /) -> None:
-        super().__init__()
+    def __init__(
+        self, domain: MeshingDomain, /, *, evaluations: SourceEvaluationLedger | None = None
+    ) -> None:
+        super().__init__(evaluations=evaluations)
+        self.evaluations.require_construction(domain)
         self._domain = domain
         self._box_programs: dict[
             int, tuple[AbstractSurfacePatch, PreparedIntervalFunction]
@@ -1421,7 +1483,7 @@ class SourcePreparation(_PointPreparation):
         domain.require_current()
         old = self.domain.brep_authority
         new = domain.brep_authority
-        result = SourcePreparation(domain)
+        result = SourcePreparation(domain, evaluations=self.evaluations)
         if old is None or new is None or old.source_id != new.source_id:
             return result
         if (
@@ -3004,7 +3066,11 @@ def _source_entity_slot_index(
 
 @final
 class MeshingDomain(StrictModule, NonTrainableState):
-    """Revision/frame-bound view of actual surface, curve, corner, and region sources."""
+    """Revision/frame-bound view of actual surface, curve, corner, and region sources.
+
+    A domain held without its construction ledger makes no declaration about
+    the realization used for inferred corner coordinates.
+    """
 
     patches: tuple[MeshingSurfacePatch, ...]
     curves: tuple[MeshingDomainCurve, ...]
@@ -3053,6 +3119,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
         authority_id: str = "",
         brep_authority: BRepGeometry | BRepModel | None = None,
         corner_points: ArrayLike | None = None,
+        evaluations: SourceEvaluationLedger | None = None,
     ) -> None:
         """Validate one complete source graph before publishing its fields.
 
@@ -3100,7 +3167,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
         source_id_ = canonical_identifier(source_id, "source_id")
         revision_ = canonical_identifier(source_revision, "source_revision")
         accuracy_ = parse(accuracy, MeshingSourceAccuracy, "accuracy")
-        point_preparation = _PointPreparation()
+        point_preparation = _PointPreparation(evaluations=evaluations)
         owners: list[tuple[int, int, int]] = [(-1, -1, -1) for _ in curves_]
         endpoint_images: list[list[tuple[int, np.ndarray]]] = [[] for _ in range(corners)]
         chart_curves: list[tuple[int, int, int, PatchCurveUse]] = []
@@ -3365,14 +3432,18 @@ class MeshingDomain(StrictModule, NonTrainableState):
             _source_entity_slot_index(keys) for keys in stratum_keys
         )
         self.domain_id = self.content_domain_id()
+        if evaluations is not None:
+            evaluations.bind_construction(self)
 
     @classmethod
     @checked
-    def from_brep(cls, model: BRepModel, /) -> MeshingDomain:
+    def from_brep(
+        cls, model: BRepModel, /, *, evaluations: SourceEvaluationLedger | None = None
+    ) -> MeshingDomain:
         geometry = model.geometry
         occurrences = tuple(geometry.assembly_graph.iter_occurrences())
         if occurrences:
-            return _placed_brep_domain(cls, model, occurrences)
+            return _placed_brep_domain(cls, model, occurrences, evaluations=evaluations)
         return cls.from_brep_geometry(
             geometry,
             model.patches,
@@ -3381,6 +3452,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
             source_revision=model.source_revision,
             _authority=model,
             corner_points=None,
+            evaluations=evaluations,
         )
 
     @classmethod
@@ -3396,6 +3468,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
         source_revision: str,
         _authority: BRepModel | None = None,
         corner_points: ArrayLike | None = None,
+        evaluations: SourceEvaluationLedger | None = None,
     ) -> MeshingDomain:
         """Build a generic domain from supplied geometry, or bind its owning model."""
         if len(surfaces) != len(geometry.face_loops):
@@ -3453,7 +3526,11 @@ class MeshingDomain(StrictModule, NonTrainableState):
                                 edge, geometry.pcurves[coedge], first, last, sense=sense
                             )
                         )
-                patch_loops.append(_lift_native_period_loop(surfaces[face], tuple(uses)))
+                patch_loops.append(
+                    _lift_native_period_loop(
+                        surfaces[face], tuple(uses), evaluations=evaluations
+                    )
+                )
             patches.append(
                 MeshingSurfacePatch(
                     surfaces[face],
@@ -3509,6 +3586,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
             authority_id=authority_id_,
             brep_authority=authority,
             corner_points=corner_points,
+            evaluations=evaluations,
         )
 
     def content_domain_id(self) -> str:
@@ -4314,8 +4392,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
     ) -> np.ndarray:
         """Physical points of (patch, chart) pairs.
 
-        Analytic carriers use D1 representatives owned by ``preparation``;
-        reconstructed stacked carriers retain their stacked realization.
+        Analytic carriers use D1 representatives owned by ``preparation``.
+        Stacked reconstructed-triangle carriers instead use their specified
+        fixed sequence of binary64 operations, not interval lower endpoints.
         Unsupported D1 evaluators are recorded on the preparation.
         Omitting it creates a one-call preparation and can repeat expensive
         lowering; pass a domain-bound preparation to reuse it across calls.
@@ -4713,6 +4792,8 @@ class MeshingDomain(StrictModule, NonTrainableState):
         patches: ArrayLike,
         seeds: ArrayLike,
         /,
+        *,
+        preparation: SourcePreparation | None = None,
     ) -> MeshingDomainProjection:
         points_ = np.asarray(points, dtype=np.float64).reshape((-1, 3))
         rows, seeds_ = self._batch(patches, seeds)
@@ -4720,6 +4801,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
             raise ValueError(
                 "MeshingDomain projection points must be finite and align with seeds."
             )
+        prepared = SourcePreparation.of(self, preparation)
+        if rows.size:
+            prepared.evaluations.record("domain-projection:newton", rows.size)
         from ..nonlinear import VectorLocalRootPlan
 
         plan = VectorLocalRootPlan(
@@ -4748,9 +4832,15 @@ class MeshingDomain(StrictModule, NonTrainableState):
             )
             parameters[selected] = np.asarray(roots, dtype=np.float64)
             converged[selected] = np.asarray(status, dtype=np.bool_)
-        projected = self.evaluate(rows, parameters)
+        projected = self.evaluate(rows, parameters, preparation=prepared)
         distances = np.linalg.norm(projected - points_, axis=-1)
-        return MeshingDomainProjection(projected, parameters, distances, converged)
+        return MeshingDomainProjection(
+            projected,
+            parameters,
+            distances,
+            converged,
+            unspecified_evaluations=prepared.evaluations.snapshot(),
+        )
 
     @property
     def curve_count(self) -> int:
@@ -4762,6 +4852,8 @@ def _placed_brep_domain(
     model: BRepModel,
     occurrences: tuple[BRepAssemblyOccurrence, ...],
     /,
+    *,
+    evaluations: SourceEvaluationLedger | None = None,
 ) -> MeshingDomain:
     """Expand source-defined solid occurrences while preserving their exact paths."""
     geometry = model.geometry
@@ -4855,7 +4947,11 @@ def _placed_brep_domain(
                                 edge_map[edge], pcurve, first, last, sense=sense
                             )
                         )
-                loops.append(_lift_native_period_loop(model.patches[face], tuple(uses)))
+                loops.append(
+                    _lift_native_period_loop(
+                        model.patches[face], tuple(uses), evaluations=evaluations
+                    )
+                )
             surface = _PlacedSurfacePatch(model.patches[face], occurrence.placement)
             face_orientation = (
                 int(np.asarray(model.orientation)[face]) * surface.orientation_sign
@@ -4896,6 +4992,7 @@ def _placed_brep_domain(
         authority_id=model.model_id,
         brep_authority=model,
         corner_points=np.asarray(corner_points, dtype=np.float64),
+        evaluations=evaluations,
     )
 
 
@@ -4910,6 +5007,8 @@ __all__ = [
     "PatchCurveUse",
     "PatchPoleUse",
     "PatchBoundaryUse",
+    "SourceEvaluationLedger",
+    "SourceEvaluationSnapshot",
     "SourcePreparation",
     "use_endpoints",
     "ValidatedMeshingDomain",

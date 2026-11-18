@@ -154,6 +154,11 @@ def test_qualification_intersection_evidence_measures_stored_lifts(
     model, _, source, _ = _quadric_case("iges", tmp_path)
     evidence = _intersection_evidence(model, _intersection_loop_oracles(source))
     assert evidence["passed"] is True
+    assert evidence["stored_evaluation_declaration"] == {
+        "rows": {},
+        "calls": {},
+        "unknown": {},
+    }
     residuals = evidence["maximum_residuals_m"]
     assert isinstance(residuals, dict)
     assert residuals["first_pcurve"] > 0.0
