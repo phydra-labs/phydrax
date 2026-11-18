@@ -489,6 +489,11 @@ def test_deferred_certification_resolves_only_the_original_mesh() -> None:
         plan.route,
     ).candidate_id
     assert candidate.screens == {"error": 0.5}
+    public_names = {name for name in dir(candidate) if not name.startswith("_")}
+    assert not public_names.intersection(
+        {"certification", "certificate", "audit", "compliance", "validated"}
+    )
+    assert "NativeMeshConstruction" not in repr(candidate)
     with pytest.raises(ValueError, match="pending certification"):
         _accept_native_construction(
             pending, specification, _NATIVE_PROVIDER, version, plan.plan_id, plan.route

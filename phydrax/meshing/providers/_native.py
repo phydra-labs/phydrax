@@ -1294,7 +1294,13 @@ class CellMeshingCandidate(StrictModule, NonTrainableState):
                 ),
                 "reference_maps": tuple(
                     {
-                        "arrays": array_tree_fingerprint(reference_map),
+                        "arrays": array_tree_fingerprint(
+                            (
+                                reference_map.target_cell_ids,
+                                reference_map.source_cell_ids,
+                                reference_map.source_reference_vertices,
+                            )
+                        ),
                         "target_kind": reference_map.target_cell_kind,
                         "source_kind": reference_map.source_cell_kind,
                         "exact_vertices": None

@@ -5,6 +5,7 @@
 ### Added
 - Native meshing plans accept `prove=True` for immediate acceptance and expose
   `CellMeshingCandidate.prove()` to certify an already constructed mesh.
+  Pending candidates distinguish sampled `screens` from certified bounds.
 - Exposed `phydrax.geometry.source_entity_id` and
   `phydrax.interchange.save_composition_archive` and
   `phydrax.interchange.load_composition_archive` for source identities and
