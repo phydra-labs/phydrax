@@ -32,7 +32,15 @@ from ...typing import checked
 from .._atlas import _CoarseChordPlan, _curve_loops_point_state, TrimEnclosures
 from .._interval_enclosure import PreparedIntervalFunction
 from .._planar_embedding import PlanarEmbedding
-from .._rational import fraction_endpoint, rational_cross, rational_dot, rational_vector
+from .._rational import (
+    binary64_dot,
+    binary64_matmul,
+    binary64_norm,
+    fraction_endpoint,
+    rational_cross,
+    rational_dot,
+    rational_vector,
+)
 from .._source_boundary_records import SourceBoundaryDistance
 from ._host_program import evaluate_host_program, prepare_host_program
 from ._intersection_projection import _IntersectionPreparation, _prepare_intersection
@@ -235,7 +243,7 @@ def _distance_bounds(first: np.ndarray, second: np.ndarray, /) -> tuple[float, f
     of the pad covers underflow. Only for points that are themselves the
     compared locations (vertices, box corners), never for evaluated candidates.
     """
-    distance = float(np.linalg.norm(first - second))
+    distance = float(binary64_norm(first - second))
     scale = max(
         1.0,
         float(np.max(np.abs(first), initial=0.0)),
@@ -269,7 +277,7 @@ def _map_frame(frame: np.ndarray, matrix: np.ndarray, /) -> np.ndarray:
     """
     mapped = np.full((*frame.shape[:-1], matrix.shape[1]), np.nan, dtype=np.float64)
     defined = np.all(np.isfinite(frame), axis=-1)
-    mapped[defined] = frame[defined] @ matrix
+    mapped[defined] = binary64_matmul(frame[defined], matrix)
     return mapped
 
 
@@ -398,24 +406,24 @@ def _circle_revolution_frame(
     scale = max(1.0, float(np.max(np.abs(center))), radius)
     if (
         not radius > 0.0
-        or abs(float(axis @ axis) - 1.0) > tolerance
-        or abs(float(first @ first) - 1.0) > tolerance
-        or abs(float(second @ second) - 1.0) > tolerance
-        or abs(float(first @ second)) > tolerance
-        or abs(float(normal @ axis)) > tolerance
-        or abs(float(normal @ center)) > tolerance * scale
+        or abs(float(binary64_dot(axis, axis)) - 1.0) > tolerance
+        or abs(float(binary64_dot(first, first)) - 1.0) > tolerance
+        or abs(float(binary64_dot(second, second)) - 1.0) > tolerance
+        or abs(float(binary64_dot(first, second))) > tolerance
+        or abs(float(binary64_dot(normal, axis))) > tolerance
+        or abs(float(binary64_dot(normal, center))) > tolerance * scale
     ):
         return None
     meridian = np.cross(normal, axis)
-    meridian /= np.linalg.norm(meridian)
+    meridian /= binary64_norm(meridian)
     return _CircleRevolutionFrame(
         origin,
         axis,
         meridian,
         np.cross(axis, meridian),
-        np.asarray((center @ meridian, center @ axis)),
-        np.asarray((first @ meridian, first @ axis)),
-        np.asarray((second @ meridian, second @ axis)),
+        np.asarray((binary64_dot(center, meridian), binary64_dot(center, axis))),
+        np.asarray((binary64_dot(first, meridian), binary64_dot(first, axis))),
+        np.asarray((binary64_dot(second, meridian), binary64_dot(second, axis))),
         radius,
     )
 
@@ -444,13 +452,17 @@ def _circle_revolution_closest(
     if frame is None:
         return None
     relative = point - frame.origin
-    height = float(relative @ frame.axis)
+    height = float(binary64_dot(relative, frame.axis))
     radial = relative - height * frame.axis
-    rho = float(np.linalg.norm(radial))
+    rho = float(binary64_norm(radial))
     angle = (
         float(bounds[0, 0])
         if rho == 0.0
-        else float(np.arctan2(radial @ frame.binormal, radial @ frame.meridian))
+        else float(
+            np.arctan2(
+                binary64_dot(radial, frame.binormal), binary64_dot(radial, frame.meridian)
+            )
+        )
     )
     period = patch.periods[1]
     first_parameter, last_parameter = (float(value) for value in bounds[:, 1])
@@ -462,13 +474,15 @@ def _circle_revolution_closest(
     options: list[tuple[float, float | None, bool]] = []
     for sign in (1.0, -1.0):
         offset = np.asarray((sign * rho, height)) - frame.center
-        length = float(np.linalg.norm(offset))
+        length = float(binary64_norm(offset))
         if length == 0.0:
             # Every profile point is equidistant.
             options.append((frame.radius, first_parameter, True))
             continue
         parameter: float | None = float(
-            np.arctan2(offset @ frame.second, offset @ frame.first)
+            np.arctan2(
+                binary64_dot(offset, frame.second), binary64_dot(offset, frame.first)
+            )
         )
         if period is not None:
             parameter = _periodic_parameter(
@@ -499,12 +513,12 @@ def _circle_revolution_closest(
             )
         )
     uv, expected, nonisolated = located[0]
-    if any(np.linalg.norm(value - expected) > tolerance for _, value, _ in located[1:]):
+    if any(binary64_norm(value - expected) > tolerance for _, value, _ in located[1:]):
         return None
     candidate = np.asarray(
         patch.evaluate(jnp.asarray(uv, dtype=jnp.float64)), dtype=np.float64
     )
-    if np.linalg.norm(candidate - expected) > tolerance:
+    if binary64_norm(candidate - expected) > tolerance:
         return None
     return uv, candidate, nonisolated
 
@@ -536,7 +550,7 @@ def _circle_revolution_normal(
     # (a . q') w - (w . q') a in meridian coordinates, turned by the angle.
     turned = frame.turned(angle)
     normal = side * (derivative[1] * turned - derivative[0] * frame.axis)
-    length = float(np.linalg.norm(normal))
+    length = float(binary64_norm(normal))
     if not length > 0.0:
         return None
     tangent = -np.sin(angle) * frame.meridian + np.cos(angle) * frame.binormal
@@ -559,7 +573,7 @@ def _face_normal_and_frame(
             dtype=np.float64,
         )
     normal = np.cross(jacobian[:, 0], jacobian[:, 1])
-    length = float(np.linalg.norm(normal))
+    length = float(binary64_norm(normal))
     if not np.isfinite(length) or length <= 128.0 * np.finfo(np.float64).eps:
         if isinstance(patch, SpherePatch):
             longitude, latitude = (float(value) for value in parameters)
@@ -571,16 +585,16 @@ def _face_normal_and_frame(
                 + np.cos(latitude) * np.sin(longitude) * second_axis
                 + np.sin(latitude) * third_axis
             )
-            radial_length = float(np.linalg.norm(radial))
+            radial_length = float(binary64_norm(radial))
             if radial_length > 0.0 and np.isfinite(radial_length):
                 normal = orientation * radial / radial_length
                 first = -np.sin(longitude) * first_axis + np.cos(longitude) * second_axis
-                first /= np.linalg.norm(first)
+                first /= binary64_norm(first)
                 frame = np.stack((first, np.cross(normal, first)))
                 if embedding is None:
                     return normal, frame, True
                 basis = np.stack((embedding.x_axis, embedding.y_axis), axis=1)
-                return np.full((2,), np.nan), frame @ basis, True
+                return np.full((2,), np.nan), binary64_matmul(frame, basis), True
         if isinstance(patch, RevolutionSurface) and profile_interval is not None:
             regular = _circle_revolution_normal(patch, parameters, profile_interval)
             if regular is not None:
@@ -590,14 +604,14 @@ def _face_normal_and_frame(
                 if embedding is None:
                     return normal, frame, True
                 basis = np.stack((embedding.x_axis, embedding.y_axis), axis=1)
-                return np.full((2,), np.nan), frame @ basis, True
+                return np.full((2,), np.nan), binary64_matmul(frame, basis), True
         if embedding is not None:
             return np.full((2,), np.nan), np.full((2, 2), np.nan), False
         return _NAN3.copy(), _NAN_FRAME3.copy(), False
     normal = orientation * normal / length
-    first_length = float(np.linalg.norm(jacobian[:, 0]))
+    first_length = float(binary64_norm(jacobian[:, 0]))
     if first_length <= 128.0 * np.finfo(np.float64).eps:
-        first = jacobian[:, 1] / np.linalg.norm(jacobian[:, 1])
+        first = jacobian[:, 1] / binary64_norm(jacobian[:, 1])
     else:
         first = jacobian[:, 0] / first_length
     second = np.cross(normal, first)
@@ -606,7 +620,7 @@ def _face_normal_and_frame(
         return normal, frame, True
     return (
         np.full((2,), np.nan),
-        frame @ np.stack((embedding.x_axis, embedding.y_axis), axis=1),
+        binary64_matmul(frame, np.stack((embedding.x_axis, embedding.y_axis), axis=1)),
         True,
     )
 
@@ -890,12 +904,12 @@ def _prepare_face(model: BRepModel, face: int, /) -> _PreparedFace:
             for axis in (patch.first_axis, patch.second_axis, patch.axis)
         )
         if isinstance(patch, CylinderPatch):
-            axis_squared = float(axes[2] @ axes[2])
+            axis_squared = float(binary64_dot(axes[2], axes[2]))
             if axis_squared > 0.0:
                 frame = np.stack((axes[0], axes[1], axes[2] / np.sqrt(axis_squared)))
                 valid_frame = bool(
                     np.allclose(
-                        frame @ frame.T,
+                        binary64_matmul(frame, frame.T),
                         np.eye(3),
                         rtol=0.0,
                         atol=256.0 * np.finfo(np.float64).eps,
@@ -907,7 +921,7 @@ def _prepare_face(model: BRepModel, face: int, /) -> _PreparedFace:
             frame = np.column_stack(axes)
             valid_frame = bool(
                 np.allclose(
-                    frame.T @ frame,
+                    binary64_matmul(frame.T, frame),
                     np.eye(3),
                     rtol=0.0,
                     atol=256.0 * np.finfo(np.float64).eps,
@@ -971,7 +985,7 @@ def _prepare_edge(model: BRepModel, edge: int, /) -> _PreparedEdge:
         origin = np.asarray(curve.center, dtype=np.float64)
         axes = (np.asarray(curve.first_axis), np.asarray(curve.second_axis))
     if direction is not None:
-        squared = float(direction @ direction)
+        squared = float(binary64_dot(direction, direction))
     return _PreparedEdge(
         (float(ranges[0]), float(ranges[1])), origin, direction, squared, axes
     )
@@ -1092,7 +1106,9 @@ def _line_curve_hit(
             return _unresolved(1, edge, path)
         if squared <= np.finfo(np.float64).tiny:
             return _unresolved(1, edge, path)
-        parameter = float(np.clip((point - origin) @ direction / squared, first, last))
+        parameter = float(
+            np.clip(binary64_dot(point - origin, direction) / squared, first, last)
+        )
         pending_point = defer_point
         closest = (
             _NAN3.copy()
@@ -1110,8 +1126,8 @@ def _line_curve_hit(
         if edge_data.origin is None:
             return _unresolved(1, edge, path)
         relative = point - edge_data.origin
-        x = float(relative @ edge_data.axes[0])
-        y = float(relative @ edge_data.axes[1])
+        x = float(binary64_dot(relative, edge_data.axes[0]))
+        y = float(binary64_dot(relative, edge_data.axes[1]))
         if x == 0.0 and y == 0.0:
             around = _arc_distance(
                 curve, point, (first, last, first), edge=edge, preparation=preparation
@@ -1146,7 +1162,8 @@ def _line_curve_hit(
                 )
                 if preparation is not None:
                     preparation.circle_endpoints[edge] = (values[0], values[1])
-            nearest = int(np.argmin([np.sum((value - point) ** 2) for value in values]))
+            offsets = tuple(value - point for value in values)
+            nearest = int(np.argmin([binary64_dot(offset, offset) for offset in offsets]))
             parameter = endpoints[nearest]
             closest = values[nearest]
         else:
@@ -1196,7 +1213,7 @@ def _line_curve_hit(
                 preparation.line_derivatives[edge] = derivative
             if preparation is not None and endpoint_key is not None:
                 preparation.circle_endpoint_derivatives[endpoint_key] = derivative
-        derivative_length = float(np.linalg.norm(derivative))
+        derivative_length = float(binary64_norm(derivative))
         tangent = derivative / derivative_length if derivative_length else _NAN3.copy()
         tangents = np.stack((tangent, _NAN3))
         if derivative_length == 0.0 and status != _AMBIGUOUS:
@@ -1314,7 +1331,8 @@ def _plane_boundary_hit(
             tolerance = 256.0 * np.finfo(np.float64).eps * scale
             if np.linalg.norm(closest - lifted) > tolerance:
                 return None
-            distance = float(np.sum((point - closest) ** 2))
+            offset = point - closest
+            distance = float(binary64_dot(offset, offset))
             lower = min(lower, hit.lower)
             if best is None or distance < best[0]:
                 best = distance, closest, uv, hit.upper
@@ -3222,8 +3240,8 @@ def _project_face(
         if not radius > 0.0:
             return _unresolved(2, face, path)
         relative = point - origin
-        axial = float(relative @ axis) / axis_squared
-        x, y = float(relative @ first), float(relative @ second)
+        axial = float(binary64_dot(relative, axis)) / axis_squared
+        x, y = float(binary64_dot(relative, first)), float(binary64_dot(relative, second))
         radial = float(np.hypot(x, y))
         carrier_distance = _cylinder_distance(
             patch, point, (float(bounds[0, 1]), float(bounds[1, 1]))
@@ -3286,8 +3304,10 @@ def _project_face(
         if carrier_distance is None:
             return _unresolved(2, face, path)
         relative = point - center
-        coordinates = np.asarray([relative @ axis for axis in axes], dtype=np.float64)
-        length = float(np.linalg.norm(coordinates))
+        coordinates = np.asarray(
+            [binary64_dot(relative, axis) for axis in axes], dtype=np.float64
+        )
+        length = float(binary64_norm(coordinates))
         if length == 0.0:
             latitude_tolerance = 256.0 * np.finfo(np.float64).eps
             if (
@@ -3328,8 +3348,8 @@ def _project_face(
         if origin is None or not prepared.valid_frame:
             return _unresolved(2, face, path)
         relative = point - origin
-        axial_point = float(relative @ axis)
-        x, y = float(relative @ first), float(relative @ second)
+        axial_point = float(binary64_dot(relative, axis))
+        x, y = float(binary64_dot(relative, first)), float(binary64_dot(relative, second))
         radial_point = float(np.hypot(x, y))
         tangent, reference = prepared.radii
         axial = (axial_point + tangent * (radial_point - reference)) / (
@@ -3376,9 +3396,9 @@ def _project_face(
             return _unresolved(2, face, path)
         relative = point - center
         x, y, z = (
-            float(relative @ first),
-            float(relative @ second),
-            float(relative @ axis),
+            float(binary64_dot(relative, first)),
+            float(binary64_dot(relative, second)),
+            float(binary64_dot(relative, axis)),
         )
         radial = float(np.hypot(x, y))
         major, minor = prepared.radii
@@ -3488,9 +3508,9 @@ def _project_face(
         )
         if dot_exact(exact_axis, exact_axis) != 1:
             return _unresolved(2, face, path)
-        axial_start = float((line_origin - axis_origin) @ axis)
+        axial_start = float(binary64_dot(line_origin - axis_origin, axis))
         radial_start = line_origin - axis_origin - axial_start * axis
-        radial_rate = line_direction - float(line_direction @ axis) * axis
+        radial_rate = line_direction - float(binary64_dot(line_direction, axis)) * axis
         exact_axial_rate = dot_exact(exact_direction, exact_axis)
         exact_radial_start = tuple(
             value - dot_exact(exact_origin, exact_axis) * axis_value
@@ -3510,8 +3530,8 @@ def _project_face(
         )
         if any(value != 0 for value in cross):
             return _unresolved(2, face, path)
-        radial_norm = float(np.linalg.norm(radial_start))
-        rate_norm = float(np.linalg.norm(radial_rate))
+        radial_norm = float(binary64_norm(radial_start))
+        rate_norm = float(binary64_norm(radial_rate))
         if radial_norm > 0.0:
             radial_axis = radial_start / radial_norm
         elif rate_norm > 0.0:
@@ -3583,22 +3603,23 @@ def _project_face(
         profile_last = line_origin + last_parameter * line_direction
         relative_first = profile_first - axis_origin
         relative_last = profile_last - axis_origin
-        z_first, z_last = float(relative_first @ axis), float(relative_last @ axis)
-        rho_first = float(np.linalg.norm(relative_first - z_first * axis))
-        rho_last = float(np.linalg.norm(relative_last - z_last * axis))
+        z_first = float(binary64_dot(relative_first, axis))
+        z_last = float(binary64_dot(relative_last, axis))
+        rho_first = float(binary64_norm(relative_first - z_first * axis))
+        rho_last = float(binary64_norm(relative_last - z_last * axis))
         if crossing:
             rho_last = -rho_last
         relative = point - axis_origin
-        axial_point = float(relative @ axis)
+        axial_point = float(binary64_dot(relative, axis))
         radial_point = relative - axial_point * axis
-        rho_point = float(np.linalg.norm(radial_point))
+        rho_point = float(binary64_norm(radial_point))
         signed_point = -rho_point if mirrored else rho_point
         delta = np.asarray((rho_last - rho_first, z_last - z_first))
-        squared = float(delta @ delta)
+        squared = float(binary64_dot(delta, delta))
         if squared == 0.0:
             return _unresolved(2, face, path)
         phase = np.asarray((signed_point - rho_first, axial_point - z_first))
-        fraction = float(np.clip((phase @ delta) / squared, 0.0, 1.0))
+        fraction = float(np.clip(binary64_dot(phase, delta) / squared, 0.0, 1.0))
         profile_parameter = first_parameter + fraction * (
             last_parameter - first_parameter
         )
@@ -3606,7 +3627,10 @@ def _project_face(
             angle = float(bounds[0, 0])
         else:
             angle = float(
-                np.arctan2(radial_point @ second_axis, radial_point @ radial_axis)
+                np.arctan2(
+                    binary64_dot(radial_point, second_axis),
+                    binary64_dot(radial_point, radial_axis),
+                )
             )
             if mirrored != reversed_side:
                 # The positive meridian side lies along the reference direction
@@ -3617,10 +3641,10 @@ def _project_face(
             patch.evaluate(jnp.asarray(uv, dtype=jnp.float64)), dtype=np.float64
         )
         candidate_relative = candidate - axis_origin
-        candidate_height = float(candidate_relative @ axis)
+        candidate_height = float(binary64_dot(candidate_relative, axis))
         nonisolated = (
             rho_point == 0.0
-            and float(np.linalg.norm(candidate_relative - candidate_height * axis)) > 0.0
+            and float(binary64_norm(candidate_relative - candidate_height * axis)) > 0.0
         )
         rectangle_closest = True
     elif isinstance(patch, RevolutionSurface) and isinstance(patch.curve, CircleCurve):
@@ -4744,18 +4768,19 @@ def _profile_arcs(
     else:
         middle = 0.5 * (start + stop)
         offset = np.cos(middle) * first + np.sin(middle) * second
-        meridian = offset - float(offset @ axis_) * axis_
-    length = float(np.linalg.norm(meridian))
+        meridian = offset - float(binary64_dot(offset, axis_)) * axis_
+    length = float(binary64_norm(meridian))
     if not length > 1.0e-6 * max(1.0, radius):
         return None
     meridian /= length
     orientation = float(
-        (first @ meridian) * (second @ axis_) - (second @ meridian) * (first @ axis_)
+        binary64_dot(first, meridian) * binary64_dot(second, axis_)
+        - binary64_dot(second, meridian) * binary64_dot(first, axis_)
     )
     if abs(abs(orientation) - 1.0) > 1.0e-9:
         return None
     turn = 1.0 if orientation > 0.0 else -1.0
-    phase = float(np.arctan2(first @ axis_, first @ meridian))
+    phase = float(np.arctan2(binary64_dot(first, axis_), binary64_dot(first, meridian)))
     if whole:
         low, high = -0.5 * pi, 1.5 * pi
     else:
@@ -5204,7 +5229,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                     matrix.shape != (4, 4)
                     or not np.all(np.isfinite(matrix))
                     or not np.allclose(
-                        rotation_matrix.T @ rotation_matrix,
+                        binary64_matmul(rotation_matrix.T, rotation_matrix),
                         np.eye(3),
                         rtol=0.0,
                         atol=tolerance,
@@ -5632,7 +5657,7 @@ class NativeBRepProjection(AbstractBRepProjection):
         for occurrence in targets:
             rotation = np.asarray(occurrence.rotation, dtype=np.float64)
             translation = np.asarray(occurrence.translation, dtype=np.float64)
-            local = rotation.T @ (query - translation)
+            local = binary64_matmul(rotation.T, query - translation)
             if not np.all(np.isfinite(local)):
                 hits.append(_unresolved(dimension, index, occurrence.path))
                 continue
@@ -5723,12 +5748,12 @@ class NativeBRepProjection(AbstractBRepProjection):
                 return _failed(self.ambient_dimension)
             if hit.status not in (_FAILED, _UNRESOLVED) and occurrence.path:
                 point = (
-                    rotation @ hit.point + translation
+                    binary64_matmul(rotation, hit.point) + translation
                     if np.all(np.isfinite(hit.point))
                     else hit.point
                 )
                 normal = (
-                    rotation @ hit.normal
+                    binary64_matmul(rotation, hit.normal)
                     if np.all(np.isfinite(hit.normal))
                     else hit.normal
                 )
@@ -5765,7 +5790,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                 or (
                     np.all(np.isfinite(hit.point))
                     and np.all(np.isfinite(best.point))
-                    and np.linalg.norm(hit.point - best.point)
+                    and binary64_norm(hit.point - best.point)
                     > self.policy.ambiguity_tolerance
                 )
             )
@@ -5981,9 +6006,9 @@ class NativeBRepProjection(AbstractBRepProjection):
                 hit = hits[row]
                 occurrence = self._target_occurrences(dimension, hit.index, hit.path)[0]
                 if occurrence.path:
-                    value = np.asarray(
-                        occurrence.rotation, dtype=np.float64
-                    ) @ value + np.asarray(occurrence.translation, dtype=np.float64)
+                    value = binary64_matmul(
+                        np.asarray(occurrence.rotation, dtype=np.float64), value
+                    ) + np.asarray(occurrence.translation, dtype=np.float64)
                 hits[row] = replace(
                     hit,
                     point=value,
@@ -6030,7 +6055,11 @@ class NativeBRepProjection(AbstractBRepProjection):
                 )
                 if occurrence.path:
                     rotation = np.asarray(occurrence.rotation, dtype=np.float64)
-                    normal = rotation @ normal if np.all(np.isfinite(normal)) else normal
+                    normal = (
+                        binary64_matmul(rotation, normal)
+                        if np.all(np.isfinite(normal))
+                        else normal
+                    )
                     tangents = _map_frame(tangents, rotation.T)
                 hits[row] = replace(
                     hit,
@@ -6203,7 +6232,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                 or (
                     np.all(np.isfinite(hit.point))
                     and np.all(np.isfinite(best.point))
-                    and np.linalg.norm(hit.point - best.point) > ambiguity_tolerance
+                    and binary64_norm(hit.point - best.point) > ambiguity_tolerance
                 )
             )
         ]
@@ -6811,7 +6840,7 @@ class NativeBRepProjection(AbstractBRepProjection):
             for occurrence in targets:
                 rotation = np.asarray(occurrence.rotation, dtype=np.float64)
                 translation = np.asarray(occurrence.translation, dtype=np.float64)
-                local = rotation.T @ (query - translation)
+                local = binary64_matmul(rotation.T, query - translation)
                 if not np.all(np.isfinite(local)):
                     unresolved.append(_unresolved(3, occurrence.solid, occurrence.path))
                     continue
