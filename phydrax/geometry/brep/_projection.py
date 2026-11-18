@@ -6589,6 +6589,9 @@ class NativeBRepProjection(AbstractBRepProjection):
                     unresolved.append(hit)
                 else:
                     projected.append(hit)
+            if all(hit.status == _FAILED for hit in all_hits):
+                hits.append(_failed(self.ambient_dimension))
+                continue
             if unresolved:
                 hits.append(
                     replace(
