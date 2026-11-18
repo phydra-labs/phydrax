@@ -44,7 +44,7 @@ from .._association import (
 )
 from .._certification import _ComputedSurfaceAcceptance
 from .._certification_schedule import MeshCertificationSchedule
-from .._contracts import VolumeMeshingSpec
+from .._contracts import MeshingFailureEvidence, VolumeMeshingSpec
 from .._controls import (
     FeatureKind,
     HoleSeed,
@@ -62,6 +62,13 @@ from .._plc_source import _ValidatedCadSurface, PiecewiseLinearComplex, PlcBound
 from .._result import CellMeshingResult, MeshingComplianceReport
 from .._scope import MeshingEntityKind, MeshingScope
 from .._sizing import UniformSizeControl
+from .._trace import (
+    MeshingDiagnostic,
+    MeshingDiagnosticSeverity,
+    MeshingStageKind,
+    MeshingStageReport,
+    MeshingStageStatus,
+)
 from .._volume_generation import (
     generate_plc_volume,
     NativeVolumeSchedule,
@@ -86,6 +93,60 @@ def _readonly(value: np.ndarray, dtype: np.dtype, /) -> np.ndarray:
     result = np.array(value, dtype=dtype, copy=True)
     result.setflags(write=False)
     return result
+
+
+def _surface_fidelity_evaluation_stage(
+    surface: CellMeshingResult, /
+) -> MeshingStageReport:
+    """Retain surface-fidelity evaluation evidence in the enclosing volume."""
+    report = surface.certification
+    counts: dict[str, int] = {}
+    unknown = 0
+    seen: set[int] = set()
+    if report is None:
+        unknown = 1
+    else:
+        for certificate in (report.fidelity, *report.scoped_fidelity):
+            if certificate is None or id(certificate) in seen:
+                continue
+            seen.add(id(certificate))
+            declaration = certificate.unspecified_evaluations
+            if declaration is None:
+                unknown += 1
+                continue
+            for kind, count in declaration:
+                counts[kind] = counts.get(kind, 0) + count
+    values = tuple(sorted(counts.items()))
+    if not values:
+        values = (("none", 0),)
+    diagnostics = tuple(
+        MeshingDiagnostic(
+            MeshingDiagnosticSeverity.INFO,
+            "Surface fidelity unspecified evaluations.",
+            provider_code="stored_coordinate_unspecified_surface_fidelity",
+            failure_evidence=MeshingFailureEvidence(
+                achieved_quantities={"count": float(count)},
+                logical_findings=(kind,),
+            ),
+        )
+        for kind, count in values
+    )
+    diagnostics += (
+        MeshingDiagnostic(
+            MeshingDiagnosticSeverity.INFO,
+            "Surface fidelity certificates without evaluation evidence.",
+            provider_code="stored_coordinate_unspecified_surface_fidelity_unknown",
+            failure_evidence=MeshingFailureEvidence(
+                achieved_quantities={"count": float(unknown)}
+            ),
+        ),
+    )
+    return MeshingStageReport(
+        MeshingStageKind.GEOMETRY_AUDIT,
+        MeshingStageStatus.PASSED,
+        input_ids=(surface.result_id,),
+        diagnostics=diagnostics,
+    )
 
 
 def _domain_stratum(
@@ -3596,7 +3657,18 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
             certification,
             geometry=physical.geometry,
             organization=organization,
-            stages=construction.stages,
+            stages=(
+                *(
+                    stage
+                    for stage in self.source.surface.trace.stages
+                    if any(
+                        diagnostic.provider_code == "stored_coordinate_unspecified_construction"
+                        for diagnostic in stage.diagnostics
+                    )
+                ),
+                _surface_fidelity_evaluation_stage(self.source.surface),
+                *construction.stages,
+            ),
         )
 
 

@@ -894,6 +894,7 @@ def test_polyhedral_surface_chart_uses_actual_triangulated_face_vertices() -> No
     )
 
     assert certificate.status == "certified"
+    assert certificate.unspecified_evaluations == ()
     coverage = certificate.coverage
     assert coverage is not None
     assert coverage.semantics == "certified"
@@ -1482,6 +1483,7 @@ def test_parametric_curve_point_witness_uses_authored_endpoint_query() -> None:
     )
 
     assert certificate.status == "certified"
+    assert certificate.unspecified_evaluations is None
     assert certificate.mesh_to_source_upper == 0.0
 
 
@@ -2048,6 +2050,8 @@ def test_source_fidelity_reports_nonzero_parallel_offset() -> None:
     bounded = certify_source_fidelity(
         mesh, geometry, source, tolerance=0.25, witness=witness
     )
+    assert bounded.unspecified_evaluations == ()
+    assert bounded.adopt_reproof(bounded).unspecified_evaluations == ()
     assert bounded.status == "certified"
     assert bounded.mesh_to_source_upper >= offset
     assert bounded.source_to_mesh_upper >= offset

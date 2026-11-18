@@ -123,6 +123,7 @@ def _fidelity_certificate_identity(fields: dict[str, Any], /) -> str:
         "witness": None if witness is None else witness.witness_id,
         "coverage": None if coverage is None else coverage.cover_id,
         "findings": tuple(finding.finding_id for finding in fields["findings"]),
+        "unspecified_evaluations": fields["unspecified_evaluations"],
         "status": fields["status"],
     }
     restriction = fields["chart_restriction"]
@@ -184,7 +185,12 @@ def _require_intersecting(
 
 @final
 class SourceFidelityCertificate(StrictModule, NonTrainableState):
-    """Continuous two-directed bounds and optional oriented-normal evidence."""
+    """Continuous bounds and optional counts of unspecified point evaluations.
+
+    ``unspecified_evaluations`` contains sorted operation-local class/count
+    pairs, or ``None`` when contributing preparations are not all reported.
+    Counts include evaluations used during proof, not only final stored points.
+    """
 
     __strict_contract__ = True
 
@@ -213,6 +219,7 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
     coverage: SourceBoundaryChartCover | None
     status: MeshCertificateStatus
     findings: tuple[MeshCertificateFinding, ...]
+    unspecified_evaluations: tuple[tuple[str, int], ...] | None
     # Implicit root-chart evidence: every row's own proof, keyed by its proof
     # inputs (not part of the certificate identity; checked by its own); and
     # the restriction theorem with its premise when the bounds were inherited.
@@ -268,6 +275,7 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
         self.coverage = computed.coverage
         self.status = computed.status
         self.findings = computed.findings
+        self.unspecified_evaluations = computed.unspecified_evaluations
         self.chart_rows = computed.chart_rows
         self.chart_restriction = computed.chart_restriction
         self.chart_premise = computed.chart_premise
@@ -298,7 +306,18 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
         chart_rows: ImplicitChartRows | None = None,
         chart_restriction: ImplicitChartRestrictionEvidence | None = None,
         chart_premise: ImplicitChartPremise | None = None,
+        unspecified_evaluations: tuple[tuple[str, int], ...] | None = None,
     ) -> SourceFidelityCertificate:
+        if unspecified_evaluations is not None and (
+            tuple(sorted(unspecified_evaluations)) != unspecified_evaluations
+            or len({name for name, _ in unspecified_evaluations})
+            != len(unspecified_evaluations)
+            or any(
+                not name or isinstance(count, bool) or count <= 0
+                for name, count in unspecified_evaluations
+            )
+        ):
+            raise ValueError("Unspecified evaluation counts must be sorted and positive.")
         if (chart_restriction is None) != (chart_premise is None):
             raise ValueError(
                 "An inherited implicit-chart certificate needs its restriction "
@@ -406,6 +425,7 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
             "witness": witness,
             "coverage": coverage,
             "status": status,
+            "unspecified_evaluations": unspecified_evaluations,
             "findings": tuple(findings),
             "chart_rows": chart_rows,
             "chart_restriction": chart_restriction,
@@ -432,6 +452,7 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
                 "coverage": self.coverage,
                 "findings": self.findings,
                 "status": self.status,
+                "unspecified_evaluations": self.unspecified_evaluations,
                 "chart_restriction": self.chart_restriction,
             }
         )
@@ -709,6 +730,7 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
             coverage=coverage,
             findings=self.findings,
             status=self.status,
+            unspecified_evaluations=self.unspecified_evaluations,
             chart_rows=stored_rows,
             certificate_id=self.certificate_id,
         )

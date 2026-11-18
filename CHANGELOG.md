@@ -1,6 +1,23 @@
 # Changelog
 
 ## Unreleased
+- Native CAD meshing stores an analytic surface point as the lower endpoint of
+  its lowered host interval program, and an intersection chart point as the
+  lower endpoint of its certified point enclosure intersected with the
+  certified source span. Exact rational line charts remain exact. Supported
+  lowered planes, cylinders, cones, spheres, tori, revolutions, and placements
+  use this convention; evaluators that decline it retain their prior numerical
+  route and are declared by evaluation kind and count where their operation
+  carries declaration evidence. Counts describe evaluations, not final
+  coordinate rows; uncovered query evidence is not represented as a global
+  zero. CAD surface and volume meshes and every identity derived from them
+  change once on every platform and affected stored results must be rebuilt.
+  Stored coordinates are defined by the lowered program: a JAX version that
+  reorders its trace changes identity and must be announced as such.
+  Intersection qualification residuals now compare stored-route surface
+  lifts rather than compiled coupled-evaluator outputs. Source root charts and
+  curve queries use domain content and row order rather than source-name
+  hashes to break geometric ties.
 - Native geometry and meshing now share a single fixed-order binary64 dot,
   matrix product, and norm definition. On platforms whose BLAS fused or
   reordered these operations, rounding can change surface-association

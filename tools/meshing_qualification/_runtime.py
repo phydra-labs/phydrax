@@ -73,7 +73,76 @@ def accepted_result_record(result: phx.meshing.CellMeshingResult, /) -> dict[str
         raise RuntimeError("Native result failed its requested meshing compliance.")
     if result.provider.name != "phydrax-native":
         raise RuntimeError(f"Unexpected meshing backend: {result.provider.name!r}.")
+    unspecified: dict[str, int] = {}
+    reported = False
+    surface_fidelity_counts: dict[str, int] = {}
+    surface_fidelity_unknown = 0
+    surface_fidelity_reported = False
+    for stage in result.trace.stages:
+        for diagnostic in stage.diagnostics:
+            code = diagnostic.provider_code
+            if code not in (
+                "stored_coordinate_unspecified_construction",
+                "stored_coordinate_unspecified_surface_fidelity",
+                "stored_coordinate_unspecified_surface_fidelity_unknown",
+            ):
+                continue
+            amounts = dict(diagnostic.achieved_quantities)
+            if "count" not in amounts:
+                raise RuntimeError("Stored-coordinate declaration lacks its evaluation count.")
+            count = amounts["count"]
+            if count < 0 or not count.is_integer():
+                raise RuntimeError("Stored-coordinate evaluation count must be a nonnegative integer.")
+            if code == "stored_coordinate_unspecified_surface_fidelity_unknown":
+                surface_fidelity_unknown += int(count)
+                surface_fidelity_reported = True
+                continue
+            if len(diagnostic.logical_findings) != 1:
+                raise RuntimeError("Stored-coordinate declaration lacks an evaluator kind.")
+            kind = diagnostic.logical_findings[0]
+            if code == "stored_coordinate_unspecified_construction":
+                reported = True
+                target = unspecified
+            else:
+                surface_fidelity_reported = True
+                target = surface_fidelity_counts
+            if kind != "none":
+                target[kind] = target.get(kind, 0) + int(count)
+    certificate_counts: dict[str, int] = {}
+    unknown_certificates = 0
+    seen_certificates: set[int] = set()
+    certificates = (
+        result.certification.fidelity,
+        *result.certification.scoped_fidelity,
+    )
+    for certificate in certificates:
+        if certificate is None or id(certificate) in seen_certificates:
+            continue
+        seen_certificates.add(id(certificate))
+        counts = certificate.unspecified_evaluations
+        if counts is None:
+            unknown_certificates += 1
+            continue
+        for kind, count in counts:
+            certificate_counts[kind] = certificate_counts.get(kind, 0) + count
     return {
+        **(
+            {"construction_unspecified_evaluations": dict(sorted(unspecified.items()))}
+            if reported
+            else {}
+        ),
+        **(
+            {
+                "source_surface_fidelity_unspecified_evaluations": dict(
+                    sorted(surface_fidelity_counts.items())
+                ),
+                "source_surface_fidelity_unspecified_evidence_unknown": surface_fidelity_unknown,
+            }
+            if surface_fidelity_reported
+            else {}
+        ),
+        "fidelity_unspecified_evaluations": dict(sorted(certificate_counts.items())),
+        "fidelity_unspecified_evidence_unknown": unknown_certificates,
         "result_id": result.result_id,
         "topology_id": result.mesh.topology_id,
         "provider": result.provider.name,
