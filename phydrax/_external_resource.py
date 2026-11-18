@@ -21,6 +21,11 @@ from ._host_io import open_regular_beneath, OpenedHostFile
 _ResourceFailure = Literal["policy", "malformed", "limit", "inconsistent"]
 
 
+def content_source_identity(format_name: str, digest: str, /) -> str:
+    """Name exact source bytes independently of their storage location."""
+    return f"{format_name}-{digest[:16]}"
+
+
 class ResourceReadError(ValueError):
     """Fail-closed resource-read error with a stable failure category."""
 

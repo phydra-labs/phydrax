@@ -18,7 +18,7 @@ import hashlib
 import importlib
 import io
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from types import ModuleType
@@ -301,7 +301,7 @@ def import_occt_shape(
     # The declared identity is bound when the model is published, so the
     # tessellation's source-fidelity proof is derived once, on that model.
     return decode_brep_text_resource(
-        CadResource(payload, hashlib.sha256(payload).hexdigest(), identifier),
+        CadResource(payload, hashlib.sha256(payload).hexdigest()),
         CadImportPolicy(
             coordinate_contract,
             tessellation=tessellation,
@@ -310,6 +310,7 @@ def import_occt_shape(
         source_length_unit=coordinate_contract.length_unit,
         source_format=source_format,
         source_digest=source_digest,
+        source_id=identifier,
     )
 
 
@@ -324,8 +325,7 @@ def persist_occt_shape(
 ) -> CadImportResult:
     """Publish a validated BRep-text carrier, then import its native source.
 
-    Returns the same codec result as :func:`import_occt_shape`, bound to the
-    published path and digest.
+    Returns the codec result bound to the published content digest.
     """
     if not isinstance(coordinate_contract, SpatialCoordinateContract):
         raise TypeError("coordinate_contract must be a SpatialCoordinateContract.")
@@ -357,13 +357,18 @@ def persist_occt_shape(
         mode=mode,
         validator=validate_staged,
     )
-    return import_occt_shape(
+    from ._cad_io import CadResource
+
+    result = import_occt_shape(
         shape,
         coordinate_contract=coordinate_contract,
-        source_id=os.fspath(target),
+        source_id=CadResource(payload, digest).source_identity("brep-text"),
         source_digest=digest,
         source_format="brep",
         tessellation=tessellation,
+    )
+    return replace(
+        result, provenance=result.provenance + (("source-path", os.fspath(target)),)
     )
 
 

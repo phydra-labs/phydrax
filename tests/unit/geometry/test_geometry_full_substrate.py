@@ -388,7 +388,8 @@ def test_persist_occt_shape_publishes_native_identity_without_clobbering(
     published_digest = hashlib.sha256(published_bytes).hexdigest()
     published_revision = model.source_revision
 
-    assert model.source_id == str(destination.resolve())
+    assert model.source_id == f"brep-text-{published_digest[:16]}"
+    assert ("source-path", str(destination.resolve())) in published.provenance
     assert model.source_digest == published_digest
     assert published.source_digest == published_digest
     assert published.report.target_id == model.model_id
@@ -414,6 +415,23 @@ def test_persist_occt_shape_publishes_native_identity_without_clobbering(
     assert reopened.source_digest == model.source_digest
     assert reopened.source_revision == published_revision
     assert reopened.model_id == model.model_id
+    other_directory = tmp_path / "other"
+    other_directory.mkdir()
+    copied = persist_occt_shape(
+        bd.Box(1.0, 2.0, 3.0).wrapped,
+        other_directory / "other.brep",
+        coordinate_contract=_SI_COORDINATES,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.1, angular_deflection=0.3
+        ),
+    )
+    assert (other_directory / "other.brep").read_bytes() == published_bytes
+    assert copied.model.source_id == model.source_id
+    assert copied.model.source_revision == model.source_revision
+    assert copied.result_id == published.result_id
+    assert phx.geometry.BRepEntityId(
+        copied.model.source_id, copied.model.source_revision, "face", 0
+    ) == (phx.geometry.BRepEntityId(model.source_id, model.source_revision, "face", 0))
 
     with pytest.raises(FileExistsError):
         persist_occt_shape(

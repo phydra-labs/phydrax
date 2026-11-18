@@ -1,6 +1,12 @@
 # Changelog
 
 ## Unreleased
+- Imported CAD, surface, and mesh sources now use a format prefix and the first
+  16 hexadecimal digits of the source bytes' SHA-256 digest, not the file path.
+  Imported model identities and identities derived from them change; stored
+  results of imported models must be regenerated. Embedded Phydrax surface
+  identities remain authoritative.
+
 
 ### Added
 - `MetricMeshAdaptation` accepts `accepted_minimum_length`, the smallest metric

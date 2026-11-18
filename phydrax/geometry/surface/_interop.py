@@ -23,7 +23,11 @@ from xml.sax.saxutils import escape
 import numpy as np
 from numpy.typing import ArrayLike
 
-from ..._external_resource import read_bounded_resource, ResourceLimits
+from ..._external_resource import (
+    content_source_identity,
+    read_bounded_resource,
+    ResourceLimits,
+)
 from ..._physical import SpatialCoordinateContract
 from ..._publication import publish_bytes
 from ...units import (
@@ -357,6 +361,7 @@ class SurfaceInteropReport:
     lossy: bool
     losses: tuple[str, ...]
     fields: tuple[SurfaceFieldRecord, ...]
+    source_path: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -634,6 +639,7 @@ def _import_meshio_surface(
     policy: SurfaceImportPolicy,
     artifact_digest: str,
     source_identity: str,
+    source_path: str,
     /,
 ) -> SurfaceImportResult:
     meshio = _require_module("meshio", f"{file_format.value} surface import")
@@ -765,6 +771,7 @@ def _import_meshio_surface(
         lossy=bool(losses_),
         losses=losses_,
         fields=_field_records(fields),
+        source_path=source_path,
     )
     return SurfaceImportResult(model, fields, report)
 
@@ -874,6 +881,7 @@ def _import_cad_surface(
         lossy=True,
         losses=losses,
         fields=(),
+        source_path=str(source),
     )
     return SurfaceImportResult(model, (), report, cad_model)
 
@@ -885,7 +893,7 @@ def import_surface(
     *,
     file_format: SurfaceFileFormat | None = None,
 ) -> SurfaceImportResult:
-    """Import a surface to authoritative SI coordinates without healing or welding."""
+    """Import a surface in SI, retaining the input path only in the report."""
 
     if not isinstance(policy, SurfaceImportPolicy):
         raise TypeError("policy must be SurfaceImportPolicy.")
@@ -917,6 +925,7 @@ def import_surface(
             format_,
             policy,
             resource.manifest.content_sha256,
+            content_source_identity(format_.value, resource.manifest.content_sha256),
             str(source),
         )
 

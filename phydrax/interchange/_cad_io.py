@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
 
+from .._external_resource import content_source_identity
 from .._host_io import open_regular_beneath
 from ..typing import checked
 from ..units._dimension import LENGTH
@@ -29,6 +30,12 @@ class CadResource:
     data: bytes | mmap.mmap
     digest: str
     source_path: str | None = None
+
+    def source_identity(self, format_name: str, digest: str | None = None) -> str:
+        """Identify source bytes independently of their location."""
+        return content_source_identity(
+            format_name, self.digest if digest is None else digest
+        )
 
 
 type CadResourceDecoder = Callable[[CadResource, CadImportPolicy], CadImportResult]
@@ -102,6 +109,8 @@ def read_cad(
 
     BRep text requires an explicit length unit; embedded STEP and IGES units
     cannot be overridden.
+    The format-prefixed source identity is derived from the source bytes'
+    SHA-256 digest. The read path is retained only as result provenance.
     """
     if source_length_unit is not None and source_length_unit.dimension != LENGTH:
         raise ValueError(
