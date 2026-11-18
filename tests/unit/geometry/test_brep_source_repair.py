@@ -1117,6 +1117,18 @@ def test_intersection_chart_source_bounds_enclose_exact_carriers(
                     curve, side, first=0.0, last=1.0, reversed=reversed_source
                 )
                 evaluate, lower, upper = pcurve._chart_evaluator_with_source_bounds(0)
+                parameterized, other_lower, other_upper, structure = (
+                    pcurve._parameterized_chart_evaluator_with_source_bounds(0)
+                )
+                assert np.array_equal(other_lower, lower)
+                assert np.array_equal(other_upper, upper)
+                assert structure[-2:] == (reversed_source, side)
+                values = jnp.asarray(lower)
+                arguments = (jnp.asarray(0.375), jnp.asarray(2 * np.pi), values)
+                assert np.array_equal(
+                    np.asarray(evaluate(*arguments)),
+                    np.asarray(parameterized(*arguments, jnp.asarray(0.0))),
+                )
                 for index, exact in ((2, large_radius), (3, small_radius)):
                     assert (
                         Fraction(float(lower[index]))
