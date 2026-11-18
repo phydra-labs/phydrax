@@ -1,6 +1,11 @@
 # Changelog
 
 ## Unreleased
+- Fix certified B-Rep face projection at partial angular windows: a rounded
+  projected parameter no longer proves that the carrier foot lies within the
+  face, and conservative hits retain sound distance bounds. Placed
+  non-deferred projections now include transformation rounding in their
+  residual bounds. Projection statuses, bounds and derived evidence may change.
 - Closed-form B-Rep face projection now uses specified binary64 chart
   parameters for planes, cylinders, straight-profile revolutions, spheres,
   cones, and tori; projected points use the lowered host surface program.

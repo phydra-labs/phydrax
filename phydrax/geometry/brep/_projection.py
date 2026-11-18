@@ -17,6 +17,7 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from ..._exact_kernels import float64_interval_elementary
 from ..._fingerprint import canonical_fingerprint
 from ..._meshcore import angle_arctangent2, angle_cosine, angle_sine
 from ..._validation import positive_finite_float
@@ -110,6 +111,46 @@ class _Occurrence:
     solid: int
     rotation: tuple[tuple[float, ...], ...]
     translation: tuple[float, ...]
+    exact_matrix: tuple[tuple[Fraction, ...], ...] | None = None
+
+
+def _identity_occurrence(occurrence: _Occurrence, /) -> bool:
+    if not occurrence.path:
+        return True
+    matrix = occurrence.exact_matrix
+    return matrix == (
+        (1, 0, 0, 0),
+        (0, 1, 0, 0),
+        (0, 0, 1, 0),
+        (0, 0, 0, 1),
+    )
+
+
+def _local_query_error(
+    occurrence: _Occurrence, query: np.ndarray, local: np.ndarray, /
+) -> Fraction | None:
+    """Upper-bound rounding of an exact rational isometric inverse placement."""
+    matrix = occurrence.exact_matrix
+    if matrix is None:
+        return None
+    if any(
+        sum(matrix[k][i] * matrix[k][j] for k in range(3)) != int(i == j)
+        for i in range(3)
+        for j in range(3)
+    ):
+        return None
+    relative = tuple(Fraction(float(query[i])) - matrix[i][3] for i in range(3))
+    exact = tuple(
+        sum((matrix[j][i] * relative[j] for j in range(3)), Fraction(0)) for i in range(3)
+    )
+    squared = sum(
+        (
+            (Fraction(float(value)) - expected) ** 2
+            for value, expected in zip(local, exact, strict=True)
+        ),
+        Fraction(0),
+    )
+    return fraction_sqrt_interval(squared)[1]
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +183,9 @@ class _ProjectionPreparation:
     )
     lifts: dict[tuple[int, int], bool] = field(default_factory=dict)
     angle_bounds: dict[int, tuple[float, float] | None] = field(default_factory=dict)
+    angular_windows: dict[tuple[int, int], _AngularWindow] = field(default_factory=dict)
+    window_frames: dict[int, _WindowFrame | None] = field(default_factory=dict)
+    torus_windows: dict[int, _TorusWindowFilter | None] = field(default_factory=dict)
     faces: dict[int, _PreparedFace] = field(default_factory=dict)
     orientations: dict[tuple[int, int], float] = field(default_factory=dict)
     edges: dict[int, _PreparedEdge] = field(default_factory=dict)
@@ -625,6 +669,459 @@ def _face_normal_and_frame(
         binary64_matmul(frame, np.stack((embedding.x_axis, embedding.y_axis), axis=1)),
         True,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class _AngularWindow:
+    """Outward edge directions and the exact-width case of one chart window."""
+
+    mode: int
+    cosine: tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]]
+    sine: tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]]
+    pi_upper: Fraction
+
+
+@dataclass(frozen=True, slots=True)
+class _WindowFrame:
+    origin: tuple[Fraction, ...]
+    first: tuple[Fraction, ...]
+    second: tuple[Fraction, ...]
+    axis: tuple[Fraction, ...]
+    profile_origin: tuple[Fraction, ...] | None = None
+    profile_direction: tuple[Fraction, ...] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _TorusWindowFilter:
+    program: PreparedIntervalFunction
+    lower: np.ndarray
+    upper: np.ndarray
+
+
+def _angular_window(
+    bounds: np.ndarray, axis: int, full_period: bool, /
+) -> _AngularWindow:
+    edges = np.asarray(bounds[:, axis], dtype=np.float64)
+    cos_lower, cos_upper = float64_interval_elementary("cos", edges, edges)
+    sin_lower, sin_upper = float64_interval_elementary("sin", edges, edges)
+    minus_one = np.asarray((-1.0,), dtype=np.float64)
+    pi_lower, pi_upper = float64_interval_elementary("acos", minus_one, minus_one)
+    width = Fraction(float(edges[1])) - Fraction(float(edges[0]))
+    lower_pi, upper_pi = Fraction(float(pi_lower[0])), Fraction(float(pi_upper[0]))
+    # 1: narrower than pi; 2: wider than pi (including an uncertain full turn);
+    # 3: a proved complete turn; 0: unresolved half-turn case.
+    if full_period or width >= 2 * upper_pi:
+        mode = 3
+    elif 0 < width < lower_pi:
+        mode = 1
+    elif upper_pi < width:
+        mode = 2
+    else:
+        mode = 0
+    cosine = tuple(
+        (Fraction(float(low)), Fraction(float(high)))
+        for low, high in zip(cos_lower, cos_upper, strict=True)
+    )
+    sine = tuple(
+        (Fraction(float(low)), Fraction(float(high)))
+        for low, high in zip(sin_lower, sin_upper, strict=True)
+    )
+    return _AngularWindow(mode, (cosine[0], cosine[1]), (sine[0], sine[1]), upper_pi)
+
+
+def _cross_sign(
+    x: Fraction,
+    y: Fraction,
+    cosine: tuple[Fraction, Fraction],
+    sine: tuple[Fraction, Fraction],
+    /,
+) -> int:
+    products = tuple(y * c - x * s for c in cosine for s in sine)
+    if min(products) > 0:
+        return 1
+    if max(products) < 0:
+        return -1
+    return 0
+
+
+def _window_contains_direction(
+    window: _AngularWindow, x: Fraction, y: Fraction, /
+) -> bool:
+    if x == 0 and y == 0:
+        return False
+    if window.mode == 3:
+        return True
+    first = _cross_sign(x, y, window.cosine[0], window.sine[0])
+    last = _cross_sign(x, y, window.cosine[1], window.sine[1])
+    if window.mode == 1:
+        return first > 0 and last < 0
+    if window.mode == 2:
+        return first > 0 or last < 0
+    return False
+
+
+def _fraction_vector(values: Sequence[ExactScalar], /) -> tuple[Fraction, ...] | None:
+    result: list[Fraction] = []
+    for value in values:
+        if not isinstance(value, Fraction):
+            return None
+        result.append(value)
+    return tuple(result)
+
+
+def _window_frame(patch: AbstractSurfacePatch, /) -> _WindowFrame | None:
+    if isinstance(patch, (CylinderPatch, TorusPatch)):
+        source_origin = (
+            patch.origin_exact if isinstance(patch, CylinderPatch) else patch.center_exact
+        )
+        origin = _fraction_vector(source_origin)
+        first = _fraction_vector(patch.first_axis_exact)
+        second = _fraction_vector(patch.second_axis_exact)
+        axis = _fraction_vector(patch.axis_exact)
+    elif isinstance(patch, (ConePatch, SpherePatch)):
+        origin = rational_vector(
+            np.asarray(patch.origin if isinstance(patch, ConePatch) else patch.center)
+        )
+        first = rational_vector(np.asarray(patch.first_axis))
+        second = rational_vector(np.asarray(patch.second_axis))
+        axis = rational_vector(np.asarray(patch.axis))
+    elif isinstance(patch, RevolutionSurface) and isinstance(
+        patch.curve, (LineCurve, ExactLineCurve)
+    ):
+        origin = rational_vector(np.asarray(patch.axis_origin))
+        axis = rational_vector(np.asarray(patch.axis_direction))
+        if rational_dot(axis, axis) != 1:
+            return None
+        if isinstance(patch.curve, LineCurve):
+            profile_origin = _fraction_vector(patch.curve.origin_exact)
+            profile_direction = _fraction_vector(patch.curve.direction_exact)
+        else:
+            profile_origin = _fraction_vector(patch.curve.first_exact)
+            profile_end = _fraction_vector(patch.curve.last_exact)
+            if profile_origin is None or profile_end is None:
+                return None
+            profile_direction = tuple(
+                end - start
+                for start, end in zip(profile_origin, profile_end, strict=True)
+            )
+        if profile_origin is None or profile_direction is None:
+            return None
+        relative = tuple(a - b for a, b in zip(profile_origin, origin, strict=True))
+        axial = rational_dot(relative, axis)
+        first = tuple(a - axial * b for a, b in zip(relative, axis, strict=True))
+        if not any(first):
+            axial_rate = rational_dot(profile_direction, axis)
+            first = tuple(
+                a - axial_rate * b for a, b in zip(profile_direction, axis, strict=True)
+            )
+        if not any(first):
+            return None
+        second = rational_cross(axis, first)
+        return _WindowFrame(
+            origin, first, second, axis, profile_origin, profile_direction
+        )
+    else:
+        return None
+    if origin is None or first is None or second is None or axis is None:
+        return None
+    if (
+        rational_dot(first, first) != rational_dot(second, second)
+        or rational_dot(first, first) == 0
+        or rational_dot(first, second) != 0
+        or rational_dot(first, axis) != 0
+        or rational_dot(second, axis) != 0
+        or rational_dot(axis, axis) == 0
+    ):
+        return None
+    return _WindowFrame(origin, first, second, axis)
+
+
+def _declared_full_turn(
+    patch: AbstractSurfacePatch, bounds: np.ndarray, axis: int, metadata: bool, /
+) -> bool:
+    if metadata:
+        return True
+    period = patch.periods[axis]
+    return (
+        period is not None
+        and patch.native_period_symbols()[axis] == "two_pi"
+        and Fraction(float(bounds[1, axis])) - Fraction(float(bounds[0, axis]))
+        == Fraction(float(period))
+    )
+
+
+def _torus_window_map(values: Array, /) -> Array:
+    """Cross products of both angular edge directions with the carrier foot."""
+    delta = values[:3] - values[3:6]
+    x = jnp.dot(delta, values[6:9])
+    y = jnp.dot(delta, values[9:12])
+    z = jnp.dot(delta, values[12:15])
+    radial = jnp.sqrt(x * x + y * y) - values[15]
+    return jnp.stack(
+        (
+            x,
+            y,
+            radial,
+            z,
+            values[16] * y - values[17] * x,
+            values[18] * y - values[19] * x,
+            values[20] * z - values[21] * radial,
+            values[22] * z - values[23] * radial,
+        )
+    )
+
+
+def _prepare_torus_window_filter(
+    patch: TorusPatch,
+    frame: _WindowFrame,
+    first: _AngularWindow,
+    second: _AngularWindow,
+    /,
+) -> _TorusWindowFilter | None:
+    """Lower a proof filter with source-exact coefficient intervals."""
+    major, minor = patch.major_radius_exact, patch.minor_radius_exact
+    if (
+        not isinstance(major, Fraction)
+        or not isinstance(minor, Fraction)
+        or not major > minor > 0
+        or rational_dot(frame.first, frame.first) != 1
+        or rational_dot(frame.axis, frame.axis) != 1
+    ):
+        return None
+    program = prepare_host_program(_torus_window_map, 24)
+    if program is None:
+        return None
+    coefficients = (*frame.origin, *frame.first, *frame.second, *frame.axis, major)
+    trig = (
+        first.cosine[0],
+        first.sine[0],
+        first.cosine[1],
+        first.sine[1],
+        second.cosine[0],
+        second.sine[0],
+        second.cosine[1],
+        second.sine[1],
+    )
+    lower = np.empty((1, 24), dtype=np.float64)
+    upper = np.empty_like(lower)
+    for index, value in enumerate(coefficients, start=3):
+        lower[0, index] = fraction_endpoint(value, upper=False)
+        upper[0, index] = fraction_endpoint(value, upper=True)
+    for index, (low, high) in enumerate(trig, start=16):
+        lower[0, index] = float(low)
+        upper[0, index] = float(high)
+    return _TorusWindowFilter(program, lower, upper)
+
+
+def _interval_window_decision(
+    mode: int,
+    first_low: float,
+    first_high: float,
+    last_low: float,
+    last_high: float,
+    /,
+) -> bool | None:
+    if mode == 3:
+        return True
+    if mode == 1:
+        if first_low > 0 and last_high < 0:
+            return True
+        if first_high < 0 or last_low > 0:
+            return False
+    elif mode == 2:
+        if first_low > 0 or last_high < 0:
+            return True
+        if first_high < 0 and last_low > 0:
+            return False
+    return None
+
+
+def _torus_window_filter(
+    filt: _TorusWindowFilter,
+    point: np.ndarray,
+    first: _AngularWindow,
+    second: _AngularWindow,
+    /,
+) -> bool | None:
+    """Decide only strict signs from a single native interval evaluation."""
+    lower, upper = filt.lower.copy(), filt.upper.copy()
+    lower[0, :3] = upper[0, :3] = point
+    low, high = filt.program.evaluate(lower, upper)
+    lo, hi = low[0], high[0]
+    if not np.all(np.isfinite(lo)) or not np.all(np.isfinite(hi)):
+        return None
+    if lo[0] <= 0 <= hi[0] and lo[1] <= 0 <= hi[1]:
+        return None
+    if lo[2] <= 0 <= hi[2] and lo[3] <= 0 <= hi[3]:
+        return None
+    outer = _interval_window_decision(first.mode, lo[4], hi[4], lo[5], hi[5])
+    inner = _interval_window_decision(second.mode, lo[6], hi[6], lo[7], hi[7])
+    if outer is False or inner is False:
+        return False
+    if outer is True and inner is True:
+        return True
+    return None
+
+
+def _radical_difference_sign(
+    rational: Fraction, coefficient: Fraction, squared: Fraction, /
+) -> int:
+    """Sign of ``rational - coefficient * sqrt(squared)``, by exact squares."""
+    if coefficient == 0 or squared == 0:
+        return (rational > 0) - (rational < 0)
+    if rational == 0:
+        return (coefficient < 0) - (coefficient > 0)
+    if rational > 0 and coefficient < 0:
+        return 1
+    if rational < 0 and coefficient > 0:
+        return -1
+    difference = rational * rational - coefficient * coefficient * squared
+    sign = (difference > 0) - (difference < 0)
+    return sign if rational > 0 else -sign
+
+
+def _torus_edge_sign(
+    squared: Fraction,
+    major: Fraction,
+    z: Fraction,
+    cosine: tuple[Fraction, Fraction],
+    sine: tuple[Fraction, Fraction],
+    /,
+) -> int:
+    signs = tuple(
+        _radical_difference_sign(c * z + s * major, s, squared)
+        for c in cosine
+        for s in sine
+    )
+    if all(sign > 0 for sign in signs):
+        return 1
+    if all(sign < 0 for sign in signs):
+        return -1
+    return 0
+
+
+def _torus_window_exact(
+    patch: TorusPatch,
+    frame: _WindowFrame,
+    point: np.ndarray,
+    first: _AngularWindow,
+    second: _AngularWindow,
+    /,
+) -> bool:
+    """Resolve uncertain filter rows by exact rational square comparisons."""
+    major, minor = patch.major_radius_exact, patch.minor_radius_exact
+    if (
+        not isinstance(major, Fraction)
+        or not isinstance(minor, Fraction)
+        or not major > minor > 0
+        or rational_dot(frame.first, frame.first) != 1
+        or rational_dot(frame.axis, frame.axis) != 1
+    ):
+        return False
+    delta = tuple(
+        Fraction(float(value)) - origin
+        for value, origin in zip(point, frame.origin, strict=True)
+    )
+    x, y = rational_dot(delta, frame.first), rational_dot(delta, frame.second)
+    if not _window_contains_direction(first, x, y):
+        return False
+    z = rational_dot(delta, frame.axis)
+    squared = x * x + y * y
+    if squared == major * major and z == 0:
+        return False
+    if second.mode == 3:
+        return True
+    a = _torus_edge_sign(squared, major, z, second.cosine[0], second.sine[0])
+    b = _torus_edge_sign(squared, major, z, second.cosine[1], second.sine[1])
+    if second.mode == 1:
+        return a > 0 and b < 0
+    return second.mode == 2 and (a > 0 or b < 0)
+
+
+def _closed_form_foot_interior(
+    patch: AbstractSurfacePatch,
+    point: np.ndarray,
+    bounds: np.ndarray,
+    prepared: _PreparedFace,
+    preparation: _ProjectionPreparation | None,
+    face: int,
+    flipped: bool,
+    /,
+) -> bool:
+    """Prove strict interior membership without using the rounded angle."""
+    if preparation is None:
+        frame = _window_frame(patch)
+        full_turn = _declared_full_turn(patch, bounds, 0, prepared.full_periods[0])
+        window = _angular_window(bounds, 0, full_turn)
+    else:
+        if face not in preparation.window_frames:
+            preparation.window_frames[face] = _window_frame(patch)
+        frame = preparation.window_frames[face]
+        key = (face, 0)
+        if key not in preparation.angular_windows:
+            full_turn = _declared_full_turn(patch, bounds, 0, prepared.full_periods[0])
+            preparation.angular_windows[key] = _angular_window(bounds, 0, full_turn)
+        window = preparation.angular_windows[key]
+    if frame is None:
+        return False
+    if isinstance(patch, TorusPatch):
+        if preparation is None:
+            full_second = _declared_full_turn(patch, bounds, 1, prepared.full_periods[1])
+            second = _angular_window(bounds, 1, full_second)
+            filt = _prepare_torus_window_filter(patch, frame, window, second)
+        else:
+            key = (face, 1)
+            if key not in preparation.angular_windows:
+                full_second = _declared_full_turn(
+                    patch, bounds, 1, prepared.full_periods[1]
+                )
+                preparation.angular_windows[key] = _angular_window(bounds, 1, full_second)
+            second = preparation.angular_windows[key]
+            if face not in preparation.torus_windows:
+                preparation.torus_windows[face] = _prepare_torus_window_filter(
+                    patch, frame, window, second
+                )
+            filt = preparation.torus_windows[face]
+        if filt is not None:
+            decision = _torus_window_filter(filt, point, window, second)
+            if decision is not None:
+                return decision
+        return _torus_window_exact(patch, frame, point, window, second)
+    relative = tuple(
+        Fraction(float(value)) - origin
+        for value, origin in zip(point, frame.origin, strict=True)
+    )
+    x, y = rational_dot(relative, frame.first), rational_dot(relative, frame.second)
+    if flipped:
+        x, y = -x, -y
+    if not _window_contains_direction(window, x, y):
+        return False
+    low, high = Fraction(float(bounds[0, 1])), Fraction(float(bounds[1, 1]))
+    if isinstance(patch, CylinderPatch):
+        axial = rational_dot(relative, frame.axis) / rational_dot(frame.axis, frame.axis)
+        return low < axial < high
+    if isinstance(patch, RevolutionSurface):
+        if frame.profile_origin is None or frame.profile_direction is None:
+            return False
+        axial_rate = rational_dot(frame.profile_direction, frame.axis)
+        radial_rate = tuple(
+            value - axial_rate * axis
+            for value, axis in zip(frame.profile_direction, frame.axis, strict=True)
+        )
+        if any(radial_rate) or axial_rate == 0:
+            return False
+        start = tuple(
+            value - origin
+            for value, origin in zip(frame.profile_origin, frame.origin, strict=True)
+        )
+        parameter = (
+            rational_dot(relative, frame.axis) - rational_dot(start, frame.axis)
+        ) / axial_rate
+        return low < parameter < high
+    if isinstance(patch, SpherePatch):
+        return low <= -window.pi_upper / 2 and high >= window.pi_upper / 2
+    # A cone's slant-coordinate window may clip its true minimizing point.
+    return False
 
 
 def _specified_atan2(ordinate: float, abscissa: float, /) -> float:
@@ -3089,6 +3586,135 @@ def _cylindrical_trim_distance(
     )
 
 
+def _exact_rectangle_trim(model: BRepModel, face: int, bounds: np.ndarray, /) -> bool:
+    """Prove the authored trim is exactly the binary64 rectangle."""
+    from ._boolean_core import line_chart_coefficients
+
+    loops = model.geometry.face_loops[face]
+    if len(loops) != 1 or len(loops[0]) != 4:
+        return False
+    u0, v0 = (Fraction(float(value)) for value in bounds[0])
+    u1, v1 = (Fraction(float(value)) for value in bounds[1])
+    corners = ((u0, v0), (u1, v0), (u1, v1), (u0, v1))
+    expected = {
+        frozenset((corners[index], corners[(index + 1) % 4])) for index in range(4)
+    }
+    actual: set[frozenset[tuple[Fraction, Fraction]]] = set()
+    for coedge in loops[0]:
+        coefficients = line_chart_coefficients(model.geometry.pcurves[coedge])
+        if coefficients is None:
+            return False
+        origin, direction = coefficients
+        if not all(isinstance(value, Fraction) for value in (*origin, *direction)):
+            return False
+        edge = model.geometry.coedge_edges[coedge]
+        first, last = (
+            Fraction(float(value)) for value in model.geometry.edge_ranges[edge]
+        )
+        endpoints = tuple(
+            tuple(origin[axis] + parameter * direction[axis] for axis in range(2))
+            for parameter in (first, last)
+        )
+        actual.add(
+            frozenset(
+                ((endpoints[0][0], endpoints[0][1]), (endpoints[1][0], endpoints[1][1]))
+            )
+        )
+    return actual == expected
+
+
+def _point_box_distance_upper(
+    point: np.ndarray, lower: np.ndarray, upper: np.ndarray, /
+) -> float:
+    squared = sum(
+        (
+            max(
+                abs(Fraction(float(value)) - Fraction(float(lo))),
+                abs(Fraction(float(value)) - Fraction(float(hi))),
+            )
+            ** 2
+            for value, lo, hi in zip(point, lower, upper, strict=True)
+        ),
+        Fraction(0),
+    )
+    return fraction_endpoint(
+        fraction_sqrt_interval(squared)[1], upper=True, saturate=True
+    )
+
+
+def _unproven_window_hit(
+    model: BRepModel,
+    face: int,
+    point: np.ndarray,
+    uv: np.ndarray,
+    bounds: np.ndarray,
+    path: tuple[str, ...],
+    lower: float,
+    preparation: _ProjectionPreparation | None,
+    /,
+) -> _Hit:
+    """Bound an unproved foot by a certified point of the trimmed face."""
+    from ._root_bindings import _patch_box, _source_coefficients_are_binary
+
+    patch = model.patches[face]
+    candidate_uv = np.minimum(np.maximum(uv, bounds[0]), bounds[1])
+    domain = model.trim_domains[face]
+    certified = _exact_rectangle_trim(model, face, bounds)
+    if not certified and domain is not None and domain.curve_loops:
+        certified = _trim_classification(model, face, candidate_uv) == 1
+    if preparation is None:
+        program = prepare_host_program(patch.evaluate, 2)
+    else:
+        if face not in preparation.patch_programs:
+            preparation.patch_programs[face] = prepare_host_program(patch.evaluate, 2)
+        program = preparation.patch_programs[face]
+    has_source_box = isinstance(patch, (CylinderPatch, TorusPatch)) or (
+        _source_coefficients_are_binary(patch)
+    )
+    if certified and program is not None and has_source_box:
+        rows = candidate_uv.reshape((1, 2))
+        stored_lower, stored_upper = program.evaluate(rows, rows)
+        source = _patch_box(
+            patch,
+            candidate_uv,
+            candidate_uv,
+            interval_program=lambda _: program,
+        )
+        if (
+            np.all(np.isfinite(stored_lower))
+            and np.all(np.isfinite(stored_upper))
+            and np.all(np.isfinite(source))
+        ):
+            upper = max(
+                _point_box_distance_upper(point, source[0], source[1]),
+                _exact_point_distance_upper(point, stored_lower[0]),
+            )
+            return _Hit(
+                2,
+                face,
+                stored_lower[0],
+                candidate_uv,
+                lower,
+                max(lower, upper),
+                _AMBIGUOUS,
+                _NAN3.copy(),
+                _NAN_FRAME3.copy(),
+                path,
+            )
+    return _Hit(
+        2,
+        face,
+        _NAN3.copy(),
+        _NAN2.copy(),
+        lower,
+        np.inf,
+        _UNRESOLVED,
+        _NAN3.copy(),
+        _NAN_FRAME3.copy(),
+        path,
+    )
+
+
 def _specified_face_carrier(patch: AbstractSurfacePatch, /) -> bool:
     return isinstance(
         patch, (PlanePatch, CylinderPatch, ConePatch, SpherePatch, TorusPatch)
@@ -3117,8 +3743,11 @@ def _project_face(
     defer_frame: bool = False,
     prepared: _PreparedFace | None = None,
     preparation: _ProjectionPreparation | None = None,
+    exact_query: bool | None = None,
 ) -> _Hit:
     patch = model.patches[face]
+    if exact_query is None:
+        exact_query = not path
     specified_point = _specified_face_carrier(patch)
     if prepared is None:
         prepared = _prepare_face(model, face)
@@ -3127,6 +3756,7 @@ def _project_face(
     uv: np.ndarray | None = None
     exact_uv: tuple[ExactScalar, ExactScalar] | None = None
     nonisolated = False
+    revolution_flipped = False
     affine_spline = False
     # Straight-ruled revolutions and cylinders: the candidate is the closest
     # point of the whole authored parameter rectangle, including its profile
@@ -3658,6 +4288,7 @@ def _project_face(
                 float(binary64_dot(radial_point, second_axis)),
                 float(binary64_dot(radial_point, radial_axis)),
             )
+            revolution_flipped = mirrored != reversed_side
             if mirrored != reversed_side:
                 # The positive meridian side lies along the reference direction
                 # unless reversed and faces the point unless mirrored.
@@ -3689,7 +4320,11 @@ def _project_face(
         return _unresolved(2, face, path)
     if uv is None or candidate is None or carrier_distance is None:
         return _unresolved(2, face, path)
-    if distance_threshold is not None and carrier_distance[0] > distance_threshold:
+    if (
+        exact_query
+        and distance_threshold is not None
+        and carrier_distance[0] > distance_threshold
+    ):
         # The whole carrier rectangle is certified beyond the caller's radius,
         # so no trim, boundary, or frame decision can bring the face within it.
         return _Hit(
@@ -3704,6 +4339,21 @@ def _project_face(
             _NAN_FRAME3.copy(),
             path,
         )
+    if specified_point and not isinstance(patch, PlanePatch):
+        proven = exact_query and _closed_form_foot_interior(
+            patch, point, bounds, prepared, preparation, face, revolution_flipped
+        )
+        if not proven:
+            return _unproven_window_hit(
+                model,
+                face,
+                point,
+                uv,
+                bounds,
+                path,
+                carrier_distance[0],
+                preparation,
+            )
     periods = patch.periods
     for axis, period in enumerate(periods):
         if period is not None:
@@ -5306,6 +5956,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                         item.solid_index,
                         rotation_values,
                         translation_values,
+                        item.placement.matrix,
                     )
                 )
         occurrence_rows = tuple(sorted(occurrences, key=lambda value: value.path))
@@ -5709,6 +6360,7 @@ class NativeBRepProjection(AbstractBRepProjection):
             return _failed(self.ambient_dimension)
         hits: list[_Hit] = []
         for occurrence in targets:
+            identity_occurrence = _identity_occurrence(occurrence)
             rotation = np.asarray(occurrence.rotation, dtype=np.float64)
             translation = np.asarray(occurrence.translation, dtype=np.float64)
             local = binary64_matmul(rotation.T, query - translation)
@@ -5784,15 +6436,14 @@ class NativeBRepProjection(AbstractBRepProjection):
                     defer_frame=defer_frame and len(targets) == 1,
                     prepared=prepared,
                     preparation=preparation,
+                    exact_query=identity_occurrence,
                 )
                 if hit.status == _UNRESOLVED and not (
                     distance_threshold is not None and hit.lower > distance_threshold
                 ):
                     source_box = (
                         np.asarray(self.entity_boxes[sum(self.entity_counts[:2]) + index])
-                        if occurrence.rotation
-                        == ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
-                        and occurrence.translation == (0.0, 0.0, 0.0)
+                        if identity_occurrence
                         else None
                     )
                     hit = _bounded_unresolved_face(
@@ -5800,12 +6451,36 @@ class NativeBRepProjection(AbstractBRepProjection):
                     )
             else:
                 return _failed(self.ambient_dimension)
+            if occurrence.path and not identity_occurrence and hit.status != _FAILED:
+                error = _local_query_error(occurrence, query, local)
+                if error is None:
+                    hit = _unresolved(dimension, index, occurrence.path)
+                else:
+                    lower = fraction_endpoint(
+                        max(Fraction(0), Fraction(hit.lower) - error), upper=False
+                    )
+                    upper = (
+                        fraction_endpoint(
+                            Fraction(hit.upper) + error, upper=True, saturate=True
+                        )
+                        if np.isfinite(hit.upper)
+                        else np.inf
+                    )
+                    hit = replace(hit, lower=lower, upper=upper)
             if hit.status not in (_FAILED, _UNRESOLVED) and occurrence.path:
                 point = (
                     binary64_matmul(rotation, hit.point) + translation
                     if np.all(np.isfinite(hit.point))
                     else hit.point
                 )
+                upper = hit.upper
+                lower = hit.lower
+                if (
+                    not identity_occurrence
+                    and np.all(np.isfinite(point))
+                    and not hit.pending_point
+                ):
+                    upper = max(upper, _exact_point_distance_upper(query, point))
                 normal = (
                     binary64_matmul(rotation, hit.normal)
                     if np.all(np.isfinite(hit.normal))
@@ -5817,8 +6492,8 @@ class NativeBRepProjection(AbstractBRepProjection):
                     hit.index,
                     point,
                     hit.parameters,
-                    hit.lower,
-                    hit.upper,
+                    lower,
+                    upper,
                     hit.status,
                     normal,
                     tangents,
@@ -5833,7 +6508,11 @@ class NativeBRepProjection(AbstractBRepProjection):
             hit = hits[0]
             return hit
         if any(hit.status in (_FAILED, _UNRESOLVED) for hit in hits):
-            return _unresolved(dimension, index)
+            return replace(
+                _unresolved(dimension, index),
+                lower=min(hit.lower for hit in hits),
+                upper=min(hit.upper for hit in hits),
+            )
         best = min(hits, key=lambda value: value.upper)
         tied = [
             hit
@@ -6241,12 +6920,19 @@ class NativeBRepProjection(AbstractBRepProjection):
                     angle_bounds=angle_bounds,
                     preparation=preparation,
                 )
-                if hit.status == _UNRESOLVED:
+                if hit.status in (_UNRESOLVED, _FAILED):
                     unresolved.append(hit)
-                elif hit.status != _FAILED:
+                else:
                     projected.append(hit)
             if unresolved:
-                hits.append(unresolved[0])
+                all_hits = (*projected, *unresolved)
+                hits.append(
+                    replace(
+                        unresolved[0],
+                        lower=min(hit.lower for hit in all_hits),
+                        upper=min(hit.upper for hit in all_hits),
+                    )
+                )
                 continue
             if not projected:
                 hits.append(_failed(self.ambient_dimension))
