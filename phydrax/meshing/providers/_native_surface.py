@@ -93,7 +93,6 @@ from ...discretization import CellGeometrySpec
 from ...discretization._cell_geometry_validity import cell_geometry_id
 from ...discretization._reference_cell import reference_cell_topology
 from ...geometry.brep._source_correspondence import _affine_curve_coefficients
-from ...typing import parse
 from .._plc_source import _numeric_entity_ids
 from ._native_options import NativeMeshingOptions
 from ._native_schedules import NativeSurfaceSchedule
@@ -6628,7 +6627,7 @@ class _DeferredSurfaceCertification:
     organization: NativeMeshOrganization
     certified_steps: tuple[str, ...]
 
-    def resolve(self) -> NativeMeshConstruction:
+    def resolve(self, /) -> NativeMeshConstruction:
         prepared = self.prepared
         domain = prepared.domain
         refined = _resolve_refinement_bounds(
@@ -7061,6 +7060,17 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
                     raise TypeError(
                         "Screened surface construction requires structural data."
                     )
+                certified_steps = ("pole_sampling",) if pole_charts else ()
+                screens = {
+                    "sampled_curve_deviation": float(
+                        np.max(construction.curve_edge_deviations, initial=0.0)
+                    ),
+                    "sampled_triangle_deviation": float(
+                        np.max(construction.triangle_deviations, initial=0.0)
+                    ),
+                }
+                if refined.fidelity_tolerance is not None:
+                    screens["fidelity_tolerance"] = refined.fidelity_tolerance
                 request = NativeCertificationRequest(
                     MeshCertificationSchedule("surface"),
                     domain.source_id,
@@ -7091,9 +7101,10 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
                         surface_source,
                         curve_ids,
                         organization,
-                        ("pole_sampling",),
+                        certified_steps,
                     ),
-                    certified_steps=("pole_sampling",),
+                    certified_steps=certified_steps,
+                    screens=screens,
                 )
             case "certified":
                 pass
