@@ -818,7 +818,9 @@ int32_t prepare_implicit_owner(const phx_mc_tet_implicit_source* source,
       source->binding_id_length <= 0 || !valid_utf8(source->source_id, source->source_id_length) ||
       !valid_utf8(source->source_revision, source->source_revision_length) ||
       !valid_utf8(source->binding_id, source->binding_id_length) ||
-      source->frame_id_length <= 0 || !valid_utf8(source->frame_id, source->frame_id_length)) {
+      source->frame_id_length <= 0 || !valid_utf8(source->frame_id, source->frame_id_length) ||
+      (source->decision != PHX_MC_ZERO_SET_DECISION_CERTIFIED &&
+       source->decision != PHX_MC_ZERO_SET_DECISION_SAMPLED)) {
     return PHX_MC_INVALID_ARGUMENT;
   }
   owned = std::make_shared<phx::mc::TetImplicitSource>();
@@ -837,6 +839,9 @@ int32_t prepare_implicit_owner(const phx_mc_tet_implicit_source* source,
   owned->groups.assign(source->groups, source->groups + source->group_count);
   owned->tolerance = source->tolerance;
   owned->orientation = source->orientation;
+  owned->decision = source->decision == PHX_MC_ZERO_SET_DECISION_SAMPLED
+                        ? phx::mc::remesh::ZeroSetDecision::kSampled
+                        : phx::mc::remesh::ZeroSetDecision::kCertified;
   owned->source_id.assign(source->source_id, static_cast<std::size_t>(source->source_id_length));
   owned->source_revision.assign(source->source_revision,
                                 static_cast<std::size_t>(source->source_revision_length));
@@ -2142,6 +2147,7 @@ int32_t phx_mc_tet_mesh_implicit_source(
   output->frame_id_length = static_cast<int64_t>(source->frame_id.size());
   output->transversality_refusals = source->transversality_refusals;
   output->distance_refusals = source->distance_refusals;
+  output->decision = static_cast<int32_t>(source->decision);
   return PHX_MC_OK;
 }
 

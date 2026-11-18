@@ -93,15 +93,26 @@ class AdmissionMemo {
   std::vector<Entry> entries_;
 };
 
+// How an admission decides its two conditions, the side of the zero set a
+// triangle faces and its distance from it. kCertified proves both with
+// interval enclosures over the triangle. kSampled screens them at seven
+// points of the triangle (its corners, edge midpoints and centroid) from
+// point evaluations of the same two programs, with |f| / |grad f| as the
+// distance: it proves nothing, and is for construction whose result is
+// certified afterwards. The values are those of the C ABI.
+enum class ZeroSetDecision : int32_t { kCertified = 0, kSampled = 1 };
+
 class ZeroSetBandAdmission final : public TriangleAdmission {
  public:
   ZeroSetBandAdmission(const IntervalBoxProgram& value, const IntervalBoxProgram& gradient,
-                       double tolerance, int orientation, AdmissionMemo* memo = nullptr)
+                       double tolerance, int orientation, AdmissionMemo* memo = nullptr,
+                       ZeroSetDecision decision = ZeroSetDecision::kCertified)
       : value_(value),
         gradient_(gradient),
         tolerance_(tolerance),
         orientation_(orientation),
-        memo_(memo) {}
+        memo_(memo),
+        decision_(decision) {}
 
   AdmissionKind kind() const override { return AdmissionKind::kZeroSetBand; }
   // Point enclosure of f at the vertex (mean-value anchor for admits()).
@@ -119,10 +130,12 @@ class ZeroSetBandAdmission final : public TriangleAdmission {
   double normal_cone_floor(const Point& a, const Point& b, const Point& c,
                            const std::array<VertexEvidence, 3>& evidence) const override;
 
-  // Certified upper bound on max_{x in T} dist(x, Z), +inf when undecided.
+  // Certified upper bound on max_{x in T} dist(x, Z), +inf when undecided
+  // (certified under either decision).
   double distance_bound(const Point& a, const Point& b, const Point& c,
                         const std::array<VertexEvidence, 3>& evidence) const;
-  // Certified sign of n . grad f over bbox(T): +1, -1, or 0 when undecided.
+  // Sign of n . grad f: +1, -1, or 0 when undecided. Certified over bbox(T),
+  // or under kSampled the sign the seven samples share.
   int transversal_sign(const Point& a, const Point& b, const Point& c) const;
 
   // Refused admissions by first failing condition (evidence for the caller).
@@ -155,12 +168,22 @@ class ZeroSetBandAdmission final : public TriangleAdmission {
                         const std::array<VertexEvidence, 3>& evidence, double slack) const;
   AdmissionMemo::Entry* memo_entry(const Point& a, const Point& b, const Point& c,
                                    const std::array<VertexEvidence, 3>& evidence) const;
+  // The sampled screen: the samples' common sign of n . grad f (0 when they
+  // differ or a sample cannot be evaluated), the largest |f| / |grad f|, and
+  // the sample that has it.
+  struct Screen {
+    int sign = 0;
+    double distance = 0;
+    std::size_t worst = 0;
+  };
+  Screen screen(const Point& a, const Point& b, const Point& c) const;
 
   const IntervalBoxProgram& value_;
   const IntervalBoxProgram& gradient_;
   double tolerance_;
   int orientation_;
   AdmissionMemo* memo_;
+  ZeroSetDecision decision_;
   mutable Refusals refusals_;  // single-threaded, like the program scratch
   mutable std::optional<Point> distance_barycentric_;
 };

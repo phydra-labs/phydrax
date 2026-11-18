@@ -343,6 +343,115 @@ void torus_cases() {
   admission_soundness(value, gradient, torus_point, outward_torus, torus_distance, 11u);
 }
 
+// The sampled decision on the unit sphere with f = |x|^2 - 1, where
+// |f| / |grad f| = |r - 1| (r + 1) / (2 r): within 2% of the distance |r - 1|
+// for 0.97 <= r <= 1.03. It decides from seven points of the triangle (the
+// corners, the edge midpoints, the centroid) and proves nothing about the
+// rest; these cases pin what it decides, what it records for a refusal, and
+// its relation to the certified decision.
+void sampled_decision_cases() {
+  using phx::mc::remesh::ZeroSetDecision;
+  IntervalBoxProgram value, gradient;
+  PHX_CHECK(sphere_value().bind(value));
+  PHX_CHECK(sphere_gradient().bind(gradient));
+  constexpr double tolerance = 0.02;
+  const ZeroSetBandAdmission certified(value, gradient, tolerance, 1);
+  const ZeroSetBandAdmission sampled(value, gradient, tolerance, 1, nullptr,
+                                     ZeroSetDecision::kSampled);
+  const auto listed = [](const Point& weights) {
+    const double third = 1.0 / 3;
+    for (const Point& sample : {Point{1, 0, 0}, Point{0, 1, 0}, Point{0, 0, 1},
+                                Point{0.5, 0.5, 0}, Point{0, 0.5, 0.5}, Point{0.5, 0, 0.5},
+                                Point{third, third, third}})
+      if (weights == sample) return true;
+    return false;
+  };
+  // A small outward triangle on the sphere is admitted; its reverse is
+  // refused for its side, with no sample named.
+  const Point a = sphere_point(0.05, 0.0), b = sphere_point(0.05, 2.1),
+              c = sphere_point(0.05, 4.2);
+  PHX_CHECK(sampled.admits(a, b, c, evidence_of(sampled, a, b, c)));
+  PHX_CHECK(sampled.transversal_sign(a, b, c) == 1);
+  PHX_CHECK(sampled.transversal_sign(a, c, b) == -1);
+  PHX_CHECK(!sampled.admits(a, c, b, evidence_of(sampled, a, c, b)));
+  PHX_CHECK(sampled.refusals().transversality == 1 && sampled.refusals().distance == 0);
+  PHX_CHECK(!sampled.distance_barycentric().has_value());
+  // A copy lifted out of the band is refused for its distance, and the sample
+  // named is one of the seven and is itself outside the band.
+  const Point la{a[0], a[1], a[2] + 0.3}, lb{b[0], b[1], b[2] + 0.3}, lc{c[0], c[1], c[2] + 0.3};
+  PHX_CHECK(!sampled.admits(la, lb, lc, evidence_of(sampled, la, lb, lc)));
+  PHX_CHECK(sampled.refusals().transversality == 1 && sampled.refusals().distance == 1);
+  PHX_CHECK(sampled.distance_barycentric().has_value());
+  if (sampled.distance_barycentric()) {
+    const Point worst = *sampled.distance_barycentric();
+    PHX_CHECK(listed(worst));
+    PHX_CHECK(sphere_distance(combine(la, lb, lc, worst[1], worst[2])) > tolerance);
+  }
+  // Corners on the sphere, the middle 0.12 inside it: the centroid is the
+  // worst sample.
+  const Point wa = sphere_point(0.5, 0.0), wb = sphere_point(0.5, 2 * kPi / 3),
+              wc = sphere_point(0.5, 4 * kPi / 3);
+  PHX_CHECK(!sampled.admits(wa, wb, wc, evidence_of(sampled, wa, wb, wc)));
+  const Point centroid{1.0 / 3, 1.0 / 3, 1.0 / 3};
+  PHX_CHECK(sampled.distance_barycentric().has_value() &&
+            *sampled.distance_barycentric() == centroid);
+  // Through the centre, where the certified decision has no gradient bound.
+  const Point o1{-0.1, -0.1, 0.0}, o2{0.1, -0.1, 0.0}, o3{0.0, 0.1, 0.0};
+  PHX_CHECK(!sampled.admits(o1, o2, o3, evidence_of(sampled, o1, o2, o3)));
+  // A zero-area triangle faces no side.
+  PHX_CHECK(sampled.transversal_sign(a, b, b) == 0);
+  PHX_CHECK(!sampled.admits(a, b, b, evidence_of(sampled, a, b, b)));
+
+  // Random triangles near the sphere. A reversed triangle is never admitted;
+  // every sample of an admitted triangle is within 2% of the tolerance of the
+  // sphere; and whatever the certified decision admits, the sampled decision
+  // admits at a tolerance 2% wider (the certified bound covers the samples,
+  // and the quotient is within 2% of the distance there).
+  const ZeroSetBandAdmission wide(value, gradient, 1.02 * tolerance, 1, nullptr,
+                                  ZeroSetDecision::kSampled);
+  std::mt19937_64 random(29u);
+  std::uniform_real_distribution<double> unit(0.0, 1.0);
+  int admitted = 0, refused = 0, proved = 0;
+  for (int trial = 0; trial < 1500; ++trial) {
+    const Point n = sphere_point(kPi * unit(random), 2 * kPi * unit(random));
+    const double lift = 0.03 * (2 * unit(random) - 1);
+    const double size = 0.01 + 0.25 * unit(random);
+    Point e1 = std::fabs(n[2]) < 0.9 ? Point{-n[1], n[0], 0} : Point{0, -n[2], n[1]};
+    const double e1n = std::hypot(e1[0], e1[1], e1[2]);
+    for (double& coordinate : e1) coordinate /= e1n;
+    const Point e2{n[1] * e1[2] - n[2] * e1[1], n[2] * e1[0] - n[0] * e1[2],
+                   n[0] * e1[1] - n[1] * e1[0]};
+    std::array<Point, 3> corners{};
+    for (int k = 0; k < 3; ++k) {
+      const double angle = 2 * kPi * k / 3 + 0.6 * unit(random);
+      for (int d = 0; d < 3; ++d)
+        corners[static_cast<size_t>(k)][d] =
+            (1 + lift) * n[d] + size * (std::cos(angle) * e1[d] + std::sin(angle) * e2[d]);
+    }
+    const bool flip = unit(random) < 0.2;
+    if (flip) std::swap(corners[1], corners[2]);
+    const auto& [p, q, r] = corners;
+    const bool sampled_admits = sampled.admits(p, q, r, evidence_of(sampled, p, q, r));
+    if (certified.admits(p, q, r, evidence_of(certified, p, q, r))) {
+      ++proved;
+      PHX_CHECK(wide.admits(p, q, r, evidence_of(wide, p, q, r)));
+    }
+    if (!sampled_admits) {
+      ++refused;
+      continue;
+    }
+    ++admitted;
+    PHX_CHECK(!flip);
+    for (const Point& weights : {Point{1, 0, 0}, Point{0, 1, 0}, Point{0, 0, 1},
+                                 Point{0.5, 0.5, 0}, Point{0, 0.5, 0.5}, Point{0.5, 0, 0.5},
+                                 Point{1.0 / 3, 1.0 / 3, 1.0 / 3}})
+      PHX_CHECK(sphere_distance(combine(p, q, r, weights[1], weights[2])) <= 1.02 * tolerance);
+  }
+  PHX_CHECK(admitted > 100);
+  PHX_CHECK(refused > 100);
+  PHX_CHECK(proved > 50);
+}
+
 void near_band_distance_cases() {
   IntervalBoxProgram value, gradient;
   PHX_CHECK(sphere_value().bind(value));
@@ -1331,6 +1440,7 @@ int main() {
   sphere_cases();
   normal_cone_cases();
   torus_cases();
+  sampled_decision_cases();
   near_band_distance_cases();
   whole_piece_bracketing_cases();
   remesh_sphere_carrier();

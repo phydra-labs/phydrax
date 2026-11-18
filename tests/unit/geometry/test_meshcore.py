@@ -56,6 +56,7 @@ from phydrax._meshcore import (
     tetrahedron_intersection_moments,
     tetrahedron_intersection_simplices,
     triangle_dual_quads,
+    ZeroSetDecision,
 )
 from phydrax.geometry import (
     ConstrainedDelaunayTriangulation,
@@ -1550,6 +1551,88 @@ def test_implicit_tet_source_round_trips_owned_program_and_refuses_tamper() -> N
     )
     with pytest.raises(MeshcoreError, match="UNRESOLVED"):
         _restored_tet_mesh(tampered, tampered.witness_parameters)
+
+
+def test_implicit_tet_source_carries_its_admission_decision() -> None:
+    # f = z with gradient (0, 0, 1); the source facet is the unit tetrahedron's
+    # face in the plane z = 0.
+    integers = np.empty(0, dtype=np.int64)
+    value = IntervalBoxProgram(
+        np.asarray([[2, 4, 1, 2, -1, 3, -1, 0]], dtype=np.int64),
+        integers,
+        np.empty(0, dtype=np.float64),
+        np.zeros(5),
+        np.zeros(5),
+        np.asarray([4]),
+        integers,
+    )
+    constant = np.asarray([0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
+    gradient = IntervalBoxProgram(
+        np.empty((0, 8), dtype=np.int64),
+        integers,
+        np.empty(0, dtype=np.float64),
+        constant,
+        constant,
+        np.asarray([3, 4, 5]),
+        integers,
+    )
+    certified = TetMeshImplicitSource(
+        value,
+        gradient,
+        np.asarray([3], dtype=np.int32),
+        0.01,
+        0,
+        "implicit",
+        "revision",
+        "binding",
+        "world",
+    )
+    assert certified.decision is ZeroSetDecision.CERTIFIED
+
+    def bound(source: TetMeshImplicitSource) -> TetMesh3D:
+        return TetMesh3D(
+            UNIT_TET,
+            np.asarray([[0, 1, 2, 3]]),
+            None,
+            np.asarray(((1, 3, 2), (0, 2, 3), (0, 3, 1), (0, 1, 2)), dtype=np.int32),
+            np.arange(4),
+            np.empty((0, 2), dtype=np.int32),
+            np.empty(0, dtype=np.int32),
+            boundary_policy=PlcBoundaryPolicy.CONFORMING,
+            source_id="implicit",
+            source_revision="revision",
+            source_map_id="binding",
+            frame_id="world",
+            implicit_source=source,
+        )
+
+    with bound(certified) as state:
+        snapshot = state.arrays().implicit_source
+        assert snapshot is not None
+        assert snapshot.source.decision is ZeroSetDecision.CERTIFIED
+    sampled = certified._replace(decision=ZeroSetDecision.SAMPLED)
+    with bound(sampled) as state:
+        arrays = state.arrays()
+        assert arrays.implicit_source is not None
+        assert arrays.implicit_source.source.decision is ZeroSetDecision.SAMPLED
+        assert arrays.implicit_source.source.orientation == 1
+    with _restored_tet_mesh(arrays, arrays.witness_parameters) as restored:
+        restored_source = restored.arrays().implicit_source
+        assert restored_source is not None
+        assert restored_source.source.decision is ZeroSetDecision.SAMPLED
+    # The sampled decision still refuses a facet whose samples are off the band
+    # (f = z - 1 on the face z = 0) and a facet facing the other side.
+    low, high = value.workspace_lower.copy(), value.workspace_upper.copy()
+    low[3] = high[3] = 1.0
+    off_band = sampled._replace(
+        value=value._replace(workspace_lower=low, workspace_upper=high)
+    )
+    with pytest.raises(MeshcoreError, match="UNRESOLVED"):
+        bound(off_band)
+    with pytest.raises(ValueError, match="INVALID_INPUT"):
+        bound(sampled._replace(orientation=-1))
+    with pytest.raises(TypeError, match="decision must be ZeroSetDecision"):
+        bound(certified._replace(decision=1))  # ty: ignore[invalid-argument-type]
 
 
 def test_plane_witnesses_and_records_round_trip_through_tet_mesh_arrays() -> None:
