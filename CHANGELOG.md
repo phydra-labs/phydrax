@@ -45,6 +45,14 @@
   Regenerate affected stored results.
   These reductions reject complex inputs instead of discarding imaginary parts.
   Small scalar reduction paths do not report floating-point underflow.
+- CAD and standalone PLC volume meshing now order boundary edges and native
+  source groups by model content rather than source names. Existing meshes,
+  `complex_id`, and derived identities change once; regenerate stored results.
+  For a given model, coordinates and connectivity no longer depend on source
+  names through these volume-meshing orders. Two name-dependent orders remain
+  in the surface provider: the root-chart tie-break when three bounding extrema
+  coincide, and curve-query traversal. Both are being changed with the
+  stored-coordinate work.
 - Certified native Boolean intersection curves now use platform-identical
   interval matrix products. On platforms whose BLAS fused or reordered those
   products, rounding changes stored `IntersectionCurve.contractions` and can

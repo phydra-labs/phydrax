@@ -195,6 +195,40 @@ def test_native_provider_builds_a_direct_brep_volume_boundary_internally() -> No
     assert result.coordinate_contract.spatial_id == contract.spatial_id
 
 
+def test_native_cad_volume_geometry_is_independent_of_source_id() -> None:
+    contract = SpatialCoordinateContract.si()
+    meshes = []
+    for source_id in ("cad-volume-cylinder", "renamed-cad-cylinder"):
+        source = phx.geometry.brep.brep_cylinder(
+            0.5,
+            1.0,
+            coordinate_contract=contract,
+            source_id=source_id,
+        )
+        boundary = MeshingScope.whole(source, 2)
+        specification = VolumeMeshingSpec(
+            CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+            boundary,
+            VolumeFillStrategy.SIMPLEX,
+            size_controls=(UniformSizeControl(boundary, 0.3),),
+            maximum_deviation=0.05,
+        )
+        options = NativeMeshingOptions(
+            "cad_tetrahedral",
+            volume_schedule=NativeVolumeSchedule(
+                radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
+            ),
+        )
+        result = NativeMeshingProvider(options).plan(source, specification).execute()
+        assert result.certification is not None and result.certification.passed
+        meshes.append(result.mesh)
+
+    np.testing.assert_array_equal(meshes[0].coordinates, meshes[1].coordinates)
+    assert len(meshes[0].blocks) == len(meshes[1].blocks)
+    for first, second in zip(meshes[0].blocks, meshes[1].blocks, strict=True):
+        np.testing.assert_array_equal(first.vertices, second.vertices)
+
+
 def test_native_cad_volume_soft_shape_strength_softens_boundary_angle() -> None:
     contract = SpatialCoordinateContract.si()
     source = brep_box(

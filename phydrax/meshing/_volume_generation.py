@@ -641,14 +641,12 @@ def _source_tables(
             )
     source_facet_region_sides = np.asarray(complex_.facet_regions, dtype=np.int64).copy()
     facet_labels = np.asarray(complex_.facet_entity_ids, dtype=np.int64)
-    face_ids = np.unique(facet_labels)
-    face_group_rows = np.searchsorted(face_ids, facet_labels[face_facets]).astype(
-        np.int32
-    )
-    segment_ids = np.unique(source_segment_labels)
-    segment_group_rows = np.searchsorted(segment_ids, source_segment_labels).astype(
-        np.int32
-    )
+    # Native group ranks follow the PLC's facet and active edge rows, not the
+    # hash-derived public identities. Each row identifies one distinct group.
+    face_ids = np.arange(complex_.facet_count, dtype=np.int64)
+    face_group_rows = np.asarray(face_facets, dtype=np.int32)
+    segment_ids = np.arange(source_segment_labels.size, dtype=np.int64)
+    segment_group_rows = np.arange(source_segment_labels.size, dtype=np.int32)
     plc_edge_facets = np.asarray(edge_facet_rows, dtype=np.int64)
     witness_strata = np.asarray(recovery.witness_strata, dtype=np.int8)
     witness_entities = np.asarray(recovery.witness_entities, dtype=np.int32).copy()
@@ -1438,30 +1436,23 @@ def _make_construction(
             raise ValueError(
                 "Native vertex source witnesses must identify one PLC stratum or region."
             )
-    facet_row_by_label = {
-        int(label): row for row, label in enumerate(tables.facet_labels.tolist())
-    }
-    source_segment_row_by_label = {
-        int(label): row for row, label in enumerate(tables.source_segment_labels.tolist())
-    }
-    face_sources = np.asarray(arrays.face_sources, dtype=np.int64).copy()
-    face_source_facets = np.asarray(
-        [facet_row_by_label[int(label)] for label in face_sources], dtype=np.int64
-    )
+    face_source_facets = np.asarray(arrays.face_sources, dtype=np.int64).copy()
+    if np.any(
+        (face_source_facets < 0) | (face_source_facets >= tables.facet_labels.size)
+    ):
+        raise ValueError("TetMesh returned an undeclared source facet.")
+    face_sources = tables.facet_labels[face_source_facets]
     face_source_ids = tuple(tables.facet_ids[row] for row in face_source_facets.tolist())
     face_source_occurrence_paths = tuple(
         tables.facet_occurrence_paths[row] for row in face_source_facets.tolist()
     )
-    segment_sources = np.asarray(arrays.segment_sources, dtype=np.int64).copy()
-    try:
-        segment_source_edges = np.asarray(
-            [source_segment_row_by_label[int(label)] for label in segment_sources],
-            dtype=np.int64,
-        )
-    except KeyError as error:
-        raise ValueError(
-            "TetMesh returned an undeclared canonical source segment."
-        ) from error
+    segment_source_edges = np.asarray(arrays.segment_sources, dtype=np.int64).copy()
+    if np.any(
+        (segment_source_edges < 0)
+        | (segment_source_edges >= tables.source_segment_labels.size)
+    ):
+        raise ValueError("TetMesh returned an undeclared canonical source segment.")
+    segment_sources = tables.source_segment_labels[segment_source_edges]
     segment_source_ids = tuple(
         tables.segment_entity_ids[row] for row in segment_source_edges.tolist()
     )
@@ -1745,9 +1736,7 @@ def _rebind_mapped_quality_proposal(
     )
     try:
         if np.any(protected_facets):
-            groups = np.searchsorted(
-                tables.face_ids, tables.facet_labels[protected_facets]
-            )
+            groups = np.flatnonzero(protected_facets)
             state.protect_facet_group_rows(groups.astype(np.int32))
         current = state.arrays()
         if not np.array_equal(current.vertex_ids, new_ids[order]):
@@ -2125,9 +2114,9 @@ def generate_plc_volume(
         np.arange(tables.source_segment_vertices.shape[0], dtype=np.int64),
     ):
         raise ValueError("Native PLC recovery dropped an active source edge chain.")
-    face_sources = tables.facet_labels[face_rows]
+    face_sources = face_rows
     segments = np.asarray(recovery.segments, dtype=np.int64)
-    segment_sources = tables.source_segment_labels[carrier_source_rows]
+    segment_sources = carrier_source_rows
     sizes = _size_field(
         complex_,
         specification,
@@ -2179,9 +2168,7 @@ def generate_plc_volume(
                 initial.vertex_ids[:input_count], dtype=np.uint64
             ).copy()
         if protected_facets is not None and np.any(protected_facets):
-            groups = np.searchsorted(
-                tables.face_ids, tables.facet_labels[protected_facets]
-            )
+            groups = np.flatnonzero(protected_facets)
             state.protect_facet_group_rows(groups.astype(np.int32))
         refinement = state.refine(
             radius_edge_bound=schedule.radius_edge_bound,

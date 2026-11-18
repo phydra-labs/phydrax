@@ -191,36 +191,11 @@ def _plc_edge_records(
         records.append(((first, second), facets, segment_ids[row], segment_paths[row]))
 
     boundary_keys = set(boundary) - explicit_keys
-    ordered_boundary_keys = sorted(
-        boundary_keys,
-        key=lambda key: (
-            tuple(
-                sorted(
-                    (
-                        vertex_ids[vertex],
-                        vertex_paths[vertex],
-                    )
-                    for vertex in key
-                )
-            ),
-            tuple(
-                sorted(
-                    (
-                        facet_ids[facet],
-                        facet_paths[facet],
-                    )
-                    for facet in {entry[0] for entry in boundary[key]}
-                )
-            ),
-        ),
-    )
+    # Vertex rows are model-owned indices; each undirected edge has a unique
+    # endpoint pair, so this order is total without provenance identities.
+    ordered_boundary_keys = sorted(boundary_keys)
     for key in ordered_boundary_keys:
-        facets = tuple(
-            sorted(
-                {entry[0] for entry in boundary[key]},
-                key=lambda facet: (facet_ids[facet], facet_paths[facet]),
-            )
-        )
+        facets = tuple(sorted({entry[0] for entry in boundary[key]}))
         paths = {facet_paths[facet] for facet in facets}
         if len(paths) != 1:
             raise ValueError(
@@ -240,10 +215,7 @@ def _plc_edge_records(
             if len(directed) == 1:
                 first, second = directed[0]
             elif len(directed) == 2 and directed[0] == tuple(reversed(directed[1])):
-                first, second = sorted(
-                    key,
-                    key=lambda vertex: (vertex_ids[vertex], vertex_paths[vertex]),
-                )
+                first, second = key
             else:
                 raise ValueError(
                     "A PLC facet must orient each boundary edge exactly once."
