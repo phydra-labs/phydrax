@@ -5935,6 +5935,10 @@ def _domain_curve_source_query(
     if np.any(~np.isin(selected, available)):
         raise ValueError("MeshingDomain curve query scope names an absent source edge.")
     selected_set = set(int(value) for value in selected.tolist())
+    scope_by_source = {
+        domain.source_entity_key_for_scope(1, int(identifier)): int(identifier)
+        for identifier in available.tolist()
+    }
     curves = []
     ranges = []
     curve_entity_ids = []
@@ -5948,11 +5952,13 @@ def _domain_curve_source_query(
     ] = []
     endpoint_bounds = []
     endpoint_parameter_bounds = []
-    for numeric_id in available.tolist():
-        identifier = int(numeric_id)
+    # Identities remain lookup values; geometry follows the domain's own rows.
+    for entity_id, occurrence in zip(
+        domain.stratum_entity_ids(1), domain.source_occurrences[1], strict=True
+    ):
+        identifier = scope_by_source[(entity_id, occurrence)]
         if identifier not in selected_set:
             continue
-        entity_id, occurrence = domain.source_entity_key_for_scope(1, identifier)
         chart_uses = domain.source_curve_chart_uses(identifier)
         for chart_id, patch_row, loop_row, use_row, use in chart_uses:
             curve = SurfaceMappedCurve(domain.patches[patch_row].surface, use.pcurve)
