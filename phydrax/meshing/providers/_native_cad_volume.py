@@ -16,7 +16,7 @@ from ..._validation import finite_real_scalar
 from ...discretization._cell_complex import PolygonalConnectivity
 from ...discretization._cell_geometry import CellGeometrySpec
 from ...discretization._cell_geometry_validity import cell_geometry_id
-from ...discretization._cell_mesh import SimplicialConnectivity
+from ...discretization._cell_mesh import CellMesh, SimplicialConnectivity
 from ...discretization._coordinate_enclosure import ExactScalar
 from ...discretization._reference_cell import reference_cell_topology
 from ...geometry._domain_boundary import (
@@ -80,6 +80,23 @@ from ._native_volume import (
     _volume_compliance,
     volume_support_issues,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class CadSurfaceConstructionData:
+    """Surface geometry and source ancestry needed to construct a CAD PLC."""
+
+    mesh: CellMesh
+    geometry: CellGeometrySpec
+    coordinate_contract: SpatialCoordinateContract
+    associations: tuple[GeometryAssociation, ...]
+    surface_source: SurfaceSourceCharts
+
+
+@dataclass(frozen=True, slots=True)
+class _CadSurfaceProofPremises:
+    surface: CellMeshingResult
+    computed: _ComputedSurfaceAcceptance | None
 
 
 def _readonly(value: np.ndarray, dtype: np.dtype, /) -> np.ndarray:
@@ -180,7 +197,11 @@ def _cad_curve_parameter_sense(domain: MeshingDomain, curve: int, /) -> int:
 
 
 def _association_for(
-    surface: CellMeshingResult | SurfaceSourceCharts, dimension: int, /, *, required: bool
+    surface: CellMeshingResult | SurfaceSourceCharts | CadSurfaceConstructionData,
+    dimension: int,
+    /,
+    *,
+    required: bool,
 ) -> GeometryAssociation | None:
     entity_set = surface.mesh.entity_set(dimension)
     expected_kind = (
@@ -246,7 +267,7 @@ def _association_row_map(association: GeometryAssociation, /) -> dict[int, int]:
 
 
 def _exact_surface_points(
-    surface: CellMeshingResult | SurfaceSourceCharts, /
+    surface: CellMeshingResult | SurfaceSourceCharts | CadSurfaceConstructionData, /
 ) -> tuple[np.ndarray, tuple[tuple[ExactScalar, ...], ...]]:
     mesh = surface.mesh
     if mesh.topological_dimension != 2 or mesh.ambient_dimension != 3:
@@ -347,6 +368,14 @@ def _cad_plc_data(
     surface lies within the source ``deviation`` bound of its patch, which is
     the declared plane tolerance (zero without a bound: rounding only).
     """
+    surface_data = CadSurfaceConstructionData(
+        surface.mesh,
+        surface.geometry,
+        surface.coordinate_contract,
+        surface.associations,
+        surface_source,
+    )
+    premises = _CadSurfaceProofPremises(surface, computed_surface)
     domain.require_current(domain.source_id, domain.source_revision)
     if domain.brep_authority is None or domain.source_kinds != ("vertex", "edge", "face"):
         raise ValueError(
@@ -366,7 +395,7 @@ def _cad_plc_data(
         (vertex_association, edge_association, face_association)
     ):
         accepted = _association_for(
-            surface, dimension, required=chart_association is not None
+            surface_data, dimension, required=chart_association is not None
         )
         if (accepted is None) != (chart_association is None) or (
             accepted is not None
@@ -387,7 +416,7 @@ def _cad_plc_data(
                 "Accepted CAD surface associations must bind the same BRep revision."
             )
 
-    _, exact_points = _exact_surface_points(surface)
+    _, exact_points = _exact_surface_points(surface_data)
     if not isinstance(surface_source, SurfaceSourceCharts):
         raise TypeError("CAD volume construction requires retained SurfaceSourceCharts.")
     source_chart_cell_ids = np.asarray(surface_source.cell_global_ids, dtype=np.int64)
@@ -405,7 +434,7 @@ def _cad_plc_data(
         or len(chart_row_by_cell_id) != source_chart_cell_ids.size
     ):
         raise ValueError("CAD source root charts lost their original triangle ancestry.")
-    mesh = surface.mesh
+    mesh = surface_data.mesh
     mesh_vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     vertex_association_rows = _association_row_map(vertex_association)
     vertex_dimensions = np.asarray(vertex_association.source_dimensions, dtype=np.int64)
@@ -706,7 +735,7 @@ def _cad_plc_data(
         plane = _exact_patch_plane(domain, patch)
         if plane is not None:
             facet_planes[patch] = plane
-    report = surface.certification
+    report = premises.surface.certification
     if computed_surface is not None and computed_surface.report is not report:
         raise ValueError("Computed surface acceptance binds another report.")
     validated_surface = None
