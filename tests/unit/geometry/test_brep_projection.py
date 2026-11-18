@@ -1733,7 +1733,7 @@ def test_planar_trim_projection_is_identical_alone_and_in_a_batch() -> None:
     ]
     assert (
         batch.result_id
-        == "4ab198b006a7e6d9de2c82f4e2e75ca2a323e2054ceda19671689369a090f9e1"
+        == "8acd7d51015d033182552bcbede92e3bc1e0fb6343c7a458c7670fffab2b19b9"
     )
     for index, point in enumerate(points):
         single = _project(projection, [point], _FACE, 0)
@@ -2537,3 +2537,201 @@ def test_trim_polygon_exact_boundary_and_batch_independence() -> None:
     reversed_result = domain.classify(queries[::-1])
     np.testing.assert_array_equal(reversed_result.inside, oracle[::-1, 0])
     np.testing.assert_array_equal(reversed_result.boundary, oracle[::-1, 1])
+
+
+@pytest.mark.parametrize(
+    ("kind", "v_hex", "point_hex", "axis_status"),
+    (
+        (
+            "cylinder",
+            "0x1.0000000000000p-2",
+            ("0x1.f0b6848d2af20p-3", "0x1.f0b6848d2af1bp-1", "0x1.0000000000000p-2"),
+            _STATUS.UNRESOLVED,
+        ),
+        (
+            "cone",
+            "0x1.3bfc0d26d282ap-3",
+            ("0x1.fa57c58570670p-3", "0x1.fa57c5857066bp-1", "0x1.3bfc0d26d282ap-3"),
+            _STATUS.UNRESOLVED,
+        ),
+        (
+            "sphere",
+            "0x1.8a5d76f0f032dp-1",
+            ("0x1.6482d37a5a3d3p-3", "0x1.6482d37a5a3d0p-1", "0x1.6482d37a5a3d1p-1"),
+            _STATUS.UNRESOLVED,
+        ),
+        (
+            "torus",
+            "0x1.7fe1c4bb56d83p+1",
+            ("0x1.75cb2ce9e5870p-2", "0x1.75cb2ce9e586cp+0", "0x1.22e25bdba653dp-4"),
+            _STATUS.UNRESOLVED,
+        ),
+        (
+            "revolution",
+            "0x1.4000000000000p-1",
+            ("0x1.f0b6848d2af20p-3", "0x1.f0b6848d2af1bp-1", "0x1.0000000000000p-2"),
+            _STATUS.NON_ISOLATED,
+        ),
+    ),
+)
+def test_specified_closed_form_face_points_are_batch_independent(
+    kind: str, v_hex: str, point_hex: tuple[str, str, str], axis_status: int
+) -> None:
+    import math
+
+    import mpmath as mp
+
+    from phydrax.geometry._rational import binary64_norm
+    from phydrax.geometry.brep._host_program import (
+        evaluate_host_program,
+        prepare_host_program,
+    )
+    from phydrax.geometry.brep._patches import (
+        ConePatch,
+        CylinderPatch,
+        LineCurve,
+        RevolutionSurface,
+        SpherePatch,
+        TorusPatch,
+    )
+    from phydrax.geometry.brep._projection import _specified_atan2
+
+    origin, first, second, axis = (0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)
+    patches = {
+        "cylinder": CylinderPatch(origin, first, second, axis, 1),
+        "cone": ConePatch(origin, first, second, axis, 1, 0.125),
+        "sphere": SpherePatch(origin, first, second, axis, 1),
+        "torus": TorusPatch(origin, first, second, axis, 2, 0.5),
+        "revolution": RevolutionSurface(LineCurve((1, 0, -1), (0, 0, 2)), origin, axis),
+    }
+    patch = patches[kind]
+    if kind == "torus":
+        bounds = ((0.0, 0.0), (math.tau, math.tau))
+    elif kind == "revolution":
+        bounds = ((-math.pi, 0.0), (math.pi, 1.0))
+    else:
+        bounds = ((-math.pi, -1.0), (math.pi, 1.0))
+    projection = phx.geometry.prepare_brep_projection(
+        _rectangle_face_model(patch, bounds)
+    )
+    tiny = np.nextafter(0.0, np.inf)
+    points = np.asarray(
+        (
+            (0.0625, 0.25, 0.25),
+            (0.125, 0.1875, 0.25),
+            (0.1875, 0.25, -0.25),
+            (0.125, 0.5, 0.75),
+            (-2.0, 0.0, 0.25),
+            (-2.0, -0.0, 0.25),
+            (-2.0, tiny, 0.25),
+            (-2.0, -tiny, 0.25),
+            (2.0, 0.0, 0.25),
+            (0.0, 0.0, 0.25),
+        ),
+        dtype=np.float64,
+    )
+    batch = _project(projection, points, _FACE, 0)
+    uv = np.asarray(batch.parameters, dtype=np.float64)
+    projected = np.asarray(batch.points, dtype=np.float64)
+    np.testing.assert_array_equal(
+        uv[0].view(np.uint64),
+        np.asarray((float.fromhex("0x1.5368c951e9cfcp+0"), float.fromhex(v_hex))).view(
+            np.uint64
+        ),
+    )
+    np.testing.assert_array_equal(
+        projected[0].view(np.uint64),
+        np.asarray(tuple(float.fromhex(value) for value in point_hex)).view(np.uint64),
+    )
+    program = prepare_host_program(patch.evaluate, 2)
+    assert program is not None
+    expected = evaluate_host_program(program, uv[:9])
+    np.testing.assert_array_equal(projected[:9].view(np.uint64), expected.view(np.uint64))
+    for row in range(len(points)):
+        single = _project(projection, points[row : row + 1], _FACE, 0)
+        np.testing.assert_array_equal(
+            np.asarray(single.status), np.asarray(batch.status)[row : row + 1]
+        )
+        np.testing.assert_array_equal(
+            np.asarray(single.parameters).view(np.uint64),
+            uv[row : row + 1].view(np.uint64),
+        )
+        np.testing.assert_array_equal(
+            np.asarray(single.points).view(np.uint64),
+            projected[row : row + 1].view(np.uint64),
+        )
+    seam = math.pi if kind == "torus" else -math.pi
+    assert np.all(uv[4:8, 0] == seam)
+    assert uv[8, 0] == 0.0
+    assert int(np.asarray(batch.status)[9]) == axis_status
+    # Recorded Linux/glibc arctan2 values for these four dyadic directions;
+    # pinning them keeps the fault-adequacy check portable to other hosts.
+    old = np.asarray(
+        [
+            float.fromhex(value)
+            for value in (
+                "0x1.5368c951e9cfdp+0",
+                "0x1.f730bd281f69bp-1",
+                "0x1.dac670561bb4fp-1",
+                "0x1.5368c951e9cfdp+0",
+            )
+        ],
+        dtype=np.float64,
+    )
+    assert np.count_nonzero(old.view(np.uint64) != uv[:4, 0].view(np.uint64)) == 4
+    with mp.workdps(100):
+        for row in range(4):
+            true_angle = mp.atan2(
+                mp.mpf(float(points[row, 1])), mp.mpf(float(points[row, 0]))
+            )
+            error = abs(mp.mpf(float(uv[row, 0])) - true_angle)
+            assert error <= 7 * mp.mpf(math.ulp(float(true_angle)))
+            if kind in ("sphere", "torus"):
+                radial = float(binary64_norm(points[row, :2]))
+                denominator = radial if kind == "sphere" else radial - 2.0
+                specified = _specified_atan2(float(points[row, 2]), denominator)
+                reference = mp.atan2(mp.mpf(float(points[row, 2])), mp.mpf(denominator))
+                assert abs(mp.mpf(specified) - reference) <= (
+                    7 * mp.mpf(math.ulp(float(reference)))
+                )
+                representative = specified + math.tau if specified < 0.0 else specified
+                assert uv[row, 1] == (specified if kind == "sphere" else representative)
+
+
+def test_specified_angle_canonicalizes_zero_without_snapping_near_cut() -> None:
+    import math
+
+    from phydrax.geometry.brep._projection import _specified_atan2
+
+    epsilon = np.nextafter(0.0, np.inf)
+    assert _specified_atan2(0.0, -1.0).hex() == math.pi.hex()
+    assert _specified_atan2(-0.0, -1.0).hex() == math.pi.hex()
+    assert _specified_atan2(epsilon, -1.0).hex() == math.pi.hex()
+    assert _specified_atan2(-epsilon, -1.0).hex() == (-math.pi).hex()
+    assert _specified_atan2(0.0, 1.0).hex() == "0x0.0p+0"
+    assert _specified_atan2(-0.0, 1.0).hex() == "0x0.0p+0"
+
+
+def test_specified_sphere_pole_and_cone_apex_retain_declared_status() -> None:
+    import math
+
+    from phydrax.geometry.brep._patches import ConePatch, SpherePatch
+
+    origin, first, second, axis = (0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)
+    sphere = SpherePatch(origin, first, second, axis, 1)
+    sphere_projection = phx.geometry.prepare_brep_projection(
+        _rectangle_face_model(sphere, ((-math.pi, -math.pi / 2), (math.pi, math.pi / 2)))
+    )
+    pole = _project(sphere_projection, ((0, 0, 2),), _FACE, 0)
+    assert int(pole.status[0]) == _STATUS.SEAM
+    assert float(pole.parameters[0, 0]) == -math.pi
+    assert float(pole.parameters[0, 1]) == math.pi / 2
+
+    cone = ConePatch(origin, first, second, axis, 0, 0.125)
+    cone_projection = phx.geometry.prepare_brep_projection(
+        _rectangle_face_model(cone, ((-math.pi, 0.0), (math.pi, 2.0)))
+    )
+    apex = _project(cone_projection, ((0, 0, 0),), _FACE, 0)
+    assert int(apex.status[0]) == _STATUS.SINGULAR
+    np.testing.assert_array_equal(apex.parameters, ((0.0, 0.0),))
+    np.testing.assert_array_equal(apex.points, ((0.0, 0.0, 0.0),))

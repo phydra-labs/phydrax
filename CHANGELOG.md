@@ -1,6 +1,13 @@
 # Changelog
 
 ## Unreleased
+- Closed-form B-Rep face projection now uses specified binary64 chart
+  parameters for planes, cylinders, straight-profile revolutions, spheres,
+  cones, and tori; projected points use the lowered host surface program.
+  Curved meshes, projection/association evidence, and identities derived from
+  them change and must be regenerated. Line/circle edge projections, spline
+  and circle-profile revolution projections, and offset/Newton routes remain
+  unspecified.
 - Native CAD meshing stores an analytic surface point as the lower endpoint of
   its lowered host interval program, and an intersection or plane-cylinder
   section chart point as the lower endpoint of its certified point enclosure

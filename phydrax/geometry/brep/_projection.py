@@ -18,6 +18,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._meshcore import angle_arctangent2, angle_cosine, angle_sine
 from ..._validation import positive_finite_float
 from ...discretization._exact_algebraic_geometry import (
     coefficient_interval,
@@ -30,7 +31,7 @@ from ...linalg._exact import (
 from ...linalg._hermitian_spectral import fraction_sqrt_interval
 from ...typing import checked
 from .._atlas import _CoarseChordPlan, _curve_loops_point_state, TrimEnclosures
-from .._interval_enclosure import PreparedIntervalFunction
+from .._interval_enclosure import interval_tan, PreparedIntervalFunction
 from .._planar_embedding import PlanarEmbedding
 from .._rational import (
     binary64_dot,
@@ -85,6 +86,7 @@ _NON_ISOLATED = int(BRepProjectionStatus.NON_ISOLATED)
 _NAN3 = np.full((3,), np.nan, dtype=np.float64)
 _NAN2 = np.full((2,), np.nan, dtype=np.float64)
 _NAN_FRAME3 = np.full((2, 3), np.nan, dtype=np.float64)
+_BINARY64_TWO_PI = tau
 
 _IDENTITY_ROTATION = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 _ZERO_TRANSLATION = (0.0, 0.0, 0.0)
@@ -147,7 +149,6 @@ class _ProjectionPreparation:
         default_factory=dict
     )
     arc_distances: dict[int, _ArcDistancePreparation | None] = field(default_factory=dict)
-    plane_jacobians: dict[int, np.ndarray] = field(default_factory=dict)
     line_derivatives: dict[int, np.ndarray] = field(default_factory=dict)
     circle_endpoints: dict[int, tuple[np.ndarray, np.ndarray]] = field(
         default_factory=dict
@@ -578,15 +579,18 @@ def _face_normal_and_frame(
             first_axis = np.asarray(patch.first_axis, dtype=np.float64)
             second_axis = np.asarray(patch.second_axis, dtype=np.float64)
             third_axis = np.asarray(patch.axis, dtype=np.float64)
+            angles = np.asarray((longitude, latitude), dtype=np.float64)
+            cosines = angle_cosine(angles)
+            sines = angle_sine(angles)
             radial = (
-                np.cos(latitude) * np.cos(longitude) * first_axis
-                + np.cos(latitude) * np.sin(longitude) * second_axis
-                + np.sin(latitude) * third_axis
+                cosines[1] * cosines[0] * first_axis
+                + cosines[1] * sines[0] * second_axis
+                + sines[1] * third_axis
             )
             radial_length = float(binary64_norm(radial))
             if radial_length > 0.0 and np.isfinite(radial_length):
                 normal = orientation * radial / radial_length
-                first = -np.sin(longitude) * first_axis + np.cos(longitude) * second_axis
+                first = -sines[0] * first_axis + cosines[0] * second_axis
                 first /= binary64_norm(first)
                 frame = np.stack((first, np.cross(normal, first)))
                 if embedding is None:
@@ -621,6 +625,20 @@ def _face_normal_and_frame(
         binary64_matmul(frame, np.stack((embedding.x_axis, embedding.y_axis), axis=1)),
         True,
     )
+
+
+def _specified_atan2(ordinate: float, abscissa: float, /) -> float:
+    """Specified to the bit, within seven ulps, and not an exact decision.
+
+    Both signs of an ordinate zero are canonicalized to positive zero before
+    calling the platform-identical kernel. Window selection subsequently uses
+    the smallest integer shift by the one binary64 two-pi constant that lands
+    in the authored inclusive window; the approximate angle is not a proof of
+    exact trim membership.
+    """
+    y = np.asarray((ordinate + 0.0,), dtype=np.float64)
+    x = np.asarray((abscissa,), dtype=np.float64)
+    return float(angle_arctangent2(y, x)[0])
 
 
 def _periodic_parameter(
@@ -924,15 +942,18 @@ def _prepare_face(model: BRepModel, face: int, /) -> _PreparedFace:
                     rtol=0.0,
                     atol=256.0 * np.finfo(np.float64).eps,
                 )
-                and np.linalg.det(frame) > 0.0
+                and rational_dot(
+                    rational_cross(rational_vector(axes[0]), rational_vector(axes[1])),
+                    rational_vector(axes[2]),
+                )
+                > 0
             )
         if isinstance(patch, (CylinderPatch, SpherePatch)):
             radii = (float(patch.radius),)
         elif isinstance(patch, ConePatch):
-            radii = (
-                float(np.tan(float(patch.semi_angle))),
-                float(patch.reference_radius),
-            )
+            angle = np.asarray(float(patch.semi_angle), dtype=np.float64)
+            tangent, _ = interval_tan((angle, angle))
+            radii = (float(tangent), float(patch.reference_radius))
         else:
             radii = (float(patch.major_radius), float(patch.minor_radius))
     elif isinstance(patch, RevolutionSurface) and isinstance(
@@ -3068,6 +3089,15 @@ def _cylindrical_trim_distance(
     )
 
 
+def _specified_face_carrier(patch: AbstractSurfacePatch, /) -> bool:
+    return isinstance(
+        patch, (PlanePatch, CylinderPatch, ConePatch, SpherePatch, TorusPatch)
+    ) or (
+        isinstance(patch, RevolutionSurface)
+        and isinstance(patch.curve, (LineCurve, ExactLineCurve))
+    )
+
+
 def _project_face(
     model: BRepModel,
     face: int,
@@ -3089,6 +3119,7 @@ def _project_face(
     preparation: _ProjectionPreparation | None = None,
 ) -> _Hit:
     patch = model.patches[face]
+    specified_point = _specified_face_carrier(patch)
     if prepared is None:
         prepared = _prepare_face(model, face)
     bounds = prepared.bounds
@@ -3240,7 +3271,7 @@ def _project_face(
         relative = point - origin
         axial = float(binary64_dot(relative, axis)) / axis_squared
         x, y = float(binary64_dot(relative, first)), float(binary64_dot(relative, second))
-        radial = float(np.hypot(x, y))
+        radial = float(binary64_norm(np.asarray((x, y), dtype=np.float64)))
         carrier_distance = _cylinder_distance(
             patch, point, (float(bounds[0, 1]), float(bounds[1, 1]))
         )
@@ -3278,7 +3309,7 @@ def _project_face(
                 _NAN_FRAME3.copy(),
                 path,
             )
-        angle = float(np.arctan2(y, x))
+        angle = _specified_atan2(y, x)
         # Axial and angular distances separate on a cylinder: the free angle and
         # the height clamped to the authored range give the rectangle-closest
         # point, seam angles included.
@@ -3328,11 +3359,10 @@ def _project_face(
                 _NAN_FRAME3.copy(),
                 path,
             )
-        longitude = float(np.arctan2(coordinates[1], coordinates[0]))
-        latitude = float(
-            np.arctan2(coordinates[2], np.hypot(coordinates[0], coordinates[1]))
-        )
-        if np.hypot(coordinates[0], coordinates[1]) == 0.0:
+        radial = float(binary64_norm(coordinates[:2]))
+        longitude = _specified_atan2(float(coordinates[1]), float(coordinates[0]))
+        latitude = _specified_atan2(float(coordinates[2]), radial)
+        if radial == 0.0:
             longitude = float(bounds[0, 0])
         uv = np.asarray((longitude, latitude), dtype=np.float64)
         candidate = center + radius * relative / length
@@ -3348,7 +3378,7 @@ def _project_face(
         relative = point - origin
         axial_point = float(binary64_dot(relative, axis))
         x, y = float(binary64_dot(relative, first)), float(binary64_dot(relative, second))
-        radial_point = float(np.hypot(x, y))
+        radial_point = float(binary64_norm(np.asarray((x, y), dtype=np.float64)))
         tangent, reference = prepared.radii
         axial = (axial_point + tangent * (radial_point - reference)) / (
             1.0 + tangent * tangent
@@ -3380,7 +3410,7 @@ def _project_face(
                 _NAN_FRAME3.copy(),
                 path,
             )
-        angle = 0.0 if radial_point == 0.0 else float(np.arctan2(y, x))
+        angle = 0.0 if radial_point == 0.0 else _specified_atan2(y, x)
         uv = np.asarray((angle, axial), dtype=np.float64)
         candidate = (
             origin
@@ -3398,7 +3428,7 @@ def _project_face(
             float(binary64_dot(relative, second)),
             float(binary64_dot(relative, axis)),
         )
-        radial = float(np.hypot(x, y))
+        radial = float(binary64_norm(np.asarray((x, y), dtype=np.float64)))
         major, minor = prepared.radii
         if not major > minor > 0.0:
             return _unresolved(2, face, path)
@@ -3413,7 +3443,7 @@ def _project_face(
         if carrier_distance is None:
             return _unresolved(2, face, path)
         tube_x, tube_y = radial - major, z
-        tube_length = float(np.hypot(tube_x, tube_y))
+        tube_length = float(binary64_norm(np.asarray((tube_x, tube_y), dtype=np.float64)))
         if tube_length == 0.0:
             if (
                 not prepared.full_rectangle
@@ -3434,7 +3464,7 @@ def _project_face(
                 _NAN_FRAME3.copy(),
                 path,
             )
-        tube_angle = float(np.arctan2(tube_y, tube_x))
+        tube_angle = _specified_atan2(tube_y, tube_x)
         ring_radius = major + minor * tube_x / tube_length
         height = minor * tube_y / tube_length
         if radial == 0.0:
@@ -3457,7 +3487,7 @@ def _project_face(
                 _NAN_FRAME3.copy(),
                 path,
             )
-        longitude = float(np.arctan2(y, x))
+        longitude = _specified_atan2(y, x)
         uv = np.asarray((longitude, tube_angle), dtype=np.float64)
         radial_direction = np.cos(longitude) * first + np.sin(longitude) * second
         candidate = center + ring_radius * radial_direction + height * axis
@@ -3624,11 +3654,9 @@ def _project_face(
         if rho_point == 0.0:
             angle = float(bounds[0, 0])
         else:
-            angle = float(
-                np.arctan2(
-                    binary64_dot(radial_point, second_axis),
-                    binary64_dot(radial_point, radial_axis),
-                )
+            angle = _specified_atan2(
+                float(binary64_dot(radial_point, second_axis)),
+                float(binary64_dot(radial_point, radial_axis)),
             )
             if mirrored != reversed_side:
                 # The positive meridian side lies along the reference direction
@@ -3638,11 +3666,9 @@ def _project_face(
         candidate = np.asarray(
             patch.evaluate(jnp.asarray(uv, dtype=jnp.float64)), dtype=np.float64
         )
-        candidate_relative = candidate - axis_origin
-        candidate_height = float(binary64_dot(candidate_relative, axis))
-        nonisolated = (
-            rho_point == 0.0
-            and float(binary64_norm(candidate_relative - candidate_height * axis)) > 0.0
+        nonisolated = rho_point == 0.0 and any(
+            start + Fraction(profile_parameter) * rate != 0
+            for start, rate in zip(exact_radial_start, exact_radial_rate, strict=True)
         )
         rectangle_closest = True
     elif isinstance(patch, RevolutionSurface) and isinstance(patch.curve, CircleCurve):
@@ -3681,6 +3707,8 @@ def _project_face(
     periods = patch.periods
     for axis, period in enumerate(periods):
         if period is not None:
+            if specified_point and patch.native_period_symbols()[axis] == "two_pi":
+                period = _BINARY64_TWO_PI
             representative = _periodic_parameter(
                 float(uv[axis]), bounds[0, axis], bounds[1, axis], period
             )
@@ -3901,14 +3929,18 @@ def _project_face(
         normal, tangents, regular = _NAN3.copy(), _NAN_FRAME3.copy(), True
     else:
         jacobian = None
-        if preparation is not None and isinstance(patch, PlanePatch):
-            jacobian = preparation.plane_jacobians.get(face)
-            if jacobian is None:
-                jacobian = np.asarray(
-                    _patch_jacobian(patch, jnp.asarray(uv, dtype=jnp.float64)),
-                    dtype=np.float64,
-                )
-                preparation.plane_jacobians[face] = jacobian
+        if specified_point:
+            if preparation is None:
+                frame_program = prepare_host_program(jax.jacfwd(patch.evaluate), 2)
+            else:
+                if face not in preparation.frame_programs:
+                    preparation.frame_programs[face] = prepare_host_program(
+                        jax.jacfwd(patch.evaluate), 2
+                    )
+                frame_program = preparation.frame_programs[face]
+            if frame_program is None:
+                return _unresolved(2, face, path)
+            jacobian = evaluate_host_program(frame_program, uv.reshape((1, 2)))[0]
         normal, tangents, regular = _face_normal_and_frame(
             patch,
             uv,
@@ -3939,6 +3971,20 @@ def _project_face(
         for axis, period in enumerate(periods)
     ):
         status = _SEAM
+    if specified_point:
+        if preparation is None:
+            program = prepare_host_program(patch.evaluate, 2)
+        else:
+            if face not in preparation.patch_programs:
+                preparation.patch_programs[face] = prepare_host_program(patch.evaluate, 2)
+            program = preparation.patch_programs[face]
+        if program is None:
+            return _unresolved(2, face, path)
+        if not defer_frame:
+            candidate = evaluate_host_program(program, uv.reshape((1, 2)))[0]
+            if not np.all(np.isfinite(candidate)):
+                return _unresolved(2, face, path)
+            upper = max(upper, _exact_point_distance_upper(point, candidate))
     if embedding is not None:
         candidate = embedding.to_planar(candidate)
     return _Hit(
@@ -3955,8 +4001,10 @@ def _project_face(
         pending_frame=defer_frame,
         pending_point=(
             defer_frame
-            and status != _SEAM
-            and not _periodic_landmark(uv, bounds, periods)
+            and (
+                specified_point
+                or (status != _SEAM and not _periodic_landmark(uv, bounds, periods))
+            )
         ),
     )
 
@@ -5169,7 +5217,13 @@ def _revolution_profile_contains(
 
 @final
 class NativeBRepProjection(AbstractBRepProjection):
-    """Source-evaluating closest-point and point-location queries without tessellation."""
+    """Source-evaluating closest-point and point-location queries.
+
+    Closed-form face angles are specified to the bit, within the native
+    seven-ulp bound for their computed arguments; no exact decision may rest on
+    those approximations. Line/circle edge and spline, circle-profile
+    revolution, offset and Newton projection values remain unspecified.
+    """
 
     source_id: str = eqx.field(static=True)
     source_revision: str = eqx.field(static=True)
@@ -6018,6 +6072,9 @@ class NativeBRepProjection(AbstractBRepProjection):
             for row, value in zip(selected, values, strict=True):
                 value = np.asarray(value, dtype=np.float64)
                 hit = hits[row]
+                if not np.all(np.isfinite(value)):
+                    hits[row] = _unresolved(dimension, hit.index, hit.path)
+                    continue
                 key = (dimension, hit.index, hit.path)
                 occurrences = targets.get(key)
                 if occurrences is None:
@@ -6052,6 +6109,10 @@ class NativeBRepProjection(AbstractBRepProjection):
                 [hits[row].parameters for row in selected], dtype=np.float64
             )
             if program is None:
+                if _specified_face_carrier(patch):
+                    for row in selected:
+                        hits[row] = _unresolved(2, face, hits[row].path)
+                    continue
                 jacobians = tuple(
                     np.asarray(_patch_jacobian(patch, jnp.asarray(parameter)))
                     for parameter in parameters
@@ -6150,6 +6211,7 @@ class NativeBRepProjection(AbstractBRepProjection):
         lifts: dict[tuple[int, int], bool] = {}
         angle_bounds: dict[int, tuple[float, float] | None] = {}
         boxes = self._source_edge_boxes()
+        preparation = _ProjectionPreparation(self.model, boxes)
         for row, query in enumerate(world):
             if row % 64 == 0:
                 for trim_cache in enclosures.values():
@@ -6177,6 +6239,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                     lifts=lifts,
                     boxes=boxes,
                     angle_bounds=angle_bounds,
+                    preparation=preparation,
                 )
                 if hit.status == _UNRESOLVED:
                     unresolved.append(hit)
@@ -6413,6 +6476,7 @@ class NativeBRepProjection(AbstractBRepProjection):
             for occurrence in self.occurrences
         )
         branch_boxes = self._source_edge_boxes()
+        preparation = _ProjectionPreparation(self.model, branch_boxes)
         if identity_occurrences:
             from ._intersection_curve import IntersectionCurve
 
@@ -6569,6 +6633,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                     boxes=branch_boxes,
                     distance_threshold=radius,
                     angle_bounds=angle_bounds,
+                    preparation=preparation,
                 )
                 add_hit(hit, query, candidates, unresolved)
                 if candidates:
@@ -6829,6 +6894,7 @@ class NativeBRepProjection(AbstractBRepProjection):
         lifts: dict[tuple[int, int], bool] = {}
         angle_bounds: dict[int, tuple[float, float] | None] = {}
         boxes = self._source_edge_boxes()
+        preparation = _ProjectionPreparation(self.model, boxes)
         for row, (query, selected_path, selected_solid) in enumerate(
             zip(world, requested, selected_solids, strict=True)
         ):
@@ -6879,6 +6945,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                         lifts=lifts,
                         distance_threshold=self.policy.classifier_tolerance,
                         angle_bounds=angle_bounds,
+                        preparation=preparation,
                         _occurrence=occurrence if selected_solid is not None else None,
                     )
                     for face in self.model.topology.solid_faces[occurrence.solid]
