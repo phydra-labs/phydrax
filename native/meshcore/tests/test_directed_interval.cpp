@@ -16,6 +16,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 #include "check.hpp"
 #include "directed_interval.hpp"
@@ -174,6 +175,29 @@ void angles() {
                                  phx::mc::remesh::Interval{-1.0, 1.0},
                                  phx::mc::remesh::Interval{-1.0, 1.0}};
   PHX_CHECK(phx::mc::remesh::angle_upper(axis, around) >= phx::mc::remesh::kPiUpper);
+  // So does every pair with a component that is not finite, on either side:
+  // all triples over 0, +-1, +-infinity and NaN against all of them.
+  const double infinity = std::numeric_limits<double>::infinity();
+  const double values[6] = {0.0, 1.0, -1.0, infinity, -infinity,
+                            std::numeric_limits<double>::quiet_NaN()};
+  int nonfinite = 0;
+  for (int a = 0; a < 216; ++a) {
+    const Vector u = {values[a % 6], values[(a / 6) % 6], values[a / 36]};
+    const bool u_finite = std::isfinite(u[0]) && std::isfinite(u[1]) && std::isfinite(u[2]);
+    for (int b = 0; b < 216; ++b) {
+      const Vector v = {values[b % 6], values[(b / 6) % 6], values[b / 36]};
+      if (u_finite && std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2])) continue;
+      ++nonfinite;
+      PHX_CHECK(phx::mc::remesh::angle_upper(exactly(u), exactly(v)) ==
+                phx::mc::remesh::kPiUpper);
+    }
+  }
+  PHX_CHECK(nonfinite == 216 * 216 - 27 * 27);
+  // An interval whose endpoints are out of order encloses nothing.
+  const IntervalVector reversed = {phx::mc::remesh::Interval{2.0, 1.0},
+                                   phx::mc::remesh::Interval{0.0, 0.0},
+                                   phx::mc::remesh::Interval{0.0, 0.0}};
+  PHX_CHECK(phx::mc::remesh::angle_upper(reversed, axis) == phx::mc::remesh::kPiUpper);
   // A box in front of the axis: at most the angle of its far corner.
   const IntervalVector ahead = {phx::mc::remesh::Interval{1.0, 2.0},
                                 phx::mc::remesh::Interval{-1.0, 1.0},

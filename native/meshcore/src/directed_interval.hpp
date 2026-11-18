@@ -104,8 +104,13 @@ inline double atan_upper(double ratio) { return elementary::atan(ratio, ratio).u
 inline double atan_lower(double ratio) { return elementary::atan(ratio, ratio).lower; }
 
 // An upper bound of the angle in [0, pi] between every u in `first` and every
-// v in `second`; kPiUpper when the enclosures do not bound it.
+// v in `second`; kPiUpper when the enclosures do not bound it. An enclosure
+// with an endpoint that is not finite, or with its endpoints out of order,
+// bounds nothing: its products could hide an infinity times zero.
 inline double angle_upper(const IntervalVector& first, const IntervalVector& second) {
+  for (std::size_t d = 0; d < 3; ++d) {
+    if (!finite(first[d]) || !finite(second[d])) return kPiUpper;
+  }
   const IntervalVector normal = cross(first, second);
   const Interval along = dot(first, second);
   // Acute: atan(|u x v| / (u . v)) with the quotient at its largest.
