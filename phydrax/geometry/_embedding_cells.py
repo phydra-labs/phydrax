@@ -111,24 +111,19 @@ def _linear_simplex_chart(
         ):
             return None
         polynomials.append(expression)
-    zero = (0,) * dimension
-    units = tuple(
-        tuple(int(axis == column) for axis in range(dimension))
-        for column in range(dimension)
-    )
+    zero, units = _affine_exponents(dimension)
     offset = tuple(polynomial.get(zero, _ZERO) for polynomial in polynomials)
     matrix = tuple(
         tuple(polynomial.get(unit, _ZERO) for unit in units) for polynomial in polynomials
     )
     corners = tuple(
-        tuple(
-            sum(
-                (row[column] for column, value in enumerate(point) if value),
-                offset[axis],
-            )
-            for axis, row in enumerate(matrix)
+        offset if column is None else tuple(
+            value + row[column] for value, row in zip(offset, matrix, strict=True)
         )
-        for point in references
+        for column in (
+            next((axis for axis, value in enumerate(point) if value), None)
+            for point in references
+        )
     )
     bounds = tuple(
         (
@@ -429,6 +424,26 @@ def _prepare_cell_basis(
         ) from error
 
 
+def _nodal_corner_dofs(
+    basis: tuple[Expression, ...], references: tuple[tuple[Fraction, ...], ...]
+) -> tuple[int, ...] | None:
+    """Prove the fixed polynomial basis selects a single DOF at each corner."""
+    if any(
+        isinstance(function, RationalPolynomial)
+        or any(not isinstance(value, Fraction) for value in function.values())
+        for function in basis
+    ):
+        return None
+    result = []
+    for point in references:
+        values = tuple(_evaluate(function, point) for function in basis)
+        indices = tuple(index for index, value in enumerate(values) if value)
+        if len(indices) != 1 or values[indices[0]] != 1:
+            return None
+        result.append(indices[0])
+    return tuple(result)
+
+
 def _cell_expressions(
     element: ScalarCoordinateElement,
     local: tuple[tuple[ExactScalar, ...], ...],
@@ -510,6 +525,7 @@ def _mapped_cell_chart(
     basis: PreparedLinearCombinationBasis | None = None,
     interval_bounds: IntervalBasisBounds | None = None,
     simplex_frame: tuple[int, tuple[int, ...]] | None = None,
+    nodal_corners: tuple[int, ...] | None = None,
     /,
 ) -> _CellChart:
     """Chart of a cell from its exact composed per-cell coordinate expressions."""
@@ -550,9 +566,14 @@ def _mapped_cell_chart(
     matrix: tuple[tuple[ExactScalar, ...], ...] | None
     inner_bounds: tuple[tuple[float, float], ...] | None = None
     if linear_chart is None:
-        corners = tuple(
-            tuple(_evaluate(expression, point) for expression in proof_coordinates)
-            for point in proof_references
+        corners = (
+            tuple(local[index] for index in nodal_corners)
+            if nodal_corners is not None
+            and all(isinstance(value, Fraction) for point in local for value in point)
+            else tuple(
+                tuple(_evaluate(expression, point) for expression in proof_coordinates)
+                for point in proof_references
+            )
         )
         if simplex_frame is not None and all(
             isinstance(value, Fraction) for point in corners for value in point
@@ -683,6 +704,7 @@ def _iter_embedding_cells(
         chart_bases: dict[bytes, PreparedLinearCombinationBasis] = {}
         fixed_basis: tuple[Expression, ...] | None = None
         prepared_fixed_basis: PreparedLinearCombinationBasis | None = None
+        nodal_corners: tuple[int, ...] | None = None
         interval_rows: tuple[IntervalBasisBounds | None, ...] | None = None
         if (
             not vertex_element
@@ -796,6 +818,8 @@ def _iter_embedding_cells(
                                     element, cell_row=local_index
                                 )
                             prepared_fixed_basis = _prepare_cell_basis(fixed_basis)
+                            if domain == "simplex":
+                                nodal_corners = _nodal_corner_dofs(fixed_basis, references)
                         basis = prepared_fixed_basis
                     else:
                         from ..discretization._cell_geometry_validity import _map_digest
@@ -824,6 +848,7 @@ def _iter_embedding_cells(
                         basis,
                         None if interval_rows is None else interval_rows[local_index],
                         simplex_frame,
+                        nodal_corners,
                     )
                 cell_references = references
                 cell_domain = domain
