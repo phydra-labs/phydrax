@@ -675,6 +675,93 @@ def test_welded_audit_uses_nondegenerate_exact_projection(power: int, shift: int
     assert dict(report.check_counts)["self_intersection"] == 0
 
 
+def test_welded_host_contact_uses_exact_projection_with_meshcore_present() -> None:
+    from phydrax.meshing._audit_topology import _triangle_pairs_intersect
+
+    n = 1 << 52
+    first = ((0, 0, 0), (n, n - 1, n - 1), (n - 1, n - 2, n - 2))
+    second = tuple((x + 1, y, z) for x, y, z in first)
+    # Exact x-z orientation separates the triangles across the first edge.
+    assert Fraction(n - 1) ** 2 - Fraction(n) * (n - 2) == 1
+    assert all(Fraction(n - 1) * z - Fraction(n - 2) * x < 0 for x, _, z in second)
+    points = np.asarray((*first, *second), dtype=np.float64)
+    hit, certain = _triangle_pairs_intersect(
+        points,
+        np.asarray(((0, 1, 2),), dtype=np.int64),
+        np.asarray(((3, 4, 5),), dtype=np.int64),
+    )
+    np.testing.assert_array_equal(hit, (False,))
+    np.testing.assert_array_equal(certain, (True,))
+
+
+def test_welded_audit_keeps_degenerate_contact_among_ordinary_cells() -> None:
+    # The degenerate triangle is [0,2] on the x axis. The other triangle's
+    # exact y=0 section is [1/2,3/2], so their closed intersection is nonempty.
+    # The third triangle lies at x>=3/2 and y>=3/4, while the second has
+    # x<=9/8 there, although their axis-aligned boxes overlap.
+    lower = (Fraction(0) + Fraction(1)) / 2
+    upper = (Fraction(2) + Fraction(1)) / 2
+    assert lower < Fraction(1) < upper
+    assert Fraction(2) - (Fraction(3, 4) + 1) / 2 < Fraction(3, 2)
+    points = np.asarray(
+        (
+            (0, 0, 0),
+            (1, 0, 0),
+            (2, 0, 0),
+            (0, -1, 0),
+            (2, -1, 0),
+            (1, 1, 0),
+            (1.5, 0.75, 0),
+            (2, 0.75, 0),
+            (2, 1, 0),
+        ),
+        dtype=np.float64,
+    )
+    cells = np.asarray(((0, 1, 2), (3, 4, 5), (6, 7, 8)), dtype=np.int32)
+    mesh = phx.discretization.CellMesh(
+        points, (phx.discretization.CellBlock("cells", "triangle", cells),)
+    )
+    report = phx.meshing.audit_cell_mesh(
+        mesh, phx.discretization.CellGeometrySpec.affine(mesh)
+    )
+    assert dict(report.check_counts)["self_intersection"] == 1
+
+
+def test_welded_contact_batch_retains_pair_order() -> None:
+    from phydrax._meshcore import meshcore_available
+    from phydrax.meshing._audit_topology import (
+        _native_triangle_pairs_intersect,
+        _triangle_pairs_intersect,
+    )
+
+    # The geometries are a transverse crossing, a separated coplanar pair,
+    # and a point in the first triangle's interior; queries reorder them.
+    first = ((0, 0, 0), (2, 0, 0), (0, 2, 0))
+    second = (
+        ((1, -1, -1), (1, -1, 1), (1, 2, 0)),
+        ((1.25, 1.25, 0), (2, 1.25, 0), (1.25, 2, 0)),
+        ((0.5, 0.5, 0), (0.5, 0.5, 1), (1, 0.5, 1)),
+    )
+    # (1,0,0) is the second triangle's exact centroid and lies on the first.
+    assert (Fraction(-1) + Fraction(-1) + Fraction(2)) / 3 == 0
+    assert Fraction(1) + Fraction(0) <= 2
+    assert Fraction(5, 4) + Fraction(5, 4) > 2
+    assert Fraction(1, 2) + Fraction(1, 2) < 2
+    points = np.asarray(
+        tuple(p for triangle in second for p in (*first, *triangle)), dtype=np.float64
+    )
+    rows = np.asarray(((12, 13, 14), (0, 1, 2), (6, 7, 8)), dtype=np.int64)
+    other = rows + 3
+    classify = (
+        _native_triangle_pairs_intersect
+        if meshcore_available()
+        else _triangle_pairs_intersect
+    )
+    hit, certain = classify(points, rows, other)
+    np.testing.assert_array_equal(hit, (True, True, False))
+    np.testing.assert_array_equal(certain, (True, True, True))
+
+
 def test_audit_quality_scenario_5() -> None:
     # Notched square: the vertex-zero fan folds over itself, the cell does not.
     points = np.asarray(((0.0, 0.0), (3.0, 0.0), (3.0, 3.0), (1.5, 1.0), (0.0, 3.0)))
