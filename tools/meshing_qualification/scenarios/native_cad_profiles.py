@@ -856,6 +856,15 @@ def _loop_length(axis_radius: float, transverse_radius: float) -> float:
         return _rounded_reference(value, error)
 
 
+def _analytic_loop_residual(
+    points: np.ndarray, major: float, minor: float, center: float
+) -> float:
+    """Return the largest deviation of points from a declared quadric loop."""
+    radial = np.hypot(points[:, 0], points[:, 1])
+    transverse = np.hypot(points[:, 1], points[:, 2] - center)
+    return float(np.max(np.maximum(np.abs(radial - major), np.abs(transverse - minor))))
+
+
 def _intersection_evidence(
     model: phx.geometry.brep.BRepModel,
     loops: tuple[tuple[float, float, float, float], ...],
@@ -894,7 +903,7 @@ def _intersection_evidence(
         parameters = np.linspace(first, last, 2049)
         evaluated = curve.evaluate_coupled(parameters)
         points = np.asarray(evaluated.point, dtype=np.float64)
-        x, y, z = points[:, 0], points[:, 1], points[:, 2]
+        x, y = points[:, 0], points[:, 1]
         side = int(np.sign(np.median(x)))
         radial = np.hypot(x, y)
         matches = [
@@ -908,20 +917,19 @@ def _intersection_evidence(
             )
         loop_index = matches[0]
         major, minor, center, _ = loops[loop_index]
-        residual = np.maximum(
-            np.abs(radial - major), np.abs(np.hypot(y, z - center) - minor)
-        )
         worst["three_dimensional"] = max(
-            worst["three_dimensional"], float(np.max(residual))
+            worst["three_dimensional"],
+            _analytic_loop_residual(points, major, minor, center),
         )
+        # The coupled point is the first patch's lift by construction, so each
+        # p-curve is measured against the declared analytic loop, not against it.
         for name, parameters_uv, patch in (
             ("first_pcurve", evaluated.first_parameters, curve.first.patch),
             ("second_pcurve", evaluated.second_parameters, curve.second.patch),
         ):
             lifted = np.asarray(patch.evaluate(parameters_uv), dtype=np.float64)
             worst[name] = max(
-                worst[name],
-                float(np.max(np.linalg.norm(lifted - points, axis=1))),
+                worst[name], _analytic_loop_residual(lifted, major, minor, center)
             )
         lengths[loop_index] += float(
             np.sum(np.linalg.norm(np.diff(points, axis=0), axis=1))
