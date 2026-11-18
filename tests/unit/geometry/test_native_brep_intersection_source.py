@@ -1277,7 +1277,9 @@ def test_terminal_trim_subdivision_replaces_the_selected_piece(index: int) -> No
     segment = CurveTrimSegment(LineCurve((0.0, 0.0), (1.0, 0.0)), 0.0, 1.0)
     pieces = [(0.0, 1.0, np.asarray(((0.0, 0.0), (1.0, 0.0))))]
     query = np.asarray(((2.0, 2.0), (3.0, 3.0)))
-    assert _split_terminal_piece(_SegmentEnclosures(segment), pieces, query, index)
+    assert _split_terminal_piece(
+        _SegmentEnclosures(segment, {}), pieces, query, index
+    )
     assert [(first, last) for first, last, _ in pieces] == [(0.0, 0.5), (0.5, 1.0)]
 
 
