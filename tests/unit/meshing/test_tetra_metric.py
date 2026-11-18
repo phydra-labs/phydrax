@@ -35,7 +35,6 @@ from phydrax.meshing._tetra_metric import (
     _collapse_metric_candidates,
     _collapse_phase,
     _entity_frame,
-    _entity_weights,
     _facet_group_map,
     _locate_source_weights,
     _metric_logarithms,
@@ -47,7 +46,6 @@ from phydrax.meshing._tetra_metric import (
     _replacement_candidates,
     _source_cell_weights,
     _source_metric_from_stencil,
-    _SourceSupport,
     _split_phase,
     _stencil_image,
     _topology,
@@ -1538,6 +1536,7 @@ def _implicit_plane_pyramid(
 
 
 def test_implicit_boundary_survivor_proposals_keep_exact_source_stencils() -> None:
+    from phydrax._meshcore import MetricCollapseStar
     from phydrax.meshing._tetra_metric import _implicit_only_vertex, _survivor_moves
 
     state = _implicit_plane_pyramid(1.0, 0.01)
@@ -1547,18 +1546,30 @@ def test_implicit_boundary_survivor_proposals_keep_exact_source_stencils() -> No
         records = _boundary_records(state)
         assert _implicit_only_vertex(state, records, 4)
         topology = _topology(state.snapshot)
-        local = points[[4, 0, 1, 2, 3]]
-        moves = list(
-            _survivor_moves(
-                state, records, topology, 4, local, np.broadcast_to(np.eye(3), (5, 3, 3))
-            )
+        # The survivor at the base center, the removed vertex at the origin,
+        # the other corners, and a far vertex whose spoke stays long: every
+        # carrier that shortens it is a move and the search does not stop.
+        star = MetricCollapseStar(
+            np.concatenate((points[[4, 0, 1, 2, 3]], ((3.0, 0.0, 0.0),))),
+            np.broadcast_to(np.eye(3), (6, 3, 3)),
+            np.asarray((2, 3, 4, 5), dtype=np.int64),
+            np.asarray((3.0, 3.0), dtype=np.float64),
+            np.asarray(((0, 2, 3, 4),), dtype=np.int64),
+            2.0**-22,
         )
-        assert moves
-        for move in moves:
+        moves = list(_survivor_moves(state, records, topology, 4, star))
+        assert len(moves) > 3
+        for move, evidence in moves:
             exact = _stencil_image(state, move["stencil"])
             np.testing.assert_array_equal(
                 move["point"], [float(value) for value in exact]
             )
+            # The carrier stays on the implicit plane and the far spoke is
+            # the only violation left.
+            assert move["point"][2] == 0.0
+            assert len(evidence["violations"][0]) == 1
+            assert evidence["violations"][1] == ()
+            assert evidence["quality"] > 0.0
         state.native.protect_facet_group_rows(np.asarray([group], dtype=np.int32))
         state.snapshot = state.native.arrays()
         assert not _implicit_only_vertex(state, _boundary_records(state), 4)
@@ -1712,13 +1723,15 @@ def test_directed_collapses_of_the_sphere_witness_keep_their_recorded_proposals(
     assert hashlib.sha256(text.encode()).hexdigest() == recorded
 
 
-def test_survivor_prescreen_refuses_the_positions_that_do_not_shorten_the_star() -> None:
-    from phydrax.meshing._tetra_metric import _refused_survivor_carriers
+def test_survivor_positions_are_admitted_exactly_when_they_shorten_the_star() -> None:
+    from phydrax._meshcore import MetricCollapseStar
+    from phydrax.meshing._tetra_metric import _collapse_position
 
     # One measured spoke from the survivor position to a link vertex at the
-    # origin, unit metric. Before the collapse the star holds one long edge in
-    # the first violation quantum, so a position improves the objective only
-    # if its spoke is in the band.
+    # origin, unit metric, and one cell that is positive for a survivor on
+    # the positive x axis. Before the collapse the star holds one long edge
+    # in the first violation quantum, so a position improves the objective
+    # only if its spoke is in the band.
     upper = float(np.sqrt(2.0))
     lengths = {
         "in band": 1.0,
@@ -1729,33 +1742,54 @@ def test_survivor_prescreen_refuses_the_positions_that_do_not_shorten_the_star()
         "far outside": 3.0,
         "on the link vertex": 0.0,
     }
-    state = _state(_source(2), np.eye(3, dtype=np.float64))
-    try:
-        stencil = {int(state.source_vertex_ids[0]): Fraction(1)}
-        refused = _refused_survivor_carriers(
-            state,
-            [(stencil, np.asarray((length, 0.0, 0.0))) for length in lengths.values()],
-            np.asarray(((9.0, 9.0, 9.0), (8.0, 8.0, 8.0), (0.0, 0.0, 0.0))),
-            np.broadcast_to(np.eye(3, dtype=np.float64), (3, 3, 3)),
-            np.asarray(((0, 2),), dtype=np.int64),
-            np.asarray((upper * (1.0 + 2.0**-20),), dtype=np.float64),
-        )
-    finally:
-        state.native.close()
-
-    # The spoke length is the kernel value the per-position screen measures,
-    # so the decision is sharp at the band edge: dropping the position one ulp
-    # inside would lose an improving collapse, keeping the one an ulp outside
-    # would only defer its refusal.
-    assert dict(zip(lengths, refused.tolist(), strict=True)) == {
-        "in band": False,
-        "one ulp inside": False,
-        "on the band edge": False,
-        "one ulp outside": True,
-        "first quantum": True,
-        "far outside": True,
-        "on the link vertex": True,
+    star = MetricCollapseStar(
+        np.asarray(
+            (
+                (9.0, 9.0, 9.0),
+                (8.0, 8.0, 8.0),
+                (0.0, 0.0, 0.0),
+                (0.0, 1.0, 0.0),
+                (0.0, 0.0, 1.0),
+            )
+        ),
+        np.broadcast_to(np.eye(3, dtype=np.float64), (5, 3, 3)),
+        np.asarray((2,), dtype=np.int64),
+        np.asarray((upper * (1.0 + 2.0**-20),), dtype=np.float64),
+        np.asarray(((2, 0, 3, 4),), dtype=np.int64),
+        2.0**-22,
+    )
+    unit = np.eye(3, dtype=np.float64)
+    evidence = {
+        name: _collapse_position(star, np.asarray((length, 0.0, 0.0)), unit)
+        for name, length in lengths.items()
     }
+
+    # The spoke length is the kernel value the objective measures, so the
+    # decision is sharp at the band edge: refusing the position one ulp
+    # inside would lose an improving collapse, admitting the one an ulp
+    # outside would create a long edge where one was to be removed.
+    assert {name: found is not None for name, found in evidence.items()} == {
+        "in band": True,
+        "one ulp inside": True,
+        "on the band edge": True,
+        "one ulp outside": False,
+        "first quantum": False,
+        "far outside": False,
+        "on the link vertex": False,
+    }
+    for name in ("in band", "one ulp inside", "on the band edge"):
+        found = evidence[name]
+        assert found is not None
+        assert found["violations"] == ((), ())
+        assert found["lengths"].tolist() == [lengths[name]]
+        assert found["quality"] > 0.0
+
+    # A length that was not measured has no place in the objective: the
+    # position is reported, not refused.
+    unmeasured = star._replace(before_lengths=np.asarray((0.0,), dtype=np.float64))
+    with pytest.raises(FloatingPointError, match="not a positive finite number"):
+        _collapse_position(unmeasured, np.asarray((1.0, 0.0, 0.0)), unit)
+    assert _collapse_position(unmeasured, np.asarray((0.0, 0.0, 0.0)), unit) is None
 
 
 @pytest.fixture
@@ -2464,7 +2498,7 @@ def test_source_cell_carrier_preserves_exact_affine_membership() -> None:
         row = state.source_vertex_rows[xy]
         exact[row] = (exact[row][0], exact[row][1], Fraction(1, 2**1100))
         state.source_exact_points = tuple(exact)
-        state.source_supports.clear()
+        state.source_frames.clear()
         assert _source_cell_carrier(state, record, (face,)) is None
     finally:
         state.native.close()
@@ -2571,16 +2605,16 @@ def test_relocation_can_refine_coarse_source_carriers() -> None:
     current = np.asarray((0.05625916, 0.68115234, 0.2355957))
     goal = current + np.asarray((5.03073591e-05, 0.00612579696, 0.00986193289))
     coarse = _quantized_relocation(state, None, goal, current)
-    fine = next(
-        _quantized_relocation_candidates(state, None, goal, current, fine_first=True)
-    )
+    fine = _quantized_relocation_candidates(state, None, goal, current, fine_first=True)[
+        0
+    ]
     assert coarse is not None
     assert np.linalg.norm(fine[1] - goal) < np.linalg.norm(coarse[1] - goal)
     assert fine[0] != coarse[0]
     combined = _quantized_relocation_candidates(
         state, None, goal, current, coarse_and_fine=True
     )
-    actual_coarse, actual_fine = next(combined), next(combined)
+    actual_coarse, actual_fine = combined[:2]
     assert actual_coarse[0] == coarse[0]
     assert actual_fine[0] == fine[0]
     np.testing.assert_array_equal(actual_coarse[1], coarse[1])
@@ -2882,24 +2916,6 @@ def test_declared_plane_admits_a_rounded_relocation_on_a_slanted_facet() -> None
     quantized = _quantized_relocation(state, simplices, goal, current)
     assert quantized is not None
     stencil, carrier = quantized
-    frames: dict[tuple[int, ...], _SourceSupport] = {}
-    images: dict[Any, Any] = {}
-    for factor in (0.5, 0.25, 0.125):
-        trial = current + factor * (centroid - current)
-        uncached = _quantized_relocation(state, simplices, trial, current)
-        cached = _quantized_relocation(
-            state, simplices, trial, current, frames=frames, images=images
-        )
-        assert uncached is not None and cached is not None
-        assert cached[0] == uncached[0]
-        np.testing.assert_array_equal(cached[1], uncached[1])
-        repeated = _quantized_relocation(
-            state, simplices, trial, current, frames=frames, images=images
-        )
-        assert repeated is not None and repeated[0] == cached[0]
-        np.testing.assert_array_equal(repeated[1], cached[1])
-    assert frames
-    assert images
     assert np.linalg.norm(carrier - goal) < np.linalg.norm(current - goal)
     exact = [
         sum(
@@ -3099,21 +3115,35 @@ def test_collapse_center_goal_handles_degenerate_metric_supports(
 
 
 def test_exact_entity_frames_project_rational_edge_and_triangle() -> None:
+    def weights(
+        corners: tuple[tuple[Fraction, ...], ...], point: tuple[Fraction, ...]
+    ) -> tuple[Fraction, ...]:
+        # Barycentric weights of the orthogonal projection: one minus the
+        # gradients applied to the offset from the first corner, and those.
+        origin, gradients = _entity_frame(corners)
+        assert gradients is not None
+        tail = tuple(
+            sum((gradient[k] * (point[k] - origin[k]) for k in range(3)), Fraction(0))
+            for gradient in gradients
+        )
+        return (1 - sum(tail, Fraction(0)), *tail)
+
     edge = tuple(tuple(Fraction(v) for v in row) for row in ((1, 2, 3), (3, 3, 5)))
-    assert _entity_weights(
-        _entity_frame(edge), (Fraction(2), Fraction(2), Fraction(4))
-    ) == (Fraction(5, 9), Fraction(4, 9))
+    assert weights(edge, (Fraction(2), Fraction(2), Fraction(4))) == (
+        Fraction(5, 9),
+        Fraction(4, 9),
+    )
     triangle = tuple(
         tuple(Fraction(v) for v in row) for row in ((0, 0, 0), (2, 1, 0), (1, 0, 1))
     )
     u, v = Fraction(1, 3), Fraction(1, 4)
-    point_values = tuple(
+    point = tuple(
         u * triangle[1][k] + v * triangle[2][k] + Fraction((-1, 2, 1)[k], 7)
         for k in range(3)
     )
-    point = (point_values[0], point_values[1], point_values[2])
-    assert _entity_weights(_entity_frame(triangle), point) == (1 - u - v, u, v)
-    assert _entity_weights(_entity_frame((edge[0], edge[0])), point) is None
+    assert weights(triangle, point) == (1 - u - v, u, v)
+    # An edge of zero length spans no frame.
+    assert _entity_frame((edge[0], edge[0])) == (edge[0], None)
 
 
 def test_source_stencil_dyadic_image_matches_fraction_oracle() -> None:

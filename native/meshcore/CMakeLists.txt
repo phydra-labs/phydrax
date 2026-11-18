@@ -48,6 +48,9 @@ set(PHX_MC_SOURCES
   src/deterministic_solve.cpp
   src/metric_goal.cpp
   src/metric_goal_capi.cpp
+  src/metric_carrier.cpp
+  src/metric_collapse.cpp
+  src/metric_source_capi.cpp
   src/exact_kernels.cpp
   src/exact_polynomial_kernels.cpp
   src/exact_polynomial_integral.cpp
@@ -109,6 +112,8 @@ set(PHX_MC_HEADERS
   src/deterministic_float.hpp
   src/metric_float.hpp
   src/metric_goal.hpp
+  src/metric_carrier.hpp
+  src/metric_collapse.hpp
   src/floating_point_mode.hpp
   src/interval_arithmetic.hpp
   src/geometry3.hpp
@@ -226,6 +231,8 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_metric_float)
   phx_mc_add_test(test_metric_goal)
   phx_mc_add_test(test_deterministic_solve)
+  phx_mc_add_test(test_metric_carrier)
+  phx_mc_add_test(test_metric_collapse)
   phx_mc_add_test(test_interval_program)
   phx_mc_add_test(test_interval_simplex_restrict)
   phx_mc_add_test(test_parallel)

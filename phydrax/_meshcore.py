@@ -29,9 +29,11 @@ import importlib
 import importlib.metadata
 import importlib.util
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import IntEnum
+from fractions import Fraction
+from math import lcm
 from pathlib import Path
 from typing import Any, final, NamedTuple
 
@@ -1402,6 +1404,66 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
             _I64,
             _P,
             ctypes.POINTER(_I64),
+        ),
+    ),
+    "phx_mc_metric_source_create": (
+        _I32,
+        (_I64, _P, _P, _P, _P, _I64, _P, _P, _P, ctypes.POINTER(ctypes.c_void_p)),
+    ),
+    "phx_mc_metric_source_free": (None, (_P,)),
+    "phx_mc_metric_source_carriers": (
+        _I32,
+        (
+            _P,
+            _P,
+            _P,
+            _I64,
+            _I64,
+            _P,
+            _P,
+            _I32,
+            _I64,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            ctypes.POINTER(_I64),
+        ),
+    ),
+    "phx_mc_metric_collapse_positions": (
+        _I32,
+        (_I64, _P, _P, _I64, _P, _I64, _P, _I64, _P, _F64, _I64, _P, _P, _P, _P, _P),
+    ),
+    "phx_mc_metric_source_survivor_moves": (
+        _I32,
+        (
+            _P,
+            _I64,
+            _P,
+            _P,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _F64,
+            _I64,
+            _P,
+            _P,
+            _I32,
+            _I64,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            ctypes.POINTER(_I64),
+            ctypes.POINTER(_I32),
         ),
     ),
 }
@@ -10178,6 +10240,433 @@ def metric_relocation_pulls(
     return pulls[: written.value].copy()
 
 
+class MetricCarrierOrder(IntEnum):
+    """Order in which the dyadic resolutions of one goal are tried."""
+
+    COARSE_FIRST = 0
+    FINE_FIRST = 1
+    COARSE_THEN_FINE = 2
+
+
+class MetricCarrier(NamedTuple):
+    """One exact carrier: ``sum_i weights[i] / 2**bits * X[rows[i]]``."""
+
+    rows: tuple[int, ...]
+    """Distinct source point rows, ascending."""
+    weights: tuple[int, ...]
+    """Positive integers that sum to ``2**bits``."""
+    bits: int
+    point: np.ndarray
+    """The correctly rounded binary64 image of the exact point."""
+    exact: bool
+    """Whether the image is the exact point itself."""
+
+
+class MetricPositionVerdict(IntEnum):
+    """Verdict of one position of a collapse survivor, in the order decided."""
+
+    ADMITTED = 0
+    COINCIDENT = 1
+    """The position is the other end of a spoke."""
+    NOT_DECREASING = 2
+    """The band violations do not strictly decrease."""
+    NOT_ORIENTED = 3
+    """A cell is not positively oriented or is under the determinant floor."""
+    NO_QUALITY = 4
+    """A cell quality is not positive and finite."""
+    UNMEASURED = 5
+    """A length is not a positive finite number."""
+    OUTSIDE_DOMAIN = 6
+    """A cell coordinate is outside the exact predicate domain."""
+
+
+class MetricSearchEnd(IntEnum):
+    """How a search of survivor moves ended."""
+
+    EXHAUSTED = 0
+    IN_BAND = 1
+    """The last move leaves no spoke above the band."""
+    GOAL_NOT_FINITE = 2
+    """A goal is not a finite point; the moves before it stand."""
+    UNMEASURED = 3
+    """The last entry is not a move: its verdict is ``UNMEASURED``."""
+    OUTSIDE_DOMAIN = 4
+    """The last entry is not a move: its verdict is ``OUTSIDE_DOMAIN``."""
+
+
+class MetricCollapseStar(NamedTuple):
+    """The star of an edge collapse; row 0 is the survivor."""
+
+    points: np.ndarray
+    """``(n, 3)`` coordinates."""
+    metrics: np.ndarray
+    """``(n, 3, 3)`` tensors."""
+    spokes: np.ndarray
+    """Star row (not 0) of the other end of each measured survivor spoke."""
+    before_lengths: np.ndarray
+    """Metric lengths of the measured edges the collapse removes."""
+    cells: np.ndarray
+    """``(m, 4)`` star rows of the survivor's cells after the collapse."""
+    determinant_floor: float
+    """A cell is oriented only above this relative determinant."""
+
+
+class MetricSurvivorMove(NamedTuple):
+    """A carrier of the source a collapse survivor may move to."""
+
+    goal: int
+    rows: tuple[int, ...]
+    """Distinct source point rows, ascending."""
+    weights: tuple[int, ...]
+    """Positive integers that sum to ``2**bits``."""
+    bits: int
+    point: np.ndarray
+    metric: np.ndarray
+    """``(3, 3)`` log-Euclidean mean of the source tensors over ``rows``."""
+    quality: float
+    """Smallest cell quality of the star at the move."""
+    lengths: np.ndarray
+    """Metric lengths of the survivor's spokes at the move."""
+
+
+def _collapse_star_arrays(
+    star: MetricCollapseStar, least: int, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    points = np.ascontiguousarray(star.points, dtype=np.float64)
+    if points.ndim != 2 or points.shape[1] != 3 or points.shape[0] < least:
+        raise ValueError(f"star points must have shape (n, 3) with n >= {least}.")
+    metrics = _metric_tensors(star.metrics, "star metrics")
+    if metrics.shape[0] != points.shape[0]:
+        raise ValueError("star metrics must hold one tensor per point.")
+    spokes = np.ascontiguousarray(star.spokes, dtype=np.int64)
+    before = np.ascontiguousarray(star.before_lengths, dtype=np.float64)
+    if spokes.ndim != 1 or before.ndim != 1:
+        raise ValueError("star spokes and lengths must be one-dimensional.")
+    cells = _metric_rows(star.cells, "star cells", 4)
+    if cells.shape[0] == 0:
+        raise ValueError("A collapse star has at least one cell.")
+    return points, metrics, spokes, before, cells
+
+
+def metric_collapse_positions(
+    star: MetricCollapseStar, positions: np.ndarray, metrics: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Verdicts of positions ``(p, 3)`` of a collapse survivor with tensors ``(p, 3, 3)``.
+
+    A position replaces row 0 of the star. Returns the int32
+    :class:`MetricPositionVerdict` of each, the smallest cell quality of an
+    admitted one and its spoke lengths ``(p, s)`` (zero for a coincident
+    one). A position is admitted when the violations of its spokes are
+    strictly smaller than those of the lengths before (quanta above the band
+    largest first, a proper prefix smaller, then those below it), every cell
+    is positive by the exact orientation predicate and above the determinant
+    floor, and every cell quality is positive. The same verdicts and values
+    on every platform.
+    """
+    points, tensors, spokes, before, cells = _collapse_star_arrays(star, 1)
+    candidates = np.ascontiguousarray(positions, dtype=np.float64)
+    if candidates.ndim != 2 or candidates.shape[1] != 3:
+        raise ValueError("positions must have shape (p, 3).")
+    candidate_metrics = _metric_tensors(metrics, "metrics")
+    if candidate_metrics.shape[0] != candidates.shape[0]:
+        raise ValueError("metrics must hold one tensor per position.")
+    verdicts = np.empty((candidates.shape[0],), dtype=np.int32)
+    qualities = np.empty((candidates.shape[0],), dtype=np.float64)
+    lengths = np.empty((candidates.shape[0], spokes.shape[0]), dtype=np.float64)
+    status = load_meshcore()["phx_mc_metric_collapse_positions"](
+        points.shape[0],
+        points.ctypes.data,
+        tensors.ctypes.data,
+        spokes.shape[0],
+        spokes.ctypes.data,
+        before.shape[0],
+        before.ctypes.data,
+        cells.shape[0],
+        cells.ctypes.data,
+        star.determinant_floor,
+        candidates.shape[0],
+        candidates.ctypes.data,
+        candidate_metrics.ctypes.data,
+        verdicts.ctypes.data,
+        qualities.ctypes.data,
+        lengths.ctypes.data,
+    )
+    _raise_for_call(status, "metric_collapse_positions")
+    return verdicts, qualities, lengths
+
+
+def _simplex_arrays(
+    simplices: Sequence[tuple[tuple[int, ...], bool]], /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Three point rows per edge or triangle (unused -1) and its declared flag."""
+    simplex_rows = np.full((len(simplices), 3), -1, dtype=np.int64)
+    declared = np.zeros((len(simplices),), dtype=np.int8)
+    for index, (vertices, is_declared) in enumerate(simplices):
+        simplex_rows[index, : len(vertices)] = vertices
+        declared[index] = is_declared
+    return simplex_rows, declared
+
+
+# Three goals at the 53 resolutions of a carrier.
+_SURVIVOR_MOVE_CAPACITY = 159
+
+
+@final
+class MetricSource:
+    """Exact tetrahedral source of a metric adaptation (owned native handle).
+
+    A carrier of a floating-point goal is an exact combination of source
+    points with dyadic weights whose binary64 image is closer to the goal than
+    the current point. The search is integer arithmetic over the exact
+    points, so its result is the same on every platform.
+    """
+
+    __slots__ = ("_handle", "_library")
+
+    def __init__(
+        self,
+        points: np.ndarray,
+        exact_points: Sequence[Sequence[Fraction]],
+        cells: np.ndarray,
+        metrics: np.ndarray,
+        logarithms: np.ndarray,
+        /,
+    ) -> None:
+        """``points`` are the binary64 roundings of ``exact_points``, ``cells``
+        four point rows per cell in the order cells are searched, and
+        ``metrics`` and ``logarithms`` the ``(n, 3, 3)`` tensors of the points
+        and their logarithms."""
+        self._handle = ctypes.c_void_p()
+        self._library = load_meshcore()
+        coordinates = np.ascontiguousarray(points, dtype=np.float64)
+        if coordinates.ndim != 2 or coordinates.shape[1] != 3:
+            raise ValueError("points must have shape (n, 3).")
+        rows = _metric_rows(cells, "cells", 4)
+        if len(exact_points) != coordinates.shape[0] or any(
+            len(point) != 3 for point in exact_points
+        ):
+            raise ValueError("exact_points must hold three rationals per point.")
+        tensors = _metric_tensors(metrics, "metrics")
+        tensor_logarithms = _metric_tensors(logarithms, "logarithms")
+        if (
+            tensors.shape[0] != coordinates.shape[0]
+            or tensor_logarithms.shape != tensors.shape
+        ):
+            raise ValueError("metrics and logarithms must hold one tensor per point.")
+        # One common denominator: point p is numerators[p] / denominator.
+        denominator = lcm(
+            *(value.denominator for point in exact_points for value in point)
+        )
+        integers = [
+            value.numerator * (denominator // value.denominator)
+            for point in exact_points
+            for value in point
+        ]
+        integers.append(denominator)
+        lengths = [(abs(value).bit_length() + 31) // 32 for value in integers]
+        offsets = np.zeros((len(integers) + 1,), dtype=np.int64)
+        np.cumsum(lengths, out=offsets[1:])
+        words = np.frombuffer(
+            b"".join(
+                abs(value).to_bytes(4 * length, "little")
+                for value, length in zip(integers, lengths, strict=True)
+            ),
+            dtype="<u4",
+        )
+        signs = np.asarray(
+            [-1 if value < 0 else 1 for value in integers[:-1]], dtype=np.int8
+        )
+        status = self._library["phx_mc_metric_source_create"](
+            coordinates.shape[0],
+            coordinates.ctypes.data,
+            words.ctypes.data,
+            offsets.ctypes.data,
+            signs.ctypes.data,
+            rows.shape[0],
+            rows.ctypes.data,
+            tensors.ctypes.data,
+            tensor_logarithms.ctypes.data,
+            ctypes.byref(self._handle),
+        )
+        _raise_for_call(status, "MetricSource")
+
+    def carriers(
+        self,
+        target: np.ndarray,
+        current: np.ndarray,
+        simplices: Sequence[tuple[tuple[int, ...], bool]] | None,
+        order: MetricCarrierOrder,
+        limit: int,
+        /,
+        *,
+        cell: int | None = None,
+    ) -> tuple[MetricCarrier, ...]:
+        """Carriers of ``target`` closer to it than ``current``, at most ``limit``.
+
+        With ``simplices`` ``None`` the target is located in the first cell
+        that holds it (in ``cell`` alone when given) and is its own goal.
+        Otherwise each simplex is an edge or a triangle (point rows) with
+        whether it is a declared exact face; the goal is the rounded
+        orthogonal projection on the first simplex that holds it, and a
+        carrier there must be exact unless the simplex is declared. At
+        ``2**-bits`` the partial sums of the barycentric weights are rounded
+        half to even; ``order`` walks the resolutions from the coarsest that
+        can resolve the move to 53 bits, or back.
+        """
+        if not self._handle.value:
+            raise RuntimeError("The metric source is closed.")
+        goal = np.ascontiguousarray(target, dtype=np.float64)
+        start = np.ascontiguousarray(current, dtype=np.float64)
+        if goal.shape != (3,) or start.shape != (3,):
+            raise ValueError("target and current must have shape (3,).")
+        # Only edges and triangles are projected on; a located route with
+        # none of them has no carrier (and is not a search of the cells).
+        usable = (
+            []
+            if simplices is None
+            else [entry for entry in simplices if len(entry[0]) in (2, 3)]
+        )
+        if simplices is not None and not usable:
+            return ()
+        simplex_rows, declared = _simplex_arrays(usable)
+        room = max(limit, 0)
+        rows = np.empty((room, 4), dtype=np.int64)
+        weights = np.empty((room, 4), dtype=np.int64)
+        bits = np.empty((room,), dtype=np.int32)
+        points = np.empty((room, 3), dtype=np.float64)
+        exact = np.empty((room,), dtype=np.int8)
+        found = _I64(0)
+        status = self._library["phx_mc_metric_source_carriers"](
+            self._handle,
+            goal.ctypes.data,
+            start.ctypes.data,
+            -1 if cell is None or simplices is not None else cell,
+            simplex_rows.shape[0],
+            simplex_rows.ctypes.data,
+            declared.ctypes.data,
+            int(order),
+            room,
+            rows.ctypes.data,
+            weights.ctypes.data,
+            bits.ctypes.data,
+            points.ctypes.data,
+            exact.ctypes.data,
+            ctypes.byref(found),
+        )
+        _raise_for_call(status, "MetricSource.carriers")
+        carriers = []
+        for index in range(found.value):
+            used = int(np.count_nonzero(rows[index] >= 0))
+            carriers.append(
+                MetricCarrier(
+                    tuple(rows[index, :used].tolist()),
+                    tuple(weights[index, :used].tolist()),
+                    int(bits[index]),
+                    points[index].copy(),
+                    bool(exact[index]),
+                )
+            )
+        return tuple(carriers)
+
+    def survivor_moves(
+        self,
+        star: MetricCollapseStar,
+        simplices: Sequence[tuple[tuple[int, ...], bool]] | None,
+        every_resolution: bool,
+        /,
+    ) -> tuple[tuple[MetricSurvivorMove, ...], MetricSearchEnd]:
+        """Moves of the survivor of ``star`` to carriers of the source, in order.
+
+        Row 1 of the star is the removed vertex and the merged link follows.
+        The three goals of :func:`metric_survivor_goals` are tried in order,
+        projected onto the hull of the first simplex when ``simplices`` (edges
+        or triangles, as for :meth:`carriers`) are given. The carriers of a
+        goal are searched coarse first from the survivor: all of them with
+        ``every_resolution``, the coarsest only without. A carrier at the
+        survivor or the removed vertex, or without a tensor, is skipped; the
+        others are evaluated as positions (:func:`metric_collapse_positions`)
+        and the admitted ones returned. The search ends as the returned
+        :class:`MetricSearchEnd` states; for its last two values the last
+        entry is not a move but the carrier whose verdict the caller reports.
+        """
+        if not self._handle.value:
+            raise RuntimeError("The metric source is closed.")
+        points, tensors, spokes, before, cells = _collapse_star_arrays(star, 2)
+        simplex_rows, declared = _simplex_arrays(() if simplices is None else simplices)
+        room = _SURVIVOR_MOVE_CAPACITY
+        goals = np.empty((room,), dtype=np.int32)
+        rows = np.empty((room, 4), dtype=np.int64)
+        weights = np.empty((room, 4), dtype=np.int64)
+        bits = np.empty((room,), dtype=np.int32)
+        carrier_points = np.empty((room, 3), dtype=np.float64)
+        carrier_metrics = np.empty((room, 3, 3), dtype=np.float64)
+        qualities = np.empty((room,), dtype=np.float64)
+        lengths = np.empty((room, spokes.shape[0]), dtype=np.float64)
+        found = _I64(0)
+        end = _I32(0)
+        status = self._library["phx_mc_metric_source_survivor_moves"](
+            self._handle,
+            points.shape[0],
+            points.ctypes.data,
+            tensors.ctypes.data,
+            spokes.shape[0],
+            spokes.ctypes.data,
+            before.shape[0],
+            before.ctypes.data,
+            cells.shape[0],
+            cells.ctypes.data,
+            star.determinant_floor,
+            simplex_rows.shape[0],
+            simplex_rows.ctypes.data,
+            declared.ctypes.data,
+            int(every_resolution),
+            room,
+            goals.ctypes.data,
+            rows.ctypes.data,
+            weights.ctypes.data,
+            bits.ctypes.data,
+            carrier_points.ctypes.data,
+            carrier_metrics.ctypes.data,
+            qualities.ctypes.data,
+            lengths.ctypes.data,
+            ctypes.byref(found),
+            ctypes.byref(end),
+        )
+        _raise_for_call(status, "MetricSource.survivor_moves")
+        moves = []
+        for index in range(found.value):
+            used = int(np.count_nonzero(rows[index] >= 0))
+            moves.append(
+                MetricSurvivorMove(
+                    int(goals[index]),
+                    tuple(rows[index, :used].tolist()),
+                    tuple(weights[index, :used].tolist()),
+                    int(bits[index]),
+                    carrier_points[index].copy(),
+                    carrier_metrics[index].copy(),
+                    float(qualities[index]),
+                    lengths[index].copy(),
+                )
+            )
+        return tuple(moves), MetricSearchEnd(end.value)
+
+    def close(self) -> None:
+        if self._handle.value:
+            self._library["phx_mc_metric_source_free"](self._handle)
+            self._handle = ctypes.c_void_p()
+
+    def __del__(self) -> None:
+        # A constructor that raised before the handle existed leaves nothing
+        # to free; interpreter shutdown may already have unloaded the library.
+        handle = getattr(self, "_handle", None)
+        library = getattr(self, "_library", None)
+        if library is not None and handle is not None and handle.value:
+            try:
+                library["phx_mc_metric_source_free"](handle)
+            except BaseException:
+                pass
+
+
 __all__ = [
     "ARRANGEMENT_UNCLASSIFIED",
     "ArrangementClassification",
@@ -10187,6 +10676,13 @@ __all__ = [
     "IntersectionClass",
     "MeshcoreError",
     "MeshcoreLibrary",
+    "MetricCarrier",
+    "MetricCarrierOrder",
+    "MetricCollapseStar",
+    "MetricPositionVerdict",
+    "MetricSearchEnd",
+    "MetricSource",
+    "MetricSurvivorMove",
     "MixedElementKind",
     "MixedTemplateCounts",
     "mixed_template",

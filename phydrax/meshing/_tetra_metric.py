@@ -11,9 +11,9 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from fractions import Fraction
-from itertools import combinations, compress, islice
-from math import frexp, gcd, lcm, sqrt
-from typing import Any, cast, final, NamedTuple
+from itertools import combinations
+from math import lcm, sqrt
+from typing import Any, assert_never, cast, final, NamedTuple, NoReturn
 
 import equinox as eqx
 import numpy as np
@@ -25,6 +25,7 @@ from .._meshcore import (
     interval_program_execute,
     IntervalBoxProgram,
     metric_band_quanta,
+    metric_collapse_positions,
     metric_congruence_defects,
     metric_hull_frame,
     metric_interpolations,
@@ -34,9 +35,13 @@ from .._meshcore import (
     metric_project_goals,
     metric_relative_determinants,
     metric_relocation_pulls,
-    metric_survivor_goals,
     metric_tensor_properties,
     metric_tetra_quality,
+    MetricCarrierOrder,
+    MetricCollapseStar,
+    MetricPositionVerdict,
+    MetricSearchEnd,
+    MetricSource,
     PlcBoundaryPolicy,
     relocated_tet_mesh_arrays,
     TetMesh3D,
@@ -100,13 +105,6 @@ _SCREEN_WORK_BYTES = 32 * 1024**2
 _SCREEN_GOAL_BYTES = 2048
 _SCREEN_NEIGHBOR_BYTES = 512
 _SCREEN_CELL_BYTES = 2048
-# The survivor pre-screen of a collapse evaluates one goal's carriers together
-# with the kernels of the per-carrier screen, row by row, so it refuses
-# exactly the carriers that screen refuses by their violations.
-_SURVIVOR_SCREEN_MINIMUM = 4
-# Carriers are quantized lazily; a block bounds the ones a collapse that
-# stops early has quantized in vain.
-_SURVIVOR_SCREEN_BLOCK = 16
 _SEED_STEPS = np.arange(_SPLIT_PARAMETER_BITS + 1, dtype=np.int64)
 _GOAL_STEPS = np.arange(_GOAL_BLOCK, dtype=np.int64)
 _SEED_STEPS.setflags(write=False)
@@ -496,15 +494,17 @@ class _NativeState:
     unrepresentable_edges: set[tuple[int, int]]
     # Host tables derived from exactly ``snapshot`` (see ``_snapshot_tables``).
     tables: _SnapshotTables | None = None
-    # Exact integer data of located source cells and carrier simplices, keyed
-    # by their ordered source vertex IDs (``_quantized_relocation_candidates``):
-    # a pure function of the immutable source, built once per adaptation.
-    source_supports: dict[tuple[int, ...], _SourceSupport] = field(default_factory=dict)
+    # Exact affine frames of carrier simplices, keyed by their ordered source
+    # vertex IDs (``_source_carrier_frame``): a pure function of the immutable
+    # source, built once per adaptation.
+    source_frames: dict[tuple[int, ...], _EntityFrame] = field(default_factory=dict)
     # Corners, projector and orthonormal basis of a carrier's affine hull:
     # kernel values that depend only on the same immutable source.
     source_projections: dict[
         tuple[int, ...], tuple[np.ndarray, np.ndarray, np.ndarray]
     ] = field(default_factory=dict)
+    # The native exact source (``_source_bank``), created on first use.
+    source_bank: _SourceBank | None = None
 
 
 @dataclass(slots=True)
@@ -1354,97 +1354,6 @@ def _entity_frame(corners: tuple[tuple[Fraction, ...], ...], /) -> _EntityFrame:
             ),
         )
     return origin, gradients
-
-
-type _Ratio = tuple[int, int]
-"""An exact rational ``numerator / denominator`` with a positive denominator."""
-type _IntegerFrame = tuple[tuple[_Ratio, ...], tuple[tuple[_Ratio, ...], ...]]
-
-
-def _integer_frame(frame: _EntityFrame, /) -> _IntegerFrame | None:
-    """``_EntityFrame`` as integer ratios (``None``: degenerate entity)."""
-    origin, gradients = frame
-    if gradients is None:
-        return None
-    return (
-        tuple((value.numerator, value.denominator) for value in origin),
-        tuple(
-            tuple((value.numerator, value.denominator) for value in gradient)
-            for gradient in gradients
-        ),
-    )
-
-
-def _entity_weight_ratios(
-    frame: _IntegerFrame, point: tuple[_Ratio, _Ratio, _Ratio], /
-) -> tuple[_Ratio, ...] | None:
-    """Reduced exact barycentric weights ``(remaining, *tail)`` of a source
-    edge or triangle projection; ``None`` outside the entity.
-
-    Each weight ``sum_k g_k (p_k - o_k)`` is accumulated as an unreduced
-    integer ratio (positive denominators) and reduced once.
-    """
-    origin, gradients = frame
-    offsets = [
-        (
-            point_numerator * origin_denominator - origin_numerator * point_denominator,
-            point_denominator * origin_denominator,
-        )
-        for (point_numerator, point_denominator), (
-            origin_numerator,
-            origin_denominator,
-        ) in zip(point, origin, strict=True)
-    ]
-    tail: list[_Ratio] = []
-    remaining_numerator, remaining_denominator = 1, 1
-    for gradient in gradients:
-        numerator, denominator = 0, 1
-        for (factor_numerator, factor_denominator), (
-            offset_numerator,
-            offset_denominator,
-        ) in zip(gradient, offsets, strict=True):
-            term_denominator = factor_denominator * offset_denominator
-            numerator = (
-                numerator * term_denominator
-                + factor_numerator * offset_numerator * denominator
-            )
-            denominator *= term_denominator
-        if (
-            numerator < 0
-            or numerator * remaining_denominator > remaining_numerator * denominator
-        ):
-            return None
-        common = gcd(numerator, denominator)
-        numerator, denominator = numerator // common, denominator // common
-        tail.append((numerator, denominator))
-        remaining_numerator = (
-            remaining_numerator * denominator - numerator * remaining_denominator
-        )
-        remaining_denominator *= denominator
-        common = gcd(remaining_numerator, remaining_denominator)
-        remaining_numerator //= common
-        remaining_denominator //= common
-    return ((remaining_numerator, remaining_denominator), *tail)
-
-
-def _entity_weights(
-    frame: _EntityFrame, point: tuple[Fraction, Fraction, Fraction], /
-) -> tuple[Fraction, ...] | None:
-    """Exact barycentric weights of a source edge or triangle projection."""
-    integer_frame = _integer_frame(frame)
-    if integer_frame is None:
-        return None
-    ratios = _entity_weight_ratios(
-        integer_frame,
-        (
-            (point[0].numerator, point[0].denominator),
-            (point[1].numerator, point[1].denominator),
-            (point[2].numerator, point[2].denominator),
-        ),
-    )
-    if ratios is None:
-        return None
-    return tuple(Fraction(numerator, denominator) for numerator, denominator in ratios)
 
 
 def _fresh_ids(first: int, count: int, name: str, /) -> np.ndarray:
@@ -4400,55 +4309,15 @@ def _directed_collapse(
         ],
         dtype=np.int64,
     ).reshape((-1, 4))
-    before_violations: tuple[tuple[int, ...], tuple[int, ...]] | None = None
-    # Quantization may repeat identical numerical variants. The cache belongs
-    # only to this fixed directed star; source stencils are checked separately.
-    # Three goals at at most 53 resolutions bound it to 160 entries.
-    rejected_variants: set[tuple[bytes, bytes, tuple[tuple[int, int, int, int], ...]]] = (
-        set()
+    star = MetricCollapseStar(
+        local_points,
+        local_metrics,
+        after_spokes[:, 1],
+        before_lengths,
+        np.asarray(removed_cells, dtype=np.int64).reshape((-1, 4)),
+        _DETERMINANT_FLOOR,
     )
-
-    def variant(
-        point: np.ndarray, metric: np.ndarray, cells: list[tuple[int, int, int, int]]
-    ) -> dict[str, Any] | None:
-        nonlocal before_violations
-        key = (point.tobytes(), metric.tobytes(), tuple(cells))
-        if key in rejected_variants:
-            return None
-        moved_points = local_points.copy()
-        moved_points[0] = point
-        moved_metrics = local_metrics.copy()
-        moved_metrics[0] = metric
-        if np.any(np.all(moved_points[after_spokes[:, 1]] == point, axis=1)):
-            rejected_variants.add(key)
-            return None
-        # Reject a non-decreasing metric objective before exact orientation;
-        # the surviving candidates still receive every geometric check.
-        after_lengths = metric_lengths(moved_points, moved_metrics, after_spokes)
-        # Prepare lazily to preserve the original refusal/error ordering.
-        if before_violations is None:
-            before_violations = _band_violations(before_lengths)
-        violations = _band_violations(after_lengths)
-        if not violations < before_violations:
-            rejected_variants.add(key)
-            return None
-        rows = np.asarray(cells, dtype=np.int64).reshape((-1, 4))
-        signs = _tetra_orientation(moved_points, rows, PredicateMode.EXACT)
-        if not np.all(signs == 1) or not _clears_determinant_floor(moved_points[rows]):
-            rejected_variants.add(key)
-            return None
-        quality = metric_tetra_quality(moved_points, moved_metrics, rows)
-        if not np.all(np.isfinite(quality)) or np.any(quality <= 0.0):
-            rejected_variants.add(key)
-            return None
-        return {
-            "rows": rows,
-            "quality": float(np.min(quality)),
-            "violations": violations,
-            "lengths": after_lengths,
-        }
-
-    best = variant(local_points[0], local_metrics[0], removed_cells)
+    best = _collapse_position(star, local_points[0], local_metrics[0])
     survivor: dict[str, Any] | None = None
     if best is None or best["violations"][0]:
         # Collapsing in place creates a long edge (or is refused): move the
@@ -4456,43 +4325,27 @@ def _directed_collapse(
         # its longest spoke, replacing both stars. A move must keep every long
         # spoke of the moved survivor exactly splittable; otherwise the
         # collapse stays in place.
-        def refused(
-            candidates: Sequence[tuple[dict[int, Fraction], np.ndarray]],
-        ) -> np.ndarray:
-            return _refused_survivor_carriers(
+        moved_star = star._replace(
+            cells=np.asarray(removed_cells + kept_cells, dtype=np.int64).reshape((-1, 4))
+        )
+        for move, moved in _survivor_moves(state, records, topology, kept, moved_star):
+            if (
+                best is None
+                or (moved["violations"], -moved["quality"])
+                < (best["violations"], -best["quality"])
+            ) and _moved_spokes_splittable(
                 state,
-                candidates,
+                records,
+                removed,
+                kept,
+                local_vertices,
+                move,
                 local_points,
                 local_metrics,
                 after_spokes,
-                before_lengths,
-            )
-
-        for move in _survivor_moves(
-            state, records, topology, kept, local_points, local_metrics, refused=refused
-        ):
-            moved = variant(move["point"], move["metric"], removed_cells + kept_cells)
-            if (
-                moved is not None
-                and (
-                    best is None
-                    or (moved["violations"], -moved["quality"])
-                    < (best["violations"], -best["quality"])
-                )
-                and _moved_spokes_splittable(
-                    state,
-                    records,
-                    removed,
-                    kept,
-                    local_vertices,
-                    move,
-                    local_points,
-                    local_metrics,
-                    after_spokes,
-                    moved["lengths"],
-                    new_facets,
-                    new_segments,
-                )
+                moved["lengths"],
+                new_facets,
+                new_segments,
             ):
                 best, survivor = moved, move
                 if not best["violations"][0]:
@@ -4527,92 +4380,109 @@ def _directed_collapse(
     }
 
 
-def _refused_survivor_carriers(
-    state: _NativeState,
-    candidates: Sequence[tuple[dict[int, Fraction], np.ndarray]],
-    local_points: np.ndarray,
-    local_metrics: np.ndarray,
-    after_spokes: np.ndarray,
-    before_lengths: np.ndarray,
-    /,
-) -> np.ndarray:
-    """Survivor carriers the length screen of ``_directed_collapse`` refuses.
+class _SourceBank(NamedTuple):
+    """The native exact source of one adaptation.
 
-    One evaluation over all carriers of a goal: coincidence with a link
-    vertex (exact), then the survivor's spoke lengths at each carrier's
-    interpolated source metric against the star's violations before the
-    collapse. The metric of a carrier is the mean over its own stencil and
-    every length is the kernel value of its own row, so these are the values
-    the per-carrier screen evaluates and a carrier is refused here exactly
-    when its violations do not decrease there. A carrier without a metric, or
-    with a zero or infinite spoke, is left to the per-carrier screen, which
-    alone admits and alone reports those cases.
+    Its points are in ascending source vertex ID, so the support of a native
+    carrier (ascending rows) is a stencil in ascending ID; its cells are in
+    ascending cell ID, the order in which a point is located.
     """
-    count = len(candidates)
-    refused = np.zeros((count,), dtype=np.bool_)
-    if not np.all(np.isfinite(before_lengths)) or np.any(before_lengths <= 0.0):
-        return refused
-    carriers = np.asarray([carrier for _, carrier in candidates], dtype=np.float64)
-    other_rows = after_spokes[:, 1]
-    others = local_points[other_rows]
-    coincident = np.any(
-        np.all(others[None, :, :] == carriers[:, None, :], axis=2), axis=1
-    )
-    offsets = np.zeros((count + 1,), dtype=np.int64)
-    support: list[int] = []
-    weights: list[float] = []
-    for row, (stencil, _) in enumerate(candidates):
-        for identifier in sorted(stencil):
-            support.append(state.source_vertex_rows[int(identifier)])
-            weights.append(float(stencil[identifier]))
-        offsets[row + 1] = len(support)
-    metrics, valid = metric_interpolations(
-        offsets,
-        np.asarray(support, dtype=np.int64),
-        np.asarray(weights, dtype=np.float64),
-        state.source_metric,
-        state.source_metric_log,
-    )
-    spokes = others.shape[0]
-    lengths = metric_lengths(
-        np.concatenate((carriers, others)),
-        np.concatenate((metrics, local_metrics[other_rows])),
-        np.stack(
-            (
-                np.repeat(np.arange(count, dtype=np.int64), spokes),
-                np.tile(count + np.arange(spokes, dtype=np.int64), count),
+
+    source: MetricSource
+    identifiers: tuple[int, ...]
+    """Source vertex ID of each bank row."""
+    rows: dict[int, int]
+    """Bank row of each source vertex ID."""
+    cells: dict[int, int]
+    """Bank cell row of each source cell ID."""
+
+
+def _source_bank(state: _NativeState, /) -> _SourceBank:
+    bank = state.source_bank
+    if bank is None:
+        identifiers = tuple(sorted(state.source_vertex_rows))
+        rows = {identifier: row for row, identifier in enumerate(identifiers)}
+        order = [state.source_vertex_rows[identifier] for identifier in identifiers]
+        bank = _SourceBank(
+            MetricSource(
+                state.source_points[order],
+                [state.source_exact_points[row] for row in order],
+                np.asarray(
+                    [
+                        [rows[int(vertex)] for vertex in record[1]]
+                        for record in state.source_records.records
+                    ],
+                    dtype=np.int64,
+                ).reshape((-1, 4)),
+                state.source_metric[order],
+                state.source_metric_log[order],
             ),
-            axis=1,
-        ),
-    ).reshape((count, spokes))
-    long, short = _band_violation_rows(lengths)
-    counted = valid & np.all(np.isfinite(long) & np.isfinite(short), axis=1)
-
-    def order(rows: np.ndarray, reference: tuple[int, ...]) -> np.ndarray:
-        width = max(rows.shape[1], len(reference))
-        padded = np.zeros((rows.shape[0], width), dtype=np.float64)
-        padded[:, : rows.shape[1]] = rows
-        target = np.zeros((width,), dtype=np.float64)
-        target[: len(reference)] = reference
-        return _lexicographic_signs(padded, target)
-
-    before_long, before_short = _band_violations(before_lengths)
-    long_order = order(long, before_long)
-    decreases = (long_order < 0) | ((long_order == 0) & (order(short, before_short) < 0))
-    return coincident | (counted & ~decreases)
+            identifiers,
+            rows,
+            {
+                int(record[0]): row
+                for row, record in enumerate(state.source_records.records)
+            },
+        )
+        state.source_bank = bank
+    return bank
 
 
-def _unrefused_carriers(
-    carriers: Iterator[tuple[dict[int, Fraction], np.ndarray]],
-    refused: Callable[[Sequence[tuple[dict[int, Fraction], np.ndarray]]], np.ndarray],
-    /,
-) -> Iterator[tuple[dict[int, Fraction], np.ndarray]]:
-    """Carriers a batched screen does not refuse, in order, read block by block."""
-    while block := tuple(islice(carriers, _SURVIVOR_SCREEN_BLOCK)):
-        if len(block) < _SURVIVOR_SCREEN_MINIMUM:
-            yield from block
-        else:
-            yield from compress(block, ~refused(block))
+def _position_evidence(
+    star: MetricCollapseStar, quality: float, lengths: np.ndarray, /
+) -> dict[str, Any]:
+    return {
+        "rows": star.cells,
+        "quality": quality,
+        "violations": _band_violations(lengths),
+        "lengths": lengths,
+    }
+
+
+def _report_position(
+    star: MetricCollapseStar, point: np.ndarray, lengths: np.ndarray, /
+) -> NoReturn:
+    """Raise the error of a survivor position the kernels give no verdict for.
+
+    A length before the collapse or a spoke at the position was not measured,
+    or a cell coordinate lies outside the exact predicate domain: the owners
+    of those contracts report them, in the order the position is evaluated.
+    """
+    _band_violations(star.before_lengths)
+    _band_violations(lengths)
+    moved = np.array(star.points, dtype=np.float64)
+    moved[0] = point
+    _tetra_orientation(moved, star.cells, PredicateMode.EXACT)
+    raise RuntimeError("A survivor position without a verdict raised no error.")
+
+
+def _collapse_position(
+    star: MetricCollapseStar, point: np.ndarray, metric: np.ndarray, /
+) -> dict[str, Any] | None:
+    """Evidence of the survivor of ``star`` at ``point``; ``None`` if not admitted.
+
+    A position is admitted when it has no neighbor at it, strictly decreases
+    the band violations of the measured edges, keeps every cell exactly
+    positive above the determinant floor and gives every cell a positive
+    quality (``metric_collapse_positions``).
+    """
+    verdicts, qualities, lengths = metric_collapse_positions(
+        star, point[None, :], metric[None, :, :]
+    )
+    match MetricPositionVerdict(int(verdicts[0])):
+        case MetricPositionVerdict.ADMITTED:
+            return _position_evidence(star, float(qualities[0]), lengths[0])
+        case (
+            MetricPositionVerdict.COINCIDENT
+            | MetricPositionVerdict.NOT_DECREASING
+            | MetricPositionVerdict.NOT_ORIENTED
+            | MetricPositionVerdict.NO_QUALITY
+        ):
+            return None
+        case MetricPositionVerdict.UNMEASURED | MetricPositionVerdict.OUTSIDE_DOMAIN:
+            _report_position(star, point, lengths[0])
+        case _ as unreachable:
+            assert_never(unreachable)
 
 
 def _survivor_moves(
@@ -4620,26 +4490,25 @@ def _survivor_moves(
     records: _BoundaryRecords,
     topology: _TetTopology,
     kept: int,
-    local_points: np.ndarray,
-    local_metrics: np.ndarray,
+    star: MetricCollapseStar,
     /,
-    *,
-    refused: Callable[[Sequence[tuple[dict[int, Fraction], np.ndarray]]], np.ndarray]
-    | None = None,
-) -> Iterator[dict[str, Any]]:
-    """Quantized source points a collapse survivor may move to.
+) -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
+    """Quantized source points a collapse survivor may move to, with their evidence.
 
-    ``local_points`` hold the survivor, the removed vertex, then the merged
-    link. Goals are the center of the smallest ball (in the endpoints' mean
-    metric) holding the merged link, which minimizes the longest survivor
-    spoke, the metric midpoint of the collapsed edge and the point halfway to
-    it; each is projected onto the survivor's carrier and quantized by
-    ``_quantized_relocation``: an interior survivor moves in its source cell, a
-    boundary survivor within its source facet or curve (on a declared plane
-    when its carrier rounds). Survivors that are fixed, protected or pinned at a
-    source corner do not move. On a periodic lift only a survivor whose vertex
-    orbit has a single lifted member moves: its star is the whole quotient star,
-    so no deck partner has to follow it; a seam survivor stays in place.
+    ``star`` holds the survivor, the removed vertex, then the merged link, and
+    the cells of both stars after the collapse. Goals are the center of the
+    smallest ball (in the endpoints' mean metric) holding the merged link,
+    which minimizes the longest survivor spoke, the metric midpoint of the
+    collapsed edge and the point halfway to it; each is projected onto the
+    survivor's carrier and quantized to exact source carriers: an interior
+    survivor moves in its source cell, a boundary survivor within its source
+    facet or curve (on a declared plane when its carrier rounds). Each move
+    is admitted as a position of the star (``_collapse_position``) by one
+    native search, which ends at the first move that leaves no long spoke.
+    Survivors that are fixed, protected or pinned at a source corner do not
+    move. On a periodic lift only a survivor whose vertex orbit has a single
+    lifted member moves: its star is the whole quotient star, so no deck
+    partner has to follow it; a seam survivor stays in place.
     """
     row = topology.vertex_row[kept]
     snapshot = state.snapshot
@@ -4662,46 +4531,29 @@ def _survivor_moves(
         return
     if simplices is not None and not simplices:
         return
-    endpoints = local_points[:2]
+    bank = _source_bank(state)
     # The carrier simplices are coplanar (one facet) or collinear (one curve
     # or segment): the first spans their affine hull.
-    corners = (
-        None
-        if simplices is None
-        else state.source_points[[state.source_vertex_rows[v] for v in simplices[0]]]
+    entries, end = bank.source.survivor_moves(
+        star, _bank_simplices(state, bank, simplices), implicit_only
     )
-    goals, goal_valid = metric_survivor_goals(local_points, local_metrics[:2], corners)
-    for goal, valid in zip(goals, goal_valid, strict=True):
-        if not valid:
-            raise FloatingPointError("A collapse survivor goal is not a finite point.")
-        if implicit_only:
-            candidates = _quantized_relocation_candidates(state, None, goal, endpoints[0])
-        else:
-            quantized = _quantized_relocation(state, simplices, goal, endpoints[0])
-            candidates = () if quantized is None else (quantized,)
-        admissible: Iterator[tuple[dict[int, Fraction], np.ndarray]] = (
-            (stencil, carrier)
-            for stencil, carrier in candidates
-            if not (
-                np.array_equal(carrier, endpoints[0])
-                or np.array_equal(carrier, endpoints[1])
-            )
+    referred = end in (MetricSearchEnd.UNMEASURED, MetricSearchEnd.OUTSIDE_DOMAIN)
+    for index, entry in enumerate(entries):
+        if referred and index == len(entries) - 1:
+            _report_position(star, entry.point, entry.lengths)
+        yield (
+            {
+                "point": entry.point,
+                "metric": entry.metric,
+                "stencil": {
+                    bank.identifiers[source_row]: Fraction(weight, 1 << entry.bits)
+                    for source_row, weight in zip(entry.rows, entry.weights, strict=True)
+                },
+            },
+            _position_evidence(star, entry.quality, entry.lengths),
         )
-        if refused is not None:
-            # Carriers of one goal share their source cell: screen them together
-            # and interpolate a metric only for those the screen leaves.
-            admissible = _unrefused_carriers(admissible, refused)
-        for stencil, carrier in admissible:
-            try:
-                metric = _source_metric_from_stencil(
-                    state.source_metric,
-                    state.source_vertex_rows,
-                    stencil,
-                    source_metric_log=state.source_metric_log,
-                )
-            except FloatingPointError:
-                continue
-            yield {"point": carrier, "metric": metric, "stencil": stencil}
+    if end is MetricSearchEnd.GOAL_NOT_FINITE:
+        raise FloatingPointError("A collapse survivor goal is not a finite point.")
 
 
 def _edge_set_lengths(
@@ -6164,78 +6016,20 @@ def _replacement_phase(
             blocked.clear()
 
 
-type _CarrierCache = dict[
-    tuple[tuple[int, ...], tuple[int, ...], int],
-    tuple[np.ndarray, bool, tuple[float, float, float]],
-]
-"""Dyadic carriers by stencil: (support IDs, reduced numerators, reduced
-denominator) to the binary64 carrier and whether it is exact."""
-
-
-class _SourceSupport(NamedTuple):
-    """Exact integer data of one located source simplex or cell."""
-
-    frame: _IntegerFrame | None
-    support: tuple[int, ...]
-    """Sorted distinct source vertex IDs."""
-    numerators: tuple[tuple[int, ...], ...]
-    """Exact source points of ``support`` times ``denominator``."""
-    denominator: int
-    columns: tuple[int, ...]
-    """Row in ``support`` of each located vertex, in located order."""
-    span: float
-    """Largest coordinate extent of the support's binary64 points."""
-
-
-def _source_support(
-    state: _NativeState,
-    vertices: tuple[int, ...],
-    frames: dict[tuple[int, ...], _SourceSupport] | None,
-    /,
-) -> _SourceSupport:
-    cached = frames.get(vertices) if frames is not None else None
-    if cached is None:
-        rows = state.source_vertex_rows
-        support = tuple(sorted({int(vertex) for vertex in vertices}))
-        points = [state.source_exact_points[rows[vertex]] for vertex in support]
-        denominator = lcm(*(value.denominator for point in points for value in point))
-        cached = _SourceSupport(
-            _integer_frame(
-                _entity_frame(tuple(state.source_exact_points[rows[v]] for v in vertices))
-            )
-            if len(vertices) in (2, 3)
-            else None,
-            support,
-            tuple(
-                tuple(
-                    value.numerator * (denominator // value.denominator)
-                    for value in point
-                )
-                for point in points
-            ),
-            denominator,
-            tuple(support.index(int(vertex)) for vertex in vertices),
-            float(
-                np.max(np.ptp(state.source_points[[rows[v] for v in support]], axis=0))
-            ),
-        )
-        if frames is not None:
-            frames[vertices] = cached
-    return cached
-
-
 def _source_carrier_frame(
     state: _NativeState, vertices: tuple[int, ...], /
 ) -> _EntityFrame:
     """Exact affine frame of an edge or face in the immutable source."""
-    frame = _source_support(state, vertices, state.source_supports).frame
+    frame = state.source_frames.get(vertices)
     if frame is None:
-        return state.source_exact_points[state.source_vertex_rows[vertices[0]]], None
-    origin, gradients = frame
-    return (
-        tuple(Fraction(*value) for value in origin),
-        tuple(tuple(Fraction(*value) for value in gradient) for gradient in gradients),
-    )
+        corners = tuple(
+            state.source_exact_points[state.source_vertex_rows[vertex]]
+            for vertex in vertices
+        )
+        # Only an edge or a triangle spans a frame.
+        frame = _entity_frame(corners) if len(corners) in (2, 3) else (corners[0], None)
+        state.source_frames[vertices] = frame
+    return frame
 
 
 def _source_cell_carrier(
@@ -6276,6 +6070,59 @@ def _source_cell_carrier(
     return tuple(sorted(members)) if len(members) == len(simplex) else None
 
 
+# The 53 resolutions of a carrier and the coarsest one repeated by a
+# coarse-and-fine search.
+_ALL_CARRIERS = 54
+
+
+def _bank_simplices(
+    state: _NativeState,
+    bank: _SourceBank,
+    simplices: tuple[tuple[int, ...], ...] | None,
+    /,
+) -> tuple[tuple[tuple[int, ...], bool], ...] | None:
+    """Carrier simplices as bank rows, each with whether it is a declared face."""
+    if simplices is None:
+        return None
+    return tuple(
+        (
+            tuple(bank.rows[vertex] for vertex in simplex),
+            len(simplex) != 2 and frozenset(simplex) in state.declared_source_faces,
+        )
+        for simplex in simplices
+    )
+
+
+def _source_carriers(
+    state: _NativeState,
+    simplices: tuple[tuple[int, ...], ...] | None,
+    target: np.ndarray,
+    current: np.ndarray,
+    order: MetricCarrierOrder,
+    limit: int,
+    cell: int | None,
+    /,
+) -> tuple[tuple[dict[int, Fraction], np.ndarray], ...]:
+    bank = _source_bank(state)
+    return tuple(
+        (
+            {
+                bank.identifiers[row]: Fraction(weight, 1 << carrier.bits)
+                for row, weight in zip(carrier.rows, carrier.weights, strict=True)
+            },
+            carrier.point,
+        )
+        for carrier in bank.source.carriers(
+            target,
+            current,
+            _bank_simplices(state, bank, simplices),
+            order,
+            limit,
+            cell=None if cell is None else bank.cells[cell],
+        )
+    )
+
+
 def _quantized_relocation_candidates(
     state: _NativeState,
     simplices: tuple[tuple[int, ...], ...] | None,
@@ -6283,12 +6130,12 @@ def _quantized_relocation_candidates(
     current: np.ndarray,
     /,
     *,
-    frames: dict[tuple[int, ...], _SourceSupport] | None = None,
-    images: _CarrierCache | None = None,
     fine_first: bool = False,
     coarse_and_fine: bool = False,
-) -> Iterator[tuple[dict[int, Fraction], np.ndarray]]:
-    """Enumerate exact dyadic source carriers for one relocation target.
+    limit: int = _ALL_CARRIERS,
+    cell: int | None = None,
+) -> tuple[tuple[dict[int, Fraction], np.ndarray], ...]:
+    """Exact dyadic source carriers for one relocation target, at most ``limit``.
 
     Each carrier is closer to the target than the current point. Boundary
     images retain the exact or declared-plane admission required by the
@@ -6296,168 +6143,24 @@ def _quantized_relocation_candidates(
     through 53 bits, in fine-to-coarse or coarse-to-fine order.
     With ``coarse_and_fine``, the first two results are the coarsest and
     finest admissible carriers, sharing the same exact source location.
+    An interior target is located in the first source cell that holds it, or
+    in source cell ``cell`` alone.
 
     Each support weight is rounded to the grid ``2**-bits`` through its
     partial sums (half to even, monotone, the last exactly one), so the
     quantized weights are nonnegative, sum to one and are binary64 values;
     the point stays in the entity spanned by the support. The rounding and
-    the image ``sum_i w_i X_i`` are evaluated in integers over common
-    denominators, so stencils, carriers and admissions are exact.
+    the image ``sum_i w_i X_i`` are evaluated in integers over the exact
+    source points by the native source (``MetricSource.carriers``), so
+    stencils, carriers and admissions are exact.
     """
-    query = tuple(float(value).as_integer_ratio() for value in target)
-    located: tuple[_SourceSupport, tuple[_Ratio, ...]] | None = None
-    if simplices is None:
-        cell = _locate_source_weights(
-            (Fraction(*query[0]), Fraction(*query[1]), Fraction(*query[2])),
-            state.source_records,
-        )
-        if cell is not None:
-            located = (
-                _source_support(state, tuple(int(vertex) for vertex in cell[1]), frames),
-                tuple((weight.numerator, weight.denominator) for weight in cell[2]),
-            )
+    if coarse_and_fine:
+        order = MetricCarrierOrder.COARSE_THEN_FINE
+    elif fine_first:
+        order = MetricCarrierOrder.FINE_FIRST
     else:
-        for simplex in simplices:
-            entity = _source_support(state, simplex, frames)
-            if entity.frame is None:
-                continue
-            simplex_weights = _entity_weight_ratios(
-                entity.frame, (query[0], query[1], query[2])
-            )
-            if simplex_weights is not None:
-                located = entity, simplex_weights
-                break
-    if located is None:
-        return
-    entity, weights = located
-    support, support_numerators, denominator, columns = (
-        entity.support,
-        entity.numerators,
-        entity.denominator,
-        entity.columns,
-    )
-    if simplices is None:
-        # Exact barycentric inversion reproduces the target itself.
-        goal = target
-    else:
-        # ``float`` of the exact image ``sum_i w_i X_i``: one correctly
-        # rounded quotient per axis.
-        weight_denominator = lcm(
-            *(weight_denominator for _, weight_denominator in weights)
-        )
-        merged_weights = [0] * len(support)
-        for column, (weight_numerator, weight_denominator_i) in zip(
-            columns, weights, strict=True
-        ):
-            merged_weights[column] += weight_numerator * (
-                weight_denominator // weight_denominator_i
-            )
-        goal = np.asarray(
-            [
-                sum(
-                    merged_weights[index] * support_numerators[index][axis]
-                    for index in range(len(support))
-                )
-                / (weight_denominator * denominator)
-                for axis in range(3)
-            ]
-        )
-    distance = float(np.sum((goal - current) ** 2))
-    span = entity.span
-    if not distance > 0.0 or not span > 0.0:
-        return
-    # Exact partial weight sums.
-    partials: list[_Ratio] = []
-    running_numerator, running_denominator = 0, 1
-    for weight_numerator, weight_denominator_i in weights[:-1]:
-        running_numerator = (
-            running_numerator * weight_denominator_i
-            + weight_numerator * running_denominator
-        )
-        running_denominator *= weight_denominator_i
-        common = gcd(running_numerator, running_denominator)
-        running_numerator //= common
-        running_denominator //= common
-        partials.append((running_numerator, running_denominator))
-    vertices = tuple(support[column] for column in columns)
-    declared = len(vertices) != 2 and frozenset(vertices) in state.declared_source_faces
-    # ``float(np.sum((carrier - goal) ** 2))`` for three components is the
-    # sequential binary64 sum of the squares.
-    goal_x, goal_y, goal_z = (float(value) for value in goal)
-    # A grid coarser than the move cannot resolve it; start where it can: at
-    # the binary exponent of span / |move|, which is floor(log2) exactly.
-    first = min(max(frexp(span / sqrt(distance))[1] - 1, 1), 53)
-    resolutions = iter(
-        range(53, first - 1, -1)
-        if fine_first and not coarse_and_fine
-        else range(first, 54)
-    )
-    searching_coarse = coarse_and_fine
-    while (bits := next(resolutions, None)) is not None:
-        scale = 1 << bits
-        merged = [0] * len(support)
-        previous = 0
-        for column, (numerator, partial_denominator) in zip(
-            columns, partials, strict=False
-        ):
-            # ``round`` of the exact partial sum times ``scale`` (half to even).
-            quotient, remainder = divmod(numerator << bits, partial_denominator)
-            twice = 2 * remainder
-            if twice > partial_denominator or (
-                twice == partial_denominator and quotient & 1
-            ):
-                quotient += 1
-            quotient = min(max(quotient, previous), scale)
-            merged[column] += quotient - previous
-            previous = quotient
-        merged[columns[-1]] += scale - previous
-        present = [index for index, value in enumerate(merged) if value]
-        common = gcd(scale, *(merged[index] for index in present))
-        key = (
-            tuple(support[index] for index in present),
-            tuple(merged[index] // common for index in present),
-            scale // common,
-        )
-        cached = images.get(key) if images is not None else None
-        if cached is None:
-            image_denominator = scale * denominator
-            values = [
-                sum(merged[index] * support_numerators[index][axis] for index in present)
-                for axis in range(3)
-            ]
-            # Correctly rounded quotients: ``float`` of the exact image.
-            components = (
-                values[0] / image_denominator,
-                values[1] / image_denominator,
-                values[2] / image_denominator,
-            )
-            carrier = np.asarray(components, dtype=np.float64)
-            exact = True
-            for value, rounded in zip(values, components, strict=True):
-                rounded_numerator, rounded_denominator = rounded.as_integer_ratio()
-                if value * rounded_denominator != rounded_numerator * image_denominator:
-                    exact = False
-                    break
-            cached = carrier, exact, components
-            if images is not None:
-                images[key] = cached
-        carrier, exact, (carrier_x, carrier_y, carrier_z) = cached
-        delta_x, delta_y, delta_z = (
-            carrier_x - goal_x,
-            carrier_y - goal_y,
-            carrier_z - goal_z,
-        )
-        if not delta_x * delta_x + delta_y * delta_y + delta_z * delta_z < distance:
-            continue
-        if simplices is not None and not exact and not declared:
-            continue
-        yield (
-            {support[index]: Fraction(merged[index], scale) for index in present},
-            carrier,
-        )
-        if searching_coarse:
-            resolutions = iter(range(53, first - 1, -1))
-            searching_coarse = False
+        order = MetricCarrierOrder.COARSE_FIRST
+    return _source_carriers(state, simplices, target, current, order, limit, cell)
 
 
 def _quantized_relocation(
@@ -6466,17 +6169,12 @@ def _quantized_relocation(
     target: np.ndarray,
     current: np.ndarray,
     /,
-    *,
-    frames: dict[tuple[int, ...], _SourceSupport] | None = None,
-    images: _CarrierCache | None = None,
 ) -> tuple[dict[int, Fraction], np.ndarray] | None:
     """Return the coarsest admissible exact source carrier, if one exists."""
-    return next(
-        _quantized_relocation_candidates(
-            state, simplices, target, current, frames=frames, images=images
-        ),
-        None,
+    found = _source_carriers(
+        state, simplices, target, current, MetricCarrierOrder.COARSE_FIRST, 1, None
     )
+    return found[0] if found else None
 
 
 def _implicit_tangent_pulls(
@@ -7187,8 +6885,6 @@ def _relocation_proposals(
                 frame = corners, projection, basis
                 state.source_projections[simplex] = frame
             corners, projection, basis = frame
-        frames = state.source_supports
-        images: _CarrierCache = {}
         jacobian = None
         if deep and np.any(outside) and not constant_metric:
             # A varying tensor changes with the vertex. Finite differences
@@ -7202,9 +6898,7 @@ def _relocation_proposals(
                 derivative = None
                 for sign in (1.0, -1.0):
                     trial = points[row] + sign * step * direction
-                    located = _quantized_relocation(
-                        state, simplices, trial, points[row], frames=frames, images=images
-                    )
+                    located = _quantized_relocation(state, simplices, trial, points[row])
                     if located is None:
                         continue
                     trial_stencil, carrier = located
@@ -7397,37 +7091,22 @@ def _relocation_proposals(
                         simplices,
                         goal,
                         local_points[0],
-                        frames=frames,
-                        images=images,
                         fine_first=True,
+                        limit=_ALL_CARRIERS if remaining else 1,
                     )
-                    first = next(choices, None)
-                    candidates = (
-                        choices if remaining else (() if first is None else (first,))
-                    )
+                    candidates = choices[1:] if remaining else choices
                 elif deep:
-                    candidates = tuple(
-                        islice(
-                            _quantized_relocation_candidates(
-                                state,
-                                simplices,
-                                goal,
-                                local_points[0],
-                                frames=frames,
-                                images=images,
-                                coarse_and_fine=True,
-                            ),
-                            2,
-                        )
-                    )
-                else:
-                    quantized = _quantized_relocation(
+                    candidates = _quantized_relocation_candidates(
                         state,
                         simplices,
                         goal,
                         local_points[0],
-                        frames=frames,
-                        images=images,
+                        coarse_and_fine=True,
+                        limit=2,
+                    )
+                else:
+                    quantized = _quantized_relocation(
+                        state, simplices, goal, local_points[0]
                     )
                     candidates = () if quantized is None else (quantized,)
                 admitted: list[tuple[Any, dict[str, Any]]] = []
