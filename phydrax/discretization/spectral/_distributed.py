@@ -383,8 +383,9 @@ class SpectralMeshTopology(StrictModule, NonTrainableState):
 
     @classmethod
     def one_device(cls, device: jax.Device | None = None, /) -> "SpectralMeshTopology":
+        """Bind the canonical single-device execution-group mesh."""
         selected = jax.devices()[0] if device is None else device
-        return cls((1,), devices=(selected,), axis_names=("spectral",))
+        return cls((1,), devices=(selected,), axis_names=("device",))
 
     @property
     def device_count(self) -> int:

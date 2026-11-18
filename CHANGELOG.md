@@ -940,6 +940,14 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- The default spectral topology and execution substrate used differently named
+  single-device meshes, so arrays placed by both could not meet in one compiled
+  call. The default spectral topology now uses the execution substrate's
+  `device` axis; explicitly supplied topologies are unchanged. Default-topology
+  spectral topology, physical and modal layout, execution, transform plan and
+  preparation report, Maxwell plan, and prepared solver identities change;
+  numerical and owner identities remain unchanged. Stored plans with the old
+  default identity must be regenerated.
 - Source preparations bind their cached artifacts to one live domain; rebuilt
   domains use a fresh preparation. Domain-owned host arrays now have immutable
   storage, so validated-domain reuse cannot be bypassed by enabling writes.
