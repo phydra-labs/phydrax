@@ -233,6 +233,42 @@ def test_tetrahedron_routes_preserve_permuted_cell_order() -> None:
         np.testing.assert_array_equal(connectivity.cell_entities[degree], expected)
 
 
+def test_tetrahedron_routes_across_twenty_bit_boundary() -> None:
+    boundary = 1 << 20
+    cells = np.asarray(
+        (
+            (0, 1, 2, boundary),
+            (1, boundary + 1, 2, boundary),
+            (boundary + 2, boundary, 0, boundary + 1),
+        ),
+        dtype=np.int32,
+    )
+    mesh = CellMesh.from_simplices(
+        np.zeros((boundary + 3, 3), dtype=np.float64), cells, dimension=3
+    )
+    connectivity = mesh.connectivity
+    assert isinstance(connectivity, SimplicialConnectivity)
+    for degree in (1, 2):
+        local = tuple(combinations(range(4), degree + 1))
+        entities = sorted(
+            {
+                tuple(sorted(int(cell[index]) for index in indices))
+                for cell in cells
+                for indices in local
+            }
+        )
+        lookup = {entity: row for row, entity in enumerate(entities)}
+        expected = [
+            [
+                lookup[tuple(sorted(int(cell[index]) for index in indices))]
+                for indices in local
+            ]
+            for cell in cells
+        ]
+        np.testing.assert_array_equal(connectivity.entities[degree], entities)
+        np.testing.assert_array_equal(connectivity.cell_entities[degree], expected)
+
+
 def test_shared_four_dimensional_facet_is_not_a_support_boundary() -> None:
     points = np.concatenate(
         (
