@@ -255,6 +255,15 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Sphere and torus projection points, parameters, normals and tangents now use
+  platform-identical representatives, changing projection `result_id`s while
+  certified bounds, statuses, source identities and profile identities remain
+  unchanged. Periodic projection accepts or refuses by certified distance
+  bounds and decides boundary cases exactly. Adaptive discovery uses
+  platform-identical cell diameters and initial levels. Exported periodic
+  surfaces record a platform-identical certified root-distance upper bound;
+  its last digits can change, causing a one-time change to `metadata_id` and
+  `model_id`, without changing geometry or source identities.
 - B-Rep edge projection prepares exact line and circle distance data and arc endpoint enclosures once per edge, preserving results and certified bounds.
 - Torus projection prepares face-constant exact distance bounds once per
   projection operation without changing evidence or result identities.

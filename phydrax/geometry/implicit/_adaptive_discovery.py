@@ -31,6 +31,7 @@ from .._interval_enclosure import (
     prepare_interval_function,
     PreparedIntervalFunction,
 )
+from .._rational import binary64_norm_upper
 from .._source_boundary_records import (
     _SOURCE_BOUNDARY_SAMPLES_OWNERSHIP,
     SourceBoundaryDistance,
@@ -1676,32 +1677,14 @@ def _state_identity(geometry: CompiledGeometry) -> str:
 
 def _norm_upper(vector: np.ndarray) -> float:
     raw = np.abs(np.asarray(vector, dtype=np.float64).reshape((-1,)))
-    if not np.any(raw):
-        return 0.0
-    widened = np.nextafter(raw, np.inf)
-    value = math.hypot(*widened.tolist())
-    return float(np.nextafter(value, np.inf))
+    widened = np.where(raw == 0.0, 0.0, np.nextafter(raw, np.inf))
+    return float(binary64_norm_upper(widened))
 
 
 def _norm_upper_rows(vectors: np.ndarray, /) -> np.ndarray:
-    """`_norm_upper` of every row: the same widening, ``math.hypot`` and rounding."""
     raw = np.abs(np.asarray(vectors, dtype=np.float64))
-    # Grid-edge brackets are axis aligned. For a normal single nonzero
-    # component, widening the zero components to the least subnormal changes
-    # its hypot by far less than half an ulp. Preserve the scalar route for
-    # subnormal components and general vectors.
-    nonzero = np.count_nonzero(raw, axis=1)
-    magnitude = np.max(raw, axis=1, initial=0.0)
-    if np.all(
-        (nonzero <= 1) & ((magnitude == 0.0) | (magnitude >= np.finfo(np.float64).tiny))
-    ):
-        widened = np.nextafter(magnitude, np.inf)
-        return np.where(magnitude == 0.0, 0.0, np.nextafter(widened, np.inf))
-    widened = np.nextafter(raw, np.inf).tolist()
-    norms = np.nextafter(
-        np.asarray([math.hypot(*row) for row in widened], dtype=np.float64), np.inf
-    )
-    return np.where(np.any(raw, axis=1), norms, 0.0)
+    widened = np.where(raw == 0.0, 0.0, np.nextafter(raw, np.inf))
+    return binary64_norm_upper(widened)
 
 
 def _grid_coordinate_fraction(
@@ -2757,7 +2740,9 @@ def _target_level(domain: np.ndarray, relative_diameter: float) -> int:
             "The discovery-domain diagonal is not representable in binary64."
         )
     target = relative_diameter * diagonal
-    level = max(0, math.ceil(-math.log2(relative_diameter)))
+    # frexp returns x = mantissa * 2**exponent with 0.5 <= mantissa < 1.
+    # Both the exact-power endpoint and the open interval have this ceiling.
+    level = max(0, 1 - math.frexp(relative_diameter)[1])
     if target == 0.0:
         return level
     while float(np.nextafter(math.ldexp(diagonal, -level), np.inf)) > target:

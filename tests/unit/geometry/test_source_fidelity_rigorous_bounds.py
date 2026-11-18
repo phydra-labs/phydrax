@@ -201,6 +201,68 @@ def test_analytic_profile_cover_ignores_platform_libm(
             assert distance <= mp.mpf(float(here.point_error[row]))
 
 
+@pytest.mark.parametrize("family", ("sphere", "ring-torus"))
+def test_analytic_projection_representatives_and_identity_ignore_libm(
+    family: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    geometry = (
+        phx.geometry.Sphere((0.0, 0.0, 0.0), 0.4)
+        if family == "sphere"
+        else phx.geometry.Torus((0.0, 0.0, 0.0), 0.3, 0.9)
+    ).compile()
+    profile = _analytic_profile.AnalyticImplicitProfile(
+        geometry, phx.SpatialCoordinateContract.si()
+    )
+    queries = np.asarray(
+        (
+            (1.0, 2.0, 0.3),
+            (-1.0, 2.0, -0.3),
+            (-1.0, -2.0, 0.3),
+            (1.0, -2.0, -0.3),
+            (0.0, 1.0, 0.2),
+            (0.0, -1.0, -0.2),
+            (0.0, 0.0, 1.0),
+            (0.0, 0.0, 0.0),
+        ),
+        dtype=np.float64,
+    )
+    here = profile.project_boundary(queries)
+    _perturb_libm(monkeypatch)
+    original_hypot = math.hypot
+    monkeypatch.setattr(
+        math, "hypot", lambda *args: math.nextafter(original_hypot(*args), math.inf)
+    )
+    there = profile.project_boundary(queries)
+    for name in (
+        "points",
+        "parameters",
+        "normals",
+        "tangents",
+        "status",
+        "residuals",
+        "distance_lower_bounds",
+    ):
+        np.testing.assert_array_equal(getattr(here, name), getattr(there, name))
+    assert here.result_id == there.result_id
+    monkeypatch.undo()
+
+    for index in range(6):
+        with mp.workdps(80):
+            mx, my, mz = (mp.mpf(float(queries[index, axis])) for axis in range(3))
+            radial = mp.sqrt(mx * mx + my * my)
+            longitude = mp.atan2(my, mx) % (2 * mp.pi)
+            if family == "sphere":
+                latitude = mp.atan2(mz, radial)
+                expected = (mp.pi / 2 - latitude, longitude)
+            else:
+                latitude = mp.atan2(mz, radial - mp.mpf(profile.major_radius)) % (
+                    2 * mp.pi
+                )
+                expected = (longitude, latitude)
+            for actual, reference in zip(here.parameters[index], expected, strict=True):
+                assert abs(mp.mpf(float(actual)) - reference) < mp.mpf("2e-15")
+
+
 def test_tangent_conditioner_decides_conditioning_exactly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
