@@ -788,8 +788,8 @@ class _PeriodBoundProgram:
 type _IntervalProgram = PreparedIntervalFunction | _PeriodBoundProgram | _BoundProgram
 type _StripStructure = tuple[int, int, int, int, int, bool, IntersectionSide]
 type _StripPrograms = dict[
-    tuple[int, int, int, _StripStructure],
-    tuple[AbstractSurfacePatch, AbstractCurve, np.ndarray, PreparedIntervalFunction],
+    tuple[int, int, type[float], str, bool, _StripStructure],
+    tuple[AbstractSurfacePatch, AbstractCurve, PreparedIntervalFunction],
 ]
 
 
@@ -801,7 +801,6 @@ def _green_strip_program(
     *,
     chart: int | None = None,
     cylinder: bool = False,
-    origin_owner: np.ndarray | None = None,
     programs: _StripPrograms | None = None,
 ) -> _IntervalProgram:
     """``g(u0 + s (u(t) - u0), v(t)) (u(t) - u0) v'(t)`` on the strip ``(t, s)``.
@@ -819,7 +818,6 @@ def _green_strip_program(
     if chart is not None and isinstance(pcurve, IntersectionPCurve):
         if (
             programs is not None
-            and origin_owner is not None
             and orthogonal_cylinder_family(pcurve.curve.first, pcurve.curve.second)
             is not None
         ):
@@ -829,7 +827,14 @@ def _green_strip_program(
             # The chart index is an exact, non-integrated singleton input.
             chart_lower = np.append(chart_lower, np.float64(chart))
             chart_upper = np.append(chart_upper, np.float64(chart))
-            program_key = (id(patch), id(pcurve), id(origin_owner), structure)
+            program_key = (
+                id(patch),
+                id(pcurve),
+                type(origin),
+                repr(origin),
+                cylinder,
+                structure,
+            )
 
             def chart_evaluator(
                 parameter: Array, period: Array, values: Array, /
@@ -1108,24 +1113,21 @@ def _green_strip_program(
             parameters[:dimension]
         )
 
-    if program_key is None or programs is None or origin_owner is None:
+    if program_key is None or programs is None:
         program = _cell_program(jet_with_bounds, dimension + len(lower))
     else:
         entry = programs.get(program_key)
-        if (
-            entry is not None
-            and entry[0] is patch
-            and entry[1] is pcurve
-            and entry[2] is origin_owner
-        ):
-            program = entry[3]
+        if entry is not None and entry[0] is patch and entry[1] is pcurve:
+            program = entry[2]
         else:
             program = _cell_program(jet_with_bounds, dimension + len(lower))
             if program.execution != "batched":
+                # Only batched lowering is known to preserve endpoints when a
+                # formerly folded chart constant becomes an interval input.
                 return _green_strip_program(
                     patch, pcurve, origin, chart=chart, cylinder=cylinder
                 )
-            programs[program_key] = (patch, pcurve, origin_owner, program)
+            programs[program_key] = (patch, pcurve, program)
     return _BoundProgram(program, np.asarray(lower), np.asarray(upper))
 
 
@@ -2430,7 +2432,6 @@ def _plan_face(
                         float(bounds[0, 0]),
                         chart=chart,
                         cylinder=cylinder,
-                        origin_owner=bounds,
                         programs=programs,
                     ),
                 )
@@ -2631,7 +2632,7 @@ def _volume_integral(
     fixed_upper: list[float] = []
     jacobians: dict[int, tuple[float, float]] = {}
     ends: dict[int, _LoopEnds] = {}
-    # Entries retain their live patch, curve, and origin owner for this operation.
+    # Entries retain their live patch and curve for this operation.
     programs: _StripPrograms = {}
     for face, sign in zip(faces, signs, strict=True):
         if sign not in (-1, 1):

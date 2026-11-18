@@ -906,7 +906,6 @@ def test_chart_green_programs_match_general_route_across_charts() -> None:
     patch, curve = _orthogonal_green_sources()
     assert isinstance(patch, CylinderPatch) and isinstance(curve, IntersectionCurve)
     pcurve = curve.p_curve("first")
-    origin = np.asarray((0.0, 2 * np.pi))
     programs: _StripPrograms = {}
     for chart in range(curve.num_charts):
         low = np.asarray(((chart + 0.2,), (chart + 0.4,)))
@@ -918,7 +917,6 @@ def test_chart_green_programs_match_general_route_across_charts() -> None:
             0.0,
             chart=chart,
             cylinder=True,
-            origin_owner=origin,
             programs=programs,
         )
         for expected, value in zip(
@@ -937,7 +935,6 @@ def test_chart_green_programs_keep_curve_structures_distinct() -> None:
 
     patch, curve = _orthogonal_green_sources()
     assert isinstance(patch, CylinderPatch) and isinstance(curve, IntersectionCurve)
-    origin = np.asarray((0.0, 2 * np.pi))
     programs: _StripPrograms = {}
     for side in ("first", "second"):
         for reversed_source in (False, True):
@@ -956,7 +953,6 @@ def test_chart_green_programs_keep_curve_structures_distinct() -> None:
                     0.0,
                     chart=chart,
                     cylinder=True,
-                    origin_owner=origin,
                     programs=programs,
                 )
                 for expected, value in zip(
@@ -965,23 +961,50 @@ def test_chart_green_programs_keep_curve_structures_distinct() -> None:
                     assert np.array_equal(expected.view(np.uint64), value.view(np.uint64))
 
 
+def test_chart_green_programs_keep_origins_distinct() -> None:
+    from phydrax.geometry.brep._intersection_curve import IntersectionCurve
+    from phydrax.geometry.brep._measure import _green_strip_program, _StripPrograms
+    from phydrax.geometry.brep._patches import CylinderPatch
+
+    patch, curve = _orthogonal_green_sources()
+    assert isinstance(patch, CylinderPatch) and isinstance(curve, IntersectionCurve)
+    pcurve = curve.p_curve("first")
+    programs: _StripPrograms = {}
+    for chart, origin in ((0, 0.0), (1, 0.75), (2, -0.0)):
+        low = np.asarray(((chart + 0.2,),))
+        high = np.asarray(((chart + 0.3,),))
+        reference = _green_strip_program(
+            patch, pcurve, origin, chart=chart, cylinder=True
+        )
+        actual = _green_strip_program(
+            patch, pcurve, origin, chart=chart, cylinder=True, programs=programs
+        )
+        for expected, value in zip(
+            reference.evaluate(low, high), actual.evaluate(low, high), strict=True
+        ):
+            assert np.array_equal(expected.view(np.uint64), value.view(np.uint64))
+
+
 def test_chart_green_program_owner_does_not_outlive_operation(tmp_path: Path) -> None:
     import gc
     import weakref
 
+    from phydrax.geometry.brep._intersection_curve import IntersectionPCurve
     from phydrax.geometry.brep._measure import source_shell_volume_sign
     from tools.meshing_qualification.scenarios.native_cad_profiles import _quadric_case
 
-    model, _, _, _ = _quadric_case("iges", tmp_path)
-    geometry = model.geometry
-    faces = geometry.shell_faces[0]
-    signs = np.asarray(model.orientation, dtype=np.float64).copy()
-    for face, orientation in zip(faces, geometry.shell_orientations[0], strict=True):
-        signs[face] *= orientation
-
-    def operation() -> weakref.ReferenceType[np.ndarray]:
-        bounds = np.array(model.parameter_bounds, dtype=np.float64, copy=True)
-        reference = weakref.ref(bounds)
+    def operation() -> weakref.ReferenceType[IntersectionPCurve]:
+        model, _, _, _ = _quadric_case("iges", tmp_path)
+        geometry = model.geometry
+        faces = geometry.shell_faces[0]
+        signs = np.asarray(model.orientation, dtype=np.float64).copy()
+        for face, orientation in zip(faces, geometry.shell_orientations[0], strict=True):
+            signs[face] *= orientation
+        curve = next(
+            curve for curve in geometry.pcurves if isinstance(curve, IntersectionPCurve)
+        )
+        reference = weakref.ref(curve)
+        bounds = np.asarray(model.parameter_bounds, dtype=np.float64)
         source_shell_volume_sign(
             geometry, model.patches, bounds, model.trim_domains, signs, faces
         )
@@ -990,3 +1013,52 @@ def test_chart_green_program_owner_does_not_outlive_operation(tmp_path: Path) ->
     reference = operation()
     gc.collect()
     assert reference() is None
+
+
+def test_chart_green_program_native_unavailable_refusal_is_unchanged(
+    tmp_path: Path,
+) -> None:
+    import os
+    import pickle
+    import subprocess
+    import sys
+
+    from phydrax.geometry.brep._intersection_curve import IntersectionCurve
+    from phydrax.geometry.brep._patches import CylinderPatch
+
+    patch, curve = _orthogonal_green_sources()
+    assert isinstance(patch, CylinderPatch) and isinstance(curve, IntersectionCurve)
+    capture = tmp_path / "chart.pickle"
+    with capture.open("wb") as handle:
+        pickle.dump((patch, curve.p_curve("first")), handle)
+    script = """
+import pickle
+import sys
+import numpy as np
+from phydrax.geometry._interval_enclosure import IntervalExtensionError
+from phydrax.geometry.brep._measure import _green_strip_program
+with open(sys.argv[1], "rb") as handle:
+    patch, curve = pickle.load(handle)
+box = np.asarray(((0.25,),), dtype=np.float64)
+programs = {}
+messages = []
+for cache in (None, programs):
+    program = _green_strip_program(patch, curve, 0.0, chart=0, cylinder=True, programs=cache)
+    try:
+        program.evaluate(box, box)
+    except IntervalExtensionError as error:
+        messages.append(str(error))
+assert messages == [
+    "the rigorous cos enclosure requires the native meshcore library.",
+    "the rigorous cos enclosure requires the native meshcore library.",
+]
+"""
+    environment = os.environ.copy()
+    environment["PHYDRAX_MESHCORE_LIBRARY"] = str(tmp_path / "missing.dylib")
+    subprocess.run(
+        (sys.executable, "-c", script, str(capture)),
+        check=True,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
