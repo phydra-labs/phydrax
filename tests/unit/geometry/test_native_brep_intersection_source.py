@@ -1732,3 +1732,206 @@ def test_krawczyk_certified_box_contains_the_exact_root_after_every_rounding() -
     assert bool(result.certified[0])
     assert Fraction(float(result.lower[0, 0])) <= root
     assert root <= Fraction(float(result.upper[0, 0]))
+
+
+def _rounded_add(first: float, second: float, /) -> float:
+    return float(Fraction(first) + Fraction(second))
+
+
+def _rounded_multiply(first: float, second: float, /) -> float:
+    return float(Fraction(first) * Fraction(second))
+
+
+def _ordered_dot(first: list[float], second: list[float], /) -> float:
+    products = [_rounded_multiply(a, b) for a, b in zip(first, second, strict=True)]
+    result = products[0]
+    for product in products[1:]:
+        result = _rounded_add(result, product)
+    return result
+
+
+def _point_radius(value: float, /) -> tuple[float, float]:
+    midpoint = _rounded_add(_rounded_multiply(0.5, value), _rounded_multiply(0.5, value))
+    radius = max(_rounded_add(midpoint, -value), _rounded_add(value, -midpoint))
+    return midpoint, math.nextafter(radius, math.inf)
+
+
+def test_ordered_dot_differs_from_alternative_rounding() -> None:
+    first = [
+        float.fromhex(value)
+        for value in (
+            "0x1.da5dcac364928p-1",
+            "0x1.390c8604c6aa8p-2",
+            "0x1.1ff5669fe18d4p+0",
+            "0x1.4aeaf6ff72b34p-1",
+        )
+    ]
+    second = [
+        float.fromhex(value)
+        for value in (
+            "0x1.5b70f08258c26p+0",
+            "-0x1.f07aec346c9a0p-3",
+            "-0x1.613ab981b4f48p+0",
+            "-0x1.6691a38290500p+0",
+        )
+    ]
+    ordered = _ordered_dot(first, second)
+    reverse = _ordered_dot(first[::-1], second[::-1])
+    products = [Fraction(a) * Fraction(b) for a, b in zip(first, second, strict=True)]
+    fused = float(products[0])
+    for product in products[1:]:
+        fused = float(Fraction(fused) + product)
+    exact = float(sum(products, Fraction()))
+    assert ordered != reverse
+    assert ordered != fused
+    assert ordered != exact
+
+
+@pytest.mark.parametrize(
+    ("first_hex", "second_hex"),
+    [
+        (
+            ("0x1.da5dcac364928p-1", "0x1.390c8604c6aa8p-2"),
+            ("0x1.5b70f08258c26p+0", "-0x1.f07aec346c9a0p-3"),
+        ),
+        (
+            ("-0x1.e3ef90e46ea50p-1", "-0x1.e8372c3e8d7fcp-1", "-0x1.59ee9fa261e38p+0"),
+            ("-0x1.b8a946afd4600p-5", "0x1.3463940c2bbf2p+0", "-0x1.2983ad5668338p-2"),
+        ),
+        (
+            (
+                "0x1.2815444508460p-4",
+                "-0x1.54489bd372e92p+0",
+                "0x1.e8b04e39ef9dcp+0",
+                "0x1.e766194ceec34p+0",
+            ),
+            (
+                "-0x1.44406c0537624p-1",
+                "0x1.172329305d5d4p+0",
+                "-0x1.6e5e4ae1c2adap+0",
+                "-0x1.9f84bf39f7d40p-1",
+            ),
+        ),
+        (
+            (
+                "0x1.da5dcac364928p-1",
+                "0x1.390c8604c6aa8p-2",
+                "0x1.1ff5669fe18d4p+0",
+                "0x1.4aeaf6ff72b34p-1",
+            ),
+            (
+                "0x1.5b70f08258c26p+0",
+                "-0x1.f07aec346c9a0p-3",
+                "-0x1.613ab981b4f48p+0",
+                "-0x1.6691a38290500p+0",
+            ),
+        ),
+    ],
+)
+@pytest.mark.parametrize("vector_right", [False, True])
+@pytest.mark.parametrize("interval_left", [False, True])
+def test_interval_products_use_fixed_order_and_enclose_exact_product(
+    interval_left: bool,
+    vector_right: bool,
+    first_hex: tuple[str, ...],
+    second_hex: tuple[str, ...],
+) -> None:
+    from phydrax.geometry.brep._intersection_kernel import (
+        interval_times_interval,
+        point_times_interval,
+    )
+
+    first = [float.fromhex(value) for value in first_hex]
+    second = [float.fromhex(value) for value in second_hex]
+    right = [_point_radius(value) for value in second]
+    right_mid = [item[0] for item in right]
+    right_rad = [item[1] for item in right]
+    left = [_point_radius(value) for value in first]
+    left_mid = [item[0] for item in left] if interval_left else first
+    center = _ordered_dot(left_mid, right_mid)
+    width = _ordered_dot([abs(value) for value in left_mid], right_rad)
+    if interval_left:
+        left_rad = [item[1] for item in left]
+        width = _rounded_add(
+            width, _ordered_dot(left_rad, [abs(value) for value in right_mid])
+        )
+        width = _rounded_add(width, _ordered_dot(left_rad, right_rad))
+    length = len(first) + 1
+    unit = 2.0**-52
+    gamma = float(
+        Fraction(_rounded_multiply(float(length), unit))
+        / Fraction(_rounded_add(1.0, -_rounded_multiply(float(length), unit)))
+    )
+    magnitude = _ordered_dot(
+        [abs(value) for value in left_mid], [abs(value) for value in right_mid]
+    )
+    width = math.nextafter(
+        _rounded_add(width, _rounded_multiply(gamma, _rounded_add(magnitude, width))),
+        math.inf,
+    )
+    expected = (
+        math.nextafter(_rounded_add(center, -width), -math.inf),
+        math.nextafter(_rounded_add(center, width), math.inf),
+    )
+    matrix = np.asarray([first], dtype=np.float64)
+    vector = np.asarray(second, dtype=np.float64)
+    if not vector_right:
+        vector = vector[:, None]
+    if interval_left:
+        lower, upper = interval_times_interval(matrix, matrix, vector, vector)
+    else:
+        lower, upper = point_times_interval(matrix, vector, vector)
+    actual_lower = float(lower.flat[0])
+    actual_upper = float(upper.flat[0])
+    assert (actual_lower.hex(), actual_upper.hex()) == tuple(
+        float(value).hex() for value in expected
+    )
+    exact = sum(
+        (Fraction(a) * Fraction(b) for a, b in zip(first, second, strict=True)),
+        Fraction(),
+    )
+    assert Fraction(actual_lower) <= exact <= Fraction(actual_upper)
+
+
+@pytest.mark.parametrize("interval_left", [False, True])
+def test_interval_products_are_batch_independent(interval_left: bool) -> None:
+    from phydrax.geometry.brep._intersection_kernel import (
+        interval_times_interval,
+        point_times_interval,
+    )
+
+    first = np.asarray([[0.1, -0.3, 0.7], [1.1, 0.2, -0.9]], dtype=np.float64)
+    second = np.asarray([[0.8], [-0.4], [0.2]], dtype=np.float64)
+    batches = np.stack([first, first * 2.0])
+    if interval_left:
+        single = interval_times_interval(first, first, second, second)
+        batch = interval_times_interval(batches, batches, second, second)
+    else:
+        single = point_times_interval(first, second, second)
+        batch = point_times_interval(batches, second, second)
+    for alone, together in zip(single, batch, strict=True):
+        assert [float(value).hex() for value in alone.flat] == [
+            float(value).hex() for value in together[0].flat
+        ]
+
+
+@pytest.mark.parametrize("interval_left", [False, True])
+def test_interval_products_widen_signed_zero_center(interval_left: bool) -> None:
+    from phydrax.geometry.brep._intersection_kernel import (
+        interval_times_interval,
+        point_times_interval,
+    )
+
+    positive = np.asarray([[0.0, 0.0]], dtype=np.float64)
+    negative = np.asarray([[-0.0, -0.0]], dtype=np.float64)
+    right = np.asarray([1.0, 1.0], dtype=np.float64)
+    if interval_left:
+        positive_bounds = interval_times_interval(positive, positive, right, right)
+        negative_bounds = interval_times_interval(negative, negative, right, right)
+    else:
+        positive_bounds = point_times_interval(positive, right, right)
+        negative_bounds = point_times_interval(negative, right, right)
+    assert float(positive_bounds[0][0]) < 0.0 < float(positive_bounds[1][0])
+    assert tuple(float(bound[0]).hex() for bound in positive_bounds) == tuple(
+        float(bound[0]).hex() for bound in negative_bounds
+    )
