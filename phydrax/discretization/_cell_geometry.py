@@ -9,8 +9,8 @@ from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 from fractions import Fraction
 from itertools import product
-from math import comb
-from typing import Any, Literal, overload, Protocol, runtime_checkable, TypedDict
+from math import comb, lcm
+from typing import Any, cast, Literal, overload, Protocol, runtime_checkable, TypedDict
 
 import equinox as eqx
 import jax
@@ -3687,7 +3687,7 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
         if len(reference_points) != identifiers.size:
             raise ValueError("Exact reference point rows must align with cell IDs.")
         lift = _quotient_chart_lift(self, mesh, routes)
-        source_bank = self.source_coordinates() if lift is None else ()
+        source_bank = tuple(self.source_coordinates()) if lift is None else ()
         # One host copy per block route table; rows are read per requested cell.
         route_tables = tuple(np.asarray(route, dtype=np.int64) for route in routes)
         row_by_cell: dict[int, tuple[int, int]] = {}
@@ -3806,7 +3806,7 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
         # numbered, and the exact image of each (numbered point, bank rows).
         point_plans: dict[
             tuple[int, tuple[Any, ...]],
-            tuple[int, tuple[int, ...], tuple[Any, ...]],
+            tuple[int, tuple[int, ...], tuple[int, ...], int],
         ] = {}
         plain_images: dict[tuple[int, int, tuple[int, ...]], tuple[Any, ...]] = {}
         # The caller's point rows stay alive for this call, so a row object
@@ -3878,29 +3878,46 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
                         raise ValueError(
                             "Exact coordinate basis and local coefficient bank disagree."
                         )
+                    # The rational-data and rational-basis checks above prove these
+                    # types, although the checker cannot follow those predicates.
+                    rational_coefficients = cast(
+                        tuple[tuple[Fraction, ...], ...], coefficients
+                    )
                     route_rows = route.tolist()
                     # A lifted bank is per cell; an unlifted node shares its
                     # image with every cell routing the same bank rows.
                     scope = -1 if lift is None else local_row
                     cell_results = []
+                    integer_coefficients: tuple[tuple[int, ...], ...] | None = None
+                    coefficient_denominator = 1
                     for point in point_rows:
                         exact_point = tuple(point)
                         plan = point_plans.get((block_index, exact_point))
                         if plan is None:
-                            weights = tuple(
-                                evaluate(basis, exact_point) for basis in plain_basis
+                            weights = cast(
+                                tuple[Fraction, ...],
+                                tuple(evaluate(basis, exact_point) for basis in plain_basis),
+                            )
+                            active = tuple(
+                                dof
+                                for dof, weight in enumerate(weights)
+                                if weight != 0
+                            )
+                            denominator = lcm(
+                                *(weights[dof].denominator for dof in active)
                             )
                             plan = (
                                 len(point_plans),
+                                active,
                                 tuple(
-                                    dof
-                                    for dof, weight in enumerate(weights)
-                                    if weight != 0
+                                    weights[dof].numerator
+                                    * (denominator // weights[dof].denominator)
+                                    for dof in active
                                 ),
-                                tuple(weight for weight in weights if weight != 0),
+                                denominator,
                             )
                             point_plans[(block_index, exact_point)] = plan
-                        ordinal, active, weights = plan
+                        ordinal, active, integer_weights, weight_denominator = plan
                         node_key = (
                             ordinal,
                             scope,
@@ -3908,14 +3925,44 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
                         )
                         value = plain_images.get(node_key)
                         if value is None:
-                            # Zero basis values add nothing to the exact sum.
-                            value = (
-                                combine(
-                                    tuple(coefficients[dof] for dof in active), weights
+                            if (
+                                len(active) == 1
+                                and integer_weights[0] == weight_denominator
+                            ):
+                                value = tuple(
+                                    Fraction(item) for item in rational_coefficients[active[0]]
                                 )
-                                if active
-                                else tuple(Fraction(0) for _ in coefficients[0])
-                            )
+                            elif not active:
+                                value = tuple(Fraction(0) for _ in coefficients[0])
+                            else:
+                                if integer_coefficients is None:
+                                    coefficient_denominator = lcm(
+                                        *(
+                                            item.denominator
+                                            for row in rational_coefficients
+                                            for item in row
+                                        )
+                                    )
+                                    integer_coefficients = tuple(
+                                        tuple(
+                                            item.numerator
+                                            * (coefficient_denominator // item.denominator)
+                                            for item in row
+                                        )
+                                        for row in rational_coefficients
+                                    )
+                                value = tuple(
+                                    Fraction(
+                                        sum(
+                                            integer_coefficients[dof][axis] * weight
+                                            for dof, weight in zip(
+                                                active, integer_weights, strict=True
+                                            )
+                                        ),
+                                        coefficient_denominator * weight_denominator,
+                                    )
+                                    for axis in range(len(coefficients[0]))
+                                )
                             plain_images[node_key] = value
                         cell_results.append(value)
                     results.append(tuple(cell_results))
