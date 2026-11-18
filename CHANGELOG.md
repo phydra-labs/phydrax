@@ -565,6 +565,17 @@
   On Windows, where both were library calls, the recorded sphere adaptation
   takes about a tenth less time with identical coordinates, edits and
   evidence.
+- The native exact carrier search runs on integers of at most 1,024 bits held
+  inline. An operation whose result does not fit is detected and the query is
+  repeated on the unbounded integers the search used before, so no value is
+  truncated and the carriers are the same on either route. Barycentric
+  weights are kept as integer numerators over one denominator, each partial
+  sum is divided once for all 53 resolutions, and images are rounded from an
+  integer quotient; the results are those of the definition, which the
+  reference tests now also check on sources with common denominators of about
+  300 and 1,500 bits and on subnormal coordinates. On the recorded sphere
+  adaptation the coordinates, edits and evidence are identical and the
+  adaptation takes about a tenth less time on Windows.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep
