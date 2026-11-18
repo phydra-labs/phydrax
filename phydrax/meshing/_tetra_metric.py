@@ -11,9 +11,9 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from fractions import Fraction
-from itertools import combinations, compress, islice
+from itertools import combinations, islice
 from math import frexp, gcd, lcm, sqrt
-from typing import Any, cast, final, NamedTuple
+from typing import Any, assert_never, cast, final, NamedTuple, NoReturn
 
 import equinox as eqx
 import numpy as np
@@ -25,6 +25,7 @@ from .._meshcore import (
     interval_program_execute,
     IntervalBoxProgram,
     metric_band_quanta,
+    metric_collapse_positions,
     metric_congruence_defects,
     metric_hull_frame,
     metric_interpolations,
@@ -34,9 +35,12 @@ from .._meshcore import (
     metric_project_goals,
     metric_relative_determinants,
     metric_relocation_pulls,
-    metric_survivor_goals,
     metric_tensor_properties,
     metric_tetra_quality,
+    MetricCollapseStar,
+    MetricPositionVerdict,
+    MetricSearchEnd,
+    MetricSource,
     PlcBoundaryPolicy,
     relocated_tet_mesh_arrays,
     TetMesh3D,
@@ -100,13 +104,6 @@ _SCREEN_WORK_BYTES = 32 * 1024**2
 _SCREEN_GOAL_BYTES = 2048
 _SCREEN_NEIGHBOR_BYTES = 512
 _SCREEN_CELL_BYTES = 2048
-# The survivor pre-screen of a collapse evaluates one goal's carriers together
-# with the kernels of the per-carrier screen, row by row, so it refuses
-# exactly the carriers that screen refuses by their violations.
-_SURVIVOR_SCREEN_MINIMUM = 4
-# Carriers are quantized lazily; a block bounds the ones a collapse that
-# stops early has quantized in vain.
-_SURVIVOR_SCREEN_BLOCK = 16
 _SEED_STEPS = np.arange(_SPLIT_PARAMETER_BITS + 1, dtype=np.int64)
 _GOAL_STEPS = np.arange(_GOAL_BLOCK, dtype=np.int64)
 _SEED_STEPS.setflags(write=False)
@@ -505,6 +502,8 @@ class _NativeState:
     source_projections: dict[
         tuple[int, ...], tuple[np.ndarray, np.ndarray, np.ndarray]
     ] = field(default_factory=dict)
+    # The native exact source (``_source_bank``), created on first use.
+    source_bank: _SourceBank | None = None
 
 
 @dataclass(slots=True)
@@ -4396,55 +4395,15 @@ def _directed_collapse(
         ],
         dtype=np.int64,
     ).reshape((-1, 4))
-    before_violations: tuple[tuple[int, ...], tuple[int, ...]] | None = None
-    # Quantization may repeat identical numerical variants. The cache belongs
-    # only to this fixed directed star; source stencils are checked separately.
-    # Three goals at at most 53 resolutions bound it to 160 entries.
-    rejected_variants: set[tuple[bytes, bytes, tuple[tuple[int, int, int, int], ...]]] = (
-        set()
+    star = MetricCollapseStar(
+        local_points,
+        local_metrics,
+        after_spokes[:, 1],
+        before_lengths,
+        np.asarray(removed_cells, dtype=np.int64).reshape((-1, 4)),
+        _DETERMINANT_FLOOR,
     )
-
-    def variant(
-        point: np.ndarray, metric: np.ndarray, cells: list[tuple[int, int, int, int]]
-    ) -> dict[str, Any] | None:
-        nonlocal before_violations
-        key = (point.tobytes(), metric.tobytes(), tuple(cells))
-        if key in rejected_variants:
-            return None
-        moved_points = local_points.copy()
-        moved_points[0] = point
-        moved_metrics = local_metrics.copy()
-        moved_metrics[0] = metric
-        if np.any(np.all(moved_points[after_spokes[:, 1]] == point, axis=1)):
-            rejected_variants.add(key)
-            return None
-        # Reject a non-decreasing metric objective before exact orientation;
-        # the surviving candidates still receive every geometric check.
-        after_lengths = metric_lengths(moved_points, moved_metrics, after_spokes)
-        # Prepare lazily to preserve the original refusal/error ordering.
-        if before_violations is None:
-            before_violations = _band_violations(before_lengths)
-        violations = _band_violations(after_lengths)
-        if not violations < before_violations:
-            rejected_variants.add(key)
-            return None
-        rows = np.asarray(cells, dtype=np.int64).reshape((-1, 4))
-        signs = _tetra_orientation(moved_points, rows, PredicateMode.EXACT)
-        if not np.all(signs == 1) or not _clears_determinant_floor(moved_points[rows]):
-            rejected_variants.add(key)
-            return None
-        quality = metric_tetra_quality(moved_points, moved_metrics, rows)
-        if not np.all(np.isfinite(quality)) or np.any(quality <= 0.0):
-            rejected_variants.add(key)
-            return None
-        return {
-            "rows": rows,
-            "quality": float(np.min(quality)),
-            "violations": violations,
-            "lengths": after_lengths,
-        }
-
-    best = variant(local_points[0], local_metrics[0], removed_cells)
+    best = _collapse_position(star, local_points[0], local_metrics[0])
     survivor: dict[str, Any] | None = None
     if best is None or best["violations"][0]:
         # Collapsing in place creates a long edge (or is refused): move the
@@ -4452,43 +4411,27 @@ def _directed_collapse(
         # its longest spoke, replacing both stars. A move must keep every long
         # spoke of the moved survivor exactly splittable; otherwise the
         # collapse stays in place.
-        def refused(
-            candidates: Sequence[tuple[dict[int, Fraction], np.ndarray]],
-        ) -> np.ndarray:
-            return _refused_survivor_carriers(
+        moved_star = star._replace(
+            cells=np.asarray(removed_cells + kept_cells, dtype=np.int64).reshape((-1, 4))
+        )
+        for move, moved in _survivor_moves(state, records, topology, kept, moved_star):
+            if (
+                best is None
+                or (moved["violations"], -moved["quality"])
+                < (best["violations"], -best["quality"])
+            ) and _moved_spokes_splittable(
                 state,
-                candidates,
+                records,
+                removed,
+                kept,
+                local_vertices,
+                move,
                 local_points,
                 local_metrics,
                 after_spokes,
-                before_lengths,
-            )
-
-        for move in _survivor_moves(
-            state, records, topology, kept, local_points, local_metrics, refused=refused
-        ):
-            moved = variant(move["point"], move["metric"], removed_cells + kept_cells)
-            if (
-                moved is not None
-                and (
-                    best is None
-                    or (moved["violations"], -moved["quality"])
-                    < (best["violations"], -best["quality"])
-                )
-                and _moved_spokes_splittable(
-                    state,
-                    records,
-                    removed,
-                    kept,
-                    local_vertices,
-                    move,
-                    local_points,
-                    local_metrics,
-                    after_spokes,
-                    moved["lengths"],
-                    new_facets,
-                    new_segments,
-                )
+                moved["lengths"],
+                new_facets,
+                new_segments,
             ):
                 best, survivor = moved, move
                 if not best["violations"][0]:
@@ -4523,92 +4466,103 @@ def _directed_collapse(
     }
 
 
-def _refused_survivor_carriers(
-    state: _NativeState,
-    candidates: Sequence[tuple[dict[int, Fraction], np.ndarray]],
-    local_points: np.ndarray,
-    local_metrics: np.ndarray,
-    after_spokes: np.ndarray,
-    before_lengths: np.ndarray,
-    /,
-) -> np.ndarray:
-    """Survivor carriers the length screen of ``_directed_collapse`` refuses.
+class _SourceBank(NamedTuple):
+    """The native exact source of one adaptation.
 
-    One evaluation over all carriers of a goal: coincidence with a link
-    vertex (exact), then the survivor's spoke lengths at each carrier's
-    interpolated source metric against the star's violations before the
-    collapse. The metric of a carrier is the mean over its own stencil and
-    every length is the kernel value of its own row, so these are the values
-    the per-carrier screen evaluates and a carrier is refused here exactly
-    when its violations do not decrease there. A carrier without a metric, or
-    with a zero or infinite spoke, is left to the per-carrier screen, which
-    alone admits and alone reports those cases.
+    Its points are in ascending source vertex ID, so the support of a native
+    carrier (ascending rows) is a stencil in ascending ID; its cells are in
+    ascending cell ID, the order in which a point is located.
     """
-    count = len(candidates)
-    refused = np.zeros((count,), dtype=np.bool_)
-    if not np.all(np.isfinite(before_lengths)) or np.any(before_lengths <= 0.0):
-        return refused
-    carriers = np.asarray([carrier for _, carrier in candidates], dtype=np.float64)
-    other_rows = after_spokes[:, 1]
-    others = local_points[other_rows]
-    coincident = np.any(
-        np.all(others[None, :, :] == carriers[:, None, :], axis=2), axis=1
-    )
-    offsets = np.zeros((count + 1,), dtype=np.int64)
-    support: list[int] = []
-    weights: list[float] = []
-    for row, (stencil, _) in enumerate(candidates):
-        for identifier in sorted(stencil):
-            support.append(state.source_vertex_rows[int(identifier)])
-            weights.append(float(stencil[identifier]))
-        offsets[row + 1] = len(support)
-    metrics, valid = metric_interpolations(
-        offsets,
-        np.asarray(support, dtype=np.int64),
-        np.asarray(weights, dtype=np.float64),
-        state.source_metric,
-        state.source_metric_log,
-    )
-    spokes = others.shape[0]
-    lengths = metric_lengths(
-        np.concatenate((carriers, others)),
-        np.concatenate((metrics, local_metrics[other_rows])),
-        np.stack(
-            (
-                np.repeat(np.arange(count, dtype=np.int64), spokes),
-                np.tile(count + np.arange(spokes, dtype=np.int64), count),
+
+    source: MetricSource
+    identifiers: tuple[int, ...]
+    """Source vertex ID of each bank row."""
+    rows: dict[int, int]
+    """Bank row of each source vertex ID."""
+
+
+def _source_bank(state: _NativeState, /) -> _SourceBank:
+    bank = state.source_bank
+    if bank is None:
+        identifiers = tuple(sorted(state.source_vertex_rows))
+        rows = {identifier: row for row, identifier in enumerate(identifiers)}
+        order = [state.source_vertex_rows[identifier] for identifier in identifiers]
+        bank = _SourceBank(
+            MetricSource(
+                state.source_points[order],
+                [state.source_exact_points[row] for row in order],
+                np.asarray(
+                    [
+                        [rows[int(vertex)] for vertex in record[1]]
+                        for record in state.source_records.records
+                    ],
+                    dtype=np.int64,
+                ).reshape((-1, 4)),
+                state.source_metric[order],
+                state.source_metric_log[order],
             ),
-            axis=1,
-        ),
-    ).reshape((count, spokes))
-    long, short = _band_violation_rows(lengths)
-    counted = valid & np.all(np.isfinite(long) & np.isfinite(short), axis=1)
-
-    def order(rows: np.ndarray, reference: tuple[int, ...]) -> np.ndarray:
-        width = max(rows.shape[1], len(reference))
-        padded = np.zeros((rows.shape[0], width), dtype=np.float64)
-        padded[:, : rows.shape[1]] = rows
-        target = np.zeros((width,), dtype=np.float64)
-        target[: len(reference)] = reference
-        return _lexicographic_signs(padded, target)
-
-    before_long, before_short = _band_violations(before_lengths)
-    long_order = order(long, before_long)
-    decreases = (long_order < 0) | ((long_order == 0) & (order(short, before_short) < 0))
-    return coincident | (counted & ~decreases)
+            identifiers,
+            rows,
+        )
+        state.source_bank = bank
+    return bank
 
 
-def _unrefused_carriers(
-    carriers: Iterator[tuple[dict[int, Fraction], np.ndarray]],
-    refused: Callable[[Sequence[tuple[dict[int, Fraction], np.ndarray]]], np.ndarray],
-    /,
-) -> Iterator[tuple[dict[int, Fraction], np.ndarray]]:
-    """Carriers a batched screen does not refuse, in order, read block by block."""
-    while block := tuple(islice(carriers, _SURVIVOR_SCREEN_BLOCK)):
-        if len(block) < _SURVIVOR_SCREEN_MINIMUM:
-            yield from block
-        else:
-            yield from compress(block, ~refused(block))
+def _position_evidence(
+    star: MetricCollapseStar, quality: float, lengths: np.ndarray, /
+) -> dict[str, Any]:
+    return {
+        "rows": star.cells,
+        "quality": quality,
+        "violations": _band_violations(lengths),
+        "lengths": lengths,
+    }
+
+
+def _report_position(
+    star: MetricCollapseStar, point: np.ndarray, lengths: np.ndarray, /
+) -> NoReturn:
+    """Raise the error of a survivor position the kernels give no verdict for.
+
+    A length before the collapse or a spoke at the position was not measured,
+    or a cell coordinate lies outside the exact predicate domain: the owners
+    of those contracts report them, in the order the position is evaluated.
+    """
+    _band_violations(star.before_lengths)
+    _band_violations(lengths)
+    moved = np.array(star.points, dtype=np.float64)
+    moved[0] = point
+    _tetra_orientation(moved, star.cells, PredicateMode.EXACT)
+    raise RuntimeError("A survivor position without a verdict raised no error.")
+
+
+def _collapse_position(
+    star: MetricCollapseStar, point: np.ndarray, metric: np.ndarray, /
+) -> dict[str, Any] | None:
+    """Evidence of the survivor of ``star`` at ``point``; ``None`` if not admitted.
+
+    A position is admitted when it has no neighbor at it, strictly decreases
+    the band violations of the measured edges, keeps every cell exactly
+    positive above the determinant floor and gives every cell a positive
+    quality (``metric_collapse_positions``).
+    """
+    verdicts, qualities, lengths = metric_collapse_positions(
+        star, point[None, :], metric[None, :, :]
+    )
+    match MetricPositionVerdict(int(verdicts[0])):
+        case MetricPositionVerdict.ADMITTED:
+            return _position_evidence(star, float(qualities[0]), lengths[0])
+        case (
+            MetricPositionVerdict.COINCIDENT
+            | MetricPositionVerdict.NOT_DECREASING
+            | MetricPositionVerdict.NOT_ORIENTED
+            | MetricPositionVerdict.NO_QUALITY
+        ):
+            return None
+        case MetricPositionVerdict.UNMEASURED | MetricPositionVerdict.OUTSIDE_DOMAIN:
+            _report_position(star, point, lengths[0])
+        case _ as unreachable:
+            assert_never(unreachable)
 
 
 def _survivor_moves(
@@ -4616,26 +4570,25 @@ def _survivor_moves(
     records: _BoundaryRecords,
     topology: _TetTopology,
     kept: int,
-    local_points: np.ndarray,
-    local_metrics: np.ndarray,
+    star: MetricCollapseStar,
     /,
-    *,
-    refused: Callable[[Sequence[tuple[dict[int, Fraction], np.ndarray]]], np.ndarray]
-    | None = None,
-) -> Iterator[dict[str, Any]]:
-    """Quantized source points a collapse survivor may move to.
+) -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
+    """Quantized source points a collapse survivor may move to, with their evidence.
 
-    ``local_points`` hold the survivor, the removed vertex, then the merged
-    link. Goals are the center of the smallest ball (in the endpoints' mean
-    metric) holding the merged link, which minimizes the longest survivor
-    spoke, the metric midpoint of the collapsed edge and the point halfway to
-    it; each is projected onto the survivor's carrier and quantized by
-    ``_quantized_relocation``: an interior survivor moves in its source cell, a
-    boundary survivor within its source facet or curve (on a declared plane
-    when its carrier rounds). Survivors that are fixed, protected or pinned at a
-    source corner do not move. On a periodic lift only a survivor whose vertex
-    orbit has a single lifted member moves: its star is the whole quotient star,
-    so no deck partner has to follow it; a seam survivor stays in place.
+    ``star`` holds the survivor, the removed vertex, then the merged link, and
+    the cells of both stars after the collapse. Goals are the center of the
+    smallest ball (in the endpoints' mean metric) holding the merged link,
+    which minimizes the longest survivor spoke, the metric midpoint of the
+    collapsed edge and the point halfway to it; each is projected onto the
+    survivor's carrier and quantized to exact source carriers: an interior
+    survivor moves in its source cell, a boundary survivor within its source
+    facet or curve (on a declared plane when its carrier rounds). Each move
+    is admitted as a position of the star (``_collapse_position``) by one
+    native search, which ends at the first move that leaves no long spoke.
+    Survivors that are fixed, protected or pinned at a source corner do not
+    move. On a periodic lift only a survivor whose vertex orbit has a single
+    lifted member moves: its star is the whole quotient star, so no deck
+    partner has to follow it; a seam survivor stays in place.
     """
     row = topology.vertex_row[kept]
     snapshot = state.snapshot
@@ -4658,46 +4611,39 @@ def _survivor_moves(
         return
     if simplices is not None and not simplices:
         return
-    endpoints = local_points[:2]
+    bank = _source_bank(state)
     # The carrier simplices are coplanar (one facet) or collinear (one curve
     # or segment): the first spans their affine hull.
-    corners = (
+    entries, end = bank.source.survivor_moves(
+        star,
         None
         if simplices is None
-        else state.source_points[[state.source_vertex_rows[v] for v in simplices[0]]]
-    )
-    goals, goal_valid = metric_survivor_goals(local_points, local_metrics[:2], corners)
-    for goal, valid in zip(goals, goal_valid, strict=True):
-        if not valid:
-            raise FloatingPointError("A collapse survivor goal is not a finite point.")
-        if implicit_only:
-            candidates = _quantized_relocation_candidates(state, None, goal, endpoints[0])
-        else:
-            quantized = _quantized_relocation(state, simplices, goal, endpoints[0])
-            candidates = () if quantized is None else (quantized,)
-        admissible: Iterator[tuple[dict[int, Fraction], np.ndarray]] = (
-            (stencil, carrier)
-            for stencil, carrier in candidates
-            if not (
-                np.array_equal(carrier, endpoints[0])
-                or np.array_equal(carrier, endpoints[1])
+        else tuple(
+            (
+                tuple(bank.rows[vertex] for vertex in simplex),
+                len(simplex) != 2 and frozenset(simplex) in state.declared_source_faces,
             )
+            for simplex in simplices
+        ),
+        implicit_only,
+    )
+    referred = end in (MetricSearchEnd.UNMEASURED, MetricSearchEnd.OUTSIDE_DOMAIN)
+    for index, entry in enumerate(entries):
+        if referred and index == len(entries) - 1:
+            _report_position(star, entry.point, entry.lengths)
+        yield (
+            {
+                "point": entry.point,
+                "metric": entry.metric,
+                "stencil": {
+                    bank.identifiers[source_row]: Fraction(weight, 1 << entry.bits)
+                    for source_row, weight in zip(entry.rows, entry.weights, strict=True)
+                },
+            },
+            _position_evidence(star, entry.quality, entry.lengths),
         )
-        if refused is not None:
-            # Carriers of one goal share their source cell: screen them together
-            # and interpolate a metric only for those the screen leaves.
-            admissible = _unrefused_carriers(admissible, refused)
-        for stencil, carrier in admissible:
-            try:
-                metric = _source_metric_from_stencil(
-                    state.source_metric,
-                    state.source_vertex_rows,
-                    stencil,
-                    source_metric_log=state.source_metric_log,
-                )
-            except FloatingPointError:
-                continue
-            yield {"point": carrier, "metric": metric, "stencil": stencil}
+    if end is MetricSearchEnd.GOAL_NOT_FINITE:
+        raise FloatingPointError("A collapse survivor goal is not a finite point.")
 
 
 def _edge_set_lengths(

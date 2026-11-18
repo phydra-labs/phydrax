@@ -1012,6 +1012,114 @@ PHX_MC_API int32_t phx_mc_metric_relocation_pulls(
     const int8_t* measured, int32_t deep, int32_t interior, int32_t basis_count,
     const double* basis, const double* projector, const double* jacobian, int64_t capacity,
     double* pulls, int64_t* count);
+/* The exact tetrahedral source of a metric adaptation: exact points, cells
+ * and the metric tensors of the points.
+ *
+ * A carrier is an exact combination of source points with dyadic weights
+ * (positive integers over 2^bits that sum to 2^bits) together with its
+ * correctly rounded binary64 image. The search is integer arithmetic except
+ * for the final comparison of binary64 distances, so its result is the same
+ * on every platform.
+ *
+ * phx_mc_metric_source_create: exact point p is
+ * numerator[3 p + axis] / denominator. The 3 * point_count numerators and
+ * then the positive denominator are unsigned integers of little-endian
+ * 32-bit words: integer i is words[word_offsets[i] .. word_offsets[i + 1]),
+ * with signs[i] negative for a negative numerator. points holds the binary64
+ * roundings of the exact points, cells four point rows per cell in the order
+ * the cells are searched, and metrics and logarithms the tensor of every
+ * point and its logarithm (nine values each). The source owns copies of
+ * everything. */
+typedef struct phx_mc_metric_source phx_mc_metric_source;
+PHX_MC_API int32_t phx_mc_metric_source_create(
+    int64_t point_count, const double* points, const uint32_t* words,
+    const int64_t* word_offsets, const int8_t* signs, int64_t cell_count, const int64_t* cells,
+    const double* metrics, const double* logarithms, phx_mc_metric_source** source);
+PHX_MC_API void phx_mc_metric_source_free(phx_mc_metric_source* source);
+/* Carriers of target that are closer to it than current, at most limit.
+ *
+ * Location: with simplex_count 0, the first cell whose closed binary64 box
+ * holds the target and in which its exact barycentric weights are all
+ * nonnegative; the goal is the target. Otherwise the first simplex
+ * (simplex_rows holds three point rows per simplex, the third negative for an
+ * edge) with independent edges on which the orthogonal projection of the
+ * target has nonnegative weights; the goal is the correctly rounded
+ * projection. Without a location, with a goal at current or a support of
+ * zero extent there is no carrier.
+ *
+ * Resolutions: at 2^-bits the partial sums of the weights in located order
+ * are rounded half to even, made monotone and capped at one; each weight is
+ * the difference of consecutive rounded sums. With
+ * first = floor(log2(extent / |goal - current|)) clamped to [1, 53], order 0
+ * tries first..53, order 1 tries 53..first, and order 2 tries first.. up to
+ * its first carrier and then 53..first.
+ *
+ * A carrier is written when its rounded image is closer to the goal than
+ * current (squared binary64 distances summed x, y, z) and, on a simplex, when
+ * the image is exact or declared[s] is nonzero. Per carrier: four rows in
+ * ascending order (unused -1) with their weights (unused 0), bits, three
+ * point values and whether the image is exact. *count is the number
+ * written. */
+PHX_MC_API int32_t phx_mc_metric_source_carriers(
+    const phx_mc_metric_source* source, const double* target, const double* current,
+    int64_t simplex_count, const int64_t* simplex_rows, const int8_t* declared, int32_t order,
+    int64_t limit, int64_t* rows, int64_t* weights, int32_t* bits, double* points,
+    int8_t* exact, int64_t* count);
+/* Positions of the survivor of an edge collapse.
+ *
+ * The star: points (three values each) and metrics (nine each) with the
+ * survivor in row 0; spokes, the star row (not 0) of the other end of each
+ * measured spoke of the survivor after the collapse; before_lengths, the
+ * metric lengths of the measured edges the collapse removes; cells, four
+ * star rows per cell of the survivor after the collapse (at least one).
+ *
+ * A position replaces row 0. Its verdict is the first of: 1 it is the other
+ * end of a spoke; 5 a length before, or a spoke length at the position, has
+ * no finite band quantum; 2 the violations do not strictly decrease (the
+ * nonzero quanta above the band, largest first, compared lexicographically
+ * with a proper prefix smaller, and on a tie those below it); 6 a cell
+ * coordinate is outside the exact predicate domain; 3 a cell is not
+ * positively oriented (exact) or its relative determinant does not exceed
+ * determinant_floor; 4 a cell quality is not positive and finite; 0 it is
+ * admitted. qualities[i] is the smallest cell quality of an admitted
+ * position and lengths (spoke_count values per position) its spoke lengths,
+ * zero for verdict 1. The same verdicts and values on every platform. */
+PHX_MC_API int32_t phx_mc_metric_collapse_positions(
+    int64_t point_count, const double* points, const double* metrics, int64_t spoke_count,
+    const int64_t* spokes, int64_t before_count, const double* before_lengths,
+    int64_t cell_count, const int64_t* cells, double determinant_floor, int64_t position_count,
+    const double* positions, const double* position_metrics, int32_t* verdicts,
+    double* qualities, double* lengths);
+/* Moves of the survivor of an edge collapse to carriers of the source, in the
+ * order they are found. The star is that of
+ * phx_mc_metric_collapse_positions with the removed vertex in row 1 and the
+ * merged link after it.
+ *
+ * The three goals of phx_mc_metric_survivor_goals are tried in order,
+ * projected onto the hull of the first simplex when simplex_count is not 0
+ * (every simplex is then an edge or a triangle). The carriers of a goal are
+ * those of phx_mc_metric_source_carriers from the survivor, order 0: all of
+ * them with every_resolution, the first only without. A carrier at the
+ * survivor or at the removed vertex is skipped, and so is one whose tensor,
+ * the log-Euclidean mean of the source tensors over its rows, does not
+ * exist. Every other carrier is evaluated as a position: an admitted one is
+ * a move.
+ *
+ * *end: 0 every carrier was evaluated; 1 the last move leaves no spoke above
+ * the band and ends the search; 2 a goal is not a finite point, the moves
+ * before it stand; 3 and 4 the last entry is not a move but a carrier with
+ * verdict 5 or 6, which the caller reports. Per entry: the goal (0, 1, 2),
+ * the carrier as in phx_mc_metric_source_carriers, its tensor, its smallest
+ * cell quality and its spoke lengths (spoke_count values). capacity is the
+ * number of entries the arrays hold, at least 159. */
+PHX_MC_API int32_t phx_mc_metric_source_survivor_moves(
+    const phx_mc_metric_source* source, int64_t point_count, const double* points,
+    const double* metrics, int64_t spoke_count, const int64_t* spokes, int64_t before_count,
+    const double* before_lengths, int64_t cell_count, const int64_t* cells,
+    double determinant_floor, int64_t simplex_count, const int64_t* simplex_rows,
+    const int8_t* declared, int32_t every_resolution, int64_t capacity, int32_t* goals,
+    int64_t* rows, int64_t* weights, int32_t* bits, double* carrier_points,
+    double* carrier_metrics, double* qualities, double* lengths, int64_t* count, int32_t* end);
 /* Gates of a metric field on the deterministic kernels: the same verdict for
  * the same input on every platform.
  *
