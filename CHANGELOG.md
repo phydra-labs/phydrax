@@ -12,6 +12,8 @@
   coordinate rows; uncovered query evidence is not represented as a global
   zero. CAD surface and volume meshes and every identity derived from them
   change once on every platform and affected stored results must be rebuilt.
+  Domains with inferred (rather than authored) corners also store D1 endpoint
+  images in `corner_points`; their `domain_id` and derived identities can change.
   Stored coordinates are defined by the lowered program: a JAX version that
   reorders its trace changes identity and must be announced as such.
   Trim-lens search uses lower endpoints of batched fixed-chart host programs as

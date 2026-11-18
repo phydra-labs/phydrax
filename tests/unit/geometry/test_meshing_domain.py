@@ -556,6 +556,30 @@ def _square_domain() -> MeshingDomain:
     )
 
 
+def test_inferred_corners_use_stored_curve_and_surface_representatives() -> None:
+    circle = CircleCurve((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), 1.0)
+    surface = PlanePatch((0.13, 0.27, 0.43), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
+    arc = PatchCurveUse(0, circle, 0.0, math.pi)
+    closing = PatchCurveUse(1, LineCurve((-1.0, 0.0), (2.0, 0.0)), 0.0, 1.0)
+    domain = MeshingDomain(
+        (MeshingSurfacePatch(surface, ((arc, closing),)),),
+        (MeshingDomainCurve(0, 1), MeshingDomainCurve(1, 0)),
+        2,
+        source_id="nonlinear-endpoints",
+        source_revision="r1",
+        tolerance=1.0e-9,
+    )
+    preparation = SourcePreparation(domain)
+    parameters = np.asarray((arc.first, arc.last), dtype=np.float64)
+    expected_charts = preparation.stored_pcurve_points(circle, parameters, 0.0, math.pi)
+    np.testing.assert_array_equal(use_endpoints(arc), expected_charts)
+    np.testing.assert_array_equal(arc.charts(parameters), expected_charts)
+    expected_corners = preparation.stored_patch_points(surface, expected_charts)
+    np.testing.assert_array_equal(np.asarray(domain.corner_points), expected_corners)
+    assert not domain.corner_points_authored
+    assert domain.domain_id == domain.content_domain_id()
+
+
 def test_stored_points_are_independent_of_row_batching() -> None:
     domain = _square_domain()
     preparation = SourcePreparation(domain)
@@ -639,6 +663,36 @@ def test_stored_points_report_unsupported_evaluators() -> None:
         f"{type(surface).__module__}.{type(surface).__qualname__}": 2,
         f"{type(curve).__module__}.{type(curve).__qualname__}": 3,
     }
+
+
+def test_constructor_unsupported_surface_preserves_scalar_endpoint_values() -> None:
+    from phydrax.geometry._meshing_domain import _PointPreparation, _surface_endpoint_images
+    from phydrax.geometry.brep._patches import AbstractSurfacePatch
+
+    class ScalarSurface(AbstractSurfacePatch):
+        def evaluate(self, parameters: Array, /) -> Array:
+            value = jnp.linalg.svd(parameters[:1].reshape((1, 1)), compute_uv=False)[0]
+            return jnp.stack((parameters[0], parameters[1], value))
+
+    original = _square_domain()
+    surface = ScalarSurface()
+    patch = MeshingSurfacePatch(surface, original.patches[0].loops)
+    domain = MeshingDomain(
+        (patch,), original.curves, 4,
+        source_id="scalar-endpoint-fallback",
+        source_revision="r1",
+    )
+    np.testing.assert_array_equal(
+        np.asarray(domain.corner_points),
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 1.0), (1.0, 1.0, 1.0), (0.0, 1.0, 0.0)),
+    )
+    charts = np.asarray(((0.2, 0.4), (0.3, 0.5)), dtype=np.float64)
+    preparation = _PointPreparation()
+    points = _surface_endpoint_images((patch,), (0, 0), charts, preparation=preparation)
+    expected = np.stack([np.asarray(surface.evaluate(jnp.asarray(row))) for row in charts])
+    np.testing.assert_array_equal(points, expected)
+    name = f"{type(surface).__module__}.{type(surface).__qualname__}"
+    assert preparation.unsupported_points == {name: 2}
 
 
 def test_stored_intersection_pcurve_points_lie_in_point_and_span_boxes() -> None:

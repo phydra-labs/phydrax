@@ -99,13 +99,16 @@ class StackedSurfaceEvaluation(Protocol):
     ) -> np.ndarray: ...
 
 
-def _pcurve_points(pcurve: AbstractCurve, parameters: np.ndarray, /) -> np.ndarray:
-    """``pcurve.evaluate(parameters)`` as binary64 host chart points.
-
-    An affine `LineCurve` evaluates ``origin + t * direction`` in NumPy: the same
-    two correctly rounded operations in its own dtype, so the points are bit for
-    bit those of its eager evaluation without one device dispatch per use.
-    """
+def _pcurve_points(
+    pcurve: AbstractCurve,
+    parameters: np.ndarray,
+    /,
+    *,
+    preparation: _PointPreparation | None = None,
+    first: float | None = None,
+    last: float | None = None,
+) -> np.ndarray:
+    """Binary64 chart representatives; exact line arithmetic stays unchanged."""
     from .brep._patches import LineCurve
 
     if type(pcurve) is LineCurve:
@@ -115,8 +118,15 @@ def _pcurve_points(pcurve: AbstractCurve, parameters: np.ndarray, /) -> np.ndarr
         return np.asarray(
             origin + values[..., None] * direction, dtype=np.float64
         ).reshape((-1, 2))
-    return np.asarray(pcurve.evaluate(jnp.asarray(parameters)), dtype=np.float64).reshape(
-        (-1, 2)
+    values = np.asarray(parameters, dtype=np.float64).reshape((-1,))
+    if not values.size:
+        return np.empty((0, 2), dtype=np.float64)
+    domain = pcurve.parameter_domain
+    lower = float(np.min(values)) if domain is None else domain[0]
+    upper = float(np.max(values)) if domain is None else domain[1]
+    prepared = _PointPreparation() if preparation is None else preparation
+    return prepared.stored_pcurve_points(
+        pcurve, values, lower if first is None else first, upper if last is None else last
     )
 
 
@@ -175,15 +185,18 @@ def _surface_endpoint_images(
     rows: Sequence[int],
     charts: np.ndarray,
     /,
+    *,
+    preparation: _PointPreparation,
 ) -> list[np.ndarray]:
     """Physical points ``patches[rows[i]].surface.evaluate(charts[i])``, in row order.
 
     Stacked surface classes evaluate all their rows in one host call per class;
-    every other surface evaluates each point on its own, exactly as before.
+    other surfaces use D1 in one batch per live carrier.
     """
     points: list[np.ndarray] = [np.empty((0,), dtype=np.float64)] * len(rows)
     stacked_kinds: dict[type, bool] = {}
     stacked: dict[type, list[int]] = {}
+    ordinary: dict[int, tuple[AbstractSurfacePatch, list[int]]] = {}
     for index, patch_index in enumerate(rows):
         surface = patches[patch_index].surface
         kind = type(surface)
@@ -195,9 +208,15 @@ def _surface_endpoint_images(
         if is_stacked:
             stacked.setdefault(kind, []).append(index)
             continue
-        points[index] = np.asarray(
-            surface.evaluate(jnp.asarray(charts[index])), dtype=np.float64
+        entry = ordinary.setdefault(id(surface), (surface, []))
+        entry[1].append(index)
+    for surface, members in ordinary.values():
+        selected = np.asarray(members, dtype=np.int64)
+        values = preparation.stored_patch_points(
+            surface, charts[selected], scalar_fallback=True
         )
+        for position, index in enumerate(members):
+            points[index] = values[position]
     for kind, members in stacked.items():
         selected = np.asarray(members, dtype=np.int64)
         owned, owners = np.unique(
@@ -378,15 +397,23 @@ class PatchCurveUse(StrictModule, NonTrainableState):
         self.last = last_
         self.sense = sense
 
-    def charts(self, parameters: ConvertibleToArray, /) -> np.ndarray:
+    def charts(
+        self, parameters: ConvertibleToArray, /, *,
+        preparation: _PointPreparation | None = None,
+    ) -> np.ndarray:
         values = np.asarray(parameters, dtype=np.float64).reshape((-1,))
-        return _pcurve_points(self.pcurve, values)
+        return _pcurve_points(
+            self.pcurve, values, preparation=preparation,
+            first=min(self.first, self.last), last=max(self.first, self.last),
+        )
 
-    def traversal_endpoints(self) -> np.ndarray:
+    def traversal_endpoints(
+        self, *, preparation: _PointPreparation | None = None
+    ) -> np.ndarray:
         parameters = (
             (self.first, self.last) if self.sense > 0 else (self.last, self.first)
         )
-        return self.charts(parameters)
+        return self.charts(parameters, preparation=preparation)
 
     def closes_native_turn(self) -> bool:
         """Whether this use spans exactly one turn of a ``2 pi``-periodic p-curve.
@@ -456,15 +483,23 @@ class PatchPoleUse(StrictModule, NonTrainableState):
         self.last = last_
         self.sense = sense
 
-    def traversal_endpoints(self) -> np.ndarray:
+    def traversal_endpoints(
+        self, *, preparation: _PointPreparation | None = None
+    ) -> np.ndarray:
         parameters = (
             (self.first, self.last) if self.sense > 0 else (self.last, self.first)
         )
-        return _pcurve_points(self.pcurve, np.asarray(parameters, dtype=np.float64))
+        return _pcurve_points(
+            self.pcurve, np.asarray(parameters, dtype=np.float64),
+            preparation=preparation,
+            first=min(self.first, self.last), last=max(self.first, self.last),
+        )
 
 
-def use_endpoints(use: PatchBoundaryUse, /) -> np.ndarray:
-    return use.traversal_endpoints()
+def use_endpoints(
+    use: PatchBoundaryUse, /, *, preparation: _PointPreparation | None = None
+) -> np.ndarray:
+    return use.traversal_endpoints(preparation=preparation)
 
 
 def _lift_native_period_loop(
@@ -478,9 +513,10 @@ def _lift_native_period_loop(
         return uses
     lifted: list[PatchBoundaryUse] = [uses[0]]
     period_shadow = Fraction.from_float(math.tau)
+    preparation = _PointPreparation()
     for use in uses[1:]:
-        previous = use_endpoints(lifted[-1])[1]
-        start = use_endpoints(use)[0]
+        previous = use_endpoints(lifted[-1], preparation=preparation)[1]
+        start = use_endpoints(use, preparation=preparation)[0]
         shifts = [0, 0]
         for axis, symbol in enumerate(symbols):
             if symbol != "two_pi":
@@ -928,95 +964,28 @@ def _surface_span_data(
     )
 
 
-@final
-class SourcePreparation:
-    """Exact source artifacts that one consumer prepares for one meshing domain.
-
-    A computation over one domain owns interval programs, mapped p-curve
-    Hessians and span interval nets for its lifetime. Immutable exact span data
-    may also be reused across preparations for the same unchanged live carrier.
-    Span restrictions to query boxes remain per-query and are never retained.
-    Local entries retain their carriers for the duration of the preparation.
-
-    D1 stores the lower endpoint of the host interval realization of each surface
-    point. D2 does the same for p-curves, except implicit intersection p-curves
-    use the lower endpoint of their certified point box intersected with the
-    certified span box. Thus supported points are independent of row batching
-    for a fixed span; intersection representatives also lie in its enclosure.
-    When a realization is unavailable, the original evaluator is used and
-    ``unsupported_points`` accumulates call counts by qualified class name.
-    These counts include transient calls, not just final stored rows.
-    """
+class _PointPreparation:
+    """Operation-local D1/D2 programs and certified intersection point boxes."""
 
     __slots__ = (
-        "_box_programs",
-        "_curve_box_programs",
-        "_intersection_curve_atlases",
-        "_curve_spans",
-        "_mapped_hessians",
-        "_host_jacobian_programs",
-        "_programs",
-        "_trim_chains",
-        "_trim_partitions",
-        "_surface_spans",
-        "_domain",
         "_stored_surface_programs",
         "_stored_curve_programs",
-        "_search_curve_programs",
+        "_exact_curve_points",
         "_intersection_point_boxes",
         "_intersection_point_support",
         "_intersection_span_boxes",
+        "_point_intersection_atlases",
         "unsupported_points",
     )
 
-    def __init__(self, domain: MeshingDomain, /) -> None:
-        self._domain = domain
-        self._box_programs: dict[
-            int, tuple[AbstractSurfacePatch, PreparedIntervalFunction]
-        ] = {}
-        self._curve_box_programs: dict[
-            int, tuple[AbstractCurve, PreparedIntervalFunction]
-        ] = {}
-        self._surface_spans: dict[
-            int,
-            tuple[
-                AbstractSurfacePatch,
-                PreparedSourceSpans[RationalBSplineSurfaceSpan] | None,
-            ],
-        ] = {}
-        self._curve_spans: dict[
-            int, tuple[BSplineCurve, PreparedSourceSpans[RationalBSplineCurveSpan]]
-        ] = {}
-        self._intersection_curve_atlases: dict[
-            int, tuple[IntersectionCurve, _IntersectionCurveHostAtlas]
-        ] = {}
-        self._programs: dict[
-            tuple[int, int], tuple[AbstractSurfacePatch, PreparedIntervalFunction]
-        ] = {}
-        self._host_jacobian_programs: dict[
-            int, tuple[AbstractSurfacePatch, PreparedIntervalFunction | None]
-        ] = {}
-        self._mapped_hessians: dict[
-            tuple[int, int],
-            tuple[AbstractSurfacePatch, AbstractCurve, PreparedIntervalFunction | None],
-        ] = {}
-        self._trim_chains: dict[
-            tuple[int, bool, int, tuple[_Point2, ...]],
-            tuple[PatchCurveUse | PatchPoleUse, tuple[CurvedTrimLens, ...]],
-        ] = {}
-        self._trim_partitions: dict[
-            tuple[int, bool, tuple[_Triangle2, ...]],
-            tuple[tuple[_Triangle2, ...], tuple[CurvedTrimLens, ...]],
-        ] = {}
+    def __init__(self) -> None:
         self._stored_surface_programs: dict[
             int, tuple[AbstractSurfacePatch, PreparedIntervalFunction | None]
         ] = {}
         self._stored_curve_programs: dict[
             int, tuple[AbstractCurve, PreparedIntervalFunction | None]
         ] = {}
-        self._search_curve_programs: dict[
-            tuple[int, int], tuple[AbstractCurve, PreparedIntervalFunction | None]
-        ] = {}
+        self._exact_curve_points: dict[int, AbstractCurve] = {}
         self._intersection_point_boxes: dict[
             tuple[int, float], tuple[AbstractCurve, np.ndarray]
         ] = {}
@@ -1026,7 +995,34 @@ class SourcePreparation:
         self._intersection_span_boxes: dict[
             tuple[int, float, float], tuple[AbstractCurve, np.ndarray]
         ] = {}
+        self._point_intersection_atlases: dict[
+            int, tuple[IntersectionCurve, _IntersectionCurveHostAtlas]
+        ] = {}
         self.unsupported_points: dict[str, int] = {}
+
+    def curve_box(self, curve: AbstractCurve, first: float, last: float, /) -> np.ndarray:
+        """Certified intersection p-curve box without a domain owner."""
+        from .brep._intersection_curve import (
+            _IntersectionCurveHostAtlas,
+            CurveTrimSegment,
+            IntersectionPCurve,
+        )
+
+        carrier = curve
+        while isinstance(carrier, CurveTrimSegment):
+            carrier = carrier.curve
+        if not isinstance(carrier, IntersectionPCurve):
+            raise TypeError("A point enclosure requires an intersection p-curve.")
+        root = carrier.curve
+        entry = self._point_intersection_atlases.get(id(root))
+        if entry is None or entry[0] is not root:
+            atlas = _IntersectionCurveHostAtlas.from_curve(root)
+            self._point_intersection_atlases[id(root)] = (root, atlas)
+        else:
+            atlas = entry[1]
+        if not isinstance(curve, (CurveTrimSegment, IntersectionPCurve)):
+            raise TypeError("A point enclosure requires an intersection p-curve.")
+        return curve._bounding_box(first, last, host_atlas=atlas)
 
     def _record_unsupported(
         self, evaluator: AbstractSurfacePatch | AbstractCurve, count: int, /
@@ -1048,6 +1044,8 @@ class SourcePreparation:
         Intersection p-curves return ``None``: their certified realization can
         depend on the particular span and points, not just carrier identity.
         """
+        if self._exact_curve_points.get(id(pcurve)) is pcurve:
+            return True
         entry = self._stored_curve_programs.get(id(pcurve))
         if entry is None or entry[0] is not pcurve:
             return None
@@ -1064,7 +1062,8 @@ class SourcePreparation:
         return entry[1]
 
     def stored_patch_points(
-        self, surface: AbstractSurfacePatch, rows: np.ndarray, /
+        self, surface: AbstractSurfacePatch, rows: np.ndarray, /, *,
+        scalar_fallback: bool = False,
     ) -> np.ndarray:
         """D1: batch-independent binary64 representatives of surface rows."""
         from .brep._host_program import evaluate_host_program, prepare_host_program
@@ -1080,6 +1079,14 @@ class SourcePreparation:
             program = entry[1]
         if program is None:
             self._record_unsupported(surface, points.shape[0])
+            if scalar_fallback:
+                return np.asarray(
+                    [
+                        np.asarray(surface.evaluate(jnp.asarray(point)), dtype=np.float64)
+                        for point in points
+                    ],
+                    dtype=np.float64,
+                )
             return bucketed_query_rows(surface.evaluate, points)
         return evaluate_host_program(program, points)
 
@@ -1093,10 +1100,14 @@ class SourcePreparation:
         """
         from .brep._host_program import evaluate_host_program, prepare_host_program
         from .brep._intersection_curve import CurveTrimSegment, IntersectionPCurve
+        from .brep._patches import LineCurve
 
         values = np.asarray(parameters, dtype=np.float64).reshape((-1,))
         if not values.size:
             return np.empty((0, 2), dtype=np.float64)
+        if type(pcurve) is LineCurve:
+            self._exact_curve_points[id(pcurve)] = pcurve
+            return _pcurve_points(pcurve, values)
         carrier = pcurve
         while isinstance(carrier, CurveTrimSegment):
             carrier = carrier.curve
@@ -1147,6 +1158,88 @@ class SourcePreparation:
             self._record_unsupported(pcurve, values.size)
             return _pcurve_points_per_parameter(pcurve, values)
         return evaluate_host_program(program, values[:, None]).reshape((-1, 2))
+
+
+@final
+class SourcePreparation(_PointPreparation):
+    """Exact source artifacts that one consumer prepares for one meshing domain.
+
+    A computation over one domain owns interval programs, mapped p-curve
+    Hessians and span interval nets for its lifetime. Immutable exact span data
+    may also be reused across preparations for the same unchanged live carrier.
+    Span restrictions to query boxes remain per-query and are never retained.
+    Local entries retain their carriers for the duration of the preparation.
+
+    D1 stores the lower endpoint of the host interval realization of each surface
+    point. D2 does the same for p-curves, except exact line arithmetic is
+    retained and implicit intersection p-curves use the lower endpoint of their
+    certified point box intersected with the certified span box. Supported points
+    are independent of row batching for a fixed span; intersection representatives
+    also lie in its enclosure.
+    When a realization is unavailable, the original evaluator is used and
+    ``unsupported_points`` accumulates call counts by qualified class name.
+    These counts include transient calls, not just final stored rows.
+    """
+
+    __slots__ = (
+        "_box_programs",
+        "_curve_box_programs",
+        "_intersection_curve_atlases",
+        "_curve_spans",
+        "_mapped_hessians",
+        "_host_jacobian_programs",
+        "_programs",
+        "_trim_chains",
+        "_trim_partitions",
+        "_surface_spans",
+        "_domain",
+        "_search_curve_programs",
+    )
+
+    def __init__(self, domain: MeshingDomain, /) -> None:
+        super().__init__()
+        self._domain = domain
+        self._box_programs: dict[
+            int, tuple[AbstractSurfacePatch, PreparedIntervalFunction]
+        ] = {}
+        self._curve_box_programs: dict[
+            int, tuple[AbstractCurve, PreparedIntervalFunction]
+        ] = {}
+        self._surface_spans: dict[
+            int,
+            tuple[
+                AbstractSurfacePatch,
+                PreparedSourceSpans[RationalBSplineSurfaceSpan] | None,
+            ],
+        ] = {}
+        self._curve_spans: dict[
+            int, tuple[BSplineCurve, PreparedSourceSpans[RationalBSplineCurveSpan]]
+        ] = {}
+        self._intersection_curve_atlases: dict[
+            int, tuple[IntersectionCurve, _IntersectionCurveHostAtlas]
+        ] = {}
+        self._programs: dict[
+            tuple[int, int], tuple[AbstractSurfacePatch, PreparedIntervalFunction]
+        ] = {}
+        self._host_jacobian_programs: dict[
+            int, tuple[AbstractSurfacePatch, PreparedIntervalFunction | None]
+        ] = {}
+        self._mapped_hessians: dict[
+            tuple[int, int],
+            tuple[AbstractSurfacePatch, AbstractCurve, PreparedIntervalFunction | None],
+        ] = {}
+        self._trim_chains: dict[
+            tuple[int, bool, int, tuple[_Point2, ...]],
+            tuple[PatchCurveUse | PatchPoleUse, tuple[CurvedTrimLens, ...]],
+        ] = {}
+        self._trim_partitions: dict[
+            tuple[int, bool, tuple[_Triangle2, ...]],
+            tuple[tuple[_Triangle2, ...], tuple[CurvedTrimLens, ...]],
+        ] = {}
+        self._search_curve_programs: dict[
+            tuple[int, int], tuple[AbstractCurve, PreparedIntervalFunction | None]
+        ] = {}
+
 
     def search_pcurve_points(
         self, pcurve: AbstractCurve, parameters: np.ndarray, first: float, last: float, /
@@ -2720,6 +2813,8 @@ def _require_brep_domain_binding(
     authority_id: str,
     tolerance: float,
     /,
+    *,
+    preparation: _PointPreparation,
 ) -> None:
     authority.require_current()
     from ._mesh_certificates import _same_tree_content
@@ -2782,7 +2877,10 @@ def _require_brep_domain_binding(
                 next_slot = (slot + 1) % len(uses)
                 next_use = uses[next_slot]
                 if float(
-                    np.linalg.norm(use_endpoints(use)[1] - use_endpoints(next_use)[0])
+                    np.linalg.norm(
+                        use_endpoints(use, preparation=preparation)[1]
+                        - use_endpoints(next_use, preparation=preparation)[0]
+                    )
                 ) > tolerance and not _same_brep_trim_endpoint(
                     authority, face, coedge, coedges[next_slot], use, next_use
                 ):
@@ -2907,6 +3005,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
         source_id_ = canonical_identifier(source_id, "source_id")
         revision_ = canonical_identifier(source_revision, "source_revision")
         accuracy_ = parse(accuracy, MeshingSourceAccuracy, "accuracy")
+        point_preparation = _PointPreparation()
         owners: list[tuple[int, int, int]] = [(-1, -1, -1) for _ in curves_]
         endpoint_images: list[list[tuple[int, np.ndarray]]] = [[] for _ in range(corners)]
         chart_curves: list[tuple[int, int, int, PatchCurveUse]] = []
@@ -2917,7 +3016,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
             for loop_index, loop in enumerate(patch.loops):
                 # Each use's traversal endpoints are evaluated once; the next
                 # use's start closes this use's end.
-                loop_endpoints = tuple(use_endpoints(use) for use in loop)
+                loop_endpoints = tuple(
+                    use_endpoints(use, preparation=point_preparation) for use in loop
+                )
                 for use_index, use in enumerate(loop):
                     uv_endpoints = loop_endpoints[use_index]
                     if uv_endpoints.shape != (2, 2) or not np.all(
@@ -2963,6 +3064,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
                 patches_,
                 image_patches,
                 np.asarray(image_charts, dtype=np.float64).reshape((-1, 2)),
+                preparation=point_preparation,
             ),
             strict=True,
         ):
@@ -3111,6 +3213,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
                 revision_,
                 authority_id,
                 tolerance_,
+                preparation=point_preparation,
             )
         region_rows: list[list[int]] = [[] for _ in patches_]
         for index, region in enumerate(regions_):
