@@ -19,6 +19,7 @@
 
 namespace {
 using phx::mc::remesh::AdmissionKind;
+using phx::mc::remesh::InputTopology;
 using phx::mc::remesh::NormalCone;
 using phx::mc::remesh::Point;
 using phx::mc::remesh::RemeshCounters;
@@ -143,6 +144,20 @@ void folded_cluster() {
       {20, 12, 11},
   };
   PHX_CHECK(maximum_turn(input, triangles) > 170);
+  // The cluster is a patch: its outer edges have one triangle each. Declared
+  // closed it is refused before any edit; declared with its border it is
+  // remeshed, the border edges taking no fold factor.
+  const RemeshTargets patch{0.04, 30, false, InputTopology::kWithBorder};
+  {
+    const SourceCone admission(NormalCone{});
+    std::vector<Point> points = input;
+    std::vector<Triangle> remeshed = triangles;
+    RemeshCounters counters;
+    PHX_CHECK(phx::mc::remesh::remesh_surface(points, remeshed, admission, {0.04, 30},
+                                             counters) == PHX_MC_INVALID_INPUT);
+    PHX_CHECK(counters.splits == 0 && counters.collapses == 0 && counters.flips == 0 &&
+              counters.relocations == 0);
+  }
   // A source that admits any normal (open cones) explains every turn: the
   // fold stays, as a genuine crease would.
   {
@@ -150,8 +165,8 @@ void folded_cluster() {
     std::vector<Point> points = input;
     std::vector<Triangle> remeshed = triangles;
     RemeshCounters counters;
-    PHX_CHECK(phx::mc::remesh::remesh_surface(points, remeshed, admission, {0.04, 30},
-                                             counters) == PHX_MC_OK);
+    PHX_CHECK(phx::mc::remesh::remesh_surface(points, remeshed, admission, patch, counters) ==
+              PHX_MC_OK);
     PHX_CHECK(maximum_turn(points, remeshed) > 170);
   }
   // A smooth source (normals within 30 degrees of the patch's mean normal)
@@ -174,7 +189,7 @@ void folded_cluster() {
   std::vector<Point> points = input;
   std::vector<Triangle> remeshed = triangles;
   RemeshCounters counters;
-  PHX_CHECK(phx::mc::remesh::remesh_surface(points, remeshed, admission, {0.04, 30}, counters) ==
+  PHX_CHECK(phx::mc::remesh::remesh_surface(points, remeshed, admission, patch, counters) ==
             PHX_MC_OK);
   PHX_CHECK(maximum_turn(points, remeshed) <= 60);
 }

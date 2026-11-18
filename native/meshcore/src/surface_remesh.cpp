@@ -9,6 +9,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <tuple>
 #include <unordered_map>
 #include <utility>
@@ -645,6 +646,11 @@ class Remesher {
   size_t borrowed_star_vertices = 0, borrowed_star_faces = 0;
   EditedStars edited_star;
   bool compact_stars = false;
+  // Stars collected for one loop at a time, their storage reused: at the
+  // vertex an edge neighbor is sought at (`across`, three times for every
+  // score), inside `edge_triangles` and `neighbors`, and in the loops of
+  // `apply_if_admissible`. No loop over one of them collects into the same.
+  std::vector<int64_t> across_star_, helper_star_, apply_star_;
   struct BucketBlock {
     V lower{}, upper{};
     bool invalid = false;
@@ -763,7 +769,8 @@ class Remesher {
     if (staged.created != nullptr)
       for (size_t row = 0; row < staged.created->size(); ++row)
         if (holds((*staged.created)[row])) return Ref{-1, row};
-    for (int64_t id : live_star(p)) {
+    collect_star(p, across_star_);
+    for (int64_t id : across_star_) {
       if (std::binary_search(removed.begin(), removed.end(), id)) continue;
       if (holds(triangles[static_cast<size_t>(id)])) return Ref{id, 0};
     }
@@ -786,7 +793,12 @@ class Remesher {
     double fold = 1;
     for (int k = 0; k < 3; ++k) {
       const auto neighbor = across(t[k], t[(k + 1) % 3], staged, removed);
-      if (!neighbor) continue;
+      if (!neighbor) {
+        // A closed carrier holds every live edge twice; only a border has none.
+        if (targets.topology == InputTopology::kClosed)
+          throw std::logic_error("surface remesh: a live edge of a closed carrier has no neighbor");
+        continue;
+      }
       const F& other_triangle = triangle(*neighbor, staged);
       const V other = normal(other_triangle);
       if (!(length(other) > 0)) continue;
@@ -1081,37 +1093,53 @@ class Remesher {
     state.set_alive(static_cast<size_t>(id), false);
     if (queue_enabled) queue.erase(id);
   }
-  std::vector<int64_t> live_star(int64_t v) {
+  // Room reserved beyond a vertex's original incidence for the faces edits
+  // appended to its star: one allocation for most queries instead of one per
+  // growth step.
+  static constexpr size_t kEditedStarRoom = 16;
+  // The live faces at a vertex, in star order, into `incident` (emptied
+  // first). Reusing one buffer keeps its storage across queries.
+  void collect_star(int64_t v, std::vector<int64_t>& incident) {
+    incident.clear();
     if (compact_stars) {
-      std::vector<int64_t> incident;
       const size_t vertex = static_cast<size_t>(v);
       if (borrowed_star_offsets != nullptr && vertex < borrowed_star_vertices) {
         const size_t begin = static_cast<size_t>(borrowed_star_offsets[vertex]);
         const size_t end = static_cast<size_t>(borrowed_star_offsets[vertex + 1]);
+        incident.reserve(end - begin + kEditedStarRoom);
         for (size_t i = begin; i < end; ++i) {
           const int64_t id = borrowed_star_rows[i];
           if (state.alive(static_cast<size_t>(id))) incident.push_back(id);
         }
       } else if (vertex + 1 < base_star_offsets.size()) {
         const size_t end = base_star_offsets[vertex + 1];
+        incident.reserve(end - base_star_offsets[vertex] + kEditedStarRoom);
         for (size_t i = base_star_offsets[vertex]; i < end; ++i) {
           const int64_t id = static_cast<int64_t>(base_star_ids.empty() ? wide_star_ids[i]
                                                                         : base_star_ids[i]);
           if (state.alive(static_cast<size_t>(id))) incident.push_back(id);
         }
+      } else {
+        incident.reserve(kEditedStarRoom);
       }
       edited_star.collect(vertex, state, incident);
-      return incident;
+      return;
     }
-    auto& incident = star[static_cast<size_t>(v)];
-    incident.erase(std::remove_if(incident.begin(), incident.end(),
-                                  [&](int64_t id) { return !state.alive(static_cast<size_t>(id)); }),
-                   incident.end());
+    auto& stored = star[static_cast<size_t>(v)];
+    stored.erase(std::remove_if(stored.begin(), stored.end(),
+                                [&](int64_t id) { return !state.alive(static_cast<size_t>(id)); }),
+                 stored.end());
+    incident.assign(stored.begin(), stored.end());
+  }
+  std::vector<int64_t> live_star(int64_t v) {
+    std::vector<int64_t> incident;
+    collect_star(v, incident);
     return incident;
   }
   std::vector<int64_t> edge_triangles(int64_t a, int64_t b) {
     std::vector<int64_t> found;
-    for (int64_t id : live_star(a)) {
+    found.reserve(2);
+    for (collect_star(a, helper_star_); int64_t id : helper_star_) {
       const F& t = triangles[static_cast<size_t>(id)];
       if (t[0] == b || t[1] == b || t[2] == b) found.push_back(id);
     }
@@ -1119,7 +1147,8 @@ class Remesher {
   }
   std::vector<int64_t> neighbors(int64_t v) {
     std::vector<int64_t> result;
-    for (int64_t id : live_star(v))
+    result.reserve(2 * kEditedStarRoom);
+    for (collect_star(v, helper_star_); int64_t id : helper_star_)
       for (int64_t w : triangles[static_cast<size_t>(id)])
         if (w != v) result.push_back(w);
     std::sort(result.begin(), result.end());
@@ -1154,6 +1183,7 @@ class Remesher {
     uint32_t removed_minimum = kScoreLevels;
     V reference{0, 0, 0};
     std::vector<std::array<int64_t, 3>> removed_keys;
+    removed_keys.reserve(edit.removed.size());
     for (int64_t id : edit.removed) {
       if (!state.alive(static_cast<size_t>(id))) return false;
       removed_minimum = std::min(removed_minimum, state.score(static_cast<size_t>(id)));
@@ -1201,6 +1231,7 @@ class Remesher {
       if (!point_in_domain(edit.added)) return restore();
     }
     std::vector<std::array<int64_t, 3>> created_keys;
+    created_keys.reserve(edit.created.size());
     for (size_t row = 0; row < edit.created.size(); ++row) {
       const F& t = edit.created[row];
       if (t[0] == t[1] || t[1] == t[2] || t[0] == t[2]) return restore();
@@ -1223,7 +1254,7 @@ class Remesher {
       return restore();
     // A created face may not duplicate a surviving face.
     for (const F& t : edit.created)
-      for (int64_t id : live_star(t[0])) {
+      for (collect_star(t[0], apply_star_); int64_t id : apply_star_) {
         if (std::binary_search(removed_ids.begin(), removed_ids.end(), id)) continue;
         if (sorted(triangles[static_cast<size_t>(id)]) == sorted(t)) return restore();
       }
@@ -1271,7 +1302,7 @@ class Remesher {
     for (const F& t : edit.created)
       for (int k = 0; k < 3; ++k) {
         const int64_t p = t[k], q = t[(k + 1) % 3];
-        for (int64_t id : live_star(p)) {
+        for (collect_star(p, apply_star_); int64_t id : apply_star_) {
           if (std::binary_search(removed_ids.begin(), removed_ids.end(), id)) continue;
           const F& u = triangles[static_cast<size_t>(id)];
           for (int j = 0; j < 3; ++j)
@@ -1304,7 +1335,7 @@ class Remesher {
     std::sort(touched.begin(), touched.end());
     touched.erase(std::unique(touched.begin(), touched.end()), touched.end());
     for (int64_t v : touched)
-      for (int64_t id : live_star(v))
+      for (collect_star(v, apply_star_); int64_t id : apply_star_)
         if (state.stuck(static_cast<size_t>(id))) {
           state.set_stuck(static_cast<size_t>(id), false);
           if (queue_enabled && state.score(static_cast<size_t>(id)) < kScoreLevels)
@@ -2075,7 +2106,34 @@ class Remesher {
   }
 
 
-  void run(std::vector<V>& input_points, std::vector<F>& input_triangles,
+  // Whether every directed edge of the input is held by exactly one triangle
+  // and reversed by exactly one: at each vertex the successors and the
+  // predecessors named by its star are the same vertices, each named once.
+  bool closed_carrier() {
+    std::vector<int64_t> incident, successors, predecessors;
+    for (size_t v = 0; v < points.size(); ++v) {
+      collect_star(static_cast<int64_t>(v), incident);
+      successors.clear();
+      predecessors.clear();
+      for (int64_t id : incident) {
+        const F t = triangles[static_cast<size_t>(id)];
+        for (int k = 0; k < 3; ++k) {
+          if (t[k] != static_cast<int64_t>(v)) continue;
+          successors.push_back(t[(k + 1) % 3]);
+          predecessors.push_back(t[(k + 2) % 3]);
+        }
+      }
+      std::sort(successors.begin(), successors.end());
+      std::sort(predecessors.begin(), predecessors.end());
+      if (successors != predecessors ||
+          std::adjacent_find(successors.begin(), successors.end()) != successors.end())
+        return false;
+    }
+    return true;
+  }
+
+  // False when the input is declared closed and is not; nothing is edited then.
+  bool run(std::vector<V>& input_points, std::vector<F>& input_triangles,
            const int32_t* borrowed = nullptr, size_t borrowed_count = 0,
            const double* borrowed_points = nullptr, size_t point_count = 0,
            const int32_t* borrowed_offsets = nullptr, const int32_t* borrowed_rows = nullptr) {
@@ -2145,6 +2203,7 @@ class Remesher {
       }
     }
     prepare_buckets();
+    if (targets.topology == InputTopology::kClosed && !closed_carrier()) return false;
     for (size_t id = 0; id < triangles.size(); ++id) {
       rescore(static_cast<int64_t>(id));
     }
@@ -2160,9 +2219,10 @@ class Remesher {
     improve_worst_first();
     regularize();
     improve_worst_first();
-    if (!targets.admission_limited_coarsening) return;
+    if (!targets.admission_limited_coarsening) return true;
     coarsen_uniformly();
     improve_worst_first();
+    return true;
   }
 
   int64_t unmet() const {
@@ -2300,7 +2360,7 @@ int32_t remesh_surface(std::vector<Point>& points, std::vector<Triangle>& triang
     for (int64_t v : t)
       if (v < 0 || v >= static_cast<int64_t>(points.size())) return PHX_MC_INVALID_ARGUMENT;
   Remesher remesher(admission, targets);
-  remesher.run(points, triangles);
+  if (!remesher.run(points, triangles)) return PHX_MC_INVALID_INPUT;
   counters.splits = remesher.splits;
   counters.collapses = remesher.collapses;
   counters.flips = remesher.flips;
@@ -2329,8 +2389,9 @@ int32_t remesh_surface_borrowed_i32(std::vector<Point>& points, const double* in
         return PHX_MC_INVALID_ARGUMENT;
   {
     Remesher remesher(admission, targets);
-    remesher.run(points, output, triangles, triangle_count, input_points, point_count,
-                 vertex_face_offsets, vertex_faces);
+    if (!remesher.run(points, output, triangles, triangle_count, input_points, point_count,
+                      vertex_face_offsets, vertex_faces))
+      return PHX_MC_INVALID_INPUT;
     counters.splits = remesher.splits;
     counters.collapses = remesher.collapses;
     counters.flips = remesher.flips;

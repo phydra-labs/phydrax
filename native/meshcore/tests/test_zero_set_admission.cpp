@@ -424,6 +424,14 @@ struct Surface {
   std::vector<int64_t> triangles;
 };
 
+// The int32 index array of the compact entry.
+std::vector<int32_t> compact_indices(const std::vector<int64_t>& indices) {
+  std::vector<int32_t> compact;
+  compact.reserve(indices.size());
+  for (int64_t index : indices) compact.push_back(static_cast<int32_t>(index));
+  return compact;
+}
+
 // UV sphere: slivers at both poles (minimum angle ~ 4.5 degrees).
 Surface uv_sphere(int rings, int segments) {
   Surface s;
@@ -512,7 +520,7 @@ void remesh_sphere_carrier() {
   phx_mc_zero_set_remesh_free(handle);
   // The compact borrowed-input ABI must produce exactly the same edits,
   // certificates and ordering as the ordinary int64 entry.
-  std::vector<int32_t> compact(input.triangles.begin(), input.triangles.end());
+  std::vector<int32_t> compact = compact_indices(input.triangles);
   const std::vector<int32_t> original_compact = compact;
   void* compact_handle = nullptr;
   std::array<int64_t, 8> compact_counters{};
@@ -582,6 +590,31 @@ void remesh_sphere_carrier() {
   compact_request.vertices = nonfinite_vertices.data();
   PHX_CHECK(phx_mc_zero_set_remesh_i32(&compact_request, nullptr, 0, nullptr, 0) == PHX_MC_NONFINITE_INPUT);
   PHX_CHECK(compact_handle == nullptr);
+  // The carrier must be closed: with one triangle left out (a border) or one
+  // repeated (an edge held twice in one direction) both entries refuse it
+  // before any edit.
+  for (const bool repeated : {false, true}) {
+    std::vector<int64_t> defective = input.triangles;
+    if (repeated) defective.insert(defective.end(), input.triangles.begin(),
+                                   input.triangles.begin() + 3);
+    else defective.resize(defective.size() - 3);
+    const std::vector<int32_t> defective_compact = compact_indices(defective);
+    void* defective_handle = nullptr;
+    std::array<int64_t, 8> defective_counters{};
+    double defective_distance = -1;
+    auto defective_request = request;
+    defective_request.triangles = defective.data();
+    defective_request.triangle_count = static_cast<int64_t>(defective.size() / 3);
+    defective_request.result = &defective_handle;
+    defective_request.counters = defective_counters.data();
+    defective_request.distance = &defective_distance;
+    PHX_CHECK(phx_mc_zero_set_remesh(&defective_request) == PHX_MC_INVALID_INPUT);
+    PHX_CHECK(defective_handle == nullptr);
+    defective_request.triangles = reinterpret_cast<const int64_t*>(defective_compact.data());
+    PHX_CHECK(phx_mc_zero_set_remesh_i32(&defective_request, nullptr, 0, nullptr, 0) ==
+              PHX_MC_INVALID_INPUT);
+    PHX_CHECK(defective_handle == nullptr);
+  }
   // Closed oriented 2-manifold: every directed edge appears once, reversed once.
   std::map<std::pair<int64_t, int64_t>, int> directed;
   for (size_t f = 0; f < triangles.size(); f += 3)
@@ -629,13 +662,166 @@ void remesh_sphere_carrier() {
   PHX_CHECK(phx_mc_zero_set_remesh(&request) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(phx_mc_zero_set_remesh(nullptr) == PHX_MC_INVALID_ARGUMENT);
 }
+
+// Octahedron subdivided `levels` times onto the unit sphere, every coordinate
+// then moved by a deterministic jitter. Only +, *, / and sqrt in a fixed
+// order: the carrier is the same binary64 array on every platform.
+Surface jittered_octasphere(int levels, double jitter, uint64_t seed) {
+  std::vector<Point> points{{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+  std::vector<std::array<int64_t, 3>> triangles{{0, 2, 4}, {2, 1, 4}, {1, 3, 4}, {3, 0, 4},
+                                                {2, 0, 5}, {1, 2, 5}, {3, 1, 5}, {0, 3, 5}};
+  for (int level = 0; level < levels; ++level) {
+    std::map<std::pair<int64_t, int64_t>, int64_t> middle;
+    auto split = [&](int64_t a, int64_t b) {
+      const auto key = std::minmax(a, b);
+      const auto found = middle.find(key);
+      if (found != middle.end()) return found->second;
+      const Point p = points[static_cast<size_t>(key.first)];
+      const Point q = points[static_cast<size_t>(key.second)];
+      const Point m{(p[0] + q[0]) / 2, (p[1] + q[1]) / 2, (p[2] + q[2]) / 2};
+      const double r = std::sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
+      points.push_back({m[0] / r, m[1] / r, m[2] / r});
+      return middle[key] = static_cast<int64_t>(points.size()) - 1;
+    };
+    std::vector<std::array<int64_t, 3>> refined;
+    for (const auto& t : triangles) {
+      const int64_t ab = split(t[0], t[1]), bc = split(t[1], t[2]), ca = split(t[2], t[0]);
+      refined.push_back({t[0], ab, ca});
+      refined.push_back({ab, t[1], bc});
+      refined.push_back({ca, bc, t[2]});
+      refined.push_back({ab, bc, ca});
+    }
+    triangles = refined;
+  }
+  uint64_t state = seed;
+  Surface surface;
+  for (const Point& p : points)
+    for (double coordinate : p) {
+      state = state * 6364136223846793005ull + 1442695040888963407ull;
+      const double unit = static_cast<double>(state >> 11) * 0x1p-53 * 2 - 1;
+      surface.vertices.push_back(coordinate + jitter * unit);
+    }
+  for (const auto& t : triangles)
+    surface.triangles.insert(surface.triangles.end(), t.begin(), t.end());
+  return surface;
+}
+
+// The complete result of one small remesh, pinned. Which edits a remesh makes
+// depends on the order in which a vertex's star lists its faces: a reversed
+// order returns another valid closed surface, so no property of the output
+// shows it and the output itself is the reference. The expected arrays are
+// what the library at 464b28fe3 (before star storage was reused and scratch
+// pages were indexed directly) returns for this carrier through
+// phx_mc_zero_set_remesh. Carrier and admission use only correctly rounded
+// operations in a fixed order, so the arrays hold on every platform, and
+// both entries (owned stars, borrowed compact stars) must return them.
+void remesh_pinned_carrier() {
+  const Surface input = jittered_octasphere(2, 0.01, 1);
+  PHX_CHECK(input.triangles.size() == 3 * 128);
+  const Program value = sphere_value(), gradient = sphere_gradient();
+  const std::vector<double> expected_vertices{
+      0x1.4e0dd2d838ad8p-5, 0x1.771aa5ff42964p-1, 0x1.7b937e7c4c248p-1,
+      -0x1.c9678e0a25ed8p-2, 0x1.b985c60df75ebp-2, 0x1.ae39ad82c018ep-1,
+      0x1.97f300da1c46ep-3, 0x1.1ea719f3c9078p-3, 0x1.033ddb01b6829p+0,
+      -0x1.c1256feb7958bp-1, 0x1.adfd6b8cb2d17p-2, 0x1.8b2201b7f5c2ap-2,
+      -0x1.8e0baf7e80bf3p-1, -0x1.b9d13768deba6p-6, 0x1.67dac968eac05p-1,
+      -0x1.30bcaf7ddac2bp-2, -0x1.01204f68ba37bp+0, 0x1.fa1a5816b14ddp-7,
+      -0x1.8763db8961fe2p-1, -0x1.6f3eaaa27ff37p-1, 0x1.d9093dbe6fe33p-8,
+      -0x1.df1e7407b3769p-2, -0x1.9822c7c862593p-1, -0x1.f9af2f376e4a1p-2,
+      -0x1.ce48873ce0bb8p-2, 0x1.ab73bb6a3586ep-1, 0x1.ca03f35302948p-2,
+      0x1.d79218668d016p-8, 0x1.028727106948ap+0, 0x1.0dbd9668d098ap-2,
+      -0x1.05b33c8c2abd2p+0, -0x1.6e91c29d393d4p-3, 0x1.36f5f1f2a4621p-3,
+      0x1.0566e11190dbap-2, -0x1.04797674eb8abp+0, 0x1.99a3c208968bap-6,
+      -0x1.cdc4e50df89cdp-7, -0x1.bbe3af69d27b6p-1, 0x1.282fffe7bdbcdp-1,
+      -0x1.16bde77036b8ep-1, -0x1.706903a8f6237p-2, -0x1.a10e523dcfc56p-1,
+      -0x1.aab428a0e7e6fp-9, -0x1.1db4f74964ba5p-1, -0x1.c5f811a7f5b92p-1,
+      0x1.d49faca84a123p-2, -0x1.d8efd7398be69p-2, 0x1.a0deb89f76695p-1,
+      0x1.85ce62f155503p-1, 0x1.4b6ad3613d9f2p-6, 0x1.71dcdbbc40792p-1,
+      -0x1.9166ba2f0b3dfp-1, 0x1.5bf9cdaa01c26p-1, -0x1.006f068f88d4fp-3,
+      0x1.d187633943f3dp-2, 0x1.ce686eb11194cp-1, 0x1.b484a8effe62dp-3,
+      0x1.5bff1587dd78ap-1, 0x1.db478bb68ad5ap-2, 0x1.49427b4865498p-1,
+      0x1.b3e4f807d2e01p-1, 0x1.33c39a927c604p-1, -0x1.4ca2c265013cap-5,
+      0x1.064cd6059ba46p+0, 0x1.47a3536244c01p-5, 0x1.c6563b4f52fe2p-3,
+      -0x1.7c55f140152b3p-2, 0x1.eff8043c88d93p-1, -0x1.35a43250f68b9p-4,
+      -0x1.c706197bf59ffp-2, 0x1.4aa80b3c6ec52p-1, -0x1.62293a90f6fb0p-1,
+      -0x1.67dfb5a3fb020p-2, -0x1.2b6bf04602127p-5, 0x1.f3ca5ae55b87bp-1,
+      -0x1.ecb50e43c4ee3p-2, -0x1.def994e939045p-2, 0x1.9c23aa40091e6p-1,
+      -0x1.5b93839901ad1p-1, -0x1.5004c01187032p-1, 0x1.cf0da01ae80a7p-2,
+      -0x1.f767ba0b242b7p-6, -0x1.7a9adfb2ecd97p-2, 0x1.f62f5a6fb4749p-1,
+      0x1.3797c773bdd2bp-1, -0x1.9fe8b51c6d2dep-1, 0x1.e7a712a943e6ap-3,
+      0x1.dbb89648dd788p-2, -0x1.a381400863b66p-1, -0x1.d6d61ed41cf86p-2,
+      0x1.e18fa18a0038bp-1, -0x1.9e9b47c82fb40p-2, -0x1.d274b527d8a12p-3,
+      0x1.b46ebacc56114p-1, -0x1.d801913a6fc22p-2, 0x1.9c30291cffde5p-2,
+      0x1.57e42f8756274p-1, 0x1.ba4c973e1de05p-2, -0x1.5b5d1c0f427cfp-1,
+      0x1.e3cab3e7cc5fcp-2, 0x1.a2d3a899c696bp-1, -0x1.d233de72d0379p-2,
+      0x1.b6e41cfc369c6p-6, 0x1.f65ab52c831d4p-1, -0x1.5c39c1816a0b7p-2,
+      0x1.fa8624b124865p-1, 0x1.1510f6faae28ep-3, -0x1.3f600584807e3p-2,
+      0x1.4f11a02833f45p-2, 0x1.deee028024c3fp-9, -0x1.fcba543b7f947p-1,
+      0x1.f57928956891ep-4, 0x1.32f131ac1f773p-1, -0x1.b200f9687dc75p-1,
+      -0x1.978f09e596223p-1, 0x1.ab93c60ddd489p-3, -0x1.4b2feca36872ep-1,
+      -0x1.037669f51ad6bp+0, 0x1.a782eae39e46fp-3, -0x1.4a700a450f962p-3,
+      -0x1.1bdfb94ce7675p-2, 0x1.803ef7e29dc4dp-4, -0x1.01bad4ba869eep+0,
+      -0x1.99da3d9514bd9p-6, -0x1.ee962d065c760p-1, -0x1.9e8fe76b003f6p-2,
+      -0x1.cd5bc2f859abfp-1, -0x1.5df48a6b6b5e8p-2, -0x1.a10e00abf8dffp-2,
+      0x1.5758b1d50e393p-1, -0x1.e6201a6fa07c5p-3, -0x1.7e59de06f546fp-1,
+  };
+  const std::vector<int64_t> expected_triangles{
+      0, 1, 2,  3, 4, 1,  5, 6, 7,  8, 1, 0,  3, 1, 8,  9, 8, 0,
+      3, 10, 4,  5, 11, 12,  7, 13, 14,  15, 16, 2,  17, 3, 8,  18, 9, 0,
+      19, 0, 2,  20, 19, 21,  16, 19, 2,  21, 19, 16,  18, 0, 19,  20, 18, 19,
+      22, 8, 9,  22, 17, 8,  17, 22, 23,  1, 24, 2,  1, 4, 24,  4, 25, 24,
+      5, 12, 26,  6, 5, 26,  10, 26, 4,  10, 6, 26,  26, 12, 25,  26, 25, 4,
+      12, 15, 27,  15, 2, 27,  25, 12, 27,  24, 27, 2,  25, 27, 24,  28, 15, 12,
+      11, 28, 12,  28, 29, 30,  28, 11, 29,  30, 21, 31,  31, 16, 15,  31, 21, 16,
+      31, 15, 28,  28, 30, 31,  20, 32, 33,  18, 20, 33,  9, 18, 34,  22, 9, 34,
+      22, 34, 23,  18, 33, 34,  21, 30, 35,  20, 21, 35,  20, 35, 32,  32, 36, 37,
+      33, 32, 37,  23, 34, 37,  34, 33, 37,  17, 23, 38,  39, 10, 3,  17, 39, 3,
+      39, 17, 38,  36, 14, 40,  13, 40, 14,  37, 36, 40,  23, 37, 40,  38, 23, 40,
+      13, 38, 40,  41, 7, 14,  5, 7, 41,  11, 5, 41,  29, 41, 14,  11, 41, 29,
+      6, 42, 7,  6, 10, 42,  42, 13, 7,  42, 38, 13,  10, 39, 42,  42, 39, 38,
+      43, 14, 36,  29, 14, 43,  29, 43, 30,  32, 43, 36,  35, 30, 43,  32, 35, 43,
+  };
+  const std::array<int64_t, 8> expected_counters{0, 22, 0, 856, 0, 1, 0, 41283};
+  const double expected_distance = 0x1.9999999999999p-5;
+  const std::vector<int32_t> compact = compact_indices(input.triangles);
+  for (const bool borrowed : {false, true}) {
+    void* handle = nullptr;
+    std::array<int64_t, 8> counters{};
+    double distance = -1;
+    phx_mc_zero_set_remesh_request request{
+        input.vertices.data(), static_cast<int64_t>(input.vertices.size() / 3),
+        borrowed ? reinterpret_cast<const int64_t*>(compact.data()) : input.triangles.data(),
+        static_cast<int64_t>(input.triangles.size() / 3),
+        value.view(),          gradient.view(),
+        0.05,                  0.05,
+        0.8,                   30.0,
+        &handle,               counters.data(),
+        &distance};
+    request.admission_limited_coarsening = 1;
+    PHX_CHECK((borrowed ? phx_mc_zero_set_remesh_i32(&request, nullptr, 0, nullptr, 0)
+                        : phx_mc_zero_set_remesh(&request)) == PHX_MC_OK);
+    PHX_CHECK(handle != nullptr);
+    if (handle == nullptr) continue;
+    std::array<int64_t, 2> sizes{};
+    PHX_CHECK(phx_mc_zero_set_remesh_sizes(handle, sizes.data()) == PHX_MC_OK);
+    std::vector<double> vertices(static_cast<size_t>(3 * sizes[0]));
+    std::vector<int64_t> triangles(static_cast<size_t>(3 * sizes[1]));
+    PHX_CHECK(phx_mc_zero_set_remesh_arrays(handle, sizes[0], sizes[1], vertices.data(),
+                                            triangles.data()) == PHX_MC_OK);
+    phx_mc_zero_set_remesh_free(handle);
+    PHX_CHECK(vertices == expected_vertices);
+    PHX_CHECK(triangles == expected_triangles);
+    PHX_CHECK(counters == expected_counters);
+    PHX_CHECK(distance == expected_distance);
+  }
+}
 void remesh_edit_parity(int rings, int segments, double tolerance, double edge,
                         double angle, bool require_split) {
   const Surface input = uv_sphere(rings, segments);
   const auto original_vertices = input.vertices;
   const auto original_faces = input.triangles;
   const Program value = sphere_value(), gradient = sphere_gradient();
-  std::vector<int32_t> compact(input.triangles.begin(), input.triangles.end());
+  std::vector<int32_t> compact = compact_indices(input.triangles);
   const auto original = compact;
   std::vector<int32_t> offsets(input.vertices.size() / 3 + 1, 0);
   for (int32_t vertex : compact) ++offsets[static_cast<size_t>(vertex) + 1];
@@ -1148,6 +1334,7 @@ int main() {
   near_band_distance_cases();
   whole_piece_bracketing_cases();
   remesh_sphere_carrier();
+  remesh_pinned_carrier();
   remesh_coarsening_absorbs_rosette();
   remesh_lens_crease();
   remesh_edit_parity(5, 12, 0.08, 0.22, 25.0, true);

@@ -4221,7 +4221,9 @@ def zero_set_remesh(
     distance bound, retained by untouched input triangles; ``distance`` is the
     maximum certified bound over the result. ``admission_limited_coarsening``
     additionally centers vertices in the band (off the zero set) and collapses
-    edges below 4/5 of ``edge_length`` until the admission refuses them.
+    edges below 4/5 of ``edge_length`` until the admission refuses them. A
+    carrier that is not closed (an edge not held by exactly two triangles, in
+    opposite directions) raises ``ValueError``.
     """
     if not isinstance(admission_limited_coarsening, bool):
         raise TypeError("admission_limited_coarsening must be a bool.")
