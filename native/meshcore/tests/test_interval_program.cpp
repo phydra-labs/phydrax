@@ -1081,6 +1081,46 @@ void floating_point_modes() {
   PHX_CHECK(phx::mc::floating_point_mode() == initial_mode);
 }
 
+// A scope opened under a verified scope relies on that verification, and a
+// program executed there gives the round-to-nearest result. A mode write in
+// between ends the reliance: the inner scope establishes the mode again and
+// restores the written one.
+void nested_mode_scopes() {
+  Program subnormal;
+  const std::int64_t source = subnormal.values({{kSmallest, 0x1p-1060}, {0x1p-1023, 0x1p-1022}});
+  const std::int64_t result = subnormal.slots(4);
+  subnormal.row(kAdd, result, 2, source, -1, source, -1, 0);
+  subnormal.row(kMultiply, result + 2, 2, source, -1, source, -1, 0);
+  Program nearest = subnormal;
+  PHX_CHECK(execute(nearest) == PHX_MC_OK);
+  const auto initial_mode = phx::mc::floating_point_mode();
+  {
+    const phx::mc::GradualNearestScope outer;
+    PHX_CHECK(outer.established());
+    Program inside = subnormal;
+    PHX_CHECK(execute(inside) == PHX_MC_OK);
+    PHX_CHECK(identical(inside.lower, nearest.lower));
+    PHX_CHECK(identical(inside.upper, nearest.upper));
+    if (phx::mc::kFlushControl) {
+      phx::mc::set_floating_point_mode(phx::mc::kFlushingMode);
+      PHX_CHECK(!phx::mc::gradual_nearest_arithmetic());
+      {
+        const phx::mc::GradualNearestScope inner;
+        PHX_CHECK(inner.established());
+        PHX_CHECK(phx::mc::gradual_nearest_arithmetic());
+      }
+      PHX_CHECK(phx::mc::floating_point_mode() == phx::mc::kFlushingMode);
+      Program flushed = subnormal;
+      PHX_CHECK(execute(flushed) == PHX_MC_OK);
+      PHX_CHECK(identical(flushed.lower, nearest.lower));
+      PHX_CHECK(identical(flushed.upper, nearest.upper));
+      PHX_CHECK(phx::mc::floating_point_mode() == phx::mc::kFlushingMode);
+      phx::mc::set_floating_point_mode(phx::mc::kGradualNearestMode);
+    }
+  }
+  PHX_CHECK(phx::mc::floating_point_mode() == initial_mode);
+}
+
 void batched_elementwise_arithmetic() {
   const std::int64_t rows[] = {kMultiply, 2, 1, 0, -1, 1, -1, 0,
                                kAdd, 3, 1, 2, -1, 1, -1, 0};
@@ -1162,5 +1202,6 @@ int main() {
   prepared_ownership_and_refusal();
   batched_elementwise_arithmetic();
   floating_point_modes();
+  nested_mode_scopes();
   return phx::mc::test::finish("test_interval_program");
 }
