@@ -2829,6 +2829,14 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
             geometry=geometry,
             validated_global_embedding=validated_embedding,
             organization=organization,
+            certified_steps=(
+                "entire_certified_route",
+                "implicit_boundary_cover",
+                "restricted_delaunay_refinement",
+                "boundary_projection_and_coverage",
+                "global_embedding",
+                "volume_compliance",
+            ),
         )
 
 

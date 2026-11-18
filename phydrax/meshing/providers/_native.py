@@ -1281,6 +1281,13 @@ class CellMeshingCandidate(StrictModule, NonTrainableState):
                 "mesh": construction.mesh.mesh_id,
                 "geometry": cell_geometry_id(construction.geometry),
                 "coordinate_contract": construction.coordinate_contract.spatial_id,
+                "construction_compliance": construction.compliance.report_id,
+                "construction_stages": tuple(
+                    stage.report_id for stage in construction.stages
+                ),
+                "reference_map_arrays": array_tree_fingerprint(
+                    construction.reference_maps
+                ),
                 "specification": specification.specification_id,
                 "provider": provider.provider_id,
                 "actual_version": actual_version,
@@ -1291,6 +1298,19 @@ class CellMeshingCandidate(StrictModule, NonTrainableState):
                     construction.certification.source_revision,
                 ),
                 "schedule": construction.certification.schedule.schedule_id,
+                "domain": None if request.domain is None else request.domain.domain_id,
+                "fidelity_source": None
+                if request.fidelity_source is None
+                else (
+                    request.fidelity_source.source_id,
+                    request.fidelity_source.source_revision,
+                ),
+                "feature_source": None
+                if request.feature_source is None
+                else (
+                    request.feature_source.source_id,
+                    request.feature_source.source_revision,
+                ),
                 "regions": None
                 if request.cell_regions is None
                 else array_tree_fingerprint(request.cell_regions),
@@ -1324,6 +1344,42 @@ class CellMeshingCandidate(StrictModule, NonTrainableState):
                 "surface_source": None
                 if organization.surface_source is None
                 else organization.surface_source.source_chart_id,
+                "boundary": None
+                if organization.boundary is None
+                else organization.boundary.model_id,
+                "region_boundaries": tuple(
+                    value.evidence_id for value in organization.region_boundary_evidence
+                ),
+                "multiregion_surface": None
+                if organization.multiregion_surface is None
+                else organization.multiregion_surface.topology_id,
+                "source_mesh": None
+                if construction.source_mesh is None
+                else construction.source_mesh.mesh_id,
+                "source_geometry": None
+                if construction.source_geometry is None
+                else cell_geometry_id(construction.source_geometry),
+                "quad_field_event": None
+                if construction.surface_quad_field_event is None
+                else construction.surface_quad_field_event.event_id,
+                "planar_embedding": None
+                if construction.planar_embedding is None
+                else construction.planar_embedding.embedding_id,
+                "layer_curving_evidence": None
+                if construction.layer_curving_evidence is None
+                else construction.layer_curving_evidence.evidence_id,
+                "layer_carrier": None
+                if construction.layer_core_carrier_witness is None
+                else construction.layer_core_carrier_witness.witness_id,
+                "layer_overlap": None
+                if construction.layer_core_overlap_stencils is None
+                else construction.layer_core_overlap_stencils.witness_id,
+                "layer_column": None
+                if construction.layer_core_column_certification is None
+                else construction.layer_core_column_certification.certification_id,
+                "layer_root": None
+                if construction.layer_core_root_geometry is None
+                else construction.layer_core_root_geometry.root_id,
                 "certified_steps": self.certified_steps,
             }
         )
