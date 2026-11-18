@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -15,6 +16,37 @@ from phydrax.meshing.providers._native_cad_volume import _screen_cad_shell
 
 
 pytestmark = pytest.mark.meshcore
+
+
+def test_public_candidate_proves_same_box_and_refuses_changed_mesh() -> None:
+    plan = _box_plan()
+    candidate = plan.execute(prove=False)
+    expected = plan.execute(prove=True)
+    proved = candidate.prove()
+    assert proved.mesh.mesh_id == candidate.mesh.mesh_id == expected.mesh.mesh_id
+    assert tuple(a.association_id for a in proved.associations) == tuple(
+        a.association_id for a in expected.associations
+    )
+    mesh = phx.discretization.CellMesh(
+        np.zeros_like(np.asarray(candidate.mesh.coordinates)),
+        candidate.mesh.blocks,
+        vertex_global_ids=candidate.mesh.vertex_global_ids,
+    )
+    changed = replace(
+        candidate._construction,
+        mesh=mesh,
+        geometry=phx.discretization.CellGeometrySpec.affine(mesh),
+    )
+    broken = phx.meshing.CellMeshingCandidate(
+        changed,
+        plan.specification,
+        _NATIVE_PROVIDER,
+        meshcore_identity(),
+        plan.plan_id,
+        plan.route,
+    )
+    with pytest.raises(ValueError, match="changed the constructed mesh"):
+        broken.prove()
 
 
 def _box_plan() -> phx.meshing.NativeMeshingPlan:

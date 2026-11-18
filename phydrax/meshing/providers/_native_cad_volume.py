@@ -3761,7 +3761,7 @@ class _DeferredCadVolume:
     junction_vertices: tuple[int, ...]
     certified_steps: tuple[str, ...]
 
-    def resolve(self) -> NativeMeshConstruction:
+    def resolve(self, /) -> NativeMeshConstruction:
         from ..._meshcore import meshcore_identity
         from .._canonical import _accept_native_construction, _NATIVE_PROVIDER
 
@@ -4004,7 +4004,6 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
                     "boundary_distance",
                     "cad_plane",
                     "surface_construction",
-                    "surface_incidence",
                 )
                 certification = NativeCertificationRequest(
                     MeshCertificationSchedule("volume_cad"),
