@@ -92,6 +92,7 @@ set(PHX_MC_SOURCES
   src/improve3d.cpp
   src/zero_set_admission.cpp
   src/elementary.cpp
+  src/metric_relocation.cpp
 )
 set(PHX_MC_HEADERS
   include/phydrax_meshcore.h
@@ -137,6 +138,7 @@ set(PHX_MC_HEADERS
   src/triangulation3d.hpp
   src/zero_set_admission.hpp
   src/elementary.hpp
+  src/metric_relocation.hpp
 )
 
 # Content identity of the library sources; CMake re-configures when any listed
@@ -233,6 +235,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_deterministic_solve)
   phx_mc_add_test(test_metric_carrier)
   phx_mc_add_test(test_metric_collapse)
+  phx_mc_add_test(test_metric_relocation)
   phx_mc_add_test(test_interval_program)
   phx_mc_add_test(test_interval_simplex_restrict)
   phx_mc_add_test(test_parallel)
