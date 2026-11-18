@@ -475,6 +475,13 @@ def test_source_chart_identity_binds_cad_ancestry() -> None:
         )
 
     first = make(True, root, association("parent-a"))
+    for witness in (first, make(False, root, None)):
+        assert witness.source_parameter_charts() == tuple(
+            witness.source_parameter_chart(row) for row in range(len(witness.source_chart_ids))
+        )
+        assert witness.target_reference_charts() == tuple(
+            witness.target_reference_chart(row) for row in range(len(witness.source_chart_ids))
+        )
     assert first.witness_id == make(True, root, association("parent-a")).witness_id
     assert first.witness_id == make(
         True, root, association("parent-a"), equivalent_plc

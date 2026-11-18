@@ -433,14 +433,7 @@ def _surface_source_chart_rows(
         patch_rows[row] = patch
     return (
         patch_rows,
-        tuple(
-            _exact_triangle2(
-                _fractions_from_chart_tokens(
-                    witness.source_parameter_rational_tokens, row
-                )
-            )
-            for row in range(len(patch_rows))
-        ),
+        tuple(_exact_triangle2(chart) for chart in witness.source_parameter_charts()),
         frozenset(patch for patch, plane in plane_by_patch.items() if plane),
     )
 
@@ -4038,8 +4031,6 @@ def _face_reference_chart(
     target_vertices: tuple[tuple[Fraction, ...], ...],
     /,
 ) -> tuple[tuple[Triangle2, ...], tuple[Triangle2, ...]]:
-    from ..linalg._exact import solve_exact
-
     topology = reference_cell_topology(cell_kind)
     faces = topology.entities[2]
     if local_facet < 0 or local_facet >= len(faces):
@@ -4081,28 +4072,32 @@ def _face_reference_chart(
     if coordinate_pair is None:
         raise ValueError("Reference facet has a singular exact chart basis.")
     left, right = coordinate_pair
-    matrix = ((first[left], second[left]), (first[right], second[right]))
-    solution = solve_exact(
-        matrix,
-        (
-            tuple(point[left] - origin[left] for point in target_vertices),
-            tuple(point[right] - origin[right] for point in target_vertices),
-        ),
+    scale = math.lcm(
+        *(value.denominator for point in (origin, first, second) for value in point),
+        *(value.denominator for point in target_vertices for value in point),
     )
+    origin_int = tuple(value.numerator * (scale // value.denominator) for value in origin)
+    first_int = tuple(value.numerator * (scale // value.denominator) for value in first)
+    second_int = tuple(value.numerator * (scale // value.denominator) for value in second)
+    determinant = first_int[left] * second_int[right] - first_int[right] * second_int[left]
+    remaining = 3 - left - right
     mapped: list[Point2] = []
-    for point, first_coordinate, second_coordinate in zip(
-        target_vertices, solution[0], solution[1], strict=True
-    ):
-        chart_point = (first_coordinate, second_coordinate)
-        if any(
-            origin[axis] + chart_point[0] * first[axis] + chart_point[1] * second[axis]
-            != point[axis]
-            for axis in range(3)
+    for point in target_vertices:
+        point_int = tuple(value.numerator * (scale // value.denominator) for value in point)
+        offset = tuple(point_int[axis] - origin_int[axis] for axis in range(3))
+        first_numerator = offset[left] * second_int[right] - offset[right] * second_int[left]
+        second_numerator = first_int[left] * offset[right] - first_int[right] * offset[left]
+        if (
+            offset[remaining] * determinant
+            != first_numerator * first_int[remaining]
+            + second_numerator * second_int[remaining]
         ):
             raise ValueError(
                 "Target reference chart leaves its actual local reference facet."
             )
-        mapped.append(chart_point)
+        mapped.append(
+            (Fraction(first_numerator, determinant), Fraction(second_numerator, determinant))
+        )
     domain: tuple[Triangle2, ...]
     if len(face_indices) == 3:
         domain = (
