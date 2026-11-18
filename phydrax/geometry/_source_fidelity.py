@@ -7296,6 +7296,7 @@ def certify_source_fidelity(
         from ._source_interpolation import (
             _exact_rational_surface_point_bounds,
             _exact_surface_interpolation_bound,
+            _exact_surface_map_is_rational_affine,
             _fraction_float_interval,
             exact_surface_coordinate_expressions,
         )
@@ -7332,12 +7333,17 @@ def certify_source_fidelity(
             # Generic carriers are bounded after the endpoint errors fix each row's budget.
             interpolation: np.ndarray | None = None
             if exact_surface_map is not None:
-                interpolation = np.asarray(
-                    [
-                        _exact_surface_interpolation_bound(exact_surface_map, chart)
-                        for _, chart in chart_rows
-                    ],
-                    dtype=np.float64,
+                # The exact affine interpolant has identically zero residual.
+                interpolation = (
+                    np.zeros(len(chart_rows), dtype=np.float64)
+                    if _exact_surface_map_is_rational_affine(exact_surface_map)
+                    else np.asarray(
+                        [
+                            _exact_surface_interpolation_bound(exact_surface_map, chart)
+                            for _, chart in chart_rows
+                        ],
+                        dtype=np.float64,
+                    )
                 )
             elif spans is not None:
                 from ._meshing_domain import (
