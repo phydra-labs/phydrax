@@ -1,116 +1,12 @@
 # Changelog
 
 ## Unreleased
-- Accelerated exact planar chart pair screening while preserving outward boxes,
-  candidate order, and separation decisions.
-- Restricted JAX to `>=0.12.0,<0.12.1` to match audited frontend source
-  identities: JAX 0.12.1 rewrote the index narrowing repaired by Phydrax,
-  including `_clamp_and_cast_index`, `NDIndexer.normalize_indices`, and
-  `_normalize_index`; its changed source is not admitted by the guard.
-- Reused operation-local interval programs across compatible orthogonal-cylinder
-  measure charts without changing certified enclosure endpoints.
-- Orthogonal-cylinder branch enclosure queries reuse bounded proofs for the same
-  unchanged live curve and exact interval premises; returned bounds and identities
-  are unchanged.
-- Native CAD projection avoids discarded eager revolution-surface points for eligible batched rows.
-- Fixed the native CAD qualification intersection evidence reporting a p-curve
-  residual that was zero by construction: `maximum_residuals_m.first_pcurve`
-  and `.second_pcurve` now measure each patch lift against the declared analytic
-  loop, as `.three_dimensional` does. Both reported values change.
+
+### Added
 - Exposed `phydrax.geometry.source_entity_id` and
   `phydrax.interchange.save_composition_archive` and
   `phydrax.interchange.load_composition_archive` for source identities and
   composition persistence.
-- `AdaptiveImplicitSurfacePolicy.relative_cell_diameter` now defaults to `None`.
-  Native implicit meshing derives an unspecified diameter from request
-  tolerances and uniform size controls, falling back to `0.001` only when
-  there is no candidate. A policy that customizes other controls no longer
-  silently forces the old `0.001` diameter. Direct discovery without a
-  specification still resolves it to `0.001`; explicitly supplied diameters
-  retain their previous meaning. Affected discoveries, carrier meshes,
-  downstream results and their identities can change and should be regenerated.
-  Options containing a default-constructed policy also have a different
-  `options_id`; archived policy values retain their declared representation.
-  On the measured first sphere, the reported discovery count pair and CPU
-  times changed as follows (seconds):
-
-  | Resolution | Discovery counts | Discovery CPU | Remesh CPU |
-  | --- | ---: | ---: | ---: |
-  | Baseline | 3,162,582 / 6,325,160 | 203.71 | 354.43 |
-  | Tolerance-derived | 197,622 / 395,240 | 13.43 | 22.58 |
-
-- Tetrahedral simplex mesh construction now derives entity levels and routes
-  with batched integer operations while preserving mesh identities and ordering.
-- Concrete cell-quality evaluations use specified host binary64 arithmetic
-  without requiring meshcore. Stored quality diagnostics and their extrema can
-  change in their last bits, including the ordering of equally poor cells.
-  JAX-traced evaluations remain differentiable and may not bind as a supplied
-  concrete audit evaluation. Metric interpolation remains device-dependent.
-  Native CAD qualification volume summaries also accumulate cell measures in
-  mesh block order, so their reported volumes and relative defects can change.
-- Welded mesh audits use native batched exact triangle contacts when available,
-  retaining the host route for unsupported contact rows and installations.
-- Fixed welded mesh audits reporting certain self-intersections for disjoint
-  coplanar triangles when the floating-point normal cancels.
-- Welded mesh audits accelerate vertex and edge star incidence lookups without
-  changing topology findings or their order.
-- Mapped-cell location uses specified binary64 residual norms, exact-rational
-  least-squares proposals, and ordered periodic winding products. Root
-  acceptance near tolerance boundaries and stored owner-local lifted
-  coordinates and their fingerprints can change. Krawczyk preconditioner
-  solves can still affect isolation status, SVD directions can affect
-  tolerance-segment refusal witnesses, and condition diagnostics and the
-  inverse-Jacobian calculation remain platform-dependent. Floating integer
-  powers and runtime-width reference-coordinate sums and products are also not
-  specified across platforms. Current production owner-local views are already
-  lifted, so they do not exercise the unlifted winding-product path.
-- Boundary-layer directions, heights, distances, and quantities derived from
-  them now use specified binary64 operations, including a native distance
-  kernel. In captured tests the visibility solve differed from the old inexact
-  solver by up to 287 units in the last place at condition number 569; stored
-  coordinates and thicknesses moved by at most 3 units except near zero, where
-  a coordinate changed from -9.0e-19 to 6.2e-19. Layer mesh coordinates and
-  their fingerprints can consequently change. Exact least-squares solutions
-  that round to infinity are refused with a `ValueError` rather than an
-  `OverflowError`.
-- Native B-Rep projection batches safely regular deferred surface frames while
-  preserving the specified binary64 results and scalar fallback behavior.
-- Native geometry and meshing now share a single fixed-order binary64 dot,
-  matrix product, and norm definition. On platforms whose BLAS fused or
-  reordered these operations, rounding can change surface-association
-  curve-edge residuals, Boolean intersection gap and chart data, projection
-  results, placed geometry, and identities and meshes derived from them.
-  Regenerate affected stored results.
-  These reductions reject complex inputs instead of discarding imaginary parts.
-  Small scalar reduction paths do not report floating-point underflow.
-- CAD and standalone PLC volume meshing now order boundary edges and native
-  source groups by model content rather than source names. Existing meshes,
-  `complex_id`, and derived identities change once; regenerate stored results.
-  For a given model, coordinates and connectivity no longer depend on source
-  names through these volume-meshing orders. Two name-dependent orders remain
-  in the surface provider: the root-chart tie-break when three bounding extrema
-  coincide, and curve-query traversal. Both are being changed with the
-  stored-coordinate work.
-- Certified native Boolean intersection curves now use platform-identical
-  interval matrix products. On platforms whose BLAS fused or reordered those
-  products, rounding changes stored `IntersectionCurve.contractions` and can
-  change affected models' `geometry_id`, `model_id`, and `source_id`,
-  association-graph revisions, and downstream results including meshes.
-  Regenerate affected stored results. Observed for the two-cylinder
-  intersection of the native CAD qualification profile: results changed on
-  Linux aarch64 with OpenBLAS and were unchanged on macOS arm64 with
-  Accelerate; other platforms and inputs are not characterized.
-  Trigonometric level-set critical-level certificates also use these
-  products: their stored root and unresolved boxes and value bounds, and
-  identities derived from them, can change.
-- Imported CAD, surface, and mesh sources now use a format prefix and the first
-  16 hexadecimal digits of the source bytes' SHA-256 digest, not the file path.
-  Imported model identities and identities derived from them change; stored
-  results of imported models must be regenerated. Embedded Phydrax surface
-  identities remain authoritative.
-
-
-### Added
 - The native interval program evaluates the tangent (opcode 28, after the
   elementwise power), so a function that contains `tan` lowers to it instead
   of being refused by the native and batched routes. A tangent row encloses
@@ -365,6 +261,102 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Welded mesh audits accelerate vertex and edge star incidence lookups without
+  changing topology findings or their order.
+- Mapped-cell location uses specified binary64 residual norms, exact-rational
+  least-squares proposals, and ordered periodic winding products. Root
+  acceptance near tolerance boundaries and stored owner-local lifted
+  coordinates and their fingerprints can change. Krawczyk preconditioner
+  solves can still affect isolation status, SVD directions can affect
+  tolerance-segment refusal witnesses, and condition diagnostics and the
+  inverse-Jacobian calculation remain platform-dependent. Floating integer
+  powers and runtime-width reference-coordinate sums and products are also not
+  specified across platforms. Current production owner-local views are already
+  lifted, so they do not exercise the unlifted winding-product path.
+- Boundary-layer directions, heights, distances, and quantities derived from
+  them now use specified binary64 operations, including a native distance
+  kernel. In captured tests the visibility solve differed from the old inexact
+  solver by up to 287 units in the last place at condition number 569; stored
+  coordinates and thicknesses moved by at most 3 units except near zero, where
+  a coordinate changed from -9.0e-19 to 6.2e-19. Layer mesh coordinates and
+  their fingerprints can consequently change. Exact least-squares solutions
+  that round to infinity are refused with a `ValueError` rather than an
+  `OverflowError`.
+- Native B-Rep projection batches safely regular deferred surface frames while
+  preserving the specified binary64 results and scalar fallback behavior.
+- Native geometry and meshing now share a single fixed-order binary64 dot,
+  matrix product, and norm definition. On platforms whose BLAS fused or
+  reordered these operations, rounding can change surface-association
+  curve-edge residuals, Boolean intersection gap and chart data, projection
+  results, placed geometry, and identities and meshes derived from them.
+  Regenerate affected stored results.
+  These reductions reject complex inputs instead of discarding imaginary parts.
+  Small scalar reduction paths do not report floating-point underflow.
+- CAD and standalone PLC volume meshing now order boundary edges and native
+  source groups by model content rather than source names. Existing meshes,
+  `complex_id`, and derived identities change once; regenerate stored results.
+  For a given model, coordinates and connectivity no longer depend on source
+  names through these volume-meshing orders. Two name-dependent orders remain
+  in the surface provider: the root-chart tie-break when three bounding extrema
+  coincide, and curve-query traversal.
+- Certified native Boolean intersection curves now use platform-identical
+  interval matrix products. On platforms whose BLAS fused or reordered those
+  products, rounding changes stored `IntersectionCurve.contractions` and can
+  change affected models' `geometry_id`, `model_id`, and `source_id`,
+  association-graph revisions, and downstream results including meshes.
+  Regenerate affected stored results. Observed for the two-cylinder
+  intersection of the native CAD qualification profile: results changed on
+  Linux aarch64 with OpenBLAS and were unchanged on macOS arm64 with
+  Accelerate; other platforms and inputs are not characterized.
+  Trigonometric level-set critical-level certificates also use these
+  products: their stored root and unresolved boxes and value bounds, and
+  identities derived from them, can change.
+- Imported CAD, surface, and mesh sources now use a format prefix and the first
+  16 hexadecimal digits of the source bytes' SHA-256 digest, not the file path.
+  Imported model identities and identities derived from them change; stored
+  results of imported models must be regenerated. Embedded Phydrax surface
+  identities remain authoritative.
+- `AdaptiveImplicitSurfacePolicy.relative_cell_diameter` now defaults to `None`.
+  Native implicit meshing derives an unspecified diameter from request
+  tolerances and uniform size controls, falling back to `0.001` only when
+  there is no candidate. A policy that customizes other controls no longer
+  silently forces the old `0.001` diameter. Direct discovery without a
+  specification still resolves it to `0.001`; explicitly supplied diameters
+  retain their previous meaning. Affected discoveries, carrier meshes,
+  downstream results and their identities can change and should be regenerated.
+  Options containing a default-constructed policy also have a different
+  `options_id`; archived policy values retain their declared representation.
+  On the measured first sphere, the reported discovery count pair and CPU
+  times changed as follows (seconds):
+
+  | Resolution | Discovery counts | Discovery CPU | Remesh CPU |
+  | --- | ---: | ---: | ---: |
+  | Baseline | 3,162,582 / 6,325,160 | 203.71 | 354.43 |
+  | Tolerance-derived | 197,622 / 395,240 | 13.43 | 22.58 |
+
+- Tetrahedral simplex mesh construction now derives entity levels and routes
+  with batched integer operations while preserving mesh identities and ordering.
+- Concrete cell-quality evaluations use specified host binary64 arithmetic
+  without requiring meshcore. Stored quality diagnostics and their extrema can
+  change in their last bits, including the ordering of equally poor cells.
+  JAX-traced evaluations remain differentiable and may not bind as a supplied
+  concrete audit evaluation. Metric interpolation remains device-dependent.
+  Native CAD qualification volume summaries also accumulate cell measures in
+  mesh block order, so their reported volumes and relative defects can change.
+- Welded mesh audits use native batched exact triangle contacts when available,
+  retaining the host route for unsupported contact rows and installations.
+- Accelerated exact planar chart pair screening while preserving outward boxes,
+  candidate order, and separation decisions.
+- Restricted JAX to `>=0.12.0,<0.12.1` to match audited frontend source
+  identities: JAX 0.12.1 rewrote the index narrowing repaired by Phydrax,
+  including `_clamp_and_cast_index`, `NDIndexer.normalize_indices`, and
+  `_normalize_index`; its changed source is not admitted by the guard.
+- Reused operation-local interval programs across compatible orthogonal-cylinder
+  measure charts without changing certified enclosure endpoints.
+- Orthogonal-cylinder branch enclosure queries reuse bounded proofs for the same
+  unchanged live curve and exact interval premises; returned bounds and identities
+  are unchanged.
+- Native CAD projection avoids discarded eager revolution-surface points for eligible batched rows.
 - Sparse storage planning uses stable packed route keys when coordinates fit
   32 bits, preserving lexicographic order and coefficient reduction order.
 - Mesh incidence composition uses bounded packed integer keys for sorted unique
@@ -1351,6 +1343,12 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Fixed welded mesh audits reporting certain self-intersections for disjoint
+  coplanar triangles when the floating-point normal cancels.
+- Fixed the native CAD qualification intersection evidence reporting a p-curve
+  residual that was zero by construction: `maximum_residuals_m.first_pcurve`
+  and `.second_pcurve` now measure each patch lift against the declared analytic
+  loop, as `.three_dimensional` does. Both reported values change.
 - Implicit root charts form certified vector-norm bounds with outward-rounded
   squares and sums, and use directed norms for bracket starting steps and
   sign-coverage resolution. Chart evidence and coverage outcomes can change
