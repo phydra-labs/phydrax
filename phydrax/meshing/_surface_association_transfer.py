@@ -545,7 +545,9 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
             )
         ]
         output.append(
-            self._surface_cells(source, lineage, target, tables[2], preparation=preparation)
+            self._surface_cells(
+                source, lineage, target, tables[2], preparation=preparation
+            )
         )
         if 1 in tables:
             curve_edges = self._curve_edges(

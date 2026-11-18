@@ -951,7 +951,8 @@ def _chart_inputs(
                     # shared row records the start parameter.
                     recorded = (
                         Fraction(0)
-                        if parameter == 1 and use.closes_chart_loop(preparation=preparation)
+                        if parameter == 1
+                        and use.closes_chart_loop(preparation=preparation)
                         else parameter
                     )
                     previous_parameter = point_curve_parameters.get((row, use.curve))
@@ -6389,7 +6390,9 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
     roots: _SurfaceRootCells
     boundary_source: domain_boundary_owner.MeshingDomainBoundarySource
     prepared_id: str = eqx.field(static=True)
-    preparation_evaluations: domain_owner.SourceEvaluationSnapshot = eqx.field(static=True)
+    preparation_evaluations: domain_owner.SourceEvaluationSnapshot = eqx.field(
+        static=True
+    )
 
     def __init__(
         self,

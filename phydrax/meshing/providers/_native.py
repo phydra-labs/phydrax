@@ -981,7 +981,11 @@ def _prepare_route(
             from ._native_surface import prepare_native_surface
 
             return prepare_native_surface(
-                domain, specification, options, coordinate_contract, preparation=preparation
+                domain,
+                specification,
+                options,
+                coordinate_contract,
+                preparation=preparation,
             )
         case "reconstructed_surface":
             if not isinstance(source, ReconstructedGeometrySource):

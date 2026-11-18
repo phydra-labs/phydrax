@@ -533,7 +533,10 @@ def test_trimmed_sheet_association_transfer_retains_patches_and_curve_intervals(
         dict(calls)[spline] - 1,
         dict(rows)[spline] - refined.target.mesh.entity_set(2).count,
     ) == (25, 804)
-    assert (dict(calls)["domain-projection:newton"], dict(rows)["domain-projection:newton"]) == (
+    assert (
+        dict(calls)["domain-projection:newton"],
+        dict(rows)["domain-projection:newton"],
+    ) == (
         2,
         2508,
     )

@@ -425,7 +425,9 @@ def _surface_source_chart_rows(
                 plane = False
             else:
                 if patch not in plane_chart_ids:
-                    plane_chart = exact_plane_chart(domain, patch, preparation=preparation)
+                    plane_chart = exact_plane_chart(
+                        domain, patch, preparation=preparation
+                    )
                     plane_chart_ids[patch] = (
                         None if plane_chart is None else plane_chart.chart_id
                     )

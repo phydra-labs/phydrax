@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "7370c5de071213029551712212f21f895b1588c2173333cdd284fbb92c47261a",
+  "manifest_id": "f53be3ff55bf2b0a81c998bfc6a5b323d0ced1a50c54c0b545cbaf8ba1afb3a7",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -23621,6 +23621,7 @@
       "phydrax.geometry.SourceBoundaryProjectionQuery",
       "phydrax.geometry.SourceBoundaryProjectionResult",
       "phydrax.geometry.SourceBoundaryQuery",
+      "phydrax.geometry.SourceEvaluationLedger",
       "phydrax.geometry.SourceProjectionStatus",
       "phydrax.geometry.SpecimenEnvelope",
       "phydrax.geometry.SpecimenEnvelopeKind",

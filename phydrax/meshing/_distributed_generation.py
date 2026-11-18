@@ -128,7 +128,9 @@ class DistributedSurfaceConstruction(StrictModule, NonTrainableState):
     source_revision: str = eqx.field(static=True)
     specification_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
-    unspecified_evaluations: domain_owner.SourceEvaluationSnapshot = eqx.field(static=True)
+    unspecified_evaluations: domain_owner.SourceEvaluationSnapshot = eqx.field(
+        static=True
+    )
 
     def __init__(
         self,

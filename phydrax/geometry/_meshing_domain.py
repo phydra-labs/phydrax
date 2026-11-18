@@ -676,7 +676,11 @@ class MeshingDomainProjection(StrictModule, NonTrainableState):
         converged: ArrayLike,
         /,
         *,
-        unspecified_evaluations: SourceEvaluationSnapshot = ((), (), (("unattached", 1),)),
+        unspecified_evaluations: SourceEvaluationSnapshot = (
+            (),
+            (),
+            (("unattached", 1),),
+        ),
     ) -> None:
         self.points = jnp.asarray(points, dtype=jnp.float64)
         self.parameters = jnp.asarray(parameters, dtype=jnp.float64)
@@ -1084,7 +1088,9 @@ class _PointPreparation:
     )
 
     def __init__(self, *, evaluations: SourceEvaluationLedger | None = None) -> None:
-        self.evaluations = SourceEvaluationLedger() if evaluations is None else evaluations
+        self.evaluations = (
+            SourceEvaluationLedger() if evaluations is None else evaluations
+        )
         self._stored_surface_programs: dict[
             int, tuple[AbstractSurfacePatch, PreparedIntervalFunction | None]
         ] = {}
@@ -1338,7 +1344,11 @@ class SourcePreparation(_PointPreparation):
     )
 
     def __init__(
-        self, domain: MeshingDomain, /, *, evaluations: SourceEvaluationLedger | None = None
+        self,
+        domain: MeshingDomain,
+        /,
+        *,
+        evaluations: SourceEvaluationLedger | None = None,
     ) -> None:
         super().__init__(evaluations=evaluations)
         self.evaluations.require_construction(domain)
