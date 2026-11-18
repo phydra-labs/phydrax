@@ -505,7 +505,7 @@ def test_reconstructed_public_plan_certifies_continuous_source_boundary() -> Non
     )
 
     assert plan.route == "reconstructed_surface"
-    result = plan.execute()
+    result = plan.execute(prove=True)
     certification = result.certification
     boundary = result.boundary
     assert certification is not None

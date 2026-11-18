@@ -46,7 +46,7 @@ def execute(
     )
     if plan.route != route:
         raise RuntimeError(f"Expected {route}, got {plan.route}")
-    result = plan.execute()
+    result = plan.execute(prove=True)
     kinds = {b.cell_kind for b in result.mesh.blocks if b.cell_count}
     measures = np.asarray(result.quality.evaluation.measures, dtype=np.float64)
     if (

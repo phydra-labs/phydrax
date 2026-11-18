@@ -97,7 +97,7 @@ def _accepted(
         .plan(
             source, specification, coordinate_contract=phx.SpatialCoordinateContract.si()
         )
-        .execute()
+        .execute(prove=True)
     )
     return source, result
 
@@ -419,7 +419,7 @@ def _tilted_accepted() -> tuple[NativePlcSource, phx.meshing.CellMeshingResult]:
         .plan(
             source, specification, coordinate_contract=phx.SpatialCoordinateContract.si()
         )
-        .execute()
+        .execute(prove=True)
     )
     return source, result
 
@@ -691,7 +691,7 @@ def _envelope_accepted() -> tuple[
     result = (
         NativeMeshingProvider(options)
         .plan(source, specification, coordinate_contract=contract)
-        .execute()
+        .execute(prove=True)
     )
     return source, result
 

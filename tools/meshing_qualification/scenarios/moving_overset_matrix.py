@@ -321,7 +321,7 @@ def _native_part(
     plan = NativeMeshingProvider(
         NativeMeshingOptions("planar_constrained_delaunay")
     ).plan(source, specification, coordinate_contract=_CONTRACT)
-    result = plan.execute()
+    result = plan.execute(prove=True)
     part = MeshPart(name, result)
     generated = accepted_result_record(result)
     generated.update(

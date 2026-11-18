@@ -1046,6 +1046,7 @@ def _owner_local_periodic_power_assembly(
             coordinate_contract=phx.SpatialCoordinateContract.si(),
         )
         .execute(
+            prove=True,
             execution_group=execution_group,
             graph_partition_plan=graph_partition_plan,
         )
@@ -1984,7 +1985,7 @@ def _periodic_power_regular_worker(
         assembly = (
             NativeMeshingProvider(NativeMeshingOptions("periodic_power"))
             .plan(source, spec, coordinate_contract=phx.SpatialCoordinateContract.si())
-            .execute(execution_group=group)
+            .execute(prove=True, execution_group=group)
         )
         view = _owner_view(assembly, source.source_id)
         support_count = int(np.asarray(view.source_point_ids).size)

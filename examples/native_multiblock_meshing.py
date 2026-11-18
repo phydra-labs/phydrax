@@ -124,7 +124,7 @@ def poisson_error(resolution: int) -> tuple[float, dict[str, object]]:
     )
     if plan.route != "structured_transfinite":
         raise RuntimeError("Unexpected native route")
-    result = plan.execute()
+    result = plan.execute(prove=True)
     kinds = {b.cell_kind for b in result.mesh.blocks if b.cell_count}
     measures = np.asarray(result.quality.evaluation.measures, dtype=np.float64)
     if (

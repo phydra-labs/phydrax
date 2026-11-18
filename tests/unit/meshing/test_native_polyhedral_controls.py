@@ -275,12 +275,12 @@ def test_polyhedral_controls_resolve_scientific_source_scope_ids(
     ).plan(source, specification, coordinate_contract=phx.SpatialCoordinateContract.si())
     if hard:
         with pytest.raises(phx.meshing.MeshingFailure) as failure:
-            plan.execute()
+            plan.execute(prove=True)
         assert (
             failure.value.category is phx.meshing.MeshingFailureCategory.COMPLIANCE_FAILED
         )
         return
-    result = plan.execute()
+    result = plan.execute(prove=True)
     connectivity = result.mesh.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
         raise TypeError("The scoped power result must retain polyhedral connectivity.")
@@ -328,7 +328,7 @@ def test_restricted_power_periodic_plc_preserves_quotient_and_fv_measure() -> No
             specification,
             coordinate_contract=phx.SpatialCoordinateContract.si(),
         )
-        .execute()
+        .execute(prove=True)
     )
 
     mesh = result.mesh
@@ -568,7 +568,7 @@ def test_material_l_polyhedral_fill_keeps_material_volumes_and_facet_areas() -> 
             specification,
             coordinate_contract=phx.SpatialCoordinateContract.si(),
         )
-        .execute()
+        .execute(prove=True)
     )
 
     mesh = result.mesh
@@ -651,7 +651,7 @@ def test_periodic_material_l_polyhedral_fill_preserves_material_and_coverage() -
             specification,
             coordinate_contract=phx.SpatialCoordinateContract.si(),
         )
-        .execute()
+        .execute(prove=True)
     )
 
     mesh = result.mesh
@@ -906,7 +906,7 @@ def test_rotational_periodic_plc_uses_finite_isometry_quotient() -> None:
             specification,
             coordinate_contract=phx.SpatialCoordinateContract.si(),
         )
-        .execute()
+        .execute(prove=True)
     )
     mesh = result.mesh
     connectivity = mesh.connectivity

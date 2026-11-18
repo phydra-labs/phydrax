@@ -1007,15 +1007,19 @@ plan = NativeMeshingProvider().plan(
     specification,
     coordinate_contract=coordinates,
 )
-result = plan.execute()
+candidate = plan.execute()
+result = candidate.prove()  # or plan.execute(prove=True)
 ```
 
 `NativeMeshingOptions.route` may select a route explicitly. When omitted,
 planning deterministically resolves a route from source capabilities and the
 request; unsupported combinations fail rather than falling back to another
-algorithm. The result is published only after canonical mathematical
-acceptance. Sources that own a coordinate contract bind it directly; otherwise
-the caller must supply the actual units and reference frame.
+algorithm. The default result is a pending `CellMeshingCandidate`, not an
+acceptance claim. `candidate.prove()` certifies exactly the produced mesh without
+remeshing or repair; `execute(prove=True)` runs certified construction and
+immediate acceptance. The candidate's `certified_steps` names construction work
+that still used its certified form. Sources that own a coordinate contract bind
+it directly; otherwise the caller must supply the actual units and reference frame.
 PLC-backed sources scope dimension-1 entities by stable source identity: explicit
 segments and original polygon-loop edges, including shared seams between polygons
 of one facet. Edges introduced only by recovery triangulation are not source curves;
@@ -1922,7 +1926,7 @@ cell family.
 `PeriodicPointOrbits` binds authored site IDs to a fully periodic lattice;
 `NativePeriodicSource` adds the source revision, optional fixed power weights,
 and, for owner-local execution, one execution-group owner slot per local site.
-`NativeMeshingProvider.plan(source, specification).execute()` is the public
+`NativeMeshingProvider.plan(source, specification).execute(prove=True)` is the public
 route. Periodic surface and simplex-volume requests use periodic Delaunay.
 Three-dimensional `POLYHEDRAL` volume requests that require the `polyhedron`
 family select periodic power cells. Power sites and weights remain scientific
@@ -1934,7 +1938,7 @@ shadow; transforming an already-rounded representative need not reproduce a
 separately rounded lifted vertex bit for bit.
 
 For owner-local execution, each rank supplies its owned and resident ghost site
-rows and calls `plan.execute(execution_group=group)`. Generation closes native
+rows and calls `plan.execute(execution_group=group, prove=True)`. Generation closes native
 support by exact periodic predicates and returns a `MeshAssembly` containing a
 compact local `OwnerLocalCellGeometry` without a global mesh gather. The local
 view retains stable cell owners, exact quotient keys, absolute deck windings,

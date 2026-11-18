@@ -51,7 +51,7 @@ def write_family(
         result = (
             NativeMeshingProvider(case.options)
             .plan(case.source, case.specification, coordinate_contract=_CONTRACT)
-            .execute()
+            .execute(prove=True)
         )
     else:
         result = read_model_artifact(

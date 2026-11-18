@@ -157,7 +157,7 @@ def _certified_surface_mesh(domain: MeshingDomain) -> CellMeshingResult:
             )
         )
         .plan(domain, _surface_specification(domain), coordinate_contract=_CONTRACT)
-        .execute()
+        .execute(prove=True)
     )
 
 

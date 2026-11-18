@@ -457,7 +457,7 @@ def test_native_power_regeneration_republishes_site_evidence_and_refuses_user_da
     source = (
         NativeMeshingProvider(NativeMeshingOptions("plc_restricted_power"))
         .plan(initial, source_spec, coordinate_contract=SpatialCoordinateContract.si())
-        .execute()
+        .execute(prove=True)
     )
     policy = MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_POLYHEDRAL)
     adapted = execute_mesh_adaptation(

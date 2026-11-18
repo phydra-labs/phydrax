@@ -86,7 +86,7 @@ def test_native_provider_plans_and_accepts_a_curve_mesh() -> None:
     assert isinstance(first, NativeMeshingPlan)
     assert first.route == "curve_arc_length"
     assert first.plan_id == second.plan_id
-    result = first.execute()
+    result = first.execute(prove=True)
     assert result.certification is not None and result.certification.passed
     assert result.coordinate_contract.spatial_id == contract.spatial_id
     assert result.provider.name == "phydrax-native"
@@ -190,7 +190,7 @@ def test_native_provider_builds_a_direct_brep_volume_boundary_internally() -> No
     plan = NativeMeshingProvider().plan(source, specification)
 
     assert plan.route == "cad_tetrahedral"
-    result = plan.execute()
+    result = plan.execute(prove=True)
     assert result.certification is not None and result.certification.passed
     assert result.coordinate_contract.spatial_id == contract.spatial_id
 
@@ -219,7 +219,9 @@ def test_native_cad_volume_geometry_is_independent_of_source_id() -> None:
                 radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
             ),
         )
-        result = NativeMeshingProvider(options).plan(source, specification).execute()
+        result = (
+            NativeMeshingProvider(options).plan(source, specification).execute(prove=True)
+        )
         assert result.certification is not None and result.certification.passed
         meshes.append(result.mesh)
 
@@ -263,7 +265,7 @@ def test_native_cad_volume_soft_shape_strength_softens_boundary_angle() -> None:
     soft_target = boundary_target(soft_plan)
     assert hard_target.hard and not soft_target.hard
     assert soft_target.minimum_angle == hard_target.minimum_angle
-    result = soft_plan.execute()
+    result = soft_plan.execute(prove=True)
     assert result.certification is not None and result.certification.passed
     assert result.compliance.issues == ()
     assert "soft_shape_target_unmet_count" in dict(result.compliance.achieved)
@@ -356,7 +358,7 @@ def test_native_provider_accepts_bounded_implicit_volume_region_and_patch() -> N
             )
         )
         .plan(source, specification, coordinate_contract=contract)
-        .execute()
+        .execute(prove=True)
     )
 
     assert result.certification is not None and result.certification.passed
@@ -381,3 +383,149 @@ def test_native_provider_accepts_bounded_implicit_volume_region_and_patch() -> N
         region_key[1],
         None,
     )
+
+
+@pytest.mark.parametrize("route", ["planar", "sphere-surface", "sphere-volume"])
+def test_native_plan_candidate_proves_the_constructed_mesh(route: str) -> None:
+    if route == "planar":
+        from tests.unit.meshing.test_native_curve_planar_routes import _planar_request
+
+        source, specification, options = _planar_request()
+        plan = NativeMeshingProvider(options).plan(
+            source, specification, coordinate_contract=SpatialCoordinateContract.si()
+        )
+    else:
+        contract = SpatialCoordinateContract.si()
+        geometry = phx.geometry.Sphere(
+            (0.0, 0.0, 0.0), 0.75, feature_id=f"candidate-{route}"
+        ).compile()
+        profile = AnalyticImplicitProfile(
+            geometry, contract, source_id=f"candidate-{route}"
+        )
+        scope = MeshingScope.whole(profile, 2)
+        if route == "sphere-surface":
+            surface = SurfaceMeshingSpec(
+                CellMeshingTarget(2, 3, CellFamilyPolicy(required=("triangle",))),
+                scope,
+                size_controls=(
+                    UniformSizeControl(scope, 0.5, strength=SizeControlStrength.SOFT),
+                ),
+                maximum_deviation=0.25,
+            )
+            plan = NativeMeshingProvider().plan(profile, surface)
+        else:
+            volume = VolumeMeshingSpec(
+                CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+                scope,
+                VolumeFillStrategy.SIMPLEX,
+                size_controls=(
+                    UniformSizeControl(scope, 0.5, strength=SizeControlStrength.SOFT),
+                ),
+                maximum_deviation=0.25,
+            )
+            plan = NativeMeshingProvider().plan(profile, volume)
+
+    candidate = plan.execute()
+    assert isinstance(candidate, phx.meshing.CellMeshingCandidate)
+    assert candidate.certified_steps
+    assert not hasattr(candidate, "certification")
+    assert not hasattr(candidate, "audit")
+    assert not hasattr(candidate, "compliance")
+    accepted = plan.execute(prove=True)
+    np.testing.assert_array_equal(candidate.mesh.coordinates, accepted.mesh.coordinates)
+    assert (
+        np.asarray(candidate.mesh.coordinates).tobytes()
+        == np.asarray(accepted.mesh.coordinates).tobytes()
+    )
+    for left, right in zip(candidate.mesh.blocks, accepted.mesh.blocks, strict=True):
+        assert np.asarray(left.vertices).tobytes() == np.asarray(right.vertices).tobytes()
+    proved = candidate.prove()
+    assert proved.result_id == accepted.result_id
+    assert proved.mesh.mesh_id == accepted.mesh.mesh_id
+    assert proved.certification is not None
+    assert accepted.certification is not None
+    assert proved.certification.status == accepted.certification.status
+    assert proved.certification.report_id == accepted.certification.report_id
+
+
+def test_pending_candidate_is_refused_by_accepted_result_consumer() -> None:
+    from tools.meshing_qualification._runtime import accepted_result_record
+
+    source, specification = _curve_request()
+    candidate = (
+        NativeMeshingProvider()
+        .plan(source, specification, coordinate_contract=SpatialCoordinateContract.si())
+        .execute()
+    )
+    with pytest.raises(TypeError, match="accepted CellMeshingResult"):
+        accepted_result_record(candidate)  # ty: ignore[invalid-argument-type]
+
+
+def test_pending_owner_local_execution_is_refused() -> None:
+    import jax
+
+    from phydrax._execution_resources import ExecutionGroupSpec
+    from phydrax._execution_runtime import ExecutionGroup
+
+    process = jax.process_index()
+    device = next(device for device in jax.devices() if device.process_index == process)
+    group = ExecutionGroup(
+        ExecutionGroupSpec(
+            "candidate-refusal",
+            (process,),
+            ((process, device.id),),
+            mesh_axes=(("candidate", 1),),
+        ),
+        (device,),
+    )
+    source, specification = _curve_request()
+    plan = NativeMeshingProvider().plan(
+        source, specification, coordinate_contract=SpatialCoordinateContract.si()
+    )
+    with pytest.raises(ValueError, match="requires prove=True"):
+        plan.execute(execution_group=group)  # ty: ignore[invalid-argument-type]
+
+
+def test_broken_candidate_proof_reports_the_mesh_failure() -> None:
+    from dataclasses import replace
+
+    from phydrax._meshcore import meshcore_identity
+    from phydrax.discretization import CellGeometrySpec, CellMesh
+    from phydrax.meshing._canonical import _NATIVE_PROVIDER
+
+    source, specification = _curve_request()
+    specification = CurveMeshingSpec(
+        specification.target,
+        specification.scope,
+        size_controls=specification.size_controls,
+    )
+    plan = NativeMeshingProvider().plan(
+        source, specification, coordinate_contract=SpatialCoordinateContract.si()
+    )
+    construction = plan.prepared.execute(steering="screened")
+    coordinates = np.zeros_like(np.asarray(construction.mesh.coordinates))
+    broken_mesh = CellMesh(
+        coordinates,
+        construction.mesh.blocks,
+        vertex_global_ids=construction.mesh.vertex_global_ids,
+    )
+    broken = replace(
+        construction,
+        mesh=broken_mesh,
+        geometry=CellGeometrySpec.affine(broken_mesh),
+    )
+    candidate = phx.meshing.CellMeshingCandidate(
+        broken,
+        specification,
+        _NATIVE_PROVIDER,
+        meshcore_identity(),
+        plan.plan_id,
+        plan.route,
+    )
+    with pytest.raises(MeshingFailure) as failure:
+        candidate.prove()
+    assert failure.value.category is MeshingFailureCategory.AUDIT_FAILED
+    assert failure.value.stage == "mesh_certification"
+    assert "cell_validity" in str(failure.value)
+    broken_cells = set(np.asarray(broken_mesh.blocks[0].global_ids).tolist())
+    assert broken_cells <= set(failure.value.entity_ids)

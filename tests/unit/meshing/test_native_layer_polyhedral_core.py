@@ -237,7 +237,7 @@ def test_accepted_layer_cap_shares_polyhedral_core_and_fv_recovers_box_measure()
     result = (
         NativeMeshingProvider(_options())
         .plan(source, specification, coordinate_contract=_COORDINATES)
-        .execute()
+        .execute(prove=True)
     )
 
     assert result.certification is not None and result.certification.passed
@@ -341,7 +341,7 @@ def test_polyhedral_core_audit_refuses_an_unreplayed_source_edge_face_overlay() 
     result = (
         NativeMeshingProvider(_options())
         .plan(source, specification, coordinate_contract=_COORDINATES)
-        .execute()
+        .execute(prove=True)
     )
     certification = result.certification
     assert certification is not None

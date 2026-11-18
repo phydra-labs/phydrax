@@ -63,7 +63,7 @@ def generate(size: float) -> phx.meshing.CellMeshingResult:
             specification,
             coordinate_contract=phx.SpatialCoordinateContract.si(),
         )
-        .execute()
+        .execute(prove=True)
     )
     result.audit.require_passed()
     certification = result.certification

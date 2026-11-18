@@ -191,7 +191,7 @@ def test_general_enclosed_scalar_source_publishes_and_rejects_stale_state(
     )
     result = provider.plan(
         source, _volume_specification(source), coordinate_contract=_CONTRACT
-    ).execute()
+    ).execute(prove=True)
     epsilon = _require_certified(result)
     coordinates, faces = _boundary(result)
     assert _component_count(faces) == components
@@ -250,7 +250,7 @@ def test_ellipsoid_surface_publishes_certified_root_charts() -> None:
             NativeMeshingOptions("implicit_surface", implicit_policy=_policy())
         )
         .plan(source, specification, coordinate_contract=_CONTRACT)
-        .execute()
+        .execute(prove=True)
     )
     certificate = result.certification
     assert certificate is not None and certificate.passed

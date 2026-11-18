@@ -213,7 +213,7 @@ def test_mapped_stretched_polyhedral_provider_preserves_features_and_fv_measure(
             specification,
             coordinate_contract=phx.SpatialCoordinateContract.si(),
         )
-        .execute()
+        .execute(prove=True)
     )
 
     geometry = prepare_polyhedral_finite_volume_geometry(result.mesh)
@@ -241,7 +241,7 @@ def test_mapped_power_geometry_source_round_trips_through_the_model_archive(
             specification,
             coordinate_contract=phx.SpatialCoordinateContract.si(),
         )
-        .execute()
+        .execute(prove=True)
     )
     source_map = result.geometry.source_map
     assert isinstance(source_map, MappedPowerCellGeometrySource)
@@ -306,7 +306,7 @@ def test_periodic_polyhedral_source_reaches_fv_measure_consumer() -> None:
             specification,
             coordinate_contract=phx.SpatialCoordinateContract.si(),
         )
-        .execute()
+        .execute(prove=True)
     )
 
     geometry = prepare_polyhedral_finite_volume_geometry(result.mesh)

@@ -167,7 +167,7 @@ def _implicit_volume_source() -> tuple[Any, Any, Any]:
             specification,
             coordinate_contract=contract,
         )
-        .execute()
+        .execute(prove=True)
     )
     surface_specification = SurfaceMeshingSpec(
         CellMeshingTarget(
@@ -190,7 +190,7 @@ def _implicit_volume_source() -> tuple[Any, Any, Any]:
             surface_specification,
             coordinate_contract=contract,
         )
-        .execute()
+        .execute(prove=True)
     )
     return profile, result, surface_result
 
@@ -1228,7 +1228,7 @@ def test_implicit_volume_archive_preserves_tighter_scoped_metric_tolerance(
             )
         )
         .plan(authority, specification, coordinate_contract=seed.coordinate_contract)
-        .execute()
+        .execute(prove=True)
     )
     assert source.certification is not None and source.certification.passed
     before_metric_source = _implicit_metric_source(source)

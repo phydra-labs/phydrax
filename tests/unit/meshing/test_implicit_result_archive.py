@@ -66,7 +66,7 @@ def _generate(source: Any, maximum_deviation: float, /) -> CellMeshingResult:
             NativeMeshingOptions("implicit_surface", implicit_policy=_POLICY)
         )
         .plan(source, specification, coordinate_contract=SpatialCoordinateContract.si())
-        .execute()
+        .execute(prove=True)
     )
 
 
@@ -177,7 +177,7 @@ def test_analytic_profile_volume_restores_its_shared_profile_owner(
             ),
             coordinate_contract=contract,
         )
-        .execute()
+        .execute(prove=True)
     )
     assert original.certification is not None
     inputs = original.certification.inputs

@@ -305,7 +305,7 @@ def tiny_affine_mapped_lifecycle() -> tuple[Any, Any, Any, Any, Any]:
     result = (
         phx.meshing.NativeMeshingProvider(NativeMeshingOptions("layer_core"))
         .plan(source, spec, coordinate_contract=phx.SpatialCoordinateContract.si())
-        .execute()
+        .execute(prove=True)
     )
     if result.certification is None or not result.certification.passed:
         raise ValueError("Tiny real affine mapped producer did not certify.")

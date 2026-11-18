@@ -1086,7 +1086,7 @@ def _surface_case(model: phx.geometry.brep.BRepModel, size: float) -> dict[str, 
     plan = NativeMeshingProvider(NativeMeshingOptions("parametric_surface")).plan(
         domain, specification, coordinate_contract=model.coordinate_contract
     )
-    result = plan.execute()
+    result = plan.execute(prove=True)
     acceptance_failures: list[dict[str, str]] = []
     try:
         fe_solve = _solve_planar_fe(result)
@@ -1718,7 +1718,7 @@ def _volume_run(
     plan = NativeMeshingProvider(
         NativeMeshingOptions("cad_tetrahedral", volume_schedule=schedule)
     ).plan(model, specification, coordinate_contract=model.coordinate_contract)
-    straight = plan.execute()
+    straight = plan.execute(prove=True)
     acceptance_failures: list[dict[str, str]] = []
     try:
         straight_accepted = accepted_result_record(straight)

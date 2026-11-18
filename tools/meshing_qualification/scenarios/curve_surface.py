@@ -49,7 +49,7 @@ def native_curve() -> dict[str, object]:
     plan = NativeMeshingProvider().plan(
         source, specification, coordinate_contract=contract
     )
-    result = plan.execute()
+    result = plan.execute(prove=True)
     accepted = accepted_result_record(result)
     cells = np.asarray(result.mesh.blocks[0].vertices, dtype=np.int64)
     points = np.asarray(result.mesh.coordinates, dtype=np.float64)
@@ -95,7 +95,7 @@ def native_surface() -> dict[str, object]:
     plan = NativeMeshingProvider(NativeMeshingOptions("parametric_surface")).plan(
         domain, specification, coordinate_contract=contract
     )
-    result = plan.execute()
+    result = plan.execute(prove=True)
     accepted = accepted_result_record(result)
     source = result.surface_source
     certification = result.certification

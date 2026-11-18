@@ -540,7 +540,9 @@ def test_transported_face_drives_native_mesh_and_fe_dirichlet_constraint() -> No
         maximum_deviation=0.05,
     )
     result = (
-        phx.meshing.NativeMeshingProvider().plan(partition.model, specification).execute()
+        phx.meshing.NativeMeshingProvider()
+        .plan(partition.model, specification)
+        .execute(prove=True)
     )
     patch = next(value for value in result.patches if value.name == "wall")
     selection = phx.meshing.resolve_mesh_scope(result.mesh, patch.scope)
@@ -713,7 +715,9 @@ def test_split_face_descendants_drive_fe_and_fv_boundary_conditions() -> None:
         maximum_deviation=0.05,
     )
     result = (
-        phx.meshing.NativeMeshingProvider().plan(partition.model, specification).execute()
+        phx.meshing.NativeMeshingProvider()
+        .plan(partition.model, specification)
+        .execute(prove=True)
     )
     scopes = tuple(
         next(patch.scope for patch in result.patches if patch.name == control.name)

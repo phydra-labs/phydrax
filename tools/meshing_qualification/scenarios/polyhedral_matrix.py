@@ -1076,7 +1076,7 @@ def _run_native_source(
         specification,
         coordinate_contract=_CONTRACT,
     )
-    return plan.execute()
+    return plan.execute(prove=True)
 
 
 def _record_value(value: Any, /) -> object:

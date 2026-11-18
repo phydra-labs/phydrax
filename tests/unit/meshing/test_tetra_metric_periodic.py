@@ -664,7 +664,7 @@ def test_native_periodic_volume_route_adapts_metric_over_tetra_orbits() -> None:
             specification,
             coordinate_contract=phx.SpatialCoordinateContract.si(),
         )
-        .execute()
+        .execute(prove=True)
     )
 
     target = result.mesh

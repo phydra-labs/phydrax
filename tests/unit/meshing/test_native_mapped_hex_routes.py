@@ -731,7 +731,7 @@ def test_mapped_grid_hex_certifies_exact_restriction_without_requested_deviation
     result = (
         NativeMeshingProvider(NativeMeshingOptions("mapped_balanced_grid_hex"))
         .plan(source, specification, coordinate_contract=SpatialCoordinateContract.si())
-        .execute()
+        .execute(prove=True)
     )
 
     assert result.certification is not None
@@ -757,7 +757,7 @@ def test_mapped_grid_hex_preserves_multiple_charts_per_source_face() -> None:
         .plan(
             source, _request(source), coordinate_contract=SpatialCoordinateContract.si()
         )
-        .execute()
+        .execute(prove=True)
     )
     assert result.certification is not None
     assert result.certification.passed

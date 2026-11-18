@@ -36,7 +36,7 @@ def test_direct_execution_rejects_replaced_prepared_source(
     )
     edited = eqx.tree_at(lambda value: value.prepared.source, plan, replacement)
     with pytest.raises(ValueError, match="plan|source|binding|revision"):
-        edited.execute()
+        edited.execute(prove=True)
 
 
 def test_direct_execution_rejects_edited_discovery_witnesses(
@@ -51,7 +51,7 @@ def test_direct_execution_rejects_edited_discovery_witnesses(
         lambda value: value.prepared.discovery_recipe[-1][-1], plan, changed
     )
     with pytest.raises(ValueError, match="discovery|authority|witness|current"):
-        edited.execute()
+        edited.execute(prove=True)
 
 
 def test_fixed_preparation_does_not_publish_supplied_volume(
@@ -78,7 +78,7 @@ def test_fixed_preparation_does_not_publish_supplied_volume(
         lambda value: value.prepared.discovery_recipe[1], plan, domain * 1.1
     )
     with pytest.raises(ValueError, match="discovery|authority|current"):
-        edited.execute()
+        edited.execute(prove=True)
 
 
 def test_chained_rebind_rejects_reused_revision_for_new_state(

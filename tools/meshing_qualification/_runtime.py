@@ -65,6 +65,8 @@ def single_cell_kind(mesh: phx.discretization.CellMesh, family: str, /) -> str:
 
 
 def accepted_result_record(result: phx.meshing.CellMeshingResult, /) -> dict[str, object]:
+    if not isinstance(result, phx.meshing.CellMeshingResult):
+        raise TypeError("result must be an accepted CellMeshingResult.")
     result.audit.require_passed()
     if result.certification is None:
         raise RuntimeError("Native result omitted computed scientific certification.")

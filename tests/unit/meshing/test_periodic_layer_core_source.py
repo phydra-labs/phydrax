@@ -1198,7 +1198,7 @@ def test_original_ridge_layer_core_retains_full_boundary_source_witness() -> Non
         .plan(
             source, specification, coordinate_contract=phx.SpatialCoordinateContract.si()
         )
-        .execute()
+        .execute(prove=True)
     )
     certificate = result.certification
     assert certificate is not None and certificate.passed

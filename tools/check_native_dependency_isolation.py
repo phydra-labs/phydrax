@@ -281,7 +281,7 @@ source = NativeCurveSource(segments, "revision-1", curve_entity_ids=np.asarray((
 scope = MeshingScope.whole(source, 1)
 spec = CurveMeshingSpec(CellMeshingTarget(1, 2, CellFamilyPolicy(required=("interval",))), scope, size_controls=(UniformSizeControl(scope, 0.5),), maximum_deviation=0.01)
 try:
-    NativeMeshingProvider().plan(source, spec, coordinate_contract=SpatialCoordinateContract.si()).execute()
+    NativeMeshingProvider().plan(source, spec, coordinate_contract=SpatialCoordinateContract.si()).execute(prove=True)
 except MeshingFailure as error:
     if error.category is not MeshingFailureCategory.PROVIDER_UNAVAILABLE:
         raise RuntimeError("Missing meshcore was not a provider-unavailable refusal.") from error

@@ -38,7 +38,7 @@ def test_cylinder_source_metric_and_carrier_are_distinct() -> None:
             specification,
             coordinate_contract=profiles.SpatialCoordinateContract.si(),
         )
-        .execute()
+        .execute(prove=True)
     )
     assert result.certification is not None
     assert result.certification.inputs.source is not None
@@ -248,7 +248,7 @@ def test_closed_accuracy_rejects_wrong_cap_source_despite_small_residual() -> No
             specification,
             coordinate_contract=profiles.SpatialCoordinateContract.si(),
         )
-        .execute()
+        .execute(prove=True)
     )
     assert result.certification is not None
     assert result.certification.inputs.source is not None

@@ -209,7 +209,7 @@ def _cad_cylinder_volume() -> CellMeshingResult:
             )
         )
         .plan(model, specification)
-        .execute()
+        .execute(prove=True)
     )
 
 

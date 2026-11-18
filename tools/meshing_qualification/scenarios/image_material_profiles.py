@@ -625,7 +625,7 @@ def _run_image_profile(name: str, /, *, oblique: bool) -> dict[str, object]:
     result = (
         NativeMeshingProvider(options)
         .plan(source, specification, coordinate_contract=contract)
-        .execute()
+        .execute(prove=True)
     )
     accepted = accepted_result_record(result)
     certification = result.certification

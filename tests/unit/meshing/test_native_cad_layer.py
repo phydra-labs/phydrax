@@ -112,7 +112,11 @@ def _execute(model: Any, specification: Any) -> Any:
             radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
         ),
     )
-    return phx.meshing.NativeMeshingProvider(options).plan(model, specification).execute()
+    return (
+        phx.meshing.NativeMeshingProvider(options)
+        .plan(model, specification)
+        .execute(prove=True)
+    )
 
 
 def _blocks(mesh: Any, kind: str) -> np.ndarray:

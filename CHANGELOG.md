@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- Native meshing plans accept `prove=True` for immediate acceptance and expose
+  `CellMeshingCandidate.prove()` to certify an already constructed mesh.
 - Exposed `phydrax.geometry.source_entity_id` and
   `phydrax.interchange.save_composition_archive` and
   `phydrax.interchange.load_composition_archive` for source identities and
@@ -261,6 +263,8 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native meshing plans now return a pending candidate by default rather than an
+  accepted result. Pass `prove=True` when an accepted result is required.
 - Native implicit requests with a tolerance-derived resolution now select a
   carrier using a certified second-order forward distance bound when the
   interval field is smooth, its gradient is nonzero in the certified tube, and

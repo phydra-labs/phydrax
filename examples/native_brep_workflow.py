@@ -100,7 +100,7 @@ def run_workflow() -> dict[str, object]:
             raise RuntimeError("Native STEP exchange did not validate.")
         if imported.model.topology.num_solids != model.topology.num_solids:
             raise RuntimeError("Native STEP exchange lost the source solid.")
-    result = plan.execute()
+    result = plan.execute(prove=True)
     result.audit.require_passed()
     certification = result.certification
     if certification is None:

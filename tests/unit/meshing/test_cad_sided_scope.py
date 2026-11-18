@@ -151,7 +151,7 @@ def shared_volume(shared_face: _SharedFaceCase) -> CellMeshingResult:
     return (
         phx.meshing.NativeMeshingProvider()
         .plan(shared_face.model, specification)
-        .execute()
+        .execute(prove=True)
     )
 
 
@@ -356,7 +356,9 @@ def test_native_patch_preflight_refuses_single_interface_side(
         (ValueError, phx.meshing.MeshingFailure),
         match="single interface side cannot be flattened",
     ):
-        phx.meshing.NativeMeshingProvider().plan(shared_face.model, one_sided).execute()
+        phx.meshing.NativeMeshingProvider().plan(shared_face.model, one_sided).execute(
+            prove=True
+        )
 
 
 def test_source_association_selects_the_shared_interface(

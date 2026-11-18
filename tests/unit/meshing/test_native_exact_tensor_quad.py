@@ -213,7 +213,7 @@ def test_exact_quarter_source_recipe_replays_and_rejects_forgery(
     result = (
         NativeMeshingProvider(case.options)
         .plan(case.source, case.specification, coordinate_contract=_CONTRACT)
-        .execute()
+        .execute(prove=True)
     )
     assert result.certification is not None
     source = result.certification.inputs.source
@@ -322,7 +322,7 @@ def test_hard_scoped_minimum_size_is_enforced() -> None:
     with pytest.raises(MeshingFailure):
         NativeMeshingProvider(case.options).plan(
             case.source, specification, coordinate_contract=_CONTRACT
-        ).execute()
+        ).execute(prove=True)
 
 
 def test_hard_quad_quality_uses_mapped_tangents_not_chords() -> None:

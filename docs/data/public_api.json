@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "c541bc629fa3a5acdb2840f2768e831ac1615e365b0e20b3f97bc14c42d8786a",
+  "manifest_id": "a0027a80cccb740f8db56d2d4cce6616a7c46b8de41ea637a579aacc7755a931",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -26963,6 +26963,7 @@
       "phydrax.meshing.CellMeshExportResult",
       "phydrax.meshing.CellMeshImportResult",
       "phydrax.meshing.CellMeshTransition",
+      "phydrax.meshing.CellMeshingCandidate",
       "phydrax.meshing.CellMeshingResult",
       "phydrax.meshing.CellMeshingTarget",
       "phydrax.meshing.CellQualityEvaluation",

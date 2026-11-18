@@ -4324,7 +4324,7 @@ def _write_exact_tensor_quad_fidelity(directory: Path, /) -> None:
     result = (
         NativeMeshingProvider(case.options)
         .plan(case.source, case.specification, coordinate_contract=_CONTRACT)
-        .execute()
+        .execute(prove=True)
     )
     if result.certification is None or result.certification.fidelity is None:
         raise ValueError("Exact tensor quad result has no fidelity certificate.")
@@ -11283,7 +11283,7 @@ def _owner_local_remap_archive_fixture() -> tuple[
             specification,
             coordinate_contract=SpatialCoordinateContract.si(),
         )
-        .execute(execution_group=group)
+        .execute(prove=True, execution_group=group)
     )
     if not isinstance(assembly, MeshAssembly) or len(assembly.parts) != 1:
         raise TypeError(
@@ -11380,6 +11380,7 @@ def _owner_local_periodic_adaptive_archive_fixture() -> tuple[
             coordinate_contract=SpatialCoordinateContract.si(),
         )
         .execute(
+            prove=True,
             execution_group=group,
             graph_partition_plan=graph_partition_plan,
         )

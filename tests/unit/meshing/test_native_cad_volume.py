@@ -566,7 +566,7 @@ def _parametric_surface_charts(model: BRepModel, /) -> SurfaceSourceCharts:
     result = (
         phx.meshing.NativeMeshingProvider(NativeMeshingOptions("parametric_surface"))
         .plan(domain, specification, coordinate_contract=contract)
-        .execute()
+        .execute(prove=True)
     )
     assert isinstance(result.surface_source, SurfaceSourceCharts)
     return result.surface_source
@@ -1078,7 +1078,7 @@ def test_quadric_boundary_meets_fixed_tetrahedral_face_quality(tmp_path: Path) -
     result = (
         phx.meshing.NativeMeshingProvider(NativeMeshingOptions("parametric_surface"))
         .plan(domain, specification, coordinate_contract=model.coordinate_contract)
-        .execute()
+        .execute(prove=True)
     )
     assert result.compliance.passed
     assert isinstance(result.surface_source, SurfaceSourceCharts)
@@ -2078,7 +2078,7 @@ def test_cad_sphere_volume_certifies_collapsed_poles_and_its_periodic_seam() -> 
             )
         )
         .plan(model, specification)
-        .execute()
+        .execute(prove=True)
     )
 
     assert result.certification is not None and result.certification.passed
@@ -2134,7 +2134,7 @@ def test_cad_cylinder_volume_charts_planar_caps_in_their_exact_plane() -> None:
             )
         )
         .plan(model, specification)
-        .execute()
+        .execute(prove=True)
     )
 
     assert result.certification is not None and result.certification.passed
@@ -2275,7 +2275,7 @@ def test_cad_volume_recorded_vertex_classes_agree_with_geometric_classification(
             )
         )
         .plan(model, specification)
-        .execute()
+        .execute(prove=True)
     )
     vertex_set = result.mesh.entity_set(0).entity_set_id
     (recorded,) = (

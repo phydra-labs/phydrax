@@ -1489,7 +1489,7 @@ def test_remeshed_implicit_carrier_certifies_charts_and_coverage(
             )
         )
         .plan(source, specification, coordinate_contract=SpatialCoordinateContract.si())
-        .execute()
+        .execute(prove=True)
     )
     achieved = dict(result.compliance.achieved)
 

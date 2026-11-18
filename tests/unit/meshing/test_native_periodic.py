@@ -913,7 +913,7 @@ def algebraic_periodic_result() -> CellMeshingResult:
             specification,
             coordinate_contract=phx.SpatialCoordinateContract.si(),
         )
-        .execute()
+        .execute(prove=True)
     )
 
 

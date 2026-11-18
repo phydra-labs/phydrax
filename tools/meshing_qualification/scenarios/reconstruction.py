@@ -1150,7 +1150,7 @@ def _reconstruct_case(
     plan = NativeMeshingProvider().plan(
         source, specification, coordinate_contract=contract
     )
-    result = plan.execute()
+    result = plan.execute(prove=True)
     accepted = accepted_result_record(result)
     # The reconstructed route certifies fidelity against the reconstructed
     # triangle source itself; it publishes no MeshingDomain chart bank.
@@ -1222,7 +1222,7 @@ def _reconstruct_case(
         plc, volume_specification, coordinate_contract=contract
     )
     _stage(_profile_id(kind, scale), "plc-volume-fill")
-    volume_result = volume_plan.execute()
+    volume_result = volume_plan.execute(prove=True)
     lifecycle = _volume_lifecycle(
         plc,
         plc,
@@ -2293,7 +2293,7 @@ def _envelope_case(directory: str, /) -> dict[str, object]:
         )
     ).plan(source, specification, coordinate_contract=contract)
     _stage(_ENVELOPE_PROFILE, "envelope-volume-fill")
-    result = plan.execute()
+    result = plan.execute(prove=True)
     _stage(_ENVELOPE_PROFILE, "independent-envelope-deviation")
     accepted = accepted_result_record(result)
     target_triangles = _actual_target_triangles(result.mesh, result.geometry)

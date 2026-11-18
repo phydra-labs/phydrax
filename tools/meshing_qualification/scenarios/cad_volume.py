@@ -38,7 +38,7 @@ def native_brep_workflow() -> dict[str, object]:
     )
     provider = NativeMeshingProvider()
     plan = provider.plan(model, specification, coordinate_contract=contract)
-    result = plan.execute()
+    result = plan.execute(prove=True)
     accepted = accepted_result_record(result)
     measured_volume = float(np.sum(np.asarray(result.quality.evaluation.measures)))
     exact_volume = 2.0
@@ -94,7 +94,7 @@ def native_volume() -> dict[str, object]:
     plan = NativeMeshingProvider().plan(
         source, specification, coordinate_contract=contract
     )
-    result = plan.execute()
+    result = plan.execute(prove=True)
     accepted = accepted_result_record(result)
     measured_volume = float(np.sum(np.asarray(result.quality.evaluation.measures)))
     exact_volume = (4.0 / 3.0) * np.pi * 0.75**3

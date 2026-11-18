@@ -234,7 +234,7 @@ def main() -> None:
     native_result = (
         NativeMeshingProvider(NativeMeshingOptions("parametric_surface"))
         .plan(model, specification, coordinate_contract=coordinate_contract)
-        .execute()
+        .execute(prove=True)
     )
     native_mesh_cell_count = sum(block.cell_count for block in native_result.mesh.blocks)
     surface_source = native_result.surface_source
