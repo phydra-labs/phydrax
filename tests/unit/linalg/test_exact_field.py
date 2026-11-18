@@ -524,12 +524,16 @@ def test_batched_symmetric_product_minors_match_independent_rational_reference(
         right: tuple[tuple[Fraction, ...], ...],
     ) -> tuple[tuple[Fraction, ...], ...]:
         return tuple(
-            tuple(sum((left[i][k] * right[k][j] for k in range(size)), Fraction(0))
-                  for j in range(size))
+            tuple(
+                sum((left[i][k] * right[k][j] for k in range(size)), Fraction(0))
+                for j in range(size)
+            )
             for i in range(size)
         )
 
-    def reference(factors: tuple[tuple[tuple[Fraction, ...], ...], ...]) -> tuple[Fraction, ...]:
+    def reference(
+        factors: tuple[tuple[tuple[Fraction, ...], ...], ...],
+    ) -> tuple[Fraction, ...]:
         product = factors[0]
         for factor in factors[1:]:
             product = multiply(product, factor)
@@ -569,19 +573,30 @@ def test_batched_symmetric_product_minors_match_independent_rational_reference(
         actual = symmetric_product_minors_batch_exact(matrices, left, suffix)
         for values, result in zip(matrices, actual, strict=True):
             factors = (left, values) if suffix is None else (left, values, suffix)
-            assert result == reference(factors) == symmetric_product_minors_exact(*factors)
-        assert symmetric_product_minors_batch_exact(matrices[:1], left, suffix)[0] == actual[0]
+            assert (
+                result == reference(factors) == symmetric_product_minors_exact(*factors)
+            )
+        assert (
+            symmetric_product_minors_batch_exact(matrices[:1], left, suffix)[0]
+            == actual[0]
+        )
         integers = [
             tuple(tuple(value.numerator for value in row) for row in values)
             for values in matrices
         ]
         integer_results = symmetric_product_minors_batch_exact(integers, left, suffix)
         for values, result in zip(integers, integer_results, strict=True):
-            rational_values = tuple(tuple(Fraction(value) for value in row) for row in values)
-            factors = (left, rational_values) if suffix is None else (
-                left, rational_values, suffix
+            rational_values = tuple(
+                tuple(Fraction(value) for value in row) for row in values
             )
-            assert result == reference(factors) == symmetric_product_minors_exact(*factors)
+            factors = (
+                (left, rational_values)
+                if suffix is None
+                else (left, rational_values, suffix)
+            )
+            assert (
+                result == reference(factors) == symmetric_product_minors_exact(*factors)
+            )
 
 
 @pytest.mark.parametrize("size", (2, 3))

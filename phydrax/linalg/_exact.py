@@ -169,7 +169,9 @@ def inverse_small_rational(
     """Invert a two- or three-dimensional rational matrix via integer cofactors."""
     size = len(matrix)
     if size not in (2, 3) or any(len(row) != size for row in matrix):
-        raise ValueError("A small rational inverse requires a square matrix of order two or three.")
+        raise ValueError(
+            "A small rational inverse requires a square matrix of order two or three."
+        )
     scale = lcm(*(value.denominator for row in matrix for value in row))
     rows = tuple(
         tuple(value.numerator * (scale // value.denominator) for value in row)
@@ -268,6 +270,7 @@ def symmetric_product_minors_exact(
         for order in range(1, len(numerator) + 1)
     )
 
+
 def symmetric_product_minors_batch_exact(
     matrices: Sequence[Sequence[Sequence[Fraction | int]]],
     prefix: Sequence[Sequence[Fraction | int]],
@@ -287,7 +290,9 @@ def symmetric_product_minors_batch_exact(
         matrix: Sequence[Sequence[Fraction | int]],
     ) -> tuple[np.ndarray[tuple[int, ...], np.dtype[np.object_]], int]:
         if len(matrix) != size or any(len(row) != size for row in matrix):
-            raise ValueError("Exact symmetric product factors must have equal square shapes.")
+            raise ValueError(
+                "Exact symmetric product factors must have equal square shapes."
+            )
         if any(
             isinstance(value, bool) or not isinstance(value, Fraction | int)
             for row in matrix

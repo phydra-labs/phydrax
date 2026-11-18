@@ -1648,10 +1648,41 @@ def _jacobian_controls_positive(
             )
             for vector in controls.controls.values.values()
         )
+        # The scalar route owns exception ordering for malformed inputs. In
+        # particular, a negative control must stop before a later malformed one.
+        if (
+            dimension not in (1, 2, 3)
+            or any(
+                len(factor) != dimension
+                or any(len(row) != dimension for row in factor)
+                or any(isinstance(value, bool) for row in factor for value in row)
+                for factor in rational_factors
+            )
+            or any(
+                any(len(row) != dimension for row in matrix)
+                or any(isinstance(value, bool) for row in matrix for value in row)
+                for matrix in matrices
+            )
+        ):
+            return all(
+                all(
+                    value > 0
+                    for value in symmetric_product_minors_exact(
+                        *(
+                            (rational_factors[0], matrix)
+                            if glue is None
+                            else (rational_factors[0], matrix, rational_factors[1])
+                        )
+                    )
+                )
+                for matrix in matrices
+            )
         return all(
             all(value > 0 for value in minors)
             for minors in symmetric_product_minors_batch_exact(
-                matrices, rational_factors[0], None if glue is None else rational_factors[1]
+                matrices,
+                rational_factors[0],
+                None if glue is None else rational_factors[1],
             )
         )
     return all(
