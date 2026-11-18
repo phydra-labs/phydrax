@@ -42,6 +42,9 @@ from ._sizing import (
 )
 
 
+ConstructionSteering: TypeAlias = Literal["certified", "screened"]
+
+
 class MeshingOperation(StrEnum):
     FACET_GEOMETRY = "facet_geometry"
     MESH_CURVE = "mesh_curve"
