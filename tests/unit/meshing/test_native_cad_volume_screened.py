@@ -8,7 +8,7 @@ import pytest
 
 import phydrax as phx
 from phydrax._meshcore import meshcore_identity
-from phydrax.geometry.brep._constructors import brep_box
+from phydrax.geometry.brep._constructors import brep_box, brep_cylinder
 from phydrax.meshing._canonical import _accept_native_construction, _NATIVE_PROVIDER
 from phydrax.meshing.providers import NativeMeshingOptions, NativeMeshingProvider
 from phydrax.meshing.providers._native import _PreparedDirectBRepCadVolume
@@ -21,6 +21,8 @@ pytestmark = pytest.mark.meshcore
 def test_public_candidate_proves_same_box_and_refuses_changed_mesh() -> None:
     plan = _box_plan()
     candidate = plan.execute(prove=False)
+    assert "boundary_distance" not in candidate.certified_steps
+    assert candidate.screens["cad_boundary_sample_distance_max"] >= 0.0
     expected = plan.execute(prove=True)
     proved = candidate.prove()
     assert proved.mesh.mesh_id == candidate.mesh.mesh_id == expected.mesh.mesh_id
@@ -47,6 +49,58 @@ def test_public_candidate_proves_same_box_and_refuses_changed_mesh() -> None:
     )
     with pytest.raises(ValueError, match="changed the constructed mesh"):
         broken.prove()
+
+
+def test_screened_cylinder_is_closed_and_proves_or_reports_findings() -> None:
+    contract = phx.SpatialCoordinateContract.si()
+    model = brep_cylinder(1.0, 1.0, coordinate_contract=contract)
+    scope = phx.meshing.MeshingScope.whole(model, 2)
+    specification = phx.meshing.VolumeMeshingSpec(
+        phx.meshing.CellMeshingTarget(
+            3, 3, phx.meshing.CellFamilyPolicy(required=("tetrahedron",))
+        ),
+        scope,
+        phx.meshing.VolumeFillStrategy.SIMPLEX,
+        size_controls=(
+            phx.meshing.UniformSizeControl(
+                scope, 0.8, strength=phx.meshing.SizeControlStrength.SOFT
+            ),
+        ),
+        maximum_deviation=0.08,
+    )
+    plan = NativeMeshingProvider(
+        NativeMeshingOptions(
+            "cad_tetrahedral",
+            volume_schedule=phx.meshing.NativeVolumeSchedule(
+                shape_strength=phx.meshing.SizeControlStrength.SOFT
+            ),
+        )
+    ).plan(model, specification, coordinate_contract=contract)
+    candidate = plan.execute(prove=False)
+    mesh_id = candidate.mesh.mesh_id
+    coordinates = np.array(candidate.mesh.coordinates, copy=True)
+    tetrahedra = np.concatenate(
+        [np.asarray(block.vertices, dtype=np.int64) for block in candidate.mesh.blocks]
+    )
+    faces = Counter(
+        tuple(sorted(int(value) for value in tetrahedron[list(face)]))
+        for tetrahedron in tetrahedra
+        for face in ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3))
+    )
+    assert all(count in (1, 2) for count in faces.values())
+    boundary = [face for face, count in faces.items() if count == 1]
+    edges = Counter(
+        tuple(sorted((face[i], face[(i + 1) % 3]))) for face in boundary for i in range(3)
+    )
+    assert all(count == 2 for count in edges.values())
+    try:
+        accepted = candidate.prove()
+    except phx.meshing.MeshingFailure as error:
+        assert str(error) and error.stage
+    else:
+        assert accepted.mesh.mesh_id == mesh_id
+    assert candidate.mesh.mesh_id == mesh_id
+    np.testing.assert_array_equal(candidate.mesh.coordinates, coordinates)
 
 
 def _box_plan() -> phx.meshing.NativeMeshingPlan:

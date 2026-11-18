@@ -3307,13 +3307,32 @@ def _cad_curve_feature_witness(
     )
 
 
+def _sampled_cad_boundary_distances(
+    source: NativeCadVolumeSource, points: np.ndarray, /
+) -> np.ndarray:
+    """Distances to sampled CAD chart vertices, not certified distance bounds."""
+    from scipy.spatial import cKDTree
+
+    charts = np.asarray(source.source_triangle_parameters, dtype=np.float64).reshape(
+        (-1, 2)
+    )
+    patches = np.repeat(np.asarray(source.source_triangle_patches, dtype=np.int64), 3)
+    samples = source.domain.evaluate(patches, charts)
+    if not np.all(np.isfinite(samples)):
+        raise ValueError("CAD boundary sample coordinates must be finite.")
+    distances, _ = cKDTree(samples).query(points)
+    return np.asarray(distances, dtype=np.float64)
+
+
 def _brep_associations(
     source: NativeCadVolumeSource,
     construction: VolumeConstruction,
     physical_points: np.ndarray,
     native: tuple[GeometryAssociation, ...],
     /,
-) -> tuple[GeometryAssociation, ...]:
+    *,
+    steering: ConstructionSteering,
+) -> tuple[tuple[GeometryAssociation, ...], float | None]:
     mesh = construction.mesh
     source_maps = _cad_entity_maps(source)
     vertex_rows = {
@@ -3324,16 +3343,23 @@ def _brep_associations(
     }
     vertex_distances = np.zeros((mesh.coordinates.shape[0],), dtype=np.float64)
     boundary_rows = np.unique(np.asarray(construction.boundary_faces, dtype=np.int64))
+    maximum_sample_distance = None
     if boundary_rows.size:
-        distance = source.fidelity_source.boundary_distance(
-            np.asarray(physical_points, dtype=np.float64)[boundary_rows]
-        )
-        upper = np.asarray(distance.upper, dtype=np.float64)
-        if upper.shape != boundary_rows.shape:
+        queries = np.asarray(physical_points, dtype=np.float64)[boundary_rows]
+        match steering:
+            case "certified":
+                distance = source.fidelity_source.boundary_distance(queries)
+                residual = np.asarray(distance.upper, dtype=np.float64)
+            case "screened":
+                residual = _sampled_cad_boundary_distances(source, queries)
+                maximum_sample_distance = float(np.max(residual, initial=0.0))
+            case invalid:
+                assert_never(invalid)
+        if residual.shape != boundary_rows.shape:
             raise ValueError(
                 "CAD boundary query returned a misaligned vertex distance bank."
             )
-        vertex_distances[boundary_rows] = upper
+        vertex_distances[boundary_rows] = residual
 
     connectivity_edges, connectivity_faces = simplex_volume_entities(mesh)
     edge_vertices = {
@@ -3490,7 +3516,7 @@ def _brep_associations(
                 exact=False,
             )
         )
-    return tuple(result)
+    return tuple(result), maximum_sample_distance
 
 
 def _compliance_for_request(
@@ -3760,14 +3786,34 @@ class _DeferredCadVolume:
     curve_association: GeometryAssociation | None
     junction_vertices: tuple[int, ...]
     certified_steps: tuple[str, ...]
+    screens: dict[str, float]
 
     def resolve(self, /) -> NativeMeshConstruction:
         from ..._meshcore import meshcore_identity
         from .._canonical import _accept_native_construction, _NATIVE_PROVIDER
 
+        surface_construction = self.surface.construction
+        if surface_construction.deferred_certification is not None:
+            resolved = surface_construction.deferred_certification.resolve()
+            if (
+                resolved.mesh.mesh_id != surface_construction.mesh.mesh_id
+                or cell_geometry_id(resolved.geometry)
+                != cell_geometry_id(surface_construction.geometry)
+                or resolved.coordinate_contract.spatial_id
+                != surface_construction.coordinate_contract.spatial_id
+                or tuple(a.association_id for a in resolved.organization.associations)
+                != tuple(
+                    a.association_id
+                    for a in surface_construction.organization.associations
+                )
+            ):
+                raise ValueError(
+                    "Deferred surface certification changed the constructed mesh, geometry, or associations."
+                )
+            surface_construction = resolved
         proofs: list[_ComputedSurfaceAcceptance] = []
         accepted = _accept_native_construction(
-            self.surface.construction,
+            surface_construction,
             self.surface.specification,
             _NATIVE_PROVIDER,
             meshcore_identity(),
@@ -3811,6 +3857,7 @@ class _DeferredCadVolume:
             organization=self.organization,
             stages=rebound.stages,
             certified_steps=self.certified_steps,
+            screens=self.screens,
         )
 
 
@@ -3960,8 +4007,12 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
             source_scope_owner=self.source.domain,
             region_controls=self.specification.region_controls,
         )
-        associations = _brep_associations(
-            self.source, construction, physical.points, organization.associations
+        associations, maximum_sample_distance = _brep_associations(
+            self.source,
+            construction,
+            physical.points,
+            organization.associations,
+            steering=steering,
         )
         curve_association = _cad_curve_association(self.source, construction)
         if curve_association is not None:
@@ -4000,11 +4051,18 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
                     raise ValueError(
                         "Screened CAD volume requires deferred surface operands."
                     )
-                steps = (
-                    "boundary_distance",
-                    "cad_plane",
-                    "surface_construction",
+                steps = tuple(
+                    sorted(
+                        set(surface_premises.construction.certified_steps) | {"cad_plane"}
+                    )
                 )
+                screens = dict(surface_premises.construction.screens)
+                if maximum_sample_distance is not None:
+                    if "cad_boundary_sample_distance_max" in screens:
+                        raise ValueError(
+                            "Surface and volume screen names must be distinct."
+                        )
+                    screens["cad_boundary_sample_distance_max"] = maximum_sample_distance
                 certification = NativeCertificationRequest(
                     MeshCertificationSchedule("volume_cad"),
                     self.source.source_id,
@@ -4029,6 +4087,7 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
                     curve_association,
                     _cad_junction_vertices(self.source),
                     steps,
+                    screens,
                 )
                 return NativeMeshConstruction(
                     construction.mesh,
@@ -4040,6 +4099,7 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
                     stages=construction.stages,
                     deferred_certification=deferred,
                     certified_steps=steps,
+                    screens=screens,
                 )
             case invalid:
                 assert_never(invalid)
