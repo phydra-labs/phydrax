@@ -287,6 +287,11 @@
   common-scale integers, preserving exact results and coefficient order. In
   three alternating replays of 15,302 captured compositions, the original
   took 33.9–45.0 seconds and the integer path 11.9–15.4 seconds under load.
+- Oriented boundary proofs reuse exact integer-scaled quadratic tetrahedron
+  edge values for trace equality and face-image evidence, preserving findings
+  and their order. On captured 147,231-cell qualification inputs, the median
+  combined time of three alternating proof replays fell from 99.24 to 62.90
+  seconds.
 - Sphere and torus projection points, parameters, normals and tangents now use
   platform-identical representatives, changing projection `result_id`s while
   certified bounds, statuses, source identities and profile identities remain
