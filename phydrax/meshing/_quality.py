@@ -736,7 +736,9 @@ def _corner_table(kind: str, arity: int, /) -> _CornerTable:
         raise ValueError(f"Reference corner frames of {kind!r} are not positive.")
     identity = np.eye(frames.shape[-1], dtype=np.float64)
     inverse = np.stack([_rational_solve(frame, identity) for frame in frames])
-    scaled = determinant / np.prod(binary64_norm(np.swapaxes(frames, -1, -2)), axis=-1)
+    scaled = determinant / _quality_product(
+        binary64_norm(np.swapaxes(frames, -1, -2)), -1, True
+    )
     return _CornerTable(vertices, neighbors, inverse, determinant, scaled)
 
 
@@ -837,14 +839,15 @@ def _measure_rule(kind: str, /) -> _MeasureRule:
         case "hexahedron":
             points = np.stack(np.meshgrid(gauss, gauss, gauss, indexing="ij"), -1)
             points = points.reshape(-1, 3)
-            weights = np.prod(
+            weights = _quality_product(
                 np.stack(
                     np.meshgrid(
                         gauss_weights, gauss_weights, gauss_weights, indexing="ij"
                     ),
                     -1,
                 ),
-                axis=-1,
+                -1,
+                True,
             ).reshape(-1)
         case "prism":
             points = np.stack(
@@ -885,6 +888,23 @@ def _quality_sum(values: Any, axis: int, keepdims: bool, host: bool, /) -> Any:
     for index in range(moved.shape[-1]):
         result = result + moved[..., index]
     return np.expand_dims(result, axis) if keepdims else result
+
+
+def _quality_product(values: Any, axis: int, host: bool, /) -> Any:
+    """Multiply host entries in increasing index order, without reassociation."""
+    if not host:
+        return jnp.prod(values, axis=axis)
+    moved = np.moveaxis(values, axis, -1)
+    result = np.ones(moved.shape[:-1], dtype=np.float64)
+    for index in range(moved.shape[-1]):
+        result = result * moved[..., index]
+    return result
+
+
+def _quality_trace(values: Any, host: bool, /) -> Any:
+    if not host:
+        return jnp.trace(values, axis1=-2, axis2=-1)
+    return _quality_sum(np.diagonal(values, axis1=-2, axis2=-1), -1, False, True)
 
 
 def _quality_norm(values: Any, axis: int, keepdims: bool, host: bool, /) -> Any:
@@ -1004,7 +1024,7 @@ def _corner_measures(
     lengths = _quality_norm(frames, -2, False, host)
     scaled = (
         determinant
-        / xp.maximum(xp.prod(lengths, axis=-1), _tiny(points))
+        / xp.maximum(_quality_product(lengths, -1, host), _tiny(points))
         / table.ideal_scaled[None, :]
     )
     if host:
@@ -1017,7 +1037,7 @@ def _corner_measures(
         gram = ein.contract("ckad,ckae->ckde", target, target, backend="jax")
     positive = determinant > 0.0
     gram_determinant = xp.maximum(_square_determinant(gram), _tiny(points))
-    trace = xp.trace(gram, axis1=-2, axis2=-1)
+    trace = _quality_trace(gram, host)
     ratio = xp.where(
         positive,
         dimension
@@ -1045,7 +1065,7 @@ def _corner_measures(
             positive,
             dimension
             * _quality_root(metric_determinant, dimension, host)
-            / xp.maximum(xp.trace(metric_gram, axis1=-2, axis2=-1), _tiny(points)),
+            / xp.maximum(_quality_trace(metric_gram, host), _tiny(points)),
             0.0,
         )
     return determinant, scaled, ratio, condition, metric_ratio
@@ -1116,7 +1136,7 @@ def _surface_quality(kind: str, points: Any, metric: Any, host: bool, /) -> _Blo
         radius = (
             16.0
             * magnitude**2
-            / xp.maximum(perimeter * xp.prod(lengths, axis=1), _tiny(points))
+            / xp.maximum(perimeter * _quality_product(lengths, 1, host), _tiny(points))
         )
         valid = measure > 0.0
     elif kind == "quadrilateral":
