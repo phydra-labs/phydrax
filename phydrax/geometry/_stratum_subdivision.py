@@ -1623,11 +1623,63 @@ def _edge_matrix(points: tuple[tuple[ExactScalar, ...], ...], origin: int, /) ->
     )
 
 
+def _quadratic_simplex_jacobians(
+    coordinates: tuple[dict[_Index, Fraction | int], ...], /
+) -> _JacobianControls:
+    """Degree-one Jacobian controls over one positive integer scale."""
+    scale = lcm(*(value.denominator for poly in coordinates for value in poly.values()))
+    rows: list[list[int]] = []
+    for polynomial in coordinates:
+        numerators = {
+            index: value.numerator * (scale // value.denominator)
+            for index, value in polynomial.items()
+        }
+        for axis in range(3):
+            origin = tuple(int(index == axis) for index in range(3))
+            constant = numerators.get(origin, 0)
+            row = [constant]
+            for slot in range(3):
+                exponent = tuple(
+                    int(index == axis) + int(index == slot) for index in range(3)
+                )
+                row.append(
+                    constant + numerators.get(exponent, 0) * (2 if slot == axis else 1)
+                )
+            rows.append(row)
+    values = {
+        index: tuple(row[index.index(1)] for row in rows)
+        for index in _control_indices((4,), (1,))
+    }
+    return _JacobianControls(3, _integer_controls(values, scale))
+
+
 def _jacobian_controls(cell: EmbeddingCell, /) -> _JacobianControls | None:
     """Bernstein controls of the reference Jacobian on the unit reference simplex."""
     dimension = cell.dimension
+    coordinates = cell.coordinates
+    # A quadratic tetrahedron has an affine Jacobian: its Bernstein controls
+    # are the exact derivatives at the four reference corners. The bounded
+    # integer workset contains at most 30 input and 36 output coefficients.
+    if (
+        dimension == 3
+        and len(coordinates) == 3
+        and all(
+            isinstance(expression, dict)
+            and all(
+                isinstance(index, tuple)
+                and len(index) == 3
+                and all(type(power) is int and power >= 0 for power in index)
+                and sum(index) <= 2
+                and type(coefficient) in (int, Fraction)
+                for index, coefficient in expression.items()
+            )
+            for expression in coordinates
+        )
+    ):
+        rational = cast(tuple[dict[_Index, Fraction | int], ...], coordinates)
+        return _quadratic_simplex_jacobians(rational)
     entries: list[list[dict[_Index, ExactScalar]]] = []
-    for expression in cell.coordinates:
+    for expression in coordinates:
         if not isinstance(expression, dict):
             return None
         row: list[dict[_Index, ExactScalar]] = []

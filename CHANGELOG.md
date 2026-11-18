@@ -267,6 +267,10 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Contact subdivision constructs quadratic tetrahedron Jacobian controls with
+  common-scale integers, preserving exact control nets. Three alternating
+  replays of 56,425 captured requests took 10.6–13.9 seconds before and
+  3.0–3.7 seconds after on the measured machine.
 - Contact subdivision composes quadratic rational root polynomials with
   common-scale integers, preserving exact results and coefficient order. In
   three alternating replays of 15,302 captured compositions, the original
