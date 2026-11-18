@@ -1,4 +1,5 @@
 import gc
+import hashlib
 import math
 import weakref
 from fractions import Fraction
@@ -10,6 +11,7 @@ import numpy as np
 import pytest
 from jax import Array
 
+import phydrax.geometry as geometry
 from phydrax._interpolation import TMesh2D
 from phydrax._interpolation._bspline_extraction import (
     _rational_bernstein_surface_span,
@@ -1506,6 +1508,18 @@ def test_meshing_domain_preserves_trim_orientation_and_batched_queries() -> None
     np.testing.assert_array_equal(np.asarray(point), ((0.5, 0.0, 0.0),))
     np.testing.assert_allclose(normals, ((0.0, 0.0, 1.0),))
     np.testing.assert_array_equal(regular, (True,))
+
+
+def test_public_source_entity_id_uses_canonical_key() -> None:
+    assert geometry.source_entity_id is source_entity_id
+    canonical_json = (
+        b'{"entity":"zero-set","entity_kind":"implicit-surface",'
+        b'"kind":"geometry-source-entity","occurrence":[],"revision":"r1",'
+        b'"source":"sphere"}'
+    )
+    assert geometry.source_entity_id(
+        "sphere", "r1", "implicit-surface", "zero-set"
+    ) == hashlib.sha256(canonical_json).hexdigest()
 
 
 def test_meshing_domain_entity_lookup_requires_occurrence_disambiguation() -> None:

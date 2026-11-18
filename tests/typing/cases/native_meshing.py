@@ -65,3 +65,19 @@ def bounded_native_search() -> None:
 def native_cad_archive(model: phx.geometry.brep.BRepModel, path: Path) -> None:
     assert_type(phx.interchange.save_brep_archive(model, path), Path)
     assert_type(phx.interchange.load_brep_archive(path), phx.geometry.brep.BRepModel)
+
+
+def composition_archive(composition: phx.lifecycle.Composition, path: Path) -> None:
+    assert_type(phx.interchange.save_composition_archive(composition, path), Path)
+    assert_type(
+        phx.interchange.load_composition_archive(path), phx.lifecycle.Composition
+    )
+
+
+def source_entity_key() -> None:
+    assert_type(
+        phx.geometry.source_entity_id(
+            "sphere", "r1", "implicit-surface", "zero-set", occurrence_path=("copy",)
+        ),
+        str,
+    )

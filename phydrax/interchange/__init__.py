@@ -73,6 +73,8 @@ _DEFERRED_EXPORTS = {
     "write_brep_text": "._cad_brep_text",
     "load_brep_archive": "._cad_archive",
     "save_brep_archive": "._cad_archive",
+    "load_composition_archive": "._composition_archive",
+    "save_composition_archive": "._composition_archive",
     "DxfExportResult": "._dxf",
     "DxfImportError": "._dxf",
     "DxfImportPolicy": "._dxf",
@@ -412,6 +414,7 @@ if TYPE_CHECKING:
         FormatCapability,
         FormatDirection,
     )
+    from ._composition_archive import load_composition_archive, save_composition_archive
     from ._compressible_kinetic import (
         CompressibleKineticCaseIR,
         import_packed_kinetic_boundary,
@@ -627,6 +630,7 @@ __all__ = [
     "explore_unique",
     "import_occt_shape",
     "load_brep_archive",
+    "load_composition_archive",
     "persist_occt_shape",
     "prepare_occt_projection",
     "read_brep_text",
@@ -637,6 +641,7 @@ __all__ = [
     "read_occt_shape",
     "read_step",
     "save_brep_archive",
+    "save_composition_archive",
     "shape_digest",
     "shape_index",
     "write_brep_text",

@@ -80,11 +80,15 @@ no prior-run result or cached acceptance replaces execution.
 
 Use `phydrax.interchange.save_brep_archive(model, path)` and
 `phydrax.interchange.load_brep_archive(path)` for native B-Rep persistence.
-The archive retains registered source geometry, exact identity, realization,
+The B-Rep archive retains registered source geometry, exact identity, realization,
 and T-spline refinement structure; loading reconstructs the native objects
 through their owning validation. Native persistence is distinct from STEP or
 IGES exchange: a source unsupported by an exact external codec is refused,
 not silently replaced by a tessellation.
+
+Use `phydrax.interchange.save_composition_archive(composition, path)` and
+`phydrax.interchange.load_composition_archive(path)` to persist compositions,
+including sketch continuation state.
 
 Native source constructors are available from `phydrax.meshing.providers`,
 including `NativeCurveSource`, `NativePlanarSource`, `NativePlcSource`,

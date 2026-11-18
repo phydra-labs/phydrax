@@ -192,6 +192,7 @@ def test_continuation_reference_restores_in_fresh_process(tmp_path: Path) -> Non
     import subprocess
     import sys
 
+    from phydrax._array_archive import ArrayArchiveCorruptionError
     from phydrax.geometry.design import (
         ParameterId,
         SketchBranchWitness,
@@ -200,8 +201,8 @@ def test_continuation_reference_restores_in_fresh_process(tmp_path: Path) -> Non
     from phydrax.geometry.design._continuation import (
         SketchContinuationReferenceArchiveRecipe,
     )
+    from phydrax.interchange import load_composition_archive, save_composition_archive
     from phydrax.lifecycle import Composition, CompositionEntry
-    from phydrax.meshing._model_codec import write_model_artifact
 
     distance = ParameterId("triangle", "radius")
     points = np.array([[0.0, 0.0], [2.0, 0.0], [1.0, 1.5]], dtype=np.float64)
@@ -244,15 +245,27 @@ def test_continuation_reference_restores_in_fresh_process(tmp_path: Path) -> Non
         ),
         boundary_id="sketch-archive",
     )
-    path = write_model_artifact(tmp_path / "sketch.phx", composition, limits=None)
+    path = save_composition_archive(composition, tmp_path / "sketch.phx")
+    restored = load_composition_archive(path).value("sketch")
+    restored.solution.preparation.verify(
+        restored.sketch,
+        restored.solution.dimensions,
+        tolerance=restored.solution.root_evidence.residual_tolerance,
+    )
+    np.testing.assert_allclose(restored.solution.points, solution.points)
+    assert restored.witness_signs == reference.witness_signs
+    with pytest.raises(TypeError, match="Composition"):
+        save_composition_archive(sketch, tmp_path / "wrong.phx")
+    corrupted = tmp_path / "corrupted.phx"
+    corrupted.write_bytes(path.read_bytes()[:32])
+    with pytest.raises(ArrayArchiveCorruptionError):
+        load_composition_archive(corrupted)
     child = """
 import sys
 import numpy as np
 from phydrax.geometry.design import ParameterId, SketchContinuationReference, continue_sketch
-from phydrax.lifecycle import Composition
-from phydrax.meshing._model_codec import read_model_artifact, restore_model_archive_value
-composition = read_model_artifact(sys.argv[1], expected_type=Composition,
-                                  restore=restore_model_archive_value, limits=None)
+from phydrax.interchange import load_composition_archive
+composition = load_composition_archive(sys.argv[1])
 reference = composition.value("sketch")
 assert type(reference) is SketchContinuationReference
 assert reference.witness_signs == (1,)

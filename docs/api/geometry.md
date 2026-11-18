@@ -293,6 +293,14 @@ for its complete zero-set scope. The witness keeps source ID and revision as
 separate binding fields and uses empty occurrence paths; a raw source ID is not
 a substitute for the entity key.
 
+`source_entity_id` returns the SHA-256 hex digest of canonical JSON containing
+`kind` (`"geometry-source-entity"`), `source`, `revision`, `entity_kind`,
+`entity`, and `occurrence` (an array of occurrence identifiers). Canonical JSON
+sorts object keys and uses compact separators. String and integer entity IDs
+remain distinct.
+
+::: phydrax.geometry.source_entity_id
+
 Implicit witness admission scans the complete retained root and triangle banks
 in bounded worksets while retaining lookup entries only for requested chart
 ancestry. Worksets do not limit the source or skip late duplicate keys.

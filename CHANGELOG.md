@@ -1,6 +1,10 @@
 # Changelog
 
 ## Unreleased
+- Exposed `phydrax.geometry.source_entity_id` and
+  `phydrax.interchange.save_composition_archive` and
+  `phydrax.interchange.load_composition_archive` for source identities and
+  composition persistence.
 - Tetrahedral simplex mesh construction now derives entity levels and routes
   with batched integer operations while preserving mesh identities and ordering.
 - Concrete cell-quality evaluations use specified host binary64 arithmetic

@@ -29,6 +29,24 @@ collection digests while streaming publication and verifying source stability.
 Lifecycle NPZ exports and authorized full-archive support bundles use temporary-file
 staging; distributed checkpoint reads use bounded disk-spilling chunk spools.
 
+Native model persistence exposes `save_brep_archive` and `load_brep_archive`
+for B-Rep models, and `save_composition_archive` and `load_composition_archive`
+for lifecycle compositions.
+
+::: phydrax.interchange.save_brep_archive
+
+---
+
+::: phydrax.interchange.load_brep_archive
+
+---
+
+::: phydrax.interchange.save_composition_archive
+
+---
+
+::: phydrax.interchange.load_composition_archive
+
 ## Identity byte streams
 
 Array content fingerprints hash contiguous byte views directly and stage strided
