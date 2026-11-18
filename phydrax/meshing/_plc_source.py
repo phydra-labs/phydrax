@@ -477,8 +477,8 @@ def _cad_segment_incidence(
     surface: SurfaceSourceCharts,
     fidelity_tolerance: float,
     maximum_normal_deviation: float | None,
-    embedding: GlobalEmbeddingCertificate,
-    fidelity: SourceFidelityCertificate,
+    embedding: GlobalEmbeddingCertificate | None,
+    fidelity: SourceFidelityCertificate | None,
     vertex_rows: np.ndarray,
     segment_edge_ids: np.ndarray,
     polygon_cell_ids: np.ndarray,
@@ -498,7 +498,9 @@ def _cad_segment_incidence(
     validated_surface: _ValidatedCadSurface | None,
     computed_surface: _ComputedSurfaceAcceptance | None,
     /,
-) -> tuple[frozenset[int], GlobalEmbeddingCertificate, SourceFidelityCertificate]:
+) -> tuple[
+    frozenset[int], GlobalEmbeddingCertificate | None, SourceFidelityCertificate | None
+]:
     """Replay exact CAD surface and source incidence before joining occurrences."""
     from ..geometry._meshing_domain import PatchCurveUse
     from ..geometry._surface_source_support import validate_cad_curve_ancestry
@@ -534,58 +536,56 @@ def _cad_segment_incidence(
         raise ValueError(
             "CAD PLC facet regions differ from authoritative oriented incidence."
         )
-    if not isinstance(embedding, GlobalEmbeddingCertificate) or not isinstance(
-        fidelity, SourceFidelityCertificate
-    ):
-        raise TypeError(
-            "CAD PLC incidence requires retained mathematical surface proofs."
-        )
-    if embedding.status != "certified" or fidelity.status != "certified":
-        raise ValueError(
-            "CAD PLC surface embedding and source fidelity must be certified."
-        )
-    junctions = np.asarray(embedding.binding.junction_vertices, dtype=np.int64)
-    if validated_surface is None:
-        # The replay adopts the retained fidelity evidence inside its own
-        # certification, so bound-limit decisions are not re-decided here.
-        fresh_embedding, fresh_fidelity = _certify_cad_surface(
-            surface,
-            fidelity_tolerance,
-            maximum_normal_deviation,
-            junctions,
-            computed_surface=computed_surface,
-            stored_fidelity=fidelity,
-        )
-    elif type(validated_surface) is _ValidatedCadSurface:
-        fresh_embedding, fresh_fidelity = validated_surface.require(
-            surface, fidelity_tolerance, maximum_normal_deviation, junctions
-        )
+    if embedding is None and fidelity is None:
+        fresh_embedding = None
+        fresh_fidelity = None
     else:
-        raise TypeError("CAD surface proof handoff requires a validated artifact.")
-    _register_model_archive_types()
-    if not _same_model_content(fresh_embedding, embedding):
-        raise ValueError("CAD PLC mathematical proofs differ from their source replay.")
-    # Certified fidelity bounds are stored evidence: the replay must reproduce
-    # the retained certificate's exact content and intersect its enclosures,
-    # and the retained proof, not this platform's rounding of it, is kept.
-    fresh_fidelity = fidelity.adopt_reproof(fresh_fidelity)
-    # The retained archive graph may still contain column recipes.  Its exact
-    # projected content has just matched the freshly constructed proofs, whose
-    # own currentness checks operate on the restored scientific owners.
-    fresh_embedding.require_current(surface.mesh, surface.geometry)
-    fresh_fidelity.require_inputs(
-        surface.mesh,
-        surface.geometry,
-        surface.boundary_source,
-        tolerance=fidelity_tolerance,
-        maximum_normal_deviation=maximum_normal_deviation,
-        witness=surface.chart_witness,
-    )
-    curve_ancestry = validate_cad_curve_ancestry(surface, fidelity_tolerance)
-    if set(int(value) for value in segment_edge_ids) != set(curve_ancestry):
-        raise ValueError(
-            "CAD PLC segments must cover every verified source curve edge exactly."
+        if not isinstance(embedding, GlobalEmbeddingCertificate) or not isinstance(
+            fidelity, SourceFidelityCertificate
+        ):
+            raise TypeError(
+                "CAD PLC incidence requires retained mathematical surface proofs."
+            )
+        if embedding.status != "certified" or fidelity.status != "certified":
+            raise ValueError(
+                "CAD PLC surface embedding and source fidelity must be certified."
+            )
+        junctions = np.asarray(embedding.binding.junction_vertices, dtype=np.int64)
+        if validated_surface is None:
+            fresh_embedding, fresh_fidelity = _certify_cad_surface(
+                surface,
+                fidelity_tolerance,
+                maximum_normal_deviation,
+                junctions,
+                computed_surface=computed_surface,
+                stored_fidelity=fidelity,
+            )
+        elif type(validated_surface) is _ValidatedCadSurface:
+            fresh_embedding, fresh_fidelity = validated_surface.require(
+                surface, fidelity_tolerance, maximum_normal_deviation, junctions
+            )
+        else:
+            raise TypeError("CAD surface proof handoff requires a validated artifact.")
+        _register_model_archive_types()
+        if not _same_model_content(fresh_embedding, embedding):
+            raise ValueError(
+                "CAD PLC mathematical proofs differ from their source replay."
+            )
+        fresh_fidelity = fidelity.adopt_reproof(fresh_fidelity)
+        fresh_embedding.require_current(surface.mesh, surface.geometry)
+        fresh_fidelity.require_inputs(
+            surface.mesh,
+            surface.geometry,
+            surface.boundary_source,
+            tolerance=fidelity_tolerance,
+            maximum_normal_deviation=maximum_normal_deviation,
+            witness=surface.chart_witness,
         )
+        curve_ancestry = validate_cad_curve_ancestry(surface, fidelity_tolerance)
+        if set(int(value) for value in segment_edge_ids) != set(curve_ancestry):
+            raise ValueError(
+                "CAD PLC segments must cover every verified source curve edge exactly."
+            )
     model = domain.brep_authority
     _require_unambiguous_cad_copies(
         model.geometry, model.source_id, model.source_revision
@@ -1060,8 +1060,6 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
         cad_values = (
             cad_source_charts,
             cad_fidelity_tolerance,
-            cad_embedding,
-            cad_fidelity,
             cad_vertex_rows,
             cad_segment_edge_ids,
             cad_polygon_cell_ids,
@@ -1070,6 +1068,10 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
             value is None for value in cad_values
         ):
             raise ValueError("CAD PLC incidence evidence must be supplied together.")
+        if (cad_embedding is None) != (cad_fidelity is None):
+            raise ValueError("CAD PLC incidence evidence must be supplied together.")
+        if cad_source_charts is None and cad_embedding is not None:
+            raise ValueError("CAD PLC surface proofs require CAD incidence data.")
         if cad_source_charts is None and cad_maximum_normal_deviation is not None:
             raise ValueError("CAD normal tolerance requires source charts.")
         verified_segments: frozenset[int] = frozenset()
@@ -1077,9 +1079,13 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
         normalized_segment_edge_ids: np.ndarray | None = None
         normalized_polygon_cell_ids: np.ndarray | None = None
         if cad_source_charts is not None:
-            assert cad_fidelity_tolerance is not None and cad_vertex_rows is not None
-            assert cad_embedding is not None and cad_fidelity is not None
-            assert cad_segment_edge_ids is not None and cad_polygon_cell_ids is not None
+            if (
+                cad_fidelity_tolerance is None
+                or cad_vertex_rows is None
+                or cad_segment_edge_ids is None
+                or cad_polygon_cell_ids is None
+            ):
+                raise ValueError("CAD PLC incidence evidence must be supplied together.")
             normalized_vertex_rows = _integer_array(
                 cad_vertex_rows, "cad_vertex_rows"
             ).copy()
@@ -1184,7 +1190,7 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
         self.cad_vertex_rows = normalized_vertex_rows
         self.cad_segment_edge_ids = normalized_segment_edge_ids
         self.cad_polygon_cell_ids = normalized_polygon_cell_ids
-        self.complex_id = canonical_fingerprint(
+        certified_complex_id = canonical_fingerprint(
             {
                 "kind": "piecewise-linear-complex",
                 "vertices": array_tree_fingerprint(points),
@@ -1240,13 +1246,78 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
                 ),
             }
         )
-        if cad_source_charts is not None:
+        self.complex_id = (
+            canonical_fingerprint(
+                {"kind": "screened-cad-plc", "structure": self.structure_id}
+            )
+            if cad_source_charts is not None and cad_embedding is None
+            else certified_complex_id
+        )
+        if cad_source_charts is not None and cad_embedding is not None:
             operands = (self,)
             fingerprint = live_content_fingerprint(operands)
             ancestry_digest = _cad_ancestry_digest(self)
             if not _same_fingerprint(fingerprint, live_content_fingerprint(operands)):
                 raise ValueError("CAD PLC content changed while recording its proof.")
             _VERIFIED_CAD_COMPLEXES.record(operands, fingerprint, ancestry_digest)
+
+    @property
+    def structure_id(self) -> str:
+        """Bind PLC construction data independently of CAD proof certificates."""
+        charts = self.cad_source_charts
+        return canonical_fingerprint(
+            {
+                "kind": "piecewise-linear-complex-structure",
+                "vertices": array_tree_fingerprint(self.vertices),
+                "polygon_offsets": array_tree_fingerprint(self.polygon_offsets),
+                "polygon_vertices": array_tree_fingerprint(self.polygon_vertices),
+                "polygon_facets": array_tree_fingerprint(self.polygon_facets),
+                "facet_regions": array_tree_fingerprint(self.facet_regions),
+                "segments": array_tree_fingerprint(self.segments),
+                "vertex_ids": self.vertex_ids,
+                "vertex_occurrence_paths": self.vertex_occurrence_paths,
+                "facet_ids": self.facet_ids,
+                "facet_occurrence_paths": self.facet_occurrence_paths,
+                "segment_ids": self.segment_ids,
+                "segment_occurrence_paths": self.segment_occurrence_paths,
+                "plc_edge_vertices": self.plc_edge_vertices,
+                "plc_edge_ids": self.plc_edge_ids,
+                "plc_edge_occurrence_paths": self.plc_edge_occurrence_paths,
+                "region_ids": self.region_ids,
+                "region_occurrence_paths": self.region_occurrence_paths,
+                "boundary": self.boundary,
+                **(
+                    {
+                        "cad_incidence": (
+                            charts.source_chart_id,
+                            self.cad_fidelity_tolerance,
+                            self.cad_maximum_normal_deviation,
+                            array_tree_fingerprint(self.cad_vertex_rows),
+                            array_tree_fingerprint(self.cad_segment_edge_ids),
+                            array_tree_fingerprint(self.cad_polygon_cell_ids),
+                        )
+                    }
+                    if charts is not None
+                    else {}
+                ),
+                **(
+                    {"geometry": array_tree_fingerprint(self.geometry)}
+                    if self.geometry is not None
+                    else {}
+                ),
+                **(
+                    {
+                        "facet_planes": array_tree_fingerprint(self.facet_planes),
+                        "facet_plane_tolerances": array_tree_fingerprint(
+                            self.facet_plane_tolerances
+                        ),
+                    }
+                    if self.facet_planes is not None
+                    and self.facet_plane_tolerances is not None
+                    else {}
+                ),
+            }
+        )
 
     @classmethod
     @checked
@@ -1388,7 +1459,7 @@ class PiecewiseLinearComplex(StrictModule, NonTrainableState):
         if fresh.complex_id != value.complex_id:
             raise ValueError("Stored PLC fields do not match their complex identity.")
         ancestry_digest = None
-        if cad_source_charts is not None:
+        if cad_source_charts is not None and cad_embedding is not None:
             # The constructor just verified `fresh`. A value with exactly the
             # same structure and content is that verified complex, so later
             # replays of this live value need not prove its surface again.

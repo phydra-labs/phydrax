@@ -8,7 +8,15 @@ from __future__ import annotations
 
 import math
 from fractions import Fraction
-from typing import final, NoReturn, overload, Protocol, runtime_checkable, TYPE_CHECKING
+from typing import (
+    assert_never,
+    final,
+    NoReturn,
+    overload,
+    Protocol,
+    runtime_checkable,
+    TYPE_CHECKING,
+)
 
 import equinox as eqx
 import numpy as np
@@ -30,12 +38,13 @@ from ...geometry.multiregion_surface._label_extraction import (
 from ...geometry.reconstruction._core import ReconstructedGeometrySource
 from ...geometry.surface._model import SurfaceModel
 from ...graph import GraphPartitionPlan
-from ...typing import checked
+from ...typing import checked, parse
 from .._canonical import _accept_native_construction, _NATIVE_PROVIDER
 from .._certification import _ComputedSurfaceAcceptance
 from .._contracts import (
     CellFamilyPolicy,
     CellMeshingTarget,
+    ConstructionSteering,
     CurveMeshingSpec,
     MeshingFailure,
     MeshingFailureCategory,
@@ -735,7 +744,61 @@ class _PreparedDirectBRepCadVolume(StrictModule, NonTrainableState):
             }
         )
 
-    def execute(self, /) -> NativeMeshConstruction:
+    def execute(
+        self, /, *, steering: ConstructionSteering = "certified"
+    ) -> NativeMeshConstruction:
+        steering = parse(steering, ConstructionSteering, "steering")
+        match steering:
+            case "certified":
+                pass
+            case "screened":
+                if self.specification.layer_controls:
+                    raise _failure(
+                        MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                        "Screened CAD volume with layer_controls is unsupported.",
+                    )
+                from ._native_cad_volume import (
+                    CadDeferredSurface,
+                    CadSurfaceConstructionData,
+                    NativeCadVolumeSource,
+                    prepare_native_cad_volume,
+                )
+
+                # Surface steering is supplied by the surface owner's branch at integration.
+                boundary_construction = self.boundary_preparation.execute()
+                charts = boundary_construction.organization.surface_source
+                if charts is None:
+                    raise ValueError(
+                        "Screened CAD boundary requires surface source charts."
+                    )
+                surface_data = CadSurfaceConstructionData(
+                    boundary_construction.mesh,
+                    boundary_construction.geometry,
+                    boundary_construction.coordinate_contract,
+                    boundary_construction.organization.associations,
+                    charts,
+                    boundary_construction.certification.fidelity_tolerance,
+                    boundary_construction.certification.maximum_normal_deviation,
+                )
+                cad_source = NativeCadVolumeSource(
+                    self.domain, surface_data, maximum_deviation=None, boundary="fixed"
+                )
+                prepared_volume = prepare_native_cad_volume(
+                    cad_source,
+                    self.specification,
+                    self.options,
+                    self.coordinate_contract,
+                )
+                return prepared_volume.execute(
+                    steering="screened",
+                    surface_premises=CadDeferredSurface(
+                        boundary_construction,
+                        self.boundary_specification,
+                        self.boundary_plan_id,
+                    ),
+                )
+            case invalid:
+                assert_never(invalid)
         boundary_construction = self.boundary_preparation.execute()
         surface_proofs: list[_ComputedSurfaceAcceptance] = []
         boundary_result = _accept_native_construction(
