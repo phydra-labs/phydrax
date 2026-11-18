@@ -120,10 +120,10 @@ def _interval(ctx: Any, lo: Fraction, hi: Fraction) -> Any:
     return ctx.mpf((_scalar(ctx, lo), _scalar(ctx, hi)))
 
 
-def _poly_interval(ctx: Any, p: P, x: Any) -> Any:
-    out = _scalar(ctx, p[-1])
+def _poly_interval(p: tuple[Any, ...], x: Any) -> Any:
+    out = p[-1]
     for coefficient in reversed(p[:-1]):
-        out = out * x + _scalar(ctx, coefficient)
+        out = out * x + coefficient
     return out
 
 
@@ -145,7 +145,7 @@ class _Candidate:
 
 def _distance(
     ctx: Any,
-    family: _OrthogonalCylinderFamily,
+    source: _IntersectionPreparation,
     sign: int,
     theta: Any,
     qx: Fraction,
@@ -153,15 +153,10 @@ def _distance(
     qz: Fraction,
 ) -> tuple[float, float] | None:
     cosine, sine = ctx.cos(theta), ctx.sin(theta)
-    a, b = family.small_normal_coefficients
-    c, d = family.small_large_axis_coefficients
-    n = _scalar(ctx, family.delta_n) + _scalar(ctx, family.small_radius) * (
-        _scalar(ctx, a) * cosine + _scalar(ctx, b) * sine
-    )
-    z = _scalar(ctx, family.delta_large_axis) + _scalar(ctx, family.small_radius) * (
-        _scalar(ctx, c) * cosine + _scalar(ctx, d) * sine
-    )
-    h = _scalar(ctx, family.large_radius) ** 2 - n**2
+    delta_n, radius_small, a, b, delta_a, c, d, radius_large = source.distance_constants
+    n = delta_n + radius_small * (a * cosine + b * sine)
+    z = delta_a + radius_small * (c * cosine + d * sine)
+    h = radius_large**2 - n**2
     if float(h.a) <= 0:
         return None
     x = sign * ctx.sqrt(h)
@@ -186,6 +181,7 @@ class _IntersectionPreparation:
     node_values: np.ndarray
     node_lower: np.ndarray
     node_upper: np.ndarray
+    distance_constants: tuple[Any, ...]
     point_program: PreparedIntervalFunction | None
     chart_programs: dict[int, PreparedIntervalFunction | None] = field(
         default_factory=dict
@@ -226,6 +222,17 @@ def _prepare_intersection(curve: IntersectionCurve, /) -> _IntersectionPreparati
         np.asarray(curve.node_values),
         np.asarray(curve.node_lower),
         np.asarray(curve.node_upper),
+        tuple(
+            _scalar(interval_context(80), value)
+            for value in (
+                family.delta_n,
+                family.small_radius,
+                *family.small_normal_coefficients,
+                family.delta_large_axis,
+                *family.small_large_axis_coefficients,
+                family.large_radius,
+            )
+        ),
         prepare_host_program(lambda value: curve.evaluate(value[0]), 1),
     )
 
@@ -463,7 +470,7 @@ class _PreparedProjection:
                 digits += 20
             parameter = node + (float(delta.a) + float(delta.b)) / (2 * float(e - s))
             bounds = _distance(
-                self.ctx, self.family, self.sign, refined_angle, self.qx, self.qn, self.qz
+                self.ctx, self.source, self.sign, refined_angle, self.qx, self.qn, self.qz
             )
             if bounds is None or not chart <= parameter <= chart + 1:
                 self.uncertain = True
@@ -516,7 +523,7 @@ class _PreparedProjection:
                     )
                     bounds = _distance(
                         self.ctx,
-                        self.family,
+                        self.source,
                         self.sign,
                         refined_angle,
                         self.qx,
@@ -628,7 +635,7 @@ class _PreparedProjection:
             else:
                 parameter = chart + ((tl + th) / 2 - float(s)) / float(e - s)
             bounds = _distance(
-                self.ctx, self.family, self.sign, lifted, self.qx, self.qn, self.qz
+                self.ctx, self.source, self.sign, lifted, self.qx, self.qn, self.qz
             )
             if bounds is None:
                 self.uncertain = True
@@ -706,7 +713,7 @@ class _PreparedProjection:
             if order == 0:
                 if self.first <= node <= self.last:
                     bounds = _distance(
-                        self.ctx, self.family, self.sign, angle, self.qx, self.qn, self.qz
+                        self.ctx, self.source, self.sign, angle, self.qx, self.qn, self.qz
                     )
                     if bounds is None:
                         self.uncertain = True
@@ -744,7 +751,7 @@ class _PreparedProjection:
                 if lower_ok and upper_ok:
                     parameter = chart + ((tl + th) / 2 - float(s)) / float(e - s)
                     bounds = _distance(
-                        self.ctx, self.family, self.sign, angle, self.qx, self.qn, self.qz
+                        self.ctx, self.source, self.sign, angle, self.qx, self.qn, self.qz
                     )
                     if bounds is None:
                         self.uncertain = True
@@ -788,7 +795,7 @@ class _PreparedProjection:
                 continue
             parameter = chart + ((tl + th) / 2 - float(s)) / float(e - s)
             bounds = _distance(
-                self.ctx, self.family, self.sign, angle, self.qx, self.qn, self.qz
+                self.ctx, self.source, self.sign, angle, self.qx, self.qn, self.qz
             )
             if bounds is None:
                 self.uncertain = True
@@ -798,6 +805,7 @@ class _PreparedProjection:
                 )
 
     def collect_finite_candidates(self) -> None:
+        coefficients: dict[int, tuple[tuple[Any, ...], tuple[Any, ...]]] = {}
         for index, (lo, hi, multiplicity) in enumerate(self.roots):
             width = self.tolerance
             digits = 80
@@ -811,10 +819,15 @@ class _PreparedProjection:
                 if any(lo <= cl <= ch <= hi for cl, ch, _ in shared):
                     break
                 local = interval_context(digits)
+                if digits not in coefficients:
+                    coefficients[digits] = (
+                        tuple(_scalar(local, value) for value in self.aa),
+                        tuple(_scalar(local, value) for value in self.bb),
+                    )
                 argument = _interval(local, lo, hi)
                 av, bv = (
-                    _poly_interval(local, self.aa, argument),
-                    _poly_interval(local, self.bb, argument),
+                    _poly_interval(coefficients[digits][0], argument),
+                    _poly_interval(coefficients[digits][1], argument),
                 )
                 if (av.a > 0 and bv.a > 0) or (av.b < 0 and bv.b < 0):
                     reject = True
@@ -888,14 +901,14 @@ def _append_endpoint_candidate(
         node = int(parameter)
         lo = F.from_float(float(source.node_lower[node, axis]))
         hi = F.from_float(float(source.node_upper[node, axis]))
-        bounds = _distance(ctx, family, sign, _interval(ctx, lo, hi), *query_frame)
+        bounds = _distance(ctx, source, sign, _interval(ctx, lo, hi), *query_frame)
         if bounds is None:
             return False
         candidates.append(
             _Candidate(*bounds, parameter, ("node", node), parameter in edge_range)
         )
         return True
-    bounds = _distance(ctx, family, sign, _scalar(ctx, theta), *query_frame)
+    bounds = _distance(ctx, source, sign, _scalar(ctx, theta), *query_frame)
     if bounds is None:
         return False
     candidates.append(

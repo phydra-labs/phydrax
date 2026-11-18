@@ -622,6 +622,44 @@ def test_trimmed_circle_endpoint_projection_is_batch_independent() -> None:
             )
 
 
+def test_intersection_trim_projection_is_independent_of_batch_order() -> None:
+    from phydrax.geometry.brep._intersection_curve import (
+        CurveTrimSegment,
+        IntersectionPCurve,
+    )
+    from tests.unit.interchange._native_cad_archive_worker import (
+        _orthogonal_quadric_boolean_model,
+    )
+
+    model = _orthogonal_quadric_boolean_model()
+    face, segment = next(
+        (index, segment)
+        for index, domain in enumerate(model.trim_domains)
+        if domain is not None
+        for loop in domain.curve_loops
+        for segment in loop
+        if isinstance(segment, CurveTrimSegment)
+        and isinstance(segment.curve, IntersectionPCurve)
+    )
+    assert isinstance(segment.curve, IntersectionPCurve)
+    curve = segment.curve.curve
+    point = np.asarray(curve.evaluate_coupled(0.37).point, dtype=np.float64)
+    points = np.stack((point + (0.08, 0.02, 0.03), point + (-0.03, 0.05, 0.01)))
+    projection = phx.geometry.prepare_brep_projection(model)
+    singles = [_project(projection, [value], _FACE, face) for value in points]
+    for order in ((0, 1, 0), (1, 0)):
+        batch = _project(projection, points[list(order)], _FACE, face)
+        for row, index in enumerate(order):
+            for name in (
+                "points", "parameters", "residuals", "status", "normals", "tangents",
+                "distance_lower_bounds",
+            ):
+                np.testing.assert_array_equal(
+                    np.asarray(getattr(batch, name))[row],
+                    np.asarray(getattr(singles[index], name))[0],
+                )
+
+
 def test_intersection_edge_frames_follow_both_cylinders_across_batches() -> None:
     from phydrax.geometry.brep._intersection_curve import IntersectionCurve
     from tests.unit.interchange._native_cad_archive_worker import (
