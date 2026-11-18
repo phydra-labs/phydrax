@@ -275,6 +275,8 @@
   reduced the native portions of those patches in another three alternating
   replays from 2.41–2.55 to 0.81–1.29 seconds and from 1.71–2.20 to
   0.92–1.41 seconds, respectively; overflow still uses unbounded arithmetic.
+  The native boundary also checks supplied screening boxes against every exact
+  corner, rejecting non-enclosing boxes rather than accepting an unsound proof.
 - Sphere and torus projection points, parameters, normals and tangents now use
   platform-identical representatives, changing projection `result_id`s while
   certified bounds, statuses, source identities and profile identities remain

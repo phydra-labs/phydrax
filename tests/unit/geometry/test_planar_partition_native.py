@@ -141,3 +141,21 @@ def test_native_partition_rejects_misaligned_arrays() -> None:
             np.empty((0, 2), dtype=np.float64),
             np.empty((0, 2), dtype=np.float64),
         )
+
+
+def test_native_partition_rejects_non_enclosing_boxes() -> None:
+    coordinates = (
+        (0, 0, 2, 0, 0, 2) + (0, 0, 2, 0, 2, 2) + (0, 0, 2, 0, 0, 2) + (2, 2, 0, 2, 2, 0)
+    )
+    values = (*coordinates, 1)
+    words = np.asarray(values, dtype=np.uint32)
+    offsets = np.arange(len(values) + 1, dtype=np.int64)
+    signs = np.ones((len(coordinates),), dtype=np.int8)
+    lower = np.asarray(
+        [[0, 0], [1, 1], [-np.inf, -np.inf], [-np.inf, -np.inf]], dtype=np.float64
+    )
+    upper = np.asarray(
+        [[0, 0], [1, 1], [np.inf, np.inf], [np.inf, np.inf]], dtype=np.float64
+    )
+    with pytest.raises(ValueError, match="INVALID_ARGUMENT"):
+        planar_partition(2, 2, words, offsets, signs, lower, upper)

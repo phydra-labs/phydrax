@@ -2,6 +2,7 @@
 // Exact planar partition decisions over common-denominator integer coordinates.
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <numeric>
 #include <utility>
@@ -180,6 +181,43 @@ Rational intersection_area(const Triangle& subject, const Triangle& clip, bool& 
   }
   return polygon_area(polygon);
 }
+// Decode binary64 exactly without a platform math-library operation. Infinite
+// outward bounds are allowed; NaNs and inward infinities are not.
+bool scaled_bound(double bound, const Dyadic& denominator, bool lower,
+                  Dyadic& scaled, bool& unbounded) {
+  const uint64_t bits = std::bit_cast<uint64_t>(bound);
+  const uint64_t exponent = (bits >> 52) & 0x7ffu;
+  const uint64_t fraction = bits & ((uint64_t{1} << 52) - 1);
+  const bool negative = (bits >> 63) != 0;
+  if (exponent == 0x7ffu) {
+    unbounded = fraction == 0 && negative == lower;
+    return unbounded;
+  }
+  unbounded = false;
+  const uint64_t mantissa = fraction | (exponent == 0 ? 0 : uint64_t{1} << 52);
+  const std::array<uint32_t, 2> limbs{
+      static_cast<uint32_t>(mantissa), static_cast<uint32_t>(mantissa >> 32)};
+  const int64_t power = exponent == 0 ? -1074 : static_cast<int64_t>(exponent) - 1075;
+  scaled = Dyadic::integer(limbs.data(), limbs.size(), negative ? -1 : 1)
+               .scaled_power(power) * denominator;
+  return true;
+}
+
+bool box_encloses(const Box& box, const Triangle& triangle, const Dyadic& denominator) {
+  for (int axis = 0; axis < 2; ++axis) {
+    Dyadic lo, hi;
+    bool low_unbounded = false, high_unbounded = false;
+    if (!scaled_bound(box.lo[axis], denominator, true, lo, low_unbounded) ||
+        !scaled_bound(box.hi[axis], denominator, false, hi, high_unbounded)) return false;
+    for (const Point& point : triangle.p) {
+      const Dyadic& coordinate = axis == 0 ? point.x : point.y;
+      if ((!low_unbounded && (coordinate - lo).sign() < 0) ||
+          (!high_unbounded && (coordinate - hi).sign() > 0)) return false;
+    }
+  }
+  return true;
+}
+
 bool boxes_meet(const Box& a, const Box& b) {
   return a.lo[0] <= b.hi[0] && b.lo[0] <= a.hi[0] &&
          a.lo[1] <= b.hi[1] && b.lo[1] <= a.hi[1];
@@ -300,6 +338,7 @@ extern "C" int32_t phx_mc_planar_partition(
       Box box{{lower[row * 2], lower[row * 2 + 1]},
               {upper[row * 2], upper[row * 2 + 1]}};
       if (!(box.lo[0] <= box.hi[0] && box.lo[1] <= box.hi[1])) return PHX_MC_INVALID_ARGUMENT;
+      if (!box_encloses(box, triangles.back(), denominator)) return PHX_MC_INVALID_ARGUMENT;
       (row < target_count ? target_boxes : declared_boxes).push_back(box);
     }
     *verdict = 0; *first = -1; *second = -1;

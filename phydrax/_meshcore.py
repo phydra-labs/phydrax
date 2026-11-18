@@ -10681,7 +10681,7 @@ def planar_partition(
     upper: np.ndarray,
     /,
 ) -> tuple[int, int, int]:
-    """Decide one exact planar partition from common-denominator integer limbs."""
+    """Decide a partition; the native entry verifies every supplied box exactly."""
     words = np.ascontiguousarray(words, dtype=np.uint32)
     offsets = np.ascontiguousarray(offsets, dtype=np.int64)
     signs = np.ascontiguousarray(signs, dtype=np.int8)
