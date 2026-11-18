@@ -456,6 +456,7 @@ def test_surface_source_currentness_after_rebuild_and_tree_edits() -> None:
     message = "SurfaceSourceCharts source identity or chart bank changed."
     for original in (source, restored):
         changed = copy(original)
+        changed.require_current()
         # Static Equinox fields are not addressable by tree_at.
         object.__setattr__(changed, "root_parameter_rational_tokens", changed_bank)
         with pytest.raises(ValueError, match=message.replace(".", r"\.")):
