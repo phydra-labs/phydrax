@@ -1,0 +1,265 @@
+//
+// Copyright © 2026 PHYDRA, Inc. All rights reserved.
+//
+// Candidate positions of a relocated vertex through the C boundary: every
+// candidate is a carrier of the source whose recorded lengths, quality and
+// verdict the separate measurement entries reproduce; the sequence is finite
+// and the same for two searches of one star; the modes order the carriers of
+// a goal as stated; malformed arguments and a star without a measured length
+// are refused. The composition against its definition is checked from the
+// host (tests/unit/geometry/test_metric_relocation.py).
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <vector>
+
+#include "check.hpp"
+#include "phydrax_meshcore.h"
+
+namespace {
+
+constexpr int64_t kRoom = 54;
+constexpr double kFloor = 0x1p-22;
+constexpr double kImprovement = 1.0e-6;
+
+struct Source {
+  phx_mc_metric_source* handle = nullptr;
+  std::vector<double> points;
+  ~Source() { phx_mc_metric_source_free(handle); }
+};
+
+// The cell with corners (0, 0, 0), (9, 0, 0), (0, 10, 0), (0, 0, 11) over 8,
+// every tensor `scale` times the identity.
+void create(Source& source, double scale) {
+  const int64_t numerators[12] = {0, 0, 0, 9, 0, 0, 0, 10, 0, 0, 0, 11};
+  std::vector<uint32_t> words;
+  std::vector<int64_t> offsets = {0};
+  std::vector<int8_t> signs;
+  for (const int64_t value : numerators) {
+    source.points.push_back(static_cast<double>(value) / 8.0);
+    signs.push_back(1);
+    if (value != 0) words.push_back(static_cast<uint32_t>(value));
+    offsets.push_back(static_cast<int64_t>(words.size()));
+  }
+  words.push_back(8);
+  offsets.push_back(static_cast<int64_t>(words.size()));
+  std::vector<double> tensors(36, 0.0);
+  std::vector<double> logarithms(36, 0.0);
+  for (std::size_t point = 0; point < 4; ++point) {
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      tensors[9 * point + 4 * axis] = scale;
+    }
+  }
+  int8_t valid[4] = {0, 0, 0, 0};
+  PHX_CHECK(phx_mc_metric_logarithms(4, tensors.data(), logarithms.data(), valid) == PHX_MC_OK);
+  const int64_t cells[4] = {0, 1, 2, 3};
+  PHX_CHECK(phx_mc_metric_source_create(4, source.points.data(), words.data(), offsets.data(),
+                                        signs.data(), 1, cells, tensors.data(),
+                                        logarithms.data(), &source.handle) == PHX_MC_OK);
+}
+
+// The star of a vertex inside the cell: its four corners as neighbors.
+struct Star {
+  std::vector<double> points;
+  std::vector<double> metrics;
+  std::vector<int8_t> measured = {1, 1, 1, 1};
+  std::vector<double> lengths = std::vector<double>(4);
+  std::vector<int64_t> cells = {0, 2, 3, 4, 1, 0, 3, 4, 1, 2, 0, 4, 1, 2, 3, 0};
+  double quality = 0.0;
+};
+
+void measure(const std::vector<double>& points, const std::vector<double>& metrics,
+             const std::vector<int64_t>& cells, double* lengths, double& quality) {
+  const int64_t spokes[8] = {0, 1, 0, 2, 0, 3, 0, 4};
+  PHX_CHECK(phx_mc_metric_lengths(4, spokes, 5, points.data(), metrics.data(), lengths) ==
+            PHX_MC_OK);
+  double qualities[4];
+  PHX_CHECK(phx_mc_metric_tetra_quality(4, cells.data(), 5, points.data(), metrics.data(),
+                                        qualities) == PHX_MC_OK);
+  quality = qualities[0];
+  for (const double value : qualities) quality = value < quality ? value : quality;
+}
+
+Star star_of(const Source& source, double scale, double x, double y, double z) {
+  Star star;
+  star.points = {x, y, z};
+  star.points.insert(star.points.end(), source.points.begin(), source.points.end());
+  star.metrics.assign(45, 0.0);
+  for (std::size_t point = 0; point < 5; ++point) {
+    for (std::size_t axis = 0; axis < 3; ++axis) star.metrics[9 * point + 4 * axis] = scale;
+  }
+  measure(star.points, star.metrics, star.cells, star.lengths.data(), star.quality);
+  return star;
+}
+
+struct Group {
+  int32_t end = -1;
+  int64_t count = -1;
+  std::vector<int64_t> rows = std::vector<int64_t>(4 * kRoom);
+  std::vector<int64_t> weights = std::vector<int64_t>(4 * kRoom);
+  std::vector<int32_t> bits = std::vector<int32_t>(kRoom);
+  std::vector<double> points = std::vector<double>(3 * kRoom);
+  std::vector<double> metrics = std::vector<double>(9 * kRoom);
+  std::vector<double> qualities = std::vector<double>(kRoom);
+  std::vector<double> lengths = std::vector<double>(4 * kRoom);
+};
+
+struct Search {
+  phx_mc_metric_relocation* handle = nullptr;
+  ~Search() { phx_mc_metric_relocation_free(handle); }
+  Group next() {
+    Group group;
+    PHX_CHECK(phx_mc_metric_relocation_next(handle, kRoom, group.rows.data(),
+                                            group.weights.data(), group.bits.data(),
+                                            group.points.data(), group.metrics.data(),
+                                            group.qualities.data(), group.lengths.data(),
+                                            &group.count, &group.end) == PHX_MC_OK);
+    return group;
+  }
+};
+
+int32_t open(Search& search, const Source& source, const Star& star,
+             const std::vector<double>& pulls, int32_t flags) {
+  return phx_mc_metric_relocation_create(
+      source.handle, 5, star.points.data(), star.metrics.data(), star.measured.data(),
+      star.lengths.data(), star.quality, 4, star.cells.data(), kFloor, kImprovement,
+      static_cast<int64_t>(pulls.size() / 3), pulls.data(), nullptr, nullptr, 0, nullptr,
+      nullptr, flags, &search.handle);
+}
+
+const std::vector<double> kPulls = {0.25,  0.0,  0.0,   0.0,  0.25, 0.0,  0.0,  0.0,
+                                    0.25,  -0.1, -0.1,  -0.1, 0.2,  0.15, 0.1,  0.25,
+                                    0.0,   0.0,  0.125, 0.25, 0.3};
+
+// Every candidate of every group is what the measurement entries say of the
+// star with the vertex at the carrier, and is a carrier of the source.
+std::int64_t drain_and_check(const Source& source, const Star& star, int32_t flags,
+                             std::vector<double>* sequence = nullptr) {
+  Search search;
+  PHX_CHECK(open(search, source, star, kPulls, flags) == PHX_MC_OK);
+  std::int64_t candidates = 0;
+  for (int guard = 0; guard < 100000; ++guard) {
+    const Group group = search.next();
+    if (group.end == 1) {
+      PHX_CHECK(group.count == 0);
+      // Exhausted stays exhausted.
+      PHX_CHECK(search.next().end == 1);
+      return candidates;
+    }
+    PHX_CHECK(group.end == 0 && group.count >= 1 && group.count <= kRoom);
+    for (std::int64_t index = 0; index < group.count; ++index) {
+      const std::size_t at = static_cast<std::size_t>(index);
+      // Weights over distinct ascending rows that sum to 2^bits.
+      std::int64_t total = 0;
+      for (std::size_t slot = 0; slot < 4; ++slot) {
+        const std::int64_t row = group.rows[4 * at + slot];
+        if (row < 0) continue;
+        PHX_CHECK(group.weights[4 * at + slot] > 0);
+        PHX_CHECK(slot == 0 || group.rows[4 * at + slot - 1] < row);
+        total += group.weights[4 * at + slot];
+      }
+      PHX_CHECK(total == (std::int64_t{1} << group.bits[at]));
+      // The constant field leaves the tensor as it is.
+      for (std::size_t entry = 0; entry < 9; ++entry) {
+        PHX_CHECK(group.metrics[9 * at + entry] == star.metrics[entry]);
+      }
+      std::vector<double> moved = star.points;
+      for (std::size_t axis = 0; axis < 3; ++axis) moved[axis] = group.points[3 * at + axis];
+      double lengths[4];
+      double quality = 0.0;
+      measure(moved, star.metrics, star.cells, lengths, quality);
+      for (std::size_t spoke = 0; spoke < 4; ++spoke) {
+        PHX_CHECK(group.lengths[4 * at + spoke] == lengths[spoke]);
+      }
+      PHX_CHECK(group.qualities[at] == quality);
+      if (sequence != nullptr) {
+        sequence->insert(sequence->end(), moved.begin(), moved.begin() + 3);
+      }
+      ++candidates;
+    }
+  }
+  PHX_CHECK(false);
+  return candidates;
+}
+
+void sequences() {
+  Source source;
+  create(source, 4.0);
+  // Off the center of the cell: with tensor 4 I the spokes are out of the
+  // band on both sides.
+  const Star star = star_of(source, 4.0, 0.2, 0.3, 0.25);
+  for (const int32_t flags : {8, 9, 10, 11, 12, 13, 14, 15, 0, 1, 2, 3}) {
+    std::vector<double> first;
+    std::vector<double> second;
+    const std::int64_t candidates = drain_and_check(source, star, flags, &first);
+    PHX_CHECK(drain_and_check(source, star, flags, &second) == candidates);
+    PHX_CHECK(first == second);
+    // A refining search revisits its goals; a seed search has at least one.
+    if (flags == 8) PHX_CHECK(candidates >= 1);
+    if (flags == 10) PHX_CHECK(candidates > 3);
+  }
+  // No candidate repeats a position within one search of any mode.
+  std::vector<double> positions;
+  drain_and_check(source, star, 11, &positions);
+  for (std::size_t a = 0; a < positions.size(); a += 3) {
+    for (std::size_t b = a + 3; b < positions.size(); b += 3) {
+      PHX_CHECK(positions[a] != positions[b] || positions[a + 1] != positions[b + 1] ||
+                positions[a + 2] != positions[b + 2]);
+    }
+  }
+}
+
+void refuses() {
+  Source source;
+  create(source, 4.0);
+  Star star = star_of(source, 4.0, 0.2, 0.3, 0.25);
+  Search search;
+  PHX_CHECK(open(search, source, star, kPulls, 16) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(open(search, source, star, kPulls, -1) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(search.handle == nullptr);
+  PHX_CHECK(phx_mc_metric_relocation_create(nullptr, 5, star.points.data(), star.metrics.data(),
+                                            star.measured.data(), star.lengths.data(),
+                                            star.quality, 4, star.cells.data(), kFloor,
+                                            kImprovement, 0, nullptr, nullptr, nullptr, 0,
+                                            nullptr, nullptr, 0,
+                                            &search.handle) == PHX_MC_INVALID_ARGUMENT);
+  // A frame is an origin and a projector together.
+  const double origin[3] = {0.0, 0.0, 0.0};
+  PHX_CHECK(phx_mc_metric_relocation_create(source.handle, 5, star.points.data(),
+                                            star.metrics.data(), star.measured.data(),
+                                            star.lengths.data(), star.quality, 4,
+                                            star.cells.data(), kFloor, kImprovement, 0, nullptr,
+                                            origin, nullptr, 0, nullptr, nullptr, 0,
+                                            &search.handle) == PHX_MC_INVALID_ARGUMENT);
+  // A cell names an absent star row; a measured spoke has no finite length.
+  Star absent = star;
+  absent.cells[3] = 5;
+  PHX_CHECK(open(search, source, absent, kPulls, 0) == PHX_MC_INVALID_INPUT);
+  Star unmeasured = star;
+  unmeasured.lengths[2] = std::numeric_limits<double>::infinity();
+  PHX_CHECK(open(search, source, unmeasured, kPulls, 0) == PHX_MC_INVALID_INPUT);
+  unmeasured.measured[2] = 0;
+  PHX_CHECK(open(search, source, unmeasured, kPulls, 0) == PHX_MC_OK);
+  // Too little room for the carriers of one goal.
+  Group group;
+  PHX_CHECK(phx_mc_metric_relocation_next(search.handle, kRoom - 1, group.rows.data(),
+                                          group.weights.data(), group.bits.data(),
+                                          group.points.data(), group.metrics.data(),
+                                          group.qualities.data(), group.lengths.data(),
+                                          &group.count, &group.end) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_metric_relocation_next(nullptr, kRoom, group.rows.data(),
+                                          group.weights.data(), group.bits.data(),
+                                          group.points.data(), group.metrics.data(),
+                                          group.qualities.data(), group.lengths.data(),
+                                          &group.count, &group.end) == PHX_MC_INVALID_ARGUMENT);
+  phx_mc_metric_relocation_free(nullptr);
+}
+
+}  // namespace
+
+int main() {
+  sequences();
+  refuses();
+  return phx::mc::test::finish("test_metric_relocation");
+}

@@ -294,6 +294,50 @@ def _float_up(value: Fraction, /) -> float:
     return result if Fraction(result) >= value else float(np.nextafter(result, np.inf))
 
 
+def partition_verdict(
+    rows: tuple[Polygon, ...], declared: tuple[Polygon, ...], /
+) -> tuple[int, int, int]:
+    """Decide ordered exact partition conditions for a bank of triangles."""
+    from .._meshcore import planar_partition
+
+    polygons = rows + declared
+    denominator = lcm(
+        *(
+            coordinate.denominator
+            for polygon in polygons
+            for point in polygon
+            for coordinate in point
+        )
+    )
+    integers = [
+        coordinate.numerator * (denominator // coordinate.denominator)
+        for polygon in polygons
+        for point in polygon
+        for coordinate in point
+    ]
+    lengths = [(abs(value).bit_length() + 31) // 32 for value in integers]
+    denominator_length = (denominator.bit_length() + 31) // 32
+    offsets = np.empty((len(integers) + 2,), dtype=np.int64)
+    offsets[0] = 0
+    np.cumsum((*lengths, denominator_length), out=offsets[1:])
+    words = np.frombuffer(
+        b"".join(
+            abs(value).to_bytes(4 * length, "little")
+            for value, length in zip(integers, lengths, strict=True)
+        )
+        + denominator.to_bytes(4 * denominator_length, "little"),
+        dtype=np.uint32,
+    )
+    signs = np.asarray([-1 if value < 0 else 1 for value in integers], dtype=np.int8)
+    boxes = polygon_boxes(polygons)
+    if boxes is None:
+        lower = np.full((len(polygons), 2), -np.inf, dtype=np.float64)
+        upper = np.full((len(polygons), 2), np.inf, dtype=np.float64)
+    else:
+        lower, upper = boxes
+    return planar_partition(len(rows), len(declared), words, offsets, signs, lower, upper)
+
+
 def polygon_boxes(polygons: Sequence[Polygon], /) -> PolygonBoxes | None:
     """Outward-rounded binary64 boxes of exact planar polygons (None if unbounded)."""
     if not polygons:
@@ -623,6 +667,7 @@ __all__ = [
     "intersection",
     "line_key",
     "oriented_polygon",
+    "partition_verdict",
     "plane_key",
     "plane_orientation",
     "polygon_boxes",

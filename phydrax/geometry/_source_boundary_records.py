@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 from fractions import Fraction
 from itertools import groupby
-from math import gcd
+from math import gcd, isfinite
 from typing import final, Literal, Protocol, runtime_checkable, TYPE_CHECKING
 
 import equinox as eqx
@@ -476,26 +476,34 @@ def _validated_rational_chart_tokens(
             coordinates: list[_RationalToken] = []
             for axis, token in enumerate(point):
                 if (
-                    not isinstance(token, tuple)
-                    or len(token) != 2
-                    or isinstance(token[0], (bool, np.bool_))
-                    or not isinstance(token[0], (int, np.integer))
-                    or isinstance(token[1], (bool, np.bool_))
-                    or not isinstance(token[1], (int, np.integer))
+                    type(token) is tuple
+                    and len(token) == 2
+                    and type(token[0]) is int
+                    and type(token[1]) is int
                 ):
-                    raise TypeError(
-                        f"{name} coordinates must be integer numerator/denominator pairs."
+                    numerator, denominator = token
+                else:
+                    if (
+                        not isinstance(token, tuple)
+                        or len(token) != 2
+                        or isinstance(token[0], (bool, np.bool_))
+                        or not isinstance(token[0], (int, np.integer))
+                        or isinstance(token[1], (bool, np.bool_))
+                        or not isinstance(token[1], (int, np.integer))
+                    ):
+                        raise TypeError(
+                            f"{name} coordinates must be integer numerator/denominator pairs."
+                        )
+                    numerator, denominator = int(token[0]), int(token[1])
+                    canonical_input = canonical_input and (
+                        type(token[0]) is int and type(token[1]) is int
                     )
-                numerator, denominator = int(token[0]), int(token[1])
-                canonical_input = canonical_input and (
-                    type(token[0]) is int and type(token[1]) is int
-                )
                 if denominator <= 0:
                     raise ValueError(f"{name} denominators must be positive.")
                 represented = float(realization[row_index, corner_index, axis])
                 if (
                     gcd(numerator, denominator) != 1
-                    or not np.isfinite(represented)
+                    or not isfinite(represented)
                     or numerator / denominator != represented
                 ):
                     raise ValueError(
@@ -508,6 +516,45 @@ def _validated_rational_chart_tokens(
             canonical_row = row
         result.append(distinct.setdefault(canonical_row, canonical_row))
     return tuple(result)
+
+
+def _chart_tokens_nondegenerate(
+    chart: tuple[tuple[_RationalToken, ...], ...], dimension: int, /
+) -> bool:
+    """Test affine independence with integer determinants of reduced tokens."""
+    if len(chart) == 2:
+        return chart[0] != chart[1]
+    first, second, third = chart
+    differences = tuple(
+        (
+            second[axis][0] * first[axis][1] - first[axis][0] * second[axis][1],
+            second[axis][1] * first[axis][1],
+            third[axis][0] * first[axis][1] - first[axis][0] * third[axis][1],
+            third[axis][1] * first[axis][1],
+        )
+        for axis in range(dimension)
+    )
+    return any(
+        differences[left][0]
+        * differences[right][2]
+        * differences[left][3]
+        * differences[right][1]
+        != differences[right][0]
+        * differences[left][2]
+        * differences[right][3]
+        * differences[left][1]
+        for left in range(dimension)
+        for right in range(left + 1, dimension)
+    )
+
+
+def _chart_tokens_in_parent_triangle(
+    chart: tuple[tuple[_RationalToken, ...], ...], /
+) -> bool:
+    return all(
+        x[0] >= 0 and y[0] >= 0 and x[0] * y[1] + y[0] * x[1] <= x[1] * y[1]
+        for x, y in chart
+    )
 
 
 def _fractions_from_chart_tokens(
@@ -1192,49 +1239,31 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
             chart_dimension,
             "source_parameter_rational_tokens",
         )
-        # Validate each distinct exact chart pair without retaining two full
-        # Fraction banks alongside the compact tokens and binary64 arrays.
+        # Tokens are reduced with positive denominators. Integer determinants
+        # preserve exact degeneracy without allocating per-coordinate Fractions.
+        # The operation-local target cache has at most one entry per row.
+        target_checks: dict[
+            tuple[tuple[_RationalToken, ...], ...], tuple[bool, bool]
+        ] = {}
         for target_tokens, source_tokens in dict.fromkeys(
             zip(target_rational_tokens, source_rational_tokens, strict=True)
         ):
-            target_exact = _fractions_from_chart_tokens((target_tokens,), 0)
-            source_exact = _fractions_from_chart_tokens((source_tokens,), 0)
-            if face_vertices.shape[0] != 0:
-                for point in target_exact:
-                    if point[0] < 0 or point[1] < 0 or point[0] + point[1] > 1:
-                        raise ValueError(
-                            "Polyhedral target face chart points must stay in the parent triangle."
-                        )
-            if chart_dimension == 1:
-                target_nondegenerate = target_exact[0] != target_exact[1]
-                source_nondegenerate = source_exact[0] != source_exact[1]
-            else:
-                target_first = tuple(
-                    target_exact[1][axis] - target_exact[0][axis]
-                    for axis in range(reference_dimension)
+            checks = target_checks.get(target_tokens)
+            if checks is None:
+                checks = (
+                    face_vertices.shape[0] == 0
+                    or _chart_tokens_in_parent_triangle(target_tokens),
+                    _chart_tokens_nondegenerate(target_tokens, reference_dimension),
                 )
-                target_second = tuple(
-                    target_exact[2][axis] - target_exact[0][axis]
-                    for axis in range(reference_dimension)
+                target_checks[target_tokens] = checks
+            if not checks[0]:
+                raise ValueError(
+                    "Polyhedral target face chart points must stay in the parent triangle."
                 )
-                source_first = tuple(
-                    source_exact[1][axis] - source_exact[0][axis] for axis in range(2)
-                )
-                source_second = tuple(
-                    source_exact[2][axis] - source_exact[0][axis] for axis in range(2)
-                )
-                target_nonzero = any(
-                    target_first[left] * target_second[right]
-                    - target_first[right] * target_second[left]
-                    for left in range(reference_dimension)
-                    for right in range(left + 1, reference_dimension)
-                )
-                source_nonzero = (
-                    source_first[0] * source_second[1]
-                    - source_first[1] * source_second[0]
-                ) != 0
-                target_nondegenerate = bool(target_nonzero)
-                source_nondegenerate = source_nonzero
+            target_nondegenerate = checks[1]
+            source_nondegenerate = _chart_tokens_nondegenerate(
+                source_tokens, chart_dimension
+            )
             if not target_nondegenerate or not source_nondegenerate:
                 raise ValueError(
                     "SourceBoundaryChartWitness contains a degenerate exact chart piece."

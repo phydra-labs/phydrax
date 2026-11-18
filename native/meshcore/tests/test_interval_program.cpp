@@ -48,6 +48,7 @@ constexpr std::int64_t kAttain = 24;
 constexpr std::int64_t kDivideElementwise = 25;
 constexpr std::int64_t kAtan = 26;
 constexpr std::int64_t kPowerElementwise = 27;
+constexpr std::int64_t kTan = 28;
 constexpr double kInfinity = std::numeric_limits<double>::infinity();
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 constexpr double kLargest = std::numeric_limits<double>::max();
@@ -376,6 +377,34 @@ void trigonometric_enclosures() {
       PHX_CHECK(point_cosine.upper <= program.upper[cosine + element]);
     }
   }
+}
+
+void tangent_enclosures() {
+  Program program;
+  const double half_pi = kPi / 2.0;
+  const std::int64_t input = program.values({
+      {-1.0, 1.0}, {0.1, 0.2}, {1.5, half_pi}, {1.5, step_up(half_pi)},
+      {step_up(half_pi), 3.0}, {0.0, 0.0}, {-0.0, -0.0}, {1e300, 1e300},
+      {-kInfinity, 0.0}, {kNaN, 1.0}, {2.0, 1.0}});
+  const std::int64_t out = program.slots(11);
+  const std::int64_t indexed = program.index({10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0});
+  program.row(kTan, out, 11, input, indexed, -1, -1, 0);
+  PHX_CHECK(execute(program) == PHX_MC_OK);
+  for (std::int64_t k = 0; k < 11; ++k) {
+    const std::int64_t source = input + 10 - k;
+    const auto expected = phx::mc::elementary::tan(program.lower[source], program.upper[source]);
+    PHX_CHECK(same(program.lower[out + k], expected.lower));
+    PHX_CHECK(same(program.upper[out + k], expected.upper));
+  }
+  PHX_CHECK(program.lower[out + 7] == -kInfinity && program.upper[out + 7] == kInfinity);
+
+  Program invalid;
+  const std::int64_t value = invalid.values({{0.0, 1.0}});
+  const std::int64_t target = invalid.slots(1);
+  invalid.row(kTan, target, 1, value, -1, 0, -1, 0);
+  const Program before = invalid;
+  PHX_CHECK(execute(invalid) == PHX_MC_INVALID_INPUT);
+  PHX_CHECK(unchanged(invalid, before));
 }
 
 void unary_interval_enclosures() {
@@ -803,7 +832,7 @@ void interval_capability_query() {
       (std::uint64_t{1} << kExtremumPair) | (std::uint64_t{1} << kExtremumReduce) |
       (std::uint64_t{1} << kDecide) | (std::uint64_t{1} << kAttain) |
       (std::uint64_t{1} << kDivideElementwise) | (std::uint64_t{1} << kAtan) |
-      (std::uint64_t{1} << kPowerElementwise);
+      (std::uint64_t{1} << kPowerElementwise) | (std::uint64_t{1} << kTan);
   PHX_CHECK(phx_mc_interval_program_capabilities(&opcodes) == PHX_MC_OK);
   PHX_CHECK(opcodes == expected);
   PHX_CHECK(phx_mc_interval_program_capabilities(nullptr) == PHX_MC_INVALID_ARGUMENT);
@@ -1118,6 +1147,7 @@ int main() {
   arithmetic_and_reductions();
   zero_times_unbounded_multiply();
   trigonometric_enclosures();
+  tangent_enclosures();
   unary_interval_enclosures();
   interval_capability_query();
   compare_and_select();

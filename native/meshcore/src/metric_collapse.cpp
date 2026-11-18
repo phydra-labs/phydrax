@@ -25,11 +25,14 @@ bool same_point(const double* a, const double* b) noexcept {
   return a[0] == b[0] && a[1] == b[1] && a[2] == b[2];
 }
 
-// The nonzero band quanta of `count` lengths, largest first, above the band
-// in `above` and below it in `below`. False when a length has no finite
-// quantum: it was not measured.
-bool violations(std::int64_t count, const double* lengths, std::vector<double>& above,
-                std::vector<double>& below) {
+bool smaller(const std::vector<double>& a, const std::vector<double>& b) {
+  return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end());
+}
+
+}  // namespace
+
+bool band_violations(std::int64_t count, const double* lengths, std::vector<double>& above,
+                     std::vector<double>& below) {
   above.clear();
   below.clear();
   bool measured = true;
@@ -49,15 +52,9 @@ bool violations(std::int64_t count, const double* lengths, std::vector<double>& 
   return measured;
 }
 
-bool smaller(const std::vector<double>& a, const std::vector<double>& b) {
-  return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end());
-}
-
-}  // namespace
-
 CollapseObjective::CollapseObjective(const CollapseStar& star) : star_(star) {
   before_measured_ =
-      violations(star.before_count, star.before_lengths, before_long_, before_short_);
+      band_violations(star.before_count, star.before_lengths, before_long_, before_short_);
   const std::size_t spokes = static_cast<std::size_t>(star.spoke_count);
   long_.reserve(spokes);
   short_.reserve(spokes);
@@ -76,7 +73,7 @@ PositionVerdict CollapseObjective::evaluate(const double* point, const double* m
     lengths[spoke] = length(point, star.points + 3 * other, metric, star.metrics + 9 * other);
   }
   if (!before_measured_) return PositionVerdict::kUnmeasured;
-  if (!violations(star.spoke_count, lengths, long_, short_)) {
+  if (!band_violations(star.spoke_count, lengths, long_, short_)) {
     return PositionVerdict::kUnmeasured;
   }
   if (!(smaller(long_, before_long_) ||

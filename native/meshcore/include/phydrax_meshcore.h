@@ -853,7 +853,10 @@ PHX_MC_API int32_t phx_mc_interval_program_execute(
  * Opcode 25 divides intervals using the elementwise host-kernel convention;
  * reduction opcode 7 uses a_index -2 to accumulate from positive zero and
  * -1 to begin from the first term. Opcode 27 evaluates power per element;
- * its second size output entries are -1 for invalid real domains, else 0. */
+ * its second size output entries are -1 for invalid real domains, else 0.
+ * Opcode 28 is the tangent: one operand, like the sine and cosine rows, with
+ * the enclosure of phx_mc_interval_elementary's tangent, which is the whole
+ * line for an interval that reaches a pole. */
 PHX_MC_API int32_t phx_mc_interval_program_batch(
     const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
     int64_t index_count, const double* parameters, int64_t parameter_count, double* lower,
@@ -1121,6 +1124,103 @@ PHX_MC_API int32_t phx_mc_metric_source_survivor_moves(
     const int8_t* declared, int32_t every_resolution, int64_t capacity, int32_t* goals,
     int64_t* rows, int64_t* weights, int32_t* bits, double* carrier_points,
     double* carrier_metrics, double* qualities, double* lengths, int64_t* count, int32_t* end);
+/* Angles with one binary64 result per input on every platform: the values
+ * the native meshers use, for host code that must agree with them. Rows are
+ * independent and evaluated in order.
+ *
+ * phx_mc_angle_arcsine and phx_mc_angle_arccosine: asin and acos of a value
+ * in [-1, 1] by binary64 operations in a fixed order, within 7 and 5 units in
+ * the last place; NaN outside the interval and for NaN. asin keeps the sign
+ * of a zero and acos(1) is +0.
+ *
+ * phx_mc_angle_between: the angle in [0, pi] of the direction
+ * (along[r], across[r]) for across[r] >= 0, atan2(across, along), within 7
+ * units in the last place: between two vectors, from the length of their
+ * cross product and their dot product. The quadrant follows the sign of
+ * along exactly; (0, 0) gives 0; a negative across and a value that is not
+ * finite give NaN.
+ *
+ * phx_mc_angle_arctangent2: atan2(ordinates[r], abscissas[r]) in [-pi, pi],
+ * within 7 units in the last place: phx_mc_angle_between of the magnitude of
+ * the ordinate, with the ordinate's sign. Zeros follow IEEE 754: the result
+ * has the sign of the ordinate, also of a negative zero, and a zero ordinate
+ * gives a zero for an abscissa that is positive or +0 and pi for one that is
+ * negative or -0. A value that is not finite gives NaN.
+ *
+ * phx_mc_angle_sine and phx_mc_angle_cosine: sin and cos of a finite value
+ * as the lower endpoint of phx_mc_interval_elementary's enclosure, at most
+ * the true value and at most four binary64 values below it; NaN for a value
+ * that is not finite. Slower than the three kernels above.
+ *
+ * None is correctly rounded and no exact decision may rest on them; a bound
+ * comes from phx_mc_interval_elementary. */
+PHX_MC_API int32_t phx_mc_angle_sine(int64_t count, const double* values, double* results);
+PHX_MC_API int32_t phx_mc_angle_cosine(int64_t count, const double* values, double* results);
+PHX_MC_API int32_t phx_mc_angle_arcsine(int64_t count, const double* values, double* results);
+PHX_MC_API int32_t phx_mc_angle_arccosine(int64_t count, const double* values,
+                                          double* results);
+PHX_MC_API int32_t phx_mc_angle_between(int64_t count, const double* across,
+                                        const double* along, double* results);
+PHX_MC_API int32_t phx_mc_angle_arctangent2(int64_t count, const double* ordinates,
+                                            const double* abscissas, double* results);
+/* Candidate positions of one relocated vertex, as a sequence.
+ *
+ * The star: row 0 of points and metrics is the vertex, rows 1.. its
+ * neighbors; spoke j runs from row 0 to row j + 1 (point_count - 1 spokes).
+ * measured[j] says whether spoke j counts toward the band violations and
+ * before_lengths[j] is its metric length now; before_quality is the smallest
+ * cell quality now; cells holds four star rows per cell.
+ *
+ * Each pull p (three values) gives the goals x + 2^-s p, s = 0, 1, ..., until
+ * the goal is x (s <= 5 unless flag 1 is set). A goal is projected with
+ * phx_mc_metric_project_goals(origin, projector) when both are given, and a
+ * projected goal seen before in this search is passed over. With flag 8 (a
+ * constant field) a goal is kept when its position with the vertex's own
+ * tensor is admitted as below; without it when every cell of the star has a
+ * positive determinant and a relative determinant above determinant_floor.
+ * A kept goal is replaced by the carriers of
+ * phx_mc_metric_source_carriers from the vertex, on the simplices or, with
+ * simplex_count 0, in the source cells: order 0 and the first carrier; with
+ * flag 1 order 2 and the first two; with flag 2 order 1 and the first, and
+ * once every goal has been treated the kept goals again in order with the
+ * carriers after the first. A carrier at the vertex or at a neighbor is
+ * skipped, and so is one whose support and weights were examined before.
+ * Its tensor is the log-Euclidean mean of the source tensors over its rows.
+ *
+ * A position is admitted when no neighbor lies at it; the band violations
+ * of its measured spokes are not larger than before, and smaller with flag
+ * 4; every cell has a positive determinant and a relative determinant above
+ * determinant_floor; and, when the violations are unchanged, its smallest
+ * cell quality exceeds before_quality + improvement.
+ *
+ * flags: 1 deep, 2 refine, 4 band-only, 8 constant field. The search copies
+ * its arrays; the source must outlive it. PHX_MC_INVALID_INPUT when a
+ * measured spoke has no finite length now.
+ *
+ * phx_mc_metric_relocation_next writes the candidates of the next goal that
+ * has any, in the order of its carriers: the carrier as in
+ * phx_mc_metric_source_carriers, its tensor, the smallest cell quality and
+ * the spoke lengths (point_count - 1 values per candidate). *end: 0 a group
+ * of *count candidates; 1 no goal is left. Otherwise the search cannot go
+ * on and one entry is written for the caller to report: 2 a goal (rows -1,
+ * the vertex's tensor, lengths written) whose screen met a spoke without a
+ * finite quantum; 3 a carrier whose evaluation met one (lengths written);
+ * 4 a carrier whose tensor does not exist. capacity is the number of
+ * entries the arrays hold, at least 54. The sequence does not depend on how
+ * the calls are spaced, and it is the same on every platform. */
+typedef struct phx_mc_metric_relocation phx_mc_metric_relocation;
+PHX_MC_API int32_t phx_mc_metric_relocation_create(
+    const phx_mc_metric_source* source, int64_t point_count, const double* points,
+    const double* metrics, const int8_t* measured, const double* before_lengths,
+    double before_quality, int64_t cell_count, const int64_t* cells, double determinant_floor,
+    double improvement, int64_t pull_count, const double* pulls, const double* origin,
+    const double* projector, int64_t simplex_count, const int64_t* simplex_rows,
+    const int8_t* declared, int32_t flags, phx_mc_metric_relocation** search);
+PHX_MC_API void phx_mc_metric_relocation_free(phx_mc_metric_relocation* search);
+PHX_MC_API int32_t phx_mc_metric_relocation_next(
+    phx_mc_metric_relocation* search, int64_t capacity, int64_t* rows, int64_t* weights,
+    int32_t* bits, double* carrier_points, double* carrier_metrics, double* qualities,
+    double* lengths, int64_t* count, int32_t* end);
 /* Gates of a metric field on the deterministic kernels: the same verdict for
  * the same input on every platform.
  *
@@ -2163,6 +2263,18 @@ enum phx_mc_intersection_class {
   PHX_MC_COPLANAR_OVERLAP = 5,
   PHX_MC_COINCIDENT = 6
 };
+// Exact planar partition. Coordinates are six signed integers per triangle
+// followed by one positive common denominator, all in little-endian 32-bit
+// limbs indexed by offsets. Target triangles precede declared triangles.
+// Closed boxes must enclose every exact triangle corner; invalid bounds are
+// refused. Verdict 0 succeeds, 1 reports area mismatch, 2 incomplete coverage,
+// 3 overlapping targets, and 4 singular clipping.
+PHX_MC_API int32_t phx_mc_planar_partition(
+    int64_t target_count, int64_t declared_count, int64_t word_count,
+    const uint32_t* words, const int64_t* offsets, const int8_t* signs,
+    const double* lower, const double* upper, int32_t* verdict,
+    int64_t* first, int64_t* second);
+
 #ifdef __cplusplus
 }
 #endif

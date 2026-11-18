@@ -9,6 +9,7 @@
 #include "floating_point_mode.hpp"
 #include "metric_carrier.hpp"
 #include "metric_collapse.hpp"
+#include "metric_relocation.hpp"
 #include "phydrax_meshcore.h"
 
 #include <cstddef>
@@ -23,6 +24,10 @@ struct phx_mc_metric_source {
   std::vector<double> logarithms;
 };
 
+struct phx_mc_metric_relocation {
+  phx::mc::metric::RelocationSearch search;
+};
+
 namespace {
 
 using phx::mc::addressable;
@@ -32,6 +37,8 @@ using phx::mc::metric::CollapseStar;
 
 // Three goals at the 53 resolutions of a carrier.
 constexpr int64_t kSurvivorMoves = 159;
+// The carriers of one goal: at most the 53 resolutions and one more.
+constexpr int64_t kRelocationGroup = 54;
 
 bool finite3(const double* values) noexcept {
   for (int axis = 0; axis < 3; ++axis) {
@@ -291,6 +298,108 @@ int32_t phx_mc_metric_source_survivor_moves(
     }
     for (std::size_t index = 0; index < measured.size(); ++index) lengths[index] = measured[index];
     *count = static_cast<int64_t>(moves.size());
+    *end = static_cast<int32_t>(ended);
+    return PHX_MC_OK;
+  });
+}
+
+int32_t phx_mc_metric_relocation_create(
+    const phx_mc_metric_source* source, int64_t point_count, const double* points,
+    const double* metrics, const int8_t* measured, const double* before_lengths,
+    double before_quality, int64_t cell_count, const int64_t* cells, double determinant_floor,
+    double improvement, int64_t pull_count, const double* pulls, const double* origin,
+    const double* projector, int64_t simplex_count, const int64_t* simplex_rows,
+    const int8_t* declared, int32_t flags, phx_mc_metric_relocation** search) {
+  if (search == nullptr) return PHX_MC_INVALID_ARGUMENT;
+  *search = nullptr;
+  if (source == nullptr || point_count < 2 || !addressable(point_count, 9, sizeof(double)) ||
+      cell_count < 1 || !addressable(cell_count, 4, sizeof(int64_t)) ||
+      !addressable(pull_count, 3, sizeof(double)) ||
+      !addressable(simplex_count, 3, sizeof(int64_t)) || points == nullptr ||
+      metrics == nullptr || measured == nullptr || before_lengths == nullptr ||
+      cells == nullptr || (pull_count > 0 && pulls == nullptr) ||
+      (origin == nullptr) != (projector == nullptr) ||
+      (simplex_count > 0 && (simplex_rows == nullptr || declared == nullptr)) || flags < 0 ||
+      flags > 15) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  for (int64_t entry = 0; entry < 4 * cell_count; ++entry) {
+    if (cells[entry] < 0 || cells[entry] >= point_count) return PHX_MC_INVALID_INPUT;
+  }
+  return phx::mc::guarded([&]() -> int32_t {
+    std::vector<CarrierSimplex> simplices;
+    const int32_t parsed = read_simplices(simplex_count, simplex_rows, declared,
+                                          source->source.point_count(), 2, simplices);
+    if (parsed != PHX_MC_OK) return parsed;
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    phx::mc::metric::RelocationStar star;
+    star.point_count = point_count;
+    star.points = points;
+    star.metrics = metrics;
+    star.measured = measured;
+    star.before_lengths = before_lengths;
+    star.before_quality = before_quality;
+    star.cell_count = cell_count;
+    star.cells = cells;
+    star.determinant_floor = determinant_floor;
+    star.improvement = improvement;
+    phx::mc::metric::RelocationMode selected;
+    selected.deep = (flags & 1) != 0;
+    selected.refine = (flags & 2) != 0;
+    selected.band_only = (flags & 4) != 0;
+    selected.constant_field = (flags & 8) != 0;
+    // The only argument the search refuses is a star whose measured spokes
+    // have no finite length.
+    std::vector<double> lengths;
+    std::vector<double> above;
+    std::vector<double> below;
+    for (int64_t spoke = 0; spoke + 1 < point_count; ++spoke) {
+      if (measured[spoke] != 0) lengths.push_back(before_lengths[spoke]);
+    }
+    if (!phx::mc::metric::band_violations(static_cast<int64_t>(lengths.size()), lengths.data(),
+                                          above, below)) {
+      return PHX_MC_INVALID_INPUT;
+    }
+    *search = new phx_mc_metric_relocation{phx::mc::metric::RelocationSearch(
+        source->source, source->metrics.data(), source->logarithms.data(), star, pull_count,
+        pulls, origin, projector, std::move(simplices), selected)};
+    return PHX_MC_OK;
+  });
+}
+
+void phx_mc_metric_relocation_free(phx_mc_metric_relocation* search) { delete search; }
+
+int32_t phx_mc_metric_relocation_next(phx_mc_metric_relocation* search, int64_t capacity,
+                                      int64_t* rows, int64_t* weights, int32_t* bits,
+                                      double* carrier_points, double* carrier_metrics,
+                                      double* qualities, double* lengths, int64_t* count,
+                                      int32_t* end) {
+  if (search == nullptr || count == nullptr || end == nullptr) return PHX_MC_INVALID_ARGUMENT;
+  const int64_t spokes = search->search.spoke_count();
+  if (capacity < kRelocationGroup || !addressable(capacity, 9, sizeof(double)) ||
+      !addressable(capacity, spokes, sizeof(double)) || rows == nullptr ||
+      weights == nullptr || bits == nullptr || carrier_points == nullptr ||
+      carrier_metrics == nullptr || qualities == nullptr || lengths == nullptr) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    std::vector<phx::mc::metric::RelocationCandidate> group;
+    std::vector<double> measured;
+    const phx::mc::metric::RelocationEnd ended = search->search.next(group, measured);
+    if (static_cast<int64_t>(group.size()) > capacity) return PHX_MC_CAPACITY_EXCEEDED;
+    for (std::size_t index = 0; index < group.size(); ++index) {
+      const phx::mc::metric::RelocationCandidate& candidate = group[index];
+      write_carrier(candidate.carrier, index, rows, weights, bits, carrier_points);
+      for (std::size_t entry = 0; entry < 9; ++entry) {
+        carrier_metrics[9 * index + entry] = candidate.metric[entry];
+      }
+      qualities[index] = candidate.quality;
+    }
+    for (std::size_t index = 0; index < measured.size(); ++index) lengths[index] = measured[index];
+    *count = static_cast<int64_t>(group.size());
     *end = static_cast<int32_t>(ended);
     return PHX_MC_OK;
   });
