@@ -1649,12 +1649,16 @@ def _validate_periodic_metric_values(
         if missing is not None:
             break
     # A metric M at the image of the isometry x -> A x + t agrees with the
-    # representative's metric R when A^T M A = R: lengths of mapped segments
-    # are equal. Every member before a missing one is judged first.
+    # representative's metric R when M = A R A^T: lengths of mapped segments
+    # are equal, and the transpose of an isometry is its inverse. The defect
+    # is measured at the member, M - A R A^T, the quantity the allowance is
+    # stated for: its norm does not change with the frame of the
+    # representative. Every member before a missing one is judged first.
+    isometries = np.asarray(linear, dtype=np.float64).reshape((-1, 3, 3))
     errors, scales = metric_congruence_defects(
-        np.asarray(linear, dtype=np.float64).reshape((-1, 3, 3)),
-        np.asarray(metrics, dtype=np.float64).reshape((-1, 3, 3)),
+        np.ascontiguousarray(np.swapaxes(isometries, 1, 2)),
         np.asarray(references, dtype=np.float64).reshape((-1, 3, 3)),
+        np.asarray(metrics, dtype=np.float64).reshape((-1, 3, 3)),
     )
     tolerance = (256.0 * np.finfo(np.float64).eps) * np.maximum(
         scales, np.finfo(np.float64).tiny

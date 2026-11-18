@@ -475,9 +475,10 @@
   symmetry defect and the smallest eigenvalue), so a field at that tolerance
   is accepted or refused alike on every platform. A tensor with an entry
   above `2**778` is refused: its lengths could overflow over the exact
-  coordinate domain. Periodic equivariance is checked as the congruence
-  `A^T M A = R` of a member's metric with its representative's, without an
-  inverse. A metric length that is zero, infinite or not a number is no
+  coordinate domain. Periodic equivariance is checked as `M = A R A^T` of a
+  member's metric with its representative's under the member's isometry `A`
+  (whose transpose is its inverse), in a fixed operation order and without a
+  matrix inverse. A metric length that is zero, infinite or not a number is no
   longer read as inside the band: an evaluation that meets one raises
   `FloatingPointError`.
 - The CAD profile matrix curves each mesh from the vertex association the
