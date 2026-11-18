@@ -46,3 +46,19 @@ def test_point_triangle_distances_refuse_invalid_inputs(
 ) -> None:
     with pytest.raises(exception):
         point_triangle_distances(points, triangles)
+
+
+@pytest.mark.parametrize("coordinate", range(12))
+@pytest.mark.parametrize("nonfinite", [np.nan, np.inf, -np.inf])
+def test_point_triangle_distances_refuse_each_nonfinite_coordinate(
+    coordinate: int, nonfinite: float
+) -> None:
+    points = np.array([[0.25, 0.25, 2.0]], dtype=np.float64)
+    triangles = np.array([[[0, 0, 0], [1, 0, 0], [0, 1, 0]]], dtype=np.float64)
+    if coordinate < 3:
+        points[0, coordinate] = nonfinite
+    else:
+        triangles[0, (coordinate - 3) // 3, (coordinate - 3) % 3] = nonfinite
+
+    with pytest.raises(ValueError):
+        point_triangle_distances(points, triangles)

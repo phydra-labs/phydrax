@@ -648,9 +648,15 @@ def test_binary64_least_squares_overflow_rounding_boundary(sign: float) -> None:
             )
 
     with pytest.raises(ValueError, match="solution is not finite"):
-        binary64_least_squares([[0.5]], [sign * 2.0**1023])
+        binary64_least_squares(
+            np.asarray([[0.5]], dtype=np.float64),
+            np.asarray([sign * 2.0**1023], dtype=np.float64),
+        )
 
 
 def test_binary64_least_squares_rejects_subnormal_divisor_overflow() -> None:
     with pytest.raises(ValueError, match="solution is not finite"):
-        binary64_least_squares([[5e-324]], [1.0])
+        binary64_least_squares(
+            np.asarray([[5e-324]], dtype=np.float64),
+            np.asarray([1.0], dtype=np.float64),
+        )
