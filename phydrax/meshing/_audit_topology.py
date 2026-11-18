@@ -396,6 +396,32 @@ def _star_components(
 def _lookup(table: np.ndarray, rows: np.ndarray, /) -> np.ndarray:
     """Row positions of ``rows`` inside the lexicographically sorted ``table``."""
 
+    # Nodes are lexicographically sorted (and normally unique). Pack each
+    # nonnegative tuple into equal-width big-endian fields so unsigned integer
+    # order is tuple order. The bound prevents collisions and shift overflow;
+    # negative padding and larger identifiers retain the general lookup.
+    width = table.shape[1]
+    if (
+        width in (2, 3)
+        and table.dtype == np.dtype(np.int64)
+        and rows.dtype == np.dtype(np.int64)
+        and table.size
+        and rows.size
+        and np.min(table) >= 0
+        and np.min(rows) >= 0
+        and np.max(table) < (1 << (64 // width))
+        and np.max(rows) < (1 << (64 // width))
+    ):
+        bits = np.uint64(64 // width)
+        keys = np.zeros(table.shape[0], dtype=np.uint64)
+        query_keys = np.zeros(rows.shape[0], dtype=np.uint64)
+        for column in range(width):
+            keys = (keys << bits) | table[:, column].astype(np.uint64)
+            query_keys = (query_keys << bits) | rows[:, column].astype(np.uint64)
+        position = np.searchsorted(keys, query_keys, side="left")
+        if np.all(position < table.shape[0]) and np.array_equal(table[position], rows):
+            return position
+
     view = (
         np.ascontiguousarray(table)
         .view(np.dtype((np.void, table.dtype.itemsize * table.shape[1])))

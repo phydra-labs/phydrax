@@ -539,6 +539,29 @@ def test_welded_audit_counts_disconnected_vertex_stars() -> None:
     assert findings[0] == findings[1]
 
 
+@pytest.mark.parametrize("offset", (0, 1 << 33))
+@pytest.mark.parametrize("reverse", (False, True))
+def test_welded_star_findings_preserve_vertex_and_cell_numbering(
+    offset: int, reverse: bool
+) -> None:
+    points = np.asarray(((0, 0), (1, 0), (1, 1), (-1, 0), (-1, -1)), dtype=np.float64)
+    cells = np.asarray(((0, 1, 2), (0, 3, 4)), dtype=np.int32)
+    order = np.arange(points.shape[0] - 1, -1, -1) if reverse else np.arange(len(points))
+    inverse = np.argsort(order)
+    if reverse:
+        cells = cells[::-1]
+    mesh = phx.discretization.CellMesh(
+        points[order],
+        (phx.discretization.CellBlock("cells", "triangle", inverse[cells]),),
+        vertex_global_ids=np.arange(len(points), dtype=np.int64)[order] + offset,
+    )
+    report = phx.meshing.audit_cell_mesh(
+        mesh, phx.discretization.CellGeometrySpec.affine(mesh)
+    )
+    assert report.issues == ("nonmanifold_vertices",)
+    assert dict(report.check_counts)["nonmanifold_vertices"] == 1
+
+
 def test_welded_audit_reports_disconnected_edge_and_vertex_stars() -> None:
     points = np.asarray(
         ((0, 0, 0), (0, 0, 1), (1, 0, 0), (0, 1, 0), (-1, 0, 0), (0, -1, 0)),

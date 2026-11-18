@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- Welded mesh audits accelerate vertex and edge star incidence lookups without
+  changing topology findings or their order.
 - Native geometry and meshing now share a single fixed-order binary64 dot,
   matrix product, and norm definition. On platforms whose BLAS fused or
   reordered these operations, rounding can change surface-association
