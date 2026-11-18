@@ -33,6 +33,22 @@ bool finite(const Interval& value) {
   return std::isfinite(value.lower) && std::isfinite(value.upper) && value.lower <= value.upper;
 }
 Interval point(double value) { return {value, value}; }
+// The first smallest (largest) of the values in order, the element std::min
+// (std::max) of a list selects. Spelled out: the list overloads are
+// out-of-line library calls on some toolchains, and these run per interval
+// product.
+template <class... Rest>
+double least(double first, Rest... rest) {
+  double result = first;
+  ((result = rest < result ? rest : result), ...);
+  return result;
+}
+template <class... Rest>
+double greatest(double first, Rest... rest) {
+  double result = first;
+  ((result = result < rest ? rest : result), ...);
+  return result;
+}
 Interval add(const Interval& a, const Interval& b) {
   return {next_down(a.lower + b.lower), next_up(a.upper + b.upper)};
 }
@@ -42,8 +58,7 @@ Interval subtract(const Interval& a, const Interval& b) {
 Interval multiply(const Interval& a, const Interval& b) {
   const double p[4] = {a.lower * b.lower, a.lower * b.upper, a.upper * b.lower,
                        a.upper * b.upper};
-  return {next_down(std::min({p[0], p[1], p[2], p[3]})),
-          next_up(std::max({p[0], p[1], p[2], p[3]}))};
+  return {next_down(least(p[0], p[1], p[2], p[3])), next_up(greatest(p[0], p[1], p[2], p[3]))};
 }
 // Smallest magnitude in the interval (0 when it contains zero).
 double mignitude(const Interval& value) {
@@ -65,8 +80,8 @@ double norm_lower(const std::array<Interval, 3>& gradient) {
 }
 void bounding_box(const Point& a, const Point& b, const Point& c, Point& lower, Point& upper) {
   for (int d = 0; d < 3; ++d) {
-    lower[d] = std::min({a[d], b[d], c[d]});
-    upper[d] = std::max({a[d], b[d], c[d]});
+    lower[d] = least(a[d], b[d], c[d]);
+    upper[d] = greatest(a[d], b[d], c[d]);
   }
 }
 bool gradient_over(const IntervalBoxProgram& program, const Point& lower, const Point& upper,
@@ -94,8 +109,8 @@ bool tighten_triangle_field(const Point& a, const Point& b, const Point& c,
       along_q = add(along_q, multiply(g, subtract(point(q[d]), point(p[d]))));
       along_r = add(along_r, multiply(g, subtract(point(r[d]), point(p[d]))));
     }
-    form = add(form, {std::min({0.0, along_q.lower, along_r.lower}),
-                      std::max({0.0, along_q.upper, along_r.upper})});
+    form = add(form, {least(0.0, along_q.lower, along_r.lower),
+                      greatest(0.0, along_q.upper, along_r.upper)});
     if (!finite(form)) continue;
     field = {std::max(field.lower, form.lower), std::min(field.upper, form.upper)};
     if (field.lower > field.upper) return false;
@@ -549,8 +564,8 @@ double ZeroSetBandAdmission::split_distance(const Point& a, const Point& b, cons
     }
     double extent = 0;
     for (int d = 0; d < 3; ++d) {
-      extent = std::max({extent, std::fabs(piece.a[d] - piece.b[d]),
-                         std::fabs(piece.b[d] - piece.c[d]), std::fabs(piece.c[d] - piece.a[d])});
+      extent = greatest(extent, std::fabs(piece.a[d] - piece.b[d]),
+                        std::fabs(piece.b[d] - piece.c[d]), std::fabs(piece.c[d] - piece.a[d]));
     }
     if (extent <= slack) {
       record_sample(piece);
@@ -667,8 +682,8 @@ double ZeroSetBandAdmission::normal_cone_floor(const Point& a, const Point& b, c
   }
   const double twice_area = std::hypot(u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2],
                                        u[0] * w[1] - u[1] * w[0]);
-  const double longest = std::max({std::hypot(u[0], u[1], u[2]), std::hypot(w[0], w[1], w[2]),
-                                   std::hypot(c[0] - b[0], c[1] - b[1], c[2] - b[2])});
+  const double longest = greatest(std::hypot(u[0], u[1], u[2]), std::hypot(w[0], w[1], w[2]),
+                                  std::hypot(c[0] - b[0], c[1] - b[1], c[2] - b[2]));
   if (!(twice_area > 0) || !(longest > 0)) return kOpenCone;
   const double tilt = 2 * tolerance_ * longest / twice_area;  // 2 tolerance / altitude
   return tilt < 1 ? std::asin(tilt) : kOpenCone;
@@ -717,8 +732,8 @@ Point ZeroSetBandAdmission::project(const Point& position) const {
     if (!(slope.lower > 0) && !(slope.upper < 0)) break;
     const double q[4] = {at_value.lower / slope.lower, at_value.lower / slope.upper,
                          at_value.upper / slope.lower, at_value.upper / slope.upper};
-    const Interval newton{next_down(middle - next_up(std::max({q[0], q[1], q[2], q[3]}))),
-                          next_up(middle - next_down(std::min({q[0], q[1], q[2], q[3]})))};
+    const Interval newton{next_down(middle - next_up(greatest(q[0], q[1], q[2], q[3]))),
+                          next_up(middle - next_down(least(q[0], q[1], q[2], q[3])))};
     const Interval narrowed{std::max(step.lower, newton.lower),
                             std::min(step.upper, newton.upper)};
     if (narrowed.lower > narrowed.upper) return position;  // no root on this segment

@@ -561,6 +561,16 @@
   native search (the coupled route in its selected source cell); the host
   quantization and its caches are removed. A goal that is not finite is now
   reported by the native search as invalid input.
+- The directed neighbors of a binary64 value in the native library
+  (`next_up`, `next_down`) are taken on the bit pattern instead of through
+  `std::nextafter`, and the smallest and largest of the three or four
+  endpoint candidates of an interval operation in the zero-set admission are
+  inline comparisons instead of `std::min` and `std::max` of a list. Every
+  value is the one computed before: a native test holds the neighbors to
+  `std::nextafter` on every class of value and on two million bit patterns.
+  On Windows, where both were library calls, the recorded sphere adaptation
+  takes about a tenth less time with identical coordinates, edits and
+  evidence.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep
@@ -1040,6 +1050,18 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Implicit root charts form certified vector-norm bounds with outward-rounded
+  squares and sums, and use directed norms for bracket starting steps and
+  sign-coverage resolution. Chart evidence and coverage outcomes can change
+  near a rounding threshold. Stored `LayerCurvingImplicitRootTrace.displacement_upper`
+  values now enclose the exact represented root displacement plus root error;
+  this correction changes `trace_id` and the enclosing source-evidence identity,
+  but does not itself change root points, root errors, root-map identity or
+  fidelity identity. Directed bracket starts can change root points and errors
+  separately. Correctly rounded multiplication in place of floating-point
+  squares can change live piece bracket and derivative bounds, which are not
+  archived or directly hashed. Exact singular-circle contact now falls through
+  to the exact comparison when interval endpoints tie.
 - The default spectral topology and execution substrate used differently named
   single-device meshes, so arrays placed by both could not meet in one compiled
   call. The default spectral topology now uses the execution substrate's
