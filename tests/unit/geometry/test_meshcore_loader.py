@@ -9,6 +9,8 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 # ty: ignore[unresolved-import]
 import numpy._core._multiarray_umath as numpy_extension
 import pytest
@@ -62,6 +64,17 @@ def test_missing_meshcore_path_refuses_packaged_fallback(
         MeshcoreUnavailableError, match="PHYDRAX_MESHCORE_LIBRARY names a missing"
     ):
         load_meshcore()
+
+
+def test_optional_implicit_proposals_fall_back_without_library(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("PHYDRAX_MESHCORE_LIBRARY", str(tmp_path / "missing-meshcore"))
+    coefficients = np.zeros((1, 3, 10), dtype=np.float64)
+    rows = np.zeros((1,), dtype=np.int64)
+    points = np.zeros((1, 3), dtype=np.float64)
+    assert meshcore.implicit_face_proposals(coefficients, rows, points) is None
+    assert not meshcore_available()
 
 
 def test_shared_library_without_the_meshcore_abi_is_unavailable(monkeypatch: Any) -> None:

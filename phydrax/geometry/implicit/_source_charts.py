@@ -21,6 +21,7 @@ from jax.typing import ArrayLike
 
 from ..._bvh import bvh_overlap_pair_blocks, PackedBVH, prepare_bvh
 from ..._fingerprint import canonical_fingerprint
+from ..._meshcore import implicit_face_proposals
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import canonical_identifier
@@ -5683,7 +5684,7 @@ def _monomial_values(first: np.ndarray, second: np.ndarray, /) -> np.ndarray:
             first * second * second,
             second * second * second,
         ),
-        axis=-1,
+        axis=0,
     )
 
 
@@ -5709,10 +5710,10 @@ def _inside_standard_triangle(
 
 
 def _ordered_contraction(coefficients: np.ndarray, values: np.ndarray, /) -> np.ndarray:
-    """``einsum("nam,nm->na")`` summed in monomial order on every platform."""
-    total = coefficients[..., 0] * values[:, None, 0]
-    for index in range(1, values.shape[-1]):
-        total = total + coefficients[..., index] * values[:, None, index]
+    """``einsum("mna,mn->na")`` summed in monomial order on every platform."""
+    total = coefficients[0] * values[0, :, None]
+    for index in range(1, values.shape[0]):
+        total = total + coefficients[index] * values[index, :, None]
     return total
 
 
@@ -5724,7 +5725,10 @@ def _nearest_face_parameters(
     Only the choice of the enclosed face point depends on these; their accuracy
     never enters a bound.
     """
-    coefficients = maps.middle[faces]
+    native = implicit_face_proposals(maps.middle, faces, points)
+    if native is not None:
+        return native
+    coefficients = np.ascontiguousarray(maps.middle[faces].transpose(2, 0, 1))
     first = np.full((faces.shape[0],), 1.0 / 3.0)
     second = np.full((faces.shape[0],), 1.0 / 3.0)
     zero = np.zeros_like(first)
@@ -5748,7 +5752,7 @@ def _nearest_face_parameters(
                     second * second,
                     zero,
                 ),
-                axis=-1,
+                axis=0,
             ),
         )
         along_second = _ordered_contraction(
@@ -5766,7 +5770,7 @@ def _nearest_face_parameters(
                     2.0 * first * second,
                     3.0 * second * second,
                 ),
-                axis=-1,
+                axis=0,
             ),
         )
         a11 = np.sum(along_first * along_first, axis=1)

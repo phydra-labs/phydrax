@@ -347,6 +347,10 @@
   32 bits, preserving lexicographic order and coefficient reduction order.
 - Mesh incidence composition uses bounded packed integer keys for sorted unique
   pairs, preserving exact incidence order and falling back for other inputs.
+- Implicit reverse-fidelity searches use an optional native fixed-order
+  face-proposal batch, falling back for unsupported or anomalous inputs.
+- Implicit reverse-fidelity searches evaluate face-point proposals from contiguous
+  monomial lanes, preserving their fixed binary64 operation order and bounds.
 - Dynamic glued-face monotonicity checks rational Jacobian controls with exact
   integer signs before decoding, preserving findings and the alternative
   preconditioner route. Three alternating replays of 6,990 captured calls took
