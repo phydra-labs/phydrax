@@ -253,9 +253,18 @@ struct Integer<Dyadic> {
   }
 };
 
+// Correction steps a quotient may take. The estimate from the leading bits is
+// within 2^-50 of a quotient below 2^62, so within about 2^12; the first step,
+// estimated the same way from the remainder, leaves less than 2, and unit
+// steps finish: four at most, and never more than two on the carriers of the
+// tests. Twice the bound is allowed. More means the integer arithmetic under
+// the search is wrong, which must end the query and not spin.
+constexpr int kQuotientCorrections = 8;
+
 // floor(numerator 2^shift / denominator) for numerator >= 0, denominator > 0
 // and a quotient below 2^62; `exact` reports a zero remainder. The quotient is
-// estimated from the leading bits and corrected with exact remainders.
+// estimated from the leading bits and corrected with exact remainders; a
+// quotient that does not settle in kQuotientCorrections steps throws.
 template <class Z>
 std::uint64_t floor_quotient(const Z& numerator, std::int64_t shift, const Z& denominator,
                              bool& exact) {
@@ -278,21 +287,24 @@ std::uint64_t floor_quotient(const Z& numerator, std::int64_t shift, const Z& de
   if (!(estimate < 0x1p62)) throw std::logic_error("A carrier quotient is out of range.");
   std::uint64_t quotient = static_cast<std::uint64_t>(estimate);
   Z remainder = scaled - Integer<Z>::of(quotient) * divisor;
-  for (;;) {
-    if (remainder.sign() < 0) {
+  for (int corrections = 0;;) {
+    const bool below = remainder.sign() < 0;
+    if (!below && Integer<Z>::order(remainder, divisor) < 0) break;
+    if (++corrections > kQuotientCorrections) {
+      throw std::logic_error("A carrier quotient did not converge.");
+    }
+    if (below) {
       const double behind = ratio(remainder);
       std::uint64_t step = behind >= 1.0 ? static_cast<std::uint64_t>(behind) : 1;
       if (quotient == 0) throw std::logic_error("A carrier quotient is negative.");
       if (step > quotient) step = quotient;
       quotient -= step;
       remainder = remainder + Integer<Z>::of(step) * divisor;
-    } else if (Integer<Z>::order(remainder, divisor) >= 0) {
+    } else {
       const double ahead = ratio(remainder);
       const std::uint64_t step = ahead >= 1.0 && ahead < 0x1p62 ? static_cast<std::uint64_t>(ahead) : 1;
       quotient += step;
       remainder = remainder - Integer<Z>::of(step) * divisor;
-    } else {
-      break;
     }
   }
   exact = remainder.sign() == 0;
