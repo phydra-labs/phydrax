@@ -15,6 +15,7 @@ import pytest
 from phydrax._meshcore import (
     angle_arccosine,
     angle_arcsine,
+    angle_arctangent2,
     angle_between,
     angle_cosine,
     angle_sine,
@@ -80,6 +81,46 @@ def test_between_follows_the_sign_of_its_second_argument() -> None:
     assert np.all(np.isnan(invalid))
     with pytest.raises(ValueError, match="one shape"):
         angle_between(np.zeros((3,)), np.zeros((2,)))
+
+
+def test_arctangent2_takes_the_sign_of_its_ordinate_and_ieee_zeros() -> None:
+    ordinates = np.asarray(
+        (0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 1.0, -1.0, 1.0, -1.0, 2.0, -2.0)
+    )
+    abscissas = np.asarray(
+        (0.0, 0.0, -0.0, -0.0, -3.0, -3.0, 1.0, 1.0, -1.0, -1.0, 0.0, -0.0)
+    )
+    angles = angle_arctangent2(ordinates, abscissas)
+    assert [value.hex() for value in angles.tolist()] == [
+        "0x0.0p+0",
+        "-0x0.0p+0",
+        "0x1.921fb54442d18p+1",
+        "-0x1.921fb54442d18p+1",
+        "0x1.921fb54442d18p+1",
+        "-0x1.921fb54442d18p+1",
+        "0x1.921fb54442d18p-1",
+        "-0x1.921fb54442d18p-1",
+        "0x1.2d97c7f3321d2p+1",
+        "-0x1.2d97c7f3321d2p+1",
+        "0x1.921fb54442d18p+0",
+        "-0x1.921fb54442d18p+0",
+    ]
+    # The same zeros and quadrants as the platform function.
+    assert np.array_equal(
+        np.signbit(angles), np.signbit(np.arctan2(ordinates, abscissas))
+    )
+    generator = np.random.default_rng(20261119)
+    y = generator.uniform(-10.0, 10.0, size=2000)
+    x = generator.uniform(-10.0, 10.0, size=2000)
+    signed = angle_arctangent2(y, x)
+    assert int(np.max(_steps(signed, np.arctan2(y, x)))) <= 6
+    # The magnitude is the unsigned angle, bit for bit.
+    assert np.array_equal(np.abs(signed), angle_between(np.abs(y), x))
+    assert np.all(
+        np.isnan(angle_arctangent2(np.asarray((np.inf, 1.0)), np.asarray((1.0, np.nan))))
+    )
+    with pytest.raises(ValueError, match="one shape"):
+        angle_arctangent2(np.zeros((3,)), np.zeros((2,)))
 
 
 def test_angles_agree_with_numpy_to_a_few_values_and_keep_their_shape() -> None:

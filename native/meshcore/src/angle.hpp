@@ -38,6 +38,14 @@ double arccosine(double x) noexcept;
 // value that is not finite give NaN.
 double between(double across, double along) noexcept;
 
+// atan2(ordinate, abscissa) in [-pi, pi], within 7 ulp: `between` of the
+// magnitude of the ordinate, with the ordinate's sign. Both quadrant
+// decisions are on the signs of the arguments exactly. Zeros follow IEEE
+// 754: the result has the sign of the ordinate, also of a negative zero, and
+// a zero ordinate gives a zero for an abscissa that is positive or +0 and pi
+// for one that is negative or -0. A value that is not finite gives NaN.
+double arctangent2(double ordinate, double abscissa) noexcept;
+
 // sin(x) and cos(x) for finite x, NaN otherwise: the lower endpoint of the
 // interval kernel's enclosure, at most the true value and at most four
 // binary64 values below it. Several times the cost of the kernels above; for

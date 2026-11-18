@@ -632,7 +632,9 @@
   come from the interval kernel. Host code reaches the same kernels through
   `phydrax._meshcore.angle_arcsine`, `angle_arccosine`, `angle_between`,
   `angle_sine` and `angle_cosine` (C entries `phx_mc_angle_*`), so an angle
-  computed on the host and one computed in the library are the same double.
+  computed on the host and one computed in the library are the same double;
+  `angle_arctangent2` is the four-quadrant form of `angle_between`, with the
+  sign of its first argument and the zeros of IEEE 754.
 - The CAD profile matrix curves each mesh from the vertex association the
   native CAD route records while meshing instead of classifying every vertex
   geometrically again. A unit test holds the two routes to the same B-Rep

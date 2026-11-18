@@ -1137,6 +1137,13 @@ PHX_MC_API int32_t phx_mc_metric_source_survivor_moves(
  * along exactly; (0, 0) gives 0; a negative across and a value that is not
  * finite give NaN.
  *
+ * phx_mc_angle_arctangent2: atan2(ordinates[r], abscissas[r]) in [-pi, pi],
+ * within 7 units in the last place: phx_mc_angle_between of the magnitude of
+ * the ordinate, with the ordinate's sign. Zeros follow IEEE 754: the result
+ * has the sign of the ordinate, also of a negative zero, and a zero ordinate
+ * gives a zero for an abscissa that is positive or +0 and pi for one that is
+ * negative or -0. A value that is not finite gives NaN.
+ *
  * phx_mc_angle_sine and phx_mc_angle_cosine: sin and cos of a finite value
  * as the lower endpoint of phx_mc_interval_elementary's enclosure, at most
  * the true value and at most four binary64 values below it; NaN for a value
@@ -1151,6 +1158,8 @@ PHX_MC_API int32_t phx_mc_angle_arccosine(int64_t count, const double* values,
                                           double* results);
 PHX_MC_API int32_t phx_mc_angle_between(int64_t count, const double* across,
                                         const double* along, double* results);
+PHX_MC_API int32_t phx_mc_angle_arctangent2(int64_t count, const double* ordinates,
+                                            const double* abscissas, double* results);
 /* Gates of a metric field on the deterministic kernels: the same verdict for
  * the same input on every platform.
  *

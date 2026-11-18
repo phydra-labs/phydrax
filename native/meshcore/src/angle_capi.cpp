@@ -28,6 +28,19 @@ int32_t map_scalars(int64_t count, const double* values, double* results,
   return PHX_MC_OK;
 }
 
+template <class Kernel>
+int32_t map_pairs(int64_t count, const double* first, const double* second, double* results,
+                  Kernel kernel) noexcept {
+  if (!addressable(count, 1, sizeof(double)) ||
+      (count > 0 && (first == nullptr || second == nullptr || results == nullptr))) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  const phx::mc::GradualNearestScope mode;
+  if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+  for (int64_t row = 0; row < count; ++row) results[row] = kernel(first[row], second[row]);
+  return PHX_MC_OK;
+}
+
 }  // namespace
 
 extern "C" {
@@ -50,16 +63,12 @@ int32_t phx_mc_angle_arccosine(int64_t count, const double* values, double* resu
 
 int32_t phx_mc_angle_between(int64_t count, const double* across, const double* along,
                              double* results) {
-  if (!addressable(count, 1, sizeof(double)) ||
-      (count > 0 && (across == nullptr || along == nullptr || results == nullptr))) {
-    return PHX_MC_INVALID_ARGUMENT;
-  }
-  const phx::mc::GradualNearestScope mode;
-  if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
-  for (int64_t row = 0; row < count; ++row) {
-    results[row] = phx::mc::angle::between(across[row], along[row]);
-  }
-  return PHX_MC_OK;
+  return map_pairs(count, across, along, results, phx::mc::angle::between);
+}
+
+int32_t phx_mc_angle_arctangent2(int64_t count, const double* ordinates,
+                                 const double* abscissas, double* results) {
+  return map_pairs(count, ordinates, abscissas, results, phx::mc::angle::arctangent2);
 }
 
 }  // extern "C"

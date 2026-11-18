@@ -1471,6 +1471,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_angle_arcsine": (_I32, (_I64, _P, _P)),
     "phx_mc_angle_arccosine": (_I32, (_I64, _P, _P)),
     "phx_mc_angle_between": (_I32, (_I64, _P, _P, _P)),
+    "phx_mc_angle_arctangent2": (_I32, (_I64, _P, _P, _P)),
 }
 
 
@@ -10154,6 +10155,28 @@ def angle_between(across: np.ndarray, along: np.ndarray, /) -> np.ndarray:
     return results
 
 
+def angle_arctangent2(ordinates: np.ndarray, abscissas: np.ndarray, /) -> np.ndarray:
+    """``atan2(ordinates, abscissas)`` in ``[-pi, pi]``, the same binary64
+    result on every platform (within 7 units in the last place).
+
+    :func:`angle_between` of the magnitude of the ordinate, with the
+    ordinate's sign. Zeros follow IEEE 754: the result has the sign of the
+    ordinate, also of a negative zero, and a zero ordinate gives a zero for an
+    abscissa that is positive or ``+0`` and pi for one that is negative or
+    ``-0``. A value that is not finite gives NaN.
+    """
+    first = np.ascontiguousarray(ordinates, dtype=np.float64)
+    second = np.ascontiguousarray(abscissas, dtype=np.float64)
+    if first.shape != second.shape:
+        raise ValueError("ordinates and abscissas must have one shape.")
+    results = np.empty_like(first)
+    status = load_meshcore()["phx_mc_angle_arctangent2"](
+        first.size, first.ctypes.data, second.ctypes.data, results.ctypes.data
+    )
+    _raise_for_call(status, "angle_arctangent2")
+    return results
+
+
 def metric_hull_frame(corners: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     """Orthonormal basis and projector of the affine hull of 2 or 3 corners.
 
@@ -10733,6 +10756,7 @@ class MetricSource:
 
 __all__ = [
     "angle_arccosine",
+    "angle_arctangent2",
     "angle_arcsine",
     "angle_between",
     "angle_cosine",

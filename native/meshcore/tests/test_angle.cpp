@@ -269,6 +269,38 @@ void entries() {
     PHX_CHECK(bits(between[row]) == bits(angle::between(first[row], second[row])));
   }
   PHX_CHECK(angle::cosine(0.0) == 1.0 && std::isnan(angle::cosine(kInfinity)));
+  // The four-quadrant arctangent is `between` of the magnitude with the
+  // ordinate's sign, so the bit vectors of `between` hold it; zeros follow
+  // IEEE 754.
+  std::vector<double> signed_angle(first.size()), negated(first.size());
+  for (std::size_t row = 0; row < first.size(); ++row) negated[row] = -first[row];
+  PHX_CHECK(phx_mc_angle_arctangent2(count, negated.data(), second.data(),
+                                     signed_angle.data()) == PHX_MC_OK);
+  for (std::size_t row = 0; row < first.size(); ++row) {
+    const bool valid = std::isfinite(first[row]) && std::isfinite(second[row]);
+    const double magnitude = std::fabs(first[row]);
+    const bool origin = magnitude == 0.0 && second[row] == 0.0;
+    if (!valid) {
+      PHX_CHECK(std::isnan(signed_angle[row]));
+    } else if (!origin) {
+      PHX_CHECK(bits(signed_angle[row]) ==
+                bits(std::copysign(angle::between(magnitude, second[row]), negated[row])));
+    }
+  }
+  const double pi = angle::between(0.0, -1.0);
+  PHX_CHECK(bits(angle::arctangent2(0.0, 0.0)) == bits(0.0));
+  PHX_CHECK(bits(angle::arctangent2(-0.0, 0.0)) == bits(-0.0));
+  PHX_CHECK(bits(angle::arctangent2(0.0, -0.0)) == bits(pi));
+  PHX_CHECK(bits(angle::arctangent2(-0.0, -0.0)) == bits(-pi));
+  PHX_CHECK(bits(angle::arctangent2(0.0, 2.0)) == bits(0.0));
+  PHX_CHECK(bits(angle::arctangent2(-0.0, 2.0)) == bits(-0.0));
+  PHX_CHECK(bits(angle::arctangent2(0.0, -2.0)) == bits(pi));
+  PHX_CHECK(bits(angle::arctangent2(-0.0, -2.0)) == bits(-pi));
+  PHX_CHECK(bits(angle::arctangent2(3.0, 0.0)) == bits(angle::between(3.0, 0.0)));
+  PHX_CHECK(bits(angle::arctangent2(-3.0, -0.0)) == bits(-angle::between(3.0, 0.0)));
+  PHX_CHECK(bits(angle::arctangent2(-1.0, -1.0)) == bits(-angle::between(1.0, -1.0)));
+  PHX_CHECK(std::isnan(angle::arctangent2(kInfinity, 1.0)) &&
+            std::isnan(angle::arctangent2(1.0, -kInfinity)));
   PHX_CHECK(phx_mc_angle_sine(0, nullptr, nullptr) == PHX_MC_OK);
   PHX_CHECK(phx_mc_angle_sine(1, nullptr, sine.data()) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(phx_mc_angle_arccosine(1, first.data(), nullptr) == PHX_MC_INVALID_ARGUMENT);

@@ -143,4 +143,13 @@ double between(double across, double along) noexcept {
   return across > 0.0 ? kHalfPi : 0.0;
 }
 
+double arctangent2(double ordinate, double abscissa) noexcept {
+  if (!std::isfinite(ordinate) || !std::isfinite(abscissa)) return kNaN;
+  const double magnitude = std::fabs(ordinate);
+  const double angle = magnitude == 0.0 && abscissa == 0.0
+                           ? (std::signbit(abscissa) ? kPi : 0.0)
+                           : between(magnitude, abscissa);
+  return std::copysign(angle, ordinate);
+}
+
 }  // namespace phx::mc::angle
