@@ -1145,6 +1145,89 @@ def _cone_tests(pairs: list[tuple[_Piece, _Piece]], /) -> list[tuple[bool, int |
     return results
 
 
+def _multiply_integer_polynomials(
+    first: dict[_Index, int], second: dict[_Index, int], /
+) -> dict[_Index, int]:
+    result: dict[_Index, int] = {}
+    for left_index, left_value in first.items():
+        for right_index, right_value in second.items():
+            index = tuple(
+                left + right for left, right in zip(left_index, right_index, strict=True)
+            )
+            result[index] = result.get(index, 0) + left_value * right_value
+    return {index: value for index, value in result.items() if value}
+
+
+def _compose_root_expression(
+    expression: Expression, arguments: tuple[Expression, ...], /
+) -> Expression:
+    """Compose bounded quadratic rational polynomials using integer numerators.
+
+    Other dimensions, degrees, radicals, rational expressions, and malformed
+    polynomials retain the general composition path. Each quadratic workset
+    has at most 35 result monomials and is independent of other requests.
+    """
+    operands = (expression, *arguments)
+    if len(arguments) != 3 or not all(
+        isinstance(operand, dict)
+        and operand
+        and all(
+            isinstance(index, tuple)
+            and len(index) == 3
+            and all(type(power) is int and power >= 0 for power in index)
+            and sum(index) <= 2
+            and type(coefficient) in (int, Fraction)
+            for index, coefficient in operand.items()
+        )
+        for operand in operands
+    ):
+        return compose_expression(expression, arguments)
+    polynomials = cast(tuple[dict[_Index, Fraction | int], ...], operands)
+    outer, *inner = polynomials
+    scales = [
+        lcm(*(value.denominator for value in poly.values())) for poly in polynomials
+    ]
+    outer_scale = scales[0]
+    inner_scales = scales[1:]
+    integers = [
+        {
+            index: value.numerator * (scale // value.denominator)
+            for index, value in poly.items()
+        }
+        for poly, scale in zip(inner, inner_scales, strict=True)
+    ]
+    degrees = [max(index[axis] for index in outer) for axis in range(3)]
+    denominator = outer_scale
+    for scale, degree in zip(inner_scales, degrees, strict=True):
+        denominator *= scale**degree
+    zero = (0, 0, 0)
+    powers: dict[tuple[int, int], dict[_Index, int]] = {}
+    result: dict[_Index, int] = {}
+    for exponent, coefficient in outer.items():
+        if not coefficient:
+            continue
+        numerator = coefficient.numerator * (outer_scale // coefficient.denominator)
+        for scale, degree, power in zip(inner_scales, degrees, exponent, strict=True):
+            numerator *= scale ** (degree - power)
+        term: dict[_Index, int] = {zero: numerator}
+        for axis, power in enumerate(exponent):
+            if power:
+                key = (axis, power)
+                if key not in powers:
+                    factor = integers[axis]
+                    if power == 2:
+                        factor = _multiply_integer_polynomials(factor, factor)
+                    powers[key] = _multiply_integer_polynomials({zero: 1}, factor)
+                term = _multiply_integer_polynomials(term, powers[key])
+        for index, value in term.items():
+            updated = result.get(index, 0) + value
+            if updated:
+                result[index] = updated
+            else:
+                result.pop(index, None)
+    return {index: Fraction(value, denominator) for index, value in result.items()}
+
+
 def _prepare_root_nets(
     cells: tuple[EmbeddingCell, ...],
     stratum: tuple[int, ...],
@@ -1203,7 +1286,7 @@ def _prepare_root_nets(
             )
             if residuals and not affine:
                 composed = tuple(
-                    compose_expression(residual, cell.coordinates)
+                    _compose_root_expression(residual, cell.coordinates)
                     for residual in residuals
                 )
                 residual_degree = _degree(composed, groups, cell.dimension)

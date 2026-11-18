@@ -267,6 +267,10 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Contact subdivision composes quadratic rational root polynomials with
+  common-scale integers, preserving exact results and coefficient order. In
+  three alternating replays of 15,302 captured compositions, the original
+  took 33.9–45.0 seconds and the integer path 11.9–15.4 seconds under load.
 - Sphere and torus projection points, parameters, normals and tangents now use
   platform-identical representatives, changing projection `result_id`s while
   certified bounds, statuses, source identities and profile identities remain
