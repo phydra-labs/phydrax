@@ -1124,6 +1124,18 @@ void nested_mode_scopes() {
       PHX_CHECK(execute(restored) == PHX_MC_OK);
       PHX_CHECK(identical(restored.lower, nearest.lower));
       PHX_CHECK(identical(restored.upper, nearest.upper));
+      // A scope that was opened nested also answers by arithmetic once the
+      // mode has been written under it.
+      {
+        const phx::mc::GradualNearestScope nested;
+        PHX_CHECK(nested.established());
+        phx::mc::set_floating_point_mode(phx::mc::kFlushingMode);
+        PHX_CHECK(!nested.established());
+        phx::mc::set_floating_point_mode(phx::mc::kGradualNearestMode);
+        PHX_CHECK(nested.established());
+      }
+      PHX_CHECK(outer.established());
+      PHX_CHECK(phx::mc::floating_point_mode() == phx::mc::kGradualNearestMode);
     }
   }
   PHX_CHECK(phx::mc::floating_point_mode() == initial_mode);
