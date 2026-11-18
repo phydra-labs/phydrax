@@ -1538,6 +1538,7 @@ def _implicit_plane_pyramid(
 
 
 def test_implicit_boundary_survivor_proposals_keep_exact_source_stencils() -> None:
+    from phydrax._meshcore import MetricCollapseStar
     from phydrax.meshing._tetra_metric import _implicit_only_vertex, _survivor_moves
 
     state = _implicit_plane_pyramid(1.0, 0.01)
@@ -1547,18 +1548,30 @@ def test_implicit_boundary_survivor_proposals_keep_exact_source_stencils() -> No
         records = _boundary_records(state)
         assert _implicit_only_vertex(state, records, 4)
         topology = _topology(state.snapshot)
-        local = points[[4, 0, 1, 2, 3]]
-        moves = list(
-            _survivor_moves(
-                state, records, topology, 4, local, np.broadcast_to(np.eye(3), (5, 3, 3))
-            )
+        # The survivor at the base center, the removed vertex at the origin,
+        # the other corners, and a far vertex whose spoke stays long: every
+        # carrier that shortens it is a move and the search does not stop.
+        star = MetricCollapseStar(
+            np.concatenate((points[[4, 0, 1, 2, 3]], ((3.0, 0.0, 0.0),))),
+            np.broadcast_to(np.eye(3), (6, 3, 3)),
+            np.asarray((2, 3, 4, 5), dtype=np.int64),
+            np.asarray((3.0, 3.0), dtype=np.float64),
+            np.asarray(((0, 2, 3, 4),), dtype=np.int64),
+            2.0**-22,
         )
-        assert moves
-        for move in moves:
+        moves = list(_survivor_moves(state, records, topology, 4, star))
+        assert len(moves) > 3
+        for move, evidence in moves:
             exact = _stencil_image(state, move["stencil"])
             np.testing.assert_array_equal(
                 move["point"], [float(value) for value in exact]
             )
+            # The carrier stays on the implicit plane and the far spoke is
+            # the only violation left.
+            assert move["point"][2] == 0.0
+            assert len(evidence["violations"][0]) == 1
+            assert evidence["violations"][1] == ()
+            assert evidence["quality"] > 0.0
         state.native.protect_facet_group_rows(np.asarray([group], dtype=np.int32))
         state.snapshot = state.native.arrays()
         assert not _implicit_only_vertex(state, _boundary_records(state), 4)
@@ -1712,13 +1725,15 @@ def test_directed_collapses_of_the_sphere_witness_keep_their_recorded_proposals(
     assert hashlib.sha256(text.encode()).hexdigest() == recorded
 
 
-def test_survivor_prescreen_refuses_the_positions_that_do_not_shorten_the_star() -> None:
-    from phydrax.meshing._tetra_metric import _refused_survivor_carriers
+def test_survivor_positions_are_admitted_exactly_when_they_shorten_the_star() -> None:
+    from phydrax._meshcore import MetricCollapseStar
+    from phydrax.meshing._tetra_metric import _collapse_position
 
     # One measured spoke from the survivor position to a link vertex at the
-    # origin, unit metric. Before the collapse the star holds one long edge in
-    # the first violation quantum, so a position improves the objective only
-    # if its spoke is in the band.
+    # origin, unit metric, and one cell that is positive for a survivor on
+    # the positive x axis. Before the collapse the star holds one long edge
+    # in the first violation quantum, so a position improves the objective
+    # only if its spoke is in the band.
     upper = float(np.sqrt(2.0))
     lengths = {
         "in band": 1.0,
@@ -1729,33 +1744,54 @@ def test_survivor_prescreen_refuses_the_positions_that_do_not_shorten_the_star()
         "far outside": 3.0,
         "on the link vertex": 0.0,
     }
-    state = _state(_source(2), np.eye(3, dtype=np.float64))
-    try:
-        stencil = {int(state.source_vertex_ids[0]): Fraction(1)}
-        refused = _refused_survivor_carriers(
-            state,
-            [(stencil, np.asarray((length, 0.0, 0.0))) for length in lengths.values()],
-            np.asarray(((9.0, 9.0, 9.0), (8.0, 8.0, 8.0), (0.0, 0.0, 0.0))),
-            np.broadcast_to(np.eye(3, dtype=np.float64), (3, 3, 3)),
-            np.asarray(((0, 2),), dtype=np.int64),
-            np.asarray((upper * (1.0 + 2.0**-20),), dtype=np.float64),
-        )
-    finally:
-        state.native.close()
-
-    # The spoke length is the kernel value the per-position screen measures,
-    # so the decision is sharp at the band edge: dropping the position one ulp
-    # inside would lose an improving collapse, keeping the one an ulp outside
-    # would only defer its refusal.
-    assert dict(zip(lengths, refused.tolist(), strict=True)) == {
-        "in band": False,
-        "one ulp inside": False,
-        "on the band edge": False,
-        "one ulp outside": True,
-        "first quantum": True,
-        "far outside": True,
-        "on the link vertex": True,
+    star = MetricCollapseStar(
+        np.asarray(
+            (
+                (9.0, 9.0, 9.0),
+                (8.0, 8.0, 8.0),
+                (0.0, 0.0, 0.0),
+                (0.0, 1.0, 0.0),
+                (0.0, 0.0, 1.0),
+            )
+        ),
+        np.broadcast_to(np.eye(3, dtype=np.float64), (5, 3, 3)),
+        np.asarray((2,), dtype=np.int64),
+        np.asarray((upper * (1.0 + 2.0**-20),), dtype=np.float64),
+        np.asarray(((2, 0, 3, 4),), dtype=np.int64),
+        2.0**-22,
+    )
+    unit = np.eye(3, dtype=np.float64)
+    evidence = {
+        name: _collapse_position(star, np.asarray((length, 0.0, 0.0)), unit)
+        for name, length in lengths.items()
     }
+
+    # The spoke length is the kernel value the objective measures, so the
+    # decision is sharp at the band edge: refusing the position one ulp
+    # inside would lose an improving collapse, admitting the one an ulp
+    # outside would create a long edge where one was to be removed.
+    assert {name: found is not None for name, found in evidence.items()} == {
+        "in band": True,
+        "one ulp inside": True,
+        "on the band edge": True,
+        "one ulp outside": False,
+        "first quantum": False,
+        "far outside": False,
+        "on the link vertex": False,
+    }
+    for name in ("in band", "one ulp inside", "on the band edge"):
+        found = evidence[name]
+        assert found is not None
+        assert found["violations"] == ((), ())
+        assert found["lengths"].tolist() == [lengths[name]]
+        assert found["quality"] > 0.0
+
+    # A length that was not measured has no place in the objective: the
+    # position is reported, not refused.
+    unmeasured = star._replace(before_lengths=np.asarray((0.0,), dtype=np.float64))
+    with pytest.raises(FloatingPointError, match="not a positive finite number"):
+        _collapse_position(unmeasured, np.asarray((1.0, 0.0, 0.0)), unit)
+    assert _collapse_position(unmeasured, np.asarray((0.0, 0.0, 0.0)), unit) is None
 
 
 @pytest.fixture
