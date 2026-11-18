@@ -59,6 +59,8 @@ from ._adaptive_discovery import (
 )
 from ._adaptive_packed_polygon import QuotientContour
 from ._policy import (
+    _relative_cell_diameter,
+    _resolve_discovery_policy,
     AdaptiveImplicitBoxIssue,
     AdaptiveImplicitSurfacePolicy,
     AdaptiveImplicitSurfaceStatus,
@@ -509,7 +511,7 @@ def _discover_once(
     if not bounds.value_rigorous:
         raise ValueError("Quotient discovery requires a rigorous value enclosure.")
     state_id = _state_identity(geometry)
-    target_level = _target_level(domain, policy.relative_cell_diameter)
+    target_level = _target_level(domain, _relative_cell_diameter(policy))
     leaves = discover_leaves(bounds, domain, target_level)
     leaf_count = len(leaves.level)
     surface_count = len(leaves.surface_rows)
@@ -632,6 +634,7 @@ def discover_periodic_trigonometric_surface(
     unresolved cells reach ``root_tolerance``. Undecided results keep the last
     attempt's unresolved boxes as evidence and carry no mesh.
     """
+    policy = _resolve_discovery_policy(policy)
     if policy.enclosure != "interval":
         raise ValueError("Quotient discovery requires the interval enclosure policy.")
     reduced = reduced_trigonometric_source(source)
@@ -650,7 +653,7 @@ def discover_periodic_trigonometric_surface(
             break
         boxes = np.asarray(evidence.unresolved_boxes)
         widest = max((_cell_diagonal(box[0], box[1]) for box in boxes), default=0.0)
-        following = current.relative_cell_diameter * 0.5
+        following = _relative_cell_diameter(current) * 0.5
         if (
             np.any(issues & ~_REFINABLE)
             or widest <= current.root_tolerance

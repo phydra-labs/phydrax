@@ -508,11 +508,12 @@ def test_native_sphere_polygon_matches_legacy_identity_and_replay() -> None:
 
     geometry = phx.geometry.Sphere((0.031, -0.017, 0.043), 0.371).compile()
     domain = np.asarray(((-0.7, -0.7, -0.7), (0.7, 0.7, 0.7)))
+    relative_diameter = 0.125
     policy = AdaptiveImplicitSurfacePolicy(
-        relative_cell_diameter=0.125, root_tolerance=1.0e-10
+        relative_cell_diameter=relative_diameter, root_tolerance=1.0e-10
     )
     bounds = _FieldEnclosures(geometry, policy.enclosure)
-    level = _target_level(domain, policy.relative_cell_diameter)
+    level = _target_level(domain, relative_diameter)
     immutable_leaves = discover_leaves(bounds, domain, level)
     leaves = PackedPolygonLeaves.from_leaves(immutable_leaves)
     del immutable_leaves

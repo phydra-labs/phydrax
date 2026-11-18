@@ -1105,15 +1105,18 @@ edge are unchanged. `generate_plc_volume(size_convention=...)` accepts only
 `"edge-length"` (the default) or `"circumradius"`. A non-default convention
 joins the fill stage identity.
 
-Without an explicit `implicit_policy`, a native implicit route resolves its
-adaptive discovery from the request: the relative cell diameter is the smallest
-of half the `maximum_deviation`, every hard `UniformSizeControl` allowance and
-every soft uniform size target, each relative to the discovery-domain diagonal,
-and the root tolerance is at most a quarter of `maximum_deviation`. The policy
-default applies only when the request declares none of these. An explicit policy
-is only tightened by the deviation and hard size allowances. An analytic profile
-given to an adaptive route is discovered once at that resolution and the route
-reuses the discovery. Discovery re-anchors its
+`AdaptiveImplicitSurfacePolicy.relative_cell_diameter` defaults to `None`, so a
+policy can customize other controls without imposing a discovery resolution.
+For an omitted or `None` diameter, a native implicit route resolves the
+diameter from the request: the smallest of half the `maximum_deviation`, every
+hard `UniformSizeControl` allowance and every soft uniform size target, each
+relative to the discovery-domain diagonal. If there are no such candidates, it
+uses `0.001`. The root tolerance is at most a quarter of `maximum_deviation`.
+An explicitly specified diameter is only tightened by the deviation and hard
+size allowances. Direct discovery without a meshing specification resolves an
+unspecified diameter to `0.001`. An analytic profile given to an adaptive route
+is discovered once at the resolved resolution and the route reuses the discovery.
+Discovery re-anchors its
 lattice only when a lattice vertex lies on a sign crossing (its point enclosure
 contains zero while its neighbour stencil takes both certified signs): it
 restarts on a deterministic shifted lattice at the declared resolution. Touching

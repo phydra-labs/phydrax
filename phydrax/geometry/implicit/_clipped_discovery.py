@@ -49,6 +49,8 @@ from ._curve_discovery import (
     ParametricChartCurve,
 )
 from ._policy import (
+    _relative_cell_diameter,
+    _resolve_discovery_policy,
     AdaptiveImplicitBoxIssue,
     AdaptiveImplicitSurfacePolicy,
     AdaptiveImplicitSurfaceStatus,
@@ -260,8 +262,8 @@ def _policy_at_level(
 ) -> AdaptiveImplicitSurfacePolicy:
     """The policy whose physical resolution selects discovery ``level``."""
     current = policy
-    while _target_level(domain, current.relative_cell_diameter) < level:
-        following = current.relative_cell_diameter * 0.5
+    while _target_level(domain, _relative_cell_diameter(current)) < level:
+        following = _relative_cell_diameter(current) * 0.5
         if not math.isfinite(following) or following <= 0.0:
             raise ValueError("The clipped discovery resolution is not representable.")
         current = replace(current, relative_cell_diameter=following)
@@ -290,6 +292,7 @@ def discover_clipped_implicit_surface(
     from ._adaptive_packed_frontier import discover_leaves, PackedPolygonLeaves
     from ._adaptive_packed_polygon import polygonize
 
+    policy = _resolve_discovery_policy(policy)
     _validate_discovery_inputs(geometry, policy, source_id)
     if policy.enclosure != "interval":
         raise ValueError("Clipped discovery requires the interval enclosure policy.")
@@ -300,7 +303,7 @@ def discover_clipped_implicit_surface(
     if not bounds.gradient_rigorous:
         raise ValueError("Clipped discovery requires rigorous gradient enclosures.")
     curvature = _CurvatureEnclosures(geometry)
-    level = _target_level(box, policy.relative_cell_diameter)
+    level = _target_level(box, _relative_cell_diameter(policy))
     tolerance = float(policy.root_tolerance)
     history: list[tuple[int, str]] = []
     while True:

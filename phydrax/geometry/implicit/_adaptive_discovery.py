@@ -40,6 +40,8 @@ from .._source_boundary_records import (
 )
 from ..simplicial import TriangleMesh
 from ._policy import (
+    _relative_cell_diameter,
+    _resolve_discovery_policy,
     AdaptiveImplicitBoxIssue,
     AdaptiveImplicitSurfacePolicy,
     AdaptiveImplicitSurfaceStatus,
@@ -1429,11 +1431,12 @@ class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
 
         current = self.surface
         policy = current.policy
-        relative = min(policy.relative_cell_diameter, target_relative)
+        policy_relative = _relative_cell_diameter(policy)
+        relative = min(policy_relative, target_relative)
         root_tolerance = policy.root_tolerance
-        if relative >= policy.relative_cell_diameter:
-            relative = policy.relative_cell_diameter * 0.5
-        if relative <= 0.0 or relative >= policy.relative_cell_diameter:
+        if relative >= policy_relative:
+            relative = policy_relative * 0.5
+        if relative <= 0.0 or relative >= policy_relative:
             return self._cover_from(current, requested)
 
         while True:
@@ -1455,14 +1458,15 @@ class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
                 return samples
             current = candidate
             policy = candidate.policy
-            next_relative = min(policy.relative_cell_diameter * 0.5, target_relative)
+            policy_relative = _relative_cell_diameter(policy)
+            next_relative = min(policy_relative * 0.5, target_relative)
             next_tolerance = policy.root_tolerance * 0.5
             if (
                 not math.isfinite(next_relative)
                 or not math.isfinite(next_tolerance)
                 or next_relative <= 0.0
                 or next_tolerance <= 0.0
-                or next_relative >= policy.relative_cell_diameter
+                or next_relative >= policy_relative
                 or next_tolerance >= policy.root_tolerance
             ):
                 return samples
@@ -3592,6 +3596,7 @@ def _discover_adaptive_implicit_surface_once(
     scaffold's ``local_resolutions``; other tangencies, singular and otherwise
     unresolved leaves remain explicit.
     """
+    policy = _resolve_discovery_policy(policy)
     _validate_discovery_inputs(geometry, policy, source_id)
     domain_ = np.asarray(domain, dtype=np.float64)
     if (
@@ -3613,7 +3618,7 @@ def _discover_adaptive_implicit_surface_once(
         and np.all(domain_[0] <= geometry_bounds[0])
         and np.all(domain_[1] >= geometry_bounds[1])
     )
-    target_level = _target_level(domain_, policy.relative_cell_diameter)
+    target_level = _target_level(domain_, _relative_cell_diameter(policy))
     from ._adaptive_packed_frontier import discover_leaves, PackedPolygonLeaves
     from ._adaptive_packed_polygon import polygonize
 
@@ -3808,11 +3813,12 @@ def _next_discovery_resolution(
         <= policy.root_tolerance
     ):
         return None
-    next_relative = policy.relative_cell_diameter * 0.5
+    relative = _relative_cell_diameter(policy)
+    next_relative = relative * 0.5
     if (
         not math.isfinite(next_relative)
         or next_relative <= 0.0
-        or next_relative >= policy.relative_cell_diameter
+        or next_relative >= relative
         or _target_level(surface.scaffold.domain, next_relative)
         <= surface.scaffold.target_level
     ):
@@ -3824,14 +3830,13 @@ def _anchored_lattice(
     declared: np.ndarray, policy: AdaptiveImplicitSurfacePolicy, anchor: int, /
 ) -> tuple[np.ndarray, AdaptiveImplicitSurfacePolicy]:
     """Discovery box and first-attempt policy of lattice ``anchor``."""
-    domain = _anchored_domain(declared, policy.relative_cell_diameter, anchor)
+    relative = _relative_cell_diameter(policy)
+    domain = _anchored_domain(declared, relative, anchor)
     if anchor == 0:
         return domain, policy
     return domain, replace(
         policy,
-        relative_cell_diameter=_anchored_relative_diameter(
-            declared, domain, policy.relative_cell_diameter
-        ),
+        relative_cell_diameter=_anchored_relative_diameter(declared, domain, relative),
     )
 
 
@@ -3871,7 +3876,7 @@ def _separating_anchor(
     slabs = _tangency_slabs(bounds, tangencies)
     for candidate in range(anchor + 1, len(_LATTICE_ANCHORS) + 1):
         domain, candidate_policy = _anchored_lattice(declared, policy, candidate)
-        level = _target_level(domain, candidate_policy.relative_cell_diameter)
+        level = _target_level(domain, _relative_cell_diameter(candidate_policy))
         if _lattice_separates(domain, level, slabs):
             return candidate
     return None
@@ -3970,7 +3975,7 @@ def verify_discovery_history(surface: AdaptiveImplicitSurface, /) -> bool:
     from ._adaptive_polygon_replay import replay_history_attempt
 
     declared = np.asarray(surface.evidence.declared_domain, dtype=np.float64)
-    policy = surface.policy
+    policy = _resolve_discovery_policy(surface.policy)
     final_anchor = surface.evidence.lattice_anchor
     if not 0 <= final_anchor <= len(_LATTICE_ANCHORS):
         return False
@@ -4002,7 +4007,7 @@ def verify_discovery_history(surface: AdaptiveImplicitSurface, /) -> bool:
                 break
             previous_policy = replace(
                 previous_policy,
-                relative_cell_diameter=previous_policy.relative_cell_diameter * 0.5,
+                relative_cell_diameter=_relative_cell_diameter(previous_policy) * 0.5,
             )
         if following is None:
             return False
@@ -4014,7 +4019,7 @@ def verify_discovery_history(surface: AdaptiveImplicitSurface, /) -> bool:
         return False
     target_level = surface.scaffold.target_level
     while (
-        _target_level(selected_domain, effective_policy.relative_cell_diameter)
+        _target_level(selected_domain, _relative_cell_diameter(effective_policy))
         < target_level
     ):
         retry, _, tangencies = replay_history_attempt(
@@ -4030,10 +4035,10 @@ def verify_discovery_history(surface: AdaptiveImplicitSurface, /) -> bool:
             return False
         effective_policy = replace(
             effective_policy,
-            relative_cell_diameter=effective_policy.relative_cell_diameter * 0.5,
+            relative_cell_diameter=_relative_cell_diameter(effective_policy) * 0.5,
         )
     if (
-        _target_level(selected_domain, effective_policy.relative_cell_diameter)
+        _target_level(selected_domain, _relative_cell_diameter(effective_policy))
         != target_level
     ):
         return False
@@ -4100,6 +4105,7 @@ def discover_adaptive_implicit_surface(
     nonempty edge-ambiguous boxes wider than the root tolerance, which binary64
     representability bounds.
     """
+    policy = _resolve_discovery_policy(policy)
     declared = np.array(domain, dtype=np.float64, copy=True)
     known = np.empty((0, 2, _DIMENSION), dtype=np.float64)
     anchor = 0

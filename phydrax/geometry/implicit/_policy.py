@@ -5,11 +5,14 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import IntFlag
 from typing import Literal, TypeAlias
 
 from ...typing import parse
+
+
+_DEFAULT_RELATIVE_CELL_DIAMETER = 1.0e-3
 
 
 class ImplicitProjectionStatus(IntFlag):
@@ -155,11 +158,12 @@ class AdaptiveImplicitSurfacePolicy:
     the diagonal of the authored discovery domain. It is not a depth, leaf,
     query, or allocation quota: all possible-zero boxes are traversed until
     their topology is resolved or this physical resolution (or binary64
-    representability) prevents further subdivision.
+    representability) prevents further subdivision. When unspecified, direct
+    discovery uses 0.001; providers may derive it from their specification.
     """
 
     enclosure: ImplicitDiscoveryEnclosure = "interval"
-    relative_cell_diameter: float = 1.0e-3
+    relative_cell_diameter: float | None = None
     root_tolerance: float = 1.0e-10
     allow_approximate_zero_set: bool = False
     allow_nonsmooth_field: bool = False
@@ -174,6 +178,8 @@ class AdaptiveImplicitSurfacePolicy:
             ("relative_cell_diameter", self.relative_cell_diameter),
             ("root_tolerance", self.root_tolerance),
         ):
+            if name == "relative_cell_diameter" and value is None:
+                continue
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise TypeError(f"{name} must be a real scalar.")
             if not math.isfinite(value) or value <= 0.0:
@@ -182,6 +188,21 @@ class AdaptiveImplicitSurfacePolicy:
             raise TypeError("allow_approximate_zero_set must be a bool.")
         if not isinstance(self.allow_nonsmooth_field, bool):
             raise TypeError("allow_nonsmooth_field must be a bool.")
+
+
+def _relative_cell_diameter(policy: AdaptiveImplicitSurfacePolicy, /) -> float:
+    """Return the direct-discovery resolution for a policy."""
+    value = policy.relative_cell_diameter
+    return _DEFAULT_RELATIVE_CELL_DIAMETER if value is None else value
+
+
+def _resolve_discovery_policy(
+    policy: AdaptiveImplicitSurfacePolicy, /
+) -> AdaptiveImplicitSurfacePolicy:
+    """Resolve an unspecified direct-discovery resolution, preserving explicit identity."""
+    if policy.relative_cell_diameter is not None:
+        return policy
+    return replace(policy, relative_cell_diameter=_DEFAULT_RELATIVE_CELL_DIAMETER)
 
 
 __all__ = [

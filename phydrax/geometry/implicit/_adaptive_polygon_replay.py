@@ -16,6 +16,7 @@ from ._adaptive_packed_polygon import (
     clipped_face_keys,
     ClippedBoundary,
 )
+from ._policy import _relative_cell_diameter
 
 
 if TYPE_CHECKING:
@@ -632,7 +633,8 @@ def replay_history_attempt(
     from ._adaptive_native_polygon import contours
     from ._adaptive_packed_frontier import _Coordinates, discover_leaves
 
-    level = _target_level(domain, policy.relative_cell_diameter)
+    relative = _relative_cell_diameter(policy)
+    level = _target_level(domain, relative)
     bounds = _FieldEnclosures(geometry, policy.enclosure)
     geometry_bounds = np.asarray(geometry.bounds, dtype=np.float64)
     source_in_domain = (
@@ -970,11 +972,11 @@ def replay_history_attempt(
             and not (status & ~retryable_status)
             and max_diagonal > policy.root_tolerance
         )
-        next_relative = policy.relative_cell_diameter * 0.5
+        next_relative = relative * 0.5
         if (
             not np.isfinite(next_relative)
             or next_relative <= 0
-            or next_relative >= policy.relative_cell_diameter
+            or next_relative >= relative
             or _target_level(domain, next_relative) <= level
         ):
             retry = False
