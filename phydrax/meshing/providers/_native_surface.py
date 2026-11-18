@@ -2195,6 +2195,7 @@ def _surface_root_charts(
             orientation,
         )
         by_patch.setdefault(int(patch_value), []).append(chart)
+    # Stable sorting retains the original root-bank row order for exact ties.
     return {
         patch: tuple(
             sorted(
@@ -2203,7 +2204,9 @@ def _surface_root_charts(
                     chart.lower_u,
                     chart.upper_u,
                     chart.lower_v,
-                    chart.cell_id,
+                    chart.upper_v,
+                    chart.corners,
+                    chart.source_piece,
                 ),
             )
         )
