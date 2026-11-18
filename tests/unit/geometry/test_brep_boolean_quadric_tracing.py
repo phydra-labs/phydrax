@@ -142,7 +142,9 @@ def test_iges_convex_cylinder_intersection_has_spherical_boundary(tmp_path: Path
     assert _topology_oracle(model, "quadric-larger")["passed"] is True
 
 
-def test_qualification_intersection_evidence_measures_stored_lifts(tmp_path: Path) -> None:
+def test_qualification_intersection_evidence_measures_stored_lifts(
+    tmp_path: Path,
+) -> None:
     from tools.meshing_qualification.scenarios.native_cad_profiles import (
         _intersection_evidence,
         _intersection_loop_oracles,
@@ -172,7 +174,9 @@ def test_qualification_intersection_evidence_measures_stored_lifts(tmp_path: Pat
         compiled = curve.evaluate_coupled(parameters)
         lifts = []
         sides: tuple[Literal["first", "second"], ...] = ("first", "second")
-        for side, patch in zip(sides, (curve.first.patch, curve.second.patch), strict=True):
+        for side, patch in zip(
+            sides, (curve.first.patch, curve.second.patch), strict=True
+        ):
             pcurve = curve.p_curve(side)
             charts = preparation.stored_pcurve_points(
                 pcurve, parameters, float(first), float(last)

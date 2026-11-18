@@ -896,7 +896,9 @@ def _intersection_evidence(
         parameters = np.linspace(first, last, 2049)
         lifts = []
         sides: tuple[Literal["first", "second"], ...] = ("first", "second")
-        for side, patch in zip(sides, (curve.first.patch, curve.second.patch), strict=True):
+        for side, patch in zip(
+            sides, (curve.first.patch, curve.second.patch), strict=True
+        ):
             pcurve = curve.p_curve(side)
             charts = preparation.stored_pcurve_points(
                 pcurve, parameters, float(first), float(last)

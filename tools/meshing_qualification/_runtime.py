@@ -89,16 +89,22 @@ def accepted_result_record(result: phx.meshing.CellMeshingResult, /) -> dict[str
                 continue
             amounts = dict(diagnostic.achieved_quantities)
             if "count" not in amounts:
-                raise RuntimeError("Stored-coordinate declaration lacks its evaluation count.")
+                raise RuntimeError(
+                    "Stored-coordinate declaration lacks its evaluation count."
+                )
             count = amounts["count"]
             if count < 0 or not count.is_integer():
-                raise RuntimeError("Stored-coordinate evaluation count must be a nonnegative integer.")
+                raise RuntimeError(
+                    "Stored-coordinate evaluation count must be a nonnegative integer."
+                )
             if code == "stored_coordinate_unspecified_surface_fidelity_unknown":
                 surface_fidelity_unknown += int(count)
                 surface_fidelity_reported = True
                 continue
             if len(diagnostic.logical_findings) != 1:
-                raise RuntimeError("Stored-coordinate declaration lacks an evaluator kind.")
+                raise RuntimeError(
+                    "Stored-coordinate declaration lacks an evaluator kind."
+                )
             kind = diagnostic.logical_findings[0]
             if code == "stored_coordinate_unspecified_construction":
                 reported = True
