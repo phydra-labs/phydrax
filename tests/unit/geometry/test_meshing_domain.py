@@ -605,16 +605,20 @@ def test_stored_points_are_independent_of_row_batching() -> None:
         batch, domain.evaluate(np.zeros(3, dtype=np.int64), charts, preparation=second)
     )
     np.testing.assert_array_equal(
-        batch, domain.evaluate(np.zeros(3, dtype=np.int64), charts, preparation=preparation)
+        batch,
+        domain.evaluate(np.zeros(3, dtype=np.int64), charts, preparation=preparation),
     )
     with pytest.raises(ValueError, match="only the meshing domain"):
         domain.evaluate(
-            np.zeros(3, dtype=np.int64), charts,
+            np.zeros(3, dtype=np.int64),
+            charts,
             preparation=SourcePreparation(_square_domain()),
         )
     singles = np.concatenate(
         [
-            domain.evaluate(np.zeros(1, dtype=np.int64), row[None], preparation=preparation)
+            domain.evaluate(
+                np.zeros(1, dtype=np.int64), row[None], preparation=preparation
+            )
             for row in charts
         ]
     )
@@ -640,9 +644,7 @@ def test_stored_points_report_unsupported_evaluators() -> None:
 
     class UnsupportedSurface(AbstractSurfacePatch):
         def evaluate(self, parameters: Array, /) -> Array:
-            value = jnp.linalg.svd(
-                parameters[..., :1, None], compute_uv=False
-            )[..., 0]
+            value = jnp.linalg.svd(parameters[..., :1, None], compute_uv=False)[..., 0]
             return jnp.stack((value, parameters[..., 0], parameters[..., 1]), axis=-1)
 
     class UnsupportedCurve(AbstractCurve):
@@ -661,7 +663,9 @@ def test_stored_points_report_unsupported_evaluators() -> None:
     charts = np.asarray(((0.2, 0.4), (0.3, 0.5)), dtype=np.float64)
     parameters = np.asarray((0.2, 0.3, 0.4), dtype=np.float64)
     actual = preparation.stored_patch_points(surface, charts)
-    expected = np.stack([np.asarray(surface.evaluate(jnp.asarray(row))) for row in charts])
+    expected = np.stack(
+        [np.asarray(surface.evaluate(jnp.asarray(row))) for row in charts]
+    )
     np.testing.assert_array_equal(actual, expected)
     actual_curve = preparation.stored_pcurve_points(curve, parameters, 0.0, 1.0)
     expected_curve = np.stack(
@@ -692,7 +696,9 @@ def test_constructor_unsupported_surface_preserves_scalar_endpoint_values() -> N
     surface = ScalarSurface()
     patch = MeshingSurfacePatch(surface, original.patches[0].loops)
     domain = MeshingDomain(
-        (patch,), original.curves, 4,
+        (patch,),
+        original.curves,
+        4,
         source_id="scalar-endpoint-fallback",
         source_revision="r1",
     )
@@ -703,7 +709,9 @@ def test_constructor_unsupported_surface_preserves_scalar_endpoint_values() -> N
     charts = np.asarray(((0.2, 0.4), (0.3, 0.5)), dtype=np.float64)
     preparation = _PointPreparation()
     points = _surface_endpoint_images((patch,), (0, 0), charts, preparation=preparation)
-    expected = np.stack([np.asarray(surface.evaluate(jnp.asarray(row))) for row in charts])
+    expected = np.stack(
+        [np.asarray(surface.evaluate(jnp.asarray(row))) for row in charts]
+    )
     np.testing.assert_array_equal(points, expected)
     name = f"{type(surface).__module__}.{type(surface).__qualname__}"
     assert preparation.unsupported_points == {name: 2}
@@ -719,12 +727,26 @@ def test_stored_intersection_pcurve_points_lie_in_point_and_span_boxes() -> None
     large = CylinderPatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1.0)
     small = CylinderPatch((0, 0, 0), (0, 1, 0), (0, 0, 1), (1, 0, 0), 0.5)
     box = np.asarray(((0.0, -2.0), (math.tau, 2.0)), dtype=np.float64)
-    intersection = intersect_surface_regions(SurfaceRegion(large, box), SurfaceRegion(small, box))
+    intersection = intersect_surface_regions(
+        SurfaceRegion(large, box), SurfaceRegion(small, box)
+    )
     assert intersection.complete and intersection.curves
     curve = IntersectionPCurve(intersection.curves[0], "first", first=0.0, last=1.0)
     preparation = SourcePreparation(_square_domain())
     parameters = np.asarray((0.25, 0.5, 0.75, 0.5), dtype=np.float64)
     points = preparation.stored_pcurve_points(curve, parameters, 0.0, 1.0)
+    golden = np.asarray(
+        [
+            [float.fromhex(value) for value in row]
+            for row in (
+                ("0x1.54a922984afdep+1", "0x1.87de2a6aea961p-3"),
+                ("0x1.63de6e1ebf1ecp+1", "0x1.6a09e667f3bcbp-2"),
+                ("0x1.797aeb7a3e2aep+1", "0x1.d906bcf328d45p-2"),
+            )
+        ],
+        dtype=np.float64,
+    )
+    np.testing.assert_array_equal(points[:3].view(np.uint64), golden.view(np.uint64))
     assert preparation.stored_pcurve_supported(curve) is None
     assert preparation.stored_intersection_point_supported(curve, 0.5, 0.0, 1.0) is True
     assert preparation.stored_intersection_point_supported(curve, 0.6, 0.0, 1.0) is None

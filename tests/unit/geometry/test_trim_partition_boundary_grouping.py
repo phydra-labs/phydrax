@@ -1,7 +1,9 @@
 from fractions import Fraction
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax import Array
 
 from phydrax.geometry._domain_boundary import (
     _chain_parameters,
@@ -14,7 +16,12 @@ from phydrax.geometry._meshing_domain import (
     PatchCurveUse,
     SourcePreparation,
 )
-from phydrax.geometry.brep._patches import CircleCurve, LineCurve, PlanePatch
+from phydrax.geometry.brep._patches import (
+    AbstractCurve,
+    CircleCurve,
+    LineCurve,
+    PlanePatch,
+)
 from phydrax.meshing.providers._native_surface import _chart_cdt_scale
 
 
@@ -69,6 +76,29 @@ def test_chain_parameter_ties_choose_first_candidate_deterministically(
     assert _chain_parameters(use, (first, last), preparation) == (0.0, 1.0)
     assert _chain_parameters(use, chain, preparation) == (0.0, 0.0, 1.0)
     assert _chain_parameters(use, chain, preparation) == (0.0, 0.0, 1.0)
+
+
+def test_chain_parameter_exact_equidistance_selects_smaller_parameter(
+    sector: tuple[MeshingDomainBoundarySource, tuple[Point, ...], tuple[Triangle, ...]],
+) -> None:
+    class FoldedCurve(AbstractCurve):
+        @property
+        def ambient_dimension(self) -> int:
+            return 2
+
+        def evaluate(self, parameters: Array, /) -> Array:
+            values = jnp.asarray(parameters)
+            return jnp.stack(((values - 0.5) ** 2, jnp.zeros_like(values)), axis=-1)
+
+    # Both t=1/4 and t=3/4 map exactly to (1/16, 0), so their exact
+    # squared distances to this target are both zero.
+    curve = FoldedCurve()
+    use = PatchCurveUse(0, curve, 0.0, 1.0)
+    target = (Fraction(1, 16), Fraction(0))
+    chain = ((Fraction(1, 4), Fraction(0)), target, (Fraction(1, 4), Fraction(0)))
+    preparation = SourcePreparation(sector[0].domain)
+    assert _chain_parameters(use, chain, preparation) == (0.0, 0.25, 1.0)
+    assert not preparation.unsupported_points
 
 
 def test_chart_scale_is_stable_for_isotropic_plane(
