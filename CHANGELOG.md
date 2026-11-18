@@ -7,6 +7,8 @@
   identities: JAX 0.12.1 rewrote the index narrowing repaired by Phydrax,
   including `_clamp_and_cast_index`, `NDIndexer.normalize_indices`, and
   `_normalize_index`; its changed source is not admitted by the guard.
+- Reused operation-local interval programs across compatible orthogonal-cylinder
+  measure charts without changing certified enclosure endpoints.
 - Fixed the native CAD qualification intersection evidence reporting a p-curve
   residual that was zero by construction: `maximum_residuals_m.first_pcurve`
   and `.second_pcurve` now measure each patch lift against the declared analytic

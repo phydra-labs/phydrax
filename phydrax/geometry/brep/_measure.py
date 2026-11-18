@@ -61,7 +61,11 @@ from ._assembly import BRepAssemblyOccurrence
 from ._boolean_core import AffinePCurve, PeriodicPCurve
 from ._exact import rational_determinant
 from ._intersection import _prepare_plane_cylinder_angular_data, _straight_revolution
-from ._intersection_curve import IntersectionPCurve, orthogonal_cylinder_family
+from ._intersection_curve import (
+    IntersectionPCurve,
+    IntersectionSide,
+    orthogonal_cylinder_family,
+)
 from ._model import BRepEntityId, BRepGeometry, BRepModel
 from ._patches import (
     AbstractCurve,
@@ -782,6 +786,11 @@ class _PeriodBoundProgram:
 
 
 type _IntervalProgram = PreparedIntervalFunction | _PeriodBoundProgram | _BoundProgram
+type _StripStructure = tuple[int, int, int, int, int, bool, IntersectionSide]
+type _StripPrograms = dict[
+    tuple[int, int, type[float], str, bool, _StripStructure],
+    tuple[AbstractSurfacePatch, AbstractCurve, PreparedIntervalFunction],
+]
 
 
 def _green_strip_program(
@@ -792,6 +801,7 @@ def _green_strip_program(
     *,
     chart: int | None = None,
     cylinder: bool = False,
+    programs: _StripPrograms | None = None,
 ) -> _IntervalProgram:
     """``g(u0 + s (u(t) - u0), v(t)) (u(t) - u0) v'(t)`` on the strip ``(t, s)``.
 
@@ -804,10 +814,36 @@ def _green_strip_program(
     upper: list[float] = []
     chart_evaluator = None
     chart_slice = None
+    program_key = None
     if chart is not None and isinstance(pcurve, IntersectionPCurve):
-        chart_evaluator, chart_lower, chart_upper = _intersection_chart_evaluator(
-            pcurve, chart
-        )
+        if (
+            programs is not None
+            and orthogonal_cylinder_family(pcurve.curve.first, pcurve.curve.second)
+            is not None
+        ):
+            evaluate_chart, chart_lower, chart_upper, structure = (
+                pcurve._parameterized_chart_evaluator_with_source_bounds(chart)
+            )
+            # The chart index is an exact, non-integrated singleton input.
+            chart_lower = np.append(chart_lower, np.float64(chart))
+            chart_upper = np.append(chart_upper, np.float64(chart))
+            program_key = (
+                id(patch),
+                id(pcurve),
+                type(origin),
+                repr(origin),
+                cylinder,
+                structure,
+            )
+
+            def chart_evaluator(
+                parameter: Array, period: Array, values: Array, /
+            ) -> Array:
+                return evaluate_chart(parameter, period, values[:-1], values[-1])
+        else:
+            chart_evaluator, chart_lower, chart_upper = _intersection_chart_evaluator(
+                pcurve, chart
+            )
         chart_slice = slice(len(lower), len(lower) + chart_lower.size)
         lower.extend(chart_lower.tolist())
         upper.extend(chart_upper.tolist())
@@ -1077,11 +1113,22 @@ def _green_strip_program(
             parameters[:dimension]
         )
 
-    return _BoundProgram(
-        _cell_program(jet_with_bounds, dimension + len(lower)),
-        np.asarray(lower),
-        np.asarray(upper),
-    )
+    if program_key is None or programs is None:
+        program = _cell_program(jet_with_bounds, dimension + len(lower))
+    else:
+        entry = programs.get(program_key)
+        if entry is not None and entry[0] is patch and entry[1] is pcurve:
+            program = entry[2]
+        else:
+            program = _cell_program(jet_with_bounds, dimension + len(lower))
+            if program.execution != "batched":
+                # Only batched lowering is known to preserve endpoints when a
+                # formerly folded chart constant becomes an interval input.
+                return _green_strip_program(
+                    patch, pcurve, origin, chart=chart, cylinder=cylinder
+                )
+            programs[program_key] = (patch, pcurve, program)
+    return _BoundProgram(program, np.asarray(lower), np.asarray(upper))
 
 
 def _pcurve_point_program(pcurve: AbstractCurve, /) -> PreparedIntervalFunction:
@@ -2211,7 +2258,12 @@ def _torus_periodic_face(
 
 
 def _plan_face(
-    source: _VolumeSource, face: int, sign: int, ends: _LoopEnds, /
+    source: _VolumeSource,
+    face: int,
+    sign: int,
+    ends: _LoopEnds,
+    programs: _StripPrograms,
+    /,
 ) -> _FacePlan:
     geometry, patch = source.geometry, source.patches[face]
     label = f"source face {face}"
@@ -2375,7 +2427,12 @@ def _plan_face(
                 program = _prepare(
                     coedge_label,
                     lambda: _green_strip_program(
-                        patch, curve, float(bounds[0, 0]), chart=chart, cylinder=cylinder
+                        patch,
+                        curve,
+                        float(bounds[0, 0]),
+                        chart=chart,
+                        cylinder=cylinder,
+                        programs=programs,
                     ),
                 )
                 strip_programs[key] = program
@@ -2575,11 +2632,13 @@ def _volume_integral(
     fixed_upper: list[float] = []
     jacobians: dict[int, tuple[float, float]] = {}
     ends: dict[int, _LoopEnds] = {}
+    # Entries retain their live patch and curve for this operation.
+    programs: _StripPrograms = {}
     for face, sign in zip(faces, signs, strict=True):
         if sign not in (-1, 1):
             raise ValueError("Source face volume signs must be -1 or 1.")
         ends[face] = _loop_ends(source, face)
-        plan = _plan_face(source, face, sign, ends[face])
+        plan = _plan_face(source, face, sign, ends[face], programs)
         families.extend(plan.families)
         exact += plan.exact
         if plan.fixed != (0.0, 0.0):

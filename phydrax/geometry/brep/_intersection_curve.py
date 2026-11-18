@@ -3939,6 +3939,23 @@ class IntersectionPCurve(AbstractCurve):
     def _chart_evaluator_with_source_bounds(
         self, chart: int, /
     ) -> tuple[Callable[[Array, Array, Array], Array], np.ndarray, np.ndarray]:
+        evaluate, lower, upper, _ = (
+            self._parameterized_chart_evaluator_with_source_bounds(chart)
+        )
+
+        def fixed(parameter: Array, period: Array, values: Array, /) -> Array:
+            return evaluate(parameter, period, values, chart)
+
+        return fixed, lower, upper
+
+    def _parameterized_chart_evaluator_with_source_bounds(
+        self, chart: int, /
+    ) -> tuple[
+        Callable[[Array, Array, Array, Array | int], Array],
+        np.ndarray,
+        np.ndarray,
+        tuple[int, int, int, int, int, bool, IntersectionSide],
+    ]:
         """Prepare a fixed analytic chart with directed exact-source inputs.
 
         The returned coefficient bounds enclose the exact rational cylinder
@@ -3999,7 +4016,9 @@ class IntersectionPCurve(AbstractCurve):
             [fraction_up(value) for value in coefficients], dtype=np.float64
         )
 
-        def evaluate(parameter: Array, period: Array, values: Array, /) -> Array:
+        def evaluate(
+            parameter: Array, period: Array, values: Array, chart: Array | int, /
+        ) -> Array:
             carrier = values[17] - parameter if self.reversed else parameter
             theta = values[0] + (carrier - chart) * (values[1] - values[0])
             cosine, sine = jnp.cos(theta), jnp.sin(theta)
@@ -4028,7 +4047,16 @@ class IntersectionPCurve(AbstractCurve):
             )
             return parameters[:2] if self.side == "first" else parameters[2:]
 
-        return evaluate, lower, upper
+        structure = (
+            angle_mode,
+            angle_sign,
+            angle_turns,
+            branch_sign,
+            family.large_index,
+            self.reversed,
+            self.side,
+        )
+        return evaluate, lower, upper, structure
 
     def _chart_evaluator_with_period(
         self, chart: int, /
