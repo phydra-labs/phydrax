@@ -5,7 +5,9 @@
   than the face distance: for example, a partial unit-cylinder window could
   report the carrier distance 11/16 even though its foot is outside the face.
   Where the returned parameter's face membership is certified, the residual
-  now also bounds the distance to the patch point at that parameter. Exact
+  now also bounds the distance to the patch point at that parameter. Torus
+  points use an interval box enclosing their exact source coefficients; its
+  upper bound may be slightly wider than an exact-composition box. Exact
   rational-isometry placements include inverse-query and stored-point rounding;
   boundary-union bounds take minima over all candidates. Stored residuals and
   identifiers that fingerprint them can change; individual face-hit statuses

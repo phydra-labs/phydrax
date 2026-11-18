@@ -99,7 +99,9 @@ def test_interior_foot_remains_unique(kind: str) -> None:
     assert _trig(Fraction(2), cosine=True)[1] < 0
     assert _trig(Fraction(2), cosine=False)[0] > 0
     result = _projection(kind, 0.0, 2.0).project(
-        np.asarray(((1.0, 1.0, 0.25),)), np.asarray((2,)), np.asarray((0,))
+        np.asarray(((1.0, 1.0, 0.25),), dtype=np.float64),
+        np.asarray((2,), dtype=np.int64),
+        np.asarray((0,), dtype=np.int64),
     )
     assert int(result.status[0]) == BRepProjectionStatus.UNIQUE
     lower = Fraction(float(result.distance_lower_bounds[0]))
@@ -180,11 +182,15 @@ def test_nonbinary_torus_source_point_bounds_are_batch_independent() -> None:
 def test_full_turn_retains_interior_and_seam(kind: str) -> None:
     projection = _projection(kind, -math.pi, math.pi)
     interior = projection.project(
-        np.asarray(((1.0, 1.0, 0.25),)), np.asarray((2,)), np.asarray((0,))
+        np.asarray(((1.0, 1.0, 0.25),), dtype=np.float64),
+        np.asarray((2,), dtype=np.int64),
+        np.asarray((0,), dtype=np.int64),
     )
     assert int(interior.status[0]) == BRepProjectionStatus.UNIQUE
     seam = projection.project(
-        np.asarray(((-1.0, 0.0, 0.25),)), np.asarray((2,)), np.asarray((0,))
+        np.asarray(((-1.0, 0.0, 0.25),), dtype=np.float64),
+        np.asarray((2,), dtype=np.int64),
+        np.asarray((0,), dtype=np.int64),
     )
     assert int(seam.status[0]) == BRepProjectionStatus.SEAM
 
@@ -199,9 +205,14 @@ def test_placed_point_residual_covers_exact_distance() -> None:
         )
     )
     projection = prepare_brep_projection(_instanced_box(placement))
-    point = np.asarray(((float(Fraction(17, 60)), float(Fraction(7, 20)), -0.125),))
+    point = np.asarray(
+        ((float(Fraction(17, 60)), float(Fraction(7, 20)), -0.125),), dtype=np.float64
+    )
     result = projection.project(
-        point, np.asarray((2,)), np.asarray((0,)), occurrence_paths=(("pair", "right"),)
+        point,
+        np.asarray((2,), dtype=np.int64),
+        np.asarray((0,), dtype=np.int64),
+        occurrence_paths=(("pair", "right"),),
     )
     assert int(result.status[0]) == BRepProjectionStatus.UNIQUE
     lower = Fraction(float(result.distance_lower_bounds[0]))
@@ -288,7 +299,9 @@ def test_uncertified_polygon_membership_keeps_base_projection() -> None:
 
     patch = CylinderPatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1)
     corners = ((0.0, -1.0), (2.0, -1.0), (1.0, 1.0), (0.0, 1.0))
-    points = np.asarray(patch.evaluate(jnp.asarray(corners, dtype=jnp.float64)))
+    points = np.asarray(
+        patch.evaluate(jnp.asarray(corners, dtype=jnp.float64)), dtype=np.float64
+    )
     pcurves = tuple(
         LineCurve(
             corners[i],
@@ -299,7 +312,14 @@ def test_uncertified_polygon_membership_keeps_base_projection() -> None:
     geometry = BRepGeometry(
         vertex_points=points,
         vertex_roots=tuple(
-            BRepVertexRoot(BRepPlacedVertex(point, np.eye(3), np.zeros(3), f"probe-{i}"))
+            BRepVertexRoot(
+                BRepPlacedVertex(
+                    point,
+                    np.eye(3, dtype=np.float64),
+                    np.zeros(3, dtype=np.float64),
+                    f"probe-{i}",
+                )
+            )
             for i, point in enumerate(points)
         ),
         curves=tuple(SurfaceMappedCurve(patch, curve) for curve in pcurves),
