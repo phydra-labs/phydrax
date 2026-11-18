@@ -433,14 +433,7 @@ def _surface_source_chart_rows(
         patch_rows[row] = patch
     return (
         patch_rows,
-        tuple(
-            _exact_triangle2(
-                _fractions_from_chart_tokens(
-                    witness.source_parameter_rational_tokens, row
-                )
-            )
-            for row in range(len(patch_rows))
-        ),
+        tuple(_exact_triangle2(chart) for chart in witness.source_parameter_charts()),
         frozenset(patch for patch, plane in plane_by_patch.items() if plane),
     )
 
