@@ -3,6 +3,10 @@
 ## Unreleased
 - Accelerated exact planar chart pair screening while preserving outward boxes,
   candidate order, and separation decisions.
+- Restricted JAX to `>=0.12.0,<0.12.1` to match audited frontend source
+  identities: JAX 0.12.1 rewrote the index narrowing repaired by Phydrax,
+  including `_clamp_and_cast_index`, `NDIndexer.normalize_indices`, and
+  `_normalize_index`; its changed source is not admitted by the guard.
 - Fixed the native CAD qualification intersection evidence reporting a p-curve
   residual that was zero by construction: `maximum_residuals_m.first_pcurve`
   and `.second_pcurve` now measure each patch lift against the declared analytic
