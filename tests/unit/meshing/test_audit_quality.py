@@ -616,6 +616,36 @@ def test_welded_audit_triangle_contact_is_batch_independent(
     assert reports[0] == reports[1]
 
 
+@pytest.mark.parametrize("power", (30, 52))
+@pytest.mark.parametrize("shift", (1, 10))
+def test_welded_audit_uses_nondegenerate_exact_projection(power: int, shift: int) -> None:
+    n = 1 << power
+    first = ((0, 0, 0), (n, n - 1, n - 1), (n - 1, n - 2, n - 2))
+    second = tuple((x + shift, y, z) for x, y, z in first)
+
+    def side(point: tuple[int, int, int]) -> Fraction:
+        return Fraction(n - 1) * point[2] - Fraction(n - 2) * point[0]
+
+    # In the exact x-z projection the second triangle is strictly across an
+    # edge of the first, even though the floating cross product cancels.
+    assert side(first[1]) > 0
+    assert all(side(point) < 0 for point in second)
+    mesh = phx.discretization.CellMesh(
+        np.asarray((*first, *second), dtype=np.float64),
+        (
+            phx.discretization.CellBlock(
+                "cells", "triangle", np.asarray(((0, 1, 2), (3, 4, 5)), dtype=np.int32)
+            ),
+        ),
+    )
+    report = phx.meshing.audit_cell_mesh(
+        mesh,
+        phx.discretization.CellGeometrySpec.affine(mesh),
+        policy=phx.meshing.CellMeshAuditPolicy(coincident_vertex_tolerance=0.0),
+    )
+    assert dict(report.check_counts)["self_intersection"] == 0
+
+
 def test_audit_quality_scenario_5() -> None:
     # Notched square: the vertex-zero fan folds over itself, the cell does not.
     points = np.asarray(((0.0, 0.0), (3.0, 0.0), (3.0, 3.0), (1.5, 1.0), (0.0, 3.0)))

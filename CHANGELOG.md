@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- Fixed welded mesh audits reporting certain self-intersections for disjoint
+  coplanar triangles when the floating-point normal cancels.
 - Welded mesh audits accelerate vertex and edge star incidence lookups without
   changing topology findings or their order.
 - Native geometry and meshing now share a single fixed-order binary64 dot,

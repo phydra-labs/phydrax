@@ -545,12 +545,34 @@ def _segment_crosses_triangle(
 
 
 def _projection_axes(triangles: np.ndarray, /) -> np.ndarray:
+    """Choose the existing projection unless its exact orientation is zero."""
+
     normal = np.cross(
         triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]
     )
     dropped = np.argmax(np.abs(normal), axis=1)
-    axes = np.asarray(((1, 2), (0, 2), (0, 1)))
-    return axes[dropped]
+    axes = np.asarray(((1, 2), (0, 2), (0, 1)), dtype=np.int64)
+    selected = axes[dropped]
+    sign, known = _orient2d(
+        _project(triangles[:, 0], selected),
+        _project(triangles[:, 1], selected),
+        _project(triangles[:, 2], selected),
+    )
+    remaining = known & (sign == 0)
+    for candidate in axes:
+        rows = np.flatnonzero(remaining)
+        if rows.size == 0:
+            break
+        projection = np.broadcast_to(candidate, (rows.size, 2))
+        sign, known = _orient2d(
+            _project(triangles[rows, 0], projection),
+            _project(triangles[rows, 1], projection),
+            _project(triangles[rows, 2], projection),
+        )
+        valid = known & (sign != 0)
+        selected[rows[valid]] = candidate
+        remaining[rows[valid]] = False
+    return selected
 
 
 def _project(points: np.ndarray, axes: np.ndarray, /) -> np.ndarray:
