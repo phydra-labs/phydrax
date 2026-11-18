@@ -150,6 +150,36 @@ def test_nonpositive_and_typed_refusal() -> None:
     ]
 
 
+def test_mixed_word_widths_and_radical_refusals_are_batch_independent() -> None:
+    matrices: tuple[tuple[tuple[e.Polynomial, ...], ...], ...] = (
+        (({(0,): Fraction(1, 3), (1,): Fraction(-1, 6)},),),
+        (({(0,): RadicalElement.sqrt(2)},),),
+        (({(0,): Fraction(1 << 260, 3), (1,): Fraction(7, 5)},),),
+        (({(0,): Fraction(1 << 4100)},),),
+        (({(0,): Fraction(-1, 7), (1,): Fraction(2, 7)},),),
+    )
+    expected = (
+        ((True, control_digest((Fraction(1, 3), Fraction(1, 6)))),),
+        None,
+        (
+            (
+                True,
+                control_digest(
+                    (Fraction(1 << 260, 3), Fraction(1 << 260, 3) + Fraction(7, 5))
+                ),
+            ),
+        ),
+        None,
+        ((False, control_digest((Fraction(-1, 7), Fraction(1, 7)))),),
+    )
+    assert tuple(symmetric_jacobian_verdicts(matrices, "box", 1)) == expected
+    assert tuple(symmetric_jacobian_verdicts(matrices[::-1], "box", 1)) == expected[::-1]
+    assert (
+        tuple(symmetric_jacobian_verdicts((matrix,), "box", 1)[0] for matrix in matrices)
+        == expected
+    )
+
+
 def test_positive_nondiagonal_matrix() -> None:
     z = (0, 0)
     matrix: tuple[tuple[e.Polynomial, ...], ...] = (
