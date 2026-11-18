@@ -18,9 +18,9 @@ from phydrax.geometry.brep._projection import (
     prepare_brep_projection,
 )
 from phydrax.geometry.brep._projection_contracts import (
+    brep_entity_id,
     BRepProjectionPolicy,
     BRepProjectionStatus,
-    brep_entity_id,
 )
 from tests.unit.geometry.test_brep_projection import _instanced_box, _rectangle_face_model
 from tests.unit.geometry.test_native_source_projection import (

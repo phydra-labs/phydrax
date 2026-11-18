@@ -3243,13 +3243,18 @@ def _exact_trim_line_contains(model: BRepModel, face: int, uv: np.ndarray, /) ->
             if coefficients is None:
                 continue
             origin, direction = coefficients
-            if not all(isinstance(value, Fraction) for value in (*origin, *direction)):
+            exact_origin = tuple(value for value in origin if isinstance(value, Fraction))
+            if len(exact_origin) != len(origin) or not all(
+                isinstance(value, Fraction) for value in direction
+            ):
                 continue
             axis = next((i for i, value in enumerate(direction) if value != 0), None)
             if axis is None:
                 continue
-            parameter = (point[axis] - origin[axis]) / direction[axis]
-            if any(origin[i] + parameter * direction[i] != point[i] for i in range(2)):
+            parameter = (point[axis] - exact_origin[axis]) / direction[axis]
+            if any(
+                exact_origin[i] + parameter * direction[i] != point[i] for i in range(2)
+            ):
                 continue
             edge = geometry.coedge_edges[coedge]
             first, last = (Fraction(float(value)) for value in geometry.edge_ranges[edge])
