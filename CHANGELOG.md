@@ -1,6 +1,26 @@
 # Changelog
 
 ## Unreleased
+- Fixed closed-form B-Rep face projection upper bounds that could be smaller
+  than the face distance: for example, a partial unit-cylinder window could
+  report the carrier distance 11/16 even though its foot is outside the face.
+  Where the returned parameter's face membership is certified, the residual
+  now also bounds the distance to the patch point at that parameter. Exact
+  rational-isometry placements include inverse-query and stored-point rounding;
+  boundary-union bounds take minima over all candidates. Stored residuals and
+  identifiers that fingerprint them can change; individual face-hit statuses
+  do not. Aggregate winners or ambiguity can change with the corrected bounds.
+  Polygon-fallback trim membership and placements without an exact rational
+  isometry retain their previous behavior and are not covered by this new
+  certificate. This change does not prove closest-point uniqueness near a
+  trim boundary or on a non-orthonormal carrier.
+  - Association resolution can change when a wider residual exceeds its limit.
+  - Curving local acceptance can reject a candidate with a wider residual.
+  - Certified source-boundary distance and nearest-face choice can change
+    where a corrected upper overlaps another candidate's interval.
+  - Layer-wall source records can carry larger residual evidence or refuse it.
+  - Boolean material separation reads the lower bound; placement and union
+    corrections can change that bound.
 - Fixed the native CAD qualification intersection evidence reporting a p-curve
   residual that was zero by construction: `maximum_residuals_m.first_pcurve`
   and `.second_pcurve` now measure each patch lift against the declared analytic

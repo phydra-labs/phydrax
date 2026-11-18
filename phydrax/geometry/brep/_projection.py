@@ -108,6 +108,44 @@ class _Occurrence:
     solid: int
     rotation: tuple[tuple[float, ...], ...]
     translation: tuple[float, ...]
+    exact_matrix: tuple[tuple[Fraction, ...], ...] | None = None
+
+
+def _identity_occurrence(occurrence: _Occurrence, /) -> bool:
+    if not occurrence.path:
+        return True
+    return occurrence.exact_matrix == (
+        (1, 0, 0, 0),
+        (0, 1, 0, 0),
+        (0, 0, 1, 0),
+        (0, 0, 0, 1),
+    )
+
+
+def _local_query_error(
+    occurrence: _Occurrence, query: np.ndarray, local: np.ndarray, /
+) -> Fraction | None:
+    """Enclose inverse-query rounding for an exact rational isometry."""
+    matrix = occurrence.exact_matrix
+    if matrix is None or any(
+        sum(matrix[k][i] * matrix[k][j] for k in range(3)) != int(i == j)
+        for i in range(3)
+        for j in range(3)
+    ):
+        return None
+    relative = tuple(Fraction(float(query[i])) - matrix[i][3] for i in range(3))
+    exact = tuple(
+        sum((matrix[j][i] * relative[j] for j in range(3)), Fraction(0))
+        for i in range(3)
+    )
+    squared = sum(
+        ((Fraction(float(value)) - expected) ** 2
+         for value, expected in zip(local, exact, strict=True)),
+        Fraction(0),
+    )
+    return fraction_sqrt_interval(squared)[1]
+
+
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +178,7 @@ class _ProjectionPreparation:
     )
     lifts: dict[tuple[int, int], bool] = field(default_factory=dict)
     angle_bounds: dict[int, tuple[float, float] | None] = field(default_factory=dict)
+    exact_rectangles: dict[int, bool] = field(default_factory=dict)
     faces: dict[int, _PreparedFace] = field(default_factory=dict)
     orientations: dict[tuple[int, int], float] = field(default_factory=dict)
     edges: dict[int, _PreparedEdge] = field(default_factory=dict)
@@ -231,6 +270,7 @@ class _Hit:
     root_id: tuple[object, ...] | None = None
     pending_frame: bool = False
     pending_point: bool = False
+    pending_box: bool = False
 
 
 def _distance_bounds(first: np.ndarray, second: np.ndarray, /) -> tuple[float, float]:
@@ -3131,6 +3171,257 @@ def _cylindrical_trim_distance(
     )
 
 
+def _rectangle_trim_exact(model: BRepModel, face: int, bounds: np.ndarray, /) -> bool:
+    """Prove that the authored line loop is the exact parameter rectangle."""
+    from ._boolean_core import line_chart_coefficients
+
+    loops = model.geometry.face_loops[face]
+    if len(loops) != 1 or len(loops[0]) != 4:
+        return False
+    u0, v0 = (Fraction(float(value)) for value in bounds[0])
+    u1, v1 = (Fraction(float(value)) for value in bounds[1])
+    corners = ((u0, v0), (u1, v0), (u1, v1), (u0, v1))
+    expected = {
+        frozenset((corners[i], corners[(i + 1) % 4])) for i in range(4)
+    }
+    actual = set()
+    for coedge in loops[0]:
+        coefficients = line_chart_coefficients(model.geometry.pcurves[coedge])
+        if coefficients is None:
+            return False
+        origin, direction = coefficients
+        if not all(isinstance(value, Fraction) for value in (*origin, *direction)):
+            return False
+        edge = model.geometry.coedge_edges[coedge]
+        ends = tuple(
+            tuple(origin[i] + Fraction(float(t)) * direction[i] for i in range(2))
+            for t in model.geometry.edge_ranges[edge]
+        )
+        actual.add(frozenset(ends))
+    return actual == expected
+
+
+def _authored_sphere_pole(
+    model: BRepModel, face: int, uv: np.ndarray, bounds: np.ndarray, /
+) -> tuple[Fraction, Fraction, Fraction] | None:
+    """Find a declared symbolic pole bound to a vertex of this face."""
+    from ._correspondence import exact_sphere_pole
+
+    patch = model.patches[face]
+    if not isinstance(patch, SpherePatch) or uv[1] not in (bounds[0, 1], bounds[1, 1]):
+        return None
+    pole = exact_sphere_pole(patch, Fraction(float(uv[1])))
+    if pole is None:
+        return None
+    geometry = model.geometry
+    for loop in geometry.face_loops[face]:
+        for coedge in loop:
+            edge = geometry.coedge_edges[coedge]
+            for vertex in geometry.edge_vertices[edge]:
+                if geometry.source_vertex_point_bounds(vertex) == (pole, pole):
+                    return pole
+    return None
+
+
+def _exact_trim_line_contains(model: BRepModel, face: int, uv: np.ndarray, /) -> bool:
+    """Prove a binary chart point lies in the interior of a line coedge."""
+    from ._boolean_core import line_chart_coefficients
+
+    point = tuple(Fraction(float(value)) for value in uv)
+    geometry = model.geometry
+    for loop in geometry.face_loops[face]:
+        for coedge in loop:
+            coefficients = line_chart_coefficients(geometry.pcurves[coedge])
+            if coefficients is None:
+                continue
+            origin, direction = coefficients
+            if not all(isinstance(value, Fraction) for value in (*origin, *direction)):
+                continue
+            axis = next((i for i, value in enumerate(direction) if value != 0), None)
+            if axis is None:
+                continue
+            parameter = (point[axis] - origin[axis]) / direction[axis]
+            if any(origin[i] + parameter * direction[i] != point[i] for i in range(2)):
+                continue
+            edge = geometry.coedge_edges[coedge]
+            first, last = (Fraction(float(value)) for value in geometry.edge_ranges[edge])
+            if not first < parameter < last:
+                continue
+            endpoints = geometry.coedge_endpoint_roots[coedge]
+            if all(root is not None for root in endpoints):
+                intervals = sorted(
+                    root.parameter_enclosure() for root in endpoints if root is not None
+                )
+                if not Fraction(float(intervals[0][1])) < parameter < Fraction(float(intervals[1][0])):
+                    continue
+            elif any(root is not None for root in endpoints):
+                continue
+            return True
+    return False
+
+
+def _source_point_upper(
+    patch: AbstractSurfacePatch,
+    point: np.ndarray,
+    uv: np.ndarray,
+    face: int,
+    preparation: _ProjectionPreparation | None,
+    /,
+) -> float:
+    """Bound distance to the exact source point at an authored parameter."""
+    from ._root_bindings import _patch_box, _source_coefficients_are_binary
+
+    if not isinstance(patch, (CylinderPatch, TorusPatch)) and not (
+        _source_coefficients_are_binary(patch)
+    ):
+        return np.inf
+    if preparation is None:
+        program = prepare_host_program(patch.evaluate, 2)
+    else:
+        if face not in preparation.patch_programs:
+            preparation.patch_programs[face] = prepare_host_program(patch.evaluate, 2)
+        program = preparation.patch_programs[face]
+    if program is None and not (
+        isinstance(patch, TorusPatch)
+        or (isinstance(patch, CylinderPatch) and not _source_coefficients_are_binary(patch))
+    ):
+        return np.inf
+    box = (
+        _patch_box(patch, uv, uv, interval_program=lambda _: program)
+        if program is not None
+        else _patch_box(patch, uv, uv)
+    )
+    return _point_box_upper(point, box)
+
+
+def _point_box_upper(point: np.ndarray, box: np.ndarray, /) -> float:
+    if not np.all(np.isfinite(box)):
+        return np.inf
+    squared = sum(
+        (
+            max(
+                abs(Fraction(float(value)) - Fraction(float(lo))),
+                abs(Fraction(float(value)) - Fraction(float(hi))),
+            ) ** 2
+            for value, lo, hi in zip(point, box[0], box[1], strict=True)
+        ),
+        Fraction(0),
+    )
+    return fraction_endpoint(
+        fraction_sqrt_interval(squared)[1], upper=True, saturate=True
+    )
+
+
+def _finish_source_boxes(
+    model: BRepModel,
+    queries: np.ndarray,
+    hits: list[_Hit],
+    preparation: _ProjectionPreparation,
+    /,
+) -> None:
+    """Complete source-point distance certificates in face-grouped batches."""
+    from ._root_bindings import _patch_boxes, _source_coefficients_are_binary
+
+    groups: dict[int, list[int]] = {}
+    for row, hit in enumerate(hits):
+        if hit.pending_box:
+            groups.setdefault(hit.index, []).append(row)
+    for face, selected in groups.items():
+        patch = model.patches[face]
+        parameters = np.stack([hits[row].parameters for row in selected])
+        binary = _source_coefficients_are_binary(patch)
+        if isinstance(patch, TorusPatch) or (isinstance(patch, CylinderPatch) and not binary):
+            boxes = _patch_boxes(
+                tuple((patch, uv, uv) for uv in parameters)
+            )
+        elif binary:
+            if face not in preparation.patch_programs:
+                preparation.patch_programs[face] = prepare_host_program(patch.evaluate, 2)
+            program = preparation.patch_programs[face]
+            if program is None:
+                boxes = tuple(np.full((2, 3), np.nan) for _ in selected)
+            else:
+                low, high = program.evaluate(parameters, parameters)
+                boxes = tuple(np.stack(pair) for pair in zip(low, high, strict=True))
+        else:
+            boxes = tuple(np.full((2, 3), np.nan) for _ in selected)
+        for row, box in zip(selected, boxes, strict=True):
+            hit = hits[row]
+            upper = _point_box_upper(queries[row], box)
+            if not np.isfinite(upper):
+                hits[row] = replace(hit, pending_box=False)
+            else:
+                hits[row] = replace(
+                    hit,
+                    upper=max(hit.upper, upper),
+                    pending_box=False,
+                )
+
+
+def _enlarge_face_hit(
+    model: BRepModel,
+    face: int,
+    point: np.ndarray,
+    hit: _Hit,
+    occurrence: _Occurrence,
+    preparation: _ProjectionPreparation | None,
+    enclosures: dict[int, TrimEnclosures] | None,
+    /,
+) -> _Hit:
+    """Enlarge only when the returned chart point is certified on the face.
+
+    Polygon-fallback membership is not certified; those hits retain the
+    pre-existing bounds and status.
+    """
+    patch = model.patches[face]
+    if not (
+        isinstance(patch, (CylinderPatch, ConePatch, SpherePatch, TorusPatch))
+        or (
+            isinstance(patch, RevolutionSurface)
+            and isinstance(patch.curve, (LineCurve, ExactLineCurve))
+        )
+    ) or hit.status in (_FAILED, _UNRESOLVED, _NON_ISOLATED):
+        return hit
+    uv = hit.parameters
+    if not np.all(np.isfinite(uv)):
+        return hit
+    bounds = np.asarray(model.parameter_bounds[face], dtype=np.float64)
+    if np.any(uv < bounds[0]) or np.any(uv > bounds[1]):
+        return hit
+    if preparation is not None and face in preparation.exact_rectangles:
+        rectangle = preparation.exact_rectangles[face]
+    else:
+        rectangle = _rectangle_trim_exact(model, face, bounds)
+        if preparation is not None:
+            preparation.exact_rectangles[face] = rectangle
+    domain = model.trim_domains[face]
+    pole = _authored_sphere_pole(model, face, uv, bounds)
+    certified = (
+        rectangle
+        or (
+            domain is not None
+            and bool(domain.curve_loops)
+            and _trim_classification(model, face, uv, enclosures=enclosures) == 1
+        )
+        or _exact_trim_line_contains(model, face, uv)
+        or pole is not None
+    )
+    if not certified:
+        return hit
+    if hit.pending_frame and _identity_occurrence(occurrence) and pole is None:
+        return replace(hit, pending_box=True)
+    if pole is None:
+        upper = _source_point_upper(patch, point, uv, face, preparation)
+    else:
+        squared = sum(
+            ((Fraction(float(value)) - exact) ** 2
+             for value, exact in zip(point, pole, strict=True)),
+            Fraction(0),
+        )
+        upper = fraction_endpoint(fraction_sqrt_interval(squared)[1], upper=True)
+    return replace(hit, upper=max(hit.upper, upper)) if np.isfinite(upper) else hit
+
+
 def _project_face(
     model: BRepModel,
     face: int,
@@ -5315,6 +5606,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                         item.solid_index,
                         rotation_values,
                         translation_values,
+                        item.placement.matrix,
                     )
                 )
         occurrence_rows = tuple(sorted(occurrences, key=lambda value: value.path))
@@ -5724,6 +6016,8 @@ class NativeBRepProjection(AbstractBRepProjection):
             if not np.all(np.isfinite(local)):
                 hits.append(_unresolved(dimension, index, occurrence.path))
                 continue
+            identity = _identity_occurrence(occurrence)
+            error = Fraction(0) if identity else _local_query_error(occurrence, query, local)
             if dimension == BRepEntityDimension.VERTEX:
                 point = np.asarray(
                     self.model.geometry.vertex_points[index], dtype=np.float64
@@ -5807,14 +6101,31 @@ class NativeBRepProjection(AbstractBRepProjection):
                     hit = _bounded_unresolved_face(
                         self.model, index, local, hit, source_box
                     )
+                if error is not None:
+                    hit = _enlarge_face_hit(
+                        self.model, index, local, hit, occurrence, preparation, enclosures
+                    )
             else:
                 return _failed(self.ambient_dimension)
+            if not identity and error is not None and hit.status != _FAILED:
+                lower = fraction_endpoint(
+                    max(Fraction(0), Fraction(hit.lower) - error), upper=False
+                )
+                upper = (
+                    fraction_endpoint(Fraction(hit.upper) + error, upper=True, saturate=True)
+                    if np.isfinite(hit.upper)
+                    else np.inf
+                )
+                hit = replace(hit, lower=lower, upper=upper)
             if hit.status not in (_FAILED, _UNRESOLVED) and occurrence.path:
                 point = (
                     binary64_matmul(rotation, hit.point) + translation
                     if np.all(np.isfinite(hit.point))
                     else hit.point
                 )
+                upper = hit.upper
+                if not identity and error is not None and np.all(np.isfinite(point)) and not hit.pending_point:
+                    upper = max(upper, _exact_point_distance_upper(query, point))
                 normal = (
                     binary64_matmul(rotation, hit.normal)
                     if np.all(np.isfinite(hit.normal))
@@ -5827,7 +6138,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                     point,
                     hit.parameters,
                     hit.lower,
-                    hit.upper,
+                    upper,
                     hit.status,
                     normal,
                     tangents,
@@ -5836,13 +6147,18 @@ class NativeBRepProjection(AbstractBRepProjection):
                     hit.root_id,
                     hit.pending_frame,
                     hit.pending_point,
+                    hit.pending_box,
                 )
             hits.append(hit)
         if len(hits) == 1:
             hit = hits[0]
             return hit
         if any(hit.status in (_FAILED, _UNRESOLVED) for hit in hits):
-            return _unresolved(dimension, index)
+            return replace(
+                _unresolved(dimension, index),
+                lower=min(hit.lower if hit.status != _FAILED else 0.0 for hit in hits),
+                upper=min(hit.upper if hit.status != _FAILED else np.inf for hit in hits),
+            )
         best = min(hits, key=lambda value: value.upper)
         tied = [
             hit
@@ -6052,6 +6368,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                     ),
                 )
             )
+        _finish_source_boxes(self.model, world, hits, preparation)
         pending_points: dict[tuple[int, int], list[int]] = {}
         for row, hit in enumerate(hits):
             if hit.pending_point and hit.dimension == 1:
@@ -6255,6 +6572,7 @@ class NativeBRepProjection(AbstractBRepProjection):
                 continue
             projected: list[_Hit] = []
             unresolved: list[_Hit] = []
+            all_hits: list[_Hit] = []
             for entity in eligible:
                 hit = self._project_one(
                     entity.dimension,
@@ -6266,18 +6584,31 @@ class NativeBRepProjection(AbstractBRepProjection):
                     boxes=boxes,
                     angle_bounds=angle_bounds,
                 )
-                if hit.status == _UNRESOLVED:
+                all_hits.append(hit)
+                if hit.status in (_UNRESOLVED, _FAILED):
                     unresolved.append(hit)
-                elif hit.status != _FAILED:
+                else:
                     projected.append(hit)
             if unresolved:
-                hits.append(unresolved[0])
+                hits.append(
+                    replace(
+                        _unresolved(
+                            unresolved[0].dimension, unresolved[0].index, unresolved[0].path
+                        ),
+                        lower=min(
+                            hit.lower if hit.status != _FAILED else 0.0 for hit in all_hits
+                        ),
+                        upper=min(
+                            hit.upper if hit.status != _FAILED else np.inf for hit in all_hits
+                        ),
+                    )
+                )
                 continue
             if not projected:
                 hits.append(_failed(self.ambient_dimension))
                 continue
             best = min(projected, key=lambda hit: hit.upper)
-            lower = min(hit.lower for hit in projected)
+            lower = min(hit.lower if hit.status != _FAILED else 0.0 for hit in all_hits)
             overlaps = [
                 hit
                 for hit in projected
