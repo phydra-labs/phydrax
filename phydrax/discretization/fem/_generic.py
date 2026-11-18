@@ -752,10 +752,8 @@ def _canonical_form_dof_layout(
                 raise ValueError(
                     "Mixed form routing requires canonical reference factories."
                 )
-    operands = (mesh,)
-    element_structure, element_digest = live_content_fingerprint(elements)
-    parameters = (element_structure, element_digest)
-    recorded = _CANONICAL_FORM_LAYOUTS.find(operands, parameters=parameters)
+    operands = (mesh, *elements)
+    recorded = _CANONICAL_FORM_LAYOUTS.find(operands)
     if recorded is not None:
         return recorded
     fingerprint = live_content_fingerprint(operands)
@@ -793,7 +791,7 @@ def _canonical_form_dof_layout(
         canonical_transforms=transforms,
         canonical_boundary=boundary,
     )
-    _CANONICAL_FORM_LAYOUTS.record(operands, fingerprint, layout, parameters=parameters)
+    _CANONICAL_FORM_LAYOUTS.record(operands, fingerprint, layout)
     return layout
 
 
