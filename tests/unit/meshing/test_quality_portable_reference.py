@@ -407,3 +407,81 @@ def test_distorted_corner_quality_against_high_precision(kind: str) -> None:
     np.testing.assert_allclose(quality.mean_ratios, [ratio], rtol=3e-13)
     np.testing.assert_allclose(quality.scaled_jacobian, [scaled], rtol=3e-13)
     np.testing.assert_allclose(quality.condition_number, [condition], rtol=3e-13)
+
+
+def _rounded_binary64(value: Fraction) -> Fraction:
+    """Round one exact arithmetic operation to binary64."""
+    return Fraction(float(value))
+
+
+def _ordered_triangle_area(points: np.ndarray, *, reverse: bool = False) -> float:
+    """Centroid-fan area, independently rounding every binary64 operation."""
+    p = [[Fraction(float(value)) for value in row] for row in points]
+
+    def ordered_sum(values: list[Fraction]) -> Fraction:
+        result = Fraction(0)
+        for value in reversed(values) if reverse else values:
+            result = _rounded_binary64(result + value)
+        return result
+
+    center = [
+        _rounded_binary64(ordered_sum([row[axis] for row in p]) / 3) for axis in range(2)
+    ]
+    shifted = [
+        [_rounded_binary64(row[axis] - center[axis]) for axis in range(2)] for row in p
+    ]
+    fan = []
+    for index in range(3):
+        following = shifted[(index + 1) % 3]
+        first = _rounded_binary64(shifted[index][0] * following[1])
+        second = _rounded_binary64(shifted[index][1] * following[0])
+        fan.append(_rounded_binary64(first - second))
+    return float(_rounded_binary64(Fraction(1, 2) * ordered_sum(fan)))
+
+
+def test_triangle_measure_uses_forward_ordered_sums() -> None:
+    points = np.array(
+        (
+            (-6.01993226379191, -1.5509655652973442),
+            (9.530848135200312, -5.080569956447261),
+            (-8.452338919340407, 3.8672499509564107),
+        ),
+        dtype=np.float64,
+    )
+    expected = _ordered_triangle_area(points)
+    assert (
+        np.asarray(expected, dtype=np.float64).tobytes()
+        == np.asarray(float.fromhex("0x1.2eb02cf0d21b3p+5"), dtype=np.float64).tobytes()
+    )
+    assert (
+        np.asarray(
+            _ordered_triangle_area(points, reverse=True), dtype=np.float64
+        ).tobytes()
+        == np.asarray(float.fromhex("0x1.2eb02cf0d21b2p+5"), dtype=np.float64).tobytes()
+    )
+    quality = phx.meshing.evaluate_cell_quality(_mesh("triangle", points))
+    assert (
+        np.asarray(quality.measures, dtype=np.float64).tobytes()
+        == np.asarray([expected], dtype=np.float64).tobytes()
+    )
+
+
+def test_concrete_triangle_measure_uses_host_arithmetic() -> None:
+    points = np.array(
+        (
+            (-2.5923735009859916, -6.5357962186118845),
+            (3.408220598554166, -1.314099518189984),
+            (-6.1693702250211135, -8.336948037181191),
+        ),
+        dtype=np.float64,
+    )
+    expected = _ordered_triangle_area(points)
+    assert (
+        np.asarray(expected, dtype=np.float64).tobytes()
+        == np.asarray(float.fromhex("0x1.f7ae42afaed05p+1"), dtype=np.float64).tobytes()
+    )
+    quality = phx.meshing.evaluate_cell_quality(_mesh("triangle", points))
+    assert (
+        np.asarray(quality.measures, dtype=np.float64).tobytes()
+        == np.asarray([expected], dtype=np.float64).tobytes()
+    )

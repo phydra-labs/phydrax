@@ -656,6 +656,38 @@ def test_binary64_cube_root_against_integer_rounding() -> None:
     distances = np.abs(actual.view(np.int64) - expected.view(np.int64))
     assert int(np.max(distances)) <= 1
 
+    # The seventh and eighth native Newton steps differ for these values;
+    # the integer midpoint oracle independently establishes the exact rounding.
+    iteration_inputs = np.asarray(
+        [
+            float.fromhex("0x1.aaae9cfed9cc2p-41"),
+            float.fromhex("0x1.5f1994d024085p-353"),
+        ],
+        dtype=np.float64,
+    )
+    rounded = np.asarray(
+        [
+            float.fromhex("0x1.7e6af5a5e36bap-14"),
+            float.fromhex("0x1.665ae5f8547bap-118"),
+        ],
+        dtype=np.float64,
+    )
+    eighth = np.asarray(
+        [
+            float.fromhex("0x1.7e6af5a5e36bbp-14"),
+            float.fromhex("0x1.665ae5f8547b9p-118"),
+        ],
+        dtype=np.float64,
+    )
+    oracle = np.asarray(
+        [_integer_rounded_cube_root(float(value)) for value in iteration_inputs],
+        dtype=np.float64,
+    )
+    assert np.array_equal(oracle.view(np.uint64), rounded.view(np.uint64))
+    assert np.array_equal(
+        binary64_cube_root(iteration_inputs).view(np.uint64), eighth.view(np.uint64)
+    )
+
     unchanged_bits = np.array(
         [
             0,
