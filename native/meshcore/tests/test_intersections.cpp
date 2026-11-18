@@ -491,6 +491,160 @@ void test_floating_point_hazards() {
   });
 }
 
+// Independent exact rational squared distance for bounded integer coordinates.
+using IVec = std::array<int64_t, 3>;
+struct Fraction { int64_t numerator; int64_t denominator; };
+IVec minus_vec(const IVec& x, const IVec& y) {
+  return {x[0] - y[0], x[1] - y[1], x[2] - y[2]};
+}
+int64_t idot(const IVec& x, const IVec& y) {
+  return x[0] * y[0] + x[1] * y[1] + x[2] * y[2];
+}
+Fraction imin(Fraction x, Fraction y) {
+  return x.numerator * y.denominator < y.numerator * x.denominator ? x : y;
+}
+Fraction segment_squared(const IVec& p, const IVec& a, const IVec& b) {
+  const IVec edge = minus_vec(b, a), offset = minus_vec(p, a);
+  const int64_t length = idot(edge, edge), projection = idot(offset, edge);
+  if (length == 0 || projection <= 0) return {idot(offset, offset), 1};
+  if (projection >= length) {
+    const IVec end_offset = minus_vec(p, b);
+    return {idot(end_offset, end_offset), 1};
+  }
+  return {idot(offset, offset) * length - projection * projection, length};
+}
+Fraction triangle_squared(const IVec& p, const IVec& a, const IVec& b, const IVec& c) {
+  Fraction best = imin(imin(segment_squared(p, a, b), segment_squared(p, b, c)),
+                       segment_squared(p, c, a));
+  const IVec u = minus_vec(b, a), v = minus_vec(c, a), w = minus_vec(p, a);
+  const int64_t uu = idot(u, u), uv = idot(u, v), vv = idot(v, v);
+  const int64_t wu = idot(w, u), wv = idot(w, v), det = uu * vv - uv * uv;
+  if (det > 0) {
+    const int64_t s = wu * vv - wv * uv, t = wv * uu - wu * uv;
+    if (s >= 0 && t >= 0 && s + t <= det) {
+      const int64_t numerator = idot(w, w) * det - (wu * s + wv * t);
+      best = imin(best, {numerator, det});
+    }
+  }
+  return best;
+}
+
+void test_point_triangle_distances() {
+  std::uint64_t state = 2026;
+  const auto coordinate = [&state]() -> int64_t {
+    state = phx::mc::splitmix64(state);
+    return static_cast<int64_t>(state % 9) - 4;
+  };
+  for (int sample = 0; sample < 10000; ++sample) {
+    IVec p{}, a{}, b{}, c{};
+    for (int axis = 0; axis < 3; ++axis) {
+      p[axis] = coordinate(); a[axis] = coordinate();
+      b[axis] = coordinate(); c[axis] = coordinate();
+    }
+    switch (sample % 8) {
+      case 0: b = a; break;
+      case 1: c = b; break;
+      case 2: c = a; break;
+      case 3: b = a; c = a; break;
+      case 4:
+        for (int axis = 0; axis < 3; ++axis) c[axis] = 2 * b[axis] - a[axis];
+        break;
+    }
+    double point[3], triangle[9];
+    for (int axis = 0; axis < 3; ++axis) {
+      point[axis] = static_cast<double>(p[axis]);
+      triangle[axis] = static_cast<double>(a[axis]);
+      triangle[3 + axis] = static_cast<double>(b[axis]);
+      triangle[6 + axis] = static_cast<double>(c[axis]);
+    }
+    double result;
+    const double candidate = phx::mc::geometry::point_triangle_candidate_distance(
+        point, triangle, triangle + 3, triangle + 6);
+    const double edge = std::min(
+        {phx::mc::geometry::point_segment_distance(point, triangle, triangle + 3),
+         phx::mc::geometry::point_segment_distance(point, triangle + 3, triangle + 6),
+         phx::mc::geometry::point_segment_distance(point, triangle + 6, triangle)});
+    PHX_CHECK(candidate <= edge);
+    PHX_CHECK(phx_mc_point_triangle_distances(1, point, triangle, &result) == PHX_MC_OK);
+    const Fraction exact2 = triangle_squared(p, a, b, c);
+    const double expected = std::sqrt(static_cast<double>(exact2.numerator) /
+                                      static_cast<double>(exact2.denominator));
+    // Regression tolerance for this bounded integer corpus, not a universal
+    // error bound for near-degenerate or arbitrarily distant input.
+    PHX_CHECK_NEAR(result, expected, 1e-12);
+    double gap[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      const double low = std::min({triangle[axis], triangle[3 + axis], triangle[6 + axis]});
+      const double high = std::max({triangle[axis], triangle[3 + axis], triangle[6 + axis]});
+      gap[axis] = std::max({low - point[axis], point[axis] - high, 0.0});
+    }
+    const double lower = std::sqrt((gap[0] * gap[0] + gap[1] * gap[1]) + gap[2] * gap[2]);
+    PHX_CHECK(result >= lower);
+  }
+}
+
+void test_point_triangle_distance_cases() {
+  const auto distance = [](const std::array<double, 3>& p, const Triangle& t) {
+    double out = -1.0;
+    PHX_CHECK(phx_mc_point_triangle_distances(1, p.data(), t.data(), &out) == PHX_MC_OK);
+    double gap[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      const double lo = std::min({t[axis], t[3 + axis], t[6 + axis]});
+      const double hi = std::max({t[axis], t[3 + axis], t[6 + axis]});
+      gap[axis] = std::max({lo - p[axis], p[axis] - hi, 0.0});
+    }
+    const double lower = std::sqrt((gap[0] * gap[0] + gap[1] * gap[1]) + gap[2] * gap[2]);
+    PHX_CHECK(out >= lower);
+    return out;
+  };
+  PHX_CHECK(distance({0, 0, 0}, kBase) == 0.0);
+  PHX_CHECK(distance({0.5, 0, 0}, kBase) == 0.0);
+  PHX_CHECK(distance({0.25, 0.25, 2}, kBase) == 2.0);
+  const Triangle repeated = {0, 0, 0, 0, 0, 0, 1, 0, 0};
+  PHX_CHECK(distance({1, 1, 0}, repeated) == 1.0);
+  const Triangle coincident = {858, 922, 344, 858, 922, 344, 1647, 1896, 1256};
+  PHX_CHECK(distance({1647, 1896, 1256}, coincident) == 0.0);
+  const Triangle collinear_large = {
+      -257146602457, -1817076916548, 3304793895589,
+      742079067743, -2979806753148, 3406194317089,
+      409003844343, -2592230140948, 3372394176589};
+  // The exact squared distance is 15135807982224892909/26229718426520883665.
+  // The edge witness is rounded at coordinate magnitudes near 2^42, so 0.002
+  // bounds several binary64 ulps of the rounded witness, not of the distance.
+  PHX_CHECK_NEAR(distance({75928620944, -2204653528748, 3338594036089}, collinear_large),
+                 std::sqrt(15135807982224892909.0 / 26229718426520883665.0), 0.002);
+  const Triangle collinear = {0, 0, 0, 1e12, 1e12, 0, 2e12, 2e12, 0};
+  // Exact squared distance is (10^12)^2 / 2; 0.001 allows about eight ulps.
+  PHX_CHECK_NEAR(distance({1e12, 0, 0}, collinear), std::sqrt(5e23), 0.001);
+  // Below the guard, the nearest edge is no farther than the altitude.
+  const Triangle below = {0, 0, 0, 1, 0, 0, 1, 0x1p-52, 0};
+  const Triangle above = {0, 0, 0, 1, 0, 0, 1, 0x1p-45, 0};
+  PHX_CHECK(distance({0.5, 0x1p-54, 0}, below) <= 0x1p-52);
+  PHX_CHECK_NEAR(distance({0.5, 0x1p-47, 0}, above), 0.0, 0x1p-90);
+  // Outside the exact-coordinate domain, assert only the box inequality.
+  const Triangle tiny = {0, 0, 0, 1e-100, 0, 0, 0, 1e-100, 0};
+  const double tiny_distance = distance({2.5e-101, 2.5e-101, 1e-101}, tiny);
+  PHX_CHECK(std::isfinite(tiny_distance));
+  PHX_CHECK(tiny_distance <= std::sqrt(2.16) * 2.5e-101);
+  const double far = 0x1p60;
+  // The exact nearest point is (1/2,1/2,0), within two ulps of this value.
+  PHX_CHECK_NEAR(distance({far, far, 0}, kBase), std::sqrt(2.0) * far, 512.0);
+  const double inf = std::numeric_limits<double>::infinity();
+  const double nonfinite[3] = {inf, 0, 0};
+  const double huge[3] = {1e308, 0, 0};
+  double out = 42;
+  PHX_CHECK(phx_mc_point_triangle_distances(1, nonfinite, kBase.data(), &out) ==
+            PHX_MC_NONFINITE_INPUT);
+  PHX_CHECK(phx_mc_point_triangle_distances(1, huge, kBase.data(), &out) == PHX_MC_RANGE_ERROR);
+  PHX_CHECK(phx_mc_point_triangle_distances(-1, huge, kBase.data(), &out) ==
+            PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_point_triangle_distances(1, nullptr, kBase.data(), &out) ==
+            PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_point_triangle_distances(1, huge, kBase.data(), nullptr) ==
+            PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_point_triangle_distances(0, nullptr, nullptr, &out) == PHX_MC_OK);
+}
+
 }  // namespace
 
 int main() {
@@ -502,5 +656,7 @@ int main() {
   test_lattice_invariance();
   test_abi_batches();
   test_floating_point_hazards();
+  test_point_triangle_distances();
+  test_point_triangle_distance_cases();
   return phx::mc::test::finish("test_intersections");
 }

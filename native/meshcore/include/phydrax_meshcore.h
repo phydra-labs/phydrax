@@ -1953,6 +1953,13 @@ PHX_MC_API int32_t phx_mc_segment_triangle_intersections(
 PHX_MC_API int32_t phx_mc_point_triangle_locations(
     int64_t count, const double* points, const double* triangles, int8_t* sides,
     int8_t* features, int32_t* item_status);
+/* Paired rows: points[count][3], triangles[count][3][3], distances[count].
+ * Returns max(candidate distance, ordered point-to-triangle-box distance).
+ * Inputs and computed distances must be finite; an error can leave a prefix
+ * of the output written. Degenerate and poorly conditioned inputs are accepted
+ * but the floating candidate is not guaranteed to be relatively accurate. */
+PHX_MC_API int32_t phx_mc_point_triangle_distances(
+    int64_t count, const double* points, const double* triangles, double* distances);
 PHX_MC_API int32_t phx_mc_arrange_triangles(
     int64_t vertex_count, const double* vertices, int64_t triangle_count,
     const int64_t* triangles, const int32_t* surfaces, int64_t pair_count,

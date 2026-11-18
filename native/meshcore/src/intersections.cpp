@@ -905,4 +905,41 @@ int32_t phx_mc_point_triangle_locations(int64_t count, const double* points,
   });
 }
 
+// S = max(N, L), with N the fixed-order edge/face candidate minimum and L the
+// ordered point-to-box distance. For nonzero coordinates in [2^-120, 2^120],
+// candidates have the usual rounding and conditioning error of the projections.
+// Outside that range, underflow can reduce accuracy and only the computed
+// inequalities N <= edge minimum and S >= L remain; segment witnesses are on
+// their edges only up to component rounding. Nonfinite input, N or L is refused.
+int32_t phx_mc_point_triangle_distances(int64_t count, const double* points,
+                                        const double* triangles, double* distances) {
+  return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    if (count < 0 || !phx::mc::addressable(count, 9, sizeof(double)) ||
+        !phx::mc::addressable(count, 1, sizeof(double)) || distances == nullptr ||
+        (count > 0 && (points == nullptr || triangles == nullptr))) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    for (int64_t item = 0; item < count; ++item) {
+      const double* p = points + 3 * item;
+      const double* t = triangles + 9 * item;
+      if (phx::mc::clip::check_finite(p, 3) != PHX_MC_OK ||
+          phx::mc::clip::check_finite(t, 9) != PHX_MC_OK) return PHX_MC_NONFINITE_INPUT;
+      const double candidate = phx::mc::geometry::point_triangle_candidate_distance(
+          p, t, t + 3, t + 6);
+      double gap[3];
+      for (int axis = 0; axis < 3; ++axis) {
+        const double lo = std::min({t[axis], t[3 + axis], t[6 + axis]});
+        const double hi = std::max({t[axis], t[3 + axis], t[6 + axis]});
+        gap[axis] = std::max({lo - p[axis], p[axis] - hi, 0.0});
+      }
+      const double lower = std::sqrt((gap[0] * gap[0] + gap[1] * gap[1]) + gap[2] * gap[2]);
+      if (!std::isfinite(candidate) || !std::isfinite(lower)) return PHX_MC_RANGE_ERROR;
+      distances[item] = std::max(candidate, lower);
+    }
+    return PHX_MC_OK;
+  });
+}
+
 }  // extern "C"

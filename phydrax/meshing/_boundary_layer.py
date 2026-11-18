@@ -22,6 +22,7 @@ wall vertices and locations.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from typing import Any
@@ -33,9 +34,15 @@ from jax import Array
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
-from .._bvh import bvh_nearest_items, bvh_overlap_pair_blocks, prepare_bvh
+from .._bvh import bvh_nearest_items, bvh_overlap_pair_blocks, PackedBVH, prepare_bvh
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._meshcore import angle_arccosine, angle_cosine, angle_sine, load_meshcore
+from .._meshcore import (
+    angle_arccosine,
+    angle_cosine,
+    angle_sine,
+    load_meshcore,
+    point_triangle_distances,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar
@@ -46,7 +53,6 @@ from ..discretization import (
     CellValidityPolicy,
     CellValidityStatus,
     certify_cell_geometry_validity,
-    point_triangle_distance,
 )
 from ..discretization._periodic_exact import (
     apply_periodic,
@@ -190,9 +196,10 @@ class BoundaryLayerPolicy(StrictModule, NonTrainableState):
 class BoundaryLayerEvidence(StrictModule, NonTrainableState):
     """Measured layer realization and collision-resolution evidence.
 
-    Thicknesses are measured as increments of the exact distance from each
-    column's layer vertices to the wall surface (BVH-nearest point-triangle
-    distances); per-layer statistics cover every column that carries the layer.
+    Thicknesses are increments of the minimum specified point-triangle distance
+    from each column's layer vertices to the wall surface. These binary64
+    distances are approximations; per-layer statistics cover every column that
+    carries the layer.
     ``layer_active[k]`` is ``True`` iff at least one surviving column carries
     requested layer ``k``. A requested layer carried by no surviving column has
     ``layer_active[k] == False`` and NaN achieved, minimum, and maximum
@@ -1660,7 +1667,9 @@ def _slerp_weights(
         left, right = 1.0 - fraction, fraction
     else:
         sine = angle_sine(np.asarray([angle], dtype=np.float64))[0]
-        left = angle_sine(np.asarray([(1.0 - fraction) * angle], dtype=np.float64))[0] / sine
+        left = (
+            angle_sine(np.asarray([(1.0 - fraction) * angle], dtype=np.float64))[0] / sine
+        )
         right = angle_sine(np.asarray([fraction * angle], dtype=np.float64))[0] / sine
     total = left + right
     return float(left / total), float(right / total)
@@ -1902,9 +1911,12 @@ def _build_front(
         first = column_direction_[ring]
         second = column_direction_[np.roll(ring, -1)]
         # Corner fans face away from the vertex: normals along the center direction.
-        if binary64_sum(
-            binary64_matmul(np.cross(first - value, second - value), value), axis=0
-        ) < 0.0:
+        if (
+            binary64_sum(
+                binary64_matmul(np.cross(first - value, second - value), value), axis=0
+            )
+            < 0.0
+        ):
             rows = rows[:, (0, 2, 1)]
         corner_rows.append(rows)
         corner_source_vertices.extend((vertex,) * len(cycle))
@@ -2349,124 +2361,18 @@ def _incident_grown_triangles(
     return grow_triangles, rows, incidence[np.repeat(starts, counts) + within, 1]
 
 
-type _Integers3 = tuple[int, int, int]
-
-# Relative band of the float tie screen in ``_probe_stretch``. It is about 1e6
-# times the rounding of the float distance kernel, so every exact tie is
-# screened in; the exact pass, not the band, decides whether a tie exists.
-_PROBE_TIE_BAND = 2.0**-20
-
-
-def _subtract3(first: _Integers3, second: _Integers3, /) -> _Integers3:
-    return (first[0] - second[0], first[1] - second[1], first[2] - second[2])
-
-
-def _dot3(first: _Integers3, second: _Integers3, /) -> int:
-    return first[0] * second[0] + first[1] * second[1] + first[2] * second[2]
-
-
-def _cross3(first: _Integers3, second: _Integers3, /) -> _Integers3:
-    return (
-        first[1] * second[2] - first[2] * second[1],
-        first[2] * second[0] - first[0] * second[2],
-        first[0] * second[1] - first[1] * second[0],
-    )
-
-
-def _exact_probe_candidates(probe: np.ndarray, corners: np.ndarray, /) -> list[Fraction]:
-    """Exact squared-distance candidates of ``point_triangle_distance``.
-
-    The face projection is a candidate when it lies in the closed triangle;
-    each edge contributes its clamped projection. The binary64 inputs are
-    scaled by one common power of two, so all arithmetic is on integers.
-    """
-    ratios = [
-        value.as_integer_ratio()
-        for value in (*probe.tolist(), *corners.reshape(-1).tolist())
-    ]
-    shift = max(denominator.bit_length() for _, denominator in ratios) - 1
-    scaled = [
-        numerator << (shift + 1 - denominator.bit_length())
-        for numerator, denominator in ratios
-    ]
-    point, first, second, third = (
-        (scaled[start], scaled[start + 1], scaled[start + 2]) for start in range(0, 12, 3)
-    )
-    unit = 1 << (2 * shift)
-    edges = ((first, second), (second, third), (third, first))
-    normal = _cross3(_subtract3(second, first), _subtract3(third, first))
-    area = _dot3(normal, normal)
-    candidates: list[Fraction] = []
-    if area and all(
-        _dot3(_cross3(_subtract3(end, start), _subtract3(point, start)), normal) >= 0
-        for start, end in edges
-    ):
-        height = _dot3(_subtract3(point, first), normal)
-        candidates.append(Fraction(height * height, area * unit))
-    for start, end in edges:
-        edge = _subtract3(end, start)
-        offset = _subtract3(point, start)
-        along = _dot3(offset, edge)
-        length = _dot3(edge, edge)
-        if along <= 0:
-            candidates.append(Fraction(_dot3(offset, offset), unit))
-        elif along >= length:
-            rest = _subtract3(point, end)
-            candidates.append(Fraction(_dot3(rest, rest), unit))
-        else:
-            candidates.append(
-                Fraction(_dot3(offset, offset) * length - along * along, length * unit)
-            )
-    return candidates
-
-
 def _probe_stretch(wall: _Wall, front: _Front, /) -> np.ndarray:
-    """Height factor that makes each column's local wall distance equal its level.
-
-    A column whose nearest wall distance is attained by two or more distance
-    candidates (its probe's foot on a wall vertex or edge, or on several
-    triangles) is an exact tie. Float rounding must not break it: its minimum
-    is computed exactly on the binary64 inputs and rounded once. Every other
-    column keeps the float kernel's value.
-    """
+    """Height factor that makes each column's local wall distance equal its level."""
     grow_triangles, rows, items = _incident_grown_triangles(wall, front.column_vertex)
-    lengths = binary64_norm(
-        wall.points[wall.edges[:, 0]] - wall.points[wall.edges[:, 1]]
-    )
+    lengths = binary64_norm(wall.points[wall.edges[:, 0]] - wall.points[wall.edges[:, 1]])
     shortest = np.full((wall.points.shape[0],), np.inf)
     np.minimum.at(shortest, wall.edges.reshape(-1), np.repeat(lengths, 2))
     epsilon = 1.0e-3 * shortest[front.column_vertex]
     probe = wall.points[front.column_vertex] + epsilon[:, None] * front.column_direction
     corners = wall.points[grow_triangles[items]]
-    distance = point_triangle_distance(
-        jnp.asarray(probe[rows]),
-        jnp.asarray(corners[:, 0]),
-        jnp.asarray(corners[:, 1]),
-        jnp.asarray(corners[:, 2]),
-    )
-    pair_squared = np.asarray(distance.squared_distance, dtype=np.float64)
-    count = front.column_vertex.size
-    squared = np.full((count,), np.inf, dtype=np.float64)
-    np.minimum.at(squared, rows, pair_squared)
-    # Screen: two near-minimal pairs, or a near-minimal witness near its
-    # triangle's boundary (edge and vertex witnesses have a zero weight).
-    near = pair_squared <= squared[rows] * (1.0 + _PROBE_TIE_BAND)
-    weights = -np.asarray(distance.coefficients, dtype=np.float64)[:, 1:]
-    boundary = np.min(weights, axis=1) <= _PROBE_TIE_BAND
-    suspect = (np.bincount(rows[near], minlength=count) > 1) | (
-        np.bincount(rows[near & boundary], minlength=count) > 0
-    )
-    bounds = np.searchsorted(rows, np.arange(count + 1, dtype=np.int64))
-    for column in np.flatnonzero(suspect):
-        candidates = [
-            value
-            for pair in range(bounds[column], bounds[column + 1])
-            for value in _exact_probe_candidates(probe[column], corners[pair])
-        ]
-        least = min(candidates)
-        if candidates.count(least) > 1:
-            squared[column] = float(least)
-    nearest = np.sqrt(squared)
+    pair_distance = point_triangle_distances(probe[rows], corners)
+    nearest = np.full((front.column_vertex.size,), np.inf, dtype=np.float64)
+    np.minimum.at(nearest, rows, pair_distance)
     return epsilon / np.maximum(nearest, np.finfo(np.float64).tiny)
 
 
@@ -2492,32 +2398,55 @@ def _curvature_limits(wall: _Wall, policy: BoundaryLayerPolicy, /) -> np.ndarray
     return policy.curvature_fraction * radius
 
 
-def _triangle_distance(triangles: np.ndarray) -> Any:
-    first = jnp.asarray(triangles[:, 0])
-    second = jnp.asarray(triangles[:, 1])
-    third = jnp.asarray(triangles[:, 2])
+def _nearby_pairs(
+    item_bvh: PackedBVH, queries: np.ndarray, radius: np.ndarray, /
+) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+    """Enumerate a conservative closed box around every finite query radius.
 
-    def distance(point: Any, items: Any) -> Any:
-        corner = first[items]
-        return point_triangle_distance(
-            jnp.broadcast_to(point, corner.shape), corner, second[items], third[items]
-        ).squared_distance
+    For nonnegative gaps, the rounded sum of squares is at least each rounded
+    square; above 2**-510 a one-ulp radius expansion covers square-root
+    rounding. Smaller gaps fit the 2**-510 floor. If a rounded gap is at most
+    that radius, its exact coordinate difference is less than the next larger
+    binary64 radius. An additional outward step after forming each box corner
+    therefore contains the triangle box on that axis. Closed overlap includes
+    every item whose computed box distance is at most the original radius.
+    """
+    if not np.all(np.isfinite(radius)):
+        raise ValueError("Boundary-layer query radii must be finite.")
+    outward = np.nextafter(np.maximum(radius, 2.0**-510), np.inf)
+    lower = np.nextafter(queries - outward[:, None], -np.inf)
+    upper = np.nextafter(queries + outward[:, None], np.inf)
+    if not np.all(np.isfinite(lower)) or not np.all(np.isfinite(upper)):
+        raise ValueError("Boundary-layer query boxes must be finite.")
+    query_bvh = prepare_bvh(lower, upper, dtype=jnp.float64)
+    return bvh_overlap_pair_blocks(query_bvh, item_bvh, include_touching=True)
 
-    return distance
+
+def _distances_within(
+    triangles: np.ndarray, queries: np.ndarray, radius: np.ndarray, bvh: PackedBVH, /
+) -> np.ndarray:
+    """Minimum specified triangle distance among the conservative box candidates."""
+    minimum = np.full((queries.shape[0],), np.inf, dtype=np.float64)
+    for rows, items in _nearby_pairs(bvh, queries, radius):
+        values = point_triangle_distances(queries[rows], triangles[items])
+        np.minimum.at(minimum, rows, values)
+    if not np.all(np.isfinite(minimum)):
+        raise ValueError("Boundary-layer distance search found no finite candidate.")
+    return minimum
 
 
 def _nearest_distances(triangles: np.ndarray, queries: np.ndarray, /) -> np.ndarray:
-    """Exact nearest point-triangle distances through a float64 BVH."""
+    """Minimum specified point-triangle distance over every triangle."""
     bvh = prepare_bvh(
         np.min(triangles, axis=1), np.max(triangles, axis=1), dtype=jnp.float64
     )
-    result = bvh_nearest_items(
-        bvh,
-        jnp.asarray(queries),
-        k=1,
-        item_distance_squared=_triangle_distance(triangles),
-    )
-    return np.sqrt(np.asarray(result.distance_squared, dtype=np.float64)[:, 0])
+    proposal = np.asarray(
+        bvh_nearest_items(bvh, jnp.asarray(queries), k=1).items, dtype=np.int64
+    )[:, 0]
+    if np.any((proposal < 0) | (proposal >= triangles.shape[0])):
+        raise ValueError("Boundary-layer distance search did not propose a triangle.")
+    radius = point_triangle_distances(queries, triangles[proposal])
+    return _distances_within(triangles, queries, radius, bvh)
 
 
 def _parallel_attached_wall_mask(
@@ -2610,21 +2539,20 @@ def _proximity_limits(
         origin[:, None, :]
         + heights[..., None] * front.column_direction[columns][:, None, :]
     )
-    nearest = _nearest_distances(triangles, probes.reshape(-1, 3)).reshape(
-        columns.size, samples
-    )
     own_corners = wall.points[grow_triangles[items]]
-    shape = (rows.size, samples, 3)
-    own = point_triangle_distance(
-        jnp.asarray(probes[rows]),
-        *(
-            jnp.asarray(np.broadcast_to(own_corners[:, None, corner], shape))
-            for corner in range(3)
-        ),
+    shape = (rows.size, samples, 3, 3)
+    own = point_triangle_distances(
+        probes[rows].reshape(-1, 3),
+        np.broadcast_to(own_corners[:, None, :, :], shape).reshape(-1, 3, 3),
+    ).reshape(rows.size, samples)
+    own_distance = np.full((columns.size, samples), np.inf, dtype=np.float64)
+    np.minimum.at(own_distance, rows, own)
+    bvh = prepare_bvh(
+        np.min(triangles, axis=1), np.max(triangles, axis=1), dtype=jnp.float64
     )
-    own_squared = np.full((columns.size, samples), np.inf)
-    np.minimum.at(own_squared, rows, np.asarray(own.squared_distance))
-    own_distance = np.sqrt(own_squared)
+    nearest = _distances_within(
+        triangles, probes.reshape(-1, 3), own_distance.reshape(-1), bvh
+    ).reshape(columns.size, samples)
     crossed = nearest < (1.0 - policy.medial_tolerance) * own_distance
     first = np.where(np.any(crossed, axis=1), np.argmax(crossed, axis=1), samples)
     safe = np.where(
@@ -3355,7 +3283,25 @@ def _merge_pairs(
     probe = origin + 2.0 * medial[vertices][:, None] * direction
     candidate_points = wall.points[vertices]
     bvh = prepare_bvh(candidate_points, candidate_points, dtype=jnp.float64)
-    nearest = np.asarray(bvh_nearest_items(bvh, jnp.asarray(probe), k=1).items)[:, 0]
+    proposal = np.asarray(
+        bvh_nearest_items(bvh, jnp.asarray(probe), k=1).items, dtype=np.int64
+    )[:, 0]
+    if np.any((proposal < 0) | (proposal >= candidate_points.shape[0])):
+        raise ValueError("Boundary-layer merge search did not propose a vertex.")
+    delta = candidate_points[proposal] - probe
+    radius = np.sqrt(binary64_dot(delta, delta))
+    minimum = np.full((probe.shape[0],), np.inf, dtype=np.float64)
+    nearest = np.full((probe.shape[0],), candidate_points.shape[0], dtype=np.int64)
+    for rows, items in _nearby_pairs(bvh, probe, radius):
+        delta = candidate_points[items] - probe[rows]
+        squared = binary64_dot(delta, delta)
+        previous = minimum[rows]
+        np.minimum.at(minimum, rows, squared)
+        nearest[rows[minimum[rows] < previous]] = candidate_points.shape[0]
+        equal = squared == minimum[rows]
+        np.minimum.at(nearest, rows[equal], items[equal])
+    if np.any(nearest == candidate_points.shape[0]) or not np.all(np.isfinite(minimum)):
+        raise ValueError("Boundary-layer merge search found no finite candidate.")
     partner = vertices[nearest]
     back = np.full((wall.points.shape[0],), -1, dtype=np.int64)
     back[vertices] = partner

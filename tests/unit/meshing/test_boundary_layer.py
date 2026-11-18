@@ -747,9 +747,8 @@ def test_retained_column_stretch_is_stored_evidence_not_a_float_rederivation(
 
 @pytest.mark.parametrize("count", (5, 6, 9))
 def test_planar_wall_probe_stretch_is_exactly_one(count: int) -> None:
-    # Each probe sits exactly epsilon above its planar column vertex, so every
-    # face, edge and vertex distance candidate ties at epsilon squared. The tie
-    # is decided exactly, never by a float argmin/min, so the stretch is 1.
+    # Each probe sits exactly epsilon above its planar column vertex, so the
+    # specified distances reproduce epsilon and the stretch remains exactly 1.
     points, triangles = _plate(count)
     wall = _wall(points, triangles)
     layers = phx.meshing.prepare_boundary_layers(wall, _control(wall))
@@ -1299,3 +1298,60 @@ def test_closed_inward_cap_only_core_retains_original_wall_charts() -> None:
     object.__setattr__(wrong_wall, "source_wall", None)
     with pytest.raises(ValueError, match="actual closed accepted layer cap"):
         build(wrong_wall)
+
+
+def test_layer_nearest_distance_contains_near_tied_distant_triangles() -> None:
+    from phydrax._meshcore import point_triangle_distances
+    from phydrax.meshing._boundary_layer import _nearest_distances
+
+    triangles = np.asarray(
+        [
+            [[-10.0, 0.0, 3e-7], [-10.0, 3e-7, 0.0], [-10.0, 1.0, 1.0]],
+            [[10.0, -1.0, -1.0], [10.0, 1.0, -1.0], [10.0, 0.0, 1.0]],
+        ],
+        dtype=np.float64,
+    )
+    queries = np.asarray(
+        [[0.0, 0.0, 0.0], [2.0**-49, 0.0, 0.0]],
+        dtype=np.float64,
+    )
+    expected = np.asarray(
+        [
+            np.min(point_triangle_distances(np.broadcast_to(point, (2, 3)), triangles))
+            for point in queries
+        ],
+        dtype=np.float64,
+    )
+    np.testing.assert_array_equal(_nearest_distances(triangles, queries), expected)
+
+
+def test_layer_wall_nearest_distances_match_all_triangle_pairs() -> None:
+    from phydrax._meshcore import point_triangle_distances
+    from phydrax.meshing._boundary_layer import _nearest_distances
+
+    points, faces = _plate(2)
+    triangles = points[faces]
+    wall = _wall(points, faces)
+    layers = phx.meshing.prepare_boundary_layers(wall, _control(wall))
+    # This planar wall has one vertical, unit-stretch column per source vertex.
+    # Include all generated level vertices and the 16 medial probes per column.
+    level_points = np.asarray(layers.column_level_coordinates, dtype=np.float64).reshape(
+        -1, 3
+    )
+    fractions = np.arange(1, 17, dtype=np.float64) / 16
+    heights = SCHEDULE.total_thickness / 0.8 * fractions
+    probes = np.broadcast_to(points[:, None, :], (points.shape[0], 16, 3)).copy()
+    probes[..., 2] += heights
+    queries = np.concatenate((level_points, probes.reshape(-1, 3)))
+    expected = np.asarray(
+        [
+            np.min(
+                point_triangle_distances(
+                    np.broadcast_to(point, (triangles.shape[0], 3)), triangles
+                )
+            )
+            for point in queries
+        ],
+        dtype=np.float64,
+    )
+    np.testing.assert_array_equal(_nearest_distances(triangles, queries), expected)
