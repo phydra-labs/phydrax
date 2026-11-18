@@ -41,6 +41,16 @@
 
 namespace phx::mc::remesh {
 
+// Intersects `field`, an enclosure of f over a triangle, with the mean-value
+// form anchored at each corner p whose evidence is finite: f(p) plus the hull
+// of 0, G . (q - p) and G . (r - p) for the gradient enclosure G, every
+// operation rounded outward. False when the intersection is empty. A triangle
+// whose corners coincide (the point proofs of the distance bound) takes the
+// same bounds from a closed form: see the definition.
+bool tighten_triangle_field(const Point& a, const Point& b, const Point& c,
+                            const std::array<VertexEvidence, 3>& evidence,
+                            const std::array<Interval, 3>& gradient, Interval& field);
+
 // One validated interval program over a single 3-d input box. The workspace
 // template carries the program's constant seeds; entries [0, 3) receive the
 // box and `outputs` name the workspace entries of the result components.

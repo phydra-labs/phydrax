@@ -749,6 +749,16 @@
   adaptation takes 12% less time on Windows (357 to 316 seconds) and the
   three surface remeshes 3% less, with identical coordinates, edits and
   evidence.
+- The zero-set distance bound no longer computes on subnormals when it tests a
+  single point. Its piece proofs are applied to points as triangles with three
+  coincident corners; every edge difference is then an exact zero enclosed
+  between the two least subnormals, and the products and sums of the
+  mean-value form ran on subnormals, which trap on common x86 processors
+  (2.2 microseconds for such a triangle against 0.08 for a proper one). The
+  same endpoints now follow from the gradient magnitudes in closed form,
+  compared bit for bit with the general products on generated cases. The
+  results are identical; on the adaptive sphere profile on Windows the first
+  adaptation takes 2 to 3% less time and the surface remeshes 1 to 2% less.
 - The source normal cones of certified surface remeshing are outward-rounded
   bounds computed without the platform math library. For the zero-set
   admission the half-angle `asin(|r| / |g|) + asin(2 tolerance / altitude)`

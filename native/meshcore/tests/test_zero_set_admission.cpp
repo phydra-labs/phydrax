@@ -25,6 +25,7 @@
 
 namespace {
 using phx::mc::remesh::IntervalBoxProgram;
+using phx::mc::remesh::Interval;
 using phx::mc::remesh::Point;
 using phx::mc::remesh::VertexEvidence;
 using phx::mc::remesh::ZeroSetBandAdmission;
@@ -341,6 +342,99 @@ void torus_cases() {
     PHX_CHECK(torus_distance(admission.project(off)) <= 1e-12);
   }
   admission_soundness(value, gradient, torus_point, outward_torus, torus_distance, 11u);
+}
+
+// The mean-value form of a triangle whose corners coincide, by the general
+// outward-rounded products and sums (all of them on subnormals).
+bool coincident_field_by_products(const Point& p,
+                                  const std::array<VertexEvidence, 3>& evidence,
+                                  const std::array<Interval, 3>& gradient, Interval& field) {
+  using phx::mc::remesh::add;
+  using phx::mc::remesh::finite;
+  using phx::mc::remesh::greatest;
+  using phx::mc::remesh::least;
+  using phx::mc::remesh::multiply;
+  using phx::mc::remesh::point;
+  using phx::mc::remesh::subtract;
+  for (size_t k = 0; k < 3; ++k) {
+    Interval form{evidence[k].lower, evidence[k].upper};
+    if (!finite(form)) continue;
+    Interval along_q{0, 0}, along_r{0, 0};
+    for (size_t d = 0; d < 3; ++d) {
+      along_q = add(along_q, multiply(gradient[d], subtract(point(p[d]), point(p[d]))));
+      along_r = add(along_r, multiply(gradient[d], subtract(point(p[d]), point(p[d]))));
+    }
+    form = add(form, {least(0.0, along_q.lower, along_r.lower),
+                      greatest(0.0, along_q.upper, along_r.upper)});
+    if (!finite(form)) continue;
+    field = {std::max(field.lower, form.lower), std::min(field.upper, form.upper)};
+    if (field.lower > field.upper) return false;
+  }
+  return true;
+}
+
+// A triangle whose corners coincide gets its field bound from a closed form.
+// It must return the endpoints of the general products and sums bit for bit:
+// on gradient magnitudes at and around the ties of the subnormal rounding,
+// zero, subnormal, huge (where the closed form steps aside) and not finite;
+// on evidence at zero of either sign, subnormal, at both sides of the
+// magnitude where a subnormal addend stops mattering, ordinary, at the
+// largest finite value and infinite; and on fields that the form leaves,
+// narrows or empties.
+void coincident_corner_field_bounds() {
+  const double tiny = std::numeric_limits<double>::denorm_min();
+  const double infinity = std::numeric_limits<double>::infinity();
+  const std::array<double, 22> magnitudes{
+      0.0,    tiny,   0x1p-1022, 0.25,   0.5,    0x1.0000000000001p-1, 0.75,        1.0,
+      1.5,    2.5,    3.5,       1000.5, 1.0e9,  0x1p40,               0x1.8p39,    0x1.0000000000001p40,
+      0x1p41, 1e300,  infinity,  std::numeric_limits<double>::quiet_NaN(), 0.3, 7.25};
+  const std::array<double, 18> values{
+      0.0,      -0.0,     tiny,     -tiny,   5 * tiny, 0x1p-1022, -0x1p-1022, 0x1p-961, -0x1p-961,
+      0x1p-960, -0x1p-960, 1.0e-3,  -1.0e-3, 1.0,      -2.5,      std::numeric_limits<double>::max(),
+      infinity, -infinity};
+  std::uint64_t state = 0x9e3779b97f4a7c15ull;
+  const auto draw = [&](size_t count) {
+    state = state * 6364136223846793005ull + 1442695040888963407ull;
+    return static_cast<size_t>((state >> 33) % count);
+  };
+  int closed = 0, emptied = 0;
+  for (int trial = 0; trial < 20000; ++trial) {
+    std::array<Interval, 3> gradient{};
+    for (Interval& g : gradient) {
+      const double first = magnitudes[draw(magnitudes.size())];
+      const double second = magnitudes[draw(magnitudes.size())];
+      switch (draw(4)) {
+        case 0: g = {first, first}; break;
+        case 1: g = {-first, -first}; break;
+        case 2: g = {-first, second}; break;
+        default: g = {std::min(first, second), std::max(first, second)}; break;
+      }
+    }
+    std::array<VertexEvidence, 3> evidence{};
+    for (VertexEvidence& corner : evidence) {
+      const double first = values[draw(values.size())], second = values[draw(values.size())];
+      corner = draw(3) == 0 ? VertexEvidence{first, first}
+                            : VertexEvidence{std::min(first, second), std::max(first, second)};
+    }
+    const double center = values[draw(values.size())];
+    const Interval initial = draw(2) == 0 ? Interval{-1.0e300, 1.0e300}
+                                          : Interval{std::min(center, 1.0), std::max(center, 1.0)};
+    const Point p{0.125 * static_cast<double>(draw(64)), -0.5, 0x1.fp-3};
+    Interval expected = initial, actual = initial;
+    const bool expected_holds = coincident_field_by_products(p, evidence, gradient, expected);
+    const bool actual_holds =
+        phx::mc::remesh::tighten_triangle_field(p, p, p, evidence, gradient, actual);
+    PHX_CHECK(actual_holds == expected_holds);
+    PHX_CHECK(std::memcmp(&actual, &expected, sizeof(Interval)) == 0);
+    bool finite_small = true;
+    for (const Interval& g : gradient)
+      finite_small = finite_small && std::fabs(g.lower) <= 0x1p40 && std::fabs(g.upper) <= 0x1p40;
+    closed += finite_small;
+    emptied += !expected_holds;
+  }
+  // Both routes and both outcomes were exercised.
+  PHX_CHECK(closed > 1000 && closed < 19000);
+  PHX_CHECK(emptied > 100 && emptied < 19900);
 }
 
 void near_band_distance_cases() {
@@ -1331,6 +1425,7 @@ int main() {
   sphere_cases();
   normal_cone_cases();
   torus_cases();
+  coincident_corner_field_bounds();
   near_band_distance_cases();
   whole_piece_bracketing_cases();
   remesh_sphere_carrier();

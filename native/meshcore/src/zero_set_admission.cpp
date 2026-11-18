@@ -4,6 +4,7 @@
 #include "zero_set_admission.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -45,34 +46,77 @@ bool gradient_over(const IntervalBoxProgram& program, const Point& lower, const 
   return finite(gradient[0]) && finite(gradient[1]) && finite(gradient[2]);
 }
 
+// The steps S of the mean-value form of a triangle whose corners coincide,
+// or false when a gradient component is not finite or too large for the
+// closed form. Each edge difference is then an exact zero, enclosed as
+// [-m, m] with m the least subnormal. Its product with a component of
+// magnitude M has the endpoints -+fl(M m), and fl(M m) = R m for R = M
+// rounded to an integer, ties to even (the subnormal grid has spacing m);
+// one step outward gives [-(R + 1) m, (R + 1) m]. Sums of subnormals are
+// exact and each of the three steps outward once more, so along either edge
+// the form is [-S m, S m] with S = R_0 + R_1 + R_2 + 6.
+bool coincident_form_steps(const std::array<Interval, 3>& gradient, std::uint64_t& steps) {
+  steps = 6;
+  for (const Interval& g : gradient) {
+    if (!finite(g)) return false;
+    const double most = std::max(std::fabs(g.lower), std::fabs(g.upper));
+    if (!(most <= 0x1p40)) return false;
+    // Adding 2^52 rounds to an integer in round-to-nearest, ties to even.
+    steps += static_cast<std::uint64_t>((most + 0x1p52) - 0x1p52);
+  }
+  return true;
+}
+
+// add(form, [-S m, S m]) for S < 2^43. S m is then below 2^-20 of an ulp of
+// an endpoint of magnitude 2^-960 or more, so that sum rounds back to the
+// endpoint; a smaller endpoint is added as written.
+Interval widened_by_steps(const Interval& form, std::uint64_t steps) {
+  const double reach = std::bit_cast<double>(steps);
+  const auto sum = [](double endpoint, double addend) {
+    return std::fabs(endpoint) >= 0x1p-960 ? endpoint : endpoint + addend;
+  };
+  return {next_down(sum(form.lower, -reach)), next_up(sum(form.upper, reach))};
+}
+}  // namespace
+
 // Translation preserves these edge vectors exactly. Anchor enclosures may
 // therefore describe either the original triangle or an outward-enclosed
 // translate without rounding its geometry into a different triangle.
+//
+// The general products and sums of a triangle whose corners coincide are
+// all on subnormals, which cost a microcode assist each on processors that
+// trap them (about 2 microseconds for one such triangle against 80
+// nanoseconds for a proper one); the closed form returns the same endpoints.
 bool tighten_triangle_field(const Point& a, const Point& b, const Point& c,
                             const std::array<VertexEvidence, 3>& evidence,
                             const std::array<Interval, 3>& gradient, Interval& field) {
   const std::array<const Point*, 3> corners{&a, &b, &c};
+  std::uint64_t steps = 0;
+  const bool coincident = a == b && b == c && coincident_form_steps(gradient, steps);
   for (size_t k = 0; k < 3; ++k) {
     Interval form{evidence[k].lower, evidence[k].upper};
     if (!finite(form)) continue;
-    const Point& p = *corners[k];
-    const Point& q = *corners[(k + 1) % 3];
-    const Point& r = *corners[(k + 2) % 3];
-    Interval along_q{0, 0}, along_r{0, 0};
-    for (int d = 0; d < 3; ++d) {
-      const Interval& g = gradient[static_cast<size_t>(d)];
-      along_q = add(along_q, multiply(g, subtract(point(q[d]), point(p[d]))));
-      along_r = add(along_r, multiply(g, subtract(point(r[d]), point(p[d]))));
+    if (coincident) {
+      form = widened_by_steps(form, steps);
+    } else {
+      const Point& p = *corners[k];
+      const Point& q = *corners[(k + 1) % 3];
+      const Point& r = *corners[(k + 2) % 3];
+      Interval along_q{0, 0}, along_r{0, 0};
+      for (int d = 0; d < 3; ++d) {
+        const Interval& g = gradient[static_cast<size_t>(d)];
+        along_q = add(along_q, multiply(g, subtract(point(q[d]), point(p[d]))));
+        along_r = add(along_r, multiply(g, subtract(point(r[d]), point(p[d]))));
+      }
+      form = add(form, {least(0.0, along_q.lower, along_r.lower),
+                        greatest(0.0, along_q.upper, along_r.upper)});
     }
-    form = add(form, {least(0.0, along_q.lower, along_r.lower),
-                      greatest(0.0, along_q.upper, along_r.upper)});
     if (!finite(form)) continue;
     field = {std::max(field.lower, form.lower), std::min(field.upper, form.upper)};
     if (field.lower > field.upper) return false;
   }
   return true;
 }
-}  // namespace
 
 int32_t IntervalBoxProgram::bind(const int64_t* instructions, int64_t instruction_count,
                                  const int64_t* indices, int64_t index_count,
