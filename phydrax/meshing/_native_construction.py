@@ -11,9 +11,12 @@ canonical acceptance, not construction of these records, establishes validity.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Protocol, TYPE_CHECKING
+
+from .._validation import canonical_identifier
 
 
 if TYPE_CHECKING:
@@ -163,3 +166,11 @@ class NativeMeshConstruction:
         default=None, kw_only=True, repr=False, compare=False
     )
     screens: Mapping[str, float] = field(default_factory=dict, kw_only=True)
+
+    def __post_init__(self) -> None:
+        for name, value in self.screens.items():
+            canonical_identifier(name, "screen name")
+            if not isinstance(value, float):
+                raise TypeError("Screen values must be floats.")
+            if not math.isfinite(value):
+                raise ValueError("Screen values must be finite.")

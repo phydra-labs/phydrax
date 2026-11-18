@@ -477,6 +477,17 @@ def test_deferred_certification_resolves_only_the_original_mesh() -> None:
     candidate = phx.meshing.CellMeshingCandidate(
         pending, specification, _NATIVE_PROVIDER, version, plan.plan_id, plan.route
     )
+    assert candidate.candidate_id == phx.meshing.CellMeshingCandidate(
+        pending, specification, _NATIVE_PROVIDER, version, plan.plan_id, plan.route
+    ).candidate_id
+    assert candidate.candidate_id != phx.meshing.CellMeshingCandidate(
+        replace(pending, screens={"error": 0.6}),
+        specification,
+        _NATIVE_PROVIDER,
+        version,
+        plan.plan_id,
+        plan.route,
+    ).candidate_id
     assert candidate.screens == {"error": 0.5}
     with pytest.raises(ValueError, match="pending certification"):
         _accept_native_construction(
