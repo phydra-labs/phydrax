@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from fractions import Fraction
+
 import numpy as np
 import pytest
 
@@ -11,11 +13,19 @@ from phydrax.geometry._mesh_certificates import _same_tree_content
 from phydrax.geometry._meshing_domain import MeshingDomain
 from phydrax.geometry.brep import brep_box, brep_cylinder
 from phydrax.meshing._canonical import _accept_native_construction, _NATIVE_PROVIDER
-from phydrax.meshing._contracts import CellFamilyPolicy, CellMeshingTarget, SurfaceMeshingSpec
+from phydrax.meshing._contracts import (
+    CellFamilyPolicy,
+    CellMeshingTarget,
+    MeshingFailure,
+    SurfaceMeshingSpec,
+)
 from phydrax.meshing._scope import MeshingScope
 from phydrax.meshing._sizing import SizeControlStrength, UniformSizeControl
 from phydrax.meshing.providers._native_options import NativeMeshingOptions
-from phydrax.meshing.providers._native_surface import prepare_native_surface
+from phydrax.meshing.providers._native_surface import (
+    _curve_interval_midpoint,
+    prepare_native_surface,
+)
 
 
 def test_deferred_surface_request_accepts_the_same_mesh() -> None:
@@ -25,11 +35,15 @@ def test_deferred_surface_request_accepts_the_same_mesh() -> None:
     specification = SurfaceMeshingSpec(
         CellMeshingTarget(2, 3, CellFamilyPolicy(required=("triangle",))),
         scope,
-        size_controls=(UniformSizeControl(scope, 0.8, strength=SizeControlStrength.SOFT),),
+        size_controls=(
+            UniformSizeControl(scope, 0.8, strength=SizeControlStrength.SOFT),
+        ),
     )
     prepared = prepare_native_surface(
-        MeshingDomain.from_brep(model), specification,
-        NativeMeshingOptions("parametric_surface"), contract
+        MeshingDomain.from_brep(model),
+        specification,
+        NativeMeshingOptions("parametric_surface"),
+        contract,
     )
     certified = prepared.execute(steering="certified")
     screened = prepared.execute(steering="screened")
@@ -38,7 +52,9 @@ def test_deferred_surface_request_accepts_the_same_mesh() -> None:
     deferred = screened.deferred_certification
     assert deferred is not None
     assert not screened.compliance.passed
-    assert screened.compliance.issues == ("compliance not assessed: screened construction",)
+    assert screened.compliance.issues == (
+        "compliance not assessed: screened construction",
+    )
     resolved = deferred.resolve()
     assert resolved.deferred_certification is None
     assert resolved.certified_steps == screened.certified_steps
@@ -46,21 +62,37 @@ def test_deferred_surface_request_accepts_the_same_mesh() -> None:
     expected = certified.certification
     assert _same_tree_content(
         (
-            request.schedule, request.source_id, request.source_revision,
-            request.domain, request.cell_regions, request.fidelity_source,
-            request.fidelity_tolerance, request.junction_vertices,
-            request.scoped_fidelity, request.protected_features,
-            request.maximum_normal_deviation, request.fidelity_witness,
-            request.feature_source, request.source_coverage_witness,
+            request.schedule,
+            request.source_id,
+            request.source_revision,
+            request.domain,
+            request.cell_regions,
+            request.fidelity_source,
+            request.fidelity_tolerance,
+            request.junction_vertices,
+            request.scoped_fidelity,
+            request.protected_features,
+            request.maximum_normal_deviation,
+            request.fidelity_witness,
+            request.feature_source,
+            request.source_coverage_witness,
             request.validity_parent,
         ),
         (
-            expected.schedule, expected.source_id, expected.source_revision,
-            expected.domain, expected.cell_regions, expected.fidelity_source,
-            expected.fidelity_tolerance, expected.junction_vertices,
-            expected.scoped_fidelity, expected.protected_features,
-            expected.maximum_normal_deviation, expected.fidelity_witness,
-            expected.feature_source, expected.source_coverage_witness,
+            expected.schedule,
+            expected.source_id,
+            expected.source_revision,
+            expected.domain,
+            expected.cell_regions,
+            expected.fidelity_source,
+            expected.fidelity_tolerance,
+            expected.junction_vertices,
+            expected.scoped_fidelity,
+            expected.protected_features,
+            expected.maximum_normal_deviation,
+            expected.fidelity_witness,
+            expected.feature_source,
+            expected.source_coverage_witness,
             expected.validity_parent,
         ),
     )
@@ -69,12 +101,23 @@ def test_deferred_surface_request_accepts_the_same_mesh() -> None:
     assert request.fidelity_tolerance == certified.certification.fidelity_tolerance
     assert request.fidelity_witness is not None
     assert certified.certification.fidelity_witness is not None
-    assert request.fidelity_witness.witness_id == certified.certification.fidelity_witness.witness_id
-    args = (specification, _NATIVE_PROVIDER, meshcore_identity(), "surface-test", "parametric_surface")
+    assert (
+        request.fidelity_witness.witness_id
+        == certified.certification.fidelity_witness.witness_id
+    )
+    args = (
+        specification,
+        _NATIVE_PROVIDER,
+        meshcore_identity(),
+        "surface-test",
+        "parametric_surface",
+    )
     accepted = _accept_native_construction(certified, *args)
     replayed = _accept_native_construction(resolved, *args)
     np.testing.assert_array_equal(accepted.mesh.coordinates, replayed.mesh.coordinates)
-    np.testing.assert_array_equal(accepted.mesh.blocks[0].vertices, replayed.mesh.blocks[0].vertices)
+    np.testing.assert_array_equal(
+        accepted.mesh.blocks[0].vertices, replayed.mesh.blocks[0].vertices
+    )
     assert tuple(value.association_id for value in accepted.associations) == tuple(
         value.association_id for value in replayed.associations
     )
@@ -91,12 +134,16 @@ def test_screened_surface_has_closed_oriented_edge_incidence(shape: str) -> None
     specification = SurfaceMeshingSpec(
         CellMeshingTarget(2, 3, CellFamilyPolicy(required=("triangle",))),
         scope,
-        size_controls=(UniformSizeControl(scope, 0.8, strength=SizeControlStrength.SOFT),),
+        size_controls=(
+            UniformSizeControl(scope, 0.8, strength=SizeControlStrength.SOFT),
+        ),
         maximum_deviation=0.08,
     )
     prepared = prepare_native_surface(
-        MeshingDomain.from_brep(model), specification,
-        NativeMeshingOptions("parametric_surface"), contract,
+        MeshingDomain.from_brep(model),
+        specification,
+        NativeMeshingOptions("parametric_surface"),
+        contract,
     )
     result = prepared.execute(steering="screened")
     triangles = np.asarray(result.mesh.blocks[0].vertices, dtype=np.int64)
@@ -104,7 +151,18 @@ def test_screened_surface_has_closed_oriented_edge_incidence(shape: str) -> None
         (triangles[:, (0, 1)], triangles[:, (1, 2)], triangles[:, (2, 0)])
     )
     unordered = np.sort(edges, axis=1)
-    _, inverse, counts = np.unique(unordered, axis=0, return_inverse=True, return_counts=True)
+    _, inverse, counts = np.unique(
+        unordered, axis=0, return_inverse=True, return_counts=True
+    )
     np.testing.assert_array_equal(counts, np.full(counts.shape, 2, dtype=np.int64))
     signs = np.where(edges[:, 0] < edges[:, 1], 1, -1)
-    np.testing.assert_array_equal(np.bincount(inverse, weights=signs), np.zeros(len(counts)))
+    np.testing.assert_array_equal(
+        np.bincount(inverse, weights=signs), np.zeros(len(counts))
+    )
+
+
+def test_unrepresentable_curve_interval_fails() -> None:
+    lower = Fraction.from_float(1.0)
+    upper = Fraction.from_float(float(np.nextafter(1.0, 2.0)))
+    with pytest.raises(MeshingFailure, match="parameter representability"):
+        _curve_interval_midpoint(lower, upper, 0)
