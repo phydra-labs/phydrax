@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- Welded mesh audits use native batched exact triangle contacts when available,
+  retaining the host route for unsupported contact rows and installations.
 - Fixed welded mesh audits reporting certain self-intersections for disjoint
   coplanar triangles when the floating-point normal cancels.
 - Welded mesh audits accelerate vertex and edge star incidence lookups without

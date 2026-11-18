@@ -616,6 +616,35 @@ def test_welded_audit_triangle_contact_is_batch_independent(
     assert reports[0] == reports[1]
 
 
+@pytest.mark.parametrize(
+    ("second", "expected"),
+    (
+        (((0, 0, 0), (-2, 0, 1), (0, -2, 1)), 0),
+        (((0, 0, 0), (1, 1, -1), (1, 1, 1)), 1),
+        (((0, 0, 0), (2, 0, 0), (0, -2, 0)), 0),
+        (((0, 0, 0), (2, 0, 0), (0, 0, 2)), 0),
+        (((0, 0, 0), (2, 0, 0), (0.5, 0.5, 0)), 1),
+    ),
+    ids=("vertex", "vertex-crossing", "edge", "edge-angled", "edge-folded"),
+)
+def test_welded_audit_shared_feature_contacts(
+    second: tuple[tuple[float, float, float], ...], expected: int
+) -> None:
+    first = ((0, 0, 0), (2, 0, 0), (0, 2, 0))
+    mesh = phx.discretization.CellMesh(
+        np.asarray((*first, *second), dtype=np.float64),
+        (
+            phx.discretization.CellBlock(
+                "cells", "triangle", np.asarray(((0, 1, 2), (3, 4, 5)), dtype=np.int32)
+            ),
+        ),
+    )
+    report = phx.meshing.audit_cell_mesh(
+        mesh, phx.discretization.CellGeometrySpec.affine(mesh)
+    )
+    assert dict(report.check_counts)["self_intersection"] == expected
+
+
 @pytest.mark.parametrize("power", (30, 52))
 @pytest.mark.parametrize("shift", (1, 10))
 def test_welded_audit_uses_nondegenerate_exact_projection(power: int, shift: int) -> None:

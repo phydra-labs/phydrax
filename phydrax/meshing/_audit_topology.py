@@ -33,6 +33,12 @@ from .._geometry_predicates import (
     segment_intersections_2d,
     SegmentIntersectionStatus,
 )
+from .._meshcore import (
+    IntersectionClass,
+    meshcore_available,
+    MeshcoreStatus,
+    triangle_intersection_classes,
+)
 from ..discretization import CellMesh, PolyhedralConnectivity
 from ..discretization._cell_geometry_validity import polyhedral_star_tables
 from ..discretization._reference_cell import reference_cell_topology
@@ -758,6 +764,25 @@ def _triangle_pairs_intersect(
     return hit, certain
 
 
+def _native_triangle_pairs_intersect(
+    points: np.ndarray, first: np.ndarray, second: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Classify contacts in input order, retaining the host route for failed rows."""
+    classes, status = triangle_intersection_classes(
+        points[first], points[second], first_ids=first, second_ids=second
+    )
+    shared = np.sum(first[:, :, None] == second[:, None, :], axis=(1, 2))
+    # The host audit excludes coincident triangles with all three IDs shared.
+    hit = (classes > IntersectionClass.SHARED_EDGE) & (shared != 3)
+    certain = status == MeshcoreStatus.OK
+    failed = np.flatnonzero(~certain)
+    if failed.size:
+        hit[failed], certain[failed] = _triangle_pairs_intersect(
+            points, first[failed], second[failed]
+        )
+    return hit, certain
+
+
 def _projected_disjoint(
     points: np.ndarray,
     first: np.ndarray,
@@ -991,13 +1016,18 @@ def _self_intersections(
     corners = points[triangles]
     bvh = prepare_bvh(np.min(corners, axis=1), np.max(corners, axis=1), dtype=np.float64)
     intersections = loops
+    intersect_pairs = (
+        _native_triangle_pairs_intersect
+        if meshcore_available()
+        else _triangle_pairs_intersect
+    )
     for first, second in bvh_overlap_pair_blocks(bvh, bvh, include_touching=True):
         keep = first < second
         first = first[keep]
         second = second[keep]
         for start in range(0, first.size, _TRIANGLE_PAIR_BATCH):
             stop = min(start + _TRIANGLE_PAIR_BATCH, first.size)
-            hit, certain = _triangle_pairs_intersect(
+            hit, certain = intersect_pairs(
                 points, triangles[first[start:stop]], triangles[second[start:stop]]
             )
             intersections += int(np.count_nonzero(hit & certain))
