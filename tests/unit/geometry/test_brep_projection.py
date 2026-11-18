@@ -895,6 +895,98 @@ def test_straight_revolution_projection_preserves_distance_and_axis_evidence() -
     assert float(result.distance_lower_bounds[1]) <= 1.0 <= float(result.residuals[1])
 
 
+def test_straight_revolution_seam_and_landmarks_keep_carrier_points() -> None:
+    from phydrax.geometry.brep._patches import LineCurve, RevolutionSurface
+
+    model = brep_cylinder(1.0, 2.0, coordinate_contract=_CONTRACT)
+    face = next(
+        index
+        for index, patch in enumerate(model.patches)
+        if isinstance(patch, RevolutionSurface)
+        and isinstance(patch.curve, LineCurve)
+        and np.linalg.norm(np.cross(patch.axis_direction, patch.curve.direction)) == 0
+    )
+    patch = model.patches[face]
+    points = np.asarray(((0.0, 2.0, 0.5), (0.0, -2.0, 1.5), (-2.0e-14, 2.0, 1.0)))
+    projection = phx.geometry.prepare_brep_projection(model)
+    result = _project(projection, points, _FACE, face)
+    expected = np.asarray(
+        [patch.evaluate(jnp.asarray(uv, dtype=jnp.float64)) for uv in result.parameters]
+    )
+    np.testing.assert_array_equal(
+        np.asarray(result.points).view(np.uint64), expected.view(np.uint64)
+    )
+    assert int(result.status[0]) == _STATUS.SEAM
+
+
+def test_straight_revolution_selects_nearest_occurrence() -> None:
+    from phydrax.geometry.brep._patches import LineCurve, RevolutionSurface
+
+    definition = brep_cylinder(1.0, 2.0, coordinate_contract=_CONTRACT)
+    source = definition.geometry
+    placement = BRepAffinePlacement.from_matrix(
+        ((1, 0, 0, 10), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
+    )
+    graph = BRepAssemblyGraph(
+        roots=(BRepAssemblyUse("pair", definition_id="two-copies"),),
+        definitions=(
+            BRepAssemblyDefinition(
+                "two-copies",
+                (
+                    BRepAssemblyUse("left", solid_index=0),
+                    BRepAssemblyUse("right", placement=placement, solid_index=0),
+                ),
+            ),
+        ),
+        solid_count=1,
+    )
+    geometry = BRepGeometry(
+        vertex_points=source.vertex_points,
+        vertex_exact_points=source.vertex_exact_points,
+        vertex_roots=source.vertex_roots,
+        edge_endpoint_roots=source.edge_endpoint_roots,
+        coedge_endpoint_roots=source.coedge_endpoint_roots,
+        edge_vertex_gap_bounds=source.edge_vertex_gap_bounds,
+        edge_face_gap_bounds=source.edge_face_gap_bounds,
+        curves=source.curves,
+        edge_curves=source.edge_curves,
+        edge_ranges=source.edge_ranges,
+        edge_vertices=source.edge_vertices,
+        pcurves=source.pcurves,
+        coedge_edges=source.coedge_edges,
+        coedge_senses=source.coedge_senses,
+        face_loops=source.face_loops,
+        shell_faces=source.shell_faces,
+        shell_orientations=source.shell_orientations,
+        solid_shells=source.solid_shells,
+        assembly_graph=graph,
+    )
+    model = BRepModel(
+        geometry=geometry,
+        patches=definition.patches,
+        parameter_bounds=definition.parameter_bounds,
+        orientation=definition.orientation,
+        physical_tags=definition.physical_tags,
+        coordinate_contract=definition.coordinate_contract,
+        report=definition.report,
+        trim_domains=definition.trim_domains,
+    )
+    face = next(
+        index
+        for index, patch in enumerate(model.patches)
+        if isinstance(patch, RevolutionSurface)
+        and isinstance(patch.curve, LineCurve)
+        and np.linalg.norm(np.cross(patch.axis_direction, patch.curve.direction)) == 0
+    )
+    projection = phx.geometry.prepare_brep_projection(model)
+    result = _project(projection, ((2.0, 1.0, 1.0),), _FACE, face)
+    assert result.occurrence_paths == (("pair", "left"),)
+    assert int(result.status[0]) == _STATUS.UNIQUE
+    np.testing.assert_allclose(
+        result.points[0], (2.0 / np.sqrt(5.0), 1.0 / np.sqrt(5.0), 1.0), atol=1e-14
+    )
+
+
 def test_straight_revolution_batched_frames_match_scalar_projection() -> None:
     from phydrax.geometry.brep._patches import LineCurve, RevolutionSurface
     from phydrax.geometry.brep._projection import _exact_cylinder

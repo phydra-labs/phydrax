@@ -3148,6 +3148,7 @@ def _project_face(
     distance_threshold: float | None = None,
     angle_bounds: dict[int, tuple[float, float] | None] | None = None,
     defer_frame: bool = False,
+    defer_candidate: bool = False,
     prepared: _PreparedFace | None = None,
     preparation: _ProjectionPreparation | None = None,
 ) -> _Hit:
@@ -3158,6 +3159,7 @@ def _project_face(
     candidate: np.ndarray | None = None
     uv: np.ndarray | None = None
     exact_uv: tuple[ExactScalar, ExactScalar] | None = None
+    deferred_candidate_uv: np.ndarray | None = None
     nonisolated = False
     affine_spline = False
     # Straight-ruled revolutions and cylinders: the candidate is the closest
@@ -3698,15 +3700,75 @@ def _project_face(
                 # unless reversed and faces the point unless mirrored.
                 angle += pi
         uv = np.asarray((angle, profile_parameter), dtype=np.float64)
-        candidate = np.asarray(
-            patch.evaluate(jnp.asarray(uv, dtype=jnp.float64)), dtype=np.float64
+        # A single-occurrence batch can discard the carrier realization when
+        # the host program will replace it. Establish the chart predicates using
+        # the same periodic representative as the later status decision.
+        candidate_uv = uv
+        candidate_deferred = (
+            defer_candidate
+            and defer_frame
+            and embedding is None
+            and rho_point != 0.0
+            and type(patch) is RevolutionSurface
+            and type(patch.curve) in (LineCurve, ExactLineCurve)
+            and np.geterr()["under"] == "ignore"
+            and all(
+                np.all(np.isfinite(value))
+                and np.max(np.abs(value), initial=0.0) <= 2.0**64
+                for value in (uv, bounds, axis_origin, axis, line_origin, line_direction)
+            )
         )
-        candidate_relative = candidate - axis_origin
-        candidate_height = float(binary64_dot(candidate_relative, axis))
-        nonisolated = (
-            rho_point == 0.0
-            and float(binary64_norm(candidate_relative - candidate_height * axis)) > 0.0
-        )
+        if candidate_deferred:
+            candidate_uv = uv.copy()
+            for coordinate, period in enumerate(patch.periods):
+                if period is not None:
+                    representative = _periodic_parameter(
+                        float(candidate_uv[coordinate]),
+                        bounds[0, coordinate],
+                        bounds[1, coordinate],
+                        period,
+                    )
+                    if representative is None:
+                        candidate_deferred = False
+                        break
+                    candidate_uv[coordinate] = representative
+        if candidate_deferred:
+            seam_tolerance = (
+                128.0
+                * np.finfo(np.float64).eps
+                * max(1.0, float(np.max(np.abs(candidate_uv))))
+            )
+            candidate_deferred = (
+                not np.any(candidate_uv < bounds[0])
+                and not np.any(candidate_uv > bounds[1])
+                and not any(
+                    period is not None
+                    and abs(candidate_uv[coordinate] - bounds[0, coordinate])
+                    <= seam_tolerance
+                    for coordinate, period in enumerate(patch.periods)
+                )
+                and not _periodic_landmark(candidate_uv, bounds, patch.periods)
+            )
+        if candidate_deferred and preparation is not None:
+            if face not in preparation.patch_programs:
+                preparation.patch_programs[face] = prepare_host_program(patch.evaluate, 2)
+            candidate_deferred = preparation.patch_programs[face] is not None
+        else:
+            candidate_deferred = False
+        if candidate_deferred:
+            deferred_candidate_uv = uv.copy()
+            candidate = _NAN3.copy()
+        else:
+            candidate = np.asarray(
+                patch.evaluate(jnp.asarray(uv, dtype=jnp.float64)), dtype=np.float64
+            )
+            candidate_relative = candidate - axis_origin
+            candidate_height = float(binary64_dot(candidate_relative, axis))
+            nonisolated = (
+                rho_point == 0.0
+                and float(binary64_norm(candidate_relative - candidate_height * axis))
+                > 0.0
+            )
         rectangle_closest = True
     elif isinstance(patch, RevolutionSurface) and isinstance(patch.curve, CircleCurve):
         projected = _circle_revolution_closest(
@@ -4002,6 +4064,11 @@ def _project_face(
         for axis, period in enumerate(periods)
     ):
         status = _SEAM
+    if deferred_candidate_uv is not None and status == _SEAM:
+        candidate = np.asarray(
+            patch.evaluate(jnp.asarray(deferred_candidate_uv, dtype=jnp.float64)),
+            dtype=np.float64,
+        )
     if embedding is not None:
         candidate = embedding.to_planar(candidate)
     return _Hit(
@@ -5791,6 +5858,12 @@ class NativeBRepProjection(AbstractBRepProjection):
                     distance_threshold=distance_threshold,
                     angle_bounds=angle_bounds,
                     defer_frame=defer_frame and len(targets) == 1,
+                    defer_candidate=(
+                        batch_points
+                        and len(targets) == 1
+                        and occurrence.rotation == _IDENTITY_ROTATION
+                        and occurrence.translation == _ZERO_TRANSLATION
+                    ),
                     prepared=prepared,
                     preparation=preparation,
                 )

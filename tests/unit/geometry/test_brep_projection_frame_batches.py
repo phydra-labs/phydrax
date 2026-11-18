@@ -5,6 +5,7 @@ import pytest
 
 import phydrax as phx
 from phydrax.geometry.brep._constructors import (
+    brep_cylinder,
     brep_planar_face,
     brep_sphere,
     brep_torus,
@@ -118,6 +119,32 @@ def test_face_projection_frames_are_byte_identical_across_batches(
             queries[selection], dimensions[selection], indices[selection]
         )
         _assert_rows_equal(selected, batch, selection)
+
+
+def test_revolution_projection_is_independent_of_row_order() -> None:
+    from phydrax.geometry.brep._patches import LineCurve, RevolutionSurface
+
+    model = brep_cylinder(1.0, 2.0, coordinate_contract=_CONTRACT)
+    face = next(
+        index
+        for index, patch in enumerate(model.patches)
+        if isinstance(patch, RevolutionSurface)
+        and isinstance(patch.curve, LineCurve)
+        and np.linalg.norm(np.cross(patch.axis_direction, patch.curve.direction)) == 0
+    )
+    projection = phx.geometry.prepare_brep_projection(model)
+    queries = np.asarray(
+        ((2.0, 1.0, 0.5), (0.0, 2.0, 1.0), (0.0, -2.0, 1.5), (0.0, 0.0, 1.0))
+    )
+    dimensions = np.full(len(queries), _FACE, dtype=np.int8)
+    indices = np.full(len(queries), face, dtype=np.int32)
+    batch = projection.project(queries, dimensions, indices)
+    order = np.arange(len(queries), dtype=np.int64)[::-1]
+    reversed_batch = projection.project(queries[order], dimensions[order], indices[order])
+    _assert_rows_equal(reversed_batch, batch, order)
+    np.testing.assert_allclose(
+        batch.points[0], (2.0 / np.sqrt(5.0), 1.0 / np.sqrt(5.0), 0.5), atol=1e-14
+    )
 
 
 @pytest.mark.parametrize("mode", ["ignore", "warn", "raise", "print"])

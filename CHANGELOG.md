@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Native CAD projection avoids discarded eager revolution-surface points for eligible batched rows.
 - Fixed the native CAD qualification intersection evidence reporting a p-curve
   residual that was zero by construction: `maximum_residuals_m.first_pcurve`
   and `.second_pcurve` now measure each patch lift against the declared analytic
