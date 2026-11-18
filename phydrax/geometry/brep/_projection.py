@@ -648,10 +648,17 @@ def _regular_face_frames(
     if not selected.size:
         return None
     values = jacobians[selected]
-    normal = np.cross(values[:, :, 0], values[:, :, 1])
+    first, second = values[:, :, 0], values[:, :, 1]
+    normal = np.stack(
+        (
+            first[:, 1] * second[:, 2] - first[:, 2] * second[:, 1],
+            first[:, 2] * second[:, 0] - first[:, 0] * second[:, 2],
+            first[:, 0] * second[:, 1] - first[:, 1] * second[:, 0],
+        ),
+        axis=1,
+    )
     squared = normal * normal
     length = np.sqrt((squared[:, 0] + squared[:, 1]) + squared[:, 2])
-    first = values[:, :, 0]
     first_squared = first * first
     first_length = np.sqrt(
         (first_squared[:, 0] + first_squared[:, 1]) + first_squared[:, 2]
@@ -667,7 +674,15 @@ def _regular_face_frames(
     normals = np.empty((len(jacobians), 3), dtype=np.float64)
     tangents = np.empty((len(jacobians), 2, 3), dtype=np.float64)
     normals[selected] = normal
-    tangents[selected] = np.stack((first, np.cross(normal, first)), axis=1)
+    second = np.stack(
+        (
+            normal[:, 1] * first[:, 2] - normal[:, 2] * first[:, 1],
+            normal[:, 2] * first[:, 0] - normal[:, 0] * first[:, 2],
+            normal[:, 0] * first[:, 1] - normal[:, 1] * first[:, 0],
+        ),
+        axis=1,
+    )
+    tangents[selected] = np.stack((first, second), axis=1)
     return eligible, normals, tangents
 
 
