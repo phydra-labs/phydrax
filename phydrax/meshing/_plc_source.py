@@ -601,10 +601,13 @@ def _cad_segment_incidence(
         or any(row < 0 or row >= len(points) for row in vertex_rows)
     ):
         raise ValueError("CAD PLC surface incidence maps are incomplete or invalid.")
-    _, exact_points = _exact_surface_points(surface)
+    if embedding is None:
+        surface_points = np.asarray(surface.mesh.coordinates, dtype=np.float64)
+    else:
+        surface_points, _ = _exact_surface_points(surface)
     if any(
-        not np.array_equal(points[target], np.asarray([float(x) for x in point]))
-        for target, point in zip(vertex_rows, exact_points, strict=True)
+        not np.array_equal(points[target], point)
+        for target, point in zip(vertex_rows, surface_points, strict=True)
     ):
         raise ValueError("CAD PLC vertices differ from certified exact surface points.")
     vertex_assoc = _association_for(surface, 0, required=True)
