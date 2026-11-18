@@ -10,7 +10,6 @@ from fractions import Fraction
 from typing import final
 
 import equinox as eqx
-import jax.numpy as jnp
 import numpy as np
 
 from .._fingerprint import canonical_fingerprint
@@ -19,7 +18,7 @@ from .._trainable import NonTrainableState
 from ..discretization import CellBlock, CellMesh
 from ..discretization._cell_geometry_transition_types import CellGeometryTransition
 from ..discretization._exact_algebraic_geometry import rational_coefficient
-from ..geometry._meshing_domain import MeshingDomain, PatchCurveUse
+from ..geometry._meshing_domain import MeshingDomain, PatchCurveUse, SourcePreparation
 from ..geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryFaceImageWitness,
@@ -224,20 +223,25 @@ def _trim_child_parameter(
 
 
 def _trim_curve_point(
-    domain: MeshingDomain, curve: int, parameter: Fraction, /
+    domain: MeshingDomain,
+    curve: int,
+    parameter: Fraction,
+    preparation: SourcePreparation,
+    /,
 ) -> np.ndarray:
     from .providers._native_surface import _source_curve_points
 
     return np.asarray(
-        _source_curve_points(domain, curve, (parameter,))[0], dtype=np.float64
+        _source_curve_points(domain, curve, (parameter,), preparation)[0],
+        dtype=np.float64,
     )
 
 
-def _use_chart(use: PatchCurveUse, parameter: float, /) -> np.ndarray:
+def _use_chart(
+    use: PatchCurveUse, parameter: float, preparation: SourcePreparation, /
+) -> np.ndarray:
     native = use.first + parameter * (use.last - use.first)
-    return np.asarray(
-        use.pcurve.evaluate(jnp.asarray(native, dtype=jnp.float64)), dtype=np.float64
-    ).reshape((2,))
+    return use.charts((native,), preparation=preparation)[0]
 
 
 def _source_vertex_chart(
@@ -246,6 +250,7 @@ def _source_vertex_chart(
     dimension: int,
     index: int,
     parameters: np.ndarray,
+    preparation: SourcePreparation,
     /,
 ) -> np.ndarray:
     """One chart point of a source vertex on ``patch``, or NaN when not unique.
@@ -264,11 +269,13 @@ def _source_vertex_chart(
     )
     if dimension == 1:
         candidates = [
-            _use_chart(use, float(parameters[0])) for use in uses if use.curve == index
+            _use_chart(use, float(parameters[0]), preparation)
+            for use in uses
+            if use.curve == index
         ]
     elif dimension == 0:
         candidates = [
-            _use_chart(use, endpoint)
+            _use_chart(use, endpoint, preparation)
             for use in uses
             for endpoint, corner in (
                 (0.0, domain.curves[use.curve].start),
@@ -628,6 +635,7 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
         tables: dict[int, GeometryAssociation],
         /,
     ) -> GeometryAssociation:
+        preparation = SourcePreparation(self.domain)
         old = tables[0]
         source_mesh, target_mesh = source.mesh, target
         source_vertex_ids = np.asarray(source_mesh.vertex_global_ids, dtype=np.int64)
@@ -774,7 +782,10 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
                     stencil,
                 )
                 curve_point = _trim_curve_point(
-                    self.domain, int(vertex_indices[target_row]), curve_parameter
+                    self.domain,
+                    int(vertex_indices[target_row]),
+                    curve_parameter,
+                    preparation,
                 )
                 parameters[target_row] = (float(curve_parameter), np.nan)
                 residuals[target_row] = float(
@@ -815,6 +826,7 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
                         int(np.asarray(old.source_dimensions)[int(parent_row)]),
                         int(np.asarray(old.source_indices)[int(parent_row)]),
                         np.asarray(old.parameters, dtype=np.float64)[int(parent_row)],
+                        preparation,
                     )
                     for parent_row in np.asarray(source_parent_rows).tolist()
                 ]

@@ -48,7 +48,9 @@ def sector() -> tuple[
         source_revision="source-revision-1",
         tolerance=1.0e-12,
     )
-    points = arc_use.charts(np.linspace(0.0, angle, 5), preparation=SourcePreparation(domain))
+    points = arc_use.charts(
+        np.linspace(0.0, angle, 5), preparation=SourcePreparation(domain)
+    )
     chain = tuple((Fraction(float(u)), Fraction(float(v))) for u, v in points)
     origin = (Fraction(0), Fraction(0))
     fan = tuple((origin, chain[row], chain[row + 1]) for row in range(4))

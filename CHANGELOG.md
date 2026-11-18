@@ -26,6 +26,9 @@
   hashes to break geometric ties.
   Sampled triangle deviations use fixed-order chart interpolation and norms;
   sampled deviation evidence can change in its last bits.
+  Distributed surface generation and surface-association transfer also use
+  operation-local preparations for stored source points and chart seeds;
+  transferred associations and derived results can change in their last bits.
 - Native geometry and meshing now share a single fixed-order binary64 dot,
   matrix product, and norm definition. On platforms whose BLAS fused or
   reordered these operations, rounding can change surface-association

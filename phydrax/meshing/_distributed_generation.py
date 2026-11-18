@@ -441,7 +441,7 @@ def _initial_curve_parameters(
         preparation,
     )
     native_surface_owner._integrate_pole_ring_parameters(
-        surface.domain, patches, pole_charts, parameters
+        surface.domain, patches, pole_charts, parameters, preparation
     )
     return parameters, pole_charts
 
@@ -451,6 +451,7 @@ def _generate_local_charts(
     local_patch_rows: tuple[int, ...],
     parameters_by_curve: dict[int, set[Fraction]],
     pole_charts: native_surface_owner._PoleCharts,
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> list[native_surface_owner._ChartMesh]:
     surface = prepared.surface
@@ -469,6 +470,7 @@ def _generate_local_charts(
             parameters_by_curve,
             pole_charts,
             quality_angle,
+            preparation,
         )
         for patch in patches
     ]
@@ -487,6 +489,7 @@ def _canonical_curve_point(
     prepared: PreparedDistributedSurfaceGeneration,
     curve: int,
     parameter: Fraction,
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> tuple[float, float, float]:
     domain = prepared.surface.domain
@@ -497,7 +500,9 @@ def _canonical_curve_point(
         point = np.asarray(domain.corner_points[source_curve.end], dtype=np.float64)
     else:
         point = np.asarray(
-            native_surface_owner._source_curve_points(domain, curve, (parameter,))[0],
+            native_surface_owner._source_curve_points(
+                domain, curve, (parameter,), preparation
+            )[0],
             dtype=np.float64,
         )
     if point.shape != (3,) or not np.all(np.isfinite(point)):
@@ -684,7 +689,15 @@ class _SeamRefinementRounds:
     has schedule violations.
     """
 
-    __slots__ = ("canonical_points", "charts", "prepared", "rank", "settled", "shared")
+    __slots__ = (
+        "canonical_points",
+        "charts",
+        "preparation",
+        "prepared",
+        "rank",
+        "settled",
+        "shared",
+    )
 
     def __init__(
         self,
@@ -692,12 +705,14 @@ class _SeamRefinementRounds:
         rank: int,
         charts: list[native_surface_owner._ChartMesh],
         canonical_points: dict[int, dict[Fraction, tuple[float, float, float]]],
+        preparation: domain_owner.SourcePreparation,
         /,
     ) -> None:
         self.prepared = prepared
         self.rank = rank
         self.charts = charts
         self.canonical_points = canonical_points
+        self.preparation = preparation
         self.shared = {
             curve: owners for curve, owners in prepared.curve_owners if len(owners) > 1
         }
@@ -739,7 +754,7 @@ class _SeamRefinementRounds:
                 if owners is None:
                     continue
                 midpoint = (lower + upper) / 2
-                point = _canonical_curve_point(prepared, curve, midpoint)
+                point = _canonical_curve_point(prepared, curve, midpoint, self.preparation)
                 self.canonical_points.setdefault(curve, {})[midpoint] = point
                 for owner in owners:
                     if owner != self.rank:
@@ -782,7 +797,8 @@ class _SeamRefinementRounds:
                             ),
                         )
                     if not _coordinates_match(
-                        _canonical_curve_point(prepared, curve, midpoint), point
+                        _canonical_curve_point(prepared, curve, midpoint, self.preparation),
+                        point,
                     ):
                         raise native_surface_owner._failure(
                             "an incident patch owner cannot reproduce a shared trim split's canonical source-curve coordinate",
@@ -821,6 +837,7 @@ def _reconcile_curve_parameters(
     prepared: PreparedDistributedSurfaceGeneration,
     rank: int,
     local_parameters: dict[int, set[Fraction]],
+    preparation: domain_owner.SourcePreparation,
     /,
 ) -> tuple[
     dict[int, set[Fraction]],
@@ -838,7 +855,7 @@ def _reconcile_curve_parameters(
     try:
         local_points = {
             curve: {
-                parameter: _canonical_curve_point(prepared, curve, parameter)
+                parameter: _canonical_curve_point(prepared, curve, parameter, preparation)
                 for parameter in sorted(local_parameters[curve])
             }
             for curve in shared
@@ -933,7 +950,7 @@ def _reconcile_curve_parameters(
                     raise ValueError(
                         "A canonical seam sample arrived from a non-steward owner."
                     )
-                expected = _canonical_curve_point(prepared, curve, parameter)
+                expected = _canonical_curve_point(prepared, curve, parameter, preparation)
                 if not _coordinates_match(expected, point):
                     raise native_surface_owner._failure(
                         "an incident patch owner cannot reproduce the steward's canonical source-curve coordinate",
@@ -1150,6 +1167,7 @@ def execute_distributed_surface_initial(
                 prepared,
                 rank,
                 local_parameters,
+                preparation,
             )
             if any(
                 not local_parameters[curve].issubset(reconciled[curve])
@@ -1173,6 +1191,7 @@ def execute_distributed_surface_initial(
                 local_patch_rows,
                 local_parameters,
                 pole_charts,
+                preparation,
             )
             discovered = {
                 curve: set(values) for curve, values in local_parameters.items()
@@ -1213,7 +1232,7 @@ def execute_distributed_surface_initial(
         local_parameters = discovered
 
     refined: native_surface_owner._RefinedSurface | None = None
-    rounds = _SeamRefinementRounds(prepared, rank, charts, canonical_points)
+    rounds = _SeamRefinementRounds(prepared, rank, charts, canonical_points, preparation)
     local_error = None
     try:
         if charts:
@@ -1274,6 +1293,7 @@ def execute_distributed_surface_initial(
                 prepared.surface.roots,
                 curve_ids,
                 prepared.surface.schedule,
+                preparation,
             )
             vertex_ids, cell_ids = _canonical_local_ids(
                 prepared,

@@ -520,6 +520,40 @@ def _surface_specification(
     )
 
 
+def test_single_owner_distributed_surface_uses_prepared_source() -> None:
+    import jax
+
+    from phydrax._execution_resources import ExecutionGroupSpec
+    from phydrax._execution_runtime import ExecutionGroup
+    from phydrax.meshing._distributed_generation import (
+        execute_distributed_surface_initial,
+        prepare_distributed_surface_generation,
+    )
+
+    device = jax.local_devices()[0]
+    group = ExecutionGroup(
+        ExecutionGroupSpec(
+            "single-owner-surface",
+            (device.process_index,),
+            ((device.process_index, device.id),),
+            mesh_axes=(("surface_owner", 1),),
+        ),
+        (device,),
+    )
+    domain = _square_domain()
+    prepared = prepare_distributed_surface_generation(
+        domain,
+        _surface_specification(domain),
+        NativeMeshingOptions("parametric_surface"),
+        SpatialCoordinateContract.si(),
+        group,
+    )
+    construction = execute_distributed_surface_initial(prepared).construction
+    assert construction is not None
+    assert construction.vertices.shape[0] > 0
+    assert construction.triangles.shape[0] > 0
+
+
 def _curve_point(domain: MeshingDomain, curve: int, parameter: float, /) -> np.ndarray:
     patch, loop, use_row = (int(value) for value in domain.curve_owners[curve])
     use = domain.patches[patch].loops[loop][use_row]

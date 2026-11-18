@@ -677,7 +677,10 @@ def test_stored_points_report_unsupported_evaluators() -> None:
 
 
 def test_constructor_unsupported_surface_preserves_scalar_endpoint_values() -> None:
-    from phydrax.geometry._meshing_domain import _PointPreparation, _surface_endpoint_images
+    from phydrax.geometry._meshing_domain import (
+        _PointPreparation,
+        _surface_endpoint_images,
+    )
     from phydrax.geometry.brep._patches import AbstractSurfacePatch
 
     class ScalarSurface(AbstractSurfacePatch):
