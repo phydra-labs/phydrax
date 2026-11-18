@@ -12,7 +12,7 @@ canonical acceptance, not construction of these records, establishes validity.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 
 if TYPE_CHECKING:
@@ -77,6 +77,17 @@ class NativeCertificationRequest:
     # Validity certificates the route already proved (e.g. its layer cells);
     # acceptance reuses their proofs of identical exact cell maps.
     validity_parent: tuple[CellValidityCertificate, ...] = ()
+
+
+class DeferredNativeCertification(Protocol):
+    """Construction operands a screened route retained instead of proof inputs.
+
+    ``resolve`` builds, for the mesh already constructed, the certification
+    request the certified route would have returned.  It may run exact work and
+    may raise the route's scientific failure; it never changes the mesh.
+    """
+
+    def resolve(self) -> NativeCertificationRequest: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,3 +155,12 @@ class NativeMeshConstruction:
     computed_layer_core_root: ComputedLayerCoreRoot | None = field(
         default=None, kw_only=True, repr=False, compare=False
     )
+    # Screened construction: operands that resolve to the full request at proof
+    # time.  While present, ``certification`` holds obligations only (no
+    # witnesses) and the construction must not be accepted before resolution.
+    deferred_certification: DeferredNativeCertification | None = field(
+        default=None, kw_only=True, repr=False, compare=False
+    )
+    # Names of construction steps that ran certified under screened steering,
+    # sorted; empty for certified steering and for a fully screened route.
+    certified_steps: tuple[str, ...] = field(default=(), kw_only=True)
