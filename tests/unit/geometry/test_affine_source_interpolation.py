@@ -196,3 +196,91 @@ def test_affine_and_bilinear_chart_bounds(height: float, chart_upper: str) -> No
     assert float(chart.deviation_bounds[0, 1]).hex() == chart_upper
     assert float(chart.mesh_to_source_upper).hex() == chart_upper
     assert float(chart.source_to_mesh_upper).hex() == chart_upper
+
+
+def test_mixed_affine_and_bilinear_charts_are_row_independent() -> None:
+    uv = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)), dtype=np.float64)
+    patches = []
+    curves = []
+    points = []
+    for index, height in enumerate((0.0, 2.0**-20)):
+        surface = RuledSurface(
+            LineCurve((2.0 * index, 0.0, 0.0), (1.0, 0.0, 0.0)),
+            LineCurve((2.0 * index, 1.0, 0.0), (1.0, 0.0, height)),
+        )
+        uses = (
+            PatchCurveUse(3 * index, LineCurve((0.0, 0.0), (1.0, 0.0)), 0.0, 1.0),
+            PatchCurveUse(3 * index + 1, LineCurve((1.0, 0.0), (-1.0, 1.0)), 0.0, 1.0),
+            PatchCurveUse(
+                3 * index + 2, LineCurve((0.0, 0.0), (0.0, 1.0)), 0.0, 1.0, sense=-1
+            ),
+        )
+        patches.append(MeshingSurfacePatch(surface, (uses,)))
+        curves.extend(
+            (
+                MeshingDomainCurve(3 * index, 3 * index + 1),
+                MeshingDomainCurve(3 * index + 1, 3 * index + 2),
+                MeshingDomainCurve(3 * index, 3 * index + 2),
+            )
+        )
+        points.extend(np.asarray(surface.evaluate(jnp.asarray(uv)), dtype=np.float64))
+    coordinates = np.asarray(points, dtype=np.float64)
+    domain = MeshingDomain(
+        tuple(patches),
+        tuple(curves),
+        6,
+        source_id="mixed-affine-consumer",
+        source_revision="mixed-affine-revision",
+        corner_points=coordinates,
+    )
+    source = MeshingDomainBoundarySource(domain, (0, 1))
+    mesh = CellMesh(
+        coordinates,
+        (
+            CellBlock(
+                "triangles",
+                "triangle",
+                np.asarray(((0, 1, 2), (3, 4, 5)), dtype=np.int64),
+            ),
+        ),
+        vertex_global_ids=np.arange(6, dtype=np.int64),
+    )
+    geometry = CellGeometrySpec.affine(mesh)
+    ids = np.asarray(mesh.blocks[0].global_ids, dtype=np.int64)
+    for order in ((0, 1), (1, 0)):
+        selected = np.asarray(order, dtype=np.int64)
+        entities = tuple(domain.entity_id(2, index) for index in order)
+        paths = tuple(domain.source_occurrences[2][index] for index in order)
+        witness = SourceBoundaryChartWitness(
+            mesh_id=mesh.mesh_id,
+            geometry_id=cell_geometry_id(geometry),
+            topology_id=mesh.topology_id,
+            source_id=source.source_id,
+            source_revision=source.source_revision,
+            source_query_id=source.source_scope_id,
+            chart_dimension=2,
+            reference_dimension=2,
+            cell_global_ids=ids[selected],
+            entity_global_ids=ids[selected],
+            local_entity_indices=np.full(2, -1, dtype=np.int32),
+            target_reference_vertices=np.tile(uv, (2, 1, 1)),
+            source_chart_ids=entities,
+            source_entity_ids=entities,
+            occurrence_paths=paths,
+            source_parameters=np.tile(uv, (2, 1, 1)),
+            orientations=np.ones(2, dtype=np.int8),
+        )
+        chart = certify_domain_surface_charts(
+            mesh,
+            geometry,
+            source,
+            witness,
+            np.asarray((0, 1), dtype=np.int64),
+            ((0, 0), (0, 1)),
+            tolerance=0.5,
+        )
+        assert chart.findings == ()
+        assert tuple(float(value).hex() for value in chart.deviation_bounds[:, 1]) == (
+            "0x1.3988e14092130p-536",
+            "0x1.0000000000001p-22",
+        )

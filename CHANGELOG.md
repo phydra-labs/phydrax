@@ -296,6 +296,10 @@
   and their order. On captured 147,231-cell qualification inputs, the median
   combined time of three alternating proof replays fell from 99.24 to 62.90
   seconds.
+- Source-boundary chart witnesses validate reduced rational token pairs and
+  chart degeneracy with integer arithmetic, preserving findings and identities.
+  On one captured 60,992-row bank, three alternating exact-loop runs used
+  1.275/0.153, 1.291/0.156, and 1.269/0.150 CPU seconds before/after.
 - Source-fidelity interpolation recognizes exact rational affine surface maps
   and uses their identically zero residual without constructing per-chart
   rational polynomials. Bounds and findings are unchanged. On one captured
