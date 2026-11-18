@@ -3173,7 +3173,7 @@ def _cylindrical_trim_distance(
 
 def _rectangle_trim_exact(model: BRepModel, face: int, bounds: np.ndarray, /) -> bool:
     """Prove that the authored line loop is the exact parameter rectangle."""
-    from ._boolean_core import line_chart_coefficients
+    from ._boolean_core import _coedge_axis_values, line_chart_coefficients
 
     loops = model.geometry.face_loops[face]
     if len(loops) != 1 or len(loops[0]) != 4:
@@ -3189,14 +3189,13 @@ def _rectangle_trim_exact(model: BRepModel, face: int, bounds: np.ndarray, /) ->
         coefficients = line_chart_coefficients(model.geometry.pcurves[coedge])
         if coefficients is None:
             return False
-        origin, direction = coefficients
-        if not all(isinstance(value, Fraction) for value in (*origin, *direction)):
+        first = _coedge_axis_values(model.geometry, coedge, 0)
+        second = _coedge_axis_values(model.geometry, coedge, 1)
+        if first is None or second is None or not all(
+            isinstance(value, Fraction) for value in (*first, *second)
+        ):
             return False
-        edge = model.geometry.coedge_edges[coedge]
-        ends = tuple(
-            tuple(origin[i] + Fraction(float(t)) * direction[i] for i in range(2))
-            for t in model.geometry.edge_ranges[edge]
-        )
+        ends = ((first[0], second[0]), (first[1], second[1]))
         actual.add(frozenset(ends))
     return actual == expected
 

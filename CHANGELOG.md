@@ -10,10 +10,12 @@
   boundary-union bounds take minima over all candidates. Stored residuals and
   identifiers that fingerprint them can change; individual face-hit statuses
   do not. Aggregate winners or ambiguity can change with the corrected bounds.
-  Polygon-fallback trim membership and placements without an exact rational
-  isometry retain their previous behavior and are not covered by this new
-  certificate. This change does not prove closest-point uniqueness near a
-  trim boundary or on a non-orthonormal carrier.
+  Polygon-fallback trim membership does not receive the face-point enlargement,
+  because membership is uncertified; exact-isometry placement rounding is still
+  accounted for independently. Placements without an exact rational isometry
+  receive neither widening and retain their previous behavior. This change does
+  not prove closest-point uniqueness near a trim boundary or on a
+  non-orthonormal carrier.
   - Association resolution can change when a wider residual exceeds its limit.
   - Curving local acceptance can reject a candidate with a wider residual.
   - Certified source-boundary distance and nearest-face choice can change
