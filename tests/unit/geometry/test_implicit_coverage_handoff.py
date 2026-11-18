@@ -323,9 +323,7 @@ def test_wrong_frame_chart_is_refused_by_coverage(
         charts._branches,
     )
     with pytest.raises(ValueError, match="prepared for a different mesh"):
-        _coverage(
-            case, case.mesh, case.geometry, case.source, case.fidelity, wrong_frame
-        )
+        _coverage(case, case.mesh, case.geometry, case.source, case.fidelity, wrong_frame)
 
 
 def test_wrong_live_surface_is_refused_by_coverage(

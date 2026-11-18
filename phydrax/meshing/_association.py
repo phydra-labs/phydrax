@@ -997,9 +997,7 @@ def _rows_or(value: ArrayLike | None, fill: Any, shape: Any, dtype: Any, /) -> n
     )
 
 
-def _fraction_rows_fingerprint(
-    rows: tuple[tuple[Fraction, ...] | None, ...], /
-) -> str:
+def _fraction_rows_fingerprint(rows: tuple[tuple[Fraction, ...] | None, ...], /) -> str:
     """Bind optional exact rational rows without serializing individual JSON tokens."""
     return rational_chart_bank_fingerprint(
         tuple(
@@ -1456,7 +1454,9 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                     else {}
                 ),
                 "source_parameter_points": _fraction_rows_fingerprint(
-                    tuple(None if point is None else (point,) for point in parameter_points)
+                    tuple(
+                        None if point is None else (point,) for point in parameter_points
+                    )
                 ),
                 "orientations": array_tree_fingerprint(orientations_),
                 "parent_dimensions": array_tree_fingerprint(parent_dimensions_),

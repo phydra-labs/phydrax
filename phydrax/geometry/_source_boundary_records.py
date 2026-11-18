@@ -450,8 +450,7 @@ def _validated_rational_chart_tokens(
         ] = {}
         rows = (
             tuple(
-                tuple(float(value).as_integer_ratio() for value in point)
-                for point in row
+                tuple(float(value).as_integer_ratio() for value in point) for point in row
             )
             for row in realization
         )
@@ -577,7 +576,9 @@ def _fraction_charts_from_tokens(
         exact = distinct.get(chart)
         if exact is None:
             exact = tuple(
-                tuple(Fraction(numerator, denominator) for numerator, denominator in point)
+                tuple(
+                    Fraction(numerator, denominator) for numerator, denominator in point
+                )
                 for point in chart
             )
             distinct[chart] = exact
@@ -1370,8 +1371,12 @@ class SourceBoundaryChartWitness(StrictModule, NonTrainableState):
                 "entities": self.source_entity_ids,
                 "occurrences": self.occurrence_paths,
                 "exact_rational_charts": (
-                    rational_chart_bank_fingerprint(self.target_reference_rational_tokens),
-                    rational_chart_bank_fingerprint(self.source_parameter_rational_tokens),
+                    rational_chart_bank_fingerprint(
+                        self.target_reference_rational_tokens
+                    ),
+                    rational_chart_bank_fingerprint(
+                        self.source_parameter_rational_tokens
+                    ),
                 ),
                 "cad_ancestry": (
                     None

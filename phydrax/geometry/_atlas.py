@@ -206,7 +206,9 @@ class _SegmentEnclosures:
     def __init__(
         self,
         segment: _CurveTrimSegment,
-        intersection_atlases: dict[int, tuple[IntersectionCurve, _IntersectionCurveHostAtlas]],
+        intersection_atlases: dict[
+            int, tuple[IntersectionCurve, _IntersectionCurveHostAtlas]
+        ],
         /,
     ) -> None:
         self.segment = segment
@@ -482,15 +484,22 @@ def _compute_segment_box(
 
     try:
         segment = record.segment
-        if type(segment) is CurveTrimSegment and type(segment.curve) is IntersectionPCurve:
+        if (
+            type(segment) is CurveTrimSegment
+            and type(segment.curve) is IntersectionPCurve
+        ):
             curve = segment.curve.curve
             entry = record.intersection_atlases.get(id(curve))
             if entry is None:
-                atlas = _IntersectionCurveHostAtlas.from_curve(curve, prepare_cylinder=True)
+                atlas = _IntersectionCurveHostAtlas.from_curve(
+                    curve, prepare_cylinder=True
+                )
                 record.intersection_atlases[id(curve)] = (curve, atlas)
             else:
                 atlas = entry[1]
-            box = np.asarray(segment._bounding_box(first, last, host_atlas=atlas), dtype=np.float64)
+            box = np.asarray(
+                segment._bounding_box(first, last, host_atlas=atlas), dtype=np.float64
+            )
         else:
             box = np.asarray(segment.bounding_box(first, last), dtype=np.float64)
     except (AttributeError, NotImplementedError, TypeError, ValueError, RuntimeError):

@@ -258,6 +258,7 @@ def test_source_chart_witness_identity_binds_content(field: str) -> None:
     assert make("").witness_id == identity
     assert make(field).witness_id != identity
 
+
 @pytest.mark.parametrize(
     ("bank", "message"),
     (
@@ -477,22 +478,27 @@ def test_source_chart_identity_binds_cad_ancestry() -> None:
     first = make(True, root, association("parent-a"))
     for witness in (first, make(False, root, None)):
         assert witness.source_parameter_charts() == tuple(
-            witness.source_parameter_chart(row) for row in range(len(witness.source_chart_ids))
+            witness.source_parameter_chart(row)
+            for row in range(len(witness.source_chart_ids))
         )
         assert witness.target_reference_charts() == tuple(
-            witness.target_reference_chart(row) for row in range(len(witness.source_chart_ids))
+            witness.target_reference_chart(row)
+            for row in range(len(witness.source_chart_ids))
         )
     assert first.witness_id == make(True, root, association("parent-a")).witness_id
-    assert first.witness_id == make(
-        True, root, association("parent-a"), equivalent_plc
-    ).witness_id
+    assert (
+        first.witness_id
+        == make(True, root, association("parent-a"), equivalent_plc).witness_id
+    )
     rebuilt_plc = copy(plc)
-    assert first.witness_id == make(
-        True, root, association("parent-a"), rebuilt_plc
-    ).witness_id
-    assert first.witness_id == make(
-        True, root, association("parent-a"), rebuilt_plc
-    ).witness_id
+    assert (
+        first.witness_id
+        == make(True, root, association("parent-a"), rebuilt_plc).witness_id
+    )
+    assert (
+        first.witness_id
+        == make(True, root, association("parent-a"), rebuilt_plc).witness_id
+    )
     offsets = plc.polygon_offsets
     offsets.setflags(write=True)
     original_offset = offsets[0]
@@ -508,9 +514,10 @@ def test_source_chart_identity_binds_cad_ancestry() -> None:
     assert first.witness_id == make(True, root, association("parent-a")).witness_id
     assert first.witness_id != make(False, root, None).witness_id
     assert first.witness_id != make(True, -1, association("parent-a")).witness_id
-    assert make(True, -1, association("parent-a")).witness_id == make(
-        True, -1, association("parent-a")
-    ).witness_id
+    assert (
+        make(True, -1, association("parent-a")).witness_id
+        == make(True, -1, association("parent-a")).witness_id
+    )
     assert (
         first.witness_id
         != make(True, root, association("parent-a"), other_plc).witness_id
@@ -576,14 +583,28 @@ def test_face_image_identity_and_exact_integer_degeneracy() -> None:
         )
 
     zero = Fraction(0)
-    triangle = ((zero, zero, zero), (Fraction(1, 3), zero, zero), (zero, Fraction(1, 2), zero))
-    changed = ((zero, zero, zero), (Fraction(2, 3), zero, zero), (zero, Fraction(1, 2), zero))
+    triangle = (
+        (zero, zero, zero),
+        (Fraction(1, 3), zero, zero),
+        (zero, Fraction(1, 2), zero),
+    )
+    changed = (
+        (zero, zero, zero),
+        (Fraction(2, 3), zero, zero),
+        (zero, Fraction(1, 2), zero),
+    )
     first = make(triangle)
     assert first.witness_id == make(triangle).witness_id
     assert first.witness_id != make(changed).witness_id
     assert first.image_triangle(0) == triangle
     with pytest.raises(ValueError, match="degenerate"):
-        make(((zero, zero, zero), (Fraction(1, 3), zero, zero), (Fraction(2, 3), zero, zero)))
+        make(
+            (
+                (zero, zero, zero),
+                (Fraction(1, 3), zero, zero),
+                (Fraction(2, 3), zero, zero),
+            )
+        )
     with pytest.raises(ValueError, match="canonical rational"):
         SourceBoundaryImagePullback(
             1, 0, (((2, 4), (0, 1), (0, 1)), ((0, 1), (0, 1), (0, 1))), "chart"
@@ -594,11 +615,17 @@ def test_face_image_identity_and_exact_integer_degeneracy() -> None:
         numerators = rng.integers(-8, 9, size=(3, 3), dtype=np.int64)
         denominators = rng.integers(1, 9, size=(3, 3), dtype=np.int64)
         random_triangle = tuple(
-            tuple(Fraction(int(numerators[i, j]), int(denominators[i, j])) for j in range(3))
+            tuple(
+                Fraction(int(numerators[i, j]), int(denominators[i, j])) for j in range(3)
+            )
             for i in range(3)
         )
-        first_edge = tuple(random_triangle[1][i] - random_triangle[0][i] for i in range(3))
-        second_edge = tuple(random_triangle[2][i] - random_triangle[0][i] for i in range(3))
+        first_edge = tuple(
+            random_triangle[1][i] - random_triangle[0][i] for i in range(3)
+        )
+        second_edge = tuple(
+            random_triangle[2][i] - random_triangle[0][i] for i in range(3)
+        )
         nonzero = any(
             first_edge[i] * second_edge[j] - first_edge[j] * second_edge[i]
             for i, j in ((0, 1), (0, 2), (1, 2))
@@ -619,9 +646,13 @@ def test_live_cad_chart_preparation_does_not_retain_source() -> None:
     from phydrax.meshing.providers._native_cad_volume import NativeCadVolumeSource
     from tests.unit.meshing.test_native_cad_volume import _cad_surface
 
-    def construct() -> tuple[weakref.ReferenceType[object], weakref.ReferenceType[object]]:
+    def construct() -> tuple[
+        weakref.ReferenceType[object], weakref.ReferenceType[object]
+    ]:
         domain, surface = _cad_surface()
-        source = NativeCadVolumeSource(domain, surface, maximum_deviation=0.1, boundary="fixed")
+        source = NativeCadVolumeSource(
+            domain, surface, maximum_deviation=0.1, boundary="fixed"
+        )
         plc = source.plc_source.complex
         charts = plc.cad_source_charts
         assert charts is not None
@@ -643,16 +674,25 @@ def test_live_cad_chart_preparation_does_not_retain_source() -> None:
         )
         triangle = np.asarray([[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]], dtype=np.float64)
         witness = SourceBoundaryChartWitness(
-            mesh_id="mesh", geometry_id="geometry", topology_id="topology",
-            source_id=source.source_id, source_revision=source.source_revision,
-            source_query_id="query", chart_dimension=2, reference_dimension=2,
+            mesh_id="mesh",
+            geometry_id="geometry",
+            topology_id="topology",
+            source_id=source.source_id,
+            source_revision=source.source_revision,
+            source_query_id="query",
+            chart_dimension=2,
+            reference_dimension=2,
             cell_global_ids=np.asarray([1], dtype=np.int64),
             entity_global_ids=np.asarray([1], dtype=np.int64),
             local_entity_indices=np.asarray([-1], dtype=np.int32),
-            target_reference_vertices=triangle, source_chart_ids=(entity,),
-            source_entity_ids=(entity,), occurrence_paths=(domain.source_occurrences[2][patch],),
-            source_parameters=triangle, orientations=np.asarray([1], dtype=np.int8),
-            cad_plc=plc, cad_curve_association=association,
+            target_reference_vertices=triangle,
+            source_chart_ids=(entity,),
+            source_entity_ids=(entity,),
+            occurrence_paths=(domain.source_occurrences[2][patch],),
+            source_parameters=triangle,
+            orientations=np.asarray([1], dtype=np.int8),
+            cad_plc=plc,
+            cad_curve_association=association,
             cad_root_cell_ids=np.asarray([-1], dtype=np.int64),
         )
         assert witness.source_chart_ids == (entity,)

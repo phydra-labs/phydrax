@@ -25,8 +25,18 @@ def test_fidelity_validation_mixed_blocks_and_inconsistent_facet_rows() -> None:
     mesh = CellMesh(
         vertices,
         (
-            CellBlock('first', 'tetrahedron', np.asarray(((0, 1, 2, 3),), dtype=np.int32), global_ids=(41,)),
-            CellBlock('second', 'tetrahedron', np.asarray(((0, 2, 1, 4),), dtype=np.int32), global_ids=(19,)),
+            CellBlock(
+                "first",
+                "tetrahedron",
+                np.asarray(((0, 1, 2, 3),), dtype=np.int32),
+                global_ids=(41,),
+            ),
+            CellBlock(
+                "second",
+                "tetrahedron",
+                np.asarray(((0, 2, 1, 4),), dtype=np.int32),
+                global_ids=(19,),
+            ),
         ),
     )
     geometry = CellGeometrySpec.affine(mesh)
@@ -35,16 +45,23 @@ def test_fidelity_validation_mixed_blocks_and_inconsistent_facet_rows() -> None:
             vertices[:4],
             np.asarray(((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1)), dtype=np.int64),
             np.tile(np.asarray(((0, -1),), dtype=np.int64), (4, 1)),
-            ('solid',), source_id='mixed-target-source',
+            ("solid",),
+            source_id="mixed-target-source",
         )
     )
-    source = PiecewiseLinearBoundarySource(owner, 2, entity_ids=np.asarray([0], dtype=np.int64))
-    topology = reference_cell_topology('tetrahedron')
-    local = next(index for index, face in enumerate(topology.entities[2]) if set(face) == {0, 1, 2})
+    source = PiecewiseLinearBoundarySource(
+        owner, 2, entity_ids=np.asarray([0], dtype=np.int64)
+    )
+    topology = reference_cell_topology("tetrahedron")
+    local = next(
+        index for index, face in enumerate(topology.entities[2]) if set(face) == {0, 1, 2}
+    )
     lookup = _volume_boundary_facet_lookup(mesh)
     face_id, is_boundary = lookup[(41, local)]
     assert not is_boundary and lookup[(19, local)] == (face_id, False)
-    target = np.asarray(topology.vertices, dtype=np.float64)[np.asarray(topology.entities[2][local], dtype=np.int64)]
+    target = np.asarray(topology.vertices, dtype=np.float64)[
+        np.asarray(topology.entities[2][local], dtype=np.int64)
+    ]
     standard = np.asarray(((0, 0), (1, 0), (0, 1)), dtype=np.float64)
 
     def witness(cells: tuple[int, ...]) -> SourceBoundaryChartWitness:
@@ -71,11 +88,21 @@ def test_fidelity_validation_mixed_blocks_and_inconsistent_facet_rows() -> None:
 
     for cell in (41, 19):
         validate_source_fidelity_witness(mesh, geometry, source, witness((cell,)))
-    with pytest.raises(ValueError, match='Each volume target facet must use one consistent incident-cell side'):
+    with pytest.raises(
+        ValueError,
+        match="Each volume target facet must use one consistent incident-cell side",
+    ):
         validate_source_fidelity_witness(mesh, geometry, source, witness((41, 19)))
-    with pytest.raises(ValueError, match='Volume chart witness changes an actual target facet ancestry'):
+    with pytest.raises(
+        ValueError, match="Volume chart witness changes an actual target facet ancestry"
+    ):
         validate_source_fidelity_witness(mesh, geometry, source, witness((999,)))
-    with pytest.raises(ValueError, match='Volume chart witness changes an actual target facet ancestry'):
+    with pytest.raises(
+        ValueError, match="Volume chart witness changes an actual target facet ancestry"
+    ):
         validate_source_fidelity_witness(mesh, geometry, source, witness((999, 19)))
-    with pytest.raises(ValueError, match='Each volume target facet must use one consistent incident-cell side'):
+    with pytest.raises(
+        ValueError,
+        match="Each volume target facet must use one consistent incident-cell side",
+    ):
         validate_source_fidelity_witness(mesh, geometry, source, witness((41, 19, 999)))

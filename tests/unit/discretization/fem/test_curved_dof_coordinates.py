@@ -114,7 +114,9 @@ def test_quadratic_tetrahedral_routes_follow_canonical_edges(kind: str) -> None:
     for local_dof, reference in enumerate(reference_nodes):
         weights = np.concatenate(([1.0 - np.sum(reference)], reference))
         expected = np.einsum("i,cij->cj", weights, points[cells])
-        np.testing.assert_allclose(coordinates[routes[:, local_dof]], expected, atol=1e-15)
+        np.testing.assert_allclose(
+            coordinates[routes[:, local_dof]], expected, atol=1e-15
+        )
 
 
 def _annulus(parameters: np.ndarray) -> np.ndarray:

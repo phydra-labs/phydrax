@@ -200,9 +200,11 @@ def test_filter_bound_encloses_exact_underflow_term() -> None:
     ):
         for exponent in (1, 2, 3, 4):
             largest = float.fromhex(f"0x1.0000000000001p-{exponent}")
-            exact = Fraction(spec.multiplier) * tiny * (
-                1 + Fraction(largest)
-            ) ** (spec.degree - 1)
+            exact = (
+                Fraction(spec.multiplier)
+                * tiny
+                * (1 + Fraction(largest)) ** (spec.degree - 1)
+            )
             for xp, safety in ((np, 1.0), (jnp, 2.0)):
                 result = predicates._filter_bound(
                     xp, spec, xp.asarray(0.0), xp.asarray(largest), np.float64, safety
@@ -222,9 +224,14 @@ def test_near_cocircular_predicate_requires_exact_resolution() -> None:
     cube = flush_safe_outward(square * device_base, "up")
     assert Fraction(float(cube)) >= exact_scale**3
 
-    a, b, c, d = (0.0, 0.0), (scale, 0.0), (0.0, scale), (
-        scale,
-        scale + 2.0**-52,
+    a, b, c, d = (
+        (0.0, 0.0),
+        (scale, 0.0),
+        (0.0, scale),
+        (
+            scale,
+            scale + 2.0**-52,
+        ),
     )
     for mode in (PredicateMode.FILTERED, PredicateMode.FILTERED_DEVICE):
         result = incircle(a, b, c, d, mode=mode)

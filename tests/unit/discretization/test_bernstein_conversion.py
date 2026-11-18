@@ -14,16 +14,28 @@ from phydrax.discretization._coordinate_enclosure import BernsteinDomain
 from phydrax.linalg._exact import solve_exact
 
 
-def _basis(domain: str, degrees: tuple[int, ...], nodes: np.ndarray) -> list[list[Fraction]]:
+def _basis(
+    domain: str, degrees: tuple[int, ...], nodes: np.ndarray
+) -> list[list[Fraction]]:
     def axis(degree: int, value: Fraction) -> list[Fraction]:
-        return [Fraction(math.comb(degree, i)) * value**i * (1 - value)**(degree - i) for i in range(degree + 1)]
+        return [
+            Fraction(math.comb(degree, i)) * value**i * (1 - value) ** (degree - i)
+            for i in range(degree + 1)
+        ]
 
     def simplex(degree: int, point: tuple[Fraction, ...]) -> list[Fraction]:
         bary = (1 - sum(point, Fraction(0)), *point)
-        indices = (index for index in product(range(degree + 1), repeat=len(bary)) if sum(index) == degree)
+        indices = (
+            index
+            for index in product(range(degree + 1), repeat=len(bary))
+            if sum(index) == degree
+        )
         return [
             Fraction(math.factorial(degree), math.prod(math.factorial(i) for i in index))
-            * math.prod((value**power for value, power in zip(bary, index, strict=True)), start=Fraction(1))
+            * math.prod(
+                (value**power for value, power in zip(bary, index, strict=True)),
+                start=Fraction(1),
+            )
             for index in indices
         ]
 
@@ -36,15 +48,25 @@ def _basis(domain: str, degrees: tuple[int, ...], nodes: np.ndarray) -> list[lis
             factors = (simplex(degrees[0], point),)
         else:
             factors = (simplex(degrees[0], point[:2]), axis(degrees[1], point[2]))
-        rows.append([math.prod(values, start=Fraction(1)) for values in product(*factors)])
+        rows.append(
+            [math.prod(values, start=Fraction(1)) for values in product(*factors)]
+        )
     return rows
 
 
 @pytest.mark.parametrize(
     ("domain", "degrees"),
     [
-        *((domain, (degree, degree)) for domain in ("box", "prism") for degree in range(5)),
-        *(("simplex", (degree, dimension)) for dimension in (1, 2, 3) for degree in range(5)),
+        *(
+            (domain, (degree, degree))
+            for domain in ("box", "prism")
+            for degree in range(5)
+        ),
+        *(
+            ("simplex", (degree, dimension))
+            for dimension in (1, 2, 3)
+            for degree in range(5)
+        ),
         *(("simplex", (degree, dimension)) for dimension in (2, 3) for degree in (5, 6)),
         ("box", (2, 3, 1)),
         ("prism", (2, 3)),
@@ -76,12 +98,18 @@ def test_conversion_table_encloses_exact_rational_interpolants(
     rng = Random(716 + sum(degrees))
     for _ in range(3):
         values = tuple(Fraction(rng.randint(-30, 30), 8) for _ in range(size))
-        floating = plan.coefficients_from_values @ np.asarray([float(value) for value in values])
+        floating = plan.coefficients_from_values @ np.asarray(
+            [float(value) for value in values]
+        )
         magnitude = max(abs(value) for value in values)
         bound = Fraction(plan.conversion_rounding_norm) * magnitude
-        bound += 2 * Fraction(plan.conversion_norm) * size * Fraction(2, 2**52) * magnitude
+        bound += (
+            2 * Fraction(plan.conversion_norm) * size * Fraction(2, 2**52) * magnitude
+        )
         for row in range(size):
-            exact = sum((inverse[row][col] * values[col] for col in range(size)), Fraction(0))
+            exact = sum(
+                (inverse[row][col] * values[col] for col in range(size)), Fraction(0)
+            )
             assert abs(Fraction(float(floating[row])) - exact) <= bound
 
 
@@ -102,7 +130,10 @@ def test_exact_conversion_avoids_recorded_float_solve_error() -> None:
         836100811362416860007308138903,
         9361112124762313742037515367735,
     )
-    assert abs(Fraction(original) - original_exact) > Fraction(float(np.spacing(original))) / 2
+    assert (
+        abs(Fraction(original) - original_exact)
+        > Fraction(float(np.spacing(original))) / 2
+    )
 
 
 def test_conversion_preparation_has_bounded_retention_and_refuses_oversize() -> None:

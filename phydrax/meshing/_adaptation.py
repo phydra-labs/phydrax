@@ -4113,9 +4113,7 @@ def _simplex_chart_weights(
         return None
     if dimension not in (1, 2, 3) or (dimension == 3 and len(point) != 3):
         return None
-    scale = lcm(
-        *(value.denominator for vertex in (point, *vertices) for value in vertex)
-    )
+    scale = lcm(*(value.denominator for vertex in (point, *vertices) for value in vertex))
     integer_points = tuple(
         tuple(value.numerator * (scale // value.denominator) for value in vertex)
         for vertex in (point, *vertices)
@@ -4155,7 +4153,9 @@ def _simplex_chart_weights(
     else:
         first, second, third = directions
 
-        def determinant(a: tuple[int, ...], b: tuple[int, ...], c: tuple[int, ...]) -> int:
+        def determinant(
+            a: tuple[int, ...], b: tuple[int, ...], c: tuple[int, ...]
+        ) -> int:
             return (
                 a[0] * (b[1] * c[2] - b[2] * c[1])
                 - b[0] * (a[1] * c[2] - a[2] * c[1])
@@ -4171,9 +4171,11 @@ def _simplex_chart_weights(
             determinant(first, second, delta),
         )
     if any(
-        sum(numerator * direction[axis] for numerator, direction in zip(
-            numerators, directions, strict=True
-        )) != delta[axis] * denominator
+        sum(
+            numerator * direction[axis]
+            for numerator, direction in zip(numerators, directions, strict=True)
+        )
+        != delta[axis] * denominator
         for axis in range(len(point))
     ):
         return None

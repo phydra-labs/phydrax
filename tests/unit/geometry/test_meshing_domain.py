@@ -561,7 +561,11 @@ def test_domain_owned_arrays_are_immutable_without_changing_identity() -> None:
     assert domain.domain_id == (
         "00add01a9bed07d989197c916150069460d2f3d497ec8d340123976dd96181c7"
     )
-    for array in (domain.corner_points, domain.curve_owners, *domain.scope_entity_id_banks):
+    for array in (
+        domain.corner_points,
+        domain.curve_owners,
+        *domain.scope_entity_id_banks,
+    ):
         with pytest.raises(ValueError):
             array.setflags(write=True)
     np.testing.assert_array_equal(
@@ -636,14 +640,23 @@ def test_rebuilt_restriction_query_reprepares_its_live_root_domain() -> None:
     assert root_domain is not source.domain
     assert root_domain.domain_id == source.domain.domain_id
     root = MeshingDomainBoundarySource(root_domain, source.root.patches)
-    query = SurfaceNativeRestrictionBoundarySource(root, source.support, source.mesh, source.geometry)
+    query = SurfaceNativeRestrictionBoundarySource(
+        root, source.support, source.mesh, source.geometry
+    )
     fresh = certify_source_fidelity(
-        source.mesh, source.geometry, query, tolerance=inputs.fidelity_tolerance,
+        source.mesh,
+        source.geometry,
+        query,
+        tolerance=inputs.fidelity_tolerance,
         witness=inputs.fidelity_witness,
     )
     carried = certify_source_fidelity(
-        source.mesh, source.geometry, query, tolerance=inputs.fidelity_tolerance,
-        witness=inputs.fidelity_witness, preparation=SourcePreparation(source.domain),
+        source.mesh,
+        source.geometry,
+        query,
+        tolerance=inputs.fidelity_tolerance,
+        witness=inputs.fidelity_witness,
+        preparation=SourcePreparation(source.domain),
     )
     assert carried.status == fresh.status == "certified"
     assert carried.certificate_id == fresh.certificate_id
@@ -771,9 +784,7 @@ def test_source_preparation_live_and_rebuilt_spline_carriers() -> None:
         )
 
     def curve() -> BSplineCurve:
-        return BSplineCurve(
-            ((0.0, 0.0), (1.0, 1.0)), (1.0, 1.0), (0.0, 0.0, 1.0, 1.0), 1
-        )
+        return BSplineCurve(((0.0, 0.0), (1.0, 1.0)), (1.0, 1.0), (0.0, 0.0, 1.0, 1.0), 1)
 
     domain = _rational_spline_domain(_rational_spline_surfaces()[0], "span-reuse")
     domain_ref = weakref.ref(domain)
@@ -782,17 +793,17 @@ def test_source_preparation_live_and_rebuilt_spline_carriers() -> None:
     box = np.asarray(((0.0, 0.0), (1.0, 1.0)), dtype=np.float64)
     first = SourcePreparation(domain)
     surface_box = first.surface_box(live_surface, box)
-    curve_box = first.curve_box(live_curve, 0., 1.)
+    curve_box = first.curve_box(live_curve, 0.0, 1.0)
 
     second = SourcePreparation(domain)
     np.testing.assert_array_equal(second.surface_box(live_surface, box), surface_box)
-    np.testing.assert_array_equal(second.curve_box(live_curve, 0., 1.), curve_box)
+    np.testing.assert_array_equal(second.curve_box(live_curve, 0.0, 1.0), curve_box)
     rebuilt_surface, rebuilt_curve = surface(), curve()
     np.testing.assert_array_equal(
         SourcePreparation(domain).surface_box(rebuilt_surface, box), surface_box
     )
     np.testing.assert_array_equal(
-        SourcePreparation(domain).curve_box(rebuilt_curve, 0., 1.), curve_box
+        SourcePreparation(domain).curve_box(rebuilt_curve, 0.0, 1.0), curve_box
     )
 
     del first, second, live_surface, live_curve, domain
@@ -1795,13 +1806,20 @@ def test_planar_revolution_caps_partition_in_their_exact_plane_chart() -> None:
             assert tuple(len(loop) for loop in other.loops) == tuple(
                 len(loop) for loop in original.loops
             )
-            for other_loop, original_loop in zip(other.loops, original.loops, strict=True):
-                for other_use, original_use in zip(other_loop, original_loop, strict=True):
+            for other_loop, original_loop in zip(
+                other.loops, original.loops, strict=True
+            ):
+                for other_use, original_use in zip(
+                    other_loop, original_loop, strict=True
+                ):
                     assert isinstance(other_use.pcurve, CircleCurve)
                     assert isinstance(original_use.pcurve, CircleCurve)
-                    assert other_use.pcurve.radius_exact == original_use.pcurve.radius_exact
+                    assert (
+                        other_use.pcurve.radius_exact == original_use.pcurve.radius_exact
+                    )
                     np.testing.assert_array_equal(
-                        other_use.traversal_endpoints(), original_use.traversal_endpoints()
+                        other_use.traversal_endpoints(),
+                        original_use.traversal_endpoints(),
                     )
     caps = tuple(patch for patch, chart in charts.items() if chart is not None)
     assert len(caps) == 2

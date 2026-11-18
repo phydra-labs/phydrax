@@ -628,7 +628,11 @@ def test_exact_planar_cad_domain_uses_authored_source_faces() -> None:
         np.asarray((0,), dtype=np.int64),
         embedding=_embedding(mesh, geometry),
     )
-    assert repeated.certificate_id == independent.certificate_id == certificate.certificate_id
+    assert (
+        repeated.certificate_id
+        == independent.certificate_id
+        == certificate.certificate_id
+    )
     assert repeated.findings == independent.findings == certificate.findings
 
 
@@ -641,7 +645,9 @@ def test_source_trim_preparation_respects_live_domain_identity_and_lifetime() ->
     triangles = source.boundary_parameter_triangles()[0][1]
     preparation = SourcePreparation(domain)
     expected = source.trim_partition_reference(0, triangles, preparation=preparation)
-    assert source.trim_partition_reference(0, triangles, preparation=preparation) == expected
+    assert (
+        source.trim_partition_reference(0, triangles, preparation=preparation) == expected
+    )
 
     rebuilt = copy(domain)
     assert rebuilt is not domain
@@ -1458,7 +1464,10 @@ def test_exact_cell_measure_consumers_keep_ordered_failures_and_signed_values() 
     names = ("first", "rational", "reversed", "last")
     mesh = CellMesh(
         np.concatenate(
-            (np.asarray(original.coordinates), np.asarray(original.coordinates)[[1, 3, 2]])
+            (
+                np.asarray(original.coordinates),
+                np.asarray(original.coordinates)[[1, 3, 2]],
+            )
         ),
         tuple(
             CellBlock(name, "triangle", np.asarray((cell,)), global_ids=(identifier,))
@@ -1502,7 +1511,9 @@ def test_exact_cell_measure_consumers_keep_ordered_failures_and_signed_values() 
         {name: np.asarray((cell,)) for name, cell in zip(names, cells, strict=True)},
         np.asarray(mesh.coordinates)[:, :1],
     )
-    with pytest.raises(ValueError, match="source geometry must have the reference volume dimension"):
+    with pytest.raises(
+        ValueError, match="source geometry must have the reference volume dimension"
+    ):
         MappedReferenceDomain(
             reference,
             mesh,

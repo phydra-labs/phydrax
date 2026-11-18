@@ -188,8 +188,11 @@ def test_bisection_preserves_shared_and_independent_scoped_fidelity() -> None:
         target_inputs.scoped_fidelity, target.certification.scoped_fidelity, strict=True
     ):
         independent = certify_source_fidelity(
-            target.mesh, target.geometry, scoped_query,
-            tolerance=tolerance, witness=scoped_witness,
+            target.mesh,
+            target.geometry,
+            scoped_query,
+            tolerance=tolerance,
+            witness=scoped_witness,
         )
         assert certificate.status == independent.status
         assert certificate.findings == independent.findings

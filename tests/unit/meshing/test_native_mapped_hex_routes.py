@@ -491,7 +491,11 @@ def test_mapped_whole_surface_feature_preserves_fidelity_certificate(
     assert isinstance(witness, SourceBoundaryChartWitness)
     scoped_query, scoped_witness, tolerance = request.scoped_fidelity[0]
     primary = certify_source_fidelity(
-        construction.mesh, construction.geometry, query, tolerance=tolerance, witness=witness
+        construction.mesh,
+        construction.geometry,
+        query,
+        tolerance=tolerance,
+        witness=witness,
     )
     scoped = certify_source_fidelity(
         construction.mesh,

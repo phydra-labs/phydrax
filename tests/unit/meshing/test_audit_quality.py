@@ -521,9 +521,7 @@ def test_welded_audit_counts_disconnected_vertex_stars() -> None:
         dtype=np.float64,
     )
     points = np.concatenate((first, first + np.asarray((10.0, 0.0))), axis=0)
-    triangles = np.asarray(
-        ((0, 1, 2), (0, 3, 4), (5, 6, 7), (5, 8, 9)), dtype=np.int32
-    )
+    triangles = np.asarray(((0, 1, 2), (0, 3, 4), (5, 6, 7), (5, 8, 9)), dtype=np.int32)
     findings = []
     for cells in (triangles, triangles[::-1]):
         mesh = phx.discretization.CellMesh(
@@ -569,9 +567,13 @@ def test_welded_audit_reports_disconnected_edge_and_vertex_stars() -> None:
     )
     mesh = phx.discretization.CellMesh(
         points,
-        (phx.discretization.CellBlock(
-            "cells", "tetrahedron", np.asarray(((0, 1, 2, 3), (0, 1, 4, 5)), dtype=np.int32)
-        ),),
+        (
+            phx.discretization.CellBlock(
+                "cells",
+                "tetrahedron",
+                np.asarray(((0, 1, 2, 3), (0, 1, 4, 5)), dtype=np.int32),
+            ),
+        ),
     )
     audit = phx.meshing.audit_cell_mesh(
         mesh, phx.discretization.CellGeometrySpec.affine(mesh)
@@ -605,7 +607,11 @@ def test_welded_audit_triangle_contact_is_batch_independent(
     ):
         mesh = phx.discretization.CellMesh(
             np.asarray(vertices, dtype=np.float64),
-            (phx.discretization.CellBlock("cells", "triangle", np.asarray(cells, dtype=np.int32)),),
+            (
+                phx.discretization.CellBlock(
+                    "cells", "triangle", np.asarray(cells, dtype=np.int32)
+                ),
+            ),
         )
         audit = phx.meshing.audit_cell_mesh(
             mesh, phx.discretization.CellGeometrySpec.affine(mesh)

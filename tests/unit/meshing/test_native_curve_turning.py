@@ -170,9 +170,7 @@ def test_chord_bounds_preserve_exact_width_and_outward_endpoints(
         (Fraction(2, 9), Fraction(7, 9)),
     )
     jobs = [(program, (endpoint, endpoint), native, (zero, zero)) for native in intervals]
-    reference = [
-        native_surface._second_order_chord_bounds([job])[0] for job in jobs
-    ]
+    reference = [native_surface._second_order_chord_bounds([job])[0] for job in jobs]
     actual = [
         value
         for start in range(0, len(jobs), chunk_size)
@@ -235,5 +233,3 @@ def test_surface_mesh_is_deterministic_for_curved_trim() -> None:
     assert actual.compliance.passed == expected.compliance.passed
     assert actual.compliance.achieved == expected.compliance.achieved
     assert actual.compliance.issues == expected.compliance.issues
-
-

@@ -271,8 +271,13 @@ def compact_array_tree_fingerprint(tree: PyTree[Any], /) -> str:
         dtype = value.dtype.newbyteorder("<")
         if dtype.fields is not None or dtype.kind not in "biufcSUmM":
             raise TypeError("Array tree fingerprints require fixed-format scalar dtypes.")
-        if dtype.kind in "biufc" and (dtype.kind, dtype.itemsize) not in _FIXED_NUMERIC_FORMATS:
-            raise TypeError("Array tree fingerprints require fixed-format numeric dtypes.")
+        if (
+            dtype.kind in "biufc"
+            and (dtype.kind, dtype.itemsize) not in _FIXED_NUMERIC_FORMATS
+        ):
+            raise TypeError(
+                "Array tree fingerprints require fixed-format numeric dtypes."
+            )
         normalized = np.asarray(value, dtype=dtype)
         metadata = canonical_json(
             {"path": path, "shape": list(value.shape), "dtype": dtype.str}

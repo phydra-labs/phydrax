@@ -234,7 +234,9 @@ def test_tessellation_rebinds_equal_rebuilt_model_preparation() -> None:
     fresh_mesh, fresh_proof = tessellate_brep_model(rebuilt, policy)
     np.testing.assert_array_equal(rebuilt_mesh.vertices, fresh_mesh.vertices)
     np.testing.assert_array_equal(rebuilt_mesh.triangles, fresh_mesh.triangles)
-    assert prepared_proof.status == rebuilt_proof.status == fresh_proof.status == "certified"
+    assert (
+        prepared_proof.status == rebuilt_proof.status == fresh_proof.status == "certified"
+    )
     np.testing.assert_array_equal(prepared_mesh.vertices, fresh_mesh.vertices)
     canonical = preparation.domain
     alternate = MeshingDomain(

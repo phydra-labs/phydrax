@@ -1550,7 +1550,9 @@ def _exact_patch_chart(domain: MeshingDomain, patch: int, /) -> _ExactPlaneChart
     return cached[0]
 
 
-def _compute_exact_patch_chart(domain: MeshingDomain, patch: int, /) -> _ExactPlaneChart | None:
+def _compute_exact_patch_chart(
+    domain: MeshingDomain, patch: int, /
+) -> _ExactPlaneChart | None:
     """Exact placed ``(origin, first_axis, second_axis)`` of a planar patch chart.
 
     Only a (placed) ``PlanePatch`` has one; the exact affine placement maps
@@ -3551,7 +3553,10 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
                 FeatureKind.MATERIAL_INTERFACE,
             ):
                 feature_query, feature_witness = _cad_surface_feature_witness(
-                    self.source.domain, feature, fidelity_witness, self.source.fidelity_source
+                    self.source.domain,
+                    feature,
+                    fidelity_witness,
+                    self.source.fidelity_source,
                 )
             elif feature.feature_kind is FeatureKind.CORNER:
                 feature_query = self.source.fidelity_source

@@ -41,7 +41,9 @@ def _branch() -> IntersectionCurve:
     box = np.asarray(((0.0, -2.0), (math.tau, 2.0)), dtype=np.float64)
     large = CylinderPatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1.0)
     small = CylinderPatch((0, 0, 0), (0, 1, 0), (0, 0, 1), (1, 0, 0), 0.5)
-    result = intersect_surface_regions(SurfaceRegion(large, box), SurfaceRegion(small, box))
+    result = intersect_surface_regions(
+        SurfaceRegion(large, box), SurfaceRegion(small, box)
+    )
     assert result.complete and len(result.curves) == 2
     return result.curves[0]
 
@@ -86,14 +88,14 @@ def test_rebuilt_branch_reproves_and_preserves_bounds() -> None:
         np.testing.assert_array_equal(original, restored)
     pcurve = IntersectionPCurve(curve, "first")
     np.testing.assert_array_equal(first[2], pcurve.bounding_box(0.1, 0.2))
-    for prepared, direct in zip(first[3:], pcurve.derivative_bounds(0.1, 0.2), strict=True):
+    for prepared, direct in zip(
+        first[3:], pcurve.derivative_bounds(0.1, 0.2), strict=True
+    ):
         np.testing.assert_array_equal(prepared, direct)
 
     consumer_box = preparation.curve_box(pcurve, 0.1, 0.2)
     consumer_box[:] = 0.0
-    np.testing.assert_array_equal(
-        preparation.curve_box(pcurve, 0.1, 0.2), first[2]
-    )
+    np.testing.assert_array_equal(preparation.curve_box(pcurve, 0.1, 0.2), first[2])
 
     bad_axes = rebuilt.chart_axes.at[0].set((int(rebuilt.chart_axes[0]) + 1) % 4)
     corrupt = eqx.tree_at(lambda value: value.chart_axes, rebuilt, bad_axes)
@@ -142,8 +144,14 @@ def test_trim_partition_uses_prepared_intersection_pcurve() -> None:
     pcurve = IntersectionPCurve(curve, "first", first=0.0, last=1.0)
     segment = CurveTrimSegment(pcurve, 0.25, 0.75)
     endpoints = np.asarray(segment.evaluate(jnp.asarray((0.0, 1.0), dtype=jnp.float64)))
-    start = (Fraction.from_float(float(endpoints[0, 0])), Fraction.from_float(float(endpoints[0, 1])))
-    end = (Fraction.from_float(float(endpoints[1, 0])), Fraction.from_float(float(endpoints[1, 1])))
+    start = (
+        Fraction.from_float(float(endpoints[0, 0])),
+        Fraction.from_float(float(endpoints[0, 1])),
+    )
+    end = (
+        Fraction.from_float(float(endpoints[1, 0])),
+        Fraction.from_float(float(endpoints[1, 1])),
+    )
     dx, dy = end[0] - start[0], end[1] - start[1]
     origin = (
         Fraction.from_float(float(start[0] - dy)),
@@ -167,8 +175,15 @@ def test_trim_partition_uses_prepared_intersection_pcurve() -> None:
     preparation = SourcePreparation(domain)
     expected = source.trim_partition_reference(0, triangles)
     assert expected[0] and expected[1]
-    assert source.trim_partition_reference(0, triangles, preparation=preparation) == expected
-    assert source.trim_partition_reference(0, triangles, preparation=preparation) == expected
-    assert source.trim_partition_reference(
-        0, triangles, preparation=SourcePreparation(domain)
-    ) == expected
+    assert (
+        source.trim_partition_reference(0, triangles, preparation=preparation) == expected
+    )
+    assert (
+        source.trim_partition_reference(0, triangles, preparation=preparation) == expected
+    )
+    assert (
+        source.trim_partition_reference(
+            0, triangles, preparation=SourcePreparation(domain)
+        )
+        == expected
+    )

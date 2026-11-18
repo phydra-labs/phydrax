@@ -469,8 +469,15 @@ def test_compact_array_tree_fingerprint_binds_paths_shapes_and_bytes() -> None:
 
 def test_compact_array_tree_fingerprint_preserves_binary64_evidence_bits() -> None:
     patterns = np.asarray(
-        [0, 1 << 63, 1, (1 << 63) | 1, 0x7FF8000000000001, 0x7FF8000000000002,
-         0x7FF0000000000001],
+        [
+            0,
+            1 << 63,
+            1,
+            (1 << 63) | 1,
+            0x7FF8000000000001,
+            0x7FF8000000000002,
+            0x7FF0000000000001,
+        ],
         dtype=np.uint64,
     )
     values = patterns.view(np.float64)

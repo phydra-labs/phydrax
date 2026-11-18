@@ -15,7 +15,7 @@ from phydrax.geometry._embedding_cells import EmbeddingCell, prepare_embedding_c
 
 def _endpoint(value: Fraction, *, upper: bool) -> float:
     result = float(value)
-    if (Fraction(result) < value if upper else Fraction(result) > value):
+    if Fraction(result) < value if upper else Fraction(result) > value:
         result = float(np.nextafter(result, np.inf if upper else -np.inf))
     return result
 
@@ -57,7 +57,9 @@ def _interval_bounds(
                     exact = Fraction(previous) + product
                     rounded = float(exact)
                     if Fraction(rounded) != exact:
-                        rounded = float(np.nextafter(rounded, -np.inf if lower else np.inf))
+                        rounded = float(
+                            np.nextafter(rounded, -np.inf if lower else np.inf)
+                        )
                     if lower:
                         low = rounded
                     else:
@@ -68,11 +70,13 @@ def _interval_bounds(
         inner.append((min(highs), max(lows)))
     return tuple(outer), tuple(inner)
 
+
 def test_p2_tetrahedra_match_exact_fraction_reference() -> None:
     element = lagrange_element("tetrahedron", 2)
     nodes = np.asarray(element.reference_nodes, dtype=np.float64)
     edge = next(
-        i for i in range(nodes.shape[0])
+        i
+        for i in range(nodes.shape[0])
         if tuple(float(nodes[i, axis]) for axis in range(3)) == (0.5, 0.0, 0.0)
     )
     rows = []
@@ -93,8 +97,14 @@ def test_p2_tetrahedra_match_exact_fraction_reference() -> None:
     )
     mesh = CellMesh(
         vertices,
-        (CellBlock("cells", "tetrahedron", np.arange(12, dtype=np.int32).reshape(3, 4),
-                   global_ids=np.asarray((31, 17, 42), dtype=np.int64)),),
+        (
+            CellBlock(
+                "cells",
+                "tetrahedron",
+                np.arange(12, dtype=np.int32).reshape(3, 4),
+                global_ids=np.asarray((31, 17, 42), dtype=np.int64),
+            ),
+        ),
         vertex_global_ids=np.arange(100, 112, dtype=np.int64),
     )
     geometry = CellGeometrySpec(
@@ -138,18 +148,37 @@ def test_p2_tetrahedra_match_exact_fraction_reference() -> None:
                     midpoint = (corners[left][axis] + corners[right][axis]) / 2
                     if (left, right) == (0, 1):
                         midpoint += delta[axis]
-                    controls.append(2 * midpoint - (corners[left][axis] + corners[right][axis]) / 2)
+                    controls.append(
+                        2 * midpoint - (corners[left][axis] + corners[right][axis]) / 2
+                    )
             exact_bounds.append((min(controls), max(controls)))
         expected = EmbeddingCell(
-            (31, 17, 42)[index], "cells", index, "tetrahedron", 3, "simplex",
+            (31, 17, 42)[index],
+            "cells",
+            index,
+            "tetrahedron",
+            3,
+            "simplex",
             tuple(range(4 * index, 4 * index + 4)),
             tuple(range(100 + 4 * index, 104 + 4 * index)),
-            reference_vertices, tuple(expressions), corners,
+            reference_vertices,
+            tuple(expressions),
+            corners,
             corners[0] if affine else None,
-            tuple(tuple(Fraction(int(axis == column)) for column in range(3)) for axis in range(3)) if affine else None,
+            tuple(
+                tuple(Fraction(int(axis == column)) for column in range(3))
+                for axis in range(3)
+            )
+            if affine
+            else None,
             tuple(_endpoint(lo, upper=False) for lo, _ in exact_bounds),
             tuple(_endpoint(hi, upper=True) for _, hi in exact_bounds),
-            facets, None, None, mesh.mesh_id, cell_geometry_id(geometry), None,
+            facets,
+            None,
+            None,
+            mesh.mesh_id,
+            cell_geometry_id(geometry),
+            None,
         )
         if not affine and meshcore_available():
             outer, inner = _interval_bounds(nodes, rows[index])
@@ -173,23 +202,32 @@ def test_curved_chart_is_independent_of_other_cells() -> None:
     element = lagrange_element("tetrahedron", 2)
     nodes = np.asarray(element.reference_nodes, dtype=np.float64)
     edge = next(
-        i for i in range(nodes.shape[0])
+        i
+        for i in range(nodes.shape[0])
         if tuple(float(nodes[i, axis]) for axis in range(3)) == (0.5, 0.0, 0.0)
     )
     curved = nodes.copy()
     curved[edge, 2] += 0.125
     other = nodes.copy()
     other[:, 0] += 4.0
-    reference = np.asarray(
-        ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype=np.float64
-    )
+    reference = np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype=np.float64)
 
     def prepare(include_other: bool) -> EmbeddingCell:
-        vertices = np.concatenate((reference, reference + (4.0, 0.0, 0.0))) if include_other else reference
+        vertices = (
+            np.concatenate((reference, reference + (4.0, 0.0, 0.0)))
+            if include_other
+            else reference
+        )
         count = 2 if include_other else 1
         mesh = CellMesh(
             vertices,
-            (CellBlock("cells", "tetrahedron", np.arange(4 * count, dtype=np.int32).reshape(count, 4)),),
+            (
+                CellBlock(
+                    "cells",
+                    "tetrahedron",
+                    np.arange(4 * count, dtype=np.int32).reshape(count, 4),
+                ),
+            ),
             vertex_global_ids=np.arange(4 * count, dtype=np.int64),
         )
         bank = np.concatenate((curved, other)) if include_other else curved
@@ -201,8 +239,11 @@ def test_curved_chart_is_independent_of_other_cells() -> None:
         return prepare_embedding_cells(mesh, geometry)[0]
 
     single, batched = prepare(False), prepare(True)
-    assert replace(
-        single,
-        owning_mesh_id=batched.owning_mesh_id,
-        owning_geometry_id=batched.owning_geometry_id,
-    ) == batched
+    assert (
+        replace(
+            single,
+            owning_mesh_id=batched.owning_mesh_id,
+            owning_geometry_id=batched.owning_geometry_id,
+        )
+        == batched
+    )

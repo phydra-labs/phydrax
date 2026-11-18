@@ -175,5 +175,3 @@ def test_coverage_retains_zero_and_negative_signed_measures() -> None:
         ("target_cell_orientation", (12,)),
         ("target_cell_orientation", (13,)),
     ]
-
-

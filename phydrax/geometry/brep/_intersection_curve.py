@@ -154,7 +154,11 @@ class _PreparedPairValue(StrictModule):
         result_upper = np.empty_like(result_lower)
         boxes = _patch_boxes(
             tuple(
-                (patch, lower_[index, start : start + 2], upper_[index, start : start + 2])
+                (
+                    patch,
+                    lower_[index, start : start + 2],
+                    upper_[index, start : start + 2],
+                )
                 for index in range(lower_.shape[0])
                 for patch, start in ((self.system.first, 0), (self.system.second, 2))
             )
@@ -772,9 +776,13 @@ class _CylinderGraphPreparation:
     def create(cls, family: _OrthogonalCylinderFamily, /) -> _CylinderGraphPreparation:
         context = interval_context(80)
         values = (
-            family.large_radius, family.small_radius, family.delta_n,
-            family.delta_large_axis, family.delta_small_axis,
-            *family.small_normal_coefficients, *family.small_large_axis_coefficients,
+            family.large_radius,
+            family.small_radius,
+            family.delta_n,
+            family.delta_large_axis,
+            family.delta_small_axis,
+            *family.small_normal_coefficients,
+            *family.small_large_axis_coefficients,
             family.source_slopes[family.large_index],
             family.source_slopes[family.small_index],
         )
@@ -870,8 +878,17 @@ def orthogonal_cylinder_graph_bounds(
         )
     else:
         (
-            radius_large, radius_small, delta_n, delta_a, delta_b,
-            normal_cosine, normal_sine, axial_cosine, axial_sine, _, _,
+            radius_large,
+            radius_small,
+            delta_n,
+            delta_a,
+            delta_b,
+            normal_cosine,
+            normal_sine,
+            axial_cosine,
+            axial_sine,
+            _,
+            _,
         ) = prepared.constants
     radial_n = delta_n + radius_small * (normal_cosine * cosine + normal_sine * sine)
     axial = delta_a + radius_small * (axial_cosine * cosine + axial_sine * sine)
@@ -1208,8 +1225,17 @@ def orthogonal_cylinder_graph_derivative_bounds(
         )
     else:
         (
-            radius_large, radius_small, delta_n, _, _,
-            normal_cosine, normal_sine, axial_cosine, axial_sine, _, _,
+            radius_large,
+            radius_small,
+            delta_n,
+            _,
+            _,
+            normal_cosine,
+            normal_sine,
+            axial_cosine,
+            axial_sine,
+            _,
+            _,
         ) = prepared.constants
     radial_n = delta_n + radius_small * (normal_cosine * cosine + normal_sine * sine)
     radial_n_derivative = radius_small * (-normal_cosine * sine + normal_sine * cosine)
@@ -3562,14 +3588,20 @@ class IntersectionCurve(AbstractCurve):
                         )
                 reference = float(start[large_angle_axis])
                 key = (
-                    float(theta_lower).hex(), float(theta_upper).hex(),
-                    branch_sign, reference.hex(),
+                    float(theta_lower).hex(),
+                    float(theta_upper).hex(),
+                    branch_sign,
+                    reference.hex(),
                 )
                 if prepared is not None and key in prepared.bounds:
                     bounds = prepared.bounds[key]
                 else:
                     bounds = orthogonal_cylinder_graph_bounds(
-                        family, theta_lower, theta_upper, branch_sign, reference,
+                        family,
+                        theta_lower,
+                        theta_upper,
+                        branch_sign,
+                        reference,
                         prepared=prepared,
                     )
                     if prepared is not None:
@@ -4116,9 +4148,7 @@ class IntersectionPCurve(AbstractCurve):
         order: int = 1,
         chart_index: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        return self._derivative_bounds(
-            first, last, order=order, chart_index=chart_index
-        )
+        return self._derivative_bounds(first, last, order=order, chart_index=chart_index)
 
     def _derivative_bounds(
         self,
@@ -4537,9 +4567,7 @@ class CurveTrimSegment(AbstractCurve):
         order: int = 1,
         chart_index: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        return self._derivative_bounds(
-            first, last, order=order, chart_index=chart_index
-        )
+        return self._derivative_bounds(first, last, order=order, chart_index=chart_index)
 
     def _derivative_bounds(
         self,

@@ -153,9 +153,7 @@ def _certified_cell_bounds(
     node_magnitude = np.nextafter(
         np.max(basis_sum) * np.max(np.abs(cell_coordinates), axis=(1, 2)), np.inf
     )
-    table_rounding = np.nextafter(
-        plan.conversion_rounding_norm * node_magnitude, np.inf
-    )
+    table_rounding = np.nextafter(plan.conversion_rounding_norm * node_magnitude, np.inf)
     rounding = np.nextafter(rounding + table_rounding, np.inf)
     return (
         np.nextafter(np.min(control, axis=1) - rounding[:, None], -np.inf),

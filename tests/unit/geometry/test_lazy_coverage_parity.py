@@ -132,9 +132,10 @@ def test_full_coverage_detects_misassigned_cell_against_exact_areas() -> None:
     assert faulty.status == "violated"
     assert faulty.requested_region_measures == requested
     assert faulty.achieved_region_measures == (Fraction(1, 4), Fraction(3, 4))
-    assert {
-        f.entity_ids for f in faulty.findings if f.check == "region_measure"
-    } == {(0,), (1,)}
+    assert {f.entity_ids for f in faulty.findings if f.check == "region_measure"} == {
+        (0,),
+        (1,),
+    }
 
 
 def test_polyhedral_measure_reuses_fixed_cell_maps_with_exact_parity() -> None:

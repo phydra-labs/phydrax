@@ -391,7 +391,10 @@ def _star_components(
     )
     _, labels = connected_components(graph, directed=False)
     starts = np.concatenate(
-        (np.asarray((True,), dtype=np.bool_), np.any(nodes[1:, :-1] != nodes[:-1, :-1], axis=1))
+        (
+            np.asarray((True,), dtype=np.bool_),
+            np.any(nodes[1:, :-1] != nodes[:-1, :-1], axis=1),
+        )
     )
     entity_index = np.cumsum(starts, dtype=np.int64) - 1
     pairs = np.unique(np.stack((entity_index, labels), axis=1), axis=0)

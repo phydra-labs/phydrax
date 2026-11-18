@@ -880,15 +880,32 @@ def _prepare_surface_spans(
 type _CurveRows = tuple[tuple[ExactScalar, ...], ...]
 type _SurfaceRows = tuple[tuple[tuple[ExactScalar, ...], ...], ...]
 type _CurveSpanData = tuple[
-    str, int, int, tuple[int, ...], tuple[ExactScalar, ExactScalar],
-    tuple[ExactScalar, ExactScalar], int | None, int | None, _CurveRows,
-    Fraction, _CurveRows, _CurveRows,
+    str,
+    int,
+    int,
+    tuple[int, ...],
+    tuple[ExactScalar, ExactScalar],
+    tuple[ExactScalar, ExactScalar],
+    int | None,
+    int | None,
+    _CurveRows,
+    Fraction,
+    _CurveRows,
+    _CurveRows,
 ]
 type _SurfaceSpanData = tuple[
-    str, tuple[int, int], tuple[int, int], tuple[int, ...],
+    str,
+    tuple[int, int],
+    tuple[int, int],
+    tuple[int, ...],
     tuple[tuple[ExactScalar, ExactScalar], tuple[ExactScalar, ExactScalar]],
-    _SurfaceRows, Fraction, _SurfaceRows, _SurfaceRows,
-    _SurfaceRows | None, _SurfaceRows | None, _SurfaceRows | None,
+    _SurfaceRows,
+    Fraction,
+    _SurfaceRows,
+    _SurfaceRows,
+    _SurfaceRows | None,
+    _SurfaceRows | None,
+    _SurfaceRows | None,
 ]
 _LIVE_CURVE_SPANS: LiveProofLedger[tuple[str, tuple[_CurveSpanData, ...]]] = (
     LiveProofLedger()
@@ -903,11 +920,18 @@ def _curve_span_data(
 ) -> tuple[str, tuple[_CurveSpanData, ...]]:
     return spans.source_id, tuple(
         (
-            span.source_id, span.span_index, span.degree, span.coefficient_rows,
-            span.parameter_bounds, span.source_parameter_bounds,
-            span.continuity_at_lower, span.continuity_at_upper,
-            span.homogeneous_bernstein_coefficients, span.positive_denominator_lower_bound,
-            span._first_derivative_numerators, span._second_derivative_numerators,
+            span.source_id,
+            span.span_index,
+            span.degree,
+            span.coefficient_rows,
+            span.parameter_bounds,
+            span.source_parameter_bounds,
+            span.continuity_at_lower,
+            span.continuity_at_upper,
+            span.homogeneous_bernstein_coefficients,
+            span.positive_denominator_lower_bound,
+            span._first_derivative_numerators,
+            span._second_derivative_numerators,
         )
         for span in spans.spans
     )
@@ -918,10 +942,17 @@ def _surface_span_data(
 ) -> tuple[str, tuple[_SurfaceSpanData, ...]]:
     return spans.source_id, tuple(
         (
-            span.source_id, span.span_indices, span.degrees, span.coefficient_rows,
-            span.parameter_bounds, span.homogeneous_bernstein_coefficients,
-            span.positive_denominator_lower_bound, span._du_numerators,
-            span._dv_numerators, span._duu_numerators, span._duv_numerators,
+            span.source_id,
+            span.span_indices,
+            span.degrees,
+            span.coefficient_rows,
+            span.parameter_bounds,
+            span.homogeneous_bernstein_coefficients,
+            span.positive_denominator_lower_bound,
+            span._du_numerators,
+            span._dv_numerators,
+            span._duu_numerators,
+            span._duv_numerators,
             span._dvv_numerators,
         )
         for span in spans.spans

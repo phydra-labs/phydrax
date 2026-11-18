@@ -108,8 +108,7 @@ def _no_rational_roots(p: Poly) -> bool:
     coefficients = _integer_coefficients(p)
     for prime in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31):
         if coefficients[-1] % prime and all(
-            sum(value * pow(x, i, prime) for i, value in enumerate(coefficients))
-            % prime
+            sum(value * pow(x, i, prime) for i, value in enumerate(coefficients)) % prime
             for x in range(prime)
         ):
             return True
@@ -132,7 +131,9 @@ def _isolate_factor(p: Poly, tolerance: F, recognize: bool) -> tuple[tuple[F, F]
         while not _evaluate(p, lower) or not _evaluate(p, upper):
             lower -= 1
             upper += 1
-        pending = [(lower, upper, _variation(sequence, lower) - _variation(sequence, upper))]
+        pending = [
+            (lower, upper, _variation(sequence, lower) - _variation(sequence, upper))
+        ]
         intervals: list[tuple[F, F]] = []
         found = None
         accept = not recognize or _no_rational_roots(p)
@@ -165,7 +166,9 @@ def _isolate_factor(p: Poly, tolerance: F, recognize: bool) -> tuple[tuple[F, F]
     return tuple(sorted(exact))
 
 
-def _reference(coefficients: tuple[int | F, ...], tolerance: F, recognize: bool) -> tuple[Interval, ...]:
+def _reference(
+    coefficients: tuple[int | F, ...], tolerance: F, recognize: bool
+) -> tuple[Interval, ...]:
     factors = _factors(_trim(tuple(F(v) for v in coefficients)))
     while True:
         result = sorted(
@@ -197,14 +200,25 @@ def test_randomized_fraction_reference_parity() -> None:
             p = _multiply(p, (-root, F(1)))
         polynomials.append(p)
         # Independent dense rational coefficients exercise general remainders.
-        polynomials.append(tuple(F(rng.randint(-3, 3), rng.randint(1, 3)) for _ in range(degree)) + (F(1),))
+        polynomials.append(
+            tuple(F(rng.randint(-3, 3), rng.randint(1, 3)) for _ in range(degree))
+            + (F(1),)
+        )
     for p in polynomials:
         isolator = RealRootIsolator(p)
         for recognize in (False, True):
             tolerance = F(1, 8)
             expected = _reference(p, tolerance, recognize)
-            assert isolator.isolate(tolerance=tolerance, recognize_rational_roots=recognize) == expected
-            assert isolate_real_roots(p, tolerance=tolerance, recognize_rational_roots=recognize) == expected
+            assert (
+                isolator.isolate(tolerance=tolerance, recognize_rational_roots=recognize)
+                == expected
+            )
+            assert (
+                isolate_real_roots(
+                    p, tolerance=tolerance, recognize_rational_roots=recognize
+                )
+                == expected
+            )
 
 
 def test_large_coefficients_and_endpoint_roots() -> None:
@@ -216,7 +230,9 @@ def test_large_coefficients_and_endpoint_roots() -> None:
     )
     for p in cases:
         for recognize in (False, True):
-            assert isolate_real_roots(p, tolerance=F(1, 16), recognize_rational_roots=recognize) == _reference(p, F(1, 16), recognize)
+            assert isolate_real_roots(
+                p, tolerance=F(1, 16), recognize_rational_roots=recognize
+            ) == _reference(p, F(1, 16), recognize)
 
 
 def test_sturm_remainder_sign_fault_changes_observable_roots() -> None:
@@ -227,4 +243,7 @@ def test_sturm_remainder_sign_fault_changes_observable_roots() -> None:
     wrong_sequence = [p, _derivative(p), (F(-2),)]
     assert _variation(wrong_sequence, F(-4)) - _variation(wrong_sequence, F(4)) == 0
     assert _reference(p, F(1, 2), False) == expected
-    assert isolate_real_roots(p, tolerance=F(1, 2), recognize_rational_roots=False) == expected
+    assert (
+        isolate_real_roots(p, tolerance=F(1, 2), recognize_rational_roots=False)
+        == expected
+    )

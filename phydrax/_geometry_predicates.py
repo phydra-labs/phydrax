@@ -304,11 +304,18 @@ _INSPHERE = _Filter("insphere", _insphere_kernel, 3, 5, (16.0, 224.0), 5, 2880.0
 
 
 def _filter_bound(
-    xp: ModuleType, spec: _Filter, permanent: Any, largest: Any, dtype: Any, safety: float, /
+    xp: ModuleType,
+    spec: _Filter,
+    permanent: Any,
+    largest: Any,
+    dtype: Any,
+    safety: float,
+    /,
 ) -> Any:
     info = np.finfo(dtype)
     unit = float(info.eps) / 2.0
     first, second = spec.coefficient
+
     # The static error estimate is itself an upper bound, not an ordinary
     # floating-point approximation. Direct every operation upward.
     def upper(value: Any, /) -> Any:

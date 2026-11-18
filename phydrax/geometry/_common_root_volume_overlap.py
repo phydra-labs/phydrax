@@ -3525,8 +3525,12 @@ def prepare_common_root_volume_refinement(
     source_slack = np.full_like(source_diameter, roundoff)
     target_slack = np.full_like(target_diameter, roundoff)
     for _ in range(3):
-        source_slack = np.maximum(np.nextafter(source_slack * source_diameter, -np.inf), 0.0)
-        target_slack = np.maximum(np.nextafter(target_slack * target_diameter, -np.inf), 0.0)
+        source_slack = np.maximum(
+            np.nextafter(source_slack * source_diameter, -np.inf), 0.0
+        )
+        target_slack = np.maximum(
+            np.nextafter(target_slack * target_diameter, -np.inf), 0.0
+        )
     source_tolerance = np.maximum(
         np.nextafter(policy.coverage_tolerance * source_measures, -np.inf), 0.0
     )

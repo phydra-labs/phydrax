@@ -617,9 +617,10 @@ def test_batched_stratum_keeps_objects_and_proofs_independent() -> None:
     )
     assert expected == ((1, 0), (1, 0), None, None, None, (1, 0))
     assert subdivided_stratum_separations(requests, StratumSubdivisionCache()) == expected
-    assert subdivided_stratum_separations(
-        requests, StratumSubdivisionCache(proof_roots={})
-    ) == expected
+    assert (
+        subdivided_stratum_separations(requests, StratumSubdivisionCache(proof_roots={}))
+        == expected
+    )
     cache = StratumSubdivisionCache()
     assert (
         tuple(subdivided_stratum_separation(*request, cache) for request in requests)

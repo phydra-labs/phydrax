@@ -3041,7 +3041,10 @@ class _CurveChordBounds:
     ) -> dict[tuple[int, Fraction, Fraction], tuple[float, float]]:
         completed: dict[tuple[int, Fraction, Fraction], tuple[float, float]] = {}
         pending: list[
-            tuple[tuple[int, Fraction, Fraction], Generator[_ChordJob, float, tuple[float, float]]]
+            tuple[
+                tuple[int, Fraction, Fraction],
+                Generator[_ChordJob, float, tuple[float, float]],
+            ]
         ] = []
         jobs: list[_ChordJob] = []
         for key in intervals:

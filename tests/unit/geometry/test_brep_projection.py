@@ -651,7 +651,12 @@ def test_intersection_trim_projection_is_independent_of_batch_order() -> None:
         batch = _project(projection, points[list(order)], _FACE, face)
         for row, index in enumerate(order):
             for name in (
-                "points", "parameters", "residuals", "status", "normals", "tangents",
+                "points",
+                "parameters",
+                "residuals",
+                "status",
+                "normals",
+                "tangents",
                 "distance_lower_bounds",
             ):
                 np.testing.assert_array_equal(
@@ -2620,7 +2625,11 @@ def test_trim_polygon_exact_boundary_and_batch_independence() -> None:
         winding = 0
         for (x0, y0), (x1, y1) in zip(rational, rational[1:] + rational[:1], strict=True):
             area = (x1 - x0) * (y - y0) - (y1 - y0) * (x - x0)
-            if area == 0 and min(x0, x1) <= x <= max(x0, x1) and min(y0, y1) <= y <= max(y0, y1):
+            if (
+                area == 0
+                and min(x0, x1) <= x <= max(x0, x1)
+                and min(y0, y1) <= y <= max(y0, y1)
+            ):
                 return False, True
             if y0 <= y < y1 and area > 0:
                 winding += 1

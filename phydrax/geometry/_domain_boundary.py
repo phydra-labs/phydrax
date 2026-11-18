@@ -252,6 +252,7 @@ class _RootedJunction(NamedTuple):
     lower: _Point2
     upper: _Point2
 
+
 # Only unprepared junctions are source-only; a caller's mutable preparation may
 # contribute additional endpoint boxes and must always be evaluated separately.
 _ROOTED_JUNCTIONS: LiveProofLedger[tuple[tuple[_RootedJunction, ...], ...]] = (
@@ -1114,7 +1115,9 @@ def exact_plane_chart(domain: MeshingDomain, patch: int, /) -> ExactPlaneChart |
     return cached[0]
 
 
-def _compute_exact_plane_chart(domain: MeshingDomain, patch: int, /) -> ExactPlaneChart | None:
+def _compute_exact_plane_chart(
+    domain: MeshingDomain, patch: int, /
+) -> ExactPlaneChart | None:
     """Exact plane chart of a patch proved planar by its carrier, if any.
 
     A surface of revolution of an exact profile line ``P(v) = P0 + v d`` about

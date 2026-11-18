@@ -15,10 +15,15 @@ from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.meshing.providers._native_plc_geometry import volume_cell_entity_rows
 
 
-def _reference_rows(mesh: CellMesh, requested: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _reference_rows(
+    mesh: CellMesh, requested: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
     connectivity = mesh.connectivity
     if isinstance(connectivity, SimplicialConnectivity):
-        levels = (np.asarray(connectivity.entities[1]), np.asarray(connectivity.entities[2]))
+        levels = (
+            np.asarray(connectivity.entities[1]),
+            np.asarray(connectivity.entities[2]),
+        )
     else:
         assert isinstance(connectivity, (TetrahedralConnectivity, HexahedralConnectivity))
         levels = (np.asarray(connectivity.edges), np.asarray(connectivity.faces))
@@ -38,8 +43,12 @@ def _reference_rows(mesh: CellMesh, requested: np.ndarray) -> tuple[np.ndarray, 
                 for dimension, mapping in enumerate(maps, start=1)
             )
     return (
-        np.asarray([cells[int(identifier)][0] for identifier in requested], dtype=np.int64),
-        np.asarray([cells[int(identifier)][1] for identifier in requested], dtype=np.int64),
+        np.asarray(
+            [cells[int(identifier)][0] for identifier in requested], dtype=np.int64
+        ),
+        np.asarray(
+            [cells[int(identifier)][1] for identifier in requested], dtype=np.int64
+        ),
     )
 
 
@@ -78,10 +87,14 @@ def test_mixed_simplex_blocks_shared_face_and_requested_order(reverse: bool) -> 
 def test_single_volume_block_matches_vertex_reference(kind: str) -> None:
     topology = reference_cell_topology(kind)
     points = np.asarray(topology.vertices, dtype=np.float64)
-    mesh = CellMesh(points, (CellBlock("cells", kind, [list(range(len(points)))], global_ids=[9]),))
+    mesh = CellMesh(
+        points, (CellBlock("cells", kind, [list(range(len(points)))], global_ids=[9]),)
+    )
     requested = np.asarray([9], dtype=np.int64)
     for result, reference in zip(
-        volume_cell_entity_rows(mesh, requested), _reference_rows(mesh, requested), strict=True
+        volume_cell_entity_rows(mesh, requested),
+        _reference_rows(mesh, requested),
+        strict=True,
     ):
         np.testing.assert_array_equal(result, reference)
 
@@ -97,6 +110,8 @@ def test_single_volume_block_matches_vertex_reference(kind: str) -> None:
         (np.asarray([17, 99]), ValueError, "absent from connectivity"),
     ],
 )
-def test_invalid_requested_cell_ids(ids: np.ndarray, error: type[Exception], message: str) -> None:
+def test_invalid_requested_cell_ids(
+    ids: np.ndarray, error: type[Exception], message: str
+) -> None:
     with pytest.raises(error, match=message):
         volume_cell_entity_rows(_shared_mesh(), ids)

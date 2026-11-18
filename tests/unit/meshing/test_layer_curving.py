@@ -779,11 +779,17 @@ def test_parametric_layer_replay_rejects_exact_distance_above_tolerance() -> Non
     assert charts is not None
     mesh = result.construction.mesh
     _validate_parametric_chart_geometry(
-        mesh, geometry, charts, evidence.chart_witness, evidence.chart_column_identity, 1.0
+        mesh,
+        geometry,
+        charts,
+        evidence.chart_witness,
+        evidence.chart_column_identity,
+        1.0,
     )
     points = np.asarray(geometry.coordinates).copy()
     origin_rows = np.flatnonzero(np.all(points == 0.0, axis=1))
     assert origin_rows.size
+
     def altered_with(point: tuple[float, float, float]) -> CellGeometrySpec:
         candidate = points.copy()
         candidate[origin_rows[0]] = point
@@ -892,13 +898,17 @@ def test_mapped_layer_trace_normal_uses_reproducible_rounded_length() -> None:
         normal = trace.normals[row]
         cross = np.cross(trace.tangents[row, 0, :], trace.tangents[row, 1, :])
         rounded_squares = tuple(float(value) * float(value) for value in cross)
-        rounded_sum = float(sum((Fraction(value) for value in rounded_squares), Fraction(0)))
+        rounded_sum = float(
+            sum((Fraction(value) for value in rounded_squares), Fraction(0))
+        )
         with localcontext() as context:
             context.prec = 200
             exact_sum = Fraction(rounded_sum)
             root = (Decimal(exact_sum.numerator) / Decimal(exact_sum.denominator)).sqrt()
             length = float(root)
-        expected = np.asarray([float(value) / length for value in cross], dtype=np.float64)
+        expected = np.asarray(
+            [float(value) / length for value in cross], dtype=np.float64
+        )
         np.testing.assert_array_equal(normal, expected)
 
     tangents = np.asarray(
@@ -909,11 +919,15 @@ def test_mapped_layer_trace_normal_uses_reproducible_rounded_length() -> None:
         dtype=np.float64,
     )
     expressions: tuple[Expression, ...] = tuple(
-        {(1, 0): Fraction(float(tangents[0, axis])),
-         (0, 1): Fraction(float(tangents[1, axis]))}
+        {
+            (1, 0): Fraction(float(tangents[0, axis])),
+            (0, 1): Fraction(float(tangents[1, axis])),
+        }
         for axis in range(3)
     )
-    query: Any = SimpleNamespace(chart_coordinate_expressions=lambda _dim, _id: expressions)
+    query: Any = SimpleNamespace(
+        chart_coordinate_expressions=lambda _dim, _id: expressions
+    )
     witness: Any = SimpleNamespace(source_chart_ids=("constructed-chart",))
     vertices = tuple(
         tuple(Fraction(float(value)) for value in vertex)
@@ -924,26 +938,37 @@ def test_mapped_layer_trace_normal_uses_reproducible_rounded_length() -> None:
         {(0, 1, 0): Fraction(1)},
         {(0, 0, 1): Fraction(1)},
     )
-    mapping = NestedCellReferenceMap(0, 0, "tetrahedron", "tetrahedron", vertices, arguments)
+    mapping = NestedCellReferenceMap(
+        0, 0, "tetrahedron", "tetrahedron", vertices, arguments
+    )
     zero3 = (Fraction(0), Fraction(0), Fraction(0))
     zero2 = (Fraction(0), Fraction(0))
     chart = (zero2, (Fraction(1), Fraction(0)), (Fraction(0), Fraction(1)))
     _, _, _, actual_tangents, actual_normal = _evaluate_mapped_chart_point(
-        query, witness, 0, zero3, mapping, zero3, zero2, chart,
+        query,
+        witness,
+        0,
+        zero3,
+        mapping,
+        zero3,
+        zero2,
+        chart,
         _prepare_barycentric_solver_2d(chart),
     )
     np.testing.assert_array_equal(actual_tangents, tangents)
     cross = np.cross(tangents[0], tangents[1])
-    rounded_sum = float(sum(
-        (Fraction(float(value) * float(value)) for value in cross), Fraction(0)
-    ))
+    rounded_sum = float(
+        sum((Fraction(float(value) * float(value)) for value in cross), Fraction(0))
+    )
     with localcontext() as context:
         context.prec = 200
         exact_sum = Fraction(rounded_sum)
         length = float(
             (Decimal(exact_sum.numerator) / Decimal(exact_sum.denominator)).sqrt()
         )
-    expected_normal = np.asarray([float(value) / length for value in cross], dtype=np.float64)
+    expected_normal = np.asarray(
+        [float(value) / length for value in cross], dtype=np.float64
+    )
     np.testing.assert_array_equal(actual_normal, expected_normal)
 
     def rebuilt(normal: np.ndarray) -> LayerCurvingMappedChartTrace:
@@ -952,14 +977,30 @@ def test_mapped_layer_trace_normal_uses_reproducible_rounded_length() -> None:
         normals[0] = normal
         frames[0] = tangents
         return LayerCurvingMappedChartTrace(
-            trace.source_id, trace.source_revision, trace.frame_id, trace.query_id,
-            trace.geometry_node_rows, trace.target_cell_global_ids, trace.target_local_dofs,
-            trace.chart_witness_rows, trace.target_reference_points, trace.root_reference_points,
-            trace.source_parameters, trace.source_chart_ids, trace.source_entity_ids,
-            trace.occurrence_paths, trace.root_face_global_ids, trace.root_cell_global_ids,
-            trace.root_local_face_indices, trace.target_points, trace.source_points,
-            trace.distance_lower_bounds, trace.distance_upper_bounds,
-            normals, frames, trace.column_identity,
+            trace.source_id,
+            trace.source_revision,
+            trace.frame_id,
+            trace.query_id,
+            trace.geometry_node_rows,
+            trace.target_cell_global_ids,
+            trace.target_local_dofs,
+            trace.chart_witness_rows,
+            trace.target_reference_points,
+            trace.root_reference_points,
+            trace.source_parameters,
+            trace.source_chart_ids,
+            trace.source_entity_ids,
+            trace.occurrence_paths,
+            trace.root_face_global_ids,
+            trace.root_cell_global_ids,
+            trace.root_local_face_indices,
+            trace.target_points,
+            trace.source_points,
+            trace.distance_lower_bounds,
+            trace.distance_upper_bounds,
+            normals,
+            frames,
+            trace.column_identity,
         )
 
     actual_trace = rebuilt(actual_normal)
@@ -991,12 +1032,32 @@ def test_layer_trace_accepts_nonzero_underflow_scale_frames() -> None:
 
     def projection(frame: np.ndarray) -> LayerCurvingProjectionTrace:
         return LayerCurvingProjectionTrace(
-            "source", "revision", "frame",
-            indices, indices, indices, indices, ((0,),), identity,
-            ("entity",), ("entity",), ((),), ((),),
-            zero_point, zero_chart, zero_point,
-            zero_scalar, zero_scalar, indices, ("source",), ("revision",), ("frame",), (),
-            normals=normals, tangents=frame, chart_witness_rows=indices,
+            "source",
+            "revision",
+            "frame",
+            indices,
+            indices,
+            indices,
+            indices,
+            ((0,),),
+            identity,
+            ("entity",),
+            ("entity",),
+            ((),),
+            ((),),
+            zero_point,
+            zero_chart,
+            zero_point,
+            zero_scalar,
+            zero_scalar,
+            indices,
+            ("source",),
+            ("revision",),
+            ("frame",),
+            (),
+            normals=normals,
+            tangents=frame,
+            chart_witness_rows=indices,
             target_reference_points=point,
         )
 
@@ -1005,11 +1066,30 @@ def test_layer_trace_accepts_nonzero_underflow_scale_frames() -> None:
 
     def mapped(frame: np.ndarray, normal: np.ndarray) -> LayerCurvingMappedChartTrace:
         return LayerCurvingMappedChartTrace(
-            "source", "revision", "frame", "query",
-            indices, indices, indices, indices, point, point,
-            ((Fraction(0), Fraction(0)),), ("chart",), ("entity",), ((),),
-            indices, indices, indices, zero_point, zero_point,
-            zero_scalar, zero_scalar, normal, frame, identity,
+            "source",
+            "revision",
+            "frame",
+            "query",
+            indices,
+            indices,
+            indices,
+            indices,
+            point,
+            point,
+            ((Fraction(0), Fraction(0)),),
+            ("chart",),
+            ("entity",),
+            ((),),
+            indices,
+            indices,
+            indices,
+            zero_point,
+            zero_point,
+            zero_scalar,
+            zero_scalar,
+            normal,
+            frame,
+            identity,
         )
 
     assert mapped(tangents, normals).resolved
@@ -1017,6 +1097,7 @@ def test_layer_trace_accepts_nonzero_underflow_scale_frames() -> None:
         mapped(np.zeros_like(tangents), normals)
     with pytest.raises(ValueError, match="singular physical frame"):
         mapped(tangents, np.zeros_like(normals))
+
 
 @pytest.mark.parametrize(
     "make_case",

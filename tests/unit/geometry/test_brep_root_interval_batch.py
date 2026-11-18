@@ -215,7 +215,9 @@ def test_surface_pair_batch_matches_per_item_enclosures() -> None:
     singles = [prepared.evaluate(lower[i : i + 1], upper[i : i + 1]) for i in range(3)]
     for side in range(2):
         expected = np.concatenate([result[side] for result in singles])
-        np.testing.assert_array_equal(batch[side].view(np.uint64), expected.view(np.uint64))
+        np.testing.assert_array_equal(
+            batch[side].view(np.uint64), expected.view(np.uint64)
+        )
 
 
 def test_surface_pair_rejects_inward_torus_endpoint_fault() -> None:

@@ -117,9 +117,9 @@ def _linear_simplex_chart(
         tuple(polynomial.get(unit, _ZERO) for unit in units) for polynomial in polynomials
     )
     corners = tuple(
-        offset if column is None else tuple(
-            value + row[column] for value, row in zip(offset, matrix, strict=True)
-        )
+        offset
+        if column is None
+        else tuple(value + row[column] for value, row in zip(offset, matrix, strict=True))
         for column in (
             next((axis for axis, value in enumerate(point) if value), None)
             for point in references
@@ -688,15 +688,17 @@ def _iter_embedding_cells(
                 frame = _straight_simplex_frame(
                     element, references, dimension, route_rows.shape[1]
                 )
-                if (
-                    len(references) == dimension + 1
-                    and frozenset(references) == _unit_simplex_corners(dimension)
-                ):
+                if len(references) == dimension + 1 and frozenset(
+                    references
+                ) == _unit_simplex_corners(dimension):
                     simplex_frame = (
                         references.index((_ZERO,) * dimension),
                         tuple(
                             references.index(
-                                tuple(Fraction(int(axis == column)) for axis in range(dimension))
+                                tuple(
+                                    Fraction(int(axis == column))
+                                    for axis in range(dimension)
+                                )
                             )
                             for column in range(dimension)
                         ),
@@ -819,7 +821,9 @@ def _iter_embedding_cells(
                                 )
                             prepared_fixed_basis = _prepare_cell_basis(fixed_basis)
                             if domain == "simplex":
-                                nodal_corners = _nodal_corner_dofs(fixed_basis, references)
+                                nodal_corners = _nodal_corner_dofs(
+                                    fixed_basis, references
+                                )
                         basis = prepared_fixed_basis
                     else:
                         from ..discretization._cell_geometry_validity import _map_digest

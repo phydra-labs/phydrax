@@ -325,7 +325,11 @@ def _integer_polynomials(
     if any(not isinstance(coefficient, Fraction) for coefficient in coefficients):
         raise ValueError("Integer lattice evaluation requires rational coefficients.")
     coefficient_denominator = lcm(
-        *(coefficient.denominator for coefficient in coefficients if isinstance(coefficient, Fraction))
+        *(
+            coefficient.denominator
+            for coefficient in coefficients
+            if isinstance(coefficient, Fraction)
+        )
     )
     degree = max(
         (sum(exponent) for polynomial in polynomials for exponent in polynomial),
@@ -356,7 +360,10 @@ def _integer_polynomial_values(
 ) -> tuple[Fraction, ...]:
     """Evaluate the cleared map with integer products and a single final reduction."""
     max_powers = tuple(
-        max((exponent[axis] for polynomial in terms for exponent, _ in polynomial), default=0)
+        max(
+            (exponent[axis] for polynomial in terms for exponent, _ in polynomial),
+            default=0,
+        )
         for axis in range(len(numerators))
     )
     powers = tuple(

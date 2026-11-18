@@ -841,8 +841,7 @@ def _mesh_evidence_issues(
             interval = target_parameter_intervals[row]
             source_interval = source_parameter_intervals[row]
             facet_edge = (
-                target_kinds[0]
-                and source_roles[row] is GeometrySourceEntityRole.FACET
+                target_kinds[0] and source_roles[row] is GeometrySourceEntityRole.FACET
             )
             edge_face = (
                 target_kinds[1]

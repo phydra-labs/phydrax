@@ -660,7 +660,11 @@ def test_whole_curve_feature_preserves_primary_fidelity_certificate() -> None:
     assert isinstance(witness, SourceBoundaryChartWitness)
     feature_query, feature_witness, tolerance = request.scoped_fidelity[0]
     primary = certify_source_fidelity(
-        construction.mesh, construction.geometry, query, tolerance=tolerance, witness=witness
+        construction.mesh,
+        construction.geometry,
+        query,
+        tolerance=tolerance,
+        witness=witness,
     )
     scoped = certify_source_fidelity(
         construction.mesh,

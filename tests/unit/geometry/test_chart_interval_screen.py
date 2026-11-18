@@ -263,4 +263,6 @@ def test_quadratic_screen_encloses_exact_endpoint() -> None:
         endpoint = exact[identifier - 101]
         inward = np.nextafter(float(endpoint), -np.inf)
         assert Fraction(float(inward)) < endpoint
-        assert Fraction(float(certificate.deviation_bounds[row, 1])) > Fraction(float(inward))
+        assert Fraction(float(certificate.deviation_bounds[row, 1])) > Fraction(
+            float(inward)
+        )

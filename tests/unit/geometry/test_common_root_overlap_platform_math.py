@@ -31,11 +31,15 @@ def _down(value: float) -> float:
 def _reference_diameter(bounds: np.ndarray) -> float:
     components = []
     for lower, upper in zip(bounds[0], bounds[1], strict=True):
-        difference = abs(Fraction.from_float(float(upper)) - Fraction.from_float(float(lower)))
+        difference = abs(
+            Fraction.from_float(float(upper)) - Fraction.from_float(float(lower))
+        )
         components.append(_down(_nearest(difference)) if difference else 0.0)
     total = 0.0
     for component in components:
-        square = _down(_nearest(Fraction.from_float(component) ** 2)) if component else 0.0
+        square = (
+            _down(_nearest(Fraction.from_float(component) ** 2)) if component else 0.0
+        )
         rounded = _nearest(Fraction.from_float(total) + Fraction.from_float(square))
         total = _down(rounded) if total and square else rounded
     with localcontext() as context:
@@ -45,8 +49,13 @@ def _reference_diameter(bounds: np.ndarray) -> float:
         return _down(float(root)) if total else 0.0
 
 
-def _reference_tolerance(bounds: np.ndarray, measure: float, cell_error: float,
-                         overlap_errors: list[float], tolerance: float) -> float:
+def _reference_tolerance(
+    bounds: np.ndarray,
+    measure: float,
+    cell_error: float,
+    overlap_errors: list[float],
+    tolerance: float,
+) -> float:
     diameter = _reference_diameter(bounds)
     squared_length = sum(
         (Fraction.from_float(float(upper)) - Fraction.from_float(float(lower))) ** 2
@@ -54,10 +63,11 @@ def _reference_tolerance(bounds: np.ndarray, measure: float, cell_error: float,
     )
     slack = 256.0 * np.finfo(np.float64).eps
     for _ in range(3):
-        slack = _down(_nearest(Fraction.from_float(slack) * Fraction.from_float(diameter)))
+        slack = _down(
+            _nearest(Fraction.from_float(slack) * Fraction.from_float(diameter))
+        )
     assert Fraction.from_float(slack) ** 2 <= (
-        Fraction.from_float(256.0 * np.finfo(np.float64).eps) ** 2
-        * squared_length**3
+        Fraction.from_float(256.0 * np.finfo(np.float64).eps) ** 2 * squared_length**3
     )
     overlap_error = 0.0
     for error in overlap_errors:
@@ -77,12 +87,19 @@ def test_curved_overlap_stored_tolerances_and_coverage_status(gap: bool) -> None
     )
     assert witness is not None
     policy = CommonRefinementPolicy(
-        coverage=CommonRefinementCoverage.TARGET if gap else CommonRefinementCoverage.COMPLETE,
+        coverage=CommonRefinementCoverage.TARGET
+        if gap
+        else CommonRefinementCoverage.COMPLETE,
         coverage_tolerance=0.0,
     )
     result, integration = prepare_common_root_volume_refinement(
-        root, source_geometry, target, target_geometry, witness,
-        policy=policy, integration_policy=CurvedOverlapIntegrationPolicy(),
+        root,
+        source_geometry,
+        target,
+        target_geometry,
+        witness,
+        policy=policy,
+        integration_policy=CurvedOverlapIntegrationPolicy(),
     )
     assert result.status is CommonRefinementStatus.SUCCESS
     for raw_bounds, raw_errors, raw_measures, raw_cells, raw_stored in (
@@ -108,16 +125,28 @@ def test_curved_overlap_stored_tolerances_and_coverage_status(gap: bool) -> None
         overlap_errors = np.asarray(integration.overlap_errors)[:, 0]
         stored = np.asarray(raw_stored)
         expected = [
-            _reference_tolerance(bounds[row], float(measures[row]), float(errors[row]),
-                                 [float(error) for cell, error in zip(cells, overlap_errors, strict=True)
-                                  if cell == row], policy.coverage_tolerance)
+            _reference_tolerance(
+                bounds[row],
+                float(measures[row]),
+                float(errors[row]),
+                [
+                    float(error)
+                    for cell, error in zip(cells, overlap_errors, strict=True)
+                    if cell == row
+                ],
+                policy.coverage_tolerance,
+            )
             for row in range(len(measures))
         ]
         np.testing.assert_array_equal(stored, expected)
     if gap:
         with pytest.raises(CommonRootOverlapError) as failure:
             prepare_common_root_volume_refinement(
-                root, source_geometry, target, target_geometry, witness,
+                root,
+                source_geometry,
+                target,
+                target_geometry,
+                witness,
                 policy=CommonRefinementPolicy(coverage=CommonRefinementCoverage.COMPLETE),
                 integration_policy=CurvedOverlapIntegrationPolicy(),
             )
@@ -168,6 +197,9 @@ def test_chart_box_subdivision_uses_exact_squared_edge_threshold(
         (2, 0, 0): Fraction(1),
     }
     points = np.asarray(cubature_rule_data("tetrahedron", 8).points, dtype=np.float64)
-    assert _chart_image_box_disjoint(
-        ((-0.125, 0.0),) * 3, (coordinate,) * 3, vertices, points
-    ) is outside
+    assert (
+        _chart_image_box_disjoint(
+            ((-0.125, 0.0),) * 3, (coordinate,) * 3, vertices, points
+        )
+        is outside
+    )

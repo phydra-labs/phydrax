@@ -369,7 +369,10 @@ def _same_triangle_chain_boundary(
         else:
             line = (True, start[0], Fraction(0))
             lower_position, upper_position = start[1], stop[1]
-        for position, delta in ((lower_position, direction), (upper_position, -direction)):
+        for position, delta in (
+            (lower_position, direction),
+            (upper_position, -direction),
+        ):
             key = (*line, position)
             events[key] = events.get(key, 0) + delta
     return not any(events.values())
@@ -493,9 +496,13 @@ def _preparation_for_chart_root(
         from ._surface_source_support import SurfaceNativeRestrictionBoundarySource
         from .reconstruction._boundary import ReconstructedTriangleBoundarySource
 
-        if isinstance(
-            source, (SurfaceChartBoundarySource, SurfaceNativeRestrictionBoundarySource)
-        ) and preparation.domain is source.domain:
+        if (
+            isinstance(
+                source,
+                (SurfaceChartBoundarySource, SurfaceNativeRestrictionBoundarySource),
+            )
+            and preparation.domain is source.domain
+        ):
             return SourcePreparation(root.domain)
         if (
             isinstance(source, ReconstructedTriangleBoundarySource)
@@ -2244,7 +2251,9 @@ def _cell_rows_for_ids(
         missing = np.full(identifiers.shape, -1, dtype=np.int64)
         return all_ids, missing, missing.copy()
     blocks = np.concatenate(
-        tuple(np.full(bank.size, index, dtype=np.int64) for index, bank in enumerate(banks))
+        tuple(
+            np.full(bank.size, index, dtype=np.int64) for index, bank in enumerate(banks)
+        )
     )
     rows = np.concatenate(tuple(np.arange(bank.size, dtype=np.int64) for bank in banks))
     order = np.argsort(all_ids, kind="stable")
@@ -2254,7 +2263,11 @@ def _cell_rows_for_ids(
     safe = np.minimum(positions, sorted_ids.size - 1)
     valid &= sorted_ids[safe] == identifiers
     selected = order[safe]
-    return all_ids, np.where(valid, blocks[selected], -1), np.where(valid, rows[selected], -1)
+    return (
+        all_ids,
+        np.where(valid, blocks[selected], -1),
+        np.where(valid, rows[selected], -1),
+    )
 
 
 @runtime_checkable
@@ -4088,14 +4101,22 @@ def _face_reference_chart(
     origin_int = tuple(value.numerator * (scale // value.denominator) for value in origin)
     first_int = tuple(value.numerator * (scale // value.denominator) for value in first)
     second_int = tuple(value.numerator * (scale // value.denominator) for value in second)
-    determinant = first_int[left] * second_int[right] - first_int[right] * second_int[left]
+    determinant = (
+        first_int[left] * second_int[right] - first_int[right] * second_int[left]
+    )
     remaining = 3 - left - right
     mapped: list[Point2] = []
     for point in target_vertices:
-        point_int = tuple(value.numerator * (scale // value.denominator) for value in point)
+        point_int = tuple(
+            value.numerator * (scale // value.denominator) for value in point
+        )
         offset = tuple(point_int[axis] - origin_int[axis] for axis in range(3))
-        first_numerator = offset[left] * second_int[right] - offset[right] * second_int[left]
-        second_numerator = first_int[left] * offset[right] - first_int[right] * offset[left]
+        first_numerator = (
+            offset[left] * second_int[right] - offset[right] * second_int[left]
+        )
+        second_numerator = (
+            first_int[left] * offset[right] - first_int[right] * offset[left]
+        )
         if (
             offset[remaining] * determinant
             != first_numerator * first_int[remaining]
@@ -4105,7 +4126,10 @@ def _face_reference_chart(
                 "Target reference chart leaves its actual local reference facet."
             )
         mapped.append(
-            (Fraction(first_numerator, determinant), Fraction(second_numerator, determinant))
+            (
+                Fraction(first_numerator, determinant),
+                Fraction(second_numerator, determinant),
+            )
         )
     domain: tuple[Triangle2, ...]
     if len(face_indices) == 3:
@@ -4406,7 +4430,12 @@ def _surface_target_chart_rows(
                 "Polyhedral face charts use their explicit two-dimensional face coordinates."
             )
         return _polyhedral_surface_target_chart_rows(
-            mesh, geometry, witness, _cell_global_rows(mesh), facets, full_source=full_source
+            mesh,
+            geometry,
+            witness,
+            _cell_global_rows(mesh),
+            facets,
+            full_source=full_source,
         )
     if witness.reference_dimension != 3:
         raise ValueError(

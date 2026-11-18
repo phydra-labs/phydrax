@@ -251,7 +251,10 @@ def volume_cell_entity_rows(
         raise ValueError("cell_global_ids must fit int64.")
     identifiers = np.asarray(raw_ids, dtype=np.int64)
     all_ids = np.concatenate(block_ids) if block_ids else np.empty(0, dtype=np.int64)
-    if identifiers.size != all_ids.size or np.unique(identifiers).size != identifiers.size:
+    if (
+        identifiers.size != all_ids.size
+        or np.unique(identifiers).size != identifiers.size
+    ):
         raise ValueError(
             "Volume cell identity bank does not cover every cell exactly once."
         )

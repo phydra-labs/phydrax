@@ -294,25 +294,29 @@ def _live_surface_witness(
     ):
         return None
     geometry_id = cell_geometry_id(surface.geometry)
-    return witness if (
-        witness.geometry_id == geometry_id
-        and witness.topology_id == surface.mesh.topology_id
-        and witness.domain_id == surface.domain.domain_id
-        and witness.cell_kind == surface.mesh.blocks[0].cell_kind
-        and np.array_equal(witness.cell_global_ids, surface.cell_global_ids)
-        and np.array_equal(witness.patches, surface.root_patches)
-        and np.array_equal(witness.charts, surface.root_parameters)
-        and np.array_equal(witness.source_root_cell_ids, surface.source_root_cell_ids)
-        and witness.source_piece_ids == surface.source_piece_ids
-        and witness.geometry_entity_ids == surface.source_patch_entity_ids
-        and witness.occurrence_paths == surface.source_occurrence_paths
-        and witness.chart_rational_tokens == surface.root_parameter_rational_tokens
-        and witness.root_mesh_cell_bindings
-        == tuple(
-            SurfaceRootMeshCellBinding(geometry_id, surface.mesh.topology_id, cell_id)
-            for cell_id in surface.cell_global_ids
+    return (
+        witness
+        if (
+            witness.geometry_id == geometry_id
+            and witness.topology_id == surface.mesh.topology_id
+            and witness.domain_id == surface.domain.domain_id
+            and witness.cell_kind == surface.mesh.blocks[0].cell_kind
+            and np.array_equal(witness.cell_global_ids, surface.cell_global_ids)
+            and np.array_equal(witness.patches, surface.root_patches)
+            and np.array_equal(witness.charts, surface.root_parameters)
+            and np.array_equal(witness.source_root_cell_ids, surface.source_root_cell_ids)
+            and witness.source_piece_ids == surface.source_piece_ids
+            and witness.geometry_entity_ids == surface.source_patch_entity_ids
+            and witness.occurrence_paths == surface.source_occurrence_paths
+            and witness.chart_rational_tokens == surface.root_parameter_rational_tokens
+            and witness.root_mesh_cell_bindings
+            == tuple(
+                SurfaceRootMeshCellBinding(geometry_id, surface.mesh.topology_id, cell_id)
+                for cell_id in surface.cell_global_ids
+            )
         )
-    ) else None
+        else None
+    )
 
 
 def _certify_cad_surface(
