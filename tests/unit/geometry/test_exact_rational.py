@@ -76,7 +76,7 @@ def test_binary64_hex_rounding_trees_and_fused_counterexample() -> None:
     assert float(binary64_dot(first, second)).hex() == float(ordered).hex()
     assert float(binary64_matmul(first[None, :], second)[0]).hex() == float(ordered).hex()
     squared = _ordered_fraction_dot(first, first)
-    assert float(binary64_norm(first)).hex() == math.sqrt(squared).hex()
+    assert float(binary64_norm(first)).hex() == float(math.sqrt(squared)).hex()
 
     # With two terms there is only one addition tree, but a fused final
     # multiply-add differs from the required separately rounded operations.
@@ -139,7 +139,7 @@ def test_binary64_norm_and_directed_bounds(values: tuple[float, ...]) -> None:
     assert lower <= norm <= upper
     assert Fraction(lower) ** 2 <= exact_squared <= Fraction(upper) ** 2
     rounded_squared = _ordered_fraction_dot(np.asarray(values), np.asarray(values))
-    assert float(norm).hex() == math.sqrt(rounded_squared).hex()
+    assert float(norm).hex() == float(math.sqrt(rounded_squared)).hex()
 
 
 def test_binary64_ordered_products_zero_exceptional_and_shapes() -> None:
