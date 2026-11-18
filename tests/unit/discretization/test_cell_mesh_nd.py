@@ -138,6 +138,137 @@ def test_declared_simplex_mesh_retains_oriented_boundary(dimension: int) -> None
         np.testing.assert_allclose(upper.mv(lower.mv(values)), 0.0, atol=1e-14)
 
 
+@pytest.mark.parametrize("maximum_vertex", ((1 << 21) - 1, 1 << 21))
+def test_tetrahedron_routes_at_packed_vertex_bound(maximum_vertex: int) -> None:
+    points = np.zeros((maximum_vertex + 1, 3), dtype=np.float64)
+    cells = np.asarray(((maximum_vertex, 2, 0, 1),), dtype=np.int32)
+    mesh = CellMesh.from_simplices(points, cells, dimension=3)
+    connectivity = mesh.connectivity
+    assert isinstance(connectivity, SimplicialConnectivity)
+    for degree in range(4):
+        local = tuple(combinations(range(4), degree + 1))
+        if degree == 0:
+            np.testing.assert_array_equal(
+                connectivity.entities[degree][:, 0],
+                np.arange(maximum_vertex + 1, dtype=np.int32),
+            )
+            np.testing.assert_array_equal(connectivity.cell_entities[degree], cells)
+        else:
+            entities = sorted(
+                {
+                    tuple(sorted(int(cells[0, index]) for index in indices))
+                    for indices in local
+                }
+            )
+            lookup = {entity: row for row, entity in enumerate(entities)}
+            expected = [
+                lookup[tuple(sorted(int(cells[0, index]) for index in indices))]
+                for indices in local
+            ]
+            np.testing.assert_array_equal(connectivity.entities[degree], entities)
+            np.testing.assert_array_equal(connectivity.cell_entities[degree], [expected])
+        signs = []
+        for indices in local:
+            selected = [int(cells[0, index]) for index in indices]
+            inversions = sum(
+                selected[first] > selected[second]
+                for first, second in combinations(range(len(selected)), 2)
+            )
+            signs.append(1.0 if degree == 3 or inversions % 2 == 0 else -1.0)
+        np.testing.assert_array_equal(connectivity.cell_entity_signs[degree], [signs])
+
+
+@pytest.mark.parametrize("components", (2, 3))
+def test_tetrahedron_packed_keys_preserve_full_width_order(components: int) -> None:
+    from phydrax.discretization._cell_mesh import _pack_tetrahedron_entities
+
+    maximum = (1 << (64 // components)) - 1
+    rows = np.asarray(
+        sorted(
+            {
+                tuple(values)
+                for values in (
+                    (0,) * components,
+                    (0,) * (components - 1) + (maximum,),
+                    (1,) + (0,) * (components - 1),
+                    (maximum,) * components,
+                )
+            }
+        ),
+        dtype=np.uint64,
+    )
+    packed = _pack_tetrahedron_entities(rows)
+    assert packed.dtype == np.dtype(np.uint64)
+    assert np.all(packed[1:] > packed[:-1])
+
+
+def test_tetrahedron_routes_preserve_permuted_cell_order() -> None:
+    cells = np.asarray(((4, 1, 0, 2), (3, 2, 0, 1)), dtype=np.int32)
+    mesh = CellMesh.from_simplices(np.zeros((5, 3), dtype=np.float64), cells, dimension=3)
+    connectivity = mesh.connectivity
+    assert isinstance(connectivity, SimplicialConnectivity)
+    for degree in range(4):
+        local = tuple(combinations(range(4), degree + 1))
+        if degree == 0:
+            entities = [(vertex,) for vertex in range(5)]
+        elif degree == 3:
+            entities = [tuple(sorted(int(value) for value in cell)) for cell in cells]
+        else:
+            entities = sorted(
+                {
+                    tuple(sorted(int(cell[index]) for index in indices))
+                    for cell in cells
+                    for indices in local
+                }
+            )
+        lookup = {entity: row for row, entity in enumerate(entities)}
+        expected = [
+            [
+                lookup[tuple(sorted(int(cell[index]) for index in indices))]
+                for indices in local
+            ]
+            for cell in cells
+        ]
+        np.testing.assert_array_equal(connectivity.entities[degree], entities)
+        np.testing.assert_array_equal(connectivity.cell_entities[degree], expected)
+
+
+def test_tetrahedron_routes_across_twenty_bit_boundary() -> None:
+    boundary = 1 << 20
+    cells = np.asarray(
+        (
+            (0, 1, 2, boundary),
+            (1, boundary + 1, 2, boundary),
+            (boundary + 2, boundary, 0, boundary + 1),
+        ),
+        dtype=np.int32,
+    )
+    mesh = CellMesh.from_simplices(
+        np.zeros((boundary + 3, 3), dtype=np.float64), cells, dimension=3
+    )
+    connectivity = mesh.connectivity
+    assert isinstance(connectivity, SimplicialConnectivity)
+    for degree in (1, 2):
+        local = tuple(combinations(range(4), degree + 1))
+        entities = sorted(
+            {
+                tuple(sorted(int(cell[index]) for index in indices))
+                for cell in cells
+                for indices in local
+            }
+        )
+        lookup = {entity: row for row, entity in enumerate(entities)}
+        expected = [
+            [
+                lookup[tuple(sorted(int(cell[index]) for index in indices))]
+                for indices in local
+            ]
+            for cell in cells
+        ]
+        np.testing.assert_array_equal(connectivity.entities[degree], entities)
+        np.testing.assert_array_equal(connectivity.cell_entities[degree], expected)
+
+
 def test_shared_four_dimensional_facet_is_not_a_support_boundary() -> None:
     points = np.concatenate(
         (

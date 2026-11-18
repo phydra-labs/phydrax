@@ -65,6 +65,7 @@ def rational_cross_2d[T: ExactField](first: tuple[T, T], second: tuple[T, T], /)
 
 _BINARY64_MAXIMUM = float(np.finfo(np.float64).max)
 _RATIONAL_BINARY64_MAXIMUM = Fraction(_BINARY64_MAXIMUM)
+_RATIONAL_BINARY64_OVERFLOW_THRESHOLD = _RATIONAL_BINARY64_MAXIMUM + Fraction(2**970)
 
 
 def _float_overflow_endpoint(value: Fraction, /, *, upper: bool) -> float:
@@ -557,16 +558,89 @@ def translation_ranges(
     return tuple(ranges)
 
 
+def binary64_sum(values: ArrayLike, /, *, axis: int) -> NDArray[np.float64]:
+    """Sum one axis from low to high index with separate binary64 additions.
+
+    The first element initializes the sum; an empty axis gives positive zero.
+    NaNs, infinities, overflow and underflow follow the elementwise additions.
+    """
+    if np.iscomplexobj(values):
+        raise TypeError("Complex operands are not supported.")
+    array = np.moveaxis(np.asarray(values, dtype=np.float64), axis, -1)
+    if array.shape[-1] == 0:
+        return np.zeros(array.shape[:-1], dtype=np.float64)
+    result = np.array(array[..., 0], dtype=np.float64, copy=True)
+    for index in range(1, array.shape[-1]):
+        np.add(result, array[..., index], out=result)
+    return result
+
+
+def binary64_least_squares(matrix: ArrayLike, right: ArrayLike, /) -> NDArray[np.float64]:
+    """Solve a small binary64 least-squares problem over the exact rationals.
+
+    Inputs are lifted exactly. The normal equations are solved over the
+    rationals and each component is rounded once to binary64, ties to even.
+    A solution whose correctly rounded component is nonfinite raises ValueError;
+    values above the largest finite binary64 are accepted when they round to it.
+    When the matrix is rank deficient, the unique minimum-Euclidean-norm
+    least-squares solution is selected exactly before rounding.
+    """
+    from ..linalg._exact import factor_exact_sparse
+
+    if np.iscomplexobj(matrix) or np.iscomplexobj(right):
+        raise TypeError("Complex operands are not supported.")
+    a = np.asarray(matrix, dtype=np.float64)
+    b = np.asarray(right, dtype=np.float64)
+    if a.ndim != 2 or b.ndim != 1 or a.shape[0] != b.shape[0] or a.shape[1] == 0:
+        raise ValueError("Expected a matrix and a matching nonempty right-hand side.")
+    if not np.all(np.isfinite(a)) or not np.all(np.isfinite(b)):
+        raise ValueError("Least-squares inputs must be finite.")
+    rows = [rational_vector(row) for row in a]
+    rhs = rational_vector(b)
+    width = a.shape[1]
+    columns = tuple(tuple(row[index] for row in rows) for index in range(width))
+    gram = [[rational_dot(first, second) for second in columns] for first in columns]
+    target = [[rational_dot(column, rhs)] for column in columns]
+    factor = factor_exact_sparse(
+        [{index: value for index, value in enumerate(row) if value} for row in gram],
+        width,
+        ordered=True,
+    )
+    nullspace = factor.nullspace_basis()
+    if nullspace:
+        augmented = [
+            row + [vector[index] for vector in nullspace]
+            for index, row in enumerate(gram)
+        ]
+        augmented.extend(
+            [list(vector) + [Fraction(0)] * len(nullspace) for vector in nullspace]
+        )
+        target.extend([[Fraction(0)] for _ in nullspace])
+        solution = solve_exact(augmented, target)
+    else:
+        solution = solve_exact(gram, target)
+    if any(
+        abs(solution[index][0]) >= _RATIONAL_BINARY64_OVERFLOW_THRESHOLD
+        for index in range(width)
+    ):
+        raise ValueError("Least-squares solution is not finite in binary64.")
+    return np.asarray(
+        [float(solution[index][0]) for index in range(width)], dtype=np.float64
+    )
+
+
 __all__ = [
     "RationalVector",
     "binary64_difference_magnitude",
     "binary64_dyadic_entries",
     "binary64_dot",
+    "binary64_least_squares",
     "binary64_matmul",
     "binary64_norm",
     "binary64_norm_lower",
     "binary64_norm_upper",
     "binary64_spectral_upper",
+    "binary64_sum",
     "dyadic_entry",
     "dyadic_integers",
     "exact_float",
@@ -580,3 +654,119 @@ __all__ = [
     "translation_ranges",
     "upper_float",
 ]
+
+# These constants and evaluation order mirror meshcore's angle.cpp.  In
+# particular, keep each multiply and add separate rather than using a ufunc
+# polynomial evaluator that could reassociate or fuse operations.
+_ATAN_COEFFICIENTS = tuple(
+    float.fromhex(value)
+    for value in (
+        "0x1.5555555555555p-2",
+        "-0x1.999999999999ap-3",
+        "0x1.2492492492492p-3",
+        "-0x1.c71c71c71c71cp-4",
+        "0x1.745d1745d1746p-4",
+        "-0x1.3b13b13b13b14p-4",
+        "0x1.1111111111111p-4",
+        "-0x1.e1e1e1e1e1e1ep-5",
+        "0x1.af286bca1af28p-5",
+        "-0x1.8618618618618p-5",
+        "0x1.642c8590b2164p-5",
+        "-0x1.47ae147ae147bp-5",
+        "0x1.2f684bda12f68p-5",
+        "-0x1.1a7b9611a7b96p-5",
+    )
+)
+_ANGLE_PI = float.fromhex("0x1.921fb54442d18p+1")
+_ANGLE_HALF_PI = float.fromhex("0x1.921fb54442d18p+0")
+_ANGLE_PI_LOW = float.fromhex("0x1.1a62633145c07p-53")
+_ANGLE_HALF_PI_LOW = float.fromhex("0x1.1a62633145c07p-54")
+
+
+def _binary64_arctangent_unit(u: NDArray[np.float64]) -> NDArray[np.float64]:
+    high = u >= 0.75
+    middle = (u >= 0.25) & ~high
+    v = np.where(
+        high, (u - 1.0) / (1.0 + u), np.where(middle, (u - 0.5) / (1.0 + 0.5 * u), u)
+    )
+    base = np.where(
+        high,
+        float.fromhex("0x1.921fb54442d18p-1"),
+        np.where(middle, float.fromhex("0x1.dac670561bb4fp-2"), 0.0),
+    )
+    low = np.where(
+        high,
+        float.fromhex("0x1.1a62633145c07p-55"),
+        np.where(middle, float.fromhex("0x1.a2b7f222f65e2p-56"), 0.0),
+    )
+    q = v * v
+    total = np.full_like(q, _ATAN_COEFFICIENTS[-1])
+    for coefficient in reversed(_ATAN_COEFFICIENTS[:-1]):
+        total = total * q + coefficient
+    return base + (v - (v * (q * total) - low))
+
+
+def _binary64_arctangent(t: NDArray[np.float64]) -> NDArray[np.float64]:
+    unit = t <= 1.0
+    argument = np.where(unit, t, 1.0 / t)
+    value = _binary64_arctangent_unit(argument)
+    return np.where(unit, value, _ANGLE_HALF_PI - (value - _ANGLE_HALF_PI_LOW))
+
+
+def binary64_angle_between(across: ArrayLike, along: ArrayLike, /) -> NDArray[np.float64]:
+    """Evaluate meshcore's unsigned angle kernel elementwise in binary64."""
+    a, b = np.broadcast_arrays(
+        np.asarray(across, dtype=np.float64), np.asarray(along, dtype=np.float64)
+    )
+    with np.errstate(all="ignore"):
+        angle = _binary64_arctangent(a / np.where(b < 0.0, -b, b))
+        result = np.where(
+            b > 0.0,
+            angle,
+            np.where(
+                b < 0.0,
+                _ANGLE_PI - (angle - _ANGLE_PI_LOW),
+                np.where(a > 0.0, _ANGLE_HALF_PI, 0.0),
+            ),
+        )
+        return np.asarray(
+            np.where((a >= 0.0) & np.isfinite(a) & np.isfinite(b), result, np.nan),
+            dtype=np.float64,
+        )
+
+
+def binary64_arctangent2(
+    ordinate: ArrayLike, abscissa: ArrayLike, /
+) -> NDArray[np.float64]:
+    """Evaluate meshcore's signed angle kernel, including IEEE signed zeros."""
+    y, x = np.broadcast_arrays(
+        np.asarray(ordinate, dtype=np.float64), np.asarray(abscissa, dtype=np.float64)
+    )
+    angle = binary64_angle_between(np.abs(y), x)
+    angle = np.where(
+        (y == 0.0) & (x == 0.0), np.where(np.signbit(x), _ANGLE_PI, 0.0), angle
+    )
+    return np.asarray(
+        np.where(np.isfinite(y) & np.isfinite(x), np.copysign(angle, y), np.nan),
+        dtype=np.float64,
+    )
+
+
+def binary64_cube_root(values: ArrayLike, /) -> NDArray[np.float64]:
+    """Evaluate plc3d's eight-step binary64 Newton cube root elementwise.
+
+    Nonpositive and nonfinite inputs are returned unchanged, including NaN bits.
+    """
+    value = np.asarray(values, dtype=np.float64)
+    valid = (value > 0.0) & np.isfinite(value)
+    _, exponent = np.frexp(np.where(valid, value, 1.0))
+    # C++ integer division truncates toward zero, unlike Python floor division.
+    exponent = np.where(exponent < 0, -((-exponent) // 3), exponent // 3)
+    root = np.ldexp(np.ones_like(value), exponent)
+    with np.errstate(all="ignore"):
+        for _ in range(8):
+            root = (2.0 * root + value / (root * root)) / 3.0
+    return np.asarray(np.where(valid, root, value), dtype=np.float64)
+
+
+__all__ += ["binary64_angle_between", "binary64_arctangent2", "binary64_cube_root"]

@@ -1057,6 +1057,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         (_I64, _I32, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P),
     ),
     "phx_mc_point_triangle_locations": (_I32, (_I64, _P, _P, _P, _P, _P)),
+    "phx_mc_point_triangle_distances": (_I32, (_I64, _P, _P, _P)),
     "phx_mc_arrange_triangles": (_I32, (_I64, _P, _I64, _P, _P, _I64, _P, _P, _P)),
     "phx_mc_arrangement_sizes": (_I32, (_P, _P)),
     "phx_mc_arrangement_export": (
@@ -5442,6 +5443,39 @@ def point_triangle_locations(
     )
     _raise_for_call(call, "point_triangle_locations")
     return sides, features, status
+
+
+def point_triangle_distances(points: object, triangles: object, /) -> np.ndarray:
+    """Return specified distances for paired points and closed triangles.
+
+    Each result is the maximum of the fixed-order candidate distance and the
+    point-to-triangle-box distance. The candidate considers the three edges
+    and, when the normal resolves the face, its perpendicular projection.
+    Results are approximate; collinear or nearly collinear triangles, very
+    distant queries, and arithmetic underflow can reduce accuracy. For finite
+    inputs outside the native exact-coordinate domain (nonzero magnitudes
+    between 2**-120 and 2**120), only the computed box lower bound is assured.
+    Nonfinite inputs or computed candidate/box distances are refused; the
+    contiguous point and triangle input buffers must not overlap.
+    """
+    point_array = _points(points, "points", 3)
+    triangle_array = _contact_simplices(triangles, "triangles", 3)
+    if point_array.shape[0] != triangle_array.shape[0]:
+        raise ValueError("points and triangles must have equal length.")
+    distances = np.empty((point_array.shape[0],), dtype=np.float64)
+    library = load_meshcore()
+    call = library["phx_mc_point_triangle_distances"](
+        point_array.shape[0],
+        point_array.ctypes.data,
+        triangle_array.ctypes.data,
+        distances.ctypes.data,
+    )
+    _raise_for_call(
+        call,
+        "point_triangle_distances",
+        contracts={MeshcoreStatus.RANGE_ERROR: "computed distance is nonfinite"},
+    )
+    return distances
 
 
 def arrange_triangles(
@@ -11220,6 +11254,7 @@ __all__ = [
     "metric_survivor_goals",
     "metric_tensor_properties",
     "metric_tetra_quality",
+    "point_triangle_distances",
     "point_triangle_locations",
     "polygon_intersection_moments",
     "polygon_intersection_simplices",

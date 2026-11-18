@@ -22,6 +22,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
+from ..geometry._rational import binary64_least_squares, binary64_matmul, binary64_norm
 from ..linalg._exact import determinant_exact
 from ..typing import checked, ConvertibleToArray, Dim, Float
 from ._cell_geometry import (
@@ -695,12 +696,12 @@ def _tolerance_root_witness(
     upper_float = np.asarray([float(value) for value in upper], dtype=np.float64)
     point = np.clip(0.5 * (lower_float + upper_float), lower_float, upper_float)
     physical, jacobian = _map_values(expressions, point)
-    residual = float(np.linalg.norm(physical - target))
+    residual = float(binary64_norm(physical - target))
     while np.isfinite(residual) and np.all(np.isfinite(jacobian)):
-        step = np.linalg.lstsq(jacobian, physical - target, rcond=None)[0]
+        step = binary64_least_squares(jacobian, physical - target)
         candidate = np.clip(point - step, lower_float, upper_float)
         candidate_physical, candidate_jacobian = _map_values(expressions, candidate)
-        candidate_residual = float(np.linalg.norm(candidate_physical - target))
+        candidate_residual = float(binary64_norm(candidate_physical - target))
         if not candidate_residual < residual:
             break
         point, physical, jacobian = candidate, candidate_physical, candidate_jacobian
@@ -886,7 +887,7 @@ def _refine_isolated_root(
             dtype=np.float64,
         )
         physical, jacobian = _map_values(expressions, reference)
-        residual = float(np.linalg.norm(physical - target))
+        residual = float(binary64_norm(physical - target))
         if (
             margin_inside
             and residual_inside
@@ -952,7 +953,7 @@ def _merge_duplicate_roots(
             (
                 index
                 for index, previous in enumerate(unique_roots)
-                if float(np.linalg.norm(root.reference - previous.reference))
+                if float(binary64_norm(root.reference - previous.reference))
                 <= duplicate_resolution
             ),
             None,
@@ -1167,7 +1168,13 @@ class PreparedMappedCellMap(StrictModule, NonTrainableState):
 
 @final
 class PreparedOwnerLocalMappedCellMap(StrictModule, NonTrainableState):
-    """Canonical mapped-cell map over one compact source-bound owner view."""
+    """Canonical mapped-cell map over one compact source-bound owner view.
+
+    Periodic winding products use the binary64 conversion of each integer
+    winding component. Magnitudes above 2**53 can round at that conversion;
+    the resulting coordinates must still match the separately retained exact
+    periodic lift when rounded to binary64.
+    """
 
     coordinate_element: ScalarCoordinateElement
     coordinate_dofs: Array
@@ -1288,7 +1295,7 @@ class PreparedOwnerLocalMappedCellMap(StrictModule, NonTrainableState):
             for cell in range(identifiers.size):
                 for local_dof in range(element.local_dof_count):
                     winding = shifts_[cell, local_dof]
-                    floating_shift = winding @ lattice
+                    floating_shift = binary64_matmul(winding, lattice)
                     source_route = int(base_routes[cell, local_dof])
                     lifted_coordinates.append(
                         base_coordinates[source_route] + floating_shift

@@ -39,6 +39,42 @@
   Distributed surface generation and surface-association transfer also use
   operation-local preparations for stored source points and chart seeds;
   transferred associations and derived results can change in their last bits.
+- Tetrahedral simplex mesh construction now derives entity levels and routes
+  with batched integer operations while preserving mesh identities and ordering.
+- Concrete cell-quality evaluations use specified host binary64 arithmetic
+  without requiring meshcore. Stored quality diagnostics and their extrema can
+  change in their last bits, including the ordering of equally poor cells.
+  JAX-traced evaluations remain differentiable and may not bind as a supplied
+  concrete audit evaluation. Metric interpolation remains device-dependent.
+  Native CAD qualification volume summaries also accumulate cell measures in
+  mesh block order, so their reported volumes and relative defects can change.
+- Welded mesh audits use native batched exact triangle contacts when available,
+  retaining the host route for unsupported contact rows and installations.
+- Fixed welded mesh audits reporting certain self-intersections for disjoint
+  coplanar triangles when the floating-point normal cancels.
+- Welded mesh audits accelerate vertex and edge star incidence lookups without
+  changing topology findings or their order.
+- Mapped-cell location uses specified binary64 residual norms, exact-rational
+  least-squares proposals, and ordered periodic winding products. Root
+  acceptance near tolerance boundaries and stored owner-local lifted
+  coordinates and their fingerprints can change. Krawczyk preconditioner
+  solves can still affect isolation status, SVD directions can affect
+  tolerance-segment refusal witnesses, and condition diagnostics and the
+  inverse-Jacobian calculation remain platform-dependent. Floating integer
+  powers and runtime-width reference-coordinate sums and products are also not
+  specified across platforms. Current production owner-local views are already
+  lifted, so they do not exercise the unlifted winding-product path.
+- Boundary-layer directions, heights, distances, and quantities derived from
+  them now use specified binary64 operations, including a native distance
+  kernel. In captured tests the visibility solve differed from the old inexact
+  solver by up to 287 units in the last place at condition number 569; stored
+  coordinates and thicknesses moved by at most 3 units except near zero, where
+  a coordinate changed from -9.0e-19 to 6.2e-19. Layer mesh coordinates and
+  their fingerprints can consequently change. Exact least-squares solutions
+  that round to infinity are refused with a `ValueError` rather than an
+  `OverflowError`.
+- Native B-Rep projection batches safely regular deferred surface frames while
+  preserving the specified binary64 results and scalar fallback behavior.
 - Native geometry and meshing now share a single fixed-order binary64 dot,
   matrix product, and norm definition. On platforms whose BLAS fused or
   reordered these operations, rounding can change surface-association
@@ -321,6 +357,8 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Sparse storage planning uses stable packed route keys when coordinates fit
+  32 bits, preserving lexicographic order and coefficient reduction order.
 - Dynamic glued-face monotonicity checks rational Jacobian controls with exact
   integer signs before decoding, preserving findings and the alternative
   preconditioner route. Three alternating replays of 6,990 captured calls took
@@ -673,6 +711,12 @@
   300 and 1,500 bits and on subnormal coordinates. On the recorded sphere
   adaptation the coordinates, edits and evidence are identical and the
   adaptation takes about a tenth less time on Windows.
+- The integer quotients of the native exact carrier search stop after eight
+  correction steps and report an internal error instead of correcting without
+  end. With correct integer arithmetic a quotient needs at most four (two on
+  every carrier of the tests), so no result changes; the bound exists for a
+  platform or build whose wide multiplication is wrong, where the search
+  previously did not return.
 - The source normal cones of certified surface remeshing are outward-rounded
   bounds computed without the platform math library. For the zero-set
   admission the half-angle `asin(|r| / |g|) + asin(2 tolerance / altitude)`

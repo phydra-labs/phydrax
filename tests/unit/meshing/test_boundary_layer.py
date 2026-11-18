@@ -747,13 +747,185 @@ def test_retained_column_stretch_is_stored_evidence_not_a_float_rederivation(
 
 @pytest.mark.parametrize("count", (5, 6, 9))
 def test_planar_wall_probe_stretch_is_exactly_one(count: int) -> None:
-    # Each probe sits exactly epsilon above its planar column vertex, so every
-    # face, edge and vertex distance candidate ties at epsilon squared. The tie
-    # is decided exactly, never by a float argmin/min, so the stretch is 1.
+    # Each probe sits exactly epsilon above its planar column vertex, so the
+    # specified distances reproduce epsilon and the stretch remains exactly 1.
     points, triangles = _plate(count)
     wall = _wall(points, triangles)
     layers = phx.meshing.prepare_boundary_layers(wall, _control(wall))
     np.testing.assert_array_equal(np.asarray(layers.column_stretch), 1.0)
+
+
+def _rounded_product(left: float, right: float) -> float:
+    from fractions import Fraction
+
+    return float(Fraction.from_float(left) * Fraction.from_float(right))
+
+
+def _rounded_sum(left: float, right: float) -> float:
+    from fractions import Fraction
+
+    return float(Fraction.from_float(left) + Fraction.from_float(right))
+
+
+def _reference_unit(vector: tuple[float, float, float]) -> tuple[float, float, float]:
+    from fractions import Fraction
+    from math import sqrt
+
+    squares = tuple(_rounded_product(value, value) for value in vector)
+    length = sqrt(_rounded_sum(_rounded_sum(squares[0], squares[1]), squares[2]))
+    return (
+        float(Fraction.from_float(vector[0]) / Fraction.from_float(length)),
+        float(Fraction.from_float(vector[1]) / Fraction.from_float(length)),
+        float(Fraction.from_float(vector[2]) / Fraction.from_float(length)),
+    )
+
+
+def test_sloped_wall_column_coordinates_follow_ordered_binary64_arithmetic() -> None:
+    points = np.asarray(
+        ((0.0, 0.0, 0.0), (3.0, 0.0, -1.0), (0.0, 3.0, -2.0)),
+        dtype=np.float64,
+    )
+    wall = _wall(points, ((0, 1, 2),))
+    result = phx.meshing.prepare_boundary_layers(
+        wall, _control(wall, smoothing_iterations=0)
+    )
+
+    # Newell's normal is (3, 6, 9); the face normal and the one-face
+    # visibility hull are each normalized separately.
+    direction = _reference_unit(_reference_unit((3.0, 6.0, 9.0)))
+    coordinates = np.asarray(result.column_level_coordinates)[0]
+    row = np.argmin(np.sum(coordinates * coordinates, axis=1))
+    stretch = float(np.asarray(result.column_stretch)[row])
+    scale = float(np.asarray(result.column_scale)[0])
+    height = _rounded_product(
+        _rounded_product(stretch, scale), float(SCHEDULE.thicknesses[0])
+    )
+    expected = np.asarray([_rounded_product(height, value) for value in direction])
+    np.testing.assert_array_equal(
+        coordinates[row].view(np.uint64), expected.view(np.uint64)
+    )
+
+
+def test_fan_column_coordinates_use_ordered_visibility_hull() -> None:
+    z = (
+        0.6437721860858656,
+        0.21430604670981213,
+        0.7177002036575362,
+        0.9395922465554276,
+    )
+    points = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, z[0]),
+            (0.0, 1.0, z[1]),
+            (-1.0, 0.0, z[2]),
+            (0.0, -1.0, z[3]),
+        ),
+        dtype=np.float64,
+    )
+    wall = _wall(points, ((0, 1, 2), (0, 2, 3), (0, 3, 4), (0, 4, 1)))
+    result = phx.meshing.prepare_boundary_layers(
+        wall,
+        _control(
+            wall,
+            corner=phx.meshing.BoundaryLayerCornerPolicy.SMOOTH,
+            smoothing_iterations=0,
+        ),
+    )
+
+    normals = tuple(
+        _reference_unit(vector)
+        for vector in (
+            (-z[0], -z[1], 1.0),
+            (z[2], -z[1], 1.0),
+            (z[2], z[3], 1.0),
+            (-z[0], z[3], 1.0),
+        )
+    )
+    # This pins the ordered combination of stored weights, stretch and scale;
+    # it does not independently derive those operands.
+    roots = np.asarray(result.column_vertex_sources)
+    source = np.flatnonzero(roots == np.asarray(wall.vertex_global_ids)[0])[0]
+    offsets = np.asarray(result.column_source_face_offsets)
+    start, stop = offsets[source : source + 2]
+    face_ids = np.asarray(result.column_source_face_ids)[start:stop]
+    weights = np.asarray(result.column_source_face_weights)[start:stop]
+    np.testing.assert_array_equal(face_ids, np.arange(4))
+    assert np.count_nonzero(weights) == 3
+    components = []
+    for axis in range(3):
+        terms = [
+            _rounded_product(float(weights[face]), normals[face][axis])
+            for face in range(4)
+        ]
+        value = terms[0]
+        for term in terms[1:]:
+            value = _rounded_sum(value, term)
+        components.append(value)
+    direction = _reference_unit(
+        _reference_unit((components[0], components[1], components[2]))
+    )
+    coordinates = np.asarray(result.column_level_coordinates)[0]
+    row = np.argmin(np.sum(coordinates * coordinates, axis=1))
+    stretch = float(np.asarray(result.column_stretch)[row])
+    scale = float(np.asarray(result.column_scale)[0])
+    height = _rounded_product(
+        _rounded_product(stretch, scale), float(SCHEDULE.thicknesses[0])
+    )
+    expected = np.asarray([_rounded_product(height, value) for value in direction])
+    np.testing.assert_array_equal(
+        coordinates[row].view(np.uint64), expected.view(np.uint64)
+    )
+
+
+def test_merge_tie_reports_the_unpaired_higher_vertex() -> None:
+    from phydrax.meshing._boundary_layer import (
+        _analyze_wall,
+        _build_front,
+        _merge_pairs,
+        _sector_directions,
+        _sectors,
+    )
+
+    # The first probe lands halfway between two distinct opposing roots.
+    # Prescribed medial distances isolate that tie at the merge boundary.
+    points = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (0.5, 0.0, 0.0),
+            (1.5, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0),
+            (0.5, 0.0, 1.0),
+            (0.5, 1.0, 0.0),
+            (1.5, 0.0, -1.0),
+            (1.5, -1.0, 0.0),
+        ),
+        dtype=np.float64,
+    )
+    triangles = np.asarray(((0, 3, 4), (1, 5, 6), (2, 7, 8)), dtype=np.int64)
+    source = _wall(points, triangles)
+    control = _control(source, smoothing_iterations=0)
+    faces = np.pad(triangles, ((0, 0), (0, 1)), constant_values=-1)
+    wall = _analyze_wall(
+        points,
+        faces,
+        np.full(3, 3, dtype=np.int64),
+        np.ones(3, dtype=np.bool_),
+        control.feature_angle,
+    )
+    split = np.zeros(wall.edges.shape[0], dtype=np.bool_)
+    sectors = _sectors(wall, split)
+    directions = _sector_directions(wall, sectors, control)
+    front = _build_front(wall, sectors, split, directions, control, source, None)
+    candidates = np.zeros(points.shape[0], dtype=np.bool_)
+    candidates[:3] = True
+    medial = np.zeros(points.shape[0], dtype=np.float64)
+    medial[:3] = (0.5, 0.25, 0.75)
+    with pytest.raises(phx.meshing.MeshingFailure) as failure:
+        _merge_pairs(wall, front, candidates, medial)
+    assert failure.value.category is phx.meshing.MeshingFailureCategory.CONTROL_CONFLICT
+    assert failure.value.entity_ids == (2,)
 
 
 def test_retained_quad_cap_and_obstacle_reproof() -> None:
@@ -1299,3 +1471,60 @@ def test_closed_inward_cap_only_core_retains_original_wall_charts() -> None:
     object.__setattr__(wrong_wall, "source_wall", None)
     with pytest.raises(ValueError, match="actual closed accepted layer cap"):
         build(wrong_wall)
+
+
+def test_layer_nearest_distance_contains_near_tied_distant_triangles() -> None:
+    from phydrax._meshcore import point_triangle_distances
+    from phydrax.meshing._boundary_layer import _nearest_distances
+
+    triangles = np.asarray(
+        [
+            [[-10.0, 0.0, 3e-7], [-10.0, 3e-7, 0.0], [-10.0, 1.0, 1.0]],
+            [[10.0, -1.0, -1.0], [10.0, 1.0, -1.0], [10.0, 0.0, 1.0]],
+        ],
+        dtype=np.float64,
+    )
+    queries = np.asarray(
+        [[0.0, 0.0, 0.0], [2.0**-49, 0.0, 0.0]],
+        dtype=np.float64,
+    )
+    expected = np.asarray(
+        [
+            np.min(point_triangle_distances(np.broadcast_to(point, (2, 3)), triangles))
+            for point in queries
+        ],
+        dtype=np.float64,
+    )
+    np.testing.assert_array_equal(_nearest_distances(triangles, queries), expected)
+
+
+def test_layer_wall_nearest_distances_match_all_triangle_pairs() -> None:
+    from phydrax._meshcore import point_triangle_distances
+    from phydrax.meshing._boundary_layer import _nearest_distances
+
+    points, faces = _plate(2)
+    triangles = points[faces]
+    wall = _wall(points, faces)
+    layers = phx.meshing.prepare_boundary_layers(wall, _control(wall))
+    # This planar wall has one vertical, unit-stretch column per source vertex.
+    # Include all generated level vertices and the 16 medial probes per column.
+    level_points = np.asarray(layers.column_level_coordinates, dtype=np.float64).reshape(
+        -1, 3
+    )
+    fractions = np.arange(1, 17, dtype=np.float64) / 16
+    heights = SCHEDULE.total_thickness / 0.8 * fractions
+    probes = np.broadcast_to(points[:, None, :], (points.shape[0], 16, 3)).copy()
+    probes[..., 2] += heights
+    queries = np.concatenate((level_points, probes.reshape(-1, 3)))
+    expected = np.asarray(
+        [
+            np.min(
+                point_triangle_distances(
+                    np.broadcast_to(point, (triangles.shape[0], 3)), triangles
+                )
+            )
+            for point in queries
+        ],
+        dtype=np.float64,
+    )
+    np.testing.assert_array_equal(_nearest_distances(triangles, queries), expected)

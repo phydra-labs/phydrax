@@ -1777,8 +1777,12 @@ def _volume_run(
                 "detail": "Native CAD volume route did not publish a 3D tetrahedral mesh.",
             }
         )
-    measured_mesh_volume = float(
-        np.sum(np.asarray(straight.quality.evaluation.measures, dtype=np.float64))
+    # Accumulate in cell block order: a runtime-length np.sum may reorder terms.
+    cell_measures = np.asarray(straight.quality.evaluation.measures, dtype=np.float64)
+    measured_mesh_volume = (
+        float(np.add.accumulate(cell_measures, dtype=np.float64)[-1])
+        if cell_measures.size
+        else 0.0
     )
     fidelity_record = (
         None

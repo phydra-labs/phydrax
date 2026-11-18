@@ -23,6 +23,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.core import Tracer
 from jax.typing import ArrayLike
 
 import phydrax.ein as ein
@@ -52,6 +53,11 @@ from ..geometry._interval_enclosure import (
     interval_subtract,
 )
 from ..geometry._rational import (
+    binary64_arctangent2,
+    binary64_cube_root,
+    binary64_dot,
+    binary64_matmul,
+    binary64_norm,
     fraction_down,
     fraction_up,
     rational_cross,
@@ -224,9 +230,9 @@ def _triangle_minimum_sine_violations(
 class CellQualityReport(StrictModule, NonTrainableState):
     """Sampled quality diagnostics with exact threshold decisions.
 
-    The evaluation arrays and float summaries are diagnostics: XLA computes them
-    and they may differ by rounding between platforms. ``report_id`` hashes only
-    exact content: the mesh, the evaluation request, the gate thresholds, and
+    Concrete evaluation arrays and float summaries are diagnostics; traced
+    evaluations use JAX arithmetic and may round differently. ``report_id``
+    hashes the mesh, the evaluation request, the gate thresholds, and
     the exactly decided failing cell IDs of each gate (see
     :func:`summarize_cell_quality`). ``gate_thresholds`` is
     ``(minimum_measure, minimum_mean_ratio, maximum_aspect_ratio)``.
@@ -531,18 +537,18 @@ class CellQualityReportArchiveRecipe(NamedTuple):
 
 
 class _BlockQuality(NamedTuple):
-    measure: Array
-    mean_ratio: Array
-    aspect: Array
-    radius_ratio: Array
-    scaled_jacobian: Array
-    minimum_angle: Array
-    maximum_angle: Array
-    condition: Array
-    sliver: Array
-    warpage: Array
-    metric_quality: Array
-    sampled_valid: Array
+    measure: Array | np.ndarray
+    mean_ratio: Array | np.ndarray
+    aspect: Array | np.ndarray
+    radius_ratio: Array | np.ndarray
+    scaled_jacobian: Array | np.ndarray
+    minimum_angle: Array | np.ndarray
+    maximum_angle: Array | np.ndarray
+    condition: Array | np.ndarray
+    sliver: Array | np.ndarray
+    warpage: Array | np.ndarray
+    metric_quality: Array | np.ndarray
+    sampled_valid: Array | np.ndarray
 
 
 # Static reference tables -----------------------------------------------------------
@@ -554,8 +560,16 @@ def _ideal_vertices(kind: str, arity: int, /) -> np.ndarray:
         case "triangle":
             return np.asarray(((0.0, 0.0), (1.0, 0.0), (0.5, 0.5 * root3)))
         case "polygon":
-            angles = 2.0 * np.pi * np.arange(arity) / arity
-            return np.stack((np.cos(angles), np.sin(angles)), axis=1)
+            return np.asarray(
+                [
+                    (
+                        _polygon_coordinate(arity, index, False),
+                        _polygon_coordinate(arity, index, True),
+                    )
+                    for index in range(arity)
+                ],
+                dtype=np.float64,
+            )
         case "tetrahedron":
             return np.asarray(
                 (
@@ -640,6 +654,62 @@ class _CornerTable:
     ideal_scaled: np.ndarray
 
 
+def _polygon_coordinate(arity: int, index: int, sine: bool, /) -> float:
+    """Correctly rounded regular-polygon coordinate, from rational enclosures."""
+    multiple = Fraction(2 * index, arity)
+    if sine:
+        multiple = Fraction(1, 2) - multiple
+    multiple = abs(multiple) % 2
+    if multiple > 1:
+        multiple = 2 - multiple
+    special = {
+        Fraction(0): 1.0,
+        Fraction(1, 3): 0.5,
+        Fraction(1, 2): 0.0,
+        Fraction(2, 3): -0.5,
+        Fraction(1): -1.0,
+    }
+    if multiple in special:
+        return special[multiple]
+    bits = 96
+    while True:
+        fifth = _inverse_arctangent(5, bits + 8)
+        large = _inverse_arctangent(239, bits + 8)
+        pi_lower = 16 * fifth[0] - 4 * large[1]
+        pi_upper = 16 * fifth[1] - 4 * large[0]
+        lower = _cosine_point(multiple * pi_upper, bits + 8)[0]
+        upper = _cosine_point(multiple * pi_lower, bits + 8)[1]
+        if float(lower) == float(upper):
+            return float(lower)
+        bits *= 2
+
+
+def _rational_solve(matrix: np.ndarray, right: np.ndarray, /) -> np.ndarray:
+    """Solve a small represented system exactly and round each output once."""
+    size = matrix.shape[0]
+    width = right.shape[1]
+    rows = [
+        [Fraction(float(value)) for value in matrix[row]]
+        + [Fraction(float(value)) for value in right[row]]
+        for row in range(size)
+    ]
+    for column in range(size):
+        pivot = next(row for row in range(column, size) if rows[row][column])
+        rows[column], rows[pivot] = rows[pivot], rows[column]
+        divisor = rows[column][column]
+        rows[column] = [value / divisor for value in rows[column]]
+        for row in range(size):
+            if row != column:
+                factor = rows[row][column]
+                rows[row] = [
+                    a - factor * b for a, b in zip(rows[row], rows[column], strict=True)
+                ]
+    return np.asarray(
+        [[float(value) for value in row[size : size + width]] for row in rows],
+        dtype=np.float64,
+    )
+
+
 @host_table_cache(
     max_entries=256,
     max_bytes=1048576,
@@ -661,12 +731,14 @@ def _corner_table(kind: str, arity: int, /) -> _CornerTable:
     else:
         vertices, neighbors = reference_corner_frames(kind)
     frames = np.swapaxes(ideal[neighbors] - ideal[vertices][:, None, :], -1, -2)
-    determinant = np.linalg.det(frames)
+    determinant = _square_determinant(frames)
     if np.any(determinant <= 0.0):
         raise ValueError(f"Reference corner frames of {kind!r} are not positive.")
-    identity = np.broadcast_to(np.eye(frames.shape[-1]), frames.shape)
-    inverse = np.linalg.solve(frames, identity)
-    scaled = determinant / np.prod(np.linalg.norm(frames, axis=-2), axis=-1)
+    identity = np.eye(frames.shape[-1], dtype=np.float64)
+    inverse = np.stack([_rational_solve(frame, identity) for frame in frames])
+    scaled = determinant / _quality_product(
+        binary64_norm(np.swapaxes(frames, -1, -2)), -1, True
+    )
     return _CornerTable(vertices, neighbors, inverse, determinant, scaled)
 
 
@@ -694,7 +766,7 @@ def _dihedral_table(kind: str, /) -> _DihedralTable:
             first, second = others
             edge = ideal[target] - ideal[origin]
             cross = np.cross(ideal[first] - ideal[origin], ideal[second] - ideal[origin])
-            if np.dot(cross, edge) < 0.0:
+            if binary64_dot(cross, edge) < 0.0:
                 first, second = second, first
             samples.append((origin, target, first, second))
     return _DihedralTable(np.asarray(samples))
@@ -767,14 +839,15 @@ def _measure_rule(kind: str, /) -> _MeasureRule:
         case "hexahedron":
             points = np.stack(np.meshgrid(gauss, gauss, gauss, indexing="ij"), -1)
             points = points.reshape(-1, 3)
-            weights = np.prod(
+            weights = _quality_product(
                 np.stack(
                     np.meshgrid(
                         gauss_weights, gauss_weights, gauss_weights, indexing="ij"
                     ),
                     -1,
                 ),
-                axis=-1,
+                -1,
+                True,
             ).reshape(-1)
         case "prism":
             points = np.stack(
@@ -796,7 +869,7 @@ def _measure_rule(kind: str, /) -> _MeasureRule:
     _, spanning = _first_order_space(kind, points)
     count = vandermonde.shape[0]
     # Nodal gradients solve V^T G_nodal = G_spanning for every point and axis.
-    nodal = np.linalg.solve(
+    nodal = _rational_solve(
         vandermonde.T, np.moveaxis(spanning, 1, 0).reshape((count, -1))
     )
     gradients = np.moveaxis(nodal.reshape((count, points.shape[0], 3)), 0, 1)
@@ -806,121 +879,211 @@ def _measure_rule(kind: str, /) -> _MeasureRule:
 # Quality kernels -----------------------------------------------------------------
 
 
-def _tiny(values: Array, /) -> Array:
-    # ty: ignore[invalid-return-type]
-    return jnp.finfo(values.dtype).tiny
+def _quality_sum(values: Any, axis: int, keepdims: bool, host: bool, /) -> Any:
+    """Sum host entries in increasing index order, without contraction."""
+    if not host:
+        return jnp.sum(values, axis=axis, keepdims=keepdims)
+    moved = np.moveaxis(values, axis, -1)
+    result = np.zeros(moved.shape[:-1], dtype=np.float64)
+    for index in range(moved.shape[-1]):
+        result = result + moved[..., index]
+    return np.expand_dims(result, axis) if keepdims else result
 
 
-def _angle(sine: Array, cosine: Array, /) -> Array:
-    angle = jnp.arctan2(sine, cosine)
-    return jnp.where(angle < 0.0, angle + 2.0 * jnp.pi, angle)
+def _quality_product(values: Any, axis: int, host: bool, /) -> Any:
+    """Multiply host entries in increasing index order, without reassociation."""
+    if not host:
+        return jnp.prod(values, axis=axis)
+    moved = np.moveaxis(values, axis, -1)
+    result = np.ones(moved.shape[:-1], dtype=np.float64)
+    for index in range(moved.shape[-1]):
+        result = result * moved[..., index]
+    return result
 
 
-def _vector_area(points: Array, /) -> Array:
+def _quality_trace(values: Any, host: bool, /) -> Any:
+    if not host:
+        return jnp.trace(values, axis1=-2, axis2=-1)
+    return _quality_sum(np.diagonal(values, axis1=-2, axis2=-1), -1, False, True)
+
+
+def _quality_norm(values: Any, axis: int, keepdims: bool, host: bool, /) -> Any:
+    if not host:
+        return jnp.linalg.norm(values, axis=axis, keepdims=keepdims)
+    result = binary64_norm(np.moveaxis(values, axis, -1))
+    return np.expand_dims(result, axis) if keepdims else result
+
+
+def _quality_mean(values: Any, axis: int, keepdims: bool, host: bool, /) -> Any:
+    if not host:
+        return jnp.mean(values, axis=axis, keepdims=keepdims)
+    return _quality_sum(values, axis, keepdims, True) / values.shape[axis]
+
+
+def _quality_atan2(first: Any, second: Any, host: bool, /) -> Any:
+    return binary64_arctangent2(first, second) if host else jnp.arctan2(first, second)
+
+
+def _quality_root(values: Any, dimension: int, host: bool, /) -> Any:
+    if not host:
+        return values ** (1.0 / dimension)
+    return np.sqrt(values) if dimension == 2 else binary64_cube_root(values)
+
+
+def _quality_segment(
+    values: Any, owners: Any, count: int, operation: str, host: bool, /
+) -> Any:
+    """Reduce in input order for repeated segment indices."""
+    if not host:
+        if operation == "sum":
+            return jax.ops.segment_sum(values, owners, count)
+        if operation == "min":
+            return jax.ops.segment_min(values, owners, count)
+        return jax.ops.segment_max(values, owners, count)
+    if operation == "sum":
+        result = np.zeros((count, *values.shape[1:]), dtype=values.dtype)
+        np.add.at(result, owners, values)
+    elif operation == "min":
+        initial = (
+            np.iinfo(values.dtype).max
+            if np.issubdtype(values.dtype, np.integer)
+            else np.inf
+        )
+        result = np.full((count, *values.shape[1:]), initial, dtype=values.dtype)
+        np.minimum.at(result, owners, values)
+    else:
+        result = np.full((count, *values.shape[1:]), -np.inf, dtype=values.dtype)
+        np.maximum.at(result, owners, values)
+    return result
+
+
+def _tiny(values: Any, /) -> Any:
+    return np.finfo(values.dtype).tiny
+
+
+def _angle(sine: Any, cosine: Any, host: bool, /) -> Any:
+    xp = np if host else jnp
+    angle = _quality_atan2(sine, cosine, host)
+    return xp.where(angle < 0.0, angle + 2.0 * xp.pi, angle)
+
+
+def _vector_area(points: Any, host: bool, /) -> Any:
     """Vector area (Newell) of cyclic 2-cells, axis -2 cycling vertices."""
-
-    center = jnp.mean(points, axis=-2, keepdims=True)
+    xp = np if host else jnp
+    center = _quality_mean(points, -2, True, host)
     shifted = points - center
-    return 0.5 * jnp.sum(jnp.cross(shifted, jnp.roll(shifted, -1, axis=-2)), axis=-2)
+    return 0.5 * _quality_sum(
+        xp.cross(shifted, xp.roll(shifted, -1, axis=-2)), -2, False, host
+    )
 
 
 def _edge_aspect(
-    points: Array, edges: tuple[tuple[int, int], ...], /
-) -> tuple[Array, Array]:
+    points: Any, edges: tuple[tuple[int, int], ...], host: bool, /
+) -> tuple[Any, Any]:
+    xp = np if host else jnp
     index = np.asarray(edges)
-    lengths = jnp.linalg.norm(points[:, index[:, 1]] - points[:, index[:, 0]], axis=-1)
-    return jnp.max(lengths, axis=1) / jnp.maximum(
-        jnp.min(lengths, axis=1), _tiny(points)
+    lengths = _quality_norm(
+        points[:, index[:, 1]] - points[:, index[:, 0]], -1, False, host
+    )
+    return xp.max(lengths, axis=1) / xp.maximum(
+        xp.min(lengths, axis=1), _tiny(points)
     ), lengths
 
 
-def _fan_warpage(points: Array, normal: Array, /) -> Array:
+def _fan_warpage(points: Any, normal: Any, host: bool, /) -> Any:
     """Largest angle between centroid-fan triangle normals and ``normal``."""
-
-    center = jnp.mean(points, axis=-2, keepdims=True)
+    xp = np if host else jnp
+    center = _quality_mean(points, -2, True, host)
     shifted = points - center
-    fan = jnp.cross(shifted, jnp.roll(shifted, -1, axis=-2))
+    fan = xp.cross(shifted, xp.roll(shifted, -1, axis=-2))
     unit = normal[..., None, :]
-    sine = jnp.linalg.norm(jnp.cross(fan, unit), axis=-1)
-    cosine = jnp.sum(fan * unit, axis=-1)
-    return jnp.max(jnp.arctan2(sine, cosine), axis=-1)
+    sine = _quality_norm(xp.cross(fan, unit), -1, False, host)
+    cosine = _quality_sum(fan * unit, -1, False, host)
+    return xp.max(_quality_atan2(sine, cosine, host), axis=-1)
 
 
 def _corner_measures(
-    points: Array,
+    points: Any,
     table: _CornerTable,
-    metric: Array | None,
-    unit_normal: Array | None,
+    metric: Any,
+    unit_normal: Any,
+    host: bool,
     /,
-) -> tuple[Array, Array, Array, Array, Array]:
-    """Corner samples: signed determinant, scaled Jacobian, mean ratio,
-    condition number, and metric mean ratio, each shaped (cells, corners)."""
-
-    frames = jnp.swapaxes(
+) -> tuple[Any, Any, Any, Any, Any]:
+    """Corner signed determinant, scaled Jacobian, shape and metric quality."""
+    xp = np if host else jnp
+    frames = xp.swapaxes(
         points[:, table.neighbors] - points[:, table.vertices][:, :, None, :], -1, -2
     )
     dimension = frames.shape[-1]
     if unit_normal is None:
         determinant = _square_determinant(frames)
     else:
-        cross = jnp.cross(frames[..., 0], frames[..., 1])
-        determinant = jnp.sum(cross * unit_normal[:, None, :], axis=-1)
-    lengths = jnp.linalg.norm(frames, axis=-2)
+        cross = xp.cross(frames[..., 0], frames[..., 1])
+        determinant = _quality_sum(cross * unit_normal[:, None, :], -1, False, host)
+    lengths = _quality_norm(frames, -2, False, host)
     scaled = (
         determinant
-        / jnp.maximum(jnp.prod(lengths, axis=-1), _tiny(points))
+        / xp.maximum(_quality_product(lengths, -1, host), _tiny(points))
         / table.ideal_scaled[None, :]
     )
-    target = ein.contract("ckad,kde->ckae", frames, table.ideal_inverse, backend="jax")
-    gram = ein.contract("ckad,ckae->ckde", target, target, backend="jax")
+    if host:
+        target = binary64_matmul(frames, table.ideal_inverse[None, ...])
+        gram = binary64_matmul(np.swapaxes(target, -1, -2), target)
+    else:
+        target = ein.contract(
+            "ckad,kde->ckae", frames, table.ideal_inverse, backend="jax"
+        )
+        gram = ein.contract("ckad,ckae->ckde", target, target, backend="jax")
     positive = determinant > 0.0
-    gram_determinant = jnp.maximum(_square_determinant(gram), _tiny(points))
-    trace = jnp.trace(gram, axis1=-2, axis2=-1)
-    ratio = jnp.where(
+    gram_determinant = xp.maximum(_square_determinant(gram), _tiny(points))
+    trace = _quality_trace(gram, host)
+    ratio = xp.where(
         positive,
         dimension
-        * gram_determinant ** (1.0 / dimension)
-        / jnp.maximum(trace, _tiny(points)),
+        * _quality_root(gram_determinant, dimension, host)
+        / xp.maximum(trace, _tiny(points)),
         0.0,
     )
-    condition = jnp.where(
+    condition = xp.where(
         positive,
-        jnp.sqrt(trace * _adjugate_trace(gram) / gram_determinant) / dimension,
-        jnp.inf,
+        xp.sqrt(trace * _adjugate_trace(gram) / gram_determinant) / dimension,
+        xp.inf,
     )
     if metric is None:
-        metric_ratio = jnp.full(ratio.shape, jnp.nan, dtype=points.dtype)
+        metric_ratio = xp.full(ratio.shape, xp.nan, dtype=points.dtype)
     else:
-        metric_gram = ein.contract(
-            "ckad,cab,ckbe->ckde", target, metric, target, backend="jax"
-        )
-        metric_determinant = jnp.maximum(_square_determinant(metric_gram), _tiny(points))
-        metric_ratio = jnp.where(
+        if host:
+            metric_target = binary64_matmul(metric[:, None, :, :], target)
+            metric_gram = binary64_matmul(np.swapaxes(target, -1, -2), metric_target)
+        else:
+            metric_gram = ein.contract(
+                "ckad,cab,ckbe->ckde", target, metric, target, backend="jax"
+            )
+        metric_determinant = xp.maximum(_square_determinant(metric_gram), _tiny(points))
+        metric_ratio = xp.where(
             positive,
             dimension
-            * metric_determinant ** (1.0 / dimension)
-            / jnp.maximum(jnp.trace(metric_gram, axis1=-2, axis2=-1), _tiny(points)),
+            * _quality_root(metric_determinant, dimension, host)
+            / xp.maximum(_quality_trace(metric_gram, host), _tiny(points)),
             0.0,
         )
     return determinant, scaled, ratio, condition, metric_ratio
 
 
-def _metric_quality(metric_ratio: Array, metric: Array | None, /) -> Array:
-    """Per-cell minimum metric ratio, or canonical NaN when no metric applies.
-
-    The non-applicable value is built directly: XLA CPU min-reductions over
-    all-NaN rows do not propagate NaN for every array size (large inputs return
-    the +inf identity), which would make the summary size- and backend-dependent.
-    """
+def _metric_quality(metric_ratio: Any, metric: Any, host: bool, /) -> Any:
+    """Per-cell minimum metric ratio, or canonical NaN when no metric applies."""
+    xp = np if host else jnp
     if metric is None:
-        return jnp.full(metric_ratio.shape[:1], jnp.nan, dtype=metric_ratio.dtype)
-    return jnp.min(metric_ratio, axis=1)
+        return xp.full(metric_ratio.shape[:1], xp.nan, dtype=metric_ratio.dtype)
+    return xp.min(metric_ratio, axis=1)
 
 
-def _interval_quality(points: Array, metric: Array | None, /) -> _BlockQuality:
-    length = jnp.linalg.norm(points[:, 1] - points[:, 0], axis=-1)
-    one = jnp.ones_like(length)
-    nan = jnp.full_like(length, jnp.nan)
+def _interval_quality(points: Any, metric: Any, host: bool, /) -> _BlockQuality:
+    xp = np if host else jnp
+    length = _quality_norm(points[:, 1] - points[:, 0], -1, False, host)
+    one = xp.ones_like(length)
+    nan = xp.full_like(length, xp.nan)
     return _BlockQuality(
         length,
         one,
@@ -931,120 +1094,127 @@ def _interval_quality(points: Array, metric: Array | None, /) -> _BlockQuality:
         nan,
         one,
         nan,
-        jnp.zeros_like(length),
+        xp.zeros_like(length),
         nan if metric is None else one,
-        jnp.isfinite(length) & (length > 0.0),
+        xp.isfinite(length) & (length > 0.0),
     )
 
 
-def _surface_quality(kind: str, points: Array, metric: Array | None, /) -> _BlockQuality:
+def _surface_quality(kind: str, points: Any, metric: Any, host: bool, /) -> _BlockQuality:
     """Triangles, quadrilaterals, and polygons in 2-D or embedded in 3-D."""
-
+    xp = np if host else jnp
     arity = points.shape[1]
     table = _corner_table(kind, arity)
     embedded = points.shape[-1] == 3
     if embedded:
-        area_vector = _vector_area(points)
-        area = jnp.linalg.norm(area_vector, axis=-1)
-        unit_normal = area_vector / jnp.maximum(area, _tiny(points))[:, None]
+        area_vector = _vector_area(points, host)
+        area = _quality_norm(area_vector, -1, False, host)
+        unit_normal = area_vector / xp.maximum(area, _tiny(points))[:, None]
         measure = area
         warpage = (
-            jnp.zeros_like(area)
+            xp.zeros_like(area)
             if kind == "triangle"
-            else _fan_warpage(points, unit_normal)
+            else _fan_warpage(points, unit_normal, host)
         )
     else:
         unit_normal = None
-        shifted = points - jnp.mean(points, axis=1, keepdims=True)
-        following = jnp.roll(shifted, -1, axis=1)
+        shifted = points - _quality_mean(points, 1, True, host)
+        following = xp.roll(shifted, -1, axis=1)
         fan = shifted[..., 0] * following[..., 1] - shifted[..., 1] * following[..., 0]
-        measure = 0.5 * jnp.sum(fan, axis=1)
-        warpage = jnp.zeros_like(measure)
+        measure = 0.5 * _quality_sum(fan, 1, False, host)
+        warpage = xp.zeros_like(measure)
     determinant, scaled, ratio, condition, metric_ratio = _corner_measures(
-        points, table, metric, unit_normal
+        points, table, metric, unit_normal, host
     )
     frames = points[:, table.neighbors] - points[:, table.vertices][:, :, None, :]
-    cosine = jnp.sum(frames[:, :, 0] * frames[:, :, 1], axis=-1)
-    angles = _angle(determinant, cosine)
-    aspect, lengths = _edge_aspect(points, _edges(kind, arity))
+    cosine = _quality_sum(frames[:, :, 0] * frames[:, :, 1], -1, False, host)
+    angles = _angle(determinant, cosine, host)
+    aspect, lengths = _edge_aspect(points, _edges(kind, arity), host)
     if kind == "triangle":
-        magnitude = jnp.abs(measure)
-        perimeter = jnp.sum(lengths, axis=1)
+        magnitude = xp.abs(measure)
+        perimeter = _quality_sum(lengths, 1, False, host)
         radius = (
             16.0
             * magnitude**2
-            / jnp.maximum(perimeter * jnp.prod(lengths, axis=1), _tiny(points))
+            / xp.maximum(perimeter * _quality_product(lengths, 1, host), _tiny(points))
         )
         valid = measure > 0.0
     elif kind == "quadrilateral":
-        radius = jnp.full_like(measure, jnp.nan)
-        valid = jnp.all(determinant > 0.0, axis=1)
+        radius = xp.full_like(measure, xp.nan)
+        valid = xp.all(determinant > 0.0, axis=1)
     else:
-        radius = jnp.full_like(measure, jnp.nan)
-        center = jnp.mean(points, axis=1, keepdims=True)
+        radius = xp.full_like(measure, xp.nan)
+        center = _quality_mean(points, 1, True, host)
         shifted = points - center
-        following = jnp.roll(shifted, -1, axis=1)
-        if embedded:
-            star = jnp.sum(
-                # ty: ignore[not-subscriptable]
-                jnp.cross(shifted, following) * unit_normal[:, None, :],
-                axis=-1,
+        following = xp.roll(shifted, -1, axis=1)
+        if embedded and unit_normal is not None:
+            star = _quality_sum(
+                xp.cross(shifted, following) * unit_normal[:, None, :], -1, False, host
             )
         else:
             star = (
                 shifted[..., 0] * following[..., 1] - shifted[..., 1] * following[..., 0]
             )
-        valid = jnp.all(star > 0.0, axis=1)
+        valid = xp.all(star > 0.0, axis=1)
     return _BlockQuality(
         measure,
-        jnp.min(ratio, axis=1),
+        xp.min(ratio, axis=1),
         aspect,
         radius,
-        jnp.min(scaled, axis=1),
-        jnp.min(angles, axis=1),
-        jnp.max(angles, axis=1),
-        jnp.max(condition, axis=1),
-        jnp.full_like(measure, jnp.nan),
+        xp.min(scaled, axis=1),
+        xp.min(angles, axis=1),
+        xp.max(angles, axis=1),
+        xp.max(condition, axis=1),
+        xp.full_like(measure, xp.nan),
         warpage,
-        _metric_quality(metric_ratio, metric),
-        valid & jnp.isfinite(measure),
+        _metric_quality(metric_ratio, metric, host),
+        valid & xp.isfinite(measure),
     )
 
 
-def _dihedral_angles(points: Array, samples: np.ndarray, /) -> Array:
+def _dihedral_angles(points: Any, samples: np.ndarray, host: bool, /) -> Any:
+    xp = np if host else jnp
     origin = points[:, samples[:, 0]]
     edge = points[:, samples[:, 1]] - origin
     first = points[:, samples[:, 2]] - origin
     second = points[:, samples[:, 3]] - origin
-    unit = edge / jnp.maximum(
-        jnp.linalg.norm(edge, axis=-1, keepdims=True), _tiny(points)
-    )
-    sine = jnp.sum(jnp.cross(first, second) * unit, axis=-1)
-    cosine = jnp.sum(first * second, axis=-1) - jnp.sum(first * unit, axis=-1) * jnp.sum(
-        second * unit, axis=-1
-    )
-    return _angle(sine, cosine)
+    unit = edge / xp.maximum(_quality_norm(edge, -1, True, host), _tiny(points))
+    sine = _quality_sum(xp.cross(first, second) * unit, -1, False, host)
+    cosine = _quality_sum(first * second, -1, False, host) - _quality_sum(
+        first * unit, -1, False, host
+    ) * _quality_sum(second * unit, -1, False, host)
+    return _angle(sine, cosine, host)
 
 
-def _volume_measure(kind: str, points: Array, /) -> Array:
+def _volume_measure(kind: str, points: Any, host: bool, /) -> Any:
+    xp = np if host else jnp
     if kind == "tetrahedron":
-        frames = jnp.swapaxes(points[:, 1:] - points[:, :1], -1, -2)
+        frames = xp.swapaxes(points[:, 1:] - points[:, :1], -1, -2)
         return _square_determinant(frames) / 6.0
     rule = _measure_rule(kind)
-    jacobian = ein.contract("qnk,cna->cqak", rule.gradients, points, backend="jax")
-    return jnp.sum(_square_determinant(jacobian) * rule.weights[None, :], axis=1)
+    if host:
+        jacobian = binary64_matmul(
+            np.swapaxes(points, -1, -2)[:, None, :, :], rule.gradients[None, :, :, :]
+        )
+    else:
+        jacobian = ein.contract("qnk,cna->cqak", rule.gradients, points, backend="jax")
+    return _quality_sum(
+        _square_determinant(jacobian) * rule.weights[None, :], 1, False, host
+    )
 
 
-def _tetrahedron_shape(points: Array, volume: Array, lengths: Array, /) -> Any:
+def _tetrahedron_shape(points: Any, volume: Any, lengths: Any, host: bool, /) -> Any:
+    xp = np if host else jnp
     faces = np.asarray(reference_cell_topology("tetrahedron").entities[2])
-    face_areas = 0.5 * jnp.linalg.norm(
-        jnp.cross(
+    face_areas = 0.5 * _quality_norm(
+        xp.cross(
             points[:, faces[:, 1]] - points[:, faces[:, 0]],
             points[:, faces[:, 2]] - points[:, faces[:, 0]],
         ),
-        axis=-1,
+        -1,
+        False,
+        host,
     )
-    # Opposite edge pairs of the reference edge order (01,12,20,03,13,23).
     first = lengths[:, 0] * lengths[:, 5]
     second = lengths[:, 1] * lengths[:, 3]
     third = lengths[:, 2] * lengths[:, 4]
@@ -1057,66 +1227,66 @@ def _tetrahedron_shape(points: Array, volume: Array, lengths: Array, /) -> Any:
     radius = (
         216.0
         * volume**2
-        / jnp.maximum(
-            jnp.sum(face_areas, axis=1) * jnp.sqrt(jnp.maximum(product, _tiny(points))),
+        / xp.maximum(
+            _quality_sum(face_areas, 1, False, host)
+            * xp.sqrt(xp.maximum(product, _tiny(points))),
             _tiny(points),
         )
     )
-    shortest = jnp.min(lengths, axis=1)
-    sliver = 6.0 * jnp.sqrt(2.0) * volume / jnp.maximum(shortest**3, _tiny(points))
+    shortest = xp.min(lengths, axis=1)
+    sliver = 6.0 * xp.sqrt(2.0) * volume / xp.maximum(shortest**3, _tiny(points))
     return radius, sliver
 
 
-def _solid_quality(kind: str, points: Array, metric: Array | None, /) -> _BlockQuality:
+def _solid_quality(kind: str, points: Any, metric: Any, host: bool, /) -> _BlockQuality:
+    xp = np if host else jnp
     table = _corner_table(kind, points.shape[1])
     determinant, scaled, ratio, condition, metric_ratio = _corner_measures(
-        points, table, metric, None
+        points, table, metric, None, host
     )
-    measure = _volume_measure(kind, points)
-    aspect, lengths = _edge_aspect(points, _edges(kind, points.shape[1]))
-    angles = _dihedral_angles(points, _dihedral_table(kind).samples)
+    measure = _volume_measure(kind, points, host)
+    aspect, lengths = _edge_aspect(points, _edges(kind, points.shape[1]), host)
+    angles = _dihedral_angles(points, _dihedral_table(kind).samples, host)
     quadrilaterals = tuple(face for face in _faces(kind, 0) if len(face) == 4)
     if quadrilaterals:
         face_points = points[:, np.asarray(quadrilaterals)]
-        area = _vector_area(face_points)
-        unit = area / jnp.maximum(
-            jnp.linalg.norm(area, axis=-1, keepdims=True), _tiny(points)
-        )
-        warpage = jnp.max(_fan_warpage(face_points, unit), axis=1)
+        area = _vector_area(face_points, host)
+        unit = area / xp.maximum(_quality_norm(area, -1, True, host), _tiny(points))
+        warpage = xp.max(_fan_warpage(face_points, unit, host), axis=1)
     else:
-        warpage = jnp.zeros_like(measure)
+        warpage = xp.zeros_like(measure)
     if kind == "tetrahedron":
-        radius, sliver = _tetrahedron_shape(points, measure, lengths)
+        radius, sliver = _tetrahedron_shape(points, measure, lengths, host)
     else:
-        radius = jnp.full_like(measure, jnp.nan)
-        sliver = jnp.full_like(measure, jnp.nan)
+        radius = xp.full_like(measure, xp.nan)
+        sliver = xp.full_like(measure, xp.nan)
     return _BlockQuality(
         measure,
-        jnp.min(ratio, axis=1),
+        xp.min(ratio, axis=1),
         aspect,
         radius,
-        jnp.min(scaled, axis=1),
-        jnp.min(angles, axis=1),
-        jnp.max(angles, axis=1),
-        jnp.max(condition, axis=1),
+        xp.min(scaled, axis=1),
+        xp.min(angles, axis=1),
+        xp.max(angles, axis=1),
+        xp.max(condition, axis=1),
         sliver,
         warpage,
-        _metric_quality(metric_ratio, metric),
-        jnp.all(determinant > 0.0, axis=1) & (measure > 0.0) & jnp.isfinite(measure),
+        _metric_quality(metric_ratio, metric, host),
+        xp.all(determinant > 0.0, axis=1) & (measure > 0.0) & xp.isfinite(measure),
     )
 
 
 def _standard_block_quality(
-    kind: str, points: Array, metric: Array | None, /
+    kind: str, points: Any, metric: Any, host: bool, /
 ) -> _BlockQuality:
     kind = kind if kind == "polygon" else reference_cell_topology(kind).family
     match kind:
         case "interval":
-            return _interval_quality(points, metric)
+            return _interval_quality(points, metric, host)
         case "triangle" | "quadrilateral" | "polygon":
-            return _surface_quality(kind, points, metric)
+            return _surface_quality(kind, points, metric, host)
         case "tetrahedron" | "hexahedron" | "prism" | "pyramid":
-            return _solid_quality(kind, points, metric)
+            return _solid_quality(kind, points, metric, host)
         case _:
             raise ValueError(f"No native quality implementation for {kind!r}.")
 
@@ -1124,95 +1294,101 @@ def _standard_block_quality(
 def _polyhedral_quality(
     tables: PolyhedralStarTables,
     cells: np.ndarray,
-    coordinates: Array,
-    metric: Array | None,
+    coordinates: Any,
+    metric: Any,
+    host: bool,
     /,
 ) -> _BlockQuality:
-    """Segment-reduced polyhedral quality of connectivity rows ``cells``."""
-
+    """Segment-reduced polyhedral quality in input order on the host."""
+    xp = np if host else jnp
     count = cells.size
     cell_total = tables.cell_vertex_counts.size
     face_total = tables.face_sizes.size
     center = (
-        jax.ops.segment_sum(
-            coordinates[tables.cell_vertex_values], tables.cell_vertex_cell, cell_total
+        _quality_segment(
+            coordinates[tables.cell_vertex_values],
+            tables.cell_vertex_cell,
+            cell_total,
+            "sum",
+            host,
         )
-        / jnp.asarray(tables.cell_vertex_counts, dtype=coordinates.dtype)[:, None]
+        / xp.asarray(tables.cell_vertex_counts, dtype=coordinates.dtype)[:, None]
     )
     corner_points = coordinates[tables.face_corner_vertex]
     face_center = (
-        jax.ops.segment_sum(corner_points, tables.face_corner_face, face_total)
-        / jnp.asarray(tables.face_sizes, dtype=coordinates.dtype)[:, None]
+        _quality_segment(corner_points, tables.face_corner_face, face_total, "sum", host)
+        / xp.asarray(tables.face_sizes, dtype=coordinates.dtype)[:, None]
     )
-    face_area = 0.5 * jax.ops.segment_sum(
-        jnp.cross(
+    face_area = 0.5 * _quality_segment(
+        xp.cross(
             corner_points - face_center[tables.face_corner_face],
             coordinates[tables.face_corner_next] - face_center[tables.face_corner_face],
         ),
         tables.face_corner_face,
         face_total,
+        "sum",
+        host,
     )
     selected = np.flatnonzero(np.isin(tables.star_cell, cells))
     local = np.searchsorted(cells, tables.star_cell[selected])
     star_face = tables.star_face[selected]
     first = coordinates[tables.star_first[selected]]
     second = coordinates[tables.star_second[selected]]
-    tetrahedra = jnp.stack(
-        (
-            center[tables.star_cell[selected]],
-            face_center[star_face],
-            first,
-            second,
-        ),
+    tetrahedra = xp.stack(
+        (center[tables.star_cell[selected]], face_center[star_face], first, second),
         axis=1,
     )
     star_metric = None if metric is None else metric[local]
-    tetra = _solid_quality("tetrahedron", tetrahedra, star_metric)
-    measure = jax.ops.segment_sum(tetra.measure, local, count)
-    edge_lengths = jnp.linalg.norm(second - first, axis=-1)
-    aspect = jax.ops.segment_max(edge_lengths, local, count) / jnp.maximum(
-        jax.ops.segment_min(edge_lengths, local, count), _tiny(coordinates)
+    tetra = _solid_quality("tetrahedron", tetrahedra, star_metric, host)
+    measure = _quality_segment(tetra.measure, local, count, "sum", host)
+    edge_lengths = _quality_norm(second - first, -1, False, host)
+    aspect = _quality_segment(edge_lengths, local, count, "max", host) / xp.maximum(
+        _quality_segment(edge_lengths, local, count, "min", host), _tiny(coordinates)
     )
-    outward = jnp.asarray(tables.star_sign[selected], dtype=coordinates.dtype)[:, None]
+    outward = xp.asarray(tables.star_sign[selected], dtype=coordinates.dtype)[:, None]
     unit = face_area[star_face] * outward
-    unit = unit / jnp.maximum(
-        jnp.linalg.norm(unit, axis=-1, keepdims=True), _tiny(coordinates)
-    )
-    fan = jnp.cross(first - face_center[star_face], second - face_center[star_face])
-    fan_angle = jnp.arctan2(
-        jnp.linalg.norm(jnp.cross(fan, unit), axis=-1), jnp.sum(fan * unit, axis=-1)
+    unit = unit / xp.maximum(_quality_norm(unit, -1, True, host), _tiny(coordinates))
+    fan = xp.cross(first - face_center[star_face], second - face_center[star_face])
+    fan_angle = _quality_atan2(
+        _quality_norm(xp.cross(fan, unit), -1, False, host),
+        _quality_sum(fan * unit, -1, False, host),
+        host,
     )
     pairs = tables.edge_pairs[np.all(np.isin(tables.edge_pairs, selected), axis=1)]
     pair_first = np.searchsorted(selected, pairs[:, 0])
     pair_second = np.searchsorted(selected, pairs[:, 1])
     direction = second[pair_first] - first[pair_first]
-    direction = direction / jnp.maximum(
-        jnp.linalg.norm(direction, axis=-1, keepdims=True), _tiny(coordinates)
+    direction = direction / xp.maximum(
+        _quality_norm(direction, -1, True, host), _tiny(coordinates)
     )
     normal_first = unit[pair_first]
     normal_second = unit[pair_second]
-    dihedral = jnp.pi - jnp.arctan2(
-        jnp.sum(jnp.cross(normal_first, normal_second) * direction, axis=-1),
-        jnp.sum(normal_first * normal_second, axis=-1),
+    dihedral = xp.pi - _quality_atan2(
+        _quality_sum(xp.cross(normal_first, normal_second) * direction, -1, False, host),
+        _quality_sum(normal_first * normal_second, -1, False, host),
+        host,
     )
     pair_cell = local[pair_first]
     return _BlockQuality(
         measure,
-        jax.ops.segment_min(tetra.mean_ratio, local, count),
+        _quality_segment(tetra.mean_ratio, local, count, "min", host),
         aspect,
-        jnp.full((count,), jnp.nan, dtype=coordinates.dtype),
-        jax.ops.segment_min(tetra.scaled_jacobian, local, count),
-        jax.ops.segment_min(dihedral, pair_cell, count),
-        jax.ops.segment_max(dihedral, pair_cell, count),
-        jax.ops.segment_max(tetra.condition, local, count),
-        jnp.full((count,), jnp.nan, dtype=coordinates.dtype),
-        jax.ops.segment_max(fan_angle, local, count),
+        xp.full((count,), xp.nan, dtype=coordinates.dtype),
+        _quality_segment(tetra.scaled_jacobian, local, count, "min", host),
+        _quality_segment(dihedral, pair_cell, count, "min", host),
+        _quality_segment(dihedral, pair_cell, count, "max", host),
+        _quality_segment(tetra.condition, local, count, "max", host),
+        xp.full((count,), xp.nan, dtype=coordinates.dtype),
+        _quality_segment(fan_angle, local, count, "max", host),
+        xp.full((count,), xp.nan, dtype=coordinates.dtype)
+        if metric is None
+        else _quality_segment(tetra.metric_quality, local, count, "min", host),
         (
-            jnp.full((count,), jnp.nan, dtype=coordinates.dtype)
-            if metric is None
-            else jax.ops.segment_min(tetra.metric_quality, local, count)
-        ),
-        (jax.ops.segment_min(tetra.sampled_valid.astype(jnp.int32), local, count) > 0)
+            _quality_segment(
+                tetra.sampled_valid.astype(xp.int32), local, count, "min", host
+            )
+            > 0
+        )
         & (measure > 0.0),
     )
 
@@ -1246,14 +1422,19 @@ def evaluate_cell_quality(
     *,
     metric: MeshMetricField | None = None,
 ) -> CellQualityEvaluation:
-    """Evaluate differentiable fixed-topology sampled quality for every cell block."""
-
+    """Evaluate fixed-topology quality on the host, or trace its JAX formulas."""
     if not isinstance(mesh, CellMesh):
         raise TypeError("mesh must be CellMesh.")
-    points = mesh.coordinates if coordinates is None else jnp.asarray(coordinates)
+    vertex_metric = _vertex_metric(mesh, metric)
+    source = mesh.coordinates if coordinates is None else coordinates
+    traced = any(
+        isinstance(value, Tracer)
+        for value in jax.tree_util.tree_leaves((source, vertex_metric))
+    )
+    host = not traced
+    points = np.asarray(source, dtype=np.float64) if host else jnp.asarray(source)
     if points.shape != mesh.coordinates.shape:
         raise ValueError("Quality coordinates must preserve the mesh coordinate shape.")
-    vertex_metric = _vertex_metric(mesh, metric)
     tables = (
         # ty: ignore[invalid-argument-type]
         polyhedral_star_tables(mesh.connectivity)
@@ -1273,18 +1454,24 @@ def evaluate_cell_quality(
                 # ty: ignore[invalid-argument-type]
                 else _polyhedral_cell_metric(vertex_metric, tables, cells)
             )
+            if host and cell_metric is not None:
+                cell_metric = np.asarray(cell_metric, dtype=np.float64)
             # ty: ignore[invalid-argument-type]
-            blocks.append(_polyhedral_quality(tables, cells, points, cell_metric))
+            blocks.append(_polyhedral_quality(tables, cells, points, cell_metric, host))
         else:
             rows = np.asarray(block.vertices, dtype=np.int32)
+            cell_metric = _cell_metric(vertex_metric, rows)
+            if host and cell_metric is not None:
+                cell_metric = np.asarray(cell_metric, dtype=np.float64)
             blocks.append(
-                _standard_block_quality(
-                    block.cell_kind, points[rows], _cell_metric(vertex_metric, rows)
-                )
+                _standard_block_quality(block.cell_kind, points[rows], cell_metric, host)
             )
         offsets.append(stop)
     fields = _BlockQuality(
-        *(jnp.concatenate(values) for values in zip(*blocks, strict=True))
+        *(
+            jnp.asarray(np.concatenate(values)) if host else jnp.concatenate(values)
+            for values in zip(*blocks, strict=True)
+        )
     )
     evaluation_id = canonical_fingerprint(
         {
@@ -1296,18 +1483,18 @@ def evaluate_cell_quality(
     )
     return CellQualityEvaluation(
         cell_global_ids=jnp.concatenate(tuple(block.global_ids for block in mesh.blocks)),
-        measures=fields.measure,
-        mean_ratios=fields.mean_ratio,
-        aspect_ratios=fields.aspect,
-        radius_ratios=fields.radius_ratio,
-        scaled_jacobian=fields.scaled_jacobian,
-        minimum_angle=fields.minimum_angle,
-        maximum_angle=fields.maximum_angle,
-        condition_number=fields.condition,
-        sliver_measures=fields.sliver,
-        warpage=fields.warpage,
-        metric_quality=fields.metric_quality,
-        sampled_valid=fields.sampled_valid,
+        measures=jnp.asarray(fields.measure),
+        mean_ratios=jnp.asarray(fields.mean_ratio),
+        aspect_ratios=jnp.asarray(fields.aspect),
+        radius_ratios=jnp.asarray(fields.radius_ratio),
+        scaled_jacobian=jnp.asarray(fields.scaled_jacobian),
+        minimum_angle=jnp.asarray(fields.minimum_angle),
+        maximum_angle=jnp.asarray(fields.maximum_angle),
+        condition_number=jnp.asarray(fields.condition),
+        sliver_measures=jnp.asarray(fields.sliver),
+        warpage=jnp.asarray(fields.warpage),
+        metric_quality=jnp.asarray(fields.metric_quality),
+        sampled_valid=jnp.asarray(fields.sampled_valid),
         block_names=tuple(block.name for block in mesh.blocks),
         block_offsets=tuple(offsets),
         topology_id=mesh.topology_id,

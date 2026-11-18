@@ -6,13 +6,16 @@ from typing import Literal
 import numpy as np
 import pytest
 
+from phydrax._meshcore import meshcore_available
 from phydrax.geometry._rational import (
     binary64_difference_magnitude,
     binary64_dot,
+    binary64_least_squares,
     binary64_matmul,
     binary64_norm,
     binary64_norm_lower,
     binary64_norm_upper,
+    binary64_sum,
     exact_float,
     fraction_endpoint,
     rational_cross,
@@ -63,6 +66,24 @@ def test_binary64_ordered_products_match_fraction_rounding_and_batches() -> None
     np.testing.assert_array_equal(
         binary64_matmul(a[:1], np.stack([b, b])), expected[:1] + np.zeros((2, 2, 2))
     )
+
+
+@pytest.mark.parametrize("winding", [(1, 1, 1), (2**53 + 1, -1, 1)])
+def test_periodic_integer_winding_product_has_ordered_binary64_rounding(
+    winding: tuple[int, int, int],
+) -> None:
+    integer_winding = np.asarray(winding, dtype=np.int64)
+    lattice = np.asarray([[1e16, 0.1], [-1e16, -0.3], [1.0, 0.7]], dtype=np.float64)
+    expected = np.asarray(
+        [
+            _ordered_fraction_dot(integer_winding, lattice[:, column])
+            for column in range(lattice.shape[1])
+        ],
+        dtype=np.float64,
+    )
+    np.testing.assert_array_equal(binary64_matmul(integer_winding, lattice), expected)
+    if winding[0] == 1:
+        assert expected[0] == 1.0
 
 
 def test_binary64_hex_rounding_trees_and_fused_counterexample() -> None:
@@ -565,3 +586,218 @@ def test_rational_endpoint_saturation_is_outward() -> None:
         np.finfo(np.float64).max
     )
     assert fraction_endpoint(maximum + 1, upper=True, saturate=True) == np.inf
+
+
+@pytest.mark.meshcore
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native phydrax-meshcore library is not available"
+)
+def test_portable_angles_match_native_bits_on_generated_and_special_inputs() -> None:
+    from phydrax._meshcore import angle_arctangent2, angle_between
+    from phydrax.geometry._rational import binary64_angle_between, binary64_arctangent2
+
+    rng = np.random.default_rng(20261118)
+    # Full bit patterns cover subnormals, extreme ratios and nonfinite inputs;
+    # bounded pairs also exercise the polynomial's reduction intervals densely.
+    y = rng.integers(0, 2**64, size=1_000_000, dtype=np.uint64).view(np.float64)
+    x = rng.integers(0, 2**64, size=1_000_000, dtype=np.uint64).view(np.float64)
+    special = np.array(
+        [
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            np.inf,
+            -np.inf,
+            np.nan,
+            np.nextafter(0.0, 1.0),
+            -np.nextafter(0.0, 1.0),
+            np.finfo(np.float64).max,
+            -np.finfo(np.float64).max,
+        ]
+    )
+    yy, xx = np.meshgrid(special, special)
+    y = np.concatenate((y, rng.uniform(-1.0, 1.0, 100_000), yy.ravel()))
+    x = np.concatenate((x, rng.uniform(-1.0, 1.0, 100_000), xx.ravel()))
+    for portable, native, first in (
+        (binary64_angle_between, angle_between, y),
+        (binary64_arctangent2, angle_arctangent2, y),
+    ):
+        actual = portable(first, x)
+        expected = native(first, x)
+        assert np.array_equal(actual.view(np.uint64), expected.view(np.uint64))
+    assert binary64_angle_between(
+        np.array([[1.0], [0.0]]), np.array([1.0, -1.0])
+    ).shape == (2, 2)
+
+
+def _integer_rounded_cube_root(value: float) -> float:
+    """Correctly rounded positive cube root using integer midpoint comparisons."""
+    numerator, denominator = value.as_integer_ratio()
+    exponent = (math.frexp(value)[1] - 1) // 3
+    shift = 52 - exponent
+    if shift >= 0:
+        numerator <<= 3 * shift
+    else:
+        denominator <<= -3 * shift
+    low, high = 1 << 52, 1 << 53
+    while low + 1 < high:
+        middle = (low + high) // 2
+        if middle**3 * denominator <= numerator:
+            low = middle
+        else:
+            high = middle
+    midpoint_cube = (2 * low + 1) ** 3 * denominator
+    if 8 * numerator > midpoint_cube or (8 * numerator == midpoint_cube and low & 1):
+        low += 1
+    return math.ldexp(float(low), -shift)
+
+
+def test_binary64_cube_root_against_integer_rounding() -> None:
+    from phydrax.geometry._rational import binary64_cube_root
+
+    rng = np.random.default_rng(20261118)
+    bits = rng.integers(0, 0x7FF0000000000000, size=1_000_000, dtype=np.uint64)
+    values = np.concatenate(
+        (
+            bits[10:20_006].view(np.float64),
+            np.array(
+                [
+                    np.nextafter(0.0, 1.0),
+                    np.finfo(np.float64).tiny,
+                    np.finfo(np.float64).max,
+                    1.0,
+                    8.0,
+                    27.0,
+                ]
+            ),
+        )
+    )
+    actual = binary64_cube_root(values)
+    expected = np.array([_integer_rounded_cube_root(float(x)) for x in values])
+    # The native Newton iteration is not correctly rounded.  One ULP was the
+    # maximum observed on this fixed stream, not a claimed universal bound.
+    distances = np.abs(actual.view(np.int64) - expected.view(np.int64))
+    assert int(np.max(distances)) <= 1
+
+    # The seventh and eighth native Newton steps differ for these values;
+    # the integer midpoint oracle independently establishes the exact rounding.
+    iteration_inputs = np.asarray(
+        [
+            float.fromhex("0x1.aaae9cfed9cc2p-41"),
+            float.fromhex("0x1.5f1994d024085p-353"),
+        ],
+        dtype=np.float64,
+    )
+    rounded = np.asarray(
+        [
+            float.fromhex("0x1.7e6af5a5e36bap-14"),
+            float.fromhex("0x1.665ae5f8547bap-118"),
+        ],
+        dtype=np.float64,
+    )
+    eighth = np.asarray(
+        [
+            float.fromhex("0x1.7e6af5a5e36bbp-14"),
+            float.fromhex("0x1.665ae5f8547b9p-118"),
+        ],
+        dtype=np.float64,
+    )
+    oracle = np.asarray(
+        [_integer_rounded_cube_root(float(value)) for value in iteration_inputs],
+        dtype=np.float64,
+    )
+    assert np.array_equal(oracle.view(np.uint64), rounded.view(np.uint64))
+    assert np.array_equal(
+        binary64_cube_root(iteration_inputs).view(np.uint64), eighth.view(np.uint64)
+    )
+
+    unchanged_bits = np.array(
+        [
+            0,
+            0x8000000000000000,
+            0xBFF0000000000000,
+            0x7FF0000000000000,
+            0xFFF0000000000000,
+            0x7FF8000000001234,
+            0xFFF8000000004321,
+        ],
+        dtype=np.uint64,
+    )
+    unchanged = unchanged_bits.view(np.float64)
+    assert np.array_equal(binary64_cube_root(unchanged).view(np.uint64), unchanged_bits)
+
+
+def test_binary64_sum_uses_index_order_on_runtime_axis() -> None:
+    values = np.asarray([[1.0e16, 1.0, -1.0e16, 2.0]], dtype=np.float64)
+    expected = 1.0e16
+    for item in (1.0, -1.0e16, 2.0):
+        expected = float(Fraction(expected) + Fraction(item))
+    np.testing.assert_array_equal(binary64_sum(values, axis=1), [expected])
+    np.testing.assert_array_equal(
+        binary64_sum(np.empty((2, 0), dtype=np.float64), axis=1), [0.0, 0.0]
+    )
+
+
+def test_binary64_least_squares_exact_and_minimum_norm() -> None:
+    matrix = np.asarray(
+        [[1.0, 1.0], [1.0, 1.0 + 2.0**-30], [0.0, 2.0**-50]], dtype=np.float64
+    )
+    right = np.asarray([0.0, 1.0, 2.0], dtype=np.float64)
+    a = [[Fraction(float(value)) for value in row] for row in matrix]
+    b = [Fraction(float(value)) for value in right]
+    g00 = sum((row[0] ** 2 for row in a), Fraction())
+    g01 = sum((row[0] * row[1] for row in a), Fraction())
+    g11 = sum((row[1] ** 2 for row in a), Fraction())
+    h0 = sum((row[0] * value for row, value in zip(a, b, strict=True)), Fraction())
+    h1 = sum((row[1] * value for row, value in zip(a, b, strict=True)), Fraction())
+    determinant = g00 * g11 - g01 * g01
+    expected = np.asarray(
+        [
+            float((g11 * h0 - g01 * h1) / determinant),
+            float((g00 * h1 - g01 * h0) / determinant),
+        ],
+        dtype=np.float64,
+    )
+    np.testing.assert_array_equal(binary64_least_squares(matrix, right), expected)
+    singular = np.asarray([[1.0, 2.0], [2.0, 4.0], [3.0, 6.0]], dtype=np.float64)
+    np.testing.assert_array_equal(
+        binary64_least_squares(singular, np.asarray([1.0, 2.0, 3.0], dtype=np.float64)),
+        np.asarray([float(Fraction(1, 5)), float(Fraction(2, 5))], dtype=np.float64),
+    )
+
+
+@pytest.mark.parametrize("sign", [1.0, -1.0])
+def test_binary64_least_squares_overflow_rounding_boundary(sign: float) -> None:
+    maximum = np.finfo(np.float64).max
+    threshold_increment = 2.0**970
+    matrix = np.asarray([[1.0, -1.0], [0.0, 1.0]], dtype=np.float64)
+
+    for increment in (0.0, np.nextafter(threshold_increment, 0.0)):
+        result = binary64_least_squares(
+            matrix, np.asarray([sign * maximum, sign * increment], dtype=np.float64)
+        )
+        np.testing.assert_array_equal(result, [sign * maximum, sign * increment])
+
+    for increment in (
+        threshold_increment,
+        np.nextafter(threshold_increment, np.inf),
+    ):
+        with pytest.raises(ValueError, match="solution is not finite"):
+            binary64_least_squares(
+                matrix, np.asarray([sign * maximum, sign * increment], dtype=np.float64)
+            )
+
+    with pytest.raises(ValueError, match="solution is not finite"):
+        binary64_least_squares(
+            np.asarray([[0.5]], dtype=np.float64),
+            np.asarray([sign * 2.0**1023], dtype=np.float64),
+        )
+
+
+def test_binary64_least_squares_rejects_subnormal_divisor_overflow() -> None:
+    with pytest.raises(ValueError, match="solution is not finite"):
+        binary64_least_squares(
+            np.asarray([[5e-324]], dtype=np.float64),
+            np.asarray([1.0], dtype=np.float64),
+        )
