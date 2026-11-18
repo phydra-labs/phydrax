@@ -792,7 +792,18 @@ class _SparseStoragePlan(StrictModule):
         positions = np.flatnonzero(valid)
         source, target = source[valid], target[valid]
         shape = (edge.target_size * target_fiber, edge.source_size * source_fiber)
-        order = np.lexsort((source, target))
+        if (
+            np.issubdtype(source.dtype, np.integer)
+            and np.issubdtype(target.dtype, np.integer)
+            and np.all((source >= 0) & (source < 2**32))
+            and np.all((target >= 0) & (target < 2**32))
+        ):
+            # Target is the primary key. Stable sorting retains the original
+            # order of equal keys, which is the coefficient reduction order.
+            keys = (target.astype(np.uint64) << np.uint64(32)) | source.astype(np.uint64)
+            order = np.argsort(keys, kind="stable")
+        else:
+            order = np.lexsort((source, target))
         source, target, positions = source[order], target[order], positions[order]
         if positions.size:
             starts = np.concatenate(

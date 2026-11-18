@@ -197,6 +197,120 @@ def test_native_block_storage_and_traced_assembly_refresh_coalesce_routes() -> N
     )
 
 
+@pytest.mark.parametrize("block", [False, True], ids=["scalar", "rectangular-block"])
+def test_sparse_storage_orders_and_stably_coalesces_routes(block: bool) -> None:
+    sources = np.asarray([2, 1, 0, 1, 2, 1, 0, 99, 2], dtype=np.int32)
+    targets = np.asarray([0, 2, 1, 2, 0, 2, 0, -1, 1], dtype=np.int32)
+    valid = np.asarray([True, True, True, True, True, True, True, False, True])
+    values = np.asarray([4, 1e16, 7, -1e16, 5, 1, 3, np.nan, 6], dtype=np.float64)
+    relation = EdgeRelation(sources, targets, source_size=3, target_size=4, valid=valid)
+    if block:
+        coefficients = np.broadcast_to(values[:, None, None], (9, 2, 3)).copy()
+        operator = SparseCoordinateOperator(
+            relation,
+            coefficients,
+            source=ArraySpace((3, 3), dtype=jnp.float64),
+            target=ArraySpace((4, 2), dtype=jnp.float64),
+            block_shape=(2, 3),
+        )
+        target_fiber, source_fiber = 2, 3
+    else:
+        coefficients = values
+        operator = SparseLinearMap(relation, coefficients)
+        target_fiber, source_fiber = 1, 1
+
+    # Python's tuple sort is stable; preserve route order for identical keys.
+    entries = []
+    for route in range(len(values)):
+        if valid[route]:
+            for row in range(target_fiber):
+                for column in range(source_fiber):
+                    value = coefficients[route, row, column] if block else values[route]
+                    entries.append(
+                        (
+                            int(targets[route]) * target_fiber + row,
+                            int(sources[route]) * source_fiber + column,
+                            float(value),
+                        )
+                    )
+    entries.sort(key=lambda entry: (entry[0], entry[1]))
+    expected_indices = []
+    expected_values = []
+    expected_indptr = [0]
+    for row in range(4 * target_fiber):
+        last_column = None
+        for target, column, value in entries:
+            if target != row:
+                continue
+            if column != last_column:
+                expected_indices.append(column)
+                expected_values.append(0.0)
+                last_column = column
+            expected_values[-1] += value
+        expected_indptr.append(len(expected_indices))
+
+    storage = operator.sparse_storage()
+    np.testing.assert_array_equal(storage.indptr, expected_indptr)
+    np.testing.assert_array_equal(storage.indices, expected_indices)
+    np.testing.assert_array_equal(storage.values, expected_values)
+    # This duplicate sum changes from 1 to 0 if its last two routes are swapped.
+    assert expected_values[expected_indptr[2 * target_fiber]] == 1.0
+
+
+def test_sparse_storage_preserves_long_duplicate_reduction_order() -> None:
+    sources = np.zeros(64, dtype=np.int32)
+    targets = np.zeros(64, dtype=np.int32)
+    coefficients = np.resize(np.asarray([1e16, 1.0, -1e16, 1.0]), sources.size)
+    relation = EdgeRelation(sources, targets, source_size=1, target_size=1)
+    entries = sorted(
+        zip(targets, sources, coefficients, strict=True),
+        key=lambda entry: (entry[0], entry[1]),
+    )
+    expected = 0.0
+    for _, _, value in entries:
+        expected += float(value)
+    storage = SparseLinearMap(relation, coefficients).sparse_storage()
+    np.testing.assert_array_equal(storage.values, np.asarray([expected]))
+
+
+@pytest.mark.parametrize(
+    ("source_fiber", "large_source", "bit31_source", "maximum"),
+    [
+        (2, 2**31 - 1, 2**30, 2**32 - 1),
+        (3, 1431655765, 715827882, 2**32 + 1),
+    ],
+    ids=["uint32-maximum", "exceeds-uint32"],
+)
+def test_block_storage_plan_orders_large_expanded_source_indices(
+    source_fiber: int, large_source: int, bit31_source: int, maximum: int
+) -> None:
+    # The target-1 route precedes target-0 routes in input order. A 31-bit
+    # packed key collides at source 2**31, and a 32-bit key collides at
+    # source 2**32 in the out-of-range case.
+    sources = np.asarray([0, large_source, bit31_source], dtype=np.int32)
+    targets = np.asarray([1, 0, 0], dtype=np.int32)
+    relation = EdgeRelation(sources, targets, source_size=large_source + 1, target_size=2)
+    coefficients = np.arange(1, 3 * source_fiber + 1, dtype=np.float64).reshape(
+        (3, 1, source_fiber)
+    )
+    plan = _SparseStoragePlan(relation, block_shape=(1, source_fiber))
+    storage = plan.apply(jnp.asarray(coefficients))
+
+    entries = sorted(
+        (
+            (int(targets[route]), int(sources[route]) * source_fiber + column),
+            float(coefficients[route, 0, column]),
+        )
+        for route in range(3)
+        for column in range(source_fiber)
+    )
+    assert max(key[1] for key, _ in entries) == maximum
+    expected_indptr = [0, sum(key[0] == 0 for key, _ in entries), len(entries)]
+    np.testing.assert_array_equal(storage.indptr, expected_indptr)
+    np.testing.assert_array_equal(storage.indices, [key[1] for key, _ in entries])
+    np.testing.assert_array_equal(storage.values, [value for _, value in entries])
+
+
 def test_block_coefficient_derivatives_follow_valid_route_algebra() -> None:
     operator, _ = _rectangular_operator()
     source = jnp.arange(9, dtype=jnp.float64).reshape((3, 3)).astype(jnp.complex128)
