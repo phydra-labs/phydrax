@@ -283,6 +283,8 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Implicit reverse-fidelity searches evaluate face-point proposals from contiguous
+  monomial lanes, preserving their fixed binary64 operation order and bounds.
 - Dynamic glued-face monotonicity checks rational Jacobian controls with exact
   integer signs before decoding, preserving findings and the alternative
   preconditioner route. Three alternating replays of 6,990 captured calls took
