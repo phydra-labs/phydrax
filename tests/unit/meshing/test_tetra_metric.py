@@ -26,7 +26,6 @@ from phydrax.meshing._tetra_metric import (
     _collapse_metric_candidates,
     _collapse_phase,
     _entity_frame,
-    _entity_weights,
     _facet_group_map,
     _locate_source_weights,
     _metric_enclosing_center,
@@ -39,7 +38,6 @@ from phydrax.meshing._tetra_metric import (
     _replacement_candidates,
     _source_cell_weights,
     _source_metric_from_stencil,
-    _SourceSupport,
     _split_phase,
     _stencil_image,
     _topology,
@@ -2478,7 +2476,7 @@ def test_source_cell_carrier_preserves_exact_affine_membership() -> None:
         row = state.source_vertex_rows[xy]
         exact[row] = (exact[row][0], exact[row][1], Fraction(1, 2**1100))
         state.source_exact_points = tuple(exact)
-        state.source_supports.clear()
+        state.source_frames.clear()
         assert _source_cell_carrier(state, record, (face,)) is None
     finally:
         state.native.close()
@@ -2585,16 +2583,16 @@ def test_relocation_can_refine_coarse_source_carriers() -> None:
     current = np.asarray((0.05625916, 0.68115234, 0.2355957))
     goal = current + np.asarray((5.03073591e-05, 0.00612579696, 0.00986193289))
     coarse = _quantized_relocation(state, None, goal, current)
-    fine = next(
-        _quantized_relocation_candidates(state, None, goal, current, fine_first=True)
-    )
+    fine = _quantized_relocation_candidates(state, None, goal, current, fine_first=True)[
+        0
+    ]
     assert coarse is not None
     assert np.linalg.norm(fine[1] - goal) < np.linalg.norm(coarse[1] - goal)
     assert fine[0] != coarse[0]
     combined = _quantized_relocation_candidates(
         state, None, goal, current, coarse_and_fine=True
     )
-    actual_coarse, actual_fine = next(combined), next(combined)
+    actual_coarse, actual_fine = combined[:2]
     assert actual_coarse[0] == coarse[0]
     assert actual_fine[0] == fine[0]
     np.testing.assert_array_equal(actual_coarse[1], coarse[1])
@@ -2898,24 +2896,6 @@ def test_declared_plane_admits_a_rounded_relocation_on_a_slanted_facet() -> None
     quantized = _quantized_relocation(state, simplices, goal, current)
     assert quantized is not None
     stencil, carrier = quantized
-    frames: dict[tuple[int, ...], _SourceSupport] = {}
-    images: dict[Any, Any] = {}
-    for factor in (0.5, 0.25, 0.125):
-        trial = current + factor * (centroid - current)
-        uncached = _quantized_relocation(state, simplices, trial, current)
-        cached = _quantized_relocation(
-            state, simplices, trial, current, frames=frames, images=images
-        )
-        assert uncached is not None and cached is not None
-        assert cached[0] == uncached[0]
-        np.testing.assert_array_equal(cached[1], uncached[1])
-        repeated = _quantized_relocation(
-            state, simplices, trial, current, frames=frames, images=images
-        )
-        assert repeated is not None and repeated[0] == cached[0]
-        np.testing.assert_array_equal(repeated[1], cached[1])
-    assert frames
-    assert images
     assert np.linalg.norm(carrier - goal) < np.linalg.norm(current - goal)
     exact = [
         sum(
@@ -3110,21 +3090,35 @@ def test_collapse_enclosing_center_handles_degenerate_metric_supports(
 
 
 def test_exact_entity_frames_project_rational_edge_and_triangle() -> None:
+    def weights(
+        corners: tuple[tuple[Fraction, ...], ...], point: tuple[Fraction, ...]
+    ) -> tuple[Fraction, ...]:
+        # Barycentric weights of the orthogonal projection: one minus the
+        # gradients applied to the offset from the first corner, and those.
+        origin, gradients = _entity_frame(corners)
+        assert gradients is not None
+        tail = tuple(
+            sum((gradient[k] * (point[k] - origin[k]) for k in range(3)), Fraction(0))
+            for gradient in gradients
+        )
+        return (1 - sum(tail, Fraction(0)), *tail)
+
     edge = tuple(tuple(Fraction(v) for v in row) for row in ((1, 2, 3), (3, 3, 5)))
-    assert _entity_weights(
-        _entity_frame(edge), (Fraction(2), Fraction(2), Fraction(4))
-    ) == (Fraction(5, 9), Fraction(4, 9))
+    assert weights(edge, (Fraction(2), Fraction(2), Fraction(4))) == (
+        Fraction(5, 9),
+        Fraction(4, 9),
+    )
     triangle = tuple(
         tuple(Fraction(v) for v in row) for row in ((0, 0, 0), (2, 1, 0), (1, 0, 1))
     )
     u, v = Fraction(1, 3), Fraction(1, 4)
-    point_values = tuple(
+    point = tuple(
         u * triangle[1][k] + v * triangle[2][k] + Fraction((-1, 2, 1)[k], 7)
         for k in range(3)
     )
-    point = (point_values[0], point_values[1], point_values[2])
-    assert _entity_weights(_entity_frame(triangle), point) == (1 - u - v, u, v)
-    assert _entity_weights(_entity_frame((edge[0], edge[0])), point) is None
+    assert weights(triangle, point) == (1 - u - v, u, v)
+    # An edge of zero length spans no frame.
+    assert _entity_frame((edge[0], edge[0])) == (edge[0], None)
 
 
 def test_source_stencil_dyadic_image_matches_fraction_oracle() -> None:
