@@ -23,6 +23,7 @@ from jax.core import Tracer
 from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._live_proofs import live_content_fingerprint, LiveProofLedger
 from ..._strict import StrictModule
 from ...discretization._exact_algebraic_geometry import ExactScalar
 from ...typing import checked, parse
@@ -803,6 +804,35 @@ class _CylinderGraphPreparation:
             for value in angle_values
         )
         return cls(family, constants, angles, {}, {})
+
+
+_CYLINDER_GRAPH_OUTCOMES: LiveProofLedger[tuple[tuple[np.ndarray, np.ndarray] | None]] = (
+    LiveProofLedger()
+)
+# On the quick profile, the per-curve maxima were 1,396 distinct bounds and
+# 629 derivatives. 4,096 is the next power of two above twice the larger peak;
+# both kinds share the limit, and further requests are computed normally.
+# A 500-entry tracemalloc sample retained about 2,543 bytes per entry on the
+# profiling machine (about 9.9 MiB at the limit); metadata size can vary.
+_CYLINDER_GRAPH_LIMIT = 4096
+
+
+def _record_cylinder_graph_bounds(
+    curve: IntersectionCurve,
+    parameters: tuple[object, ...],
+    fingerprint: tuple[object, str],
+    bounds: tuple[np.ndarray, np.ndarray] | None,
+    /,
+) -> None:
+    """Retain bounded outcomes only for the exact live curve that proved them."""
+    saved = None if bounds is None else (bounds[0].copy(), bounds[1].copy())
+    _CYLINDER_GRAPH_OUTCOMES.record(
+        (curve,),
+        fingerprint,
+        (saved,),
+        parameters=parameters,
+        limit=_CYLINDER_GRAPH_LIMIT,
+    )
 
 
 def orthogonal_cylinder_graph_bounds(
@@ -3593,9 +3623,20 @@ class IntersectionCurve(AbstractCurve):
                     branch_sign,
                     reference.hex(),
                 )
+                parameters = ("bounds", theta_lower, theta_upper, branch_sign, reference)
+                recorded = (
+                    _CYLINDER_GRAPH_OUTCOMES.find((self,), parameters=parameters)
+                    if prepared is None
+                    else None
+                )
                 if prepared is not None and key in prepared.bounds:
                     bounds = prepared.bounds[key]
+                elif recorded is not None:
+                    bounds = recorded[0]
                 else:
+                    fingerprint = (
+                        live_content_fingerprint((self,)) if prepared is None else None
+                    )
                     bounds = orthogonal_cylinder_graph_bounds(
                         family,
                         theta_lower,
@@ -3606,6 +3647,10 @@ class IntersectionCurve(AbstractCurve):
                     )
                     if prepared is not None:
                         prepared.bounds[key] = bounds
+                    elif fingerprint is not None:
+                        _record_cylinder_graph_bounds(
+                            self, parameters, fingerprint, bounds
+                        )
                 if bounds is None:
                     raise ValueError(
                         "The exact cylinder branch interval has no outward source enclosure."
@@ -4224,14 +4269,31 @@ class IntersectionPCurve(AbstractCurve):
                 theta_upper = fraction_up(max(exact_theta_first, exact_theta_last))
                 assert branch_sign is not None
                 key = (float(theta_lower).hex(), float(theta_upper).hex(), branch_sign)
+                parameters = ("derivative", theta_lower, theta_upper, branch_sign)
+                recorded = (
+                    _CYLINDER_GRAPH_OUTCOMES.find((self.curve,), parameters=parameters)
+                    if prepared is None
+                    else None
+                )
                 if prepared is not None and key in prepared.derivatives:
                     bounds = prepared.derivatives[key]
+                elif recorded is not None:
+                    bounds = recorded[0]
                 else:
+                    fingerprint = (
+                        live_content_fingerprint((self.curve,))
+                        if prepared is None
+                        else None
+                    )
                     bounds = orthogonal_cylinder_graph_derivative_bounds(
                         family, theta_lower, theta_upper, branch_sign, prepared=prepared
                     )
                     if prepared is not None:
                         prepared.derivatives[key] = bounds
+                    elif fingerprint is not None:
+                        _record_cylinder_graph_bounds(
+                            self.curve, parameters, fingerprint, bounds
+                        )
                 if bounds is None:
                     raise ValueError(
                         "IntersectionPCurve cylinder derivative interval is unresolved."

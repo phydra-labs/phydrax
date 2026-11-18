@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gc
 import math
+import pickle
 import weakref
 from fractions import Fraction
 
@@ -29,9 +30,12 @@ from phydrax.geometry.brep._intersection import (
     TrimRootEndpoint,
 )
 from phydrax.geometry.brep._intersection_curve import (
+    _orthogonal_cylinder_curve_branch_sign,
     CurveTrimSegment,
     IntersectionCurve,
     IntersectionPCurve,
+    orthogonal_cylinder_family,
+    orthogonal_cylinder_graph_bounds,
     SurfaceRegion,
 )
 from phydrax.geometry.brep._patches import CylinderPatch, ExactLineCurve
@@ -86,6 +90,10 @@ def test_rebuilt_branch_reproves_and_preserves_bounds() -> None:
         np.testing.assert_array_equal(original, repeated)
         np.testing.assert_array_equal(original, cold)
         np.testing.assert_array_equal(original, restored)
+    restored = pickle.loads(pickle.dumps(curve))
+    assert restored is not curve
+    for original, recovered in zip(first, _bounds(restored, _preparation()), strict=True):
+        np.testing.assert_array_equal(original, recovered)
     pcurve = IntersectionPCurve(curve, "first")
     np.testing.assert_array_equal(first[2], pcurve.bounding_box(0.1, 0.2))
     for prepared, direct in zip(
@@ -111,6 +119,62 @@ def test_branch_proof_does_not_keep_curve_alive() -> None:
     del curve, preparation
     gc.collect()
     assert reference() is None
+
+
+def test_branch_enclosures_preserve_distinct_graph_requests() -> None:
+    box = np.asarray(((0.0, -2.0), (math.tau, 2.0)), dtype=np.float64)
+    small = SurfaceRegion(
+        CylinderPatch((0, 0, 0), (0, 1, 0), (0, 0, 1), (1, 0, 0), 0.5), box
+    )
+    curves = []
+    for radius in (1.0, 1.25):
+        large = CylinderPatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), radius)
+        result = intersect_surface_regions(SurfaceRegion(large, box), small)
+        assert result.complete and len(result.curves) == 2
+        curves.extend(result.curves)
+
+    requests = ((0.1, 0.2), (0.2, 0.4), (0.1, 0.4), (0.1, 0.1), (0.4, 0.4))
+    for curve in (*curves, jax.tree_util.tree_map(lambda leaf: leaf, curves[0])):
+        family = orthogonal_cylinder_family(curve.first, curve.second)
+        assert family is not None
+        sign = _orthogonal_cylinder_curve_branch_sign(curve, family)
+        assert sign is not None
+        axis = 2 * family.small_index
+        for chart in (0, 1):
+            start = np.asarray(curve.chart_start)[chart]
+            end = np.asarray(curve.chart_end)[chart]
+            first_theta = Fraction.from_float(float(start[axis]))
+            last_theta = Fraction.from_float(float(end[axis]))
+            reference = float(start[2 * family.large_index])
+            for first_offset, last_offset in requests:
+                first, last = chart + first_offset, chart + last_offset
+                lower = first_theta + Fraction.from_float(first - chart) * (
+                    last_theta - first_theta
+                )
+                upper = first_theta + Fraction.from_float(last - chart) * (
+                    last_theta - first_theta
+                )
+                lower_float, upper_float = float(lower), float(upper)
+                if Fraction.from_float(lower_float) > lower:
+                    lower_float = math.nextafter(lower_float, -math.inf)
+                if Fraction.from_float(upper_float) < upper:
+                    upper_float = math.nextafter(upper_float, math.inf)
+                expected = orthogonal_cylinder_graph_bounds(
+                    family, lower_float, upper_float, sign, reference
+                )
+                assert expected is not None
+                if last > first:
+                    IntersectionPCurve(curve, "first").derivative_bounds(first, last)
+                expected_box = np.stack(expected)[None, ...]
+                np.testing.assert_array_equal(
+                    curve.parameter_enclosures(first, last), expected_box
+                )
+                repeated = curve.parameter_enclosures(first, last)
+                np.testing.assert_array_equal(repeated, expected_box)
+                repeated[:] = 0.0
+                np.testing.assert_array_equal(
+                    curve.parameter_enclosures(first, last), expected_box
+                )
 
 
 @pytest.mark.parametrize("reversed", (False, True))

@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- Orthogonal-cylinder branch enclosure queries reuse bounded proofs for the same
+  unchanged live curve and exact interval premises; returned bounds and identities
+  are unchanged.
 - Fixed the native CAD qualification intersection evidence reporting a p-curve
   residual that was zero by construction: `maximum_residuals_m.first_pcurve`
   and `.second_pcurve` now measure each patch lift against the declared analytic
