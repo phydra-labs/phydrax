@@ -653,6 +653,30 @@ def test_triangle_dual_quads_validates_and_preserves_shared_node_ids() -> None:
         triangle_dual_quads(duplicate, 7)
 
 
+@pytest.mark.parametrize(
+    "dtype",
+    [np.int64, np.int32, np.uint8, np.uint64],
+    ids=["native", "narrower-signed", "narrower-unsigned", "wider-unsigned"],
+)
+def test_native_index_arrays_convert_every_integer_dtype_in_range(
+    dtype: type[np.integer],
+) -> None:
+    nodes = np.arange(7, dtype=dtype).reshape((1, 7))
+    np.testing.assert_array_equal(
+        triangle_dual_quads(nodes, 7),
+        np.asarray(((0, 3, 6, 5), (1, 4, 6, 3), (2, 5, 6, 4)), dtype=np.int64),
+    )
+
+
+def test_native_index_arrays_refuse_values_outside_the_native_range() -> None:
+    nodes = np.arange(7, dtype=np.uint64).reshape((1, 7))
+    nodes[0, 6] = np.uint64(np.iinfo(np.int64).max) + np.uint64(1)
+    with pytest.raises(OverflowError, match="exceeds the native integer range"):
+        triangle_dual_quads(nodes, 7)
+    with pytest.raises(TypeError, match="must be an integer array"):
+        triangle_dual_quads(np.arange(7, dtype=np.float64).reshape((1, 7)), 7)
+
+
 def _declared_unit_tet(
     plane: np.ndarray,
     tolerance: float,
