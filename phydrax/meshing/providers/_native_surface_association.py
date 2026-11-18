@@ -14,7 +14,7 @@ import phydrax.geometry._meshing_domain as domain_owner
 import phydrax.meshing._association as association_owner
 
 from ...typing import checked
-from .._surface_construction import SurfaceConstruction
+from .._surface_construction import ScreenedSurfaceConstruction, SurfaceConstruction
 
 
 def simplex_rows(canonical: np.ndarray, pairs: np.ndarray, /) -> np.ndarray:
@@ -120,7 +120,7 @@ def _surface_edges(mesh: cell_mesh_owner.CellMesh) -> np.ndarray:
 @checked
 def _validate_shared_junctions(
     curves: tuple[domain_owner.MeshingDomainCurve, ...],
-    construction: SurfaceConstruction,
+    construction: SurfaceConstruction | ScreenedSurfaceConstruction,
     /,
 ) -> None:
     """Bind each shared source-curve chain to its authored corner identities."""
@@ -243,7 +243,7 @@ def _curve_orientations(
 def associations(
     domain: domain_owner.MeshingDomain,
     mesh: cell_mesh_owner.CellMesh,
-    construction: SurfaceConstruction,
+    construction: SurfaceConstruction | ScreenedSurfaceConstruction,
     /,
 ) -> tuple[association_owner.GeometryAssociation, ...]:
     """Associate faces, authored physical curves, and vertices with source strata.

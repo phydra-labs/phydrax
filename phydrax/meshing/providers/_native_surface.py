@@ -9,9 +9,9 @@ from __future__ import annotations
 import math
 from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Generator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from fractions import Fraction
-from typing import assert_never, final, Literal
+from typing import assert_never, final, Literal, overload
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -78,6 +78,7 @@ from phydrax.meshing._sizing import (
     UniformSizeControl,
 )
 from phydrax.meshing._surface_construction import (
+    ScreenedSurfaceConstruction,
     source_cell_ancestry,
     SurfaceConstruction,
     SurfaceSourceCellAtlas,
@@ -92,6 +93,7 @@ from ...discretization import CellGeometrySpec
 from ...discretization._cell_geometry_validity import cell_geometry_id
 from ...discretization._reference_cell import reference_cell_topology
 from ...geometry.brep._source_correspondence import _affine_curve_coefficients
+from ...typing import parse
 from .._plc_source import _numeric_entity_ids
 from ._native_options import NativeMeshingOptions
 from ._native_schedules import NativeSurfaceSchedule
@@ -313,11 +315,12 @@ class _RefinedSurface:
     triangles: np.ndarray
     triangle_patches: np.ndarray
     triangle_parameters: np.ndarray
-    triangle_deviation_bounds: np.ndarray
-    triangle_normal_bounds: np.ndarray
-    curve_edge_bounds: dict[tuple[int, int, int], float]
+    triangle_deviation_bounds: np.ndarray | None
+    triangle_normal_bounds: np.ndarray | None
+    curve_edge_bounds: dict[tuple[int, int, int], float] | None
     minimum_angle: float
     fidelity_tolerance: float | None
+    sampled_deviations: np.ndarray | None = None
 
 
 def _failure(
@@ -3435,6 +3438,61 @@ def _trim_lens_bounds(
     ]
 
 
+def _sampled_curve_intervals(
+    domain: domain_owner.MeshingDomain,
+    curve: int,
+    uses: tuple[tuple[int, domain_owner.PatchCurveUse], ...],
+    intervals: list[tuple[Fraction, Fraction]],
+    fidelity_limit: float,
+    edge_limit: float,
+    /,
+) -> set[tuple[Fraction, Fraction]]:
+    weights = (Fraction(0), Fraction(1, 4), Fraction(1, 2), Fraction(3, 4), Fraction(1))
+    parameters = tuple(
+        first + weight * (last - first) for first, last in intervals for weight in weights
+    )
+    points = _source_curve_points(domain, curve, parameters).reshape((-1, 5, 3))
+    if not np.all(np.isfinite(points)):
+        raise _failure(
+            "source curve sampling produced nonfinite coordinates",
+            category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+            entity_ids=(curve,),
+        )
+    weights_array = np.asarray((0.25, 0.5, 0.75), dtype=np.float64)[None, :, None]
+
+    def deviations(values: np.ndarray) -> np.ndarray:
+        chord = values[:, :1] + weights_array * (values[:, 4:5] - values[:, :1])
+        return np.max(np.linalg.norm(values[:, 1:4] - chord, axis=2), axis=1)
+
+    keep = (np.linalg.norm(points[:, 4] - points[:, 0], axis=1) <= edge_limit) & (
+        deviations(points) <= fidelity_limit
+    )
+    for patch, use in uses:
+        uv = np.asarray(_use_chart_points(use, parameters), dtype=np.float64)
+        images = domain.evaluate(np.full(len(parameters), patch, dtype=np.int64), uv)
+        if not np.all(np.isfinite(images)):
+            raise _failure(
+                "source trim sampling produced nonfinite coordinates",
+                category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                entity_ids=(curve,),
+            )
+        keep &= deviations(images.reshape((-1, 5, 3))) <= fidelity_limit / 2.0
+    return {
+        interval for interval, accepted in zip(intervals, keep, strict=True) if accepted
+    }
+
+
+def _curve_interval_midpoint(lower: Fraction, upper: Fraction, curve: int, /) -> Fraction:
+    midpoint = (lower + upper) / 2
+    if midpoint in (lower, upper) or float(midpoint) in (float(lower), float(upper)):
+        raise _failure(
+            "source curve sampling reached parameter representability before meeting continuous chord bounds",
+            category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+            entity_ids=(int(curve),),
+        )
+    return midpoint
+
+
 def _curve_parameters(
     domain: domain_owner.MeshingDomain,
     curve_ids: tuple[int, ...],
@@ -3446,6 +3504,7 @@ def _curve_parameters(
     /,
     *,
     chords: _CurveChordBounds | None = None,
+    steering: ConstructionSteering = "certified",
 ) -> dict[int, set[Fraction]]:
     sizes = {
         patch: float(size)
@@ -3506,45 +3565,57 @@ def _curve_parameters(
         intervals = list(zip(ordered[:-1], ordered[1:], strict=True))
         lens_limit = Fraction.from_float(fidelity_limit) / 2
         while intervals:
-            chords.prepare_points(
-                curve, tuple(value for interval in intervals for value in interval)
-            )
-            chords.prepare_intervals(
-                tuple((curve, lower, upper) for lower, upper in intervals)
-            )
-            candidates = [
-                interval
-                for interval in intervals
-                for deviation, length in (chords.interval(curve, *interval),)
-                if deviation <= fidelity_limit and length <= edge_limit
-            ]
-            accepted = set(candidates)
-            for patch, use in selected_uses:
-                if not candidates:
-                    break
-                bounds = _trim_lens_bounds(
-                    domain, patch, use, use_endpoints[id(use)], candidates, preparation
-                )
-                accepted.difference_update(
-                    interval
-                    for interval, bound in zip(candidates, bounds, strict=True)
-                    if bound > lens_limit
-                )
-                candidates = [interval for interval in candidates if interval in accepted]
+            match steering:
+                case "certified":
+                    chords.prepare_points(
+                        curve,
+                        tuple(value for interval in intervals for value in interval),
+                    )
+                    chords.prepare_intervals(
+                        tuple((curve, lower, upper) for lower, upper in intervals)
+                    )
+                    candidates = [
+                        interval
+                        for interval in intervals
+                        for deviation, length in (chords.interval(curve, *interval),)
+                        if deviation <= fidelity_limit and length <= edge_limit
+                    ]
+                    accepted = set(candidates)
+                    for patch, use in selected_uses:
+                        if not candidates:
+                            break
+                        bounds = _trim_lens_bounds(
+                            domain,
+                            patch,
+                            use,
+                            use_endpoints[id(use)],
+                            candidates,
+                            preparation,
+                        )
+                        accepted.difference_update(
+                            interval
+                            for interval, bound in zip(candidates, bounds, strict=True)
+                            if bound > lens_limit
+                        )
+                        candidates = [
+                            interval for interval in candidates if interval in accepted
+                        ]
+                case "screened":
+                    accepted = _sampled_curve_intervals(
+                        domain,
+                        curve,
+                        selected_uses,
+                        intervals,
+                        fidelity_limit,
+                        edge_limit,
+                    )
+                case _:
+                    assert_never(steering)
             following = []
             for lower, upper in intervals:
                 if (lower, upper) in accepted:
                     continue
-                midpoint = (lower + upper) / 2
-                if midpoint in (lower, upper) or float(midpoint) in (
-                    float(lower),
-                    float(upper),
-                ):
-                    raise _failure(
-                        "source curve sampling reached parameter representability before meeting continuous chord bounds",
-                        category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                        entity_ids=(int(curve),),
-                    )
+                midpoint = _curve_interval_midpoint(lower, upper, curve)
                 expanded.add(midpoint)
                 following.extend(((lower, midpoint), (midpoint, upper)))
             intervals = following
@@ -4608,6 +4679,50 @@ def _triangle_boundary_curves(
     return tuple(sorted(found))
 
 
+def _chart_curve_screens(
+    domain: domain_owner.MeshingDomain, chart: _ChartMesh, /
+) -> dict[tuple[int, int], float]:
+    grouped: dict[int, list[tuple[tuple[int, int], Fraction, Fraction]]] = {}
+    for edge, (curve, _, first, last) in chart.boundary_edges.items():
+        first_parameter, last_parameter = chart.edge_parameters(
+            edge, curve, (first, last)
+        )
+        if (
+            first_parameter is None
+            or last_parameter is None
+            or first_parameter == last_parameter
+        ):
+            raise _failure(
+                "source trim edge lacks a positive canonical curve interval",
+                category=MeshingFailureCategory.INVALID_SOURCE,
+                entity_ids=(int(curve),),
+            )
+        grouped.setdefault(curve, []).append((edge, first_parameter, last_parameter))
+    result: dict[tuple[int, int], float] = {}
+    weights = (Fraction(0), Fraction(1, 4), Fraction(1, 2), Fraction(3, 4), Fraction(1))
+    fractions = np.asarray((0.25, 0.5, 0.75), dtype=np.float64)[None, :, None]
+    for curve, edges in grouped.items():
+        parameters = tuple(
+            first + weight * (last - first)
+            for _, first, last in edges
+            for weight in weights
+        )
+        points = _source_curve_points(domain, curve, parameters).reshape((-1, 5, 3))
+        if not np.all(np.isfinite(points)):
+            raise _failure(
+                "source curve sampling produced nonfinite coordinates",
+                category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                entity_ids=(int(curve),),
+            )
+        chord = points[:, :1] + fractions * (points[:, 4:5] - points[:, :1])
+        deviations = np.max(np.linalg.norm(points[:, 1:4] - chord, axis=2), axis=1)
+        result.update(
+            (edge, float(value))
+            for (edge, _, _), value in zip(edges, deviations, strict=True)
+        )
+    return result
+
+
 def _chart_curve_bounds(
     chart: _ChartMesh, chords: _CurveChordBounds, /
 ) -> dict[tuple[int, int], float]:
@@ -4788,6 +4903,7 @@ def _refine_charts(
     *,
     chords: _CurveChordBounds | None = None,
     seam_rounds: _SeamRounds | None = None,
+    steering: ConstructionSteering = "certified",
 ) -> _RefinedSurface:
     """Refine source charts until every cell meets the physical schedule.
 
@@ -4841,17 +4957,38 @@ def _refine_charts(
     # and therefore their source bounds.
     if chords is None:
         chords = _CurveChordBounds(preparation)
-    curve_bounds_by_chart = tuple(_chart_curve_bounds(chart, chords) for chart in charts)
+    match steering:
+        case "certified":
+            curve_values_by_chart = tuple(
+                _chart_curve_bounds(chart, chords) for chart in charts
+            )
+        case "screened":
+            curve_values_by_chart = tuple(
+                _chart_curve_screens(domain, chart) for chart in charts
+            )
+        case _:
+            assert_never(steering)
     trim_edges = tuple(frozenset(chart.boundary_edges) for chart in charts)
     cell_bounds: dict[_CellBoundKey, tuple[float, float]] = {}
     angle_bad_cache: dict[tuple[int, int, int], bool] = {}
     sine_upper = None
-    if specification.quality_target is not None and specification.quality_target.hard:
-        from phydrax.geometry._interval_enclosure import interval_sin
+    match steering:
+        case "certified":
+            if (
+                specification.quality_target is not None
+                and specification.quality_target.hard
+            ):
+                from phydrax.geometry._interval_enclosure import interval_sin
 
-        angle = np.asarray(specification.quality_target.minimum_angle, dtype=np.float64)
-        _, upper = interval_sin((angle, angle))
-        sine_upper = Fraction.from_float(float(upper))
+                angle = np.asarray(
+                    specification.quality_target.minimum_angle, dtype=np.float64
+                )
+                _, upper = interval_sin((angle, angle))
+                sine_upper = Fraction.from_float(float(upper))
+        case "screened":
+            pass
+        case _:
+            assert_never(steering)
     quality_angle = schedule.quality_angle_degrees
     if specification.quality_target is not None:
         quality_angle = max(
@@ -4899,7 +5036,7 @@ def _refine_charts(
             math.inf if fidelity_tolerance is None else fidelity_tolerance,
         )
         offset = 0
-        for chart, curve_bounds in zip(charts, curve_bounds_by_chart, strict=True):
+        for chart, curve_values in zip(charts, curve_values_by_chart, strict=True):
             count = len(chart.triangles)
             local_parameters = chart_parameters[offset : offset + count]
             if chart.patch in protected_surface_tolerance:
@@ -4907,19 +5044,32 @@ def _refine_charts(
                     deviation_targets[offset : offset + count],
                     protected_surface_tolerance[chart.patch],
                 )
-            deviations[offset : offset + count], normal_values = _cached_cell_bounds(
-                preparation,
-                chart,
-                local_parameters,
-                cell_bounds,
-                specification.maximum_normal_deviation is not None,
-            )
-            if specification.maximum_normal_deviation is not None:
-                normal_bounds[offset : offset + count] = normal_values
+            match steering:
+                case "certified":
+                    deviations[offset : offset + count], normal_values = (
+                        _cached_cell_bounds(
+                            preparation,
+                            chart,
+                            local_parameters,
+                            cell_bounds,
+                            specification.maximum_normal_deviation is not None,
+                        )
+                    )
+                    if specification.maximum_normal_deviation is not None:
+                        normal_bounds[offset : offset + count] = normal_values
+                case "screened":
+                    deviations[offset : offset + count] = _sampled_cell_deviations(
+                        domain,
+                        patches[offset : offset + count],
+                        local_parameters,
+                        physical[triangles[offset : offset + count]],
+                    )
+                case _:
+                    assert_never(steering)
             for row, triangle in enumerate(chart.triangles):
-                boundary_bound = max(
+                boundary_value = max(
                     (
-                        curve_bounds.get(_edge_key(first, last), 0.0)
+                        curve_values.get(_edge_key(first, last), 0.0)
                         for first, last in (
                             (triangle[0], triangle[1]),
                             (triangle[1], triangle[2]),
@@ -4930,7 +5080,7 @@ def _refine_charts(
                 )
                 deviations[offset + row] = max(
                     float(deviations[offset + row]),
-                    boundary_bound,
+                    boundary_value,
                     chart.pole_deviation_bound,
                 )
                 limits = tuple(
@@ -4973,6 +5123,27 @@ def _refine_charts(
             bad |= _hard_angle_violations(
                 physical, triangles, sine_upper, angle_bad_cache
             )
+        match steering:
+            case "certified":
+                pass
+            case "screened":
+                if (
+                    specification.quality_target is not None
+                    and specification.quality_target.hard
+                ):
+                    bad |= _quality_angle_degrees(physical, triangles) < math.degrees(
+                        specification.quality_target.minimum_angle
+                    )
+                if specification.maximum_normal_deviation is not None:
+                    bad |= _facet_normal_violations(
+                        domain,
+                        patches,
+                        chart_parameters,
+                        physical[triangles],
+                        specification.maximum_normal_deviation,
+                    )
+            case _:
+                assert_never(steering)
         if specification.maximum_normal_deviation is not None:
             bad |= normal_bounds > specification.maximum_normal_deviation
         # Physical longest-edge propagation alone can miss a full-turn chart
@@ -5250,9 +5421,17 @@ def _refine_charts(
                 ),
             )
         if any(identity[0] == 1 for identity in split_edges):
-            curve_bounds_by_chart = tuple(
-                _chart_curve_bounds(chart, chords) for chart in charts
-            )
+            match steering:
+                case "certified":
+                    curve_values_by_chart = tuple(
+                        _chart_curve_bounds(chart, chords) for chart in charts
+                    )
+                case "screened":
+                    curve_values_by_chart = tuple(
+                        _chart_curve_screens(domain, chart) for chart in charts
+                    )
+                case _:
+                    assert_never(steering)
             trim_edges = tuple(frozenset(chart.boundary_edges) for chart in charts)
 
     triangles_by_chart = tuple(
@@ -5276,6 +5455,36 @@ def _refine_charts(
         ),
         axis=0,
     )
+    match steering:
+        case "screened":
+            coordinates_array = np.asarray(coordinates, dtype=np.float64)
+            quality = _quality_angle_degrees(coordinates_array, triangles)
+            return _RefinedSurface(
+                tuple(charts),
+                tuple(local_rows),
+                coordinates_array,
+                np.asarray(source_dimensions, dtype=np.int8),
+                np.asarray(source_indices, dtype=np.int64),
+                np.asarray(source_parameters, dtype=np.float64),
+                triangles,
+                triangle_patches,
+                triangle_parameters,
+                None,
+                None,
+                None,
+                float(np.min(quality, initial=math.inf)),
+                fidelity_tolerance,
+                sampled_deviations=_sampled_cell_deviations(
+                    domain,
+                    triangle_patches,
+                    triangle_parameters,
+                    coordinates_array[triangles],
+                ),
+            )
+        case "certified":
+            pass
+        case _:
+            assert_never(steering)
     deviations = np.empty((triangles.shape[0],), dtype=np.float64)
     normal_bounds = np.zeros_like(deviations)
     offset = 0
@@ -5300,7 +5509,7 @@ def _refine_charts(
     curve_edge_bounds: dict[tuple[int, int, int], float] = {}
     cell_offset = 0
     for chart, local_to_global, bounds, edges in zip(
-        charts, local_rows, curve_bounds_by_chart, trim_edges, strict=True
+        charts, local_rows, curve_values_by_chart, trim_edges, strict=True
     ):
         if frozenset(chart.boundary_edges) != edges:
             raise _failure(
@@ -5335,6 +5544,49 @@ def _refine_charts(
         curve_edge_bounds,
         float(np.min(quality, initial=math.inf)),
         fidelity_tolerance,
+    )
+
+
+def _resolve_refinement_bounds(
+    refined: _RefinedSurface,
+    preparation: domain_owner.SourcePreparation,
+    specification: SurfaceMeshingSpec,
+    /,
+) -> _RefinedSurface:
+    chords = _CurveChordBounds(preparation)
+    cell_bounds: dict[_CellBoundKey, tuple[float, float]] = {}
+    deviations = np.empty((len(refined.triangles),), dtype=np.float64)
+    normal_bounds = np.zeros_like(deviations)
+    curve_edge_bounds: dict[tuple[int, int, int], float] = {}
+    offset = 0
+    for chart, mapping in zip(refined.charts, refined.local_rows, strict=True):
+        count = len(chart.triangles)
+        values, normals = _cached_cell_bounds(
+            preparation,
+            chart,
+            refined.triangle_parameters[offset : offset + count],
+            cell_bounds,
+            specification.maximum_normal_deviation is not None,
+        )
+        deviations[offset : offset + count] = np.maximum(
+            values, chart.pole_deviation_bound
+        )
+        if specification.maximum_normal_deviation is not None:
+            normal_bounds[offset : offset + count] = normals
+        bounds = _chart_curve_bounds(chart, chords)
+        for edge, (curve, _, _, _) in chart.boundary_edges.items():
+            first, last = sorted((mapping[edge[0]], mapping[edge[1]]))
+            key = (curve, first, last)
+            curve_edge_bounds[key] = max(curve_edge_bounds.get(key, 0.0), bounds[edge])
+        _apply_curve_edge_bounds(
+            chart.triangles, bounds, deviations[offset : offset + count]
+        )
+        offset += count
+    return replace(
+        refined,
+        triangle_deviation_bounds=deviations,
+        triangle_normal_bounds=normal_bounds,
+        curve_edge_bounds=curve_edge_bounds,
     )
 
 
@@ -5465,9 +5717,11 @@ def _curve_edge_samples(
     return maximum
 
 
-def _triangle_sampled_deviations(
+def _sampled_cell_deviations(
     domain: domain_owner.MeshingDomain,
-    refined: _RefinedSurface,
+    triangle_patches: np.ndarray,
+    triangle_parameters: np.ndarray,
+    triangle_coordinates: np.ndarray,
     /,
 ) -> np.ndarray:
     weights = np.asarray(
@@ -5479,14 +5733,65 @@ def _triangle_sampled_deviations(
         ),
         dtype=np.float64,
     )
-    parameters = np.einsum("qv,cvd->cqd", weights, refined.triangle_parameters)
-    patches = np.repeat(refined.triangle_patches, weights.shape[0])
+    parameters = np.einsum("qv,cvd->cqd", weights, triangle_parameters)
+    patches = np.repeat(triangle_patches, weights.shape[0])
     source_points = domain.evaluate(patches, parameters.reshape((-1, 2))).reshape(
         (-1, weights.shape[0], 3)
     )
-    triangle_coordinates = refined.coordinates[refined.triangles]
     chord_points = binary64_matmul(weights, triangle_coordinates)
     return np.max(np.linalg.norm(source_points - chord_points, axis=2), axis=1)
+
+
+def _triangle_sampled_deviations(
+    domain: domain_owner.MeshingDomain,
+    refined: _RefinedSurface,
+    /,
+) -> np.ndarray:
+    return _sampled_cell_deviations(
+        domain,
+        refined.triangle_patches,
+        refined.triangle_parameters,
+        refined.coordinates[refined.triangles],
+    )
+
+
+@overload
+def _surface_construction(
+    domain: domain_owner.MeshingDomain,
+    refined: _RefinedSurface,
+    roots: _SurfaceRootCells,
+    curve_ids: tuple[int, ...],
+    schedule: NativeSurfaceSchedule,
+    /,
+    *,
+    steering: Literal["certified"] = "certified",
+) -> SurfaceConstruction: ...
+
+
+@overload
+def _surface_construction(
+    domain: domain_owner.MeshingDomain,
+    refined: _RefinedSurface,
+    roots: _SurfaceRootCells,
+    curve_ids: tuple[int, ...],
+    schedule: NativeSurfaceSchedule,
+    /,
+    *,
+    steering: Literal["screened"],
+) -> ScreenedSurfaceConstruction: ...
+
+
+@overload
+def _surface_construction(
+    domain: domain_owner.MeshingDomain,
+    refined: _RefinedSurface,
+    roots: _SurfaceRootCells,
+    curve_ids: tuple[int, ...],
+    schedule: NativeSurfaceSchedule,
+    /,
+    *,
+    steering: ConstructionSteering,
+) -> SurfaceConstruction | ScreenedSurfaceConstruction: ...
 
 
 def _surface_construction(
@@ -5496,7 +5801,9 @@ def _surface_construction(
     curve_ids: tuple[int, ...],
     schedule: NativeSurfaceSchedule,
     /,
-) -> SurfaceConstruction:
+    *,
+    steering: ConstructionSteering = "certified",
+) -> SurfaceConstruction | ScreenedSurfaceConstruction:
     exact_triangle_parameters = tuple(
         (
             chart.points[triangle[0]],
@@ -5516,22 +5823,38 @@ def _surface_construction(
         domain, refined, curve_ids
     )
     curve_edge_deviations = np.empty((curve_edges.shape[0],), dtype=np.float64)
-    curve_edge_deviation_bounds = np.empty_like(curve_edge_deviations)
+    match steering:
+        case "certified":
+            curve_edge_deviation_bounds = np.empty_like(curve_edge_deviations)
+        case "screened":
+            curve_edge_deviation_bounds = None
+        case _:
+            assert_never(steering)
     for row, (curve, lower, upper) in enumerate(intervals):
         first_vertex, last_vertex = curve_edges[row]
-        key = (
-            curve,
-            min(int(first_vertex), int(last_vertex)),
-            max(int(first_vertex), int(last_vertex)),
-        )
-        try:
-            bound = refined.curve_edge_bounds[key]
-        except KeyError as error:
-            raise _failure(
-                "a source-curve interval has no adjacent certified source chart cell",
-                category=MeshingFailureCategory.INVALID_SOURCE,
-                entity_ids=(int(curve),),
-            ) from error
+        match steering:
+            case "certified":
+                if refined.curve_edge_bounds is None:
+                    raise ValueError(
+                        "Certified surface construction requires curve bounds."
+                    )
+                key = (
+                    curve,
+                    min(int(first_vertex), int(last_vertex)),
+                    max(int(first_vertex), int(last_vertex)),
+                )
+                try:
+                    bound = refined.curve_edge_bounds[key]
+                except KeyError as error:
+                    raise _failure(
+                        "a source-curve interval has no adjacent certified source chart cell",
+                        category=MeshingFailureCategory.INVALID_SOURCE,
+                        entity_ids=(int(curve),),
+                    ) from error
+            case "screened":
+                pass
+            case _:
+                assert_never(steering)
         witnessed = _curve_edge_samples(
             domain,
             refined.coordinates[int(first_vertex)],
@@ -5541,15 +5864,25 @@ def _surface_construction(
             upper,
             schedule.curve_schedule.fidelity_samples,
         )
-        allowance = 128.0 * np.finfo(np.float64).eps * max(domain.scale, 1.0)
-        if witnessed > bound + allowance:
-            raise _failure(
-                "source-curve samples exceed the adjacent interval enclosure",
-                category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                entity_ids=(int(curve),),
-            )
+        match steering:
+            case "certified":
+                allowance = 128.0 * np.finfo(np.float64).eps * max(domain.scale, 1.0)
+                if witnessed > bound + allowance:
+                    raise _failure(
+                        "source-curve samples exceed the adjacent interval enclosure",
+                        category=MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                        entity_ids=(int(curve),),
+                    )
+                if curve_edge_deviation_bounds is None:
+                    raise ValueError(
+                        "Certified surface construction requires curve bounds."
+                    )
+                curve_edge_deviation_bounds[row] = bound
+            case "screened":
+                pass
+            case _:
+                assert_never(steering)
         curve_edge_deviations[row] = witnessed
-        curve_edge_deviation_bounds[row] = bound
 
     boundary_occurrences = np.full((refined.triangles.shape[0], 3, 3), -1, dtype=np.int32)
     restriction_vertices: list[tuple[int, int]] = []
@@ -5621,6 +5954,51 @@ def _surface_construction(
         raise RuntimeError(
             "Surface chart cell rows do not align with construction triangles."
         )
+    match steering:
+        case "screened":
+            return ScreenedSurfaceConstruction(
+                refined.coordinates,
+                refined.vertex_source_dimensions,
+                refined.vertex_source_indices,
+                refined.vertex_parameters,
+                np.asarray(restriction_vertices, dtype=np.int64).reshape((-1, 2)),
+                np.asarray(restriction_occurrences, dtype=np.int32).reshape((-1, 3)),
+                np.asarray(restriction_endpoint_parameters, dtype=np.float64).reshape(
+                    (-1, 2)
+                ),
+                np.asarray(restriction_chart_parameters, dtype=np.float64).reshape(
+                    (-1, 2, 2)
+                ),
+                refined.triangles,
+                refined.triangle_patches,
+                np.mean(refined.triangle_parameters, axis=1),
+                refined.triangle_parameters,
+                triangle_source_cells,
+                triangle_source_pieces,
+                _triangle_sampled_deviations(domain, refined),
+                curve_edges,
+                curve_edge_curves,
+                curve_edge_deviations,
+                np.zeros((refined.triangles.shape[0],), dtype=np.bool_),
+                boundary_occurrences,
+                tuple(
+                    (chart.patch, np.asarray(chart.triangles, dtype=np.int64))
+                    for chart in refined.charts
+                ),
+                curve_parameters,
+                tuple((lower, upper) for _, lower, upper in intervals),
+                refined.minimum_angle,
+            )
+        case "certified":
+            pass
+        case _:
+            assert_never(steering)
+    if (
+        refined.triangle_deviation_bounds is None
+        or refined.triangle_normal_bounds is None
+        or curve_edge_deviation_bounds is None
+    ):
+        raise ValueError("Certified surface construction requires continuous bounds.")
     return SurfaceConstruction(
         refined.coordinates,
         refined.vertex_source_dimensions,
@@ -5811,6 +6189,11 @@ def _compliance(
     selected_patches: tuple[int, ...],
     /,
 ) -> MeshingComplianceReport:
+    if (
+        refined.triangle_deviation_bounds is None
+        or refined.triangle_normal_bounds is None
+    ):
+        raise ValueError("Surface compliance requires continuous certified bounds.")
     triangles = refined.triangles
     edges = np.stack(
         (triangles[:, (0, 1)], triangles[:, (1, 2)], triangles[:, (2, 0)]),
@@ -6012,7 +6395,7 @@ def _surface_curve_chart_witness(
     geometry: CellGeometrySpec,
     domain: domain_owner.MeshingDomain,
     query: ParametricCurveBoundarySource,
-    construction: SurfaceConstruction,
+    construction: SurfaceConstruction | ScreenedSurfaceConstruction,
     /,
 ) -> SourceBoundaryChartWitness:
     """Bind each source trim-use chart to actual constrained output edges."""
@@ -6232,6 +6615,150 @@ def _surface_point_witness(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _DeferredSurfaceCertification:
+    prepared: _PreparedNativeSurface
+    preparation: domain_owner.SourcePreparation
+    mesh: cell_mesh_owner.CellMesh
+    geometry: CellGeometrySpec
+    construction: ScreenedSurfaceConstruction
+    refined: _RefinedSurface
+    surface_source: surface_support_owner.SurfaceSourceCharts
+    curve_ids: tuple[int, ...]
+    organization: NativeMeshOrganization
+    certified_steps: tuple[str, ...]
+
+    def resolve(self) -> NativeMeshConstruction:
+        prepared = self.prepared
+        domain = prepared.domain
+        refined = _resolve_refinement_bounds(
+            self.refined, self.preparation, prepared.specification
+        )
+        construction = _surface_construction(
+            domain, refined, prepared.roots, self.curve_ids, prepared.schedule
+        )
+        if not isinstance(construction, SurfaceConstruction):
+            raise TypeError("Certified surface resolution must produce certified bounds.")
+        boundary_cover = prepared.boundary_source.boundary_chart_cover(
+            preparation=self.preparation
+        )
+        if not boundary_cover.complete:
+            raise _failure(
+                "source boundary query could not certify complete trimmed-chart coverage",
+                category=MeshingFailureCategory.INVALID_SOURCE,
+                entity_ids=tuple(int(patch) for patch in prepared.selected_patches),
+            )
+        junctions: dict[int, set[int]] = {}
+        for curve in self.curve_ids:
+            source_curve = domain.curves[curve]
+            junctions.setdefault(source_curve.start, set()).add(curve)
+            junctions.setdefault(source_curve.end, set()).add(curve)
+        junction_rows = {
+            row
+            for row, (dimension, index) in enumerate(
+                zip(
+                    self.refined.vertex_source_dimensions.tolist(),
+                    self.refined.vertex_source_indices.tolist(),
+                    strict=True,
+                )
+            )
+            if dimension == 0 and len(junctions.get(index, ())) > 1
+        }
+        junction_ids = np.asarray(self.mesh.vertex_global_ids, dtype=np.int64)[
+            np.asarray(sorted(junction_rows), dtype=np.int64)
+        ]
+        surface_witness = self.surface_source.chart_witness
+        scoped_fidelity = []
+        for feature in prepared.specification.protected_features:
+            if not feature.hard:
+                continue
+            feature_ids = np.asarray(feature.scope.entity_ids, dtype=np.int64)
+            match feature.feature_kind:
+                case FeatureKind.CURVE:
+                    feature_query = _domain_curve_source_query(domain, feature_ids)
+                    feature_witness = _surface_curve_chart_witness(
+                        self.mesh, self.geometry, domain, feature_query, construction
+                    )
+                case FeatureKind.CORNER:
+                    feature_query = prepared.boundary_source
+                    feature_witness = _surface_point_witness(
+                        self.mesh,
+                        self.geometry,
+                        domain,
+                        feature_query,
+                        feature_ids,
+                        self.refined,
+                    )
+                case FeatureKind.SURFACE:
+                    patch_lookup = _scope_rows(prepared.scope_ids, 2)
+                    feature_patches = tuple(
+                        sorted(
+                            patch_lookup[int(identifier)] for identifier in feature_ids
+                        )
+                    )
+                    if (
+                        prepared.boundary_source.domain is domain
+                        and self.surface_source.boundary_source
+                        is prepared.boundary_source
+                        and feature_patches == prepared.boundary_source.patches
+                        and set(np.asarray(surface_witness.patches).tolist())
+                        == set(feature_patches)
+                    ):
+                        feature_query = prepared.boundary_source
+                        feature_witness = surface_witness
+                    else:
+                        feature_query = domain_boundary_owner.MeshingDomainBoundarySource(
+                            domain, feature_patches
+                        )
+                        feature_witness = self.surface_source.chart_witness
+                case FeatureKind.MATERIAL_INTERFACE:
+                    raise _failure(
+                        "material-interface feature constraints are not admitted",
+                        category=MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                    )
+                case _:
+                    assert_never(feature.feature_kind)
+            scoped_fidelity.append(
+                (feature_query, feature_witness, feature.maximum_deviation)
+            )
+        proof_tolerance = self.refined.fidelity_tolerance
+        if proof_tolerance is None:
+            from ...geometry._source_interpolation import exact_affine_boundary_source
+
+            if exact_affine_boundary_source(prepared.boundary_source):
+                proof_tolerance = 0.0
+        request = NativeCertificationRequest(
+            MeshCertificationSchedule("surface"),
+            domain.source_id,
+            domain.source_revision,
+            fidelity_source=prepared.boundary_source,
+            fidelity_tolerance=proof_tolerance,
+            junction_vertices=junction_ids if junction_ids.size else None,
+            protected_features=prepared.specification.protected_features,
+            maximum_normal_deviation=prepared.specification.maximum_normal_deviation,
+            fidelity_witness=surface_witness,
+            scoped_fidelity=tuple(scoped_fidelity),
+            feature_source=domain,
+        )
+        compliance = _compliance(
+            prepared.specification,
+            domain,
+            prepared.schedule,
+            refined,
+            prepared.size_values,
+            prepared.selected_patches,
+        )
+        return NativeMeshConstruction(
+            self.mesh,
+            prepared.coordinate_contract,
+            compliance,
+            request,
+            geometry=self.geometry,
+            organization=self.organization,
+            certified_steps=self.certified_steps,
+        )
+
+
 @final
 class _PreparedNativeSurface(StrictModule, NonTrainableState):
     domain: domain_owner.MeshingDomain
@@ -6297,6 +6824,15 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
         preparation = domain_owner.SourcePreparation.of(domain, preparation)
         family = self.specification.target.cell_families
         if set((*family.required, *family.preferred)) == {"quadrilateral"}:
+            match steering:
+                case "screened":
+                    raise _failure(
+                        "screened parametric quadrilateral surface is unsupported"
+                    )
+                case "certified":
+                    pass
+                case _:
+                    assert_never(steering)
             from ._native_surface_quad import execute_tensor_quads
 
             return execute_tensor_quads(self, preparation)
@@ -6310,6 +6846,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             self.specification,
             self.schedule,
             preparation,
+            steering=steering,
             chords=chords,
         )
         pole_charts = _pole_sampling(
@@ -6397,6 +6934,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             self.schedule,
             preparation,
             chords=chords,
+            steering=steering,
         )
         if (
             self.specification.quality_target is not None
@@ -6414,6 +6952,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             self.roots,
             curve_ids,
             self.schedule,
+            steering=steering,
         )
         # Patches separating two regions make a non-manifold multiregion surface:
         # each is triangulated once, and the region-labeled topology admits its
@@ -6433,15 +6972,21 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
         )
         geometry = CellGeometrySpec.affine(mesh)
         association_values = surface_associations(domain, mesh, construction)
-        boundary_cover = self.boundary_source.boundary_chart_cover(
-            preparation=preparation
-        )
-        if not boundary_cover.complete:
-            raise _failure(
-                "source boundary query could not certify complete trimmed-chart coverage",
-                category=MeshingFailureCategory.INVALID_SOURCE,
-                entity_ids=tuple(int(patch) for patch in self.selected_patches),
-            )
+        match steering:
+            case "certified":
+                boundary_cover = self.boundary_source.boundary_chart_cover(
+                    preparation=preparation
+                )
+                if not boundary_cover.complete:
+                    raise _failure(
+                        "source boundary query could not certify complete trimmed-chart coverage",
+                        category=MeshingFailureCategory.INVALID_SOURCE,
+                        entity_ids=tuple(int(patch) for patch in self.selected_patches),
+                    )
+            case "screened":
+                pass
+            case _:
+                assert_never(steering)
         root_parameter_exact = tuple(
             tuple(chart.points[point] for point in triangle)
             for chart in refined.charts
@@ -6510,6 +7055,50 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
             surface_source=surface_source,
             multiregion_surface=multiregion_surface,
         )
+        match steering:
+            case "screened":
+                if not isinstance(construction, ScreenedSurfaceConstruction):
+                    raise TypeError(
+                        "Screened surface construction requires structural data."
+                    )
+                request = NativeCertificationRequest(
+                    MeshCertificationSchedule("surface"),
+                    domain.source_id,
+                    domain.source_revision,
+                    fidelity_source=self.boundary_source,
+                    fidelity_tolerance=refined.fidelity_tolerance,
+                    protected_features=self.specification.protected_features,
+                    maximum_normal_deviation=self.specification.maximum_normal_deviation,
+                    feature_source=domain,
+                )
+                return NativeMeshConstruction(
+                    mesh,
+                    self.coordinate_contract,
+                    MeshingComplianceReport(
+                        self.specification.specification_id,
+                        issues=("compliance not assessed: screened construction",),
+                    ),
+                    request,
+                    geometry=geometry,
+                    organization=organization,
+                    deferred_certification=_DeferredSurfaceCertification(
+                        self,
+                        preparation,
+                        mesh,
+                        geometry,
+                        construction,
+                        refined,
+                        surface_source,
+                        curve_ids,
+                        organization,
+                        ("pole_sampling",),
+                    ),
+                    certified_steps=("pole_sampling",),
+                )
+            case "certified":
+                pass
+            case _:
+                assert_never(steering)
         compliance = _compliance(
             self.specification,
             domain,

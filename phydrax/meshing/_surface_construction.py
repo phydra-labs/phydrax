@@ -436,6 +436,59 @@ class SurfaceConstruction(StrictModule, NonTrainableState):
         return self.curve_intervals_exact
 
 
+@final
+class ScreenedSurfaceConstruction(StrictModule, NonTrainableState):
+    """Surface construction data without continuous certified bounds."""
+
+    vertices: np.ndarray
+    vertex_source_dimensions: np.ndarray
+    vertex_source_indices: np.ndarray
+    vertex_parameters: np.ndarray
+    chart_restriction_vertices: np.ndarray
+    chart_restriction_edges: np.ndarray
+    chart_restriction_endpoint_parameters: np.ndarray
+    chart_restriction_parameters: np.ndarray
+    triangles: np.ndarray
+    triangle_patches: np.ndarray
+    triangle_charts: np.ndarray
+    triangle_parameters: np.ndarray
+    triangle_source_cells: np.ndarray
+    triangle_source_pieces: tuple[tuple[int, ...], ...]
+    triangle_deviations: np.ndarray
+    curve_edges: np.ndarray
+    curve_edge_curves: np.ndarray
+    curve_edge_deviations: np.ndarray
+    unresolved: np.ndarray
+    boundary_occurrences: np.ndarray
+    chart_triangulations: tuple[tuple[int, np.ndarray], ...]
+    curve_parameters: tuple[tuple[int, np.ndarray], ...]
+    curve_intervals_exact: tuple[SourceParameterInterval, ...] = eqx.field(static=True)
+    minimum_angle: float = eqx.field(static=True)
+
+    def curve_vertex_chains(self) -> tuple[tuple[int, np.ndarray], ...]:
+        return curve_vertex_chains(
+            self.curve_parameters, self.curve_edges, self.curve_edge_curves
+        )
+
+    def curve_edge_parameter_intervals(self) -> tuple[SourceParameterInterval, ...]:
+        self.curve_vertex_chains()
+        projected = curve_edge_parameter_intervals(
+            self.curve_parameters, self.curve_edge_curves
+        )
+        if len(projected) != len(self.curve_intervals_exact) or any(
+            float(first) != float(projected_first)
+            or float(last) != float(projected_last)
+            or first >= last
+            for (first, last), (projected_first, projected_last) in zip(
+                self.curve_intervals_exact, projected, strict=True
+            )
+        ):
+            raise ValueError(
+                "Exact curve intervals must project to the construction chain."
+            )
+        return self.curve_intervals_exact
+
+
 class LatticeSpecimenEventError(ValueError):
     """A specimen boundary is a certified unresolved event and is not meshed.
 
