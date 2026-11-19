@@ -268,6 +268,13 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native tetrahedral cells (`Tetrahedron`, shared by Delaunay/PLC
+  construction, recovery and the tetrahedral mesh) carry their region and a
+  per-face constrained flag in one 48-byte record; the complex keeps only the
+  constraint IDs, read when a flag is set. Walks and cavities read one
+  record per cell instead of three banks. Same triangulations, recoveries
+  and meshes; L3 refinement 1.24 -> 1.20 s (torus), 1.06 -> 1.01 s (two
+  cylinders); recovery unchanged (sphere 81,920 0.95 s, torus 90k 1.51 s).
 - Native tetrahedral refinement scans acute input features over flat sorted
   incidence rows instead of ordered maps and sets of every boundary edge,
   screens a later round's candidate cells only when their turn comes (most

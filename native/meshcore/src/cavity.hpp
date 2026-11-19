@@ -25,12 +25,20 @@ inline constexpr int32_t kNoConstraint = -1;
 inline constexpr int32_t kNoRegion = -1;
 inline constexpr int64_t kMaxTetrahedronSlots = std::numeric_limits<int32_t>::max();
 
-struct Tetrahedron {
+// One cell with the data every walk and cavity reads from it: vertices,
+// neighbors, the visit stamp/state of its current owner, which faces carry a
+// constraint label and its region (TetrahedralComplex keeps the labels'
+// IDs). 48 bytes, so a cell rarely straddles cache lines.
+struct alignas(16) Tetrahedron {
   int32_t v[4];
   int32_t n[4];
   std::uint32_t stamp = 0;
   std::uint8_t state = 0;
+  // Bit k is set when face k carries a constraint label.
+  std::uint8_t constrained = 0;
+  int32_t region = kNoRegion;
 };
+static_assert(sizeof(Tetrahedron) == 48);
 
 inline bool is_ghost(const Tetrahedron& tet) {
   return tet.v[0] == kGhostVertex || tet.v[1] == kGhostVertex ||
@@ -115,33 +123,45 @@ class TetrahedralComplex {
   void enable_labels() {
     if (labeled_) return;
     reserve_for(constraints_, 4 * tets.size());
-    reserve_for(regions_, tets.size());
     constraints_.assign(4 * tets.size(), kNoConstraint);
-    regions_.assign(tets.size(), kNoRegion);
+    for (Tetrahedron& tet : tets) {
+      tet.constrained = 0;
+      tet.region = kNoRegion;
+    }
     labeled_ = true;
   }
+  // The cell's own flags decide an unconstrained face (every face of an
+  // unlabeled complex), so only a constrained face reads the label bank.
   int32_t constraint(int32_t t, int k) const {
-    return labeled_ ? constraints_[4 * static_cast<std::size_t>(t) + k] : kNoConstraint;
+    return (tets[static_cast<std::size_t>(t)].constrained >> k) & 1U
+               ? constraints_[4 * static_cast<std::size_t>(t) + k]
+               : kNoConstraint;
   }
-  int32_t region(int32_t t) const {
-    return labeled_ ? regions_[static_cast<std::size_t>(t)] : kNoRegion;
-  }
+  int32_t region(int32_t t) const { return tets[static_cast<std::size_t>(t)].region; }
   void set_facet_constraint(int32_t t, int k, int32_t id) {
-    const int32_t other = tets[static_cast<std::size_t>(t)].n[k];
-    const int back = neighbor_slot(tets[static_cast<std::size_t>(other)], t);
+    Tetrahedron& cell = tets[static_cast<std::size_t>(t)];
+    const int32_t other = cell.n[k];
+    Tetrahedron& twin = tets[static_cast<std::size_t>(other)];
+    const int back = neighbor_slot(twin, t);
     constraints_[4 * static_cast<std::size_t>(t) + k] = id;
     constraints_[4 * static_cast<std::size_t>(other) + back] = id;
+    flag(cell, k, id);
+    flag(twin, back, id);
   }
   // Labels the faces of cell t on its side only. For a commit that labels
   // both sides of every face it creates, and keeps on each outer face the
   // label the cell beyond already holds.
   void set_cell_constraints(int32_t t, const std::array<int32_t, 4>& ids) {
     std::copy(ids.begin(), ids.end(), constraints_.begin() + 4 * static_cast<std::ptrdiff_t>(t));
+    Tetrahedron& cell = tets[static_cast<std::size_t>(t)];
+    for (int k = 0; k < 4; ++k) flag(cell, k, ids[static_cast<std::size_t>(k)]);
   }
   void set_region(int32_t t, int32_t value) {
-    regions_[static_cast<std::size_t>(t)] = value;
+    tets[static_cast<std::size_t>(t)].region = value;
   }
-  void clear_regions() { std::fill(regions_.begin(), regions_.end(), kNoRegion); }
+  void clear_regions() {
+    for (Tetrahedron& tet : tets) tet.region = kNoRegion;
+  }
 
   int32_t allocate() {
     if (!free_slots.empty()) {
@@ -153,10 +173,7 @@ class TetrahedralComplex {
     reserve(1, 0);
     tets.push_back(Tetrahedron{{kDeadVertex, kDeadVertex, kDeadVertex, kDeadVertex},
                                {-1, -1, -1, -1}, 0, 0});
-    if (labeled_) {
-      constraints_.insert(constraints_.end(), 4, kNoConstraint);
-      regions_.push_back(kNoRegion);
-    }
+    if (labeled_) constraints_.insert(constraints_.end(), 4, kNoConstraint);
     return static_cast<int32_t>(tets.size() - 1);
   }
   void release(int32_t t) {
@@ -169,10 +186,7 @@ class TetrahedralComplex {
   void reserve(std::size_t fresh, std::size_t freed) {
     reserve_for(tets, tets.size() + fresh);
     reserve_for(free_slots, free_slots.size() + freed);
-    if (labeled_) {
-      reserve_for(constraints_, constraints_.size() + 4 * fresh);
-      reserve_for(regions_, regions_.size() + fresh);
-    }
+    if (labeled_) reserve_for(constraints_, constraints_.size() + 4 * fresh);
   }
 
   bool audit() const {
@@ -198,15 +212,24 @@ class TetrahedralComplex {
         oriented_facet(neighbor.v, back, twin);
         if (!(FacetKey::of(facet) == FacetKey::of(twin).reversed()) ||
             constraint(static_cast<int32_t>(t), k) != constraint(other, back)) return false;
+        if (labeled_ && (((tet.constrained >> k) & 1U) != 0) !=
+                            (constraints_[4 * t + static_cast<std::size_t>(k)] != kNoConstraint)) {
+          return false;
+        }
       }
     }
     return finite == finite_count;
   }
 
  private:
+  static void flag(Tetrahedron& cell, int k, int32_t id) {
+    const auto bit = static_cast<std::uint8_t>(1U << k);
+    cell.constrained = static_cast<std::uint8_t>(
+        id != kNoConstraint ? cell.constrained | bit : cell.constrained & ~bit);
+  }
+
   bool labeled_ = false;
   std::vector<int32_t> constraints_;
-  std::vector<int32_t> regions_;
 };
 
 enum class EditStatus : std::uint8_t {
@@ -307,6 +330,8 @@ class CavityEdit {
       tet.n[face.slot] = face.outside;
       tet.stamp = 0;
       tet.state = 0;
+      tet.constrained = 0;
+      tet.region = kNoRegion;
       created_.push_back(tet);
       if (labeled) {
         for (int k = 0; k < 4; ++k) {
