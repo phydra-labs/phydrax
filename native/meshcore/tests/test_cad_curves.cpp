@@ -288,15 +288,24 @@ void same_curve_small_feature() {
   check_uses(f,r);
 }
 
-// A cubic inflection has zero midpoint curvature; midpoint-only sizing misses its lobes.
+// A cubic inflection shared by a plane and a NURBS face catches both
+// midpoint-only sizing and independently sampled uses.
 void cubic_inflection() {
-  Fixture f; auto s=plane(f), pc=line2(f);
+  Fixture f; auto s=plane(f);
   auto curve=f.node(PHX_MC_CAD_NODE_BSPLINE_CURVE, {3,4,3},
       {0,0,0,0,1,1,1,1, 0,0,0, 1.0/3,1,0, 2.0/3,-1,0, 1,0,0, 1,1,1,1});
-  f.face(s); f.curve(curve,0,1); f.use(0,0,pc,0,1);
-  Run r(f,{10},{0.004},{0.004});
+  auto pc=f.node(PHX_MC_CAD_NODE_BSPLINE_CURVE, {3,4,2},
+      {0,0,0,0,1,1,1,1, 0,0, 1.0/3,1, 2.0/3,-1, 1,0, 1,1,1,1});
+  auto nurbs=f.node(PHX_MC_CAD_NODE_BSPLINE_SURFACE, {1,1,2,2},
+      {0,0,1,1, 0,0,1,1, 0,-1,0, 0,1,0, 1,-1,0, 1,1,0, 1,1,1,1});
+  auto npc=f.node(PHX_MC_CAD_NODE_BSPLINE_CURVE, {3,4,2},
+      {0,0,0,0,1,1,1,1, 0,0.5, 1.0/3,1, 2.0/3,0, 1,0.5, 1,1,1,1});
+  f.face(s); f.face(nurbs); f.curve(curve,0,1);
+  f.use(0,0,pc,0,1); f.use(1,0,npc,0,1);
+  Run r(f,{10,10},{0.004,0.004},{0.004});
   PHX_CHECK(r.segments()>2);
   sag(r, [](double t) -> Vec { return {t,3*t*(1-t)*(1-2*t),0}; }, 0.002);
+  check_uses(f,r);
 }
 
 // Interior knot is a mandatory break even when curvature and size are uniform.
@@ -419,7 +428,7 @@ void gradation() {
   for (std::size_t i=2;i<p.size();++i) {
     const double a=dist(point(p[i-2]),point(p[i-1]));
     const double b=dist(point(p[i-1]),point(p[i]));
-    PHX_CHECK(std::max(a,b) <= 1.4*std::min(a,b)+1e-10);
+    PHX_CHECK(std::abs(a-b) <= 0.15*(a+b)+1e-8);
   }
 }
 
@@ -486,6 +495,37 @@ void intersection_integral() {
   PHX_CHECK(std::abs(r.segments()-static_cast<int>(std::ceil(length/0.12)))<=1);
 }
 
+// The full closed branch of the quadric fixture, checked against independent
+// quadrature, catches rounding each chart's integral up separately.
+void quadric_closed_integral() {
+  Fixture f;
+  auto a=f.templ("cylinder",{0,0,0,1,0,0,0,1,0,0,0,1,1});
+  auto b=f.templ("cylinder",{0,0,0,0,1,0,0,0,1,1,0,0,0.6});
+  auto coord=[](double t) {
+    const double y=0.6*std::cos(t);
+    return std::array<double,4>{std::asin(y),0.6*std::sin(t),t,std::sqrt(1-y*y)};
+  };
+  std::vector<double> data{0,0};
+  for (int i=0;i<4;++i) {
+    const double lo=i*pi/2, hi=(i+1)*pi/2;
+    auto start=coord(lo), end=coord(hi), mid=coord((lo+hi)/2);
+    const double c=std::cos(mid[0]), s=std::sin(mid[0]);
+    data.insert(data.end(),start.begin(),start.end());
+    data.insert(data.end(),end.begin(),end.end());
+    data.insert(data.end(),{-1,-1,lo,0.5,1,1,hi,1, 0,1/c,0,0,0,1,-1,-s/c,0});
+  }
+  auto curve=f.node(PHX_MC_CAD_NODE_INTERSECTION,{a,b,4,0,-1,-1,0,2,2,2,2},data);
+  auto pc=f.node(PHX_MC_CAD_NODE_INTERSECTION,{a,b,4,1,-1,-1,0,2,2,2,2},data);
+  f.face(a); f.curve(curve,0,4,true); f.use(0,0,pc,0,4);
+  Run r(f,{0.229},{100},{100});
+  const double length=integrate([](double t) {
+    const double s=std::sin(t), c=std::cos(t);
+    const double dx=-0.36*s*c/std::sqrt(1-0.36*s*s);
+    return std::sqrt(dx*dx+0.36);
+  },0,2*pi);
+  PHX_CHECK(std::abs(r.segments()-static_cast<int>(std::ceil(length/0.229)))<=1);
+}
+
 // A chart sheet change is an exact graph breakpoint; omitting it mixes gauges.
 void intersection_chart_shift() {
   Fixture f;
@@ -523,7 +563,7 @@ void intersection_chart_shift() {
 int main() {
   line_integral(); circle_integral(); ellipse_integral(); shared_nurbs_and_seam(); cylindrical_seam();
   cubic_inflection(); knot_breakpoint(); graph_breakpoints(); degree_fifteen_alias(); intersection_integral();
-  surface_knot_crossing(); degree_thirty_one_composite(); intersection_chart_shift();
+  surface_knot_crossing(); degree_thirty_one_composite(); intersection_chart_shift(); quadric_closed_integral();
   anisotropic_small_features(); same_curve_small_feature(); gradation(); c_entry();
   return phx::mc::test::finish("test_cad_curves");
 }

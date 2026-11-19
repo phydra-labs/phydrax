@@ -43,6 +43,7 @@ struct Context {
   bool value(double s, double* xyz) {
     const double t = parameter(s);
     ++stats.sag_evaluations;
+    ++stats.value_evaluations;
     return geometry.jets(geometry.curve_node(curve), &t, 0, xyz, workspace);
   }
   Sample sample(double s) {
@@ -167,7 +168,9 @@ bool discretize(Context& c, std::vector<double>& points) {
     }
     borders.push_back(table.size()-1);
   }
-  const double slope = c.controls.grading-1;
+  // Equal-integral steps in a linearly graded field can differ by exp(slope);
+  // use log(g), which is also no larger than the requested Lipschitz g-1.
+  const double slope = std::log(c.controls.grading);
   for (std::size_t i=1; i<table.size(); ++i) {
     const double ds = (table[i].s-table[i-1].s)*(table[i].speed+table[i-1].speed)*0.5;
     table[i].h = std::min(table[i].h,table[i-1].h+slope*ds);
@@ -176,10 +179,17 @@ bool discretize(Context& c, std::vector<double>& points) {
     const double ds = (table[i].s-table[i-1].s)*(table[i].speed+table[i-1].speed)*0.5;
     table[i-1].h = std::min(table[i-1].h,table[i].h+slope*ds);
   }
-  points.clear(); points.push_back(0);
+  struct Span {
+    std::vector<double> cumulative;
+    double quota = 0;
+    int count = 1;
+  };
+  std::vector<Span> spans(borders.size());
+  double total=0;
   for (std::size_t span=0; span<borders.size(); ++span) {
     const std::size_t start=begins[span], end=borders[span];
-    std::vector<double> cumulative(end-start+1,0);
+    auto& cumulative=spans[span].cumulative;
+    cumulative.resize(end-start+1,0);
     for (std::size_t i=start+2; i<=end; i+=2) {
       const double left=(density(table[i-2])+density(table[i-1]))*0.5;
       const double right=(density(table[i-1])+density(table[i]))*0.5;
@@ -187,14 +197,39 @@ bool discretize(Context& c, std::vector<double>& points) {
       cumulative[i-start-1]=cumulative[i-start-2]+area*left/(left+right);
       cumulative[i-start]=cumulative[i-start-2]+area;
     }
-    const double total=cumulative.back();
-    if (!std::isfinite(total) || total > kMaxPoints || !(total > 0)) return false;
-    int n=std::max(1,static_cast<int>(std::ceil(total)));
-    if (fixed.size()==2 && m.curve_corners[2*c.curve]==m.curve_corners[2*c.curve+1]) n=std::max(n,3);
-    if (points.size()+n>kMaxPoints) return false;
+    if (!(cumulative.back()>0) || !std::isfinite(cumulative.back())) return false;
+    total+=cumulative.back();
+  }
+  if (!std::isfinite(total) || total>kMaxPoints) return false;
+  int count=std::max(static_cast<int>(spans.size()),static_cast<int>(std::ceil(total)));
+  if (m.curve_corners[2*c.curve]==m.curve_corners[2*c.curve+1]) count=std::max(count,3);
+  int assigned=0;
+  for (auto& span:spans) {
+    span.quota=count*span.cumulative.back()/total;
+    span.count=std::max(1,static_cast<int>(std::floor(span.quota)));
+    assigned+=span.count;
+  }
+  while (assigned<count) {
+    auto best=std::max_element(spans.begin(),spans.end(),[](const Span& a,const Span& b) {
+      return a.quota-a.count < b.quota-b.count;
+    });
+    ++best->count; ++assigned;
+  }
+  while (assigned>count) {
+    auto best=spans.end();
+    for (auto it=spans.begin();it!=spans.end();++it)
+      if (it->count>1 && (best==spans.end() ||
+          it->count-it->quota > best->count-best->quota)) best=it;
+    if (best==spans.end()) return false;
+    --best->count; --assigned;
+  }
+  points.clear(); points.reserve(static_cast<std::size_t>(count)+1); points.push_back(0);
+  for (std::size_t span=0; span<spans.size(); ++span) {
+    const std::size_t start=begins[span], end=borders[span];
+    const int n=spans[span].count;
     std::vector<double> parameters(end-start+1), placed(n+1);
     for (std::size_t i=start; i<=end; ++i) parameters[i-start]=table[i].s;
-    if (inverse_curve_table(parameters.data(),cumulative.data(),
+    if (inverse_curve_table(parameters.data(),spans[span].cumulative.data(),
                             static_cast<int64_t>(parameters.size()),n,placed.data()) != PHX_MC_OK)
       return false;
     points.insert(points.end(),placed.begin()+1,placed.end());
@@ -222,15 +257,21 @@ bool feature_sizes(const CadGeometry& g, const CurveControls& controls,
   EvaluationWorkspace workspace;
   std::vector<ChartSegment> segments;
   std::vector<std::vector<double>> arc(static_cast<std::size_t>(m.use_count));
+  std::vector<std::vector<double>> charts(static_cast<std::size_t>(m.use_count));
   for (int32_t e=0; e<m.curve_count; ++e) for (const Use& use : uses[e]) {
     double a[2], b[2], previous[3], next[3];
     if (!chart_point(g,workspace,use.row,points[e][0],a) ||
         !g.jets(g.surface_node(use.face),a,0,previous,workspace)) return false;
     auto& distance=arc[use.row];
     distance.reserve(points[e].size()); distance.push_back(0);
+    auto& chart=charts[use.row];
+    chart.reserve(2*points[e].size());
+    chart.insert(chart.end(),{a[0],a[1]});
+    stats.value_evaluations+=2*static_cast<int64_t>(points[e].size());
     for (std::size_t i=1; i<points[e].size(); ++i) {
       if (!chart_point(g,workspace,use.row,points[e][i],b) ||
           !g.jets(g.surface_node(use.face),b,0,next,workspace)) return false;
+      chart.insert(chart.end(),{b[0],b[1]});
       distance.push_back(distance.back()+std::hypot(next[0]-previous[0],next[1]-previous[1],next[2]-previous[2]));
       for (int k=0;k<3;++k) previous[k]=next[k];
       segments.push_back({e,use.face,use.row,m.curve_corners[2*e],m.curve_corners[2*e+1],i-1,
@@ -281,8 +322,8 @@ bool feature_sizes(const CadGeometry& g, const CurveControls& controls,
   for (int32_t e=0; e<m.curve_count; ++e) for (const Use& use : uses[e]) {
     const Grid& grid=grids[use.face];
     for (std::size_t i=0; i<points[e].size(); ++i) {
-      double uv[2], jet[9];
-      if (!chart_point(g,workspace,use.row,points[e][i],uv)) return false;
+      const double* uv=charts[use.row].data()+2*i;
+      double jet[9];
       ++stats.first_order_evaluations;
       if (!g.jets(g.surface_node(use.face),uv,1,jet,workspace)) return false;
       const double* a=jet+3; const double* b=jet+6;
@@ -313,6 +354,24 @@ bool feature_sizes(const CadGeometry& g, const CurveControls& controls,
           if (m.curve_corners[2*e]==m.curve_corners[2*e+1] &&
               ((i<=1 && segment.index+2>=points[e].size()-1) ||
                (i+2>=points[e].size() && segment.index<=1))) continue;
+        }
+        // Incident edges are locally adjacent through their shared corner,
+        // not a small feature merely because the first samples meet there.
+        if (segment.curve != e) {
+          const auto& current_arc = arc[use.row];
+          const auto& other_arc = arc[segment.use];
+          bool adjacent = false;
+          for (int endpoint=0; endpoint<2; ++endpoint) {
+            const int32_t corner_id=m.curve_corners[2*e+endpoint];
+            for (int other=0; other<2; ++other) {
+              if (corner_id != m.curve_corners[2*segment.curve+other]) continue;
+              const double a=endpoint ? current_arc.back()-current_arc[i] : current_arc[i];
+              const double b=other ? other_arc.back()-other_arc[segment.index+1]
+                                   : other_arc[segment.index];
+              if (a+b <= 2*controls.face_sizes[use.face]) adjacent=true;
+            }
+          }
+          if (adjacent) continue;
         }
         const int corner = i==0 ? m.curve_corners[2*e] :
                            (i+1==points[e].size() ? m.curve_corners[2*e+1] : -1);

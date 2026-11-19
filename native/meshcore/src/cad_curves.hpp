@@ -31,6 +31,7 @@ struct CurveFailure {
 };
 
 struct CurveStatistics {
+  int64_t value_evaluations = 0;
   int64_t first_order_evaluations = 0;
   int64_t second_order_evaluations = 0;
   int64_t simpson_subdivisions = 0;
