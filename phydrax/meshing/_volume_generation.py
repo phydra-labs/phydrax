@@ -6,15 +6,17 @@
 
 from __future__ import annotations
 
+import hashlib
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from fractions import Fraction
-from itertools import product
+from itertools import chain, product
 from typing import final, Literal
 
 import equinox as eqx
 import numpy as np
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import canonical_fingerprint, canonical_json
 from .._meshcore import (
     exact_orient3d,
     MeshcoreError,
@@ -44,6 +46,12 @@ from ..discretization._cell_geometry_validity import CellValidityPolicy
 from ..discretization._nested_reference import (
     exact_reference_chart_controls,
     ExactReferenceChartControl,
+)
+from ..discretization._topology import (
+    _has_duplicate_rows,
+    _row_run_starts,
+    row_positions,
+    sorted_unique_rows,
 )
 from ..geometry._affine_plc_domain import AffinePlcDomain
 from ..geometry._compartments import CompartmentMeshingSource
@@ -308,6 +316,22 @@ class _SourceTables:
     source: TetMeshSourceComplex
 
 
+def _identity_ranks(
+    identifiers: tuple[str, ...], occurrence_paths: tuple[tuple[str, ...], ...], /
+) -> np.ndarray:
+    """Dense ranks of the ``(identifier, occurrence path)`` rows in tuple order."""
+    identities = tuple(zip(identifiers, occurrence_paths, strict=True))
+    ranks = np.empty((len(identities),), dtype=np.int64)
+    rank = -1
+    previous: tuple[str, tuple[str, ...]] | None = None
+    for row in sorted(range(len(identities)), key=identities.__getitem__):
+        if identities[row] != previous:
+            rank += 1
+            previous = identities[row]
+        ranks[row] = rank
+    return ranks
+
+
 def _source_face_ids(
     faces: np.ndarray,
     face_facets: np.ndarray,
@@ -317,27 +341,48 @@ def _source_face_ids(
     facet_occurrence_paths: tuple[tuple[str, ...], ...],
     /,
 ) -> tuple[str, ...]:
-    identifiers: list[str] = []
-    for face, facet in zip(faces.tolist(), face_facets.tolist(), strict=True):
-        vertices = tuple(
-            (vertex_ids[int(vertex)], vertex_occurrence_paths[int(vertex)])
-            for vertex in face
-        )
-        rotations = tuple(vertices[offset:] + vertices[:offset] for offset in range(3))
-        identifiers.append(
-            canonical_fingerprint(
-                {
-                    "kind": "plc-source-triangle",
-                    "facet": (facet_ids[facet], facet_occurrence_paths[facet]),
-                    "oriented_vertices": min(rotations),
-                }
+    # Each identity hashes the canonical JSON of {"facet": (id, path), "kind":
+    # "plc-source-triangle", "oriented_vertices": the least rotation of the
+    # (id, path) corners}; corners compare through their dense identity ranks.
+    ranks = _identity_ranks(vertex_ids, vertex_occurrence_paths)
+    corners = np.asarray(faces, dtype=np.int64)
+    rotations = tuple(
+        corners[:, (offset, (offset + 1) % 3, (offset + 2) % 3)] for offset in range(3)
+    )
+    least = rotations[0]
+    for rotation in rotations[1:]:
+        first, second = ranks[least], ranks[rotation]
+        smaller = (second[:, 0] < first[:, 0]) | (
+            (second[:, 0] == first[:, 0])
+            & (
+                (second[:, 1] < first[:, 1])
+                | ((second[:, 1] == first[:, 1]) & (second[:, 2] < first[:, 2]))
             )
         )
+        least = np.where(smaller[:, None], rotation, least)
+    vertex_text = tuple(
+        map(canonical_json, zip(vertex_ids, vertex_occurrence_paths, strict=True))
+    )
+    facet_text = tuple(
+        map(canonical_json, zip(facet_ids, facet_occurrence_paths, strict=True))
+    )
+    identifiers = tuple(
+        hashlib.sha256(
+            (
+                f'{{"facet":{facet_text[facet]},"kind":"plc-source-triangle",'
+                f'"oriented_vertices":[{vertex_text[first]},{vertex_text[second]},'
+                f"{vertex_text[third]}]}}"
+            ).encode("ascii")
+        ).hexdigest()
+        for facet, first, second, third in zip(
+            face_facets.tolist(), *least.T.tolist(), strict=True
+        )
+    )
     if len(set(identifiers)) != len(identifiers):
         raise ValueError(
             "PLC source triangulation contains ambiguous duplicate triangles."
         )
-    return tuple(identifiers)
+    return identifiers
 
 
 def _source_rows(
@@ -351,6 +396,11 @@ def _source_rows(
     if any(int(identifier) not in rows for identifier in values):
         raise ValueError(f"{name} scope contains an undeclared stable PLC entity ID.")
     return np.asarray([rows[int(identifier)] for identifier in values], dtype=np.int64)
+
+
+def object_rows(values: Sequence[object], /) -> np.ndarray:
+    """One-dimensional object array holding ``values`` (tuples stay elements)."""
+    return np.fromiter(values, dtype=object, count=len(values))
 
 
 def _authored_coplanar_edge_rows(complex_: PiecewiseLinearComplex, /) -> np.ndarray:
@@ -438,13 +488,7 @@ def _source_tables(
     canonical_source_edges = np.asarray(
         complex_.plc_edge_vertices, dtype=np.int64
     ).reshape((-1, 2))
-    vertex_identity_rows = tuple(
-        (identifier, tuple(path))
-        for identifier, path in zip(
-            complex_.vertex_ids, complex_.vertex_occurrence_paths, strict=True
-        )
-    )
-    source_edge_row_by_endpoints: dict[tuple[tuple[str, tuple[str, ...]], ...], int] = {}
+    vertex_ranks = _identity_ranks(complex_.vertex_ids, complex_.vertex_occurrence_paths)
     source_edge_identity_rows = tuple(
         (
             identifier,
@@ -458,13 +502,12 @@ def _source_tables(
     )
     if len(set(source_edge_identity_rows)) != len(source_edge_identity_rows):
         raise ValueError("Canonical PLC source-edge ID/occurrence rows are ambiguous.")
-    for complex_row, edge in enumerate(canonical_source_edges.tolist()):
-        key = tuple(sorted(vertex_identity_rows[int(vertex)] for vertex in edge))
-        if key in source_edge_row_by_endpoints:
-            raise ValueError(
-                "Coincident PLC source edges lack a unique recovery identity mapping."
-            )
-        source_edge_row_by_endpoints[key] = complex_row
+    # Edges resolve by their unordered pair of endpoint identities.
+    source_edge_keys = np.sort(vertex_ranks[canonical_source_edges], axis=1)
+    if _has_duplicate_rows(source_edge_keys):
+        raise ValueError(
+            "Coincident PLC source edges lack a unique recovery identity mapping."
+        )
 
     facet_bounds = np.full((complex_.facet_count,), np.inf, dtype=np.float64)
     segment_bounds = np.full((canonical_source_edges.shape[0],), np.inf, dtype=np.float64)
@@ -516,15 +559,10 @@ def _source_tables(
     # Native kSegment rows are a subset of the canonical carrier bank. Resolve
     # them by stable endpoint identity; never equate row order or bank lengths.
     plc_edges = np.asarray(recovery.plc_edges, dtype=np.int64).reshape((-1, 2))
-    carrier_edge_complex_rows = np.asarray(
-        [
-            source_edge_row_by_endpoints.get(
-                tuple(sorted(vertex_identity_rows[int(vertex)] for vertex in edge)),
-                -1,
-            )
-            for edge in plc_edges.tolist()
-        ],
-        dtype=np.int64,
+    carrier_edge_complex_rows = (
+        row_positions(source_edge_keys, np.sort(vertex_ranks[plc_edges], axis=1))
+        if plc_edges.size and source_edge_keys.size
+        else np.full((plc_edges.shape[0],), -1, dtype=np.int64)
     )
     if np.any(carrier_edge_complex_rows < 0):
         raise ValueError(
@@ -572,17 +610,9 @@ def _source_tables(
         )
 
     active_source_complex_rows = np.unique(carrier_edge_complex_rows)
-    active_source_row_by_complex = {
-        int(complex_row): row
-        for row, complex_row in enumerate(active_source_complex_rows.tolist())
-    }
-    carrier_edge_source_rows = np.asarray(
-        [
-            active_source_row_by_complex[int(complex_row)]
-            for complex_row in carrier_edge_complex_rows.tolist()
-        ],
-        dtype=np.int64,
-    )
+    carrier_edge_source_rows = np.searchsorted(
+        active_source_complex_rows, carrier_edge_complex_rows
+    ).astype(np.int64)
     source_segment_vertices = canonical_source_edges[active_source_complex_rows]
     source_segment_labels = np.asarray(complex_.plc_edge_entity_ids, dtype=np.int64)[
         active_source_complex_rows
@@ -599,37 +629,61 @@ def _source_tables(
         path for _, path in active_source_identity_rows
     )
 
-    face_rows_by_edge: dict[tuple[int, int], set[int]] = {}
-    for face_row, face in enumerate(faces.tolist()):
-        for offset, first in enumerate(face):
-            second = int(face[(offset + 1) % 3])
-            key = (min(int(first), second), max(int(first), second))
-            face_rows_by_edge.setdefault(key, set()).add(face_row)
-
-    edge_facet_rows: list[int] = []
-    edge_offsets = np.empty((plc_edges.shape[0] + 1,), dtype=np.int64)
-    edge_offsets[0] = 0
-    carrier_edge_ids: list[str] = []
-    carrier_edge_paths: list[tuple[str, ...]] = []
-    for row, edge in enumerate(plc_edges.tolist()):
-        key = tuple(sorted(edge))
-        source_row = int(carrier_edge_source_rows[row])
-        parent_face_rows = tuple(sorted(face_rows_by_edge.get(key, ())))
-        parent_facets = tuple(
-            sorted({int(face_facets[face_row]) for face_row in parent_face_rows})
+    # Each carrier edge's distinct parent facets (from the recovered source
+    # triangles containing it) must equal its declared facets, in sorted order.
+    face_edges = np.sort(faces[:, ((0, 1), (1, 2), (2, 0))], axis=2).reshape((-1, 2))
+    incidences = sorted_unique_rows(
+        np.concatenate((face_edges, np.repeat(face_facets, 3)[:, None]), axis=1)
+    )
+    incidence_starts = np.flatnonzero(
+        _row_run_starts(incidences[:, :2]) if incidences.shape[0] else ()
+    )
+    incidence_ends = np.append(incidence_starts[1:], incidences.shape[0])
+    carrier_groups = (
+        row_positions(incidences[incidence_starts, :2], np.sort(plc_edges, axis=1))
+        if plc_edges.size and incidence_starts.size
+        else np.full((plc_edges.shape[0],), -1, dtype=np.int64)
+    )
+    parent_starts = np.where(
+        carrier_groups >= 0, incidence_starts[np.maximum(carrier_groups, 0)], 0
+    )
+    parent_counts = np.where(
+        carrier_groups >= 0,
+        incidence_ends[np.maximum(carrier_groups, 0)] - parent_starts,
+        0,
+    )
+    edge_offsets = np.concatenate(
+        (np.zeros((1,), dtype=np.int64), np.cumsum(parent_counts, dtype=np.int64))
+    )
+    parent_rows = np.repeat(parent_starts - edge_offsets[:-1], parent_counts) + np.arange(
+        edge_offsets[-1], dtype=np.int64
+    )
+    edge_facet_rows = incidences[parent_rows, 2]
+    carrier_complex_rows = active_source_complex_rows[carrier_edge_source_rows]
+    declared_facets = tuple(
+        sorted(complex_.plc_edge_facets[complex_row])
+        for complex_row in carrier_complex_rows.tolist()
+    )
+    if not np.array_equal(
+        np.fromiter(
+            map(len, declared_facets), dtype=np.int64, count=len(declared_facets)
+        ),
+        parent_counts,
+    ) or not np.array_equal(
+        np.fromiter(
+            chain.from_iterable(declared_facets),
+            dtype=np.int64,
+            count=int(edge_offsets[-1]),
+        ),
+        edge_facet_rows,
+    ):
+        raise ValueError(
+            "Recovered source edges must preserve their exact original facet incidence."
         )
-        complex_row = int(active_source_complex_rows[source_row])
-        declared_facets = tuple(
-            sorted(int(facet) for facet in complex_.plc_edge_facets[complex_row])
-        )
-        if parent_facets != declared_facets:
-            raise ValueError(
-                "Recovered source edges must preserve their exact original facet incidence."
-            )
-        carrier_edge_ids.append(source_segment_entity_ids[source_row])
-        carrier_edge_paths.append(source_segment_occurrence_paths[source_row])
-        edge_facet_rows.extend(parent_facets)
-        edge_offsets[row + 1] = len(edge_facet_rows)
+    carrier_edge_ids = object_rows(source_segment_entity_ids)[carrier_edge_source_rows]
+    carrier_edge_paths = object_rows(source_segment_occurrence_paths)[
+        carrier_edge_source_rows
+    ]
 
     source_segment_tolerances = segment_bounds[active_source_complex_rows].copy()
     for local_row, complex_row in enumerate(active_source_complex_rows.tolist()):
@@ -647,7 +701,7 @@ def _source_tables(
     face_group_rows = np.asarray(face_facets, dtype=np.int32)
     segment_ids = np.arange(source_segment_labels.size, dtype=np.int64)
     segment_group_rows = np.arange(source_segment_labels.size, dtype=np.int32)
-    plc_edge_facets = np.asarray(edge_facet_rows, dtype=np.int64)
+    plc_edge_facets = edge_facet_rows
     witness_strata = np.asarray(recovery.witness_strata, dtype=np.int8)
     witness_entities = np.asarray(recovery.witness_entities, dtype=np.int32).copy()
     witness_parameters = np.asarray(recovery.witness_parameters, dtype=np.float64).copy()
@@ -752,8 +806,8 @@ def _source_tables(
         facet_occurrence_paths=complex_.facet_occurrence_paths,
         segment_entity_ids=source_segment_entity_ids,
         segment_occurrence_paths=source_segment_occurrence_paths,
-        plc_edge_ids=tuple(carrier_edge_ids),
-        plc_edge_occurrence_paths=tuple(carrier_edge_paths),
+        plc_edge_ids=tuple(carrier_edge_ids.tolist()),
+        plc_edge_occurrence_paths=tuple(carrier_edge_paths.tolist()),
         source_face_ids=source_face_ids,
         source_face_occurrence_paths=face_occurrence_paths,
         source=source,
@@ -864,26 +918,6 @@ def declared_plc_domain(
     )
 
 
-def _vertex_facets(
-    recovery: PlcRecovery3D, tables: _SourceTables, /
-) -> tuple[tuple[int, ...], ...]:
-    incident: list[set[int]] = [set() for _ in range(recovery.points.shape[0])]
-    for triangle, facet in zip(
-        tables.faces.tolist(), tables.face_facets.tolist(), strict=True
-    ):
-        for vertex in triangle:
-            incident[vertex].add(facet)
-    for point in range(tables.points.shape[0], recovery.points.shape[0]):
-        stratum = int(recovery.witness_strata[point])
-        entity = int(recovery.witness_entities[point])
-        if stratum == 1 and 0 <= entity < tables.plc_edges.shape[0]:
-            start, stop = tables.edge_facet_offsets[entity : entity + 2]
-            incident[point].update(tables.edge_facets[start:stop].tolist())
-        elif stratum == 2 and 0 <= entity < tables.face_facets.size:
-            incident[point].add(int(tables.face_facets[entity]))
-    return tuple(tuple(sorted(values)) for values in incident)
-
-
 def _size_field(
     complex_: PiecewiseLinearComplex,
     specification: VolumeMeshingSpec,
@@ -904,46 +938,43 @@ def _size_field(
         raise ValueError("Native PLC size fields require uniform facet-scoped controls.")
     if not controls:
         return None
-    controlled_facets = {
-        row
-        for control in controls
-        for row in _source_rows(
-            np.asarray(control.scope.entity_ids, dtype=np.int64),
-            complex_.facet_entity_ids,
-            "facet",
-        )
-    }
-    sample_keys = tuple(
-        sorted(
-            {
-                (int(vertex), int(facet))
-                for triangle, facet in zip(
-                    tables.faces.tolist(), tables.face_facets.tolist(), strict=True
-                )
-                if facet in controlled_facets
-                for vertex in triangle
-            }
-        )
+    controlled_facets = np.concatenate(
+        [
+            _source_rows(
+                np.asarray(control.scope.entity_ids, dtype=np.int64),
+                complex_.facet_entity_ids,
+                "facet",
+            )
+            for control in controls
+        ]
     )
-    if not sample_keys:
+    controlled = np.isin(tables.face_facets, controlled_facets)
+    if not np.any(controlled):
         raise ValueError("Volume size controls must cover at least one PLC facet.")
-    sample_rows = {key: row for row, key in enumerate(sample_keys)}
-    sample_vertices = np.asarray([key[0] for key in sample_keys], dtype=np.int64)
-    sample_facets = np.asarray(
-        [complex_.facet_entity_ids[key[1]] for key in sample_keys],
-        dtype=np.int64,
+    # One sample per (source vertex, controlled facet), in lexicographic order.
+    corners = np.stack(
+        (
+            tables.faces[controlled].reshape(-1),
+            np.repeat(tables.face_facets[controlled], 3),
+        ),
+        axis=1,
     )
-    adjacency: set[tuple[int, int]] = set()
-    for triangle, facet in zip(
-        tables.faces.tolist(), tables.face_facets.tolist(), strict=True
-    ):
-        if facet not in controlled_facets:
-            continue
-        for offset in range(3):
-            left = sample_rows[(triangle[offset], facet)]
-            right = sample_rows[(triangle[(offset + 1) % 3], facet)]
-            adjacency.add((min(left, right), max(left, right)))
-    edges = np.asarray(sorted(adjacency), dtype=np.int64).reshape((-1, 2))
+    sample_keys = sorted_unique_rows(corners)
+    sample_vertices = sample_keys[:, 0]
+    sample_facets = np.asarray(complex_.facet_entity_ids, dtype=np.int64)[
+        sample_keys[:, 1]
+    ]
+    corner_rows = row_positions(sample_keys, corners).reshape((-1, 3))
+    following_rows = corner_rows[:, (1, 2, 0)]
+    edges = sorted_unique_rows(
+        np.stack(
+            (
+                np.minimum(corner_rows, following_rows).reshape(-1),
+                np.maximum(corner_rows, following_rows).reshape(-1),
+            ),
+            axis=1,
+        )
+    )
     field, report = resolve_size_controls(
         controls,
         tables.points[sample_vertices]
@@ -957,18 +988,18 @@ def _size_field(
     values_by_sample = np.asarray(field.values, dtype=np.float64)
     winner_by_sample = report.winning_control_ids
     control_by_id = {control.control_id: control for control in controls}
-    vertex_facets = _vertex_facets(recovery, tables)
+    sample_rows = {
+        (vertex, facet): row for row, (vertex, facet) in enumerate(sample_keys.tolist())
+    }
     source_supports: list[list[tuple[int, float, str]]] = [
         [] for _ in range(recovery.points.shape[0])
     ]
+    # A source vertex is supported by each controlled facet incident to it.
+    for (vertex, facet), value, winner in zip(
+        sample_keys.tolist(), values_by_sample.tolist(), winner_by_sample, strict=True
+    ):
+        source_supports[vertex].append((facet, value, winner))
     original_count = tables.points.shape[0]
-    for vertex in range(original_count):
-        for facet in vertex_facets[vertex]:
-            row = sample_rows.get((vertex, facet))
-            if row is not None:
-                source_supports[vertex].append(
-                    (facet, float(values_by_sample[row]), winner_by_sample[row])
-                )
     for vertex in range(original_count, recovery.points.shape[0]):
         stratum = int(recovery.witness_strata[vertex])
         entity = int(recovery.witness_entities[vertex])
@@ -1017,37 +1048,49 @@ def _size_field(
         case invalid:
             raise ValueError(f"Unknown PLC fill size convention {invalid!r}.")
     radii = np.zeros((recovery.points.shape[0],), dtype=np.float64)
+    control_facet_rows = tuple(
+        frozenset(
+            _source_rows(
+                np.asarray(control.scope.entity_ids, dtype=np.int64),
+                complex_.facet_entity_ids,
+                "facet",
+            ).tolist()
+        )
+        for control in controls
+    )
+    # Hard controls and their size interval depend only on the active facet set.
+    hard_bounds: dict[frozenset[int], tuple[bool, float, float]] = {}
     for vertex, supports in enumerate(source_supports):
         if not supports:
             continue
-        active_facets = {facet for facet, _, _ in supports}
-        active_controls = tuple(
-            control
-            for control in controls
-            if any(
-                complex_.facet_entity_ids[facet] in control.scope.entity_ids
-                for facet in active_facets
+        active_facets = frozenset(facet for facet, _, _ in supports)
+        bounds = hard_bounds.get(active_facets)
+        if bounds is None:
+            hard = tuple(
+                control
+                for control, facet_rows in zip(controls, control_facet_rows, strict=True)
+                if control.strength is SizeControlStrength.HARD
+                and not facet_rows.isdisjoint(active_facets)
             )
-        )
-        hard = tuple(
-            control
-            for control in active_controls
-            if control.strength is SizeControlStrength.HARD
-        )
-        lower = max(
-            (
-                0.0 if control.minimum_size is None else control.minimum_size
-                for control in hard
-            ),
-            default=0.0,
-        )
-        upper = min(
-            (
-                np.inf if control.maximum_size is None else control.maximum_size
-                for control in hard
-            ),
-            default=np.inf,
-        )
+            bounds = (
+                bool(hard),
+                max(
+                    (
+                        0.0 if control.minimum_size is None else control.minimum_size
+                        for control in hard
+                    ),
+                    default=0.0,
+                ),
+                min(
+                    (
+                        np.inf if control.maximum_size is None else control.maximum_size
+                        for control in hard
+                    ),
+                    default=np.inf,
+                ),
+            )
+            hard_bounds[active_facets] = bounds
+        has_hard, lower, upper = bounds
         if lower > upper:
             raise ValueError(
                 "Hard PLC size intervals conflict at a shared source vertex."
@@ -1055,7 +1098,8 @@ def _size_field(
         candidates = [
             (value, control_by_id[control_id])
             for _, value, control_id in supports
-            if not hard or control_by_id[control_id].strength is SizeControlStrength.HARD
+            if not has_hard
+            or control_by_id[control_id].strength is SizeControlStrength.HARD
         ]
         if not candidates:
             continue
@@ -1400,42 +1444,68 @@ def _make_construction(
     witness_deviations = np.asarray(evidence.witness_deviations, dtype=np.float64)[
         used
     ].copy()
-    vertex_regions: list[set[int]] = [set() for _ in range(points.shape[0])]
-    for cell, region in zip(tetrahedra.tolist(), cell_regions.tolist(), strict=True):
-        for vertex in cell:
-            vertex_regions[vertex].add(region)
-    vertex_source_ids: list[str] = []
-    vertex_source_occurrence_paths: list[tuple[str, ...]] = []
-    for vertex, (source_vertex, stratum, entity) in enumerate(
-        zip(
-            input_vertices.tolist(),
-            witness_strata.tolist(),
-            witness_entities.tolist(),
-            strict=True,
+    # Each vertex names its source vertex, else its segment, else its facet, else
+    # the one region of its incident cells.
+    region_low = np.full((points.shape[0],), np.iinfo(np.int64).max, dtype=np.int64)
+    region_high = np.full((points.shape[0],), -1, dtype=np.int64)
+    np.minimum.at(region_low, tetrahedra.reshape(-1), np.repeat(cell_regions, 4))
+    np.maximum.at(region_high, tetrahedra.reshape(-1), np.repeat(cell_regions, 4))
+    on_vertex = input_vertices >= 0
+    on_segment = (
+        ~on_vertex
+        & (witness_strata == 1)
+        & (witness_entities >= 0)
+        & (witness_entities < len(tables.segment_entity_ids))
+    )
+    on_facet = (
+        ~on_vertex
+        & ~on_segment
+        & ((witness_strata == 2) | (witness_strata == 3))
+        & (witness_entities >= 0)
+        & (witness_entities < tables.face_facets.size)
+    )
+    in_region = (
+        ~on_vertex
+        & ~on_segment
+        & ~on_facet
+        & (witness_strata == 0)
+        & (region_low == region_high)
+    )
+    if not np.all(on_vertex | on_segment | on_facet | in_region):
+        raise ValueError(
+            "Native vertex source witnesses must identify one PLC stratum or region."
         )
+    vertex_source_ids = np.empty((points.shape[0],), dtype=object)
+    vertex_source_occurrence_paths = np.empty((points.shape[0],), dtype=object)
+    for mask, selected, identifiers, paths in (
+        (
+            on_vertex,
+            input_vertices[on_vertex],
+            tables.vertex_ids,
+            tables.vertex_occurrence_paths,
+        ),
+        (
+            on_segment,
+            witness_entities[on_segment],
+            tables.segment_entity_ids,
+            tables.segment_occurrence_paths,
+        ),
+        (
+            on_facet,
+            tables.face_facets[witness_entities[on_facet]],
+            tables.facet_ids,
+            tables.facet_occurrence_paths,
+        ),
+        (
+            in_region,
+            region_low[in_region],
+            complex_.region_ids,
+            complex_.region_occurrence_paths,
+        ),
     ):
-        if source_vertex >= 0:
-            vertex_source_ids.append(tables.vertex_ids[source_vertex])
-            vertex_source_occurrence_paths.append(
-                tables.vertex_occurrence_paths[source_vertex]
-            )
-        elif stratum == 1 and 0 <= entity < len(tables.segment_entity_ids):
-            vertex_source_ids.append(tables.segment_entity_ids[entity])
-            vertex_source_occurrence_paths.append(tables.segment_occurrence_paths[entity])
-        elif stratum in (2, 3) and 0 <= entity < tables.face_facets.size:
-            facet = int(tables.face_facets[entity])
-            vertex_source_ids.append(tables.facet_ids[facet])
-            vertex_source_occurrence_paths.append(tables.facet_occurrence_paths[facet])
-        elif stratum == 0 and len(vertex_regions[vertex]) == 1:
-            region = next(iter(vertex_regions[vertex]))
-            vertex_source_ids.append(complex_.region_ids[region])
-            vertex_source_occurrence_paths.append(
-                complex_.region_occurrence_paths[region]
-            )
-        else:
-            raise ValueError(
-                "Native vertex source witnesses must identify one PLC stratum or region."
-            )
+        if selected.size:
+            vertex_source_ids[mask] = object_rows(identifiers)[selected]
+            vertex_source_occurrence_paths[mask] = object_rows(paths)[selected]
     face_source_facets = np.asarray(arrays.face_sources, dtype=np.int64).copy()
     if np.any(
         (face_source_facets < 0) | (face_source_facets >= tables.facet_labels.size)
@@ -1540,8 +1610,8 @@ def _make_construction(
         region_occurrence_paths=complex_.region_occurrence_paths,
         boundary_policy=complex_.boundary,
         input_vertices=input_vertices,
-        vertex_source_ids=tuple(vertex_source_ids),
-        vertex_source_occurrence_paths=tuple(vertex_source_occurrence_paths),
+        vertex_source_ids=tuple(vertex_source_ids.tolist()),
+        vertex_source_occurrence_paths=tuple(vertex_source_occurrence_paths.tolist()),
         vertex_dimension=vertex_dimension,
         witness_strata=witness_strata,
         witness_entities=witness_entities,

@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Iterable, Iterator, Mapping
+from itertools import chain
 from operator import itemgetter
 from typing import Any
 
@@ -22,6 +23,7 @@ _ENCODER = json.JSONEncoder(
     sort_keys=True,
 )
 _JSON_SCALAR_TYPES = frozenset((str, int, float, bool, type(None)))
+_SEQUENCE_TYPES = frozenset((tuple, list))
 _SEQUENCE_CHUNK = 4096
 _DIGEST_BUFFER_CHARACTERS = 1 << 16
 _ITEM_KEY = itemgetter(0)
@@ -142,9 +144,9 @@ def rational_chart_bank_fingerprint(
     digest = hashlib.sha256(b"rational-chart-bank\0")
     digest.update(len(bank).to_bytes(8, "big"))
     rows: dict[tuple[tuple[tuple[int, int], ...], ...], bytes] = {}
-    for row in bank:
-        row_hash = rows.get(row)
-        if row_hash is None:
+    for start in range(0, len(bank), _SEQUENCE_CHUNK):
+        chunk = bank[start : start + _SEQUENCE_CHUNK]
+        for row in set(chunk).difference(rows):
             encoded_row = bytearray(b"rational-chart-row\0")
             encoded_row.extend(len(row).to_bytes(8, "big"))
             for point in row:
@@ -158,9 +160,9 @@ def rational_chart_bank_fingerprint(
                         encoded_row.append(value < 0)
                         encoded_row.extend(len(encoded).to_bytes(8, "big"))
                         encoded_row.extend(encoded)
-            row_hash = hashlib.sha256(encoded_row).digest()
-            rows[row] = row_hash
-        digest.update(row_hash)
+            rows[row] = hashlib.sha256(encoded_row).digest()
+        # Row digests concatenate exactly as successive updates would.
+        digest.update(b"".join(map(rows.__getitem__, chunk)))
     return digest.hexdigest()
 
 
@@ -362,6 +364,17 @@ def _write_sequence(
         if len(value) <= _SEQUENCE_CHUNK:
             write(_ENCODER.encode(value))
             return
+        write("[")
+        for start in range(0, len(value), _SEQUENCE_CHUNK):
+            if start:
+                write(",")
+            write(_ENCODER.encode(value[start : start + _SEQUENCE_CHUNK])[1:-1])
+        write("]")
+        return
+    if _SEQUENCE_TYPES.issuperset(map(type, value)) and _JSON_SCALAR_TYPES.issuperset(
+        map(type, chain.from_iterable(value))
+    ):
+        # Rows of JSON scalars encode chunkwise exactly as the item walk writes them.
         write("[")
         for start in range(0, len(value), _SEQUENCE_CHUNK):
             if start:
