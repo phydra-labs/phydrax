@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- `TetMesh3D.from_recovery` adopts a PLC recovery's native mesh
+  (`PlcRecovery3D.native`, C API `phx_mc_tet_mesh_create_from_plc`): it takes
+  the recovery's cell adjacency and, for a mesh that is its own source bank,
+  skips the coverage proofs recovery already established; `validate=True`
+  repeats every check. The state equals the array-built mesh. Mesh creation
+  after recovery takes 0.089 s instead of 0.365 s on the 2.5 M-cell stuffed
+  torus benchmark surface.
 - `NativeMeshingPlan.execute(prove=False)` returns a `CellMeshingCandidate`
   (the constructed mesh, uncertified); `candidate.prove()` certifies exactly
   that mesh. `prove=True` (the default) certifies as before.
