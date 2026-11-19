@@ -268,6 +268,16 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native tetrahedral refinement's sliver-aware placement tries up to six
+  displaced points instead of three and keeps the best attempt's cavity
+  instead of rebuilding it; Bowyer-Watson growth prefetches the neighbors of
+  each accepted cell and decides clear insphere signs against a semi-static
+  bound (largest coordinate differences and lift). Meshes change (slightly
+  more refinement vertices, fewer slivers left to improvement); on the six
+  ledger rows 0 unmet, minimum dihedral 15 degrees, radius-edge at most 1.61,
+  boundary equal, and refine + improve 0.640 / 0.756 (torus / two cylinders
+  L2) and 0.699 / 0.811 M tets/s (L3), up from 0.586 / 0.672 and 0.627 /
+  0.750.
 - Native tetrahedral refinement's local feature sizes register features on a
   dense grid by counting sort: a feature at most one cell wide once (with its
   box and corners, at its box's lower corner), a wider one in every cell it

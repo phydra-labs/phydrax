@@ -1003,8 +1003,11 @@ bool measurably_positive(const double* a, const double* b, const double* c,
 
 // insphere (positive when e lies strictly inside the circumsphere of the
 // positively oriented a, b, c, d) through its first, floating stage inlined:
-// Shewchuk's stage A expression and error bound, as the predicate evaluates
-// them, decide the clear cases here.
+// Shewchuk's stage A expression decides the clear cases here, against his
+// bound with the permanent replaced by 25 L X Y Z (X, Y, Z the largest
+// coordinate differences per axis, L the largest lift). Every product in the
+// permanent is at most the matching product of maxima, so it is at most
+// 24 L X Y Z up to a relative 1e-15, and the bound stays valid.
 int inside_sphere(const double* a, const double* b, const double* c, const double* d,
                   const double* e) noexcept {
   const double aex = a[0] - e[0], bex = b[0] - e[0], cex = c[0] - e[0], dex = d[0] - e[0];
@@ -1031,27 +1034,11 @@ int inside_sphere(const double* a, const double* b, const double* c, const doubl
   const double clift = cex * cex + cey * cey + cez * cez;
   const double dlift = dex * dex + dey * dey + dez * dez;
   const double det = (dlift * abc - clift * dab) + (blift * cda - alift * bcd);
-  const double aezplus = std::fabs(aez), bezplus = std::fabs(bez);
-  const double cezplus = std::fabs(cez), dezplus = std::fabs(dez);
-  const double aexbeyplus = std::fabs(aexbey), bexaeyplus = std::fabs(bexaey);
-  const double bexceyplus = std::fabs(bexcey), cexbeyplus = std::fabs(cexbey);
-  const double cexdeyplus = std::fabs(cexdey), dexceyplus = std::fabs(dexcey);
-  const double dexaeyplus = std::fabs(dexaey), aexdeyplus = std::fabs(aexdey);
-  const double aexceyplus = std::fabs(aexcey), cexaeyplus = std::fabs(cexaey);
-  const double bexdeyplus = std::fabs(bexdey), dexbeyplus = std::fabs(dexbey);
-  const double permanent =
-      ((cexdeyplus + dexceyplus) * bezplus + (dexbeyplus + bexdeyplus) * cezplus +
-       (bexceyplus + cexbeyplus) * dezplus) *
-          alift +
-      ((dexaeyplus + aexdeyplus) * cezplus + (aexceyplus + cexaeyplus) * dezplus +
-       (cexdeyplus + dexceyplus) * aezplus) *
-          blift +
-      ((aexbeyplus + bexaeyplus) * dezplus + (bexdeyplus + dexbeyplus) * aezplus +
-       (dexaeyplus + aexdeyplus) * bezplus) *
-          clift +
-      ((bexceyplus + cexbeyplus) * aezplus + (cexaeyplus + aexceyplus) * bezplus +
-       (aexbeyplus + bexaeyplus) * cezplus) *
-          dlift;
+  const double x = std::max({std::fabs(aex), std::fabs(bex), std::fabs(cex), std::fabs(dex)});
+  const double y = std::max({std::fabs(aey), std::fabs(bey), std::fabs(cey), std::fabs(dey)});
+  const double z = std::max({std::fabs(aez), std::fabs(bez), std::fabs(cez), std::fabs(dez)});
+  const double lift = std::max({alift, blift, clift, dlift});
+  const double permanent = 25.0 * lift * (x * y * z);
   constexpr double kEpsilon = 0x1p-53;
   const double errbound = (16.0 + 224.0 * kEpsilon) * kEpsilon * permanent;
   // insphere is the negated Shewchuk determinant.
@@ -1160,6 +1147,10 @@ class InteriorCavity {
           candidate.stamp = member;
           cells.push_back(next);
           stack_.push_back(next);
+          // Its neighbors are read next (the stack is last in, first out).
+          for (std::int32_t beyond : candidate.n) {
+            if (beyond >= 0) __builtin_prefetch(&tets[static_cast<std::size_t>(beyond)]);
+          }
         } else {
           candidate.stamp = rejected;
         }
@@ -2861,20 +2852,26 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   // proposal cell's circumball conflicts with it, so it is admitted only when
   // its cavity is found, holds the proposal cell, meets no constrained face
   // that could be split (encroachment was decided for the circumcenter) and
-  // clears the spacing guard; the circumcenter's cavity is rebuilt when it
-  // wins. Natural radius and size stay the circumcenter's. Slivers left by
-  // refinement are improvement's work; most of them start here, as cone cells
-  // that meet the radius-edge and size criteria and so are never refined.
-  // Measured on the ledger shapes at their Gmsh HXT element counts: the
-  // slivers below 15 degrees that refinement leaves drop by about two thirds,
-  // for under 2% more vertices.
+  // clears the spacing guard; the best attempt's cavity is kept while later
+  // attempts build theirs. Natural radius and size stay the circumcenter's.
+  // Slivers left by refinement are improvement's work; most of them start
+  // here, as cone cells that meet the radius-edge and size criteria and so
+  // are never refined. Six attempts: each sliver left costs improvement far
+  // more than the attempts that avoid it (on the ledger L3 rows, three to six
+  // attempts add about 0.02 s of refinement and save about 0.05 s of
+  // improvement).
   constexpr double kSliverDegrees = 15.0;
   constexpr double kPickFraction = 0.3;
-  constexpr int kPickAttempts = 3;
+  constexpr int kPickAttempts = 6;
   const double sliver_sine = std::sin(kSliverDegrees * std::numbers::pi / 180.0);
   const double sliver_sine_squared = sliver_sine * sliver_sine;
   std::vector<std::uint8_t> cone_meets;
   std::vector<std::uint8_t> best_meets;
+  // The best attempt's cavity while later attempts build theirs (the mesh is
+  // not edited between them, so it stays current).
+  std::vector<std::int32_t> best_cells;
+  std::vector<BoundaryFacet> best_boundary;
+  std::vector<std::int32_t> best_vertices;
   const auto commit_center = [&](std::int32_t start, const double* center, double radius,
                                  double size, int& outcome) -> std::int32_t {
     if (mesh.metric_active() || !embedded_segments.empty()) {
@@ -2901,6 +2898,11 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       if (!std::all_of(candidate, candidate + 3,
                        [](double value) { return coordinate_in_domain(value); })) {
         break;
+      }
+      if (built_best) {
+        best_cells.swap(interior.cells);
+        best_boundary.swap(interior.boundary);
+        best_vertices.swap(interior.vertices);
       }
       built_best = false;
       if (interior.build(mesh, start, candidate, false, is_embedded) !=
@@ -2930,9 +2932,10 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       }
       if (!(quality < sliver_sine_squared)) break;
     }
-    if (!built_best && interior.build(mesh, start, best_point, false, is_embedded) !=
-                           InteriorCavity::Status::kFound) {
-      return PHX_MC_INTERNAL_ERROR;
+    if (!built_best) {
+      interior.cells.swap(best_cells);
+      interior.boundary.swap(best_boundary);
+      interior.vertices.swap(best_vertices);
     }
     return commit_interior(best_point, radius, size, best_meets, outcome);
   };
