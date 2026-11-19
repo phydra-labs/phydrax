@@ -120,6 +120,7 @@ class CadGeometry {
   // Evaluate the exact parameter on the chart selected by span_interior,
   // which must be strictly inside a representation span; a breakpoint returns
   // false rather than choosing either side. Curve composites are followed.
+  // Surface knot/piece crossings are not curve representation spans.
   bool jets_in_span(int32_t node, double parameter, double span_interior, int order,
                     double* result, EvaluationWorkspace& workspace) const;
 
@@ -143,7 +144,8 @@ class CadGeometry {
                        EvaluationWorkspace& workspace) const;
   bool expand_closed(const Node& node, const double* point, int order, Taylor* out) const;
   void bind_closed_form(Node& node) const;
-  bool expand_bspline_curve(const Node& node, double t, int order, Taylor* out) const;
+  bool expand_bspline_curve(const Node& node, double t, int order, int span_override,
+                            Taylor* out) const;
   bool expand_bspline_surface(const Node& node, const double* point, int order,
                               Taylor* out) const;
   bool expand_tspline_surface(const Node& node, const double* point, int order,
