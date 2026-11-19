@@ -41,6 +41,7 @@ set(PHX_MC_SOURCES
   src/tet_mesh_capi.cpp
   src/delaunay2d.cpp
   src/delaunay3d.cpp
+  src/verify_volume.cpp
   src/deterministic_float.cpp
   src/deterministic_float_capi.cpp
   src/metric_float.cpp
@@ -226,6 +227,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_cdt2d)
   phx_mc_add_test(test_delaunay2d)
   phx_mc_add_test(test_delaunay3d)
+  phx_mc_add_test(test_verify_volume)
   phx_mc_add_test(test_exact_kernels)
   phx_mc_add_test(test_exact_polynomial_kernels)
   phx_mc_add_test(test_exact_polynomial_integral)

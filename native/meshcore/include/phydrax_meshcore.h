@@ -2304,6 +2304,31 @@ PHX_MC_API int32_t phx_mc_planar_partition(
     const double* lower, const double* upper, int32_t* verdict,
     int64_t* first, int64_t* second);
 
+/* Certificate of a tetrahedral mesh (cells (m, 4), positively oriented by
+ * orient3d) of the solid bounded by a closed, outward oriented, embedded
+ * triangle surface (surface (f, 3)), checked exactly on the stored binary64
+ * coordinates: every cell positive; every face shared by at most two cells,
+ * with opposite induced orientations; the faces of exactly one cell, with
+ * their outward orientation, are exactly the surface triangles. certified = 1
+ * when every count of a failure is 0. Embedding of the surface is a premise,
+ * certified separately. Returns PHX_MC_INVALID_INPUT for an index out of range. */
+typedef struct phx_mc_volume_verdict {
+  int32_t certified;
+  int64_t nonpositive_cells;
+  int64_t first_nonpositive_cell;
+  int64_t nonmanifold_faces;
+  int64_t first_nonmanifold_cell;
+  int64_t boundary_faces;
+  int64_t unmatched_boundary_faces;
+  int64_t first_unmatched_cell;
+  int64_t unmatched_surface_triangles;
+  int64_t first_unmatched_surface_triangle;
+} phx_mc_volume_verdict;
+PHX_MC_API int32_t phx_mc_verify_volume(int64_t point_count, const double* points,
+                                        int64_t cell_count, const int32_t* cells,
+                                        int64_t surface_count, const int32_t* surface,
+                                        phx_mc_volume_verdict* verdict);
+
 #ifdef __cplusplus
 }
 #endif
