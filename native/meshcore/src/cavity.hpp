@@ -131,7 +131,8 @@ class TetrahedralComplex {
     labeled_ = true;
   }
   // The cell's own flags decide an unconstrained face (every face of an
-  // unlabeled complex), so only a constrained face reads the label bank.
+  // unlabeled complex), so only a constrained face reads the label bank,
+  // whose entries are meaningful only where a flag is set.
   int32_t constraint(int32_t t, int k) const {
     return (tets[static_cast<std::size_t>(t)].constrained >> k) & 1U
                ? constraints_[4 * static_cast<std::size_t>(t) + k]
@@ -139,22 +140,16 @@ class TetrahedralComplex {
   }
   int32_t region(int32_t t) const { return tets[static_cast<std::size_t>(t)].region; }
   void set_facet_constraint(int32_t t, int k, int32_t id) {
-    Tetrahedron& cell = tets[static_cast<std::size_t>(t)];
-    const int32_t other = cell.n[k];
-    Tetrahedron& twin = tets[static_cast<std::size_t>(other)];
-    const int back = neighbor_slot(twin, t);
-    constraints_[4 * static_cast<std::size_t>(t) + k] = id;
-    constraints_[4 * static_cast<std::size_t>(other) + back] = id;
-    flag(cell, k, id);
-    flag(twin, back, id);
+    const int32_t other = tets[static_cast<std::size_t>(t)].n[k];
+    const int back = neighbor_slot(tets[static_cast<std::size_t>(other)], t);
+    label(t, k, id);
+    label(other, back, id);
   }
   // Labels the faces of cell t on its side only. For a commit that labels
   // both sides of every face it creates, and keeps on each outer face the
   // label the cell beyond already holds.
   void set_cell_constraints(int32_t t, const std::array<int32_t, 4>& ids) {
-    std::copy(ids.begin(), ids.end(), constraints_.begin() + 4 * static_cast<std::ptrdiff_t>(t));
-    Tetrahedron& cell = tets[static_cast<std::size_t>(t)];
-    for (int k = 0; k < 4; ++k) flag(cell, k, ids[static_cast<std::size_t>(k)]);
+    for (int k = 0; k < 4; ++k) label(t, k, ids[static_cast<std::size_t>(k)]);
   }
   void set_region(int32_t t, int32_t value) {
     tets[static_cast<std::size_t>(t)].region = value;
@@ -212,8 +207,8 @@ class TetrahedralComplex {
         oriented_facet(neighbor.v, back, twin);
         if (!(FacetKey::of(facet) == FacetKey::of(twin).reversed()) ||
             constraint(static_cast<int32_t>(t), k) != constraint(other, back)) return false;
-        if (labeled_ && (((tet.constrained >> k) & 1U) != 0) !=
-                            (constraints_[4 * t + static_cast<std::size_t>(k)] != kNoConstraint)) {
+        if (((tet.constrained >> k) & 1U) != 0 &&
+            (!labeled_ || constraints_[4 * t + static_cast<std::size_t>(k)] == kNoConstraint)) {
           return false;
         }
       }
@@ -222,10 +217,15 @@ class TetrahedralComplex {
   }
 
  private:
-  static void flag(Tetrahedron& cell, int k, int32_t id) {
+  void label(int32_t t, int k, int32_t id) {
+    Tetrahedron& cell = tets[static_cast<std::size_t>(t)];
     const auto bit = static_cast<std::uint8_t>(1U << k);
-    cell.constrained = static_cast<std::uint8_t>(
-        id != kNoConstraint ? cell.constrained | bit : cell.constrained & ~bit);
+    if (id == kNoConstraint) {
+      cell.constrained = static_cast<std::uint8_t>(cell.constrained & ~bit);
+      return;
+    }
+    cell.constrained = static_cast<std::uint8_t>(cell.constrained | bit);
+    constraints_[4 * static_cast<std::size_t>(t) + k] = id;
   }
 
   bool labeled_ = false;

@@ -268,6 +268,12 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native tetrahedral refinement's interior cavity keeps its walk and cavity
+  marks in the cells' own visit stamps instead of two slot-sized banks,
+  decides each cone cell's exact and binary64 positivity from one floating
+  orientation stage (the exact predicate only within its error bound), and
+  the complex writes a constraint ID only for a constrained face. Same meshes
+  on the six ledger rows; L3 torus refinement about 2% faster.
 - Native tetrahedral cells (`Tetrahedron`, shared by Delaunay/PLC
   construction, recovery and the tetrahedral mesh) carry their region and a
   per-face constrained flag in one 48-byte record; the complex keeps only the

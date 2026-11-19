@@ -802,23 +802,14 @@ struct HilbertFrame {
   }
 };
 
-// The floating orientation determinant with the sign convention of
-// orient3d (the negated Shewchuk determinant: positive for a positively
-// oriented tetrahedron); no error bound (a positive value is necessary for a
-// measurable cell, not sufficient for orientation).
-double float_orientation(const double* a, const double* b, const double* c,
-                         const double* d) noexcept {
-  const double adx = a[0] - d[0], ady = a[1] - d[1], adz = a[2] - d[2];
-  const double bdx = b[0] - d[0], bdy = b[1] - d[1], bdz = b[2] - d[2];
-  const double cdx = c[0] - d[0], cdy = c[1] - d[1], cdz = c[2] - d[2];
-  return -(adx * (bdy * cdz - bdz * cdy) + bdx * (cdy * adz - cdz * ady) +
-           cdx * (ady * bdz - adz * bdy));
-}
-
-// orient3d through its first, floating stage inlined: the predicate's own
-// expression and error bound (Shewchuk's stage A) decide the clear cases
-// here, so only near-degenerate tests reach the exact predicate.
-int orientation(const double* a, const double* b, const double* c, const double* d) noexcept {
+// The floating stage of orient3d (Shewchuk's stage A expression and error
+// bound): `det` the negated orientation determinant, `errbound` its bound.
+struct OrientationStage {
+  double det;
+  double errbound;
+};
+OrientationStage orientation_stage(const double* a, const double* b, const double* c,
+                                   const double* d) noexcept {
   const double adx = a[0] - d[0], bdx = b[0] - d[0], cdx = c[0] - d[0];
   const double ady = a[1] - d[1], bdy = b[1] - d[1], cdy = c[1] - d[1];
   const double adz = a[2] - d[2], bdz = b[2] - d[2], cdz = c[2] - d[2];
@@ -830,11 +821,29 @@ int orientation(const double* a, const double* b, const double* c, const double*
                            (std::fabs(cdxady) + std::fabs(adxcdy)) * std::fabs(bdz) +
                            (std::fabs(adxbdy) + std::fabs(bdxady)) * std::fabs(cdz);
   constexpr double kEpsilon = 0x1p-53;
-  const double errbound = (7.0 + 56.0 * kEpsilon) * kEpsilon * permanent;
+  return {det, (7.0 + 56.0 * kEpsilon) * kEpsilon * permanent};
+}
+
+// orient3d through its first, floating stage inlined: the clear cases are
+// decided here, so only near-degenerate tests reach the exact predicate.
+int orientation(const double* a, const double* b, const double* c, const double* d) noexcept {
+  const OrientationStage stage = orientation_stage(a, b, c, d);
   // orient3d is the negated Shewchuk determinant.
-  if (det > errbound) return -1;
-  if (-det > errbound) return 1;
+  if (stage.det > stage.errbound) return -1;
+  if (-stage.det > stage.errbound) return 1;
   return orient3d(a, b, c, d);
+}
+
+// A cell exactly positively oriented whose binary64 orientation determinant
+// is positive as well (so it is measurable), from one floating evaluation:
+// beyond the error bound its sign is both; within it, the exact predicate
+// decides orientation and the floating value measurability.
+bool measurably_positive(const double* a, const double* b, const double* c,
+                         const double* d) noexcept {
+  const OrientationStage stage = orientation_stage(a, b, c, d);
+  if (-stage.det > stage.errbound) return true;
+  if (!(-stage.det > 0.0)) return false;
+  return orient3d(a, b, c, d) > 0;
 }
 
 // Advances a visit stamp over `marks`, clearing them when it wraps.
@@ -854,31 +863,32 @@ std::uint32_t next_stamp(std::vector<std::uint32_t>& marks, std::uint32_t& stamp
 // until every cone cell over its boundary is positive (exact orientation on
 // carriers, and positive in binary64 so it is measurable), every vertex of a
 // cavity cell lies on the boundary and no embedded segment is inside.
+// It owns the visit stamps of the mesh's cells (Tetrahedron::stamp) while
+// it lives, so a walk or cavity reads each cell's record and nothing else;
+// a cell written by an edit has stamp 0, which no visit uses.
 class InteriorCavity {
  public:
   enum class Status : std::uint8_t { kFound, kBlocked, kRefused };
 
+  explicit InteriorCavity(TetrahedralComplex& complex) : complex_(complex) {}
+
   template <class IsEmbedded>
   Status build(const TetMesh& mesh, std::int32_t start, const double* point,
                bool has_embedded, IsEmbedded&& is_embedded) {
-    const TetrahedralComplex& complex = mesh.complex();
+    std::vector<Tetrahedron>& tets = complex_.tets;
     cells.clear();
     boundary.clear();
     vertices.clear();
     root = -1;
     blocked_cell = -1;
     blocked_face = -1;
-    if (walked_.size() < complex.tets.size()) {
-      walked_.resize(complex.tets.size(), 0U);
-      in_.resize(complex.tets.size(), 0U);
-    }
-    const std::uint32_t walk = next_stamp(walked_, walk_stamp_);
+    const std::uint32_t walk = next_cell_stamp();
     walk_.clear();
     std::int32_t current = start;
     for (;;) {
-      if (walked_[static_cast<std::size_t>(current)] == walk) return Status::kRefused;
-      walked_[static_cast<std::size_t>(current)] = walk;
-      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(current)];
+      Tetrahedron& tet = tets[static_cast<std::size_t>(current)];
+      if (tet.stamp == walk) return Status::kRefused;
+      tet.stamp = walk;
       int exit = -1;
       for (int face = 0; face < 4 && exit < 0; ++face) {
         std::int32_t facet[3];
@@ -889,8 +899,8 @@ class InteriorCavity {
       }
       if (exit < 0) break;
       const std::int32_t next = tet.n[exit];
-      if (complex.constraint(current, exit) != kNoConstraint || !complex.live(next) ||
-          is_ghost(complex.tets[static_cast<std::size_t>(next)])) {
+      if (complex_.constraint(current, exit) != kNoConstraint || !complex_.live(next) ||
+          is_ghost(tets[static_cast<std::size_t>(next)])) {
         blocked_cell = current;
         blocked_face = exit;
         return Status::kBlocked;
@@ -899,33 +909,33 @@ class InteriorCavity {
       current = next;
     }
     root = current;
-    const std::int32_t region = complex.region(root);
-    std::uint32_t member = next_stamp(in_, in_stamp_);
+    const std::int32_t region = complex_.region(root);
+    std::uint32_t member = next_cell_stamp();
     cells.push_back(root);
-    in_[static_cast<std::size_t>(root)] = member;
+    tets[static_cast<std::size_t>(root)].stamp = member;
     stack_.assign(1, root);
     for (std::int32_t cell : walk_) {
-      if (complex.region(cell) != region || in_[static_cast<std::size_t>(cell)] == member) continue;
-      in_[static_cast<std::size_t>(cell)] = member;
+      Tetrahedron& tet = tets[static_cast<std::size_t>(cell)];
+      if (tet.region != region || tet.stamp == member) continue;
+      tet.stamp = member;
       cells.push_back(cell);
       stack_.push_back(cell);
     }
     while (!stack_.empty()) {
       const std::int32_t cell = stack_.back();
       stack_.pop_back();
-      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+      const Tetrahedron& tet = tets[static_cast<std::size_t>(cell)];
       for (int face = 0; face < 4; ++face) {
         const std::int32_t next = tet.n[face];
-        if (complex.constraint(cell, face) != kNoConstraint || !complex.live(next) ||
-            in_[static_cast<std::size_t>(next)] == member) {
+        if (((tet.constrained >> face) & 1U) != 0 || !complex_.live(next)) continue;
+        Tetrahedron& candidate = tets[static_cast<std::size_t>(next)];
+        if (candidate.stamp == member || is_ghost(candidate) || candidate.region != region) {
           continue;
         }
-        const Tetrahedron& candidate = complex.tets[static_cast<std::size_t>(next)];
-        if (is_ghost(candidate) || complex.region(next) != region) continue;
         if (mesh.metric_insphere(mesh.point(candidate.v[0]), mesh.point(candidate.v[1]),
                                  mesh.point(candidate.v[2]), mesh.point(candidate.v[3]),
                                  point) > 0) {
-          in_[static_cast<std::size_t>(next)] = member;
+          candidate.stamp = member;
           cells.push_back(next);
           stack_.push_back(next);
         }
@@ -939,15 +949,14 @@ class InteriorCavity {
       const std::uint32_t mark = next_stamp(marks_, mark_stamp_);
       std::int32_t drop = -1;
       for (std::int32_t cell : cells) {
-        const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+        const Tetrahedron& tet = tets[static_cast<std::size_t>(cell)];
         for (int face = 0; face < 4; ++face) {
-          if (in_[static_cast<std::size_t>(tet.n[face])] == member) continue;
+          if (tets[static_cast<std::size_t>(tet.n[face])].stamp == member) continue;
           const double* cone[4];
           for (int corner = 0; corner < 4; ++corner) {
             cone[corner] = corner == face ? point : mesh.point(tet.v[corner]);
           }
-          if (!(float_orientation(cone[0], cone[1], cone[2], cone[3]) > 0.0) ||
-              orientation(cone[0], cone[1], cone[2], cone[3]) <= 0) {
+          if (!measurably_positive(cone[0], cone[1], cone[2], cone[3])) {
             drop = cell;
             break;
           }
@@ -968,7 +977,7 @@ class InteriorCavity {
           kept_edges_.clear();
           for (const auto& [cell, face] : boundary) {
             std::int32_t facet[3];
-            oriented_facet(complex.tets[static_cast<std::size_t>(cell)].v, face, facet);
+            oriented_facet(tets[static_cast<std::size_t>(cell)].v, face, facet);
             for (int corner = 0; corner < 3; ++corner) {
               kept_edges_.push_back(slot_edge(facet[corner], facet[(corner + 1) % 3]));
             }
@@ -977,7 +986,7 @@ class InteriorCavity {
         }
         for (std::int32_t cell : cells) {
           if (cell == root) continue;
-          const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+          const Tetrahedron& tet = tets[static_cast<std::size_t>(cell)];
           bool lost = false;
           for (std::int32_t vertex : tet.v) {
             lost = lost || marks_[static_cast<std::size_t>(vertex)] != mark;
@@ -1003,25 +1012,25 @@ class InteriorCavity {
         return Status::kRefused;
       }
       // Keep the root's component of the cavity without the dropped cell.
-      in_[static_cast<std::size_t>(drop)] = 0U;
-      const std::uint32_t reached = next_stamp(in_, in_stamp_);
+      tets[static_cast<std::size_t>(drop)].stamp = 0U;
+      const std::uint32_t reached = next_cell_stamp();
       if (reached < member) {
         // The stamp wrapped and cleared every membership (once in 2^32
-        // cavities): refuse rather than rebuild.
+        // visits): refuse rather than rebuild.
         cells.clear();
         boundary.clear();
         vertices.clear();
         return Status::kRefused;
       }
-      in_[static_cast<std::size_t>(root)] = reached;
+      tets[static_cast<std::size_t>(root)].stamp = reached;
       stack_.assign(1, root);
       cells.assign(1, root);
       while (!stack_.empty()) {
         const std::int32_t cell = stack_.back();
         stack_.pop_back();
-        for (std::int32_t next : complex.tets[static_cast<std::size_t>(cell)].n) {
-          if (next >= 0 && in_[static_cast<std::size_t>(next)] == member) {
-            in_[static_cast<std::size_t>(next)] = reached;
+        for (std::int32_t next : tets[static_cast<std::size_t>(cell)].n) {
+          if (next >= 0 && tets[static_cast<std::size_t>(next)].stamp == member) {
+            tets[static_cast<std::size_t>(next)].stamp = reached;
             cells.push_back(next);
             stack_.push_back(next);
           }
@@ -1044,11 +1053,17 @@ class InteriorCavity {
     const std::uint32_t high = static_cast<std::uint32_t>(std::max(a, b));
     return (static_cast<std::uint64_t>(low) << 32) | high;
   }
+  // The next cell visit stamp, clearing every cell's stamp when it wraps.
+  std::uint32_t next_cell_stamp() {
+    if (++cell_stamp_ == 0) {
+      for (Tetrahedron& tet : complex_.tets) tet.stamp = 0U;
+      cell_stamp_ = 1;
+    }
+    return cell_stamp_;
+  }
 
-  std::vector<std::uint32_t> walked_;
-  std::uint32_t walk_stamp_ = 0;
-  std::vector<std::uint32_t> in_;
-  std::uint32_t in_stamp_ = 0;
+  TetrahedralComplex& complex_;
+  std::uint32_t cell_stamp_ = 0;
   std::vector<std::uint32_t> marks_;
   std::uint32_t mark_stamp_ = 0;
   std::vector<std::int32_t> walk_;
@@ -2547,7 +2562,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   // rounds end was proposed (each created cell is evaluated in the round
   // after its creation), so the unmet records measure only these.
   std::vector<std::uint64_t> proposed_ids;
-  InteriorCavity interior;
+  InteriorCavity interior(mesh.complex_);
   std::vector<std::int32_t> created_slots;
   std::vector<detail::LocalCell> removed_cells;
   std::unordered_set<std::uint64_t> apex_tried;
