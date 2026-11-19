@@ -21,6 +21,7 @@ from .._meshcore import (
     PlcBoundaryPolicy,
     TetMesh3D,
     TetMeshEditStatus,
+    TetMeshRun,
     verify_volume,
 )
 from .._physical import SpatialCoordinateContract
@@ -533,6 +534,21 @@ def _rows_of(identifiers: np.ndarray, query: np.ndarray, /) -> np.ndarray | None
     return order[position]
 
 
+def _improved(state: TetMesh3D, schedule: NativeVolumeSchedule, /) -> TetMeshRun:
+    improvement = state.improve(
+        radius_edge_bound=schedule.radius_edge_bound,
+        min_dihedral_degrees=schedule.minimum_dihedral_degrees,
+        minimum_relative_determinant=schedule.minimum_relative_determinant,
+    )
+    if improvement.edit_status is not TetMeshEditStatus.APPLIED:
+        raise _failure(
+            MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+            f"Native joint quality improvement returned edit status {improvement.edit_status.name}.",
+            "implicit_quality_improvement",
+        )
+    return improvement
+
+
 def _native_fixed_boundary_quality_pass(
     points: np.ndarray,
     tetrahedra: np.ndarray,
@@ -582,30 +598,24 @@ def _native_fixed_boundary_quality_pass(
         face_orientations=face_orientations,
     )
     try:
-        refinement = state.refine(radius_edge_bound=schedule.radius_edge_bound)
-        if refinement.edit_status is not TetMeshEditStatus.APPLIED:
-            raise _failure(
-                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                f"Native fixed-boundary radius refinement returned edit status {refinement.edit_status.name}.",
-                "implicit_quality_refinement",
-            )
-        if refinement.status not in (MeshcoreStatus.OK, MeshcoreStatus.UNRESOLVED):
-            raise _failure(
-                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                f"Native fixed-boundary radius refinement failed with {refinement.status.name}.",
-                "implicit_quality_refinement",
-            )
-        improvement = state.improve(
-            radius_edge_bound=schedule.radius_edge_bound,
-            min_dihedral_degrees=schedule.minimum_dihedral_degrees,
-            minimum_relative_determinant=schedule.minimum_relative_determinant,
-        )
-        if improvement.edit_status is not TetMeshEditStatus.APPLIED:
-            raise _failure(
-                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                f"Native joint quality improvement returned edit status {improvement.edit_status.name}.",
-                "implicit_quality_improvement",
-            )
+        # Local improvement first; Steiner refinement only for the cells it
+        # leaves unresolved, since inserted vertices cost dihedral quality.
+        improvement = _improved(state, schedule)
+        if improvement.status is MeshcoreStatus.UNRESOLVED:
+            refinement = state.refine(radius_edge_bound=schedule.radius_edge_bound)
+            if refinement.edit_status is not TetMeshEditStatus.APPLIED:
+                raise _failure(
+                    MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                    f"Native fixed-boundary radius refinement returned edit status {refinement.edit_status.name}.",
+                    "implicit_quality_refinement",
+                )
+            if refinement.status not in (MeshcoreStatus.OK, MeshcoreStatus.UNRESOLVED):
+                raise _failure(
+                    MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                    f"Native fixed-boundary radius refinement failed with {refinement.status.name}.",
+                    "implicit_quality_refinement",
+                )
+            improvement = _improved(state, schedule)
         if improvement.status is MeshcoreStatus.UNRESOLVED:
             unmet = state.unmet()
             residuals = tuple(
