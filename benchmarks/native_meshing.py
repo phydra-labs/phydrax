@@ -26,7 +26,6 @@ from jax import Array
 
 from benchmarks._runtime import capture_environment, measure_host
 from phydrax import _meshcore
-from phydrax.discretization import CellMesh
 from phydrax.geometry._interval_enclosure import prepare_interval_function
 
 
@@ -321,8 +320,10 @@ def _implicit_rows() -> tuple[_Row, ...]:
     # minor 0.371, i.e. inner 0.371 and outer 1.113) through the analytic
     # profile route's construction: stuffing at the route's spacing, lattice
     # acceptance (exact volume certificate, topology, certified facet
-    # deviation) and the fixed-boundary quality pass. Certification after
-    # construction is not timed. The row size is the tolerance in thousandths.
+    # deviation) and the fixed-boundary quality pass when the stuffed cells
+    # need it, ending at the constructed arrays as the references end at their
+    # native meshes. Publication as a CellMesh and certification are not
+    # timed. The row size is the tolerance in thousandths.
     from phydrax._physical import SpatialCoordinateContract
     from phydrax.geometry import Sphere, Torus
     from phydrax.geometry.implicit import AnalyticImplicitProfile
@@ -378,9 +379,11 @@ def _implicit_rows() -> tuple[_Row, ...]:
 
 
 def _constructed_cells(result: object, /) -> int:
-    if not isinstance(result, tuple) or not isinstance(result[0], CellMesh):
-        raise TypeError("The stuffing construction returns (mesh, ids, faces).")
-    return result[0].blocks[0].cell_count
+    from phydrax.meshing._implicit_volume import StuffedImplicitConstruction
+
+    if not isinstance(result, StuffedImplicitConstruction):
+        raise TypeError("The stuffing construction returns its constructed arrays.")
+    return result.tetrahedra.shape[0]
 
 
 def _ceiling(

@@ -44,12 +44,16 @@ def _first_appearance_groups(rows: np.ndarray, /) -> tuple[np.ndarray, np.ndarra
     order = _row_order(rows)
     starts = _row_run_starts(rows[order])
     first = order[starts]
-    ranking = np.argsort(first)
-    run_groups = np.empty((first.size,), dtype=np.int64)
-    run_groups[ranking] = np.arange(first.size, dtype=np.int64)
+    # Group numbers are the ranks of the distinct first rows, by counting.
+    marked = np.zeros((rows.shape[0],), dtype=np.int64)
+    marked[first] = 1
+    rank = np.cumsum(marked) - 1
+    run_groups = rank[first]
     groups = np.empty((rows.shape[0],), dtype=np.int64)
     groups[order] = run_groups[np.cumsum(starts) - 1]
-    return groups, first[ranking]
+    ordered_first = np.empty_like(first)
+    ordered_first[run_groups] = first
+    return groups, ordered_first
 
 
 def _variable_row_ranks(offsets: np.ndarray, values: np.ndarray, /) -> np.ndarray:
@@ -135,7 +139,7 @@ def _resolved_entity_ids(
 def _canonical_entity_ids(keys: np.ndarray, /) -> np.ndarray:
     if keys.ndim != 2:
         raise ValueError("Canonical entity keys must be rank-2.")
-    order = np.lexsort(tuple(keys[:, axis] for axis in range(keys.shape[1] - 1, -1, -1)))
+    order = _row_order(keys)
     identifiers = np.empty((keys.shape[0],), dtype=np.int64)
     identifiers[order] = np.arange(keys.shape[0], dtype=np.int64)
     return identifiers

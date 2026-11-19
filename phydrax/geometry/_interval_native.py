@@ -377,12 +377,22 @@ class NativeIntervalProgram:
         )
 
     def stuff_tetrahedra(
-        self, lower: NDArray[np.float64], upper: NDArray[np.float64], spacing: float, /
+        self,
+        lower: NDArray[np.float64],
+        upper: NDArray[np.float64],
+        spacing: float,
+        /,
+        *,
+        levels: int = 0,
+        lipschitz: float = 1.0,
     ) -> StuffedVolume:
         """Tetrahedra of ``{f <= 0}`` in a box by isosurface stuffing.
 
         ``f`` is the program's single output over three inputs; ``spacing`` is
-        the lattice spacing. A floating-point construction: the result is a
+        the lattice spacing within one spacing of the zero set. Away from it
+        the lattice coarsens by halving up to ``levels`` times, which is valid
+        when ``|f(x) - f(y)| <= lipschitz |x - y|`` (``lipschitz`` 1 for a
+        signed distance). A floating-point construction: the result is a
         proposal certified afterwards.
         """
         if self.input_dimension != 3 or math.prod(self.output.shape) != 1:
@@ -397,6 +407,8 @@ class NativeIntervalProgram:
             lower,
             upper,
             spacing,
+            levels,
+            lipschitz,
         )
 
     def evaluate_branches(
