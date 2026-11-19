@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- `NativeMeshingPlan.execute(prove=False)` returns a `CellMeshingCandidate`
+  (the constructed mesh, uncertified); `candidate.prove()` certifies exactly
+  that mesh. `prove=True` (the default) certifies as before.
+- Native exact affine tetrahedron validity (`phx_mc_tetrahedra_validity`):
+  exact determinant and quality-margin signs with a rigorous determinant
+  bound.
 - Isosurface stuffing (`NativeIntervalProgram.stuff_tetrahedra(..., levels=,
   lipschitz=)`, `phx_mc_implicit_stuffing`) runs on a graded body-centered
   cubic lattice: the uniform lattice within one spacing of the zero set,
@@ -311,6 +317,33 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- PLC tetrahedral volumes are certified by exact native degree theorems
+  (`phx_mc_verify_tetrahedra`, labeled `phx_mc_verify_volume`): positive
+  cells, oppositely paired faces, an embedded edge-manifold boundary whose
+  shells have winding 0 in front and 1 behind, and a boundary and region
+  interfaces equal to the declared oriented triangles with matching labels.
+  The global-embedding check and the coverage method `tetrahedral_degree` are
+  selected by the `volume_plc` schedule only; other routes keep their proofs
+  and never load the native library. Certificate identities for this route
+  change; restoring re-runs the native verifier.
+- Native tetrahedral improvement collapses an interior vertex onto a
+  protected or boundary neighbor; the fixed boundary is reproduced exactly,
+  which clears the last unmet cells of the 90,000-face grid torus.
+- Fixed-boundary recovery, mesh-state creation and refinement setup are
+  faster (incidence-list edge lookup, triangle polygons taken as-is, flat
+  source face groups, exact shortcuts for sole-primitive faces and segment
+  endpoints, acute-feature protection skipped for a fixed boundary), with
+  identical output.
+- Native tetrahedral mesh export is one pass: `TetMesh3D.arrays()` reads the
+  live state straight into the output banks (no staged snapshot, no per-cell
+  allocation, no identity hash lookups, no per-element Python). Cells, facets
+  and segments come out in ascending identity order with their corners as
+  vertex rows (`cell_vertex_rows`, `facet_vertex_rows`,
+  `segment_vertex_rows`). Output is byte-identical; 2.47 M cells export in
+  0.09 s instead of 2.48 s.
+- Refinement drops every non-positive cavity cell in one pass while shrinking
+  an insertion cavity, with unchanged results (grid torus of 90,000 triangles:
+  3.5 s instead of 7.5 s).
 - **Breaking:** an `AnalyticImplicitProfile` volume is meshed by isosurface
   stuffing instead of restricted Delaunay. The route literal
   `implicit_restricted_delaunay` is now `implicit_stuffing`,

@@ -19,7 +19,12 @@ from .._validation import canonical_identifier
 from ..discretization import CellMesh
 from ..typing import checked
 from ..units import UnitDefinition
-from ._scope import MeshingEntityKind, MeshingScope, resolve_mesh_scope
+from ._scope import (
+    MeshingEntityKind,
+    MeshingScope,
+    resolve_mesh_scope,
+    resolve_mesh_scope_rows,
+)
 
 
 class MeshZoneRole(StrEnum):
@@ -439,7 +444,7 @@ class RegionBoundaryEvidence(StrictModule, NonTrainableState):
             raise ValueError(
                 "The accepted result omits the declared region boundary label."
             )
-        selected: list[np.ndarray] = []
+        scopes: list[MeshingScope] = []
         lookup = {patch.patch_id: patch for patch in patches}
         for identifier, side in self.patch_sides:
             if identifier not in lookup:
@@ -456,9 +461,11 @@ class RegionBoundaryEvidence(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Patch source sides contradict the region occurrence orientation."
                 )
-            resolve_mesh_scope(mesh, patch.scope)
-            selected.append(np.asarray(patch.scope.entity_ids))
-        union = np.unique(np.concatenate(selected))
+            scopes.append(patch.scope)
+        resolve_mesh_scope_rows(mesh, tuple(scopes))
+        union = np.unique(
+            np.concatenate([np.asarray(scope.entity_ids) for scope in scopes])
+        )
         if not np.array_equal(union, np.asarray(self.boundary_label.scope.entity_ids)):
             raise ValueError(
                 "Region boundary patches omit or add selected mesh entities."

@@ -8,18 +8,28 @@ from __future__ import annotations
 
 import math
 from fractions import Fraction
-from typing import final, NoReturn, overload, Protocol, runtime_checkable, TYPE_CHECKING
+from typing import (
+    final,
+    Literal,
+    NoReturn,
+    overload,
+    Protocol,
+    runtime_checkable,
+    TYPE_CHECKING,
+)
 
 import equinox as eqx
 import numpy as np
 
 from ..._collection_scope import collection_scope
 from ..._execution_runtime import ExecutionGroup
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._meshcore import meshcore_identity
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...discretization import CellGeometrySpec, CellMesh
+from ...discretization._cell_geometry_validity import cell_geometry_id
 from ...geometry._compartments import CompartmentMeshingSource
 from ...geometry._meshing_domain import MeshingDomain
 from ...geometry.brep._model import BRepModel
@@ -30,7 +40,7 @@ from ...geometry.multiregion_surface._label_extraction import (
 from ...geometry.reconstruction._core import ReconstructedGeometrySource
 from ...geometry.surface._model import SurfaceModel
 from ...graph import GraphPartitionPlan
-from ...typing import checked
+from ...typing import checked, parse
 from .._canonical import _accept_native_construction, _NATIVE_PROVIDER
 from .._certification import _ComputedSurfaceAcceptance
 from .._contracts import (
@@ -39,6 +49,7 @@ from .._contracts import (
     CurveMeshingSpec,
     MeshingFailure,
     MeshingFailureCategory,
+    MeshingProviderInfo,
     MeshQualityTarget,
     SurfaceMeshingSpec,
     VolumeFillStrategy,
@@ -1230,6 +1241,97 @@ def _prepare_route(
 
 
 @final
+class CellMeshingCandidate(StrictModule, NonTrainableState):
+    """A constructed native mesh before acceptance; nothing on it is certified.
+
+    ``mesh``, ``geometry`` and ``coordinate_contract`` are the produced arrays
+    and coordinate map. :meth:`prove` runs the canonical acceptance of exactly
+    this mesh (no construction or repair) and returns the certified result or
+    raises its findings.
+    """
+
+    _construction: NativeMeshConstruction = eqx.field(repr=False)
+    specification: _Specification
+    provider: MeshingProviderInfo
+    _actual_version: str = eqx.field(static=True, repr=False)
+    plan_id: str = eqx.field(static=True)
+    route: NativeMeshingRoute = eqx.field(static=True)
+    candidate_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        construction: NativeMeshConstruction,
+        specification: _Specification,
+        provider: MeshingProviderInfo,
+        actual_version: str,
+        plan_id: str,
+        route: NativeMeshingRoute,
+        /,
+    ) -> None:
+        route_ = parse(route, NativeMeshingRoute, "route")
+        request = construction.certification
+        organization = construction.organization
+        self._construction = construction
+        self.specification = specification
+        self.provider = provider
+        self._actual_version = actual_version
+        self.plan_id = plan_id
+        self.route = route_
+        self.candidate_id = canonical_fingerprint(
+            {
+                "kind": "cell-meshing-candidate",
+                "mesh": construction.mesh.mesh_id,
+                "geometry": cell_geometry_id(construction.geometry),
+                "coordinate_contract": construction.coordinate_contract.spatial_id,
+                "specification": specification.specification_id,
+                "provider": provider.provider_id,
+                "actual_version": actual_version,
+                "plan": plan_id,
+                "route": route_,
+                "source": (request.source_id, request.source_revision),
+                "schedule": request.schedule.schedule_id,
+                "regions": None
+                if request.cell_regions is None
+                else array_tree_fingerprint(request.cell_regions),
+                "compliance": construction.compliance.report_id,
+                "patches": tuple(value.patch_id for value in organization.patches),
+                "zones": tuple(value.zone_id for value in organization.zones),
+                "labels": tuple(value.label_id for value in organization.labels),
+                "attributes": tuple(
+                    value.attribute_id for value in organization.attributes
+                ),
+                "associations": tuple(
+                    value.association_id for value in organization.associations
+                ),
+            }
+        )
+
+    @property
+    def mesh(self) -> CellMesh:
+        return self._construction.mesh
+
+    @property
+    def geometry(self) -> CellGeometrySpec:
+        return self._construction.geometry
+
+    @property
+    def coordinate_contract(self) -> SpatialCoordinateContract:
+        return self._construction.coordinate_contract
+
+    def prove(self, /) -> CellMeshingResult:
+        """Certify this mesh as produced, without constructing or repairing it."""
+        return _accept_native_construction(
+            self._construction,
+            self.specification,
+            self.provider,
+            self._actual_version,
+            self.plan_id,
+            self.route,
+        )
+
+
+@final
 class NativeMeshingPlan(StrictModule, NonTrainableState):
     """Reusable, source-bound preparation for one canonical native mesh request."""
 
@@ -1265,7 +1367,19 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
         self.plan_id = plan_id
 
     @overload
-    def execute(self, /, *, execution_group: None = None) -> CellMeshingResult: ...
+    def execute(
+        self, /, *, execution_group: None = None, prove: Literal[True] = True
+    ) -> CellMeshingResult: ...
+
+    @overload
+    def execute(
+        self, /, *, execution_group: None = None, prove: Literal[False]
+    ) -> CellMeshingCandidate: ...
+
+    @overload
+    def execute(
+        self, /, *, execution_group: None = None, prove: bool
+    ) -> CellMeshingCandidate | CellMeshingResult: ...
 
     @overload
     def execute(
@@ -1274,6 +1388,7 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
         *,
         execution_group: ExecutionGroup,
         graph_partition_plan: GraphPartitionPlan | None = None,
+        prove: Literal[True] = True,
     ) -> MeshAssembly: ...
 
     @collection_scope()
@@ -1283,7 +1398,16 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
         *,
         execution_group: ExecutionGroup | None = None,
         graph_partition_plan: GraphPartitionPlan | None = None,
-    ) -> CellMeshingResult | MeshAssembly:
+        prove: bool = True,
+    ) -> CellMeshingCandidate | CellMeshingResult | MeshAssembly:
+        """Construct the mesh and, with ``prove=True``, certify it.
+
+        ``prove=False`` returns the constructed :class:`CellMeshingCandidate`
+        without any acceptance proof; ``candidate.prove()`` later certifies
+        exactly that mesh. Owner-local execution requires ``prove=True``.
+        """
+        if not isinstance(prove, bool):
+            raise TypeError("prove must be bool.")
         from ._native_implicit import _PreparedFixedImplicitRoute
 
         if isinstance(self.prepared, _PreparedFixedImplicitRoute):
@@ -1296,6 +1420,8 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
             if execution_group is None:
                 raise ValueError("graph_partition_plan requires an execution_group.")
         if execution_group is not None:
+            if not prove:
+                raise ValueError("Owner-local execution requires prove=True.")
             from .._assembly import MeshAssembly
 
             if not isinstance(execution_group, ExecutionGroup):
@@ -1317,6 +1443,15 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
         construction = self.prepared.execute()
         if not isinstance(construction, NativeMeshConstruction):
             raise TypeError("A native prepared route must return NativeMeshConstruction.")
+        if not prove:
+            return CellMeshingCandidate(
+                construction,
+                self.specification,
+                _NATIVE_PROVIDER,
+                meshcore_identity(),
+                self.plan_id,
+                self.route,
+            )
         return _accept_native_construction(
             construction,
             self.specification,

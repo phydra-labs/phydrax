@@ -171,13 +171,15 @@ def _uv_torus(around: int, /) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _recover(vertices: np.ndarray, faces: np.ndarray, /) -> _meshcore.PlcRecovery3D:
+    # A closed surface is one PLC facet made of its triangles (as an imported
+    # triangulated surface is), bounding region 0.
     count = faces.shape[0]
     return _meshcore.recover_plc_3d(
         vertices,
         np.arange(0, 3 * count + 1, 3, dtype=np.int64),
         faces.reshape((-1,)).astype(np.int32),
-        np.arange(count, dtype=np.int32),
-        np.tile(np.asarray([[-1, 0]], dtype=np.int32), (count, 1)),
+        np.zeros((count,), dtype=np.int32),
+        np.asarray([[-1, 0]], dtype=np.int32),
         boundary_policy=_meshcore.PlcBoundaryPolicy.FIXED,
     )
 

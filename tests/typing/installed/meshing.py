@@ -18,6 +18,7 @@ from phydrax.interchange import (
 from phydrax.lifecycle import Composition
 from phydrax.linalg import SparseFactorizationPolicy
 from phydrax.meshing import (
+    CellMeshingCandidate,
     CellMeshingResult,
     MeshAssembly,
     NativeVolumeSchedule,
@@ -40,6 +41,8 @@ def native_volume(
     plan = NativeMeshingProvider().plan(source, specification)
     assert_type(plan, NativeMeshingPlan)
     assert_type(plan.execute(), CellMeshingResult)
+    assert_type(plan.execute(prove=False), CellMeshingCandidate)
+    assert_type(plan.execute(prove=False).prove(), CellMeshingResult)
     assert_type(plan.execute(execution_group=group), MeshAssembly)
 
 
