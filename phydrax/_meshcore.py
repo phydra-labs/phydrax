@@ -1296,6 +1296,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (ctypes.POINTER(_TetMeshCreateRequest), ctypes.POINTER(_TetImplicitSource)),
     ),
+    "phx_mc_tet_mesh_create_from_plc": (
+        _I32,
+        (_P, ctypes.POINTER(_TetMeshCreateRequest), _P, _I32),
+    ),
     "phx_mc_tet_mesh_bind_implicit": (_I32, (_P, ctypes.POINTER(_TetImplicitSource))),
     "phx_mc_tet_mesh_implicit_source": (_I32, (_P, ctypes.POINTER(_TetImplicitSource))),
     "phx_mc_tet_mesh_protect_facet_sources": (_I32, (_P, _I64, _P)),
@@ -3813,10 +3817,31 @@ class TetMeshEditStatus(IntEnum):
     INDEX_OVERFLOW = 7
 
 
+class NativePlcRecovery:
+    """The native result of a PLC recovery, owned for ``TetMesh3D.from_recovery``.
+
+    It holds the recovered mesh's banks and cell adjacency natively, so the
+    mesh is adopted from them rather than built from the exported arrays; it
+    is released when no recovery or mesh construction refers to it.
+    """
+
+    __slots__ = ("_handle", "_library")
+
+    def __init__(self, library: MeshcoreLibrary, handle: ctypes.c_void_p, /) -> None:
+        self._library = library
+        self._handle = handle
+
+    def __del__(self) -> None:
+        self._library["phx_mc_plc3d_free"](self._handle)
+
+
 class PlcRecovery3D(NamedTuple):
     """Recovered PLC; witness entities index raw carrier rows by stratum.
 
     Stratum 1 indexes ``plc_edges`` and stratum 2 indexes ``input_triangles``.
+    ``native`` is the native result the arrays were exported from (None when
+    the recovery was assembled from arrays), which ``TetMesh3D.from_recovery``
+    adopts.
     """
 
     status: MeshcoreStatus
@@ -3839,6 +3864,7 @@ class PlcRecovery3D(NamedTuple):
     witness_deviations: np.ndarray
     suppression_search: PlcSuppressionSearch
     suppression_routes: tuple[PlcSuppressionRoute, ...] = ()
+    native: NativePlcRecovery | None = None
 
 
 class TetMeshSourceComplex(NamedTuple):
@@ -6441,8 +6467,11 @@ def _plc3d_build(
     affine_metric: object | None = None,
     protected_facets: object | None = None,
     search_budget: PlcSearchBudget | None = None,
-) -> PlcSourceData:
-    """Run native PLC source preparation or full protected tetrahedral recovery."""
+) -> tuple[PlcSourceData, NativePlcRecovery]:
+    """Run native PLC source preparation or full protected tetrahedral recovery.
+
+    Returns the exported result and the native one it was exported from.
+    """
 
     operation_label = (
         "prepare_plc_source"
@@ -6615,152 +6644,152 @@ def _plc3d_build(
             MeshcoreStatus.INTERNAL_ERROR,
             f"{operation_label}: missing result",
         )
-    try:
-        failure_reason = np.zeros((1,), dtype=np.int32)
-        first_kind = np.zeros((1,), dtype=np.int32)
-        first = np.zeros((1,), dtype=np.int64)
-        second_kind = np.zeros((1,), dtype=np.int32)
-        second = np.zeros((1,), dtype=np.int64)
-        certified_deviation = np.zeros((1,), dtype=np.float64)
-        declared_bound = np.zeros((1,), dtype=np.float64)
-        _raise_for_call(
-            library["phx_mc_plc3d_failure"](
-                handle,
-                failure_reason.ctypes.data,
-                first_kind.ctypes.data,
-                first.ctypes.data,
-                second_kind.ctypes.data,
-                second.ctypes.data,
-                certified_deviation.ctypes.data,
-                declared_bound.ctypes.data,
-            ),
-            "plc3d_failure",
+    # The handle is owned from here on: released when the owner is dropped,
+    # or kept with the recovery for TetMesh3D.from_recovery.
+    native = NativePlcRecovery(library, handle)
+    failure_reason = np.zeros((1,), dtype=np.int32)
+    first_kind = np.zeros((1,), dtype=np.int32)
+    first = np.zeros((1,), dtype=np.int64)
+    second_kind = np.zeros((1,), dtype=np.int32)
+    second = np.zeros((1,), dtype=np.int64)
+    certified_deviation = np.zeros((1,), dtype=np.float64)
+    declared_bound = np.zeros((1,), dtype=np.float64)
+    _raise_for_call(
+        library["phx_mc_plc3d_failure"](
+            handle,
+            failure_reason.ctypes.data,
+            first_kind.ctypes.data,
+            first.ctypes.data,
+            second_kind.ctypes.data,
+            second.ctypes.data,
+            certified_deviation.ctypes.data,
+            declared_bound.ctypes.data,
+        ),
+        "plc3d_failure",
+    )
+    search = np.zeros((len(PlcSuppressionSearch._fields),), dtype=np.int64)
+    _raise_for_call(
+        library["phx_mc_plc3d_suppression_search"](handle, search.ctypes.data),
+        "plc3d_suppression_search",
+    )
+    suppression_search = PlcSuppressionSearch(*(int(value) for value in search))
+    route_count = np.zeros((1,), dtype=np.int64)
+    _raise_for_call(
+        library["phx_mc_plc3d_suppression_routes"](
+            handle, 0, route_count.ctypes.data, None
+        ),
+        "plc3d_suppression_routes",
+    )
+    route_rows = np.zeros(
+        (int(route_count[0]), len(PlcSuppressionRoute._fields)), dtype=np.int64
+    )
+    _raise_for_call(
+        library["phx_mc_plc3d_suppression_routes"](
+            handle,
+            route_rows.shape[0],
+            route_count.ctypes.data,
+            route_rows.ctypes.data,
+        ),
+        "plc3d_suppression_routes",
+    )
+    suppression_routes = tuple(
+        PlcSuppressionRoute(
+            int(row[0]),
+            int(row[1]),
+            int(row[2]),
+            PlcSuppressionRouteKind(int(row[3])),
+            int(row[4]),
+            int(row[5]),
+            int(row[6]),
         )
-        search = np.zeros((len(PlcSuppressionSearch._fields),), dtype=np.int64)
-        _raise_for_call(
-            library["phx_mc_plc3d_suppression_search"](handle, search.ctypes.data),
-            "plc3d_suppression_search",
-        )
-        suppression_search = PlcSuppressionSearch(*(int(value) for value in search))
-        route_count = np.zeros((1,), dtype=np.int64)
-        _raise_for_call(
-            library["phx_mc_plc3d_suppression_routes"](
-                handle, 0, route_count.ctypes.data, None
-            ),
-            "plc3d_suppression_routes",
-        )
-        route_rows = np.zeros(
-            (int(route_count[0]), len(PlcSuppressionRoute._fields)), dtype=np.int64
-        )
-        _raise_for_call(
-            library["phx_mc_plc3d_suppression_routes"](
-                handle,
-                route_rows.shape[0],
-                route_count.ctypes.data,
-                route_rows.ctypes.data,
-            ),
-            "plc3d_suppression_routes",
-        )
-        suppression_routes = tuple(
-            PlcSuppressionRoute(
-                int(row[0]),
-                int(row[1]),
-                int(row[2]),
-                PlcSuppressionRouteKind(int(row[3])),
-                int(row[4]),
-                int(row[5]),
-                int(row[6]),
+        for row in route_rows
+    )
+    if code != MeshcoreStatus.OK:
+        if failure_reason[0] != PlcFailureReason.NONE:
+            raise PlcSourceFailure(
+                code,
+                PlcFailureReason(int(failure_reason[0])),
+                PlcEntityKind(int(first_kind[0])),
+                int(first[0]),
+                PlcEntityKind(int(second_kind[0])),
+                int(second[0]),
+                float(certified_deviation[0]),
+                float(declared_bound[0]),
+                suppression_search=suppression_search,
             )
-            for row in route_rows
+        _raise_for_call(code, operation_label)
+    sizes = np.empty((6,), dtype=np.int64)
+    _raise_for_call(
+        library["phx_mc_plc3d_sizes"](handle, sizes.ctypes.data),
+        "plc3d_sizes",
+    )
+    if np.any(sizes < 0):
+        raise MeshcoreError(
+            MeshcoreStatus.INTERNAL_ERROR,
+            "plc3d_sizes: negative result extent",
         )
-        if code != MeshcoreStatus.OK:
-            if failure_reason[0] != PlcFailureReason.NONE:
-                raise PlcSourceFailure(
-                    code,
-                    PlcFailureReason(int(failure_reason[0])),
-                    PlcEntityKind(int(first_kind[0])),
-                    int(first[0]),
-                    PlcEntityKind(int(second_kind[0])),
-                    int(second[0]),
-                    float(certified_deviation[0]),
-                    float(declared_bound[0]),
-                    suppression_search=suppression_search,
-                )
-            _raise_for_call(code, operation_label)
-        sizes = np.empty((6,), dtype=np.int64)
-        _raise_for_call(
-            library["phx_mc_plc3d_sizes"](handle, sizes.ctypes.data),
-            "plc3d_sizes",
-        )
-        if np.any(sizes < 0):
-            raise MeshcoreError(
-                MeshcoreStatus.INTERNAL_ERROR,
-                "plc3d_sizes: negative result extent",
-            )
-        point_count, tet_count, face_count, segment_count, edge_count, triangle_count = (
-            map(int, sizes)
-        )
-        result = PlcSourceData(
-            code,
-            np.empty((point_count, 3), dtype=np.float64),
-            np.empty((tet_count, 4), dtype=np.int32),
-            np.empty((tet_count,), dtype=np.int32),
-            np.empty((face_count, 3), dtype=np.int32),
-            np.empty((face_count,), dtype=np.int32),
-            np.empty((face_count,), dtype=np.int8),
-            np.empty((segment_count, 2), dtype=np.int32),
-            np.empty((segment_count,), dtype=np.int32),
-            np.empty((point_count,), dtype=np.float64),
-            np.empty((point_count,), dtype=np.int8),
-            np.empty((edge_count, 2), dtype=np.int32),
-            np.empty((triangle_count, 3), dtype=np.int32),
-            np.empty((triangle_count,), dtype=np.int32),
-            np.empty((point_count,), dtype=np.int8),
-            np.empty((point_count,), dtype=np.int32),
-            np.empty((point_count, 2), dtype=np.float64),
-            np.empty((point_count,), dtype=np.float64),
-            suppression_search,
-            suppression_routes,
-        )
-        _raise_for_call(
-            library["phx_mc_plc3d_export"](
-                handle,
-                point_count,
-                tet_count,
-                face_count,
-                segment_count,
-                edge_count,
-                triangle_count,
-                result.points.ctypes.data,
-                result.tetrahedra.ctypes.data,
-                result.tetrahedron_regions.ctypes.data,
-                result.faces.ctypes.data,
-                result.face_sources.ctypes.data,
-                result.face_orientations.ctypes.data,
-                result.segments.ctypes.data,
-                result.segment_sources.ctypes.data,
-                result.protection.ctypes.data,
-                result.vertex_dimensions.ctypes.data,
-                result.plc_edges.ctypes.data,
-                result.input_triangles.ctypes.data,
-                result.input_polygons.ctypes.data,
-            ),
-            "plc3d_export",
-        )
-        _raise_for_call(
-            library["phx_mc_plc3d_source_witnesses"](
-                handle,
-                point_count,
-                result.source_strata.ctypes.data,
-                result.source_entities.ctypes.data,
-                result.source_parameters.ctypes.data,
-                result.source_deviations.ctypes.data,
-            ),
-            "plc3d_source_witnesses",
-        )
-        return result
-    finally:
-        library["phx_mc_plc3d_free"](handle)
+    point_count, tet_count, face_count, segment_count, edge_count, triangle_count = map(
+        int, sizes
+    )
+    result = PlcSourceData(
+        code,
+        np.empty((point_count, 3), dtype=np.float64),
+        np.empty((tet_count, 4), dtype=np.int32),
+        np.empty((tet_count,), dtype=np.int32),
+        np.empty((face_count, 3), dtype=np.int32),
+        np.empty((face_count,), dtype=np.int32),
+        np.empty((face_count,), dtype=np.int8),
+        np.empty((segment_count, 2), dtype=np.int32),
+        np.empty((segment_count,), dtype=np.int32),
+        np.empty((point_count,), dtype=np.float64),
+        np.empty((point_count,), dtype=np.int8),
+        np.empty((edge_count, 2), dtype=np.int32),
+        np.empty((triangle_count, 3), dtype=np.int32),
+        np.empty((triangle_count,), dtype=np.int32),
+        np.empty((point_count,), dtype=np.int8),
+        np.empty((point_count,), dtype=np.int32),
+        np.empty((point_count, 2), dtype=np.float64),
+        np.empty((point_count,), dtype=np.float64),
+        suppression_search,
+        suppression_routes,
+    )
+    _raise_for_call(
+        library["phx_mc_plc3d_export"](
+            handle,
+            point_count,
+            tet_count,
+            face_count,
+            segment_count,
+            edge_count,
+            triangle_count,
+            result.points.ctypes.data,
+            result.tetrahedra.ctypes.data,
+            result.tetrahedron_regions.ctypes.data,
+            result.faces.ctypes.data,
+            result.face_sources.ctypes.data,
+            result.face_orientations.ctypes.data,
+            result.segments.ctypes.data,
+            result.segment_sources.ctypes.data,
+            result.protection.ctypes.data,
+            result.vertex_dimensions.ctypes.data,
+            result.plc_edges.ctypes.data,
+            result.input_triangles.ctypes.data,
+            result.input_polygons.ctypes.data,
+        ),
+        "plc3d_export",
+    )
+    _raise_for_call(
+        library["phx_mc_plc3d_source_witnesses"](
+            handle,
+            point_count,
+            result.source_strata.ctypes.data,
+            result.source_entities.ctypes.data,
+            result.source_parameters.ctypes.data,
+            result.source_deviations.ctypes.data,
+        ),
+        "plc3d_source_witnesses",
+    )
+    return result, native
 
 
 def prepare_plc_source(
@@ -6807,7 +6836,7 @@ def prepare_plc_source(
         segment_tolerances=segment_tolerances,
         facet_planes=facet_planes,
         facet_plane_tolerances=facet_plane_tolerances,
-    )
+    )[0]
 
 
 def recover_plc(
@@ -6861,7 +6890,7 @@ def recover_plc(
         affine_metric=affine_metric,
         protected_facets=protected_facets,
         search_budget=search_budget,
-    )
+    )[0]
 
 
 def recover_plc_3d(
@@ -6894,7 +6923,8 @@ def recover_plc_3d(
     """
 
     segment_bank = np.empty((0, 2), dtype=np.int32) if segments is None else segments
-    recovered = recover_plc(
+    recovered, native = _plc3d_build(
+        "phx_mc_plc3d_recover",
         points,
         polygon_offsets,
         polygon_vertices,
@@ -6933,6 +6963,7 @@ def recover_plc_3d(
         recovered.source_deviations,
         recovered.suppression_search,
         recovered.suppression_routes,
+        native,
     )
 
 
@@ -8238,6 +8269,140 @@ class TetMesh3D:
         periodic_state: TetMeshPeriodicState | None = None,
         affine_metric: object | None = None,
     ) -> None:
+        self._create(
+            points,
+            tetrahedra,
+            tetrahedron_regions,
+            faces,
+            face_sources,
+            segments,
+            segment_sources,
+            None,
+            False,
+            boundary_policy=boundary_policy,
+            protection_radii=protection_radii,
+            protected_vertices=protected_vertices,
+            initial_vertex_sizes=initial_vertex_sizes,
+            vertex_ids=vertex_ids,
+            cell_ids=cell_ids,
+            facet_ids=facet_ids,
+            face_orientations=face_orientations,
+            segment_ids=segment_ids,
+            source=source,
+            implicit_source=implicit_source,
+            source_id=source_id,
+            source_revision=source_revision,
+            source_map_id=source_map_id,
+            frame_id=frame_id,
+            periodic_state=periodic_state,
+            affine_metric=affine_metric,
+        )
+
+    @classmethod
+    def from_recovery(
+        cls,
+        recovery: PlcRecovery3D,
+        /,
+        *,
+        face_sources: object | None = None,
+        segment_sources: object | None = None,
+        boundary_policy: PlcBoundaryPolicy | int = PlcBoundaryPolicy.FIXED,
+        protected_vertices: object | None = None,
+        initial_vertex_sizes: object | None = None,
+        vertex_ids: object | None = None,
+        cell_ids: object | None = None,
+        facet_ids: object | None = None,
+        segment_ids: object | None = None,
+        source: TetMeshSourceComplex | None = None,
+        source_id: str | None = None,
+        source_revision: str | None = None,
+        source_map_id: str | None = None,
+        frame_id: str | None = None,
+        affine_metric: object | None = None,
+        validate: bool = False,
+    ) -> TetMesh3D:
+        """The mesh of a successful PLC recovery, adopted from its native result.
+
+        The state is the one the constructor builds from the recovery's
+        points, tetrahedra, regions, faces, face orientations, segments and
+        protection radii, with ``face_sources`` and ``segment_sources``
+        (default: the recovery's) and the other arguments as there. Unless
+        ``validate``, what recovery proved is adopted rather than proved
+        again: its cell adjacency and, without an explicit ``source``, the
+        coverage of the constrained faces and segments by their source rows
+        (the mesh is then its own source bank). A recovery without a native
+        result (assembled from arrays) is refused, as is a failed one.
+        """
+        if not isinstance(recovery, PlcRecovery3D):
+            raise TypeError("recovery must be a PlcRecovery3D.")
+        if recovery.native is None:
+            raise ValueError(
+                "The recovery holds no native result to adopt; construct the mesh from its arrays."
+            )
+        mesh = cls.__new__(cls)
+        mesh._create(
+            recovery.points,
+            recovery.tetrahedra,
+            recovery.tetrahedron_regions,
+            recovery.faces,
+            recovery.face_sources if face_sources is None else face_sources,
+            recovery.segments,
+            recovery.segment_sources if segment_sources is None else segment_sources,
+            recovery.native,
+            validate,
+            boundary_policy=boundary_policy,
+            protection_radii=recovery.protection_radii,
+            protected_vertices=protected_vertices,
+            initial_vertex_sizes=initial_vertex_sizes,
+            vertex_ids=vertex_ids,
+            cell_ids=cell_ids,
+            facet_ids=facet_ids,
+            face_orientations=recovery.face_orientations,
+            segment_ids=segment_ids,
+            source=source,
+            implicit_source=None,
+            source_id=source_id,
+            source_revision=source_revision,
+            source_map_id=source_map_id,
+            frame_id=frame_id,
+            periodic_state=None,
+            affine_metric=affine_metric,
+        )
+        return mesh
+
+    def _create(
+        self,
+        points: object,
+        tetrahedra: object,
+        tetrahedron_regions: object,
+        faces: object,
+        face_sources: object,
+        segments: object,
+        segment_sources: object,
+        recovery: NativePlcRecovery | None,
+        validate: bool,
+        /,
+        *,
+        boundary_policy: PlcBoundaryPolicy | int,
+        protection_radii: object | None,
+        protected_vertices: object | None,
+        initial_vertex_sizes: object | None,
+        vertex_ids: object | None,
+        cell_ids: object | None,
+        facet_ids: object | None,
+        face_orientations: object | None,
+        segment_ids: object | None,
+        source: TetMeshSourceComplex | None,
+        implicit_source: TetMeshImplicitSource | None,
+        source_id: str | None,
+        source_revision: str | None,
+        source_map_id: str | None,
+        frame_id: str | None,
+        periodic_state: TetMeshPeriodicState | None,
+        affine_metric: object | None,
+    ) -> None:
+        # `recovery`: the banks are adopted from this native recovery, whose
+        # exported arrays these are (from_recovery).
         metric_array = (
             None
             if affine_metric is None
@@ -8558,7 +8723,23 @@ class TetMesh3D:
         refusal = _TetPlaneRefusal()
         request.plane_refusal = ctypes.addressof(refusal)
         request.result = ctypes.addressof(handle)
-        if implicit_payload is None:
+        if recovery is not None:
+            # The recovery's banks are adopted natively; the exported arrays
+            # above only fixed the counts and validated the request's rows.
+            request.points = None
+            request.tetrahedra = None
+            request.tetrahedron_regions = None
+            request.faces = None
+            request.face_orientations = None
+            request.segments = None
+            request.protection_radii = None
+            status = library["phx_mc_tet_mesh_create_from_plc"](
+                recovery._handle,
+                ctypes.byref(request),
+                None if metric_array is None else _tet_mesh_pointer(metric_array),
+                1 if validate else 0,
+            )
+        elif implicit_payload is None:
             status = library["phx_mc_tet_mesh_create_with_affine_metric"](
                 ctypes.byref(request),
                 None if metric_array is None else _tet_mesh_pointer(metric_array),
@@ -11632,6 +11813,7 @@ __all__ = [
     "MeshcoreStatus",
     "MeshcoreUnavailableError",
     "NativeArrangement",
+    "NativePlcRecovery",
     "NativeReferenceTetrahedronClip",
     "NativeReferenceTriangleClip",
     "NativeTetrahedraArrangement",

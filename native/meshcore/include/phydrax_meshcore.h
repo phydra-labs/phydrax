@@ -2307,6 +2307,24 @@ PHX_MC_API int32_t phx_mc_plc3d_suppression_search(
 PHX_MC_API int32_t phx_mc_plc3d_suppression_routes(
     const phx_mc_plc3d_result* result, int64_t capacity, int64_t* count, int64_t* rows);
 PHX_MC_API void phx_mc_plc3d_free(phx_mc_plc3d_result* result);
+/* The mesh of a successful PLC recovery (phx_mc_plc3d_recover*), adopted
+ * from the recovery's native banks: its points, tetrahedra, regions, faces,
+ * face orientations, segments and protection radii are the recovery's, so the
+ * request's pointers for them must be null and its point, tetrahedron, face
+ * and segment counts must equal the recovery's (phx_mc_plc3d_sizes).
+ * face_sources, segment_sources and every other field are the request's, as
+ * for phx_mc_tet_mesh_create_with_affine_metric; periodic state is refused
+ * (PHX_MC_INVALID_ARGUMENT), as is a failed recovery. Unless `validate` is
+ * nonzero, what recovery proved is adopted rather than proved again: its
+ * cell adjacency, and, without an explicit source complex or witnesses (the
+ * mesh is then its own source bank, whose rows cover its constrained faces
+ * and segments by construction), the coverage proofs. A nonzero `validate`
+ * repeats every check of the array route. The resulting state is the one
+ * phx_mc_tet_mesh_create_with_affine_metric builds from the recovery's
+ * exported banks. */
+PHX_MC_API int32_t phx_mc_tet_mesh_create_from_plc(
+    const phx_mc_plc3d_result* recovery, const phx_mc_tet_mesh_create_request* request,
+    const double* linear, int32_t validate);
 
 enum phx_mc_intersection_class {
   PHX_MC_DISJOINT = 0,

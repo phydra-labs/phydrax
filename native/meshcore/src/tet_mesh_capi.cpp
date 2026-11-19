@@ -797,11 +797,39 @@ int32_t prepare_implicit_owner(const phx_mc_tet_implicit_source* source,
 
 extern "C" {
 
+// `recovery`: the mesh banks are this recovery's (phx_mc_tet_mesh_create_from_plc).
 static int32_t create_tet_mesh(
-    const phx_mc_tet_mesh_create_request* request, const double* linear,
-    const phx_mc_tet_implicit_source* implicit) {
-  if (request != nullptr && request->result != nullptr) *request->result = nullptr;
-  if (request == nullptr) return PHX_MC_INVALID_ARGUMENT;
+    const phx_mc_tet_mesh_create_request* caller, const double* linear,
+    const phx_mc_tet_implicit_source* implicit,
+    const phx::mc::PlcRecovery* recovery = nullptr, bool validate = true) {
+  if (caller != nullptr && caller->result != nullptr) *caller->result = nullptr;
+  if (caller == nullptr) return PHX_MC_INVALID_ARGUMENT;
+  phx_mc_tet_mesh_create_request adopted = *caller;
+  if (recovery != nullptr) {
+    if (recovery->failure.reason != phx::mc::kPlcNoFailure || recovery->tets.empty() ||
+        caller->points != nullptr || caller->tetrahedra != nullptr ||
+        caller->tetrahedron_regions != nullptr || caller->faces != nullptr ||
+        caller->face_orientations != nullptr || caller->segments != nullptr ||
+        caller->protection_radii != nullptr || caller->periodic_state != nullptr ||
+        caller->point_count != static_cast<int64_t>(recovery->points.size() / 3) ||
+        caller->tetrahedron_count != static_cast<int64_t>(recovery->tets.size() / 4) ||
+        caller->face_count != static_cast<int64_t>(recovery->faces.size() / 3) ||
+        caller->segment_count != static_cast<int64_t>(recovery->segments.size() / 2) ||
+        recovery->tet_regions.size() != recovery->tets.size() / 4 ||
+        recovery->tet_neighbors.size() != recovery->tets.size() ||
+        recovery->face_orientations.size() != recovery->faces.size() / 3 ||
+        recovery->protection.size() != recovery->points.size() / 3) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    adopted.points = recovery->points.data();
+    adopted.tetrahedra = recovery->tets.data();
+    adopted.tetrahedron_regions = recovery->tet_regions.data();
+    adopted.faces = recovery->faces.data();
+    adopted.face_orientations = recovery->face_orientations.data();
+    adopted.segments = recovery->segments.data();
+    adopted.protection_radii = recovery->protection.data();
+  }
+  const phx_mc_tet_mesh_create_request* request = &adopted;
   return guarded([&]() -> int32_t {
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
@@ -923,6 +951,14 @@ static int32_t create_tet_mesh(
         source_face_tolerances, source_segments, source_segment_groups,
         source_segment_ids, source_segment_tolerances, witnesses,
         source_face_planes, source_face_plane_tolerances};
+    // Unless `validate`, the recovery's adjacency is adopted and, without an
+    // explicit source complex or witnesses, the mesh is its own source bank
+    // (RecoveredTopology).
+    phx::mc::RecoveredTopology recovered;
+    if (recovery != nullptr && !validate) {
+      recovered.neighbors = recovery->tet_neighbors;
+      recovered.self_covered = !explicit_source && witnesses.empty();
+    }
     const int32_t status = handle->state.build(
         input_span(request->points, request->point_count * 3),
         input_span(request->tetrahedra, request->tetrahedron_count * 4),
@@ -939,10 +975,11 @@ static int32_t create_tet_mesh(
         request->protection_radii == nullptr
             ? std::span<const double>{}
             : input_span(request->protection_radii, request->point_count),
-        &source,
+        recovered.self_covered ? nullptr : &source,
         request->protected_vertices == nullptr
             ? std::span<const int8_t>{}
-            : input_span(request->protected_vertices, request->point_count));
+            : input_span(request->protected_vertices, request->point_count),
+        &recovered);
     if (status != PHX_MC_OK) {
       const auto& refusal = handle->state.plane_refusal();
       if (request->plane_refusal != nullptr && refusal.has_value()) {
@@ -993,6 +1030,16 @@ static int32_t create_tet_mesh(
     *request->result = handle.release();
     return PHX_MC_OK;
   });
+}
+
+int32_t phx_mc_tet_mesh_create_from_plc(
+    const phx_mc_plc3d_result* recovery, const phx_mc_tet_mesh_create_request* request,
+    const double* linear, int32_t validate) {
+  if (recovery == nullptr) {
+    if (request != nullptr && request->result != nullptr) *request->result = nullptr;
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  return create_tet_mesh(request, linear, nullptr, &recovery->recovery, validate != 0);
 }
 
 int32_t phx_mc_tet_mesh_create_with_affine_metric(

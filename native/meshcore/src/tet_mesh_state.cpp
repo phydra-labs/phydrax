@@ -172,6 +172,190 @@ bool link_ghosts(std::vector<Tetrahedron>& tets, std::size_t cell_count,
   return true;
 }
 
+// A cell face: (cell, slot).
+using FaceSlot = std::pair<std::int32_t, int>;
+
+// Pairs the faces of the cells [0, cell_count) by their vertices (each face
+// of at most two cells, on opposite sides). `boundary` receives the boundary
+// faces in face key order (the ghost order), `face_cells` each constrained
+// face row's first occurrence in (cell, slot) order; every boundary face is
+// a constrained one and none is constrained twice.
+int32_t pair_faces(std::vector<Tetrahedron>& tets, std::size_t cell_count,
+                   std::size_t vertex_count, std::span<const std::int32_t> faces,
+                   std::vector<FaceSlot>& boundary, std::vector<FaceSlot>& face_cells) {
+  // Cell faces bucketed by their smallest vertex, each bucket sorted by the
+  // other two vertices, then by occurrence (cell row, face slot): a face is a
+  // run of equal keys, its first record its first occurrence.
+  std::vector<FaceRecord> records;
+  std::vector<std::uint32_t> bucket;
+  bucket_faces(tets, cell_count, vertex_count, records, bucket);
+  std::vector<std::uint32_t> boundary_records;
+  for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+    std::uint32_t row = bucket[vertex];
+    const std::uint32_t end = bucket[vertex + 1];
+    while (row < end) {
+      std::uint32_t last = row + 1;
+      while (last < end && records[last].b == records[row].b &&
+             records[last].c == records[row].c) {
+        ++last;
+      }
+      if (last - row > 2) return PHX_MC_INVALID_INPUT;
+      if (last - row == 1) {
+        boundary_records.push_back(row);
+      } else {
+        const FaceRecord& first = records[row];
+        const FaceRecord& second = records[row + 1];
+        if (first.parity == second.parity) return PHX_MC_INVALID_INPUT;
+        tets[static_cast<std::size_t>(first.cell)].n[first.slot] = second.cell;
+        tets[static_cast<std::size_t>(second.cell)].n[second.slot] = first.cell;
+      }
+      row = last;
+    }
+  }
+  if (boundary_records.empty()) return PHX_MC_INVALID_INPUT;
+  // The first face record of each constrained face row; a face is claimed once.
+  std::vector<std::uint8_t> claimed(records.size(), 0);
+  for (std::size_t row = 0; row < face_cells.size(); ++row) {
+    std::int32_t key[3];
+    std::copy_n(faces.data() + 3 * row, 3, key);
+    std::sort(key, key + 3);
+    if (key[0] < 0 || static_cast<std::size_t>(key[2]) >= vertex_count) return PHX_MC_INVALID_INPUT;
+    const auto begin = records.begin() + bucket[static_cast<std::size_t>(key[0])];
+    const auto end = records.begin() + bucket[static_cast<std::size_t>(key[0]) + 1];
+    const auto found = std::lower_bound(begin, end, key, [](const FaceRecord& record,
+                                                            const std::int32_t* wanted) {
+      return record.b < wanted[1] || (record.b == wanted[1] && record.c < wanted[2]);
+    });
+    if (found == end || found->b != key[1] || found->c != key[2]) return PHX_MC_INVALID_INPUT;
+    const std::size_t record = static_cast<std::size_t>(found - records.begin());
+    if (claimed[record] != 0) return PHX_MC_INVALID_INPUT;
+    claimed[record] = 1;
+    face_cells[row] = {found->cell, found->slot};
+  }
+  boundary.reserve(boundary_records.size());
+  for (std::uint32_t record : boundary_records) {
+    if (claimed[record] == 0) return PHX_MC_INVALID_INPUT;
+    boundary.emplace_back(records[record].cell, records[record].slot);
+  }
+  return PHX_MC_OK;
+}
+
+// pair_faces for cells whose adjacency `neighbors` (per cell and slot, -1 on
+// the boundary) a PLC recovery published: the same boundary order and first
+// occurrences, without pairing every face. A constrained face on the
+// boundary is found among the boundary faces, an interior one among the
+// cells around its smallest vertex.
+int32_t adopt_adjacency(std::vector<Tetrahedron>& tets, std::size_t cell_count,
+                        std::size_t vertex_count, std::span<const std::int32_t> faces,
+                        std::span<const std::int32_t> neighbors,
+                        std::vector<FaceSlot>& boundary, std::vector<FaceSlot>& face_cells) {
+  if (neighbors.size() != 4 * cell_count) return PHX_MC_INVALID_ARGUMENT;
+  struct BoundaryFace {
+    std::array<std::int32_t, 3> key;
+    FaceSlot face;
+  };
+  std::vector<BoundaryFace> keyed;
+  for (std::size_t cell = 0; cell < cell_count; ++cell) {
+    for (int slot = 0; slot < 4; ++slot) {
+      const std::int32_t across = neighbors[4 * cell + static_cast<std::size_t>(slot)];
+      if (across < -1 || across >= static_cast<std::int32_t>(cell_count)) {
+        return PHX_MC_INVALID_INPUT;
+      }
+      tets[cell].n[slot] = across;
+      if (across >= 0) continue;
+      BoundaryFace entry{{}, {static_cast<std::int32_t>(cell), slot}};
+      sorted_face_of(tets[cell], slot, entry.key.data());
+      keyed.push_back(entry);
+    }
+  }
+  if (keyed.empty()) return PHX_MC_INVALID_INPUT;
+  std::sort(keyed.begin(), keyed.end(),
+            [](const BoundaryFace& x, const BoundaryFace& y) { return x.key < y.key; });
+  std::vector<std::uint8_t> claimed(keyed.size(), 0);
+  std::vector<std::size_t> interior;
+  for (std::size_t row = 0; row < face_cells.size(); ++row) {
+    std::array<std::int32_t, 3> key;
+    std::copy_n(faces.data() + 3 * row, 3, key.begin());
+    std::sort(key.begin(), key.end());
+    if (key[0] < 0 || static_cast<std::size_t>(key[2]) >= vertex_count) return PHX_MC_INVALID_INPUT;
+    const auto found = std::lower_bound(
+        keyed.begin(), keyed.end(), key,
+        [](const BoundaryFace& entry, const std::array<std::int32_t, 3>& wanted) {
+          return entry.key < wanted;
+        });
+    if (found == keyed.end() || found->key != key) {
+      interior.push_back(row);
+      continue;
+    }
+    const std::size_t at = static_cast<std::size_t>(found - keyed.begin());
+    if (claimed[at] != 0) return PHX_MC_INVALID_INPUT;
+    claimed[at] = 1;
+    face_cells[row] = found->face;
+  }
+  boundary.reserve(keyed.size());
+  for (std::size_t at = 0; at < keyed.size(); ++at) {
+    if (claimed[at] == 0) return PHX_MC_INVALID_INPUT;
+    boundary.push_back(keyed[at].face);
+  }
+  if (interior.empty()) return PHX_MC_OK;
+  // The cells around each interior face's smallest vertex, in cell order
+  // (a counting sort), so the first holding the face is its first occurrence.
+  std::vector<std::uint32_t> starts(vertex_count + 1, 0U);
+  std::vector<std::uint8_t> wanted(vertex_count, 0);
+  for (std::size_t row : interior) {
+    const std::int32_t* face = faces.data() + 3 * row;
+    wanted[static_cast<std::size_t>(std::min({face[0], face[1], face[2]}))] = 1;
+  }
+  for (std::size_t cell = 0; cell < cell_count; ++cell) {
+    for (std::int32_t vertex : tets[cell].v) {
+      if (wanted[static_cast<std::size_t>(vertex)] != 0) ++starts[static_cast<std::size_t>(vertex) + 1];
+    }
+  }
+  for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) starts[vertex + 1] += starts[vertex];
+  std::vector<std::uint32_t> around(starts.back());
+  {
+    std::vector<std::uint32_t> cursor(starts.begin(), starts.end() - 1);
+    for (std::size_t cell = 0; cell < cell_count; ++cell) {
+      for (std::int32_t vertex : tets[cell].v) {
+        if (wanted[static_cast<std::size_t>(vertex)] != 0) {
+          around[cursor[static_cast<std::size_t>(vertex)]++] = static_cast<std::uint32_t>(cell);
+        }
+      }
+    }
+  }
+  std::vector<FaceSlot> interior_faces;
+  interior_faces.reserve(interior.size());
+  for (std::size_t row : interior) {
+    const std::int32_t* face = faces.data() + 3 * row;
+    const std::int32_t smallest = std::min({face[0], face[1], face[2]});
+    face_cells[row] = {-1, -1};
+    for (std::uint32_t at = starts[static_cast<std::size_t>(smallest)];
+         at < starts[static_cast<std::size_t>(smallest) + 1]; ++at) {
+      const Tetrahedron& tet = tets[around[at]];
+      int outside = -1;
+      int held = 0;
+      for (int corner = 0; corner < 4; ++corner) {
+        if (std::find(face, face + 3, tet.v[corner]) != face + 3) {
+          ++held;
+        } else {
+          outside = corner;
+        }
+      }
+      if (held == 3) {
+        face_cells[row] = {static_cast<std::int32_t>(around[at]), outside};
+        break;
+      }
+    }
+    if (face_cells[row].first < 0) return PHX_MC_INVALID_INPUT;
+    interior_faces.push_back(face_cells[row]);
+  }
+  std::sort(interior_faces.begin(), interior_faces.end());
+  if (std::adjacent_find(interior_faces.begin(), interior_faces.end()) != interior_faces.end()) {
+    return PHX_MC_INVALID_INPUT;
+  }
+  return PHX_MC_OK;
+}
+
 FacetCoverageBounds facet_bounds(const double* a, const double* b, const double* c) {
   FacetCoverageBounds result{};
   for (int axis = 0; axis < 3; ++axis) {
@@ -248,7 +432,8 @@ int32_t TetMesh::build(std::span<const double> points,
                        std::span<const std::int32_t> segment_sources,
                        std::span<const double> protection_radii,
                        const SourceComplexView* source,
-                       std::span<const std::int8_t> protected_vertices) {
+                       std::span<const std::int8_t> protected_vertices,
+                       const RecoveredTopology* recovered) {
   clear_implicit_facet_refusal();
   if (implicit_source_) return PHX_MC_INVALID_ARGUMENT;
   try {
@@ -266,7 +451,7 @@ int32_t TetMesh::build(std::span<const double> points,
     staged.pending_implicit_source_ = pending_implicit_source_;
     const std::int32_t status = staged.build_state(
         points, tetrahedra, regions, faces, face_sources, face_orientations,
-        segments, segment_sources, protection_radii, source, protected_vertices);
+        segments, segment_sources, protection_radii, source, protected_vertices, recovered);
     if (status != PHX_MC_OK) {
       plane_refusal_ = staged.plane_refusal_;
       return status;
@@ -292,10 +477,12 @@ int32_t TetMesh::build_state(std::span<const double> points,
                              std::span<const std::int32_t> segment_sources,
                              std::span<const double> protection_radii,
                              const SourceComplexView* source,
-                             std::span<const std::int8_t> protected_vertices) {
+                             std::span<const std::int8_t> protected_vertices,
+                             const RecoveredTopology* recovered) {
   if (points.empty() || points.size() % 3 != 0 || tetrahedra.empty() ||
       tetrahedra.size() % 4 != 0 || faces.size() % 3 != 0 ||
-      segments.size() % 2 != 0) {
+      segments.size() % 2 != 0 ||
+      (recovered != nullptr && recovered->self_covered && source != nullptr)) {
     return PHX_MC_INVALID_ARGUMENT;
   }
   const std::size_t vertex_count = points.size() / 3;
@@ -486,69 +673,27 @@ int32_t TetMesh::build_state(std::span<const double> points,
   complex_.finite_count = static_cast<std::int64_t>(cell_count);
   next_cell_id_ = static_cast<std::uint64_t>(cell_count);
 
-  // Cell faces bucketed by their smallest vertex, each bucket sorted by the
-  // other two vertices, then by occurrence (cell row, face slot): a face is a
-  // run of equal keys, its first record its first occurrence.
-  std::vector<FaceRecord> records;
-  std::vector<std::uint32_t> bucket;
-  bucket_faces(complex_.tets, cell_count, vertex_count, records, bucket);
-  std::vector<std::uint32_t> boundary_records;
-  for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
-    std::uint32_t row = bucket[vertex];
-    const std::uint32_t end = bucket[vertex + 1];
-    while (row < end) {
-      std::uint32_t last = row + 1;
-      while (last < end && records[last].b == records[row].b &&
-             records[last].c == records[row].c) {
-        ++last;
-      }
-      if (last - row > 2) return PHX_MC_INVALID_INPUT;
-      if (last - row == 1) {
-        boundary_records.push_back(row);
-      } else {
-        const FaceRecord& first = records[row];
-        const FaceRecord& second = records[row + 1];
-        if (first.parity == second.parity) return PHX_MC_INVALID_INPUT;
-        complex_.tets[static_cast<std::size_t>(first.cell)].n[first.slot] = second.cell;
-        complex_.tets[static_cast<std::size_t>(second.cell)].n[second.slot] = first.cell;
-      }
-      row = last;
-    }
-  }
-  if (boundary_records.empty()) return PHX_MC_INVALID_INPUT;
-  // The first face record of each constrained face row; a face is claimed once.
-  const auto find_face = [&](const std::int32_t* vertices) -> std::int64_t {
-    std::int32_t key[3]{vertices[0], vertices[1], vertices[2]};
-    std::sort(key, key + 3);
-    const auto begin = records.begin() + bucket[static_cast<std::size_t>(key[0])];
-    const auto end = records.begin() + bucket[static_cast<std::size_t>(key[0]) + 1];
-    const auto found = std::lower_bound(begin, end, key, [](const FaceRecord& record,
-                                                            const std::int32_t* wanted) {
-      return record.b < wanted[1] || (record.b == wanted[1] && record.c < wanted[2]);
-    });
-    if (found == end || found->b != key[1] || found->c != key[2]) return -1;
-    return found - records.begin();
-  };
-  std::vector<std::uint8_t> claimed(records.size(), 0);
-  std::vector<std::uint32_t> face_records(face_count);
+  // The boundary faces in ghost order and each constrained face row's cell face.
+  std::vector<FaceSlot> boundary_faces;
+  std::vector<FaceSlot> face_cells(face_count);
+  const std::int32_t paired =
+      recovered != nullptr && !recovered->neighbors.empty()
+          ? adopt_adjacency(complex_.tets, cell_count, vertex_count, faces, recovered->neighbors,
+                            boundary_faces, face_cells)
+          : pair_faces(complex_.tets, cell_count, vertex_count, faces, boundary_faces,
+                       face_cells);
+  if (paired != PHX_MC_OK) return paired;
   facets_.reserve(face_count);
   facet_index_.reserve(face_count);
   for (std::size_t row = 0; row < face_count; ++row) {
     const std::int32_t* vertices = faces.data() + 3 * row;
     for (int corner = 0; corner < 3; ++corner) {
-      if (vertices[corner] < 0 || static_cast<std::size_t>(vertices[corner]) >= vertex_count) {
-        return PHX_MC_INVALID_INPUT;
-      }
       vertex_dimension_[static_cast<std::size_t>(vertices[corner])] =
           std::min<std::int8_t>(vertex_dimension_[static_cast<std::size_t>(vertices[corner])], 2);
       if (policy_ == BoundaryPolicy::kFixed) {
         protected_vertices_[static_cast<std::size_t>(vertices[corner])] = 1;
       }
     }
-    const std::int64_t record = find_face(vertices);
-    if (record < 0 || claimed[static_cast<std::size_t>(record)] != 0) return PHX_MC_INVALID_INPUT;
-    claimed[static_cast<std::size_t>(record)] = 1;
-    face_records[row] = static_cast<std::uint32_t>(record);
     const std::int8_t orientation = face_orientations.empty() ? 1 : face_orientations[row];
     TetSnapshotFacet face;
     face.id = next_facet_id_++;
@@ -559,10 +704,6 @@ int32_t TetMesh::build_state(std::span<const double> points,
     face.protected_facet = policy_ == BoundaryPolicy::kFixed;
     facets_.push_back(face);
   }
-  for (std::uint32_t record : boundary_records) {
-    if (claimed[record] == 0) return PHX_MC_INVALID_INPUT;
-  }
-  claimed = {};
 
   if (segment_count != 0) {
     // A segment must be a cell edge (found among its first endpoint's cells,
@@ -634,20 +775,20 @@ int32_t TetMesh::build_state(std::span<const double> points,
   }
 
   // One ghost cell per boundary face, in face key order, closing the hull.
-  if (cell_count + boundary_records.size() >= static_cast<std::size_t>(kMaxTetrahedronSlots)) {
+  if (cell_count + boundary_faces.size() >= static_cast<std::size_t>(kMaxTetrahedronSlots)) {
     return PHX_MC_INDEX_RANGE_ERROR;
   }
-  complex_.tets.resize(cell_count + boundary_records.size());
-  for (std::size_t index = 0; index < boundary_records.size(); ++index) {
-    const FaceRecord& boundary = records[boundary_records[index]];
+  complex_.tets.resize(cell_count + boundary_faces.size());
+  for (std::size_t index = 0; index < boundary_faces.size(); ++index) {
+    const auto [owner, slot] = boundary_faces[index];
     const std::int32_t ghost_slot = static_cast<std::int32_t>(cell_count + index);
-    Tetrahedron& cell = complex_.tets[static_cast<std::size_t>(boundary.cell)];
+    Tetrahedron& cell = complex_.tets[static_cast<std::size_t>(owner)];
     std::int32_t oriented[3];
-    oriented_facet(cell.v, boundary.slot, oriented);
+    oriented_facet(cell.v, slot, oriented);
     complex_.tets[static_cast<std::size_t>(ghost_slot)] =
         Tetrahedron{{kGhostVertex, oriented[0], oriented[1], oriented[2]},
-                    {boundary.cell, -1, -1, -1}, 0, 0};
-    cell.n[boundary.slot] = ghost_slot;
+                    {owner, -1, -1, -1}, 0, 0};
+    cell.n[slot] = ghost_slot;
   }
   cell_ids_.resize(complex_.tets.size(), std::numeric_limits<std::uint64_t>::max());
   if (!link_ghosts(complex_.tets, cell_count, vertex_count)) return PHX_MC_INVALID_INPUT;
@@ -658,8 +799,8 @@ int32_t TetMesh::build_state(std::span<const double> points,
     }
   }
   for (std::size_t row = 0; row < face_count; ++row) {
-    const FaceRecord& record = records[face_records[row]];
-    complex_.set_facet_constraint(record.cell, record.slot, face_sources[row]);
+    complex_.set_facet_constraint(face_cells[row].first, face_cells[row].second,
+                                  face_sources[row]);
   }
   if (pending_implicit_source_) {
     auto pending = std::move(pending_implicit_source_);
@@ -688,11 +829,34 @@ int32_t TetMesh::build_state(std::span<const double> points,
       return PHX_MC_INVALID_INPUT;
     }
   }
-  // Source face rows ordered by group, each group's rows in source-bank
-  // order, so coverage and its first-refusal behavior are unchanged. A group
-  // of one row with bounds (one source triangle per facet, the common case)
-  // is prepared at its turn in one reused scratch group; every other group
-  // is prepared once up front.
+  // A recovered mesh that is its own source bank is covered by construction
+  // (RecoveredTopology::self_covered).
+  if ((recovered == nullptr || !recovered->self_covered) && !constraints_covered()) {
+    return PHX_MC_INVALID_INPUT;
+  }
+  for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+    if (vertex_dimension_[vertex] < 0) return PHX_MC_INVALID_INPUT;
+    TetEditVertex candidate;
+    candidate.id = vertex_ids_[vertex];
+    std::copy_n(points_.data() + 3 * vertex, 3, candidate.carrier.begin());
+    candidate.witness = witnesses_[vertex];
+    candidate.has_edge_parameter = vertex_has_edge_parameter_[vertex] != 0;
+    candidate.edge_endpoints = vertex_edge_endpoints_[vertex];
+    candidate.edge_parameter = vertex_edge_parameters_[vertex];
+    candidate.protection_radius = protection_radii_[vertex];
+    candidate.protected_vertex = protected_vertices_[vertex] != 0;
+    if (!source_carrier_valid(candidate)) return PHX_MC_INVALID_INPUT;
+  }
+  // The adjacency, ghost hull and identities above are consistent by
+  // construction (every face pairing checked its reversed orientation).
+  return PHX_MC_OK;
+}
+
+// Whether every constrained face and segment is covered by its source group
+// (source_face_valid, source_segment_valid), each in row order.
+bool TetMesh::constraints_covered() const {
+  const std::size_t face_count = facets_.size();
+  const std::size_t segment_count = segments_.size();
   std::vector<std::pair<std::int32_t, std::uint32_t>> grouped(source_face_groups_.size());
   for (std::size_t row = 0; row < grouped.size(); ++row) {
     grouped[row] = {source_face_groups_[row], static_cast<std::uint32_t>(row)};
@@ -785,7 +949,7 @@ int32_t TetMesh::build_state(std::span<const double> points,
         group = &prepared_groups[static_cast<std::size_t>(group_prepared[index])];
       }
     }
-    if (!source_face_valid(candidate, nullptr, group)) return PHX_MC_INVALID_INPUT;
+    if (!source_face_valid(candidate, nullptr, group)) return false;
   }
   // Source segment row order determines the first successful exact witness.
   std::vector<std::pair<std::int32_t, std::uint32_t>> segment_grouped(
@@ -810,24 +974,9 @@ int32_t TetMesh::build_state(std::span<const double> points,
          ++entry) {
       segment_rows.push_back(entry->second);
     }
-    if (!source_segment_valid(candidate, nullptr, &segment_rows)) return PHX_MC_INVALID_INPUT;
+    if (!source_segment_valid(candidate, nullptr, &segment_rows)) return false;
   }
-  for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
-    if (vertex_dimension_[vertex] < 0) return PHX_MC_INVALID_INPUT;
-    TetEditVertex candidate;
-    candidate.id = vertex_ids_[vertex];
-    std::copy_n(points_.data() + 3 * vertex, 3, candidate.carrier.begin());
-    candidate.witness = witnesses_[vertex];
-    candidate.has_edge_parameter = vertex_has_edge_parameter_[vertex] != 0;
-    candidate.edge_endpoints = vertex_edge_endpoints_[vertex];
-    candidate.edge_parameter = vertex_edge_parameters_[vertex];
-    candidate.protection_radius = protection_radii_[vertex];
-    candidate.protected_vertex = protected_vertices_[vertex] != 0;
-    if (!source_carrier_valid(candidate)) return PHX_MC_INVALID_INPUT;
-  }
-  // The adjacency, ghost hull and identities above are consistent by
-  // construction (every face pairing checked its reversed orientation).
-  return PHX_MC_OK;
+  return true;
 }
 
 int32_t TetMesh::install_vertex_sizes(std::span<const double> sizes) {

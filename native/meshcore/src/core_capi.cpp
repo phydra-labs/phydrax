@@ -16,9 +16,6 @@
 #include "plc3d.hpp"
 #include "parallel.hpp"
 
-struct phx_mc_plc3d_result {
-  phx::mc::PlcRecovery recovery;
-};
 #ifndef PHX_MC_VERSION
 #error "PHX_MC_VERSION must be defined by the build."
 #endif
