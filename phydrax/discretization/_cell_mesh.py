@@ -17,11 +17,13 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..sparse import EdgeRelation
 from ..typing import checked, ConvertibleToArray, Dim, Int32
 from ._cell_complex import (
     _canonical_entity_ids,
     _interval_complex,
     _polygonal_complex,
+    _simplicial_incidence_routes,
     _tetrahedral_complex,
     interval_connectivity,
     IntervalConnectivity,
@@ -30,7 +32,6 @@ from ._cell_complex import (
     polyhedral_cell_complex,
     polyhedral_connectivity as _build_polyhedral_connectivity,
     PolyhedralConnectivity,
-    simplicial_cell_complex,
     tetrahedral_connectivity,
     TetrahedralConnectivity,
 )
@@ -782,10 +783,9 @@ def _simplex_mesh_levels(
 
 
 def _simplex_mesh_boundary(
-    levels: tuple[np.ndarray, ...], topology: CellComplexTopology, /
+    levels: tuple[np.ndarray, ...], relation: EdgeRelation, /
 ) -> tuple[np.ndarray, ...]:
-    dimension = topology.dimension
-    relation = topology.incidences[-1].relation
+    dimension = len(levels) - 1
     valid = np.asarray(relation.valid, dtype=np.bool_)
     source = np.asarray(relation.source_indices)[valid]
     counts = np.bincount(source, minlength=levels[-2].shape[0])
@@ -918,24 +918,39 @@ def _simplex_mesh_topology(
         tuple(np.asarray(block.vertices, dtype=np.int32) for block in blocks)
     )
     levels = _simplex_mesh_levels(cells, dimension, vertex_count)
-    canonical = simplicial_cell_complex(levels)
-    masks = _simplex_mesh_boundary(levels, canonical)
-    sets: list[EntitySet] = []
-    for degree, (rows, source) in enumerate(
-        zip(levels, canonical.entity_sets, strict=True)
-    ):
-        ids = (
-            vertex_ids
-            if degree == 0
-            else cell_ids
-            if degree == dimension
-            else entity_ids.get(degree, _canonical_entity_ids(vertex_ids[rows]))
+    # The levels are increasing, distinct and face closed by construction, so
+    # the topology is assembled once from their incidence routes.
+    relations = tuple(
+        (
+            EdgeRelation(
+                source,
+                target,
+                source_size=levels[degree - 1].shape[0],
+                target_size=levels[degree].shape[0],
+            ),
+            signs,
         )
-        if ids.shape != (source.count,):
+        for degree, (source, target, signs) in enumerate(
+            _simplicial_incidence_routes(levels), start=1
+        )
+    )
+    masks = _simplex_mesh_boundary(levels, relations[-1][0])
+    sets: list[EntitySet] = []
+    for degree, rows in enumerate(levels):
+        if degree == 0:
+            ids = vertex_ids
+        elif degree == dimension:
+            ids = cell_ids
+        else:
+            supplied = entity_ids.get(degree)
+            ids = (
+                _canonical_entity_ids(vertex_ids[rows]) if supplied is None else supplied
+            )
+        if ids.shape != (rows.shape[0],):
             raise ValueError("Simplex entity global IDs must match entity counts.")
         sets.append(
             EntitySet(
-                source.name,
+                f"simplicial_{degree}_cells",
                 degree,
                 ids,
                 subsets=(EntitySubset("boundary", masks[degree]),),
@@ -943,15 +958,13 @@ def _simplex_mesh_topology(
         )
     orientation = _simplex_orientation(cells)
     incidences: list[OrientedIncidence] = []
-    for degree, incidence in enumerate(canonical.incidences, start=1):
-        coefficients = np.asarray(incidence.signs)
+    for degree, (relation, signs) in enumerate(relations, start=1):
+        coefficients = signs
         if degree == dimension:
-            coefficients = (
-                coefficients * orientation[np.asarray(incidence.relation.target_indices)]
-            )
+            coefficients = coefficients * orientation[np.asarray(relation.target_indices)]
         incidences.append(
             OrientedIncidence(
-                degree, sets[degree - 1], sets[degree], incidence.relation, coefficients
+                degree, sets[degree - 1], sets[degree], relation, coefficients
             )
         )
     topology = CellComplexTopology(sets, incidences)

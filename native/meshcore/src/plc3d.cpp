@@ -7853,8 +7853,9 @@ class PlcRecoveryBuilder {
       cells.push_back(tet.n[zero_slots[0]]);
     } else if (zeros == 2 || zeros == 3) {
       int32_t ends[2] = {-1, -1};
+      // The 4 - zeros nonzero slots (at most two) are the edge or vertex ends.
       int count = 0;
-      for (int slot = 0; slot < 4; ++slot) {
+      for (int slot = 0; slot < 4 && count < 2; ++slot) {
         if (std::find(zero_slots, zero_slots + zeros, slot) == zero_slots + zeros) {
           ends[count++] = tet.v[slot];
         }

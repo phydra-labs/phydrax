@@ -21,12 +21,12 @@ from ..typing import ConvertibleToArray
 from ._topology import (
     _has_duplicate_rows,
     _row_order,
-    row_positions,
     _row_run_starts,
     CellComplexTopology,
     EntitySet,
     EntitySubset,
     OrientedIncidence,
+    row_positions,
 )
 
 
@@ -1405,6 +1405,33 @@ def _tetrahedral_complex(
     )
 
 
+def _simplicial_incidence_routes(
+    levels: tuple[np.ndarray, ...], /
+) -> tuple[tuple[np.ndarray, np.ndarray, np.ndarray], ...]:
+    """Face-to-simplex ``(face row, simplex row, sign)`` routes of each degree.
+
+    ``levels`` are the increasing vertex rows of every degree; simplex row ``r``
+    of degree ``k`` routes its faces opposite each vertex in turn, with sign
+    ``(-1)^i`` for the face opposite local vertex ``i``. A face absent from the
+    level below is refused.
+    """
+    routes: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    for degree, upper in enumerate(levels[1:], start=1):
+        lower = levels[degree - 1]
+        positions = np.arange(degree + 1, dtype=np.int32)
+        face_columns = np.stack(
+            [positions[positions != removed] for removed in range(degree + 1)]
+        )
+        faces = upper[:, face_columns].reshape((-1, degree))
+        source = row_positions(lower, faces).astype(np.int32)
+        if np.any(source < 0):
+            raise ValueError("Simplex family must be face closed.")
+        target = np.repeat(np.arange(upper.shape[0], dtype=np.int32), degree + 1)
+        signs = np.tile(np.where(positions % 2, -1.0, 1.0), upper.shape[0])
+        routes.append((source, target, signs))
+    return tuple(routes)
+
+
 def simplicial_cell_complex(
     simplices: Sequence[ArrayLike],
     /,
@@ -1436,27 +1463,23 @@ def simplicial_cell_complex(
         )
         for degree, level in enumerate(levels)
     )
-    incidences: list[OrientedIncidence] = []
-    for degree, upper in enumerate(levels[1:], start=1):
-        lower = levels[degree - 1]
-        positions = np.arange(degree + 1, dtype=np.int32)
-        face_columns = np.stack(
-            [positions[positions != removed] for removed in range(degree + 1)]
+    incidences = tuple(
+        OrientedIncidence(
+            degree,
+            entities[degree - 1],
+            entities[degree],
+            EdgeRelation(
+                source,
+                target,
+                source_size=levels[degree - 1].shape[0],
+                target_size=levels[degree].shape[0],
+            ),
+            signs,
         )
-        faces = upper[:, face_columns].reshape((-1, degree))
-        source = row_positions(lower, faces).astype(np.int32)
-        if np.any(source < 0):
-            raise ValueError("Simplex family must be face closed.")
-        target = np.repeat(np.arange(upper.shape[0], dtype=np.int32), degree + 1)
-        signs = np.tile(np.where(positions % 2, -1.0, 1.0), upper.shape[0])
-        relation = EdgeRelation(
-            source, target, source_size=lower.shape[0], target_size=upper.shape[0]
+        for degree, (source, target, signs) in enumerate(
+            _simplicial_incidence_routes(levels), start=1
         )
-        incidences.append(
-            OrientedIncidence(
-                degree, entities[degree - 1], entities[degree], relation, signs
-            )
-        )
+    )
     return CellComplexTopology(entities, incidences, topology_id=topology_id)
 
 

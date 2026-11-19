@@ -825,6 +825,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             layer_core_root_geometry=inputs.layer_core_root_geometry,
             certification_inputs=inputs,
             computed_root=computed_root,
+            tetrahedral_degree=inputs.schedule.route == "volume_plc",
         )
         findings = list(_audit_findings(inputs, audit, multiregion))
         findings.extend(embedding.findings)

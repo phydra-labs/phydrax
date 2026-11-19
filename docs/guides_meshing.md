@@ -1030,7 +1030,15 @@ cells, the boundary triangles are edge-manifold and meet only in shared vertices
 and edges, and every boundary shell has winding number zero in front of it, so
 the covering degree is zero or one; the boundary and region interfaces must be
 exactly the declared oriented source triangles with the cells' regions on their
-sides. Local validity uses the native exact determinant enclosure. A mesh these
+sides. Local validity uses the native exact determinant enclosure. The
+acceptance audit takes what the embedding theorem implies from its certificate
+instead of re-deriving it: no duplicate, collapsed, nonmanifold or
+inconsistently oriented cells and facets, no open boundary or boundary
+self-intersection, connected vertex stars wherever each boundary vertex has one
+fan of boundary triangles, and no failure of zero measure and mean-ratio
+thresholds or of an aspect threshold of at least 2^294. Welded vertices, a
+pinched boundary vertex or other thresholds are evaluated as on every route; the
+audit report records the selection (`tetrahedral_degree`). A mesh these
 theorems do not decide (a boundary that subdivides the source triangles,
 coordinates outside the exact predicate domain) takes the rational proofs. The
 certificates record which proof ran, and restore reproves the same one.

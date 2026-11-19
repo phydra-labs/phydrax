@@ -28,6 +28,9 @@ struct CadRefine2DInput {
   int32_t point_cap = 0;
   CadMetric2DFunction metric = nullptr;
   void* metric_context = nullptr;
+  const uint8_t* fixed_vertices = nullptr;
+  int32_t (*admit_point)(void* context, const double point[2]) = nullptr;
+  void* admit_context = nullptr;
 };
 
 struct CadRefine2DStats {
@@ -41,6 +44,8 @@ struct CadRefine2DStats {
   int64_t proximity_refusals = 0;
   int64_t unresolved_triangles = 0;
   double invalid_metric_point[2] = {0.0, 0.0};
+  int64_t excluded_refusals = 0;
+  int64_t fixed_triangles_skipped = 0;
 };
 
 struct CadRefine2DResult {
@@ -57,6 +62,11 @@ struct CadRefine2DResult {
 // and each size or angle criterion it misses; refusal counts identify the rule.
 // Refinement preserves exact orientation and constraints and terminates at the cap.
 // Invalid metrics return PHX_MC_INVALID_INPUT and record the evaluation point.
+// Triangles with three fixed input vertices are neither refined nor scanned;
+// fixed_triangles_skipped counts them in the final mesh. The optional admission
+// callback rejects candidate points before their metric is evaluated.
+// The caller must ensure all other evaluated triangle centroids are in the
+// metric callback's domain; candidate admission does not filter centroids.
 int32_t cad_refine2d(const CadRefine2DInput& input, CadRefine2DResult& result);
 
 // Re-evaluate one live finite region triangle using the same centroid metric

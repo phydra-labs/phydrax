@@ -20,8 +20,11 @@
 // is the regular triangulation of the symbolically perturbed lifting, hence
 // the conflict region of p is connected and star-shaped from p, and the
 // visibility walk is acyclic.
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <numeric>
 #include <vector>
 
 #include "capi_guard.hpp"
@@ -57,21 +60,40 @@ int32_t triangulate_3d(int64_t point_count, const double* points, const double* 
   const std::vector<int32_t> order =
       deduplicated_insertion_order(points, point_count, 3, active_weights, vertex_map);
 
-  std::vector<char> alive(static_cast<std::size_t>(point_count), 0);
-  for (int32_t vertex : order) {
-    alive[static_cast<std::size_t>(vertex)] = 1;
+  // Vertex k of the triangulation is input point order[k], stored in
+  // insertion order so that walks and cavities touch nearby memory; its
+  // input index orders the symbolic perturbation, so the triangulation is
+  // that of the input points.
+  const std::size_t count = order.size();
+  std::vector<double> local_points(3 * count);
+  std::vector<double> local_weights(weighted ? count : 0);
+  for (std::size_t k = 0; k < count; ++k) {
+    const double* point = points + 3 * static_cast<std::size_t>(order[k]);
+    std::copy_n(point, 3, local_points.begin() + static_cast<std::ptrdiff_t>(3 * k));
+    if (weighted) local_weights[k] = weights[order[k]];
   }
+  std::vector<int32_t> local_order(count);
+  std::iota(local_order.begin(), local_order.end(), 0);
+  std::vector<char> alive(count, 1);
   auto result = std::make_unique<phx_mc_mesh>();
   {
-    Triangulation3D triangulation(points, active_weights, point_count);
-    status = triangulation.build(order, alive);
+    Triangulation3D triangulation(local_points.data(),
+                                  weighted ? local_weights.data() : nullptr,
+                                  static_cast<int64_t>(count));
+    triangulation.set_identities(order.data());
+    status = triangulation.build(local_order, alive);
     if (status != PHX_MC_OK) {
       return status;
     }
     triangulation.collect_cells(result->cells);
   }
+  for (int32_t& vertex : result->cells) vertex = order[static_cast<std::size_t>(vertex)];
+  std::vector<char> input_alive(static_cast<std::size_t>(point_count), 0);
+  for (std::size_t k = 0; k < count; ++k) {
+    input_alive[static_cast<std::size_t>(order[k])] = alive[k];
+  }
   for (int32_t& target : vertex_map) {
-    if (target >= 0 && alive[static_cast<std::size_t>(target)] == 0) {
+    if (target >= 0 && input_alive[static_cast<std::size_t>(target)] == 0) {
       target = -1;
     }
   }
