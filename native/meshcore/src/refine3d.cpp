@@ -1634,7 +1634,9 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     return first < second ? EdgeKey{first, second} : EdgeKey{second, first};
   };
   const auto sorted_face = [](FaceKey face) {
-    std::sort(face.begin(), face.end());
+    if (face[1] < face[0]) std::swap(face[0], face[1]);
+    if (face[2] < face[1]) std::swap(face[1], face[2]);
+    if (face[1] < face[0]) std::swap(face[0], face[1]);
     return face;
   };
   // Hard size fields are stored in regular-tetrahedron circumradius units.

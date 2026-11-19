@@ -1806,6 +1806,8 @@ class PlcRecoveryBuilder {
   }
 
   int orient(int32_t a, int32_t b, int32_t c, int32_t d) const {
+    // A repeated vertex is the same point: the orientation is exactly zero.
+    if (a == b || a == c || a == d || b == c || b == d || c == d) return 0;
     return orient3d(ref(a), ref(b), ref(c), ref(d));
   }
 
