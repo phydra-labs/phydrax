@@ -2625,6 +2625,41 @@ PHX_MC_API int32_t phx_mc_cad_curves_test(
     int64_t split_capacity, int64_t* sag_splits,
     phx_mc_cad_curve_statistics* statistics);
 
+enum {
+  PHX_MC_FIDELITY_CERTIFIED = 0,
+  PHX_MC_FIDELITY_RESOLUTION = 1,
+  PHX_MC_FIDELITY_INTERVAL_REFUSAL = 2,
+  PHX_MC_FIDELITY_TRIM_REFUSAL = 3
+};
+/* CAD fidelity verifier. UV triangles and trim chords are already in one
+ * lifted chart per patch; the producer refuses non-closing lifts. No periodic
+ * identification is performed. Each use belongs to a patch and has a directed
+ * nonempty range; each directed chord belongs to one use and numbered loop.
+ * Triangle UV is (triangle_count,3,2), chord UV (chord_count,2,2), and ranges
+ * are (count,2). The source must establish that its oriented trim cycles bound
+ * the patch. Endpoint and range joins compare bitwise, including signed zero.
+ * edge_chord (triangle_count,3) names the published chord row for each edge,
+ * or -1 for an interior edge. Use rows refer to model use rows. The exact-source
+ * coefficient bounds have model->node_reals layout. Certification is
+ * conditional on a separately verified complete chart partition.
+ *
+ * Outputs per triangle are upper distance bounds, status, reason and subdivision
+ * counts. Unresolved bounds are +infinity. A trim/pole edge currently reports
+ * PHX_MC_UNRESOLVED; it must not be treated as a certificate. Overall OK means
+ * all rows certified, UNRESOLVED means at least one row did not certify.
+ * Invalid input leaves outputs unchanged. max_depth is between 0 and 24. */
+PHX_MC_API int32_t phx_mc_verify_cad_fidelity(
+    const phx_mc_cad_model* model, int64_t coefficient_count,
+    const double* coefficient_lower, const double* coefficient_upper,
+    int64_t point_count, const double* points, int64_t triangle_count,
+    const int64_t* triangles, const int32_t* face_rows, const double* uv,
+    int64_t use_count, const int64_t* use_patch, const double* use_range,
+    int64_t loop_count, int64_t chord_count, const int64_t* chord_use,
+    const int64_t* chord_loop, const double* chord_uv, const double* chord_range,
+    const int64_t* edge_chord, double tolerance, int32_t max_depth,
+    int64_t output_capacity, double* upper, int32_t* item_status, int32_t* reasons,
+    int32_t* subdivisions, double* maximum_upper);
+
 #ifdef __cplusplus
 }
 #endif

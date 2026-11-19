@@ -28,6 +28,10 @@ int main() {
       0.1, 0.2, 0.3, 0.0, 0.0, 1.0};
   const int64_t real_offsets[] = {0, 13, 25, 35, 37, 39, 40, 41, 48, 48, 51, 51, 57};
   const int64_t empty[] = {0};
+  const int32_t surface_nodes[] = {0};
+  const int8_t orientations[] = {1};
+  const double periods[] = {0.0, 0.0};
+  const double domains[] = {-2.0, 2.0, -2.0, 2.0};
   phx_mc_cad_model model{};
   model.node_count = 12;
   model.node_kinds = kinds;
@@ -37,6 +41,11 @@ int main() {
   model.node_reals = coefficients.data();
   model.loop_use_offsets = empty;
   model.region_surface_offsets = empty;
+  model.surface_count = 1;
+  model.surface_nodes = surface_nodes;
+  model.surface_orientations = orientations;
+  model.surface_periods = periods;
+  model.surface_parameter_domains = domains;
   CadGeometry geometry;
   PHX_CHECK(geometry.bind(model, Evaluators::kPrograms) == PHX_MC_OK);
   IntervalEvaluationWorkspace workspace;
@@ -103,5 +112,64 @@ int main() {
       }
     }
   }
+  const double uv[] = {0.0, 0.0, 1.0, 0.0, 0.0, 1.0};
+  const double points[] = {2.0, 0.0, 0.0, 2 * std::cos(1.0), 2 * std::sin(1.0), 0.0,
+                           2 * std::cos(1.0), 0.0, 2 * std::sin(1.0)};
+  const int64_t triangles[] = {0, 1, 2};
+  const int32_t face_rows[] = {0};
+  const int64_t edges[] = {-1, -1, -1};
+  double bound, maximum;
+  int32_t status, reason, splits;
+  PHX_CHECK(phx_mc_verify_cad_fidelity(
+                &model, coefficients.size(), coefficients.data(), coefficients.data(),
+                3, points, 1, triangles, face_rows, uv, 0, nullptr, nullptr, 0, 0, nullptr,
+                nullptr, nullptr, nullptr, edges, 1.0, 8, 1, &bound, &status,
+                &reason, &splits, &maximum) == PHX_MC_OK);
+  PHX_CHECK(status == PHX_MC_OK && reason == PHX_MC_FIDELITY_CERTIFIED && splits > 0);
+  for (int i = 0; i <= 50; ++i) {
+    for (int j = 0; j <= 50 - i; ++j) {
+      const double u = i / 50.0, v = j / 50.0;
+      const double sample[] = {2 * std::cos(v) * std::cos(u),
+                               2 * std::cos(v) * std::sin(u), 2 * std::sin(v)};
+      double squared = 0.0;
+      for (int axis = 0; axis < 3; ++axis) {
+        const double linear = (1 - u - v) * points[axis] + u * points[3 + axis] +
+                              v * points[6 + axis];
+        squared += (sample[axis] - linear) * (sample[axis] - linear);
+      }
+      PHX_CHECK(std::sqrt(squared) <= bound);
+    }
+  }
+  PHX_CHECK(phx_mc_verify_cad_fidelity(
+                &model, coefficients.size(), coefficients.data(), coefficients.data(),
+                3, points, 1, triangles, face_rows, uv, 0, nullptr, nullptr, 0, 0, nullptr,
+                nullptr, nullptr, nullptr, edges, 1e-4, 2, 1, &bound, &status,
+                &reason, &splits, &maximum) == PHX_MC_UNRESOLVED);
+  PHX_CHECK(status == PHX_MC_UNRESOLVED && reason == PHX_MC_FIDELITY_RESOLUTION);
+  const double corner[] = {0.0, 0.0, 0.0};
+  const int64_t loop_offsets[] = {0, 1};
+  const int32_t loop_surface[] = {0}, use_entity[] = {0}, pcurve[] = {7};
+  const int8_t use_kind[] = {1}, use_sense[] = {1};
+  const double use_parameters[] = {0.0, 1.0};
+  model.corner_count = 1;
+  model.corner_points = corner;
+  model.loop_count = 1;
+  model.loop_use_offsets = loop_offsets;
+  model.loop_surfaces = loop_surface;
+  model.use_count = 1;
+  model.use_kinds = use_kind;
+  model.use_entities = use_entity;
+  model.use_senses = use_sense;
+  model.use_ranges = use_parameters;
+  model.use_pcurve_nodes = pcurve;
+  const int64_t use_patch[] = {0}, chord_use[] = {0}, chord_loop[] = {0};
+  const int64_t chord_edges[] = {0, -1, -1};
+  PHX_CHECK(phx_mc_verify_cad_fidelity(
+                &model, coefficients.size(), coefficients.data(), coefficients.data(),
+                3, points, 1, triangles, face_rows, uv, 1, use_patch, use_parameters,
+                1, 1, chord_use, chord_loop, uv, use_parameters, chord_edges, 1.0, 8,
+                1, &bound, &status, &reason, &splits, &maximum) == PHX_MC_UNRESOLVED);
+  PHX_CHECK(reason == PHX_MC_FIDELITY_TRIM_REFUSAL && std::isinf(bound) &&
+            std::isinf(maximum));
   return 0;
 }

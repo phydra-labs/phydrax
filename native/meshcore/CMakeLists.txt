@@ -103,6 +103,7 @@ set(PHX_MC_SOURCES
   src/cad_refine2d.cpp
   src/cad_curves.cpp
   src/cad_curves_capi.cpp
+  src/verify_cad_fidelity.cpp
 )
 set(PHX_MC_HEADERS
   include/phydrax_meshcore.h
@@ -161,6 +162,7 @@ set(PHX_MC_HEADERS
   src/cad_curves.hpp
   src/cad_curve_discretization.hpp
   src/refine_queue.hpp
+  src/verify_cad_fidelity.hpp
 )
 
 # Content identity of the library sources; CMake re-configures when any listed
