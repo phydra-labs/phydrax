@@ -2995,18 +2995,23 @@ class PlcRecoveryBuilder {
         vertex_slot(complex.tets[static_cast<std::size_t>(start)], first) < 0) {
       return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, first);
     }
-    // With no unsynced edits the incidence list of `first` is exactly the
-    // star the walk below visits (every live cell through it).
+    // With no unsynced edits the incidence list of each end is exactly its
+    // star (every live cell through it), and the edge is a finite cell
+    // through both: the shorter list is scanned.
     if (journal_.empty()) {
-      for (const int32_t id : incidence_[static_cast<std::size_t>(first)]) {
+      const bool by_first = incidence_[static_cast<std::size_t>(first)].size() <=
+                            incidence_[static_cast<std::size_t>(second)].size();
+      const int32_t scanned = by_first ? first : second;
+      const int32_t other = by_first ? second : first;
+      for (const int32_t id : incidence_[static_cast<std::size_t>(scanned)]) {
         if (!triangulation_->valid_live_cell(id)) {
-          return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, first);
+          return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, scanned);
         }
         const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(id)];
-        if (vertex_slot(tet, first) < 0) {
-          return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, first);
+        if (vertex_slot(tet, scanned) < 0) {
+          return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, scanned);
         }
-        if (!is_ghost(tet) && !artificial_corner_tet(tet) && vertex_slot(tet, second) >= 0) {
+        if (!is_ghost(tet) && !artificial_corner_tet(tet) && vertex_slot(tet, other) >= 0) {
           found = true;
           return PHX_MC_OK;
         }
