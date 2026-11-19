@@ -115,7 +115,7 @@ void sag(const Run& run, const std::function<Vec(double)>& point, double limit) 
   for (std::size_t i = 1; i < p.size(); ++i) {
     const Vec a = point(p[i-1]), b = point(p[i]);
     for (int j = 1; j < 128; ++j)
-      PHX_CHECK(chord_distance(point(p[i-1] + (p[i]-p[i-1])*j/128.0), a, b) <= limit * 1.01 + 1e-12);
+      PHX_CHECK(chord_distance(point(p[i-1] + (p[i]-p[i-1])*j/128.0), a, b) <= limit + 1e-12);
   }
 }
 
