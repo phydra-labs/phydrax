@@ -101,6 +101,16 @@ tetrahedra, then implicit volumes, then the CAD solid.
 - Tests: route tests updated; the certificate rejects a mesh with a flipped cell, a missing boundary
   face, and a cell outside the surface.
 - Acceptance: the S3 rows of the benchmark beaten; quick CAD profile passes with the new volume stage.
+- Status (Nov 19): `phx_mc_verify_tetrahedra` / `phx_mc_verify_volume` / `phx_mc_tetrahedra_validity`
+  decide embedding, region coverage and validity natively (`tetrahedral_degree`); `prove=False` returns
+  `CellMeshingCandidate`, `candidate.prove()` the same result. Rejection tests (flipped cell, missing
+  boundary face, cell outside the surface, wrong region label) and a fresh-process archive round trip
+  pass. Certified icosphere execute under cProfile: L4 1.3 s (13,462 cells), L5 5.1 s (89,740), L6
+  32.8 s (636,257; was 77.8 s). L6 split: native recovery + refinement + improvement about 2 s;
+  `CellMesh` topology 5.9 s, source tables and size field 1.7 s, source associations 8.3 s (Equinox's
+  static-field array walk over per-row identity tuples about 4.6 s of it), audit 11.0 s (welded
+  topology 5.5, quality 3.6, evidence 1.0). NOT met: L6 "in seconds"; the remainder is generic numpy
+  topology/quality work and per-row association tuples, not per-row Python loops.
 
 ## Later slices (planned when S3 is accepted; same rules)
 - S1 implicit field to tetrahedra by isosurface stuffing on a graded body-centered cubic lattice
