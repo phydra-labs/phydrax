@@ -77,8 +77,8 @@ def _evaluate_interval_boxes(
     upper: np.ndarray,
     output_shape: tuple[int, ...],
 ) -> tuple[np.ndarray, np.ndarray]:
-    # The profile's programs use the native batched executor: one call encloses
-    # every box, independent of how the boxes are partitioned.
+    # One call: the host executor blocks the boxes itself, so an outer
+    # partition would only add dispatches.
     if lower.shape[0] == 0:
         empty = np.empty((0, *output_shape), dtype=np.float64)
         return empty, empty.copy()
@@ -276,16 +276,10 @@ class _AnalyticFieldBounds:
 
             return jax.grad(scalar)(point)
 
-        object.__setattr__(
-            self,
-            "_value_program",
-            prepare_interval_function(values, 3, batch_capacity=1, execution="batched"),
-        )
+        object.__setattr__(self, "_value_program", prepare_interval_function(values, 3))
         gradient_program: PreparedIntervalFunction | None = None
         try:
-            gradient_program = prepare_interval_function(
-                gradients, 3, batch_capacity=1, execution="batched"
-            )
+            gradient_program = prepare_interval_function(gradients, 3)
         except IntervalExtensionError:
             gradient_program = None
         object.__setattr__(self, "_gradient_program", gradient_program)
@@ -651,9 +645,7 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
                 axis=-1,
             )
 
-        self._map_program = prepare_interval_function(
-            parameter_map, 2, batch_capacity=1, execution="batched"
-        )
+        self._map_program = prepare_interval_function(parameter_map, 2)
 
     @property
     def ambient_dimension(self) -> int:
