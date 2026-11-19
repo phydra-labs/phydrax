@@ -103,6 +103,17 @@ class CadGeometry {
   int32_t pcurve_node(int64_t use) const noexcept { return model_.use_pcurve_nodes[use]; }
   const Node& node(int32_t index) const noexcept { return nodes_[static_cast<std::size_t>(index)]; }
 
+  // Append representation breakpoints mapped to s in (0,1), where the
+  // node parameter is first + s * (last - first). All distinct spline knots
+  // are retained, regardless of multiplicity: each starts a polynomial span.
+  // degree is raised to the largest encountered spline degree. Endpoints are
+  // the topological vertices and are supplied separately by the caller.
+  // Crossings of adjacent surface knot or piece lines are not enumerated:
+  // they only change the sampled face-curvature size integrand. In particular,
+  // a C0 surface crease is the face stage's responsibility.
+  void curve_breakpoints(int32_t index, double first, double last,
+                         std::vector<double>& points, int& degree) const;
+
   // Derivatives of `node` at `point` (its input coordinates) through total
   // order `order` (0 to 2): for n = 0..order the derivatives
   // d^n / (du^(n-j) dv^j), j = 0..n (one per order for one input), each an
