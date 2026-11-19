@@ -2606,7 +2606,7 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
         self.prepared_id = prepared_id
 
     def execute(self, /, *, steering: ConstructionSteering) -> NativeMeshConstruction:
-        parse(steering, ConstructionSteering, "steering")
+        steering = parse(steering, ConstructionSteering, "steering")
         profile = self.profile
         specification = self.specification
         profile.require_bound(profile.geometry, self.coordinate_contract)
@@ -2830,11 +2830,11 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
             validated_global_embedding=validated_embedding,
             organization=organization,
             certified_steps=(
+                "boundary_projection_and_coverage",
                 "entire_certified_route",
+                "global_embedding",
                 "implicit_boundary_cover",
                 "restricted_delaunay_refinement",
-                "boundary_projection_and_coverage",
-                "global_embedding",
                 "volume_compliance",
             ),
         )

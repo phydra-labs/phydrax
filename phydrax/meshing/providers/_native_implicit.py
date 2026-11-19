@@ -3472,10 +3472,10 @@ class _PreparedImplicitRoute(StrictModule, NonTrainableState):
             geometry=geometry,
             organization=organization,
             certified_steps=(
-                "entire_certified_route",
                 "adaptive_implicit_discovery_and_carrier_bound",
-                "surface_compliance",
+                "entire_certified_route",
                 "source_chart_witness",
+                "surface_compliance",
             ),
         )
 
@@ -4149,11 +4149,11 @@ class _PreparedImplicitVolumeRoute(StrictModule, NonTrainableState):
             geometry=geometry,
             organization=organization,
             certified_steps=(
-                "entire_certified_route",
                 "adaptive_implicit_discovery_and_carrier",
+                "entire_certified_route",
                 "plc_volume_generation",
-                "volume_compliance",
                 "source_chart_witness",
+                "volume_compliance",
             ),
         )
 

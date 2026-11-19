@@ -12,7 +12,7 @@ canonical acceptance, not construction of these records, establishes validity.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Protocol, TYPE_CHECKING
 
@@ -109,6 +109,25 @@ class NativeMeshOrganization:
     multiregion_surface: MultiRegionSurfaceTopology | None = None
 
 
+@dataclass(frozen=True, slots=True, eq=False)
+class _Screens(Mapping[str, float]):
+    """Picklable immutable screen values in canonical name order."""
+
+    items_: tuple[tuple[str, float], ...]
+
+    def __getitem__(self, key: str, /) -> float:
+        for name, value in self.items_:
+            if name == key:
+                return value
+        raise KeyError(key)
+
+    def __iter__(self) -> Iterator[str]:
+        return (name for name, _ in self.items_)
+
+    def __len__(self) -> int:
+        return len(self.items_)
+
+
 @dataclass(frozen=True, slots=True)
 class NativeMeshConstruction:
     """A candidate and its coordinate map, not an accepted meshing result."""
@@ -174,3 +193,4 @@ class NativeMeshConstruction:
                 raise TypeError("Screen values must be floats.")
             if not math.isfinite(value):
                 raise ValueError("Screen values must be finite.")
+        object.__setattr__(self, "screens", _Screens(tuple(sorted(self.screens.items()))))

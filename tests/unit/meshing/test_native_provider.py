@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -449,12 +451,14 @@ def test_native_plan_candidate_proves_the_constructed_mesh(route: str) -> None:
 
 
 def test_deferred_certification_resolves_only_the_original_mesh() -> None:
+    import pickle
     from dataclasses import replace
 
     from phydrax._meshcore import meshcore_identity
     from phydrax.discretization import CellGeometrySpec, CellMesh
     from phydrax.meshing._canonical import _accept_native_construction, _NATIVE_PROVIDER
     from phydrax.meshing._native_construction import NativeMeshConstruction
+    from phydrax.meshing._result import MeshingComplianceReport
 
     class Deferred:
         def __init__(self, construction: NativeMeshConstruction) -> None:
@@ -474,26 +478,66 @@ def test_deferred_certification_resolves_only_the_original_mesh() -> None:
         deferred_certification=Deferred(construction),
         screens={"error": 0.5},
     )
+    assert pickle.loads(pickle.dumps(pending.screens)) == {"error": 0.5}
+    with pytest.raises(ValueError, match="screen name"):
+        replace(construction, screens={"": 0.5})
+    with pytest.raises(ValueError, match="finite"):
+        replace(construction, screens={"error": float("inf")})
     candidate = phx.meshing.CellMeshingCandidate(
         pending, specification, _NATIVE_PROVIDER, version, plan.plan_id, plan.route
     )
-    assert candidate.candidate_id == phx.meshing.CellMeshingCandidate(
-        pending, specification, _NATIVE_PROVIDER, version, plan.plan_id, plan.route
-    ).candidate_id
-    assert candidate.candidate_id != phx.meshing.CellMeshingCandidate(
-        replace(pending, screens={"error": 0.6}),
-        specification,
-        _NATIVE_PROVIDER,
-        version,
-        plan.plan_id,
-        plan.route,
-    ).candidate_id
+    assert (
+        candidate.candidate_id
+        == phx.meshing.CellMeshingCandidate(
+            pending, specification, _NATIVE_PROVIDER, version, plan.plan_id, plan.route
+        ).candidate_id
+    )
+    assert (
+        candidate.candidate_id
+        == phx.meshing.CellMeshingCandidate(
+            replace(
+                pending,
+                compliance=MeshingComplianceReport(
+                    specification.specification_id, issues=("not assessed",)
+                ),
+                stages=(),
+            ),
+            specification,
+            _NATIVE_PROVIDER,
+            version,
+            plan.plan_id,
+            plan.route,
+        ).candidate_id
+    )
+    assert (
+        candidate.candidate_id
+        != phx.meshing.CellMeshingCandidate(
+            replace(pending, screens={"error": 0.6}),
+            specification,
+            _NATIVE_PROVIDER,
+            version,
+            plan.plan_id,
+            plan.route,
+        ).candidate_id
+    )
     assert candidate.screens == {"error": 0.5}
+    assert candidate.associations == construction.organization.associations
+    assert candidate.source_id == construction.certification.source_id
+    assert candidate.source_revision == construction.certification.source_revision
     public_names = {name for name in dir(candidate) if not name.startswith("_")}
     assert not public_names.intersection(
         {"certification", "certificate", "audit", "compliance", "validated"}
     )
     assert "NativeMeshConstruction" not in repr(candidate)
+    assert all(
+        name not in repr(candidate)
+        for name in (
+            "\n  certification=",
+            "\n  certificate=",
+            "\n  audit=",
+            "\n  compliance=",
+        )
+    )
     with pytest.raises(ValueError, match="pending certification"):
         _accept_native_construction(
             pending, specification, _NATIVE_PROVIDER, version, plan.plan_id, plan.route
@@ -528,8 +572,65 @@ def test_deferred_certification_resolves_only_the_original_mesh() -> None:
     with pytest.raises(ValueError, match="changed the constructed mesh"):
         replaced_candidate.prove()
 
+    assert construction.organization.associations
+    changed_organization = replace(construction.organization, associations=())
+    changed_candidate = phx.meshing.CellMeshingCandidate(
+        replace(pending, organization=changed_organization),
+        specification,
+        _NATIVE_PROVIDER,
+        version,
+        plan.plan_id,
+        plan.route,
+    )
+    with pytest.raises(ValueError, match="associations"):
+        changed_candidate.prove()
 
-def test_pending_candidate_is_refused_by_accepted_result_consumer() -> None:
+
+def test_candidate_identity_binds_exact_reference_charts() -> None:
+    from dataclasses import replace
+    from fractions import Fraction
+
+    from phydrax._meshcore import meshcore_identity
+    from phydrax.discretization._nested_reference_types import (
+        ExactReferenceChartArgumentBank,
+        ReferenceCellMapWitnesses,
+    )
+    from phydrax.meshing._canonical import _NATIVE_PROVIDER
+
+    source, specification = _curve_request()
+    plan = NativeMeshingProvider().plan(
+        source, specification, coordinate_contract=SpatialCoordinateContract.si()
+    )
+    construction = plan.prepared.execute(steering="screened")
+    ids = np.asarray(construction.mesh.blocks[0].global_ids)
+    vertices = np.tile(np.asarray([[[0.0], [1.0]]], dtype=np.float64), (len(ids), 1, 1))
+    exact = tuple(((Fraction(0),), (Fraction(1),)) for _ in ids)
+    linear: ExactReferenceChartArgumentBank = tuple(({(1,): Fraction(1)},) for _ in ids)
+    nonlinear: ExactReferenceChartArgumentBank = tuple(
+        ({(2,): Fraction(1)},) for _ in ids
+    )
+    chart = ReferenceCellMapWitnesses(
+        ids, ids, "interval", "interval", vertices, exact, linear
+    )
+    other_chart = chart._replace(source_reference_chart_arguments=nonlinear)
+    version = meshcore_identity()
+
+    def candidate_id(reference: ReferenceCellMapWitnesses) -> str:
+        return phx.meshing.CellMeshingCandidate(
+            replace(construction, reference_maps=(reference,)),
+            specification,
+            _NATIVE_PROVIDER,
+            version,
+            plan.plan_id,
+            plan.route,
+        ).candidate_id
+
+    assert candidate_id(chart) == candidate_id(chart)
+    assert candidate_id(chart) != candidate_id(other_chart)
+
+
+def test_pending_candidate_is_refused_by_accepted_result_consumer(tmp_path: Path) -> None:
+    from phydrax.meshing._model_codec import write_model_artifact
     from tools.meshing_qualification._runtime import accepted_result_record
 
     source, specification = _curve_request()
@@ -540,6 +641,8 @@ def test_pending_candidate_is_refused_by_accepted_result_consumer() -> None:
     )
     with pytest.raises(TypeError, match="accepted CellMeshingResult"):
         accepted_result_record(candidate)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError):
+        write_model_artifact(tmp_path / "pending.phx", candidate, limits=None)
 
 
 def test_pending_owner_local_execution_is_refused() -> None:

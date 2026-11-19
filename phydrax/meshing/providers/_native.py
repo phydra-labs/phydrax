@@ -83,6 +83,7 @@ from ._native_sources import (
 
 if TYPE_CHECKING:
     from .._assembly import MeshAssembly
+    from .._association import GeometryAssociation
 
 
 _Specification = CurveMeshingSpec | SurfaceMeshingSpec | VolumeMeshingSpec
@@ -1279,7 +1280,7 @@ class CellMeshingCandidate(StrictModule, NonTrainableState):
         self._actual_version = actual_version
         self.plan_id = plan_id
         self.route = parse(route, NativeMeshingRoute, "route")
-        self.certified_steps = construction.certified_steps
+        self.certified_steps = tuple(sorted(construction.certified_steps))
         self._screens = tuple(sorted(construction.screens.items()))
         request = construction.certification
         organization = construction.organization
@@ -1289,9 +1290,6 @@ class CellMeshingCandidate(StrictModule, NonTrainableState):
                 "mesh": construction.mesh.mesh_id,
                 "geometry": cell_geometry_id(construction.geometry),
                 "coordinate_contract": construction.coordinate_contract.spatial_id,
-                "construction_stages": tuple(
-                    stage.report_id for stage in construction.stages
-                ),
                 "reference_maps": tuple(
                     {
                         "arrays": array_tree_fingerprint(
@@ -1413,6 +1411,19 @@ class CellMeshingCandidate(StrictModule, NonTrainableState):
     @property
     def coordinate_contract(self) -> SpatialCoordinateContract:
         return self._construction.coordinate_contract
+
+    @property
+    def associations(self) -> tuple[GeometryAssociation, ...]:
+        """Source associations authored for this pending mesh."""
+        return self._construction.organization.associations
+
+    @property
+    def source_id(self) -> str:
+        return self._construction.certification.source_id
+
+    @property
+    def source_revision(self) -> str:
+        return self._construction.certification.source_revision
 
     def prove(self, /) -> CellMeshingResult:
         """Certify this mesh as produced, without constructing or repairing it."""

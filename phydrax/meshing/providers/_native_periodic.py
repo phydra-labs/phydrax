@@ -10979,7 +10979,7 @@ class PreparedNativePeriodic(StrictModule, NonTrainableState):
         from ..._execution_runtime import ExecutionGroup
         from ...graph._partition import GraphPartitionPlan
 
-        parse(steering, ConstructionSteering, "steering")
+        steering = parse(steering, ConstructionSteering, "steering")
 
         if execution_group is not None and not isinstance(
             execution_group, ExecutionGroup
