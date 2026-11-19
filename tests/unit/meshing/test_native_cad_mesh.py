@@ -1,5 +1,6 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 """Embedded native CAD fixture against the Python geometry bundle."""
+
 from __future__ import annotations
 
 import re
@@ -8,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from phydrax._meshcore import cad_mesh, MeshcoreStatus
 from phydrax.geometry._meshing_domain import MeshingDomain
 from phydrax.meshing.providers._native_cad_bundle import cad_geometry_bundle
 from tests.unit.meshing.test_native_cad_bundle import _quadric_model
@@ -19,16 +21,30 @@ def domain() -> MeshingDomain:
 
 
 def _fixture_arrays() -> dict[str, np.ndarray]:
-    path = Path(__file__).resolve().parents[3] / "native/meshcore/tests/cad_quadric_model.inc"
+    path = (
+        Path(__file__).resolve().parents[3]
+        / "native/meshcore/tests/cad_quadric_model.inc"
+    )
     text = path.read_text(encoding="utf-8")
-    pattern = r"std::array<(int8_t|int32_t|int64_t|double), (\d+)> quadric_(\w+)\{\{(.*?)\}\};"
-    dtypes = {"int8_t": np.int8, "int32_t": np.int32, "int64_t": np.int64, "double": np.float64}
+    pattern = (
+        r"std::array<(int8_t|int32_t|int64_t|double), (\d+)> quadric_(\w+)\{\{(.*?)\}\};"
+    )
+    dtypes = {
+        "int8_t": np.int8,
+        "int32_t": np.int32,
+        "int64_t": np.int64,
+        "double": np.float64,
+    }
     arrays: dict[str, np.ndarray] = {}
     for kind, count, name, body in re.findall(pattern, text, re.DOTALL):
         tokens = [value.strip() for value in body.split(",") if value.strip()]
         if kind == "double":
-            values = [(-np.inf if value.startswith("-") else np.inf)
-                      if "infinity()" in value else float.fromhex(value) for value in tokens]
+            values = [
+                (-np.inf if value.startswith("-") else np.inf)
+                if "infinity()" in value
+                else float.fromhex(value)
+                for value in tokens
+            ]
         else:
             values = [int(value) for value in tokens]
         array = np.asarray(values, dtype=dtypes[kind])
@@ -43,9 +59,12 @@ def test_quadric_embedded_bundle_matches_domain(domain: MeshingDomain) -> None:
     model = cad_geometry_bundle(domain).model
     assert set(embedded) == set(model._fields)
     shapes = {
-        "corner_points": (2, 3), "surface_periods": (3, 2),
-        "surface_parameter_domains": (3, 2, 2), "curve_corners": (3, 2),
-        "curve_ranges": (3, 2), "use_ranges": (6, 2),
+        "corner_points": (2, 3),
+        "surface_periods": (3, 2),
+        "surface_parameter_domains": (3, 2, 2),
+        "curve_corners": (3, 2),
+        "curve_ranges": (3, 2),
+        "use_ranges": (6, 2),
     }
     for name, actual in zip(model._fields, model, strict=True):
         reference = embedded[name]
@@ -74,5 +93,82 @@ def test_quadric_embedded_bundle_matches_domain(domain: MeshingDomain) -> None:
             pytest.fail(f"{name}[{index}] differs by {gap[index]} ulps (limit 4)")
 
 
+def _closest_triangle_distance(points: np.ndarray, triangles: np.ndarray) -> np.ndarray:
+    answer = np.full((points.shape[0],), np.inf, dtype=np.float64)
+    a, b, c = triangles[:, 0], triangles[:, 1], triangles[:, 2]
+    ab, ac = b - a, c - a
+    normal = np.cross(ab, ac)
+    normal2 = np.sum(normal * normal, axis=1)
+    for i, point in enumerate(points):
+        ap = point - a
+        signed = np.sum(ap * normal, axis=1)
+        projection = point - (signed / normal2)[:, None] * normal
+        projected = projection - a
+        d00 = np.sum(ab * ab, axis=1)
+        d01 = np.sum(ab * ac, axis=1)
+        d11 = np.sum(ac * ac, axis=1)
+        d20 = np.sum(projected * ab, axis=1)
+        d21 = np.sum(projected * ac, axis=1)
+        determinant = d00 * d11 - d01 * d01
+        v = (d11 * d20 - d01 * d21) / determinant
+        w = (d00 * d21 - d01 * d20) / determinant
+        distances = np.where(
+            (v >= 0) & (w >= 0) & (v + w <= 1), signed * signed / normal2, np.inf
+        )
+        for start, end in ((a, b), (b, c), (c, a)):
+            direction = end - start
+            length2 = np.sum(direction * direction, axis=1)
+            fraction = np.clip(
+                np.sum((point - start) * direction, axis=1) / length2, 0, 1
+            )
+            delta = point - (start + fraction[:, None] * direction)
+            distances = np.minimum(distances, np.sum(delta * delta, axis=1))
+        answer[i] = np.sqrt(np.min(distances))
+    return answer
 
 
+def test_quadric_surface_candidate(domain: MeshingDomain) -> None:
+    model = cad_geometry_bundle(domain).model
+    result = cad_mesh(
+        model,
+        np.full((model.surface_nodes.size,), 0.12, dtype=np.float64),
+        np.full((model.surface_nodes.size,), 0.4, dtype=np.float64),
+        np.full((model.curve_nodes.size,), np.inf, dtype=np.float64),
+    )
+    assert result.status is MeshcoreStatus.OK
+    triangles = result.points[result.triangles]
+    a, b, c = triangles[:, 0], triangles[:, 1], triangles[:, 2]
+    for first, second in ((b - a, c - a), (c - b, a - b), (a - c, b - c)):
+        cosine = np.sum(first * second, axis=1) / (
+            np.linalg.norm(first, axis=1) * np.linalg.norm(second, axis=1)
+        )
+        assert np.min(np.arccos(np.clip(cosine, -1, 1))) >= np.deg2rad(25)
+    centers = (a + b + c) / 3
+    vertical = np.abs(np.hypot(centers[:, 0], centers[:, 1]) - 1)
+    transverse = np.abs(np.hypot(centers[:, 1], centers[:, 2]) - 0.6)
+    mesh_to_source = np.max(np.where(result.triangle_patches < 2, vertical, transverse))
+    u = np.linspace(0, 2 * np.pi, 161, endpoint=False, dtype=np.float64)
+    keep = np.abs(np.sin(u)) < 0.6
+    u = u[keep]
+    z_extent = np.sqrt(0.36 - np.sin(u) ** 2)
+    fractions = np.linspace(-1, 1, 9, dtype=np.float64)
+    vertical_points = np.stack(
+        np.broadcast_arrays(
+            np.cos(u)[:, None], np.sin(u)[:, None], z_extent[:, None] * fractions
+        ),
+        axis=-1,
+    ).reshape((-1, 3))
+    v = np.linspace(0, 2 * np.pi, 161, endpoint=False, dtype=np.float64)
+    y, z = 0.6 * np.cos(v), 0.6 * np.sin(v)
+    x_extent = np.sqrt(1 - y * y)
+    transverse_points = np.stack(
+        np.broadcast_arrays(x_extent[:, None] * fractions, y[:, None], z[:, None]),
+        axis=-1,
+    ).reshape((-1, 3))
+    source_to_mesh = np.max(
+        _closest_triangle_distance(
+            np.concatenate((vertical_points, transverse_points)), triangles
+        )
+    )
+    assert mesh_to_source < 0.2
+    assert source_to_mesh < 0.2
