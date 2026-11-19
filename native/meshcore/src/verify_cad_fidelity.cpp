@@ -2,9 +2,12 @@
 #include "verify_cad_fidelity.hpp"
 
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <vector>
 
 #include "capi_guard.hpp"
 #include "directed_interval.hpp"
@@ -93,6 +96,81 @@ int32_t leaf_bound(const CadGeometry& geometry, int32_t node, const Leaf& leaf,
                   di::point(phx::mc::geometry::norm_upper(magnitude))).upper;
   return std::isfinite(upper) ? PHX_MC_OK : PHX_MC_UNRESOLVED;
 }
+
+struct EdgeSlot {
+  std::array<uint64_t, 4> endpoints{};
+  int32_t patch = -1;
+  int64_t first = -1;
+  int32_t count = 0;
+  bool direction = false;
+};
+
+std::vector<phx_mc_fidelity_finding> association_findings(
+    int64_t triangle_count, const int32_t* face_rows, const double* uv,
+    int64_t chord_count, const int64_t* chord_use, const int64_t* use_patch,
+    const double* chord_uv, const int64_t* edge_chord) {
+  const auto edge_count = static_cast<std::size_t>(triangle_count) * 3;
+  std::size_t table_size = 1;
+  while (table_size < edge_count * 2) table_size *= 2;
+  std::vector<EdgeSlot> table(table_size);
+  std::vector<int64_t> owners(static_cast<std::size_t>(chord_count), -1);
+  std::vector<phx_mc_fidelity_finding> findings;
+  for (std::size_t index = 0; index < edge_count; ++index) {
+    const int64_t triangle = static_cast<int64_t>(index / 3), edge = index % 3;
+    const double* a = uv + 6 * triangle + 2 * edge;
+    const double* b = uv + 6 * triangle + 2 * ((edge + 1) % 3);
+    const int64_t chord = edge_chord[index];
+    if (chord >= 0) {
+      const double* c = chord_uv + 4 * chord;
+      if (use_patch[chord_use[chord]] != face_rows[triangle] ||
+          std::memcmp(a, c, 2 * sizeof(double)) != 0 ||
+          std::memcmp(b, c + 2, 2 * sizeof(double)) != 0)
+        findings.push_back({PHX_MC_FIDELITY_BAD_CHORD_EDGE, triangle, edge, -1, -1, chord});
+      int64_t& owner = owners[static_cast<std::size_t>(chord)];
+      if (owner >= 0)
+        findings.push_back({PHX_MC_FIDELITY_DUPLICATE_CHORD, triangle, edge,
+                            owner / 3, owner % 3, chord});
+      else
+        owner = static_cast<int64_t>(index);
+      continue;
+    }
+    const std::array<uint64_t, 2> first{std::bit_cast<uint64_t>(a[0]), std::bit_cast<uint64_t>(a[1])};
+    const std::array<uint64_t, 2> second{std::bit_cast<uint64_t>(b[0]), std::bit_cast<uint64_t>(b[1])};
+    const bool direction = first < second;
+    const auto& low = direction ? first : second;
+    const auto& high = direction ? second : first;
+    const std::array<uint64_t, 4> key{low[0], low[1], high[0], high[1]};
+    uint64_t hash = static_cast<uint32_t>(face_rows[triangle]);
+    for (uint64_t value : key) hash = (hash ^ value) * UINT64_C(1099511628211);
+    std::size_t position = static_cast<std::size_t>(hash) & (table_size - 1);
+    while (table[position].first >= 0 &&
+           (table[position].patch != face_rows[triangle] || table[position].endpoints != key))
+      position = (position + 1) & (table_size - 1);
+    EdgeSlot& slot = table[position];
+    if (slot.first < 0) {
+      slot = {key, face_rows[triangle], static_cast<int64_t>(index), 1, direction};
+    } else {
+      ++slot.count;
+      if (slot.count > 2 || slot.direction == direction || first == second)
+        findings.push_back({PHX_MC_FIDELITY_UNPAIRED_INTERIOR, triangle, edge,
+                            slot.first / 3, slot.first % 3, -1});
+    }
+  }
+  for (const EdgeSlot& slot : table)
+    if (slot.count == 1)
+      findings.push_back({PHX_MC_FIDELITY_UNPAIRED_INTERIOR,
+                          slot.first / 3, slot.first % 3, -1, -1, -1});
+  for (int64_t chord = 0; chord < chord_count; ++chord)
+    if (owners[static_cast<std::size_t>(chord)] < 0)
+      findings.push_back({PHX_MC_FIDELITY_MISSING_CHORD, -1, -1, -1, -1, chord});
+  std::sort(findings.begin(), findings.end(), [](const auto& a, const auto& b) {
+    if (a.kind != b.kind) return a.kind < b.kind;
+    if (a.triangle != b.triangle) return a.triangle < b.triangle;
+    if (a.edge != b.edge) return a.edge < b.edge;
+    return a.chord < b.chord;
+  });
+  return findings;
+}
 }  // namespace
 
 FidelityTriangleResult fidelity_triangle(const CadGeometry& geometry, int32_t face,
@@ -154,14 +232,16 @@ extern "C" int32_t phx_mc_verify_cad_fidelity(
     const int64_t* chord_loop, const double* chord_uv, const double* chord_range,
     const int64_t* edge_chord, double tolerance, int32_t max_depth,
     int64_t output_capacity, double* upper, int32_t* item_status, int32_t* reasons,
-    int32_t* subdivisions, double* maximum_upper) {
+    int32_t* subdivisions, double* maximum_upper, int64_t evidence_capacity,
+    phx_mc_fidelity_finding* evidence, int64_t* evidence_count) {
   return phx::mc::guarded([&]() -> int32_t {
     if (model == nullptr || !phx::mc::addressable(point_count, 3, sizeof(double)) ||
         !phx::mc::addressable(triangle_count, 6, sizeof(double)) ||
         !phx::mc::addressable(triangle_count, 3, sizeof(int64_t)) ||
         !phx::mc::addressable(use_count, 2, sizeof(double)) ||
         !phx::mc::addressable(chord_count, 4, sizeof(double)) || loop_count < 0 ||
-        coefficient_count < 0 || output_capacity < 0 || maximum_upper == nullptr ||
+        coefficient_count < 0 || output_capacity < 0 || evidence_capacity < 0 ||
+        maximum_upper == nullptr || evidence_count == nullptr ||
         !std::isfinite(tolerance) || tolerance < 0 || max_depth < 0 || max_depth > 24)
       return PHX_MC_INVALID_ARGUMENT;
     if (output_capacity < triangle_count) return PHX_MC_CAPACITY_EXCEEDED;
@@ -169,6 +249,7 @@ extern "C" int32_t phx_mc_verify_cad_fidelity(
         (coefficient_count && (!coefficient_lower || !coefficient_upper)) ||
         (use_count && (!use_patch || !use_range)) ||
         (chord_count && (!chord_use || !chord_loop || !chord_uv || !chord_range)) ||
+        (evidence_capacity && !evidence) ||
         (triangle_count && (!triangles || !face_rows || !uv || !edge_chord ||
                             !upper || !item_status || !reasons || !subdivisions)))
       return PHX_MC_INVALID_ARGUMENT;
@@ -193,7 +274,7 @@ extern "C" int32_t phx_mc_verify_cad_fidelity(
     if (coefficient_count != model->node_real_offsets[model->node_count])
       return PHX_MC_INVALID_ARGUMENT;
     for (int64_t i = 0; i < coefficient_count; ++i)
-      if (!std::isfinite(coefficient_lower[i]) || !std::isfinite(coefficient_upper[i]) ||
+      if (std::isnan(coefficient_lower[i]) || std::isnan(coefficient_upper[i]) ||
           coefficient_lower[i] > coefficient_upper[i])
         return PHX_MC_INVALID_ARGUMENT;
     for (int64_t i = 0; i < point_count * 3; ++i)
@@ -206,20 +287,24 @@ extern "C" int32_t phx_mc_verify_cad_fidelity(
         if (triangles[3 * i + j] < 0 || triangles[3 * i + j] >= point_count ||
             chord < -1 || chord >= chord_count)
           return PHX_MC_INVALID_ARGUMENT;
-        if (chord >= 0) {
-          if (use_patch[chord_use[chord]] != face_rows[i]) return PHX_MC_INVALID_ARGUMENT;
-          const double* a = uv + 6 * i + 2 * j;
-          const double* b = uv + 6 * i + 2 * ((j + 1) % 3);
-          const double* c = chord_uv + 4 * chord;
-          const bool forward = std::memcmp(a, c, 2 * sizeof(double)) == 0 &&
-                               std::memcmp(b, c + 2, 2 * sizeof(double)) == 0;
-          const bool reverse = std::memcmp(a, c + 2, 2 * sizeof(double)) == 0 &&
-                               std::memcmp(b, c, 2 * sizeof(double)) == 0;
-          if (!forward && !reverse) return PHX_MC_INVALID_ARGUMENT;
-        }
       }
       for (int j = 0; j < 6; ++j)
         if (!std::isfinite(uv[6 * i + j])) return PHX_MC_NONFINITE_INPUT;
+    }
+    const auto findings = phx::mc::cad::association_findings(
+        triangle_count, face_rows, uv, chord_count, chord_use, use_patch, chord_uv, edge_chord);
+    *evidence_count = static_cast<int64_t>(findings.size());
+    if (*evidence_count > evidence_capacity) return PHX_MC_CAPACITY_EXCEEDED;
+    if (!findings.empty()) {
+      std::copy(findings.begin(), findings.end(), evidence);
+      for (int64_t i = 0; i < triangle_count; ++i) {
+        upper[i] = std::numeric_limits<double>::infinity();
+        item_status[i] = PHX_MC_UNRESOLVED;
+        reasons[i] = PHX_MC_FIDELITY_EDGE_ASSOCIATION;
+        subdivisions[i] = 0;
+      }
+      *maximum_upper = std::numeric_limits<double>::infinity();
+      return PHX_MC_UNRESOLVED;
     }
     phx::mc::cad::IntervalEvaluationWorkspace workspace;
     workspace.coefficient_lower = coefficient_lower;

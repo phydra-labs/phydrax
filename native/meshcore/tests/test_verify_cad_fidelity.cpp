@@ -7,6 +7,7 @@
 #include "cad_geometry.hpp"
 #include "check.hpp"
 #include "phydrax_meshcore.h"
+#include "verify_cad_fidelity.hpp"
 
 int main() {
   using namespace phx::mc::cad;
@@ -117,15 +118,12 @@ int main() {
                            2 * std::cos(1.0), 0.0, 2 * std::sin(1.0)};
   const int64_t triangles[] = {0, 1, 2};
   const int32_t face_rows[] = {0};
-  const int64_t edges[] = {-1, -1, -1};
   double bound, maximum;
   int32_t status, reason, splits;
-  PHX_CHECK(phx_mc_verify_cad_fidelity(
-                &model, coefficients.size(), coefficients.data(), coefficients.data(),
-                3, points, 1, triangles, face_rows, uv, 0, nullptr, nullptr, 0, 0, nullptr,
-                nullptr, nullptr, nullptr, edges, 1.0, 8, 1, &bound, &status,
-                &reason, &splits, &maximum) == PHX_MC_OK);
-  PHX_CHECK(status == PHX_MC_OK && reason == PHX_MC_FIDELITY_CERTIFIED && splits > 0);
+  const auto certified = fidelity_triangle(geometry, 0, points, uv, 1.0, 8, workspace);
+  bound = certified.upper;
+  PHX_CHECK(certified.status == PHX_MC_OK &&
+            certified.reason == PHX_MC_FIDELITY_CERTIFIED && certified.subdivisions > 0);
   for (int i = 0; i <= 50; ++i) {
     for (int j = 0; j <= 50 - i; ++j) {
       const double u = i / 50.0, v = j / 50.0;
@@ -140,12 +138,9 @@ int main() {
       PHX_CHECK(std::sqrt(squared) <= bound);
     }
   }
-  PHX_CHECK(phx_mc_verify_cad_fidelity(
-                &model, coefficients.size(), coefficients.data(), coefficients.data(),
-                3, points, 1, triangles, face_rows, uv, 0, nullptr, nullptr, 0, 0, nullptr,
-                nullptr, nullptr, nullptr, edges, 1e-4, 2, 1, &bound, &status,
-                &reason, &splits, &maximum) == PHX_MC_UNRESOLVED);
-  PHX_CHECK(status == PHX_MC_UNRESOLVED && reason == PHX_MC_FIDELITY_RESOLUTION);
+  const auto unresolved = fidelity_triangle(geometry, 0, points, uv, 1e-4, 2, workspace);
+  PHX_CHECK(unresolved.status == PHX_MC_UNRESOLVED &&
+            unresolved.reason == PHX_MC_FIDELITY_RESOLUTION);
   const double corner[] = {0.0, 0.0, 0.0};
   const int64_t loop_offsets[] = {0, 1};
   const int32_t loop_surface[] = {0}, use_entity[] = {0}, pcurve[] = {7};
@@ -162,14 +157,37 @@ int main() {
   model.use_senses = use_sense;
   model.use_ranges = use_parameters;
   model.use_pcurve_nodes = pcurve;
-  const int64_t use_patch[] = {0}, chord_use[] = {0}, chord_loop[] = {0};
-  const int64_t chord_edges[] = {0, -1, -1};
-  PHX_CHECK(phx_mc_verify_cad_fidelity(
-                &model, coefficients.size(), coefficients.data(), coefficients.data(),
-                3, points, 1, triangles, face_rows, uv, 1, use_patch, use_parameters,
-                1, 1, chord_use, chord_loop, uv, use_parameters, chord_edges, 1.0, 8,
-                1, &bound, &status, &reason, &splits, &maximum) == PHX_MC_UNRESOLVED);
-  PHX_CHECK(reason == PHX_MC_FIDELITY_TRIM_REFUSAL && std::isinf(bound) &&
-            std::isinf(maximum));
+  const int64_t use_patch[] = {0}, chord_use[] = {0, 0, 0}, chord_loop[] = {0, 0, 0};
+  const double chords[] = {0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 1.0,
+                           0.0, 1.0, 0.0, 0.0};
+  const double chord_parameters[] = {0.0, 0.25, 0.25, 0.75, 0.75, 1.0};
+  int64_t chord_edges[] = {0, 1, 2};
+  phx_mc_fidelity_finding evidence[12];
+  int64_t evidence_count;
+  const auto verify = [&]() {
+    return phx_mc_verify_cad_fidelity(
+        &model, coefficients.size(), coefficients.data(), coefficients.data(),
+        3, points, 1, triangles, face_rows, uv, 1, use_patch, use_parameters,
+        1, 3, chord_use, chord_loop, chords, chord_parameters, chord_edges, 1.0, 8,
+        1, &bound, &status, &reason, &splits, &maximum, 12, evidence, &evidence_count);
+  };
+  PHX_CHECK(verify() == PHX_MC_UNRESOLVED);
+  PHX_CHECK(evidence_count == 0 && reason == PHX_MC_FIDELITY_TRIM_REFUSAL);
+  chord_edges[0] = -1;
+  PHX_CHECK(verify() == PHX_MC_UNRESOLVED);
+  PHX_CHECK(evidence_count >= 2 && reason == PHX_MC_FIDELITY_EDGE_ASSOCIATION);
+  bool missing = false, unpaired = false;
+  for (int64_t i = 0; i < evidence_count; ++i) {
+    missing |= evidence[i].kind == PHX_MC_FIDELITY_MISSING_CHORD && evidence[i].chord == 0;
+    unpaired |= evidence[i].kind == PHX_MC_FIDELITY_UNPAIRED_INTERIOR &&
+                evidence[i].triangle == 0 && evidence[i].edge == 0;
+  }
+  PHX_CHECK(missing && unpaired);
+  chord_edges[0] = 1;
+  PHX_CHECK(verify() == PHX_MC_UNRESOLVED);
+  bool duplicate = false;
+  for (int64_t i = 0; i < evidence_count; ++i)
+    duplicate |= evidence[i].kind == PHX_MC_FIDELITY_DUPLICATE_CHORD && evidence[i].chord == 1;
+  PHX_CHECK(duplicate);
   return 0;
 }
