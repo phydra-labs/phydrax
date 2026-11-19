@@ -268,6 +268,13 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native tetrahedral improvement (`phx_mc_tet_mesh_improve_quality`) screens
+  each cell in closed form (no trigonometry or square roots: radius-edge,
+  dihedral sines, relative determinant, orientation by the floating stage of
+  orient3d, each with a relative margin of 1e-6) and fully measures a cell
+  that clearly meets its targets only when an edit first reads it. The
+  improved mesh is unchanged; on the ledger L3 shapes improvement takes
+  0.19-0.22 s instead of 0.25-0.28 s.
 - Native tetrahedral refinement (`phx_mc_tet_mesh_refine`) places points
   sliver-aware: when a cone cell that meets the radius-edge and size criteria
   (and so is never refined) would have a dihedral angle below 15 degrees, up

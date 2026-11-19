@@ -15,6 +15,7 @@
 #include <limits>
 #include <new>
 #include <map>
+#include <numbers>
 #include <set>
 #include <utility>
 #include <unordered_map>
@@ -875,12 +876,167 @@ bool quality_vector_for_cells(const TetMesh& mesh,
   return !quality.empty();
 }
 
-// Sorted score vector of live cells, read from `cell_quality`: the current
-// local_flip_quality of every live cell by slot (improve_mesh measures each
-// cell when it is created or moved and keeps the measurement until then).
+// True when the cell `points` (identity metric) clearly meets the score
+// targets and the determinant floor, so its local_flip_quality meets the
+// target (cell_quality_meets_target): orientation positive by the floating
+// stage of orient3d; with 6 V = D from the edge vectors a, b, c of corner 0
+// and D^2 above 1e-8 |a|^2 |b|^2 |c|^2 (every binary64 term within a relative
+// 1e-9 of its value), circumradius R^2 = |N|^2 / (4 D^2),
+// N = |a|^2 (b x c) + |b|^2 (c x a) + |c|^2 (a x b), at most the radius-edge
+// bound times the shortest edge; every dihedral angle within [target,
+// 180 - target] by sin^2 theta_ij = D^2 |e_ij|^2 / (|n_k|^2 |n_l|^2) (face
+// normals n_k opposite corner k); and |D| above the relative determinant
+// floor times the largest product of three edges at a corner. Every limit
+// keeps a relative margin of 1e-6. A radius-edge ratio at most B bounds every
+// face angle phi by sin phi >= 1 / (2 B) (law of sines, R at least the face's
+// circumradius), so the face normals are well conditioned. Without a
+// radius-edge bound the screen decides nothing.
+bool clearly_meets_targets(const std::array<const double*, 4>& p,
+                           const TetQualityRequest& request) noexcept {
+  const double bound = request.radius_edge_bound;
+  if (!(bound > 0.0)) return false;
+  const double* o = p[0];
+  double edges[3][3];
+  double lengths[3];
+  for (int row = 0; row < 3; ++row) {
+    for (int axis = 0; axis < 3; ++axis) edges[row][axis] = p[row + 1][axis] - o[axis];
+    lengths[row] = edges[row][0] * edges[row][0] + edges[row][1] * edges[row][1] +
+                   edges[row][2] * edges[row][2];
+  }
+  const auto cross = [](const double* u, const double* v, double* out) {
+    out[0] = u[1] * v[2] - u[2] * v[1];
+    out[1] = u[2] * v[0] - u[0] * v[2];
+    out[2] = u[0] * v[1] - u[1] * v[0];
+  };
+  double bc[3], ca[3], ab[3];
+  cross(edges[1], edges[2], bc);
+  cross(edges[2], edges[0], ca);
+  cross(edges[0], edges[1], ab);
+  const double det = edges[0][0] * bc[0] + edges[0][1] * bc[1] + edges[0][2] * bc[2];
+  // orient3d is positive for a negative D here (the negated Shewchuk
+  // determinant of (p0 - p3, p1 - p3, p2 - p3)); its floating stage decides.
+  {
+    const double* d = p[3];
+    const double adx = p[0][0] - d[0], bdx = p[1][0] - d[0], cdx = p[2][0] - d[0];
+    const double ady = p[0][1] - d[1], bdy = p[1][1] - d[1], cdy = p[2][1] - d[1];
+    const double adz = p[0][2] - d[2], bdz = p[1][2] - d[2], cdz = p[2][2] - d[2];
+    const double bdxcdy = bdx * cdy, cdxbdy = cdx * bdy;
+    const double cdxady = cdx * ady, adxcdy = adx * cdy;
+    const double adxbdy = adx * bdy, bdxady = bdx * ady;
+    const double shewchuk =
+        adz * (bdxcdy - cdxbdy) + bdz * (cdxady - adxcdy) + cdz * (adxbdy - bdxady);
+    const double permanent = (std::fabs(bdxcdy) + std::fabs(cdxbdy)) * std::fabs(adz) +
+                             (std::fabs(cdxady) + std::fabs(adxcdy)) * std::fabs(bdz) +
+                             (std::fabs(adxbdy) + std::fabs(bdxady)) * std::fabs(cdz);
+    constexpr double kEpsilon = 0x1p-53;
+    if (!(-shewchuk > (7.0 + 56.0 * kEpsilon) * kEpsilon * permanent)) return false;
+  }
+  const double det_squared = det * det;
+  if (!(det_squared > 1e-8 * (lengths[0] * lengths[1] * lengths[2])) ||
+      !std::isfinite(det_squared)) {
+    return false;
+  }
+  constexpr double kMargin = 1.0 - 1e-6;
+  double squared[4][4]{};
+  double shortest = std::numeric_limits<double>::infinity();
+  for (int first = 0; first < 4; ++first) {
+    for (int second = first + 1; second < 4; ++second) {
+      double length = 0.0;
+      for (int axis = 0; axis < 3; ++axis) {
+        const double delta = p[first][axis] - p[second][axis];
+        length += delta * delta;
+      }
+      squared[first][second] = squared[second][first] = length;
+      shortest = std::min(shortest, length);
+    }
+  }
+  double numerator = 0.0;
+  for (int axis = 0; axis < 3; ++axis) {
+    const double component = lengths[0] * bc[axis] + lengths[1] * ca[axis] + lengths[2] * ab[axis];
+    numerator += component * component;
+  }
+  if (!(numerator <= 4.0 * det_squared * (bound * bound) * shortest * kMargin)) return false;
+  const double floor = request.minimum_relative_determinant;
+  double largest_product = 0.0;
+  for (int origin = 0; origin < 4; ++origin) {
+    double product = 1.0;
+    for (int other = 0; other < 4; ++other) {
+      if (other != origin) product *= squared[origin][other];
+    }
+    largest_product = std::max(largest_product, product);
+  }
+  if (!(det_squared * kMargin > floor * floor * largest_product)) return false;
+  if (request.minimum_dihedral_degrees == 0.0) return true;
+  const double sine = std::sin(request.minimum_dihedral_degrees * (std::numbers::pi / 180.0));
+  const double sine_squared = sine * sine;
+  double normal_squared[4];
+  for (int opposite = 0; opposite < 4; ++opposite) {
+    const double* m = p[static_cast<std::size_t>((opposite + 1) & 3)];
+    const double* l = p[static_cast<std::size_t>((opposite + 2) & 3)];
+    const double* n = p[static_cast<std::size_t>((opposite + 3) & 3)];
+    const double u[3]{l[0] - m[0], l[1] - m[1], l[2] - m[2]};
+    const double v[3]{n[0] - m[0], n[1] - m[1], n[2] - m[2]};
+    double normal[3];
+    cross(u, v, normal);
+    normal_squared[opposite] = normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2];
+  }
+  for (int first = 0; first < 4; ++first) {
+    for (int second = first + 1; second < 4; ++second) {
+      int others[2]{};
+      for (int corner = 0, count = 0; corner < 4; ++corner) {
+        if (corner != first && corner != second) others[count++] = corner;
+      }
+      if (!(det_squared * squared[first][second] * kMargin >
+            sine_squared * normal_squared[others[0]] * normal_squared[others[1]])) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// Validity class of a cell whose local_flip_quality is not yet taken.
+constexpr std::int8_t kUnmeasured = -2;
+
+// The current local_flip_quality of every live cell by slot. improve_mesh
+// measures a cell when it is created or moved, unless clearly_meets_targets
+// decides it meets the target: then the measurement is taken when an edit
+// first reads it, and is the same.
+class CellQualities {
+ public:
+  CellQualities(const TetMesh& mesh, const TetQualityRequest& request)
+      : mesh_(&mesh), request_(&request) {}
+
+  std::size_t size() const noexcept { return values_.size(); }
+  void assign(std::size_t count) { values_.assign(count, FlipQuality{}); }
+  void resize(std::size_t count) { values_.resize(count); }
+  void set(std::size_t slot, const FlipQuality& quality) { values_[slot] = quality; }
+  void defer(std::size_t slot) {
+    values_[slot] = FlipQuality{};
+    values_[slot].validity_class = kUnmeasured;
+  }
+  const FlipQuality& operator[](std::size_t slot) const {
+    FlipQuality& value = values_[slot];
+    if (value.validity_class == kUnmeasured) {
+      LocalCell vertices{};
+      std::copy_n(mesh_->tet(static_cast<std::int32_t>(slot)).v, 4, vertices.begin());
+      value = local_flip_quality(*mesh_, vertices, *request_);
+    }
+    return value;
+  }
+
+ private:
+  const TetMesh* mesh_;
+  const TetQualityRequest* request_;
+  mutable std::vector<FlipQuality> values_;
+};
+
+// Sorted score vector of live cells, read from `cell_quality` (improve_mesh
+// measures each cell when it is created or moved and keeps the measurement
+// until then).
 bool quality_vector_for_slots(const TetMesh& mesh,
                               std::span<const std::int32_t> cell_slots,
-                              std::span<const FlipQuality> cell_quality,
+                              const CellQualities& cell_quality,
                               QualityVector& quality) {
   quality.clear();
   quality.reserve(cell_slots.size());
@@ -1101,7 +1257,7 @@ TetEditStatus prepare_quality_reconnection(
 bool make_face_removal_proposal(
     const TetMesh& mesh, const LocalIncidence& incidence,
     std::int32_t cell_slot, int face_slot, const TetQualityRequest& request,
-    std::span<const FlipQuality> cell_quality,
+    const CellQualities& cell_quality,
     const std::set<LogicalEdgeKey>& source_edges,
     std::array<std::int32_t, 2>& removed,
     std::array<LocalCell, 3>& replacement_cells,
@@ -1162,7 +1318,7 @@ bool make_face_removal_proposal(
 TetEditStatus make_edge_removal_proposal(
     const TetMesh& mesh, const LocalIncidence& incidence, std::int32_t start,
     std::int32_t first, std::int32_t second, const TetQualityRequest& request,
-    std::span<const FlipQuality> cell_quality,
+    const CellQualities& cell_quality,
     const std::set<LogicalEdgeKey>& source_edges, EdgeRemovalScratch& scratch) {
   auto& removed_slots = scratch.removed_slots;
   auto& ring = scratch.ring;
@@ -2025,10 +2181,11 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   // an accepted edit changed that cell or star or was made while processing it.
   IdWorklist pending_cells;
   IdWorklist pending_vertices;
-  // The current local_flip_quality of every live cell by slot: measured
-  // once for every cell below, then for each cell an accepted edit creates
-  // or moves (enqueue_violating_cell), so it is read instead of remeasured.
-  std::vector<FlipQuality> cell_quality;
+  // The current local_flip_quality of every live cell by slot: screened once
+  // for every cell below, then for each cell an accepted edit creates or
+  // moves (enqueue_violating_cell), and measured once (when the screen leaves
+  // it open, else when first read), so it is read instead of remeasured.
+  CellQualities cell_quality(mesh, request);
   // Edit clock and, per vertex slot (append-only in this run), the clock of
   // the last accepted edit that changed its star (a cell containing it was
   // created, removed or moved). Every accepted edit touches each vertex of the
@@ -2154,17 +2311,25 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   const auto enqueue_violating_cell = [&](std::uint64_t id) {
     const std::int32_t slot = mesh.cell_slot(id);
     if (!mesh.complex().live(slot) || is_ghost(mesh.tet(slot))) return true;
-    LocalCell vertices{};
-    std::copy_n(mesh.tet(slot).v, 4, vertices.begin());
-    const FlipQuality quality = local_flip_quality(mesh, vertices, request);
-    if (quality.validity_class < 0) return false;
-    const bool violating = !cell_quality_meets_target(quality);
     if (violating_slots.size() <= static_cast<std::size_t>(slot)) {
       violating_slots.resize(mesh.complex().tets.size(), 0);
       cell_quality.resize(mesh.complex().tets.size());
     }
+    LocalCell vertices{};
+    std::copy_n(mesh.tet(slot).v, 4, vertices.begin());
+    if (!mesh.metric_active() &&
+        clearly_meets_targets({mesh.point(vertices[0]), mesh.point(vertices[1]),
+                               mesh.point(vertices[2]), mesh.point(vertices[3])},
+                              request)) {
+      violating_slots[static_cast<std::size_t>(slot)] = 0;
+      cell_quality.defer(static_cast<std::size_t>(slot));
+      return true;
+    }
+    const FlipQuality quality = local_flip_quality(mesh, vertices, request);
+    if (quality.validity_class < 0) return false;
+    const bool violating = !cell_quality_meets_target(quality);
     violating_slots[static_cast<std::size_t>(slot)] = violating ? 1 : 0;
-    cell_quality[static_cast<std::size_t>(slot)] = quality;
+    cell_quality.set(static_cast<std::size_t>(slot), quality);
     if (violating) {
       pending_cells.push(id);
       violating_ids.push_back(id);
@@ -2192,7 +2357,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     return true;
   };
   violating_slots.assign(mesh.complex().tets.size(), 0);
-  cell_quality.assign(mesh.complex().tets.size(), FlipQuality{});
+  cell_quality.assign(mesh.complex().tets.size());
   for (std::size_t slot = 0; slot < mesh.complex().tets.size(); ++slot) {
     const std::int32_t cell = static_cast<std::int32_t>(slot);
     if (!mesh.complex().live(cell) || is_ghost(mesh.tet(cell))) continue;
