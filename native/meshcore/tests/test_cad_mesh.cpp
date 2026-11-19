@@ -632,9 +632,9 @@ void polar_patch(bool cone, bool trim = false) {
                static_cast<long long>(result.stats.proximity_refusals),
                static_cast<long long>(result.stats.nonstar_refusals));
   if (trim) {
-    PHX_CHECK(status == PHX_MC_UNRESOLVED);
-    PHX_CHECK(result.stats.unresolved_triangles > 0);
-    PHX_CHECK(result.stats.encroachment_refusals > 0);
+    PHX_CHECK(status == PHX_MC_OK);
+    PHX_CHECK(result.stats.unresolved_triangles == 0);
+    PHX_CHECK(result.stats.encroachment_refusals == 0);
     PHX_CHECK(result.stats.excluded_refusals == 0);
     PHX_CHECK(result.stats.proximity_refusals == 0);
     PHX_CHECK(result.omitted_pole_points > 0);
