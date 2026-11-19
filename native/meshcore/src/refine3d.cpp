@@ -859,6 +859,65 @@ bool measurably_positive(const double* a, const double* b, const double* c,
   return orient3d(a, b, c, d) > 0;
 }
 
+// insphere (positive when e lies strictly inside the circumsphere of the
+// positively oriented a, b, c, d) through its first, floating stage inlined:
+// Shewchuk's stage A expression and error bound, as the predicate evaluates
+// them, decide the clear cases here.
+int inside_sphere(const double* a, const double* b, const double* c, const double* d,
+                  const double* e) noexcept {
+  const double aex = a[0] - e[0], bex = b[0] - e[0], cex = c[0] - e[0], dex = d[0] - e[0];
+  const double aey = a[1] - e[1], bey = b[1] - e[1], cey = c[1] - e[1], dey = d[1] - e[1];
+  const double aez = a[2] - e[2], bez = b[2] - e[2], cez = c[2] - e[2], dez = d[2] - e[2];
+  const double aexbey = aex * bey, bexaey = bex * aey;
+  const double ab = aexbey - bexaey;
+  const double bexcey = bex * cey, cexbey = cex * bey;
+  const double bc = bexcey - cexbey;
+  const double cexdey = cex * dey, dexcey = dex * cey;
+  const double cd = cexdey - dexcey;
+  const double dexaey = dex * aey, aexdey = aex * dey;
+  const double da = dexaey - aexdey;
+  const double aexcey = aex * cey, cexaey = cex * aey;
+  const double ac = aexcey - cexaey;
+  const double bexdey = bex * dey, dexbey = dex * bey;
+  const double bd = bexdey - dexbey;
+  const double abc = aez * bc - bez * ac + cez * ab;
+  const double bcd = bez * cd - cez * bd + dez * bc;
+  const double cda = cez * da + dez * ac + aez * cd;
+  const double dab = dez * ab + aez * bd + bez * da;
+  const double alift = aex * aex + aey * aey + aez * aez;
+  const double blift = bex * bex + bey * bey + bez * bez;
+  const double clift = cex * cex + cey * cey + cez * cez;
+  const double dlift = dex * dex + dey * dey + dez * dez;
+  const double det = (dlift * abc - clift * dab) + (blift * cda - alift * bcd);
+  const double aezplus = std::fabs(aez), bezplus = std::fabs(bez);
+  const double cezplus = std::fabs(cez), dezplus = std::fabs(dez);
+  const double aexbeyplus = std::fabs(aexbey), bexaeyplus = std::fabs(bexaey);
+  const double bexceyplus = std::fabs(bexcey), cexbeyplus = std::fabs(cexbey);
+  const double cexdeyplus = std::fabs(cexdey), dexceyplus = std::fabs(dexcey);
+  const double dexaeyplus = std::fabs(dexaey), aexdeyplus = std::fabs(aexdey);
+  const double aexceyplus = std::fabs(aexcey), cexaeyplus = std::fabs(cexaey);
+  const double bexdeyplus = std::fabs(bexdey), dexbeyplus = std::fabs(dexbey);
+  const double permanent =
+      ((cexdeyplus + dexceyplus) * bezplus + (dexbeyplus + bexdeyplus) * cezplus +
+       (bexceyplus + cexbeyplus) * dezplus) *
+          alift +
+      ((dexaeyplus + aexdeyplus) * cezplus + (aexceyplus + cexaeyplus) * dezplus +
+       (cexdeyplus + dexceyplus) * aezplus) *
+          blift +
+      ((aexbeyplus + bexaeyplus) * dezplus + (bexdeyplus + dexbeyplus) * aezplus +
+       (dexaeyplus + aexdeyplus) * bezplus) *
+          clift +
+      ((bexceyplus + cexbeyplus) * aezplus + (cexaeyplus + aexceyplus) * bezplus +
+       (aexbeyplus + bexaeyplus) * cezplus) *
+          dlift;
+  constexpr double kEpsilon = 0x1p-53;
+  const double errbound = (16.0 + 224.0 * kEpsilon) * kEpsilon * permanent;
+  // insphere is the negated Shewchuk determinant.
+  if (det > errbound) return -1;
+  if (-det > errbound) return 1;
+  return insphere(a, b, c, d, e);
+}
+
 // Advances a visit stamp over `marks`, clearing them when it wraps.
 std::uint32_t next_stamp(std::vector<std::uint32_t>& marks, std::uint32_t& stamp) {
   if (++stamp == 0) {
@@ -923,6 +982,9 @@ class InteriorCavity {
     }
     root = current;
     const std::int32_t region = complex_.region(root);
+    // Candidates found outside the circumsphere keep their own stamp, so a
+    // cell next to several cavity cells is tested once.
+    const std::uint32_t rejected = next_cell_stamp();
     std::uint32_t member = next_cell_stamp();
     cells.push_back(root);
     tets[static_cast<std::size_t>(root)].stamp = member;
@@ -942,15 +1004,22 @@ class InteriorCavity {
         const std::int32_t next = tet.n[face];
         if (((tet.constrained >> face) & 1U) != 0 || !complex_.live(next)) continue;
         Tetrahedron& candidate = tets[static_cast<std::size_t>(next)];
-        if (candidate.stamp == member || is_ghost(candidate) || candidate.region != region) {
+        if (candidate.stamp == member || candidate.stamp == rejected || is_ghost(candidate) ||
+            candidate.region != region) {
           continue;
         }
-        if (mesh.metric_insphere(mesh.point(candidate.v[0]), mesh.point(candidate.v[1]),
-                                 mesh.point(candidate.v[2]), mesh.point(candidate.v[3]),
-                                 point) > 0) {
+        const double* corners[4]{mesh.point(candidate.v[0]), mesh.point(candidate.v[1]),
+                                 mesh.point(candidate.v[2]), mesh.point(candidate.v[3])};
+        const int side = mesh.metric_active()
+                             ? mesh.metric_insphere(corners[0], corners[1], corners[2],
+                                                    corners[3], point)
+                             : inside_sphere(corners[0], corners[1], corners[2], corners[3], point);
+        if (side > 0) {
           candidate.stamp = member;
           cells.push_back(next);
           stack_.push_back(next);
+        } else {
+          candidate.stamp = rejected;
         }
       }
     }

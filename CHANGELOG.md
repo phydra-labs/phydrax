@@ -268,6 +268,11 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native tetrahedral refinement's Bowyer-Watson growth tests a neighbor's
+  circumsphere once per cavity (a cell found outside keeps its own visit
+  stamp) and decides clear insphere signs with the predicate's own floating
+  stage inlined. Same meshes on the six ledger rows; L3 refinement 1.20 ->
+  1.16 s (torus), 0.97 -> 0.95 s (two cylinders).
 - Native tetrahedral refinement's interior cone commit takes each cavity
   boundary face with the cell beyond it and that cell's face (found during
   the star check) and the cavity's distinct boundary vertices, so it checks
