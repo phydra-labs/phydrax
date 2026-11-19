@@ -311,6 +311,16 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native tetrahedral mesh export is one pass: `TetMesh3D.arrays()` reads the
+  live state straight into the output banks (no staged snapshot, no per-cell
+  allocation, no identity hash lookups, no per-element Python). Cells, facets
+  and segments come out in ascending identity order with their corners as
+  vertex rows (`cell_vertex_rows`, `facet_vertex_rows`,
+  `segment_vertex_rows`). Output is byte-identical; 2.47 M cells export in
+  0.09 s instead of 2.48 s.
+- Refinement drops every non-positive cavity cell in one pass while shrinking
+  an insertion cavity, with unchanged results (grid torus of 90,000 triangles:
+  3.5 s instead of 7.5 s).
 - **Breaking:** an `AnalyticImplicitProfile` volume is meshed by isosurface
   stuffing instead of restricted Delaunay. The route literal
   `implicit_restricted_delaunay` is now `implicit_stuffing`,
