@@ -3,6 +3,21 @@
 ## Unreleased
 
 ### Added
+- Isosurface stuffing (`NativeIntervalProgram.stuff_tetrahedra(..., levels=,
+  lipschitz=)`, `phx_mc_implicit_stuffing`) runs on a graded body-centered
+  cubic lattice: the uniform lattice within one spacing of the zero set,
+  coarsening up to `levels` times away from it for a field with the given
+  Lipschitz bound, through conforming red-green transitions; zero levels gives
+  the uniform lattice. A solid reaching the lattice padding outside the box is
+  refused, and edge tables grow with the cut count.
+- `PreparedStuffedImplicitVolume.construct()` returns
+  `StuffedImplicitConstruction` arrays (points, tetrahedra, outward boundary
+  faces, vertex and cell ids); `execute()` publishes the `CellMesh` and
+  certifies as before. The first lattice spacing comes from the certified facet
+  bound; the native fixed-boundary quality pass runs only when the stuffed
+  cells miss the schedule, improving before refining. `CellMesh` tetrahedral
+  topology and `TetMesh3D.arrays()` are faster on large meshes with identical
+  results.
 - Native CAD geometry bundle (S2-A of the native meshing plan): every surface,
   3D curve and p-curve of a `MeshingDomain` becomes a node of one native
   geometry graph (`_native_cad_bundle.cad_geometry_bundle`, cached by domain
