@@ -11,6 +11,8 @@
 #include <limits>
 #include <vector>
 
+#include "wide_integer.hpp"
+
 namespace phx::mc {
 namespace {
 
@@ -190,13 +192,11 @@ int incircle_adapt(const double* const* p, double permanent) {
 // `value` and the N-limb `total`, modulo 2^(64 N).
 template <int N>
 void accumulate(std::uint64_t (&total)[N], const std::uint64_t* value, int count, bool subtract) {
-  unsigned __int128 carry = subtract ? 1 : 0;
+  std::uint64_t carry = subtract ? 1 : 0;
   for (int i = 0; i < N; ++i) {
     std::uint64_t limb = i < count ? value[i] : 0;
     if (subtract) limb = ~limb;
-    const unsigned __int128 sum = static_cast<unsigned __int128>(total[i]) + limb + carry;
-    total[i] = static_cast<std::uint64_t>(sum);
-    carry = sum >> 64;
+    total[i] = phx::mc::add_with_carry(total[i], limb, carry);
   }
 }
 
@@ -211,14 +211,13 @@ void limbs_product(const std::uint64_t* left, int left_count, const std::uint64_
                    int right_count, std::uint64_t* product) {
   std::fill(product, product + left_count + right_count, std::uint64_t{0});
   for (int i = 0; i < left_count; ++i) {
-    unsigned __int128 carry = 0;
+    std::uint64_t carry = 0;
     for (int j = 0; j < right_count; ++j) {
-      const unsigned __int128 term =
-          static_cast<unsigned __int128>(left[i]) * right[j] + product[i + j] + carry;
-      product[i + j] = static_cast<std::uint64_t>(term);
-      carry = term >> 64;
+      std::uint64_t high = 0;
+      product[i + j] = phx::mc::multiply_accumulate(left[i], right[j], product[i + j], carry, high);
+      carry = high;
     }
-    product[i + right_count] = static_cast<std::uint64_t>(carry);
+    product[i + right_count] = carry;
   }
 }
 
@@ -264,29 +263,54 @@ bool common_integers(const double* values, int count, int width, std::int64_t* i
   return true;
 }
 
+// value = a * b as a two's-complement 128-bit value in two little-endian limbs,
+// exact for |a|, |b| < 2^63.
+void signed_product(std::int64_t a, std::int64_t b, std::uint64_t (&value)[2]) {
+  const std::uint64_t ua = a < 0 ? ~static_cast<std::uint64_t>(a) + 1 : static_cast<std::uint64_t>(a);
+  const std::uint64_t ub = b < 0 ? ~static_cast<std::uint64_t>(b) + 1 : static_cast<std::uint64_t>(b);
+  value[0] = phx::mc::multiply_wide(ua, ub, value[1]);
+  if ((a < 0) != (b < 0)) {
+    std::uint64_t zero[2]{};
+    accumulate(zero, value, 2, true);
+    value[0] = zero[0];
+    value[1] = zero[1];
+  }
+}
+
 // Sign of lifted3_rows on integer rows below 2^62 in magnitude: minors below
 // 2^125 and lifts below 2^126 in 128 bits, cofactors below 2^189 in three
 // limbs, the determinant below 2^317 in five.
 int insphere_integer_rows(const std::int64_t* x, const std::int64_t* y, const std::int64_t* z) {
-  const auto minor = [&](int i, int j) {
-    return static_cast<__int128>(x[i]) * y[j] - static_cast<__int128>(x[j]) * y[i];
+  // minor(i, j) = x_i y_j - x_j y_i, below 2^125 in magnitude.
+  const auto minor = [&](int i, int j, std::uint64_t (&value)[2]) {
+    std::uint64_t right[2];
+    signed_product(x[i], y[j], value);
+    signed_product(x[j], y[i], right);
+    accumulate(value, right, 2, true);
   };
-  const __int128 ab = minor(0, 1), bc = minor(1, 2), cd = minor(2, 3);
-  const __int128 da = minor(3, 0), ac = minor(0, 2), bd = minor(1, 3);
-  const auto magnitude = [](__int128 value) {
-    const auto bits = static_cast<unsigned __int128>(value);
-    return value < 0 ? ~bits + 1 : bits;
-  };
+  std::uint64_t ab[2], bc[2], cd[2], da[2], ac[2], bd[2];
+  minor(0, 1, ab);
+  minor(1, 2, bc);
+  minor(2, 3, cd);
+  minor(3, 0, da);
+  minor(0, 2, ac);
+  minor(1, 3, bd);
   // total += z[k] m (minus: -=).
-  const auto add_term = [&](std::uint64_t (&total)[3], int k, __int128 m, bool minus) {
+  const auto add_term = [&](std::uint64_t (&total)[3], int k, const std::uint64_t (&m)[2],
+                            bool minus) {
     const std::uint64_t row =
         z[k] < 0 ? ~static_cast<std::uint64_t>(z[k]) + 1 : static_cast<std::uint64_t>(z[k]);
-    const unsigned __int128 size = magnitude(m);
-    const std::uint64_t right[2]{static_cast<std::uint64_t>(size),
-                                 static_cast<std::uint64_t>(size >> 64)};
+    const bool negative = limbs_negative(m);
+    std::uint64_t right[2]{m[0], m[1]};
+    if (negative) {
+      std::uint64_t zero[2]{};
+      accumulate(zero, right, 2, true);
+      right[0] = zero[0];
+      right[1] = zero[1];
+    }
     std::uint64_t product[3];
     limbs_product(&row, 1, right, 2, product);
-    accumulate(total, product, 3, ((z[k] < 0) != (m < 0)) != minus);
+    accumulate(total, product, 3, ((z[k] < 0) != negative) != minus);
   };
   // abc = z0 bc - z1 ac + z2 ab; bcd = z1 cd - z2 bd + z3 bc;
   // cda = z2 da + z3 ac + z0 cd; dab = z3 ab + z0 bd + z1 da.
@@ -306,11 +330,13 @@ int insphere_integer_rows(const std::int64_t* x, const std::int64_t* y, const st
   // det = (l3 abc - l2 dab) + (l1 cda - l0 bcd).
   std::uint64_t det[5]{};
   const auto add_lifted = [&](int k, const std::uint64_t (&cofactor)[3], bool minus) {
-    const unsigned __int128 lift = static_cast<unsigned __int128>(
-        static_cast<__int128>(x[k]) * x[k] + static_cast<__int128>(y[k]) * y[k] +
-        static_cast<__int128>(z[k]) * z[k]);
-    const std::uint64_t left[2]{static_cast<std::uint64_t>(lift),
-                                static_cast<std::uint64_t>(lift >> 64)};
+    // x^2 + y^2 + z^2 below 2^126: three unsigned 128-bit squares summed.
+    std::uint64_t left[2]{};
+    for (const std::int64_t coordinate : {x[k], y[k], z[k]}) {
+      std::uint64_t square[2];
+      signed_product(coordinate, coordinate, square);
+      accumulate(left, square, 2, false);
+    }
     const bool negative = limbs_negative(cofactor);
     std::uint64_t size[3]{cofactor[0], cofactor[1], cofactor[2]};
     if (negative) {

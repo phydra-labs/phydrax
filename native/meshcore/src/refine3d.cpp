@@ -26,6 +26,7 @@
 #include "geometry3.hpp"
 #include "local_incidence.hpp"
 #include "predicates.hpp"
+#include "prefetch.hpp"
 #include "phydrax_meshcore.h"
 #include "exact_scalar.hpp"
 
@@ -994,7 +995,7 @@ class InteriorCavity {
           stack_.push_back(next);
           // Its neighbors are read next (the stack is last in, first out).
           for (std::int32_t beyond : candidate.n) {
-            if (beyond >= 0) __builtin_prefetch(&tets[static_cast<std::size_t>(beyond)]);
+            if (beyond >= 0) prefetch(&tets[static_cast<std::size_t>(beyond)]);
           }
         } else {
           candidate.stamp = rejected;
