@@ -317,6 +317,10 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native meshing decides clear Delaunay predicate cases (recovery, flips) in
+  their inline floating stage, links cavity stars through a table sized to
+  each cone, and finds edge cells in improvement by walking around the edge;
+  output unchanged.
 - PLC tetrahedral route: cell validity of affine tetrahedra is proved by the
   exact native kernel when the route selects it (`native_affine_tetrahedra`
   on `certify_cell_geometry_validity` and `CellValidityCertificate`, part of
