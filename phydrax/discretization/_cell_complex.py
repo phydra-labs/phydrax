@@ -21,6 +21,7 @@ from ..typing import ConvertibleToArray
 from ._topology import (
     _has_duplicate_rows,
     _row_order,
+    row_positions,
     _row_run_starts,
     CellComplexTopology,
     EntitySet,
@@ -1443,10 +1444,7 @@ def simplicial_cell_complex(
             [positions[positions != removed] for removed in range(degree + 1)]
         )
         faces = upper[:, face_columns].reshape((-1, degree))
-        _, groups = np.unique(np.concatenate((lower, faces)), axis=0, return_inverse=True)
-        lookup = np.full((groups.max(initial=-1) + 1,), -1, dtype=np.int32)
-        lookup[groups[: lower.shape[0]]] = np.arange(lower.shape[0], dtype=np.int32)
-        source = lookup[groups[lower.shape[0] :]]
+        source = row_positions(lower, faces).astype(np.int32)
         if np.any(source < 0):
             raise ValueError("Simplex family must be face closed.")
         target = np.repeat(np.arange(upper.shape[0], dtype=np.int32), degree + 1)

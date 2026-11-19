@@ -3300,16 +3300,15 @@ def verify_volume(
     )
 
 
-def validity_coordinates(values: object, /) -> bool:
-    """Whether ``tetrahedra_validity`` decides these coordinates exactly.
+def validity_coordinates(values: object, /) -> np.ndarray:
+    """Which values ``tetrahedra_validity`` decides exactly (elementwise mask).
 
-    Every coordinate must be zero or of magnitude in [2**-60, 2**60], so that
-    the degree-eight validity margin is free of overflow and underflow.
+    A cell's coordinates and the floor must be zero or of magnitude in
+    [2**-60, 2**60], so that the degree-eight validity margin is free of
+    overflow and underflow.
     """
     magnitudes = np.abs(np.asarray(values, dtype=np.float64))
-    return bool(
-        np.all((magnitudes == 0.0) | ((magnitudes >= 2.0**-60) & (magnitudes <= 2.0**60)))
-    )
+    return (magnitudes == 0.0) | ((magnitudes >= 2.0**-60) & (magnitudes <= 2.0**60))
 
 
 def tetrahedra_validity(

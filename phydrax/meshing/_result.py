@@ -426,6 +426,7 @@ def _restored_global_embedding(
             relative_determinant_floor=stored_validity.policy.relative_determinant_floor,
             relative_planarity_tolerance=stored_validity.policy.relative_planarity_tolerance,
         ),
+        native_affine_tetrahedra=stored_validity.native_affine_tetrahedra,
     )
     if validity.certificate_id != stored_validity.certificate_id:
         raise ValueError("Stored cell validity does not reproduce its proof.")

@@ -16,6 +16,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellGeometrySpec, CellMesh
 from ..discretization._cell_geometry_validity import (
+    affine_tetrahedra,
     cell_geometry_id,
     CellValidityCertificate,
     ComputedCellValidity,
@@ -500,6 +501,10 @@ def _acceptance_validity(
             ).policy_id
             == validity_policy.policy_id
         ),
+        # The PLC route selects the exact native proof of its affine
+        # tetrahedra; mapped (curved) PLC geometry keeps the rational proof.
+        native_affine_tetrahedra=inputs.schedule.route == "volume_plc"
+        and affine_tetrahedra(inputs.mesh, inputs.geometry) is not None,
     )
     return computed.certificate, computed
 

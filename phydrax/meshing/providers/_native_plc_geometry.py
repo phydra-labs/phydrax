@@ -484,6 +484,19 @@ def physical_plc_tetrahedra(
         raise ValueError(
             "A PLC carrier for physical power construction must be tetrahedral."
         )
+    if source.mapped_domain is None:
+        # The affine vertex map takes every reference vertex exactly to its
+        # stored mesh vertex, so the physical corners are the coordinates.
+        points = np.array(mesh.coordinates, dtype=np.float64)
+        if np.any(
+            np.bincount(cells.reshape(-1), minlength=points.shape[0]) == 0
+        ) or not np.all(np.isfinite(points)):
+            raise ValueError(
+                "Every PLC mesh vertex must have a finite physical source-map value."
+            )
+        points.setflags(write=False)
+        cells.setflags(write=False)
+        return PhysicalPlcTetrahedra(geometry, points, cells)
     reference_vertices = tuple(
         tuple(Fraction.from_float(float(value)) for value in vertex)
         for vertex in reference_cell_topology(block.cell_kind).vertices

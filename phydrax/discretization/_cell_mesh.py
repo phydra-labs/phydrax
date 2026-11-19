@@ -51,6 +51,8 @@ from ._topology import (
     EntitySet,
     EntitySubset,
     OrientedIncidence,
+    row_positions,
+    sorted_unique_rows,
 )
 
 
@@ -765,9 +767,9 @@ def _simplex_mesh_levels(
                 tuple(combinations(range(dimension + 1), degree + 1)), dtype=np.int32
             )
             faces = np.sort(cells[:, indices].reshape((-1, degree + 1)), axis=1)
-            # Both unique and the general set/sorted route use lexicographic
-            # integer order and discard equal rows, independently of occurrence.
-            levels.append(np.unique(faces, axis=0))
+            # Both the sorted unique rows and the general set/sorted route use
+            # lexicographic integer order and discard equal rows.
+            levels.append(sorted_unique_rows(faces))
         else:
             faces = {
                 tuple(sorted(int(cell[index]) for index in indices))
@@ -792,20 +794,14 @@ def _simplex_mesh_boundary(
     facets = levels[-2][counts == 1]
     masks: list[np.ndarray] = []
     for degree in range(dimension):
-        boundary = {
-            tuple(int(vertex) for vertex in face)
-            for facet in facets
-            for face in combinations(facet, degree + 1)
-        }
-        masks.append(
-            np.asarray(
-                [
-                    tuple(int(vertex) for vertex in row) in boundary
-                    for row in levels[degree]
-                ],
-                dtype=np.bool_,
-            )
+        columns = np.asarray(
+            tuple(combinations(range(dimension), degree + 1)), dtype=np.int64
         )
+        faces = facets[:, columns].reshape((-1, degree + 1))
+        rows = row_positions(levels[degree], faces)
+        mask = np.zeros((levels[degree].shape[0],), dtype=np.bool_)
+        mask[rows[rows >= 0]] = True
+        masks.append(mask)
     masks.append(np.zeros(levels[-1].shape[0], dtype=np.bool_))
     return tuple(masks)
 
