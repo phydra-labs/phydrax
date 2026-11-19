@@ -76,6 +76,79 @@ inline void two_two_diff(double a1, double a0, double b1, double b0, double* h) 
   two_sum(j, i, h[3], h[2]);
 }
 
+// Shewchuk's scale_expansion_zeroelim on a caller buffer: h = b e for the
+// expansion e[0..elen) (elen >= 1), h of capacity 2 elen. Returns the
+// component count of h, at least one (a lone zero when the product is zero).
+inline int scale_expansion_zeroelim(int elen, const double* e, double b, double* h) {
+  double q, hh, product1, product0, sum;
+  int hindex = 0;
+  two_product(e[0], b, q, hh);
+  if (hh != 0.0) h[hindex++] = hh;
+  for (int eindex = 1; eindex < elen; ++eindex) {
+    two_product(e[eindex], b, product1, product0);
+    two_sum(q, product0, sum, hh);
+    if (hh != 0.0) h[hindex++] = hh;
+    fast_two_sum(product1, sum, q, hh);
+    if (hh != 0.0) h[hindex++] = hh;
+  }
+  if (q != 0.0 || hindex == 0) h[hindex++] = q;
+  return hindex;
+}
+
+// Shewchuk's fast_expansion_sum_zeroelim on caller buffers: h = e + f for
+// expansions with elen, flen >= 1, h of capacity elen + flen. Returns the
+// component count of h, at least one.
+inline int fast_expansion_sum_zeroelim(int elen, const double* e, int flen, const double* f,
+                                       double* h) {
+  double q, qnew, hh;
+  double enow = e[0];
+  double fnow = f[0];
+  int eindex = 0, findex = 0, hindex = 0;
+  if ((fnow > enow) == (fnow > -enow)) {
+    q = enow;
+    enow = ++eindex < elen ? e[eindex] : 0.0;
+  } else {
+    q = fnow;
+    fnow = ++findex < flen ? f[findex] : 0.0;
+  }
+  if (eindex < elen && findex < flen) {
+    if ((fnow > enow) == (fnow > -enow)) {
+      fast_two_sum(enow, q, qnew, hh);
+      enow = ++eindex < elen ? e[eindex] : 0.0;
+    } else {
+      fast_two_sum(fnow, q, qnew, hh);
+      fnow = ++findex < flen ? f[findex] : 0.0;
+    }
+    q = qnew;
+    if (hh != 0.0) h[hindex++] = hh;
+    while (eindex < elen && findex < flen) {
+      if ((fnow > enow) == (fnow > -enow)) {
+        two_sum(q, enow, qnew, hh);
+        enow = ++eindex < elen ? e[eindex] : 0.0;
+      } else {
+        two_sum(q, fnow, qnew, hh);
+        fnow = ++findex < flen ? f[findex] : 0.0;
+      }
+      q = qnew;
+      if (hh != 0.0) h[hindex++] = hh;
+    }
+  }
+  while (eindex < elen) {
+    two_sum(q, enow, qnew, hh);
+    enow = ++eindex < elen ? e[eindex] : 0.0;
+    q = qnew;
+    if (hh != 0.0) h[hindex++] = hh;
+  }
+  while (findex < flen) {
+    two_sum(q, fnow, qnew, hh);
+    fnow = ++findex < flen ? f[findex] : 0.0;
+    q = qnew;
+    if (hh != 0.0) h[hindex++] = hh;
+  }
+  if (q != 0.0 || hindex == 0) h[hindex++] = q;
+  return hindex;
+}
+
 // Small-buffer storage for expansion components.  Most predicate expansions
 // have fewer than 24 components; larger exact products spill to the heap.
 class Expansion {
