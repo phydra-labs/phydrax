@@ -556,6 +556,8 @@ class TetMesh {
   bool bind_periodic_identity(const TetPeriodicIdentity& identity);
   const TetPeriodicIdentity& periodic_identity() const noexcept { return periodic_identity_; }
 
+  // Number of vertex slots (live and dead).
+  std::size_t vertex_slot_count() const noexcept { return vertex_ids_.size(); }
   bool live_vertex(std::int32_t slot) const noexcept;
   std::int32_t vertex_slot(std::uint64_t logical_id) const noexcept;
   std::int32_t cell_slot(std::uint64_t logical_id) const noexcept;
@@ -678,6 +680,18 @@ class TetMesh {
                                   std::span<const std::int32_t> removed_vertices,
                                   std::vector<std::uint64_t>& created_cells,
                                   const TetSegmentIndex* segment_index);
+  // Called by refinement: cones the cavity `cells` to a new interior vertex
+  // at `point` (no source witness) with size target `size` (0: none). The
+  // caller has checked that the cavity is one region with no constrained
+  // face, constrained segment or vertex inside, and that every cone cell
+  // over `boundary` (cavity cell, face slot whose neighbor stays) is
+  // positive on carriers; a cone over a source-witnessed vertex is checked
+  // exactly here. New cells and the vertex take fresh IDs and no lineage.
+  // Created cell slots are returned in `created`.
+  TetEditStatus insert_interior_vertex(const double* point, double size,
+                                       std::span<const std::int32_t> cells,
+                                       std::span<const std::pair<std::int32_t, int>> boundary,
+                                       std::vector<std::int32_t>& created);
   // Called by refinement through LocalIncidence: inserts the source-witnessed
   // vertex `vertex` into a constrained facet, or into the constrained segment
   // of `segment_rows` (at most one row). `cavity` holds the finite and hull
@@ -888,6 +902,17 @@ class TetMesh {
   std::string frame_id_;
   std::string source_map_id_;
   TetPeriodicIdentity periodic_identity_;
+  // Scratch of insert_interior_vertex (not state: never copied or swapped).
+  struct ConeFace {
+    std::int32_t outside = -1;
+    std::int32_t outside_face = -1;
+    std::int32_t constraint = kNoConstraint;
+    std::int32_t apex = -1;
+    std::array<std::int32_t, 4> vertices{};
+  };
+  std::vector<ConeFace> cone_faces_;
+  std::vector<std::uint64_t> cone_edge_keys_;
+  std::vector<std::int64_t> cone_edge_sides_;
 };
 
 }  // namespace phx::mc
