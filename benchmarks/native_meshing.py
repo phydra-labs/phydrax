@@ -44,6 +44,7 @@ class _Row:
     count: Callable[[object], int]
     # Cells left off the row's quality targets; a row with any does not pass.
     unmet: Callable[[object], int] = _none_unmet
+    domain: str | None = None
 
 
 def _uniform_points(count: int, dimension: int, seed: int, /) -> np.ndarray:
@@ -84,10 +85,87 @@ def _delaunay_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
     return tuple(rows)
 
 
+def _planar_cells(result: object, /) -> int:
+    if not isinstance(result, _meshcore.ConstrainedDelaunay2D):
+        raise TypeError("A planar constrained kernel returns ConstrainedDelaunay2D.")
+    return result.triangles.shape[0]
+
+
+def _planar_unmet(result: object, /) -> int:
+    if not isinstance(result, _meshcore.ConstrainedDelaunay2D):
+        raise TypeError("A planar constrained kernel returns ConstrainedDelaunay2D.")
+    return int(result.status != _meshcore.MeshcoreStatus.OK)
+
+
+def _planar_minimum_angle(result: _meshcore.ConstrainedDelaunay2D, /) -> float:
+    triangles = result.points[result.triangles]
+    minimum = 180.0
+    for k in range(3):
+        a = triangles[:, (k + 1) % 3] - triangles[:, k]
+        b = triangles[:, (k + 2) % 3] - triangles[:, k]
+        cross = np.abs(a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0])
+        dot = np.sum(a * b, axis=1)
+        minimum = min(minimum, float(np.degrees(np.arctan2(cross, dot)).min()))
+    return minimum
+
+
+def _planar_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
+    fixture = Path(__file__).with_name("native_meshing_inputs")
+    ring_points = np.load(fixture / "q2ring_pts.npy", allow_pickle=False)
+    ring_segments = np.load(fixture / "q2ring_seg.npy", allow_pickle=False)
+    if ring_points.dtype != np.float64 or ring_points.shape != (206, 2):
+        raise ValueError("The published ring points must be float64 with shape (206, 2).")
+    if ring_segments.dtype != np.int32 or ring_segments.shape != (205, 2):
+        raise ValueError("The published ring segments must be int32 with shape (205, 2).")
+    square_points = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=np.float64)
+    square_segments = np.array([[0, 1], [1, 2], [2, 3], [3, 0]], dtype=np.int32)
+    rows: list[_Row] = []
+    for size in sizes:
+        count = int(4 * np.sqrt(size))
+        angles = 2 * np.pi * np.arange(count) / count
+        ring = np.column_stack(
+            (0.5 + 0.3 * np.cos(angles), 0.5 + 0.3 * np.sin(angles))
+        )
+        points = np.vstack((ring, _uniform_points(size - count, 2, 777 + size)))
+        segments = np.column_stack(
+            (np.arange(count), (np.arange(count) + 1) % count)
+        ).astype(np.int32)
+        rows.append(
+            _Row(
+                "cdt-2d",
+                size,
+                lambda p=points, s=segments: _meshcore.constrained_delaunay_2d(
+                    p, s, keep_convex_hull=True
+                ),
+                _planar_cells,
+                _planar_unmet,
+                "ring",
+            )
+        )
+        for domain, p, s in (
+            ("square", square_points, square_segments),
+            ("ring-slit", ring_points, ring_segments),
+        ):
+            rows.append(
+                _Row(
+                    "ruppert-2d",
+                    size,
+                    lambda p=p, s=s, n=size: _meshcore.constrained_delaunay_2d(
+                        p, s, keep_convex_hull=True, min_angle=20.0, max_area=1.5 / n
+                    ),
+                    _planar_cells,
+                    _planar_unmet,
+                    domain,
+                )
+            )
+    return tuple(rows)
+
+
 def _rows(sizes: tuple[int, ...], names: frozenset[str] | None, /) -> tuple[_Row, ...]:
     # Families prepare their inputs only when one of their rows is selected.
     families: tuple[tuple[frozenset[str], Callable[[], tuple[_Row, ...]]], ...] = (
         (frozenset({"delaunay-2d", "delaunay-3d"}), lambda: _delaunay_rows(sizes)),
+        (frozenset({"cdt-2d", "ruppert-2d"}), lambda: _planar_rows(sizes)),
         (frozenset({"implicit-sphere", "implicit-torus"}), _implicit_rows),
         (frozenset({"recover-sphere", "recover-torus"}), _recovery_rows),
         (
@@ -455,6 +533,15 @@ def _measure(row: _Row, repeats: int, /) -> dict[str, Any]:
         samples.append(seconds)
         count = row.count(result)
         unmet = row.unmet(result)
+    if isinstance(result, _meshcore.ConstrainedDelaunay2D):
+        return {
+            "domain": row.domain,
+            "elements": count,
+            "unmet": unmet,
+            "minimum_angle_degrees": _planar_minimum_angle(result),
+            "seconds": samples,
+            "minimum_seconds": min(samples),
+        }
     return {
         "elements": count,
         "unmet": unmet,
