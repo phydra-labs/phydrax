@@ -7870,6 +7870,8 @@ class PlcRecoveryBuilder {
       volume_output_[row] = static_cast<int32_t>(published_points + published_volume.size());
       published_volume.push_back(row);
     }
+    // Published row of each complex cell (-1: unpublished), for the adjacency.
+    std::vector<int32_t> published_row(complex.tets.size(), -1);
     for (std::size_t t = 0; t < complex.tets.size(); ++t) {
       const Tetrahedron& tet = complex.tets[t];
       if (tet.v[0] == kDeadVertex || is_ghost(tet) || complex.region(static_cast<int32_t>(t)) < 0) continue;
@@ -7881,8 +7883,18 @@ class PlcRecoveryBuilder {
           return;
         }
       }
+      published_row[t] = static_cast<int32_t>(candidate_.tet_regions.size());
       candidate_.tets.insert(candidate_.tets.end(), output_tet, output_tet + 4);
       candidate_.tet_regions.push_back(complex.region(static_cast<int32_t>(t)));
+    }
+    candidate_.tet_neighbors.clear();
+    candidate_.tet_neighbors.reserve(candidate_.tets.size());
+    for (std::size_t t = 0; t < complex.tets.size(); ++t) {
+      if (published_row[t] < 0) continue;
+      for (const int32_t across : complex.tets[t].n) {
+        candidate_.tet_neighbors.push_back(
+            across < 0 ? -1 : published_row[static_cast<std::size_t>(across)]);
+      }
     }
     const auto publish_face = [&](const PlcSourceFace& source) {
       for (int32_t vertex : source.oriented) {

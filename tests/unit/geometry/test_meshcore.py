@@ -15,6 +15,13 @@ import numpy as np
 import pytest
 from scipy.spatial import ConvexHull
 
+from benchmarks.native_meshing import (
+    _facets,
+    _icosphere,
+    _recover,
+    _stuffed_torus_surface,
+    _uv_torus,
+)
 from phydrax._meshcore import (
     arrange_tetrahedra_exact,
     clip_reference_tetrahedron_exact,
@@ -2103,7 +2110,9 @@ def test_fixed_cad_sphere_recovery_suppresses_its_splits_with_bounded_wraps() ->
         segment_tolerances=data["segment_tolerances"],
         boundary_policy=PlcBoundaryPolicy.FIXED,
     )
-    np.testing.assert_array_equal(recovered.points[: data["points"].shape[0]], data["points"])
+    np.testing.assert_array_equal(
+        recovered.points[: data["points"].shape[0]], data["points"]
+    )
     assert recovered.points.shape[0] == data["points"].shape[0] + 1
     assert int(recovered.faces.max()) < data["points"].shape[0]
     assert recovered.faces.shape[0] == data["polygon_facets"].shape[0]
@@ -2728,3 +2737,88 @@ def test_relocated_tet_mesh_arrays_erases_only_the_moved_ancestry_rows() -> None
     assert derived.generation == arrays.generation + 1
     with pytest.raises(ValueError, match="snapshot rows"):
         relocated_tet_mesh_arrays(arrays, [11], [2], [point], None)
+
+
+# The native meshing benchmark's surfaces (benchmarks/native_meshing.py).
+_BENCHMARK_SURFACES = {
+    "sphere-5": lambda: _icosphere(5),
+    "sphere-6": lambda: _icosphere(6),
+    "stuffed-torus-67": lambda: _stuffed_torus_surface(0.067),
+    "stuffed-torus-22": lambda: _stuffed_torus_surface(0.022),
+    "grid-torus-100": lambda: _uv_torus(100),
+    "grid-torus-300": lambda: _uv_torus(300),
+}
+
+
+def _benchmark_recovery(name: str) -> PlcRecovery3D:
+    vertices, faces = _BENCHMARK_SURFACES[name]()
+    return _recover(vertices, faces, _facets(vertices, faces))
+
+
+def _array_built_mesh(recovery: PlcRecovery3D) -> TetMesh3D:
+    return TetMesh3D(
+        recovery.points,
+        recovery.tetrahedra,
+        recovery.tetrahedron_regions,
+        recovery.faces,
+        recovery.face_sources,
+        recovery.segments,
+        recovery.segment_sources,
+        boundary_policy=PlcBoundaryPolicy.FIXED,
+        protection_radii=recovery.protection_radii,
+        face_orientations=recovery.face_orientations,
+    )
+
+
+def _assert_same_arrays(first: TetMesh3D, second: TetMesh3D) -> None:
+    for name, left, right in zip(
+        first.arrays()._fields, first.arrays(), second.arrays(), strict=True
+    ):
+        left_array = np.asarray(left)
+        right_array = np.asarray(right)
+        assert left_array.dtype == right_array.dtype, name
+        np.testing.assert_array_equal(left_array, right_array, err_msg=name)
+
+
+@pytest.mark.parametrize("surface", tuple(_BENCHMARK_SURFACES))
+def test_mesh_adopted_from_recovery_is_the_array_built_mesh(surface: str) -> None:
+    # Adopting the recovery's native banks and adjacency (and, with
+    # `validate`, proving everything again) builds the state the exported
+    # arrays build.
+    recovery = _benchmark_recovery(surface)
+    built = _array_built_mesh(recovery)
+    for validate in (False, True):
+        adopted = TetMesh3D.from_recovery(
+            recovery, boundary_policy=PlcBoundaryPolicy.FIXED, validate=validate
+        )
+        _assert_same_arrays(adopted, built)
+
+
+def test_mesh_adopted_from_recovery_refines_as_the_array_built_mesh() -> None:
+    # Ghost order and adjacency are not in the snapshot: refinement and
+    # improvement, which walk them, end in the same mesh.
+    vertices, faces = _BENCHMARK_SURFACES["stuffed-torus-67"]()
+    recovery = _recover(vertices, faces, _facets(vertices, faces))
+    edges = np.concatenate((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]))
+    spacing = np.mean(
+        np.linalg.norm(vertices[edges[:, 0]] - vertices[edges[:, 1]], axis=1)
+    )
+    sizes = np.full((recovery.points.shape[0],), 1.75 * np.sqrt(3.0 / 8.0) * spacing)
+    meshes = (
+        _array_built_mesh(recovery),
+        TetMesh3D.from_recovery(recovery, boundary_policy=PlcBoundaryPolicy.FIXED),
+    )
+    for mesh in meshes:
+        mesh.refine(radius_edge_bound=2.0, sizes=sizes)
+        mesh.improve(radius_edge_bound=2.0, min_dihedral_degrees=15.0)
+    _assert_same_arrays(*meshes)
+
+
+def test_mesh_adoption_refuses_a_recovery_without_its_native_result() -> None:
+    recovery = _benchmark_recovery("grid-torus-100")
+    with pytest.raises(ValueError, match="no native result"):
+        TetMesh3D.from_recovery(recovery._replace(native=None))
+    with pytest.raises(TypeError, match="PlcRecovery3D"):
+        TetMesh3D.from_recovery(tuple(recovery))  # ty: ignore[invalid-argument-type]
+    with pytest.raises(ValueError, match="face_sources"):
+        TetMesh3D.from_recovery(recovery, face_sources=recovery.face_sources[1:])

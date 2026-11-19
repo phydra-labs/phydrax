@@ -254,19 +254,12 @@ def _surface_to_tets(
     vertices: np.ndarray, faces: np.ndarray, facets: np.ndarray, size: float, /
 ) -> _VolumeResult:
     # The whole task Gmsh's generate(3) performs from a surface: boundary
-    # recovery, state creation, refinement, improvement and export.
+    # recovery, state creation (adopted from the recovery), refinement,
+    # improvement and export.
     recovered = _recover(vertices, faces, facets)
     _recovered_cells(recovered)
-    mesh = _meshcore.TetMesh3D(
-        recovered.points,
-        recovered.tetrahedra,
-        recovered.tetrahedron_regions,
-        recovered.faces,
-        recovered.face_sources,
-        recovered.segments,
-        recovered.segment_sources,
-        boundary_policy=_meshcore.PlcBoundaryPolicy.FIXED,
-        protection_radii=recovered.protection_radii,
+    mesh = _meshcore.TetMesh3D.from_recovery(
+        recovered, boundary_policy=_meshcore.PlcBoundaryPolicy.FIXED
     )
     sizes = np.full((recovered.points.shape[0],), size, dtype=np.float64)
     refined = mesh.refine(radius_edge_bound=2.0, sizes=sizes)

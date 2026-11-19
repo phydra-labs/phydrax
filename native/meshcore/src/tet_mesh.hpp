@@ -469,12 +469,28 @@ class TetIdIndex {
   std::size_t live_ = 0;
 };
 
+// What a PLC recovery proved of the mesh it published (PlcRecovery), which
+// TetMesh::build adopts rather than proves again; the resulting state is the
+// one the arrays alone build.
+struct RecoveredTopology {
+  // Per cell and face slot: the cell across, -1 on the boundary (empty: the
+  // adjacency is paired from the cells).
+  std::span<const std::int32_t> neighbors;
+  // The mesh is its own source bank (no explicit source or witnesses): every
+  // constrained face and segment is one of its own source rows, which covers
+  // it alone, since recovery proved the faces pairwise legal (no other row
+  // of a group overlaps one), so the coverage proofs are not repeated.
+  bool self_covered = false;
+};
+
 class TetMesh {
  public:
   explicit TetMesh(BoundaryPolicy policy = BoundaryPolicy::kFixed);
   TetMesh(const TetMesh&) = delete;
   TetMesh& operator=(const TetMesh&) = delete;
 
+  // `recovered`: the input is a PLC recovery's published mesh
+  // (RecoveredTopology), adopted without repeating what recovery proved.
   int32_t build(std::span<const double> points,
                 std::span<const std::int32_t> tetrahedra,
                 std::span<const std::int32_t> regions,
@@ -485,7 +501,8 @@ class TetMesh {
                 std::span<const std::int32_t> segment_sources,
                 std::span<const double> protection_radii,
                 const SourceComplexView* source = nullptr,
-                std::span<const std::int8_t> protected_vertices = {});
+                std::span<const std::int8_t> protected_vertices = {},
+                const RecoveredTopology* recovered = nullptr);
 
   int32_t build(std::span<const double> points,
                 std::span<const std::int32_t> tetrahedra,
@@ -838,7 +855,11 @@ class TetMesh {
                       std::span<const std::int32_t> segment_sources,
                       std::span<const double> protection_radii,
                       const SourceComplexView* source,
-                      std::span<const std::int8_t> protected_vertices);
+                      std::span<const std::int8_t> protected_vertices,
+                      const RecoveredTopology* recovered);
+  // Whether every constrained face and segment is covered by its source
+  // group (source_face_valid, source_segment_valid).
+  bool constraints_covered() const;
   // A face group whose facet declares an exact plane: every row carries the
   // same plane, `rows` in bank order (the first is the group's plane row),
   // `boundary_edges` the source point pairs used by exactly one row (the

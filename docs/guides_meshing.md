@@ -1290,6 +1290,17 @@ Missing proof, a changed parameter, or an unrelated occurrence is refused.
 Degree-one vertices remain the graph boundary, and conforming H1 diffusion
 assembles the incident fluxes at the shared junction.
 
+A recovered PLC becomes a native tetrahedral mesh by adoption:
+`TetMesh3D.from_recovery(recovery, ...)` takes the recovery's points, cells,
+regions, constrained faces and segments, protection radii and cell adjacency
+from its native result (`PlcRecovery3D.native`) rather than from the exported
+arrays, and does not prove again what recovery proved: the adjacency and,
+without an explicit source complex, the coverage of the constrained faces and
+segments by their own source rows. The state is the one the array
+constructor builds from the same recovery; `validate=True` repeats every check
+of the array route. A recovery assembled from arrays has no native result and
+is refused.
+
 Native tetrahedral refinement and quality improvement (`TetMesh3D.refine` and
 `TetMesh3D.improve`, run in that order by the native volume routes) have these
 contracts:

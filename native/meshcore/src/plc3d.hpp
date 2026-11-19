@@ -234,6 +234,9 @@ struct PlcRecovery {
   std::vector<double> points;
   std::vector<int32_t> tets;
   std::vector<int32_t> tet_regions;
+  // Per tet and face slot (opposite its corner): the tet across, -1 on the
+  // domain boundary. Native only (TetMesh adopts it, phx_mc_tet_mesh_create_from_plc).
+  std::vector<int32_t> tet_neighbors;
   std::vector<int32_t> faces;
   std::vector<int32_t> face_sources;
   std::vector<int8_t> face_orientations;  // +1: each subfacet follows its authored source row
@@ -378,3 +381,9 @@ std::vector<double> protection_radii(const double* points, int64_t point_count,
                                      const double* affine_metric = nullptr);
 
 }  // namespace phx::mc
+
+// The C ABI's owner of one recovery (phx_mc_plc3d_*), also read by the mesh
+// handoff (phx_mc_tet_mesh_create_from_plc).
+struct phx_mc_plc3d_result {
+  phx::mc::PlcRecovery recovery;
+};

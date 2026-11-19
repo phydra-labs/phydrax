@@ -5,7 +5,9 @@
 #include <map>
 #include <array>
 #include <bit>
+#include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <limits>
 #include <string_view>
 #include <vector>
@@ -15,6 +17,9 @@
 #include "facet_coverage.hpp"
 #include "predicates.hpp"
 #include "tet_mesh.hpp"
+#include "plc3d.hpp"
+#include "refine3d.hpp"
+#include "tet_mesh_handle.hpp"
 
 namespace {
 struct TetGeometrySnapshot {
@@ -4545,6 +4550,355 @@ void flat_build_matches_reference_sets() {
   }
 }
 
+// A PLC (one polygon per row of `polygons`) recovered for the mesh handoff.
+struct HandoffCase {
+  const char* name;
+  std::vector<double> points;
+  std::vector<std::vector<int32_t>> polygons;
+  std::vector<int32_t> polygon_facets;
+  std::vector<int32_t> facet_regions;  // (negative side, positive side) per facet
+  std::vector<int32_t> segments;
+  int32_t policy = PHX_MC_TET_MESH_BOUNDARY_FIXED;
+  std::vector<double> facet_planes;  // 9 per facet, or none
+  std::vector<double> facet_plane_tolerances;
+  // Refine both meshes to radius-edge 2 and compare again (small inputs).
+  bool refine = true;
+};
+
+HandoffCase icosphere_case(int level) {
+  const double golden = (1.0 + std::sqrt(5.0)) / 2.0;
+  std::vector<std::array<double, 3>> vertices{
+      {-1, golden, 0}, {1, golden, 0}, {-1, -golden, 0}, {1, -golden, 0},
+      {0, -1, golden}, {0, 1, golden}, {0, -1, -golden}, {0, 1, -golden},
+      {golden, 0, -1}, {golden, 0, 1}, {-golden, 0, -1}, {-golden, 0, 1}};
+  std::vector<std::array<int32_t, 3>> faces{
+      {0, 11, 5}, {0, 5, 1}, {0, 1, 7}, {0, 7, 10}, {0, 10, 11}, {1, 5, 9}, {5, 11, 4},
+      {11, 10, 2}, {10, 7, 6}, {7, 1, 8}, {3, 9, 4}, {3, 4, 2}, {3, 2, 6}, {3, 6, 8},
+      {3, 8, 9}, {4, 9, 5}, {2, 4, 11}, {6, 2, 10}, {8, 6, 7}, {9, 8, 1}};
+  const auto normalized = [](std::array<double, 3> p) {
+    const double length = std::sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]);
+    for (double& x : p) x /= length;
+    return p;
+  };
+  for (auto& p : vertices) p = normalized(p);
+  for (int step = 0; step < level; ++step) {
+    std::map<std::pair<int32_t, int32_t>, int32_t> middle;
+    const auto split = [&](int32_t a, int32_t b) {
+      const auto key = std::minmax(a, b);
+      const auto found = middle.find(key);
+      if (found != middle.end()) return found->second;
+      std::array<double, 3> p{};
+      for (int axis = 0; axis < 3; ++axis) p[axis] = vertices[a][axis] + vertices[b][axis];
+      vertices.push_back(normalized(p));
+      return middle[key] = static_cast<int32_t>(vertices.size() - 1);
+    };
+    std::vector<std::array<int32_t, 3>> next;
+    for (const auto& [a, b, c] : faces) {
+      const int32_t ab = split(a, b);
+      const int32_t bc = split(b, c);
+      const int32_t ca = split(c, a);
+      next.insert(next.end(), {{a, ab, ca}, {b, bc, ab}, {c, ca, bc}, {ab, bc, ca}});
+    }
+    faces.swap(next);
+  }
+  HandoffCase result{"icosphere"};
+  for (const auto& p : vertices) result.points.insert(result.points.end(), p.begin(), p.end());
+  for (const auto& [a, b, c] : faces) result.polygons.push_back({a, b, c});
+  result.polygon_facets.assign(faces.size(), 0);
+  result.facet_regions = {-1, 0};
+  result.refine = false;
+  return result;
+}
+
+// The benchmark's grid torus (R = 1, r = 0.4): an around x around / 2 grid,
+// each triangle its own facet (its quads are planar).
+HandoffCase grid_torus_case(int around) {
+  const int across = around / 2;
+  HandoffCase result{"grid torus"};
+  const double pi = std::acos(-1.0);
+  for (int i = 0; i < around; ++i) {
+    for (int j = 0; j < across; ++j) {
+      const double u = 2.0 * pi * i / around;
+      const double w = 2.0 * pi * j / across;
+      const double ring = 1.0 + 0.4 * std::cos(w);
+      result.points.insert(result.points.end(),
+                           {ring * std::cos(u), ring * std::sin(u), 0.4 * std::sin(w)});
+    }
+  }
+  for (int i = 0; i < around; ++i) {
+    for (int j = 0; j < across; ++j) {
+      const int32_t a = i * across + j;
+      const int32_t b = ((i + 1) % around) * across + j;
+      const int32_t c = ((i + 1) % around) * across + (j + 1) % across;
+      const int32_t d = i * across + (j + 1) % across;
+      result.polygons.push_back({a, b, c});
+      result.polygons.push_back({a, c, d});
+    }
+  }
+  for (std::size_t row = 0; row < result.polygons.size(); ++row) {
+    result.polygon_facets.push_back(static_cast<int32_t>(row));
+    result.facet_regions.insert(result.facet_regions.end(), {-1, 0});
+  }
+  result.refine = false;
+  return result;
+}
+
+// tests/unit/meshing/test_native_volume_generation.py fixtures.
+HandoffCase two_region_bipyramid() {
+  HandoffCase result{"two-region bipyramid"};
+  result.points = {-1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -1};
+  result.polygons = {{1, 2, 3}, {0, 3, 2}, {0, 1, 3}, {2, 1, 4}, {0, 4, 1}, {0, 2, 4}, {0, 1, 2}};
+  result.polygon_facets = {0, 1, 2, 3, 4, 5, 6};
+  result.facet_regions = {-1, 0, -1, 0, -1, 0, -1, 1, -1, 1, -1, 1, 0, 1};
+  return result;
+}
+
+// The unit cube, two triangles per face facet; `angle` rotates and shrinks
+// it so a face's triangles are not exactly coplanar unless the face's
+// exact plane is declared (`declared`).
+HandoffCase grouped_cube(int32_t policy, double angle, bool declared) {
+  HandoffCase result{declared ? "declared-plane cube" : "grouped cube"};
+  std::vector<std::array<double, 3>> corners{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {1, 1, 0},
+                                             {0, 0, 1}, {1, 0, 1}, {0, 1, 1}, {1, 1, 1}};
+  if (angle != 0.0) {
+    const double c = std::cos(angle);
+    const double s = std::sin(angle);
+    const double rotation[3][3]{{c, -s, 0.0}, {s * c, c * c, -s}, {s * s, s * c, c}};
+    for (auto& p : corners) {
+      std::array<double, 3> rotated{};
+      for (int row = 0; row < 3; ++row) {
+        for (int axis = 0; axis < 3; ++axis) rotated[row] += rotation[row][axis] * (p[axis] - 0.5);
+        rotated[row] /= 3.0;
+      }
+      p = rotated;
+    }
+  }
+  for (const auto& p : corners) result.points.insert(result.points.end(), p.begin(), p.end());
+  result.polygons = {{0, 2, 3}, {0, 3, 1}, {4, 5, 7}, {4, 7, 6}, {0, 1, 5}, {0, 5, 4},
+                     {2, 6, 7}, {2, 7, 3}, {0, 4, 6}, {0, 6, 2}, {1, 3, 7}, {1, 7, 5}};
+  for (int32_t facet = 0; facet < 6; ++facet) {
+    result.polygon_facets.insert(result.polygon_facets.end(), {facet, facet});
+    result.facet_regions.insert(result.facet_regions.end(), {-1, 0});
+  }
+  result.policy = policy;
+  if (declared) {
+    // The fixture's declared tolerance (a face's rounded corners are within it).
+    result.facet_plane_tolerances.assign(6, 1e-12);
+    constexpr int kPlanes[6][3]{{0, 2, 1}, {4, 5, 6}, {0, 1, 4}, {2, 6, 3}, {0, 4, 2}, {1, 3, 5}};
+    for (const auto& [a, b, c] : kPlanes) {
+      for (int axis = 0; axis < 3; ++axis) result.facet_planes.push_back(corners[a][axis]);
+      for (int axis = 0; axis < 3; ++axis) {
+        result.facet_planes.push_back(corners[b][axis] - corners[a][axis]);
+      }
+      for (int axis = 0; axis < 3; ++axis) {
+        result.facet_planes.push_back(corners[c][axis] - corners[a][axis]);
+      }
+    }
+  }
+  return result;
+}
+
+// The constrained-solid matrix's small-angle wedge: its apex ridge meets at
+// 2 atan(1/16), its quads are one facet, so its ridges are segments.
+HandoffCase small_angle_wedge() {
+  HandoffCase result{"small-angle wedge"};
+  for (const double z : {0.0, 1.0}) {
+    result.points.insert(result.points.end(), {0.0, 0.0, z, 16.0, -1.0, z, 16.0, 1.0, z});
+  }
+  result.polygons = {{0, 2, 1}, {3, 4, 5}, {0, 1, 4, 3}, {1, 2, 5, 4}, {2, 0, 3, 5}};
+  result.polygon_facets = {0, 0, 0, 0, 0};
+  result.facet_regions = {-1, 0};
+  result.policy = PHX_MC_TET_MESH_BOUNDARY_CONFORMING;
+  return result;
+}
+
+bool same_bits(const std::vector<double>& a, const std::vector<double>& b) {
+  return a.size() == b.size() &&
+         std::equal(a.begin(), a.end(), b.begin(), [](double x, double y) {
+           return std::bit_cast<uint64_t>(x) == std::bit_cast<uint64_t>(y);
+         });
+}
+
+// Every slot of the complex (ghosts included) with its adjacency and labels,
+// and every snapshot record and source bank, are equal.
+void check_same_state(const phx::mc::TetMesh& a, const phx::mc::TetMesh& b, const char* name) {
+  const auto& left = a.complex();
+  const auto& right = b.complex();
+  bool same = left.tets.size() == right.tets.size() && left.free_slots == right.free_slots;
+  for (std::size_t slot = 0; same && slot < left.tets.size(); ++slot) {
+    const phx::mc::Tetrahedron& x = left.tets[slot];
+    const phx::mc::Tetrahedron& y = right.tets[slot];
+    same = std::equal(x.v, x.v + 4, y.v) && std::equal(x.n, x.n + 4, y.n) &&
+           x.constrained == y.constrained && x.region == y.region;
+    for (int face = 0; same && face < 4; ++face) {
+      same = left.constraint(static_cast<int32_t>(slot), face) ==
+             right.constraint(static_cast<int32_t>(slot), face);
+    }
+  }
+  phx::mc::TetMeshSnapshot first;
+  phx::mc::TetMeshSnapshot second;
+  PHX_CHECK(a.snapshot(first) == phx::mc::TetEditStatus::kApplied);
+  PHX_CHECK(b.snapshot(second) == phx::mc::TetEditStatus::kApplied);
+  same = same && first.vertices.size() == second.vertices.size() &&
+         first.cells.size() == second.cells.size() &&
+         first.constrained_facets.size() == second.constrained_facets.size() &&
+         first.constrained_segments.size() == second.constrained_segments.size();
+  for (std::size_t row = 0; same && row < first.vertices.size(); ++row) {
+    const auto& x = first.vertices[row];
+    const auto& y = second.vertices[row];
+    same = x.id == y.id && same_bits({x.carrier.begin(), x.carrier.end()},
+                                     {y.carrier.begin(), y.carrier.end()}) &&
+           x.witness.stratum == y.witness.stratum && x.witness.entity == y.witness.entity &&
+           same_bits({x.witness.parameters[0], x.witness.parameters[1], x.witness.deviation},
+                     {y.witness.parameters[0], y.witness.parameters[1], y.witness.deviation}) &&
+           x.stratum_dimension == y.stratum_dimension &&
+           same_bits({x.protection_radius, x.edge_parameter},
+                     {y.protection_radius, y.edge_parameter}) &&
+           x.protected_vertex == y.protected_vertex &&
+           x.has_edge_parameter == y.has_edge_parameter && x.edge_endpoints == y.edge_endpoints;
+  }
+  for (std::size_t row = 0; same && row < first.cells.size(); ++row) {
+    same = first.cells[row].id == second.cells[row].id &&
+           first.cells[row].vertices == second.cells[row].vertices &&
+           first.cells[row].region == second.cells[row].region;
+  }
+  for (std::size_t row = 0; same && row < first.constrained_facets.size(); ++row) {
+    const auto& x = first.constrained_facets[row];
+    const auto& y = second.constrained_facets[row];
+    same = x.id == y.id && x.vertices == y.vertices && x.source == y.source &&
+           x.orientation == y.orientation && x.protected_facet == y.protected_facet;
+  }
+  for (std::size_t row = 0; same && row < first.constrained_segments.size(); ++row) {
+    const auto& x = first.constrained_segments[row];
+    const auto& y = second.constrained_segments[row];
+    same = x.id == y.id && x.vertices == y.vertices && x.source == y.source &&
+           x.protected_segment == y.protected_segment;
+  }
+  same = same && same_bits(first.source_points, second.source_points) &&
+         first.source_faces == second.source_faces &&
+         first.source_face_groups == second.source_face_groups &&
+         first.source_face_ids == second.source_face_ids &&
+         same_bits(first.source_face_tolerances, second.source_face_tolerances) &&
+         first.source_segments == second.source_segments &&
+         first.source_segment_groups == second.source_segment_groups &&
+         first.source_segment_ids == second.source_segment_ids &&
+         same_bits(first.source_segment_tolerances, second.source_segment_tolerances) &&
+         same_bits(first.source_face_planes, second.source_face_planes) &&
+         same_bits(first.source_face_plane_tolerances, second.source_face_plane_tolerances);
+  if (!same) std::fprintf(stderr, "state differs: %s\n", name);
+  PHX_CHECK(same);
+}
+
+// The mesh adopted from a recovery (phx_mc_tet_mesh_create_from_plc, with and
+// without `validate`) is the one its exported banks build, and refines alike.
+void check_handoff(const HandoffCase& input) {
+  std::vector<int64_t> offsets{0};
+  std::vector<int32_t> polygon_vertices;
+  for (const auto& polygon : input.polygons) {
+    polygon_vertices.insert(polygon_vertices.end(), polygon.begin(), polygon.end());
+    offsets.push_back(static_cast<int64_t>(polygon_vertices.size()));
+  }
+  phx_mc_plc3d_result* recovery = nullptr;
+  phx_mc_plc3d_prepare_source_request plc{};
+  plc.point_count = static_cast<int64_t>(input.points.size() / 3);
+  plc.points = input.points.data();
+  plc.polygon_count = static_cast<int64_t>(input.polygons.size());
+  plc.polygon_vertex_count = static_cast<int64_t>(polygon_vertices.size());
+  plc.polygon_offsets = offsets.data();
+  plc.polygon_vertices = polygon_vertices.data();
+  plc.polygon_facets = input.polygon_facets.data();
+  plc.facet_count = static_cast<int64_t>(input.facet_regions.size() / 2);
+  plc.facet_regions = input.facet_regions.data();
+  plc.segment_count = static_cast<int64_t>(input.segments.size() / 2);
+  plc.segments = input.segments.data();
+  plc.boundary_policy = input.policy;
+  plc.facet_planes = input.facet_planes.empty() ? nullptr : input.facet_planes.data();
+  plc.facet_plane_tolerances =
+      input.facet_plane_tolerances.empty() ? nullptr : input.facet_plane_tolerances.data();
+  plc.result = &recovery;
+  const int32_t recovered_status = phx_mc_plc3d_recover(&plc);
+  if (recovered_status != PHX_MC_OK) {
+    std::fprintf(stderr, "recovery failed (%d, reason %d): %s\n", recovered_status,
+                 recovery == nullptr ? -1 : static_cast<int>(recovery->recovery.failure.reason),
+                 input.name);
+  }
+  PHX_CHECK(recovered_status == PHX_MC_OK);
+  if (recovered_status != PHX_MC_OK) {
+    phx_mc_plc3d_free(recovery);
+    return;
+  }
+  const phx::mc::PlcRecovery& recovered = recovery->recovery;
+  phx_mc_tet_mesh_create_request request{};
+  request.point_count = static_cast<int64_t>(recovered.points.size() / 3);
+  request.tetrahedron_count = static_cast<int64_t>(recovered.tets.size() / 4);
+  request.face_count = static_cast<int64_t>(recovered.faces.size() / 3);
+  request.face_sources = recovered.face_sources.data();
+  request.segment_count = static_cast<int64_t>(recovered.segments.size() / 2);
+  request.segment_sources = recovered.segment_sources.data();
+  request.boundary_policy = input.policy;
+  phx_mc_tet_mesh* adopted = nullptr;
+  phx_mc_tet_mesh* validated = nullptr;
+  phx_mc_tet_mesh* built = nullptr;
+  request.result = &adopted;
+  PHX_CHECK(phx_mc_tet_mesh_create_from_plc(recovery, &request, nullptr, 0) == PHX_MC_OK);
+  request.result = &validated;
+  PHX_CHECK(phx_mc_tet_mesh_create_from_plc(recovery, &request, nullptr, 1) == PHX_MC_OK);
+  // The array route over the exported banks.
+  phx_mc_tet_mesh_create_request arrays = request;
+  arrays.points = recovered.points.data();
+  arrays.tetrahedra = recovered.tets.data();
+  arrays.tetrahedron_regions = recovered.tet_regions.data();
+  arrays.faces = recovered.faces.data();
+  arrays.face_orientations = recovered.face_orientations.data();
+  arrays.segments = recovered.segments.data();
+  arrays.protection_radii = recovered.protection.data();
+  arrays.result = &built;
+  PHX_CHECK(phx_mc_tet_mesh_create_with_affine_metric(&arrays, nullptr) == PHX_MC_OK);
+  // Banks the recovery owns are refused from the request, as is a mismatch.
+  phx_mc_tet_mesh* refused = nullptr;
+  arrays.result = &refused;
+  PHX_CHECK(phx_mc_tet_mesh_create_from_plc(recovery, &arrays, nullptr, 0) ==
+            PHX_MC_INVALID_ARGUMENT);
+  request.result = &refused;
+  ++request.face_count;
+  PHX_CHECK(phx_mc_tet_mesh_create_from_plc(recovery, &request, nullptr, 0) ==
+            PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_tet_mesh_create_from_plc(nullptr, &request, nullptr, 0) ==
+            PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(refused == nullptr);
+  if (adopted != nullptr && validated != nullptr && built != nullptr) {
+    phx::mc::TetMesh& adopted_state = phx::mc::tet_mesh_state(*adopted);
+    phx::mc::TetMesh& validated_state = phx::mc::tet_mesh_state(*validated);
+    phx::mc::TetMesh& built_state = phx::mc::tet_mesh_state(*built);
+    PHX_CHECK(adopted_state.complex().audit());
+    check_same_state(adopted_state, built_state, input.name);
+    check_same_state(validated_state, built_state, input.name);
+    if (input.refine) {
+      for (phx::mc::TetMesh* state : {&adopted_state, &built_state}) {
+        int64_t inserted = 0;
+        int64_t unmet = 0;
+        // UNRESOLVED leaves unmet cells (the wedge's input-forced ones).
+        const int32_t refined = phx::mc::refine_mesh(*state, 2.0, {}, inserted, unmet);
+        PHX_CHECK(refined == PHX_MC_OK || (refined == PHX_MC_UNRESOLVED && unmet > 0));
+      }
+      check_same_state(adopted_state, built_state, input.name);
+    }
+  }
+  phx_mc_tet_mesh_free(adopted);
+  phx_mc_tet_mesh_free(validated);
+  phx_mc_tet_mesh_free(built);
+  phx_mc_plc3d_free(recovery);
+}
+
+void recovery_handoff_matches_array_build() {
+  check_handoff(icosphere_case(5));
+  check_handoff(grid_torus_case(100));
+  check_handoff(two_region_bipyramid());
+  check_handoff(grouped_cube(PHX_MC_TET_MESH_BOUNDARY_CONFORMING, 0.0, false));
+  check_handoff(grouped_cube(PHX_MC_TET_MESH_BOUNDARY_FIXED, 0.3, true));
+  check_handoff(small_angle_wedge());
+}
+
 }  // namespace
 
 int main() {
@@ -4572,5 +4926,6 @@ int main() {
   declared_plane_admission_refuses_and_records_vertices();
   periodic_closure_accepts_edit_touching_one_orbit_copy();
   flat_build_matches_reference_sets();
+  recovery_handoff_matches_array_build();
   return phx::mc::test::finish("test_tet_mesh");
 }
