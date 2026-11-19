@@ -2491,28 +2491,15 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
         *controls,
     )
     assert 0.0 <= certificate.distance <= 0.01
-    # Input triangles the remesh left untouched are the carrier's own.
-    assert 0 <= certificate.counters[3] < remeshed.triangles.shape[0]
+    # Input triangles the remesh left untouched are proved, not carried.
+    assert certificate.counters[3] == 0
     # Nothing needed repair: the certified surface is the constructed one.
     assert certificate.counters[4] == 0
     np.testing.assert_array_equal(certificate.vertices, remeshed.vertices)
     np.testing.assert_array_equal(certificate.triangles, remeshed.triangles)
-    # The carrier certified against itself, listed from other corners: every
-    # triangle is accepted at the carrier's distance.
-    own = zero_set_certify(
-        vertices,
-        faces,
-        value,
-        gradient,
-        0.01,
-        1,
-        vertices,
-        faces[:, (1, 2, 0)],
-        *controls,
-    )
-    assert own.distance == 0.005
-    assert own.counters[3] == faces.shape[0]
-    # A vertex lifted off the sphere cannot be repaired by splitting its star.
+    # A vertex lifted off the sphere: its star fails the proof and splitting
+    # cannot repair it, unless the carrier holds those very triangles, which
+    # are then accepted at the carrier's distance, here above the tolerance.
     lifted = np.array(remeshed.vertices)
     lifted[0] *= 1.05
     with pytest.raises(MeshcoreError, match="UNRESOLVED"):
@@ -2527,6 +2514,21 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
             faces,
             *controls,
         )
+    carried = zero_set_certify(
+        lifted,
+        remeshed.triangles,
+        value,
+        gradient,
+        0.01,
+        1,
+        lifted,
+        remeshed.triangles[:, (1, 2, 0)],
+        0.02,
+        0.15,
+        30.0,
+    )
+    assert carried.distance == 0.02
+    assert carried.counters[3] > 0 and carried.counters[4] == 0
 
 
 def test_surface_envelope_names_the_offset_domination_contract() -> None:

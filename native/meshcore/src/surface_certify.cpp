@@ -185,7 +185,10 @@ bool closed_manifold(const std::vector<Triangle>& triangles, size_t vertex_count
 // Broad phase: a uniform grid of the mean box extent, every triangle listed in
 // each cell its box meets. A pair is classified once, in the first cell (by
 // coordinates) of the intersection of the two cell ranges, and only when the
-// boxes meet.
+// boxes meet. A triangle whose box meets more than kGridCells cells (far
+// larger than the mean) is not listed; it is tested by box against every
+// triangle instead, which keeps the grid at most kGridCells entries per
+// triangle.
 int64_t refuse_illegal_contacts(const std::vector<Point>& points,
                                 const std::vector<Triangle>& triangles,
                                 const std::vector<uint8_t>* changed,
@@ -232,8 +235,10 @@ int64_t refuse_illegal_contacts(const std::vector<Point>& points,
   const auto coordinate = [&](double value, int d) {
     return static_cast<int64_t>(std::floor((value - origin[d]) / cell));
   };
+  constexpr int64_t kGridCells = 64;
   std::vector<std::array<int64_t, 6>> ranges(m);
   std::vector<std::pair<uint64_t, int32_t>> entries;
+  std::vector<size_t> large;
   entries.reserve(4 * counted);
   const auto key = [](int64_t x, int64_t y, int64_t z) {
     return (static_cast<uint64_t>(x) << 42) | (static_cast<uint64_t>(y) << 21) |
@@ -241,15 +246,34 @@ int64_t refuse_illegal_contacts(const std::vector<Point>& points,
   };
   for (size_t t = 0; t < m; ++t) {
     if (!finite[t]) continue;
+    int64_t cells = 1;
     for (int d = 0; d < 3; ++d) {
       ranges[t][static_cast<size_t>(d)] = coordinate(boxes[t][static_cast<size_t>(d)], d);
       ranges[t][static_cast<size_t>(d) + 3] = coordinate(boxes[t][static_cast<size_t>(d) + 3], d);
+      cells *= ranges[t][static_cast<size_t>(d) + 3] - ranges[t][static_cast<size_t>(d)] + 1;
+    }
+    if (cells > kGridCells) {
+      large.push_back(t);
+      continue;
     }
     for (int64_t x = ranges[t][0]; x <= ranges[t][3]; ++x)
       for (int64_t y = ranges[t][1]; y <= ranges[t][4]; ++y)
         for (int64_t z = ranges[t][2]; z <= ranges[t][5]; ++z)
           entries.push_back({key(x, y, z), static_cast<int32_t>(t)});
   }
+  const auto classify = [&](size_t s, size_t u) {
+    if (changed != nullptr && !(*changed)[s] && !(*changed)[u]) return;
+    for (size_t d = 0; d < 3; ++d)
+      if (!(boxes[s][d] <= boxes[u][d + 3] && boxes[u][d] <= boxes[s][d + 3])) return;
+    if (!legal_triangle_contact(corners[s], triangles[s], corners[u], triangles[u]))
+      refused[s] = refused[u] = 1;
+  };
+  // Large triangles against every other triangle (each large pair once).
+  std::vector<uint8_t> is_large(m, 0);
+  for (const size_t s : large) is_large[s] = 1;
+  for (const size_t s : large)
+    for (size_t u = 0; u < m; ++u)
+      if (finite[u] && u != s && (!is_large[u] || u > s)) classify(s, u);
   std::sort(entries.begin(), entries.end());
   for (size_t begin = 0; begin < entries.size();) {
     size_t end = begin + 1;
@@ -259,16 +283,10 @@ int64_t refuse_illegal_contacts(const std::vector<Point>& points,
       const auto s = static_cast<size_t>(entries[i].second);
       for (size_t j = i + 1; j < end; ++j) {
         const auto u = static_cast<size_t>(entries[j].second);
-        if (changed != nullptr && !(*changed)[s] && !(*changed)[u]) continue;
-        bool meet = true;
-        for (size_t d = 0; d < 3 && meet; ++d)
-          meet = boxes[s][d] <= boxes[u][d + 3] && boxes[u][d] <= boxes[s][d + 3];
-        if (!meet) continue;
         if (key(std::max(ranges[s][0], ranges[u][0]), std::max(ranges[s][1], ranges[u][1]),
                 std::max(ranges[s][2], ranges[u][2])) != here)
           continue;
-        if (!legal_triangle_contact(corners[s], triangles[s], corners[u], triangles[u]))
-          refused[s] = refused[u] = 1;
+        classify(s, u);
       }
     }
     begin = end;

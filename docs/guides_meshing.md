@@ -1107,15 +1107,16 @@ Native interval enclosures certify each face's distance to the zero set within
 that selected bound and its normal transversal to the field gradient with the
 carrier's orientation, and exact contact classification certifies the surface
 embedded. Triangles touching an input crease (adjacent input triangles turning
-more than 45°) are kept bitwise from the scaffold, where transversality is not
-decidable, and retain the independently established original scaffold
-distance bound; that bound is not substituted for the requested admission
-tolerance. A refused triangle is repaired locally by splitting its longest
-edge at a projected midpoint and certified again, for at most four rounds; a
-triangle still refused is a typed refusal. The native result reports the
-maximum certified distance over certified and kept faces, and the volume
-fidelity bound adds the fill's boundary-witness deviation outward before
-checking the original request and hard features. The remeshed carrier identity
+more than 45°) are kept bitwise from the scaffold. A scaffold face whose proof
+fails (next to a crease transversality is not decidable) retains the
+independently established original scaffold distance bound; that bound is not
+substituted for the requested admission tolerance. Any other refused triangle
+is repaired locally by splitting its longest edge at a projected midpoint and
+certified again, for at most four rounds; a triangle still refused is a typed
+refusal. The native result reports the maximum distance over proved and kept
+faces, and the volume fidelity bound adds the fill's boundary-witness
+deviation outward before checking the original request and hard features.
+The remeshed carrier identity
 binds both distance bounds, and achieved evidence includes
 `carrier_remesh_admission_tolerance`, the certification refusals, the kept
 scaffold triangles and the repair splits.

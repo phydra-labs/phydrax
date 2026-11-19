@@ -1979,10 +1979,11 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_reque
  * when its distance to {f = 0} is at most `tolerance` (interval |f| over the
  * triangle against a certified lower bound of |grad f| over its widened box,
  * subdividing where needed) and its normal is transversal to grad f with
- * `orientation` (+1 or -1), or when it has the corner coordinates, in the
- * same cyclic order, of a triangle of the carrier (the surface remeshed,
- * within carrier_distance of the zero set by its producer's evidence; a NULL
- * carrier with zero counts accepts none); and when it is nondegenerate with
+ * `orientation` (+1 or -1), or, when that proof fails, when it has the
+ * corner coordinates, in the same cyclic order, of a triangle of the carrier
+ * (the surface remeshed, within carrier_distance of the zero set by its
+ * producer's evidence; a NULL carrier with zero counts accepts none); and
+ * when it is nondegenerate with
  * only legal contacts (disjoint, a shared vertex or a shared edge, exact)
  * with every triangle whose box meets its own. The surface must be a closed,
  * consistently oriented 2-manifold (else PHX_MC_INVALID_INPUT). Refused
@@ -1993,11 +1994,13 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_reque
  * changed or refused triangles are decided again, for at most four rounds.
  * `value` has one output, `gradient` three. On PHX_MC_OK `result` owns the
  * certified surface (read with phx_mc_zero_set_remesh_sizes / _arrays, free
- * with phx_mc_zero_set_remesh_free) and `distance` is the maximum certified
- * or carrier distance, at most `tolerance`; a triangle left refused is
- * PHX_MC_UNRESOLVED. counters receives (triangle certifications refused for
- * transversality, refused for distance, triangles refused for embedding,
- * all over every round; triangles accepted from the carrier; repair splits;
+ * with phx_mc_zero_set_remesh_free) and `distance` is the maximum over the
+ * proved triangles (each at most `tolerance`) and, for triangles accepted
+ * from the carrier, carrier_distance, which may exceed `tolerance`; a
+ * triangle left refused is PHX_MC_UNRESOLVED. counters receives (triangle
+ * certifications refused for transversality, refused for distance,
+ * triangles refused for embedding, all over every round, carrier triangles
+ * included; triangles accepted from the carrier; repair splits;
  * certification rounds run) on PHX_MC_OK and PHX_MC_UNRESOLVED. */
 typedef struct phx_mc_zero_set_certify_request {
   const double* vertices;

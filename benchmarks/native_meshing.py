@@ -446,9 +446,23 @@ def _remesh_rows() -> tuple[_Row, ...]:
         return ring * ring + x[2] * x[2] - 0.16
 
     rows: list[_Row] = []
-    for name, function, shape, area, (vertices, faces) in (
-        ("surface-remesh-sphere", sphere, "sphere", 4.0 * math.pi, _icosphere(6)),
-        ("surface-remesh-torus", torus, "torus", 4.0 * math.pi**2 * 0.4, _uv_torus(300)),
+    for name, function, distance, samples, area, (vertices, faces) in (
+        (
+            "surface-remesh-sphere",
+            sphere,
+            _sphere_distance,
+            _sphere_samples,
+            4.0 * math.pi,
+            _icosphere(6),
+        ),
+        (
+            "surface-remesh-torus",
+            torus,
+            _torus_distance,
+            _torus_samples,
+            4.0 * math.pi**2 * 0.4,
+            _uv_torus(300),
+        ),
     ):
         program = prepare_interval_function(
             function, 3, batch_capacity=1, execution="native"
@@ -471,8 +485,8 @@ def _remesh_rows() -> tuple[_Row, ...]:
                 ),
                 _remeshed_triangles,
                 _remesh_unmet,
-                lambda result, shape=shape, tolerance=tolerance: _remesh_quality(
-                    result, shape, tolerance
+                lambda result, distance=distance, samples=samples, tolerance=tolerance: (
+                    _remesh_quality(result, distance, samples, tolerance)
                 ),
             )
         )
@@ -493,29 +507,24 @@ def _remesh_unmet(result: object, /) -> int:
     return int(result.counters[4] + result.counters[6])
 
 
-def _exact_distance(points: np.ndarray, shape: str, /) -> np.ndarray:
-    match shape:
-        case "sphere":
-            return np.abs(np.linalg.norm(points, axis=-1) - 1.0)
-        case "torus":
-            ring = np.linalg.norm(points[..., :2], axis=-1) - 1.0
-            return np.abs(np.hypot(ring, points[..., 2]) - 0.4)
-        case _:
-            raise ValueError(f"Unknown remesh row shape {shape!r}.")
+def _sphere_distance(points: np.ndarray, /) -> np.ndarray:
+    return np.abs(np.linalg.norm(points, axis=-1) - 1.0)
 
 
-def _surface_samples(shape: str, count: int, /) -> np.ndarray:
-    generator = np.random.default_rng(20261119)
-    match shape:
-        case "sphere":
-            directions = generator.normal(size=(count, 3))
-            return directions / np.linalg.norm(directions, axis=1, keepdims=True)
-        case "torus":
-            u, v = 2.0 * np.pi * generator.random((2, count))
-            ring = 1.0 + 0.4 * np.cos(v)
-            return np.stack((ring * np.cos(u), ring * np.sin(u), 0.4 * np.sin(v)), axis=1)
-        case _:
-            raise ValueError(f"Unknown remesh row shape {shape!r}.")
+def _torus_distance(points: np.ndarray, /) -> np.ndarray:
+    ring = np.linalg.norm(points[..., :2], axis=-1) - 1.0
+    return np.abs(np.hypot(ring, points[..., 2]) - 0.4)
+
+
+def _sphere_samples(count: int, /) -> np.ndarray:
+    directions = np.random.default_rng(20261119).normal(size=(count, 3))
+    return directions / np.linalg.norm(directions, axis=1, keepdims=True)
+
+
+def _torus_samples(count: int, /) -> np.ndarray:
+    u, v = 2.0 * np.pi * np.random.default_rng(20261119).random((2, count))
+    ring = 1.0 + 0.4 * np.cos(v)
+    return np.stack((ring * np.cos(u), ring * np.sin(u), 0.4 * np.sin(v)), axis=1)
 
 
 def _point_triangle_distances(point: np.ndarray, corners: np.ndarray, /) -> np.ndarray:
@@ -547,7 +556,11 @@ def _point_triangle_distances(point: np.ndarray, corners: np.ndarray, /) -> np.n
 
 
 def _remesh_quality(
-    result: object, shape: str, tolerance: float, /
+    result: object,
+    distance: Callable[[np.ndarray], np.ndarray],
+    samples: Callable[[int], np.ndarray],
+    tolerance: float,
+    /,
 ) -> tuple[int, dict[str, float]]:
     # Angles of every triangle; mesh -> surface at 15 barycentric points per
     # triangle and surface -> mesh at 4000 points of the exact surface (exact
@@ -568,18 +581,18 @@ def _remesh_quality(
         angles.append(np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
     angle = np.stack(angles, axis=1)
     weights = np.asarray(
-        [(i / 4, j / 4, 1 - (i + j) / 4) for i in range(5) for j in range(5 - i)]
+        [(i / 4, j / 4, 1 - (i + j) / 4) for i in range(5) for j in range(5 - i)],
+        dtype=np.float64,
     )
-    mesh_to_surface = float(
-        np.max(_exact_distance(np.einsum("wk,tkd->twd", weights, corners), shape))
-    )
+    # (W, 3) @ (T, 3, 3): every triangle's barycentric sample points.
+    mesh_to_surface = float(np.max(distance(weights @ corners)))
     centroids = corners.mean(axis=1)
     reach = 2.0 * float(
         np.max(np.linalg.norm(corners - np.roll(corners, 1, axis=1), axis=2))
     )
     tree = cKDTree(centroids)
     surface_to_mesh = 0.0
-    for point in _surface_samples(shape, 4000):
+    for point in samples(4000):
         nearby = tree.query_ball_point(point, reach)
         surface_to_mesh = max(
             surface_to_mesh,

@@ -8,7 +8,6 @@
 #include <cstring>
 #include <limits>
 #include <memory>
-#include <numeric>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -936,9 +935,8 @@ int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
   request.counters[4] = certified.repair_splits;
   request.counters[5] = certified.rounds;
   if (status != PHX_MC_OK) return status;
-  // Carrier triangles are accepted at the carrier's distance, which may
-  // exceed the tolerance.
-  if (!(certified.distance <= request.tolerance)) return PHX_MC_UNRESOLVED;
+  // Proved triangles are within the tolerance; carrier triangles keep the
+  // carrier's own distance, which the caller weighs against its request.
   *request.distance = certified.distance;
   result.points = std::move(points);
   result.triangles = std::move(triangles);

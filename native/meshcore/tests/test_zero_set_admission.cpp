@@ -243,9 +243,12 @@ void torus_cases() {
   // A triangle outside the band refuses; one on the torus admits.
   for (const double v : {0.0, 1.5, kPi, 4.0}) {
     Point a = torus_point(0.7, v), b = torus_point(0.75, v), c = torus_point(0.7, v + 0.05);
-    if (admission.transversal_sign(a, b, c) < 0) std::swap(b, c);
-    PHX_CHECK(admission.admits(a, b, c, evidence_of(admission, a, b, c)));
+    // Outward by the exact torus normal, independent of the admission.
     const Point n = outward_torus(0.7, v);
+    const Point e{b[0] - a[0], b[1] - a[1], b[2] - a[2]}, f{c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+    const Point cross{e[1] * f[2] - e[2] * f[1], e[2] * f[0] - e[0] * f[2], e[0] * f[1] - e[1] * f[0]};
+    if (cross[0] * n[0] + cross[1] * n[1] + cross[2] * n[2] < 0) std::swap(b, c);
+    PHX_CHECK(admission.admits(a, b, c, evidence_of(admission, a, b, c)));
     const auto lift = [&](const Point& p) {
       return Point{p[0] + 0.07 * n[0], p[1] + 0.07 * n[1], p[2] + 0.07 * n[2]};
     };
@@ -581,8 +584,9 @@ void remesh_sphere_carrier() {
 
 // Certification refuses what it cannot prove or repair: a vertex lifted out
 // of the band (distance), the opposite orientation (transversality), and
-// malformed requests. Carrier triangles are accepted only when identical
-// (any starting corner, same orientation) and at the carrier's distance.
+// malformed requests. A triangle whose proof fails is accepted from the
+// carrier only when identical to one of its triangles (any starting corner,
+// same orientation), at the carrier's distance even beyond the tolerance.
 void certify_refusals() {
   const Surface input = uv_sphere(8, 40);
   const Program value = sphere_value(), gradient = sphere_gradient();
@@ -596,27 +600,35 @@ void certify_refusals() {
   for (size_t d = 0; d < 3; ++d) lifted[d] *= 1.2;
   PHX_CHECK(certify(lifted, remeshed.triangles, value, gradient, tolerance, 1, distance,
                     failures) == PHX_MC_UNRESOLVED);
-  // Splitting refused triangles cannot bring a lifted vertex back: the
-  // refusals stand when the rounds or the possible splits run out.
-  PHX_CHECK(failures[1] > 0 && failures[5] >= 1 && failures[5] <= 4);
+  std::printf("lifted vertex: refusals %lld %lld, splits %lld, rounds %lld\n",
+              static_cast<long long>(failures[0]), static_cast<long long>(failures[1]),
+              static_cast<long long>(failures[4]), static_cast<long long>(failures[5]));
+  // Every split in the lifted star turns a created triangle more than 60
+  // degrees from the source normal, so the repair makes none and stops after
+  // the first round.
+  PHX_CHECK(failures[1] > 0 && failures[4] == 0 && failures[5] == 1);
   PHX_CHECK(certify(remeshed.vertices, remeshed.triangles, value, gradient, tolerance, -1,
                     distance, failures) == PHX_MC_UNRESOLVED);
   PHX_CHECK(failures[0] > 0);
-  // The remeshed surface as its own carrier: every triangle accepted, listed
-  // from another corner; the lifted triangles are not the carrier's.
+  // Provable triangles are proved even when the carrier holds them.
   const Surface own{remeshed.vertices, remeshed.triangles};
+  PHX_CHECK(certify(remeshed.vertices, remeshed.triangles, value, gradient, tolerance, 1,
+                    distance, failures, &own, 0.01) == PHX_MC_OK);
+  PHX_CHECK(failures[3] == 0 && distance <= tolerance);
+  // The lifted surface as its own carrier, listed from other corners: the
+  // lifted vertex's star fails its proof and is accepted from the carrier at
+  // the carrier's distance, here twice the tolerance.
+  const Surface lifted_carrier{lifted, remeshed.triangles};
   auto rotated = remeshed.triangles;
   for (size_t f = 0; f < rotated.size(); f += 3) std::rotate(&rotated[f], &rotated[f + 1], &rotated[f + 3]);
-  PHX_CHECK(certify(remeshed.vertices, rotated, value, gradient, tolerance, 1, distance, failures,
-                    &own, 0.01) == PHX_MC_OK);
-  PHX_CHECK(distance == 0.01);
-  PHX_CHECK(failures[3] == static_cast<int64_t>(rotated.size() / 3));
+  PHX_CHECK(certify(lifted, rotated, value, gradient, tolerance, 1, distance, failures,
+                    &lifted_carrier, 2 * tolerance) == PHX_MC_OK);
+  PHX_CHECK(failures[1] > 0 && failures[3] > 0 && failures[4] == 0);
+  PHX_CHECK(distance == 2 * tolerance);
+  // The unlifted carrier does not hold the lifted triangles.
   PHX_CHECK(certify(lifted, remeshed.triangles, value, gradient, tolerance, 1, distance, failures,
                     &own, 0.01) == PHX_MC_UNRESOLVED);
-  PHX_CHECK(failures[1] > 0 && failures[3] < static_cast<int64_t>(rotated.size() / 3));
-  // A carrier further than the tolerance does not certify.
-  PHX_CHECK(certify(remeshed.vertices, remeshed.triangles, value, gradient, tolerance, 1, distance,
-                    failures, &own, 2 * tolerance) == PHX_MC_UNRESOLVED);
+  PHX_CHECK(failures[1] > 0 && failures[3] == 0);
   PHX_CHECK(certify(remeshed.vertices, remeshed.triangles, value, gradient, tolerance, 0,
                     distance, failures) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(certify(remeshed.vertices, remeshed.triangles, value, value, tolerance, 1, distance,

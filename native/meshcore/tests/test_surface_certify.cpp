@@ -200,15 +200,15 @@ void certified_free_radius_is_exact() {
   PHX_CHECK(escaped == 0);
 }
 
-// Boundary of the tetrahedron with corners at `origin` + the unit axes,
-// outward, appended to (points, triangles).
+// Boundary of the tetrahedron with corners at `origin` + `size` times the
+// unit axes, outward, appended to (points, triangles).
 void append_tetrahedron(const Point& origin, std::vector<Point>& points,
-                        std::vector<Triangle>& triangles) {
+                        std::vector<Triangle>& triangles, double size = 1) {
   const auto base = static_cast<int64_t>(points.size());
   points.push_back(origin);
   for (int d = 0; d < 3; ++d) {
     Point corner = origin;
-    corner[static_cast<size_t>(d)] += 1;
+    corner[static_cast<size_t>(d)] += size;
     points.push_back(corner);
   }
   for (const Triangle& face : {Triangle{0, 2, 1}, Triangle{0, 1, 3}, Triangle{0, 3, 2},
@@ -275,6 +275,19 @@ void illegal_contact_cases() {
   apart_points[2] = Point{0.5, 0.5, 0};
   PHX_CHECK(refuse_illegal_contacts(apart_points, apart, nullptr, refused) > 0);
   PHX_CHECK(refused[0] == 1);
+  // A tetrahedron far larger than the rest (it meets more grid cells than
+  // any listed triangle may) crossing one small tetrahedron among many apart.
+  std::vector<Point> graded_points;
+  std::vector<Triangle> graded;
+  for (int k = 0; k < 40; ++k) append_tetrahedron({3.0 * k, 0, 0}, graded_points, graded);
+  PHX_CHECK(refuse_illegal_contacts(graded_points, graded, nullptr, refused) == 0);
+  append_tetrahedron({30.25, 0.25, 0.25}, graded_points, graded, 60);
+  const int64_t graded_crossing = refuse_illegal_contacts(graded_points, graded, nullptr, refused);
+  PHX_CHECK(graded_crossing > 0);
+  PHX_CHECK(refused[graded.size() - 1] + refused[graded.size() - 2] + refused[graded.size() - 3] +
+                refused[graded.size() - 4] >
+            0);
+  PHX_CHECK(refused[0] == 0);
 }
 
 }  // namespace

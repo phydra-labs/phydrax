@@ -957,21 +957,21 @@ int32_t certify_surface(std::vector<Point>& points, std::vector<Triangle>& trian
       const auto found = std::lower_bound(decided.begin(), decided.end(), key, by_key);
       const bool known = found != decided.end() && found->key == key;
       changed[t] = known && !found->refused ? 0 : 1;
-      double bound = kInfinity;
-      if (std::binary_search(carrier.keys.begin(), carrier.keys.end(), key)) {
+      // The proof first (decided once per triangle); a refused triangle of
+      // the carrier's own is accepted at the carrier's distance.
+      const double proved = known ? found->bound : certifier.bound(a, b, c);
+      if (!known && !(proved < kInfinity)) ++counters.refused_fidelity;
+      double bound = proved;
+      if (!(proved < kInfinity) &&
+          std::binary_search(carrier.keys.begin(), carrier.keys.end(), key)) {
         bound = carrier.distance;
         ++carried;
-      } else if (known) {
-        bound = found->bound;
-      } else {
-        bound = certifier.bound(a, b, c);
-        if (!(bound < kInfinity)) ++counters.refused_fidelity;
       }
       if (bound < kInfinity)
         maximum = std::max(maximum, bound);
       else
         refused[t] = 1;
-      next.push_back({key, bound, false});
+      next.push_back({key, proved, false});
     }
     counters.refused_embedding += refuse_illegal_contacts(
         points, triangles, round == 0 ? nullptr : &changed, illegal);

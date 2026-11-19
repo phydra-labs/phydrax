@@ -4879,12 +4879,14 @@ class ZeroSetCertificate(NamedTuple):
     """A surface certified against ``{f = 0}``, repaired locally where needed.
 
     ``vertices`` and ``triangles`` are the certified surface: the input unless
-    a refused triangle was repaired. ``distance`` is the maximum certified
-    bound, or carrier distance for triangles accepted from the carrier.
+    a refused triangle was repaired. ``distance`` is the maximum over the
+    proved triangles (each within the tolerance) and, for triangles accepted
+    from the carrier, the carrier distance, which may exceed the tolerance.
     ``counters`` (read-only int64) are the certifications refused for
     transversality and for distance and the triangles refused for embedding,
-    all over every round, the triangles accepted from the carrier, the repair
-    splits and the certification rounds run.
+    all over every round and carrier triangles included, the triangles
+    accepted from the carrier, the repair splits and the certification rounds
+    run.
     """
 
     vertices: np.ndarray
@@ -4912,12 +4914,13 @@ def zero_set_certify(
     A triangle is certified when interval forms of ``f`` against a certified
     lower bound of ``|grad f|`` bound its distance by ``tolerance``
     (subdividing where needed) and its normal is certified transversal to
-    ``grad f`` with ``orientation`` (+1 or -1), or when it has the corner
-    coordinates, in the same cyclic order, of a triangle of the carrier (the
-    surface remeshed, within ``carrier_distance`` of the zero set by its
-    producer's evidence; ``zero_set_remesh`` keeps the carrier's triangles
-    around creases, where transversality is not decidable); and when it is
-    nondegenerate with only legal exact contacts with nearby triangles.
+    ``grad f`` with ``orientation`` (+1 or -1), or, when that proof fails,
+    when it has the corner coordinates, in the same cyclic order, of a
+    triangle of the carrier (the surface remeshed, within
+    ``carrier_distance`` of the zero set by its producer's evidence;
+    ``zero_set_remesh`` keeps the carrier's triangles around creases, where
+    transversality is not decidable); and when it is nondegenerate with only
+    legal exact contacts with nearby triangles.
     Refused triangles are repaired: the longest edge of each is split at its
     midpoint projected onto ``{f = 0}`` and only what changed is certified
     again, for at most four rounds. A surface that is not a closed oriented
@@ -4997,7 +5000,7 @@ def zero_set_certify(
     if (
         not np.isfinite(certified)
         or certified < 0.0
-        or certified > tolerance
+        or certified > max(tolerance, carrier_distance)
         or not 0 <= counters[3] <= out_triangles.shape[0]
     ):
         raise MeshcoreError(

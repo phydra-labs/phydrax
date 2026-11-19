@@ -5,9 +5,9 @@
 // Construction (surface_adapt.hpp) proves nothing. A surface is certified
 // when every triangle has
 //  * fidelity: its source certifier (TriangleCertifier) states a finite
-//    bound for the closed triangle, or it is one of the carrier's own
-//    triangles (the same corner coordinates in the same cyclic order),
-//    accepted at the carrier's declared distance;
+//    bound for the closed triangle, or, when it cannot, the triangle is one
+//    of the carrier's own (the same corner coordinates in the same cyclic
+//    order), accepted at the carrier's declared distance;
 //  * embedding: every other triangle whose box meets its box has only legal
 //    contact with it (disjoint, a shared vertex, or a shared edge), by exact
 //    classification.
