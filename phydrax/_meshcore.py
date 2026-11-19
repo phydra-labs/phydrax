@@ -380,6 +380,21 @@ class _TetMeshImplicitFacetRefusal(ctypes.Structure):
     )
 
 
+class _VolumeVerdict(ctypes.Structure):
+    _fields_ = (
+        ("certified", _I32),
+        ("nonpositive_cells", _I64),
+        ("first_nonpositive_cell", _I64),
+        ("nonmanifold_faces", _I64),
+        ("first_nonmanifold_cell", _I64),
+        ("boundary_faces", _I64),
+        ("unmatched_boundary_faces", _I64),
+        ("first_unmatched_cell", _I64),
+        ("unmatched_surface_triangles", _I64),
+        ("first_unmatched_surface_triangle", _I64),
+    )
+
+
 class _SurfaceReconnectRequest(ctypes.Structure):
     _fields_ = (
         ("vertex_count", _I64),
@@ -982,6 +997,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (_P, _I64, _P, _I64, _P, _I64, _P, _I64, _I64, _P, _I64, _P, _I64, _P),
     ),
+    "phx_mc_verify_volume": (_I32, (_I64, _P, _I64, _P, _I64, _P, _P)),
     "phx_mc_simplex_quadratic_bounds": (
         _I32,
         (_I64, _I32, _I32, _P, _P, _P, _P, _P, _P),
@@ -3037,6 +3053,65 @@ def regular_3d(points: object, weights: object, /) -> tuple[np.ndarray, np.ndarr
     """Exact regular (weighted Delaunay) tetrahedralization; redundant points map to -1."""
 
     return _triangulate("phx_mc_regular_3d", points, weights, 3)
+
+
+class VolumeVerdict(NamedTuple):
+    """Exact certificate of a tetrahedral mesh of the solid bounded by a surface.
+
+    ``certified`` holds when every failure count is zero; each ``first_*``
+    names the first offending cell or surface triangle, or is -1.
+    """
+
+    certified: bool
+    nonpositive_cells: int
+    first_nonpositive_cell: int
+    nonmanifold_faces: int
+    first_nonmanifold_cell: int
+    boundary_faces: int
+    unmatched_boundary_faces: int
+    first_unmatched_cell: int
+    unmatched_surface_triangles: int
+    first_unmatched_surface_triangle: int
+
+
+def verify_volume(points: object, cells: object, surface: object, /) -> VolumeVerdict:
+    """Certify ``(m, 4)`` cells as a tiling of the solid bounded by ``(f, 3)`` triangles.
+
+    Exact on the stored binary64 coordinates: every cell positively oriented,
+    every face shared by at most two cells with opposite orientations, and the
+    faces of exactly one cell are exactly the outward surface triangles. The
+    surface's embedding is a premise certified separately.
+    """
+    point_array = _points(points, "points", 3)
+    cell_array = _native_integer_array(cells, "cells", np.dtype(np.int32))
+    surface_array = _native_integer_array(surface, "surface", np.dtype(np.int32))
+    if cell_array.ndim != 2 or cell_array.shape[1] != 4:
+        raise ValueError("cells must have shape (m, 4).")
+    if surface_array.ndim != 2 or surface_array.shape[1] != 3:
+        raise ValueError("surface must have shape (f, 3).")
+    verdict = _VolumeVerdict()
+    status = load_meshcore()["phx_mc_verify_volume"](
+        point_array.shape[0],
+        point_array.ctypes.data,
+        cell_array.shape[0],
+        cell_array.ctypes.data,
+        surface_array.shape[0],
+        surface_array.ctypes.data,
+        ctypes.addressof(verdict),
+    )
+    _raise_for_call(status, "verify_volume")
+    return VolumeVerdict(
+        certified=verdict.certified == 1,
+        nonpositive_cells=verdict.nonpositive_cells,
+        first_nonpositive_cell=verdict.first_nonpositive_cell,
+        nonmanifold_faces=verdict.nonmanifold_faces,
+        first_nonmanifold_cell=verdict.first_nonmanifold_cell,
+        boundary_faces=verdict.boundary_faces,
+        unmatched_boundary_faces=verdict.unmatched_boundary_faces,
+        first_unmatched_cell=verdict.first_unmatched_cell,
+        unmatched_surface_triangles=verdict.unmatched_surface_triangles,
+        first_unmatched_surface_triangle=verdict.first_unmatched_surface_triangle,
+    )
 
 
 class RestrictedPowerCells(NamedTuple):
