@@ -763,8 +763,9 @@ TetEditStatus TetMesh::replace_local_cavity(const TetEdit& operation,
           removed_vertex == survivor) {
         return TetEditStatus::kRejectedTopology;
       }
-      if (protected_vertex(removed_vertex) || protection_radius(removed_vertex) > 0.0 ||
-          protected_vertex(survivor) || protection_radius(survivor) > 0.0) {
+      // The survivor neither moves nor leaves, so it may be protected or on
+      // the boundary; only the removed vertex must be free.
+      if (protected_vertex(removed_vertex) || protection_radius(removed_vertex) > 0.0) {
         return TetEditStatus::kRejectedProtected;
       }
       if (vertex_dimension(removed_vertex) != 3 ||
