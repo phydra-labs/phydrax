@@ -819,6 +819,70 @@ void fixed_needle_face_reports_fixed_boundary_radius_edge() {
   PHX_CHECK(needle_cells == 1 && needle_records == 1);
 }
 
+// An interior vertex whose every neighbor is a protected vertex of a fixed
+// boundary collapses onto one: the survivor neither moves nor leaves, and the
+// star's link, so every boundary facet with its source, is reproduced exactly.
+// The vertex is the centroid of a near-regular tetrahedron, whose cone cells
+// keep dihedral angles below 35.3 degrees wherever it moves, while the
+// tetrahedron itself meets the 40-degree target.
+void interior_vertex_collapses_onto_protected_boundary_vertex() {
+  constexpr std::array<double, 15> points{
+      0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.5, 0.866, 0.0, 0.5, 0.289, 0.816,
+      0.5, 0.28875, 0.204};
+  constexpr std::array<std::int32_t, 4> hull{0, 1, 2, 3};
+  std::vector<std::int32_t> tetrahedra;
+  std::vector<std::int32_t> faces;
+  for (int opposite = 0; opposite < 4; ++opposite) {
+    // Replacing a corner by an interior point keeps the orientation.
+    std::array<std::int32_t, 4> cone = hull;
+    cone[static_cast<std::size_t>(opposite)] = 4;
+    tetrahedra.insert(tetrahedra.end(), cone.begin(), cone.end());
+    std::int32_t face[3];
+    oriented_facet(hull.data(), opposite, face);
+    faces.insert(faces.end(), face, face + 3);
+  }
+  const std::vector<std::int32_t> regions(4, 3);
+  const std::vector<std::int32_t> face_sources{0, 1, 2, 3};
+  const std::vector<std::int32_t> segments{0, 1, 0, 2, 0, 3, 1, 2, 1, 3, 2, 3};
+  const std::vector<std::int32_t> segment_sources{0, 1, 2, 3, 4, 5};
+  const std::vector<double> protection_radii{0.1, 0.1, 0.1, 0.1, 0.0};
+  const std::vector<std::int8_t> protected_vertices{1, 1, 1, 1, 0};
+  TetMesh mesh(BoundaryPolicy::kFixed);
+  const std::int32_t build_status =
+      mesh.build(points, tetrahedra, regions, faces, face_sources, {}, segments,
+                 segment_sources, protection_radii, nullptr, protected_vertices);
+  PHX_CHECK(build_status == PHX_MC_OK);
+  if (build_status != PHX_MC_OK) return;
+  TetMeshSnapshot before;
+  PHX_CHECK(mesh.snapshot(before) == TetEditStatus::kApplied);
+  std::int64_t inserted = 0;
+  std::int64_t collapsed = 0;
+  std::int64_t relocated = 0;
+  std::int64_t unmet = 0;
+  const std::int32_t status = improve_mesh(mesh, TetQualityRequest{2.0, 40.0, 1.0e-12}, {},
+                                           inserted, collapsed, relocated, unmet);
+  PHX_CHECK(status == PHX_MC_OK && unmet == 0);
+  PHX_CHECK(inserted == 0 && collapsed == 1);
+  TetMeshSnapshot after;
+  PHX_CHECK(mesh.snapshot(after) == TetEditStatus::kApplied);
+  PHX_CHECK(same_source_banks(before, after));
+  PHX_CHECK(after.vertices.size() == 4 && after.cells.size() == 1);
+  for (std::size_t row = 0; row < after.vertices.size(); ++row) {
+    PHX_CHECK(after.vertices[row].id == before.vertices[row].id);
+    PHX_CHECK(after.vertices[row].carrier == before.vertices[row].carrier);
+  }
+  const auto facet_set = [](const TetMeshSnapshot& snapshot) {
+    std::set<std::pair<std::array<std::uint64_t, 3>, std::int32_t>> facets;
+    for (const TetSnapshotFacet& facet : snapshot.constrained_facets) {
+      std::array<std::uint64_t, 3> key = facet.vertices;
+      std::sort(key.begin(), key.end());
+      facets.emplace(key, facet.source);
+    }
+    return facets;
+  };
+  PHX_CHECK(facet_set(after) == facet_set(before) && facet_set(after).size() == 4);
+}
+
 void relocation_clears_stale_carrier_ancestry() {
   constexpr std::array<double, 12> points{
       0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
@@ -3338,6 +3402,7 @@ int main() {
   implicit_boundary_fan_rejects_remote_contact_atomically();
   convex_bipyramid_reports_unresolved_radius_edge();
   fixed_needle_face_reports_fixed_boundary_radius_edge();
+  interior_vertex_collapses_onto_protected_boundary_vertex();
   relocation_clears_stale_carrier_ancestry();
   unresolved_radius_target_reports_residuals_without_losing_constraints();
   unrepresentable_positive_sliver_is_measured_not_refused();

@@ -2022,19 +2022,24 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     }
     return true;
   };
-  std::unordered_map<std::int32_t, std::array<double, 3>> plane_normals;
-  for (const auto& [group, declared] : mesh.declared_groups_) {
-    const double* plane = mesh.face_plane(declared.rows.front());
-    std::array<double, 3> normal{};
-    const auto u = mesh.metric_transform({plane[3], plane[4], plane[5]});
-    const auto v = mesh.metric_transform({plane[6], plane[7], plane[8]});
-    cross3(u.data(), v.data(), normal.data());
-    plane_normals.emplace(group, normal);
-  }
+  // Acute features only protect boundary splits, and a fixed boundary is
+  // never split, so it has none.
+  const bool boundary_splittable = mesh.policy_ != BoundaryPolicy::kFixed;
   std::vector<AcuteFeature> acute_features;
-  if (!acute_input_features(mesh, incidence, mesh.facets_, mesh.segments_, feature_sizes,
-                            plane_normals, acute_features)) {
-    return PHX_MC_INVALID_INPUT;
+  if (boundary_splittable) {
+    std::unordered_map<std::int32_t, std::array<double, 3>> plane_normals;
+    for (const auto& [group, declared] : mesh.declared_groups_) {
+      const double* plane = mesh.face_plane(declared.rows.front());
+      std::array<double, 3> normal{};
+      const auto u = mesh.metric_transform({plane[3], plane[4], plane[5]});
+      const auto v = mesh.metric_transform({plane[6], plane[7], plane[8]});
+      cross3(u.data(), v.data(), normal.data());
+      plane_normals.emplace(group, normal);
+    }
+    if (!acute_input_features(mesh, incidence, mesh.facets_, mesh.segments_, feature_sizes,
+                              plane_normals, acute_features)) {
+      return PHX_MC_INVALID_INPUT;
+    }
   }
   ProtectionIndex protection(mesh, acute_features);
   if (!protection.build()) return PHX_MC_INVALID_INPUT;
@@ -2072,7 +2077,6 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     enqueue_slot(static_cast<std::int32_t>(row));
   }
 
-  const bool boundary_splittable = mesh.policy_ != BoundaryPolicy::kFixed;
   const auto edit_error = [](TetEditStatus status) -> std::int32_t {
     if (status == TetEditStatus::kAllocationFailure) return PHX_MC_ALLOCATION_FAILURE;
     if (status == TetEditStatus::kIndexOverflow) return PHX_MC_INDEX_RANGE_ERROR;

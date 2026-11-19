@@ -1124,14 +1124,37 @@ bool TetMesh::source_face_valid(const TetEditFacet& facet,
     if (!source_carrier_valid(source_witness_record(vertex_id(slot), carrier, witness))) return false;
     exact_carriers = exact_carriers && witness.deviation == 0.0;
   }
+  // A subject whose corners are those of the group's only primitive is
+  // exactly that primitive, so it covers the subject alone.
+  const auto is_sole_primitive = [&]() {
+    if (primitives.size() != 1) return false;
+    for (int vertex = 0; vertex < 3; ++vertex) {
+      bool matched = false;
+      for (int corner = 0; corner < 3 && !matched; ++corner) {
+        const double* point = source_points_.data() +
+                              3 * static_cast<std::size_t>(primitives.front()[corner]);
+        matched = same_bits(point[0], subject[3 * vertex]) &&
+                  same_bits(point[1], subject[3 * vertex + 1]) &&
+                  same_bits(point[2], subject[3 * vertex + 2]);
+      }
+      if (!matched) return false;
+    }
+    return true;
+  };
   std::vector<std::int32_t> contributors;
-  const bool covered = exact_carriers &&
-      (group->coverage_index.valid()
-           ? exact_facet_coverage_prepared(subject, source_points_.data(), primitives,
-                                           group->coverage_index, group->coverage_scratch,
-                                           contributors)
-           : exact_facet_coverage(subject, source_points_.data(), primitives, rows, contributors,
-                                  group->bounds));
+  bool covered = false;
+  if (exact_carriers && is_sole_primitive()) {
+    covered = true;
+    contributors.push_back(0);
+  } else {
+    covered = exact_carriers &&
+        (group->coverage_index.valid()
+             ? exact_facet_coverage_prepared(subject, source_points_.data(), primitives,
+                                             group->coverage_index, group->coverage_scratch,
+                                             contributors)
+             : exact_facet_coverage(subject, source_points_.data(), primitives, rows,
+                                    contributors, group->bounds));
+  }
   if (covered && !contributors.empty()) {
     // Coverage returns local primitive rows; slot four maps each to the source bank.
     // Unrelated triangles in one authored group can have different normals.
@@ -1327,6 +1350,18 @@ bool TetMesh::source_segment_valid(const TetEditSegment& segment,
       const double* current_carrier = carrier_at(slot);
       source_locator(corners, SourceStratum::kSegment, current_carrier,
                      parameters, false);
+      // At parameter 0 or 1 the exact source point is that endpoint, so a
+      // carrier equal to it is its own exact, on-segment rounding.
+      const double* endpoint = parameters[0] == 0.0   ? corners[0]
+                               : parameters[0] == 1.0 ? corners[1]
+                                                      : nullptr;
+      if (endpoint != nullptr && same_bits(endpoint[0], current_carrier[0]) &&
+          same_bits(endpoint[1], current_carrier[1]) &&
+          same_bits(endpoint[2], current_carrier[2]) &&
+          geometry::point_in_domain(current_carrier)) {
+        parameter = parameters[0];
+        return true;
+      }
       double carrier[3];
       double deviation = 0.0;
       if (!source_carrier(corners, SourceStratum::kSegment, parameters, carrier, deviation) ||

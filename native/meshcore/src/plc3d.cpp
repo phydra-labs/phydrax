@@ -268,6 +268,34 @@ int32_t triangulate_planar_loop(
       count > std::numeric_limits<int32_t>::max()) {
     return PHX_MC_INVALID_INPUT;
   }
+  const auto point = [&](int32_t vertex) {
+    return points + 3 * static_cast<std::size_t>(vertex);
+  };
+  if (count == 3 && constraints.empty()) {
+    // A triangle is its own triangulation; the checks below reduce to these
+    // (every vertex lies on its own plane, and the projected orientation at
+    // the lowest corner is the triangle's, a cyclic rotation of it).
+    if (loop[0] == loop[1] || loop[0] == loop[2] || loop[1] == loop[2]) {
+      return PHX_MC_INVALID_INPUT;
+    }
+    for (int corner = 0; corner < 3; ++corner) {
+      if (loop[corner] < 0 || loop[corner] >= point_count) return PHX_MC_INVALID_INPUT;
+    }
+    const double* a = point(loop[0]);
+    const double* b = point(loop[1]);
+    const double* c = point(loop[2]);
+    if (geometry::collinear(a, b, c, 1)) return PHX_MC_DEGENERATE_INPUT;
+    const int axis = projection_axis(a, b, c);
+    if (axis < 0) return PHX_MC_DEGENERATE_INPUT;
+    const int x = (axis + 1) % 3;
+    const int y = (axis + 2) % 3;
+    const double pa[2] = {a[x], a[y]};
+    const double pb[2] = {b[x], b[y]};
+    const double pc[2] = {c[x], c[y]};
+    if (orient2d(pa, pb, pc) == 0) return PHX_MC_DEGENERATE_INPUT;
+    triangles.push_back({loop[0], loop[1], loop[2]});
+    return PHX_MC_OK;
+  }
   std::vector<int32_t> distinct(loop, loop + count);
   std::sort(distinct.begin(), distinct.end());
   if (std::adjacent_find(distinct.begin(), distinct.end()) != distinct.end()) {
@@ -291,9 +319,6 @@ int32_t triangulate_planar_loop(
     }
   }
   int64_t third = 2;
-  const auto point = [&](int32_t vertex) {
-    return points + 3 * static_cast<std::size_t>(vertex);
-  };
   while (third < count &&
          geometry::collinear(point(loop[0]), point(loop[1]), point(loop[third]), 1)) {
     ++third;
@@ -332,10 +357,6 @@ int32_t triangulate_planar_loop(
       planar.data() + 2 * local_rows.at(loop[(lowest + 1) % count]);
   const int sense = orient2d(before, center, after);
   if (sense == 0) return PHX_MC_DEGENERATE_INPUT;
-  if (count == 3 && constraints.empty()) {
-    triangles.push_back({loop[0], loop[1], loop[2]});
-    return PHX_MC_OK;
-  }
   std::vector<int32_t> segments;
   std::unordered_set<uint64_t> segment_keys;
   segments.reserve(2 * (static_cast<std::size_t>(count) + constraints.size()));
@@ -573,13 +594,17 @@ class SourcePreparer {
   }
 
   int32_t triangulate_polygons() {
+    const std::vector<std::array<int32_t, 2>> no_constraints;
+    std::vector<Triple> triangles;
+    triangles_.reserve(static_cast<std::size_t>(input_.polygon_count));
+    triangle_polygon_.reserve(static_cast<std::size_t>(input_.polygon_count));
+    triangle_facet_.reserve(static_cast<std::size_t>(input_.polygon_count));
     for (int64_t polygon = 0; polygon < input_.polygon_count; ++polygon) {
       const int64_t begin = input_.polygon_offsets[polygon];
       const int64_t count = input_.polygon_offsets[polygon + 1] - begin;
       const int32_t* loop = input_.polygon_vertices + begin;
-      std::vector<Triple> triangles;
       const int32_t status = triangulate_planar_loop(
-          input_.points, input_.point_count, loop, count, {}, triangles);
+          input_.points, input_.point_count, loop, count, no_constraints, triangles);
       if (status == PHX_MC_INVALID_INPUT || status == PHX_MC_DEGENERATE_INPUT ||
           status == PHX_MC_CONSTRAINT_INTERSECTION) {
         return invalid_polygon(polygon);
@@ -2969,6 +2994,29 @@ class PlcRecoveryBuilder {
     if (!triangulation_->valid_live_cell(start) ||
         vertex_slot(complex.tets[static_cast<std::size_t>(start)], first) < 0) {
       return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, first);
+    }
+    // With no unsynced edits the incidence list of each end is exactly its
+    // star (every live cell through it), and the edge is a finite cell
+    // through both: the shorter list is scanned.
+    if (journal_.empty()) {
+      const bool by_first = incidence_[static_cast<std::size_t>(first)].size() <=
+                            incidence_[static_cast<std::size_t>(second)].size();
+      const int32_t scanned = by_first ? first : second;
+      const int32_t other = by_first ? second : first;
+      for (const int32_t id : incidence_[static_cast<std::size_t>(scanned)]) {
+        if (!triangulation_->valid_live_cell(id)) {
+          return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, scanned);
+        }
+        const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(id)];
+        if (vertex_slot(tet, scanned) < 0) {
+          return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, scanned);
+        }
+        if (!is_ghost(tet) && !artificial_corner_tet(tet) && vertex_slot(tet, other) >= 0) {
+          found = true;
+          return PHX_MC_OK;
+        }
+      }
+      return PHX_MC_OK;
     }
     if (++star_stamp_ == 0) {
       std::fill(star_marks_.begin(), star_marks_.end(), 0U);

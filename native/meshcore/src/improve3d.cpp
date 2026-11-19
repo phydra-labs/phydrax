@@ -2521,8 +2521,8 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   // recovery Steiner points that crowd a constrained segment between nearly
   // coplanar needle source faces, where every cell around them is flat, no
   // cone over one vertex star or edge ring clears the floor, and every
-  // collapse onto a neighbour leaves a flat cell or targets a protected
-  // vertex. Growth adds a distinct cell of the finite mesh at each step and
+  // collapse onto a neighbour leaves a flat cell. Growth adds a distinct cell
+  // of the finite mesh at each step and
   // tests each face once, so it ends after at most as many steps as the mesh
   // has cells.
   std::vector<std::int32_t> clearing_cells;
@@ -3069,11 +3069,12 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
       return mesh.vertex_id(a) < mesh.vertex_id(b);
     });
 
+    // The survivor may be any neighbor, protected or on the boundary: it does
+    // not move, and the cavity is the removed vertex's star, whose link (with
+    // every boundary face of the star and its constraint label, which the
+    // cavity edit carries to the replacement cell across it) the replacement
+    // reproduces exactly. Boundary faces, labels and vertices are unchanged.
     for (std::int32_t survivor : neighbors) {
-      if (mesh.protected_vertex(survivor) || mesh.protection_radius(survivor) > 0.0 ||
-          mesh.vertex_dimension(survivor) != 3) {
-        continue;
-      }
       if (!collapsed_quality(mesh, star.cells(), removed, survivor, request,
                              after_quality, replacement_cells) ||
           !improves_quality_vector(before_quality, after_quality) ||
