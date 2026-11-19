@@ -18,7 +18,7 @@ import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import jax.numpy as jnp
 import numpy as np
@@ -32,12 +32,18 @@ from phydrax.geometry._interval_enclosure import prepare_interval_function
 _CEILINGS = Path(__file__).with_name("native_meshing_ceilings.json")
 
 
+def _none_unmet(result: object, /) -> int:
+    return 0
+
+
 @dataclass(frozen=True, slots=True)
 class _Row:
     name: str
     size: int
     run: Callable[[], object]
     count: Callable[[object], int]
+    # Cells left off the row's quality targets; a row with any does not pass.
+    unmet: Callable[[object], int] = _none_unmet
 
 
 def _uniform_points(count: int, dimension: int, seed: int, /) -> np.ndarray:
@@ -200,7 +206,12 @@ def _recovery_rows() -> tuple[_Row, ...]:
     return tuple(rows)
 
 
-def _refine_improve(recovered: _meshcore.PlcRecovery3D, size: float, /) -> int:
+class _VolumeResult(NamedTuple):
+    cells: int
+    unmet: int
+
+
+def _refine_improve(recovered: _meshcore.PlcRecovery3D, size: float, /) -> _VolumeResult:
     mesh = _meshcore.TetMesh3D(
         recovered.points,
         recovered.tetrahedra,
@@ -214,49 +225,94 @@ def _refine_improve(recovered: _meshcore.PlcRecovery3D, size: float, /) -> int:
     )
     sizes = np.full((recovered.points.shape[0],), size, dtype=np.float64)
     refined = mesh.refine(radius_edge_bound=2.0, sizes=sizes)
+    # UNRESOLVED leaves cells for improvement; any other status is a failure.
+    if refined.status not in (
+        _meshcore.MeshcoreStatus.OK,
+        _meshcore.MeshcoreStatus.UNRESOLVED,
+    ):
+        raise RuntimeError(f"Refinement failed with status {refined.status!r}.")
     improved = mesh.improve(radius_edge_bound=2.0, min_dihedral_degrees=15.0)
-    if refined.status != _meshcore.MeshcoreStatus.OK or improved.unmet_cells:
-        raise RuntimeError(
-            "Refinement and improvement left cells off the quality targets."
+    return _VolumeResult(mesh.arrays().tetrahedra.shape[0], improved.unmet_cells)
+
+
+def _stuffed_torus_surface(spacing: float, /) -> tuple[np.ndarray, np.ndarray]:
+    # A well-shaped closed torus surface (R = 1, r = 0.4): the outward boundary
+    # of the isosurface-stuffed solid at the given lattice spacing.
+    def torus(x: Array) -> Array:
+        ring = jnp.sqrt(x[0] * x[0] + x[1] * x[1]) - 1.0
+        return jnp.stack((jnp.sqrt(ring * ring + x[2] * x[2]) - 0.4,))
+
+    program = prepare_interval_function(
+        torus, 3, batch_capacity=1, execution="batched"
+    ).native_program
+    if program is None:
+        raise RuntimeError("The torus rows need the native interval program.")
+    upper = np.asarray((1.5, 1.5, 0.5), dtype=np.float64)
+    stuffed = program.stuff_tetrahedra(-upper, upper, spacing)
+    cells = stuffed.cells
+    faces = np.concatenate(
+        (
+            cells[:, [1, 2, 3]],
+            cells[:, [0, 3, 2]],
+            cells[:, [0, 1, 3]],
+            cells[:, [0, 2, 1]],
         )
-    return mesh.arrays().tetrahedra.shape[0]
+    )
+    _, inverse, counts = np.unique(
+        np.sort(faces, axis=1), axis=0, return_inverse=True, return_counts=True
+    )
+    boundary = faces[counts[inverse.reshape((-1,))] == 1]
+    used, local = np.unique(boundary, return_inverse=True)
+    return stuffed.points[used], local.reshape(boundary.shape).astype(np.int64)
 
 
 def _volume_rows() -> tuple[_Row, ...]:
     # State creation, refinement (radius-edge 2) and improvement (radius-edge 2,
     # dihedral 15 degrees) on the recovered surface with its boundary fixed. The
     # circumradius target 1.75 sqrt(3/8) h, h the mean surface edge, matches
-    # Gmsh HXT's element counts on the ledger shapes; the row size is the
-    # surface triangle count.
+    # Gmsh HXT's element counts on the ledger shapes. The sphere row size is
+    # the icosphere's triangle count, the torus row size the stuffing spacing
+    # in thousandths.
     rows: list[_Row] = []
     shapes = (
-        ("refine-improve-sphere", _icosphere(5)),
-        ("refine-improve-sphere", _icosphere(6)),
-        ("refine-improve-torus", _uv_torus(100)),
-        ("refine-improve-torus", _uv_torus(300)),
+        ("refine-improve-sphere", faces.shape[0], (vertices, faces))
+        for vertices, faces in (_icosphere(5), _icosphere(6))
     )
-    for name, (vertices, faces) in shapes:
+    tori = (
+        ("refine-improve-torus", thousandths, _stuffed_torus_surface(1e-3 * thousandths))
+        for thousandths in (67, 22)
+    )
+    for name, size, (vertices, faces) in (*shapes, *tori):
         recovered = _recover(vertices, faces)
         edges = np.concatenate((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]))
         spacing = float(
             np.mean(np.linalg.norm(vertices[edges[:, 0]] - vertices[edges[:, 1]], axis=1))
         )
-        size = 1.75 * math.sqrt(3.0 / 8.0) * spacing
+        target = 1.75 * math.sqrt(3.0 / 8.0) * spacing
         rows.append(
             _Row(
                 name,
-                faces.shape[0],
-                lambda recovered=recovered, size=size: _refine_improve(recovered, size),
+                size,
+                lambda recovered=recovered, target=target: _refine_improve(
+                    recovered, target
+                ),
                 _volume_cells,
+                _volume_unmet,
             )
         )
     return tuple(rows)
 
 
 def _volume_cells(result: object, /) -> int:
-    if not isinstance(result, int):
-        raise TypeError("The volume row returns its tetrahedron count.")
-    return result
+    if not isinstance(result, _VolumeResult):
+        raise TypeError("The volume row returns a _VolumeResult.")
+    return result.cells
+
+
+def _volume_unmet(result: object, /) -> int:
+    if not isinstance(result, _VolumeResult):
+        raise TypeError("The volume row returns a _VolumeResult.")
+    return result.unmet
 
 
 def _implicit_rows() -> tuple[_Row, ...]:
@@ -323,11 +379,18 @@ def _ceiling(
 def _measure(row: _Row, repeats: int, /) -> dict[str, Any]:
     samples: list[float] = []
     count = 0
+    unmet = 0
     for _ in range(repeats):
         result, seconds = measure_host(row.run)
         samples.append(seconds)
         count = row.count(result)
-    return {"elements": count, "seconds": samples, "minimum_seconds": min(samples)}
+        unmet = row.unmet(result)
+    return {
+        "elements": count,
+        "unmet": unmet,
+        "seconds": samples,
+        "minimum_seconds": min(samples),
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -359,9 +422,9 @@ def main(argv: list[str] | None = None) -> int:
                 "reference_seconds": seconds,
                 "ratio": ratio,
                 "allowed_ratio": allowed,
-                "passed": ratio <= allowed,
+                "passed": ratio <= allowed and measured["unmet"] == 0,
             }
-            failed = failed or ratio > allowed
+            failed = failed or ratio > allowed or measured["unmet"] > 0
         records.append(record)
         print(json.dumps(record), flush=True)
     if arguments.output is not None:

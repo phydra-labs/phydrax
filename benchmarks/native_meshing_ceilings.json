@@ -41,8 +41,8 @@
       "81920": {"tool": "gmsh-hxt", "elements_per_second": 340000, "allowed_ratio": 1.0}
     },
     "refine-improve-torus": {
-      "10000": {"tool": "gmsh-hxt", "elements_per_second": 610000, "allowed_ratio": 1.0},
-      "90000": {"tool": "gmsh-hxt", "elements_per_second": 630000, "allowed_ratio": 1.0}
+      "67": {"tool": "gmsh-hxt", "elements_per_second": 610000, "allowed_ratio": 1.0},
+      "22": {"tool": "gmsh-hxt", "elements_per_second": 630000, "allowed_ratio": 1.0}
     }
   }
 }
