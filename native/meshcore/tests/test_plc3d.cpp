@@ -1695,8 +1695,8 @@ void test_external_cavity_replacement_reseeds_incremental_locate() {
 // A constrained face around the short edge ab (between the cells abcd and
 // abec of its three-cell ring) blocks the cavity of a point next to ab, but
 // the cavity reaches the other side around ab: the cone would erase the
-// constrained face (its star link fails after the topology write). The
-// insertion is refused before any write and leaves the complex unchanged.
+// constrained face. The insertion is refused before any write and leaves
+// the complex unchanged.
 void test_insertion_refuses_a_cavity_around_a_constrained_face() {
   const std::array<double, 18> points{
       0.0, 0.0, -0.1, 0.0, 0.0, 0.1, 1.0, 0.0, 0.0,

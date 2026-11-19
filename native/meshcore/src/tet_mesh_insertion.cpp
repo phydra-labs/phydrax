@@ -1168,9 +1168,10 @@ TetEditStatus TetMesh::insert_local_cone(const TetEditVertex& vertex,
         unstage();
         return TetEditStatus::kIndexOverflow;
       case ConeInsertion::kInternal:
-        // Only the cone star link can fail after the topology write; exact
-        // positivity of every cone cell excludes it.
-        return TetEditStatus::kStaleGeneration;
+        // A cone whose boundary does not link is refused before any write;
+        // exact positivity of every cone cell excludes it.
+        unstage();
+        return TetEditStatus::kRejectedTopology;
     }
     for (std::int32_t slot : cavity) {
       cell_index_.retire(cell_id(slot));

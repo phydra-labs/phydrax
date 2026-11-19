@@ -941,7 +941,7 @@ bool CadGeometry::expand_offset_curve(const Node& node, double t, int order, Tay
   if (!expand(static_cast<int32_t>(node.integers[0]), &t, order + 1, base, workspace))
     return false;
   const Truncation local{1, order}, wide{1, order + 1};
-  Taylor tangent[3], normal[3];
+  Taylor tangent[3]{}, normal[3];
   for (int i = 0; i < dimension; ++i) differentiate(base[i], 0, tangent[i], wide);
   if (dimension == 2) {
     normal[0] = tangent[1];

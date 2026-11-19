@@ -23,6 +23,15 @@ inline std::uint64_t splitmix64(std::uint64_t value) {
   return value ^ (value >> 31);
 }
 
+// Hint that `*address` is read soon: insertion walks and cavities prefetch
+// the cells they are about to visit.
+template <class T>
+inline void prefetch_read([[maybe_unused]] const T* address) noexcept {
+#if defined(__GNUC__) || defined(__clang__)
+  __builtin_prefetch(address);
+#endif
+}
+
 // Bit b of v moved to bit 2b (v below 2^32) or 3b (v below 2^21).
 inline std::uint64_t spread_bits_2(std::uint64_t v) {
   v = (v | (v << 16)) & 0x0000FFFF0000FFFFULL;

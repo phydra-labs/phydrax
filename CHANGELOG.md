@@ -324,6 +324,59 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- The PLC tetrahedral route adopts the native recovery through
+  `TetMesh3D.from_recovery`; a kept conforming carrier is still constructed
+  from its arrays. Identities unchanged.
+- PLC route acceptance audit: `audit_cell_mesh(..., tetrahedral_degree=)`,
+  selected by the `volume_plc` certification schedule, takes the checks the
+  native tetrahedral degree theorem (`phx_mc_verify_tetrahedra`) implies from a
+  global embedding certificate it decided certified: collapsed and duplicate
+  cells, nonmanifold and inconsistently oriented facets and edges, open
+  boundary, boundary self-intersection, vertex stars wherever each boundary
+  vertex has one fan of boundary triangles, and zero measure / mean-ratio and
+  at-least-2^294 aspect thresholds. Welded vertices, a pinched boundary vertex
+  or other thresholds are evaluated as on every route. Declared identity
+  change: `CellMeshAuditReport.tetrahedral_degree` (new static field) records
+  the selection and enters `report_id`, so `volume_plc` audit, certification
+  and result identities change; counts, issues and quality reports are
+  unchanged.
+- `GeometryAssociation` per-row static banks (`source_entity_ids`,
+  `source_roles`, `source_occurrence_paths`, `source_region_sides`,
+  `source_parameter_intervals`, `target_parameter_intervals`,
+  `target_reference_pieces`, `source_parameter_points`) are validated immutable
+  tuples held as one static PyTree leaf each, so construction no longer walks
+  every row element. Accessors still return tuples (equal and hash-equal to
+  plain tuples); association, organization and result identities, archives and
+  pickles are unchanged.
+- Faster with identical results: simplex `CellMesh` topology is assembled once
+  (6.3 s -> 3.3 s at 636,257 tetrahedra), packed row ordering sorts uint64 keys
+  by value, sorted unique rows and duplicate checks value-sort int64 keys, and
+  patch-zone adjacency groups only the examined faces' incidences. Certified
+  icosphere (81,920 triangles) `execute`: L4 1.30 -> 0.68 s, L5 5.12 -> 2.67
+  s, L6 32.8 -> 17.2 s (single thread, loaded machine).
+- Native point-set Delaunay is faster with identical cells: cone cells are
+  linked through a dense directed-edge table before any topology write (a
+  cavity whose boundary is not a closed surface is refused with the complex
+  unchanged, and refinement reports it as a topology rejection), coordinates
+  are stored in insertion order with input-index tie-breaking, cavity growth
+  prefetches and avoids branches, and canonical cell ordering runs in linear
+  time (radix sort on the first vertex, branch-free ranks within each group)
+  for every caller, with byte-identical output. 3D Delaunay runs at
+  0.87-0.90x CGAL at 1e3-1e6 points (was 1.25-1.31x); 2D at 1.11-1.23x (was
+  1.33-1.62x).
+- Native surface-to-tetrahedra recovery and refinement are faster with
+  identical output (contact pairs bucketed by cell without sorting, edge rows
+  and closure read from edge-use runs, source-face indices built on first
+  query, direct protection-radius row visits, reserved incidence lists,
+  coplanar edge-sharing source triangles proved legal without the full
+  intersection test, fewer divisions and square roots in refinement setup).
+  Contact checking now also tests segment-triangle and point pairs that
+  arrive in reverse kind order.
+- PLC tetrahedral certification no longer runs per-row Python: audit
+  association and patch-zone checks, piecewise-linear domain measures (exact
+  integer arithmetic), source tables, size fields, scopes and association
+  fingerprints are vectorized with unchanged identities. The certified
+  81,920-triangle icosphere (636,257 cells) takes 32.8 s instead of 77.8 s.
 - Native meshing decides clear Delaunay predicate cases (recovery, flips) in
   their inline floating stage, links cavity stars through a table sized to
   each cone, and finds edge cells in improvement by walking around the edge;
