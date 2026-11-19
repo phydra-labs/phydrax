@@ -268,6 +268,12 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native tetrahedral refinement's local feature sizes register features on a
+  dense grid by counting sort: a feature at most one cell wide once (with its
+  box and corners, at its box's lower corner), a wider one in every cell it
+  meets; each vertex starts from the facet edges opposite it. Same sizes and
+  meshes on the six ledger rows; the precomputation takes 10.5 instead of 16
+  ms on the torus L2 row and 55 instead of 81 ms on torus L3.
 - Native tetrahedral refinement's Bowyer-Watson growth tests a neighbor's
   circumsphere once per cavity (a cell found outside keeps its own visit
   stamp) and decides clear insphere signs with the predicate's own floating

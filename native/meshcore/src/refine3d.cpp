@@ -518,31 +518,6 @@ class CellGrid {
     return {};
   }
 
-  // Calls `visit` on the items of every occupied cell meeting [lower, upper];
-  // a box spanning more cells than are occupied reads every occupied cell.
-  template <class Visit>
-  bool visit_box(double cell, const double* lower, const double* upper, Visit&& visit) const {
-    GridKey first;
-    GridKey last;
-    if (!grid_cell(lower, cell, first) || !grid_cell(upper, cell, last)) return false;
-    double span = 1.0;
-    for (std::size_t axis = 0; axis < 3; ++axis) {
-      span *= static_cast<double>(last.cell[axis] - first.cell[axis]) + 1.0;
-    }
-    if (span > static_cast<double>(keys_.size())) {
-      for (std::int32_t item : items_) visit(item);
-      return true;
-    }
-    for (std::int64_t x = first.cell[0]; x <= last.cell[0]; ++x) {
-      for (std::int64_t y = first.cell[1]; y <= last.cell[1]; ++y) {
-        for (std::int64_t z = first.cell[2]; z <= last.cell[2]; ++z) {
-          for (std::int32_t item : items(GridKey{{x, y, z}})) visit(item);
-        }
-      }
-    }
-    return true;
-  }
-
  private:
   struct Entry {
     GridKey key;
@@ -553,6 +528,107 @@ class CellGrid {
   std::vector<std::uint32_t> starts_;
   std::vector<std::int32_t> items_;
   std::vector<std::int32_t> table_;
+};
+
+// A dense uniform grid of cubic cells over a box; coordinates outside it
+// clamp to its boundary cells, so any box query reads a superset of the
+// cells its part inside the grid meets.
+struct DenseFrame {
+  double origin[3]{};
+  double cell = 0.0;
+  std::size_t dims[3]{};
+
+  // Cells of side at least `side` over [lower, upper], the side grown until
+  // there are at most `cap` cells. False for a non-finite frame.
+  bool fit(const double* lower, const double* upper, double side, double cap) {
+    for (int attempt = 0; attempt < 64; ++attempt) {
+      if (!(side > 0.0) || !std::isfinite(side)) return false;
+      double count = 1.0;
+      double spans[3];
+      for (int axis = 0; axis < 3; ++axis) {
+        spans[axis] = std::floor((upper[axis] - lower[axis]) / side) + 1.0;
+        if (!(spans[axis] >= 1.0) || !std::isfinite(spans[axis])) return false;
+        count *= spans[axis];
+      }
+      if (count <= cap) {
+        for (int axis = 0; axis < 3; ++axis) {
+          origin[axis] = lower[axis];
+          dims[axis] = static_cast<std::size_t>(spans[axis]);
+        }
+        cell = side;
+        return true;
+      }
+      side *= std::max(1.125, std::cbrt(count / cap));
+    }
+    return false;
+  }
+  std::size_t size() const noexcept { return dims[0] * dims[1] * dims[2]; }
+  // The clamped cell coordinate of the finite or infinite `value` on `axis`.
+  std::size_t coordinate(double value, std::size_t axis) const noexcept {
+    const double scaled = std::floor((value - origin[axis]) / cell);
+    if (!(scaled > 0.0)) return 0;
+    const double top = static_cast<double>(dims[axis] - 1);
+    return scaled < top ? static_cast<std::size_t>(scaled) : dims[axis] - 1;
+  }
+  std::size_t index(std::size_t x, std::size_t y, std::size_t z) const noexcept {
+    return (z * dims[1] + y) * dims[0] + x;
+  }
+};
+
+// Items of a DenseFrame grouped by cell in registration order (a counting
+// sort); an item is registered in every cell of its cell range.
+template <class Item>
+class DenseBuckets {
+ public:
+  // `range(row, first, last)` sets the inclusive cell range of item `row` per
+  // axis or returns false to skip it; `make(row)` returns its record.
+  template <class Range, class Make>
+  void build(const DenseFrame& frame, std::size_t item_count, Range&& range, Make&& make) {
+    starts_.assign(frame.size() + 1, 0U);
+    std::vector<std::size_t> cursor;
+    for (int pass = 0; pass < 2; ++pass) {
+      for (std::size_t row = 0; row < item_count; ++row) {
+        std::size_t first[3];
+        std::size_t last[3];
+        if (!range(row, first, last)) continue;
+        for (std::size_t z = first[2]; z <= last[2]; ++z) {
+          for (std::size_t y = first[1]; y <= last[1]; ++y) {
+            for (std::size_t x = first[0]; x <= last[0]; ++x) {
+              const std::size_t at = frame.index(x, y, z);
+              if (pass == 0) {
+                ++starts_[at + 1];
+              } else {
+                items_[cursor[at]++] = make(row);
+              }
+            }
+          }
+        }
+      }
+      if (pass == 0) {
+        for (std::size_t at = 1; at < starts_.size(); ++at) starts_[at] += starts_[at - 1];
+        items_.resize(starts_.back());
+        cursor.assign(starts_.begin(), starts_.end() - 1);
+      }
+    }
+  }
+
+  std::span<const Item> items(std::size_t at) const noexcept {
+    return std::span<const Item>(items_).subspan(starts_[at], starts_[at + 1] - starts_[at]);
+  }
+
+ private:
+  std::vector<std::size_t> starts_;
+  std::vector<Item> items_;
+};
+
+// A point, line or plane feature of local_feature_sizes: its metric box, its
+// corner slots (-1 past the last corner) and, for a feature registered in
+// several cells, its row among those (else -1).
+struct FeatureRecord {
+  double lower[3];
+  double upper[3];
+  std::int32_t corners[3];
+  std::int32_t row;
 };
 
 // The largest metric length of one binary64 coordinate step at `p`.
@@ -583,8 +659,7 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
   const double infinity = std::numeric_limits<double>::infinity();
   sizes.assign(slot_count, infinity);
   // The shortest incident edge bounds lambda from above and sets the query
-  // radius; one edge per cell samples the edge lengths for the grid cell.
-  std::vector<double> lengths;
+  // radius.
   const TetrahedralComplex& complex = mesh.complex();
   for (std::size_t row = 0; row < complex.tets.size(); ++row) {
     const std::int32_t cell = static_cast<std::int32_t>(row);
@@ -597,122 +672,157 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
         const double length = metric_distance(mesh, mesh.point(a), mesh.point(b));
         sizes[static_cast<std::size_t>(a)] = std::min(sizes[static_cast<std::size_t>(a)], length);
         sizes[static_cast<std::size_t>(b)] = std::min(sizes[static_cast<std::size_t>(b)], length);
-        if (first == 0 && second == 1) lengths.push_back(length);
       }
     }
   }
-  if (lengths.empty()) return false;
 
-  std::vector<std::array<std::int32_t, 2>> lines;
-  std::vector<std::array<std::int32_t, 3>> planes;
-  planes.reserve(facets.size());
+  // Features by corner slots (-1 past the last corner): the live vertices,
+  // the planes, the distinct lines.
+  std::vector<std::array<std::int32_t, 3>> features;
+  std::vector<std::uint64_t> lines;
   lines.reserve(segments.size() + 3 * facets.size());
-  const auto ordered = [](std::int32_t a, std::int32_t b) {
-    return a < b ? std::array<std::int32_t, 2>{a, b} : std::array<std::int32_t, 2>{b, a};
+  const auto line_key = [](std::int32_t a, std::int32_t b) {
+    const auto low = static_cast<std::uint32_t>(std::min(a, b));
+    const auto high = static_cast<std::uint32_t>(std::max(a, b));
+    return (static_cast<std::uint64_t>(low) << 32) | high;
   };
   for (const TetSnapshotSegment& segment : segments) {
     const std::int32_t a = mesh.vertex_slot(segment.vertices[0]);
     const std::int32_t b = mesh.vertex_slot(segment.vertices[1]);
     if (!mesh.live_vertex(a) || !mesh.live_vertex(b)) return false;
-    lines.push_back(ordered(a, b));
+    lines.push_back(line_key(a, b));
   }
+  for (std::size_t slot = 0; slot < slot_count; ++slot) {
+    if (mesh.live_vertex(static_cast<std::int32_t>(slot))) {
+      features.push_back({static_cast<std::int32_t>(slot), -1, -1});
+    }
+  }
+  const std::size_t plane_begin = features.size();
   for (const TetSnapshotFacet& facet : facets) {
     std::array<std::int32_t, 3> slots{};
     for (std::size_t corner = 0; corner < 3; ++corner) {
       slots[corner] = mesh.vertex_slot(facet.vertices[corner]);
       if (!mesh.live_vertex(slots[corner])) return false;
     }
-    planes.push_back(slots);
+    features.push_back(slots);
     for (std::size_t corner = 0; corner < 3; ++corner) {
-      lines.push_back(ordered(slots[corner], slots[(corner + 1) % 3]));
+      lines.push_back(line_key(slots[corner], slots[(corner + 1) % 3]));
     }
   }
+  const std::size_t plane_end = features.size();
   std::sort(lines.begin(), lines.end());
   lines.erase(std::unique(lines.begin(), lines.end()), lines.end());
+  for (std::uint64_t key : lines) {
+    features.push_back({static_cast<std::int32_t>(key >> 32),
+                        static_cast<std::int32_t>(key & 0xffffffffU), -1});
+  }
 
-  // Cells of the median sampled edge length, coarsened so that no feature box
-  // spans more than 17 cells per axis.
-  std::nth_element(lengths.begin(), lengths.begin() + static_cast<std::ptrdiff_t>(lengths.size() / 2),
-                   lengths.end());
-  double cell = lengths[lengths.size() / 2];
-  // Metric images of the live vertices, feature boxes over them.
+  // Cells of 1.5 median shortest incident edges (measured best on the ledger
+  // shapes: a query reads about 3 cells per axis).
+  std::vector<double> radii;
+  radii.reserve(slot_count);
+  for (std::size_t slot = 0; slot < slot_count; ++slot) {
+    if (std::isfinite(sizes[slot])) radii.push_back(sizes[slot]);
+  }
+  if (radii.empty()) return false;
+  std::nth_element(radii.begin(), radii.begin() + static_cast<std::ptrdiff_t>(radii.size() / 2),
+                   radii.end());
+  double cell = 1.5 * radii[radii.size() / 2];
+  // The edge of a plane opposite a corner is a line not incident to it,
+  // measured first (as its line feature would be), so that the query starts
+  // from a near feature.
+  for (std::size_t row = plane_begin; row < plane_end; ++row) {
+    const auto& corners = features[row];
+    for (std::size_t corner = 0; corner < 3; ++corner) {
+      const std::int32_t vertex = corners[corner];
+      const std::int32_t a = corners[(corner + 1) % 3];
+      const std::int32_t b = corners[(corner + 2) % 3];
+      if (a == b || a == vertex || b == vertex) continue;
+      double& size = sizes[static_cast<std::size_t>(vertex)];
+      size = std::min(size, metric_segment_distance(mesh, mesh.point(vertex),
+                                                    mesh.point(std::min(a, b)),
+                                                    mesh.point(std::max(a, b))));
+    }
+  }
+  // Metric images of the live vertices; the features' metric boxes over them.
   std::vector<std::array<double, 3>> world(slot_count);
+  double frame_lower[3]{infinity, infinity, infinity};
+  double frame_upper[3]{-infinity, -infinity, -infinity};
   for (std::size_t slot = 0; slot < slot_count; ++slot) {
     if (mesh.live_vertex(static_cast<std::int32_t>(slot))) {
       world[slot] = metric_point(mesh, mesh.point(static_cast<std::int32_t>(slot)));
-    }
-  }
-  const auto feature_box = [&](std::span<const std::int32_t> corners, double* lower,
-                               double* upper) {
-    const auto& first = world[static_cast<std::size_t>(corners[0])];
-    std::copy(first.begin(), first.end(), lower);
-    std::copy(first.begin(), first.end(), upper);
-    for (std::int32_t corner : corners.subspan(1)) {
-      const auto& point = world[static_cast<std::size_t>(corner)];
-      for (int axis = 0; axis < 3; ++axis) {
-        lower[axis] = std::min(lower[axis], point[axis]);
-        upper[axis] = std::max(upper[axis], point[axis]);
+      for (std::size_t axis = 0; axis < 3; ++axis) {
+        frame_lower[axis] = std::min(frame_lower[axis], world[slot][axis]);
+        frame_upper[axis] = std::max(frame_upper[axis], world[slot][axis]);
       }
     }
-  };
+  }
+  std::vector<FeatureRecord> records(features.size());
   double extent = 0.0;
-  for (const auto& plane : planes) {
-    double lower[3], upper[3];
-    feature_box(plane, lower, upper);
-    for (int axis = 0; axis < 3; ++axis) extent = std::max(extent, upper[axis] - lower[axis]);
+  for (std::size_t row = 0; row < features.size(); ++row) {
+    FeatureRecord& record = records[row];
+    const auto& corners = features[row];
+    const auto& first = world[static_cast<std::size_t>(corners[0])];
+    std::copy(first.begin(), first.end(), record.lower);
+    std::copy(first.begin(), first.end(), record.upper);
+    for (std::size_t corner = 1; corner < 3 && corners[corner] >= 0; ++corner) {
+      const auto& point = world[static_cast<std::size_t>(corners[corner])];
+      for (std::size_t axis = 0; axis < 3; ++axis) {
+        record.lower[axis] = std::min(record.lower[axis], point[axis]);
+        record.upper[axis] = std::max(record.upper[axis], point[axis]);
+      }
+    }
+    std::copy(corners.begin(), corners.end(), record.corners);
+    if (row >= plane_begin && row < plane_end) {
+      for (std::size_t axis = 0; axis < 3; ++axis) {
+        extent = std::max(extent, record.upper[axis] - record.lower[axis]);
+      }
+    }
   }
+  // No plane box spans more than 17 cells per axis.
   cell = std::max(cell, extent / 16.0);
-  if (!(cell > 0.0) || !std::isfinite(cell)) return false;
-
-  CellGrid point_grid;
-  CellGrid line_grid;
-  CellGrid plane_grid;
-  for (std::size_t slot = 0; slot < slot_count; ++slot) {
-    const std::int32_t vertex = static_cast<std::int32_t>(slot);
-    if (!mesh.live_vertex(vertex)) continue;
-    if (!point_grid.add(cell, world[slot].data(), world[slot].data(), vertex)) return false;
+  DenseFrame frame;
+  if (!frame.fit(frame_lower, frame_upper, cell,
+                 std::max(4096.0, 8.0 * static_cast<double>(slot_count)))) {
+    return false;
   }
-  // A feature whose box lies farther than lambda from v cannot lower lambda:
-  // the box distance bounds the feature distance from below (a relative
-  // slack of 1e-9 covers the rounding of either).
-  std::vector<std::array<double, 6>> line_boxes(lines.size());
-  std::vector<std::array<double, 6>> plane_boxes(planes.size());
-  for (std::size_t row = 0; row < lines.size(); ++row) {
-    double* box = line_boxes[row].data();
-    feature_box(lines[row], box, box + 3);
-    if (!line_grid.add(cell, box, box + 3, static_cast<std::int32_t>(row))) return false;
-  }
-  for (std::size_t row = 0; row < planes.size(); ++row) {
-    double* box = plane_boxes[row].data();
-    feature_box(planes[row], box, box + 3);
-    if (!plane_grid.add(cell, box, box + 3, static_cast<std::int32_t>(row))) return false;
-  }
-  point_grid.finish();
-  line_grid.finish();
-  plane_grid.finish();
-  const auto beyond = [](const std::array<double, 6>& box, const std::array<double, 3>& point,
-                         double radius) {
-    double squared = 0.0;
-    for (int axis = 0; axis < 3; ++axis) {
-      const double gap = std::max({0.0, box[static_cast<std::size_t>(axis)] - point[static_cast<std::size_t>(axis)],
-                                   point[static_cast<std::size_t>(axis)] - box[static_cast<std::size_t>(axis) + 3]});
-      squared += gap * gap;
-    }
-    return squared > radius * radius * (1.0 + 1e-9);
-  };
-  // A point whose metric image lies farther than `radius` from v's cannot
-  // lower lambda (the relative slack of 1e-9 covers the rounding of either
-  // distance), so only nearer ones are measured.
-  const auto near = [](const std::array<double, 3>& point, const std::array<double, 3>& here,
-                       double radius) {
-    double squared = 0.0;
+  // A small feature (box at most one cell wide per axis) is registered once,
+  // in the cell of its box's lower corner, so a query of radius r reads the
+  // cells of [x - r - cell, x + r]; a large one in every cell its box meets,
+  // and a query reads it once (stamped with the query's vertex slot + 1).
+  const auto small = [&](const FeatureRecord& record) {
     for (std::size_t axis = 0; axis < 3; ++axis) {
-      const double gap = point[axis] - here[axis];
-      squared += gap * gap;
+      if (!(record.upper[axis] - record.lower[axis] <= frame.cell)) return false;
     }
-    return squared <= radius * radius * (1.0 + 1e-9);
+    return true;
   };
+  std::int32_t large_count = 0;
+  for (FeatureRecord& record : records) record.row = small(record) ? -1 : large_count++;
+  DenseBuckets<FeatureRecord> small_grid;
+  DenseBuckets<FeatureRecord> large_grid;
+  small_grid.build(frame, records.size(), [&](std::size_t row, std::size_t* first,
+                                              std::size_t* last) {
+    const FeatureRecord& record = records[row];
+    if (record.row >= 0) return false;
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      first[axis] = last[axis] = frame.coordinate(record.lower[axis], axis);
+    }
+    return true;
+  }, [&](std::size_t row) { return records[row]; });
+  large_grid.build(frame, large_count > 0 ? records.size() : 0, [&](std::size_t row,
+                                                                    std::size_t* first,
+                                                                    std::size_t* last) {
+    const FeatureRecord& record = records[row];
+    if (record.row < 0) return false;
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      first[axis] = frame.coordinate(record.lower[axis], axis);
+      last[axis] = frame.coordinate(record.upper[axis], axis);
+    }
+    return true;
+  }, [&](std::size_t row) { return records[row]; });
+  std::vector<FeatureRecord>().swap(records);
 
+  std::vector<std::uint32_t> seen(static_cast<std::size_t>(large_count), 0U);
   smallest = infinity;
   for (std::size_t slot = 0; slot < slot_count; ++slot) {
     const std::int32_t vertex = static_cast<std::int32_t>(slot);
@@ -721,32 +831,64 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
     double lambda = sizes[slot];
     if (!std::isfinite(lambda)) return false;
     const auto& here = world[slot];
-    const double lower[3]{here[0] - lambda, here[1] - lambda, here[2] - lambda};
-    const double upper[3]{here[0] + lambda, here[1] + lambda, here[2] + lambda};
-    const bool visited =
-        point_grid.visit_box(cell, lower, upper, [&](std::int32_t other) {
-          if (other != vertex && near(world[static_cast<std::size_t>(other)], here, lambda)) {
-            lambda = std::min(lambda, metric_distance(mesh, p, mesh.point(other)));
+    // A feature whose box lies farther than lambda from v cannot lower
+    // lambda: the box distance bounds the feature distance from below (a
+    // relative slack of 1e-9 covers the rounding of either); the cell ranges
+    // cover that slack.
+    const auto measure = [&](const FeatureRecord& record) {
+      double squared = 0.0;
+      for (std::size_t axis = 0; axis < 3; ++axis) {
+        const double gap = std::max(
+            {0.0, record.lower[axis] - here[axis], here[axis] - record.upper[axis]});
+        squared += gap * gap;
+      }
+      if (squared > lambda * lambda * (1.0 + 1e-9)) return;
+      const std::int32_t* corners = record.corners;
+      if (corners[0] == vertex || corners[1] == vertex || corners[2] == vertex) return;
+      const double distance =
+          corners[1] < 0   ? metric_distance(mesh, p, mesh.point(corners[0]))
+          : corners[2] < 0 ? metric_segment_distance(mesh, p, mesh.point(corners[0]),
+                                                     mesh.point(corners[1]))
+                           : metric_triangle_distance(mesh, p, mesh.point(corners[0]),
+                                                      mesh.point(corners[1]),
+                                                      mesh.point(corners[2]));
+      lambda = std::min(lambda, distance);
+    };
+    const double reach = lambda * (1.0 + 1e-9);
+    std::size_t first[3];
+    std::size_t last[3];
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      first[axis] = frame.coordinate(here[axis] - reach - frame.cell, axis);
+      last[axis] = frame.coordinate(here[axis] + reach, axis);
+    }
+    for (std::size_t z = first[2]; z <= last[2]; ++z) {
+      for (std::size_t y = first[1]; y <= last[1]; ++y) {
+        for (std::size_t x = first[0]; x <= last[0]; ++x) {
+          for (const FeatureRecord& record : small_grid.items(frame.index(x, y, z))) {
+            measure(record);
           }
-        }) &&
-        line_grid.visit_box(cell, lower, upper, [&](std::int32_t row) {
-          const auto& line = lines[static_cast<std::size_t>(row)];
-          if (line[0] != vertex && line[1] != vertex &&
-              !beyond(line_boxes[static_cast<std::size_t>(row)], here, lambda)) {
-            lambda = std::min(lambda, metric_segment_distance(
-                                          mesh, p, mesh.point(line[0]), mesh.point(line[1])));
+        }
+      }
+    }
+    if (large_count > 0) {
+      const std::uint32_t stamp = static_cast<std::uint32_t>(slot) + 1U;
+      for (std::size_t axis = 0; axis < 3; ++axis) {
+        first[axis] = frame.coordinate(here[axis] - reach, axis);
+      }
+      for (std::size_t z = first[2]; z <= last[2]; ++z) {
+        for (std::size_t y = first[1]; y <= last[1]; ++y) {
+          for (std::size_t x = first[0]; x <= last[0]; ++x) {
+            for (const FeatureRecord& record : large_grid.items(frame.index(x, y, z))) {
+              std::uint32_t& mark = seen[static_cast<std::size_t>(record.row)];
+              if (mark == stamp) continue;
+              mark = stamp;
+              measure(record);
+            }
           }
-        }) &&
-        plane_grid.visit_box(cell, lower, upper, [&](std::int32_t row) {
-          const auto& plane = planes[static_cast<std::size_t>(row)];
-          if (plane[0] != vertex && plane[1] != vertex && plane[2] != vertex &&
-              !beyond(plane_boxes[static_cast<std::size_t>(row)], here, lambda)) {
-            lambda = std::min(lambda, metric_triangle_distance(
-                                          mesh, p, mesh.point(plane[0]), mesh.point(plane[1]),
-                                          mesh.point(plane[2])));
-          }
-        });
-    if (!visited || !std::isfinite(lambda)) return false;
+        }
+      }
+    }
+    if (!std::isfinite(lambda)) return false;
     // Features nearer than the coordinate spacing at v cannot be separated by
     // a representable point; lambda is floored there, which keeps it positive.
     lambda = std::max(lambda, coordinate_resolution(mesh, p));
