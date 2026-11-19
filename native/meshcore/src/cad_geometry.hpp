@@ -60,6 +60,18 @@ struct EvaluationWorkspace {
   int64_t span_chart = -1;
 };
 
+// Exact-source coefficient enclosures use the model's node_reals layout.
+// The point path continues to use node_reals itself. Programs and temporary
+// endpoints are retained by the calling thread across interval evaluations.
+struct IntervalEvaluationWorkspace {
+  const double* coefficient_lower = nullptr;
+  const double* coefficient_upper = nullptr;
+  int64_t coefficient_count = 0;
+  const ProgramData* bound_program = nullptr;
+  PreparedIntervalProgram program;
+  std::vector<double> lower, upper;
+};
+
 // Closed-form surface evaluators (decision D3) that stand in for a node's
 // generic expansion: the five quadric templates and the revolution of a line
 // profile. They evaluate the source's own formula, so they agree with the
@@ -130,6 +142,13 @@ class CadGeometry {
   // False when the point lies outside the node's evaluation domain.
   bool jets(int32_t node, const double* point, int order, double* result,
             EvaluationWorkspace& workspace) const;
+
+  // Outward enclosure of derivatives in the jets layout, over an input box.
+  // The workspace supplies exact-source coefficient bounds for node_reals.
+  // Unsupported nodes or unbounded results return PHX_MC_UNRESOLVED.
+  int32_t interval_jets(int32_t node, const double* input_lower, const double* input_upper,
+                        int order, double* output_lower, double* output_upper,
+                        IntervalEvaluationWorkspace& workspace) const;
 
   // The local Taylor expansion of `node` at `point` in its own parameters.
   bool expand(int32_t node, const double* point, int order, Taylor* out,

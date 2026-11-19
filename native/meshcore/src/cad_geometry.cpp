@@ -8,6 +8,7 @@
 #include <string_view>
 
 #include "capi_guard.hpp"
+#include "directed_interval.hpp"
 #include "floating_point_mode.hpp"
 
 namespace phx::mc::cad {
@@ -212,6 +213,107 @@ void reverse(Taylor* values, int count, int order) noexcept {
 }
 
 }  // namespace
+
+int32_t CadGeometry::interval_jets(int32_t index, const double* input_lower,
+                                   const double* input_upper, int order, double* output_lower,
+                                   double* output_upper,
+                                   IntervalEvaluationWorkspace& workspace) const {
+  if (index < 0 || index >= model_.node_count || order < 0 || order > 2 ||
+      input_lower == nullptr || input_upper == nullptr || output_lower == nullptr ||
+      output_upper == nullptr || workspace.coefficient_count < model_.node_real_offsets[model_.node_count] ||
+      (workspace.coefficient_count > 0 &&
+       (workspace.coefficient_lower == nullptr || workspace.coefficient_upper == nullptr)))
+    return PHX_MC_INVALID_ARGUMENT;
+  const Node& current = nodes_[static_cast<std::size_t>(index)];
+  for (int i = 0; i < current.inputs; ++i)
+    if (!std::isfinite(input_lower[i]) || !std::isfinite(input_upper[i]) ||
+        input_lower[i] > input_upper[i])
+      return PHX_MC_INVALID_ARGUMENT;
+  if (current.kind == PHX_MC_CAD_NODE_AFFINE) {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    double child_lower[18], child_upper[18], result_lower[18], result_upper[18];
+    const int32_t status = interval_jets(static_cast<int32_t>(current.integers[0]), input_lower,
+                                         input_upper, order, child_lower, child_upper, workspace);
+    if (status != PHX_MC_OK) return status;
+    const int dimensions = current.outputs;
+    const int terms = current.inputs == 2 ? (order + 1) * (order + 2) / 2 : order + 1;
+    const int64_t offset = model_.node_real_offsets[index];
+    for (int64_t i = 0; i < current.real_count; ++i)
+      if (!std::isfinite(workspace.coefficient_lower[offset + i]) ||
+          !std::isfinite(workspace.coefficient_upper[offset + i]) ||
+          workspace.coefficient_lower[offset + i] > workspace.coefficient_upper[offset + i])
+        return PHX_MC_INVALID_ARGUMENT;
+    for (int term = 0; term < terms; ++term) {
+      for (int row = 0; row < dimensions; ++row) {
+        using namespace phx::mc::remesh;
+        Interval value = point(0.0);
+        if (term == 0) {
+          const int64_t k = offset + dimensions * dimensions + row;
+          value = {workspace.coefficient_lower[k], workspace.coefficient_upper[k]};
+        }
+        for (int col = 0; col < dimensions; ++col) {
+          const int64_t k = offset + row * dimensions + col;
+          value = phx::mc::remesh::add(
+              value, phx::mc::remesh::multiply(
+                         {workspace.coefficient_lower[k], workspace.coefficient_upper[k]},
+                         {child_lower[term * dimensions + col],
+                          child_upper[term * dimensions + col]}));
+        }
+        if (!finite(value)) return PHX_MC_UNRESOLVED;
+        result_lower[term * dimensions + row] = value.lower;
+        result_upper[term * dimensions + row] = value.upper;
+      }
+    }
+    for (int i = 0; i < terms * dimensions; ++i) {
+      output_lower[i] = result_lower[i];
+      output_upper[i] = result_upper[i];
+    }
+    return PHX_MC_OK;
+  }
+  if (current.kind != PHX_MC_CAD_NODE_TEMPLATE) return PHX_MC_UNRESOLVED;
+  const TemplateDefinition& definition = *current.definition;
+  const ProgramData& data = order == 0 ? definition.value
+                            : order == 1 ? definition.tangent : definition.hessian;
+  if (workspace.bound_program != &data) {
+    workspace.bound_program = nullptr;
+    const int32_t status = workspace.program.bind(
+        data.instructions, data.instruction_count, data.indices, data.index_count,
+        data.parameters, data.parameter_count, data.workspace_size);
+    if (status != PHX_MC_OK) return status;
+    workspace.bound_program = &data;
+  }
+  workspace.lower.assign(data.seeds, data.seeds + data.workspace_size);
+  workspace.upper.assign(data.seeds, data.seeds + data.workspace_size);
+  for (int i = 0; i < current.inputs; ++i) {
+    workspace.lower[static_cast<std::size_t>(i)] = input_lower[i];
+    workspace.upper[static_cast<std::size_t>(i)] = input_upper[i];
+  }
+  const int64_t offset = model_.node_real_offsets[index];
+  for (int i = 0; i < definition.coefficient_count; ++i) {
+    const double lo = workspace.coefficient_lower[offset + i];
+    const double hi = workspace.coefficient_upper[offset + i];
+    if (!std::isfinite(lo) || !std::isfinite(hi) || lo > hi) return PHX_MC_INVALID_ARGUMENT;
+    const auto slot = static_cast<std::size_t>(data.coefficients[i]);
+    workspace.lower[slot] = lo;
+    workspace.upper[slot] = hi;
+  }
+  const int32_t status = workspace.program.execute(workspace.lower.data(), workspace.upper.data(),
+                                                    data.workspace_size);
+  if (status != PHX_MC_OK) return status;
+  for (int64_t i = 0; i < data.output_count; ++i) {
+    const auto slot = static_cast<std::size_t>(data.outputs[i]);
+    if (!std::isfinite(workspace.lower[slot]) || !std::isfinite(workspace.upper[slot]) ||
+        workspace.lower[slot] > workspace.upper[slot])
+      return PHX_MC_UNRESOLVED;
+  }
+  for (int64_t i = 0; i < data.output_count; ++i) {
+    const auto slot = static_cast<std::size_t>(data.outputs[i]);
+    output_lower[i] = workspace.lower[slot];
+    output_upper[i] = workspace.upper[slot];
+  }
+  return PHX_MC_OK;
+}
 
 int32_t CadGeometry::validate_node(int32_t index) {
   const phx_mc_cad_model& m = model_;
