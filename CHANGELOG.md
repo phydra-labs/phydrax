@@ -324,6 +324,21 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native zero-set surface remeshing constructs without per-edit proofs (a
+  floating-point adapter with curvature sizing, projection on point jets and
+  quality repair) and certifies afterwards: `zero_set_certify` proves the
+  distance and transversality of every triangle where it can, keeps the
+  carrier's own triangles at the carrier's bound where the proof fails next to
+  a crease, certifies the surface embedded and closed, repairs refused
+  triangles locally and returns the certified surface; the surface envelope
+  remesh uses the same construction and band certification. The per-edit
+  certified remesher is removed. New benchmark rows `surface-remesh-sphere`
+  and `surface-remesh-torus` (MMGS) with independently measured angles and
+  two-way distance.
+- The native library builds with MSVC again: the exact integer insphere rows
+  use the `wide_integer.hpp` helpers (native 128-bit arithmetic where the
+  compiler has it, portable limbs otherwise, identical results), popcount is
+  `std::popcount` and prefetch a portable hint.
 - The PLC tetrahedral route adopts the native recovery through
   `TetMesh3D.from_recovery`; a kept conforming carrier is still constructed
   from its arrays. Identities unchanged.
