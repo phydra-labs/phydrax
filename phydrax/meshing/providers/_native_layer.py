@@ -1909,13 +1909,18 @@ def implicit_layer_wall(
                 provider_code="native_layer_implicit_wall",
                 stage="surface_meshing",
             )
-        # `distance` is the certified bound of the remeshed wall.
+        # `distance` bounds the remeshed wall: the certified bound of proved
+        # faces and the scaffold distance of faces kept from the scaffold.
         evidence = (
             ("carrier_remeshed", 1.0),
             *before,
             *_carrier_quality(vertices, faces, "after"),
             ("carrier_remesh_edge_length", edge_length),
             ("carrier_remesh_unmet_count", float(remeshed.counters[4])),
+            ("carrier_remesh_transversality_refusals", float(certified.counters[0])),
+            ("carrier_remesh_distance_refusals", float(certified.counters[1])),
+            ("carrier_remesh_embedding_refusals", float(certified.counters[2])),
+            ("carrier_remesh_kept_carrier_triangles", float(certified.counters[3])),
             ("carrier_remesh_repair_splits", float(certified.counters[4])),
         )
     wall = CellMesh.from_triangles(vertices, faces, numeric_version=query.source_revision)

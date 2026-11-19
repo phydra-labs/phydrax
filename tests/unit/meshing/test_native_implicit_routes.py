@@ -1337,6 +1337,16 @@ def test_native_implicit_carrier_remesh_reports_fixed_fill_quality() -> None:
     assert achieved["carrier_remeshed"] == 1.0
     assert achieved["carrier_maximum_radius_edge_ratio_before"] > 2.0
     assert achieved["carrier_maximum_radius_edge_ratio_after"] <= 2.0
+    # Certification evidence: every face kept from the scaffold failed its
+    # proof first, the result is embedded, and repairs are counted.
+    kept = achieved["carrier_remesh_kept_carrier_triangles"]
+    refusals = (
+        achieved["carrier_remesh_transversality_refusals"]
+        + achieved["carrier_remesh_distance_refusals"]
+    )
+    assert kept >= 0.0 and refusals >= kept
+    assert achieved["carrier_remesh_embedding_refusals"] == 0.0
+    assert achieved["carrier_remesh_repair_splits"] >= 0.0
     assert (
         achieved["carrier_minimum_angle_degrees_after"]
         > achieved["carrier_minimum_angle_degrees_before"]
