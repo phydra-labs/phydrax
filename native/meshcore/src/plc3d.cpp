@@ -7525,28 +7525,59 @@ class PlcRecoveryBuilder {
     return PHX_MC_OK;
   }
 
+  // The finite cell whose closure holds `seed`, found by the visibility walk
+  // (Triangulation3D::locate); refused (INVALID_SEED) outside the finite
+  // cells or on a marked face. The cells whose closures hold the seed are
+  // that cell, the two cells of a face, the ring of an edge, or the star of
+  // a vertex holding it, and every face of them through the seed is checked.
   int32_t seed_tet(const double* seed, int64_t row) {
     const TetrahedralComplex& complex = triangulation_->complex();
-    for (std::size_t t = 0; t < complex.tets.size(); ++t) {
-      const Tetrahedron& tet = complex.tets[t];
-      if (tet.v[0] == kDeadVertex || is_ghost(tet)) continue;
-      int signs[4];
-      bool inside = true;
+    const ExactPointRef position{seed, nullptr};
+    const auto refuse = [&]() {
+      fail(PHX_MC_INVALID_INPUT, kPlcInvalidSeed, kPlcSeed, row);
+      return -1;
+    };
+    const int32_t found = triangulation_->locate(position);
+    if (!triangulation_->valid_live_cell(found) ||
+        is_ghost(complex.tets[static_cast<std::size_t>(found)])) {
+      return refuse();
+    }
+    const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(found)];
+    int zero_slots[4];
+    int zeros = 0;
+    for (int slot = 0; slot < 4; ++slot) {
+      const int sign = triangulation_->orient_with(tet, slot, position);
+      if (sign < 0) return refuse();
+      if (sign == 0) zero_slots[zeros++] = slot;
+    }
+    std::vector<int32_t> cells{found};
+    if (zeros == 1) {
+      cells.push_back(tet.n[zero_slots[0]]);
+    } else if (zeros == 2 || zeros == 3) {
+      int32_t ends[2] = {-1, -1};
+      int count = 0;
       for (int slot = 0; slot < 4; ++slot) {
-        signs[slot] = triangulation_->orient_with(tet, slot, seed);
-        inside = inside && signs[slot] >= 0;
-      }
-      if (!inside) continue;
-      for (int slot = 0; slot < 4; ++slot) {
-        if (signs[slot] == 0 && complex.constraint(static_cast<int32_t>(t), slot) != kNoConstraint) {
-          fail(PHX_MC_INVALID_INPUT, kPlcInvalidSeed, kPlcSeed, row);
-          return -1;
+        if (std::find(zero_slots, zero_slots + zeros, slot) == zero_slots + zeros) {
+          ends[count++] = tet.v[slot];
         }
       }
-      return static_cast<int32_t>(t);
+      const int32_t status =
+          zeros == 2 ? edge_cells(ends[0], ends[1], cells) : vertex_cells(ends[0], cells);
+      if (status != PHX_MC_OK) return -1;
+    } else if (zeros == 4) {
+      return refuse();
     }
-    fail(PHX_MC_INVALID_INPUT, kPlcInvalidSeed, kPlcSeed, row);
-    return -1;
+    for (int32_t cell : cells) {
+      const Tetrahedron& around = complex.tets[static_cast<std::size_t>(cell)];
+      if (is_ghost(around)) continue;
+      for (int slot = 0; slot < 4; ++slot) {
+        if (complex.constraint(cell, slot) != kNoConstraint &&
+            triangulation_->orient_with(around, slot, position) == 0) {
+          return refuse();
+        }
+      }
+    }
+    return found;
   }
 
   int32_t label_conflict(int32_t first, int32_t second, int32_t facet) {

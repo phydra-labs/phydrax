@@ -3240,6 +3240,254 @@ void test_lobed_edge_patch_recovers_without_merging() {
   PHX_CHECK(std::fabs(meshed - enclosed) <= 1e-12);
 }
 
+// A closed surface: its points, its triangles oriented with their region on
+// the negative side (outward), and that region per triangle (void outside).
+struct ClosedSurface {
+  std::vector<double> points;
+  std::vector<int32_t> triangles;
+  std::vector<int32_t> regions;
+};
+
+void add_triangle_toward(ClosedSurface& surface, int32_t a, int32_t b, int32_t c,
+                         const double* inside, int32_t region) {
+  const double* p = surface.points.data();
+  if (orient3d(p + 3 * a, p + 3 * b, p + 3 * c, inside) > 0) std::swap(b, c);
+  surface.triangles.insert(surface.triangles.end(), {a, b, c});
+  surface.regions.push_back(region);
+}
+
+// The unit icosphere: the icosahedron with every triangle split into four
+// `levels` times, its vertices projected to the sphere.
+ClosedSurface icosphere(int levels) {
+  const double t = (1.0 + std::sqrt(5.0)) / 2.0;
+  std::vector<std::array<double, 3>> points{
+      {-1, t, 0}, {1, t, 0}, {-1, -t, 0}, {1, -t, 0}, {0, -1, t}, {0, 1, t},
+      {0, -1, -t}, {0, 1, -t}, {t, 0, -1}, {t, 0, 1}, {-t, 0, -1}, {-t, 0, 1}};
+  std::vector<std::array<int32_t, 3>> faces{
+      {0, 11, 5}, {0, 5, 1}, {0, 1, 7}, {0, 7, 10}, {0, 10, 11}, {1, 5, 9}, {5, 11, 4},
+      {11, 10, 2}, {10, 7, 6}, {7, 1, 8}, {3, 9, 4}, {3, 4, 2}, {3, 2, 6}, {3, 6, 8},
+      {3, 8, 9}, {4, 9, 5}, {2, 4, 11}, {6, 2, 10}, {8, 6, 7}, {9, 8, 1}};
+  for (int level = 0; level < levels; ++level) {
+    std::map<std::pair<int32_t, int32_t>, int32_t> middles;
+    const auto middle = [&](int32_t a, int32_t b) {
+      const auto [found, fresh] =
+          middles.emplace(std::minmax(a, b), static_cast<int32_t>(points.size()));
+      if (fresh) {
+        const auto& p = points[static_cast<std::size_t>(a)];
+        const auto& q = points[static_cast<std::size_t>(b)];
+        points.push_back({0.5 * (p[0] + q[0]), 0.5 * (p[1] + q[1]), 0.5 * (p[2] + q[2])});
+      }
+      return found->second;
+    };
+    std::vector<std::array<int32_t, 3>> finer;
+    for (const auto& [a, b, c] : faces) {
+      const int32_t ab = middle(a, b), bc = middle(b, c), ca = middle(c, a);
+      finer.insert(finer.end(), {{a, ab, ca}, {b, bc, ab}, {c, ca, bc}, {ab, bc, ca}});
+    }
+    faces = std::move(finer);
+  }
+  ClosedSurface surface;
+  for (const auto& p : points) {
+    const double norm = std::sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]);
+    surface.points.insert(surface.points.end(), {p[0] / norm, p[1] / norm, p[2] / norm});
+  }
+  const double center[3] = {0.0, 0.0, 0.0};
+  for (const auto& [a, b, c] : faces) add_triangle_toward(surface, a, b, c, center, 1);
+  return surface;
+}
+
+// The torus of radii 1 and 0.4 on a (u, v) grid, each grid quad split along
+// the diagonal from (i, j) to (i + 1, j + 1). Each quad is an isosceles
+// trapezoid up to rounding, so its four vertices are nearly cocircular and
+// the Delaunay tetrahedralization misses many of these diagonals.
+ClosedSurface grid_torus(int32_t around, int32_t tube) {
+  constexpr double kPi = 3.141592653589793;
+  ClosedSurface surface;
+  for (int32_t i = 0; i < around; ++i) {
+    const double u = 2.0 * kPi * i / around;
+    for (int32_t j = 0; j < tube; ++j) {
+      const double v = 2.0 * kPi * j / tube;
+      surface.points.insert(surface.points.end(), {(1.0 + 0.4 * std::cos(v)) * std::cos(u),
+                                                   (1.0 + 0.4 * std::cos(v)) * std::sin(u),
+                                                   0.4 * std::sin(v)});
+    }
+  }
+  const auto vertex = [&](int32_t i, int32_t j) { return (i % around) * tube + j % tube; };
+  for (int32_t i = 0; i < around; ++i) {
+    // The tube center at the middle angle of the column lies inside.
+    const double u = 2.0 * kPi * (i + 0.5) / around;
+    const double inside[3] = {std::cos(u), std::sin(u), 0.0};
+    for (int32_t j = 0; j < tube; ++j) {
+      add_triangle_toward(surface, vertex(i, j), vertex(i + 1, j), vertex(i + 1, j + 1), inside, 1);
+      add_triangle_toward(surface, vertex(i, j), vertex(i + 1, j + 1), vertex(i, j + 1), inside, 1);
+    }
+  }
+  return surface;
+}
+
+// Two disjoint capped cylinders of radius 1/2 and height 1 along z, centred
+// at x = -1 (region 1) and x = 1 (region 2), their sides split into
+// rectangles (exactly coplanar and cocircular quads) along one diagonal and
+// their caps fanned from the cap centres.
+ClosedSurface two_cylinders(int32_t around, int32_t along) {
+  constexpr double kPi = 3.141592653589793;
+  ClosedSurface surface;
+  for (const int32_t region : {1, 2}) {
+    const double x = region == 1 ? -1.0 : 1.0;
+    const auto base = static_cast<int32_t>(surface.points.size() / 3);
+    for (int32_t k = 0; k <= along; ++k) {
+      for (int32_t i = 0; i < around; ++i) {
+        const double angle = 2.0 * kPi * i / around;
+        surface.points.insert(surface.points.end(), {x + 0.5 * std::cos(angle),
+                                                     0.5 * std::sin(angle),
+                                                     static_cast<double>(k) / along});
+      }
+    }
+    const auto bottom = static_cast<int32_t>(surface.points.size() / 3);
+    surface.points.insert(surface.points.end(), {x, 0.0, 0.0, x, 0.0, 1.0});
+    const double inside[3] = {x, 0.0, 0.5};
+    const auto ring = [&](int32_t k, int32_t i) { return base + k * around + i % around; };
+    for (int32_t k = 0; k < along; ++k) {
+      for (int32_t i = 0; i < around; ++i) {
+        add_triangle_toward(surface, ring(k, i), ring(k, i + 1), ring(k + 1, i + 1), inside, region);
+        add_triangle_toward(surface, ring(k, i), ring(k + 1, i + 1), ring(k + 1, i), inside, region);
+      }
+    }
+    for (int32_t i = 0; i < around; ++i) {
+      add_triangle_toward(surface, bottom, ring(0, i), ring(0, i + 1), inside, region);
+      add_triangle_toward(surface, bottom + 1, ring(along, i), ring(along, i + 1), inside, region);
+    }
+  }
+  return surface;
+}
+
+// FIXED recovery of `surface`, one facet per triangle with the void on its
+// positive side and its region on the negative one.
+int32_t recover_surface(const ClosedSurface& surface, const std::vector<double>& seeds,
+                        const std::vector<int32_t>& seed_regions, PlcRecovery& result) {
+  const std::size_t faces = surface.triangles.size() / 3;
+  std::vector<int64_t> offsets(faces + 1);
+  std::vector<int32_t> facets(faces);
+  std::vector<int32_t> regions(2 * faces);
+  for (std::size_t row = 0; row <= faces; ++row) offsets[row] = static_cast<int64_t>(3 * row);
+  for (std::size_t row = 0; row < faces; ++row) {
+    facets[row] = static_cast<int32_t>(row);
+    regions[2 * row] = -1;
+    regions[2 * row + 1] = surface.regions[row];
+  }
+  PlcInput input;
+  input.point_count = static_cast<int64_t>(surface.points.size() / 3);
+  input.points = surface.points.data();
+  input.polygon_count = static_cast<int64_t>(faces);
+  input.polygon_offsets = offsets.data();
+  input.polygon_vertices = surface.triangles.data();
+  input.polygon_facets = facets.data();
+  input.facet_count = static_cast<int64_t>(faces);
+  input.facet_regions = regions.data();
+  input.seed_count = static_cast<int64_t>(seed_regions.size());
+  input.seeds = seeds.empty() ? nullptr : seeds.data();
+  input.seed_regions = seed_regions.empty() ? nullptr : seed_regions.data();
+  input.policy = BoundaryPolicy::kFixed;
+  return recover_plc(input, result);
+}
+
+// The recovered mesh of `surface`: the input points come first and unmoved,
+// every cell is positive under exact orient3d, the faces each region's
+// cells use once (oriented outward from their cells) are exactly the input
+// triangles of that region with their orientation, and each region's cells
+// enclose exactly its volume (the sums of the cells' and of the triangles'
+// exact signed volumes agree).
+void check_surface_recovery(const ClosedSurface& surface, const PlcRecovery& result) {
+  const std::size_t input_points = surface.points.size() / 3;
+  PHX_CHECK(result.points.size() >= surface.points.size());
+  PHX_CHECK(std::equal(surface.points.begin(), surface.points.end(), result.points.begin()));
+  check_fixed_boundary(result, input_points);
+  const auto canonical = [](std::array<int32_t, 3> face) {
+    std::rotate(face.begin(), std::min_element(face.begin(), face.end()), face.end());
+    return face;
+  };
+  const std::set<int32_t> regions(surface.regions.begin(), surface.regions.end());
+  const double origin[3] = {0.0, 0.0, 0.0};
+  for (const int32_t region : regions) {
+    std::map<std::array<int32_t, 3>, int32_t> uses;
+    Expansion cells_volume;
+    for (std::size_t cell = 0; cell < result.tet_regions.size(); ++cell) {
+      PHX_CHECK(regions.contains(result.tet_regions[cell]));
+      if (result.tet_regions[cell] != region) continue;
+      const int32_t* tet = result.tets.data() + 4 * cell;
+      const double* corners[4];
+      for (int k = 0; k < 4; ++k) corners[k] = result.points.data() + 3 * tet[k];
+      PHX_CHECK(orient3d(corners[0], corners[1], corners[2], corners[3]) > 0);
+      cells_volume = cells_volume + orient3d_exact(corners[0], corners[1], corners[2], corners[3]);
+      for (const auto& [i, j, k] : {std::array<int, 3>{1, 2, 3}, std::array<int, 3>{0, 3, 2},
+                                    std::array<int, 3>{0, 1, 3}, std::array<int, 3>{0, 2, 1}}) {
+        std::array<int32_t, 3> key{tet[i], tet[j], tet[k]};
+        std::sort(key.begin(), key.end());
+        ++uses[key];
+      }
+    }
+    std::set<std::array<int32_t, 3>> boundary;
+    for (std::size_t cell = 0; cell < result.tet_regions.size(); ++cell) {
+      if (result.tet_regions[cell] != region) continue;
+      const int32_t* tet = result.tets.data() + 4 * cell;
+      for (const auto& [i, j, k] : {std::array<int, 3>{1, 2, 3}, std::array<int, 3>{0, 3, 2},
+                                    std::array<int, 3>{0, 1, 3}, std::array<int, 3>{0, 2, 1}}) {
+        std::array<int32_t, 3> key{tet[i], tet[j], tet[k]};
+        std::sort(key.begin(), key.end());
+        if (uses[key] == 1) boundary.insert(canonical({tet[i], tet[j], tet[k]}));
+      }
+    }
+    std::set<std::array<int32_t, 3>> expected;
+    Expansion surface_volume;
+    for (std::size_t row = 0; row < surface.regions.size(); ++row) {
+      if (surface.regions[row] != region) continue;
+      const int32_t* face = surface.triangles.data() + 3 * row;
+      expected.insert(canonical({face[0], face[1], face[2]}));
+      surface_volume = surface_volume +
+          orient3d_exact(origin, surface.points.data() + 3 * face[0],
+                         surface.points.data() + 3 * face[1], surface.points.data() + 3 * face[2]);
+    }
+    PHX_CHECK(boundary == expected);
+    PHX_CHECK(surface_volume.sign() > 0);
+    PHX_CHECK((cells_volume - surface_volume).sign() == 0);
+  }
+}
+
+// Closed surfaces whose FIXED recovery must return exactly their triangles
+// as the boundary: an icosphere, two (u, v) grid tori whose Delaunay
+// tetrahedralizations miss many grid diagonals (recovered by flips and,
+// where flips fail, an edge removal with a volume Steiner point, never by a
+// boundary split), and two disjoint cylinders with two regions. Seeds inside
+// the cylinders are located and agree with the facet regions; a seed on a
+// cap triangle or at a cap centre is refused.
+void test_closed_surfaces_recover_their_boundary_exactly() {
+  for (const ClosedSurface& surface :
+       {icosphere(3), grid_torus(48, 24), grid_torus(36, 18), two_cylinders(24, 6)}) {
+    PlcRecovery result;
+    const int32_t status = recover_surface(surface, {}, {}, result);
+    PHX_CHECK(status == PHX_MC_OK);
+    if (status != PHX_MC_OK) continue;
+    check_surface_recovery(surface, result);
+  }
+  const ClosedSurface cylinders = two_cylinders(24, 6);
+  PlcRecovery unseeded;
+  PHX_CHECK(recover_surface(cylinders, {}, {}, unseeded) == PHX_MC_OK);
+  PlcRecovery seeded;
+  PHX_CHECK(recover_surface(cylinders, {-1.0, 0.1, 0.5, 1.0, -0.1, 0.25}, {1, 2}, seeded) ==
+            PHX_MC_OK);
+  check_surface_recovery(cylinders, seeded);
+  PHX_CHECK(seeded.tets == unseeded.tets && seeded.tet_regions == unseeded.tet_regions);
+  PlcRecovery crossed;
+  PHX_CHECK(recover_surface(cylinders, {-1.0, 0.1, 0.5}, {2}, crossed) == PHX_MC_INVALID_INPUT);
+  PHX_CHECK(crossed.failure.reason == kPlcInconsistentRegions);
+  for (const std::vector<double>& seed :
+       {std::vector<double>{-0.9, 0.05, 0.0}, std::vector<double>{1.0, 0.0, 1.0}}) {
+    PlcRecovery refused;
+    PHX_CHECK(recover_surface(cylinders, seed, {1}, refused) == PHX_MC_INVALID_INPUT);
+    PHX_CHECK(refused.failure.reason == kPlcInvalidSeed);
+  }
+}
+
 // The distance envelope of the unit tetrahedron at offset 1.5 has grid
 // vertices such as (-1.5, 0.5, 0.5) at exactly the offset from a face. Its
 // marching-tetrahedra surface used to carry clusters of ~10 vertices within
@@ -3645,5 +3893,6 @@ int main() {
   test_sheet_segment_through_a_cone_apex_recovers_without_a_split();
   test_recurring_obstruction_patch_recovers_without_growth();
   test_lobed_edge_patch_recovers_without_merging();
+  test_closed_surfaces_recover_their_boundary_exactly();
   return phx::mc::test::finish("test_plc3d");
 }

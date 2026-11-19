@@ -268,6 +268,9 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native PLC recovery locates region seeds by a visibility walk instead of
+  scanning every cell, and refuses (INVALID_SEED) a seed on any marked face
+  through it, whichever cell holds it; regions are unchanged otherwise.
 - Native PLC source validation tests the overlapping pairs of a uniform
   grid of the source items' boxes (cells of the median item extent; the
   sweep along x remains for boxes that would fill more than eight cells per
