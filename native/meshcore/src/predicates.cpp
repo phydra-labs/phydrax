@@ -183,82 +183,72 @@ int incircle_adapt(const double* const* p, double permanent) {
 // Exact integer evaluation. Binary64 values whose set bits all lie within
 // `width` bits of one another are integers times a common power of two;
 // the determinant's sign does not depend on that power, so it is evaluated
-// on the integers: 128-bit products and 384-bit two's complement sums.
-struct Wide {
-  std::uint64_t w[6];
-};
+// on the integers: 128-bit minors, then products and sums of fixed width in
+// 64-bit limbs (little endian, two's complement for signed values).
 
-Wide wide_from(__int128 value) {
-  const auto low = static_cast<std::uint64_t>(value);
-  const auto high = static_cast<std::uint64_t>(static_cast<unsigned __int128>(value) >> 64);
-  const std::uint64_t extension = value < 0 ? ~std::uint64_t{0} : 0;
-  return {{low, high, extension, extension, extension, extension}};
-}
-
-bool wide_negative(const Wide& value) { return (value.w[5] >> 63) != 0; }
-
-Wide wide_negated(const Wide& value) {
-  Wide result{};
-  unsigned __int128 carry = 1;
-  for (int i = 0; i < 6; ++i) {
-    const unsigned __int128 sum = static_cast<unsigned __int128>(~value.w[i]) + carry;
-    result.w[i] = static_cast<std::uint64_t>(sum);
-    carry = sum >> 64;
-  }
-  return result;
-}
-
-void wide_add(Wide& total, const Wide& value) {
-  unsigned __int128 carry = 0;
-  for (int i = 0; i < 6; ++i) {
-    const unsigned __int128 sum =
-        static_cast<unsigned __int128>(total.w[i]) + value.w[i] + carry;
-    total.w[i] = static_cast<std::uint64_t>(sum);
+// total += value (subtract: total -= value) for the unsigned `count`-limb
+// `value` and the N-limb `total`, modulo 2^(64 N).
+template <int N>
+void accumulate(std::uint64_t (&total)[N], const std::uint64_t* value, int count, bool subtract) {
+  unsigned __int128 carry = subtract ? 1 : 0;
+  for (int i = 0; i < N; ++i) {
+    std::uint64_t limb = i < count ? value[i] : 0;
+    if (subtract) limb = ~limb;
+    const unsigned __int128 sum = static_cast<unsigned __int128>(total[i]) + limb + carry;
+    total[i] = static_cast<std::uint64_t>(sum);
     carry = sum >> 64;
   }
 }
 
-// Product modulo 2^384 (exact for the bounded operands below).
-Wide wide_product(const Wide& left, const Wide& right) {
-  const bool negative = wide_negative(left) != wide_negative(right);
-  const Wide a = wide_negative(left) ? wide_negated(left) : left;
-  const Wide b = wide_negative(right) ? wide_negated(right) : right;
-  Wide result{};
-  for (int i = 0; i < 6; ++i) {
-    if (a.w[i] == 0) continue;
+template <int N>
+bool limbs_negative(const std::uint64_t (&value)[N]) {
+  return (value[N - 1] >> 63) != 0;
+}
+
+// The unsigned product of the `left_count`- and `right_count`-limb values
+// into `left_count + right_count` limbs.
+void limbs_product(const std::uint64_t* left, int left_count, const std::uint64_t* right,
+                   int right_count, std::uint64_t* product) {
+  std::fill(product, product + left_count + right_count, std::uint64_t{0});
+  for (int i = 0; i < left_count; ++i) {
     unsigned __int128 carry = 0;
-    for (int j = 0; i + j < 6; ++j) {
+    for (int j = 0; j < right_count; ++j) {
       const unsigned __int128 term =
-          static_cast<unsigned __int128>(a.w[i]) * b.w[j] + result.w[i + j] + carry;
-      result.w[i + j] = static_cast<std::uint64_t>(term);
+          static_cast<unsigned __int128>(left[i]) * right[j] + product[i + j] + carry;
+      product[i + j] = static_cast<std::uint64_t>(term);
       carry = term >> 64;
     }
+    product[i + right_count] = static_cast<std::uint64_t>(carry);
   }
-  return negative ? wide_negated(result) : result;
-}
-
-int wide_sign(const Wide& value) {
-  if (wide_negative(value)) return -1;
-  for (const std::uint64_t limb : value.w) {
-    if (limb != 0) return 1;
-  }
-  return 0;
 }
 
 // values[i] = integers[i] * 2^e for one e, with |integers[i]| < 2^width;
-// false when the set bits of the values span more than `width` bits.
+// false when the set bits of the values span more than `width` bits (or a
+// value is not finite). Read from the binary64 fields: a nonzero value is
+// m 2^shift, m an odd integer.
 bool common_integers(const double* values, int count, int width, std::int64_t* integers) {
+  constexpr std::uint64_t kFraction = (std::uint64_t{1} << 52) - 1;
   int lowest = std::numeric_limits<int>::max();
   int highest = std::numeric_limits<int>::min();
+  std::uint64_t significands[16];
+  int shifts[16];
   for (int i = 0; i < count; ++i) {
-    if (values[i] == 0.0) continue;
-    int exponent = 0;
-    const double fraction = std::frexp(std::fabs(values[i]), &exponent);
-    // fraction * 2^53 is an integer below 2^53; its trailing zero bits
-    // raise the lowest set bit above exponent - 53.
-    const auto mantissa = static_cast<std::uint64_t>(std::ldexp(fraction, 53));
-    lowest = std::min(lowest, exponent - 53 + std::countr_zero(mantissa));
-    highest = std::max(highest, exponent);
+    const auto bits = std::bit_cast<std::uint64_t>(values[i]);
+    const auto biased = static_cast<int>((bits >> 52) & 0x7FF);
+    if (biased == 0x7FF) return false;
+    std::uint64_t significand =
+        biased == 0 ? bits & kFraction : (bits & kFraction) | (std::uint64_t{1} << 52);
+    int shift = biased == 0 ? -1074 : biased - 1075;
+    if (significand != 0) {
+      const int zeros = std::countr_zero(significand);
+      significand >>= zeros;
+      shift += zeros;
+      // The value lies below 2^highest; its lowest set bit is 2^lowest.
+      lowest = std::min(lowest, shift);
+      highest = std::max(highest, shift + static_cast<int>(std::bit_width(significand)));
+    }
+    significands[i] = significand;
+    shifts[i] = shift;
   }
   if (highest == std::numeric_limits<int>::min()) {
     std::fill(integers, integers + count, std::int64_t{0});
@@ -266,44 +256,78 @@ bool common_integers(const double* values, int count, int width, std::int64_t* i
   }
   if (highest - lowest > width) return false;
   for (int i = 0; i < count; ++i) {
-    integers[i] = static_cast<std::int64_t>(std::ldexp(values[i], -lowest));
+    const auto magnitude = significands[i] == 0
+                               ? std::int64_t{0}
+                               : static_cast<std::int64_t>(significands[i] << (shifts[i] - lowest));
+    integers[i] = std::signbit(values[i]) ? -magnitude : magnitude;
   }
   return true;
 }
 
-// Sign of lifted3_rows on integer rows below 2^62 in magnitude.
+// Sign of lifted3_rows on integer rows below 2^62 in magnitude: minors below
+// 2^125 and lifts below 2^126 in 128 bits, cofactors below 2^189 in three
+// limbs, the determinant below 2^317 in five.
 int insphere_integer_rows(const std::int64_t* x, const std::int64_t* y, const std::int64_t* z) {
   const auto minor = [&](int i, int j) {
     return static_cast<__int128>(x[i]) * y[j] - static_cast<__int128>(x[j]) * y[i];
   };
-  const Wide ab = wide_from(minor(0, 1)), bc = wide_from(minor(1, 2));
-  const Wide cd = wide_from(minor(2, 3)), da = wide_from(minor(3, 0));
-  const Wide ac = wide_from(minor(0, 2)), bd = wide_from(minor(1, 3));
-  const auto row = [&](int k) { return wide_from(z[k]); };
-  const auto cofactor = [&](int k0, const Wide& m0, int k1, const Wide& m1, bool minus,
-                            int k2, const Wide& m2) {
-    Wide total = wide_product(row(k0), m0);
-    const Wide second = wide_product(row(k1), m1);
-    wide_add(total, minus ? wide_negated(second) : second);
-    wide_add(total, wide_product(row(k2), m2));
-    return total;
+  const __int128 ab = minor(0, 1), bc = minor(1, 2), cd = minor(2, 3);
+  const __int128 da = minor(3, 0), ac = minor(0, 2), bd = minor(1, 3);
+  const auto magnitude = [](__int128 value) {
+    const auto bits = static_cast<unsigned __int128>(value);
+    return value < 0 ? ~bits + 1 : bits;
+  };
+  // total += z[k] m (minus: -=).
+  const auto add_term = [&](std::uint64_t (&total)[3], int k, __int128 m, bool minus) {
+    const std::uint64_t row =
+        z[k] < 0 ? ~static_cast<std::uint64_t>(z[k]) + 1 : static_cast<std::uint64_t>(z[k]);
+    const unsigned __int128 size = magnitude(m);
+    const std::uint64_t right[2]{static_cast<std::uint64_t>(size),
+                                 static_cast<std::uint64_t>(size >> 64)};
+    std::uint64_t product[3];
+    limbs_product(&row, 1, right, 2, product);
+    accumulate(total, product, 3, ((z[k] < 0) != (m < 0)) != minus);
   };
   // abc = z0 bc - z1 ac + z2 ab; bcd = z1 cd - z2 bd + z3 bc;
   // cda = z2 da + z3 ac + z0 cd; dab = z3 ab + z0 bd + z1 da.
-  const Wide abc = cofactor(0, bc, 1, ac, true, 2, ab);
-  const Wide bcd = cofactor(1, cd, 2, bd, true, 3, bc);
-  const Wide cda = cofactor(2, da, 3, ac, false, 0, cd);
-  const Wide dab = cofactor(3, ab, 0, bd, false, 1, da);
-  const auto lift = [&](int k) {
-    return wide_from(static_cast<__int128>(x[k]) * x[k] + static_cast<__int128>(y[k]) * y[k] +
-                     static_cast<__int128>(z[k]) * z[k]);
-  };
+  std::uint64_t abc[3]{}, bcd[3]{}, cda[3]{}, dab[3]{};
+  add_term(abc, 0, bc, false);
+  add_term(abc, 1, ac, true);
+  add_term(abc, 2, ab, false);
+  add_term(bcd, 1, cd, false);
+  add_term(bcd, 2, bd, true);
+  add_term(bcd, 3, bc, false);
+  add_term(cda, 2, da, false);
+  add_term(cda, 3, ac, false);
+  add_term(cda, 0, cd, false);
+  add_term(dab, 3, ab, false);
+  add_term(dab, 0, bd, false);
+  add_term(dab, 1, da, false);
   // det = (l3 abc - l2 dab) + (l1 cda - l0 bcd).
-  Wide det = wide_product(lift(3), abc);
-  wide_add(det, wide_negated(wide_product(lift(2), dab)));
-  wide_add(det, wide_product(lift(1), cda));
-  wide_add(det, wide_negated(wide_product(lift(0), bcd)));
-  return wide_sign(det);
+  std::uint64_t det[5]{};
+  const auto add_lifted = [&](int k, const std::uint64_t (&cofactor)[3], bool minus) {
+    const unsigned __int128 lift = static_cast<unsigned __int128>(
+        static_cast<__int128>(x[k]) * x[k] + static_cast<__int128>(y[k]) * y[k] +
+        static_cast<__int128>(z[k]) * z[k]);
+    const std::uint64_t left[2]{static_cast<std::uint64_t>(lift),
+                                static_cast<std::uint64_t>(lift >> 64)};
+    const bool negative = limbs_negative(cofactor);
+    std::uint64_t size[3]{cofactor[0], cofactor[1], cofactor[2]};
+    if (negative) {
+      std::uint64_t zero[3]{};
+      accumulate(zero, size, 3, true);
+      std::copy_n(zero, 3, size);
+    }
+    std::uint64_t product[5];
+    limbs_product(left, 2, size, 3, product);
+    accumulate(det, product, 5, negative != minus);
+  };
+  add_lifted(3, abc, false);
+  add_lifted(2, dab, true);
+  add_lifted(1, cda, false);
+  add_lifted(0, bcd, true);
+  if (limbs_negative(det)) return -1;
+  return std::any_of(det, det + 5, [](std::uint64_t limb) { return limb != 0; }) ? 1 : 0;
 }
 
 // The exact insphere sign by integers: on the coordinates (differences then
