@@ -30,18 +30,16 @@ int64_t root(std::vector<int64_t>& parent, int64_t x) {
   return x;
 }
 
-void topology(int64_t n, const int64_t* triangles, std::vector<Finding>& out) {
+void topology(int64_t point_count, int64_t n, const int64_t* triangles,
+              std::vector<Finding>& out) {
   std::vector<Edge> edges;
-  std::vector<std::pair<int64_t, int64_t>> corners;
   edges.reserve(static_cast<size_t>(3 * n));
-  corners.reserve(static_cast<size_t>(3 * n));
   std::vector<int64_t> parent(static_cast<size_t>(3 * n));
   std::iota(parent.begin(), parent.end(), int64_t{0});
   for (int64_t t = 0; t < n; ++t) {
     for (int k = 0; k < 3; ++k) {
       const int l = (k + 1) % 3;
       const int64_t a = triangles[3*t+k], b = triangles[3*t+l];
-      corners.emplace_back(a, 3*t+k);
       edges.push_back({std::min(a,b), std::max(a,b), t,
                        a < b ? k : l, a < b ? l : k, a < b});
     }
@@ -68,17 +66,19 @@ void topology(int64_t n, const int64_t* triangles, std::vector<Finding>& out) {
     }
     i = j;
   }
-  std::sort(corners.begin(), corners.end());
-  for (size_t i = 0; i < corners.size();) {
-    size_t j = i + 1;
-    const int64_t r = root(parent, corners[i].second);
-    bool disconnected = false;
-    while (j < corners.size() && corners[j].first == corners[i].first) {
-      disconnected |= root(parent, corners[j].second) != r;
-      ++j;
+  // Every corner at a vertex must be in one edge-connected component.
+  // The point-indexed table avoids sorting a second bank of 3*n corners.
+  std::vector<int64_t> first_root(static_cast<size_t>(point_count), -1);
+  for (int64_t corner = 0; corner < 3*n; ++corner) {
+    const int64_t vertex = triangles[corner];
+    int64_t& first = first_root[vertex];
+    if (first == -2) continue;
+    const int64_t component = root(parent, corner);
+    if (first == -1) first = component;
+    else if (first != component) {
+      out.push_back({PHX_MC_SURFACE_VERTEX_LINK, vertex, -1, 0});
+      first = -2;
     }
-    if (disconnected) out.push_back({PHX_MC_SURFACE_VERTEX_LINK, corners[i].first, -1, 0});
-    i = j;
   }
 }
 
@@ -344,7 +344,7 @@ extern "C" int32_t phx_mc_verify_surface_embedding(
           result.push_back({PHX_MC_SURFACE_DEGENERATE, t, -1, 0});
       }
       if (result.empty()) {
-        topology(triangle_count, triangles, result);
+        topology(point_count, triangle_count, triangles, result);
         const int32_t status = contacts(points, triangle_count, triangles, result);
         if (status != PHX_MC_OK) return status;
       }
