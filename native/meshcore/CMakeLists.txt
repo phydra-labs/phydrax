@@ -103,6 +103,8 @@ set(PHX_MC_SOURCES
   src/cad_refine2d.cpp
   src/cad_curves.cpp
   src/cad_curves_capi.cpp
+  src/verify_chart_partition.cpp
+  src/verify_surface_embedding.cpp
 )
 set(PHX_MC_HEADERS
   include/phydrax_meshcore.h
@@ -161,6 +163,8 @@ set(PHX_MC_HEADERS
   src/cad_curves.hpp
   src/cad_curve_discretization.hpp
   src/refine_queue.hpp
+  src/verify_chart_partition.hpp
+  src/verify_surface_embedding.hpp
 )
 
 # Content identity of the library sources; CMake re-configures when any listed
@@ -290,4 +294,6 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_cad_geometry)
   phx_mc_add_test(test_cad_refine2d)
   phx_mc_add_test(test_cad_curves)
+  phx_mc_add_test(test_verify_chart_partition)
+  phx_mc_add_test(test_verify_surface_embedding)
 endif()
